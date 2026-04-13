@@ -6,6 +6,7 @@ import { afterEach, test } from "node:test";
 
 import {
   createBackgroundTaskMemoryModelClient,
+  defaultBackgroundTaskModelForProvider,
   resolveBackgroundTaskModelSelection,
 } from "./background-task-model.js";
 
@@ -132,6 +133,12 @@ test("background task model selection falls back to legacy provider background m
     modelId: "gpt-5.3-codex",
     source: "configured",
   });
+});
+
+test("background task default model suggestions use GPT-5.4 for managed and direct OpenAI providers", () => {
+  assert.equal(defaultBackgroundTaskModelForProvider("holaboss_model_proxy"), "gpt-5.4");
+  assert.equal(defaultBackgroundTaskModelForProvider("openai_direct"), "gpt-5.4");
+  assert.equal(defaultBackgroundTaskModelForProvider("openrouter_direct"), "openai/gpt-5.4");
 });
 
 test("background task model client resolves Anthropic direct providers with anthropic-native calls", () => {

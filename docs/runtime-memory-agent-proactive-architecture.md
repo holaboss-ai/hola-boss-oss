@@ -100,26 +100,31 @@ Relevant files:
 
 ### 2. Write path
 
-Post-turn writeback is scheduled after turn results are committed.
+Evolve runs after turn results are committed.
 
 High-level path:
 - claimed input execution finishes
 - turn result is written
-- post-run tasks are scheduled
-- `writeTurnMemory(...)` runs in the background
+- evolve tasks are scheduled
+- `writeTurnContinuity(...)` runs inline
+- an `evolve` queue job is persisted for the heavier durable-memory phase
 
-`writeTurnMemory(...)` currently does all of the following:
+`writeTurnContinuity(...)` currently:
 - compacts the turn summary
 - loads recent turns and messages
 - writes runtime continuity files
+- persists the compaction boundary artifact used for later restoration
+
+The queued durable-memory phase currently:
 - derives heuristic durable workspace memories
 - optionally accepts model-extracted durable candidates if confidence and evidence thresholds are met
 - upserts `memory_entries` for durable candidates
-- regenerates durable indexes:
+- regenerates durable indexes for changed scopes:
   - `MEMORY.md`
   - `workspace/<id>/MEMORY.md`
   - `preference/MEMORY.md`
-- writes the compaction boundary artifact even when durable-memory extraction fails
+  - `identity/MEMORY.md`
+- patches the compaction boundary restored-memory paths after durable writes land
 
 Current heuristic durable extraction covers:
 - explicit command facts
@@ -132,7 +137,7 @@ User-scoped proposals are kept in the explicit acceptance lane instead.
 
 Relevant files:
 - `runtime/api-server/src/claimed-input-executor.ts`
-- `runtime/api-server/src/post-run-tasks.ts`
+- `runtime/api-server/src/evolve-tasks.ts`
 - `runtime/api-server/src/turn-memory-writeback.ts`
 - `runtime/api-server/src/turn-memory-writeback.test.ts`
 
@@ -226,7 +231,7 @@ The intended shape is:
 - final recalled content would still be read from markdown leaves and assembled by the recall workflow
 
 Important non-goal:
-- this is not intended to replace post-run durable-memory extraction
+- this is not intended to replace evolve durable-memory extraction
 - it is intended to improve the recall stage
 
 ## Agent Runtime and Resume
@@ -257,7 +262,7 @@ Relevant files:
 
 ### 2. Compaction and restoration
 
-Post-turn writeback creates a compaction boundary artifact linked to the turn result.
+The evolve phase creates and updates a compaction boundary artifact linked to the turn result.
 
 Boundary contents include:
 - boundary summary

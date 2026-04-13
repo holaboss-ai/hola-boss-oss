@@ -3,9 +3,9 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { PostRunJobRecord, RuntimeStateStore } from "@holaboss/runtime-state-store";
 
 import type { MemoryServiceLike } from "./memory.js";
-import { processDurableMemoryWritebackJob } from "./post-run-durable-memory.js";
+import { processEvolveJob } from "./evolve.js";
 
-const DEFAULT_CLAIMED_BY = "post-run-durable-memory-worker";
+const DEFAULT_CLAIMED_BY = "evolve-worker";
 const DEFAULT_LEASE_SECONDS = 300;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_MAX_CONCURRENCY = 1;
@@ -18,7 +18,7 @@ export interface DurableMemoryWorkerLike {
   close(): Promise<void>;
 }
 
-export interface RuntimePostRunDurableMemoryWorkerOptions {
+export interface RuntimeEvolveWorkerOptions {
   store: RuntimeStateStore;
   memoryService: MemoryServiceLike;
   logger?: {
@@ -35,7 +35,11 @@ export interface RuntimePostRunDurableMemoryWorkerOptions {
 }
 
 function workerMaxConcurrency(): number {
-  const raw = (process.env.HB_POST_RUN_DURABLE_MEMORY_WORKER_CONCURRENCY ?? "").trim();
+  const raw = (
+    process.env.HB_EVOLVE_WORKER_CONCURRENCY ??
+    process.env.HB_POST_RUN_DURABLE_MEMORY_WORKER_CONCURRENCY ??
+    ""
+  ).trim();
   const parsed = raw ? Number.parseInt(raw, 10) : DEFAULT_MAX_CONCURRENCY;
   if (!Number.isFinite(parsed)) {
     return DEFAULT_MAX_CONCURRENCY;
@@ -43,9 +47,9 @@ function workerMaxConcurrency(): number {
   return Math.max(1, parsed);
 }
 
-export class RuntimePostRunDurableMemoryWorker implements DurableMemoryWorkerLike {
+export class RuntimeEvolveWorker implements DurableMemoryWorkerLike {
   readonly #store: RuntimeStateStore;
-  readonly #logger: RuntimePostRunDurableMemoryWorkerOptions["logger"];
+  readonly #logger: RuntimeEvolveWorkerOptions["logger"];
   readonly #executeClaimedJob: (record: PostRunJobRecord) => Promise<void>;
   readonly #claimedBy: string;
   readonly #leaseSeconds: number;
@@ -57,14 +61,14 @@ export class RuntimePostRunDurableMemoryWorker implements DurableMemoryWorkerLik
   #task: Promise<void> | null = null;
   #wakeResolver: (() => void) | null = null;
 
-  constructor(options: RuntimePostRunDurableMemoryWorkerOptions) {
+  constructor(options: RuntimeEvolveWorkerOptions) {
     this.#store = options.store;
     this.#logger = options.logger;
     this.#claimedBy = options.claimedBy ?? DEFAULT_CLAIMED_BY;
     this.#executeClaimedJob =
       options.executeClaimedJob ??
       ((record) =>
-        processDurableMemoryWritebackJob({
+        processEvolveJob({
           store: this.#store,
           record,
           memoryService: options.memoryService,
@@ -121,7 +125,7 @@ export class RuntimePostRunDurableMemoryWorker implements DurableMemoryWorkerLik
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          this.#logger?.error?.("Post-run durable memory worker failed to process claimed job", {
+          this.#logger?.error?.("Evolve worker failed to process claimed job", {
             jobId: record.jobId,
             workspaceId: record.workspaceId,
             sessionId: record.sessionId,
@@ -158,10 +162,10 @@ export class RuntimePostRunDurableMemoryWorker implements DurableMemoryWorkerLik
   #recoverExpiredClaims(): number {
     const expired = this.#store.listExpiredClaimedPostRunJobs();
     for (const record of expired) {
-      this.#requeueOrFail(record, "claimed post-run job lease expired before durable memory writeback completed");
+      this.#requeueOrFail(record, "claimed evolve job lease expired before durable writeback completed");
     }
     if (expired.length > 0) {
-      this.#logger?.error?.("Recovered expired claimed post-run durable memory jobs", {
+      this.#logger?.error?.("Recovered expired claimed evolve jobs", {
         count: expired.length,
         jobIds: expired.map((record) => record.jobId),
       });

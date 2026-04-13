@@ -1094,7 +1094,10 @@ test("turn results support upsert, lookup, count, and listing", () => {
   ]);
   assert.deepEqual(store.getTurnResult({ inputId: "input-1" }), updated);
   assert.equal(store.countTurnResults({ workspaceId: "workspace-1", sessionId: "session-main" }), 1);
+  assert.equal(store.countTurnResults({ workspaceId: "workspace-1", sessionId: "session-main", status: "completed" }), 0);
+  assert.equal(store.countTurnResults({ workspaceId: "workspace-1", sessionId: "session-main", status: "waiting_user" }), 1);
   assert.deepEqual(store.listTurnResults({ workspaceId: "workspace-1", sessionId: "session-main" }), [updated]);
+  assert.deepEqual(store.listTurnResults({ workspaceId: "workspace-1", sessionId: "session-main", status: "waiting_user" }), [updated]);
   store.close();
 });
 
@@ -1212,6 +1215,83 @@ test("memory entries round trip and filter by workspace or scope", () => {
   assert.deepEqual(
     store.listMemoryEntries({ status: "active" }).map((entry) => entry.memoryId),
     [preference.memoryId, blocker.memoryId]
+  );
+  store.close();
+});
+
+test("memory embedding index supports vector replacement, search, and delete", () => {
+  const root = makeTempDir("hb-state-store-vec-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  assert.equal(store.supportsVectorIndex(), true);
+
+  const workspaceVector = new Float32Array(1536).fill(0);
+  workspaceVector[0] = 1;
+  const preferenceVector = new Float32Array(1536).fill(0);
+  preferenceVector[1] = 1;
+
+  const workspaceIndex = store.upsertMemoryEmbeddingIndex({
+    memoryId: "workspace-fact:workspace-1:deploy",
+    path: "workspace/workspace-1/knowledge/facts/deploy.md",
+    workspaceId: "workspace-1",
+    scopeBucket: "workspace",
+    memoryType: "fact",
+    contentFingerprint: "a".repeat(64),
+    embeddingModel: "text-embedding-3-small",
+    embeddingDim: 1536,
+  });
+  store.replaceMemoryRecallVector({
+    vecRowid: workspaceIndex.vecRowid,
+    embedding: workspaceVector,
+    scopeBucket: "workspace",
+    workspaceId: "workspace-1",
+    memoryType: "fact",
+  });
+
+  const preferenceIndex = store.upsertMemoryEmbeddingIndex({
+    memoryId: "user-preference:style",
+    path: "preference/response-style.md",
+    workspaceId: null,
+    scopeBucket: "preference",
+    memoryType: "preference",
+    contentFingerprint: "b".repeat(64),
+    embeddingModel: "text-embedding-3-small",
+    embeddingDim: 1536,
+  });
+  store.replaceMemoryRecallVector({
+    vecRowid: preferenceIndex.vecRowid,
+    embedding: preferenceVector,
+    scopeBucket: "preference",
+    workspaceId: null,
+    memoryType: "preference",
+  });
+
+  const workspaceResults = store.searchWorkspaceMemoryRecallVectors({
+    workspaceId: "workspace-1",
+    embedding: workspaceVector,
+    limit: 5,
+  });
+  const userResults = store.searchUserMemoryRecallVectors({
+    embedding: preferenceVector,
+    limit: 5,
+  });
+
+  assert.equal(workspaceResults[0]?.path, "workspace/workspace-1/knowledge/facts/deploy.md");
+  assert.equal(userResults[0]?.path, "preference/response-style.md");
+
+  store.deleteMemoryEmbeddingIndex("workspace-fact:workspace-1:deploy");
+
+  assert.equal(store.getMemoryEmbeddingIndexByMemoryId("workspace-fact:workspace-1:deploy"), null);
+  assert.equal(
+    store.searchWorkspaceMemoryRecallVectors({
+      workspaceId: "workspace-1",
+      embedding: workspaceVector,
+      limit: 5,
+    }).length,
+    0
   );
   store.close();
 });
@@ -1473,9 +1553,11 @@ test("task proposals round trip supports create, list, unreviewed, get, and stat
   const updated = store.updateTaskProposalState({ proposalId: "proposal-1", state: "accepted" });
 
   assert.equal(proposal.proposalId, "proposal-1");
+  assert.equal(proposal.proposalSource, "proactive");
   assert.equal(listed.length, 1);
   assert.equal(unreviewed.length, 1);
   assert.ok(fetched);
+  assert.equal(fetched?.proposalSource, "proactive");
   assert.ok(updated);
   assert.equal(updated.state, "accepted");
   store.close();
@@ -1526,6 +1608,98 @@ test("task proposal acceptance fields and child session metadata round trip", ()
   assert.equal(updated.acceptedSessionId, "proposal-session-1");
   assert.equal(updated.acceptedInputId, "input-1");
   assert.equal(updated.acceptedAt, "2026-01-01T01:00:00+00:00");
+  store.close();
+});
+
+test("task proposal round trip preserves explicit evolve source", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const proposal = store.createTaskProposal({
+    proposalId: "proposal-evolve-1",
+    workspaceId: "workspace-1",
+    taskName: "Review generated skill patch",
+    taskPrompt: "Inspect the queued evolve skill patch.",
+    taskGenerationRationale: "Evolve flagged a risky patch for review",
+    proposalSource: "evolve",
+    createdAt: "2026-01-01T00:00:00+00:00"
+  });
+
+  assert.equal(proposal.proposalSource, "evolve");
+  assert.equal(store.getTaskProposal("proposal-evolve-1")?.proposalSource, "evolve");
+  store.close();
+});
+
+test("evolve skill candidates round trip supports create, list, lookup, and update", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.ensureSession({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    kind: "main",
+    title: "Main"
+  });
+
+  const created = store.createEvolveSkillCandidate({
+    candidateId: "candidate-1",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    kind: "skill_create",
+    status: "draft",
+    title: "Release verification skill",
+    summary: "Reusable release verification workflow.",
+    slug: "release-verification",
+    skillPath: "workspace/workspace-1/evolve/skills/candidate-1/SKILL.md",
+    contentFingerprint: "fp-1",
+    confidence: 0.91,
+    evaluationNotes: "Looks reusable.",
+    sourceTurnInputIds: ["input-1"],
+  });
+
+  const patchCandidate = store.createEvolveSkillCandidate({
+    candidateId: "candidate-2",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-2",
+    kind: "skill_patch",
+    status: "draft",
+    title: "Release verification patch",
+    summary: "Update the release verification skill with a build step.",
+    slug: "release-verification",
+    skillPath: "workspace/workspace-1/evolve/skills/candidate-2/SKILL.md",
+    contentFingerprint: "fp-2",
+    confidence: 0.88,
+    evaluationNotes: "Existing skill is stale.",
+    sourceTurnInputIds: ["input-2"],
+  });
+  const fetched = store.getEvolveSkillCandidate("candidate-1");
+  const listed = store.listEvolveSkillCandidates({ workspaceId: "workspace-1" });
+  const updated = store.updateEvolveSkillCandidate({
+    candidateId: "candidate-1",
+    fields: {
+      taskProposalId: "proposal-1",
+      status: "proposed",
+      proposedAt: "2026-04-10T00:00:00.000Z",
+    }
+  });
+
+  assert.equal(created.kind, "skill_create");
+  assert.equal(created.status, "draft");
+  assert.equal(created.slug, "release-verification");
+  assert.equal(patchCandidate.kind, "skill_patch");
+  assert.equal(fetched?.candidateId, "candidate-1");
+  assert.equal(fetched?.evaluationNotes, "Looks reusable.");
+  assert.equal(listed.length, 2);
+  assert.equal(updated?.taskProposalId, "proposal-1");
+  assert.equal(updated?.status, "proposed");
+  assert.equal(store.getEvolveSkillCandidateByTaskProposalId("proposal-1")?.candidateId, "candidate-1");
   store.close();
 });
 

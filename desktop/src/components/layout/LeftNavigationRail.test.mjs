@@ -12,7 +12,7 @@ test("left navigation rail renders a centered version label at the bottom", asyn
   assert.match(source, /<div className="mt-2 flex w-full justify-center pt-1">/);
   assert.match(
     source,
-    /pointer-events-none select-none text-center text-\[10px\] font-medium tracking-\[0\.16em\] text-muted-foreground\/28/,
+    /pointer-events-none w-full select-none overflow-hidden px-0\.5 text-center text-\[8px\] leading-none font-medium tabular-nums tracking-\[0\.02em\] text-muted-foreground\/36/,
   );
   assert.match(source, /v\{appVersionLabel\}/);
 });

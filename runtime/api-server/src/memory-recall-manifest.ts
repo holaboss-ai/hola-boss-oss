@@ -1,13 +1,25 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import type { MemoryEntryRecord, MemoryEntryScope, MemoryEntryType, MemoryVerificationPolicy } from "@holaboss/runtime-state-store";
+import type {
+  MemoryEmbeddingIndexRecord,
+  MemoryEntryRecord,
+  MemoryEntryScope,
+  MemoryEntryType,
+  MemoryVerificationPolicy,
+  RuntimeStateStore,
+} from "@holaboss/runtime-state-store";
 import yaml from "js-yaml";
 
 import type { AgentRecalledMemoryContext } from "./agent-runtime-prompt.js";
 import { governanceRuleForMemoryType, assessMemoryFreshness } from "./memory-governance.js";
 import type { MemoryModelClientConfig } from "./memory-model-client.js";
-import { normalizedStringArray, queryMemoryModelJson } from "./memory-model-client.js";
+import {
+  normalizedStringArray,
+  queryMemoryModelEmbedding,
+  queryMemoryModelJson,
+} from "./memory-model-client.js";
+import { RECALL_EMBEDDING_DIM } from "./memory-embedding-index.js";
 
 const MAX_FRONTMATTER_LINES = 40;
 const MAX_MEMORY_SNIPPET_CHARS = 360;
@@ -15,8 +27,11 @@ const MAX_SCOPE_SAMPLE_TITLES = 6;
 const MAX_INDEX_ENTRIES = 200;
 const MAX_PRIMARY_PATHS = 8;
 const MAX_RESERVE_PATHS = 4;
-const PLAN_TIMEOUT_MS = 6000;
-const CANDIDATE_TIMEOUT_MS = 7000;
+const VECTOR_WORKSPACE_LIMIT = 12;
+const VECTOR_USER_LIMIT = 8;
+const VECTOR_PRIMARY_PATHS = 8;
+const VECTOR_RESERVE_PATHS = 4;
+const PLAN_AND_CANDIDATE_TIMEOUT_MS = 7000;
 const FINALIZE_TIMEOUT_MS = 7000;
 
 type RecallScope = "workspace" | "preference" | "identity";
@@ -69,7 +84,7 @@ interface RecallPlan {
   reason: string;
 }
 
-interface CandidateSelection {
+interface PlannedCandidateSelection extends RecallPlan {
   primaryPaths: string[];
   reservePaths: string[];
   reasonByPath: Map<string, string>;
@@ -402,6 +417,129 @@ function entryByPath(entries: MemoryEntryRecord[]): Map<string, MemoryEntryRecor
   return map;
 }
 
+function eligibleVectorEntries(params: {
+  entries: MemoryEntryRecord[];
+  workspaceId: string;
+}): MemoryEntryRecord[] {
+  return params.entries.filter((entry) => {
+    if (entry.status !== "active") {
+      return false;
+    }
+    return recallScopeFromPath(entry.path, params.workspaceId) != null;
+  });
+}
+
+function hasCompleteVectorCoverage(params: {
+  eligibleEntries: MemoryEntryRecord[];
+  indexes: MemoryEmbeddingIndexRecord[];
+  embeddingModelId: string;
+}): boolean {
+  if (params.eligibleEntries.length === 0) {
+    return false;
+  }
+  if (params.indexes.length !== params.eligibleEntries.length) {
+    return false;
+  }
+  const covered = new Set<string>();
+  for (const index of params.indexes) {
+    if (index.embeddingModel !== params.embeddingModelId || index.embeddingDim !== RECALL_EMBEDDING_DIM) {
+      return false;
+    }
+    covered.add(index.memoryId);
+  }
+  return params.eligibleEntries.every((entry) => covered.has(entry.memoryId));
+}
+
+async function planRecallFromVectorIndex(params: {
+  query: string;
+  store: RuntimeStateStore;
+  workspaceId: string;
+  entries: MemoryEntryRecord[];
+  embeddingClient: MemoryModelClientConfig;
+}): Promise<PlannedCandidateSelection | null> {
+  if (!params.store.supportsVectorIndex()) {
+    return null;
+  }
+  const eligibleEntries = eligibleVectorEntries({
+    entries: params.entries,
+    workspaceId: params.workspaceId,
+  });
+  if (eligibleEntries.length === 0) {
+    return null;
+  }
+  const embeddingIndexes = params.store.listMemoryEmbeddingIndexes({
+    memoryIds: eligibleEntries.map((entry) => entry.memoryId),
+    limit: eligibleEntries.length + 8,
+    offset: 0,
+  });
+  if (!hasCompleteVectorCoverage({
+    eligibleEntries,
+    indexes: embeddingIndexes,
+    embeddingModelId: params.embeddingClient.modelId,
+  })) {
+    return null;
+  }
+  const queryEmbedding = await queryMemoryModelEmbedding(params.embeddingClient, {
+    input: params.query,
+    timeoutMs: 5000,
+  });
+  if (!queryEmbedding || queryEmbedding.length !== RECALL_EMBEDDING_DIM) {
+    return null;
+  }
+  const workspaceMatches = params.store.searchWorkspaceMemoryRecallVectors({
+    workspaceId: params.workspaceId,
+    embedding: queryEmbedding,
+    limit: VECTOR_WORKSPACE_LIMIT,
+  });
+  const userMatches = params.store.searchUserMemoryRecallVectors({
+    embedding: queryEmbedding,
+    limit: VECTOR_USER_LIMIT,
+  });
+  const eligibleByPath = new Map(eligibleEntries.map((entry) => [entry.path, entry]));
+  const mergedByPath = new Map<string, { path: string; distance: number; scope: RecallScope; memoryType: MemoryEntryType }>();
+  for (const match of [...workspaceMatches, ...userMatches]) {
+    const entry = eligibleByPath.get(match.path);
+    if (!entry) {
+      continue;
+    }
+    const scope = recallScopeFromPath(entry.path, params.workspaceId);
+    if (!scope) {
+      continue;
+    }
+    const existing = mergedByPath.get(match.path);
+    if (!existing || match.distance < existing.distance) {
+      mergedByPath.set(match.path, {
+        path: match.path,
+        distance: match.distance,
+        scope,
+        memoryType: entry.memoryType,
+      });
+    }
+  }
+  const ranked = [...mergedByPath.values()].sort((left, right) => left.distance - right.distance);
+  if (ranked.length === 0) {
+    return null;
+  }
+  const primaryPaths = ranked.slice(0, VECTOR_PRIMARY_PATHS).map((entry) => entry.path);
+  const reservePaths = ranked
+    .slice(VECTOR_PRIMARY_PATHS, VECTOR_PRIMARY_PATHS + VECTOR_RESERVE_PATHS)
+    .map((entry) => entry.path);
+  const reasonByPath = new Map<string, string>();
+  for (const entry of ranked.slice(0, VECTOR_PRIMARY_PATHS + VECTOR_RESERVE_PATHS)) {
+    reasonByPath.set(entry.path, `vector_distance:${entry.distance.toFixed(6)}`);
+  }
+  return {
+    shouldRecall: true,
+    rewrittenQuery: params.query,
+    scopes: [...new Set(ranked.slice(0, VECTOR_PRIMARY_PATHS + VECTOR_RESERVE_PATHS).map((entry) => entry.scope))],
+    memoryTypes: [...new Set(ranked.slice(0, VECTOR_PRIMARY_PATHS + VECTOR_RESERVE_PATHS).map((entry) => entry.memoryType))],
+    reason: "vector_candidate_retrieval",
+    primaryPaths,
+    reservePaths,
+    reasonByPath,
+  };
+}
+
 function collectIndexedMemoryRecords(params: {
   workspaceRoot: string;
   workspaceId: string;
@@ -478,85 +616,32 @@ function scopeSummaries(records: IndexedMemoryRecord[], indexes: IndexFileRecord
   });
 }
 
-async function planRecall(params: {
+async function planRecallAndSelectCandidates(params: {
   query: string;
   indexes: IndexFileRecord[];
   records: IndexedMemoryRecord[];
   modelClient: MemoryModelClientConfig;
-}): Promise<RecallPlan | null> {
+}): Promise<PlannedCandidateSelection | null> {
   if (params.records.length === 0) {
     return null;
   }
   const payload = await queryMemoryModelJson(params.modelClient, {
     systemPrompt:
-      "Plan durable memory recall for the request. Return strict JSON only: " +
-      '{"should_recall":true,"rewritten_query":"string","scopes":["workspace|preference|identity"],"memory_types":["preference|identity|fact|procedure|blocker|reference"],"reason":"string"}. ' +
-      "Only include scopes that exist in the provided summaries.",
-    userPrompt: JSON.stringify(
-      {
-        request: params.query,
-        available_scopes: scopeSummaries(params.records, params.indexes),
-      },
-      null,
-      2
-    ),
-    timeoutMs: PLAN_TIMEOUT_MS,
-  });
-  if (!payload) {
-    return null;
-  }
-  const shouldRecall = payload.should_recall !== false;
-  const rewrittenQuery = firstNonEmptyString(payload.rewritten_query, params.query);
-  const scopes = normalizedStringArray(payload.scopes)
-    .map((value) => normalizeRecallScope(value))
-    .filter((value): value is RecallScope => value != null);
-  const memoryTypes = normalizedStringArray(payload.memory_types)
-    .map((value) => normalizeMemoryType(value))
-    .filter((value): value is MemoryEntryType => value != null);
-  return {
-    shouldRecall,
-    rewrittenQuery,
-    scopes,
-    memoryTypes,
-    reason: firstNonEmptyString(payload.reason, shouldRecall ? "durable_memory_recall_needed" : "durable_memory_recall_not_needed"),
-  };
-}
-
-async function selectCandidatePaths(params: {
-  query: string;
-  plan: RecallPlan;
-  records: IndexedMemoryRecord[];
-  modelClient: MemoryModelClientConfig;
-}): Promise<CandidateSelection | null> {
-  const scopedRecords = params.records.filter((record) =>
-    (params.plan.scopes.length === 0 || params.plan.scopes.includes(record.scope)) &&
-    (params.plan.memoryTypes.length === 0 || params.plan.memoryTypes.includes(record.memoryType))
-  );
-  const candidateRecords = scopedRecords.length > 0 ? scopedRecords : params.records;
-  if (candidateRecords.length === 0) {
-    return null;
-  }
-  const allowedPaths = new Set(candidateRecords.map((record) => record.path));
-  const payload = await queryMemoryModelJson(params.modelClient, {
-    systemPrompt:
-      "Select durable memory leaf files from the provided index entries. Return strict JSON only: " +
-      `{"primary_paths":["path"],"reserve_paths":["path"],"reason_by_path":{"path":"reason"}}. ` +
-      `Choose at most ${MAX_PRIMARY_PATHS} primary paths and at most ${MAX_RESERVE_PATHS} reserve paths. Only return paths from the provided entries.`,
+      "Plan durable memory recall and nominate candidate leaf files from the provided index entries. Return strict JSON only: " +
+      '{"should_recall":true,"rewritten_query":"string","scopes":["workspace|preference|identity"],"memory_types":["preference|identity|fact|procedure|blocker|reference"],"reason":"string","primary_paths":["path"],"reserve_paths":["path"],"reason_by_path":{"path":"reason"}}. ' +
+      `Choose at most ${MAX_PRIMARY_PATHS} primary paths and at most ${MAX_RESERVE_PATHS} reserve paths. Only return paths from the provided entries. Only include scopes that exist in the provided summaries.`,
     userPrompt: [
       JSON.stringify(
         {
           request: params.query,
-          rewritten_query: params.plan.rewrittenQuery,
-          scopes: params.plan.scopes,
-          memory_types: params.plan.memoryTypes,
-          reason: params.plan.reason,
+          available_scopes: scopeSummaries(params.records, params.indexes),
         },
         null,
         2
       ),
       "",
       "Index entries (JSONL):",
-      ...candidateRecords.map((record) =>
+      ...params.records.map((record) =>
         JSON.stringify({
           path: record.path,
           index_path: record.indexPath,
@@ -570,12 +655,26 @@ async function selectCandidatePaths(params: {
         })
       ),
     ].join("\n"),
-    timeoutMs: CANDIDATE_TIMEOUT_MS,
+    timeoutMs: PLAN_AND_CANDIDATE_TIMEOUT_MS,
   });
   if (!payload) {
     return null;
   }
 
+  const shouldRecall = payload.should_recall !== false;
+  const rewrittenQuery = firstNonEmptyString(payload.rewritten_query, params.query);
+  const scopes = normalizedStringArray(payload.scopes)
+    .map((value) => normalizeRecallScope(value))
+    .filter((value): value is RecallScope => value != null);
+  const memoryTypes = normalizedStringArray(payload.memory_types)
+    .map((value) => normalizeMemoryType(value))
+    .filter((value): value is MemoryEntryType => value != null);
+  const scopedRecords = params.records.filter((record) =>
+    (scopes.length === 0 || scopes.includes(record.scope)) &&
+    (memoryTypes.length === 0 || memoryTypes.includes(record.memoryType))
+  );
+  const candidateRecords = scopedRecords.length > 0 ? scopedRecords : params.records;
+  const allowedPaths = new Set(candidateRecords.map((record) => record.path));
   const reasonByPath = new Map<string, string>();
   const primaryPaths: string[] = [];
   const reservePaths: string[] = [];
@@ -603,11 +702,19 @@ async function selectCandidatePaths(params: {
     }
   }
 
-  if (primaryPaths.length === 0) {
+  if (shouldRecall && primaryPaths.length === 0) {
     return null;
   }
 
   return {
+    shouldRecall,
+    rewrittenQuery,
+    scopes,
+    memoryTypes,
+    reason: firstNonEmptyString(
+      payload.reason,
+      shouldRecall ? "durable_memory_recall_needed" : "durable_memory_recall_not_needed"
+    ),
     primaryPaths,
     reservePaths,
     reasonByPath,
@@ -775,9 +882,11 @@ export async function recalledMemoryContextFromManifest(params: {
   workspaceRoot: string;
   workspaceId: string;
   entries: MemoryEntryRecord[];
+  store?: RuntimeStateStore | null;
   maxEntries?: number;
   nowIso?: string | null;
   modelClient?: MemoryModelClientConfig | null;
+  embeddingClient?: MemoryModelClientConfig | null;
 }): Promise<AgentRecalledMemoryContext | null> {
   const maxEntries = Math.max(1, params.maxEntries ?? 5);
   if (!params.modelClient) {
@@ -789,6 +898,137 @@ export async function recalledMemoryContextFromManifest(params: {
     workspaceId: params.workspaceId,
   });
   const entriesByPath = entryByPath(scopedEntries);
+  const vectorPlanAndCandidates =
+    params.store && params.embeddingClient
+      ? await planRecallFromVectorIndex({
+          query: params.query,
+          store: params.store,
+          workspaceId: params.workspaceId,
+          entries: scopedEntries,
+          embeddingClient: params.embeddingClient,
+        })
+      : null;
+  if (vectorPlanAndCandidates) {
+    const openedLeaves = readLeafMemoryRecords({
+      workspaceRoot: params.workspaceRoot,
+      workspaceId: params.workspaceId,
+      paths: vectorPlanAndCandidates.primaryPaths,
+    });
+    if (openedLeaves.length > 0) {
+      const reserveRecords = vectorPlanAndCandidates.reservePaths
+        .map((pathValue) => {
+          const persisted = entriesByPath.get(pathValue);
+          if (!persisted) {
+            return null;
+          }
+          const inferredGovernance = governanceRuleForMemoryType(persisted.memoryType);
+          return {
+            indexPath: "vector_index",
+            scope: recallScopeFromPath(pathValue, params.workspaceId) ?? "workspace",
+            path: pathValue,
+            title: persisted.title,
+            summary: persisted.summary,
+            memoryType: persisted.memoryType,
+            tags: persisted.tags,
+            verificationPolicy: persisted.verificationPolicy ?? inferredGovernance.verificationPolicy,
+            updatedAt: persisted.updatedAt,
+          } satisfies IndexedMemoryRecord;
+        })
+        .filter((record): record is IndexedMemoryRecord => record != null);
+      let finalSelection = await finalizeSelection({
+        query: params.query,
+        plan: vectorPlanAndCandidates,
+        openedLeaves,
+        reserveRecords,
+        modelClient: params.modelClient,
+        allowExpand: reserveRecords.length > 0,
+        maxEntries,
+      });
+      let combinedLeaves = openedLeaves;
+      if (finalSelection?.status === "expand_once" && finalSelection.expansionPaths.length > 0) {
+        const expandedLeaves = readLeafMemoryRecords({
+          workspaceRoot: params.workspaceRoot,
+          workspaceId: params.workspaceId,
+          paths: finalSelection.expansionPaths,
+        });
+        if (expandedLeaves.length > 0) {
+          const byPath = new Map<string, LeafMemoryRecord>();
+          for (const record of [...openedLeaves, ...expandedLeaves]) {
+            byPath.set(record.path, record);
+          }
+          combinedLeaves = [...byPath.values()];
+          finalSelection = await finalizeSelection({
+            query: params.query,
+            plan: vectorPlanAndCandidates,
+            openedLeaves: combinedLeaves,
+            reserveRecords: [],
+            modelClient: params.modelClient,
+            allowExpand: false,
+            maxEntries,
+          });
+        }
+      }
+      if (finalSelection && finalSelection.status !== "none" && finalSelection.finalPaths.length > 0) {
+        const leafByPath = new Map(combinedLeaves.map((record) => [record.path, record]));
+        const entries: NonNullable<AgentRecalledMemoryContext["entries"]> = [];
+        const traces: NonNullable<AgentRecalledMemoryContext["selection_trace"]> = [];
+        for (const [index, selectedPath] of finalSelection.finalPaths.slice(0, maxEntries).entries()) {
+          const leaf = leafByPath.get(selectedPath);
+          if (!leaf) {
+            continue;
+          }
+          const persisted = entriesByPath.get(selectedPath) ?? null;
+          const inferredGovernance = governanceRuleForMemoryType(persisted?.memoryType ?? leaf.memoryType);
+          const freshness = assessMemoryFreshness(
+            {
+              memoryType: persisted?.memoryType ?? leaf.memoryType,
+              verificationPolicy: persisted?.verificationPolicy ?? inferredGovernance.verificationPolicy,
+              stalenessPolicy: persisted?.stalenessPolicy ?? inferredGovernance.stalenessPolicy,
+              staleAfterSeconds: persisted?.staleAfterSeconds ?? inferredGovernance.staleAfterSeconds,
+              updatedAt: persisted?.updatedAt ?? leaf.updatedAt,
+            },
+            params.nowIso ?? null
+          );
+          entries.push({
+            scope: persisted?.scope ?? leaf.scope,
+            memory_type: persisted?.memoryType ?? leaf.memoryType,
+            title: firstNonEmptyString(persisted?.title, leaf.title, selectedPath),
+            summary: firstNonEmptyString(persisted?.summary, leaf.summary, "No summary available."),
+            path: selectedPath,
+            verification_policy: persisted?.verificationPolicy ?? inferredGovernance.verificationPolicy,
+            staleness_policy: persisted?.stalenessPolicy ?? inferredGovernance.stalenessPolicy,
+            freshness_state: freshness.state,
+            freshness_note: freshness.note,
+            source_type: persisted?.sourceType ?? null,
+            observed_at: persisted?.observedAt ?? null,
+            last_verified_at: persisted?.lastVerifiedAt ?? null,
+            confidence: persisted?.confidence ?? null,
+            updated_at: persisted?.updatedAt ?? leaf.updatedAt,
+            excerpt: leaf.excerpt || null,
+          });
+          traces.push({
+            memory_id: persisted?.memoryId ?? `memory:${selectedPath}`,
+            score: Math.max(0.1, 1 - index * 0.1),
+            freshness_state: freshness.state,
+            matched_tokens: [],
+            reasons: [
+              `plan:${vectorPlanAndCandidates.reason}`,
+              `candidate:${vectorPlanAndCandidates.reasonByPath.get(selectedPath) ?? "vector_candidate_retrieval"}`,
+              `final:${finalSelection.reasonByPath.get(selectedPath) ?? "selected_after_leaf_review"}`,
+            ],
+            source_type: persisted?.sourceType ?? "manual",
+          });
+        }
+        if (entries.length > 0) {
+          return {
+            entries,
+            selection_trace: traces,
+          };
+        }
+      }
+    }
+  }
+
   const { indexes, records } = collectIndexedMemoryRecords({
     workspaceRoot: params.workspaceRoot,
     workspaceId: params.workspaceId,
@@ -798,39 +1038,33 @@ export async function recalledMemoryContextFromManifest(params: {
     return null;
   }
 
-  const plan = await planRecall({
+  const planAndCandidates = await planRecallAndSelectCandidates({
     query: params.query,
     indexes,
     records,
     modelClient: params.modelClient,
   });
-  if (!plan || !plan.shouldRecall) {
+  if (!planAndCandidates || !planAndCandidates.shouldRecall) {
     return null;
   }
 
-  const candidates = await selectCandidatePaths({
-    query: params.query,
-    plan,
-    records,
-    modelClient: params.modelClient,
-  });
-  if (!candidates || candidates.primaryPaths.length === 0) {
+  if (planAndCandidates.primaryPaths.length === 0) {
     return null;
   }
 
   const openedLeaves = readLeafMemoryRecords({
     workspaceRoot: params.workspaceRoot,
     workspaceId: params.workspaceId,
-    paths: candidates.primaryPaths,
+    paths: planAndCandidates.primaryPaths,
   });
   if (openedLeaves.length === 0) {
     return null;
   }
 
-  const reserveRecords = records.filter((record) => candidates.reservePaths.includes(record.path));
+  const reserveRecords = records.filter((record) => planAndCandidates.reservePaths.includes(record.path));
   let finalSelection = await finalizeSelection({
     query: params.query,
-    plan,
+    plan: planAndCandidates,
     openedLeaves,
     reserveRecords,
     modelClient: params.modelClient,
@@ -855,7 +1089,7 @@ export async function recalledMemoryContextFromManifest(params: {
     combinedLeaves = [...byPath.values()];
     finalSelection = await finalizeSelection({
       query: params.query,
-      plan,
+      plan: planAndCandidates,
       openedLeaves: combinedLeaves,
       reserveRecords: [],
       modelClient: params.modelClient,
@@ -869,7 +1103,7 @@ export async function recalledMemoryContextFromManifest(params: {
   }
 
   const leafByPath = new Map(combinedLeaves.map((record) => [record.path, record]));
-  const candidateReasons = candidates.reasonByPath;
+  const candidateReasons = planAndCandidates.reasonByPath;
   const finalReasons = finalSelection.reasonByPath;
   const entries: NonNullable<AgentRecalledMemoryContext["entries"]> = [];
   const traces: NonNullable<AgentRecalledMemoryContext["selection_trace"]> = [];
@@ -914,7 +1148,7 @@ export async function recalledMemoryContextFromManifest(params: {
       freshness_state: freshness.state,
       matched_tokens: [],
       reasons: [
-        `plan:${plan.reason}`,
+        `plan:${planAndCandidates.reason}`,
         `candidate:${candidateReasons.get(selectedPath) ?? "selected_from_index"}`,
         `final:${finalReasons.get(selectedPath) ?? "selected_after_leaf_review"}`,
       ],

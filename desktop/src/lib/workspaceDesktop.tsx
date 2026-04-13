@@ -14,6 +14,7 @@ import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 const ONBOARDING_ACTIVE_STATUSES = new Set(["pending", "awaiting_confirmation", "in_progress"]);
 const LOCAL_OSS_TEMPLATE_USER_ID = "local-oss";
 const DEFAULT_WORKSPACE_HARNESS: WorkspaceHarnessId = "pi";
+const BOOTSTRAP_IPC_TIMEOUT_MS = 8_000;
 type TemplateSourceMode = "local" | "marketplace" | "empty" | "empty_onboarding";
 type LifecycleStepState = "pending" | "current" | "done" | "error";
 
@@ -150,6 +151,25 @@ function normalizeErrorMessage(error: unknown) {
   }
 
   return unwrappedMessage;
+}
+
+function withBootstrapTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error(`Timed out loading ${label}.`));
+    }, BOOTSTRAP_IPC_TIMEOUT_MS);
+
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
 }
 
 function normalizedOnboardingStatus(workspace: WorkspaceRecordPayload | null): string {
@@ -325,20 +345,37 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       setWorkspaceErrorMessage("");
 
       try {
-        const [nextRuntimeConfig, nextRuntimeStatus, nextClientConfig] = await Promise.all([
-          window.electronAPI.runtime.getConfig(),
-          window.electronAPI.runtime.getStatus(),
-          window.electronAPI.workspace.getClientConfig()
+        const [runtimeConfigResult, runtimeStatusResult, clientConfigResult] = await Promise.allSettled([
+          withBootstrapTimeout(window.electronAPI.runtime.getConfig(), "runtime configuration"),
+          withBootstrapTimeout(window.electronAPI.runtime.getStatus(), "runtime status"),
+          withBootstrapTimeout(window.electronAPI.workspace.getClientConfig(), "desktop client configuration")
         ]);
         if (cancelled) {
           return;
         }
-        setRuntimeConfig(nextRuntimeConfig);
-        setRuntimeStatus(nextRuntimeStatus);
-        setClientConfig(nextClientConfig);
-      } catch (error) {
-        if (!cancelled) {
-          setWorkspaceErrorMessage(normalizeErrorMessage(error));
+
+        const bootstrapErrors: string[] = [];
+
+        if (runtimeConfigResult.status === "fulfilled") {
+          setRuntimeConfig(runtimeConfigResult.value);
+        } else {
+          bootstrapErrors.push(normalizeErrorMessage(runtimeConfigResult.reason));
+        }
+
+        if (runtimeStatusResult.status === "fulfilled") {
+          setRuntimeStatus(runtimeStatusResult.value);
+        } else {
+          bootstrapErrors.push(normalizeErrorMessage(runtimeStatusResult.reason));
+        }
+
+        if (clientConfigResult.status === "fulfilled") {
+          setClientConfig(clientConfigResult.value);
+        } else {
+          bootstrapErrors.push(normalizeErrorMessage(clientConfigResult.reason));
+        }
+
+        if (bootstrapErrors.length > 0) {
+          setWorkspaceErrorMessage(bootstrapErrors[0]);
         }
       } finally {
         if (!cancelled) {
@@ -355,13 +392,13 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
 
   useEffect(() => {
     let mounted = true;
-    void window.electronAPI.runtime.getStatus().then((status) => {
+    const unsubscribe = window.electronAPI.runtime.onStateChange((status) => {
       if (mounted) {
         setRuntimeStatus(status);
       }
     });
 
-    const unsubscribe = window.electronAPI.runtime.onStateChange((status) => {
+    void window.electronAPI.runtime.getStatus().then((status) => {
       if (mounted) {
         setRuntimeStatus(status);
       }
@@ -372,6 +409,37 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (
+      hasHydratedWorkspaceList ||
+      isLoadingBootstrap ||
+      runtimeStatus?.status !== "starting"
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const refreshStartingRuntimeStatus = () => {
+      void window.electronAPI.runtime
+        .getStatus()
+        .then((status) => {
+          if (!cancelled) {
+            setRuntimeStatus(status);
+          }
+        })
+        .catch(() => undefined);
+    };
+
+    refreshStartingRuntimeStatus();
+    const timer = window.setInterval(refreshStartingRuntimeStatus, 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [hasHydratedWorkspaceList, isLoadingBootstrap, runtimeStatus?.status]);
 
   useEffect(() => {
     let mounted = true;

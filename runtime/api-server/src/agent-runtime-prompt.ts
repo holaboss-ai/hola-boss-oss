@@ -89,6 +89,18 @@ export interface AgentPendingUserMemoryContext {
   }> | null;
 }
 
+export interface AgentEvolveCandidateContext {
+  candidate_id: string;
+  kind: string;
+  title: string;
+  summary?: string | null;
+  slug?: string | null;
+  skill_path: string;
+  target_skill_path?: string | null;
+  skill_markdown?: string | null;
+  task_proposal_id?: string | null;
+}
+
 export interface ComposeBaseAgentPromptRequest {
   defaultTools: string[];
   extraTools: string[];
@@ -102,6 +114,7 @@ export interface ComposeBaseAgentPromptRequest {
   recalledMemoryContext?: AgentRecalledMemoryContext | null;
   currentUserContext?: AgentCurrentUserContext | null;
   pendingUserMemoryContext?: AgentPendingUserMemoryContext | null;
+  evolveCandidateContext?: AgentEvolveCandidateContext | null;
   capabilityManifest?: AgentCapabilityManifest | null;
 }
 
@@ -250,6 +263,40 @@ function pendingUserMemoryContextPromptSection(context: AgentPendingUserMemoryCo
       lines.push(`  Evidence: ${evidence}`);
     }
   }
+  return linesSection(lines);
+}
+
+function evolveCandidateContextPromptSection(context: AgentEvolveCandidateContext | null | undefined): string {
+  if (!context) {
+    return "";
+  }
+  const candidateId = nonEmptyText(context.candidate_id);
+  const kind = nonEmptyText(context.kind) || "candidate";
+  const title = nonEmptyText(context.title);
+  const summary = nonEmptyText(context.summary);
+  const slug = nonEmptyText(context.slug);
+  const skillPath = nonEmptyText(context.skill_path);
+  const targetSkillPath = nonEmptyText(context.target_skill_path);
+  const skillMarkdown = nonEmptyText(context.skill_markdown);
+  if (!candidateId || !title || !skillPath) {
+    return "";
+  }
+  const lines = [
+    "Accepted evolve candidate:",
+    "This task proposal originated from the background evolve phase.",
+    `Candidate id: \`${candidateId}\`.`,
+    `Candidate kind: \`${kind}\`.`,
+    `Title: ${title}.`,
+    summary ? `Summary: ${summary}` : "",
+    slug ? `Skill id: \`${slug}\`.` : "",
+    `Draft skill artifact: \`${skillPath}\`.`,
+    targetSkillPath ? `Target live workspace skill path: \`${targetSkillPath}\`.` : "",
+    skillMarkdown ? ["Draft skill content:", "```markdown", skillMarkdown.trimEnd(), "```"].join("\n") : "",
+    "Review the draft skill, refine it if needed, and keep the session tightly scoped to evaluating or promoting this candidate.",
+    targetSkillPath
+      ? `Prefer writing the promoted live skill to \`${targetSkillPath}\`. If you do not create the live skill during this session, runtime may promote the stored draft after a successful review run.`
+      : "",
+  ];
   return linesSection(lines);
 }
 
@@ -524,6 +571,16 @@ export function buildBaseAgentPromptSections(
     priority: 490,
     volatility: "run",
     content: pendingUserMemoryContextPromptSection(request.pendingUserMemoryContext)
+  });
+
+  pushPromptLayer(promptSections, {
+    id: "evolve_candidate_context",
+    channel: "context_message",
+    apply_at: "runtime_config",
+    precedence: "runtime_context",
+    priority: 495,
+    volatility: "run",
+    content: evolveCandidateContextPromptSection(request.evolveCandidateContext)
   });
 
   pushPromptLayer(promptSections, {

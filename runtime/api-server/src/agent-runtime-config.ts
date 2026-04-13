@@ -9,6 +9,7 @@ import {
 import {
   composeBaseAgentPrompt,
   type AgentCurrentUserContext,
+  type AgentEvolveCandidateContext,
   type AgentPendingUserMemoryContext,
   type AgentRecalledMemoryContext,
   type AgentRecentRuntimeContext,
@@ -46,6 +47,7 @@ export interface AgentRuntimeConfigCliRequest {
   recalled_memory_context?: AgentRecalledMemoryContext | null;
   current_user_context?: AgentCurrentUserContext | null;
   pending_user_memory_context?: AgentPendingUserMemoryContext | null;
+  evolve_candidate_context?: AgentEvolveCandidateContext | null;
   selected_model?: string | null;
   default_provider_id: string;
   session_mode: string;
@@ -144,7 +146,8 @@ const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string, string
   },
   gemini_direct: {
     "gemini-3.1-pro-preview": "gemini-2.5-pro",
-    "gemini-3.1-flash-lite-preview": "gemini-2.5-flash-lite"
+    "gemini-2.5-flash-lite": "gemini-2.5-flash",
+    "gemini-3.1-flash-lite-preview": "gemini-2.5-flash"
   }
 };
 
@@ -1187,6 +1190,7 @@ export function projectAgentRuntimeConfig(
     recalledMemoryContext: request.recalled_memory_context ?? null,
     currentUserContext: request.current_user_context ?? null,
     pendingUserMemoryContext: request.pending_user_memory_context ?? null,
+    evolveCandidateContext: request.evolve_candidate_context ?? null,
     capabilityManifest,
   });
 

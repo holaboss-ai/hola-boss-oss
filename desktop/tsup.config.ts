@@ -4,6 +4,7 @@ export default defineConfig({
   entry: [
     "electron/main.ts",
     "electron/preload.ts",
+    "electron/browserPopupPreload.ts",
     "electron/authPopupPreload.ts",
     "electron/downloadsPopupPreload.ts",
     "electron/historyPopupPreload.ts",

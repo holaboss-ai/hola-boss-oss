@@ -31,6 +31,7 @@ import {
 } from "./agent-runtime-config.js";
 import type {
   AgentCurrentUserContext,
+  AgentEvolveCandidateContext,
   AgentPendingUserMemoryContext,
   AgentRecalledMemoryContext,
   AgentRecentRuntimeContext,
@@ -76,6 +77,7 @@ import {
 } from "./turn-result-summary.js";
 import { createBackgroundTaskMemoryModelClient } from "./background-task-model.js";
 import { recalledMemoryContextFromManifest } from "./memory-recall-manifest.js";
+import { createRecallEmbeddingModelClient } from "./recall-embedding-model.js";
 import { pendingUserMemoryContextFromProposals } from "./user-memory-proposals.js";
 import { NATIVE_WEB_SEARCH_TOOL_IDS } from "../../harnesses/src/native-web-search-tools.js";
 
@@ -335,6 +337,36 @@ function runtimeExecContextString(request: TsRunnerRequest, key: string): string
     return null;
   }
   return firstNonEmptyString(value[key]);
+}
+
+function evolveCandidateContext(request: TsRunnerRequest): AgentEvolveCandidateContext | null {
+  if (!isRecord(request.context.evolve_candidate)) {
+    return null;
+  }
+  const candidate = request.context.evolve_candidate;
+  const candidateId = firstNonEmptyString(candidate.candidate_id);
+  const kind = firstNonEmptyString(candidate.kind);
+  const title = firstNonEmptyString(candidate.title);
+  const summary = firstNonEmptyString(candidate.summary);
+  const slug = firstNonEmptyString(candidate.slug);
+  const skillPath = firstNonEmptyString(candidate.skill_path);
+  const targetSkillPath = firstNonEmptyString(candidate.target_skill_path);
+  const skillMarkdown = firstNonEmptyString(candidate.skill_markdown);
+  const taskProposalId = firstNonEmptyString(candidate.task_proposal_id);
+  if (!candidateId || !kind || !title || !skillPath) {
+    return null;
+  }
+  return {
+    candidate_id: candidateId,
+    kind,
+    title,
+    summary: summary ?? null,
+    slug: slug ?? null,
+    skill_path: skillPath,
+    target_skill_path: targetSkillPath ?? null,
+    skill_markdown: skillMarkdown ?? null,
+    task_proposal_id: taskProposalId ?? null,
+  };
 }
 
 function selectedHarness(request: TsRunnerRequest): string {
@@ -599,9 +631,17 @@ async function loadRecalledMemoryContext(params: {
       workspaceRoot: params.workspaceRoot,
       workspaceId: params.workspaceId,
       entries,
+      store,
       maxEntries: 5,
       modelClient: selectorModelClientFromRequest({
         request: params.request,
+        workspaceId: params.workspaceId,
+        sessionId: params.sessionId,
+        inputId: params.inputId,
+      }),
+      embeddingClient: createRecallEmbeddingModelClient({
+        selectedModel: params.request.model,
+        defaultProviderId: defaultProviderId(),
         workspaceId: params.workspaceId,
         sessionId: params.sessionId,
         inputId: params.inputId,
@@ -927,6 +967,7 @@ function buildAgentRuntimeConfigRequest(params: {
   recalledMemoryContext?: AgentRecalledMemoryContext | null;
   currentUserContext?: AgentCurrentUserContext | null;
   pendingUserMemoryContext?: AgentPendingUserMemoryContext | null;
+  evolveCandidateContext?: AgentEvolveCandidateContext | null;
 }): AgentRuntimeConfigCliRequest {
   const extraTools = Array.from(new Set([...defaultExtraTools(params.harnessId), ...params.extraToolIds]));
   const common = {
@@ -946,6 +987,7 @@ function buildAgentRuntimeConfigRequest(params: {
     recalled_memory_context: params.recalledMemoryContext ?? undefined,
     current_user_context: params.currentUserContext ?? undefined,
     pending_user_memory_context: params.pendingUserMemoryContext ?? undefined,
+    evolve_candidate_context: params.evolveCandidateContext ?? undefined,
     selected_model: firstNonEmptyString(params.request.model) ?? undefined,
     default_provider_id: defaultProviderId(),
     session_mode: defaultSessionMode(),
@@ -1499,6 +1541,7 @@ export async function executeTsRunnerRequest(
           recalledMemoryContext,
           currentUserContext,
           pendingUserMemoryContext,
+          evolveCandidateContext: evolveCandidateContext(request),
         })
       )
     );

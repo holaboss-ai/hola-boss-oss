@@ -4,7 +4,7 @@ This file is a deterministic setup runbook for an agent working from a fresh mac
 
 ## Goal
 
-Clone the Holaboss OSS repository and complete the same baseline desktop setup flow described in the README quick start.
+Bootstrap local Holaboss OSS desktop development, including provisioning `git` and Node.js `22`/`npm` when they are missing.
 
 ## Repository
 
@@ -14,9 +14,59 @@ Use this repository URL:
 https://github.com/holaboss-ai/holaboss-ai.git
 ```
 
+## Quick Installer
+
+For a fresh machine bootstrap, the repo ships an installer wrapper that can provision missing prerequisites before cloning and bootstrapping the desktop checkout:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/holaboss-ai/holaboss-ai/main/scripts/install.sh | bash
+```
+
+By default, that script:
+
+- installs `git` if it is missing
+- installs Node.js `22` plus `npm` if they are missing
+- clones the repo into `~/holaboss-ai`
+- creates `desktop/.env` from `desktop/.env.example` if needed
+- runs `npm run desktop:install`
+- runs `npm run desktop:prepare-runtime:local`
+- runs `npm run desktop:typecheck`
+- stops before launching Electron
+
+If you want the installer to continue directly into the desktop dev environment after verification, use:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/holaboss-ai/holaboss-ai/main/scripts/install.sh | bash -s -- --launch
+```
+
+Optional installer flags:
+
+- `--dir <path>` to choose a different checkout directory
+- `--ref <git-ref>` or `--branch <git-ref>` to install from a branch or tag other than `main`
+- `--launch` to continue into `npm run desktop:dev`
+
+If you are already inside a local checkout and want to reuse the same wrapper directly, run:
+
+```bash
+bash scripts/install.sh --dir "$PWD"
+```
+
+## Minimal Machine Requirements
+
+Before running the installer, ensure the machine has:
+
+- `curl`
+- `bash`
+- macOS, Linux, or WSL
+
+If `git` is missing:
+
+- on macOS, the installer uses Homebrew to install it
+- on Linux, the installer uses the system package manager and may require `sudo`
+
 ## Prerequisites
 
-Before running any project commands, ensure the machine has:
+For the manual path, ensure the machine has:
 
 - `git`
 - `node` version `22` or newer
@@ -68,6 +118,14 @@ cp desktop/.env.example desktop/.env
 ```
 
 The public OSS repository already includes default values in `desktop/.env.example`. Copy it as-is unless a human operator gives you replacement environment values.
+
+## Prepare The Local Runtime
+
+Stage the local runtime bundle before verification:
+
+```bash
+npm run desktop:prepare-runtime:local
+```
 
 ## Verify The Desktop Setup
 
@@ -134,13 +192,20 @@ Important:
 
 ## Minimal Command Sequence
 
-For a standard fresh setup, the expected command sequence is:
+If you want the one-command installer path, use:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/holaboss-ai/holaboss-ai/main/scripts/install.sh | bash
+```
+
+For the equivalent manual fresh setup, the expected command sequence is:
 
 ```bash
 git clone https://github.com/holaboss-ai/holaboss-ai.git
 cd holaboss-ai
 npm run desktop:install
 cp desktop/.env.example desktop/.env
+npm run desktop:prepare-runtime:local
 npm run desktop:typecheck
 npm run desktop:dev
 ```

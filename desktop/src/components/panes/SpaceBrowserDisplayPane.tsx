@@ -1,4 +1,12 @@
-import { FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  FormEvent,
+  KeyboardEvent,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -6,6 +14,7 @@ import {
   Loader2,
   RefreshCcw,
   Star,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useWorkspaceBrowser } from "@/components/panes/useWorkspaceBrowser";
@@ -55,9 +64,15 @@ export function SpaceBrowserDisplayPane({
   embedded = false,
 }: SpaceBrowserDisplayPaneProps) {
   const [inputValue, setInputValue] = useState("");
+  const [addressFocused, setAddressFocused] = useState(false);
+  const [highlightedSuggestionIndex, setHighlightedSuggestionIndex] =
+    useState(-1);
+  const addressInputRef = useRef<HTMLInputElement | null>(null);
+  const addressFieldRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
-  const { activeTab, activeBookmark, isBookmarked } =
-    useWorkspaceBrowser(browserSpace);
+  const { activeTab, activeBookmark, historyEntries, isBookmarked } =
+    useWorkspaceBrowser(browserSpace, { includeHistory: true });
+  const isActiveTabBusy = activeTab.loading || !activeTab.initialized;
 
   useEffect(() => {
     setInputValue(activeTab.url || "");
@@ -121,6 +136,150 @@ export function SpaceBrowserDisplayPane({
     void window.electronAPI.browser.navigate(normalizeUrl(inputValue));
   };
 
+  const navigateTo = (rawInput: string) => {
+    const nextUrl = normalizeUrl(rawInput);
+    setInputValue(nextUrl);
+    void window.electronAPI.browser.navigate(nextUrl);
+  };
+
+  const selectAddressInput = () => {
+    addressInputRef.current?.focus();
+    addressInputRef.current?.select();
+  };
+
+  const historySuggestions = useMemo(() => {
+    if (!addressFocused) {
+      return [];
+    }
+
+    const query = inputValue.trim().toLowerCase();
+    const filtered = historyEntries.filter((entry) => {
+      if (!query) {
+        return true;
+      }
+
+      return (
+        entry.url.toLowerCase().includes(query) ||
+        entry.title.toLowerCase().includes(query)
+      );
+    });
+
+    return filtered.filter((entry) => entry.url !== activeTab.url).slice(0, 6);
+  }, [activeTab.url, addressFocused, historyEntries, inputValue]);
+
+  useEffect(() => {
+    if (!historySuggestions.length) {
+      setHighlightedSuggestionIndex(-1);
+      return;
+    }
+
+    setHighlightedSuggestionIndex((current) => {
+      if (current < 0 || current >= historySuggestions.length) {
+        return 0;
+      }
+      return current;
+    });
+  }, [historySuggestions]);
+
+  const getAnchorBounds = (element: HTMLElement | null) => {
+    if (!element) {
+      return null;
+    }
+
+    const rect = element.getBoundingClientRect();
+    return {
+      x: rect.left,
+      y: rect.top,
+      width: rect.width,
+      height: rect.height,
+    };
+  };
+
+  useEffect(() => {
+    if (!addressFocused || historySuggestions.length === 0) {
+      void window.electronAPI.browser.hideAddressSuggestions();
+      return;
+    }
+
+    const bounds = getAnchorBounds(addressFieldRef.current);
+    if (!bounds) {
+      return;
+    }
+
+    const suggestions: AddressSuggestionPayload[] = historySuggestions.map(
+      (entry) => ({
+        id: entry.id,
+        url: entry.url,
+        title: entry.title,
+        faviconUrl: entry.faviconUrl,
+      }),
+    );
+
+    void window.electronAPI.browser.showAddressSuggestions(
+      bounds,
+      suggestions,
+      highlightedSuggestionIndex,
+    );
+  }, [addressFocused, highlightedSuggestionIndex, historySuggestions]);
+
+  useEffect(() => {
+    return window.electronAPI.browser.onAddressSuggestionChosen((index) => {
+      const entry = historySuggestions[index];
+      if (!entry) {
+        return;
+      }
+
+      setAddressFocused(false);
+      setHighlightedSuggestionIndex(index);
+      navigateTo(entry.url);
+    });
+  }, [historySuggestions]);
+
+  const onAddressKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (!historySuggestions.length) {
+      if (event.key === "Escape") {
+        setAddressFocused(false);
+        void window.electronAPI.browser.hideAddressSuggestions();
+      }
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setHighlightedSuggestionIndex(
+        (current) => (current + 1) % historySuggestions.length,
+      );
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setHighlightedSuggestionIndex((current) =>
+        current <= 0 ? historySuggestions.length - 1 : current - 1,
+      );
+      return;
+    }
+
+    if (event.key === "Enter" && highlightedSuggestionIndex >= 0) {
+      event.preventDefault();
+      const entry = historySuggestions[highlightedSuggestionIndex];
+      if (!entry) {
+        return;
+      }
+
+      setAddressFocused(false);
+      navigateTo(entry.url);
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setAddressFocused(false);
+      setHighlightedSuggestionIndex(-1);
+      void window.electronAPI.browser.hideAddressSuggestions();
+    }
+  };
+
   const onToggleBookmark = () => {
     if (!activeTab.url) {
       return;
@@ -168,19 +327,51 @@ export function SpaceBrowserDisplayPane({
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label="Refresh"
-            onClick={() => void window.electronAPI.browser.reload()}
-            disabled={!activeTab.initialized}
+            aria-label={activeTab.loading ? "Stop loading" : "Refresh"}
+            onClick={() =>
+              void (
+                activeTab.loading
+                  ? window.electronAPI.browser.stopLoading()
+                  : window.electronAPI.browser.reload()
+              )
+            }
+            disabled={!activeTab.initialized && !activeTab.loading}
+            title={activeTab.loading ? "Stop loading" : "Refresh"}
           >
-            <RefreshCcw size={13} />
+            {activeTab.loading ? (
+              <X size={13} />
+            ) : (
+              <RefreshCcw size={13} />
+            )}
           </Button>
 
           <form onSubmit={onSubmit} className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-center gap-2 rounded-md border border-border bg-muted/50 px-3 py-2 transition-colors focus-within:border-ring">
-              <Globe size={13} className="shrink-0 text-muted-foreground" />
+            <div
+              ref={addressFieldRef}
+              className="flex min-w-0 items-center gap-2 rounded-md border border-border bg-muted/50 px-3 py-2 transition-colors focus-within:border-ring"
+              onClick={selectAddressInput}
+            >
+              {isActiveTabBusy ? (
+                <Loader2
+                  size={13}
+                  className="shrink-0 animate-spin text-primary/85"
+                />
+              ) : (
+                <Globe size={13} className="shrink-0 text-muted-foreground" />
+              )}
               <input
+                ref={addressInputRef}
                 value={inputValue}
                 onChange={(event) => setInputValue(event.target.value)}
+                onFocus={(event) => {
+                  event.currentTarget.select();
+                  setAddressFocused(true);
+                }}
+                onClick={(event) => event.currentTarget.select()}
+                onBlur={() =>
+                  window.setTimeout(() => setAddressFocused(false), 120)
+                }
+                onKeyDown={onAddressKeyDown}
                 className="embedded-input w-full min-w-0 bg-transparent text-[12px] text-foreground outline-none placeholder:text-muted-foreground/55"
                 placeholder="Enter URL or search"
               />
@@ -211,9 +402,6 @@ export function SpaceBrowserDisplayPane({
           {!activeTab.initialized ? (
             <div className="absolute inset-0 grid place-items-center bg-card p-6 text-center">
               <div className="pointer-events-none w-full max-w-[360px] rounded-[24px] border border-border bg-card/92 px-6 py-6 shadow-lg backdrop-blur-sm">
-                <div className="mx-auto flex size-12 items-center justify-center rounded-[18px] border border-primary/25 bg-primary/10 text-primary">
-                  <Loader2 size={18} className="animate-spin" />
-                </div>
                 <div className="mt-4 text-[15px] font-medium tracking-[-0.02em] text-foreground">
                   Starting {browserSpace === "agent" ? "agent" : "user"} browser
                 </div>
@@ -222,15 +410,6 @@ export function SpaceBrowserDisplayPane({
                   {browserSpace === "agent" ? "agent" : "user"} browser for this
                   workspace.
                 </div>
-              </div>
-            </div>
-          ) : null}
-
-          {activeTab.initialized && activeTab.loading ? (
-            <div className="pointer-events-none absolute inset-x-4 top-4 z-10">
-              <div className="inline-flex items-center gap-2 rounded-full border border-border bg-card/92 px-3 py-1.5 text-[11px] text-muted-foreground shadow-md backdrop-blur-sm">
-                <Loader2 size={12} className="animate-spin text-primary" />
-                <span>Loading page</span>
               </div>
             </div>
           ) : null}

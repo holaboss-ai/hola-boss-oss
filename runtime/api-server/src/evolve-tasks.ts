@@ -1,34 +1,34 @@
 import type { RuntimeStateStore, SessionInputRecord, TurnResultRecord } from "@holaboss/runtime-state-store";
 
 import type { MemoryServiceLike } from "./memory.js";
-import { enqueueDurableMemoryWritebackJob } from "./post-run-durable-memory.js";
+import { enqueueEvolveJob } from "./evolve.js";
 import { writeTurnContinuity, type TurnMemoryWritebackModelContext } from "./turn-memory-writeback.js";
 
-export interface PostRunTaskContext {
+export interface EvolveTaskContext {
   store: RuntimeStateStore;
   record: SessionInputRecord;
   turnResult: TurnResultRecord;
   memoryService?: MemoryServiceLike | null;
   modelContext?: TurnMemoryWritebackModelContext | null;
   wakeDurableMemoryWorker?: (() => void) | null;
-  enqueueDurableMemoryWritebackJobFn?: typeof enqueueDurableMemoryWritebackJob;
+  enqueueEvolveJobFn?: typeof enqueueEvolveJob;
   writeTurnContinuityFn?: typeof writeTurnContinuity;
 }
 
-export interface PostRunTask {
+export interface EvolveTask {
   name: string;
-  shouldRun: (context: PostRunTaskContext) => boolean;
-  run: (context: PostRunTaskContext) => Promise<void>;
+  shouldRun: (context: EvolveTaskContext) => boolean;
+  run: (context: EvolveTaskContext) => Promise<void>;
 }
 
-export interface SchedulePostRunTasksOptions extends PostRunTaskContext {
-  tasks?: PostRunTask[];
+export interface ScheduleEvolveTasksOptions extends EvolveTaskContext {
+  tasks?: EvolveTask[];
   scheduleFn?: (callback: () => void) => void;
   onTaskError?: (taskName: string, error: unknown) => void;
 }
 
-export const turnMemoryWritebackPostRunTask: PostRunTask = {
-  name: "turn_memory_writeback",
+export const turnMemoryEvolveTask: EvolveTask = {
+  name: "turn_memory_evolve",
   shouldRun: (context) => Boolean(context.memoryService),
   run: async (context) => {
     if (!context.memoryService) {
@@ -39,7 +39,7 @@ export const turnMemoryWritebackPostRunTask: PostRunTask = {
       memoryService: context.memoryService,
       turnResult: context.turnResult,
     });
-    (context.enqueueDurableMemoryWritebackJobFn ?? enqueueDurableMemoryWritebackJob)({
+    (context.enqueueEvolveJobFn ?? enqueueEvolveJob)({
       store: context.store,
       workspaceId: updatedTurnResult.workspaceId,
       sessionId: updatedTurnResult.sessionId,
@@ -50,10 +50,10 @@ export const turnMemoryWritebackPostRunTask: PostRunTask = {
   },
 };
 
-const DEFAULT_POST_RUN_TASKS: PostRunTask[] = [turnMemoryWritebackPostRunTask];
+const DEFAULT_EVOLVE_TASKS: EvolveTask[] = [turnMemoryEvolveTask];
 
-export async function runPostRunTasks(options: SchedulePostRunTasksOptions): Promise<void> {
-  const tasks = options.tasks ?? DEFAULT_POST_RUN_TASKS;
+export async function runEvolveTasks(options: ScheduleEvolveTasksOptions): Promise<void> {
+  const tasks = options.tasks ?? DEFAULT_EVOLVE_TASKS;
   for (const task of tasks) {
     if (!task.shouldRun(options)) {
       continue;
@@ -66,9 +66,9 @@ export async function runPostRunTasks(options: SchedulePostRunTasksOptions): Pro
   }
 }
 
-export function schedulePostRunTasks(options: SchedulePostRunTasksOptions): void {
+export function scheduleEvolveTasks(options: ScheduleEvolveTasksOptions): void {
   const scheduleFn = options.scheduleFn ?? ((callback: () => void) => setImmediate(callback));
   scheduleFn(() => {
-    void runPostRunTasks(options);
+    void runEvolveTasks(options);
   });
 }

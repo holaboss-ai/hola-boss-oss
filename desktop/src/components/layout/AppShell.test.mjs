@@ -106,6 +106,33 @@ test("app shell removes the outputs quick action", async () => {
   assert.doesNotMatch(source, /aria-label="Open outputs panel"/);
 });
 
+test("app shell treats missing or stopped runtime states as startup blockers", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(
+    source,
+    /function runtimeStartupBlockedMessage\(\s*runtimeStatus: RuntimeStatusPayload \| null,\s*fallbackMessage = "",\s*\)/,
+  );
+  assert.match(source, /if \(runtimeStatus\.status === "missing"\) \{/);
+  assert.match(source, /if \(runtimeStatus\.status === "stopped"\) \{/);
+  assert.match(
+    source,
+    /const runtimeStartupBlockedDetail = runtimeStartupBlockedMessage\(\s*runtimeStatus,\s*workspaceBlockingReason \|\| workspaceErrorMessage,\s*\);/,
+  );
+  assert.match(
+    source,
+    /const bootstrapErrorMessage =\s*!hasHydratedWorkspaceList\s*\?\s*runtimeStartupBlockedMessage\(runtimeStatus, workspaceErrorMessage\)\s*:\s*"";/,
+  );
+  assert.match(
+    source,
+    /const hydratedRuntimeErrorMessage =\s*hasHydratedWorkspaceList &&\s*runtimeStartupBlockedDetail &&\s*\(!hasWorkspaces \|\| !workspaceAppsReady\)\s*\?\s*runtimeStartupBlockedDetail\s*:\s*"";/,
+  );
+  assert.match(
+    source,
+    /\) : hydratedRuntimeErrorMessage \? \(\s*<WorkspaceStartupErrorPane message=\{hydratedRuntimeErrorMessage\} \/>\s*\) : !hasWorkspaces \? \(/,
+  );
+});
+
 test("app shell polls runtime notifications and renders the toast stack", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
@@ -211,7 +238,7 @@ test("app shell no longer reserves a separate safe pane region for update toasts
 test("app shell keeps a fixed explorer width and resizes the display against chat in space mode", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /const MIN_FILES_PANE_WIDTH = 220;/);
+  assert.match(source, /const MIN_FILES_PANE_WIDTH = 260;/);
   assert.match(source, /const MIN_BROWSER_PANE_WIDTH = 120;/);
   assert.match(source, /const MIN_AGENT_CONTENT_WIDTH = 380;/);
   assert.match(source, /const DEFAULT_FILES_PANE_WIDTH = MIN_FILES_PANE_WIDTH;/);
@@ -223,7 +250,10 @@ test("app shell keeps a fixed explorer width and resizes the display against cha
     source,
     /const \[spaceAgentPaneWidth, setSpaceAgentPaneWidth\] = useState\(\s*SPACE_AGENT_PANE_WIDTH,\s*\);/,
   );
-  assert.match(source, /const clampSpaceAgentPaneWidth = useCallback\(\(width: number\) => \{/);
+  assert.match(
+    source,
+    /const clampSpaceAgentPaneWidth = useCallback\(\s*\(width: number\) => \{/,
+  );
   assert.match(
     source,
     /const explorerWidth = spaceExplorerCollapsed\s*\?\s*SPACE_EXPLORER_COLLAPSED_WIDTH\s*:\s*filesPaneWidth;/,
@@ -253,7 +283,9 @@ test("app shell always opens the file explorer at minimum width", async () => {
 test("app shell passes the app version label into the left rail", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /const appVersionLabel =[\s\S]*effectiveAppUpdateStatus\?\.currentVersion\?\.trim\(\) \|\| "";/);
+  assert.match(source, /function compactAppVersionLabel\(version: string\): string \{/);
+  assert.match(source, /const releaseMatch = trimmed\.match\(\/\^\\d\{4\}\\\.\(\\d\+\\\.\\d\+\)\$\/\);/);
+  assert.match(source, /const appVersionLabel =[\s\S]*compactAppVersionLabel\(effectiveAppUpdateStatus\?\.currentVersion \|\| ""\);/);
   assert.match(source, /<LeftNavigationRail[\s\S]*appVersionLabel=\{appVersionLabel\}/);
   assert.doesNotMatch(source, /absolute bottom-3 left-4/);
 });

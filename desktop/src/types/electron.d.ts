@@ -179,6 +179,7 @@ declare global {
     modelProxyBaseUrl: string | null;
     defaultModel: string | null;
     defaultBackgroundModel: string | null;
+    defaultEmbeddingModel: string | null;
     defaultImageModel: string | null;
     controlPlaneBaseUrl: string | null;
     catalogVersion: string | null;
@@ -206,6 +207,7 @@ declare global {
     modelProxyBaseUrl?: string | null;
     defaultModel?: string | null;
     defaultBackgroundModel?: string | null;
+    defaultEmbeddingModel?: string | null;
     defaultImageModel?: string | null;
     controlPlaneBaseUrl?: string | null;
   }
@@ -340,6 +342,7 @@ declare global {
     task_name: string;
     task_prompt: string;
     task_generation_rationale: string;
+    proposal_source: "proactive" | "evolve";
     created_at: string;
     state: string;
     source_event_ids: string[];
@@ -1394,6 +1397,7 @@ declare global {
       back: () => Promise<BrowserTabListPayload>;
       forward: () => Promise<BrowserTabListPayload>;
       reload: () => Promise<BrowserTabListPayload>;
+      stopLoading: () => Promise<BrowserTabListPayload>;
       newTab: (targetUrl?: string) => Promise<BrowserTabListPayload>;
       setActiveTab: (tabId: string) => Promise<BrowserTabListPayload>;
       closeTab: (tabId: string) => Promise<BrowserTabListPayload>;
