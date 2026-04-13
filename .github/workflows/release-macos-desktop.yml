@@ -133,6 +133,11 @@ jobs:
             package-lock.json
             desktop/package-lock.json
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Build macOS runtime bundle
         run: |
           bash runtime/deploy/package_macos_runtime.sh out/runtime-macos
@@ -148,8 +153,8 @@ jobs:
             out/runtime-macos/runtime/metadata.json
           if-no-files-found: error
 
-      - name: Install desktop dependencies
-        run: npm run desktop:install
+      - name: Prepare desktop (build SDK + install desktop deps)
+        run: npm run desktop:prepare
 
       - name: Require mac signing credentials
         run: |
@@ -278,8 +283,13 @@ jobs:
             package-lock.json
             desktop/package-lock.json
 
-      - name: Install desktop dependencies
-        run: npm run desktop:install
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Prepare desktop (build SDK + install desktop deps)
+        run: npm run desktop:prepare
 
       - name: Require mac notarization credentials
         run: |
@@ -419,8 +429,13 @@ jobs:
             package-lock.json
             desktop/package-lock.json
 
-      - name: Install desktop dependencies
-        run: npm run desktop:install
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Prepare desktop (build SDK + install desktop deps)
+        run: npm run desktop:prepare
 
       - name: Download notarized macOS app bundle artifact
         uses: actions/download-artifact@v8

@@ -13,6 +13,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
@@ -22,8 +27,12 @@ jobs:
             package-lock.json
             desktop/package-lock.json
 
-      - name: Install desktop dependencies
-        run: npm run desktop:install
+      # Desktop consumes @holaboss/app-sdk via a file: dependency whose
+      # exports map points at ./dist/*.d.ts. dist/ is gitignored, so the
+      # SDK must be installed + built before desktop can be typechecked
+      # or bundled. `desktop:prepare` chains both in the right order.
+      - name: Prepare desktop (build SDK + install desktop deps)
+        run: npm run desktop:prepare
 
       - name: Desktop typecheck
         run: npm run desktop:typecheck

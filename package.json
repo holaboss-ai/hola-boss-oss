@@ -6,6 +6,7 @@
     "dev": "npm run desktop:dev",
     "desktop:clean": "rm -rf desktop/out desktop/build",
     "desktop:install": "npm install --prefix desktop",
+    "desktop:prepare": "npm run sdk:app-sdk:install && npm run sdk:app-sdk:build && npm run desktop:install",
     "desktop:dev": "npm --prefix desktop run dev",
     "desktop:e2e": "npm --prefix desktop run e2e",
     "desktop:typecheck": "npm --prefix desktop run typecheck",

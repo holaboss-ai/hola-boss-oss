@@ -134,8 +134,13 @@ jobs:
             package-lock.json
             desktop/package-lock.json
 
-      - name: Install desktop dependencies
-        run: npm run desktop:install
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Prepare desktop (build SDK + install desktop deps)
+        run: npm run desktop:prepare
 
       - name: Build Windows desktop installer
         id: build_windows_installer
