@@ -1,3 +1,7 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+
 import { utcNowIso, type CronjobRecord, type RuntimeStateStore, type WorkspaceRecord } from "@holaboss/runtime-state-store";
 
 import { RUNTIME_AGENT_TOOL_DEFINITIONS as RUNTIME_AGENT_TOOL_BASE_DEFINITIONS } from "../../harnesses/src/runtime-agent-tools.js";
@@ -66,6 +70,17 @@ export interface RuntimeAgentToolsGenerateImageParams {
   size?: string | null;
 }
 
+export interface RuntimeAgentToolsWriteReportParams {
+  workspaceId: string;
+  sessionId?: string | null;
+  inputId?: string | null;
+  selectedModel?: string | null;
+  title?: string | null;
+  filename?: string | null;
+  summary?: string | null;
+  content: string;
+}
+
 export const ALLOWED_DELIVERY_MODES = new Set(["none", "announce"]);
 export const ALLOWED_DELIVERY_CHANNELS = new Set(["system_notification", "session_run"]);
 
@@ -117,6 +132,12 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/images/generate",
     description: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[7].description
+  },
+  {
+    id: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[8].id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/reports",
+    description: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[8].description
   }
 ];
 
@@ -134,6 +155,74 @@ export class RuntimeAgentToolsServiceError extends Error {
 
 function normalizedString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function sanitizeReportFilenameStem(value: string): string {
+  const stem = value
+    .trim()
+    .replace(/\.md$/i, "")
+    .replace(/[/\\]+/g, " ")
+    .replace(/[^a-zA-Z0-9._ -]+/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-_. ]+|[-_. ]+$/g, "");
+  return stem || "report";
+}
+
+function reportTitleFromContent(content: string): string {
+  const headingMatch = content.match(/^\s*#\s+(.+?)\s*$/m);
+  if (headingMatch?.[1]) {
+    return headingMatch[1].trim();
+  }
+  const firstContentLine = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  return firstContentLine ? firstContentLine.slice(0, 120) : "";
+}
+
+function defaultReportTitle(params: {
+  title?: string | null;
+  filename?: string | null;
+  content: string;
+}): string {
+  return (
+    normalizedString(params.title) ||
+    reportTitleFromContent(params.content) ||
+    normalizedString(params.filename).replace(/\.md$/i, "") ||
+    `Report ${utcNowIso().slice(0, 10)}`
+  );
+}
+
+async function reportOutputFilePath(params: {
+  workspaceRoot: string;
+  workspaceId: string;
+  title: string;
+  filename?: string | null;
+}): Promise<{ absolutePath: string; relativePath: string }> {
+  const preferredStem = sanitizeReportFilenameStem(
+    normalizedString(params.filename) || params.title,
+  );
+  for (let index = 0; index < 1000; index += 1) {
+    const fileName =
+      index === 0 ? `${preferredStem}.md` : `${preferredStem}-${index + 1}.md`;
+    const relativePath = path.posix.join("outputs", "reports", fileName);
+    const absolutePath = path.join(
+      params.workspaceRoot,
+      params.workspaceId,
+      relativePath,
+    );
+    try {
+      await fs.access(absolutePath);
+    } catch {
+      return { absolutePath, relativePath };
+    }
+  }
+  throw new RuntimeAgentToolsServiceError(
+    500,
+    "report_path_exhausted",
+    "unable to allocate a report output path",
+  );
 }
 
 function metadataWithCronjobDefaults(params: {
@@ -430,6 +519,67 @@ export class RuntimeAgentToolsService {
         error instanceof Error ? error.message : "image generation failed",
       );
     }
+  }
+
+  async writeReport(params: RuntimeAgentToolsWriteReportParams): Promise<JsonObject> {
+    this.requireWorkspace(params.workspaceId);
+    const sessionId = normalizedString(params.sessionId);
+    const content = String(params.content ?? "");
+    if (!content.trim()) {
+      throw new RuntimeAgentToolsServiceError(400, "report_content_required", "content is required");
+    }
+    const title = defaultReportTitle({
+      title: params.title,
+      filename: params.filename,
+      content,
+    });
+    const { absolutePath, relativePath } = await reportOutputFilePath({
+      workspaceRoot: this.options.workspaceRoot,
+      workspaceId: params.workspaceId,
+      title,
+      filename: params.filename,
+    });
+    const normalizedContent = content.endsWith("\n") ? content : `${content}\n`;
+    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+    await fs.writeFile(absolutePath, normalizedContent, "utf8");
+
+    const sizeBytes = Buffer.byteLength(normalizedContent, "utf8");
+    const output = this.store.createOutput({
+      workspaceId: params.workspaceId,
+      outputType: "document",
+      title,
+      status: "completed",
+      filePath: relativePath,
+      sessionId: sessionId || null,
+      inputId: normalizedString(params.inputId) || null,
+      artifactId: randomUUID(),
+      metadata: {
+        origin_type: "runtime_tool",
+        change_type: "created",
+        category: "document",
+        artifact_type: "report",
+        mime_type: "text/markdown",
+        size_bytes: sizeBytes,
+        tool_id: "write_report",
+        ...(normalizedString(params.summary)
+          ? { summary: normalizedString(params.summary) }
+          : {}),
+        ...(normalizedString(params.selectedModel)
+          ? { model: normalizedString(params.selectedModel) }
+          : {}),
+        ...(sessionId ? { source_session_id: sessionId } : {}),
+      },
+    });
+
+    return {
+      output_id: output.id,
+      artifact_id: output.artifactId,
+      title: output.title,
+      file_path: relativePath,
+      mime_type: "text/markdown",
+      size_bytes: sizeBytes,
+      created_at: output.createdAt,
+    };
   }
 
   private requireWorkspace(workspaceId: string): WorkspaceRecord {

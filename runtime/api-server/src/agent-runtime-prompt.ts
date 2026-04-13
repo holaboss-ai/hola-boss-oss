@@ -202,6 +202,26 @@ function sessionPolicyPromptSection(request: ComposeBaseAgentPromptRequest): str
   return lines.length > 1 ? linesSection(lines) : "";
 }
 
+function responseDeliveryPolicyPromptSection(): string {
+  return linesSection([
+    "Response delivery policy:",
+    "Default to concise chat replies that are optimized for fast comprehension.",
+    "Keep the answer inline for simple lookups, definitions, narrow factual questions, brief clarifications, and other requests that can be answered well in a short paragraph or a few bullets.",
+    "Do not create a report just because you used browser or web search tools. Tool usage alone is not a reason to artifact the answer.",
+    "If `write_report` is available and the full answer would be long, heavily structured, evidence-heavy, or likely to be referenced later, use `write_report` instead of placing the full content in chat.",
+    "If `write_report` is unavailable and you still need a report artifact, write it under `outputs/reports/` instead of placing the full content in chat.",
+    "Treat answers that would naturally require headings, many bullets, tables, long code or log excerpts, or detailed evidence as report candidates.",
+    "Prefer report artifacts for investigations, audits, plans, reviews, comparisons, research summaries, and other multi-step findings.",
+    "When the user explicitly asks you to research, investigate, study, analyze, compare, build a timeline, or summarize current or latest developments across multiple sources, default to writing a report artifact and keep the chat reply to a minimal summary unless the user explicitly asks for inline detail.",
+    "When those research-style conditions apply and `write_report` is available, call `write_report` before your final reply. Do not put the full synthesis in chat.",
+    "For those research-style tasks, a todo step such as 'summarize findings for the user' still means: create the report artifact first, then send only a short user-facing summary in chat.",
+    "When you create a report artifact, keep the chat reply short: state the outcome, mention the report title or path, and include only the most important takeaways.",
+    "For research-style tasks, keep the chat follow-up to one short paragraph or at most 3 concise bullets unless the user explicitly asks for inline detail.",
+    "If you are unsure, choose inline for a short single-answer lookup and choose a report for multi-source synthesis or referenceable findings.",
+    "Only place the full detailed content inline when the user explicitly asks for inline detail or when the answer is naturally short."
+  ]);
+}
+
 function recentRuntimeContextPromptSection(context: AgentRecentRuntimeContext | null | undefined): string {
   if (!context) {
     return "";
@@ -589,6 +609,16 @@ export function buildBaseAgentPromptSections(
     priority: 200,
     volatility: "stable",
     content: linesSection(executionLines)
+  });
+
+  pushPromptLayer(promptSections, {
+    id: "response_delivery_policy",
+    channel: "system_prompt",
+    apply_at: "runtime_config",
+    precedence: "base_runtime",
+    priority: 250,
+    volatility: "stable",
+    content: responseDeliveryPolicyPromptSection()
   });
 
   pushPromptLayer(promptSections, {

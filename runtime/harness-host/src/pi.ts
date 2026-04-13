@@ -83,6 +83,11 @@ const PI_TODO_STATUSES = [
   "completed",
   "abandoned",
 ] as const;
+const PI_TODO_WRITE_OPS = ["replace", "add_phase", "add_task", "update", "remove_task"] as const;
+const PI_TODO_WRITE_OPS_TEXT =
+  "`replace`, `add_phase`, `add_task`, `update`, and `remove_task`";
+const PI_TODO_WRITE_ALIAS_WARNING =
+  "Do not invent alias op names such as `replace_all`, `update_task`, or `set_status`.";
 const require = createRequire(import.meta.url);
 
 type PiTodoStatus = (typeof PI_TODO_STATUSES)[number];
@@ -803,8 +808,10 @@ function resumeTodoReadInstruction(request: HarnessHostPiRequest): string {
   return [
     "Resumed session requirement:",
     "A persisted phased todo plan already exists for this session.",
-    "Before any other substantive work, call `todoread` to restore that plan.",
+    "Before any other substantive work, call `todoread` to restore that plan and recover the current phase/task ids.",
     "Continue from the restored plan, and update it with `todowrite` if it is stale before proceeding.",
+    `When you use \`todowrite\`, valid \`op\` values are exactly ${PI_TODO_WRITE_OPS_TEXT}.`,
+    PI_TODO_WRITE_ALIAS_WARNING,
     "After restoring the plan, continue executing it until the recorded work is complete or genuinely blocked.",
     "Do not stop only to give progress updates or ask whether to continue while executable todo items remain.",
     "If the user's newest message clearly redirects to unrelated work, handle that new request first after restoring the todo, keep the restored todo marked unfinished, and then propose continuing it once the unrelated request is complete.",
@@ -1111,6 +1118,9 @@ function parsePiTodoInputTask(value: unknown, fallbackId: string): PiTodoItem {
   }
   const content = optionalTrimmedString(value.content);
   if (!content) {
+    if (optionalTrimmedString(value.title)) {
+      throw new Error("Todo tasks require `content`; use `content` instead of `title`.");
+    }
     throw new Error("Todo tasks require a non-empty `content`.");
   }
   const status = value.status === undefined ? "pending" : normalizePiTodoStatus(value.status);
@@ -1139,6 +1149,9 @@ function buildPiTodoPhaseFromInput(
   }
   const name = optionalTrimmedString(value.name);
   if (!name) {
+    if (optionalTrimmedString(value.title)) {
+      throw new Error("Todo phases require `name`; use `name` instead of `title`.");
+    }
     throw new Error("Todo phases require a non-empty `name`.");
   }
   const tasks: PiTodoItem[] = [];
@@ -1171,6 +1184,45 @@ function parsePiTodoWriteOps(toolParams: unknown): Array<Record<string, unknown>
     }
     return op;
   });
+}
+
+function piTodoWriteRepairError(op: Record<string, unknown>): Error {
+  const opName = firstNonEmptyString(op.op);
+  const baseLines = [
+    `Unsupported todo op ${opName ? `"${opName}"` : '"<missing>"'}.`,
+    `Valid \`op\` values are exactly ${PI_TODO_WRITE_OPS_TEXT}.`,
+    PI_TODO_WRITE_ALIAS_WARNING,
+  ];
+
+  if (opName === "set_status" || opName === "update_task") {
+    return new Error(
+      [
+        ...baseLines,
+        "Use `update` to change an existing task's status by task id.",
+        "Example:",
+        '{"ops":[{"op":"update","id":"task-1","status":"completed"}]}',
+        "Call `todoread` first if you need the current task ids.",
+      ].join("\n")
+    );
+  }
+
+  if (opName === "replace_all") {
+    return new Error(
+      [
+        ...baseLines,
+        "Use `replace` to replace the entire phased plan.",
+        "Example:",
+        '{"ops":[{"op":"replace","phases":[{"name":"Phase name","tasks":[{"content":"Task text"}]}]}]}',
+      ].join("\n")
+    );
+  }
+
+  return new Error(
+    [
+      ...baseLines,
+      "Use `replace` for a full plan rewrite, `add_phase` to append a phase, `add_task` to append a task, `update` to modify an existing task by id, or `remove_task` to delete a task by id.",
+    ].join("\n")
+  );
 }
 
 function findPiTodoTask(phases: PiTodoPhase[], id: string): PiTodoItem | undefined {
@@ -1293,7 +1345,7 @@ function applyPiTodoOps(
         break;
       }
       default:
-        throw new Error(`Unsupported todo op "${String(op.op ?? "")}".`);
+        throw piTodoWriteRepairError(op);
     }
     normalizeInProgressPiTodoTask(nextState.phases);
   }
@@ -1416,31 +1468,59 @@ function todoReadParametersSchema(): Record<string, unknown> {
 function todoWriteParametersSchema(): Record<string, unknown> {
   return {
     type: "object",
+    description:
+      `Update the session todo plan with explicit mutations. Valid \`op\` values are exactly ${PI_TODO_WRITE_OPS_TEXT}. ${PI_TODO_WRITE_ALIAS_WARNING}`,
     properties: {
       ops: {
         type: "array",
-        description: "Incremental phased todo operations over the current session plan.",
+        description:
+          `Incremental phased todo operations over the current session plan. Valid \`op\` values are exactly ${PI_TODO_WRITE_OPS_TEXT}. Use \`name\` for phase titles and \`content\` for task text.`,
         items: {
           anyOf: [
             {
               type: "object",
+              description:
+                "Replace the entire phased plan. Use this to create the initial plan or rewrite the whole plan, not for a single task status change.",
               properties: {
-                op: { const: "replace" },
+                op: {
+                  const: "replace",
+                  description: "Replace the entire phased plan.",
+                },
                 phases: {
                   type: "array",
+                  description: "Full replacement list of phases. Each phase requires `name`; each task requires `content`.",
                   items: {
                     type: "object",
+                    description: "Phase object for a full-plan replacement. Use `name`, not `title`.",
                     properties: {
-                      name: { type: "string" },
+                      name: {
+                        type: "string",
+                        description: "Human-readable phase title.",
+                      },
                       tasks: {
                         type: "array",
+                        description: "Task objects for this phase. Use `content`, not `title`.",
                         items: {
                           type: "object",
+                          description: "Task object. Use `content` as the task text.",
                           properties: {
-                            content: { type: "string" },
-                            status: { type: "string", enum: [...PI_TODO_STATUSES] },
-                            notes: { type: "string" },
-                            details: { type: "string" },
+                            content: {
+                              type: "string",
+                              description: "Required task text.",
+                            },
+                            status: {
+                              type: "string",
+                              enum: [...PI_TODO_STATUSES],
+                              description: "Optional task status.",
+                            },
+                            notes: {
+                              type: "string",
+                              description: "Short note for the task.",
+                            },
+                            details: {
+                              type: "string",
+                              description: "Longer supporting detail for the task.",
+                            },
                           },
                           required: ["content"],
                           additionalProperties: false,
@@ -1457,18 +1537,40 @@ function todoWriteParametersSchema(): Record<string, unknown> {
             },
             {
               type: "object",
+              description: "Append a new phase to the current plan.",
               properties: {
-                op: { const: "add_phase" },
-                name: { type: "string" },
+                op: {
+                  const: "add_phase",
+                  description: "Append a new phase to the current plan.",
+                },
+                name: {
+                  type: "string",
+                  description: "Human-readable phase title.",
+                },
                 tasks: {
                   type: "array",
+                  description: "Optional initial tasks for the new phase.",
                   items: {
                     type: "object",
+                    description: "Task object. Use `content` as the task text.",
                     properties: {
-                      content: { type: "string" },
-                      status: { type: "string", enum: [...PI_TODO_STATUSES] },
-                      notes: { type: "string" },
-                      details: { type: "string" },
+                      content: {
+                        type: "string",
+                        description: "Required task text.",
+                      },
+                      status: {
+                        type: "string",
+                        enum: [...PI_TODO_STATUSES],
+                        description: "Optional task status.",
+                      },
+                      notes: {
+                        type: "string",
+                        description: "Short note for the task.",
+                      },
+                      details: {
+                        type: "string",
+                        description: "Longer supporting detail for the task.",
+                      },
                     },
                     required: ["content"],
                     additionalProperties: false,
@@ -1480,37 +1582,130 @@ function todoWriteParametersSchema(): Record<string, unknown> {
             },
             {
               type: "object",
+              description: "Append a new task to an existing phase by phase id.",
               properties: {
-                op: { const: "add_task" },
-                phase: { type: "string" },
-                content: { type: "string" },
-                status: { type: "string", enum: [...PI_TODO_STATUSES] },
-                notes: { type: "string" },
-                details: { type: "string" },
+                op: {
+                  const: "add_task",
+                  description: "Append a new task to an existing phase by phase id.",
+                },
+                phase: {
+                  type: "string",
+                  description: "Existing phase id from `todoread` or a prior `todowrite` result, for example `phase-2`.",
+                },
+                content: {
+                  type: "string",
+                  description: "Required task text.",
+                },
+                status: {
+                  type: "string",
+                  enum: [...PI_TODO_STATUSES],
+                  description: "Optional task status.",
+                },
+                notes: {
+                  type: "string",
+                  description: "Short note for the task.",
+                },
+                details: {
+                  type: "string",
+                  description: "Longer supporting detail for the task.",
+                },
               },
               required: ["op", "phase", "content"],
               additionalProperties: false,
             },
             {
               type: "object",
+              description:
+                "Update an existing task by task id. Use this for status changes, content edits, notes, or details.",
               properties: {
-                op: { const: "update" },
-                id: { type: "string" },
-                status: { type: "string", enum: [...PI_TODO_STATUSES] },
-                content: { type: "string" },
-                notes: { type: "string" },
-                details: { type: "string" },
+                op: {
+                  const: "update",
+                  description: "Update an existing task by task id. Use this for status changes.",
+                },
+                id: {
+                  type: "string",
+                  description: "Existing task id from `todoread` or a prior `todowrite` result, for example `task-3`.",
+                },
+                status: {
+                  type: "string",
+                  enum: [...PI_TODO_STATUSES],
+                  description: "New task status when changing status.",
+                },
+                content: {
+                  type: "string",
+                  description: "Replacement task text.",
+                },
+                notes: {
+                  type: "string",
+                  description: "Replacement short note for the task.",
+                },
+                details: {
+                  type: "string",
+                  description: "Replacement longer supporting detail for the task.",
+                },
               },
               required: ["op", "id"],
               additionalProperties: false,
             },
             {
               type: "object",
+              description: "Remove a single task by task id.",
               properties: {
-                op: { const: "remove_task" },
-                id: { type: "string" },
+                op: {
+                  const: "remove_task",
+                  description: "Remove a single task by task id.",
+                },
+                id: {
+                  type: "string",
+                  description: "Existing task id from `todoread` or a prior `todowrite` result.",
+                },
               },
               required: ["op", "id"],
+              additionalProperties: false,
+            },
+            {
+              type: "object",
+              description:
+                "Fallback validation branch for malformed todo ops so the tool can return a repair hint. Do not rely on this shape.",
+              properties: {
+                op: { type: "string" },
+                id: { type: "string" },
+                phase: { type: "string" },
+                name: { type: "string" },
+                title: { type: "string" },
+                content: { type: "string" },
+                status: { type: "string" },
+                notes: { type: "string" },
+                details: { type: "string" },
+                phases: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      id: { type: "string" },
+                      name: { type: "string" },
+                      title: { type: "string" },
+                      tasks: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            id: { type: "string" },
+                            content: { type: "string" },
+                            title: { type: "string" },
+                            status: { type: "string" },
+                            notes: { type: "string" },
+                            details: { type: "string" },
+                          },
+                          additionalProperties: false,
+                        },
+                      },
+                    },
+                    additionalProperties: false,
+                  },
+                },
+              },
+              required: ["op"],
               additionalProperties: false,
             },
           ],
@@ -1526,12 +1721,15 @@ export function createPiTodoToolDefinitions(params: { stateDir: string; sessionI
   const readDefinition: ToolDefinition = {
     name: "todoread",
     label: "Todo Read",
-    description: "Read the current phased todo plan for this session.",
+    description:
+      "Read the current phased todo plan for this session, including the phase ids and task ids needed for later `todowrite` calls.",
     parameters: todoReadParametersSchema() as never,
-    promptSnippet: "todoread: Read the current phased todo plan for this session.",
+    promptSnippet:
+      "todoread: Read the current phased todo plan for this session and recover the phase/task ids needed for later `todowrite` mutations.",
     promptGuidelines: [
       "Use todoread before changing an existing phased plan when current todo state may matter.",
       "When resuming a session that already has todo state, call todoread before other substantive work.",
+      "Use todoread to recover the exact phase ids and task ids before calling `update`, `add_task`, or `remove_task` on an existing plan.",
       "After reading an existing todo, continue executing it until the recorded work is complete or genuinely blocked.",
       "Do not stop only to give progress updates or ask whether to continue while executable todo items remain.",
       "If the user's newest message is clearly unrelated to the unfinished todo, preserve that todo as unfinished, handle the new request first, and then propose continuing the unfinished work.",
@@ -1561,16 +1759,24 @@ export function createPiTodoToolDefinitions(params: { stateDir: string; sessionI
   const writeDefinition: ToolDefinition = {
     name: "todowrite",
     label: "Todo Write",
-    description: "Update the current phased todo plan for this session.",
+    description:
+      `Update the current phased todo plan for this session. Valid \`op\` values are exactly ${PI_TODO_WRITE_OPS_TEXT}.`,
     parameters: todoWriteParametersSchema() as never,
-    promptSnippet: "todowrite: Update the current phased todo plan for this session.",
+    promptSnippet:
+      `todowrite: Update the current phased todo plan for this session using only these \`op\` values: ${PI_TODO_WRITE_OPS_TEXT}.`,
     promptGuidelines: [
       "Use todowrite for complex or long-running tasks that benefit from an explicit phased plan.",
       "The top-level phases are grouped tasks, and each phase's `tasks` entries are the actionable task items within that grouped task.",
       "When you choose to use a todo, keep executing it until the recorded work is complete or genuinely blocked.",
       "Do not stop only to give progress updates or ask whether to continue while executable todo items remain.",
       "If a new user message clearly redirects to unrelated work, do that work first without marking the existing unfinished todo complete, then propose resuming the unfinished work afterward.",
-      "Use `replace` for the initial plan and incremental ops such as `update` or `add_task` once work is underway.",
+      `Valid \`op\` values are exactly ${PI_TODO_WRITE_OPS_TEXT}.`,
+      PI_TODO_WRITE_ALIAS_WARNING,
+      "Use `replace` only for the initial plan or a full rewrite of the entire plan, not for a single task status change.",
+      "Use `update` to change an existing task's status, content, notes, or details by task id.",
+      "Use `add_phase` to append a new phase, `add_task` to append a task to an existing phase by phase id, and `remove_task` to delete a task by task id.",
+      "Use `name` for phase titles and `content` for task text; do not use `title` for either.",
+      "On an existing plan, call `todoread` first so you have the current phase ids and task ids before writing mutations.",
       "Keep exactly one task `in_progress` whenever unfinished tasks remain unless the current task is blocked on user input or another external dependency.",
     ],
     execute: async (_toolCallId, toolParams, signal) => {
@@ -3099,6 +3305,7 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     runtimeApiBaseUrl: request.runtime_api_base_url,
     workspaceId: request.workspace_id,
     sessionId: request.session_id,
+    inputId: request.input_id,
     selectedModel: `${request.provider_id}/${request.model_id}`,
   });
   const webSearchTools = await resolvePiWebSearchToolDefinitions();

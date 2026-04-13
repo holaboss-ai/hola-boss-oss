@@ -129,11 +129,11 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
     assert.ok(result.prompt_sections);
     assert.deepEqual(
       result.prompt_layers?.map((layer) => layer.id),
-      ["runtime_core", "execution_policy", "session_policy", "capability_policy", "workspace_policy"]
+      ["runtime_core", "execution_policy", "response_delivery_policy", "session_policy", "capability_policy", "workspace_policy"]
     );
     assert.deepEqual(
       result.prompt_sections?.map((section) => section.id),
-      ["runtime_core", "execution_policy", "session_policy", "capability_policy", "workspace_policy"]
+      ["runtime_core", "execution_policy", "response_delivery_policy", "session_policy", "capability_policy", "workspace_policy"]
     );
     assert.equal(result.prompt_layers?.some((layer) => layer.id === "harness_quirks"), false);
     assert.equal(result.system_prompt, renderedRuntimeConfigPrompt(result.prompt_layers ?? []));
@@ -144,6 +144,7 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
     assert.deepEqual(result.prompt_cache_profile?.cacheable_section_ids, [
       "runtime_core",
       "execution_policy",
+      "response_delivery_policy",
       "workspace_policy",
     ]);
     assert.deepEqual(result.prompt_cache_profile?.volatile_section_ids, [
@@ -158,12 +159,14 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
       system_prompt: [
         "runtime_core",
         "execution_policy",
+        "response_delivery_policy",
         "session_policy",
         "capability_policy",
         "workspace_policy",
       ],
     });
     assert.match(result.system_prompt, /Session policy:/);
+    assert.match(result.system_prompt, /Response delivery policy:/);
     assert.match(result.system_prompt, /task proposal session/i);
     assert.doesNotMatch(result.system_prompt, /OpenCode MCP tool naming:/);
     assert.doesNotMatch(result.system_prompt, /MCP callable tool names for this run:/);

@@ -5222,6 +5222,7 @@ function AssistantTurn({
             collapsedByStepId={collapsedTraceByStepId}
             onToggleStep={onToggleTraceStep}
             live={live}
+            liveOutputStarted={live && Boolean(text)}
           />
         ) : null}
 
@@ -5800,13 +5801,30 @@ function TraceStepGroup({
   collapsedByStepId,
   onToggleStep,
   live = false,
+  liveOutputStarted = false,
 }: {
   steps: ChatTraceStep[];
   collapsedByStepId: Record<string, boolean>;
   onToggleStep: (stepId: string) => void;
   live?: boolean;
+  liveOutputStarted?: boolean;
 }) {
-  const [groupExpanded, setGroupExpanded] = useState(false);
+  const [groupExpanded, setGroupExpanded] = useState(
+    live && !liveOutputStarted,
+  );
+  const previousLiveRef = useRef(live);
+  const previousLiveOutputStartedRef = useRef(liveOutputStarted);
+
+  useEffect(() => {
+    if (live && !previousLiveRef.current) {
+      setGroupExpanded(!liveOutputStarted);
+    }
+    if (live && liveOutputStarted && !previousLiveOutputStartedRef.current) {
+      setGroupExpanded(false);
+    }
+    previousLiveRef.current = live;
+    previousLiveOutputStartedRef.current = liveOutputStarted;
+  }, [live, liveOutputStarted]);
   const runningCount = steps.filter((s) => s.status === "running").length;
   const terminalErrorCount = steps.filter(
     (step) => step.kind === "phase" && step.status === "error",

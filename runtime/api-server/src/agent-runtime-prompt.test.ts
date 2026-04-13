@@ -41,6 +41,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   assert.deepEqual(prompt.promptLayers.map((layer) => layer.id), [
     "runtime_core",
     "execution_policy",
+    "response_delivery_policy",
     "session_policy",
     "capability_policy",
     "workspace_policy",
@@ -48,6 +49,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   assert.deepEqual(prompt.promptSections.map((section) => section.id), [
     "runtime_core",
     "execution_policy",
+    "response_delivery_policy",
     "session_policy",
     "capability_policy",
     "workspace_policy",
@@ -58,9 +60,11 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     "system_prompt",
     "system_prompt",
     "system_prompt",
+    "system_prompt",
   ]);
-  assert.deepEqual(prompt.promptSections.map((section) => section.priority), [100, 200, 300, 400, 600]);
+  assert.deepEqual(prompt.promptSections.map((section) => section.priority), [100, 200, 250, 300, 400, 600]);
   assert.deepEqual(prompt.promptSections.map((section) => section.volatility), [
+    "stable",
     "stable",
     "stable",
     "run",
@@ -68,6 +72,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     "workspace",
   ]);
   assert.deepEqual(prompt.promptSections.map((section) => section.precedence), [
+    "base_runtime",
     "base_runtime",
     "base_runtime",
     "session_policy",
@@ -80,9 +85,11 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     "runtime_config",
     "runtime_config",
     "runtime_config",
+    "runtime_config",
   ]);
   assert.match(prompt.systemPrompt, /^Base runtime instructions:/);
   assert.match(prompt.systemPrompt, /Execution doctrine:/);
+  assert.match(prompt.systemPrompt, /Response delivery policy:/);
   assert.match(
     prompt.systemPrompt,
     /If local git is available, treat it as an internal recovery mechanism for the agent rather than a user-facing workflow\./
@@ -110,6 +117,46 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   assert.match(
     prompt.systemPrompt,
     /Block path traversal and cross-workspace access by default, including parent-directory paths, absolute external paths, and symlink escapes\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Keep the answer inline for simple lookups, definitions, narrow factual questions, brief clarifications, and other requests that can be answered well in a short paragraph or a few bullets\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Do not create a report just because you used browser or web search tools\. Tool usage alone is not a reason to artifact the answer\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /If `write_report` is available and the full answer would be long, heavily structured, evidence-heavy, or likely to be referenced later, use `write_report` instead of placing the full content in chat\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /When the user explicitly asks you to research, investigate, study, analyze, compare, build a timeline, or summarize current or latest developments across multiple sources, default to writing a report artifact and keep the chat reply to a minimal summary unless the user explicitly asks for inline detail\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /When those research-style conditions apply and `write_report` is available, call `write_report` before your final reply\. Do not put the full synthesis in chat\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /For those research-style tasks, a todo step such as 'summarize findings for the user' still means: create the report artifact first, then send only a short user-facing summary in chat\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /If `write_report` is unavailable and you still need a report artifact, write it under `outputs\/reports\/` instead of placing the full content in chat\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /When you create a report artifact, keep the chat reply short: state the outcome, mention the report title or path, and include only the most important takeaways\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /For research-style tasks, keep the chat follow-up to one short paragraph or at most 3 concise bullets unless the user explicitly asks for inline detail\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /If you are unsure, choose inline for a short single-answer lookup and choose a report for multi-source synthesis or referenceable findings\./
   );
   assert.match(
     prompt.systemPrompt,
@@ -144,6 +191,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   assert.deepEqual(prompt.promptCacheProfile.cacheable_section_ids, [
     "runtime_core",
     "execution_policy",
+    "response_delivery_policy",
     "workspace_policy",
   ]);
   assert.deepEqual(prompt.promptCacheProfile.volatile_section_ids, [

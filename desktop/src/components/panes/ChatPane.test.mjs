@@ -501,6 +501,31 @@ test("tool trace steps are collapsed by default and first toggle expands them", 
   assert.doesNotMatch(source, /\[step\.id\]: false/);
 });
 
+test("live trace auto-expands during the run and collapses when output starts", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /function TraceStepGroup\(\{[\s\S]*live = false,[\s\S]*liveOutputStarted = false,/,
+  );
+  assert.match(
+    source,
+    /const \[groupExpanded, setGroupExpanded\] = useState\(\s*live && !liveOutputStarted,\s*\);/,
+  );
+  assert.match(
+    source,
+    /if \(live && !previousLiveRef\.current\) \{\s*setGroupExpanded\(!liveOutputStarted\);\s*\}/,
+  );
+  assert.match(
+    source,
+    /if \(live && liveOutputStarted && !previousLiveOutputStartedRef\.current\) \{\s*setGroupExpanded\(false\);\s*\}/,
+  );
+  assert.match(
+    source,
+    /<TraceStepGroup[\s\S]*live=\{live\}[\s\S]*liveOutputStarted=\{live && Boolean\(text\)\}/,
+  );
+});
+
 test("chat pane can jump to a requested sub-session run", async () => {
   const source = await readFile(sourcePath, "utf8");
 
