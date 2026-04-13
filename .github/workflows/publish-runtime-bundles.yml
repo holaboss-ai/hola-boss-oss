@@ -134,7 +134,7 @@ jobs:
           bash runtime/deploy/package_macos_runtime.sh "out/${OUTPUT_DIR}"
 
       - name: Upload Sentry source maps
-        if: ${{ secrets.SENTRY_AUTH_TOKEN != '' }}
+        if: ${{ env.SENTRY_AUTH_TOKEN != '' }}
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
@@ -191,7 +191,7 @@ jobs:
           bash runtime/deploy/package_linux_runtime.sh "out/${OUTPUT_DIR}"
 
       - name: Upload Sentry source maps
-        if: ${{ secrets.SENTRY_AUTH_TOKEN != '' }}
+        if: ${{ env.SENTRY_AUTH_TOKEN != '' }}
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}

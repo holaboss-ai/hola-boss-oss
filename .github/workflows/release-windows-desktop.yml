@@ -186,7 +186,7 @@ jobs:
           Add-Content -Path $env:GITHUB_OUTPUT -Value "installer_path=$stablePath"
 
       - name: Upload Sentry source maps
-        if: ${{ secrets.SENTRY_AUTH_TOKEN != '' }}
+        if: ${{ env.SENTRY_AUTH_TOKEN != '' }}
         working-directory: desktop
         shell: bash
         env:
