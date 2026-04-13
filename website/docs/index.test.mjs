@@ -166,6 +166,7 @@ const MEMORY_RECALL_EVOLVE_PATH = new URL(
 test("docs app exposes vitepress build and preview scripts", async () => {
   const source = await readFile(APP_PACKAGE_PATH, "utf8");
 
+  assert.match(source, /"typecheck":\s*"tsc -p tsconfig\.json --noEmit"/);
   assert.match(source, /"build":\s*"vitepress build docs"/);
   assert.match(source, /"dev":\s*"vitepress dev docs/);
   assert.match(source, /"docs:dev":\s*"vitepress dev docs/);
@@ -529,6 +530,7 @@ test("holaOS root scripts expose docs entrypoints", async () => {
 
   assert.match(source, /"docs:dev":\s*"npm --prefix website\/docs run dev"/);
   assert.match(source, /"docs:test":\s*"npm --prefix website\/docs run test"/);
+  assert.match(source, /"docs:typecheck":\s*"npm --prefix website\/docs run typecheck"/);
   assert.match(source, /"docs:build":\s*"npm --prefix website\/docs run build"/);
   assert.match(
     source,

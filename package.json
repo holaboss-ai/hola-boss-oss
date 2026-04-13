@@ -6,6 +6,7 @@
     "dev": "npm run desktop:dev",
     "docs:dev": "npm --prefix website/docs run dev",
     "docs:test": "npm --prefix website/docs run test",
+    "docs:typecheck": "npm --prefix website/docs run typecheck",
     "docs:build": "npm --prefix website/docs run build",
     "docs:preview": "npm --prefix website/docs run preview",
     "docs:deploy:staging": "npm --prefix website/docs run deploy:staging",

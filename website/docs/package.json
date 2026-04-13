@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test index.test.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "vitepress build docs",
     "dev": "vitepress dev docs --host 0.0.0.0 --port 4173",
     "docs:dev": "vitepress dev docs --host 0.0.0.0 --port 4173",
@@ -13,6 +14,8 @@
     "deploy:production": "npm run build && wrangler deploy --env production"
   },
   "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3",
     "vitepress": "^1",
     "vitepress-mermaid-renderer": "^1",
     "wrangler": "^4.80.0"
