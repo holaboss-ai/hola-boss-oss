@@ -6670,7 +6670,7 @@ function proactiveBaseUrl() {
 }
 
 function runtimeProactiveBridgeBaseUrl() {
-  return DEFAULT_PROACTIVE_URL.replace(/\/+$/, "");
+  return proactiveBaseUrl();
 }
 
 function embeddedRuntimeStartupConfigError() {
