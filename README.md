@@ -7,7 +7,7 @@
 <p align="center"><strong>The agent environment for long-horizon work, continuity, and self-evolution.</strong></p>
 
 <p align="center">
-  <a href="https://github.com/holaboss-ai/holaboss-ai/actions/workflows/oss-ci.yml"><img src="https://github.com/holaboss-ai/holaboss-ai/actions/workflows/oss-ci.yml/badge.svg" alt="OSS CI" /></a>
+  <a href="https://github.com/holaboss-ai/holaOS/actions/workflows/ci.yml"><img src="https://github.com/holaboss-ai/holaOS/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/node-22%2B-43853d" alt="Node 22+" />
   <img src="https://img.shields.io/badge/platform-macOS%20supported,%20Windows%20%26%20Linux%20in%20progress-f28c28" alt="macOS supported, Windows and Linux in progress" />
   <img src="https://img.shields.io/badge/desktop-Electron-47848f" alt="Electron desktop" />

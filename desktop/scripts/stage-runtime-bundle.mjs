@@ -22,9 +22,8 @@ const runtimePlatform = resolveRuntimePlatform();
 const stageParentDir = path.join(repoRoot, "out");
 const stageDir = path.join(stageParentDir, runtimeBundleDirName(runtimePlatform));
 const defaultLocalRuntimeDir = path.join(os.tmpdir(), `holaboss-runtime-${runtimePlatform}-full`);
-const sourceRepo = process.env.HOLABOSS_RUNTIME_SOURCE_REPO?.trim() || "holaboss-ai/holaboss-ai";
-const runtimeReleaseTagPrefix = "holaboss-runtime-";
-const legacyStableReleaseTagPrefix = "holaboss-";
+const sourceRepo = process.env.HOLABOSS_RUNTIME_SOURCE_REPO?.trim() || "holaboss-ai/holaOS";
+const requestedReleaseTag = process.env.HOLABOSS_RUNTIME_RELEASE_TAG?.trim() || "";
 const runtimeReleaseAssetPrefix = `holaboss-runtime-${runtimePlatform}-`;
 const githubReleaseListPageSize = 50;
 
@@ -147,19 +146,21 @@ function findRuntimeReleaseAsset(release) {
   }) ?? null;
 }
 
-function isRuntimeChannelRelease(release) {
+function isEligibleRelease(release) {
   const tag = normalizedReleaseTag(release);
-  return Boolean(tag) && !release?.draft && tag.startsWith(runtimeReleaseTagPrefix);
+  return Boolean(tag) && !release?.draft;
 }
 
-function isLegacyStableRuntimeRelease(release) {
-  const tag = normalizedReleaseTag(release);
-  return (
-    Boolean(tag) &&
-    !release?.draft &&
-    !tag.startsWith(runtimeReleaseTagPrefix) &&
-    tag.startsWith(legacyStableReleaseTagPrefix)
-  );
+function isStableRelease(release) {
+  return isEligibleRelease(release) && !release?.prerelease;
+}
+
+function isPrerelease(release) {
+  return isEligibleRelease(release) && Boolean(release?.prerelease);
+}
+
+function isRequestedRelease(release) {
+  return requestedReleaseTag !== "" && normalizedReleaseTag(release) === requestedReleaseTag;
 }
 
 function sortReleasesByPublishedAtDescending(releases) {
@@ -196,15 +197,20 @@ async function stageFromGithubReleaseSelection(token) {
     throw new Error(`GitHub returned an invalid release list for ${sourceRepo}.`);
   }
 
-  const runtimeRelease = sortReleasesByPublishedAtDescending(releases).find((release) => {
-    return isRuntimeChannelRelease(release) && findRuntimeReleaseAsset(release);
+  const sortedReleases = sortReleasesByPublishedAtDescending(releases);
+  const requestedRelease = sortedReleases.find((release) => {
+    return isRequestedRelease(release) && findRuntimeReleaseAsset(release);
   }) ?? null;
 
-  const legacyStableRelease = sortReleasesByPublishedAtDescending(releases).find((release) => {
-    return isLegacyStableRuntimeRelease(release) && findRuntimeReleaseAsset(release);
+  const stableRelease = sortedReleases.find((release) => {
+    return isStableRelease(release) && findRuntimeReleaseAsset(release);
   }) ?? null;
 
-  const release = runtimeRelease ?? legacyStableRelease;
+  const prereleaseRelease = sortedReleases.find((release) => {
+    return isPrerelease(release) && findRuntimeReleaseAsset(release);
+  }) ?? null;
+
+  const release = requestedRelease ?? stableRelease ?? prereleaseRelease;
   const asset = release ? findRuntimeReleaseAsset(release) : null;
 
   if (!release || !asset) {
@@ -213,9 +219,15 @@ async function stageFromGithubReleaseSelection(token) {
     );
   }
 
-  if (!runtimeRelease && legacyStableRelease) {
+  if (requestedReleaseTag && !requestedRelease) {
     log(
-      `falling back to legacy stable runtime asset release ${normalizedReleaseTag(legacyStableRelease)} while runtime-channel releases are unavailable`,
+      `requested runtime release ${requestedReleaseTag} is unavailable; falling back to the latest eligible release asset`,
+    );
+  }
+
+  if (!requestedRelease && !stableRelease && prereleaseRelease) {
+    log(
+      `no stable release runtime asset was found; falling back to prerelease ${normalizedReleaseTag(prereleaseRelease)}`,
     );
   }
 
@@ -294,7 +306,7 @@ async function stageRuntimeBundle() {
   }
 
   throw new Error(
-    "No runtime bundle source found. Set HOLABOSS_RUNTIME_DIR, HOLABOSS_RUNTIME_TARBALL, HOLABOSS_RUNTIME_BUNDLE_URL, or make sure the latest GitHub release asset is reachable."
+    "No runtime bundle source found. Set HOLABOSS_RUNTIME_DIR, HOLABOSS_RUNTIME_TARBALL, HOLABOSS_RUNTIME_BUNDLE_URL, or make sure a release asset with the requested runtime tarball is reachable."
   );
 }
 

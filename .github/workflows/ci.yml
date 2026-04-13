@@ -1,6 +1,16 @@
-name: Release macOS Desktop
+name: CI
 
 on:
+  pull_request:
+    paths-ignore:
+      - .github/workflows/deploy-docs.yml
+      - website/docs/**
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - .github/workflows/deploy-docs.yml
+      - website/docs/**
   workflow_dispatch:
     inputs:
       ref:
@@ -23,15 +33,153 @@ on:
         type: boolean
 
 permissions:
-  contents: write
-
-concurrency:
-  group: release-macos-desktop-${{ inputs.release_tag }}
-  cancel-in-progress: true
+  contents: read
 
 jobs:
+  desktop-typecheck:
+    if: ${{ github.event_name != 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            sdk/app-sdk/package-lock.json
+            desktop/package-lock.json
+
+      - name: Prepare desktop (build SDK + install desktop deps)
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: npm run desktop:prepare
+
+      - name: Desktop typecheck
+        run: npm run desktop:typecheck
+
+  runtime-tests:
+    if: ${{ github.event_name != 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            runtime/harness-host/package-lock.json
+            runtime/state-store/package-lock.json
+
+      - name: Install runtime state store dependencies
+        run: npm --prefix runtime/state-store ci
+
+      - name: Build runtime state store
+        run: npm --prefix runtime/state-store run build
+
+      - name: Install runtime harness host dependencies
+        run: npm --prefix runtime/harness-host ci
+
+      - name: Build runtime harness host
+        run: npm --prefix runtime/harness-host run build
+
+      - name: Runtime state store tests
+        run: npm run runtime:state-store:test
+
+      - name: Runtime harness host tests
+        run: npm run runtime:harness-host:test
+
+  sdk-bridge:
+    if: ${{ github.event_name != 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --cwd sdk/bridge
+
+      - name: Run tests
+        run: bun --cwd sdk/bridge run test
+
+      - name: Build
+        run: bun --cwd sdk/bridge run build
+
+  sdk-app-sdk:
+    if: ${{ github.event_name != 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: sdk/app-sdk/package-lock.json
+
+      - name: Install dependencies
+        run: npm --prefix sdk/app-sdk install
+
+      - name: Typecheck
+        run: npm --prefix sdk/app-sdk run typecheck
+
+      - name: Run tests
+        run: npm --prefix sdk/app-sdk run test
+
+      - name: Build
+        run: npm --prefix sdk/app-sdk run build
+
+  runtime-api-server:
+    if: ${{ github.event_name != 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            runtime/api-server/package-lock.json
+            runtime/state-store/package-lock.json
+
+      - name: Install runtime API server dependencies
+        run: npm --prefix runtime/api-server ci
+
+      - name: Install runtime state store dependencies
+        run: npm --prefix runtime/state-store ci
+
+      - name: Build runtime state store
+        run: npm --prefix runtime/state-store run build
+
+      - name: Runtime API server typecheck
+        run: npm --prefix runtime/api-server run typecheck
+
+      - name: Runtime API server tests
+        run: npm --prefix runtime/api-server run test
+
+      - name: Runtime API server build
+        run: npm --prefix runtime/api-server run build
+
   ensure-release:
-    name: Ensure desktop release exists
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     outputs:
       release_ref: ${{ steps.release_meta.outputs.release_ref }}
@@ -48,19 +196,26 @@ jobs:
       - name: Compute release metadata
         id: release_meta
         run: |
+          release_tag="${{ inputs.release_tag }}"
+          if ! printf '%s' "${release_tag}" | grep -Eq '^holaboss-desktop-[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "release_tag must match holaboss-desktop-YYYY.MDD.R; got ${release_tag}" >&2
+            exit 1
+          fi
+
+          release_version="${release_tag#holaboss-desktop-}"
           release_title="${{ inputs.release_title }}"
           if [ -z "${release_title}" ]; then
-            release_title="${{ inputs.release_tag }}"
+            release_title="Holaboss ${release_version}"
           fi
 
           {
             echo "release_ref=${{ inputs.ref }}"
             echo "release_sha=$(git rev-parse HEAD)"
-            echo "release_tag=${{ inputs.release_tag }}"
+            echo "release_tag=${release_tag}"
             echo "release_title=${release_title}"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Ensure desktop release exists
+      - name: Ensure release exists
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ steps.release_meta.outputs.release_sha }}
@@ -109,12 +264,70 @@ jobs:
               --notes-file "${notes_path}"
           fi
 
-  build-signed-macos-app:
-    name: Build signed macOS app bundle
+  build-linux-runtime:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     needs: ensure-release
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.ensure-release.outputs.release_tag }}
+      RUNTIME_ASSET_NAME: holaboss-runtime-linux.tar.gz
+      RUNTIME_ARTIFACT_NAME: holaboss-runtime-linux
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.ensure-release.outputs.release_ref }}
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Build Linux runtime bundle
+        run: bash runtime/deploy/package_linux_runtime.sh out/runtime-linux
+
+      - name: Upload runtime Sentry source maps
+        if: ${{ env.SENTRY_AUTH_TOKEN != '' }}
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: holaboss-runtime
+        run: |
+          npx @sentry/cli sourcemaps upload \
+            --release "${{ env.RELEASE_TAG }}" \
+            --url-prefix "~/" \
+            runtime/api-server/dist
+
+      - name: Archive Linux runtime bundle
+        run: tar -C out -czf "out/${RUNTIME_ASSET_NAME}" runtime-linux
+
+      - name: Upload Linux runtime bundle artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.RUNTIME_ARTIFACT_NAME }}-${{ inputs.release_tag }}
+          path: |
+            out/${{ env.RUNTIME_ASSET_NAME }}
+            out/runtime-linux/package-metadata.json
+            out/runtime-linux/runtime/metadata.json
+          if-no-files-found: error
+
+      - name: Upload Linux runtime release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${RELEASE_TAG}" "out/${RUNTIME_ASSET_NAME}" --clobber
+
+  build-signed-macos-app:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: ensure-release
+    permissions:
+      contents: write
     runs-on: macos-latest
     env:
       RELEASE_TAG: ${{ needs.ensure-release.outputs.release_tag }}
+      RUNTIME_ASSET_NAME: holaboss-runtime-macos.tar.gz
+      RUNTIME_ARTIFACT_NAME: holaboss-runtime-macos
       SIGNED_APP_ARTIFACT_NAME: holaboss-desktop-signed-macos-app
       MAC_CERTIFICATE: ${{ secrets.MAC_CERTIFICATE }}
       MAC_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
@@ -135,19 +348,37 @@ jobs:
             desktop/package-lock.json
 
       - name: Build macOS runtime bundle
+        run: bash runtime/deploy/package_macos_runtime.sh out/runtime-macos
+
+      - name: Upload runtime Sentry source maps
+        if: ${{ env.SENTRY_AUTH_TOKEN != '' }}
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: holaboss-runtime
         run: |
-          bash runtime/deploy/package_macos_runtime.sh out/runtime-macos
-          tar -C out -czf out/holaboss-runtime-macos.tar.gz runtime-macos
+          npx @sentry/cli sourcemaps upload \
+            --release "${{ env.RELEASE_TAG }}" \
+            --url-prefix "~/" \
+            runtime/api-server/dist
+
+      - name: Archive macOS runtime bundle
+        run: tar -C out -czf "out/${RUNTIME_ASSET_NAME}" runtime-macos
 
       - name: Upload macOS runtime bundle artifact
         uses: actions/upload-artifact@v7
         with:
-          name: holaboss-runtime-macos-release-${{ github.run_id }}
+          name: ${{ env.RUNTIME_ARTIFACT_NAME }}-${{ inputs.release_tag }}
           path: |
-            out/holaboss-runtime-macos.tar.gz
+            out/${{ env.RUNTIME_ASSET_NAME }}
             out/runtime-macos/package-metadata.json
             out/runtime-macos/runtime/metadata.json
           if-no-files-found: error
+
+      - name: Upload macOS runtime release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${RELEASE_TAG}" "out/${RUNTIME_ASSET_NAME}" --clobber
 
       - name: Prepare desktop (build SDK + install desktop deps)
         run: npm run desktop:prepare
@@ -168,7 +399,7 @@ jobs:
         shell: bash
         env:
           HOLABOSS_RELEASE_TAG: ${{ env.RELEASE_TAG }}
-          HOLABOSS_RUNTIME_TARBALL: ${{ github.workspace }}/out/holaboss-runtime-macos.tar.gz
+          HOLABOSS_RUNTIME_TARBALL: ${{ github.workspace }}/out/${{ env.RUNTIME_ASSET_NAME }}
           HOLABOSS_AUTH_BASE_URL: ${{ vars.HOLABOSS_AUTH_BASE_URL }}
           HOLABOSS_AUTH_SIGN_IN_URL: ${{ vars.HOLABOSS_AUTH_SIGN_IN_URL }}
           HOLABOSS_BACKEND_BASE_URL: ${{ vars.HOLABOSS_BACKEND_BASE_URL }}
@@ -210,7 +441,7 @@ jobs:
           app_path="$(cd "$(dirname "${app_path}")" && pwd)/$(basename "${app_path}")"
           echo "app_path=${app_path}" >> "${GITHUB_OUTPUT}"
 
-      - name: Upload Sentry source maps
+      - name: Upload desktop Sentry source maps
         if: ${{ env.SENTRY_AUTH_TOKEN != '' }}
         working-directory: desktop
         env:
@@ -236,7 +467,7 @@ jobs:
             echo "app-update.yml is missing from signed app bundle" >&2
             exit 1
           fi
-      
+
       - name: Archive signed macOS app bundle
         working-directory: desktop
         id: archive_signed_app
@@ -255,7 +486,7 @@ jobs:
           if-no-files-found: error
 
   notarize-macos-app:
-    name: Notarize signed macOS app bundle
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     needs:
       - ensure-release
       - build-signed-macos-app
@@ -398,10 +629,12 @@ jobs:
           if-no-files-found: error
 
   release-macos-desktop:
-    name: Build signed macOS desktop release artifacts
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     needs:
       - ensure-release
       - notarize-macos-app
+    permissions:
+      contents: write
     runs-on: macos-latest
     env:
       RELEASE_TAG: ${{ needs.ensure-release.outputs.release_tag }}
@@ -523,3 +756,171 @@ jobs:
           gh release upload "${RELEASE_TAG}" \
             "${upload_paths[@]}" \
             --clobber
+
+  release-windows-desktop:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: ensure-release
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ needs.ensure-release.outputs.release_tag }}
+      DESKTOP_ASSET_PREFIX: holaboss-desktop-windows
+      DESKTOP_RELEASE_ASSET_NAME: Holaboss-windows-x64-setup.exe
+      RUNTIME_ASSET_NAME: holaboss-runtime-windows.tar.gz
+      WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.ensure-release.outputs.release_ref }}
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            sdk/app-sdk/package-lock.json
+            desktop/package-lock.json
+
+      - name: Prepare desktop (build SDK + install desktop deps)
+        run: npm run desktop:prepare
+
+      - name: Build Windows desktop installer
+        id: build_windows_installer
+        working-directory: desktop
+        shell: pwsh
+        env:
+          HOLABOSS_RELEASE_TAG: ${{ env.RELEASE_TAG }}
+          HOLABOSS_AUTH_BASE_URL: ${{ vars.HOLABOSS_AUTH_BASE_URL }}
+          HOLABOSS_AUTH_SIGN_IN_URL: ${{ vars.HOLABOSS_AUTH_SIGN_IN_URL }}
+          HOLABOSS_BACKEND_BASE_URL: ${{ vars.HOLABOSS_BACKEND_BASE_URL }}
+          HOLABOSS_DESKTOP_CONTROL_PLANE_BASE_URL: ${{ vars.HOLABOSS_DESKTOP_CONTROL_PLANE_BASE_URL }}
+          HOLABOSS_PROJECTS_URL: ${{ vars.HOLABOSS_PROJECTS_URL }}
+          HOLABOSS_MARKETPLACE_URL: ${{ vars.HOLABOSS_MARKETPLACE_URL }}
+          HOLABOSS_PROACTIVE_URL: ${{ vars.HOLABOSS_PROACTIVE_URL }}
+          GITHUB_TOKEN: ${{ github.token }}
+          CSC_LINK: ${{ env.WINDOWS_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ env.WINDOWS_CERTIFICATE_PASSWORD }}
+          WIN_CSC_LINK: ${{ env.WINDOWS_CERTIFICATE }}
+          WIN_CSC_KEY_PASSWORD: ${{ env.WINDOWS_CERTIFICATE_PASSWORD }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: |
+          if (-not $env:WINDOWS_CERTIFICATE -or -not $env:WINDOWS_CERTIFICATE_PASSWORD) {
+            throw "Windows desktop release requires WINDOWS_CERTIFICATE and WINDOWS_CERTIFICATE_PASSWORD so the public installer is code-signed."
+          }
+
+          Write-Host "Building signed Windows installer."
+
+          npm run dist:win:local
+
+          $installer = Get-ChildItem -Path out/release -File -Recurse |
+            Where-Object {
+              $_.Extension -eq ".exe" -and
+              $_.Name -notmatch "unins|elevate" -and
+              $_.FullName -notmatch "win-unpacked"
+            } |
+            Sort-Object Length -Descending |
+            Select-Object -First 1
+
+          if (-not $installer) {
+            throw "No Windows installer .exe was produced under desktop/out/release."
+          }
+
+          if (-not (Test-Path -LiteralPath (Join-Path $PWD "out/runtime-windows"))) {
+            throw "No staged Windows runtime bundle was produced under desktop/out/runtime-windows."
+          }
+
+          tar -C out -czf "out/$env:RUNTIME_ASSET_NAME" runtime-windows
+
+          $installerPath = $installer.FullName
+          $stablePath = Join-Path $PWD "out/release/$env:DESKTOP_RELEASE_ASSET_NAME"
+          $runtimeAssetPath = Join-Path $PWD "out/$env:RUNTIME_ASSET_NAME"
+          Copy-Item -LiteralPath $installerPath -Destination $stablePath -Force
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "generated_installer_path=$installerPath"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "installer_path=$stablePath"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "runtime_asset_path=$runtimeAssetPath"
+
+      - name: Upload desktop Sentry source maps
+        if: ${{ env.SENTRY_AUTH_TOKEN != '' }}
+        working-directory: desktop
+        shell: bash
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: holaboss-desktop
+        run: |
+          npx @sentry/cli sourcemaps upload \
+            --release "${{ env.RELEASE_TAG }}" \
+            --url-prefix "~/" \
+            out/dist out/dist-electron
+
+      - name: Validate Windows auto-update artifacts
+        shell: pwsh
+        run: |
+          $manifestPath = Join-Path $PWD "desktop/out/release/latest.yml"
+          if (-not (Test-Path -LiteralPath $manifestPath)) {
+            throw "latest.yml was not generated"
+          }
+
+          $blockmaps = Get-ChildItem -Path desktop/out/release -File -Filter *.blockmap
+          if (-not $blockmaps) {
+            throw "No Windows blockmap was produced under desktop/out/release."
+          }
+
+      - name: Upload Windows release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.DESKTOP_ASSET_PREFIX }}-${{ inputs.release_tag }}
+          path: |
+            desktop/out/release/*.exe
+            desktop/out/release/*.yml
+            desktop/out/release/*.blockmap
+            desktop/out/${{ env.RUNTIME_ASSET_NAME }}
+            desktop/out/runtime-windows/package-metadata.json
+            desktop/out/runtime-windows/runtime/metadata.json
+          if-no-files-found: error
+
+      - name: Upload Windows release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GENERATED_INSTALLER_PATH: ${{ steps.build_windows_installer.outputs.generated_installer_path }}
+          INSTALLER_PATH: ${{ steps.build_windows_installer.outputs.installer_path }}
+          RUNTIME_ASSET_PATH: ${{ steps.build_windows_installer.outputs.runtime_asset_path }}
+        run: |
+          if (-not $env:INSTALLER_PATH) {
+            throw "Installer path output was not set."
+          }
+
+          if (-not $env:GENERATED_INSTALLER_PATH) {
+            throw "Generated installer path output was not set."
+          }
+
+          if (-not $env:RUNTIME_ASSET_PATH) {
+            throw "Runtime asset path output was not set."
+          }
+
+          $manifestPath = Join-Path $PWD "desktop/out/release/latest.yml"
+          if (-not (Test-Path -LiteralPath $manifestPath)) {
+            throw "latest.yml was not generated"
+          }
+
+          $uploadPaths = @($env:INSTALLER_PATH)
+          if ($env:GENERATED_INSTALLER_PATH -ne $env:INSTALLER_PATH) {
+            $uploadPaths += $env:GENERATED_INSTALLER_PATH
+          }
+          $uploadPaths += $manifestPath
+          $uploadPaths += $env:RUNTIME_ASSET_PATH
+
+          $blockmapPaths = Get-ChildItem -Path desktop/out/release -File -Filter *.blockmap |
+            ForEach-Object { $_.FullName }
+          if (-not $blockmapPaths) {
+            throw "No Windows blockmap was produced under desktop/out/release."
+          }
+          $uploadPaths += $blockmapPaths
+
+          gh release upload $env:RELEASE_TAG @uploadPaths --clobber

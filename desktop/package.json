@@ -25,6 +25,7 @@
     "dev:runtime:watch": "node scripts/watch-runtime-bundle.mjs",
     "dev:electron:run": "wait-on tcp:5173 file:out/dist-electron/main.cjs && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electronmon out/dist-electron/main.cjs",
     "release:version": "node scripts/release-version.mjs",
+    "release:tag": "node scripts/release-version.mjs --tag",
     "prepare:runtime": "node scripts/stage-runtime-bundle.mjs",
     "prepare:runtime:macos": "cross-env HOLABOSS_RUNTIME_PLATFORM=macos node scripts/stage-runtime-bundle.mjs",
     "prepare:runtime:linux": "cross-env HOLABOSS_RUNTIME_PLATFORM=linux node scripts/stage-runtime-bundle.mjs",

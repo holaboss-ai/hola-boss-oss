@@ -63,7 +63,7 @@ Before running `npm run dev`, copy `desktop/.env.example` to `desktop/.env` and 
 cp .env.example .env
 ```
 
-`prepare:runtime` downloads the latest runtime-channel bundle for the current host platform from GitHub Releases and stages it into `out/runtime-<platform>/`.
+`prepare:runtime` downloads the latest release-bundled runtime for the current host platform from GitHub Releases and stages it into `out/runtime-<platform>/`.
 Each staged runtime bundle is self-contained and now carries the runtime API, bundled Node/npm, and bundled Python.
 
 ## Build
@@ -115,7 +115,9 @@ The staging script accepts one of:
 - `HOLABOSS_RUNTIME_DIR=/absolute/path/to/runtime-<platform>`
 - `HOLABOSS_RUNTIME_TARBALL=/absolute/path/to/holaboss-runtime-<platform>-<sha>.tar.gz`
 - `HOLABOSS_RUNTIME_BUNDLE_URL=https://.../holaboss-runtime-<platform>-<sha>.tar.gz`
-- `HOLABOSS_GITHUB_TOKEN=...` or `GITHUB_TOKEN=...` to fetch the latest runtime-channel release asset from GitHub Releases
+- `HOLABOSS_GITHUB_TOKEN=...` or `GITHUB_TOKEN=...` to fetch the latest stable release asset from GitHub Releases
+- `HOLABOSS_RUNTIME_RELEASE_TAG=holaboss-desktop-YYYY.MDD.R` to fetch the runtime asset from a specific release tag instead of the latest stable release
+- `HOLABOSS_RUNTIME_SOURCE_REPO=owner/repo` to override the GitHub repository used for release asset lookup
 - `HOLABOSS_RUNTIME_PLATFORM=macos|linux|windows` to override the auto-detected target platform when needed
 
 Runtime packagers can also override the bundled Python source when needed:
@@ -201,25 +203,34 @@ Notes:
 
 ### Signed Product Release
 
-Signed macOS distribution is handled by the manual `.github/workflows/release-macos-desktop.yml` workflow. Normal pushes continue to run CI and publish runtime bundles separately; the signed DMG is only built when you explicitly trigger the desktop release workflow.
+Desktop validation and desktop release packaging now share the single `.github/workflows/ci.yml` workflow, whose display name is `CI`.
 
-Windows distribution is handled by the manual `.github/workflows/release-windows-desktop.yml` workflow. It builds the Windows installer on `windows-latest`, uploads the produced NSIS installer to the chosen GitHub release, and requires `WINDOWS_CERTIFICATE` and `WINDOWS_CERTIFICATE_PASSWORD` so the public installer is code-signed. The workflow now fails fast instead of publishing an unsigned installer.
+On pull requests and pushes to `main`, `CI` runs the normal validation jobs only. On manual dispatch, that same workflow:
+- checks out the requested `ref`
+- creates or updates the requested GitHub release tag
+- builds and uploads Linux, macOS, and Windows runtime tarballs as release assets
+- builds the signed and notarized macOS app, then uploads the DMG, ZIP, blockmaps, and `latest-mac.yml`
+- builds the signed Windows NSIS installer, then uploads the installer, blockmaps, and `latest.yml`
 
 Release channel policy:
-- runtime-only bundle releases publish under `holaboss-runtime-*` and are treated as prereleases
-- desktop-shippable stable releases stay under `holaboss-*`
-- the in-app desktop update notice is intended to track desktop-shippable releases, not runtime-only bundle releases
+- there are no standalone runtime-only GitHub releases anymore
+- runtime bundles are attached to the same desktop release tag as the installable macOS and Windows artifacts
+- desktop-shippable releases publish under `holaboss-desktop-YYYY.MDD.R`
+- the in-app desktop updater is still intended to track desktop releases, not arbitrary runtime assets
 
 Desktop release versioning:
 - use stable semver in `YYYY.MDD.R` format
 - `YYYY` = year, `MDD` = month without a leading zero plus a two-digit day, `R` = release number for that date
 - examples: `2026.410.1`, `2026.410.2`, `2026.1113.1`
 - do not zero-pad the month in the middle segment; `2026.0410.1` is not valid semver
+- desktop GitHub release tags must be `holaboss-desktop-YYYY.MDD.R`
 - the desktop packager derives the app update version from the trailing `X.Y.Z` suffix in `release_tag`, so tags should end with the same `YYYY.MDD.R` value
 - to print a version for today, run `npm --prefix desktop run release:version`
+- to print the full desktop release tag for today, run `npm --prefix desktop run release:tag`
 - to print the second release for a specific day, run `npm --prefix desktop run release:version -- 2 --date 2026-04-10`
+- to print the second release tag for a specific day, run `npm --prefix desktop run release:tag -- 2 --date 2026-04-10`
 
-The desktop release workflow requires these repository secrets and fails fast when any of them are missing:
+The manual `CI` release path requires these repository secrets and fails fast when any of them are missing:
 
 - `MAC_CERTIFICATE`: base64-encoded `Developer ID Application` `.p12`
 - `MAC_CERTIFICATE_PASSWORD`: password for the `.p12`
@@ -229,14 +240,16 @@ The desktop release workflow requires these repository secrets and fails fast wh
 - `WINDOWS_CERTIFICATE`: base64-encoded or file-backed Windows code-signing certificate
 - `WINDOWS_CERTIFICATE_PASSWORD`: password for the Windows certificate
 
-When triggering the workflow, provide:
+When manually triggering `CI`, provide:
 
 - `ref`: the branch, tag, or commit you want to ship
-- `release_tag`: the GitHub release tag to create or update
+- `release_tag`: the GitHub release tag to create or update, in `holaboss-desktop-YYYY.MDD.R` format
 - `release_title`: optional display title for the GitHub release
 - `prerelease`: whether the GitHub release should be marked as a prerelease when first created
 
-The workflow builds a matching macOS runtime bundle from that ref, maps the Apple secrets to `electron-builder`'s `CSC_LINK`, `CSC_KEY_PASSWORD`, and Apple notarization environment variables, then uploads the signed DMG to the chosen GitHub release. The desktop build config uses `hardenedRuntime` plus an explicit mac entitlements plist at `resources/entitlements.mac.plist`.
+The workflow builds matching runtime tarballs from that ref, maps the Apple and Windows signing secrets to `electron-builder`, and uploads all release assets to the chosen GitHub release. The desktop build config uses `hardenedRuntime` plus an explicit mac entitlements plist at `resources/entitlements.mac.plist`.
+
+Docs publishing remains separate in `.github/workflows/deploy-docs.yml` and automatically runs only for docs changes.
 
 After a signed build, validate the produced app locally with:
 
