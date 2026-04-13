@@ -50,6 +50,8 @@ jobs:
       # SDK must be installed + built before desktop can be typechecked
       # or bundled. `desktop:prepare` chains both in the right order.
       - name: Prepare desktop (build SDK + install desktop deps)
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
         run: npm run desktop:prepare
 
       - name: Desktop typecheck
