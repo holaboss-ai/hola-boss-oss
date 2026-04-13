@@ -186,7 +186,7 @@ jobs:
           Add-Content -Path $env:GITHUB_OUTPUT -Value "installer_path=$stablePath"
 
       - name: Upload Sentry source maps
-        if: ${{ secrets.SENTRY_AUTH_TOKEN != '' }}
+        if: ${{ env.SENTRY_AUTH_TOKEN != '' }}
         working-directory: desktop
         shell: bash
         env:
@@ -194,9 +194,10 @@ jobs:
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: holaboss-desktop
         run: |
-          npx @sentry/cli releases files "${{ env.RELEASE_TAG }}" \
-            upload-sourcemaps out/dist out/dist-electron \
-            --url-prefix "~/"
+          npx @sentry/cli sourcemaps upload \
+            --release "${{ env.RELEASE_TAG }}" \
+            --url-prefix "~/" \
+            out/dist out/dist-electron
 
       - name: Validate Windows auto-update artifacts
         shell: pwsh
