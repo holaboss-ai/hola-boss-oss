@@ -99,8 +99,12 @@ jobs:
           cache: npm
           cache-dependency-path: sdk/app-sdk/package-lock.json
 
+      # Use `npm install` rather than `npm ci` because the committed
+      # lockfile is generated on macOS and can be missing platform-specific
+      # optional transitive deps (e.g. @emnapi/core, @emnapi/runtime) that
+      # Linux CI needs. `npm install` heals the drift without erroring.
       - name: Install dependencies
-        run: npm --prefix sdk/app-sdk ci
+        run: npm --prefix sdk/app-sdk install
 
       - name: Typecheck
         run: npm --prefix sdk/app-sdk run typecheck

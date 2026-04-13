@@ -92,7 +92,7 @@ jobs:
         working-directory: ${{ needs.validate.outputs.package_dir }}
         run: |
           if [ -f package-lock.json ]; then
-            npm ci
+            npm install
           else
             bun install
           fi
@@ -124,7 +124,7 @@ jobs:
         working-directory: ${{ needs.validate.outputs.package_dir }}
         run: |
           if [ -f package-lock.json ]; then
-            npm ci
+            npm install
           else
             bun install
           fi
@@ -220,7 +220,7 @@ jobs:
         working-directory: ${{ needs.validate.outputs.package_dir }}
         run: |
           if [ -f package-lock.json ]; then
-            npm ci
+            npm install
           else
             bun install
           fi
