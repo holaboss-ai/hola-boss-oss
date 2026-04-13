@@ -14,10 +14,12 @@ That split is deliberate. It prevents runtime state, long-term memory, and works
 
 - session continuity lives in runtime-owned artifacts such as `turn_results` and compaction boundaries in `state/runtime.db`
 - session-memory continuity projections live under `memory/workspace/<workspace-id>/runtime/session-memory/`
-- operational projections live under `memory/workspace/<workspace-id>/runtime/`
+- operational projections live under `memory/workspace/<workspace-id>/runtime/`, including the latest turn, session state, blockers, recent turns, and permission-blocker snapshots
 - durable recalled memory lives under `memory/workspace/<workspace-id>/knowledge/`, `memory/preference/`, and `memory/identity/`
 
 The canonical operator profile also lives in `state/runtime.db`. That profile is runtime-owned identity state, not markdown memory. The runtime also keeps pending user-memory proposals in `state/runtime.db` so the current run can use them ephemerally without promoting them into durable memory yet.
+
+Accepted user-memory proposals are the separate path that promotes user preference memory into `memory/preference/` or updates the runtime profile in `state/runtime.db`. The background evolve path does not create user preference or profile memory on its own.
 
 The easiest way to think about the storage boundary is:
 

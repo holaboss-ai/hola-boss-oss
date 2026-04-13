@@ -19,7 +19,7 @@ Runtime files under `runtime/` are for inspection and restoration. They are not 
 
 ## Durable memory types
 
-The durable memory catalog currently supports these classes:
+The durable memory catalog and recall governance currently support these classes:
 
 - `preference`
   - stable user preferences such as response style
@@ -34,7 +34,39 @@ The durable memory catalog currently supports these classes:
 - `reference`
   - durable references that should usually be reconfirmed before use
 
-Current writeback is intentionally conservative. The runtime should only promote facts and procedures that are explicit enough to survive beyond a single turn, and it should keep transient runtime state out of durable knowledge.
+Current automatic writeback is intentionally conservative. The evolve phase promotes workspace facts, procedures, and repeated permission blockers when they are explicit enough to survive beyond a single turn, and it keeps transient runtime state out of durable knowledge. User preference memory and runtime-profile updates come from accepted user-memory proposals, not from the queued evolve extraction pass.
+
+## What makes memory durable
+
+In `holaOS`, something should become durable memory only when it meets most of these standards:
+
+- it is stable across runs rather than tied to one transient execution
+- it is useful without replaying the full transcript
+- it is worth reusing later as a fact, procedure, blocker, or preference
+- it would still make sense to a human reading it outside the original run
+
+Things usually do not qualify when they are just execution residue:
+
+- a one-off error log
+- a temporary tool failure
+- a short-lived blocker that only mattered in one turn
+- a verbose transcript fragment that has not been reduced into reusable meaning
+
+That is why durable memory is intentionally smaller and more opinionated than session continuity. It is meant to capture what should remain true or useful later, not everything that happened.
+
+## How durable memory is written
+
+There are currently two durable write paths:
+
+- background evolve writeback
+  - writes workspace durable memory under `workspace/<workspace-id>/knowledge/`
+  - updates the durable memory catalog in `state/runtime.db`
+  - refreshes `workspace/<workspace-id>/MEMORY.md` and the root `MEMORY.md` when indexed scopes change
+- accepted user-memory proposals
+  - capture explicit user preferences from input
+  - persist accepted preference memory into markdown under `memory/preference/`
+  - update the canonical runtime profile for accepted profile proposals
+  - refresh durable markdown indexes for accepted preference-memory writes
 
 ## What lives where
 
@@ -49,7 +81,7 @@ Use these rules of thumb when reasoning about durable state:
 - `memory/identity/`
   - durable user identity facts beyond the canonical runtime profile
 
-If it should be recalled later without replaying the full session, it belongs in durable memory. If it is a standing workspace rule, it belongs in `AGENTS.md`.
+If it should be recalled later without replaying the full session, it belongs in durable memory. If it is a standing workspace rule, it belongs in `AGENTS.md`. If it is only a runtime profile field such as the canonical user name, it stays in `state/runtime.db` until a separate path promotes related durable identity memory.
 
 ## Namespace boundaries
 
@@ -65,4 +97,4 @@ The current namespace model allows:
 - workspace scope: `workspace/<workspace-id>/*`
 - user/global scopes such as `preference/*` and `identity/*`
 
-Cross-workspace access is blocked. A workspace can only read or write its own scoped memory.
+Cross-workspace access is blocked. The runtime only allows `MEMORY.md`, `workspace/<workspace-id>/*`, `preference/*`, and `identity/*`, rejects absolute paths and `..` traversal, and prevents writes that escape the configured memory root.

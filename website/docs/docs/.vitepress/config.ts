@@ -144,6 +144,14 @@ export default defineConfig({
             items: [
               { text: "Runtime APIs", link: "/build-on-holaos/runtime-apis" },
               {
+                text: "Run Compilation",
+                link: "/build-on-holaos/runtime/run-compilation",
+              },
+              {
+                text: "Runtime State Store",
+                link: "/build-on-holaos/runtime/state-store",
+              },
+              {
                 text: "Independent Deploy",
                 link: "/build-on-holaos/independent-deploy",
               },

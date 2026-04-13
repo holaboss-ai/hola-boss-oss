@@ -37,6 +37,12 @@ If you skip step one, later runtime or app failures are harder to interpret beca
     description="Work from the actual Fastify routes, streaming endpoints, and runtime tests instead of inferred API summaries."
   />
   <DocCard
+    title="Run Compilation"
+    eyebrow="Execution Prep"
+    href="/build-on-holaos/runtime/run-compilation"
+    description="Trace how `workspace.yaml`, app manifests, MCP allowlists, prompt layers, and runtime context become the reduced harness request."
+  />
+  <DocCard
     title="App Anatomy"
     eyebrow="Runtime-Managed Apps"
     href="/app-development/applications/app-anatomy"
@@ -71,6 +77,6 @@ npm run sdk:bridge:test
 ## Read By Subsystem
 
 - desktop contributors should start with [Start Developing](/build-on-holaos/start-developing/) and [Desktop Internals](/build-on-holaos/desktop/internals)
-- runtime contributors should start with [Runtime APIs](/build-on-holaos/runtime-apis) and [Independent Deploy](/build-on-holaos/independent-deploy)
+- runtime contributors should start with [Runtime APIs](/build-on-holaos/runtime-apis), [Run Compilation](/build-on-holaos/runtime/run-compilation), [Runtime State Store](/build-on-holaos/runtime/state-store), and [Independent Deploy](/build-on-holaos/independent-deploy)
 - app developers should start with [App Anatomy](/app-development/applications/app-anatomy), [Build Your First App](/app-development/applications/first-app), and [app.runtime.yaml](/app-development/applications/app-runtime-yaml)
 - template authors should start with [Template Materialization](/templates/materialization), [Template Structure](/templates/structure), and [Template Versioning](/templates/versioning)

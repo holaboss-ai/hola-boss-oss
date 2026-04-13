@@ -16,34 +16,37 @@ The current flow is:
 6. That writeback updates the compaction boundary, restoration order, and volatile runtime projections under `memory/workspace/<workspace-id>/runtime/`, including `session-memory/`.
 7. The runtime then persists a queued evolve job for heavier durable-memory and skill-review work.
 8. The evolve worker reloads the finished turn, recent session state, and current memory catalog state.
-9. Deterministic and optional model-assisted extraction promote durable workspace facts, procedures, blockers, preference memories, and identity memories into markdown memory plus catalog rows.
+9. Deterministic and optional model-assisted extraction promote durable workspace facts, procedures, and repeated blockers into markdown memory plus catalog rows.
 10. `MEMORY.md` indexes are refreshed only for the durable scopes that changed.
 11. Later runs restore from the latest compaction boundary first, then enrich continuity from `session-memory` and bounded durable recall.
 
-User-memory proposals remain staged in `state/runtime.db` until they are accepted. Repeated runtime blockers can also graduate into durable `knowledge/blockers/` during queued evolve when they stop looking like a one-off run artifact and start looking like stable workspace knowledge.
+User-memory proposals remain staged in `state/runtime.db` until they are accepted. That acceptance path is what creates durable preference memory or updates the canonical runtime profile; queued evolve does not create user preference or profile memory automatically. Repeated runtime blockers can also graduate into durable `knowledge/blockers/` during queued evolve when they stop looking like a one-off run artifact and start looking like stable workspace knowledge.
 
 ## Recall behavior
 
-Runtime recall is manifest-based. The runtime scans durable markdown memory files, reads summaries and metadata, and selects a bounded set of entries to inject as context.
+Runtime recall is manifest-based and model-mediated. It starts from active durable memory catalog entries in `state/runtime.db`, opens the scoped `MEMORY.md` indexes plus candidate leaf files under the memory root, and selects a bounded set of durable memories to inject as context.
 
 Important characteristics:
 
 - runtime continuity is restored before broader memory recall
+- durable recall currently requires a selector model; without one, durable recall is skipped rather than guessed
 - durable memory is selected from indexed markdown, not from raw session transcripts
 - stale or low-confidence memory should be penalized more than stable workspace facts
 - time-sensitive `reference` memory should usually be reconfirmed before action
 - recalled memory is context, not a rewrite of the base system prompt
 
+When embeddings are configured and the state store has vector support, recall can narrow candidate paths through a derived vector index before the final leaf-file review pass.
+
 ## Immediate continuity vs queued evolve
 
 `holaOS` splits post-run work into two phases:
 
-1. `write_turn_continuity`
+1. immediate continuity writeback
    - runs inline after the foreground `turn_results` row is committed
    - keeps next-run continuity fresh without waiting on heavier extraction work
-2. `queued_evolve`
-   - persists as a queue job in `state/runtime.db`
-   - drains through a dedicated evolve worker
+2. queued `evolve` jobs
+   - persist as post-run jobs in `state/runtime.db`
+   - drain through the dedicated evolve worker
    - handles durable-memory promotion, index refresh, and background skill review
 
 The queued evolve phase handles slower work such as:
@@ -52,6 +55,18 @@ The queued evolve phase handles slower work such as:
 - optional model-assisted durable extraction when background tasks are configured
 - durable markdown upserts and `MEMORY.md` refresh
 - reusable workspace skill review and candidate drafting
+
+## Human review boundary
+
+Not everything that looks useful should silently become long-term truth.
+
+`holaOS` keeps an explicit human review boundary around the highest-impact cases:
+
+- user-memory proposals stay pending until someone accepts them, because user preferences and profile facts should not be silently promoted from one message
+- evolve skill candidates stay drafts or proposals until reviewed, because reusable skills can change future behavior across the workspace
+- anything that would materially affect standing policy, durable identity, or repeated operator behavior should be conservative by default rather than auto-promoted
+
+This boundary is intentional. The system can prepare candidates, summarize evidence, and surface proposals, but it should not quietly rewrite long-term human-facing truth just because one run suggested it.
 
 ## Skill candidate lifecycle
 

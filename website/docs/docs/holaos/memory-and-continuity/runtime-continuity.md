@@ -20,8 +20,10 @@ The most important continuity artifacts are:
   - the runtime split between cacheable and volatile prompt sections for a run
 - capability manifest
   - the reduced visible and callable surface passed to the harness for that run
-- `memory/workspace/<workspace-id>/runtime/session-memory/`
-  - compact continuity snapshots used to restore the next run without replaying the full transcript
+- runtime projections under `memory/workspace/<workspace-id>/runtime/`
+  - latest-turn summaries, session snapshots, blocker snapshots, recent-turn history, and permission-blocker artifacts
+- session-memory snapshots under `memory/workspace/<workspace-id>/runtime/session-memory/`
+  - compact continuity views used to restore the next run without replaying the full transcript
 - user-memory proposals in `state/runtime.db`
   - staged strong-signal user-memory candidates that the current run can use ephemerally before acceptance
 
@@ -30,11 +32,30 @@ The most important continuity artifacts are:
 The continuity path after a run is:
 
 1. The runtime persists `turn_results`.
-2. An immediate continuity writeback runs inline after the turn result is committed.
-3. That writeback updates the compaction boundary, restoration order, and volatile runtime projections under `memory/workspace/<workspace-id>/runtime/`, including `session-memory/`.
-4. The runtime then persists a queued evolve job for heavier durable-memory and skill-review work.
+2. An immediate continuity writeback runs in the same post-turn flow.
+3. That writeback updates the compaction boundary, restoration order, and runtime projections under `memory/workspace/<workspace-id>/runtime/`, including `session-memory/`.
+4. The same flow then queues a background evolve job for heavier durable-memory and skill-review work.
 
 The point of this split is to keep the next run cheap to restore without waiting for heavier background extraction.
+
+## Restoration story
+
+Imagine a deploy run pauses because the agent needs approval before continuing.
+
+On the next run, `holaOS` restores continuity in a deliberate order:
+
+1. it restores the latest compaction boundary if one exists, because that is the cheapest high-signal summary of where the session left off
+2. it restores recent runtime context and session-memory snapshots so the next run can see the latest blocker, recent intent, and resume state
+3. it then adds only the bounded durable memories that are relevant to the new request, such as a recurring deploy blocker or a reusable release procedure
+
+What it intentionally does not restore:
+
+- the full raw transcript
+- every prior turn in full detail
+- every durable memory file in the workspace
+- stale references as unquestioned truth
+
+That is the point of runtime continuity: resume the important state cheaply, not replay everything indiscriminately.
 
 ## What lives where for continuity
 
@@ -47,4 +68,4 @@ Use these rules of thumb when reasoning about resume state:
 - `memory/workspace/<workspace-id>/runtime/session-memory/`
   - session-scoped continuity snapshots used during resume restoration
 
-If a piece of information is only needed to resume the latest session, it belongs in runtime continuity rather than durable memory. Repeated blockers can begin in runtime projections first and only later be promoted into durable `knowledge/blockers/` during queued evolve.
+At restore time, the runtime prefers the latest compaction boundary, falls back to recent `turn_results` plus selected session messages when needed, and then adds the latest `session-memory` excerpt if it exists. If a piece of information is only needed to resume the latest session, it belongs in runtime continuity rather than durable memory. Repeated blockers can begin in runtime projections first and only later be promoted into durable `knowledge/blockers/` during queued evolve.

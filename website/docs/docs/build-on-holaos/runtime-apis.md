@@ -11,6 +11,8 @@ The source of truth is code:
 
 These APIs are used by the desktop app and by surrounding platform services. They are operational surfaces for running a workspace, not a generic third-party developer platform.
 
+If a route change also changes durable records, continue to [Runtime State Store](/build-on-holaos/runtime/state-store). If it changes how a run is compiled or which tools/context the harness receives, continue to [Run Compilation](/build-on-holaos/runtime/run-compilation).
+
 ## Launch modes and ports
 
 The same API server shows up under different ports depending on how you started it:

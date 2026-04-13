@@ -66,6 +66,14 @@ const RUNTIME_APIS_PATH = new URL(
   "./docs/build-on-holaos/runtime-apis.md",
   import.meta.url
 );
+const RUNTIME_RUN_COMPILATION_PATH = new URL(
+  "./docs/build-on-holaos/runtime/run-compilation.md",
+  import.meta.url
+);
+const RUNTIME_STATE_STORE_PATH = new URL(
+  "./docs/build-on-holaos/runtime/state-store.md",
+  import.meta.url
+);
 const INDEPENDENT_DEPLOY_PATH = new URL(
   "./docs/build-on-holaos/independent-deploy.md",
   import.meta.url
@@ -138,6 +146,22 @@ const ENVIRONMENT_ENGINEERING_PATH = new URL(
   "./docs/holaos/environment-engineering.md",
   import.meta.url
 );
+const MEMORY_CONTINUITY_OVERVIEW_PATH = new URL(
+  "./docs/holaos/memory-and-continuity/index.md",
+  import.meta.url
+);
+const MEMORY_RUNTIME_CONTINUITY_PATH = new URL(
+  "./docs/holaos/memory-and-continuity/runtime-continuity.md",
+  import.meta.url
+);
+const MEMORY_DURABLE_MEMORY_PATH = new URL(
+  "./docs/holaos/memory-and-continuity/durable-memory.md",
+  import.meta.url
+);
+const MEMORY_RECALL_EVOLVE_PATH = new URL(
+  "./docs/holaos/memory-and-continuity/recall-and-evolve.md",
+  import.meta.url
+);
 
 test("docs app exposes vitepress build and preview scripts", async () => {
   const source = await readFile(APP_PACKAGE_PATH, "utf8");
@@ -188,6 +212,8 @@ test("vitepress config is set up for the agreed documentation structure", async 
   assert.match(source, /"\/templates\/materialization"/);
   assert.match(source, /"\/templates\/structure"/);
   assert.match(source, /"\/build-on-holaos\/runtime-apis"/);
+  assert.match(source, /"\/build-on-holaos\/runtime\/run-compilation"/);
+  assert.match(source, /"\/build-on-holaos\/runtime\/state-store"/);
   assert.match(source, /"\/build-on-holaos\/independent-deploy"/);
   assert.match(source, /"\/build-on-holaos\/agent-harness\/internals"/);
   assert.match(source, /"\/build-on-holaos\/start-developing\/"/);
@@ -254,6 +280,11 @@ test("build on holaOS pages expose the real developer seams and validation paths
   const contributing = await readFile(CONTRIBUTING_PATH, "utf8");
   const desktopInternals = await readFile(DESKTOP_INTERNALS_PATH, "utf8");
   const runtimeApis = await readFile(RUNTIME_APIS_PATH, "utf8");
+  const runtimeRunCompilation = await readFile(
+    RUNTIME_RUN_COMPILATION_PATH,
+    "utf8"
+  );
+  const runtimeStateStore = await readFile(RUNTIME_STATE_STORE_PATH, "utf8");
   const independentDeploy = await readFile(INDEPENDENT_DEPLOY_PATH, "utf8");
   const harnessInternals = await readFile(HARNESS_INTERNALS_PATH, "utf8");
   const troubleshooting = await readFile(TROUBLESHOOTING_PATH, "utf8");
@@ -279,6 +310,19 @@ test("build on holaOS pages expose the real developer seams and validation paths
   assert.match(runtimeApis, /\/api\/v1\/agent-runs\/stream/);
   assert.match(runtimeApis, /\/api\/v1\/task-proposals\/unreviewed\/stream/);
   assert.match(runtimeApis, /runtime\/api-server\/src\/app\.test\.ts/);
+  assert.match(runtimeApis, /\/build-on-holaos\/runtime\/state-store/);
+  assert.match(runtimeApis, /\/build-on-holaos\/runtime\/run-compilation/);
+
+  assert.match(runtimeRunCompilation, /workspace-runtime-plan\.ts/);
+  assert.match(runtimeRunCompilation, /workspace_config_checksum/);
+  assert.match(runtimeRunCompilation, /persist_turn_request_snapshot/);
+  assert.match(runtimeRunCompilation, /runtime\/api-server\/src\/ts-runner\.ts/);
+
+  assert.match(runtimeStateStore, /runtime\/state-store\/src\/store\.ts/);
+  assert.match(runtimeStateStore, /HOLABOSS_RUNTIME_DB_PATH/);
+  assert.match(runtimeStateStore, /sqlite-vec/);
+  assert.match(runtimeStateStore, /claimInputs/);
+  assert.match(runtimeStateStore, /runtime:state-store:test/);
 
   assert.match(independentDeploy, /package-metadata\.json/);
   assert.match(independentDeploy, /runtime\/metadata\.json/);
@@ -372,6 +416,54 @@ test("high-level docs route developers into the concrete builder pages", async (
   assert.match(environmentEngineering, /\/build-on-holaos\//);
   assert.match(quickStart, /\/build-on-holaos\/start-developing\//);
   assert.match(docsIndex, /\/build-on-holaos\//);
+});
+
+test("memory and continuity pages stay aligned with the runtime memory pipeline", async () => {
+  const overview = await readFile(MEMORY_CONTINUITY_OVERVIEW_PATH, "utf8");
+  const runtimeContinuity = await readFile(
+    MEMORY_RUNTIME_CONTINUITY_PATH,
+    "utf8"
+  );
+  const durableMemory = await readFile(MEMORY_DURABLE_MEMORY_PATH, "utf8");
+  const recallAndEvolve = await readFile(MEMORY_RECALL_EVOLVE_PATH, "utf8");
+
+  assert.match(overview, /pending user-memory proposals/);
+  assert.match(
+    overview,
+    /background evolve path does not create user preference or profile memory on its own/
+  );
+  assert.match(overview, /state\/runtime\.db/);
+
+  assert.match(runtimeContinuity, /turn_results/);
+  assert.match(runtimeContinuity, /compaction boundaries/);
+  assert.match(runtimeContinuity, /background evolve job/);
+  assert.match(runtimeContinuity, /session-memory/);
+  assert.match(runtimeContinuity, /Imagine a deploy run pauses/);
+  assert.match(runtimeContinuity, /What it intentionally does not restore/);
+
+  assert.match(
+    durableMemory,
+    /workspace facts, procedures, and repeated permission blockers/
+  );
+  assert.match(durableMemory, /accepted user-memory proposals/);
+  assert.match(durableMemory, /workspace\/<workspace-id>\/knowledge/);
+  assert.match(durableMemory, /absolute paths/);
+  assert.match(durableMemory, /stable across runs/);
+  assert.match(durableMemory, /useful without replaying the full transcript/);
+  assert.match(durableMemory, /not everything that happened/i);
+
+  assert.match(
+    recallAndEvolve,
+    /queued evolve does not create user preference or profile memory automatically/i
+  );
+  assert.match(
+    recallAndEvolve,
+    /durable recall currently requires a selector model/
+  );
+  assert.match(recallAndEvolve, /derived vector index/);
+  assert.match(recallAndEvolve, /Human review boundary/);
+  assert.match(recallAndEvolve, /stay pending until someone accepts them/);
+  assert.match(recallAndEvolve, /should not quietly rewrite long-term human-facing truth/);
 });
 
 test("vitepress theme extends the default theme and registers shared doc components", async () => {
