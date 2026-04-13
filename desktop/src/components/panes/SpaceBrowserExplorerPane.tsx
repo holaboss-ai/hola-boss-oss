@@ -1,4 +1,4 @@
-import { Bot, Globe, Plus, Star, X } from "lucide-react";
+import { Bot, Globe, Plus, Star, User, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -45,7 +45,7 @@ export function SpaceBrowserExplorerPane({
         >
           <TabsList className="w-full">
             <TabsTrigger value="user" className="flex-1 gap-1.5">
-              <Globe size={12} />
+              <User size={12} />
               User
               <Badge
                 variant="secondary"

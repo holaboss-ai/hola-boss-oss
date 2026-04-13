@@ -11,9 +11,6 @@ export default defineConfig({
     emptyOutDir: true,
     sourcemap: "hidden"
   },
-  define: {
-    "process.env.SENTRY_DSN": JSON.stringify(process.env.SENTRY_DSN ?? "")
-  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src")

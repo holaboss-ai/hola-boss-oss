@@ -17,9 +17,7 @@ export default defineConfig({
   platform: "node",
   external: ["electron", "better-sqlite3"],
   sourcemap: true,
-  env: {
-    SENTRY_DSN: process.env.SENTRY_DSN ?? ""
-  },
+  env: process.env.SENTRY_DSN ? { SENTRY_DSN: process.env.SENTRY_DSN } : {},
   outExtension() {
     return {
       js: ".cjs"
