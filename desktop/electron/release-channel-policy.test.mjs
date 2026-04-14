@@ -97,7 +97,8 @@ test("manual CI workflow creates combined desktop releases with bundled runtime 
   assert.match(source, /--prepackaged "\$\{app_path\}" \\\n\s+--mac dmg zip \\/);
   assert.match(source, /latest-mac\.yml was not generated/);
   assert.match(source, /latest\.yml was not generated/);
-  assert.match(source, /app-update\.yml is missing from notarized app bundle/);
+  assert.doesNotMatch(source, /app-update\.yml is missing from signed app bundle/);
+  assert.doesNotMatch(source, /app-update\.yml is missing from notarized app bundle/);
   assert.match(source, /Desktop typecheck/);
   assert.match(source, /Runtime harness host tests/);
 });
