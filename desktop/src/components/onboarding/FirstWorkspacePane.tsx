@@ -4,6 +4,7 @@ import { firstWorkspacePaneSectionClassName } from "@/components/layout/firstWor
 import { MarketplaceGallery } from "@/components/marketplace/MarketplaceGallery";
 import { KitDetail } from "@/components/marketplace/KitDetail";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
+import { BrowserProfileStep } from "./BrowserProfileStep";
 import { ConnectIntegrationsStep } from "./ConnectIntegrationsStep";
 import { ConfigureStep } from "./ConfigureStep";
 import { CreatingView } from "./CreatingView";
@@ -16,7 +17,11 @@ type OnboardingStep =
   | "detail"
   | "select_apps"
   | "configure"
+  | "browser_profile"
   | "connect_integrations";
+
+const IMPORT_PROFILE_LIST_HANDLER_MISSING_MESSAGE =
+  "No handler registered for 'workspace:listImportBrowserProfiles'";
 
 interface FirstWorkspacePaneProps {
   variant?: "full" | "panel";
@@ -34,8 +39,18 @@ export function FirstWorkspacePane({
     marketplaceTemplates,
     selectedMarketplaceTemplate,
     selectMarketplaceTemplate,
+    workspaces,
     newWorkspaceName,
     setNewWorkspaceName,
+    browserBootstrapMode,
+    setBrowserBootstrapMode,
+    browserBootstrapSourceWorkspaceId,
+    setBrowserBootstrapSourceWorkspaceId,
+    browserImportSource,
+    setBrowserImportSource,
+    browserImportProfileDir,
+    setBrowserImportProfileDir,
+    workspaceCreatePhase,
     isCreatingWorkspace,
     isLoadingMarketplaceTemplates,
     canUseMarketplaceTemplates,
@@ -60,6 +75,11 @@ export function FirstWorkspacePane({
   const [detailKit, setDetailKit] = useState<TemplateMetadataPayload | null>(
     null,
   );
+  const [importProfiles, setImportProfiles] = useState<
+    BrowserImportProfileOptionPayload[]
+  >([]);
+  const [importProfilesLoading, setImportProfilesLoading] = useState(false);
+  const [importProfilesError, setImportProfilesError] = useState("");
 
   const isPanelVariant = variant === "panel";
 
@@ -72,6 +92,78 @@ export function FirstWorkspacePane({
     }
     prevConfigureRef.current = configureStepActive;
   }, [configureStepActive, resolveIntegrationsBeforeCreate]);
+
+  useEffect(() => {
+    if (browserBootstrapMode !== "import_browser") {
+      setImportProfiles([]);
+      setImportProfilesLoading(false);
+      setImportProfilesError("");
+      return;
+    }
+
+    if (browserImportSource === "safari") {
+      setImportProfiles([]);
+      setImportProfilesLoading(false);
+      setImportProfilesError("");
+      setBrowserImportProfileDir("");
+      return;
+    }
+
+    if (step !== "browser_profile") {
+      return;
+    }
+
+    let cancelled = false;
+    setImportProfilesLoading(true);
+    setImportProfilesError("");
+    void window.electronAPI.workspace
+      .listImportBrowserProfiles(browserImportSource)
+      .then((profiles) => {
+        if (cancelled) {
+          return;
+        }
+        setImportProfiles(profiles);
+        if (
+          profiles.length > 0 &&
+          !profiles.some((profile) => profile.profileDir === browserImportProfileDir)
+        ) {
+          setBrowserImportProfileDir(profiles[0]?.profileDir ?? "");
+        }
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        const message =
+          error instanceof Error ? error.message : String(error);
+        if (message.includes(IMPORT_PROFILE_LIST_HANDLER_MISSING_MESSAGE)) {
+          setImportProfiles([]);
+          setImportProfilesError(
+            "Profile list is unavailable in this desktop session. Continue to create the workspace and choose the profile in the import dialog.",
+          );
+          return;
+        }
+        setImportProfiles([]);
+        setImportProfilesError(
+          error instanceof Error
+            ? error.message
+            : "Could not load browser profiles.",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setImportProfilesLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    step,
+    browserBootstrapMode,
+    browserImportSource,
+  ]);
 
   const hasUnconnectedIntegrations = pendingIntegrations
     ? pendingIntegrations.missing_providers.length > 0
@@ -164,8 +256,22 @@ export function FirstWorkspacePane({
     });
   }
 
-  const configureCreateDisabled =
+  const configureContinueDisabled =
     !newWorkspaceName.trim() ||
+    (templateSourceMode === "marketplace" &&
+      (!canUseMarketplaceTemplates || !selectedMarketplaceTemplate));
+
+  const browserStepCreateDisabled =
+    !newWorkspaceName.trim() ||
+    hasUnconnectedIntegrations ||
+    isResolvingIntegrations ||
+    connectingProvider !== null ||
+    (browserBootstrapMode === "copy_workspace" &&
+      !browserBootstrapSourceWorkspaceId.trim()) ||
+    (browserBootstrapMode === "import_browser" &&
+      browserImportSource !== "safari" &&
+      !browserImportProfileDir.trim() &&
+      !importProfilesError.includes("Profile list is unavailable")) ||
     (templateSourceMode === "marketplace" &&
       (!canUseMarketplaceTemplates || !selectedMarketplaceTemplate));
 
@@ -175,6 +281,8 @@ export function FirstWorkspacePane({
       creatingViaMarketplace={creatingViaMarketplace}
       showUserButton={!isPanelVariant}
       panelVariant={isPanelVariant}
+      browserBootstrapMode={browserBootstrapMode}
+      workspaceCreatePhase={workspaceCreatePhase}
     />
   ) : (
     <section className={sectionClassName}>
@@ -252,12 +360,32 @@ export function FirstWorkspacePane({
               connectingProvider={connectingProvider}
               connectStatus={connectStatus}
               workspaceErrorMessage={workspaceErrorMessage}
-              createDisabled={configureCreateDisabled}
+              continueDisabled={configureContinueDisabled}
               hasUnconnectedIntegrations={hasUnconnectedIntegrations}
               onChangeKit={() => setStep("gallery")}
               onChangeFolder={() => void chooseTemplateFolder()}
-              onBackToKits={() => setStep("gallery")}
+              onCancel={() => setStep("gallery")}
               onConnect={(provider) => void handleConnectProvider(provider)}
+              onContinue={() => setStep("browser_profile")}
+            />
+          ) : step === "browser_profile" ? (
+            <BrowserProfileStep
+              browserBootstrapMode={browserBootstrapMode}
+              setBrowserBootstrapMode={setBrowserBootstrapMode}
+              browserBootstrapSourceWorkspaceId={browserBootstrapSourceWorkspaceId}
+              setBrowserBootstrapSourceWorkspaceId={setBrowserBootstrapSourceWorkspaceId}
+              copySourceWorkspaces={workspaces}
+              browserImportSource={browserImportSource}
+              setBrowserImportSource={setBrowserImportSource}
+              browserImportProfileDir={browserImportProfileDir}
+              setBrowserImportProfileDir={setBrowserImportProfileDir}
+              importProfiles={importProfiles}
+              importProfilesLoading={importProfilesLoading}
+              importProfilesError={importProfilesError}
+              workspaceErrorMessage={workspaceErrorMessage}
+              createDisabled={browserStepCreateDisabled}
+              onBack={() => setStep("configure")}
+              onCancel={() => setStep("gallery")}
               onCreate={() => void createWorkspace()}
             />
           ) : step === "connect_integrations" && pendingIntegrations ? (

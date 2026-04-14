@@ -651,10 +651,10 @@ export function BrowserPane({
                   ref={moreButtonRef}
                   type="button"
                   variant="outline"
-                  size="icon-sm"
-                  className="relative"
+                  size="sm"
+                  className="relative shrink-0 gap-1.5"
                   aria-label="More browser options"
-                  title="More"
+                  title="More options"
                   onClick={() => {
                     const bounds = getButtonBounds(moreButtonRef.current);
                     if (!bounds) {
@@ -665,6 +665,7 @@ export function BrowserPane({
                   }}
                 >
                   <MoreHorizontal size={14} />
+                  {!isNarrowPane ? <span>More</span> : null}
                   {activeDownloadCount > 0 ? (
                     <Badge className="absolute -right-1 -top-1 h-4 min-w-4 px-1 text-xs font-bold leading-none">
                       {activeDownloadCount}

@@ -1,4 +1,10 @@
-type FirstWorkspacePaneStep = "gallery" | "detail" | "select_apps" | "configure" | "connect_integrations";
+type FirstWorkspacePaneStep =
+  | "gallery"
+  | "detail"
+  | "select_apps"
+  | "configure"
+  | "browser_profile"
+  | "connect_integrations";
 
 export function firstWorkspacePaneSectionClassName(
   step: FirstWorkspacePaneStep,

@@ -560,7 +560,17 @@ export async function buildPiPromptPayload(request: HarnessHostPiRequest): Promi
     sections.push(todoResumeInstruction);
   }
 
-  const instruction = request.instruction.trim();
+  const quotedSkills = resolveQuotedSkillSections(request.instruction, request.workspace_skill_dirs);
+  if (quotedSkills.blocks.length > 0) {
+    sections.push(["Quoted workspace skills:", ...quotedSkills.blocks].join("\n\n"));
+  }
+  if (quotedSkills.missing.length > 0) {
+    sections.push(
+      `Quoted workspace skills not found in this workspace: ${quotedSkills.missing.join(", ")}`
+    );
+  }
+
+  const instruction = quotedSkills.body.trim();
   if (instruction) {
     sections.push(instruction);
   }
@@ -768,6 +778,93 @@ function stripMarkdownFrontmatter(value: string): string {
     return normalized;
   }
   return normalized.slice(match[0].length);
+}
+
+function parseQuotedSkillInstruction(value: string): { skillIds: string[]; body: string } {
+  const normalized = value.replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
+  const skillIds: string[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index]?.trim() ?? "";
+    if (!line) {
+      break;
+    }
+    const match = /^\/([A-Za-z0-9_-]+)$/.exec(line);
+    if (!match) {
+      return { skillIds: [], body: normalized.trim() };
+    }
+    skillIds.push(match[1] ?? "");
+    index += 1;
+  }
+
+  if (skillIds.length === 0) {
+    return { skillIds: [], body: normalized.trim() };
+  }
+
+  if (index < lines.length && (lines[index]?.trim() ?? "") !== "") {
+    return { skillIds: [], body: normalized.trim() };
+  }
+
+  while (index < lines.length && (lines[index]?.trim() ?? "") === "") {
+    index += 1;
+  }
+
+  return {
+    skillIds: [...new Set(skillIds)],
+    body: lines.slice(index).join("\n").trim(),
+  };
+}
+
+function quotedSkillBlock(metadata: PiSkillMetadata): string {
+  const body = stripMarkdownFrontmatter(fs.readFileSync(metadata.filePath, "utf8")).trim();
+  return `<skill name="${metadata.skillName}" location="${metadata.filePath}">\nReferences are relative to ${metadata.baseDir}.\n\n${body}\n</skill>`;
+}
+
+function resolveQuotedSkillSections(
+  instruction: string,
+  workspaceSkillDirs: string[]
+): { blocks: string[]; missing: string[]; body: string } {
+  const parsed = parseQuotedSkillInstruction(instruction);
+  if (parsed.skillIds.length === 0) {
+    return {
+      blocks: [],
+      missing: [],
+      body: parsed.body,
+    };
+  }
+
+  const resolvedSkillDirs = Array.from(
+    new Set(
+      workspaceSkillDirs
+        .map((dir) => path.resolve(dir))
+        .filter((dir) => directoryExists(dir))
+    )
+  );
+  const loadedSkills = loadPiSkills(resolvedSkillDirs);
+  const skillMetadataByAlias = buildPiSkillMetadataByAlias(loadedSkills.skills);
+  const blocks: string[] = [];
+  const missing: string[] = [];
+
+  for (const skillId of parsed.skillIds) {
+    const metadata = resolveSkillMetadata(skillMetadataByAlias, skillId);
+    if (!metadata) {
+      missing.push(skillId);
+      continue;
+    }
+    try {
+      blocks.push(quotedSkillBlock(metadata));
+    } catch {
+      missing.push(skillId);
+    }
+  }
+
+  return {
+    blocks,
+    missing,
+    body: parsed.body,
+  };
 }
 
 function normalizeSkillLookupToken(value: unknown): string {

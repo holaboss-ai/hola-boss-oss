@@ -31,6 +31,7 @@ import {
   PencilLine,
   Plus,
   Search,
+  Sparkles,
   Square,
   Waypoints,
   X,
@@ -80,6 +81,11 @@ interface ChatMessage {
   executionItems?: ChatExecutionTimelineItem[];
   outputs?: WorkspaceOutputRecordPayload[];
   memoryProposals?: MemoryUpdateProposalRecordPayload[];
+}
+
+interface ChatSerializedQuotedSkillBlock {
+  skillIds: string[];
+  body: string;
 }
 
 type ChatTraceStepStatus = "running" | "completed" | "error" | "waiting";
@@ -182,6 +188,22 @@ interface ChatSessionOption {
   searchText: string;
 }
 
+interface ChatComposerSlashCommandOption {
+  key: string;
+  kind: "skill";
+  command: string;
+  label: string;
+  description: string;
+  searchText: string;
+  skillId: string;
+}
+
+interface ChatComposerQuotedSkillItem {
+  skillId: string;
+  title: string;
+  enabled: boolean;
+}
+
 interface StreamTelemetryEntry {
   id: string;
   at: string;
@@ -209,15 +231,16 @@ const TOOL_TRACE_TERMINAL_PHASES = new Set(["completed", "failed", "error"]);
 const CHAT_AUTO_SCROLL_THRESHOLD_PX = 72;
 const CHAT_SCROLLBAR_MIN_THUMB_HEIGHT_PX = 40;
 const COMPOSER_FOOTER_GAP_PX = 8;
-const COMPOSER_FULL_MODEL_CONTROL_WIDTH_PX = 240;
-const COMPOSER_FULL_THINKING_CONTROL_WIDTH_PX = 112;
+const COMPOSER_FULL_MODEL_CONTROL_WIDTH_PX = 168;
+const COMPOSER_FULL_THINKING_CONTROL_WIDTH_PX = 88;
 const COMPOSER_FULL_PROVIDER_SETUP_WIDTH_PX = 320;
-const COMPOSER_COMPACT_MODEL_CONTROL_MAX_WIDTH_PX = 240;
-const COMPOSER_COMPACT_THINKING_CONTROL_MIN_WIDTH_PX = 56;
-const COMPOSER_COMPACT_THINKING_CONTROL_MAX_WIDTH_PX = 148;
+const COMPOSER_COMPACT_MODEL_CONTROL_MAX_WIDTH_PX = 168;
+const COMPOSER_COMPACT_THINKING_CONTROL_MIN_WIDTH_PX = 72;
+const COMPOSER_COMPACT_THINKING_CONTROL_MAX_WIDTH_PX = 120;
 const CHAT_MODEL_STORAGE_KEY = "holaboss-chat-model-v1";
 const CHAT_THINKING_STORAGE_KEY = "holaboss-chat-thinking-v1";
 const CHAT_MODEL_USE_RUNTIME_DEFAULT = "__runtime_default__";
+const CHAT_SERIALIZED_SKILL_COMMAND_PATTERN = /^\/([A-Za-z0-9_-]+)$/;
 const LEGACY_UNAVAILABLE_CHAT_MODELS = new Set(["openai/gpt-5.2-mini"]);
 const DEPRECATED_CHAT_MODELS = new Set([
   "openai/gpt-5.1",
@@ -414,6 +437,130 @@ function runtimeModelThinkingValues(model: RuntimeProviderModelPayload) {
     values.push(normalized);
   }
   return values;
+}
+
+function serializeQuotedSkillPrompt(
+  input: string,
+  quotedSkillIds: string[],
+): string {
+  const normalizedBody = input.trim();
+  if (quotedSkillIds.length === 0) {
+    return normalizedBody;
+  }
+  const lines = quotedSkillIds.map((skillId) => `/${skillId}`);
+  if (!normalizedBody) {
+    return lines.join("\n");
+  }
+  return [...lines, "", normalizedBody].join("\n");
+}
+
+function parseSerializedQuotedSkillPrompt(
+  value: string,
+): ChatSerializedQuotedSkillBlock {
+  const normalized = value.replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
+  const skillIds: string[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index]?.trim() ?? "";
+    if (!line) {
+      break;
+    }
+    const match = CHAT_SERIALIZED_SKILL_COMMAND_PATTERN.exec(line);
+    if (!match) {
+      return {
+        skillIds: [],
+        body: normalized.trim(),
+      };
+    }
+    skillIds.push(match[1] ?? "");
+    index += 1;
+  }
+
+  if (skillIds.length === 0) {
+    return {
+      skillIds: [],
+      body: normalized.trim(),
+    };
+  }
+
+  if (index < lines.length && (lines[index]?.trim() ?? "") !== "") {
+    return {
+      skillIds: [],
+      body: normalized.trim(),
+    };
+  }
+
+  while (index < lines.length && (lines[index]?.trim() ?? "") === "") {
+    index += 1;
+  }
+
+  return {
+    skillIds: [...new Set(skillIds)],
+    body: lines.slice(index).join("\n").trim(),
+  };
+}
+
+function buildComposerSlashCommandOptions(
+  skills: WorkspaceSkillRecordPayload[],
+): ChatComposerSlashCommandOption[] {
+  return skills
+    .filter((skill) => skill.enabled)
+    .map((skill) => ({
+      key: `skill:${skill.skill_id}`,
+      kind: "skill" as const,
+      command: `/${skill.skill_id}`,
+      label: skill.title,
+      description: skill.summary,
+      searchText: `${skill.skill_id} ${skill.title} ${skill.summary}`.toLowerCase(),
+      skillId: skill.skill_id,
+    }))
+    .sort((left, right) => left.command.localeCompare(right.command));
+}
+
+function findActiveSlashCommandRange(
+  value: string,
+  caretIndex: number,
+): { start: number; end: number; query: string } | null {
+  if (caretIndex < 0 || caretIndex > value.length) {
+    return null;
+  }
+  const prefix = value.slice(0, caretIndex);
+  const whitespaceBoundary = Math.max(
+    prefix.lastIndexOf(" "),
+    prefix.lastIndexOf("\n"),
+    prefix.lastIndexOf("\t"),
+  );
+  const start = whitespaceBoundary + 1;
+  const rawToken = prefix.slice(start);
+  if (!rawToken.startsWith("/") || rawToken.length === 0) {
+    return null;
+  }
+  if (!/^\/[A-Za-z0-9_-]*$/.test(rawToken)) {
+    return null;
+  }
+  return {
+    start,
+    end: caretIndex,
+    query: rawToken.slice(1).toLowerCase(),
+  };
+}
+
+function removeSlashCommandText(
+  value: string,
+  range: { start: number; end: number },
+): { value: string; caretIndex: number } {
+  const before = value.slice(0, range.start);
+  const after = value.slice(range.end);
+  const nextValue =
+    before.endsWith(" ") && after.startsWith(" ")
+      ? `${before}${after.slice(1)}`
+      : `${before}${after}`;
+  return {
+    value: nextValue,
+    caretIndex: before.length,
+  };
 }
 
 function displayModelLabel(model: string) {
@@ -2061,8 +2208,12 @@ export function ChatPane({
     Record<string, boolean>
   >({});
   const [input, setInput] = useState("");
+  const [quotedSkillIds, setQuotedSkillIds] = useState<string[]>([]);
   const [pendingAttachments, setPendingAttachments] = useState<
     PendingAttachment[]
+  >([]);
+  const [availableWorkspaceSkills, setAvailableWorkspaceSkills] = useState<
+    WorkspaceSkillRecordPayload[]
   >([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isResponding, setIsResponding] = useState(false);
@@ -2955,6 +3106,41 @@ export function ChatPane({
 
   useEffect(() => {
     setPendingAttachments([]);
+    setQuotedSkillIds([]);
+  }, [selectedWorkspaceId]);
+
+  useEffect(() => {
+    if (!selectedWorkspaceId) {
+      setAvailableWorkspaceSkills([]);
+      return;
+    }
+
+    let cancelled = false;
+    void window.electronAPI.workspace
+      .listSkills(selectedWorkspaceId)
+      .then((result) => {
+        if (cancelled) {
+          return;
+        }
+        setAvailableWorkspaceSkills(result.skills);
+        setQuotedSkillIds((current) =>
+          current.filter((skillId) =>
+            result.skills.some(
+              (skill) => skill.enabled && skill.skill_id === skillId,
+            ),
+          ),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAvailableWorkspaceSkills([]);
+          setQuotedSkillIds([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [selectedWorkspaceId]);
 
   useEffect(() => {
@@ -2967,7 +3153,11 @@ export function ChatPane({
     }
 
     lastHandledComposerPrefillRequestKeyRef.current = requestKey;
-    setInput(composerPrefillRequest?.text ?? "");
+    const parsedPrefill = parseSerializedQuotedSkillPrompt(
+      composerPrefillRequest?.text ?? "",
+    );
+    setInput(parsedPrefill.body);
+    setQuotedSkillIds(parsedPrefill.skillIds);
     setPendingAttachments([]);
     onComposerPrefillConsumed?.(requestKey);
   }, [
@@ -3918,7 +4108,12 @@ export function ChatPane({
 
   async function sendMessage(text: string) {
     const trimmed = text.trim();
-    if ((!trimmed && pendingAttachments.length === 0) || isResponding) {
+    if (
+      (!trimmed &&
+        pendingAttachments.length === 0 &&
+        quotedSkillIds.length === 0) ||
+      isResponding
+    ) {
       return;
     }
     if (usesHostedManagedCredits) {
@@ -4008,6 +4203,15 @@ export function ChatPane({
     }
 
     try {
+      const missingQuotedSkillIds = quotedSkillIds.filter(
+        (skillId) => !availableWorkspaceSkillMap.has(skillId),
+      );
+      if (missingQuotedSkillIds.length > 0) {
+        throw new Error(
+          `Quoted skills are no longer available: ${missingQuotedSkillIds.join(", ")}`,
+        );
+      }
+
       const attachmentEntries = [...pendingAttachments];
       const localFiles = attachmentEntries.filter(
         (entry): entry is PendingLocalAttachmentFile =>
@@ -4064,10 +4268,14 @@ export function ChatPane({
         return attachment;
       });
 
+      const serializedPrompt = serializeQuotedSkillPrompt(
+        trimmed,
+        quotedSkillIds,
+      );
       const userMessage: ChatMessage = {
         id: `user-${Date.now()}`,
         role: "user",
-        text: trimmed,
+        text: serializedPrompt,
         createdAt: new Date().toISOString(),
         attachments: stagedAttachments,
       };
@@ -4076,6 +4284,7 @@ export function ChatPane({
       setMessages((prev) => [...prev, userMessage]);
       resetLiveTurn();
       setInput("");
+      setQuotedSkillIds([]);
       setPendingAttachments([]);
       setIsResponding(true);
       setLiveAgentStatus("Thinking");
@@ -4103,7 +4312,7 @@ export function ChatPane({
       });
 
       const queued = await window.electronAPI.workspace.queueSessionInput({
-        text: trimmed,
+        text: serializedPrompt,
         workspace_id: selectedWorkspace.id,
         image_urls: null,
         attachments: stagedAttachments,
@@ -4257,6 +4466,18 @@ export function ChatPane({
     );
   }
 
+  function addQuotedSkill(skillId: string) {
+    setQuotedSkillIds((current) =>
+      current.includes(skillId) ? current : [...current, skillId],
+    );
+  }
+
+  function removeQuotedSkill(skillId: string) {
+    setQuotedSkillIds((current) =>
+      current.filter((entry) => entry !== skillId),
+    );
+  }
+
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     void sendMessage(input);
@@ -4329,6 +4550,29 @@ export function ChatPane({
             : attachment.size_bytes,
       })),
     [pendingAttachments],
+  );
+  const availableWorkspaceSkillMap = useMemo(
+    () =>
+      new Map(
+        availableWorkspaceSkills.map((skill) => [skill.skill_id, skill] as const),
+      ),
+    [availableWorkspaceSkills],
+  );
+  const quotedSkills = useMemo<ChatComposerQuotedSkillItem[]>(
+    () =>
+      quotedSkillIds.map((skillId) => {
+        const skill = availableWorkspaceSkillMap.get(skillId);
+        return {
+          skillId,
+          title: skill?.title ?? skillId,
+          enabled: skill?.enabled ?? false,
+        };
+      }),
+    [availableWorkspaceSkillMap, quotedSkillIds],
+  );
+  const slashCommandOptions = useMemo(
+    () => buildComposerSlashCommandOptions(availableWorkspaceSkills),
+    [availableWorkspaceSkills],
   );
   const activeSessionOption = useMemo(
     () =>
@@ -5035,6 +5279,8 @@ export function ChatPane({
                       ) : null}
                       <Composer
                         input={input}
+                        quotedSkills={quotedSkills}
+                        slashCommands={slashCommandOptions}
                         attachments={pendingAttachmentItems}
                         isResponding={isResponding}
                         pausePending={isPausePending}
@@ -5080,6 +5326,12 @@ export function ChatPane({
                         onAddExplorerAttachments={
                           appendPendingExplorerAttachments
                         }
+                        onSelectSlashCommand={(command) => {
+                          if (command.kind === "skill") {
+                            addQuotedSkill(command.skillId);
+                          }
+                        }}
+                        onRemoveQuotedSkill={removeQuotedSkill}
                         onRemoveAttachment={removePendingAttachment}
                       />
                     </div>
@@ -5151,6 +5403,8 @@ export function ChatPane({
                   ) : null}
                   <Composer
                     input={input}
+                    quotedSkills={quotedSkills}
+                    slashCommands={slashCommandOptions}
                     attachments={pendingAttachmentItems}
                     isResponding={isResponding}
                     pausePending={isPausePending}
@@ -5190,6 +5444,12 @@ export function ChatPane({
                     onPause={pauseCurrentRun}
                     onAddDroppedFiles={appendPendingLocalFiles}
                     onAddExplorerAttachments={appendPendingExplorerAttachments}
+                    onSelectSlashCommand={(command) => {
+                      if (command.kind === "skill") {
+                        addQuotedSkill(command.skillId);
+                      }
+                    }}
+                    onRemoveQuotedSkill={removeQuotedSkill}
                     onRemoveAttachment={removePendingAttachment}
                   />
                 </div>
@@ -5411,6 +5671,8 @@ function SessionSelector({
 
 interface ComposerProps {
   input: string;
+  quotedSkills: ChatComposerQuotedSkillItem[];
+  slashCommands: ChatComposerSlashCommandOption[];
   attachments: Array<{
     id: string;
     kind: "image" | "file";
@@ -5447,6 +5709,8 @@ interface ComposerProps {
   onPause: () => void;
   onAddDroppedFiles: (files: File[]) => void;
   onAddExplorerAttachments: (files: ExplorerAttachmentDragPayload[]) => void;
+  onSelectSlashCommand: (command: ChatComposerSlashCommandOption) => void;
+  onRemoveQuotedSkill: (skillId: string) => void;
   onRemoveAttachment: (attachmentId: string) => void;
 }
 
@@ -5465,6 +5729,10 @@ function UserTurn({
   const copyResetTimerRef = useRef<number | null>(null);
   const timeLabel = chatMessageTimeLabel(createdAt);
   const canCopy = text.trim().length > 0;
+  const parsedQuotedSkills = useMemo(
+    () => parseSerializedQuotedSkillPrompt(text),
+    [text],
+  );
 
   useEffect(() => {
     return () => {
@@ -5497,13 +5765,26 @@ function UserTurn({
   return (
     <div className="group/user-turn flex min-w-0 justify-end">
       <div className="flex min-w-0 max-w-[420px] flex-col items-end gap-2 sm:max-w-[560px] lg:max-w-[680px]">
-        {text ? (
+        {parsedQuotedSkills.skillIds.length > 0 ? (
+          <div className="flex max-w-full flex-wrap justify-end gap-2">
+            {parsedQuotedSkills.skillIds.map((skillId) => (
+              <div
+                key={skillId}
+                className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/8 px-3 py-1 text-[11px] font-medium text-foreground/88"
+              >
+                <Sparkles size={12} className="text-primary/80" />
+                <span className="truncate">/{skillId}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {parsedQuotedSkills.body ? (
           <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full rounded-[18px] border px-4 py-3 text-foreground/95">
             <SimpleMarkdown
               className="chat-markdown chat-user-markdown max-w-full"
               onLinkClick={onLinkClick}
             >
-              {text}
+              {parsedQuotedSkills.body}
             </SimpleMarkdown>
           </div>
         ) : null}
@@ -6658,18 +6939,25 @@ function ThinkingValueSelect({
   thinkingValues,
   disabled,
   compact = false,
+  compactWidth,
   onThinkingValueChange,
 }: {
   selectedThinkingValue: string | null;
   thinkingValues: string[];
   disabled: boolean;
   compact?: boolean;
+  compactWidth?: number;
   onThinkingValueChange: (value: string | null) => void;
 }) {
   if (thinkingValues.length === 0 || !selectedThinkingValue) {
     return null;
   }
   const selectedThinkingLabel = displayThinkingValueLabel(selectedThinkingValue);
+  const compactLabelMinWidth = 52 + selectedThinkingLabel.length * 7;
+  const showCompactLabel =
+    !compact ||
+    typeof compactWidth !== "number" ||
+    compactWidth >= compactLabelMinWidth;
 
   return (
     <Select
@@ -6686,12 +6974,18 @@ function ThinkingValueSelect({
         }`}
       >
         {compact ? (
-          <span className="flex min-w-0 flex-1 items-center gap-1.5">
+          <span
+            className={`flex min-w-0 flex-1 items-center ${
+              showCompactLabel ? "gap-1.5" : "justify-center"
+            }`}
+          >
             <Lightbulb
               size={13}
               className="shrink-0 text-muted-foreground"
             />
-            <span className="truncate">{selectedThinkingLabel}</span>
+            {showCompactLabel ? (
+              <span className="truncate">{selectedThinkingLabel}</span>
+            ) : null}
           </span>
         ) : (
           <SelectValue placeholder="Thinking" />
@@ -6710,6 +7004,8 @@ function ThinkingValueSelect({
 
 function Composer({
   input,
+  quotedSkills,
+  slashCommands,
   attachments,
   isResponding,
   pausePending,
@@ -6741,9 +7037,18 @@ function Composer({
   onPause,
   onAddDroppedFiles,
   onAddExplorerAttachments,
+  onSelectSlashCommand,
+  onRemoveQuotedSkill,
   onRemoveAttachment,
 }: ComposerProps) {
   const [isDragActive, setIsDragActive] = useState(false);
+  const [composerActionsMenuOpen, setComposerActionsMenuOpen] = useState(false);
+  const [composerActionsView, setComposerActionsView] = useState<
+    "menu" | "skills"
+  >("menu");
+  const [skillPickerQuery, setSkillPickerQuery] = useState("");
+  const [caretIndex, setCaretIndex] = useState(0);
+  const [highlightedSlashIndex, setHighlightedSlashIndex] = useState(0);
   const composerFooterRef = useRef<HTMLDivElement | null>(null);
   const composerActionsRef = useRef<HTMLDivElement | null>(null);
   const [composerFooterLayout, setComposerFooterLayout] = useState({
@@ -6756,6 +7061,40 @@ function Composer({
     modelOptions.length === 0 &&
     modelOptionGroups.length === 0;
   const inputDisabled = disabled || isResponding;
+  const activeSlashRange = useMemo(
+    () => findActiveSlashCommandRange(input, caretIndex),
+    [caretIndex, input],
+  );
+  const showSlashCommandMenu = !inputDisabled && activeSlashRange !== null;
+  const filteredSlashCommands = useMemo(() => {
+    if (inputDisabled || !activeSlashRange) {
+      return [];
+    }
+    const query = activeSlashRange.query.trim().toLowerCase();
+    if (!query) {
+      return slashCommands;
+    }
+    return slashCommands.filter(
+      (command) =>
+        command.command.toLowerCase().includes(query) ||
+        command.searchText.includes(query),
+    );
+  }, [activeSlashRange, inputDisabled, slashCommands]);
+  const filteredSkillCommands = useMemo(() => {
+    const query = skillPickerQuery.trim().toLowerCase();
+    if (!query) {
+      return slashCommands;
+    }
+    return slashCommands.filter(
+      (command) =>
+        command.command.toLowerCase().includes(query) ||
+        command.searchText.includes(query),
+    );
+  }, [skillPickerQuery, slashCommands]);
+  const quotedSkillIdSet = useMemo(
+    () => new Set(quotedSkills.map((skill) => skill.skillId)),
+    [quotedSkills],
+  );
   const visibleModelOptions = modelOptionGroups.flatMap(
     (group) => group.options,
   );
@@ -6836,6 +7175,16 @@ function Composer({
     showThinkingValueSelector,
     thinkingValues,
   ]);
+  useEffect(() => {
+    setHighlightedSlashIndex(0);
+  }, [activeSlashRange?.query, filteredSlashCommands.length]);
+  useEffect(() => {
+    if (inputDisabled) {
+      setComposerActionsMenuOpen(false);
+      setComposerActionsView("menu");
+      setSkillPickerQuery("");
+    }
+  }, [inputDisabled]);
   const visibleFooterControlCount =
     1 + (showThinkingValueSelector ? 1 : 0) + 1;
   const fullPrimaryControlWidth = showModelSelector
@@ -6887,6 +7236,106 @@ function Composer({
         ),
       )
     : 0;
+
+  const syncCaretFromTextarea = (target: HTMLTextAreaElement | null) => {
+    if (!target) {
+      return;
+    }
+    setCaretIndex(target.selectionStart ?? target.value.length);
+  };
+
+  const handleTextareaChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
+    onChange(event.target.value);
+    syncCaretFromTextarea(event.target);
+  };
+
+  const applySlashCommand = (command: ChatComposerSlashCommandOption) => {
+    onSelectSlashCommand(command);
+    if (!activeSlashRange) {
+      window.requestAnimationFrame(() => {
+        const textarea = textareaRef.current;
+        if (!textarea) {
+          return;
+        }
+        textarea.focus();
+        syncCaretFromTextarea(textarea);
+      });
+      return;
+    }
+    const nextInput = removeSlashCommandText(input, activeSlashRange);
+    onChange(nextInput.value);
+    setCaretIndex(nextInput.caretIndex);
+    window.requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) {
+        return;
+      }
+      textarea.focus();
+      textarea.setSelectionRange(nextInput.caretIndex, nextInput.caretIndex);
+    });
+  };
+
+  const handleTextareaKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showSlashCommandMenu) {
+      if (event.key === "ArrowDown" && filteredSlashCommands.length > 0) {
+        event.preventDefault();
+        setHighlightedSlashIndex((current) =>
+          (current + 1) % filteredSlashCommands.length,
+        );
+        return;
+      }
+      if (event.key === "ArrowUp" && filteredSlashCommands.length > 0) {
+        event.preventDefault();
+        setHighlightedSlashIndex((current) =>
+          (current - 1 + filteredSlashCommands.length) %
+          filteredSlashCommands.length,
+        );
+        return;
+      }
+      if (
+        (event.key === "Enter" || event.key === "Tab") &&
+        filteredSlashCommands.length > 0
+      ) {
+        event.preventDefault();
+        applySlashCommand(
+          filteredSlashCommands[
+            Math.min(highlightedSlashIndex, filteredSlashCommands.length - 1)
+          ]!,
+        );
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setCaretIndex(-1);
+        return;
+      }
+    }
+    onKeyDown(event);
+  };
+
+  const openSkillPickerFromComposerMenu = () => {
+    setComposerActionsView("skills");
+    setSkillPickerQuery("");
+  };
+
+  const closeComposerActionsMenu = () => {
+    setComposerActionsMenuOpen(false);
+    setComposerActionsView("menu");
+    setSkillPickerQuery("");
+  };
+
+  const selectSkillFromPicker = (command: ChatComposerSlashCommandOption) => {
+    onSelectSlashCommand(command);
+    closeComposerActionsMenu();
+    window.requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) {
+        return;
+      }
+      textarea.focus();
+      syncCaretFromTextarea(textarea);
+    });
+  };
 
   const allowAttachmentDrop = (dataTransfer: DataTransfer | null) => {
     if (!dataTransfer || disabled || isResponding) {
@@ -6954,190 +7403,411 @@ function Composer({
   };
 
   return (
-    <div
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
-      className={`overflow-hidden rounded-xl border border-border bg-muted/50 transition-colors focus-within:border-ring ${
-        isDragActive
-          ? "border-primary/45 bg-primary/[0.04]"
-          : "border-border/35"
-      }`}
-    >
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        className="hidden"
-        onChange={onAttachmentInputChange}
-      />
-      {attachments.length > 0 ? (
-        <div className="border-b border-border/20 px-4 py-3">
-          <AttachmentList
-            attachments={attachments}
-            onRemove={onRemoveAttachment}
-          />
-        </div>
-      ) : null}
-      <div className="px-4 pb-2 pt-4">
-        <textarea
-          ref={textareaRef}
-          value={input}
-          onChange={(event) => onChange(event.target.value)}
-          onKeyDown={onKeyDown}
-          onCompositionStart={onCompositionStart}
-          onCompositionEnd={onCompositionEnd}
-          rows={1}
-          disabled={inputDisabled}
-          placeholder={
-            inputDisabled
-              ? disabledReason || "Chat unavailable right now"
-              : placeholder
-          }
-          className="composer-input block max-h-[220px] min-h-[40px] w-full resize-none overflow-y-auto bg-transparent text-[14px] leading-7 text-foreground outline-none placeholder:text-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-55"
-        />
-      </div>
-
-      <div
-        ref={composerFooterRef}
-        className={`border-t border-border/20 px-3 py-3 text-muted-foreground ${
-          compactComposerControls
-            ? "flex items-center gap-2 overflow-hidden"
-            : "flex flex-wrap items-center gap-2"
-        }`}
-      >
-        {showModelSelector ? (
-          <div
-            className={
-              compactComposerControls
-                ? "min-w-0 shrink-0"
-                : noAvailableModels
-                  ? "min-w-0 flex flex-1 basis-full flex-wrap items-center gap-2"
-                  : "min-w-0 flex-1 basis-[220px] max-w-[240px]"
-            }
-            style={
-              compactComposerControls
-                ? { width: `${compactModelControlWidth}px` }
-                : undefined
-            }
-          >
-            {noAvailableModels ? (
-              <>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="lg"
-                  onClick={onOpenModelProviders}
-                  className={`shrink-0 justify-between rounded-[11px] bg-card text-[12px] font-semibold hover:border-primary/35 hover:bg-card/92 ${
-                    compactComposerControls ? "px-2.5" : ""
-                  }`}
-                  aria-label="Configure model providers"
-                >
-                  <span className="flex min-w-0 items-center gap-2">
-                    <Waypoints
+    <div className="relative">
+      {showSlashCommandMenu ? (
+        <div className="pointer-events-none absolute left-3 right-3 top-4 z-20 -translate-y-[calc(100%+2px)]">
+          <div className="pointer-events-auto overflow-hidden rounded-[24px] border border-border/55 bg-popover shadow-2xl ring-1 ring-foreground/5">
+            <div className="border-b border-border/30 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/75">
+              Slash commands
+            </div>
+            {filteredSlashCommands.length > 0 ? (
+              <div className="max-h-[280px] overflow-y-auto py-1.5">
+                {filteredSlashCommands.map((command, index) => (
+                  <button
+                    key={command.key}
+                    type="button"
+                    onClick={() => applySlashCommand(command)}
+                    className={`flex w-full items-start gap-3 px-4 py-2.5 text-left text-xs transition-colors ${
+                      index === highlightedSlashIndex
+                        ? "bg-accent text-accent-foreground"
+                        : "hover:bg-accent/50"
+                    }`}
+                  >
+                    <Sparkles
                       size={13}
-                      className="shrink-0 text-muted-foreground"
+                      className="mt-0.5 shrink-0 text-primary/80"
                     />
-                    <span className="truncate">
-                      {compactComposerControls ? "Providers" : "Set up providers"}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">
+                        {command.label}
+                      </span>
+                      <span className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
+                        <span className="truncate">{command.command}</span>
+                        {command.description ? (
+                          <span className="truncate">{command.description}</span>
+                        ) : null}
+                      </span>
                     </span>
-                  </span>
-                  <ArrowRight
-                    size={14}
-                    className="shrink-0 text-muted-foreground"
-                  />
-                </Button>
-                <div
-                  className={`min-w-0 text-[10px] leading-5 text-muted-foreground ${
-                    compactComposerControls ? "hidden" : ""
-                  }`}
-                >
-                  Open provider settings to connect a model.
-                </div>
-              </>
+                  </button>
+                ))}
+              </div>
             ) : (
-              <ModelCombobox
-                selectedModel={selectedModel}
-                selectedModelLabel={selectedModelOptionLabel}
-                runtimeDefaultModelLabel={runtimeDefaultModelLabel}
-                runtimeDefaultModelAvailable={runtimeDefaultModelAvailable}
-                modelOptions={modelOptions}
-                modelOptionGroups={modelOptionGroups}
-                disabled={isResponding}
-                compact={compactComposerControls}
-                onModelChange={onModelChange}
-              />
+              <div className="px-4 py-4 text-[12px] text-muted-foreground">
+                No slash commands match.
+              </div>
             )}
           </div>
-        ) : (
-          <div className="min-w-0 flex-1 text-[11px] leading-6 text-muted-foreground">
-            Responses here stay in the workspace onboarding thread.
-          </div>
-        )}
+        </div>
+      ) : null}
 
-        {showThinkingValueSelector ? (
-          <div
-            className={
-              compactComposerControls
-                ? "shrink-0"
-                : "min-w-[112px] shrink-0 sm:w-[112px]"
-            }
-            style={
-              compactComposerControls
-                ? { width: `${compactThinkingControlWidth}px` }
-                : undefined
-            }
-          >
-            <ThinkingValueSelect
-              selectedThinkingValue={selectedThinkingValue}
-              thinkingValues={thinkingValues}
-              disabled={isResponding}
-              compact={compactComposerControls}
-              onThinkingValueChange={onThinkingValueChange}
+      <div
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+        className={`overflow-hidden rounded-xl border border-border bg-muted/50 transition-colors focus-within:border-ring ${
+          isDragActive
+            ? "border-primary/45 bg-primary/[0.04]"
+            : "border-border/35"
+        }`}
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={onAttachmentInputChange}
+        />
+        {attachments.length > 0 ? (
+          <div className="border-b border-border/20 px-4 py-3">
+            <AttachmentList
+              attachments={attachments}
+              onRemove={onRemoveAttachment}
             />
           </div>
         ) : null}
+        {quotedSkills.length > 0 ? (
+          <div className="border-b border-border/20 px-4 py-3">
+            <div className="flex flex-wrap gap-2">
+              {quotedSkills.map((skill) => (
+                <div
+                  key={skill.skillId}
+                  className={`inline-flex max-w-full items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] ${
+                    skill.enabled
+                      ? "border-primary/20 bg-primary/8 text-foreground/88"
+                      : "border-destructive/25 bg-destructive/8 text-destructive"
+                  }`}
+                >
+                  <Sparkles
+                    size={12}
+                    className={skill.enabled ? "text-primary/80" : "text-destructive"}
+                  />
+                  <span className="truncate">{skill.title}</span>
+                  <button
+                    type="button"
+                    onClick={() => onRemoveQuotedSkill(skill.skillId)}
+                    className="grid h-4 w-4 place-items-center rounded-full text-muted-foreground transition hover:text-foreground"
+                    aria-label={`Remove quoted skill ${skill.title}`}
+                  >
+                    <X size={11} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        <div className="px-4 pb-2 pt-4">
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={handleTextareaChange}
+            onKeyDown={handleTextareaKeyDown}
+            onSelect={(event) => syncCaretFromTextarea(event.currentTarget)}
+            onClick={(event) => syncCaretFromTextarea(event.currentTarget)}
+            onCompositionStart={onCompositionStart}
+            onCompositionEnd={onCompositionEnd}
+            rows={1}
+            disabled={inputDisabled}
+            placeholder={
+              inputDisabled
+                ? disabledReason || "Chat unavailable right now"
+                : placeholder
+            }
+            className="composer-input block max-h-[220px] min-h-[40px] w-full resize-none overflow-y-auto bg-transparent text-[14px] leading-7 text-foreground outline-none placeholder:text-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-55"
+          />
+        </div>
 
         <div
-          ref={composerActionsRef}
-          className="ml-auto flex shrink-0 items-center gap-2"
+          ref={composerFooterRef}
+          className={`border-t border-border/20 px-3 py-3 text-muted-foreground ${
+            compactComposerControls
+              ? "flex items-center gap-2 overflow-hidden"
+              : "flex flex-wrap items-center gap-2"
+          }`}
         >
-          <Button
-            variant="outline"
-            size="icon"
-            disabled={isResponding || disabled}
-            onClick={() => fileInputRef.current?.click()}
-            aria-label="Attach files"
-            className="rounded-full"
-          >
-            <Paperclip size={15} />
-          </Button>
-          {isResponding ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={pausePending || pauseDisabled}
-              onClick={onPause}
-              className="rounded-full px-3"
+          {showModelSelector ? (
+            <div
+              className={
+                compactComposerControls
+                  ? "min-w-0 shrink-0"
+                  : noAvailableModels
+                    ? "min-w-0 flex flex-1 basis-full flex-wrap items-center gap-2"
+                    : "min-w-0 flex-1 basis-[160px] max-w-[168px]"
+              }
+              style={
+                compactComposerControls
+                  ? { width: `${compactModelControlWidth}px` }
+                  : undefined
+              }
             >
-              {pausePending ? (
-                <Loader2 size={14} className="mr-1.5 animate-spin" />
+              {noAvailableModels ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="lg"
+                    onClick={onOpenModelProviders}
+                    className={`shrink-0 justify-between rounded-[11px] bg-card text-[12px] font-semibold hover:border-primary/35 hover:bg-card/92 ${
+                      compactComposerControls ? "px-2.5" : ""
+                    }`}
+                    aria-label="Configure model providers"
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      <Waypoints
+                        size={13}
+                        className="shrink-0 text-muted-foreground"
+                      />
+                      <span className="truncate">
+                        {compactComposerControls ? "Providers" : "Set up providers"}
+                      </span>
+                    </span>
+                    <ArrowRight
+                      size={14}
+                      className="shrink-0 text-muted-foreground"
+                    />
+                  </Button>
+                  <div
+                    className={`min-w-0 text-[10px] leading-5 text-muted-foreground ${
+                      compactComposerControls ? "hidden" : ""
+                    }`}
+                  >
+                    Open provider settings to connect a model.
+                  </div>
+                </>
               ) : (
-                <Square size={12} className="mr-1.5 fill-current" />
+                <ModelCombobox
+                  selectedModel={selectedModel}
+                  selectedModelLabel={selectedModelOptionLabel}
+                  runtimeDefaultModelLabel={runtimeDefaultModelLabel}
+                  runtimeDefaultModelAvailable={runtimeDefaultModelAvailable}
+                  modelOptions={modelOptions}
+                  modelOptionGroups={modelOptionGroups}
+                  disabled={isResponding}
+                  compact={compactComposerControls}
+                  onModelChange={onModelChange}
+                />
               )}
-              Pause
-            </Button>
+            </div>
           ) : (
-            <Button
-              size="icon"
-              disabled={(!input.trim() && attachments.length === 0) || disabled}
-              render={<button type="submit" />}
-              className="rounded-full"
-            >
-              <ArrowUp size={16} />
-            </Button>
+            <div className="min-w-0 flex-1 text-[11px] leading-6 text-muted-foreground">
+              Responses here stay in the workspace onboarding thread.
+            </div>
           )}
+
+          {showThinkingValueSelector ? (
+            <div
+              className={
+                compactComposerControls
+                  ? "shrink-0"
+                  : "min-w-[88px] shrink-0 sm:w-[88px]"
+              }
+              style={
+                compactComposerControls
+                  ? { width: `${compactThinkingControlWidth}px` }
+                  : undefined
+              }
+            >
+              <ThinkingValueSelect
+                selectedThinkingValue={selectedThinkingValue}
+                thinkingValues={thinkingValues}
+                disabled={isResponding}
+                compact={compactComposerControls}
+                compactWidth={
+                  compactComposerControls ? compactThinkingControlWidth : undefined
+                }
+                onThinkingValueChange={onThinkingValueChange}
+              />
+            </div>
+          ) : null}
+
+          <div
+            ref={composerActionsRef}
+            className="ml-auto flex shrink-0 items-center gap-2"
+          >
+            <Popover
+              open={composerActionsMenuOpen}
+              onOpenChange={(nextOpen) => {
+                setComposerActionsMenuOpen(nextOpen);
+                if (!nextOpen) {
+                  setComposerActionsView("menu");
+                  setSkillPickerQuery("");
+                }
+              }}
+            >
+              <PopoverTrigger
+                disabled={inputDisabled}
+                render={
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    aria-label="Open composer actions"
+                    className="rounded-full"
+                  />
+                }
+              >
+                <Plus size={15} />
+              </PopoverTrigger>
+              <PopoverContent
+                align="end"
+                side="top"
+                sideOffset={8}
+                className={
+                  composerActionsView === "skills"
+                    ? "w-[320px] p-0"
+                    : "w-[220px] p-1.5"
+                }
+              >
+                {composerActionsView === "skills" ? (
+                  <div className="flex flex-col">
+                    <div className="border-b border-border/30 px-3 py-3">
+                      <div className="relative rounded-lg bg-transparent">
+                        <Search
+                          size={14}
+                          className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                        />
+                        <input
+                          value={skillPickerQuery}
+                          onChange={(event) =>
+                            setSkillPickerQuery(event.target.value)
+                          }
+                          placeholder="Search skills..."
+                          className="h-9 w-full border-0 bg-transparent pl-9 text-xs text-foreground outline-none placeholder:text-muted-foreground"
+                          autoFocus
+                        />
+                      </div>
+                    </div>
+                    {filteredSkillCommands.length > 0 ? (
+                      <div className="max-h-[280px] overflow-y-auto px-2 py-2">
+                        {filteredSkillCommands.map((command) => {
+                          const isSelected = quotedSkillIdSet.has(
+                            command.skillId,
+                          );
+                          return (
+                            <button
+                              key={command.key}
+                              type="button"
+                              onClick={() => selectSkillFromPicker(command)}
+                              className={`flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left text-xs transition-colors ${
+                                isSelected
+                                  ? "bg-primary/8 text-foreground"
+                                  : "hover:bg-accent/50"
+                              }`}
+                            >
+                              <Sparkles
+                                size={14}
+                                className={`mt-0.5 shrink-0 ${
+                                  isSelected
+                                    ? "text-primary"
+                                    : "text-muted-foreground/80"
+                                }`}
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="flex items-center gap-2">
+                                  <span className="truncate font-medium text-foreground">
+                                    {command.label}
+                                  </span>
+                                  {isSelected ? (
+                                    <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-primary">
+                                      Added
+                                    </span>
+                                  ) : null}
+                                </span>
+                                <span className="mt-1 block truncate text-[11px] text-muted-foreground">
+                                  {command.description || command.command}
+                                </span>
+                              </span>
+                              {isSelected ? (
+                                <Check
+                                  size={13}
+                                  className="mt-0.5 shrink-0 text-primary"
+                                />
+                              ) : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="px-4 py-5 text-xs text-muted-foreground">
+                        No skills match this search.
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        closeComposerActionsMenu();
+                        fileInputRef.current?.click();
+                      }}
+                      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-foreground transition-colors hover:bg-accent/50"
+                    >
+                      <Paperclip
+                        size={14}
+                        className="shrink-0 text-muted-foreground"
+                      />
+                      <span className="min-w-0 flex-1 truncate">
+                        Attach a file
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openSkillPickerFromComposerMenu}
+                      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-foreground transition-colors hover:bg-accent/50"
+                    >
+                      <Sparkles
+                        size={14}
+                        className="shrink-0 text-primary/80"
+                      />
+                      <span className="min-w-0 flex-1 truncate">
+                        Use Skills
+                      </span>
+                    </button>
+                  </div>
+                )}
+              </PopoverContent>
+            </Popover>
+            {isResponding ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={pausePending || pauseDisabled}
+                onClick={onPause}
+                className="rounded-full px-3"
+              >
+                {pausePending ? (
+                  <Loader2 size={14} className="mr-1.5 animate-spin" />
+                ) : (
+                  <Square size={12} className="mr-1.5 fill-current" />
+                )}
+                Pause
+              </Button>
+            ) : (
+              <Button
+                size="icon"
+                disabled={
+                  (!input.trim() &&
+                    attachments.length === 0 &&
+                    quotedSkills.length === 0) ||
+                  disabled
+                }
+                render={<button type="submit" />}
+                className="rounded-full"
+              >
+                <ArrowUp size={16} />
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     </div>

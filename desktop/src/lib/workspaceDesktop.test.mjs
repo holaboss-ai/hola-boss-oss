@@ -80,3 +80,17 @@ test("workspace desktop rechecks runtime status while bootstrap is waiting for s
   );
   assert.match(source, /window\.clearInterval\(timer\);/);
 });
+
+test("workspace creation can copy an existing workspace browser profile or import from a browser", async () => {
+  const source = await readFile(WORKSPACE_DESKTOP_PATH, "utf8");
+
+  assert.match(source, /type WorkspaceBrowserBootstrapMode = "fresh" \| "copy_workspace" \| "import_browser";/);
+  assert.match(source, /const \[browserImportSource, setBrowserImportSourceState\] =\s*useState<BrowserImportSource>\("chrome"\);/);
+  assert.match(source, /if \(browserBootstrapMode === "copy_workspace"\) \{/);
+  assert.match(source, /workspace\.copyBrowserWorkspaceProfile\(\{/);
+  assert.match(source, /else if \(browserBootstrapMode === "import_browser"\) \{/);
+  assert.match(source, /workspace\.importBrowserProfile\(\{/);
+  assert.match(source, /profileDir:\s*browserImportSource === "safari"\s*\?\s*undefined\s*:\s*\(browserImportProfileDir\.trim\(\) \|\| undefined\),/);
+  assert.match(source, /setWorkspaceCreatePhase\("copying_browser_profile"\);/);
+  assert.match(source, /setWorkspaceCreatePhase\("importing_browser_profile"\);/);
+});

@@ -1,4 +1,4 @@
-import { MessageSquareText, Sparkles, Workflow } from "lucide-react";
+import { MessageSquareText, Workflow } from "lucide-react";
 import type { WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
 import { providerIcon } from "@/components/onboarding/constants";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
@@ -6,7 +6,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 export type LeftRailItem =
   | "space"
   | "automations"
-  | "skills"
   | "marketplace"
   | "app";
 
@@ -26,7 +25,6 @@ const PRIMARY_ITEMS: Array<{
 }> = [
   { id: "space", label: "Space", icon: <MessageSquareText size={15} /> },
   { id: "automations", label: "Automations", icon: <Workflow size={15} /> },
-  { id: "skills", label: "Skills", icon: <Sparkles size={15} /> },
 ];
 
 function appInitials(label: string): string {

@@ -328,6 +328,39 @@ interface WorkspaceListResponsePayload {
   offset: number;
 }
 
+type BrowserImportSource = "chrome" | "chromium" | "arc" | "safari";
+
+interface BrowserImportSummaryPayload {
+  sourceKind: BrowserImportSource | "workspace_copy";
+  sourceLabel: string;
+  sourcePath: string;
+  sourceProfileDir: string;
+  sourceProfileLabel: string;
+  importedBookmarks: number;
+  importedHistoryEntries: number;
+  importedCookies: number;
+  skippedCookies: number;
+  warnings: string[];
+}
+
+interface BrowserImportProfilePayload {
+  workspaceId: string;
+  source: BrowserImportSource;
+  profileDir?: string | null;
+  safariArchivePath?: string | null;
+}
+
+interface BrowserImportProfileOptionPayload {
+  profileId: string;
+  profileLabel: string;
+  profileDir: string;
+}
+
+interface BrowserCopyWorkspaceProfilePayload {
+  sourceWorkspaceId: string;
+  targetWorkspaceId: string;
+}
+
 interface TaskProposalRecordPayload {
   proposal_id: string;
   workspace_id: string;
@@ -1093,6 +1126,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:listMarketplaceTemplates") as Promise<TemplateListResponsePayload>,
     pickTemplateFolder: () =>
       ipcRenderer.invoke("workspace:pickTemplateFolder") as Promise<TemplateFolderSelectionPayload>,
+    listImportBrowserProfiles: (source: BrowserImportSource) =>
+      ipcRenderer.invoke("workspace:listImportBrowserProfiles", source) as Promise<BrowserImportProfileOptionPayload[]>,
+    importBrowserProfile: (payload: BrowserImportProfilePayload) =>
+      ipcRenderer.invoke("workspace:importBrowserProfile", payload) as Promise<BrowserImportSummaryPayload | null>,
+    copyBrowserWorkspaceProfile: (payload: BrowserCopyWorkspaceProfilePayload) =>
+      ipcRenderer.invoke("workspace:copyBrowserWorkspaceProfile", payload) as Promise<BrowserImportSummaryPayload>,
     listWorkspaces: () => ipcRenderer.invoke("workspace:listWorkspaces") as Promise<WorkspaceListResponsePayload>,
     getWorkspaceLifecycle: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:getWorkspaceLifecycle", workspaceId) as Promise<WorkspaceLifecyclePayload>,

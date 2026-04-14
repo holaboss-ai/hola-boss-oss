@@ -358,6 +358,39 @@ declare global {
     offset: number;
   }
 
+  type BrowserImportSource = "chrome" | "chromium" | "arc" | "safari";
+
+  interface BrowserImportSummaryPayload {
+    sourceKind: BrowserImportSource | "workspace_copy";
+    sourceLabel: string;
+    sourcePath: string;
+    sourceProfileDir: string;
+    sourceProfileLabel: string;
+    importedBookmarks: number;
+    importedHistoryEntries: number;
+    importedCookies: number;
+    skippedCookies: number;
+    warnings: string[];
+  }
+
+  interface BrowserImportProfilePayload {
+    workspaceId: string;
+    source: BrowserImportSource;
+    profileDir?: string | null;
+    safariArchivePath?: string | null;
+  }
+
+  interface BrowserImportProfileOptionPayload {
+    profileId: string;
+    profileLabel: string;
+    profileDir: string;
+  }
+
+  interface BrowserCopyWorkspaceProfilePayload {
+    sourceWorkspaceId: string;
+    targetWorkspaceId: string;
+  }
+
   interface TaskProposalRecordPayload {
     proposal_id: string;
     workspace_id: string;
@@ -1296,6 +1329,15 @@ declare global {
       getClientConfig: () => Promise<HolabossClientConfigPayload>;
       listMarketplaceTemplates: () => Promise<TemplateListResponsePayload>;
       pickTemplateFolder: () => Promise<TemplateFolderSelectionPayload>;
+      listImportBrowserProfiles: (
+        source: BrowserImportSource
+      ) => Promise<BrowserImportProfileOptionPayload[]>;
+      importBrowserProfile: (
+        payload: BrowserImportProfilePayload
+      ) => Promise<BrowserImportSummaryPayload | null>;
+      copyBrowserWorkspaceProfile: (
+        payload: BrowserCopyWorkspaceProfilePayload
+      ) => Promise<BrowserImportSummaryPayload>;
       listWorkspaces: () => Promise<WorkspaceListResponsePayload>;
       getWorkspaceLifecycle: (workspaceId: string) => Promise<WorkspaceLifecyclePayload>;
       activateWorkspace: (workspaceId: string) => Promise<WorkspaceLifecyclePayload>;
