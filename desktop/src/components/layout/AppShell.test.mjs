@@ -32,6 +32,23 @@ test("app shell routes file outputs into the explorer and universal display whil
   );
 });
 
+test("app shell routes app outputs into the applications explorer and app surface", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /const handleOpenSpaceApp = useCallback\(/);
+  assert.match(source, /setSpaceExplorerMode\("applications"\);/);
+  assert.match(source, /setSpaceExplorerCollapsed\(false\);/);
+  assert.match(
+    source,
+    /setSpaceDisplayView\(\{\s*type: "app",\s*appId,\s*path: options\?\.path,\s*resourceId: options\?\.resourceId,\s*view: options\?\.view,\s*\}\);/,
+  );
+  assert.match(
+    source,
+    /if \(target\.type === "app"\) \{\s*handleOpenSpaceApp\(target\.appId,\s*\{\s*path: target\.path,\s*resourceId: target\.resourceId,\s*view: target\.view,\s*resetAgentView: true,\s*\}\);/,
+  );
+  assert.doesNotMatch(source, /window\.electronAPI\.appSurface\.resolveUrl/);
+});
+
 test("app shell clears a consumed file explorer focus request", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
@@ -313,6 +330,33 @@ test("app shell requests remote task proposal generation without a separate succ
   assert.doesNotMatch(source, /Pending cloud jobs/);
 });
 
+test("app shell raises a local toast when fresh task proposals arrive and opens the inbox from it", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /const TASK_PROPOSAL_TOAST_ID_PREFIX = "task-proposal-toast:";/);
+  assert.match(source, /function buildTaskProposalToastNotification\(/);
+  assert.match(
+    source,
+    /const \[taskProposalToastNotifications,\s*setTaskProposalToastNotifications\] =\s*useState<\s*RuntimeNotificationRecordPayload\[\]\s*>\(\[\]\);/,
+  );
+  assert.match(
+    source,
+    /const knownTaskProposalIdsByWorkspaceRef = useRef<Record<string, string\[]>>\(\s*\{\s*\},?\s*\);/,
+  );
+  assert.match(source, /const applyTaskProposals = useCallback\(/);
+  assert.match(source, /const pendingNewProposals = proposals\.filter\(\(proposal\) => \{/);
+  assert.match(
+    source,
+    /return isNew && proposal\.state\.trim\(\)\.toLowerCase\(\) === "pending";/,
+  );
+  assert.match(
+    source,
+    /setTaskProposalToastNotifications\(\(current\) =>\s*\[toast, \.\.\.current\]\.slice\(0, 4\),?\s*\)\s*;/,
+  );
+  assert.match(source, /if \(isTaskProposalToastId\(notificationId\)\) \{/);
+  assert.match(source, /openTaskProposalInbox\(notification\.workspace_id\);/);
+});
+
 test("app shell tracks unread task proposals and badges the inbox control", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
@@ -346,7 +390,7 @@ test("app shell renders a collapsible explorer and universal display in space mo
   assert.doesNotMatch(source, /className="mr-1\.5 flex w-9 shrink-0 flex-col items-center gap-1\.5 py-1"/);
   assert.doesNotMatch(source, /aria-label="Toggle files pane"/);
   assert.doesNotMatch(source, /aria-label="Toggle browser pane"/);
-  assert.match(source, /type SpaceExplorerMode = "files" \| "browser";/);
+  assert.match(source, /type SpaceExplorerMode = "files" \| "browser" \| "applications";/);
   assert.match(source, /const \[spaceExplorerMode, setSpaceExplorerMode\] =\s*useState<SpaceExplorerMode>\("files"\);/);
   assert.match(source, /const \[spaceExplorerCollapsed, setSpaceExplorerCollapsed\] = useState\(false\);/);
   assert.match(source, /const \[spaceDisplayView, setSpaceDisplayView\] = useState<SpaceDisplayView>\(\{\s*type: "browser",\s*\}\);/);
@@ -356,9 +400,11 @@ test("app shell renders a collapsible explorer and universal display in space mo
   );
   assert.match(source, /<FileExplorerPane[\s\S]*focusRequest=\{fileExplorerFocusRequest\}/);
   assert.match(source, /<FileExplorerPane[\s\S]*previewInPane=\{false\}/);
+  assert.match(source, /<SpaceApplicationsExplorerPane[\s\S]*installedApps=\{installedApps\}/);
   assert.match(source, /<SpaceBrowserExplorerPane[\s\S]*browserSpace=\{spaceBrowserSpace\}/);
   assert.match(source, /<SpaceBrowserDisplayPane[\s\S]*layoutSyncKey=\{spaceDisplayLayoutSyncKey\}/);
   assert.match(source, /<SpaceBrowserDisplayPane[\s\S]*embedded/);
+  assert.match(source, /aria-label="Open applications explorer"/);
   assert.match(source, /aria-label="Collapse explorer"/);
   assert.match(source, /aria-label="Expand explorer"/);
   assert.match(source, /aria-label="Resize display pane"/);

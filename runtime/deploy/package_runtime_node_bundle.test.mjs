@@ -19,7 +19,12 @@ for (const targetPath of [macosPackagerPath, linuxPackagerPath]) {
     const source = await readFile(targetPath, "utf8");
     const targetPlatform = path.basename(targetPath).includes("macos") ? "macos" : "linux";
 
-    assert.match(source, /npm install --prefix "\$\{NODE_RUNTIME_DIR\}" "node@\$\{NODE_VERSION\}" "npm@\$\{NPM_VERSION\}"/);
+    assert.match(source, /npm install --prefix "\$\{BUILD_NODE_RUNTIME_DIR\}" "node@\$\{NODE_VERSION\}" "npm@\$\{NPM_VERSION\}"/);
+    assert.match(source, /DEFAULT_RUNTIME_NODE_VERSION="24\.14\.1"/);
+    assert.match(source, /NODE_VERSION="\$\{HOLABOSS_RUNTIME_NODE_VERSION:-\$\{DEFAULT_RUNTIME_NODE_VERSION\}\}"/);
+    assert.match(source, /BUILD_NODE_RUNTIME_DIR="\$\{STAGING_ROOT\}\/build-node-runtime"/);
+    assert.match(source, /build_runtime_root\.mjs/);
+    assert.match(source, /cp -R "\$\{BUILD_NODE_RUNTIME_DIR\}" "\$\{NODE_RUNTIME_DIR\}"/);
     assert.match(source, new RegExp(`node "\\$\\{SCRIPT_DIR\\}/stage_python_runtime\\.mjs" "\\$\\{OUTPUT_ROOT\\}" "${targetPlatform}"`));
     assert.match(source, /BUNDLED_NODE_BIN="\$\{BUNDLE_ROOT\}\/node-runtime\/node_modules\/node\/bin\/node"/);
     assert.match(source, /export PATH="\$\{BUNDLE_ROOT\}\/python-runtime\/bin:\$\{BUNDLE_ROOT\}\/python-runtime\/python\/bin:\$\{BUNDLE_ROOT\}\/node-runtime\/node_modules\/node\/bin:\$\{BUNDLE_ROOT\}\/node-runtime\/node_modules\/\.bin:\$\{PATH\}"/);
@@ -40,7 +45,11 @@ test("package_windows_runtime.mjs writes launchers that use the bundled node run
   const cmdLauncherSource = buildWindowsRuntimeCmdLauncherSource();
 
   assert.match(source, /import \{ stagePythonRuntime \} from "\.\/stage_python_runtime\.mjs";/);
-  assert.match(source, /runNpm\(\["install", "--prefix", nodeRuntimeDir, `node@\$\{nodeVersion\}`, `npm@\$\{npmVersion\}`\]/);
+  assert.match(source, /const DEFAULT_RUNTIME_NODE_VERSION = "24\.14\.1";/);
+  assert.match(source, /const buildNodeRuntimeDir = path\.join\(stagingRoot, "build-node-runtime"\);/);
+  assert.match(source, /HOLABOSS_RUNTIME_BUILD_NPM_CLI: buildNpmCli/);
+  assert.match(source, /runNpm\(\["install", "--prefix", buildNodeRuntimeDir, `node@\$\{nodeVersion\}`, `npm@\$\{npmVersion\}`\]/);
+  assert.match(source, /cpSync\(buildNodeRuntimeDir, nodeRuntimeDir, \{ recursive: true, dereference: true \}\)/);
   assert.match(source, /prunePackagedTree\(nodeRuntimeDir, "windows"\)/);
   assert.match(source, /const pythonStageResult = await stagePythonRuntime\(outputRoot, "windows"\);/);
   assert.match(source, /bundled_npm_bin: Boolean\(bundledNpmBin\)/);

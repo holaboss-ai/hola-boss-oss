@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/holaboss-ai/holaOS/actions/workflows/ci.yml"><img src="https://github.com/holaboss-ai/holaOS/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <img src="https://img.shields.io/badge/node-22%2B-43853d" alt="Node 22+" />
+  <img src="https://img.shields.io/badge/node-24.14.1-43853d" alt="Node 24.14.1" />
   <img src="https://img.shields.io/badge/platform-macOS%20supported,%20Windows%20%26%20Linux%20in%20progress-f28c28" alt="macOS supported, Windows and Linux in progress" />
   <img src="https://img.shields.io/badge/desktop-Electron-47848f" alt="Electron desktop" />
   <img src="https://img.shields.io/badge/runtime-TypeScript-3178c6" alt="TypeScript runtime" />
@@ -60,7 +60,7 @@ Quick Start is the shortest path to a working local Holaboss Desktop environment
 - `bash`
 - macOS, Linux, or WSL
 
-The installer bootstraps `git`, Node.js `22`, and `npm` if they are missing. On Linux it may use `sudo` to install `git`.
+The installer bootstraps `git`, Node.js `24.14.1`, and `npm` if they are missing. On Linux it may use `sudo` to install `git`.
 
 
 ### One-Line Install
@@ -74,7 +74,7 @@ curl -fsSL https://raw.githubusercontent.com/holaboss-ai/holaboss-ai/main/script
 That installer:
 
 - installs `git` if it is missing
-- installs Node.js `22` plus `npm` if they are missing
+- installs Node.js `24.14.1` plus `npm` if they are missing
 - clones the repository into `~/holaboss-ai` by default
 - creates `desktop/.env` from `desktop/.env.example` if needed
 - runs `npm run desktop:install`

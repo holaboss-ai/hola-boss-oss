@@ -20,6 +20,7 @@ import { stagePythonRuntime } from "./stage_python_runtime.mjs";
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const runtimeRoot = path.resolve(scriptDir, "..");
 const repoRoot = path.resolve(runtimeRoot, "..");
+const DEFAULT_RUNTIME_NODE_VERSION = "24.14.1";
 
 function resolveWindowsNpmCliPath() {
   const envExecPath = process.env.npm_execpath?.trim();
@@ -101,7 +102,7 @@ function bundledPythonCandidates(outputRoot) {
 }
 
 function resolveNodeVersion() {
-  return process.env.HOLABOSS_RUNTIME_NODE_VERSION?.trim() || process.versions.node;
+  return process.env.HOLABOSS_RUNTIME_NODE_VERSION?.trim() || DEFAULT_RUNTIME_NODE_VERSION;
 }
 
 function resolveNpmVersion() {
@@ -208,6 +209,14 @@ export async function packageWindowsRuntime(
 
   const outputRoot = path.resolve(outputRootArg);
   const stagingRoot = mkdtempSync(path.join(os.tmpdir(), "holaboss-runtime-windows."));
+  const buildNodeRuntimeDir = path.join(stagingRoot, "build-node-runtime");
+  const buildNodeExe = path.join(buildNodeRuntimeDir, "node_modules", "node", "bin", "node.exe");
+  const buildNpmCli = path.join(buildNodeRuntimeDir, "node_modules", "npm", "bin", "npm-cli.js");
+  const buildPathEntries = [
+    path.join(buildNodeRuntimeDir, "node_modules", "node", "bin"),
+    path.join(buildNodeRuntimeDir, "node_modules", ".bin"),
+    process.env.PATH ?? ""
+  ].filter((value) => value.length > 0);
   const runtimeStagingRoot = path.join(stagingRoot, "runtime-root");
   const runtimeOutputRoot = path.join(outputRoot, "runtime");
   const nodeRuntimeDir = path.join(outputRoot, "node-runtime");
@@ -218,7 +227,22 @@ export async function packageWindowsRuntime(
   const npmVersion = resolveNpmVersion();
 
   try {
-    buildRuntimeRoot(runtimeStagingRoot);
+    if (!skipNodeDeps) {
+      mkdirSync(buildNodeRuntimeDir, { recursive: true });
+      runNpm(["install", "--prefix", buildNodeRuntimeDir, `node@${nodeVersion}`, `npm@${npmVersion}`], {
+        stdio: "inherit",
+        env: process.env
+      });
+      runCommand(buildNodeExe, [path.join(scriptDir, "build_runtime_root.mjs"), runtimeStagingRoot], {
+        env: {
+          ...process.env,
+          HOLABOSS_RUNTIME_BUILD_NPM_CLI: buildNpmCli,
+          PATH: buildPathEntries.join(path.delimiter),
+        }
+      });
+    } else {
+      buildRuntimeRoot(runtimeStagingRoot);
+    }
 
     rmSync(outputRoot, { recursive: true, force: true });
     mkdirSync(outputRoot, { recursive: true });
@@ -227,11 +251,7 @@ export async function packageWindowsRuntime(
 
     mkdirSync(binDir, { recursive: true });
     if (!skipNodeDeps) {
-      mkdirSync(nodeRuntimeDir, { recursive: true });
-      runNpm(["install", "--prefix", nodeRuntimeDir, `node@${nodeVersion}`, `npm@${npmVersion}`], {
-        stdio: "inherit",
-        env: process.env
-      });
+      cpSync(buildNodeRuntimeDir, nodeRuntimeDir, { recursive: true, dereference: true });
       prunePackagedTree(nodeRuntimeDir, "windows");
       stageWindowsNodeCommandLaunchers(outputRoot);
     }

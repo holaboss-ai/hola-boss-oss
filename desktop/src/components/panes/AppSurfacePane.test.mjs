@@ -33,3 +33,13 @@ test("app surface pane resolves a URL instead of navigating a native app surface
     "expected AppSurfacePane to resolve an app surface URL for iframe rendering",
   );
 });
+
+test("app surface pane preserves explicit app routes when present", async () => {
+  const source = await readFile(APP_SURFACE_PANE_PATH, "utf8");
+
+  assert.match(
+    source,
+    /resolveAppSurfacePath\(\{ path, resourceId, view \}\)/,
+    "expected AppSurfacePane to pass explicit app paths through to route resolution",
+  );
+});

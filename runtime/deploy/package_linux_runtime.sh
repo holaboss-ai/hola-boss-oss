@@ -37,28 +37,19 @@ resolve_output_root() {
 require_cmd git
 OUTPUT_ROOT="$(resolve_output_root "${OUTPUT_ROOT}")"
 
-"${SCRIPT_DIR}/build_runtime_root.sh" "${STAGING_ROOT}/runtime-root"
-
-rm -rf "${OUTPUT_ROOT}"
-mkdir -p "${OUTPUT_ROOT}"
-cp -R "${STAGING_ROOT}/runtime-root" "${OUTPUT_ROOT}/runtime"
-"${SCRIPT_DIR}/prune_packaged_tree.sh" "${OUTPUT_ROOT}/runtime" "linux"
-
 NODE_RUNTIME_DIR="${OUTPUT_ROOT}/node-runtime"
 PYTHON_RUNTIME_DIR="${OUTPUT_ROOT}/python-runtime"
 BIN_DIR="${OUTPUT_ROOT}/bin"
 PACKAGE_METADATA_PATH="${OUTPUT_ROOT}/package-metadata.json"
 SKIP_NODE_DEPS="${HOLABOSS_SKIP_NODE_DEPS:-0}"
+BUILD_NODE_RUNTIME_DIR="${STAGING_ROOT}/build-node-runtime"
+BUILD_NODE_BIN="${BUILD_NODE_RUNTIME_DIR}/node_modules/node/bin/node"
 LOCAL_NODE_BIN="${NODE_RUNTIME_DIR}/node_modules/node/bin/node"
 LOCAL_NPM_BIN="${NODE_RUNTIME_DIR}/node_modules/.bin/npm"
 LOCAL_PYTHON_BIN="${PYTHON_RUNTIME_DIR}/bin/python"
 
-NODE_VERSION="${HOLABOSS_RUNTIME_NODE_VERSION:-}"
-if [ -z "${NODE_VERSION}" ]; then
-  require_cmd node
-  NODE_VERSION="$(node --version)"
-  NODE_VERSION="${NODE_VERSION#v}"
-fi
+DEFAULT_RUNTIME_NODE_VERSION="24.14.1"
+NODE_VERSION="${HOLABOSS_RUNTIME_NODE_VERSION:-${DEFAULT_RUNTIME_NODE_VERSION}}"
 
 NPM_VERSION="${HOLABOSS_RUNTIME_NPM_VERSION:-}"
 if [ -z "${NPM_VERSION}" ]; then
@@ -81,12 +72,28 @@ case "${PYTHON_ARCH_RAW}" in
     ;;
 esac
 
-mkdir -p "${BIN_DIR}"
-
 if [ "${SKIP_NODE_DEPS}" != "1" ]; then
   require_cmd npm
-  mkdir -p "${NODE_RUNTIME_DIR}"
-  npm install --prefix "${NODE_RUNTIME_DIR}" "node@${NODE_VERSION}" "npm@${NPM_VERSION}"
+  mkdir -p "${BUILD_NODE_RUNTIME_DIR}"
+  npm install --prefix "${BUILD_NODE_RUNTIME_DIR}" "node@${NODE_VERSION}" "npm@${NPM_VERSION}"
+fi
+
+if [ "${SKIP_NODE_DEPS}" != "1" ]; then
+  PATH="${BUILD_NODE_RUNTIME_DIR}/node_modules/node/bin:${BUILD_NODE_RUNTIME_DIR}/node_modules/.bin:${PATH}" \
+    "${BUILD_NODE_BIN}" "${SCRIPT_DIR}/build_runtime_root.mjs" "${STAGING_ROOT}/runtime-root"
+else
+  require_cmd node
+  node "${SCRIPT_DIR}/build_runtime_root.mjs" "${STAGING_ROOT}/runtime-root"
+fi
+
+rm -rf "${OUTPUT_ROOT}"
+mkdir -p "${OUTPUT_ROOT}"
+mkdir -p "${BIN_DIR}"
+cp -R "${STAGING_ROOT}/runtime-root" "${OUTPUT_ROOT}/runtime"
+"${SCRIPT_DIR}/prune_packaged_tree.sh" "${OUTPUT_ROOT}/runtime" "linux"
+
+if [ "${SKIP_NODE_DEPS}" != "1" ]; then
+  cp -R "${BUILD_NODE_RUNTIME_DIR}" "${NODE_RUNTIME_DIR}"
   "${SCRIPT_DIR}/prune_packaged_tree.sh" "${NODE_RUNTIME_DIR}" "linux"
 fi
 
