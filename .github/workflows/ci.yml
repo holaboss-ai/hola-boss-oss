@@ -46,7 +46,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -71,7 +71,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: |
             runtime/harness-host/package-lock.json
@@ -126,7 +126,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: sdk/app-sdk/package-lock.json
 
@@ -152,7 +152,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: |
             runtime/api-server/package-lock.json
@@ -280,10 +280,10 @@ jobs:
         with:
           ref: ${{ needs.ensure-release.outputs.release_ref }}
 
-      - name: Setup Node 22
+      - name: Setup Node 24
         uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24"
 
       - name: Build Linux runtime bundle
         run: bash runtime/deploy/package_linux_runtime.sh out/runtime-linux
@@ -337,10 +337,10 @@ jobs:
         with:
           ref: ${{ needs.ensure-release.outputs.release_ref }}
 
-      - name: Setup Node 22
+      - name: Setup Node 24
         uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -502,10 +502,10 @@ jobs:
         with:
           ref: ${{ needs.ensure-release.outputs.release_ref }}
 
-      - name: Setup Node 22
+      - name: Setup Node 24
         uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -646,10 +646,10 @@ jobs:
         with:
           ref: ${{ needs.ensure-release.outputs.release_ref }}
 
-      - name: Setup Node 22
+      - name: Setup Node 24
         uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -776,10 +776,10 @@ jobs:
         with:
           ref: ${{ needs.ensure-release.outputs.release_ref }}
 
-      - name: Setup Node 22
+      - name: Setup Node 24
         uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
           cache-dependency-path: |
             package-lock.json
