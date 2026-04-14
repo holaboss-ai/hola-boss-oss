@@ -6265,7 +6265,7 @@ function ExecutionTimelineThinkingEntry({
     <div className="py-1">
       <div className="-ml-2.5 w-[calc(100%+0.625rem)] rounded-[16px] border border-border/25 bg-muted/30 px-3.5 py-3">
         <SimpleMarkdown
-          className="chat-markdown chat-assistant-markdown max-w-full text-[12px] leading-6 text-foreground/82"
+          className="chat-markdown chat-thinking-markdown max-w-full text-foreground/82"
           onLinkClick={onLinkClick}
         >
           {text}

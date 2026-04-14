@@ -272,6 +272,10 @@ test("chat pane renders an execution timeline that interleaves thinking segments
     source,
     /function ExecutionTimelineThinkingEntry[\s\S]*className="py-1"[\s\S]*className="-ml-2\.5 w-\[calc\(100%\+0\.625rem\)\] rounded-\[16px\] border border-border\/25 bg-muted\/30 px-3\.5 py-3"/,
   );
+  assert.match(
+    source,
+    /function ExecutionTimelineThinkingEntry[\s\S]*className="chat-markdown chat-thinking-markdown max-w-full text-foreground\/82"/,
+  );
   assert.match(source, /<AssistantTurn[\s\S]*executionItems=\{message\.executionItems \?\? \[\]\}/);
   assert.match(source, /<AssistantTurn[\s\S]*executionItems=\{liveExecutionItems\}/);
   assert.match(source, /<TraceStepGroup[\s\S]*items=\{executionItems\}/);
