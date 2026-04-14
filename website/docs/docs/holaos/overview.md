@@ -4,6 +4,8 @@ The overview now lives on the docs landing page.
 
 Use [Overview](/) for the merged entry page, then continue with [Environment Engineering](/holaos/environment-engineering).
 
+This section stays conceptual on purpose. It explains the environment model, layer boundaries, and durable system surfaces. When you need exact commands, payloads, routes, or source-file seams, continue into [Build on holaOS](/build-on-holaos/).
+
 ## Read next
 
 <DocCards>

@@ -40,6 +40,27 @@ The desktop does not talk to the runtime through a vague helper. `desktop/electr
 
 If you are debugging runtime startup from desktop, inspect `runtime.log` and the `sandbox-host` directory under Electron `userData` before you change UI code.
 
+Representative launch shape from `desktop/electron/main.ts`:
+
+```ts
+const child = spawn(launchSpec.command, launchSpec.args, {
+  cwd: runtimeRoot,
+  env: {
+    ...process.env,
+    HB_SANDBOX_ROOT: sandboxRoot,
+    SANDBOX_AGENT_BIND_HOST: "127.0.0.1",
+    SANDBOX_AGENT_BIND_PORT: String(RUNTIME_API_PORT),
+    HOLABOSS_EMBEDDED_RUNTIME: "1",
+    SANDBOX_AGENT_HARNESS: harness,
+    HOLABOSS_RUNTIME_DB_PATH: runtimeDatabasePath(),
+    PROACTIVE_ENABLE_REMOTE_BRIDGE: "1",
+    HOLABOSS_AUTH_COOKIE: authCookieHeader() ?? "",
+  },
+});
+```
+
+`HOLABOSS_RUNTIME_ROOT` can override the staged bundle location when you need the desktop to boot a different packaged runtime tree.
+
 ## Renderer-to-main contract
 
 The desktop renderer does not talk to Electron internals directly. It goes through namespaced bridge contracts exposed by `electronAPI`.
@@ -64,6 +85,40 @@ If you change the desktop contract, update all three layers together:
 2. `desktop/src/types/electron.d.ts`
 3. the `ipcMain` handler in `desktop/electron/main.ts`, usually wired through `handleTrustedIpc(...)`
 
+Minimal bridge example:
+
+```ts
+// preload
+runtime: {
+  getConfig: () => ipcRenderer.invoke("runtime:getConfig"),
+  setConfig: (payload) => ipcRenderer.invoke("runtime:setConfig", payload),
+},
+workspace: {
+  queueSessionInput: (payload) =>
+    ipcRenderer.invoke("workspace:queueSessionInput", payload),
+}
+```
+
+```ts
+// main
+handleTrustedIpc("runtime:getConfig", ["main", "auth-popup"], () =>
+  getRuntimeConfig(),
+);
+handleTrustedIpc(
+  "runtime:setConfig",
+  ["main", "auth-popup"],
+  async (_event, payload) => {
+    const currentConfig = await readRuntimeConfigFile();
+    const nextConfig = await writeRuntimeConfigFile(payload);
+    await restartEmbeddedRuntimeIfNeeded(currentConfig, nextConfig);
+    return getRuntimeConfig();
+  },
+);
+handleTrustedIpc("workspace:queueSessionInput", ["main"], async (_event, payload) =>
+  queueSessionInput(payload),
+);
+```
+
 ## Browser protocol
 
 The browser system is not just a webview dropped into React. The current path uses BrowserView orchestration in the main process and synchronizes the visible viewport from the renderer using `browser.setBounds`.
@@ -79,6 +134,16 @@ The desktop browser service is now more than a browser-tool bridge. In addition 
 
 This split is why browser behavior belongs to desktop internals, not to generic UI code alone.
 
+The non-browser half of that context comes from the renderer:
+
+```ts
+await window.electronAPI.workspace.setOperatorSurfaceContext(
+  workspaceId,
+  reportedOperatorSurfaceContext,
+);
+// runtime later reads GET /api/v1/browser/operator-surface-context
+```
+
 ## Model catalog and reasoning controls
 
 The desktop model path is now catalog-driven rather than a flat model string list.
@@ -88,6 +153,29 @@ The desktop model path is now catalog-driven rather than a flat model string lis
 - `AuthPanel.tsx` uses that snapshot to show the actual configured provider/model surface instead of a blind text field.
 - `ChatPane.tsx` uses the same provider groups plus the local fallback catalog to decide whether the selected model supports reasoning and which `thinking_value` choices to show.
 - The selected `thinking_value` is a chat-composer preference, not a `runtime-config.json` field. On submit the renderer queues it with the session input so the runtime can apply it per run.
+
+Representative catalog metadata and queue handoff:
+
+```ts
+const entry = {
+  model_id: "gpt-5.4",
+  reasoning: true,
+  thinking_values: ["none", "low", "medium", "high", "xhigh"],
+  default_thinking_value: "medium",
+  input_modalities: ["text", "image"],
+};
+```
+
+```ts
+const selectedModelSupportsReasoning = selectedConfiguredModel
+  ? selectedConfiguredModel.reasoning === true
+  : Boolean(selectedFallbackModelMetadata?.reasoning);
+
+await window.electronAPI.workspace.queueSessionInput({
+  model: resolvedChatModel || null,
+  thinking_value: effectiveThinkingValue,
+});
+```
 
 ## File explorer contract
 

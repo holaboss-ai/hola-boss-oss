@@ -4,6 +4,8 @@
 
 Holaboss ships with a default model setup. In most cases, you do not need to edit `runtime-config.json` by hand, because the desktop app already exposes the main configuration surfaces for provider connection, managed model catalogs, background tasks, recall embeddings, and image generation.
 
+This page is the configuration reference for operators and builders. For the Electron IPC path, runtime model-catalog refresh flow, queued `thinking_value` handoff, and other execution internals, continue into [Desktop Internals](/build-on-holaos/desktop/internals) and [Runtime APIs](/build-on-holaos/runtime-apis).
+
 The baseline defaults are:
 
 - default model: `openai/gpt-5.4`

@@ -20,6 +20,28 @@ For the shipped `pi` path, a single run currently moves through these seams:
 
 If you are unsure where a behavior belongs, trace this path before you patch anything.
 
+Representative reduced host request from `runtime/harnesses/src/pi.ts`:
+
+```ts
+{
+  workspace_id: params.request.workspace_id,
+  workspace_dir: params.bootstrap.workspaceDir,
+  session_id: params.request.session_id,
+  input_id: params.request.input_id,
+  instruction: instructionWithContextMessages(
+    params.request.instruction,
+    params.runtimeConfig.context_messages,
+  ),
+  attachments: params.request.attachments ?? [],
+  thinking_value: params.request.thinking_value ?? null,
+  provider_id: params.runtimeConfig.provider_id,
+  model_id: params.runtimeConfig.model_id,
+  model_client: params.runtimeConfig.model_client,
+  mcp_servers: params.mcpServers,
+  mcp_tool_refs: params.mcpToolRefs,
+}
+```
+
 ## Main code seams
 
 - `runtime/harnesses/src/types.ts`: canonical harness contracts, including adapter capabilities, runner prep plans, prompt-layer payloads, prepared MCP payloads, and host request build parameters.
@@ -34,6 +56,36 @@ If you are unsure where a behavior belongs, trace this path before you patch any
 - `runtime/harness-host/src/pi-runtime-tools.ts`: runtime-managed tool bridge for onboarding, cronjobs, image generation, and `write_report`. This is also where the host attaches workspace/session/input/model headers to runtime-tool calls.
 - `runtime/harness-host/src/pi-web-search.ts`: hosted native web search bridge for the current `web_search` tool.
 - `runtime/harnesses/src/desktop-browser-tools.ts`, `runtime/harnesses/src/runtime-agent-tools.ts`, and `runtime/harnesses/src/native-web-search-tools.ts`: canonical ids and descriptions for the projected browser, runtime, and native web-search surfaces.
+
+Representative event normalization from `runtime/harness-host/src/pi.ts`:
+
+```ts
+switch (event.type) {
+  case "message_update":
+    return event.assistantMessageEvent.type === "thinking_delta"
+      ? [{ event_type: "thinking_delta", payload: { delta_kind: "thinking" } }]
+      : [{ event_type: "output_delta", payload: { delta_kind: "output" } }];
+  case "tool_execution_start":
+  case "tool_execution_end":
+    return [{ event_type: "tool_call", payload: { source: "pi" } }];
+}
+```
+
+Representative reasoning normalization in the host:
+
+```ts
+const requestedThinking = requestedPiThinkingLevel(request) ?? "off";
+const requestedThinkingBudgets = requestedPiThinkingBudgets(request);
+
+const settingsManager = SettingsManager.inMemory({
+  defaultProvider: request.provider_id,
+  defaultModel: request.model_id,
+  defaultThinkingLevel: requestedThinking,
+  ...(requestedThinkingBudgets
+    ? { thinkingBudgets: requestedThinkingBudgets }
+    : {}),
+});
+```
 
 ## Change the right seam
 

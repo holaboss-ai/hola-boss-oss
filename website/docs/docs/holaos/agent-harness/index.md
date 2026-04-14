@@ -2,6 +2,8 @@
 
 A harness is the execution and control layer that turns a model or agent runtime into a usable agent. In `holaOS`, the harness is the swappable execution subsystem inside the runtime boundary. The runtime still owns the environment contract around it: workspace structure, memory and continuity, capability projection, app orchestration, and the reduced execution package passed into the harness.
 
+This section stays at the boundary-and-responsibility level. For the current adapter contract, host request shape, event mapping, and runtime code seams, continue into [Agent Harness Internals](/build-on-holaos/agent-harness/internals).
+
 ## Where it sits
 
 1. The workspace holds authored inputs such as `workspace.yaml`, `AGENTS.md`, installed app manifests, and skills.

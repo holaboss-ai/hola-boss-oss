@@ -39,6 +39,45 @@ Today the reference collection is intentionally narrow:
 
 That means app manifests are runtime-plan inputs, but arbitrary workspace files are not unless later code stages them explicitly.
 
+Representative authored inputs from `workspace-runtime-plan.test.ts`:
+
+```yaml
+# workspace.yaml
+template_id: social_operator
+name: Social Operator
+agents:
+  id: workspace.general
+  model: gpt-4o
+applications:
+  - app_id: holaposter-ts-lite
+    config_path: apps/holaposter-ts-lite/app.runtime.yaml
+mcp_registry:
+  allowlist:
+    tool_ids:
+      - holaposter.create_post
+  servers:
+    holaposter:
+      type: remote
+      url: "http://localhost:3099/mcp"
+      enabled: true
+```
+
+```yaml
+# apps/holaposter-ts-lite/app.runtime.yaml
+app_id: holaposter-ts-lite
+healthchecks:
+  mcp:
+    path: /mcp/health
+    timeout_s: 60
+    interval_s: 5
+mcp:
+  transport: http-sse
+  port: 3099
+  path: /mcp
+env_contract:
+  - HOLABOSS_USER_ID
+```
+
 ## Stage 2: Compile `workspace.yaml`
 
 `compileWorkspaceRuntimePlan()` turns the authored workspace contract into a structured plan with:
@@ -128,6 +167,24 @@ Model selection and reasoning effort split here:
 - the queued input can also carry `thinking_value`, but that value is not folded into `runtime-config.json` or the projected model client
 
 That separation is intentional. The runtime owns model routing, while the harness host owns executor-specific reasoning controls.
+
+Representative projection shape:
+
+```ts
+const selectedModel = request.selected_model?.trim() || request.agent.model;
+const target = resolveRuntimeModelTarget(selectedModel, request.default_provider_id);
+
+return {
+  provider_id: target.providerId,
+  model_id: target.modelId,
+  model_client: resolveModelClientConfig(request, target),
+  tools,
+  workspace_tool_ids: workspaceToolIds,
+  workspace_skill_ids: request.workspace_skill_ids ?? [],
+  output_schema_member_id: outputSchemaMemberId,
+  output_format: outputFormat,
+};
+```
 
 ## Stage 6: Build the Harness Request and Snapshot It
 

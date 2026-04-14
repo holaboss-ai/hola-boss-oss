@@ -129,6 +129,38 @@ Current important behavior from `store.ts` and `store.test.ts`:
 
 If you change queue semantics, you are changing scheduling behavior for the whole runtime, not just one worker. The current contract is intentionally trying to prevent the same session from being processed twice in parallel when global concurrency is greater than one.
 
+The tests exercise that behavior like this:
+
+```ts
+const sessionOneFirst = store.enqueueInput({
+  workspaceId: "workspace-1",
+  sessionId: "session-one",
+  payload: { text: "session-one-first" },
+  priority: 5,
+});
+store.enqueueInput({
+  workspaceId: "workspace-1",
+  sessionId: "session-one",
+  payload: { text: "session-one-second" },
+  priority: 4,
+});
+store.enqueueInput({
+  workspaceId: "workspace-1",
+  sessionId: "session-two",
+  payload: { text: "session-two" },
+  priority: 3,
+});
+
+const claimed = store.claimInputs({
+  limit: 2,
+  claimedBy: "worker-1",
+  leaseSeconds: 60,
+  distinctSessions: true,
+});
+```
+
+With `distinctSessions: true`, the second claim comes from `session-two` instead of taking two queued items from `session-one`.
+
 ## Database vs Filesystem Contract
 
 Do not collapse the persistence model into one place.
@@ -175,6 +207,13 @@ For development, the tests are usually the better executable reference than manu
 - expired-claim handling
 - output and notification behavior
 - proposal and memory-update flows
+
+The CLI expects `cli <operation> --request-base64 <base64-json>`. A representative claim flow looks like this:
+
+```bash
+REQ='{"options":{"dbPath":"/tmp/runtime.db","workspaceRoot":"/tmp/workspace"},"claimed_by":"worker-1","limit":2,"lease_seconds":60,"distinct_sessions":true}'
+holaboss-state-store claim-inputs --request-base64 "$(printf '%s' "$REQ" | base64 | tr -d '\n')"
+```
 
 ## Practical Rules
 

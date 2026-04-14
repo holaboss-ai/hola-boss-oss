@@ -4,6 +4,8 @@ This page defines the design contract for the workspace surface in Holaboss Desk
 
 Use it when you are building or refining the workspace UI. For the underlying filesystem and runtime model, see [Workspace Model](/holaos/workspace-model).
 
+This page is about the operator-facing surface, not the Electron implementation seam. For IPC contracts, embedded-runtime launch behavior, BrowserView ownership, and the browser service, continue into [Desktop Internals](/build-on-holaos/desktop/internals).
+
 ## Why the workspace surface matters
 
 The workspace is the operator's entrypoint into the `holaOS` environment. The UI should not behave like a generic folder browser. It should expose the operating context the agent is actually working inside.

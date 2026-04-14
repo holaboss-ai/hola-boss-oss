@@ -2,6 +2,8 @@
 
 The harness request includes the model path the runtime has already resolved for this execution. The harness does not own model-provider resolution for the whole environment.
 
+This page explains routing responsibility, not the exact request payload. For the current runtime fields, harness-host request shape, and code seams, continue into [Run Compilation](/build-on-holaos/runtime/run-compilation) and [Agent Harness Internals](/build-on-holaos/agent-harness/internals).
+
 ## What the request carries
 
 The request also carries the selected provider and model client configuration for the run.
@@ -14,7 +16,7 @@ That includes:
 - API key
 - base URL
 - default headers where relevant
-- requested `thinking_value` for this run when the operator selected a reasoning effort
+- any run-scoped reasoning preference the operator selected
 
 The runtime chooses this model path before invoking the harness, then passes the prepared client payload into the host request.
 
@@ -27,7 +29,7 @@ The current chat path separates two decisions:
 
 The runtime owns the first decision. It resolves provider id, model id, transport kind, and auth headers before the harness starts.
 
-The queued input can also carry a `thinking_value`, but that value stays request-scoped. It is not a global runtime default and it is not part of `runtime.default_model`.
+The queued input can also carry a run-scoped reasoning preference, but that value stays request-scoped. It is not a global runtime default and it is not part of `runtime.default_model`.
 
 That matters because the allowed values are model-specific rather than universal:
 

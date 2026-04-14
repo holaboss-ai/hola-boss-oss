@@ -142,8 +142,24 @@ const HOLAOS_CONCEPTS_PATH = new URL(
   "./docs/holaos/concepts.md",
   import.meta.url
 );
+const HOLAOS_OVERVIEW_PATH = new URL(
+  "./docs/holaos/overview.md",
+  import.meta.url
+);
 const HOLAOS_WORKSPACE_MODEL_PATH = new URL(
   "./docs/holaos/workspace-model.md",
+  import.meta.url
+);
+const HOLAOS_HARNESS_INDEX_PATH = new URL(
+  "./docs/holaos/agent-harness/index.md",
+  import.meta.url
+);
+const HOLAOS_HARNESS_MODEL_ROUTING_PATH = new URL(
+  "./docs/holaos/agent-harness/model-routing.md",
+  import.meta.url
+);
+const HOLAOS_HARNESS_ADAPTER_CAPABILITIES_PATH = new URL(
+  "./docs/holaos/agent-harness/adapter-capabilities.md",
   import.meta.url
 );
 const ENVIRONMENT_ENGINEERING_PATH = new URL(
@@ -300,14 +316,21 @@ test("build on holaOS pages expose the real developer seams and validation paths
   assert.match(buildOnOverview, /\/build-on-holaos\/desktop\/internals/);
 
   assert.match(startDeveloping, /npm run desktop:dev/);
+  assert.match(startDeveloping, /npm --prefix desktop run dev/);
   assert.match(startDeveloping, /desktop\/scripts\/watch-runtime-bundle\.mjs/);
+  assert.match(startDeveloping, /runtimeSourceInputs/);
   assert.match(startDeveloping, /desktop\/out\/runtime-<platform>/);
   assert.match(startDeveloping, /http:\/\/127\.0\.0\.1:5160/);
   assert.match(startDeveloping, /blocked port/);
+  assert.match(startDeveloping, /desktop\/scripts\/check-runtime-status\.sh/);
 
   assert.match(contributing, /Conventional Commits/);
   assert.match(contributing, /npm run docs:test/);
   assert.match(contributing, /desktop\/electron\/preload\.ts/);
+  assert.match(
+    contributing,
+    /feat: add reasoning effort selection across desktop and runtime/
+  );
 
   assert.match(modelConfiguration, /desktop\/shared\/model-catalog\.ts/);
   assert.match(modelConfiguration, /providerModelGroups/);
@@ -325,6 +348,8 @@ test("build on holaOS pages expose the real developer seams and validation paths
   assert.match(desktopInternals, /providerModelGroups/);
   assert.match(desktopInternals, /thinking_value/);
   assert.match(desktopInternals, /5160/);
+  assert.match(desktopInternals, /spawn\(launchSpec\.command, launchSpec\.args/);
+  assert.match(desktopInternals, /ipcRenderer\.invoke\("runtime:getConfig"\)/);
 
   assert.match(runtimeApis, /runtime\/api-server\/src\/app\.ts/);
   assert.match(runtimeApis, /\/api\/v1\/agent-runs\/stream/);
@@ -336,6 +361,12 @@ test("build on holaOS pages expose the real developer seams and validation paths
   assert.match(runtimeApis, /x-holaboss-selected-model/);
   assert.match(runtimeApis, /thinking_value/);
   assert.match(runtimeApis, /127\.0\.0\.1:5160/);
+  assert.match(runtimeApis, /POST \/api\/v1\/agent-sessions\/queue/);
+  assert.match(runtimeApis, /curl -X POST http:\/\/127\.0\.0\.1:5160\/api\/v1\/capabilities\/runtime-tools\/reports/);
+  assert.match(
+    runtimeApis,
+    /api\/v1\/agent-sessions\/session-main\/outputs\/stream/
+  );
 
   assert.match(runtimeRunCompilation, /workspace-runtime-plan\.ts/);
   assert.match(runtimeRunCompilation, /workspace_config_checksum/);
@@ -343,6 +374,8 @@ test("build on holaOS pages expose the real developer seams and validation paths
   assert.match(runtimeRunCompilation, /runtime\/api-server\/src\/ts-runner\.ts/);
   assert.match(runtimeRunCompilation, /operator surface context/);
   assert.match(runtimeRunCompilation, /thinking_value/);
+  assert.match(runtimeRunCompilation, /# workspace\.yaml/);
+  assert.match(runtimeRunCompilation, /resolveRuntimeModelTarget\(selectedModel/);
 
   assert.match(runtimeStateStore, /runtime\/state-store\/src\/store\.ts/);
   assert.match(runtimeStateStore, /HOLABOSS_RUNTIME_DB_PATH/);
@@ -350,11 +383,15 @@ test("build on holaOS pages expose the real developer seams and validation paths
   assert.match(runtimeStateStore, /claimInputs/);
   assert.match(runtimeStateStore, /runtime:state-store:test/);
   assert.match(runtimeStateStore, /exclude specific session ids/);
+  assert.match(runtimeStateStore, /distinctSessions:\s*true/);
+  assert.match(runtimeStateStore, /claim-inputs --request-base64/);
 
   assert.match(independentDeploy, /package-metadata\.json/);
   assert.match(independentDeploy, /runtime\/metadata\.json/);
   assert.match(independentDeploy, /HB_SANDBOX_ROOT/);
   assert.match(independentDeploy, /runtime\/deploy\/build_runtime_root/);
+  assert.match(independentDeploy, /"holaboss_model_proxy"/);
+  assert.match(independentDeploy, /"kind": "holaboss_proxy"/);
 
   assert.match(harnessInternals, /runtime\/api-server\/src\/ts-runner\.ts/);
   assert.match(harnessInternals, /runtime\/harness-host\/src\/pi\.ts/);
@@ -362,12 +399,17 @@ test("build on holaOS pages expose the real developer seams and validation paths
   assert.match(harnessInternals, /write_report/);
   assert.match(harnessInternals, /pi-runtime-tools\.ts/);
   assert.match(harnessInternals, /thinking_value/);
+  assert.match(harnessInternals, /instructionWithContextMessages/);
+  assert.match(harnessInternals, /tool_execution_start/);
+  assert.match(harnessInternals, /defaultThinkingLevel/);
 
   assert.match(troubleshooting, /desktop\/scripts\/check-runtime-status\.sh/);
   assert.match(troubleshooting, /HOLABOSS_BACKEND_BASE_URL/);
   assert.match(troubleshooting, /workspace_session/);
   assert.match(troubleshooting, /desktop\/out\/runtime-/);
   assert.match(troubleshooting, /127\.0\.0\.1:5160/);
+  assert.match(troubleshooting, /rm -rf desktop\/out\/runtime-<platform>/);
+  assert.match(troubleshooting, /\/api\/v1\/runtime\/status/);
 });
 
 test("app development and templates pages expose runtime-true developer contracts", async () => {
@@ -428,8 +470,18 @@ test("app development and templates pages expose runtime-true developer contract
 
 test("high-level docs route developers into the concrete builder pages", async () => {
   const learningPath = await readFile(LEARNING_PATH_PATH, "utf8");
+  const holaosOverview = await readFile(HOLAOS_OVERVIEW_PATH, "utf8");
   const holaosApps = await readFile(HOLAOS_APPS_PATH, "utf8");
   const concepts = await readFile(HOLAOS_CONCEPTS_PATH, "utf8");
+  const harnessIndex = await readFile(HOLAOS_HARNESS_INDEX_PATH, "utf8");
+  const harnessModelRouting = await readFile(
+    HOLAOS_HARNESS_MODEL_ROUTING_PATH,
+    "utf8"
+  );
+  const adapterCapabilities = await readFile(
+    HOLAOS_HARNESS_ADAPTER_CAPABILITIES_PATH,
+    "utf8"
+  );
   const workspaceModel = await readFile(HOLAOS_WORKSPACE_MODEL_PATH, "utf8");
   const environmentEngineering = await readFile(
     ENVIRONMENT_ENGINEERING_PATH,
@@ -439,12 +491,37 @@ test("high-level docs route developers into the concrete builder pages", async (
   const docsIndex = await readFile(new URL("./docs/index.md", import.meta.url), "utf8");
 
   assert.match(learningPath, /\/build-on-holaos\//);
+  assert.match(holaosOverview, /This section stays conceptual on purpose/);
   assert.match(holaosApps, /applications:/);
+  assert.match(
+    holaosApps,
+    /For manifest fields, lifecycle hooks, MCP registration, and output-publishing behavior/
+  );
   assert.match(holaosApps, /mcp\.tools/);
+  assert.match(
+    concepts,
+    /This page is intentionally conceptual\. It defines responsibilities and boundaries/
+  );
   assert.match(concepts, /workspace registers it under `applications\[\]`/);
   assert.match(concepts, /Operator Surface/);
   assert.match(concepts, /\/build-on-holaos\//);
+  assert.match(
+    harnessIndex,
+    /For the current adapter contract, host request shape, event mapping, and runtime code seams/
+  );
+  assert.match(
+    harnessModelRouting,
+    /This page explains routing responsibility, not the exact request payload/
+  );
+  assert.match(
+    adapterCapabilities,
+    /This page explains the capability boundary conceptually/
+  );
   assert.match(workspaceModel, /applications\[\]\.app_id/);
+  assert.match(
+    workspaceModel,
+    /It is not the page for runner bootstrap order, compile-stage validation/
+  );
   assert.match(workspaceModel, /\/templates\/materialization/);
   assert.match(environmentEngineering, /\/build-on-holaos\//);
   assert.match(quickStart, /\/build-on-holaos\/start-developing\//);

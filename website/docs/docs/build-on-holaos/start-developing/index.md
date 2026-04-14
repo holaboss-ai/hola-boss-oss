@@ -19,6 +19,12 @@ For local development, think in three layers: desktop operator UI, a runtime bun
 
 The root wrapper runs `npm --prefix desktop run dev`. Inside `desktop/package.json`, `predev` does the heavy lifting:
 
+```bash
+npm run desktop:dev
+# root wrapper -> npm --prefix desktop run dev
+# desktop predev validates env, rebuilds native modules, and refreshes the staged runtime bundle first
+```
+
 - `node scripts/ensure-app-sdk.mjs`: makes sure the local app SDK is built before the renderer compiles against it
 - `node scripts/validate-dev-env.mjs`: fails early unless `desktop/.env` provides a control-plane URL such as `HOLABOSS_BACKEND_BASE_URL` or `HOLABOSS_PROACTIVE_URL`
 - `kill-port 5173`: clears a stale Vite port
@@ -41,6 +47,18 @@ The runtime watcher is not guessing. `desktop/scripts/watch-runtime-bundle.mjs` 
 - the active platform packager under `runtime/deploy/package_<platform>_runtime.*`
 
 When any of those inputs changes, the watcher rebuilds the staged runtime bundle and touches `desktop/out/dist-electron/main.cjs` so Electron restarts against the new runtime bits.
+
+Representative watcher inputs from `desktop/scripts/runtime-bundle-state.mjs`:
+
+```js
+runtimeSourceInputs: [
+  path.join(repoRoot, "runtime", "api-server", "src"),
+  path.join(repoRoot, "runtime", "state-store", "src"),
+  path.join(repoRoot, "runtime", "harness-host", "src"),
+  path.join(repoRoot, "runtime", "harnesses", "src"),
+  path.join(repoRoot, "runtime", "deploy", "bootstrap"),
+]
+```
 
 ## Runtime-only verification
 
@@ -69,6 +87,11 @@ Use the package-specific test commands when you are only touching one slice. Use
 - Running `runtime/api-server/dist/index.mjs` directly defaults to `3060` unless `SANDBOX_RUNTIME_API_PORT`, `SANDBOX_AGENT_BIND_PORT`, or `PORT` is set.
 - The staged runtime bundle should exist under `desktop/out/runtime-<platform>` and include `package-metadata.json`, `runtime/metadata.json`, and `runtime/api-server/dist/index.mjs`.
 - The Electron user-data directory controls the embedded sandbox root and `runtime.log`. In dev, `desktop:dev` sets `HOLABOSS_DESKTOP_USER_DATA_DIR=holaboss-local-dev` unless `HOLABOSS_DESKTOP_USER_DATA_PATH` overrides it.
+
+```bash
+curl http://127.0.0.1:5160/healthz
+bash desktop/scripts/check-runtime-status.sh
+```
 
 ## Main source-of-truth files
 

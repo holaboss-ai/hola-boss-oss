@@ -144,6 +144,8 @@ Workspaces live under the runtime OS root. In desktop mode that root comes from 
 
 The workspace model is split deliberately: human-authored policy, runtime contracts, execution truth, and durable memory do not live in the same place.
 
+This page explains what the workspace surfaces mean. It is not the page for runner bootstrap order, compile-stage validation, or reduced harness-request payloads. For those implementation details, continue into [Run Compilation](/build-on-holaos/runtime/run-compilation).
+
 The diagram above is the canonical filesystem layout. The sections below explain what each surface is for.
 
 ## What each part means

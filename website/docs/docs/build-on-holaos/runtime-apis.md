@@ -47,6 +47,23 @@ Runtime-tool routes are not generic anonymous helpers. The runtime and harness h
 
 That is how `write_report` and other runtime tools can persist outputs with stable session and input context instead of falling back to detached file writes.
 
+Representative `write_report` call:
+
+```bash
+curl -X POST http://127.0.0.1:5160/api/v1/capabilities/runtime-tools/reports \
+  -H 'x-holaboss-workspace-id: workspace-1' \
+  -H 'x-holaboss-session-id: session-main' \
+  -H 'x-holaboss-input-id: input-1' \
+  -H 'x-holaboss-selected-model: openai_direct/gpt-5.4' \
+  -H 'content-type: application/json' \
+  -d '{
+    "title": "Tariff update brief",
+    "filename": "tariff-update-brief",
+    "summary": "Short research brief on current tariff developments.",
+    "content": "# Tariff update brief\n\n- Court challenges are active.\n- Consumer impact remains debated.\n"
+  }'
+```
+
 ## Queue requests can carry model and reasoning overrides
 
 The desktop chat surface does not only queue raw text. `POST /api/v1/agent-sessions/queue` can also carry:
@@ -61,6 +78,21 @@ The runtime stores both on the queued input record, then `claimed-input-executor
 
 If a run is using the right model but the wrong reasoning effort, inspect both the queue payload and the harness-host mapping instead of only the runtime config file.
 
+Representative queue request:
+
+```http
+POST /api/v1/agent-sessions/queue
+Content-Type: application/json
+
+{
+  "workspace_id": "workspace-1",
+  "session_id": "session-main",
+  "text": "Please review the deploy plan.",
+  "model": "openai_direct/gpt-5.4",
+  "thinking_value": "low"
+}
+```
+
 ## Streaming surfaces
 
 The runtime has several streaming endpoints. If you change event shape or long-running execution behavior, trace these paths first:
@@ -71,6 +103,13 @@ The runtime has several streaming endpoints. If you change event shape or long-r
 - `GET /api/v1/agent-sessions/:sessionId/outputs/stream`
 
 Execution usually crosses `runtime/api-server/src/ts-runner.ts`, the harness registry, the harness host, and the state store before the desktop sees the result.
+
+Representative SSE debug call for session outputs:
+
+```bash
+curl -N \
+  'http://127.0.0.1:5160/api/v1/agent-sessions/session-main/outputs/stream?include_history=false&stop_on_terminal=true'
+```
 
 If you change a runtime-tool route that creates outputs or artifacts, also inspect:
 
