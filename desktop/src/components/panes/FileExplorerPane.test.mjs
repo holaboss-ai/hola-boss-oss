@@ -336,7 +336,10 @@ test("file explorer can move dragged files into folder rows", async () => {
     /const \[directoryDropTargetPath, setDirectoryDropTargetPath\] = useState<[\s\S]*string \| null[\s\S]*>\(null\);/,
   );
   assert.match(source, /const canDropDraggedEntryIntoDirectory = useCallback\(/);
-  assert.match(source, /event\.dataTransfer\.dropEffect = "move";/);
+  assert.match(
+    source,
+    /event\.dataTransfer\.dropEffect = canMoveDraggedEntry\s*\?\s*"move"\s*:\s*"copy";/,
+  );
   assert.match(
     source,
     /void moveEntryToDirectory\(\s*draggedEntryPath,\s*entry\.absolutePath,\s*\);/,
@@ -353,6 +356,41 @@ test("file explorer can move dragged files into folder rows", async () => {
     source,
     /await Promise\.all\(\s*refreshTargets\.map\(\(targetPath\) => refreshDirectoryEntries\(targetPath\)\),\s*\);/,
   );
+});
+
+test("file explorer imports dragged external files and folders into the tree", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /type ExplorerExternalImportEntry =/);
+  assert.match(source, /webkitGetAsEntry\?: \(\) => ExplorerExternalDropEntry \| null;/);
+  assert.match(source, /async function collectDroppedExternalEntriesFromEntry\(/);
+  assert.match(
+    source,
+    /const childEntries = await readExternalDropDirectoryEntries\(\s*entry as FileSystemDirectoryEntry,\s*\);/,
+  );
+  assert.match(source, /content: new Uint8Array\(await file\.arrayBuffer\(\)\),/);
+  assert.match(source, /function hasExternalExplorerDropData\(dataTransfer: DataTransfer \| null\)/);
+  assert.match(source, /const \[paneExternalDropTarget, setPaneExternalDropTarget\] = useState\(false\);/);
+  assert.match(source, /const importExternalEntriesToDirectory = useCallback\(/);
+  assert.match(
+    source,
+    /window\.electronAPI\.fs\.importExternalEntries\(\s*normalizedDestinationDirectoryPath,\s*importedEntries,\s*selectedWorkspaceId \?\? null,\s*\)/,
+  );
+  assert.match(
+    source,
+    /const refreshTargets = \[\s*normalizedDestinationDirectoryPath,\s*getParentFolderPath\(normalizedDestinationDirectoryPath\),\s*\]\.filter\(/,
+  );
+  assert.match(source, /event\.dataTransfer\.dropEffect = canMoveDraggedEntry\s*\?\s*"move"\s*:\s*"copy";/);
+  assert.match(
+    source,
+    /void importExternalEntriesToDirectory\(\s*event\.dataTransfer,\s*entry\.absolutePath,\s*\);/,
+  );
+  assert.match(
+    source,
+    /className=\{`chat-scrollbar-hidden min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-1\.5 pb-1\.5 pt-1 \$\{[\s\S]*paneExternalDropTarget[\s\S]*"rounded-md bg-emerald-500\/10 ring-1 ring-emerald-500\/30"[\s\S]*\}`\}/,
+  );
+  assert.match(source, /onDragOver=\{onPaneDragOver\}/);
+  assert.match(source, /onDrop=\{onPaneDrop\}/);
 });
 
 test("file explorer does not expose a pane-level close action", async () => {

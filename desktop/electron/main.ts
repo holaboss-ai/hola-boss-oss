@@ -306,6 +306,21 @@ interface FileSystemMutationPayload {
   absolutePath: string;
 }
 
+type ExplorerExternalImportEntryPayload =
+  | {
+      kind: "directory";
+      relativePath: string;
+    }
+  | {
+      kind: "file";
+      relativePath: string;
+      content: Uint8Array;
+    };
+
+interface ExplorerExternalImportResultPayload {
+  absolutePaths: string[];
+}
+
 type FileSystemCreateKind = "file" | "directory";
 
 interface FilePreviewWatchSubscriptionPayload {
@@ -15146,6 +15161,210 @@ async function createExplorerPath(
   };
 }
 
+function normalizeExplorerImportRelativePath(relativePath: string) {
+  const normalized = relativePath
+    .trim()
+    .replace(/[\\/]+/g, "/")
+    .replace(/^\/+|\/+$/g, "");
+  if (!normalized) {
+    throw new Error("Imported path cannot be empty.");
+  }
+
+  const segments = normalized
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  if (
+    segments.length === 0 ||
+    segments.some(
+      (segment) =>
+        segment === "." ||
+        segment === ".." ||
+        segment.includes("/") ||
+        segment.includes("\\"),
+    )
+  ) {
+    throw new Error(`Imported path is invalid: ${relativePath}`);
+  }
+
+  return segments.join("/");
+}
+
+function normalizeExplorerImportEntries(
+  entries: unknown,
+): ExplorerExternalImportEntryPayload[] {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    throw new Error("No files or folders were dropped.");
+  }
+
+  const normalizedEntries: ExplorerExternalImportEntryPayload[] = [];
+  const seenRelativePaths = new Set<string>();
+
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error("Dropped content could not be parsed.");
+    }
+
+    const kind = "kind" in entry ? entry.kind : "";
+    const relativePath =
+      "relativePath" in entry && typeof entry.relativePath === "string"
+        ? normalizeExplorerImportRelativePath(entry.relativePath)
+        : "";
+    if (!relativePath) {
+      throw new Error("Dropped content is missing a relative path.");
+    }
+    if (seenRelativePaths.has(relativePath)) {
+      continue;
+    }
+    seenRelativePaths.add(relativePath);
+
+    if (kind === "directory") {
+      normalizedEntries.push({
+        kind: "directory",
+        relativePath,
+      });
+      continue;
+    }
+
+    if (kind !== "file") {
+      throw new Error(`Unsupported dropped item kind: ${String(kind)}`);
+    }
+
+    const contentValue = "content" in entry ? entry.content : null;
+    const content =
+      contentValue instanceof Uint8Array
+        ? contentValue
+        : contentValue instanceof ArrayBuffer
+          ? new Uint8Array(contentValue)
+          : ArrayBuffer.isView(contentValue)
+            ? new Uint8Array(
+                contentValue.buffer.slice(
+                  contentValue.byteOffset,
+                  contentValue.byteOffset + contentValue.byteLength,
+                ),
+              )
+            : Array.isArray(contentValue)
+              ? Uint8Array.from(contentValue)
+              : null;
+    if (!content) {
+      throw new Error(`Dropped file content is invalid: ${relativePath}`);
+    }
+
+    normalizedEntries.push({
+      kind: "file",
+      relativePath,
+      content,
+    });
+  }
+
+  return normalizedEntries;
+}
+
+function importedEntryDepth(relativePath: string) {
+  return normalizeExplorerImportRelativePath(relativePath).split("/").length;
+}
+
+function resolveImportedEntryAbsolutePath(
+  rootPathMap: Map<string, string>,
+  relativePath: string,
+) {
+  const segments = normalizeExplorerImportRelativePath(relativePath).split("/");
+  const rootAbsolutePath = rootPathMap.get(segments[0]);
+  if (!rootAbsolutePath) {
+    throw new Error(`Missing import root for ${relativePath}`);
+  }
+
+  if (segments.length === 1) {
+    return rootAbsolutePath;
+  }
+
+  return path.join(rootAbsolutePath, ...segments.slice(1));
+}
+
+async function importExternalExplorerEntries(
+  destinationDirectoryPath: string,
+  entries: unknown,
+  workspaceId?: string | null,
+): Promise<ExplorerExternalImportResultPayload> {
+  const normalizedEntries = normalizeExplorerImportEntries(entries);
+  const { absolutePath: destinationAbsolutePath, workspaceRoot } =
+    await resolveWorkspaceScopedExplorerPath(
+      destinationDirectoryPath,
+      workspaceId,
+    );
+  const destinationStat = await fs.stat(destinationAbsolutePath);
+  if (!destinationStat.isDirectory()) {
+    throw new Error("Destination is not a directory.");
+  }
+
+  const rootNames: string[] = [];
+  for (const entry of normalizedEntries) {
+    const [rootName = ""] = normalizeExplorerImportRelativePath(
+      entry.relativePath,
+    ).split("/");
+    if (rootName && !rootNames.includes(rootName)) {
+      rootNames.push(rootName);
+    }
+  }
+
+  const rootPathMap = new Map<string, string>();
+  for (const rootName of rootNames) {
+    const nextRootAbsolutePath = await nextAvailableExplorerCreatePath(
+      destinationAbsolutePath,
+      rootName,
+    );
+    if (workspaceRoot && !isPathWithinRoot(workspaceRoot, nextRootAbsolutePath)) {
+      throw new Error("Imported path escapes workspace root.");
+    }
+    rootPathMap.set(rootName, nextRootAbsolutePath);
+  }
+
+  const directoryEntries = normalizedEntries
+    .filter(
+      (
+        entry,
+      ): entry is Extract<ExplorerExternalImportEntryPayload, { kind: "directory" }> =>
+        entry.kind === "directory",
+    )
+    .sort((left, right) => importedEntryDepth(left.relativePath) - importedEntryDepth(right.relativePath));
+  for (const directoryEntry of directoryEntries) {
+    const absolutePath = resolveImportedEntryAbsolutePath(
+      rootPathMap,
+      directoryEntry.relativePath,
+    );
+    if (workspaceRoot && !isPathWithinRoot(workspaceRoot, absolutePath)) {
+      throw new Error("Imported path escapes workspace root.");
+    }
+    await fs.mkdir(absolutePath, { recursive: true });
+  }
+
+  const fileEntries = normalizedEntries
+    .filter(
+      (
+        entry,
+      ): entry is Extract<ExplorerExternalImportEntryPayload, { kind: "file" }> =>
+        entry.kind === "file",
+    )
+    .sort((left, right) => importedEntryDepth(left.relativePath) - importedEntryDepth(right.relativePath));
+  for (const fileEntry of fileEntries) {
+    const absolutePath = resolveImportedEntryAbsolutePath(
+      rootPathMap,
+      fileEntry.relativePath,
+    );
+    if (workspaceRoot && !isPathWithinRoot(workspaceRoot, absolutePath)) {
+      throw new Error("Imported path escapes workspace root.");
+    }
+    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+    await fs.writeFile(absolutePath, Buffer.from(fileEntry.content));
+  }
+
+  return {
+    absolutePaths: rootNames
+      .map((rootName) => rootPathMap.get(rootName) ?? "")
+      .filter(Boolean),
+  };
+}
+
 async function renameExplorerPath(
   targetPath: string,
   nextName: string,
@@ -18454,6 +18673,21 @@ app.whenReady().then(async () => {
       kind: FileSystemCreateKind,
       workspaceId?: string | null,
     ) => createExplorerPath(parentPath, kind, workspaceId),
+  );
+  handleTrustedIpc(
+    "fs:importExternalEntries",
+    ["main"],
+    async (
+      _event,
+      destinationDirectoryPath: string,
+      entries: ExplorerExternalImportEntryPayload[],
+      workspaceId?: string | null,
+    ) =>
+      importExternalExplorerEntries(
+        destinationDirectoryPath,
+        entries,
+        workspaceId,
+      ),
   );
   handleTrustedIpc(
     "fs:renamePath",

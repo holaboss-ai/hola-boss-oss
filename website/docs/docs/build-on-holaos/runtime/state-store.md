@@ -102,7 +102,7 @@ Important distinction:
 The same database also stores:
 
 - output folders and outputs
-- app builds and app port allocation
+- app builds, app restart-attempt counters, and app port allocation
 - app catalog metadata
 - cronjobs
 - runtime notifications
@@ -186,6 +186,7 @@ Current migration seams in `store.ts` include:
 - cronjob instruction migration
 - sandbox run-token table migration
 - queue/runtime-state lease-column migrations
+- app-build `restart_attempts` persistence migration
 
 If you add a new durable record family, you need to think about both schema creation and migration behavior for existing runtimes.
 

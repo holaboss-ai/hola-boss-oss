@@ -142,6 +142,7 @@ Useful runtime surfaces while iterating:
 - `POST /api/v1/apps/:appId/setup`
 - `POST /api/v1/apps/:appId/start`
 - `GET /api/v1/apps/:appId/build-status`
+- `GET /api/v1/apps/:appId/setup-log`
 - `GET /api/v1/apps/ports`
 
 If you install from files or an archive instead of editing the workspace directly, the runtime also exposes:
@@ -149,7 +150,14 @@ If you install from files or an archive instead of editing the workspace directl
 - `POST /api/v1/apps/install`
 - `POST /api/v1/apps/install-archive`
 
-`install-archive` extracts into `apps/my_app/`, requires `app.runtime.yaml` at the archive root, appends the `workspace.yaml` application entry, and tries to reconcile the MCP registry after startup.
+`install-archive` extracts into `apps/my_app/`, requires `app.runtime.yaml` at the archive root, appends the `workspace.yaml` application entry, and tries to reconcile the MCP registry after startup. It now serializes installs per `(workspace_id, app_id)` and returns `409` if another install for that app is already in progress.
+
+When setup fails, pull the latest setup diagnostics:
+
+```bash
+curl \
+  'http://127.0.0.1:5160/api/v1/apps/my_app/setup-log?workspace_id=workspace-1'
+```
 
 ## 9. Verify the End-to-End Loop
 

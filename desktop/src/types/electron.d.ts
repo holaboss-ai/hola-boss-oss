@@ -55,6 +55,21 @@ declare global {
     absolutePath: string;
   }
 
+  type ExplorerExternalImportEntryPayload =
+    | {
+        kind: "directory";
+        relativePath: string;
+      }
+    | {
+        kind: "file";
+        relativePath: string;
+        content: Uint8Array;
+      };
+
+  interface ExplorerExternalImportResultPayload {
+    absolutePaths: string[];
+  }
+
   type FileSystemCreateKind = "file" | "directory";
 
   interface FilePreviewWatchSubscriptionPayload {
@@ -1260,6 +1275,11 @@ declare global {
         kind: FileSystemCreateKind,
         workspaceId?: string | null,
       ) => Promise<FileSystemMutationPayload>;
+      importExternalEntries: (
+        destinationDirectoryPath: string,
+        entries: ExplorerExternalImportEntryPayload[],
+        workspaceId?: string | null,
+      ) => Promise<ExplorerExternalImportResultPayload>;
       renamePath: (targetPath: string, nextName: string, workspaceId?: string | null) => Promise<FileSystemMutationPayload>;
       movePath: (
         sourcePath: string,

@@ -49,6 +49,7 @@ mcp_registry:
       url: http://localhost:$MCP_PORT/mcp/sse
       enabled: true
       timeout_ms: 30000
+      started_at: 2026-04-14T11:22:33.000Z
 ```
 
 The allowlist entries are written as `app_id.tool_name`, for example `my_app.create_post`.
@@ -61,6 +62,8 @@ There are two important write paths:
 2. `reconcileAppMcpRegistry()` runs after app start and rewrites the same entries idempotently
 
 That second step matters because it auto-heals stale MCP registry state when app ports or tool lists changed.
+
+On post-start reconciliation, the runtime can bump `mcp_registry.servers.<appId>.started_at` so MCP clients watching `workspace.yaml` can detect app restarts and reconnect SSE sessions.
 
 ## Health Requirements
 
