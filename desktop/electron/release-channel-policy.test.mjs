@@ -87,7 +87,11 @@ test("manual CI workflow creates combined desktop releases with bundled runtime 
   assert.match(source, /RUNTIME_ASSET_NAME: holaboss-runtime-linux\.tar\.gz/);
   assert.match(source, /RUNTIME_ASSET_NAME: holaboss-runtime-macos\.tar\.gz/);
   assert.match(source, /RUNTIME_ASSET_NAME: holaboss-runtime-windows\.tar\.gz/);
+  assert.match(source, /TOOLCHAIN_ASSET_NAME: holaboss-toolchain-linux\.tar\.gz/);
+  assert.match(source, /TOOLCHAIN_ASSET_NAME: holaboss-toolchain-macos\.tar\.gz/);
+  assert.match(source, /TOOLCHAIN_ASSET_NAME: holaboss-toolchain-windows\.tar\.gz/);
   assert.match(source, /gh release upload "\$\{RELEASE_TAG\}" "out\/\$\{RUNTIME_ASSET_NAME\}" --clobber/);
+  assert.match(source, /gh release upload "\$\{RELEASE_TAG\}" "out\/\$\{TOOLCHAIN_ASSET_NAME\}" --clobber/);
   assert.match(source, /--prepackaged "\$\{app_path\}" \\\n\s+--mac dmg zip \\/);
   assert.match(source, /latest-mac\.yml was not generated/);
   assert.match(source, /latest\.yml was not generated/);

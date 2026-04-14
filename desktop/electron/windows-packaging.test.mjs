@@ -14,6 +14,18 @@ test("windows packaging scripts prepare the packaged config before building inst
   assert.match(packageJson.scripts["dist:win:local"], /prepare:packaged-config/);
 });
 
+test("desktop packaging publishes a separate toolchain asset for bundled node/python runtimes", async () => {
+  const [workflowSource, packagedConfigSource] = await Promise.all([
+    readFile(CI_WORKFLOW_PATH, "utf8"),
+    readFile(new URL("../scripts/write-packaged-config.mjs", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(workflowSource, /TOOLCHAIN_ASSET_NAME: holaboss-toolchain-windows\.tar\.gz/);
+  assert.match(workflowSource, /toolchain_asset_path=/);
+  assert.match(workflowSource, /\$uploadPaths \+= \$env:TOOLCHAIN_ASSET_PATH/);
+  assert.match(packagedConfigSource, /toolchainManifest,/);
+});
+
 test("windows packaging config and CI workflow support optional signing and NSIS installer publishing", async () => {
   const [builderConfigSource, runElectronBuilderSource, workflowSource] = await Promise.all([
     readFile(BUILDER_CONFIG_PATH, "utf8"),

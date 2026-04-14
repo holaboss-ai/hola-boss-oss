@@ -57,7 +57,9 @@ module.exports = {
       from: runtimeBundlePath,
       to: runtimeBundleDir,
       filter: [
-        "**/*"
+        "bin/**/*",
+        "package-metadata.json",
+        "runtime/**/*"
       ]
     }
   ],

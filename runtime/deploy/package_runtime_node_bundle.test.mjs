@@ -26,9 +26,12 @@ for (const targetPath of [macosPackagerPath, linuxPackagerPath]) {
     assert.match(source, /build_runtime_root\.mjs/);
     assert.match(source, /cp -R "\$\{BUILD_NODE_RUNTIME_DIR\}" "\$\{NODE_RUNTIME_DIR\}"/);
     assert.match(source, new RegExp(`node "\\$\\{SCRIPT_DIR\\}/stage_python_runtime\\.mjs" "\\$\\{OUTPUT_ROOT\\}" "${targetPlatform}"`));
-    assert.match(source, /BUNDLED_NODE_BIN="\$\{BUNDLE_ROOT\}\/node-runtime\/node_modules\/node\/bin\/node"/);
-    assert.match(source, /export PATH="\$\{BUNDLE_ROOT\}\/python-runtime\/bin:\$\{BUNDLE_ROOT\}\/python-runtime\/python\/bin:\$\{BUNDLE_ROOT\}\/node-runtime\/node_modules\/node\/bin:\$\{BUNDLE_ROOT\}\/node-runtime\/node_modules\/\.bin:\$\{PATH\}"/);
+    assert.match(source, /TOOLCHAIN_ROOT="\$\{HOLABOSS_RUNTIME_TOOLCHAIN_ROOT:-\$\{BUNDLE_ROOT\}\}"/);
+    assert.match(source, /BUNDLED_NODE_BIN="\$\{TOOLCHAIN_ROOT\}\/node-runtime\/node_modules\/node\/bin\/node"/);
+    assert.match(source, /export HOLABOSS_RUNTIME_TOOLCHAIN_ROOT="\$\{TOOLCHAIN_ROOT\}"/);
+    assert.match(source, /export PATH="\$\{TOOLCHAIN_ROOT\}\/python-runtime\/bin:\$\{TOOLCHAIN_ROOT\}\/python-runtime\/python\/bin:\$\{TOOLCHAIN_ROOT\}\/node-runtime\/node_modules\/node\/bin:\$\{TOOLCHAIN_ROOT\}\/node-runtime\/node_modules\/\.bin:\$\{PATH\}"/);
     assert.match(source, /export HOLABOSS_RUNTIME_NODE_BIN="\$\{BUNDLED_NODE_BIN\}"/);
+    assert.match(source, /"toolchain_id":/);
     assert.match(source, /"bundled_npm_bin":/);
     assert.match(source, /"bundled_npm_version":/);
     assert.match(source, /"bundled_python_bin":/);
@@ -57,8 +60,10 @@ test("package_windows_runtime.mjs writes launchers that use the bundled node run
   assert.match(source, /bundled_python_bin: Boolean\(bundledPythonBin\)/);
   assert.match(source, /bundled_python_version: pythonStageResult\.bundledPythonVersion/);
   assert.match(source, /bundled_python_target: pythonStageResult\.bundledPythonTarget/);
+  assert.match(source, /toolchain_id: toolchainId/);
   assert.match(launcherSource, /startWindowsRuntime/);
   assert.match(launcherSource, /process\.exit/);
+  assert.match(cmdLauncherSource, /HOLABOSS_RUNTIME_TOOLCHAIN_ROOT/);
   assert.match(cmdLauncherSource, /node-runtime\\bin\\node\.exe/);
   assert.match(cmdLauncherSource, /sandbox-runtime\.mjs/);
 });

@@ -72,6 +72,9 @@ case "${PYTHON_ARCH_RAW}" in
     ;;
 esac
 
+TOOLCHAIN_ID_RAW="linux-node${NODE_VERSION}-npm${NPM_VERSION}-python${PYTHON_VERSION}-${PYTHON_TARGET}"
+TOOLCHAIN_ID="$(printf '%s' "${TOOLCHAIN_ID_RAW}" | tr -c '[:alnum:]._-' '_')"
+
 if [ "${SKIP_NODE_DEPS}" != "1" ]; then
   require_cmd npm
   mkdir -p "${BUILD_NODE_RUNTIME_DIR}"
@@ -106,11 +109,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUNDLE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-BUNDLED_NODE_BIN="${BUNDLE_ROOT}/node-runtime/node_modules/node/bin/node"
+TOOLCHAIN_ROOT="${HOLABOSS_RUNTIME_TOOLCHAIN_ROOT:-${BUNDLE_ROOT}}"
+BUNDLED_NODE_BIN="${TOOLCHAIN_ROOT}/node-runtime/node_modules/node/bin/node"
 
 export HOLABOSS_RUNTIME_APP_ROOT="${BUNDLE_ROOT}/runtime"
 export HOLABOSS_RUNTIME_ROOT="${BUNDLE_ROOT}/runtime"
-export PATH="${BUNDLE_ROOT}/python-runtime/bin:${BUNDLE_ROOT}/python-runtime/python/bin:${BUNDLE_ROOT}/node-runtime/node_modules/node/bin:${BUNDLE_ROOT}/node-runtime/node_modules/.bin:${PATH}"
+export HOLABOSS_RUNTIME_TOOLCHAIN_ROOT="${TOOLCHAIN_ROOT}"
+export PATH="${TOOLCHAIN_ROOT}/python-runtime/bin:${TOOLCHAIN_ROOT}/python-runtime/python/bin:${TOOLCHAIN_ROOT}/node-runtime/node_modules/node/bin:${TOOLCHAIN_ROOT}/node-runtime/node_modules/.bin:${PATH}"
 if [ -x "${BUNDLED_NODE_BIN}" ]; then
   export HOLABOSS_RUNTIME_NODE_BIN="${BUNDLED_NODE_BIN}"
 fi
@@ -123,6 +128,7 @@ chmod +x "${BIN_DIR}/sandbox-runtime"
 cat > "${PACKAGE_METADATA_PATH}" <<EOF
 {
   "platform": "linux",
+  "toolchain_id": "${TOOLCHAIN_ID}",
   "node_deps_installed": $([ "${SKIP_NODE_DEPS}" = "1" ] && printf 'false' || printf 'true'),
   "bundled_node_bin": $([ "${SKIP_NODE_DEPS}" = "1" ] || [ ! -x "${LOCAL_NODE_BIN}" ] && printf 'false' || printf 'true'),
   "bundled_node_version": $([ "${SKIP_NODE_DEPS}" = "1" ] && printf 'null' || printf '"%s"' "${NODE_VERSION}"),

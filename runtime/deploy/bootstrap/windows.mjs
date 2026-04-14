@@ -19,6 +19,15 @@ function resolveBundleRoot(explicitBundleRoot) {
   return path.resolve(scriptDir, "..", "..");
 }
 
+function resolveToolchainRoot(bundleRoot) {
+  const explicitToolchainRoot =
+    process.env.HOLABOSS_RUNTIME_TOOLCHAIN_ROOT?.trim();
+  if (explicitToolchainRoot) {
+    return path.resolve(explicitToolchainRoot);
+  }
+  return bundleRoot;
+}
+
 function resolveSandboxRoot() {
   const configuredRoot = (process.env.HB_SANDBOX_ROOT ?? "").trim().replace(/[\\/]+$/, "");
   if (configuredRoot) {
@@ -44,11 +53,11 @@ function runtimeNodeCandidates(bundleRoot) {
   ];
 }
 
-function runtimePythonPathEntries(bundleRoot) {
+function runtimePythonPathEntries(toolchainRoot) {
   return [
-    path.join(bundleRoot, "python-runtime", "python"),
-    path.join(bundleRoot, "python-runtime", "python", "Scripts"),
-    path.join(bundleRoot, "python-runtime", "bin"),
+    path.join(toolchainRoot, "python-runtime", "python"),
+    path.join(toolchainRoot, "python-runtime", "python", "Scripts"),
+    path.join(toolchainRoot, "python-runtime", "bin"),
   ];
 }
 
@@ -65,6 +74,7 @@ function isPathLikeCommand(command) {
 
 export async function startWindowsRuntime(args = process.argv.slice(2), options = {}) {
   const bundleRoot = resolveBundleRoot(options.bundleRoot);
+  const toolchainRoot = resolveToolchainRoot(bundleRoot);
   const sandboxRoot = resolveSandboxRoot();
   const workspaceRoot = path.join(sandboxRoot, "workspace");
   const memoryRoot = process.env.MEMORY_ROOT_DIR?.trim() || path.join(sandboxRoot, "memory");
@@ -73,13 +83,13 @@ export async function startWindowsRuntime(args = process.argv.slice(2), options 
     process.env.HOLABOSS_RUNTIME_APP_ROOT?.trim() || path.join(bundleRoot, "runtime");
   const runtimeNodeBin =
     process.env.HOLABOSS_RUNTIME_NODE_BIN?.trim() ||
-    firstExistingPath(runtimeNodeCandidates(bundleRoot)) ||
+    firstExistingPath(runtimeNodeCandidates(toolchainRoot)) ||
     process.execPath;
   const runtimeApiEntry = firstExistingPath(runtimeApiEntryCandidates(runtimeAppRoot));
   const pathEntries = [
-    ...runtimePythonPathEntries(bundleRoot),
-    path.join(bundleRoot, "node-runtime", "bin"),
-    path.join(bundleRoot, "node-runtime", "node_modules", ".bin"),
+    ...runtimePythonPathEntries(toolchainRoot),
+    path.join(toolchainRoot, "node-runtime", "bin"),
+    path.join(toolchainRoot, "node-runtime", "node_modules", ".bin"),
     process.env.PATH ?? ""
   ].filter((value) => value.length > 0);
 
@@ -92,6 +102,7 @@ export async function startWindowsRuntime(args = process.argv.slice(2), options 
   process.env.HOLABOSS_RUNTIME_APP_ROOT = runtimeAppRoot;
   process.env.HOLABOSS_RUNTIME_ROOT =
     process.env.HOLABOSS_RUNTIME_ROOT?.trim() || runtimeAppRoot;
+  process.env.HOLABOSS_RUNTIME_TOOLCHAIN_ROOT = toolchainRoot;
   process.env.HOLABOSS_RUNTIME_NODE_BIN = runtimeNodeBin;
   process.env.HOLABOSS_USER_ID = process.env.SANDBOX_HOLABOSS_USER_ID?.trim() || "";
   process.env.MEMORY_ROOT_DIR = memoryRoot;

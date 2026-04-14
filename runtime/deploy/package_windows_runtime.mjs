@@ -116,6 +116,10 @@ function resolveNpmVersion() {
   }).trim();
 }
 
+function sanitizeToolchainId(value) {
+  return value.replace(/[^A-Za-z0-9._-]+/g, "_");
+}
+
 export function buildWindowsRuntimeLauncherSource() {
   return `import { startWindowsRuntime } from "../runtime/bootstrap/windows.mjs";
 
@@ -135,11 +139,16 @@ export function buildWindowsRuntimeCmdLauncherSource() {
 setlocal
 set "SCRIPT_DIR=%~dp0"
 for %%I in ("%SCRIPT_DIR%..") do set "BUNDLE_ROOT=%%~fI"
-set "BUNDLED_NODE_BIN=%BUNDLE_ROOT%\\node-runtime\\bin\\node.exe"
-if not exist "%BUNDLED_NODE_BIN%" set "BUNDLED_NODE_BIN=%BUNDLE_ROOT%\\node-runtime\\node_modules\\node\\bin\\node.exe"
-if not exist "%BUNDLED_NODE_BIN%" set "BUNDLED_NODE_BIN=%BUNDLE_ROOT%\\node-runtime\\node_modules\\.bin\\node.exe"
+if "%HOLABOSS_RUNTIME_TOOLCHAIN_ROOT%"=="" (
+  set "TOOLCHAIN_ROOT=%BUNDLE_ROOT%"
+) else (
+  set "TOOLCHAIN_ROOT=%HOLABOSS_RUNTIME_TOOLCHAIN_ROOT%"
+)
+set "BUNDLED_NODE_BIN=%TOOLCHAIN_ROOT%\\node-runtime\\bin\\node.exe"
+if not exist "%BUNDLED_NODE_BIN%" set "BUNDLED_NODE_BIN=%TOOLCHAIN_ROOT%\\node-runtime\\node_modules\\node\\bin\\node.exe"
+if not exist "%BUNDLED_NODE_BIN%" set "BUNDLED_NODE_BIN=%TOOLCHAIN_ROOT%\\node-runtime\\node_modules\\.bin\\node.exe"
 if not exist "%BUNDLED_NODE_BIN%" (
-  >&2 echo bundled node runtime not found under "%BUNDLE_ROOT%\\node-runtime"
+  >&2 echo bundled node runtime not found under "%TOOLCHAIN_ROOT%\\node-runtime"
   exit /b 1
 )
 "%BUNDLED_NODE_BIN%" "%SCRIPT_DIR%sandbox-runtime.mjs" %*
@@ -257,6 +266,9 @@ export async function packageWindowsRuntime(
     }
 
     const pythonStageResult = await stagePythonRuntime(outputRoot, "windows");
+    const toolchainId = sanitizeToolchainId(
+      `windows-node${nodeVersion}-npm${npmVersion}-python${pythonStageResult.bundledPythonVersion}-${pythonStageResult.bundledPythonTarget}`,
+    );
 
     writeFileSync(path.join(binDir, "sandbox-runtime.mjs"), buildWindowsRuntimeLauncherSource());
     writeFileSync(path.join(binDir, "sandbox-runtime.cmd"), buildWindowsRuntimeCmdLauncherSource());
@@ -267,6 +279,7 @@ export async function packageWindowsRuntime(
       pythonStageResult.bundledPythonBin || firstExistingPath(bundledPythonCandidates(outputRoot));
     const packageMetadata = {
       platform: "windows",
+      toolchain_id: toolchainId,
       node_deps_installed: !skipNodeDeps,
       bundled_node_bin: Boolean(bundledNodeBin),
       bundled_node_version: skipNodeDeps ? null : nodeVersion,
