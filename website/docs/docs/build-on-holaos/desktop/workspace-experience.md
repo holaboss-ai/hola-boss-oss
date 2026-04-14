@@ -83,6 +83,6 @@ The workspace UI sits above several deeper contracts:
 
 - [Workspace Model](/holaos/workspace-model) for the authored and runtime-owned structure
 - [Memory and Continuity](/holaos/memory-and-continuity/) for what persists and what resumes
-- [Model Configuration](/desktop/model-configuration) for provider and model controls
+- [Model Configuration](/build-on-holaos/desktop/model-configuration) for provider and model controls
 
 The UI should expose those layers clearly without collapsing them into one undifferentiated screen.

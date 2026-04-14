@@ -63,7 +63,7 @@ const DESKTOP_INTERNALS_PATH = new URL(
   import.meta.url
 );
 const RUNTIME_APIS_PATH = new URL(
-  "./docs/build-on-holaos/runtime-apis.md",
+  "./docs/build-on-holaos/runtime/apis.md",
   import.meta.url
 );
 const RUNTIME_RUN_COMPILATION_PATH = new URL(
@@ -75,7 +75,7 @@ const RUNTIME_STATE_STORE_PATH = new URL(
   import.meta.url
 );
 const INDEPENDENT_DEPLOY_PATH = new URL(
-  "./docs/build-on-holaos/independent-deploy.md",
+  "./docs/build-on-holaos/runtime/independent-deploy.md",
   import.meta.url
 );
 const HARNESS_INTERNALS_PATH = new URL(
@@ -127,7 +127,7 @@ const TEMPLATES_VERSIONING_PATH = new URL(
   import.meta.url
 );
 const MODEL_CONFIGURATION_PATH = new URL(
-  "./docs/desktop/model-configuration.md",
+  "./docs/build-on-holaos/desktop/model-configuration.md",
   import.meta.url
 );
 const LEARNING_PATH_PATH = new URL(
@@ -226,16 +226,17 @@ test("vitepress config is set up for the agreed documentation structure", async 
   assert.match(source, /"\/holaos\/workspace-model"/);
   assert.match(source, /"\/holaos\/memory-and-continuity\/"/);
   assert.match(source, /"\/holaos\/memory-and-continuity\/runtime-continuity"/);
-  assert.match(source, /"\/desktop\/workspace-experience"/);
+  assert.match(source, /"\/build-on-holaos\/desktop\/workspace-experience"/);
+  assert.match(source, /"\/build-on-holaos\/desktop\/model-configuration"/);
   assert.match(source, /"\/build-on-holaos\/desktop\/internals"/);
   assert.match(source, /"\/app-development\/applications\/first-app"/);
   assert.match(source, /"\/templates\/"/);
   assert.match(source, /"\/templates\/materialization"/);
   assert.match(source, /"\/templates\/structure"/);
-  assert.match(source, /"\/build-on-holaos\/runtime-apis"/);
+  assert.match(source, /"\/build-on-holaos\/runtime\/apis"/);
   assert.match(source, /"\/build-on-holaos\/runtime\/run-compilation"/);
   assert.match(source, /"\/build-on-holaos\/runtime\/state-store"/);
-  assert.match(source, /"\/build-on-holaos\/independent-deploy"/);
+  assert.match(source, /"\/build-on-holaos\/runtime\/independent-deploy"/);
   assert.match(source, /"\/build-on-holaos\/agent-harness\/internals"/);
   assert.match(source, /"\/build-on-holaos\/start-developing\/"/);
   assert.match(source, /"\/build-on-holaos\/start-developing\/contributing"/);
@@ -350,6 +351,9 @@ test("build on holaOS pages expose the real developer seams and validation paths
   assert.match(desktopInternals, /5160/);
   assert.match(desktopInternals, /spawn\(launchSpec\.command, launchSpec\.args/);
   assert.match(desktopInternals, /ipcRenderer\.invoke\("runtime:getConfig"\)/);
+  assert.match(desktopInternals, /PROVIDER_MODEL_CATALOG/);
+  assert.match(desktopInternals, /catalogConfigShapeForProviderModel/);
+  assert.match(desktopInternals, /mappedHolabossProxyProviderModel/);
 
   assert.match(runtimeApis, /runtime\/api-server\/src\/app\.ts/);
   assert.match(runtimeApis, /\/api\/v1\/agent-runs\/stream/);

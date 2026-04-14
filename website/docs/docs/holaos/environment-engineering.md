@@ -131,7 +131,7 @@ That shift is what makes the system easier to inspect, package, resume, and exte
   <DocCard
     title="Runtime APIs"
     eyebrow="Runtime Surface"
-    href="/build-on-holaos/runtime-apis"
+    href="/build-on-holaos/runtime/apis"
     description="Inspect the server surface that exposes workspaces, runs, memory, and app orchestration."
   />
   <DocCard

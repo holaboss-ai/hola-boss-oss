@@ -177,6 +177,64 @@ await window.electronAPI.workspace.queueSessionInput({
 });
 ```
 
+### Adding or modifying shipped catalog entries
+
+Use `desktop/shared/model-catalog.ts` when you need the desktop to know more than a raw model id:
+
+- display label
+- whether the model supports reasoning
+- which `thinking_value` options the composer should show
+- default thinking value
+- supported input modalities
+
+Do not edit the shipped catalog just to connect a provider or type a custom model into `runtime-config.json`. Configured models can still appear through `providerModelGroups`; the catalog is the fallback metadata layer that makes those models feel first-class in the desktop UI.
+
+Representative local catalog entry:
+
+```ts
+export const PROVIDER_MODEL_CATALOG = {
+  openrouter_direct: {
+    source: "local",
+    models: [
+      {
+        model_id: "qwen/qwen3.6-plus",
+        label: "Qwen 3.6 Plus",
+        reasoning: true,
+        thinking_values: ["minimal", "low", "medium", "high"],
+        default_thinking_value: "medium",
+        input_modalities: ["text", "image"],
+      },
+    ],
+  },
+};
+```
+
+When `AuthPanel.tsx` writes configured models back into `runtime-config.json`, it projects the catalog metadata onto that model entry:
+
+```ts
+nextModels[token] = {
+  provider: providerId,
+  model: modelId,
+  ...(modelCatalog.catalogConfigShapeForProviderModel(
+    providerId,
+    modelId,
+  ) ?? {}),
+};
+```
+
+If a Holaboss-managed proxy model should inherit local fallback metadata, also update the proxy mapping rules in `mappedHolabossProxyProviderModel(...)`:
+
+```ts
+if (/^gpt-5(?:[.-]|$)/i.test(normalizedModelId)) {
+  return { providerId: "openai_direct", modelId: normalizedModelId };
+}
+if (/^claude-/i.test(normalizedModelId)) {
+  return { providerId: "anthropic_direct", modelId: normalizedModelId };
+}
+```
+
+That is how a managed proxy model like `gpt-5.4` or `claude-sonnet-4-6` can still light up the desktop reasoning selector even if the control plane catalog did not provide explicit `thinking_values`.
+
 ## File explorer contract
 
 The file explorer goes through the `fs:*` IPC namespace rather than reading files directly from the renderer.

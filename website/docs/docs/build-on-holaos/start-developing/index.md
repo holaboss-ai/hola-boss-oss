@@ -110,4 +110,4 @@ The normal dev loop is GUI-dependent. If Electron cannot start in your environme
 
 ## Next
 
-If you are changing the Electron shell, continue to [Desktop Internals](/build-on-holaos/desktop/internals). If you are changing the runtime HTTP surface, continue to [Runtime APIs](/build-on-holaos/runtime-apis). If you are changing the harness path or executor boundary, continue to [Agent Harness Internals](/build-on-holaos/agent-harness/internals). For validation and PR expectations, continue to [Contributing](/build-on-holaos/start-developing/contributing).
+If you are changing the Electron shell, continue to [Desktop Internals](/build-on-holaos/desktop/internals). If you are changing the runtime HTTP surface, continue to [Runtime APIs](/build-on-holaos/runtime/apis). If you are changing the harness path or executor boundary, continue to [Agent Harness Internals](/build-on-holaos/agent-harness/internals). For validation and PR expectations, continue to [Contributing](/build-on-holaos/start-developing/contributing).
