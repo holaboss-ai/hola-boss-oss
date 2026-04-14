@@ -15,7 +15,8 @@ That means desktop work is usually spread across four boundaries: React renderer
 
 ## Main code seams
 
-- `desktop/src/components/layout/AppShell.tsx`: the shell composition and top-level product routing. This is where the agent pane, browser panes, file explorer, applications explorer, app surfaces, operations drawer, task-proposal toasts, settings overlays, and reported non-browser operator surfaces are coordinated.
+- `desktop/src/components/layout/AppShell.tsx`: the shell composition and top-level product routing. This is where the top-toolbar shell navigation, agent pane, browser panes, file explorer, applications explorer, app surfaces, operations drawer, task-proposal toasts, settings overlays, and reported non-browser operator surfaces are coordinated.
+- `desktop/src/components/layout/TopTabsBar.tsx`: the shared desktop toolbar, including workspace switching and the shell-level `Space`, `Automations`, and `Marketplace` entry points.
 - `desktop/src/components/onboarding/FirstWorkspacePane.tsx`, `ConfigureStep.tsx`, `BrowserProfileStep.tsx`, and `CreatingView.tsx`: first-workspace flow, including empty/template workspace creation and browser-profile bootstrap choices.
 - `desktop/shared/model-catalog.ts`: shipped fallback model metadata for direct providers and Holaboss Proxy model mapping, including reasoning support, allowed thinking values, and input modalities.
 - `desktop/src/lib/workspaceDesktop.tsx` and `desktop/src/lib/workspaceSelection.tsx`: renderer-side workspace state and shell coordination.
@@ -23,7 +24,7 @@ That means desktop work is usually spread across four boundaries: React renderer
 - `desktop/src/components/panes/ChatPane.tsx`: model picker, per-model reasoning-effort selector, queued chat inputs, and stream/timeline rendering.
 - `desktop/src/components/panes/BrowserPane.tsx`, `SpaceBrowserExplorerPane.tsx`, and `SpaceBrowserDisplayPane.tsx`: the browser-space UI for the `user` and `agent` browser surfaces.
 - `desktop/src/components/panes/FileExplorerPane.tsx`: workspace file explorer, previews, editing, bookmarking, drag-and-drop imports, and file-watch behavior.
-- `desktop/src/components/panes/SpaceApplicationsExplorerPane.tsx`: workspace app list for the space explorer, parallel to files and browser.
+- `desktop/src/components/panes/SpaceApplicationsExplorerPane.tsx`: workspace app list for the space explorer, parallel to files and browser, including the `Add app` action that routes into the Marketplace apps tab.
 - `desktop/src/components/layout/NotificationToastStack.tsx`: runtime-backed notification rendering and activation behavior.
 - `desktop/electron/preload.ts`: the renderer-to-main bridge exposed on `window.electronAPI`.
 - `desktop/src/types/electron.d.ts`: the typed source of truth for the preload bridge. If the renderer can call it, it should be declared here.

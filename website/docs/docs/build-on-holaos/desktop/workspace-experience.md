@@ -12,7 +12,7 @@ The workspace is the operator's entrypoint into the `holaOS` environment. The UI
 
 At the product level, a workspace is where the operator understands what this environment is for, what capabilities are currently available, what state should persist, and what changed since the last session.
 
-In the current desktop shell that means the left workspace rail cannot just be a file tree. It has to expose the active workspace across files, browser surfaces, and installed applications without forcing the operator to translate everything back into raw paths or URLs.
+In the current desktop shell that means the workspace chrome cannot just be a file tree. The top toolbar and the space explorer together need to expose the active workspace across files, browser surfaces, installed applications, and automations without forcing the operator to translate everything back into raw paths or URLs.
 
 ## What a workspace represents
 
@@ -89,6 +89,18 @@ The space-mode explorer now has three first-class lanes:
 - `Apps` for installed workspace apps
 
 Those lanes are parallel views into one workspace, not separate products. The operator should be able to switch between them without losing the current display surface unless the lane itself requires a different one.
+
+The `Add app` entry point belongs inside the `Apps` lane rather than in top-level shell navigation. App installation is a workspace-app concern, so the control should live next to the installed app list it affects.
+
+## Shell navigation
+
+The top toolbar owns shell-level navigation:
+
+- `Space` returns the operator to the workspace surface
+- `Automations` opens the cronjob and proactive-work surface
+- `Marketplace` opens the install and template catalog
+
+That separation matters because shell destinations are product-level views, while the space explorer lanes are workspace-level surfaces inside `Space`.
 
 ## App outputs and artifacts
 
