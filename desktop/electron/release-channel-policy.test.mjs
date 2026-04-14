@@ -90,6 +90,8 @@ test("manual CI workflow creates combined desktop releases with bundled runtime 
   assert.match(source, /TOOLCHAIN_ASSET_NAME: holaboss-toolchain-linux\.tar\.gz/);
   assert.match(source, /TOOLCHAIN_ASSET_NAME: holaboss-toolchain-macos\.tar\.gz/);
   assert.match(source, /TOOLCHAIN_ASSET_NAME: holaboss-toolchain-windows\.tar\.gz/);
+  assert.match(source, /tar -C out\/runtime-linux -czf "out\/\$\{TOOLCHAIN_ASSET_NAME\}" package-metadata\.json node-runtime python-runtime/);
+  assert.match(source, /tar -C out\/runtime-macos -czf "out\/\$\{TOOLCHAIN_ASSET_NAME\}" package-metadata\.json node-runtime python-runtime/);
   assert.match(source, /gh release upload "\$\{RELEASE_TAG\}" "out\/\$\{RUNTIME_ASSET_NAME\}" --clobber/);
   assert.match(source, /gh release upload "\$\{RELEASE_TAG\}" "out\/\$\{TOOLCHAIN_ASSET_NAME\}" --clobber/);
   assert.match(source, /--prepackaged "\$\{app_path\}" \\\n\s+--mac dmg zip \\/);

@@ -305,7 +305,7 @@ jobs:
         run: tar -C out -czf "out/${RUNTIME_ASSET_NAME}" runtime-linux
 
       - name: Archive Linux toolchain bundle
-        run: tar -C out/runtime-linux -czf "../../out/${TOOLCHAIN_ASSET_NAME}" package-metadata.json node-runtime python-runtime
+        run: tar -C out/runtime-linux -czf "out/${TOOLCHAIN_ASSET_NAME}" package-metadata.json node-runtime python-runtime
 
       - name: Upload Linux runtime bundle artifact
         uses: actions/upload-artifact@v7
@@ -380,7 +380,7 @@ jobs:
         run: tar -C out -czf "out/${RUNTIME_ASSET_NAME}" runtime-macos
 
       - name: Archive macOS toolchain bundle
-        run: tar -C out/runtime-macos -czf "../../out/${TOOLCHAIN_ASSET_NAME}" package-metadata.json node-runtime python-runtime
+        run: tar -C out/runtime-macos -czf "out/${TOOLCHAIN_ASSET_NAME}" package-metadata.json node-runtime python-runtime
 
       - name: Upload macOS runtime release asset
         env:
