@@ -4,9 +4,7 @@ import {
   Copy,
   FolderKanban,
   Home,
-  LayoutGrid,
   Loader2,
-  MessageSquareText,
   Minus,
   Plus,
   Search,
@@ -15,7 +13,6 @@ import {
   Trash2,
   Upload,
   User2,
-  Workflow,
   X,
 } from "lucide-react";
 import {
@@ -48,12 +45,6 @@ interface TopTabsBarProps {
   integratedTitleBar?: boolean;
   desktopPlatform?: string | null;
   onWorkspaceSwitcherVisibilityChange?: (open: boolean) => void;
-  onOpenSpace?: () => void;
-  isSpaceActive?: boolean;
-  onOpenAutomations?: () => void;
-  isAutomationsActive?: boolean;
-  onOpenMarketplace?: () => void;
-  isMarketplaceActive?: boolean;
   onOpenWorkspaceCreatePanel?: () => void;
   onOpenSettings?: () => void;
   onOpenAccount?: () => void;
@@ -66,12 +57,6 @@ export function TopTabsBar({
   integratedTitleBar = false,
   desktopPlatform = null,
   onWorkspaceSwitcherVisibilityChange,
-  onOpenSpace,
-  isSpaceActive = false,
-  onOpenAutomations,
-  isAutomationsActive = false,
-  onOpenMarketplace,
-  isMarketplaceActive = false,
   onOpenWorkspaceCreatePanel,
   onOpenSettings,
   onOpenAccount,
@@ -270,7 +255,7 @@ export function TopTabsBar({
     "window-no-drag flex h-5 w-5 items-center justify-center rounded-[7px] border border-transparent text-muted-foreground/72 transition-colors duration-150 hover:bg-foreground/6 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
   const workspaceSwitcherContainerClassName = `${integratedTitleBar ? "window-no-drag " : ""}relative min-w-55 max-w-full`;
   const workspaceSwitcherButtonClassName =
-    "h-7 w-full justify-start gap-1.5 px-2 rounded-lg text-xs";
+    "h-8 w-full justify-start gap-1.5 px-2.5 rounded-lg text-xs";
 
   return (
     <header
@@ -371,42 +356,6 @@ export function TopTabsBar({
         <div
           className={`${integratedTitleBar ? "window-no-drag " : ""}flex items-center justify-self-end gap-1.5`}
         >
-          {onOpenSpace ? (
-            <Button
-              variant={isSpaceActive ? "secondary" : "outline"}
-              size="sm"
-              aria-label="Space"
-              onClick={onOpenSpace}
-              className="h-7 gap-1.5 px-2 rounded-lg text-xs"
-            >
-              <MessageSquareText size={12} />
-              <span className="hidden sm:inline">Space</span>
-            </Button>
-          ) : null}
-          {onOpenAutomations ? (
-            <Button
-              variant={isAutomationsActive ? "secondary" : "outline"}
-              size="sm"
-              aria-label="Automations"
-              onClick={onOpenAutomations}
-              className="h-7 gap-1.5 px-2 rounded-lg text-xs"
-            >
-              <Workflow size={12} />
-              <span className="hidden sm:inline">Automations</span>
-            </Button>
-          ) : null}
-          {onOpenMarketplace ? (
-            <Button
-              variant={isMarketplaceActive ? "secondary" : "outline"}
-              size="sm"
-              aria-label="Marketplace"
-              onClick={onOpenMarketplace}
-              className="h-7 gap-1.5 px-2 rounded-lg text-xs"
-            >
-              <LayoutGrid size={12} />
-              <span className="hidden sm:inline">Marketplace</span>
-            </Button>
-          ) : null}
           {isBillingAvailable ? (
             <CreditsPill
               balance={overview?.creditsBalance ?? 0}
@@ -418,7 +367,7 @@ export function TopTabsBar({
           <DropdownMenu>
             <DropdownMenuTrigger
               ref={userButtonRef}
-              render={<Button variant="outline" size="icon-sm" className="relative rounded-lg" />}
+              render={<Button variant="outline" size="icon" className="relative rounded-lg" />}
             >
               <User2 />
               <span

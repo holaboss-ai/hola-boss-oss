@@ -92,6 +92,11 @@ test("desktop file explorer enforces the selected workspace root as a filesystem
   assert.match(source, /await nextAvailableExplorerCreatePath\(\s*destinationAbsolutePath,\s*rootName,\s*\)/);
   assert.match(source, /await fs\.mkdir\(absolutePath, \{ recursive: true \}\);/);
   assert.match(source, /await fs\.writeFile\(absolutePath, Buffer\.from\(fileEntry\.content\)\);/);
+  assert.match(source, /const hideWorkspaceManagedRootEntries = normalizedCurrent === normalizedRoot;/);
+  assert.match(
+    source,
+    /if \(\s*hideWorkspaceManagedRootEntries &&\s*\(\(dirEntry\.isDirectory\(\) && dirEntry\.name === "apps"\) \|\|\s*\(!dirEntry\.isDirectory\(\) && dirEntry\.name === "workspace\.yaml"\)\s*\)\s*\) \{\s*continue;\s*\}/,
+  );
   assert.match(
     source,
     /"fs:importExternalEntries"[\s\S]*destinationDirectoryPath: string,[\s\S]*entries: ExplorerExternalImportEntryPayload\[\],[\s\S]*importExternalExplorerEntries\(\s*destinationDirectoryPath,\s*entries,\s*workspaceId,\s*\)/,

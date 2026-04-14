@@ -79,7 +79,7 @@ test("resolveWorkspaceSkills keeps embedded defaults authoritative when workspac
   assert.equal(resolved[0]?.source_dir, fs.realpathSync(path.join(embeddedRoot, "alpha")));
 });
 
-test("resolveWorkspaceSkills follows explicit enabled ordering across embedded and workspace skills", () => {
+test("resolveWorkspaceSkills includes workspace-local skills without requiring workspace.yaml skill allowlists", () => {
   const embeddedRoot = makeTempDir("hb-embedded-skills-");
   process.env.HOLABOSS_EMBEDDED_SKILLS_DIR = embeddedRoot;
   writeSkill(embeddedRoot, "holaboss-runtime");
@@ -88,18 +88,16 @@ test("resolveWorkspaceSkills follows explicit enabled ordering across embedded a
   const workspaceDir = makeTempDir("hb-workspace-enabled-skills-");
   const workspaceSkillsRoot = path.join(workspaceDir, "skills");
   writeSkill(workspaceSkillsRoot, "alpha");
-  fs.writeFileSync(
-    path.join(workspaceDir, "workspace.yaml"),
-    ['skills:', '  enabled:', '    - "alpha"', '    - "holaboss-runtime"', '    - "missing"'].join("\n"),
-    "utf8"
-  );
+  writeSkill(workspaceSkillsRoot, "gamma");
 
   const resolved = resolveWorkspaceSkills(workspaceDir);
   assert.deepEqual(
     resolved.map((skill) => ({ skill_id: skill.skill_id, origin: skill.origin })),
     [
+      { skill_id: "beta", origin: "embedded" },
+      { skill_id: "holaboss-runtime", origin: "embedded" },
       { skill_id: "alpha", origin: "workspace" },
-      { skill_id: "holaboss-runtime", origin: "embedded" }
+      { skill_id: "gamma", origin: "workspace" }
     ]
   );
 });

@@ -2348,11 +2348,6 @@ test("runTsRunnerCli keeps embedded skills authoritative when a workspace skill 
     "---\nname: holaboss-runtime\ndescription: Workspace override\n---\n# Workspace Override\n",
     "utf8"
   );
-  fs.writeFileSync(
-    path.join(workspaceDir, "workspace.yaml"),
-    ['skills:', '  path: "skills"', '  enabled:', '    - "holaboss-runtime"'].join("\n"),
-    "utf8"
-  );
   const embeddedSkillDir = path.join(embeddedSkillsRoot, "holaboss-runtime");
   fs.mkdirSync(embeddedSkillDir, { recursive: true });
   fs.writeFileSync(
@@ -2438,11 +2433,6 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
   const skillDir = path.join(workspaceDir, "skills", "alpha");
   fs.mkdirSync(skillDir, { recursive: true });
   fs.writeFileSync(path.join(skillDir, "SKILL.md"), "---\nname: alpha\ndescription: Alpha skill\n---\n# Alpha\n", "utf8");
-  fs.writeFileSync(
-    path.join(workspaceDir, "workspace.yaml"),
-    ['skills:', '  path: "skills"', '  enabled:', '    - "alpha"'].join("\n"),
-    "utf8"
-  );
 
   let capturedProjectRequest: Record<string, unknown> | null = null;
   let capturedHarnessRequest: Record<string, unknown> | null = null;
@@ -2504,9 +2494,15 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
   assert.equal(exitCode, 0);
   assert.ok(capturedProjectRequest);
   assert.equal((capturedProjectRequest as { harness_id: string | null }).harness_id, "pi");
-  assert.deepEqual((capturedProjectRequest as { workspace_skill_ids: string[] }).workspace_skill_ids, ["alpha"]);
+  assert.deepEqual(
+    (capturedProjectRequest as { workspace_skill_ids: string[] }).workspace_skill_ids,
+    ["skill-creator", "skill-installer", "alpha"]
+  );
   assert.ok(capturedHarnessRequest);
-  assert.deepEqual((capturedHarnessRequest as { workspace_skill_dirs: string[] }).workspace_skill_dirs, [fs.realpathSync(skillDir)]);
+  assert.deepEqual(
+    (capturedHarnessRequest as { workspace_skill_dirs: string[] }).workspace_skill_dirs.map((dir) => path.basename(dir)),
+    ["skill-creator", "skill-installer", "alpha"]
+  );
 });
 
 test("runTsRunnerCli skips workspace command staging for harnesses that do not support it", async () => {

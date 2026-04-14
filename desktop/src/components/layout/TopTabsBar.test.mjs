@@ -18,10 +18,6 @@ test("top tabs bar renders custom compact window controls for Windows title bar 
   const source = await readFile(TOP_TABS_BAR_PATH, "utf8");
 
   assert.match(source, /desktopPlatform\?: string \| null;/);
-  assert.match(source, /onOpenSpace\?: \(\) => void;/);
-  assert.match(source, /isSpaceActive\?: boolean;/);
-  assert.match(source, /onOpenAutomations\?: \(\) => void;/);
-  assert.match(source, /isAutomationsActive\?: boolean;/);
   assert.match(
     source,
     /const isWindowsIntegratedTitleBar =\s*integratedTitleBar && desktopPlatform === "win32";/,
@@ -40,7 +36,7 @@ test("top tabs bar renders custom compact window controls for Windows title bar 
   );
   assert.match(
     source,
-    /const workspaceSwitcherButtonClassName =\s*"h-7 w-full justify-start gap-1\.5 px-2 rounded-lg text-xs";/,
+    /const workspaceSwitcherButtonClassName =\s*"h-8 w-full justify-start gap-1\.5 px-2\.5 rounded-lg text-xs";/,
   );
   assert.match(
     source,
@@ -49,14 +45,19 @@ test("top tabs bar renders custom compact window controls for Windows title bar 
   assert.match(source, /className="size-7 shrink-0 rounded-\[9px\] border border-border overflow-hidden"/);
   assert.match(source, /<FolderKanban size=\{13\} className="shrink-0 text-primary" \/>/);
   assert.match(source, /<ChevronDown\s+size=\{12\}/);
-  assert.match(source, /size="sm"\s+aria-label="Space"/);
-  assert.match(source, /<MessageSquareText size=\{12\} \/>/);
-  assert.match(source, /size="sm"\s+aria-label="Automations"/);
-  assert.match(source, /<Workflow size=\{12\} \/>/);
-  assert.match(source, /size="sm"\s+aria-label="Marketplace"/);
-  assert.match(source, /className="h-7 gap-1\.5 px-2 rounded-lg text-xs"/);
-  assert.match(source, /<LayoutGrid size=\{12\} \/>/);
-  assert.match(source, /render=\{<Button variant="outline" size="icon-sm" className="relative rounded-lg" \/>\}/);
+  assert.doesNotMatch(source, /onOpenSpace\?: \(\) => void;/);
+  assert.doesNotMatch(source, /isSpaceActive\?: boolean;/);
+  assert.doesNotMatch(source, /aria-label="Space"/);
+  assert.doesNotMatch(source, /MessageSquareText/);
+  assert.doesNotMatch(source, /aria-label="Automations"/);
+  assert.doesNotMatch(source, /onOpenAutomations\?: \(\) => void;/);
+  assert.doesNotMatch(source, /isAutomationsActive\?: boolean;/);
+  assert.doesNotMatch(source, /Workflow/);
+  assert.doesNotMatch(source, /aria-label="Marketplace"/);
+  assert.doesNotMatch(source, /onOpenMarketplace\?: \(\) => void;/);
+  assert.doesNotMatch(source, /isMarketplaceActive\?: boolean;/);
+  assert.doesNotMatch(source, /LayoutGrid/);
+  assert.match(source, /render=\{<Button variant="outline" size="icon" className="relative rounded-lg" \/>\}/);
   assert.match(source, /window\.electronAPI\.ui\.getWindowState\(\)/);
   assert.match(source, /window\.electronAPI\.ui\.minimizeWindow\(\)/);
   assert.match(source, /window\.electronAPI\.ui\.closeWindow\(\)/);

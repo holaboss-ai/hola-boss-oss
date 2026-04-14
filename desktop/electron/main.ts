@@ -552,7 +552,10 @@ type UiSettingsPaneSection =
   | "account"
   | "billing"
   | "providers"
+  | "integrations"
+  | "submissions"
   | "settings"
+  | "automations"
   | "about";
 
 interface AddressSuggestionPayload {
@@ -2624,7 +2627,6 @@ interface WorkspaceSkillRecordPayload {
   skill_file_path: string;
   title: string;
   summary: string;
-  enabled: boolean;
   modified_at: string;
 }
 
@@ -2632,8 +2634,6 @@ interface WorkspaceSkillListResponsePayload {
   workspace_id: string;
   workspace_root: string;
   skills_path: string;
-  enabled_skill_ids: string[];
-  missing_enabled_skill_ids: string[];
   skills: WorkspaceSkillRecordPayload[];
 }
 
@@ -12146,78 +12146,6 @@ function sanitizeYamlScalar(rawValue: string): string {
   return trimmed;
 }
 
-function parseInlineYamlStringArray(rawValue: string): string[] {
-  const trimmed = rawValue.trim();
-  if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) {
-    return [];
-  }
-  return trimmed
-    .slice(1, -1)
-    .split(",")
-    .map((item) => normalizeWorkspaceSkillId(sanitizeYamlScalar(item)))
-    .filter((item): item is string => Boolean(item));
-}
-
-function parseWorkspaceSkillsConfig(workspaceYaml: string | null): {
-  enabledSkillIds: string[];
-} {
-  const result = {
-    enabledSkillIds: [] as string[],
-  };
-  if (!workspaceYaml) {
-    return result;
-  }
-
-  const stack: Array<{ key: string; indent: number }> = [];
-  for (const rawLine of workspaceYaml.replace(/\t/g, "  ").split(/\r?\n/)) {
-    const trimmed = rawLine.trim();
-    if (!trimmed || trimmed.startsWith("#")) {
-      continue;
-    }
-
-    const indent = rawLine.match(/^\s*/)?.[0].length ?? 0;
-    while (stack.length && indent <= stack[stack.length - 1].indent) {
-      stack.pop();
-    }
-
-    if (trimmed.startsWith("- ")) {
-      const currentScope = stack.map((entry) => entry.key).join(".");
-      if (currentScope === "skills.enabled") {
-        const skillId = normalizeWorkspaceSkillId(
-          sanitizeYamlScalar(trimmed.slice(2)),
-        );
-        if (skillId && !result.enabledSkillIds.includes(skillId)) {
-          result.enabledSkillIds.push(skillId);
-        }
-      }
-      continue;
-    }
-
-    const separatorIndex = trimmed.indexOf(":");
-    if (separatorIndex < 0) {
-      continue;
-    }
-
-    const key = trimmed.slice(0, separatorIndex).trim();
-    const rawValue = trimmed.slice(separatorIndex + 1).trim();
-    const scope = [...stack.map((entry) => entry.key), key].join(".");
-
-    if (scope === "skills.enabled" && rawValue) {
-      for (const skillId of parseInlineYamlStringArray(rawValue)) {
-        if (!result.enabledSkillIds.includes(skillId)) {
-          result.enabledSkillIds.push(skillId);
-        }
-      }
-    }
-
-    if (!rawValue) {
-      stack.push({ key, indent });
-    }
-  }
-
-  return result;
-}
-
 function humanizeSkillId(skillId: string): string {
   return skillId
     .split(/[-_]/)
@@ -12283,7 +12211,6 @@ function extractSkillMetadata(
 
 async function readSkillCatalogFromRoot(params: {
   skillsRoot: string;
-  enabledSkillIds: string[];
 }): Promise<WorkspaceSkillRecordPayload[]> {
   let directoryEntries;
   try {
@@ -12317,10 +12244,6 @@ async function readSkillCatalogFromRoot(params: {
               skill_file_path: skillFilePath,
               title: metadata.title,
               summary: metadata.summary,
-              enabled:
-                params.enabledSkillIds.length === 0
-                  ? true
-                  : params.enabledSkillIds.includes(skillId),
               modified_at: stats.mtime.toISOString(),
             } satisfies WorkspaceSkillRecordPayload;
           } catch {
@@ -12335,69 +12258,20 @@ async function listWorkspaceSkills(
   workspaceId: string,
 ): Promise<WorkspaceSkillListResponsePayload> {
   const workspaceRoot = workspaceDirectoryPath(workspaceId);
-  const workspaceYamlPath = path.join(workspaceRoot, "workspace.yaml");
-  let workspaceYamlContent: string | null = null;
-  try {
-    workspaceYamlContent = await fs.readFile(workspaceYamlPath, "utf-8");
-  } catch {
-    workspaceYamlContent = null;
-  }
-
-  const config = parseWorkspaceSkillsConfig(workspaceYamlContent);
   const skillsPath = path.resolve(workspaceRoot, "skills");
 
-  const workspaceSkills = await readSkillCatalogFromRoot({
-    skillsRoot: skillsPath,
-    enabledSkillIds: config.enabledSkillIds,
-  });
+  const workspaceSkills = await readSkillCatalogFromRoot({ skillsRoot: skillsPath });
 
-  const skillById = new Map(
-    workspaceSkills.map((skill) => [skill.skill_id, skill] as const),
-  );
-  const orderedSkillIds =
-    config.enabledSkillIds.length > 0
-      ? config.enabledSkillIds
-      : workspaceSkills.map((skill) => skill.skill_id);
-
-  const skills = orderedSkillIds
-    .map((skillId) => skillById.get(skillId) ?? null)
-    .filter((skill): skill is WorkspaceSkillRecordPayload => Boolean(skill));
-
-  const configuredOrder = new Map(
-    config.enabledSkillIds.map((skillId, index) => [skillId, index] as const),
-  );
-  if (config.enabledSkillIds.length === 0) {
-    skills.sort((left, right) => {
-      return left.title.localeCompare(right.title, undefined, {
-        sensitivity: "base",
-      });
-    });
-  } else {
-    skills.sort((left, right) => {
-      const leftRank =
-        configuredOrder.get(left.skill_id) ?? Number.MAX_SAFE_INTEGER;
-      const rightRank =
-        configuredOrder.get(right.skill_id) ?? Number.MAX_SAFE_INTEGER;
-      if (leftRank !== rightRank) {
-        return leftRank - rightRank;
-      }
-      return left.title.localeCompare(right.title, undefined, {
-        sensitivity: "base",
-      });
-    });
-  }
-
-  const discoveredIds = new Set(workspaceSkills.map((skill) => skill.skill_id));
-  const missingEnabledSkillIds = config.enabledSkillIds.filter(
-    (skillId) => !discoveredIds.has(skillId),
+  const skills = [...workspaceSkills].sort((left, right) =>
+    left.title.localeCompare(right.title, undefined, {
+      sensitivity: "base",
+    }),
   );
 
   return {
     workspace_id: workspaceId,
     workspace_root: workspaceRoot,
     skills_path: skillsPath,
-    enabled_skill_ids: config.enabledSkillIds,
-    missing_enabled_skill_ids: missingEnabledSkillIds,
     skills,
   };
 }
@@ -15512,11 +15386,23 @@ async function listDirectory(
     throw new Error("Target path is not a directory.");
   }
 
+  const normalizedCurrent = path.normalize(resolvedPath);
+  const normalizedRoot = path.normalize(
+    workspaceRoot ? workspaceRoot : path.parse(resolvedPath).root,
+  );
+  const hideWorkspaceManagedRootEntries = normalizedCurrent === normalizedRoot;
   const dirEntries = await fs.readdir(resolvedPath, { withFileTypes: true });
   const entries: DirectoryEntryPayload[] = [];
 
   for (const dirEntry of dirEntries) {
     if (dirEntry.name.startsWith(".")) {
+      continue;
+    }
+    if (
+      hideWorkspaceManagedRootEntries &&
+      ((dirEntry.isDirectory() && dirEntry.name === "apps") ||
+        (!dirEntry.isDirectory() && dirEntry.name === "workspace.yaml"))
+    ) {
       continue;
     }
     const absolutePath = path.join(resolvedPath, dirEntry.name);
@@ -15541,10 +15427,6 @@ async function listDirectory(
     return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
   });
 
-  const normalizedCurrent = path.normalize(resolvedPath);
-  const normalizedRoot = path.normalize(
-    workspaceRoot ? workspaceRoot : path.parse(resolvedPath).root,
-  );
   const parentPath =
     normalizedCurrent === normalizedRoot
       ? null

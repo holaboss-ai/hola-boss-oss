@@ -6,9 +6,9 @@ import {
 } from "@/components/layout/OperationsDrawer";
 import { SettingsDialog } from "@/components/layout/SettingsDialog";
 import { TopTabsBar } from "@/components/layout/TopTabsBar";
+import { WorkspaceAppsDialog } from "@/components/layout/WorkspaceAppsDialog";
 import { FirstWorkspacePane } from "@/components/onboarding";
 import { AppSurfacePane } from "@/components/panes/AppSurfacePane";
-import { AutomationsPane } from "@/components/panes/AutomationsPane";
 import { BrowserPane } from "@/components/panes/BrowserPane";
 import { ChatPane } from "@/components/panes/ChatPane";
 import {
@@ -16,7 +16,6 @@ import {
   type FileExplorerFocusRequest,
 } from "@/components/panes/FileExplorerPane";
 import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
-import { MarketplacePane } from "@/components/panes/MarketplacePane";
 import { OnboardingPane } from "@/components/panes/OnboardingPane";
 import { SpaceApplicationsExplorerPane } from "@/components/panes/SpaceApplicationsExplorerPane";
 import { SpaceBrowserDisplayPane } from "@/components/panes/SpaceBrowserDisplayPane";
@@ -103,7 +102,7 @@ type SpaceComponentId = "agent" | "files" | "browser";
 type UtilityPaneId = "files" | "browser";
 type DevAppUpdatePreviewMode = "off" | "downloading" | "ready";
 type SpaceExplorerMode = "files" | "browser" | "applications";
-type ShellView = "space" | "automations" | "marketplace";
+type ShellView = "space";
 
 type SpaceVisibilityState = Record<SpaceComponentId, boolean>;
 
@@ -156,7 +155,10 @@ function isSettingsPaneSection(value: string): value is UiSettingsPaneSection {
     value === "account" ||
     value === "billing" ||
     value === "providers" ||
+    value === "integrations" ||
+    value === "submissions" ||
     value === "settings" ||
+    value === "automations" ||
     value === "about"
   );
 }
@@ -195,9 +197,9 @@ type SpaceDisplayView =
     }
   | { type: "empty" };
 
-type RestorableSpaceDisplayView = Exclude<
+type RestorableSpaceFileDisplayView = Extract<
   SpaceDisplayView,
-  { type: "browser" } | { type: "empty" }
+  { type: "internal" }
 >;
 type RestorableSpaceAppDisplayView = Extract<SpaceDisplayView, { type: "app" }>;
 
@@ -1040,13 +1042,13 @@ function AppShellContent() {
   const [publishOpen, setPublishOpen] = useState(false);
   const [createWorkspacePanelOpen, setCreateWorkspacePanelOpen] =
     useState(false);
+  const [workspaceAppsDialogOpen, setWorkspaceAppsDialogOpen] =
+    useState(false);
   const [
     createWorkspacePanelAnchorWorkspaceId,
     setCreateWorkspacePanelAnchorWorkspaceId,
   ] = useState("");
   const [activeShellView, setActiveShellView] = useState<ShellView>("space");
-  const [marketplaceInitialTab, setMarketplaceInitialTab] =
-    useState<"templates" | "apps">("templates");
   const [agentView, setAgentView] = useState<AgentView>({ type: "chat" });
   const [chatFocusRequestKey, setChatFocusRequestKey] = useState(1);
   const [chatSessionJumpRequest, setChatSessionJumpRequest] = useState<{
@@ -1156,8 +1158,8 @@ function AppShellContent() {
   const knownTaskProposalIdsByWorkspaceRef = useRef<Record<string, string[]>>(
     {},
   );
-  const lastRestorableSpaceDisplayViewByWorkspaceRef = useRef<
-    Record<string, RestorableSpaceDisplayView>
+  const lastRestorableSpaceFileDisplayViewByWorkspaceRef = useRef<
+    Record<string, RestorableSpaceFileDisplayView>
   >({});
   const lastRestorableSpaceAppDisplayViewByWorkspaceRef = useRef<
     Record<string, RestorableSpaceAppDisplayView>
@@ -2024,6 +2026,13 @@ function AppShellContent() {
   ]);
 
   useEffect(() => {
+    if (selectedWorkspaceId) {
+      return;
+    }
+    setWorkspaceAppsDialogOpen(false);
+  }, [selectedWorkspaceId]);
+
+  useEffect(() => {
     setChatSessionJumpRequest(null);
   }, [selectedWorkspaceId]);
 
@@ -2567,28 +2576,8 @@ function AppShellContent() {
     [installedApps],
   );
 
-  const handleOpenSpace = useCallback(() => {
-    setActiveShellView("space");
-    if (agentView.type === "app") {
-      setAgentView({ type: "chat" });
-    }
-    setChatFocusRequestKey((current) => current + 1);
-  }, [agentView.type]);
-
-  const handleOpenMarketplace = useCallback(
-    (initialTab: "templates" | "apps" = "templates") => {
-      setMarketplaceInitialTab(initialTab);
-      setActiveShellView("marketplace");
-    },
-    [],
-  );
-
-  const handleOpenAutomations = useCallback(() => {
-    setActiveShellView("automations");
-  }, []);
-
   const handleAddApp = () => {
-    handleOpenMarketplace("apps");
+    setWorkspaceAppsDialogOpen(true);
   };
 
   const handleOpenSpaceApp = useCallback(
@@ -2623,10 +2612,22 @@ function AppShellContent() {
     [],
   );
 
-  const handleOpenAutomationRunSession = useCallback((sessionId: string) => {
+  const handleOpenAutomationRunSession = useCallback((
+    sessionId: string,
+    workspaceId?: string | null,
+  ) => {
     const normalizedSessionId = sessionId.trim();
+    const normalizedWorkspaceId =
+      workspaceId?.trim() || selectedWorkspaceId?.trim() || "";
     if (!normalizedSessionId) {
       return;
+    }
+    if (!normalizedWorkspaceId) {
+      return;
+    }
+
+    if (normalizedWorkspaceId !== (selectedWorkspaceId?.trim() || "")) {
+      setSelectedWorkspaceId(normalizedWorkspaceId);
     }
 
     setActiveShellView("space");
@@ -2640,7 +2641,7 @@ function AppShellContent() {
       requestKey: Date.now(),
     });
     setChatFocusRequestKey((current) => current + 1);
-  }, []);
+  }, [selectedWorkspaceId, setSelectedWorkspaceId]);
 
   const nextChatSessionOpenRequestKey = useCallback(() => {
     chatSessionOpenRequestKeyRef.current += 1;
@@ -2652,7 +2653,17 @@ function AppShellContent() {
     return chatComposerPrefillRequestKeyRef.current;
   }, []);
 
-  const handleCreateScheduleInChat = useCallback(() => {
+  const handleCreateScheduleInChat = useCallback((workspaceId?: string | null) => {
+    const normalizedWorkspaceId =
+      workspaceId?.trim() || selectedWorkspaceId?.trim() || "";
+    if (!normalizedWorkspaceId) {
+      return;
+    }
+
+    if (normalizedWorkspaceId !== (selectedWorkspaceId?.trim() || "")) {
+      setSelectedWorkspaceId(normalizedWorkspaceId);
+    }
+
     setActiveShellView("space");
     setSpaceVisibility((previous) => ({
       ...previous,
@@ -2660,23 +2671,66 @@ function AppShellContent() {
     }));
     setAgentView({ type: "chat" });
     setChatSessionJumpRequest(null);
-    setChatSessionOpenRequest(
-      activeChatSessionId
-        ? {
-            sessionId: activeChatSessionId,
-            requestKey: nextChatSessionOpenRequestKey(),
-          }
-        : null,
-    );
+    setChatSessionOpenRequest({
+      sessionId: "",
+      mode: "draft",
+      parentSessionId: null,
+      requestKey: nextChatSessionOpenRequestKey(),
+    });
     setChatComposerPrefillRequest({
       text: "Create a cronjob for ",
       requestKey: nextChatComposerPrefillRequestKey(),
     });
     setChatFocusRequestKey((current) => current + 1);
   }, [
-    activeChatSessionId,
     nextChatComposerPrefillRequestKey,
     nextChatSessionOpenRequestKey,
+    selectedWorkspaceId,
+    setSelectedWorkspaceId,
+  ]);
+
+  const handleEditScheduleInChat = useCallback((
+    job: CronjobRecordPayload,
+    workspaceId?: string | null,
+  ) => {
+    const normalizedWorkspaceId =
+      workspaceId?.trim() || selectedWorkspaceId?.trim() || "";
+    if (!normalizedWorkspaceId) {
+      return;
+    }
+
+    if (normalizedWorkspaceId !== (selectedWorkspaceId?.trim() || "")) {
+      setSelectedWorkspaceId(normalizedWorkspaceId);
+    }
+
+    const jobName =
+      job.name?.trim() || job.description?.trim() || "Untitled schedule";
+    const instruction = job.instruction?.trim() || job.description?.trim() || "";
+    setActiveShellView("space");
+    setSpaceVisibility((previous) => ({
+      ...previous,
+      agent: true,
+    }));
+    setAgentView({ type: "chat" });
+    setChatSessionJumpRequest(null);
+    setChatSessionOpenRequest({
+      sessionId: "",
+      mode: "draft",
+      parentSessionId: null,
+      requestKey: nextChatSessionOpenRequestKey(),
+    });
+    setChatComposerPrefillRequest({
+      text:
+        `Edit cronjob "${jobName}" (id: ${job.id}). Current cron: ${job.cron}. ` +
+        `Current instruction: ${instruction}\n\nUpdate it to: `,
+      requestKey: nextChatComposerPrefillRequestKey(),
+    });
+    setChatFocusRequestKey((current) => current + 1);
+  }, [
+    nextChatComposerPrefillRequestKey,
+    nextChatSessionOpenRequestKey,
+    selectedWorkspaceId,
+    setSelectedWorkspaceId,
   ]);
 
   const handleCreateSession = useCallback(
@@ -2766,15 +2820,12 @@ function AppShellContent() {
   );
 
   useEffect(() => {
-    if (
-      !selectedWorkspaceId ||
-      spaceDisplayView.type === "browser" ||
-      spaceDisplayView.type === "empty"
-    ) {
+    if (!selectedWorkspaceId || spaceDisplayView.type !== "internal") {
       return;
     }
-    lastRestorableSpaceDisplayViewByWorkspaceRef.current[selectedWorkspaceId] =
-      spaceDisplayView;
+    lastRestorableSpaceFileDisplayViewByWorkspaceRef.current[
+      selectedWorkspaceId
+    ] = spaceDisplayView;
   }, [selectedWorkspaceId, spaceDisplayView]);
 
   useEffect(() => {
@@ -2786,18 +2837,20 @@ function AppShellContent() {
     ] = spaceDisplayView;
   }, [selectedWorkspaceId, spaceDisplayView]);
 
-  const restoreLastSpaceDisplayView = useCallback(() => {
+  const restoreLastSpaceFileDisplayView = useCallback(() => {
     if (!selectedWorkspaceId) {
       setSpaceDisplayView({ type: "browser" });
       return;
     }
 
     const lastDisplayView =
-      lastRestorableSpaceDisplayViewByWorkspaceRef.current[selectedWorkspaceId];
-    const nextDisplayView = lastDisplayView ?? { type: "browser" };
+      lastRestorableSpaceFileDisplayViewByWorkspaceRef.current[
+        selectedWorkspaceId
+      ];
+    const nextDisplayView = lastDisplayView ?? spaceDisplayView;
     setSpaceDisplayView(nextDisplayView);
     syncFileExplorerFocusWithDisplayView(nextDisplayView);
-  }, [selectedWorkspaceId, syncFileExplorerFocusWithDisplayView]);
+  }, [selectedWorkspaceId, spaceDisplayView, syncFileExplorerFocusWithDisplayView]);
 
   const restoreLastSpaceAppDisplayView = useCallback(() => {
     if (!selectedWorkspaceId) {
@@ -2814,8 +2867,8 @@ function AppShellContent() {
       return;
     }
 
-    restoreLastSpaceDisplayView();
-  }, [restoreLastSpaceDisplayView, selectedWorkspaceId]);
+    setSpaceDisplayView(spaceDisplayView);
+  }, [selectedWorkspaceId, spaceDisplayView]);
 
   useEffect(() => {
     if (!selectedWorkspaceId) {
@@ -2825,7 +2878,9 @@ function AppShellContent() {
     }
 
     const nextDisplayView =
-      lastRestorableSpaceDisplayViewByWorkspaceRef.current[selectedWorkspaceId];
+      lastRestorableSpaceFileDisplayViewByWorkspaceRef.current[
+        selectedWorkspaceId
+      ];
     if (!nextDisplayView) {
       setSpaceExplorerMode("browser");
       setSpaceDisplayView({ type: "browser" });
@@ -2975,6 +3030,7 @@ function AppShellContent() {
     isUtilityPaneResizing ||
     workspaceSwitcherOpen ||
     settingsDialogOpen ||
+    workspaceAppsDialogOpen ||
     createWorkspacePanelOpen ||
     publishOpen;
   const runtimeStartupBlockedDetail = runtimeStartupBlockedMessage(
@@ -3575,12 +3631,6 @@ function AppShellContent() {
               integratedTitleBar={hasIntegratedTitleBar}
               desktopPlatform={desktopPlatform}
               onWorkspaceSwitcherVisibilityChange={setWorkspaceSwitcherOpen}
-              onOpenSpace={handleOpenSpace}
-              isSpaceActive={spaceMode}
-              onOpenAutomations={handleOpenAutomations}
-              isAutomationsActive={activeShellView === "automations"}
-              onOpenMarketplace={() => handleOpenMarketplace("templates")}
-              isMarketplaceActive={activeShellView === "marketplace"}
               onOpenWorkspaceCreatePanel={handleOpenCreateWorkspacePanel}
               onOpenSettings={() => {
                 setSettingsDialogSection("settings");
@@ -3644,7 +3694,7 @@ function AppShellContent() {
                                       } else if (mode === "applications") {
                                         restoreLastSpaceAppDisplayView();
                                       } else {
-                                        restoreLastSpaceDisplayView();
+                                        restoreLastSpaceFileDisplayView();
                                       }
                                     }}
                                     className="min-w-0 flex-1"
@@ -3750,7 +3800,7 @@ function AppShellContent() {
                                 size="icon"
                                 onClick={() => {
                                   setSpaceExplorerMode("files");
-                                  restoreLastSpaceDisplayView();
+                                  restoreLastSpaceFileDisplayView();
                                   setSpaceExplorerCollapsed(false);
                                 }}
                                 aria-label="Open file explorer"
@@ -3848,18 +3898,7 @@ function AppShellContent() {
                     </div>
                   </div>
                 </div>
-              ) : activeShellView === "automations" ? (
-                <div className="h-full min-h-0 overflow-hidden rounded-xl">
-                  <AutomationsPane
-                    onOpenRunSession={handleOpenAutomationRunSession}
-                    onCreateSchedule={handleCreateScheduleInChat}
-                  />
-                </div>
-              ) : (
-                <div className="h-full min-h-0 overflow-hidden rounded-xl">
-                  <MarketplacePane initialTab={marketplaceInitialTab} />
-                </div>
-              )}
+              ) : null}
             </div>
           </div>
         )}
@@ -3871,6 +3910,10 @@ function AppShellContent() {
           onClose={handleCloseCreateWorkspacePanel}
         />
       ) : null}
+      <WorkspaceAppsDialog
+        open={workspaceAppsDialogOpen}
+        onClose={() => setWorkspaceAppsDialogOpen(false)}
+      />
 
       <SettingsDialog
         open={settingsDialogOpen}
@@ -3881,6 +3924,18 @@ function AppShellContent() {
         themes={THEMES}
         onThemeChange={handleThemeChange}
         onOpenExternalUrl={handleOpenExternalUrl}
+        onOpenAutomationRunSession={(workspaceId, sessionId) => {
+          setSettingsDialogOpen(false);
+          handleOpenAutomationRunSession(sessionId, workspaceId);
+        }}
+        onCreateAutomationSchedule={(workspaceId) => {
+          setSettingsDialogOpen(false);
+          handleCreateScheduleInChat(workspaceId);
+        }}
+        onEditAutomationSchedule={(workspaceId, job) => {
+          setSettingsDialogOpen(false);
+          handleEditScheduleInChat(job, workspaceId);
+        }}
       />
       {selectedWorkspaceId && (
         <PublishDialog

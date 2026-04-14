@@ -12,9 +12,10 @@ test("automations pane keeps scheduled tasks and completed runs as distinct data
 
   assert.match(source, /const \[cronjobs, setCronjobs\] = useState<CronjobRecordPayload\[]>\(\[\]\);/);
   assert.match(source, /const \[completedRuns, setCompletedRuns\] = useState<CompletedAutomationRun\[]>\(/);
-  assert.match(source, /window\.electronAPI\.workspace\.listCronjobs\(selectedWorkspaceId\)/);
-  assert.match(source, /window\.electronAPI\.workspace\.listAgentSessions\(selectedWorkspaceId\)/);
-  assert.match(source, /window\.electronAPI\.workspace\.listRuntimeStates\(selectedWorkspaceId\)/);
+  assert.match(source, /const activeWorkspaceId = workspaceId \?\? selectedWorkspaceId;/);
+  assert.match(source, /window\.electronAPI\.workspace\.listCronjobs\(activeWorkspaceId\)/);
+  assert.match(source, /window\.electronAPI\.workspace\.listAgentSessions\(activeWorkspaceId\)/);
+  assert.match(source, /window\.electronAPI\.workspace\.listRuntimeStates\(activeWorkspaceId\)/);
   assert.match(source, /session\.kind\.trim\(\)\.toLowerCase\(\) === "cronjob"/);
 });
 
@@ -33,7 +34,7 @@ test("scheduled rows expose a run-now action for each automation", async () => {
   assert.match(source, /await window\.electronAPI\.workspace\.runCronjobNow\(job\.id\);/);
   assert.match(source, /item\.id === response\.cronjob\.id \? response\.cronjob : item/);
   assert.match(source, /Run now/);
-  assert.match(source, /<Play size=\{14\} \/>/);
+  assert.match(source, /<Play size=\{16\} \/>/);
 });
 
 test("post-action refresh preserves the current banner and suppresses transient refresh errors", async () => {
@@ -59,7 +60,7 @@ test("scheduled rows label whether an automation is a notification or task run",
 test("new schedule button can route creation into the workspace chat", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /interface AutomationsPaneProps \{\s*onOpenRunSession\?: \(sessionId: string\) => void;\s*onCreateSchedule\?: \(\) => void;\s*\}/);
+  assert.match(source, /interface AutomationsPaneProps \{\s*workspaceId\?: string \| null;\s*showHeader\?: boolean;\s*emptyWorkspaceMessage\?: string;\s*toolbarLeading\?: ReactNode;\s*onOpenRunSession\?: \(sessionId: string\) => void;\s*onCreateSchedule\?: \(\) => void;\s*onEditSchedule\?: \(job: CronjobRecordPayload\) => void;\s*\}/);
   assert.match(source, /if \(onCreateSchedule\) \{\s*onCreateSchedule\(\);\s*return;\s*\}/);
   assert.match(source, /onClick=\{handleNewSchedule\}/);
 });
@@ -67,6 +68,55 @@ test("new schedule button can route creation into the workspace chat", async () 
 test("completed runs open the corresponding sub-session when clicked", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /interface AutomationsPaneProps \{\s*onOpenRunSession\?: \(sessionId: string\) => void;/);
+  assert.match(source, /interface AutomationsPaneProps \{\s*workspaceId\?: string \| null;[\s\S]*onOpenRunSession\?: \(sessionId: string\) => void;/);
   assert.match(source, /onClick=\{\(\) => onOpenRunSession\?\.\(run\.sessionId\)\}/);
+});
+
+test("automations pane can embed inside settings and hide its standalone header", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /showHeader = true/);
+  assert.match(source, /emptyWorkspaceMessage = "Choose a workspace from the top bar to view and manage automations\."/);
+  assert.match(source, /toolbarLeading\?: ReactNode/);
+  assert.match(source, /const content = \(/);
+  assert.match(source, /if \(!showHeader\) \{\s*return content;\s*\}/);
+  assert.match(source, /return <PaneCard className="shadow-md">\{content\}<\/PaneCard>;/);
+  assert.match(source, /showHeader \? \(/);
+  assert.match(source, /toolbarLeading \? \(/);
+  assert.match(source, /!activeWorkspaceId \? \(\s*<EmptyState message=\{emptyWorkspaceMessage\} \/>/);
+});
+
+test("scheduled rows use a kebab menu for run, edit, and delete actions", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /const handleEdit = \(job: CronjobRecordPayload\) => \{/);
+  assert.match(source, /if \(onEditSchedule\) \{\s*onEditSchedule\(job\);\s*return;\s*\}/);
+  assert.match(source, /Actions for \$\{jobTitle\(job\)\}/);
+  assert.match(source, /<MoreHorizontal size=\{20\} \/>/);
+  assert.match(source, /<Pencil size=\{16\} \/>/);
+  assert.match(source, /Run now/);
+  assert.match(source, /Edit/);
+  assert.match(source, /Delete/);
+});
+
+test("new schedule button uses the shared primary button style", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /<Button\s+type="button"\s+size="default"\s+onClick=\{handleNewSchedule\}\s+className="rounded-full px-4"/);
+  assert.doesNotMatch(source, /bg-foreground/);
+});
+
+test("embedded automations toolbar uses the shared compact control height", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /theme-subtle-surface mt-5 inline-flex items-center rounded-full border border-border\/45 bg-muted\/40 p-1/);
+  assert.match(source, /min-w-\[124px\] rounded-full px-4 text-sm font-semibold/);
+  assert.doesNotMatch(source, /h-9 min-w-\[132px\]/);
+});
+
+test("automation tabs keep a distinct hover state instead of blending into the track", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /bg-background text-foreground shadow-sm hover:bg-background hover:text-foreground/);
+  assert.match(source, /text-muted-foreground hover:bg-background\/70 hover:text-foreground/);
 });
