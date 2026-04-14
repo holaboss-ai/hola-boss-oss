@@ -11,6 +11,15 @@ Use it when you are:
 
 The source of truth for this section is the code, not a conceptual product story.
 
+## About vs Build
+
+Use the docs split deliberately:
+
+- `About holaOS` explains the system model, boundaries, and why the layers exist.
+- `Build on holaOS` explains the code seams, request shapes, scripts, ports, and validation paths that developers change in practice.
+
+If a page needs exact commands, routes, payload fields, or source-file ownership, it belongs here rather than in the conceptual `holaOS` section.
+
 ## How To Use This Section
 
 The practical builder flow is:

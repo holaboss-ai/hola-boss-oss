@@ -39,6 +39,45 @@ Today the reference collection is intentionally narrow:
 
 That means app manifests are runtime-plan inputs, but arbitrary workspace files are not unless later code stages them explicitly.
 
+Representative authored inputs from `workspace-runtime-plan.test.ts`:
+
+```yaml
+# workspace.yaml
+template_id: social_operator
+name: Social Operator
+agents:
+  id: workspace.general
+  model: gpt-4o
+applications:
+  - app_id: holaposter-ts-lite
+    config_path: apps/holaposter-ts-lite/app.runtime.yaml
+mcp_registry:
+  allowlist:
+    tool_ids:
+      - holaposter.create_post
+  servers:
+    holaposter:
+      type: remote
+      url: "http://localhost:3099/mcp"
+      enabled: true
+```
+
+```yaml
+# apps/holaposter-ts-lite/app.runtime.yaml
+app_id: holaposter-ts-lite
+healthchecks:
+  mcp:
+    path: /mcp/health
+    timeout_s: 60
+    interval_s: 5
+mcp:
+  transport: http-sse
+  port: 3099
+  path: /mcp
+env_contract:
+  - HOLABOSS_USER_ID
+```
+
 ## Stage 2: Compile `workspace.yaml`
 
 `compileWorkspaceRuntimePlan()` turns the authored workspace contract into a structured plan with:
@@ -121,6 +160,32 @@ Important outputs include:
 
 This is also where response-delivery guidance and operator surface context become prompt-visible context for the run. If the harness sees the wrong tools, wrong prompt layers, wrong selected model, or wrong output schema, this is usually the page and code seam you wanted.
 
+Model selection and reasoning effort split here:
+
+- the queued input can carry a selected `model`
+- `projectAgentRuntimeConfig()` resolves that into `provider_id`, `model_id`, and `model_client`
+- the queued input can also carry `thinking_value`, but that value is not folded into `runtime-config.json` or the projected model client
+
+That separation is intentional. The runtime owns model routing, while the harness host owns executor-specific reasoning controls.
+
+Representative projection shape:
+
+```ts
+const selectedModel = request.selected_model?.trim() || request.agent.model;
+const target = resolveRuntimeModelTarget(selectedModel, request.default_provider_id);
+
+return {
+  provider_id: target.providerId,
+  model_id: target.modelId,
+  model_client: resolveModelClientConfig(request, target),
+  tools,
+  workspace_tool_ids: workspaceToolIds,
+  workspace_skill_ids: request.workspace_skill_ids ?? [],
+  output_schema_member_id: outputSchemaMemberId,
+  output_format: outputFormat,
+};
+```
+
 ## Stage 6: Build the Harness Request and Snapshot It
 
 After runtime config projection, the harness adapter builds the host request.
@@ -130,6 +195,7 @@ After runtime config projection, the harness adapter builds the host request.
 - computes a request fingerprint
 - measures the `persist_turn_request_snapshot` bootstrap stage and calls `persistTurnRequestSnapshot()`
 - persists a sanitized `turn_request_snapshot` in `runtime.db`
+- carries request-scoped execution metadata such as `thinking_value` into the reduced host request alongside the resolved model client
 - includes MCP server mapping metadata and bootstrap timing details in the run-started payload
 - launches the harness host with the reduced request payload
 
@@ -148,6 +214,7 @@ That snapshot is the runtime’s replay and debugging seam. It is how the system
 - Missing MCP tools often come from `mcp_registry` compile rules or server-id mapping, not from the host implementation.
 - Ambiguous `here`, `this page`, or `what am I looking at` behavior usually comes from operator surface context loading, not from `workspace.yaml`.
 - Wrong prompt context often comes from runtime context loading or `projectAgentRuntimeConfig()`, not from `workspace.yaml`.
+- Wrong reasoning effort usually comes from the queued `thinking_value`, catalog metadata, or harness-host normalization, not from `workspace.yaml`.
 - If the runtime-plan compile fails before a run starts, use the dedicated workspace-runtime-plan CLI entrypoint from `runtime/api-server`.
 
 ## Validation

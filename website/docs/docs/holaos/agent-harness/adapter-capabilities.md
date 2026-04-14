@@ -2,9 +2,11 @@
 
 The runtime adapter is where the shipped harness path declares what it supports before a run ever reaches the host.
 
-## Current coded truth
+This page explains the capability boundary conceptually. For the exact adapter implementation, request builder, and host payload shape, continue into [Agent Harness Internals](/build-on-holaos/agent-harness/internals).
 
-In `runtime/harnesses/src/pi.ts`, the current `pi` adapter declares:
+## Current behavior
+
+The current shipped `pi` adapter declares:
 
 - `supportsWaitingUser: true`
 - `supportsSkills: true`

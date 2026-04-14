@@ -10,7 +10,7 @@ For the desktop dev loop:
 
 ```bash
 npm run desktop:typecheck
-curl http://127.0.0.1:5060/healthz
+curl http://127.0.0.1:5160/healthz
 bash desktop/scripts/check-runtime-status.sh
 ```
 
@@ -27,12 +27,13 @@ Most early failures happen in the desktop `predev` hook, before the app window e
 
 ## The embedded runtime does not pass health checks
 
-In desktop dev, the embedded runtime is supposed to come up on `127.0.0.1:5060`, not `8080` or `3060`.
+In desktop dev, the embedded runtime is supposed to come up on `127.0.0.1:5160`, not `8080` or `3060`.
 
-- Check `curl http://127.0.0.1:5060/healthz`.
+- Check `curl http://127.0.0.1:5160/healthz`.
 - Inspect `runtime.log` under the Electron `userData` directory.
 - Inspect the embedded sandbox root under `sandbox-host/`, especially `sandbox-host/state/runtime-config.json` and `sandbox-host/state/runtime.db`.
 - If you set a custom user-data path, make sure you are looking in `HOLABOSS_DESKTOP_USER_DATA_PATH`. Otherwise `desktop:dev` defaults to an Electron `userData` directory derived from `HOLABOSS_DESKTOP_USER_DATA_DIR=holaboss-local-dev`.
+- The desktop code pins `5160` because Node's fetch stack blocks `5060` as a bad port.
 
 ## The runtime bundle is stale
 
@@ -45,11 +46,16 @@ The desktop dev loop only uses the staged bundle under `desktop/out/runtime-<pla
 
 If you want to throw away the staged bundle entirely, delete `desktop/out/runtime-<platform>` and rerun the staging command.
 
+```bash
+rm -rf desktop/out/runtime-<platform>
+npm run desktop:prepare-runtime:local
+```
+
 ## The standalone or packaged runtime is on the wrong port
 
 The launch mode controls the default port:
 
-- embedded desktop runtime: `5060`
+- embedded desktop runtime: `5160`
 - packaged launcher: `8080`
 - raw `runtime/api-server/dist/index.mjs`: `3060`
 
@@ -67,6 +73,13 @@ Check the provider path first:
 The runtime config parser merges values from `runtime`, `providers.holaboss_model_proxy`, `integrations.holaboss`, and `capabilities.desktop_browser`. The executable examples for this are in `runtime/api-server/src/runtime-config.test.ts`.
 
 If you are using direct provider fallback instead of the Holaboss model proxy path, verify the corresponding direct-provider env vars such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENROUTER_API_KEY`.
+
+From the Electron `userData` directory, a quick shape check looks like this:
+
+```bash
+jq '.providers.holaboss_model_proxy, .integrations.holaboss, .capabilities.desktop_browser' \
+  "<userData>/sandbox-host/state/runtime-config.json"
+```
 
 ## App setup fails inside an isolated app environment or container
 
@@ -91,6 +104,10 @@ The browser tool surface is not always available.
 - Confirm that runtime config enables the desktop browser capability and includes both the browser URL and auth token.
 - Confirm that you are running a `workspace_session`. The harness registry only stages browser tools for workspace sessions.
 - If the runtime reports browser unavailable, inspect `runtime-config.json` and `/api/v1/runtime/status` before you patch the harness.
+
+```bash
+curl http://127.0.0.1:5160/api/v1/runtime/status | jq .
+```
 
 ## The runtime starts but workspace data looks wrong
 

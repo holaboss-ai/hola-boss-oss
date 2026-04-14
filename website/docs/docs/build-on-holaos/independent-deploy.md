@@ -98,6 +98,32 @@ $HB_SANDBOX_ROOT/
 
 Optional product-facing env such as `HOLABOSS_RUNTIME_WORKFLOW_BACKEND`, `PROACTIVE_ENABLE_REMOTE_BRIDGE`, and `PROACTIVE_BRIDGE_BASE_URL` are only needed when you want standalone runtime behavior to match the desktop-backed workflow path.
 
+Representative `runtime-config.json` for a product-backed standalone runtime:
+
+```json
+{
+  "runtime": {
+    "mode": "product",
+    "default_model": "openai/gpt-5.4",
+    "default_provider": "holaboss_model_proxy"
+  },
+  "integrations": {
+    "holaboss": {
+      "enabled": true,
+      "auth_token": "hbrt.v1.your-runtime-token",
+      "user_id": "user_123",
+      "sandbox_id": "sandbox_123"
+    }
+  },
+  "providers": {
+    "holaboss_model_proxy": {
+      "kind": "holaboss_proxy",
+      "base_url": "https://runtime.example/api/v1/model-proxy"
+    }
+  }
+}
+```
+
 ## Install and run examples
 
 Linux:

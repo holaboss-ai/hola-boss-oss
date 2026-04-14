@@ -4,6 +4,8 @@ This page is the shared vocabulary for `holaOS`. It defines the core layers, art
 
 Holaboss Desktop is the operator-facing product surface. `holaOS` is the environment layer underneath it. The concepts below give you the working model for how those pieces fit together, so the rest of the docs are easier to scan and reason about.
 
+This page is intentionally conceptual. It defines responsibilities and boundaries, not exact implementation seams. If you need commands, payload fields, runtime routes, or source-file ownership, continue into [Build on holaOS](/build-on-holaos/).
+
 ## The system at a glance
 
 <DiagramSystemOverview />

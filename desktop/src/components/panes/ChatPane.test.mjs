@@ -59,7 +59,6 @@ test("chat pane shows provider setup CTA when no chat models are available", asy
     /onOpenModelProviders=\{\(\) =>[\s\S]*window\.electronAPI\.ui\.openSettingsPane\("providers"\)[\s\S]*\}/,
   );
   assert.match(source, /aria-label="Configure model providers"/);
-  assert.match(source, />Set up providers</);
   assert.match(
     source,
     /<Waypoints[\s\S]*size=\{13\}[\s\S]*className="shrink-0 text-muted-foreground"[\s\S]*\/>/,
@@ -67,7 +66,12 @@ test("chat pane shows provider setup CTA when no chat models are available", asy
   assert.match(source, /Open provider settings to connect a model\./);
   assert.match(
     source,
-    /className=\{[\s\S]*noAvailableModels[\s\S]*\? "min-w-0 flex flex-1 items-center gap-3"[\s\S]*: "w-\[172px\] shrink-0 sm:w-\[208px\]"[\s\S]*\}/,
+    /className=\{[\s\S]*compactComposerControls[\s\S]*\? "min-w-0 shrink-0"[\s\S]*: noAvailableModels[\s\S]*\? "min-w-0 flex flex-1 basis-full flex-wrap items-center gap-2"[\s\S]*: "min-w-0 flex-1 basis-\[220px\] max-w-\[240px\]"[\s\S]*\}/,
+  );
+  assert.match(source, /\{compactComposerControls \? "Providers" : "Set up providers"\}/);
+  assert.match(
+    source,
+    /className=\{`min-w-0 text-\[10px\] leading-5 text-muted-foreground \$\{[\s\S]*compactComposerControls \? "hidden" : ""[\s\S]*`\}/,
   );
   assert.doesNotMatch(source, /title=\{modelSelectionUnavailableReason\}/);
   assert.doesNotMatch(
@@ -91,6 +95,83 @@ test("chat pane falls back to provider setup instead of holaboss pending state w
   assert.match(
     source,
     /const requiresModelProviderSetup =\s*!hasConfiguredProviderCatalog && !holabossProxyModelsAvailable;/,
+  );
+});
+
+test("chat composer footer wraps controls based on available pane width instead of viewport breakpoints", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const COMPOSER_FULL_MODEL_CONTROL_WIDTH_PX = 240;/,
+  );
+  assert.match(source, /const syncComposerFooterLayout = \(\) => \{/);
+  assert.match(source, /const footerStyle = window\.getComputedStyle\(footer\);/);
+  assert.match(
+    source,
+    /const horizontalPadding =[\s\S]*footerStyle\.paddingLeft[\s\S]*footerStyle\.paddingRight/,
+  );
+  assert.match(
+    source,
+    /const width = Math\.max\(\s*0,\s*Math\.round\(footer\.clientWidth - horizontalPadding\),\s*\);/,
+  );
+  assert.match(
+    source,
+    /const resizeObserver = new ResizeObserver\(\(\) => \{\s*syncComposerFooterLayout\(\);\s*\}\);/,
+  );
+  assert.match(
+    source,
+    /const compactComposerControls =\s*showModelSelector &&[\s\S]*composerFooterLayout\.wraps[\s\S]*composerFooterLayout\.width < fullFooterControlWidth/,
+  );
+  assert.match(
+    source,
+    /const compactModelControlWidth = compactComposerControls[\s\S]*COMPOSER_COMPACT_MODEL_CONTROL_MAX_WIDTH_PX[\s\S]*compactFooterControlWidth -[\s\S]*COMPOSER_COMPACT_THINKING_CONTROL_MIN_WIDTH_PX/,
+  );
+  assert.match(
+    source,
+    /const compactThinkingControlWidth = showThinkingValueSelector[\s\S]*COMPOSER_COMPACT_THINKING_CONTROL_MAX_WIDTH_PX[\s\S]*compactFooterControlWidth - compactModelControlWidth/,
+  );
+  assert.match(
+    source,
+    /className=\{`border-t border-border\/20 px-3 py-3 text-muted-foreground \$\{[\s\S]*compactComposerControls[\s\S]*\? "flex items-center gap-2 overflow-hidden"[\s\S]*: "flex flex-wrap items-center gap-2"[\s\S]*`\}/,
+  );
+  assert.match(
+    source,
+    /className=\{\s*compactComposerControls[\s\S]*\? "min-w-0 shrink-0"[\s\S]*: noAvailableModels[\s\S]*"min-w-0 flex flex-1 basis-full flex-wrap items-center gap-2"[\s\S]*\}/,
+  );
+  assert.match(
+    source,
+    /style=\{\s*compactComposerControls\s*\?\s*\{ width: `\$\{compactModelControlWidth\}px` \}\s*:\s*undefined\s*\}/,
+  );
+  assert.match(
+    source,
+    /className="ml-auto flex shrink-0 items-center gap-2"/,
+  );
+  assert.match(source, /compact=\{compactComposerControls\}/);
+  assert.doesNotMatch(source, /sm:w-\[208px\]/);
+});
+
+test("chat composer switches model and thinking selectors into icon-led compact triggers", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /function compactComposerModelLabel\(label: string\)/);
+  assert.match(source, /function displayThinkingValueLabel\(value: string\)/);
+  assert.match(source, /const compactLabel = compactComposerModelLabel\(displayLabel\);/);
+  assert.match(
+    source,
+    /compact \? \(\s*<span className="flex min-w-0 items-center gap-2">[\s\S]*<Waypoints[\s\S]*<span className="truncate">\{compactLabel\}<\/span>/,
+  );
+  assert.match(
+    source,
+    /const selectedThinkingLabel = displayThinkingValueLabel\(selectedThinkingValue\);/,
+  );
+  assert.match(
+    source,
+    /aria-label=\{\s*compact \? `Reasoning effort: \$\{selectedThinkingLabel\}` : undefined\s*\}/,
+  );
+  assert.match(
+    source,
+    /compact \? \(\s*<span className="flex min-w-0 flex-1 items-center gap-1\.5">[\s\S]*<Lightbulb[\s\S]*<span className="truncate">\{selectedThinkingLabel\}<\/span>/,
   );
 });
 
@@ -174,7 +255,35 @@ test("chat pane renders live placeholder status as faint text with animated trai
   assert.doesNotMatch(source, /Queued\.\.\./);
   assert.doesNotMatch(source, /Working\.\.\./);
   assert.doesNotMatch(source, /Checking workspace context\.\.\./);
-  assert.doesNotMatch(source, /Thinking\.\.\./);
+});
+
+test("chat pane renders an execution timeline that interleaves thinking segments with trace entries", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /executionItems\?: ChatExecutionTimelineItem\[];/);
+  assert.match(source, /function appendExecutionTimelineThinkingDelta\(/);
+  assert.match(source, /function upsertExecutionTimelineTraceItem\(/);
+  assert.match(source, /function traceStepsFromExecutionItems\(items: ChatExecutionTimelineItem\[]\)/);
+  assert.match(source, /assistantHistoryStateFromOutputEvents[\s\S]*executionItems = appendExecutionTimelineThinkingDelta\(/);
+  assert.match(source, /assistantHistoryStateFromOutputEvents[\s\S]*executionItems = upsertExecutionTimelineTraceItem\(/);
+  assert.match(source, /appendLiveThinkingDelta\(delta: string, order: number\)/);
+  assert.match(source, /appendExecutionTimelineThinkingDelta\(prev, delta, order\)/);
+  assert.match(
+    source,
+    /function ExecutionTimelineThinkingEntry[\s\S]*className="py-1"[\s\S]*className="-ml-2\.5 w-\[calc\(100%\+0\.625rem\)\] rounded-\[16px\] border border-border\/25 bg-muted\/30 px-3\.5 py-3"/,
+  );
+  assert.match(
+    source,
+    /function ExecutionTimelineThinkingEntry[\s\S]*className="chat-markdown chat-thinking-markdown max-w-full text-foreground\/82"/,
+  );
+  assert.match(source, /<AssistantTurn[\s\S]*executionItems=\{message\.executionItems \?\? \[\]\}/);
+  assert.match(source, /<AssistantTurn[\s\S]*executionItems=\{liveExecutionItems\}/);
+  assert.match(source, /<TraceStepGroup[\s\S]*items=\{executionItems\}/);
+  assert.match(source, /<ExecutionTimelineThinkingEntry/);
+  assert.match(source, /<TraceTimelineStepEntry/);
+  assert.doesNotMatch(source, /<ThinkingPanel/);
+  assert.doesNotMatch(source, /thinkingCollapsed/);
+  assert.doesNotMatch(source, /onToggleThinking/);
 });
 
 test("chat trace tool errors surface stderr text instead of a generic error label", async () => {
@@ -560,8 +669,9 @@ test("live trace auto-expands during the run and collapses when output starts", 
 
   assert.match(
     source,
-    /function TraceStepGroup\(\{[\s\S]*live = false,[\s\S]*liveOutputStarted = false,/,
+    /function TraceStepGroup\(\{[\s\S]*items,[\s\S]*live = false,[\s\S]*liveOutputStarted = false,/,
   );
+  assert.match(source, /const steps = traceStepsFromExecutionItems\(items\);/);
   assert.match(
     source,
     /const \[groupExpanded, setGroupExpanded\] = useState\(\s*live && !liveOutputStarted,\s*\);/,
@@ -576,7 +686,7 @@ test("live trace auto-expands during the run and collapses when output starts", 
   );
   assert.match(
     source,
-    /<TraceStepGroup[\s\S]*live=\{live\}[\s\S]*liveOutputStarted=\{live && Boolean\(text\)\}/,
+    /<TraceStepGroup[\s\S]*items=\{executionItems\}[\s\S]*live=\{live\}[\s\S]*liveOutputStarted=\{live && Boolean\(text\)\}/,
   );
 });
 

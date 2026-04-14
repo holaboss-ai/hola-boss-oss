@@ -679,6 +679,11 @@ webview {
   line-height: 1.8;
 }
 
+.chat-thinking-markdown {
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .chat-markdown .md-link,
 .chat-markdown .md-p,
 .chat-markdown .md-li,
