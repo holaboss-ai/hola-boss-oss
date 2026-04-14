@@ -1227,7 +1227,9 @@ test("projectAgentRuntimeConfig keeps direct OpenRouter providers on the provide
         base_url: "https://openrouter.ai/api/v1",
         api_key: "or-key",
         headers: {
-          "HTTP-Referer": "https://holaboss.ai"
+          "HTTP-Referer": "https://override.example",
+          "X-Title": "Legacy Title",
+          "X-Test": "1"
         }
       }
     },
@@ -1280,6 +1282,9 @@ test("projectAgentRuntimeConfig keeps direct OpenRouter providers on the provide
   assert.equal(result.model_client.api_key, "or-key");
   assert.equal(result.model_client.base_url, "https://openrouter.ai/api/v1");
   assert.deepEqual(result.model_client.default_headers, {
-    "HTTP-Referer": "https://holaboss.ai"
+    "X-Test": "1",
+    "HTTP-Referer": "https://holaboss.ai",
+    "X-OpenRouter-Title": "holaOS",
+    "X-OpenRouter-Categories": "personal-agent,general-chat"
   });
 });

@@ -733,11 +733,16 @@ test("runtime image generation tool uses OpenRouter chat image generation for op
   const originalFetch = globalThis.fetch;
   let recordedUrl = "";
   let recordedRequestBody: Record<string, unknown> | null = null;
+  let recordedHeaders: Record<string, string> | null = null;
   globalThis.fetch = (async (input, init) => {
     recordedUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     recordedRequestBody =
       typeof init?.body === "string"
         ? (JSON.parse(init.body) as Record<string, unknown>)
+        : null;
+    recordedHeaders =
+      init?.headers && typeof init.headers === "object" && !Array.isArray(init.headers)
+        ? Object.fromEntries(Object.entries(init.headers as Record<string, string>))
         : null;
     return new Response(
       JSON.stringify({
@@ -785,6 +790,13 @@ test("runtime image generation tool uses OpenRouter chat image generation for op
     assert.equal(response.statusCode, 200);
     assert.equal(recordedUrl, "https://openrouter.ai/api/v1/chat/completions");
     assert.ok(recordedRequestBody);
+    assert.deepEqual(recordedHeaders, {
+      "Content-Type": "application/json",
+      Authorization: "Bearer sk-or-test",
+      "HTTP-Referer": "https://holaboss.ai",
+      "X-OpenRouter-Title": "holaOS",
+      "X-OpenRouter-Categories": "personal-agent,general-chat",
+    });
     assert.deepEqual(recordedRequestBody, {
       model: "google/gemini-3.1-flash-image-preview",
       messages: [

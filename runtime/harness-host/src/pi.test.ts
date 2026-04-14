@@ -1264,7 +1264,8 @@ test("buildPiProviderConfig preserves direct OpenRouter endpoints and headers", 
       base_url: "https://openrouter.ai/api/v1",
       default_headers: {
         "HTTP-Referer": "https://holaboss.ai",
-        "X-Title": "Holaboss",
+        "X-OpenRouter-Title": "holaOS",
+        "X-OpenRouter-Categories": "personal-agent,general-chat",
       },
     },
   };
@@ -1276,7 +1277,8 @@ test("buildPiProviderConfig preserves direct OpenRouter endpoints and headers", 
   assert.equal(providerConfig.api, "openai-completions");
   assert.deepEqual(providerConfig.headers, {
     "HTTP-Referer": "https://holaboss.ai",
-    "X-Title": "Holaboss",
+    "X-OpenRouter-Title": "holaOS",
+    "X-OpenRouter-Categories": "personal-agent,general-chat",
   });
   assert.equal(providerConfig.authHeader, true);
   assert.equal(providerConfig.models[0]?.id, "openai/gpt-5.4");
