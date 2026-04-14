@@ -208,6 +208,13 @@ const STREAM_TELEMETRY_LIMIT = 240;
 const TOOL_TRACE_TERMINAL_PHASES = new Set(["completed", "failed", "error"]);
 const CHAT_AUTO_SCROLL_THRESHOLD_PX = 72;
 const CHAT_SCROLLBAR_MIN_THUMB_HEIGHT_PX = 40;
+const COMPOSER_FOOTER_GAP_PX = 8;
+const COMPOSER_FULL_MODEL_CONTROL_WIDTH_PX = 240;
+const COMPOSER_FULL_THINKING_CONTROL_WIDTH_PX = 112;
+const COMPOSER_FULL_PROVIDER_SETUP_WIDTH_PX = 320;
+const COMPOSER_COMPACT_MODEL_CONTROL_MAX_WIDTH_PX = 240;
+const COMPOSER_COMPACT_THINKING_CONTROL_MIN_WIDTH_PX = 56;
+const COMPOSER_COMPACT_THINKING_CONTROL_MAX_WIDTH_PX = 148;
 const CHAT_MODEL_STORAGE_KEY = "holaboss-chat-model-v1";
 const CHAT_THINKING_STORAGE_KEY = "holaboss-chat-thinking-v1";
 const CHAT_MODEL_USE_RUNTIME_DEFAULT = "__runtime_default__";
@@ -440,6 +447,53 @@ function displayModelLabel(model: string) {
         ? part
         : `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`,
     )
+    .join(" ");
+}
+
+function compactComposerModelLabel(label: string) {
+  const normalizedLabel = label.trim();
+  if (!normalizedLabel) {
+    return "Model";
+  }
+
+  const autoMatch = normalizedLabel.match(/^Auto \((.+)\)$/i);
+  if (autoMatch?.[1]) {
+    return autoMatch[1].trim();
+  }
+
+  const segments = normalizedLabel
+    .split("·")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  return segments[segments.length - 1] ?? normalizedLabel;
+}
+
+function displayThinkingValueLabel(value: string) {
+  const normalizedValue = value.trim().toLowerCase();
+  if (!normalizedValue) {
+    return "Thinking";
+  }
+
+  if (normalizedValue === "xhigh") {
+    return "Extra High";
+  }
+  if (
+    normalizedValue === "none" ||
+    normalizedValue === "minimal" ||
+    normalizedValue === "low" ||
+    normalizedValue === "medium" ||
+    normalizedValue === "high" ||
+    normalizedValue === "max"
+  ) {
+    return `${normalizedValue[0]?.toUpperCase() ?? ""}${normalizedValue.slice(1)}`;
+  }
+  if (/^-?\d+$/.test(normalizedValue)) {
+    return Number(normalizedValue).toLocaleString();
+  }
+  return normalizedValue
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
     .join(" ");
 }
 
@@ -6397,6 +6451,7 @@ function ModelCombobox({
   modelOptions,
   modelOptionGroups,
   disabled,
+  compact = false,
   onModelChange,
 }: {
   selectedModel: string;
@@ -6406,6 +6461,7 @@ function ModelCombobox({
   modelOptions: ChatModelOption[];
   modelOptionGroups: ChatModelOptionGroup[];
   disabled: boolean;
+  compact?: boolean;
   onModelChange: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -6468,6 +6524,7 @@ function ModelCombobox({
     selectedModel === CHAT_MODEL_USE_RUNTIME_DEFAULT
       ? `Auto (${runtimeDefaultModelLabel})`
       : selectedModelLabel || "Select model";
+  const compactLabel = compactComposerModelLabel(displayLabel);
 
   const hasFilteredOptions =
     Boolean(filteredAutoOption) ||
@@ -6523,9 +6580,21 @@ function ModelCombobox({
           <Button
             variant="outline"
             size="lg"
-            className="w-full justify-between text-xs font-medium"
+            className={`w-full justify-between rounded-[11px] bg-card text-xs font-medium ${
+              compact ? "px-2.5" : ""
+            }`}
           >
-            <span className="truncate">{displayLabel}</span>
+            {compact ? (
+              <span className="flex min-w-0 items-center gap-2">
+                <Waypoints
+                  size={13}
+                  className="shrink-0 text-muted-foreground"
+                />
+                <span className="truncate">{compactLabel}</span>
+              </span>
+            ) : (
+              <span className="truncate">{displayLabel}</span>
+            )}
             <ChevronDown size={13} className="shrink-0 text-muted-foreground" />
           </Button>
         }
@@ -6583,16 +6652,19 @@ function ThinkingValueSelect({
   selectedThinkingValue,
   thinkingValues,
   disabled,
+  compact = false,
   onThinkingValueChange,
 }: {
   selectedThinkingValue: string | null;
   thinkingValues: string[];
   disabled: boolean;
+  compact?: boolean;
   onThinkingValueChange: (value: string | null) => void;
 }) {
   if (thinkingValues.length === 0 || !selectedThinkingValue) {
     return null;
   }
+  const selectedThinkingLabel = displayThinkingValueLabel(selectedThinkingValue);
 
   return (
     <Select
@@ -6600,13 +6672,30 @@ function ThinkingValueSelect({
       onValueChange={onThinkingValueChange}
       disabled={disabled}
     >
-      <SelectTrigger className="h-11 rounded-[11px] bg-card text-xs font-medium">
-        <SelectValue placeholder="Thinking" />
+      <SelectTrigger
+        aria-label={
+          compact ? `Reasoning effort: ${selectedThinkingLabel}` : undefined
+        }
+        className={`h-11 rounded-[11px] bg-card text-xs font-medium ${
+          compact ? "w-full min-w-0 px-2.5" : ""
+        }`}
+      >
+        {compact ? (
+          <span className="flex min-w-0 flex-1 items-center gap-1.5">
+            <Lightbulb
+              size={13}
+              className="shrink-0 text-muted-foreground"
+            />
+            <span className="truncate">{selectedThinkingLabel}</span>
+          </span>
+        ) : (
+          <SelectValue placeholder="Thinking" />
+        )}
       </SelectTrigger>
       <SelectContent side="top" align="end">
         {thinkingValues.map((value) => (
           <SelectItem key={value} value={value} className="text-xs">
-            {value}
+            {displayThinkingValueLabel(value)}
           </SelectItem>
         ))}
       </SelectContent>
@@ -6650,6 +6739,13 @@ function Composer({
   onRemoveAttachment,
 }: ComposerProps) {
   const [isDragActive, setIsDragActive] = useState(false);
+  const composerFooterRef = useRef<HTMLDivElement | null>(null);
+  const composerActionsRef = useRef<HTMLDivElement | null>(null);
+  const [composerFooterLayout, setComposerFooterLayout] = useState({
+    width: 0,
+    actionsWidth: 0,
+    wraps: false,
+  });
   const noAvailableModels =
     !runtimeDefaultModelAvailable &&
     modelOptions.length === 0 &&
@@ -6667,6 +6763,125 @@ function Composer({
       ?.selectedLabel ??
     modelOptions.find((option) => option.value === selectedModel)?.label ??
     resolvedModelLabel;
+  const syncComposerFooterLayout = () => {
+    const footer = composerFooterRef.current;
+    if (!footer) {
+      return;
+    }
+    const footerStyle = window.getComputedStyle(footer);
+    const horizontalPadding =
+      Number.parseFloat(footerStyle.paddingLeft || "0") +
+      Number.parseFloat(footerStyle.paddingRight || "0");
+    const width = Math.max(
+      0,
+      Math.round(footer.clientWidth - horizontalPadding),
+    );
+    const actionsWidth = Math.round(
+      composerActionsRef.current?.getBoundingClientRect().width ?? 0,
+    );
+    const visibleRowOffsets = Array.from(footer.children)
+      .filter(
+        (child): child is HTMLElement =>
+          child instanceof HTMLElement && child.offsetParent !== null,
+      )
+      .map((child) => child.offsetTop);
+    const wraps = new Set(visibleRowOffsets).size > 1;
+    setComposerFooterLayout((current) =>
+      current.width === width &&
+      current.actionsWidth === actionsWidth &&
+      current.wraps === wraps
+        ? current
+        : { width, actionsWidth, wraps },
+    );
+  };
+  useLayoutEffect(() => {
+    const footer = composerFooterRef.current;
+    if (!footer) {
+      return;
+    }
+
+    syncComposerFooterLayout();
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const resizeObserver = new ResizeObserver(() => {
+      syncComposerFooterLayout();
+    });
+    resizeObserver.observe(footer);
+    if (composerActionsRef.current) {
+      resizeObserver.observe(composerActionsRef.current);
+    }
+    Array.from(footer.children).forEach((child) => {
+      if (child instanceof HTMLElement) {
+        resizeObserver.observe(child);
+      }
+    });
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [
+    noAvailableModels,
+    resolvedModelLabel,
+    runtimeDefaultModelAvailable,
+    selectedModel,
+    selectedModelOptionLabel,
+    selectedThinkingValue,
+    showModelSelector,
+    showThinkingValueSelector,
+    thinkingValues,
+  ]);
+  const visibleFooterControlCount =
+    1 + (showThinkingValueSelector ? 1 : 0) + 1;
+  const fullPrimaryControlWidth = showModelSelector
+    ? noAvailableModels
+      ? COMPOSER_FULL_PROVIDER_SETUP_WIDTH_PX
+      : COMPOSER_FULL_MODEL_CONTROL_WIDTH_PX
+    : 0;
+  const fullFooterControlWidth =
+    fullPrimaryControlWidth +
+    (showThinkingValueSelector ? COMPOSER_FULL_THINKING_CONTROL_WIDTH_PX : 0) +
+    composerFooterLayout.actionsWidth +
+    Math.max(0, visibleFooterControlCount - 1) * COMPOSER_FOOTER_GAP_PX;
+  const compactFooterControlWidth = Math.max(
+    0,
+    composerFooterLayout.width -
+      composerFooterLayout.actionsWidth -
+      Math.max(0, visibleFooterControlCount - 1) * COMPOSER_FOOTER_GAP_PX,
+  );
+  const compactComposerControls =
+    showModelSelector &&
+    (composerFooterLayout.wraps ||
+      (composerFooterLayout.width > 0 &&
+        composerFooterLayout.actionsWidth > 0 &&
+        composerFooterLayout.width < fullFooterControlWidth));
+  const compactModelControlWidth = compactComposerControls
+    ? Math.min(
+        COMPOSER_COMPACT_MODEL_CONTROL_MAX_WIDTH_PX,
+        Math.max(
+          0,
+          compactFooterControlWidth -
+            (showThinkingValueSelector
+              ? Math.min(
+                  COMPOSER_COMPACT_THINKING_CONTROL_MIN_WIDTH_PX,
+                  compactFooterControlWidth,
+                )
+              : 0),
+        ),
+      )
+    : 0;
+  const compactThinkingControlWidth = showThinkingValueSelector
+    ? Math.max(
+        Math.min(
+          COMPOSER_COMPACT_THINKING_CONTROL_MAX_WIDTH_PX,
+          compactFooterControlWidth - compactModelControlWidth,
+        ),
+        Math.min(
+          COMPOSER_COMPACT_THINKING_CONTROL_MIN_WIDTH_PX,
+          compactFooterControlWidth,
+        ),
+      )
+    : 0;
 
   const allowAttachmentDrop = (dataTransfer: DataTransfer | null) => {
     if (!dataTransfer || disabled || isResponding) {
@@ -6778,13 +6993,27 @@ function Composer({
         />
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-t border-border/20 px-3 py-3 text-muted-foreground">
+      <div
+        ref={composerFooterRef}
+        className={`border-t border-border/20 px-3 py-3 text-muted-foreground ${
+          compactComposerControls
+            ? "flex items-center gap-2 overflow-hidden"
+            : "flex flex-wrap items-center gap-2"
+        }`}
+      >
         {showModelSelector ? (
           <div
             className={
-              noAvailableModels
-                ? "min-w-0 flex flex-1 basis-full flex-wrap items-center gap-2"
-                : "min-w-0 flex-1 basis-[220px] max-w-[240px]"
+              compactComposerControls
+                ? "min-w-0 shrink-0"
+                : noAvailableModels
+                  ? "min-w-0 flex flex-1 basis-full flex-wrap items-center gap-2"
+                  : "min-w-0 flex-1 basis-[220px] max-w-[240px]"
+            }
+            style={
+              compactComposerControls
+                ? { width: `${compactModelControlWidth}px` }
+                : undefined
             }
           >
             {noAvailableModels ? (
@@ -6794,7 +7023,9 @@ function Composer({
                   variant="outline"
                   size="lg"
                   onClick={onOpenModelProviders}
-                  className="shrink-0 justify-between rounded-[11px] bg-card text-[12px] font-semibold hover:border-primary/35 hover:bg-card/92"
+                  className={`shrink-0 justify-between rounded-[11px] bg-card text-[12px] font-semibold hover:border-primary/35 hover:bg-card/92 ${
+                    compactComposerControls ? "px-2.5" : ""
+                  }`}
                   aria-label="Configure model providers"
                 >
                   <span className="flex min-w-0 items-center gap-2">
@@ -6802,14 +7033,20 @@ function Composer({
                       size={13}
                       className="shrink-0 text-muted-foreground"
                     />
-                    <span className="truncate">Set up providers</span>
+                    <span className="truncate">
+                      {compactComposerControls ? "Providers" : "Set up providers"}
+                    </span>
                   </span>
                   <ArrowRight
                     size={14}
                     className="shrink-0 text-muted-foreground"
                   />
                 </Button>
-                <div className="min-w-0 text-[10px] leading-5 text-muted-foreground">
+                <div
+                  className={`min-w-0 text-[10px] leading-5 text-muted-foreground ${
+                    compactComposerControls ? "hidden" : ""
+                  }`}
+                >
                   Open provider settings to connect a model.
                 </div>
               </>
@@ -6822,6 +7059,7 @@ function Composer({
                 modelOptions={modelOptions}
                 modelOptionGroups={modelOptionGroups}
                 disabled={isResponding}
+                compact={compactComposerControls}
                 onModelChange={onModelChange}
               />
             )}
@@ -6833,17 +7071,32 @@ function Composer({
         )}
 
         {showThinkingValueSelector ? (
-          <div className="min-w-[112px] shrink-0 sm:w-[112px]">
+          <div
+            className={
+              compactComposerControls
+                ? "shrink-0"
+                : "min-w-[112px] shrink-0 sm:w-[112px]"
+            }
+            style={
+              compactComposerControls
+                ? { width: `${compactThinkingControlWidth}px` }
+                : undefined
+            }
+          >
             <ThinkingValueSelect
               selectedThinkingValue={selectedThinkingValue}
               thinkingValues={thinkingValues}
               disabled={isResponding}
+              compact={compactComposerControls}
               onThinkingValueChange={onThinkingValueChange}
             />
           </div>
         ) : null}
 
-        <div className="ml-auto flex items-center gap-2">
+        <div
+          ref={composerActionsRef}
+          className="ml-auto flex shrink-0 items-center gap-2"
+        >
           <Button
             variant="outline"
             size="icon"
