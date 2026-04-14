@@ -1897,7 +1897,14 @@ async function main(): Promise<void> {
   process.exitCode = await runTsRunnerCli(process.argv.slice(2));
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+// See workspace-runtime-plan.ts for why the usual import.meta.url guard
+// isn't sufficient when these files are re-bundled into dist/index.mjs.
+const TS_RUNNER_CLI_BASENAME = "ts-runner";
+if (
+  import.meta.url === pathToFileURL(process.argv[1] ?? "").href &&
+  path.basename(process.argv[1] ?? "", path.extname(process.argv[1] ?? "")) ===
+    TS_RUNNER_CLI_BASENAME
+) {
   await main();
 }
 
