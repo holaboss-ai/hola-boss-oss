@@ -3731,26 +3731,6 @@ function AppShellContent() {
                               </Button>
                               <Button
                                 variant={
-                                  spaceExplorerMode === "applications"
-                                    ? "outline"
-                                    : "ghost"
-                                }
-                                size="icon"
-                                onClick={() => {
-                                  setSpaceExplorerMode("applications");
-                                  setSpaceExplorerCollapsed(false);
-                                }}
-                                aria-label="Open applications explorer"
-                                className={
-                                  spaceExplorerMode === "applications"
-                                    ? "border-primary/40 bg-primary/10 text-primary"
-                                    : "text-muted-foreground"
-                                }
-                              >
-                                <LayoutGrid />
-                              </Button>
-                              <Button
-                                variant={
                                   spaceExplorerMode === "browser"
                                     ? "outline"
                                     : "ghost"
@@ -3769,6 +3749,26 @@ function AppShellContent() {
                                 }
                               >
                                 <Globe />
+                              </Button>
+                              <Button
+                                variant={
+                                  spaceExplorerMode === "applications"
+                                    ? "outline"
+                                    : "ghost"
+                                }
+                                size="icon"
+                                onClick={() => {
+                                  setSpaceExplorerMode("applications");
+                                  setSpaceExplorerCollapsed(false);
+                                }}
+                                aria-label="Open applications explorer"
+                                className={
+                                  spaceExplorerMode === "applications"
+                                    ? "border-primary/40 bg-primary/10 text-primary"
+                                    : "text-muted-foreground"
+                                }
+                              >
+                                <LayoutGrid />
                               </Button>
                               <div className="min-h-0 flex-1" />
                               <Button

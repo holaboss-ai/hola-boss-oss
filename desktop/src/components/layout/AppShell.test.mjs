@@ -412,6 +412,10 @@ test("app shell renders a collapsible explorer and universal display in space mo
   assert.match(source, /<SpaceBrowserExplorerPane[\s\S]*browserSpace=\{spaceBrowserSpace\}/);
   assert.match(source, /<SpaceBrowserDisplayPane[\s\S]*layoutSyncKey=\{spaceDisplayLayoutSyncKey\}/);
   assert.match(source, /<SpaceBrowserDisplayPane[\s\S]*embedded/);
+  assert.match(
+    source,
+    /aria-label="Open file explorer"[\s\S]*aria-label="Open browser explorer"[\s\S]*aria-label="Open applications explorer"/,
+  );
   assert.match(source, /aria-label="Open applications explorer"/);
   assert.match(source, /aria-label="Collapse explorer"/);
   assert.match(source, /aria-label="Expand explorer"/);
