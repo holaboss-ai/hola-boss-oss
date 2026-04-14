@@ -20,12 +20,12 @@ test("embedded runtime launch forwards auth base URL alongside the auth cookie",
   );
 });
 
-test("embedded runtime bridge uses the direct proactive service URL instead of the gateway", async () => {
+test("embedded runtime bridge uses the same proactive base URL resolution as interactive calls", async () => {
   const source = await readFile(mainSourcePath, "utf8");
 
   assert.match(
     source,
-    /function runtimeProactiveBridgeBaseUrl\(\)\s*\{\s*return DEFAULT_PROACTIVE_URL\.replace\(\/\\\/\+\$\/, ""\);\s*\}/,
+    /function runtimeProactiveBridgeBaseUrl\(\)\s*\{\s*return proactiveBaseUrl\(\);\s*\}/,
   );
   assert.match(
     source,
