@@ -130,6 +130,8 @@ const presentation = buildAppResourcePresentation({
 
 The helper normalizes `path` so it always starts with `/`.
 
+The desktop uses that presentation shape to reopen the owning app directly inside the shared app surface. If `path` is present, the artifact or output should deep-link to that in-app route instead of opening a generic browser view.
+
 ## Production Rules
 
 - persist your app's canonical local record before publishing

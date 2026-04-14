@@ -12,7 +12,6 @@ import { SettingsDialog } from "@/components/layout/SettingsDialog";
 import { TopTabsBar } from "@/components/layout/TopTabsBar";
 import { FirstWorkspacePane } from "@/components/onboarding";
 import { AppSurfacePane } from "@/components/panes/AppSurfacePane";
-import { resolveAppSurfacePath } from "@/components/panes/appSurfaceRoute";
 import { AutomationsPane } from "@/components/panes/AutomationsPane";
 import { BrowserPane } from "@/components/panes/BrowserPane";
 import { ChatPane } from "@/components/panes/ChatPane";
@@ -23,6 +22,7 @@ import {
 import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
 import { MarketplacePane } from "@/components/panes/MarketplacePane";
 import { OnboardingPane } from "@/components/panes/OnboardingPane";
+import { SpaceApplicationsExplorerPane } from "@/components/panes/SpaceApplicationsExplorerPane";
 import { SpaceBrowserDisplayPane } from "@/components/panes/SpaceBrowserDisplayPane";
 import { SpaceBrowserExplorerPane } from "@/components/panes/SpaceBrowserExplorerPane";
 import { PublishDialog } from "@/components/publish/PublishDialog";
@@ -45,6 +45,7 @@ import {
   Folder,
   Globe,
   Inbox,
+  LayoutGrid,
   Loader2,
   PanelLeftClose,
   PanelLeftOpen,
@@ -64,6 +65,7 @@ const THEME_STORAGE_KEY = "holaboss-theme-v1";
 const DEV_APP_UPDATE_PREVIEW_STORAGE_KEY = "holaboss-dev-app-update-preview-v1";
 const DEV_NOTIFICATION_TOAST_PREVIEW_ID_PREFIX =
   "dev-notification-toast-preview:";
+const TASK_PROPOSAL_TOAST_ID_PREFIX = "task-proposal-toast:";
 const OPERATIONS_DRAWER_OPEN_STORAGE_KEY = "holaboss-operations-drawer-open-v1";
 const OPERATIONS_DRAWER_TAB_STORAGE_KEY = "holaboss-operations-drawer-tab-v1";
 const TASK_PROPOSAL_SEEN_STORAGE_KEY = "holaboss-task-proposal-seen-v1";
@@ -104,7 +106,7 @@ const MAX_SEEN_TASK_PROPOSAL_IDS_PER_WORKSPACE = 200;
 type SpaceComponentId = "agent" | "files" | "browser";
 type UtilityPaneId = "files" | "browser";
 type DevAppUpdatePreviewMode = "off" | "downloading" | "ready";
-type SpaceExplorerMode = "files" | "browser";
+type SpaceExplorerMode = "files" | "browser" | "applications";
 
 type SpaceVisibilityState = Record<SpaceComponentId, boolean>;
 
@@ -168,6 +170,7 @@ type AgentView =
   | {
       type: "app";
       appId: string;
+      path?: string | null;
       resourceId?: string | null;
       view?: string | null;
     }
@@ -183,6 +186,7 @@ type SpaceDisplayView =
   | {
       type: "app";
       appId: string;
+      path?: string | null;
       resourceId?: string | null;
       view?: string | null;
     }
@@ -215,6 +219,7 @@ type WorkspaceOutputNavigationTarget =
   | {
       type: "app";
       appId: string;
+      path?: string | null;
       resourceId?: string | null;
       view?: string | null;
     }
@@ -289,17 +294,18 @@ function buildReportedSurfaceFromAppView(params: {
   view: Extract<AgentView, { type: "app" }> | Extract<SpaceDisplayView, { type: "app" }>;
 }): OperatorSurfacePayload {
   const resourceId = nonEmptySurfaceText(params.view.resourceId);
+  const routePath = nonEmptySurfaceText(params.view.path);
   const viewId = nonEmptySurfaceText(params.view.view);
   const ownerLabel = params.owner === "user" ? "User" : "Agent";
   const mutability: OperatorSurfaceMutability =
     params.owner === "agent" ? "agent_owned" : "inspect_only";
   return {
-    surface_id: `app_surface:${params.owner}:${params.view.appId}:${resourceId || viewId || "current"}`,
+    surface_id: `app_surface:${params.owner}:${params.view.appId}:${resourceId || routePath || viewId || "current"}`,
     surface_type: "app_surface",
     owner: params.owner,
     active: params.active,
     mutability,
-    summary: `${ownerLabel} is currently viewing workspace app \`${params.view.appId}\`${resourceId ? ` resource \`${resourceId}\`` : ""}${viewId ? ` in view \`${viewId}\`` : ""}.`,
+    summary: `${ownerLabel} is currently viewing workspace app \`${params.view.appId}\`${resourceId ? ` resource \`${resourceId}\`` : routePath ? ` route \`${routePath}\`` : ""}${viewId ? ` in view \`${viewId}\`` : ""}.`,
   };
 }
 
@@ -378,6 +384,10 @@ function utilityPaneMinWidth(paneId: UtilityPaneId): number {
 
 function isDevNotificationToastPreviewId(notificationId: string): boolean {
   return notificationId.startsWith(DEV_NOTIFICATION_TOAST_PREVIEW_ID_PREFIX);
+}
+
+function isTaskProposalToastId(notificationId: string): boolean {
+  return notificationId.startsWith(TASK_PROPOSAL_TOAST_ID_PREFIX);
 }
 
 function buildDevNotificationToastPreviewNotifications(
@@ -467,6 +477,43 @@ function appUpdateChangelogUrl(status: AppUpdateStatusPayload): string | null {
     return null;
   }
   return `${APP_UPDATE_CHANGELOG_BASE_URL}/holaboss-${version}`;
+}
+
+function buildTaskProposalToastNotification(params: {
+  workspaceId: string;
+  workspaceName?: string | null;
+  proposals: TaskProposalRecordPayload[];
+}): RuntimeNotificationRecordPayload {
+  const now = new Date().toISOString();
+  const proposalCount = params.proposals.length;
+  const firstProposalName =
+    params.proposals[0]?.task_name?.trim() || "Untitled task";
+  const workspaceName = params.workspaceName?.trim() || "";
+  const workspaceQualifier = workspaceName ? ` in ${workspaceName}` : "";
+
+  return {
+    id: `${TASK_PROPOSAL_TOAST_ID_PREFIX}${crypto.randomUUID()}`,
+    workspace_id: params.workspaceId,
+    cronjob_id: null,
+    source_type: "task_proposal",
+    source_label: "Task proposals",
+    title:
+      proposalCount === 1 ? "Task proposal ready" : "Task proposals ready",
+    message:
+      proposalCount === 1
+        ? `"${firstProposalName}" is ready to review in the inbox${workspaceQualifier}.`
+        : `${proposalCount} task proposals are ready to review in the inbox${workspaceQualifier}.`,
+    level: "info",
+    priority: "high",
+    state: "unread",
+    metadata: {
+      proposal_ids: params.proposals.map((proposal) => proposal.proposal_id),
+    },
+    read_at: null,
+    dismissed_at: null,
+    created_at: now,
+    updated_at: now,
+  };
 }
 
 function notificationMetadataString(
@@ -765,10 +812,8 @@ function workspaceOutputNavigationTarget(
     return {
       type: "app",
       appId: moduleId,
-      resourceId:
-        hasAppPresentation && presentation?.path
-          ? presentation.path
-          : output.module_resource_id || output.artifact_id || output.id,
+      path: hasAppPresentation ? presentation?.path || null : null,
+      resourceId: output.module_resource_id || output.artifact_id || output.id,
       view: hasAppPresentation
         ? presentation.view
         : output.output_type || "home",
@@ -1119,6 +1164,8 @@ function AppShellContent() {
   const [toastNotifications, setToastNotifications] = useState<
     RuntimeNotificationRecordPayload[]
   >([]);
+  const [taskProposalToastNotifications, setTaskProposalToastNotifications] =
+    useState<RuntimeNotificationRecordPayload[]>([]);
   const [devNotificationToastPreview, setDevNotificationToastPreview] =
     useState<RuntimeNotificationRecordPayload[]>([]);
   const utilityPaneHostRef = useRef<HTMLDivElement | null>(null);
@@ -1129,6 +1176,9 @@ function AppShellContent() {
   const spaceVisibilityRef = useRef(spaceVisibility);
   const notificationsHydratedRef = useRef(false);
   const seenNotificationIdsRef = useRef(new Set<string>());
+  const knownTaskProposalIdsByWorkspaceRef = useRef<Record<string, string[]>>(
+    {},
+  );
   const lastRestorableSpaceDisplayViewByWorkspaceRef = useRef<
     Record<string, RestorableSpaceDisplayView>
   >({});
@@ -1189,8 +1239,17 @@ function AppShellContent() {
     () =>
       devNotificationToastPreview.length > 0
         ? devNotificationToastPreview
-        : toastNotifications,
-    [devNotificationToastPreview, toastNotifications],
+        : [...taskProposalToastNotifications, ...toastNotifications]
+            .sort(
+              (left, right) =>
+                Date.parse(right.created_at) - Date.parse(left.created_at),
+            )
+            .slice(0, 4),
+    [
+      devNotificationToastPreview,
+      taskProposalToastNotifications,
+      toastNotifications,
+    ],
   );
   const runtimeNotificationById = useMemo(
     () =>
@@ -1198,6 +1257,16 @@ function AppShellContent() {
         notifications.map((notification) => [notification.id, notification]),
       ),
     [notifications],
+  );
+  const taskProposalToastById = useMemo(
+    () =>
+      new Map(
+        taskProposalToastNotifications.map((notification) => [
+          notification.id,
+          notification,
+        ]),
+      ),
+    [taskProposalToastNotifications],
   );
   const unreadTaskProposalCount = useMemo(() => {
     if (!selectedWorkspaceId || taskProposals.length === 0) {
@@ -1259,6 +1328,100 @@ function AppShellContent() {
       });
     },
     [],
+  );
+
+  const dismissTaskProposalToast = useCallback((notificationId: string) => {
+    setTaskProposalToastNotifications((current) =>
+      current.filter((item) => item.id !== notificationId),
+    );
+  }, []);
+
+  const openTaskProposalInbox = useCallback(
+    (workspaceId?: string | null) => {
+      const normalizedWorkspaceId =
+        workspaceId?.trim() || selectedWorkspaceId || "";
+      if (normalizedWorkspaceId) {
+        setSelectedWorkspaceId(normalizedWorkspaceId);
+      }
+      setActiveLeftRailItem("space");
+      setSpaceVisibility((previous) => ({
+        ...previous,
+        agent: true,
+      }));
+      setAgentView({ type: "inbox" });
+      if (
+        normalizedWorkspaceId &&
+        normalizedWorkspaceId === selectedWorkspaceId &&
+        taskProposals.length > 0
+      ) {
+        markTaskProposalsSeen(normalizedWorkspaceId, taskProposals);
+      }
+    },
+    [
+      markTaskProposalsSeen,
+      selectedWorkspaceId,
+      setSelectedWorkspaceId,
+      taskProposals,
+    ],
+  );
+
+  const applyTaskProposals = useCallback(
+    (
+      workspaceId: string | null | undefined,
+      workspaceName: string | null | undefined,
+      proposals: TaskProposalRecordPayload[],
+      options?: { notify?: boolean },
+    ) => {
+      setTaskProposals(proposals);
+
+      const normalizedWorkspaceId = workspaceId?.trim() || "";
+      if (!normalizedWorkspaceId) {
+        return;
+      }
+
+      const knownProposalIds = new Set(
+        knownTaskProposalIdsByWorkspaceRef.current[normalizedWorkspaceId] ?? [],
+      );
+      const pendingNewProposals = proposals.filter((proposal) => {
+        const proposalId = proposal.proposal_id.trim();
+        if (!proposalId) {
+          return false;
+        }
+        const isNew = !knownProposalIds.has(proposalId);
+        knownProposalIds.add(proposalId);
+        return isNew && proposal.state.trim().toLowerCase() === "pending";
+      });
+      knownTaskProposalIdsByWorkspaceRef.current[normalizedWorkspaceId] =
+        Array.from(knownProposalIds).slice(
+          -MAX_SEEN_TASK_PROPOSAL_IDS_PER_WORKSPACE,
+        );
+
+      if (options?.notify === false || pendingNewProposals.length === 0) {
+        return;
+      }
+
+      const inboxVisible =
+        agentView.type === "inbox" ||
+        (operationsDrawerOpen && activeOperationsTab === "inbox");
+      if (inboxVisible && normalizedWorkspaceId === selectedWorkspaceId) {
+        return;
+      }
+
+      const toast = buildTaskProposalToastNotification({
+        workspaceId: normalizedWorkspaceId,
+        workspaceName,
+        proposals: pendingNewProposals,
+      });
+      setTaskProposalToastNotifications((current) =>
+        [toast, ...current].slice(0, 4),
+      );
+    },
+    [
+      activeOperationsTab,
+      agentView.type,
+      operationsDrawerOpen,
+      selectedWorkspaceId,
+    ],
   );
 
   const clampUtilityPaneWidth = useCallback(
@@ -1765,9 +1928,23 @@ function AppShellContent() {
         );
         return;
       }
+      if (isTaskProposalToastId(notificationId)) {
+        const notification = taskProposalToastById.get(notificationId);
+        if (!notification) {
+          return;
+        }
+        dismissTaskProposalToast(notificationId);
+        openTaskProposalInbox(notification.workspace_id);
+        return;
+      }
       await handleActivateNotification(notificationId);
     },
-    [handleActivateNotification],
+    [
+      dismissTaskProposalToast,
+      handleActivateNotification,
+      openTaskProposalInbox,
+      taskProposalToastById,
+    ],
   );
 
   const handleCloseDisplayedNotification = useCallback(
@@ -1778,9 +1955,13 @@ function AppShellContent() {
         );
         return;
       }
+      if (isTaskProposalToastId(notificationId)) {
+        dismissTaskProposalToast(notificationId);
+        return;
+      }
       await handleDismissNotification(notificationId);
     },
-    [handleDismissNotification],
+    [dismissTaskProposalToast, handleDismissNotification],
   );
 
   useEffect(() => {
@@ -2081,7 +2262,9 @@ function AppShellContent() {
 
   async function refreshTaskProposals() {
     if (!selectedWorkspaceId || !selectedWorkspace) {
-      setTaskProposals([]);
+      applyTaskProposals(selectedWorkspaceId, selectedWorkspace?.name, [], {
+        notify: false,
+      });
       setTaskProposalStatusMessage("");
       return;
     }
@@ -2092,7 +2275,11 @@ function AppShellContent() {
       const response = await window.electronAPI.workspace.listTaskProposals(
         selectedWorkspace.id,
       );
-      setTaskProposals(response.proposals);
+      applyTaskProposals(
+        selectedWorkspace.id,
+        selectedWorkspace.name,
+        response.proposals,
+      );
     } catch (error) {
       setTaskProposalStatusMessage(normalizeErrorMessage(error));
     } finally {
@@ -2202,7 +2389,9 @@ function AppShellContent() {
 
   useEffect(() => {
     if (!selectedWorkspaceId || !selectedWorkspace) {
-      setTaskProposals([]);
+      applyTaskProposals(selectedWorkspaceId, selectedWorkspace?.name, [], {
+        notify: false,
+      });
       setTaskProposalStatusMessage("");
       setIsLoadingTaskProposals(false);
       return;
@@ -2216,7 +2405,11 @@ function AppShellContent() {
           selectedWorkspace.id,
         );
         if (!cancelled) {
-          setTaskProposals(response.proposals);
+          applyTaskProposals(
+            selectedWorkspace.id,
+            selectedWorkspace.name,
+            response.proposals,
+          );
         }
       } catch (error) {
         if (!cancelled) {
@@ -2240,7 +2433,7 @@ function AppShellContent() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [selectedWorkspace, selectedWorkspaceId]);
+  }, [applyTaskProposals, selectedWorkspace, selectedWorkspaceId]);
 
   useEffect(() => {
     if (
@@ -2414,6 +2607,38 @@ function AppShellContent() {
     });
   };
 
+  const handleOpenSpaceApp = useCallback(
+    (
+      appId: string,
+      options?: {
+        path?: string | null;
+        resourceId?: string | null;
+        view?: string | null;
+        resetAgentView?: boolean;
+      },
+    ) => {
+      setActiveLeftRailItem("space");
+      setSpaceExplorerMode("applications");
+      setSpaceExplorerCollapsed(false);
+      setSpaceVisibility((previous) => ({
+        ...previous,
+        agent: true,
+        files: true,
+      }));
+      if (options?.resetAgentView) {
+        setAgentView({ type: "chat" });
+      }
+      setSpaceDisplayView({
+        type: "app",
+        appId,
+        path: options?.path,
+        resourceId: options?.resourceId,
+        view: options?.view,
+      });
+    },
+    [],
+  );
+
   const handleOpenAutomationRunSession = useCallback((sessionId: string) => {
     const normalizedSessionId = sessionId.trim();
     if (!normalizedSessionId) {
@@ -2502,16 +2727,8 @@ function AppShellContent() {
   );
 
   const handleOpenInboxPane = useCallback(() => {
-    setActiveLeftRailItem("space");
-    setSpaceVisibility((previous) => ({
-      ...previous,
-      agent: true,
-    }));
-    setAgentView({ type: "inbox" });
-    if (selectedWorkspaceId && taskProposals.length > 0) {
-      markTaskProposalsSeen(selectedWorkspaceId, taskProposals);
-    }
-  }, [markTaskProposalsSeen, selectedWorkspaceId, taskProposals]);
+    openTaskProposalInbox(selectedWorkspaceId);
+  }, [openTaskProposalInbox, selectedWorkspaceId]);
 
   const handleReturnToChatPane = useCallback(() => {
     setAgentView({ type: "chat" });
@@ -2648,33 +2865,13 @@ function AppShellContent() {
   const handleOpenWorkspaceOutput = useCallback(
     (output: WorkspaceOutputRecordPayload) => {
       const target = workspaceOutputNavigationTarget(output, installedAppIds);
-      if (target.type === "app" && selectedWorkspaceId) {
-        // target.resourceId is already a full route path (e.g. "/drafts/abc")
-        // when derived from presentation.path — pass it as `path` so
-        // resolveAppSurfacePath uses it directly instead of nesting it under view.
-        const routePath = resolveAppSurfacePath({
-          path: target.resourceId,
+      if (target.type === "app") {
+        handleOpenSpaceApp(target.appId, {
+          path: target.path,
+          resourceId: target.resourceId,
           view: target.view,
+          resetAgentView: true,
         });
-        void window.electronAPI.appSurface
-          .resolveUrl(selectedWorkspaceId, target.appId, routePath)
-          .then((url) => {
-            revealBrowserPane("user");
-            void window.electronAPI.browser
-              .setActiveWorkspace(selectedWorkspaceId)
-              .then(() => window.electronAPI.browser.navigate(url))
-              .catch(() => undefined);
-          })
-          .catch(() => {
-            setActiveLeftRailItem("space");
-            setSpaceDisplayView({
-              type: "app",
-              appId: target.appId,
-              resourceId: target.resourceId,
-              view: target.view,
-            });
-            setAgentView({ type: "chat" });
-          });
         return;
       }
 
@@ -2718,7 +2915,7 @@ function AppShellContent() {
         });
       }
     },
-    [installedAppIds, selectedWorkspaceId, revealBrowserPane],
+    [handleOpenSpaceApp, installedAppIds],
   );
 
   const handleOpenRunningSession = (sessionId: string) => {
@@ -2910,6 +3107,7 @@ function AppShellContent() {
               ? activeApp
               : getWorkspaceAppDefinition(agentView.appId, installedApps)
           }
+          path={agentView.path}
           resourceId={agentView.resourceId}
           view={agentView.view}
         />
@@ -2994,6 +3192,7 @@ function AppShellContent() {
                     installedApps,
                   )
             }
+            path={spaceDisplayView.path}
             resourceId={spaceDisplayView.resourceId}
             view={spaceDisplayView.view}
           />
@@ -3497,6 +3696,13 @@ function AppShellContent() {
                                         <Globe />
                                         Browser
                                       </TabsTrigger>
+                                      <TabsTrigger
+                                        value="applications"
+                                        className="min-w-0 flex-1 basis-0 gap-1.5"
+                                      >
+                                        <LayoutGrid />
+                                        Apps
+                                      </TabsTrigger>
                                     </TabsList>
                                   </Tabs>
                                   <Button
@@ -3532,6 +3738,18 @@ function AppShellContent() {
                                           resourceId: path,
                                         });
                                       }}
+                                    />
+                                  ) : spaceExplorerMode === "applications" ? (
+                                    <SpaceApplicationsExplorerPane
+                                      installedApps={installedApps}
+                                      activeAppId={
+                                        spaceDisplayView.type === "app"
+                                          ? spaceDisplayView.appId
+                                          : null
+                                      }
+                                      onSelectApp={(appId) =>
+                                        handleOpenSpaceApp(appId)
+                                      }
                                     />
                                   ) : spaceExplorerMode === "browser" ? (
                                     <SpaceBrowserExplorerPane
@@ -3571,6 +3789,26 @@ function AppShellContent() {
                                   }
                                 >
                                   <Folder />
+                                </Button>
+                                <Button
+                                  variant={
+                                    spaceExplorerMode === "applications"
+                                      ? "outline"
+                                      : "ghost"
+                                  }
+                                  size="icon"
+                                  onClick={() => {
+                                    setSpaceExplorerMode("applications");
+                                    setSpaceExplorerCollapsed(false);
+                                  }}
+                                  aria-label="Open applications explorer"
+                                  className={
+                                    spaceExplorerMode === "applications"
+                                      ? "border-primary/40 bg-primary/10 text-primary"
+                                      : "text-muted-foreground"
+                                  }
+                                >
+                                  <LayoutGrid />
                                 </Button>
                                 <Button
                                   variant={

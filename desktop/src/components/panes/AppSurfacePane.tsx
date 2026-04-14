@@ -9,11 +9,18 @@ import { resolveAppSurfacePath } from "./appSurfaceRoute";
 interface AppSurfacePaneProps {
   appId: string;
   app?: WorkspaceInstalledAppDefinition | WorkspaceAppDefinition | null;
+  path?: string | null;
   resourceId?: string | null;
   view?: string | null;
 }
 
-export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: AppSurfacePaneProps) {
+export function AppSurfacePane({
+  appId,
+  app: providedApp,
+  path,
+  resourceId,
+  view,
+}: AppSurfacePaneProps) {
   const { refreshInstalledApps, removeInstalledApp } = useWorkspaceDesktop();
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const app = providedApp || getWorkspaceAppDefinition(appId);
@@ -33,8 +40,8 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
   const accentClassName = app && "accentClassName" in app ? app.accentClassName : "bg-muted-foreground/40";
 
   const routePath = useMemo(
-    () => resolveAppSurfacePath({ resourceId, view }),
-    [resourceId, view],
+    () => resolveAppSurfacePath({ path, resourceId, view }),
+    [path, resourceId, view],
   );
 
   // Integration connection status for this app
@@ -224,10 +231,14 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
                 Running
               </span>
             </div>
-            {resourceId ? (
+            {resourceId || path ? (
               <div className="flex items-center justify-between rounded-md border border-border bg-muted/50 px-3 py-2">
-                <span className="text-xs text-muted-foreground">Resource</span>
-                <span className="max-w-[120px] truncate text-xs font-medium text-foreground">{resourceId}</span>
+                <span className="text-xs text-muted-foreground">
+                  {resourceId ? "Resource" : "Route"}
+                </span>
+                <span className="max-w-[120px] truncate text-xs font-medium text-foreground">
+                  {resourceId || path}
+                </span>
               </div>
             ) : null}
             {integrationStatus ? (
