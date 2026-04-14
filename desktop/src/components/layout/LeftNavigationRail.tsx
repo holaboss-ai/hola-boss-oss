@@ -1,4 +1,4 @@
-import { MessageSquareText, Workflow } from "lucide-react";
+import { MessageSquareText, Plus, Workflow } from "lucide-react";
 import type { WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
 import { providerIcon } from "@/components/onboarding/constants";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
@@ -12,6 +12,7 @@ export type LeftRailItem =
 interface LeftNavigationRailProps {
   activeItem: LeftRailItem;
   onSelectItem: (item: LeftRailItem) => void;
+  onAddApp?: () => void;
   installedApps?: WorkspaceInstalledAppDefinition[];
   activeAppId?: string | null;
   onSelectApp?: (appId: string) => void;
@@ -41,6 +42,7 @@ function appInitials(label: string): string {
 export function LeftNavigationRail({
   activeItem,
   onSelectItem,
+  onAddApp,
   installedApps = [],
   activeAppId = null,
   onSelectApp,
@@ -81,54 +83,73 @@ export function LeftNavigationRail({
           })}
         </nav>
 
-        {installedApps.length > 0 ? (
-          <>
-            <div className="h-px w-7 bg-border" />
-            <nav className="chat-scrollbar-hidden flex min-h-0 w-full flex-1 flex-col items-center gap-0.5 overflow-x-hidden overflow-y-auto pb-1">
-              {installedApps.map((app) => {
-                const isActive = activeAppId === app.id;
-                const isReady = "ready" in app && app.ready;
-                const hasError =
-                  "error" in app && typeof app.error === "string" && app.error;
-                return (
-                  <div key={app.id} className="group relative">
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <button
-                            type="button"
-                            aria-label={app.label}
-                            title={app.label}
-                            onClick={() => onSelectApp?.(app.id)}
-                            className={`relative flex size-10 items-center justify-center rounded-md transition-colors ${
-                              isActive
-                                ? "bg-primary/12 text-accent-foreground"
-                                : "bg-muted/80 text-muted-foreground hover:bg-accent/36"
-                            }`}
-                          >
-                            {providerIcon(app.id, 18) ?? (
-                              <span className="text-xs font-semibold uppercase tracking-wide">
-                                {appInitials(app.label)}
-                              </span>
-                            )}
-                            {hasError ? (
-                              <span className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full border-2 border-card bg-destructive" />
-                            ) : !isReady ? (
-                              <span className="absolute -right-0.5 -top-0.5 size-2.5 animate-pulse rounded-full border-2 border-card bg-sky-400" />
-                            ) : null}
-                          </button>
-                        }
-                      />
-                      <TooltipContent side="right" align="center">
-                        {app.label}
-                      </TooltipContent>
-                    </Tooltip>
-                  </div>
-                );
-              })}
-            </nav>
-          </>
-        ) : null}
+        <div className="h-px w-7 bg-border" />
+        <nav className="chat-scrollbar-hidden flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-x-hidden overflow-y-auto pb-1">
+          <div className="group relative">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label="Add app"
+                    title="Add app"
+                    onClick={() => onAddApp?.()}
+                    className="flex size-10 items-center justify-center rounded-md border border-dashed border-border/60 text-muted-foreground/70 transition-colors hover:border-border hover:bg-accent/36 hover:text-foreground"
+                  >
+                    <Plus size={16} />
+                  </button>
+                }
+              />
+              <TooltipContent side="right" align="center">
+                Add app
+              </TooltipContent>
+            </Tooltip>
+          </div>
+          {installedApps.map((app) => {
+            const isActive = activeAppId === app.id;
+            const isReady = "ready" in app && app.ready;
+            const hasError =
+              "error" in app && typeof app.error === "string" && app.error;
+            return (
+              <div key={app.id} className="group relative">
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-label={app.label}
+                        title={app.label}
+                        onClick={() => onSelectApp?.(app.id)}
+                        className={`relative flex size-10 items-center justify-center rounded-md transition-colors ${
+                          isActive
+                            ? "bg-primary/12 text-foreground"
+                            : "text-muted-foreground hover:bg-accent/36 hover:text-foreground"
+                        }`}
+                      >
+                        {isActive ? (
+                          <span className="absolute -left-2 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-primary" />
+                        ) : null}
+                        {providerIcon(app.id, 20) ?? (
+                          <span className="text-xs font-semibold uppercase tracking-wide">
+                            {appInitials(app.label)}
+                          </span>
+                        )}
+                        {hasError ? (
+                          <span className="absolute -bottom-0.5 -right-0.5 size-2 rounded-full border-2 border-card bg-destructive" />
+                        ) : !isReady ? (
+                          <span className="absolute -bottom-0.5 -right-0.5 size-2 animate-pulse rounded-full border-2 border-card bg-sky-400" />
+                        ) : null}
+                      </button>
+                    }
+                  />
+                  <TooltipContent side="right" align="center">
+                    {app.label}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            );
+          })}
+        </nav>
       </div>
       {appVersionLabel ? (
         <div className="mt-2 flex w-full justify-center pt-1">

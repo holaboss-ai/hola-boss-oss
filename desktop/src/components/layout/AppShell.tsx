@@ -1069,6 +1069,8 @@ function AppShellContent() {
   ] = useState("");
   const [activeLeftRailItem, setActiveLeftRailItem] =
     useState<LeftRailItem>("space");
+  const [marketplaceInitialTab, setMarketplaceInitialTab] =
+    useState<"templates" | "apps">("templates");
   const [spaceLeftRailVisible, setSpaceLeftRailVisible] = useState(false);
   const [agentView, setAgentView] = useState<AgentView>({ type: "chat" });
   const [chatFocusRequestKey, setChatFocusRequestKey] = useState(1);
@@ -2596,7 +2598,15 @@ function AppShellContent() {
       setChatFocusRequestKey((current) => current + 1);
       return;
     }
+    if (item === "marketplace") {
+      setMarketplaceInitialTab("templates");
+    }
     setActiveLeftRailItem(item);
+  };
+
+  const handleAddApp = () => {
+    setMarketplaceInitialTab("apps");
+    setActiveLeftRailItem("marketplace");
   };
 
   const handleOpenInstalledApp = (appId: string) => {
@@ -3629,6 +3639,7 @@ function AppShellContent() {
                   <LeftNavigationRail
                     activeItem={activeLeftRailItem}
                     onSelectItem={handleLeftRailSelect}
+                    onAddApp={handleAddApp}
                     installedApps={installedApps}
                     activeAppId={activeAppId}
                     onSelectApp={handleOpenInstalledApp}
@@ -3640,6 +3651,7 @@ function AppShellContent() {
               <LeftNavigationRail
                 activeItem={activeLeftRailItem}
                 onSelectItem={handleLeftRailSelect}
+                onAddApp={handleAddApp}
                 installedApps={installedApps}
                 activeAppId={activeAppId}
                 onSelectApp={handleOpenInstalledApp}
@@ -3916,7 +3928,7 @@ function AppShellContent() {
                   </div>
                 ) : (
                   <div className="h-full min-h-0 overflow-hidden rounded-xl">
-                    <MarketplacePane />
+                    <MarketplacePane initialTab={marketplaceInitialTab} />
                   </div>
                 )}
               </div>
