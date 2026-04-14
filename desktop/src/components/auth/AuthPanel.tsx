@@ -5,6 +5,7 @@ import {
   LogOut,
   RefreshCw,
   ShieldCheck,
+  X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import anthropicLogoMarkup from "@/assets/providers/anthropic.svg?raw";
@@ -13,6 +14,7 @@ import minimaxLogoMarkup from "@/assets/providers/minimax.svg?raw";
 import ollamaLogoMarkup from "@/assets/providers/ollama.svg?raw";
 import openaiLogoMarkup from "@/assets/providers/openai.svg?raw";
 import openrouterLogoMarkup from "@/assets/providers/openrouter.svg?raw";
+import * as modelCatalog from "../../../shared/model-catalog.js";
 import { BillingSummaryCard } from "@/components/billing/BillingSummaryCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import {
   useDesktopAuthSession,
   type AuthSession
@@ -44,6 +47,8 @@ const KNOWN_PROVIDER_ORDER = ["holaboss", "openai_direct", "anthropic_direct", "
 type KnownProviderId = (typeof KNOWN_PROVIDER_ORDER)[number];
 const AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME =
   "auth-settings-control theme-control-surface relative isolate h-9 w-full overflow-hidden rounded-[10px] border border-border/45 bg-muted px-2.5 text-sm text-foreground shadow-none transition-colors hover:border-border/65 focus-visible:border-border/65 focus-visible:ring-0 focus-visible:ring-transparent aria-invalid:border-border/45 aria-invalid:ring-0";
+const PROVIDER_ROW_ACTIONS_CLASS_NAME = "flex min-w-[224px] shrink-0 items-center justify-end gap-2";
+const PROVIDER_ROW_ACTION_ITEM_CLASS_NAME = "min-w-[104px] justify-center";
 const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string, string>> = {
   anthropic_direct: {
     "claude-sonnet-4-5": "claude-sonnet-4-6"
@@ -181,7 +186,7 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
     description: "OpenRouter endpoint for provider-aggregated model access.",
     kind: "openrouter",
     defaultBaseUrl: "https://openrouter.ai/api/v1",
-    defaultModels: ["openai/gpt-5.4", "anthropic/claude-sonnet-4-6"],
+    defaultModels: ["openai/gpt-5.4", "anthropic/claude-sonnet-4-6", "qwen/qwen3.6-plus"],
     defaultBackgroundModel: "openai/gpt-5.4",
     defaultImageModel: "google/gemini-3.1-flash-image-preview",
     imageModelSuggestions: ["google/gemini-3.1-flash-image-preview"],
@@ -362,6 +367,49 @@ function parseModelsText(value: string): string[] {
       .map((item) => item.trim())
       .filter(Boolean)
   );
+}
+
+function providerCatalogChatModelOptions(
+  providerId: KnownProviderId,
+): Array<{ modelId: string; label: string }> {
+  if (providerId === "holaboss") {
+    return [];
+  }
+  const providerCatalog = modelCatalog.PROVIDER_MODEL_CATALOG[providerId];
+  if (!providerCatalog) {
+    return [];
+  }
+  return providerCatalog.models.map((entry) => ({
+    modelId: entry.model_id,
+    label: entry.label?.trim() || entry.model_id,
+  }));
+}
+
+function providerModelDisplayLabel(
+  providerId: KnownProviderId,
+  modelId: string,
+): string {
+  return (
+    modelCatalog.catalogMetadataForProviderModel(providerId, modelId)?.label?.trim() ||
+    modelId
+  );
+}
+
+function holabossSupportedModels(
+  runtimeConfig: RuntimeConfigPayload | null,
+): Array<{ modelId: string; label: string }> {
+  const managedGroup = runtimeConfig?.providerModelGroups.find(
+    (group) => group.providerId === "holaboss_model_proxy",
+  );
+  if (!managedGroup) {
+    return [];
+  }
+  return managedGroup.models
+    .filter((model) => runtimeCatalogModelSupportsCapability(model, "chat"))
+    .map((model) => ({
+      modelId: model.modelId,
+      label: model.label?.trim() || model.modelId,
+    }));
 }
 
 function normalizeConfiguredProviderModelId(providerId: string, modelId: string): string {
@@ -1297,7 +1345,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     && !connectedProviderIds.includes(backgroundTasksDraft.providerId)
       ? [backgroundTasksDraft.providerId, ...connectedProviderIds]
       : connectedProviderIds;
-  const backgroundTaskUsesManagedModelPicker = backgroundTasksDraft.providerId === "holaboss";
   const backgroundTaskModelOptions = uniqueValues([
     backgroundTasksDraft.model.trim(),
     ...backgroundProviderSuggestions,
@@ -1312,7 +1359,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     recallEmbeddingsDraft.providerId,
     effectiveRuntimeConfig,
   );
-  const recallEmbeddingsUsesManagedModelPicker = recallEmbeddingsDraft.providerId === "holaboss";
   const recallEmbeddingsModelOptions = uniqueValues([
     recallEmbeddingsDraft.model.trim(),
     ...recallEmbeddingsProviderSuggestions,
@@ -1327,7 +1373,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const imageGenerationProviderConnected =
     imageGenerationDraft.providerId !== "" &&
     connectedImageProviderIds.includes(imageGenerationDraft.providerId);
-  const imageGenerationUsesManagedModelPicker = imageGenerationDraft.providerId === "holaboss";
   const imageGenerationProviderSuggestions = imageGenerationModelSuggestions(
     imageGenerationDraft.providerId,
     effectiveRuntimeConfig,
@@ -1348,10 +1393,10 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   );
   const advancedSettingsWarnings = [
     !hasResolvableRecallEmbeddingsModel
-      ? "No embedding model can be resolved from the currently connected providers. Recall will stay on the slower staged path until you connect an embedding-capable provider or set one manually in Advanced settings."
+      ? "No embedding model can be resolved from the currently connected providers. Recall will stay on the slower staged path until you connect an embedding-capable provider or choose one in Advanced settings."
       : "",
     !hasResolvableImageGenerationModel
-      ? "No image generation model can be resolved from the currently connected providers. Image generation will stay disabled until you connect a provider with an image model or set one manually in Advanced settings."
+      ? "No image generation model can be resolved from the currently connected providers. Image generation will stay disabled until you connect a provider with an image model or choose one in Advanced settings."
       : "",
   ].filter(Boolean);
 
@@ -1536,6 +1581,37 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       }
     }));
     markProviderSettingsDirty();
+  }
+
+  function updateProviderDraftModels(
+    providerId: KnownProviderId,
+    modelIds: string[],
+  ) {
+    updateProviderDraft(providerId, { modelsText: uniqueValues(modelIds).join(", ") });
+  }
+
+  function toggleProviderDraftModel(providerId: KnownProviderId, modelId: string) {
+    const normalizedModelId = modelId.trim();
+    if (!normalizedModelId) {
+      return;
+    }
+    const currentModelIds = parseModelsText(providerDrafts[providerId].modelsText);
+    updateProviderDraftModels(
+      providerId,
+      currentModelIds.includes(normalizedModelId)
+        ? currentModelIds.filter((currentModelId) => currentModelId !== normalizedModelId)
+        : [...currentModelIds, normalizedModelId],
+    );
+  }
+
+  function removeProviderDraftModel(providerId: KnownProviderId, modelId: string) {
+    const normalizedModelId = modelId.trim();
+    updateProviderDraftModels(
+      providerId,
+      parseModelsText(providerDrafts[providerId].modelsText).filter(
+        (currentModelId) => currentModelId !== normalizedModelId,
+      ),
+    );
   }
 
   function updateBackgroundTasksDraft(update: Partial<BackgroundTasksDraft>) {
@@ -1790,7 +1866,11 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             const token = `${providerId}/${modelId}`;
             nextModels[token] = {
               provider: providerId,
-              model: modelId
+              model: modelId,
+              ...(modelCatalog.catalogConfigShapeForProviderModel(
+                providerId,
+                modelId,
+              ) ?? {}),
             };
           }
         }
@@ -2082,11 +2162,40 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     const template = KNOWN_PROVIDER_TEMPLATES[providerId];
     const draft = providerDrafts[providerId];
     if (providerId === "holaboss") {
+      const supportedModels = holabossSupportedModels(effectiveRuntimeConfig);
       return (
         <div className="grid gap-2">
           <div className="rounded-[12px] border border-border/35 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
             Catalog, base URL, and credentials come from your Holaboss runtime binding.
           </div>
+          {supportedModels.length > 0 ? (
+            <div className="grid gap-2">
+              <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
+                Supported models
+              </div>
+              <div className="grid gap-1.5">
+                {supportedModels.map((option) => (
+                  <div
+                    key={option.modelId}
+                    className="rounded-[10px] border border-border/35 bg-card/70 px-2.5 py-1.5 text-left"
+                  >
+                    <div className="truncate text-[13px] font-medium leading-4 text-foreground">
+                      {option.label}
+                    </div>
+                    {option.label !== option.modelId ? (
+                      <div className="truncate pt-0.5 text-[10px] leading-4 text-muted-foreground">
+                        {option.modelId}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+              No managed models are available yet. Refresh your runtime binding to load the latest Holaboss catalog.
+            </div>
+          )}
         </div>
       );
     }
@@ -2113,13 +2222,104 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         </label>
         <label className="grid gap-1">
           <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Models</span>
-          <textarea
-            className="auth-settings-control theme-control-surface min-h-[60px] rounded-[10px] border border-border/45 px-2.5 py-2 text-sm leading-5 text-foreground outline-none transition"
-            value={draft.modelsText}
-            onChange={(event) => updateProviderDraft(providerId, { modelsText: event.target.value })}
-            placeholder={template.defaultModels.join(", ")}
-            spellCheck={false}
-          />
+          {(() => {
+            const selectedModelIds = parseModelsText(draft.modelsText);
+            const catalogModelOptions = providerCatalogChatModelOptions(providerId);
+            const unknownSelectedModelIds = selectedModelIds.filter(
+              (modelId) =>
+                !catalogModelOptions.some((option) => option.modelId === modelId),
+            );
+
+            return (
+              <div className="grid gap-2">
+                {catalogModelOptions.length > 0 ? (
+                  <div className="grid gap-2">
+                    <div className="grid gap-1.5">
+                      {catalogModelOptions.map((option) => {
+                        const selected = selectedModelIds.includes(option.modelId);
+                        return (
+                          <div
+                            key={option.modelId}
+                            className={`rounded-[10px] border px-2.5 py-1.5 text-left transition ${
+                              selected
+                                ? "border-primary/25 bg-primary/[0.06] text-foreground"
+                                : "border-border/35 bg-card/70 text-muted-foreground"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-[13px] font-medium leading-4">
+                                  {option.label}
+                                </div>
+                                {option.label !== option.modelId ? (
+                                  <div className="truncate pt-0.5 text-[10px] leading-4 text-muted-foreground">
+                                    {option.modelId}
+                                  </div>
+                                ) : null}
+                              </div>
+                              <div className="flex shrink-0 items-center gap-1.5 pl-1">
+                                <span className="text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground/80">
+                                  {selected ? "On" : "Off"}
+                                </span>
+                                <Switch
+                                  checked={selected}
+                                  aria-label={`Toggle ${option.label}`}
+                                  onCheckedChange={() =>
+                                    toggleProviderDraftModel(providerId, option.modelId)
+                                  }
+                                  className="mt-0.5"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                    Add models in <code>desktop/shared/model-catalog.ts</code> to configure this provider.
+                  </div>
+                )}
+
+                {selectedModelIds.length === 0 ? (
+                  <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                    Select at least one configured model before saving.
+                  </div>
+                ) : null}
+
+                {unknownSelectedModelIds.length > 0 ? (
+                  <div className="grid gap-2">
+                    <div className="text-xs leading-5 text-muted-foreground">
+                      Some saved models are not in the local catalog. Add them in{" "}
+                      <code>desktop/shared/model-catalog.ts</code> to make them selectable again.
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {unknownSelectedModelIds.map((modelId) => (
+                        <Badge
+                          key={modelId}
+                          variant="outline"
+                          className="flex items-center gap-1 border-border/45 bg-muted/35 pr-1 text-foreground"
+                        >
+                          <span className="max-w-[220px] truncate">
+                            {providerModelDisplayLabel(providerId, modelId)}
+                          </span>
+                          <button
+                            type="button"
+                            className="inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted/60 hover:text-foreground"
+                            onClick={() => removeProviderDraftModel(providerId, modelId)}
+                            aria-label={`Remove ${modelId}`}
+                          >
+                            <X size={12} />
+                          </button>
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            );
+          })()}
         </label>
         <div className="flex flex-wrap gap-2 pt-1">
           <Button
@@ -2166,16 +2366,31 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             <div className="text-sm font-medium text-foreground">{template.label}</div>
           </div>
 
-          <div className="flex shrink-0 items-center gap-2">
+          <div className={PROVIDER_ROW_ACTIONS_CLASS_NAME}>
             {isHolabossProvider ? (
               isConnected ? (
-                <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">
-                  Enabled
-                </Badge>
+                <>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
+                    onClick={() => setExpandedProviderId((current) => (current === providerId ? null : providerId))}
+                    disabled={isSavingRuntimeConfigDocument}
+                  >
+                    {isExpanded ? "Hide" : "Show"}
+                  </Button>
+                  <Badge
+                    variant="outline"
+                    className={`border-primary/30 bg-primary/10 text-primary ${PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}`}
+                  >
+                    Enabled
+                  </Badge>
+                </>
               ) : (
                 <Button
                   variant="outline"
                   size="sm"
+                  className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
                   onClick={() => void handleStartSignIn()}
                   disabled={isStartingSignIn}
                 >
@@ -2187,6 +2402,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 <Button
                   variant="ghost"
                   size="sm"
+                  className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
                   onClick={() => setExpandedProviderId((current) => (current === providerId ? null : providerId))}
                   disabled={isSavingRuntimeConfigDocument}
                 >
@@ -2195,6 +2411,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 <Button
                   variant="ghost"
                   size="sm"
+                  className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
                   onClick={() => void handleDisconnectRuntimeProvider(providerId)}
                   disabled={isSavingRuntimeConfigDocument}
                 >
@@ -2206,6 +2423,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 <Button
                   variant="ghost"
                   size="sm"
+                  className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
                   onClick={() => setExpandedProviderId((current) => (current === providerId ? null : providerId))}
                   disabled={isSavingRuntimeConfigDocument}
                 >
@@ -2214,6 +2432,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 <Button
                   variant="ghost"
                   size="sm"
+                  className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
                   onClick={() => {
                     updateProviderDraft(providerId, { enabled: false });
                     setExpandedProviderId((current) => (current === providerId ? null : current));
@@ -2227,6 +2446,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               <Button
                 variant="outline"
                 size="sm"
+                className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
                 onClick={() => {
                   updateProviderDraft(providerId, { enabled: true });
                   setExpandedProviderId(providerId);
@@ -2326,56 +2546,32 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
                       <label className="grid gap-1">
                         <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Model</span>
-                        {backgroundTaskUsesManagedModelPicker ? (
-                          <Select
-                            value={backgroundTasksDraft.model || undefined}
-                            onValueChange={(value) =>
-                              updateBackgroundTasksDraft({ model: value ?? "" })
-                            }
-                            disabled={!backgroundTasksDraft.providerId}
-                          >
-                            <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
-                              <SelectValue
-                                placeholder={backgroundTaskModelPlaceholder(
-                                  backgroundTasksDraft.providerId,
-                                  effectiveRuntimeConfig,
-                                )}
-                              />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {backgroundTaskModelOptions.map((modelId) => (
-                                <SelectItem key={modelId} value={modelId}>
-                                  {modelId}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        ) : (
-                          <>
-                            <Input
-                              value={backgroundTasksDraft.model}
-                              onChange={(event) => updateBackgroundTasksDraft({ model: event.target.value })}
+                        <Select
+                          value={backgroundTasksDraft.model || undefined}
+                          onValueChange={(value) =>
+                            updateBackgroundTasksDraft({ model: value ?? "" })
+                          }
+                          disabled={
+                            !backgroundTasksDraft.providerId ||
+                            backgroundTaskModelOptions.length === 0
+                          }
+                        >
+                          <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
+                            <SelectValue
                               placeholder={backgroundTaskModelPlaceholder(
                                 backgroundTasksDraft.providerId,
                                 effectiveRuntimeConfig,
                               )}
-                              spellCheck={false}
-                              list={
-                                backgroundTasksDraft.providerId
-                                  ? `background-task-models-${backgroundTasksDraft.providerId}`
-                                  : undefined
-                              }
-                              disabled={!backgroundTasksDraft.providerId}
                             />
-                            {backgroundTasksDraft.providerId ? (
-                              <datalist id={`background-task-models-${backgroundTasksDraft.providerId}`}>
-                                {backgroundProviderSuggestions.map((modelId) => (
-                                  <option key={modelId} value={modelId} />
-                                ))}
-                              </datalist>
-                            ) : null}
-                          </>
-                        )}
+                          </SelectTrigger>
+                          <SelectContent>
+                            {backgroundTaskModelOptions.map((modelId) => (
+                              <SelectItem key={modelId} value={modelId}>
+                                {modelId}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </label>
 
                       {backgroundTasksDraft.providerId && !backgroundProviderConnected ? (
@@ -2432,56 +2628,32 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
                       <label className="grid gap-1">
                         <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Model</span>
-                        {recallEmbeddingsUsesManagedModelPicker ? (
-                          <Select
-                            value={recallEmbeddingsDraft.model || undefined}
-                            onValueChange={(value) =>
-                              updateRecallEmbeddingsDraft({ model: value ?? "" })
-                            }
-                            disabled={!recallEmbeddingsDraft.providerId}
-                          >
-                            <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
-                              <SelectValue
-                                placeholder={recallEmbeddingsModelPlaceholder(
-                                  recallEmbeddingsDraft.providerId,
-                                  effectiveRuntimeConfig,
-                                )}
-                              />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {recallEmbeddingsModelOptions.map((modelId) => (
-                                <SelectItem key={modelId} value={modelId}>
-                                  {modelId}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        ) : (
-                          <>
-                            <Input
-                              value={recallEmbeddingsDraft.model}
-                              onChange={(event) => updateRecallEmbeddingsDraft({ model: event.target.value })}
+                        <Select
+                          value={recallEmbeddingsDraft.model || undefined}
+                          onValueChange={(value) =>
+                            updateRecallEmbeddingsDraft({ model: value ?? "" })
+                          }
+                          disabled={
+                            !recallEmbeddingsDraft.providerId ||
+                            recallEmbeddingsModelOptions.length === 0
+                          }
+                        >
+                          <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
+                            <SelectValue
                               placeholder={recallEmbeddingsModelPlaceholder(
                                 recallEmbeddingsDraft.providerId,
                                 effectiveRuntimeConfig,
                               )}
-                              spellCheck={false}
-                              list={
-                                recallEmbeddingsDraft.providerId
-                                  ? `recall-embedding-models-${recallEmbeddingsDraft.providerId}`
-                                  : undefined
-                              }
-                              disabled={!recallEmbeddingsDraft.providerId}
                             />
-                            {recallEmbeddingsDraft.providerId ? (
-                              <datalist id={`recall-embedding-models-${recallEmbeddingsDraft.providerId}`}>
-                                {recallEmbeddingsModelOptions.map((modelId) => (
-                                  <option key={modelId} value={modelId} />
-                                ))}
-                              </datalist>
-                            ) : null}
-                          </>
-                        )}
+                          </SelectTrigger>
+                          <SelectContent>
+                            {recallEmbeddingsModelOptions.map((modelId) => (
+                              <SelectItem key={modelId} value={modelId}>
+                                {modelId}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </label>
 
                       {recallEmbeddingsDraft.providerId && !recallEmbeddingsProviderConnected ? (
@@ -2535,56 +2707,32 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
                       <label className="grid gap-1">
                         <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Model</span>
-                        {imageGenerationUsesManagedModelPicker ? (
-                          <Select
-                            value={imageGenerationDraft.model || undefined}
-                            onValueChange={(value) =>
-                              updateImageGenerationDraft({ model: value ?? "" })
-                            }
-                            disabled={!imageGenerationDraft.providerId}
-                          >
-                            <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
-                              <SelectValue
-                                placeholder={imageGenerationModelPlaceholder(
-                                  imageGenerationDraft.providerId,
-                                  effectiveRuntimeConfig,
-                                )}
-                              />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {imageGenerationModelOptions.map((modelId) => (
-                                <SelectItem key={modelId} value={modelId}>
-                                  {modelId}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        ) : (
-                          <>
-                            <Input
-                              value={imageGenerationDraft.model}
-                              onChange={(event) => updateImageGenerationDraft({ model: event.target.value })}
+                        <Select
+                          value={imageGenerationDraft.model || undefined}
+                          onValueChange={(value) =>
+                            updateImageGenerationDraft({ model: value ?? "" })
+                          }
+                          disabled={
+                            !imageGenerationDraft.providerId ||
+                            imageGenerationModelOptions.length === 0
+                          }
+                        >
+                          <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
+                            <SelectValue
                               placeholder={imageGenerationModelPlaceholder(
                                 imageGenerationDraft.providerId,
                                 effectiveRuntimeConfig,
                               )}
-                              spellCheck={false}
-                              list={
-                                imageGenerationDraft.providerId
-                                  ? `image-generation-models-${imageGenerationDraft.providerId}`
-                                  : undefined
-                              }
-                              disabled={!imageGenerationDraft.providerId}
                             />
-                            {imageGenerationDraft.providerId ? (
-                              <datalist id={`image-generation-models-${imageGenerationDraft.providerId}`}>
-                                {imageGenerationProviderSuggestions.map((modelId) => (
-                                  <option key={modelId} value={modelId} />
-                                ))}
-                              </datalist>
-                            ) : null}
-                          </>
-                        )}
+                          </SelectTrigger>
+                          <SelectContent>
+                            {imageGenerationModelOptions.map((modelId) => (
+                              <SelectItem key={modelId} value={modelId}>
+                                {modelId}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </label>
 
                       {imageGenerationDraft.providerId && !imageGenerationProviderConnected ? (

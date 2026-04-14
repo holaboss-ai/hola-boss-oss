@@ -34,6 +34,7 @@ export interface TsRunnerRequest {
   attachments?: TsRunnerInputAttachment[];
   context: JsonObject;
   model?: string | null;
+  thinking_value?: string | null;
   debug: boolean;
 }
 
@@ -180,6 +181,10 @@ export function validateTsRunnerRequest(payload: unknown): TsRunnerRequest {
     attachments: attachments(payload.attachments),
     context: context as JsonObject,
     model: payload.model === undefined || payload.model === null ? null : requiredString(payload.model, "model"),
+    thinking_value:
+      payload.thinking_value === undefined || payload.thinking_value === null
+        ? null
+        : requiredString(payload.thinking_value, "thinking_value"),
     debug: debugValue ?? false
   };
 }

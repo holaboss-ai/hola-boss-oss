@@ -198,7 +198,11 @@ test("image generation model client resolves OpenRouter image providers with Ope
   assert.deepEqual(client, {
     baseUrl: "https://openrouter.ai/api/v1",
     apiKey: "sk-or-test",
-    defaultHeaders: null,
+    defaultHeaders: {
+      "HTTP-Referer": "https://holaboss.ai",
+      "X-OpenRouter-Title": "holaOS",
+      "X-OpenRouter-Categories": "personal-agent,general-chat",
+    },
     modelId: "google/gemini-3.1-flash-image-preview",
     apiStyle: "openrouter_image",
   });

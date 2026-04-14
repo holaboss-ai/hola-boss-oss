@@ -319,6 +319,9 @@ export async function generateWorkspaceImage(
     });
   } else if (client.apiStyle === "openrouter_image") {
     endpoint = `${baseUrl}/chat/completions`;
+    if (!hasExplicitAuthHeader(headers) && client.apiKey.trim()) {
+      headers.Authorization = `Bearer ${client.apiKey.trim()}`;
+    }
     requestBody = openRouterImagePayload({
       modelId: client.modelId,
       prompt,
