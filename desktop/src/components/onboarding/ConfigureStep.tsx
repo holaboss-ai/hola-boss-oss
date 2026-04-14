@@ -2,8 +2,8 @@ import { ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { TemplateCard } from "./TemplateCard";
 import { IntegrationsList } from "./IntegrationsList";
+import { TemplateCard } from "./TemplateCard";
 
 interface ConfigureStepProps {
   templateSourceMode: string;
@@ -16,13 +16,13 @@ interface ConfigureStepProps {
   connectingProvider: string | null;
   connectStatus: string;
   workspaceErrorMessage: string;
-  createDisabled: boolean;
+  continueDisabled: boolean;
   hasUnconnectedIntegrations: boolean;
   onChangeKit: () => void;
   onChangeFolder: () => void;
-  onBackToKits: () => void;
+  onCancel: () => void;
   onConnect: (provider: string) => void;
-  onCreate: () => void;
+  onContinue: () => void;
 }
 
 export function ConfigureStep({
@@ -36,13 +36,13 @@ export function ConfigureStep({
   connectingProvider,
   connectStatus,
   workspaceErrorMessage,
-  createDisabled,
+  continueDisabled,
   hasUnconnectedIntegrations,
   onChangeKit,
   onChangeFolder,
-  onBackToKits,
+  onCancel,
   onConnect,
-  onCreate,
+  onContinue,
 }: ConfigureStepProps) {
   return (
     <div>
@@ -98,20 +98,20 @@ export function ConfigureStep({
       <div className="mt-5 flex items-center gap-3">
         <Button
           disabled={
-            createDisabled ||
+            continueDisabled ||
             hasUnconnectedIntegrations ||
             isResolvingIntegrations ||
             connectingProvider !== null
           }
-          onClick={onCreate}
+          onClick={onContinue}
           size="lg"
           className="h-11 gap-2 rounded-xl px-5"
         >
-          Create Workspace
+          Next
           <ArrowRight size={16} />
         </Button>
-        <Button variant="link" size="sm" onClick={onBackToKits} className="text-muted-foreground">
-          Back to workers
+        <Button variant="link" size="sm" onClick={onCancel} className="text-muted-foreground">
+          Cancel
         </Button>
       </div>
     </div>

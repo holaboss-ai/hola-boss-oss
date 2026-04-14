@@ -1,0 +1,58 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const sourcePath = path.join(__dirname, "ChatPane.tsx");
+
+test("chat pane serializes quoted skills into a leading slash block before queueing", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /function serializeQuotedSkillPrompt\(/);
+  assert.match(source, /quotedSkillIds\.map\(\(skillId\) => `\/\$\{skillId\}`\)/);
+  assert.match(source, /\[\.\.\.lines, "", normalizedBody\]\.join\("\\n"\)/);
+  assert.match(source, /const serializedPrompt = serializeQuotedSkillPrompt\(\s*trimmed,\s*quotedSkillIds,\s*\);/);
+  assert.match(source, /text: serializedPrompt,/);
+  assert.match(
+    source,
+    /window\.electronAPI\.workspace\.queueSessionInput\(\{[\s\S]*text: serializedPrompt,/,
+  );
+});
+
+test("chat pane loads workspace skills into slash commands and quoted skill chips", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /const \[quotedSkillIds, setQuotedSkillIds\] = useState<string\[\]>\(\[\]\);/);
+  assert.match(source, /const \[availableWorkspaceSkills, setAvailableWorkspaceSkills\] = useState</);
+  assert.match(source, /window\.electronAPI\.workspace\s*\.listSkills\(selectedWorkspaceId\)/);
+  assert.match(source, /const slashCommandOptions = useMemo\(\s*\(\) => buildComposerSlashCommandOptions\(availableWorkspaceSkills\),/);
+  assert.match(source, /quotedSkills=\{quotedSkills\}/);
+  assert.match(source, /slashCommands=\{slashCommandOptions\}/);
+});
+
+test("chat composer renders a slash-triggered skill menu and removes the typed token on selection", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /function findActiveSlashCommandRange\(/);
+  assert.match(source, /function removeSlashCommandText\(/);
+  assert.match(source, /const \[composerActionsMenuOpen, setComposerActionsMenuOpen\] = useState\(false\);/);
+  assert.match(source, /const \[composerActionsView, setComposerActionsView\] = useState</);
+  assert.match(source, /const \[skillPickerQuery, setSkillPickerQuery\] = useState\(""\);/);
+  assert.match(source, /const filteredSlashCommands = useMemo\(\(\) => \{/);
+  assert.match(source, /const filteredSkillCommands = useMemo\(\(\) => \{/);
+  assert.match(source, /const applySlashCommand = \(command: ChatComposerSlashCommandOption\) => \{/);
+  assert.match(source, /const openSkillPickerFromComposerMenu = \(\) => \{/);
+  assert.match(source, /const selectSkillFromPicker = \(command: ChatComposerSlashCommandOption\) => \{/);
+  assert.match(source, /onSelectSlashCommand\(command\);/);
+  assert.match(source, /Attach a file/);
+  assert.match(source, /Use Skills/);
+  assert.match(source, /Search skills\.\.\./);
+  assert.match(source, /onKeyDown=\{handleTextareaKeyDown\}/);
+  assert.match(source, /pointer-events-none absolute left-3 right-3 top-4 z-20 -translate-y-\[calc\(100%\+2px\)\]/);
+  assert.match(source, /Slash commands/);
+  assert.match(source, /No slash commands match\./);
+  assert.match(source, /No skills match this search\./);
+  assert.match(source, /Remove quoted skill/);
+});

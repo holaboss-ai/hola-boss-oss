@@ -7,6 +7,12 @@ interface CreatingViewProps {
   creatingViaMarketplace: boolean;
   showUserButton?: boolean;
   panelVariant?: boolean;
+  browserBootstrapMode?: "fresh" | "copy_workspace" | "import_browser";
+  workspaceCreatePhase?:
+    | "creating_workspace"
+    | "copying_browser_profile"
+    | "importing_browser_profile"
+    | "finalizing";
 }
 
 export function CreatingView({
@@ -14,6 +20,8 @@ export function CreatingView({
   creatingViaMarketplace,
   showUserButton = true,
   panelVariant = false,
+  browserBootstrapMode = "fresh",
+  workspaceCreatePhase = "creating_workspace",
 }: CreatingViewProps) {
   const title = creatingViaMarketplace
     ? "Launching sandbox"
@@ -22,17 +30,49 @@ export function CreatingView({
     ? "Starting a fresh sandbox. Workspace setup continues as soon as the sandbox is ready."
     : "Preparing the local runtime and importing your template.";
   const steps = creatingViaMarketplace
-    ? ["Launching sandbox", "Configuring workspace", "Opening desktop"]
-    : ["Preparing runtime", "Importing template", "Opening workspace"];
+    ? [
+        "Launching sandbox",
+        browserBootstrapMode === "copy_workspace"
+          ? "Copying browser profile"
+          : browserBootstrapMode === "import_browser"
+            ? "Importing browser data"
+            : "Configuring workspace",
+        "Opening desktop",
+      ]
+    : [
+        "Preparing runtime",
+        browserBootstrapMode === "copy_workspace"
+          ? "Copying browser profile"
+          : browserBootstrapMode === "import_browser"
+            ? "Importing browser data"
+            : "Importing template",
+        "Opening workspace",
+      ];
 
   // Simulate progress through steps for visual feedback
   const [activeStep, setActiveStep] = useState(0);
   useEffect(() => {
+    if (workspaceCreatePhase === "creating_workspace") {
+      setActiveStep(0);
+    } else if (
+      workspaceCreatePhase === "copying_browser_profile" ||
+      workspaceCreatePhase === "importing_browser_profile"
+    ) {
+      setActiveStep(1);
+    } else if (workspaceCreatePhase === "finalizing") {
+      setActiveStep(2);
+    }
+  }, [workspaceCreatePhase]);
+
+  useEffect(() => {
+    if (workspaceCreatePhase !== "creating_workspace") {
+      return undefined;
+    }
     const timer = setInterval(() => {
       setActiveStep((prev) => (prev < steps.length - 1 ? prev + 1 : prev));
     }, 4000);
     return () => clearInterval(timer);
-  }, [steps.length]);
+  }, [steps.length, workspaceCreatePhase]);
 
   return (
     <section className={`${sectionClassName} grid place-items-center`}>

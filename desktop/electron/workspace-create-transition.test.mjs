@@ -28,6 +28,8 @@ test("workspace creation keeps the creating view through the selection handoff",
 
   assert.match(
     source,
-    /setSelectedWorkspaceId\(response\.workspace\.id\);[\s\S]*window\.setTimeout\(resolve, 0\)/,
+    /setSelectedWorkspaceId\(createdWorkspaceId\);[\s\S]*window\.setTimeout\(resolve, 0\)/,
   );
+  assert.match(source, /setWorkspaceCreatePhase\("creating_workspace"\);/);
+  assert.match(source, /setWorkspaceCreatePhase\("finalizing"\);/);
 });

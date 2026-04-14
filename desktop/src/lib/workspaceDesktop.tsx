@@ -17,6 +17,12 @@ const DEFAULT_WORKSPACE_HARNESS: WorkspaceHarnessId = "pi";
 const BOOTSTRAP_IPC_TIMEOUT_MS = 8_000;
 type TemplateSourceMode = "local" | "marketplace" | "empty" | "empty_onboarding";
 type LifecycleStepState = "pending" | "current" | "done" | "error";
+type WorkspaceBrowserBootstrapMode = "fresh" | "copy_workspace" | "import_browser";
+type WorkspaceCreatePhase =
+  | "creating_workspace"
+  | "copying_browser_profile"
+  | "importing_browser_profile"
+  | "finalizing";
 
 export interface WorkspaceHarnessOption {
   id: "pi";
@@ -77,6 +83,15 @@ interface WorkspaceDesktopContextValue {
   selectMarketplaceTemplate: (templateName: string) => void;
   newWorkspaceName: string;
   setNewWorkspaceName: (value: string) => void;
+  browserBootstrapMode: WorkspaceBrowserBootstrapMode;
+  setBrowserBootstrapMode: (value: WorkspaceBrowserBootstrapMode) => void;
+  browserBootstrapSourceWorkspaceId: string;
+  setBrowserBootstrapSourceWorkspaceId: (workspaceId: string) => void;
+  browserImportSource: BrowserImportSource;
+  setBrowserImportSource: (source: BrowserImportSource) => void;
+  browserImportProfileDir: string;
+  setBrowserImportProfileDir: (profileDir: string) => void;
+  workspaceCreatePhase: WorkspaceCreatePhase;
   resolvedUserId: string;
   isLoadingBootstrap: boolean;
   isRefreshing: boolean;
@@ -209,6 +224,15 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   const [selectedMarketplaceTemplateName, setSelectedMarketplaceTemplateName] = useState("");
   const [selectedApps, setSelectedApps] = useState<Set<string>>(new Set());
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
+  const [browserBootstrapMode, setBrowserBootstrapModeState] =
+    useState<WorkspaceBrowserBootstrapMode>("fresh");
+  const [browserBootstrapSourceWorkspaceId, setBrowserBootstrapSourceWorkspaceIdState] =
+    useState("");
+  const [browserImportSource, setBrowserImportSourceState] =
+    useState<BrowserImportSource>("chrome");
+  const [browserImportProfileDir, setBrowserImportProfileDirState] = useState("");
+  const [workspaceCreatePhase, setWorkspaceCreatePhase] =
+    useState<WorkspaceCreatePhase>("creating_workspace");
   const [isLoadingBootstrap, setIsLoadingBootstrap] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
@@ -242,6 +266,22 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     () => marketplaceTemplates.find((template) => template.name === selectedMarketplaceTemplateName) ?? null,
     [marketplaceTemplates, selectedMarketplaceTemplateName]
   );
+
+  useEffect(() => {
+    const currentSourceWorkspaceId = browserBootstrapSourceWorkspaceId.trim();
+    if (
+      currentSourceWorkspaceId &&
+      workspaces.some((workspace) => workspace.id === currentSourceWorkspaceId)
+    ) {
+      return;
+    }
+    setBrowserBootstrapSourceWorkspaceIdState(workspaces[0]?.id ?? "");
+  }, [browserBootstrapSourceWorkspaceId, workspaces]);
+
+  useEffect(() => {
+    setBrowserImportProfileDirState("");
+  }, [browserImportSource]);
+
   const onboardingModeActive = useMemo(() => isOnboardingMode(selectedWorkspace), [selectedWorkspace]);
   const sessionModeLabel = onboardingModeActive ? "onboarding" : "session";
   const sessionTargetId = onboardingModeActive
@@ -255,6 +295,26 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   function setTemplateSourceMode(value: TemplateSourceMode) {
     setWorkspaceErrorMessage("");
     setTemplateSourceModeState(value);
+  }
+
+  function setBrowserBootstrapMode(value: WorkspaceBrowserBootstrapMode) {
+    setWorkspaceErrorMessage("");
+    setBrowserBootstrapModeState(value);
+  }
+
+  function setBrowserBootstrapSourceWorkspaceId(workspaceId: string) {
+    setWorkspaceErrorMessage("");
+    setBrowserBootstrapSourceWorkspaceIdState(workspaceId);
+  }
+
+  function setBrowserImportSource(source: BrowserImportSource) {
+    setWorkspaceErrorMessage("");
+    setBrowserImportSourceState(source);
+  }
+
+  function setBrowserImportProfileDir(profileDir: string) {
+    setWorkspaceErrorMessage("");
+    setBrowserImportProfileDirState(profileDir);
   }
 
   function setSelectedCreateHarness(value: string) {
@@ -504,6 +564,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
 
   async function createWorkspace() {
     setIsCreatingWorkspace(true);
+    setWorkspaceCreatePhase("creating_workspace");
     setWorkspaceErrorMessage("");
     try {
       const trimmedWorkspaceName = newWorkspaceName.trim() || "Desktop Workspace";
@@ -546,7 +607,44 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       }
       setNewWorkspaceName("");
       await loadWorkspaceData({ preserveSelection: false, allowEmpty: true });
-      setSelectedWorkspaceId(response.workspace.id);
+      const createdWorkspaceId = response.workspace.id;
+      setSelectedWorkspaceId(createdWorkspaceId);
+
+      let postCreateWarning = "";
+      if (browserBootstrapMode === "copy_workspace") {
+        const sourceWorkspaceId = browserBootstrapSourceWorkspaceId.trim();
+        if (sourceWorkspaceId) {
+          setWorkspaceCreatePhase("copying_browser_profile");
+          try {
+            await window.electronAPI.workspace.copyBrowserWorkspaceProfile({
+              sourceWorkspaceId,
+              targetWorkspaceId: createdWorkspaceId,
+            });
+          } catch (error) {
+            postCreateWarning = `Workspace created, but browser profile copy failed: ${normalizeErrorMessage(error)}`;
+          }
+        }
+      } else if (browserBootstrapMode === "import_browser") {
+        setWorkspaceCreatePhase("importing_browser_profile");
+        try {
+          await window.electronAPI.workspace.importBrowserProfile({
+            workspaceId: createdWorkspaceId,
+            source: browserImportSource,
+            profileDir:
+              browserImportSource === "safari"
+                ? undefined
+                : (browserImportProfileDir.trim() || undefined),
+          });
+        } catch (error) {
+          postCreateWarning = `Workspace created, but browser import failed: ${normalizeErrorMessage(error)}`;
+        }
+      }
+
+      if (postCreateWarning) {
+        setWorkspaceErrorMessage(postCreateWarning);
+      }
+
+      setWorkspaceCreatePhase("finalizing");
       // Keep the creating view alive for one more task so panel-based creation
       // can hand off cleanly to the newly selected workspace without flashing
       // the configuration screen again before the panel closes.
@@ -557,6 +655,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       setWorkspaceErrorMessage(normalizeErrorMessage(error));
     } finally {
       setIsCreatingWorkspace(false);
+      setWorkspaceCreatePhase("creating_workspace");
     }
   }
 
@@ -1187,6 +1286,15 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       selectMarketplaceTemplate,
       newWorkspaceName,
       setNewWorkspaceName,
+      browserBootstrapMode,
+      setBrowserBootstrapMode,
+      browserBootstrapSourceWorkspaceId,
+      setBrowserBootstrapSourceWorkspaceId,
+      browserImportSource,
+      setBrowserImportSource,
+      browserImportProfileDir,
+      setBrowserImportProfileDir,
+      workspaceCreatePhase,
       resolvedUserId,
       isLoadingBootstrap,
       isRefreshing,
@@ -1244,6 +1352,11 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       marketplaceTemplates,
       selectedMarketplaceTemplate,
       newWorkspaceName,
+      browserBootstrapMode,
+      browserBootstrapSourceWorkspaceId,
+      browserImportSource,
+      browserImportProfileDir,
+      workspaceCreatePhase,
       resolvedUserId,
       isLoadingBootstrap,
       isRefreshing,

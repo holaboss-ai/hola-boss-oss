@@ -2043,6 +2043,44 @@ test("buildPiPromptPayload requires todoread first when resuming with persisted 
   }
 });
 
+test("buildPiPromptPayload expands leading slash skill references into quoted skill blocks", async () => {
+  const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-slash-skills-"));
+  const skillsDir = path.join(workspaceDir, "skills");
+  const customerLookupDir = path.join(skillsDir, "customer_lookup");
+  fs.mkdirSync(customerLookupDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(customerLookupDir, "SKILL.md"),
+    [
+      "---",
+      'description: "Look up customer state before replying."',
+      "---",
+      "",
+      "# Customer Lookup",
+      "",
+      "Check the customer profile before writing the response.",
+    ].join("\n"),
+    "utf8"
+  );
+
+  try {
+    const prompt = await buildPiPromptPayload({
+      ...baseRequest(),
+      workspace_dir: workspaceDir,
+      workspace_skill_dirs: [skillsDir],
+      instruction: ["/customer_lookup", "", "Draft the follow-up email."].join("\n"),
+    });
+
+    assert.match(prompt.text, /Quoted workspace skills:/);
+    assert.match(prompt.text, /<skill name="customer_lookup" location=".*customer_lookup\/SKILL\.md">/);
+    assert.match(prompt.text, /References are relative to .*customer_lookup/);
+    assert.match(prompt.text, /Check the customer profile before writing the response\./);
+    assert.match(prompt.text, /Draft the follow-up email\./);
+    assert.doesNotMatch(prompt.text, /^\/customer_lookup$/m);
+  } finally {
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+  }
+});
+
 test("buildPiPromptPayload rejects attachment paths outside workspace boundary", async () => {
   const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-attachment-boundary-"));
   const outsideFile = path.join(path.dirname(workspaceDir), "outside.txt");

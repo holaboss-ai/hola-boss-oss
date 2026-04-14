@@ -23,7 +23,6 @@ import {
 import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
 import { MarketplacePane } from "@/components/panes/MarketplacePane";
 import { OnboardingPane } from "@/components/panes/OnboardingPane";
-import { SkillsPane } from "@/components/panes/SkillsPane";
 import { SpaceBrowserDisplayPane } from "@/components/panes/SpaceBrowserDisplayPane";
 import { SpaceBrowserExplorerPane } from "@/components/panes/SpaceBrowserExplorerPane";
 import { PublishDialog } from "@/components/publish/PublishDialog";
@@ -3677,13 +3676,9 @@ function AppShellContent() {
                       onCreateSchedule={handleCreateScheduleInChat}
                     />
                   </div>
-                ) : activeLeftRailItem === "marketplace" ? (
-                  <div className="h-full min-h-0 overflow-hidden rounded-xl">
-                    <MarketplacePane />
-                  </div>
                 ) : (
                   <div className="h-full min-h-0 overflow-hidden rounded-xl">
-                    <SkillsPane />
+                    <MarketplacePane />
                   </div>
                 )}
               </div>
