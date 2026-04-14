@@ -622,6 +622,8 @@ export function FileExplorerPane({
   } | null>(null);
   const lastProcessedFocusRequestKeyRef = useRef<number | null>(null);
   const currentPathRef = useRef("");
+  const isDirtyRef = useRef(false);
+  const isSavingRef = useRef(false);
   const [currentPath, setCurrentPath] = useState<string>("");
   const [entries, setEntries] = useState<LocalFileEntry[]>([]);
   const [directoryEntriesByPath, setDirectoryEntriesByPath] = useState<
@@ -772,48 +774,92 @@ export function FileExplorerPane({
     let cancelled = false;
     let refreshInFlight = false;
 
-    const refreshCurrentDirectory = async () => {
+    const refreshLoadedDirectories = async () => {
       if (cancelled || refreshInFlight) {
         return;
       }
 
       refreshInFlight = true;
       try {
-        const payload = await window.electronAPI.fs.listDirectory(
+        const refreshTargets = [
           currentPath,
-          selectedWorkspaceId ?? null,
+          ...Object.entries(expandedDirectoryPaths)
+            .filter(([, isExpanded]) => isExpanded)
+            .map(([targetPath]) => targetPath),
+        ].filter(
+          (targetPath, index, paths) =>
+            Boolean(targetPath) &&
+            paths.findIndex(
+              (candidatePath) =>
+                normalizeComparablePath(candidatePath) ===
+                normalizeComparablePath(targetPath),
+            ) === index,
         );
-        if (cancelled || payload.currentPath !== currentPath) {
+        const refreshedDirectories = await Promise.allSettled(
+          refreshTargets.map((targetPath) =>
+            window.electronAPI.fs.listDirectory(
+              targetPath,
+              selectedWorkspaceId ?? null,
+            ),
+          ),
+        );
+        if (cancelled) {
           return;
         }
-        setEntries(payload.entries);
-        setDirectoryEntriesByPath((current) => ({
-          ...current,
-          [payload.currentPath]: payload.entries,
-        }));
+
+        let currentDirectoryPayload: LocalDirectoryResponse | null = null;
+        const refreshedEntriesByPath: Record<string, LocalFileEntry[]> = {};
+
+        for (const refreshedDirectory of refreshedDirectories) {
+          if (refreshedDirectory.status !== "fulfilled") {
+            continue;
+          }
+          const payload = refreshedDirectory.value;
+          refreshedEntriesByPath[payload.currentPath] = payload.entries;
+          if (
+            normalizeComparablePath(payload.currentPath) ===
+            normalizeComparablePath(currentPath)
+          ) {
+            currentDirectoryPayload = payload;
+          }
+        }
+
+        if (Object.keys(refreshedEntriesByPath).length > 0) {
+          setDirectoryEntriesByPath((current) => ({
+            ...current,
+            ...refreshedEntriesByPath,
+          }));
+        }
+        if (!currentDirectoryPayload) {
+          return;
+        }
+
+        setEntries(currentDirectoryPayload.entries);
         setSelectedPath((prev) =>
           !prev ||
-          (!payload.entries.some((entry) => entry.absolutePath === prev) &&
-            !isPathWithin(payload.currentPath, prev))
-            ? (payload.entries[0]?.absolutePath ?? "")
+          (!currentDirectoryPayload.entries.some(
+            (entry) => entry.absolutePath === prev,
+          ) &&
+            !isPathWithin(currentDirectoryPayload.currentPath, prev))
+            ? (currentDirectoryPayload.entries[0]?.absolutePath ?? "")
             : prev,
         );
       } catch {
-        // Best-effort background refresh; keep current listing on transient failures.
+        // Best-effort background refresh; keep current listings on transient failures.
       } finally {
         refreshInFlight = false;
       }
     };
 
     const timer = window.setInterval(() => {
-      void refreshCurrentDirectory();
+      void refreshLoadedDirectories();
     }, 1200);
 
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [currentPath, selectedWorkspaceId]);
+  }, [currentPath, expandedDirectoryPaths, selectedWorkspaceId]);
 
   useEffect(() => {
     let mounted = true;
@@ -943,6 +989,14 @@ export function FileExplorerPane({
   const isMarkdownPreview = isMarkdownPreviewPayload(preview);
   const isHtmlPreview = isHtmlPreviewPayload(preview);
   const supportsRenderedTextPreview = isMarkdownPreview || isHtmlPreview;
+
+  useEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
+
+  useEffect(() => {
+    isSavingRef.current = saving;
+  }, [saving]);
 
   const openPreviewLink = useCallback((url: string) => {
     void window.electronAPI.ui.openExternalUrl(url);
@@ -1191,6 +1245,75 @@ export function FileExplorerPane({
     setRenameDraft("");
     setRenameSaving(false);
   }, []);
+
+  useEffect(() => {
+    const watchedPath = preview?.absolutePath?.trim() || "";
+    if (!previewInPane || !watchedPath) {
+      return;
+    }
+
+    let cancelled = false;
+    let subscriptionId = "";
+    let refreshInFlight = false;
+
+    const refreshPreviewFromDisk = async () => {
+      if (
+        cancelled ||
+        refreshInFlight ||
+        isDirtyRef.current ||
+        isSavingRef.current
+      ) {
+        return;
+      }
+
+      refreshInFlight = true;
+      try {
+        const nextPreview = await window.electronAPI.fs.readFilePreview(
+          watchedPath,
+          selectedWorkspaceId ?? null,
+        );
+        if (cancelled) {
+          return;
+        }
+        setPreview(nextPreview);
+        setPreviewDraft(nextPreview.content ?? "");
+        setTablePreviewDraft(cloneTablePreviewSheets(nextPreview.tableSheets));
+      } catch {
+        // The agent may still be writing or replacing the file; wait for the next event.
+      } finally {
+        refreshInFlight = false;
+      }
+    };
+
+    const unsubscribe = window.electronAPI.fs.onFileChange((payload) => {
+      if (
+        normalizeComparablePath(payload.absolutePath) !==
+        normalizeComparablePath(watchedPath)
+      ) {
+        return;
+      }
+      void refreshPreviewFromDisk();
+    });
+
+    void window.electronAPI.fs
+      .watchFile(watchedPath, selectedWorkspaceId ?? null)
+      .then((subscription) => {
+        if (cancelled) {
+          void window.electronAPI.fs.unwatchFile(subscription.subscriptionId);
+          return;
+        }
+        subscriptionId = subscription.subscriptionId;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+      if (subscriptionId) {
+        void window.electronAPI.fs.unwatchFile(subscriptionId);
+      }
+    };
+  }, [preview?.absolutePath, previewInPane, selectedWorkspaceId]);
 
   const startRenamingEntry = useCallback(
     (entry: LocalFileEntry) => {

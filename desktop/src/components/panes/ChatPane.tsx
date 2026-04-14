@@ -6974,19 +6974,22 @@ function ThinkingValueSelect({
         }`}
       >
         {compact ? (
-          <span
-            className={`flex min-w-0 flex-1 items-center ${
-              showCompactLabel ? "gap-1.5" : "justify-center"
-            }`}
-          >
-            <Lightbulb
-              size={13}
-              className="shrink-0 text-muted-foreground"
-            />
-            {showCompactLabel ? (
+          showCompactLabel ? (
+            <span className="flex min-w-0 flex-1 items-center gap-1.5">
+              <Lightbulb
+                size={13}
+                className="shrink-0 text-muted-foreground"
+              />
               <span className="truncate">{selectedThinkingLabel}</span>
-            ) : null}
-          </span>
+            </span>
+          ) : (
+            <span className="flex min-w-0 flex-1 items-center justify-start">
+              <Lightbulb
+                size={13}
+                className="shrink-0 text-muted-foreground"
+              />
+            </span>
+          )
         ) : (
           <SelectValue placeholder="Thinking" />
         )}

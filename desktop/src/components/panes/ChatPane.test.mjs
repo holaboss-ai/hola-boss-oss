@@ -171,7 +171,7 @@ test("chat composer switches model and thinking selectors into icon-led compact 
   );
   assert.match(
     source,
-    /compact \? \(\s*<span className="flex min-w-0 flex-1 items-center gap-1\.5">[\s\S]*<Lightbulb[\s\S]*<span className="truncate">\{selectedThinkingLabel\}<\/span>/,
+    /compact \? \(\s*showCompactLabel \? \(\s*<span className="flex min-w-0 flex-1 items-center gap-1\.5">[\s\S]*<Lightbulb[\s\S]*<span className="truncate">\{selectedThinkingLabel\}<\/span>[\s\S]*\) : \(\s*<span className="flex min-w-0 flex-1 items-center justify-start">[\s\S]*<Lightbulb/,
   );
 });
 

@@ -24,16 +24,57 @@ test("file explorer syncs the workspace root only when the selected workspace ch
   assert.doesNotMatch(source, /currentPath === workspaceRoot/);
 });
 
-test("file explorer polls the current directory to surface live file changes", async () => {
+test("file explorer refreshes the current directory and expanded folders to surface live file changes", async () => {
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(
     source,
-    /const payload = await window\.electronAPI\.fs\.listDirectory\(\s*currentPath,\s*selectedWorkspaceId \?\? null,\s*\);/,
+    /const refreshTargets = \[\s*currentPath,\s*\.\.\.Object\.entries\(expandedDirectoryPaths\)[\s\S]*\.filter\(\s*\(\[, isExpanded\]\) => isExpanded\s*\)[\s\S]*\.map\(\(\[targetPath\]\) => targetPath\),\s*\]\.filter\(/,
   );
-  assert.match(source, /const timer = window\.setInterval\(\(\) => \{\s*void refreshCurrentDirectory\(\);\s*\}, 1200\);/);
+  assert.match(source, /const refreshedDirectories = await Promise\.allSettled\(/);
+  assert.match(source, /refreshTargets\.map\(\(targetPath\) =>/);
+  assert.match(
+    source,
+    /window\.electronAPI\.fs\.listDirectory\(\s*targetPath,\s*selectedWorkspaceId \?\? null,\s*\)/,
+  );
+  assert.match(
+    source,
+    /setDirectoryEntriesByPath\(\(current\) => \(\{\s*\.\.\.current,\s*\.\.\.refreshedEntriesByPath,\s*\}\)\);/,
+  );
+  assert.match(source, /const timer = window\.setInterval\(\(\) => \{\s*void refreshLoadedDirectories\(\);\s*\}, 1200\);/);
   assert.match(source, /window\.clearInterval\(timer\);/);
-  assert.match(source, /\}, \[currentPath, selectedWorkspaceId\]\);/);
+  assert.match(source, /\}, \[currentPath, expandedDirectoryPaths, selectedWorkspaceId\]\);/);
+});
+
+test("file explorer live-refreshes inline previews from file watch events without overwriting dirty edits", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /const isDirtyRef = useRef\(false\);/);
+  assert.match(source, /const isSavingRef = useRef\(false\);/);
+  assert.match(source, /isDirtyRef\.current = isDirty;/);
+  assert.match(source, /isSavingRef\.current = saving;/);
+  assert.match(
+    source,
+    /const watchedPath = preview\?\.absolutePath\?\.trim\(\) \|\| "";\s*if \(!previewInPane \|\| !watchedPath\) \{\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /window\.electronAPI\.fs\.onFileChange\(\(payload\) => \{\s*if \(\s*normalizeComparablePath\(payload\.absolutePath\) !==\s*normalizeComparablePath\(watchedPath\)\s*\) \{\s*return;\s*\}\s*void refreshPreviewFromDisk\(\);\s*\}\);/,
+  );
+  assert.match(
+    source,
+    /window\.electronAPI\.fs[\s\S]*\.watchFile\(/,
+  );
+  assert.match(source, /watchedPath,\s*selectedWorkspaceId \?\? null/);
+  assert.match(
+    source,
+    /if \(\s*cancelled \|\|\s*refreshInFlight \|\|\s*isDirtyRef\.current \|\|\s*isSavingRef\.current\s*\) \{\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /const nextPreview = await window\.electronAPI\.fs\.readFilePreview\(\s*watchedPath,\s*selectedWorkspaceId \?\? null,\s*\);[\s\S]*setPreview\(nextPreview\);[\s\S]*setPreviewDraft\(nextPreview\.content \?\? ""\);/,
+  );
+  assert.match(source, /void window\.electronAPI\.fs\.unwatchFile\(subscriptionId\);/);
 });
 
 test("file explorer switches folders to inline tree expansion and keeps explorer-only file opening", async () => {
