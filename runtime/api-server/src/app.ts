@@ -4268,86 +4268,90 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 409, "app install already in progress for this id");
     }
 
-    const rawArchivePath =
-      typeof request.body.archive_path === "string" ? request.body.archive_path : "";
-    const rawArchiveUrl =
-      typeof request.body.archive_url === "string" ? request.body.archive_url : "";
-
-    if (rawArchivePath && rawArchiveUrl) {
-      return sendError(reply, 400, "provide either archive_path or archive_url, not both");
-    }
-    if (!rawArchivePath && !rawArchiveUrl) {
-      return sendError(reply, 400, "archive_path or archive_url is required");
-    }
-
-    let archivePath: string;
-    let cleanupTempFile = false;
-
-    if (rawArchiveUrl) {
-      if (!isAllowedArchiveUrl(rawArchiveUrl)) {
-        app.log.warn(
-          { event: "app.install_archive.url_denied", workspaceId, appId, url: rawArchiveUrl },
-          "install-archive: archive_url outside allowlist",
-        );
-        return sendError(reply, 400, "archive_url outside allowlist");
-      }
-      try {
-        app.log.info(
-          { event: "app.install_archive.download_start", workspaceId, appId, url: rawArchiveUrl },
-          "install-archive: downloading",
-        );
-        archivePath = await downloadArchiveToTemp(rawArchiveUrl, appId);
-        cleanupTempFile = true;
-        app.log.info(
-          { event: "app.install_archive.download_complete", workspaceId, appId, archivePath },
-          "install-archive: download complete",
-        );
-      } catch (error) {
-        app.log.error(
-          {
-            event: "app.install_archive.download_failed",
-            workspaceId,
-            appId,
-            url: rawArchiveUrl,
-            err: error instanceof Error ? error.message : String(error),
-          },
-          "install-archive: download failed",
-        );
-        return sendError(
-          reply,
-          400,
-          `archive download failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    } else {
-      archivePath = rawArchivePath;
-      if (!isAllowedArchivePath(archivePath)) {
-        return sendError(reply, 400, "archive_path outside allowed roots");
-      }
-      if (!fs.existsSync(archivePath) || !fs.statSync(archivePath).isFile()) {
-        return sendError(reply, 400, "archive_path does not exist");
-      }
-    }
-
-    // Mark this install as in-flight before any filesystem mutation so a
-    // racing request hits the early-return 409 above.
+    // Claim the install lock before ANY async work, early return, or
+    // filesystem mutation. Two bugs hide in delaying this:
+    //   1. Concurrent archive_url requests both pass the in-flight check
+    //      above, both await downloadArchiveToTemp, and both reach
+    //      extraction/registration — the download was the race window.
+    //   2. Any early return taken before the try/finally leaves the lock
+    //      set, pinning that (workspaceId, appId) until the runtime
+    //      restarts (e.g. the "app already installed" path).
+    // Every exit path below now runs through the finally that clears it.
     let installPromiseResolve!: () => void;
     const installMarker = new Promise<void>((resolve) => {
       installPromiseResolve = resolve;
     });
     appInstallTasks.set(installKey, installMarker);
 
-    const workspaceDir = store.workspaceDir(workspaceId);
-    const appDir = path.join(workspaceDir, "apps", appId);
-    if (fs.existsSync(appDir) && fs.readdirSync(appDir).length > 0) {
-      if (cleanupTempFile) {
-        try { fs.rmSync(archivePath, { force: true }); } catch { /* best effort */ }
-      }
-      return sendError(reply, 409, "app already installed — uninstall first");
-    }
-    fs.mkdirSync(appDir, { recursive: true });
+    let archivePath = "";
+    let cleanupTempFile = false;
 
     try {
+      const rawArchivePath =
+        typeof request.body.archive_path === "string" ? request.body.archive_path : "";
+      const rawArchiveUrl =
+        typeof request.body.archive_url === "string" ? request.body.archive_url : "";
+
+      if (rawArchivePath && rawArchiveUrl) {
+        return sendError(reply, 400, "provide either archive_path or archive_url, not both");
+      }
+      if (!rawArchivePath && !rawArchiveUrl) {
+        return sendError(reply, 400, "archive_path or archive_url is required");
+      }
+
+      if (rawArchiveUrl) {
+        if (!isAllowedArchiveUrl(rawArchiveUrl)) {
+          app.log.warn(
+            { event: "app.install_archive.url_denied", workspaceId, appId, url: rawArchiveUrl },
+            "install-archive: archive_url outside allowlist",
+          );
+          return sendError(reply, 400, "archive_url outside allowlist");
+        }
+        try {
+          app.log.info(
+            { event: "app.install_archive.download_start", workspaceId, appId, url: rawArchiveUrl },
+            "install-archive: downloading",
+          );
+          archivePath = await downloadArchiveToTemp(rawArchiveUrl, appId);
+          cleanupTempFile = true;
+          app.log.info(
+            { event: "app.install_archive.download_complete", workspaceId, appId, archivePath },
+            "install-archive: download complete",
+          );
+        } catch (error) {
+          app.log.error(
+            {
+              event: "app.install_archive.download_failed",
+              workspaceId,
+              appId,
+              url: rawArchiveUrl,
+              err: error instanceof Error ? error.message : String(error),
+            },
+            "install-archive: download failed",
+          );
+          return sendError(
+            reply,
+            400,
+            `archive download failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      } else {
+        archivePath = rawArchivePath;
+        if (!isAllowedArchivePath(archivePath)) {
+          return sendError(reply, 400, "archive_path outside allowed roots");
+        }
+        if (!fs.existsSync(archivePath) || !fs.statSync(archivePath).isFile()) {
+          return sendError(reply, 400, "archive_path does not exist");
+        }
+      }
+
+      const workspaceDir = store.workspaceDir(workspaceId);
+      const appDir = path.join(workspaceDir, "apps", appId);
+      if (fs.existsSync(appDir) && fs.readdirSync(appDir).length > 0) {
+        return sendError(reply, 409, "app already installed — uninstall first");
+      }
+      fs.mkdirSync(appDir, { recursive: true });
+
       app.log.info(
         { event: "app.install_archive.extract_start", workspaceId, appId, appDir },
         "install-archive: extracting tarball",
