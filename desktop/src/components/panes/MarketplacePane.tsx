@@ -23,7 +23,11 @@ function providerDisplayName(provider: string): string {
   return PROVIDER_DISPLAY_NAMES[provider] ?? provider;
 }
 
-export function MarketplacePane() {
+interface MarketplacePaneProps {
+  initialTab?: "templates" | "apps";
+}
+
+export function MarketplacePane({ initialTab = "templates" }: MarketplacePaneProps = {}) {
   const {
     marketplaceTemplates,
     isLoadingMarketplaceTemplates,
@@ -122,7 +126,7 @@ export function MarketplacePane() {
 
   return (
     <Tabs
-      defaultValue="templates"
+      defaultValue={initialTab}
       className="flex h-full min-h-0 p-6 min-w-0 flex-col overflow-hidden bg-muted/50 shadow-xs border border-border rounded-xl"
     >
       <div className="max-w-4xl mx-auto w-full">
