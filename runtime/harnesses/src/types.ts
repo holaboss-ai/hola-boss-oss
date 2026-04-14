@@ -27,6 +27,7 @@ export interface HarnessRunnerRequestLike {
   input_id: string;
   instruction: string;
   attachments?: HarnessInputAttachmentPayload[];
+  thinking_value?: string | null;
   debug?: boolean;
 }
 

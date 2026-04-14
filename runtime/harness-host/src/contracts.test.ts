@@ -79,6 +79,7 @@ test("decodeRunnerRequestBase64 applies defaults for optional fields", () => {
       },
     },
     model: undefined,
+    thinking_value: undefined,
     debug: false,
   });
 });
@@ -99,6 +100,7 @@ test("decodeHarnessHostPiRequestBase64 validates and normalizes request payloads
       browser_tools_enabled: true,
       input_id: "input-1",
       instruction: "Do the thing",
+      thinking_value: "medium",
       provider_id: "openai",
       model_id: "gpt-5.1",
       timeout_seconds: 30,
@@ -128,6 +130,7 @@ test("decodeHarnessHostPiRequestBase64 validates and normalizes request payloads
     input_id: "input-1",
     instruction: "Do the thing",
     attachments: [],
+    thinking_value: "medium",
     debug: false,
     harness_session_id: undefined,
     persisted_harness_session_id: undefined,

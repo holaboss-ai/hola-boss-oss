@@ -139,6 +139,15 @@ const DIRECT_OPENROUTER_API_KEY_ENV = "OPENROUTER_API_KEY";
 const DIRECT_OPENROUTER_BASE_URL_ENV = "OPENROUTER_BASE_URL";
 const DEFAULT_DIRECT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_DIRECT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const OPENROUTER_ATTRIBUTION_REFERER = "https://holaboss.ai";
+const OPENROUTER_ATTRIBUTION_TITLE = "holaOS";
+const OPENROUTER_ATTRIBUTION_CATEGORIES = "personal-agent,general-chat";
+const OPENROUTER_ATTRIBUTION_HEADER_NAMES = new Set([
+  "http-referer",
+  "x-title",
+  "x-openrouter-title",
+  "x-openrouter-categories"
+]);
 const KNOWN_DIRECT_PROVIDER_HOSTS = new Set(["api.openai.com", "api.anthropic.com"]);
 const GEMINI_OPENAI_COMPAT_HOST = "generativelanguage.googleapis.com";
 const GEMINI_OPENAI_COMPAT_PATH = "/v1beta/openai";
@@ -229,6 +238,21 @@ function asStringRecord(value: unknown): Record<string, string> {
     entries.push([normalizedKey, normalizedValue]);
   }
   return Object.fromEntries(entries);
+}
+
+function withOpenRouterAttributionHeaders(kind: string, headers: Record<string, string>): Record<string, string> {
+  if (kind.trim().toLowerCase() !== PROVIDER_KIND_OPENROUTER) {
+    return headers;
+  }
+  const sanitizedEntries = Object.entries(headers).filter(
+    ([key]) => !OPENROUTER_ATTRIBUTION_HEADER_NAMES.has(key.trim().toLowerCase())
+  );
+  return {
+    ...Object.fromEntries(sanitizedEntries),
+    "HTTP-Referer": OPENROUTER_ATTRIBUTION_REFERER,
+    "X-OpenRouter-Title": OPENROUTER_ATTRIBUTION_TITLE,
+    "X-OpenRouter-Categories": OPENROUTER_ATTRIBUTION_CATEGORIES
+  };
 }
 
 function normalizeProviderKind(rawKind: string, providerId: string, baseUrl: string): string {
@@ -327,7 +351,6 @@ function modelProxyProviderForConfiguredProvider(provider: ConfiguredRuntimeProv
 function providerRequiresUnscopedModelId(kind: string): boolean {
   const normalizedKind = kind.trim().toLowerCase();
   return (
-    normalizedKind === PROVIDER_KIND_HOLABOSS_PROXY ||
     normalizedKind === PROVIDER_KIND_OPENAI_COMPATIBLE ||
     normalizedKind === PROVIDER_KIND_ANTHROPIC_NATIVE
   );
@@ -431,10 +454,6 @@ function configuredRuntimeModelCatalog(defaultProviderHint: string): RuntimeMode
       options.authToken as string | undefined,
       options.auth_token as string | undefined
     );
-    const headers = {
-      ...asStringRecord(providerPayload.headers),
-      ...asStringRecord(options.headers)
-    };
     const routes = {
       ...asStringRecord(providerPayload.routes),
       ...asStringRecord(options.routes)
@@ -448,6 +467,10 @@ function configuredRuntimeModelCatalog(defaultProviderHint: string): RuntimeMode
       providerId,
       baseUrl
     );
+    const headers = withOpenRouterAttributionHeaders(kind, {
+      ...asStringRecord(providerPayload.headers),
+      ...asStringRecord(options.headers)
+    });
     providers.set(providerId, {
       id: providerId,
       kind,

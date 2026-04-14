@@ -1004,6 +1004,137 @@ test("resolveRuntimeModelClient routes managed Holaboss Gemini models to the ded
   assert.equal(resolved.modelClient.base_url, "https://proxy.example/api/v1/model-proxy/google/v1");
 });
 
+test("resolveRuntimeModelClient routes managed Holaboss Claude models to the dedicated Anthropic proxy path", () => {
+  const root = makeTempDir("hb-agent-runtime-config-");
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
+    runtime: {
+      default_provider: "holaboss_model_proxy"
+    },
+    providers: {
+      holaboss_model_proxy: {
+        kind: "holaboss_proxy",
+        base_url: "https://proxy.example/api/v1/model-proxy",
+        api_key: "hb-token"
+      }
+    }
+  });
+
+  const resolved = resolveRuntimeModelClient({
+    selectedModel: "holaboss_model_proxy/claude-sonnet-4-6",
+    defaultProviderId: "holaboss_model_proxy",
+    sessionId: "session-1",
+    workspaceId: "workspace-1",
+    inputId: "input-1"
+  });
+
+  assert.equal(resolved.providerId, "anthropic");
+  assert.equal(resolved.configuredProviderId, "holaboss_model_proxy");
+  assert.equal(resolved.modelId, "claude-sonnet-4-6");
+  assert.equal(resolved.modelProxyProvider, "anthropic_native");
+  assert.equal(resolved.modelClient.model_proxy_provider, "anthropic_native");
+  assert.equal(resolved.modelClient.api_key, "hb-token");
+  assert.equal(resolved.modelClient.base_url, "https://proxy.example/api/v1/model-proxy/anthropic/v1");
+});
+
+test("resolveRuntimeModelClient accepts namespaced Holaboss OpenRouter model ids and routes them through the OpenAI-compatible proxy path", () => {
+  const root = makeTempDir("hb-agent-runtime-config-");
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
+    runtime: {
+      default_provider: "holaboss_model_proxy"
+    },
+    providers: {
+      holaboss_model_proxy: {
+        kind: "holaboss_proxy",
+        base_url: "https://proxy.example/api/v1/model-proxy",
+        api_key: "hb-token"
+      }
+    },
+    models: {
+      "holaboss_model_proxy/xiaomi/mimo-v2-pro": {
+        provider_id: "holaboss_model_proxy",
+        model_id: "xiaomi/mimo-v2-pro"
+      }
+    }
+  });
+
+  const resolved = resolveRuntimeModelClient({
+    selectedModel: "holaboss_model_proxy/xiaomi/mimo-v2-pro",
+    defaultProviderId: "holaboss_model_proxy",
+    sessionId: "session-1",
+    workspaceId: "workspace-1",
+    inputId: "input-1"
+  });
+
+  assert.equal(resolved.providerId, "openai");
+  assert.equal(resolved.configuredProviderId, "holaboss_model_proxy");
+  assert.equal(resolved.modelId, "xiaomi/mimo-v2-pro");
+  assert.equal(resolved.modelProxyProvider, "openai_compatible");
+  assert.equal(resolved.modelClient.model_proxy_provider, "openai_compatible");
+  assert.equal(resolved.modelClient.api_key, "hb-token");
+  assert.equal(resolved.modelClient.base_url, "https://proxy.example/api/v1/model-proxy/openai/v1");
+});
+
+test("projectAgentRuntimeConfig preserves namespaced Holaboss OpenRouter model ids from persisted runtime config", () => {
+  const root = makeTempDir("hb-agent-runtime-config-");
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
+    runtime: {
+      sandbox_id: "sandbox-from-runtime",
+      default_provider: "holaboss_model_proxy"
+    },
+    providers: {
+      holaboss_model_proxy: {
+        kind: "holaboss_proxy",
+        base_url: "https://proxy.example/api/v1/model-proxy",
+        api_key: "hb-token"
+      }
+    },
+    models: {
+      "holaboss_model_proxy/xiaomi/mimo-v2-pro": {
+        provider_id: "holaboss_model_proxy",
+        model_id: "xiaomi/mimo-v2-pro"
+      }
+    }
+  });
+
+  const result = projectAgentRuntimeConfig({
+    session_id: "session-1",
+    workspace_id: "workspace-1",
+    input_id: "input-1",
+    session_kind: "workspace_session",
+    harness_id: "pi",
+    browser_tools_available: false,
+    browser_tool_ids: [],
+    runtime_tool_ids: [],
+    workspace_command_ids: [],
+    runtime_exec_model_proxy_api_key: "hb-runtime-token",
+    runtime_exec_sandbox_id: "sandbox-from-exec-context",
+    runtime_exec_run_id: "run-1",
+    selected_model: "holaboss_model_proxy/xiaomi/mimo-v2-pro",
+    default_provider_id: "holaboss_model_proxy",
+    session_mode: "code",
+    workspace_config_checksum: "checksum-1",
+    workspace_skill_ids: [],
+    default_tools: ["read"],
+    extra_tools: [],
+    resolved_mcp_tool_refs: [],
+    resolved_output_schemas: {},
+    agent: {
+      id: "workspace.general",
+      model: "gpt-5.2",
+      prompt: "You are concise."
+    }
+  });
+
+  assert.equal(result.provider_id, "openai");
+  assert.equal(result.model_id, "xiaomi/mimo-v2-pro");
+  assert.equal(result.model_client.model_proxy_provider, "openai_compatible");
+  assert.equal(result.model_client.api_key, "hb-runtime-token");
+  assert.equal(result.model_client.base_url, "https://proxy.example/api/v1/model-proxy/openai/v1");
+});
+
 test("resolveRuntimeModelReference infers bare Gemini models as Google-compatible without configured providers", () => {
   const root = makeTempDir("hb-agent-runtime-config-");
   process.env.HB_SANDBOX_ROOT = root;
@@ -1096,7 +1227,9 @@ test("projectAgentRuntimeConfig keeps direct OpenRouter providers on the provide
         base_url: "https://openrouter.ai/api/v1",
         api_key: "or-key",
         headers: {
-          "HTTP-Referer": "https://holaboss.ai"
+          "HTTP-Referer": "https://override.example",
+          "X-Title": "Legacy Title",
+          "X-Test": "1"
         }
       }
     },
@@ -1149,6 +1282,9 @@ test("projectAgentRuntimeConfig keeps direct OpenRouter providers on the provide
   assert.equal(result.model_client.api_key, "or-key");
   assert.equal(result.model_client.base_url, "https://openrouter.ai/api/v1");
   assert.deepEqual(result.model_client.default_headers, {
-    "HTTP-Referer": "https://holaboss.ai"
+    "X-Test": "1",
+    "HTTP-Referer": "https://holaboss.ai",
+    "X-OpenRouter-Title": "holaOS",
+    "X-OpenRouter-Categories": "personal-agent,general-chat"
   });
 });

@@ -256,8 +256,24 @@ test("decodeTsRunnerRequest decodes a valid runner request", () => {
     attachments: [],
     context: { k: "v" },
     model: "openai/gpt-5.4",
+    thinking_value: null,
     debug: true
   });
+});
+
+test("decodeTsRunnerRequest preserves the selected thinking value", () => {
+  const request = decodeTsRunnerRequest(
+    encodeRequest({
+      workspace_id: "workspace-1",
+      session_id: "session-1",
+      input_id: "input-1",
+      instruction: "hello",
+      context: {},
+      thinking_value: "medium",
+    })
+  );
+
+  assert.equal(request.thinking_value, "medium");
 });
 
 test("validateTsRunnerRequest rejects missing required fields", () => {

@@ -44,6 +44,13 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
 import {
   EXPLORER_ATTACHMENT_DRAG_TYPE,
@@ -59,6 +66,7 @@ import { useDesktopBilling } from "@/lib/billing/useDesktopBilling";
 import { preferredSessionId } from "@/lib/sessionRouting";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
+import * as modelCatalog from "../../../shared/model-catalog.js";
 
 type ChatAttachment = SessionInputAttachmentPayload;
 type ChatPaneVariant = "default" | "onboarding";
@@ -188,6 +196,7 @@ const TOOL_TRACE_TERMINAL_PHASES = new Set(["completed", "failed", "error"]);
 const CHAT_AUTO_SCROLL_THRESHOLD_PX = 72;
 const CHAT_SCROLLBAR_MIN_THUMB_HEIGHT_PX = 40;
 const CHAT_MODEL_STORAGE_KEY = "holaboss-chat-model-v1";
+const CHAT_THINKING_STORAGE_KEY = "holaboss-chat-thinking-v1";
 const CHAT_MODEL_USE_RUNTIME_DEFAULT = "__runtime_default__";
 const LEGACY_UNAVAILABLE_CHAT_MODELS = new Set(["openai/gpt-5.2-mini"]);
 const DEPRECATED_CHAT_MODELS = new Set([
@@ -335,6 +344,58 @@ function loadStoredChatModelPreference() {
   }
 }
 
+function normalizeStoredChatThinkingPreferences(
+  value: string | null | undefined,
+): Record<string, string> {
+  if (!value) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(value);
+    if (!isRecord(parsed)) {
+      return {};
+    }
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+        .map(([key, rawValue]) => [key.trim(), rawValue.trim()])
+        .filter(([key, rawValue]) => Boolean(key) && Boolean(rawValue)),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function loadStoredChatThinkingPreferences() {
+  try {
+    return normalizeStoredChatThinkingPreferences(
+      localStorage.getItem(CHAT_THINKING_STORAGE_KEY),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function runtimeModelThinkingValues(model: RuntimeProviderModelPayload) {
+  if (!Array.isArray(model.thinkingValues)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const values: string[] = [];
+  for (const value of model.thinkingValues) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    const normalized = value.trim();
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    values.push(normalized);
+  }
+  return values;
+}
+
 function displayModelLabel(model: string) {
   const trimmed = model.trim();
   if (!trimmed) {
@@ -367,6 +428,10 @@ function displayModelLabel(model: string) {
         : `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`,
     )
     .join(" ");
+}
+
+function runtimeModelDisplayLabel(model: RuntimeProviderModelPayload) {
+  return model.label?.trim() || displayModelLabel(model.modelId || model.token);
 }
 
 function normalizeChatAttachment(value: unknown): ChatAttachment | null {
@@ -1845,6 +1910,9 @@ export function ChatPane({
   const [chatModelPreference, setChatModelPreference] = useState(
     loadStoredChatModelPreference,
   );
+  const [chatThinkingPreferences, setChatThinkingPreferences] = useState(
+    loadStoredChatThinkingPreferences,
+  );
   const [isHistoryViewportPending, setIsHistoryViewportPending] =
     useState(false);
   const [
@@ -2780,6 +2848,17 @@ export function ChatPane({
       // ignore persistence failures
     }
   }, [chatModelPreference]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        CHAT_THINKING_STORAGE_KEY,
+        JSON.stringify(chatThinkingPreferences),
+      );
+    } catch {
+      // ignore persistence failures
+    }
+  }, [chatThinkingPreferences]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -3889,6 +3968,7 @@ export function ChatPane({
         session_id: targetSessionId,
         priority: 0,
         model: resolvedChatModel || null,
+        thinking_value: effectiveThinkingValue,
       });
       setActiveSession(queued.session_id);
       pendingInputIdRef.current = queued.input_id;
@@ -4187,7 +4267,7 @@ export function ChatPane({
   const providerModelLabelCounts = new Map<string, number>();
   for (const providerGroup of visibleConfiguredProviderModelGroups) {
     for (const model of providerGroup.models) {
-      const modelLabel = displayModelLabel(model.modelId || model.token);
+      const modelLabel = runtimeModelDisplayLabel(model);
       providerModelLabelCounts.set(
         modelLabel,
         (providerModelLabelCounts.get(modelLabel) ?? 0) + 1,
@@ -4209,7 +4289,7 @@ export function ChatPane({
       ? visibleConfiguredProviderModelGroups.map((providerGroup) => ({
           label: providerGroup.providerLabel,
           options: providerGroup.models.map((model) => {
-            const modelLabel = displayModelLabel(model.modelId || model.token);
+            const modelLabel = runtimeModelDisplayLabel(model);
             const needsProviderPrefix =
               visibleConfiguredProviderModelGroups.length > 1 &&
               (providerModelLabelCounts.get(modelLabel) ?? 0) > 1;
@@ -4281,10 +4361,64 @@ export function ChatPane({
         : ""
       : effectiveChatModelPreference.trim() ||
         (runtimeDefaultModelAvailable ? runtimeDefaultModel : "");
+  const selectedConfiguredModel =
+    visibleConfiguredProviderModelGroups
+      .flatMap((providerGroup) => providerGroup.models)
+      .find((model) => model.token === resolvedChatModel) ?? null;
   const selectedManagedProviderGroup =
     visibleConfiguredProviderModelGroups.find((providerGroup) =>
       providerGroup.models.some((model) => model.token === resolvedChatModel),
     );
+  const selectedFallbackModelMetadata =
+    !selectedConfiguredModel &&
+    !hasConfiguredProviderCatalog &&
+    holabossProxyModelsAvailable &&
+    resolvedChatModel
+      ? modelCatalog.catalogMetadataForProviderModel(
+          "holaboss_model_proxy",
+          resolvedChatModel,
+        )
+      : null;
+  const selectedModelSupportsReasoning = selectedConfiguredModel
+    ? selectedConfiguredModel.reasoning === true
+    : Boolean(selectedFallbackModelMetadata?.reasoning);
+  const selectedThinkingValues = selectedConfiguredModel
+    ? runtimeModelThinkingValues(selectedConfiguredModel)
+    : selectedFallbackModelMetadata?.thinkingValues ?? [];
+  const selectedDefaultThinkingValue = selectedConfiguredModel
+    ? selectedConfiguredModel.defaultThinkingValue?.trim() || null
+    : selectedFallbackModelMetadata?.defaultThinkingValue ?? null;
+  const selectedStoredThinkingValue = resolvedChatModel
+    ? (chatThinkingPreferences[resolvedChatModel] ?? "").trim()
+    : "";
+  const effectiveThinkingValue =
+    !selectedModelSupportsReasoning || selectedThinkingValues.length === 0
+      ? null
+      : selectedThinkingValues.includes(selectedStoredThinkingValue)
+        ? selectedStoredThinkingValue
+        : selectedThinkingValues.includes("medium")
+          ? "medium"
+          : selectedDefaultThinkingValue &&
+              selectedThinkingValues.includes(selectedDefaultThinkingValue)
+            ? selectedDefaultThinkingValue
+            : selectedThinkingValues[0] ?? null;
+  const showThinkingValueSelector =
+    !isOnboardingVariant &&
+    selectedModelSupportsReasoning &&
+    selectedThinkingValues.length > 0;
+  const setSelectedThinkingValue = (value: string | null) => {
+    if (!resolvedChatModel) {
+      return;
+    }
+    const normalizedValue = value?.trim() ?? "";
+    if (!normalizedValue) {
+      return;
+    }
+    setChatThinkingPreferences((current) => ({
+      ...current,
+      [resolvedChatModel]: normalizedValue,
+    }));
+  };
   const usesHostedManagedCredits =
     hasHostedBillingAccount &&
     (hasConfiguredProviderCatalog
@@ -4321,6 +4455,21 @@ export function ChatPane({
     }
     setChatModelPreference(effectiveChatModelPreference);
   }, [chatModelPreference, effectiveChatModelPreference]);
+
+  useEffect(() => {
+    if (!resolvedChatModel || !effectiveThinkingValue) {
+      return;
+    }
+    setChatThinkingPreferences((current) => {
+      if ((current[resolvedChatModel] ?? "") === effectiveThinkingValue) {
+        return current;
+      }
+      return {
+        ...current,
+        [resolvedChatModel]: effectiveThinkingValue,
+      };
+    });
+  }, [effectiveThinkingValue, resolvedChatModel]);
 
   const textareaPlaceholder = isOnboardingVariant
     ? "Answer the onboarding prompt or share setup details"
@@ -4776,12 +4925,16 @@ export function ChatPane({
                         runtimeDefaultModelAvailable={
                           runtimeDefaultModelAvailable
                         }
+                        selectedThinkingValue={effectiveThinkingValue}
+                        thinkingValues={selectedThinkingValues}
+                        showThinkingValueSelector={showThinkingValueSelector}
                         modelSelectionUnavailableReason={
                           modelSelectionUnavailableReason
                         }
                         placeholder={textareaPlaceholder}
                         showModelSelector={!isOnboardingVariant}
                         onModelChange={setChatModelPreference}
+                        onThinkingValueChange={setSelectedThinkingValue}
                         onOpenModelProviders={() =>
                           void window.electronAPI.ui.openSettingsPane(
                             "providers",
@@ -4886,12 +5039,16 @@ export function ChatPane({
                     modelOptions={availableChatModelOptions}
                     modelOptionGroups={availableChatModelOptionGroups}
                     runtimeDefaultModelAvailable={runtimeDefaultModelAvailable}
+                    selectedThinkingValue={effectiveThinkingValue}
+                    thinkingValues={selectedThinkingValues}
+                    showThinkingValueSelector={showThinkingValueSelector}
                     modelSelectionUnavailableReason={
                       modelSelectionUnavailableReason
                     }
                     placeholder={textareaPlaceholder}
                     showModelSelector={!isOnboardingVariant}
                     onModelChange={setChatModelPreference}
+                    onThinkingValueChange={setSelectedThinkingValue}
                     onOpenModelProviders={() =>
                       void window.electronAPI.ui.openSettingsPane("providers")
                     }
@@ -5143,10 +5300,14 @@ interface ComposerProps {
   modelOptions: ChatModelOption[];
   modelOptionGroups: ChatModelOptionGroup[];
   runtimeDefaultModelAvailable: boolean;
+  selectedThinkingValue: string | null;
+  thinkingValues: string[];
+  showThinkingValueSelector: boolean;
   modelSelectionUnavailableReason: string;
   placeholder: string;
   showModelSelector: boolean;
   onModelChange: (value: string) => void;
+  onThinkingValueChange: (value: string | null) => void;
   onOpenModelProviders: () => void;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   fileInputRef: RefObject<HTMLInputElement | null>;
@@ -6351,6 +6512,41 @@ function ModelCombobox({
   );
 }
 
+function ThinkingValueSelect({
+  selectedThinkingValue,
+  thinkingValues,
+  disabled,
+  onThinkingValueChange,
+}: {
+  selectedThinkingValue: string | null;
+  thinkingValues: string[];
+  disabled: boolean;
+  onThinkingValueChange: (value: string | null) => void;
+}) {
+  if (thinkingValues.length === 0 || !selectedThinkingValue) {
+    return null;
+  }
+
+  return (
+    <Select
+      value={selectedThinkingValue}
+      onValueChange={onThinkingValueChange}
+      disabled={disabled}
+    >
+      <SelectTrigger className="h-11 rounded-[11px] bg-card text-xs font-medium">
+        <SelectValue placeholder="Thinking" />
+      </SelectTrigger>
+      <SelectContent side="top" align="end">
+        {thinkingValues.map((value) => (
+          <SelectItem key={value} value={value} className="text-xs">
+            {value}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 function Composer({
   input,
   attachments,
@@ -6365,10 +6561,14 @@ function Composer({
   modelOptions,
   modelOptionGroups,
   runtimeDefaultModelAvailable,
+  selectedThinkingValue,
+  thinkingValues,
+  showThinkingValueSelector,
   modelSelectionUnavailableReason,
   placeholder,
   showModelSelector,
   onModelChange,
+  onThinkingValueChange,
   onOpenModelProviders,
   textareaRef,
   fileInputRef,
@@ -6511,13 +6711,13 @@ function Composer({
         />
       </div>
 
-      <div className="flex items-center justify-between gap-2 border-t border-border/20 px-3 py-3 text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-3 border-t border-border/20 px-3 py-3 text-muted-foreground">
         {showModelSelector ? (
           <div
             className={
               noAvailableModels
-                ? "min-w-0 flex flex-1 items-center gap-3"
-                : "w-[172px] shrink-0 sm:w-[208px]"
+                ? "min-w-0 basis-full flex flex-wrap items-center gap-3 sm:flex-1 sm:flex-nowrap"
+                : "min-w-0 grow basis-[172px] sm:max-w-[208px] sm:basis-[208px] sm:grow-0"
             }
           >
             {noAvailableModels ? (
@@ -6560,12 +6760,23 @@ function Composer({
             )}
           </div>
         ) : (
-          <div className="text-[11px] leading-6 text-muted-foreground">
+          <div className="min-w-0 flex-1 text-[11px] leading-6 text-muted-foreground">
             Responses here stay in the workspace onboarding thread.
           </div>
         )}
 
-        <div className="ml-auto flex items-center gap-2">
+        {showThinkingValueSelector ? (
+          <div className="min-w-[112px] shrink-0 sm:w-[112px]">
+            <ThinkingValueSelect
+              selectedThinkingValue={selectedThinkingValue}
+              thinkingValues={thinkingValues}
+              disabled={isResponding}
+              onThinkingValueChange={onThinkingValueChange}
+            />
+          </div>
+        ) : null}
+
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           <Button
             variant="outline"
             size="icon"

@@ -206,6 +206,11 @@ declare global {
   interface RuntimeProviderModelPayload {
     token: string;
     modelId: string;
+    label?: string;
+    reasoning?: boolean;
+    thinkingValues?: string[];
+    defaultThinkingValue?: string | null;
+    inputModalities?: ("text" | "image" | "audio" | "video")[];
     capabilities?: string[];
   }
 
@@ -987,6 +992,7 @@ declare global {
     idempotency_key?: string | null;
     priority?: number;
     model?: string | null;
+    thinking_value?: string | null;
   }
 
   interface HolabossStreamSessionOutputsPayload {

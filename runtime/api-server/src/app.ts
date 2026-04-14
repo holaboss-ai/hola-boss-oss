@@ -4286,6 +4286,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         attachments,
         image_urls: Array.isArray(request.body.image_urls) ? request.body.image_urls : [],
         model: nullableString(request.body.model) ?? null,
+        thinking_value: nullableString(request.body.thinking_value) ?? null,
         context: {}
       }
     });
