@@ -15,13 +15,23 @@ export function providerDisplayName(provider: string): string {
 }
 
 /**
+ * Aliases mapping app_id (as used in the runtime catalog) to the canonical
+ * provider key recognized by `providerIcon`. Add an entry whenever an app's
+ * id and its brand-icon key diverge.
+ */
+const PROVIDER_ALIASES: Record<string, string> = {
+  sheets: "googlesheets",
+};
+
+/**
  * Minimal brand-recognizable SVG icons for integration providers.
  * Each renders at the given size (default 20) with the provider's brand color.
  */
 export function providerIcon(provider: string, size = 20): ReactElement | null {
   const s = String(size);
+  const key = PROVIDER_ALIASES[provider] ?? provider;
 
-  switch (provider) {
+  switch (key) {
     case "gmail":
       // Simplified envelope with Gmail red accent
       return createElement(

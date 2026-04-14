@@ -77,8 +77,7 @@ interface ChatMessage {
   text: string;
   createdAt?: string;
   attachments?: ChatAttachment[];
-  thinkingText?: string;
-  traceSteps?: ChatTraceStep[];
+  executionItems?: ChatExecutionTimelineItem[];
   outputs?: WorkspaceOutputRecordPayload[];
   memoryProposals?: MemoryUpdateProposalRecordPayload[];
 }
@@ -93,6 +92,20 @@ interface ChatTraceStep {
   details: string[];
   order: number;
 }
+
+type ChatExecutionTimelineItem =
+  | {
+      id: string;
+      kind: "thinking";
+      text: string;
+      order: number;
+    }
+  | {
+      id: string;
+      kind: "trace_step";
+      step: ChatTraceStep;
+      order: number;
+    };
 
 type ChatTodoStatus =
   | "pending"
@@ -195,6 +208,13 @@ const STREAM_TELEMETRY_LIMIT = 240;
 const TOOL_TRACE_TERMINAL_PHASES = new Set(["completed", "failed", "error"]);
 const CHAT_AUTO_SCROLL_THRESHOLD_PX = 72;
 const CHAT_SCROLLBAR_MIN_THUMB_HEIGHT_PX = 40;
+const COMPOSER_FOOTER_GAP_PX = 8;
+const COMPOSER_FULL_MODEL_CONTROL_WIDTH_PX = 240;
+const COMPOSER_FULL_THINKING_CONTROL_WIDTH_PX = 112;
+const COMPOSER_FULL_PROVIDER_SETUP_WIDTH_PX = 320;
+const COMPOSER_COMPACT_MODEL_CONTROL_MAX_WIDTH_PX = 240;
+const COMPOSER_COMPACT_THINKING_CONTROL_MIN_WIDTH_PX = 56;
+const COMPOSER_COMPACT_THINKING_CONTROL_MAX_WIDTH_PX = 148;
 const CHAT_MODEL_STORAGE_KEY = "holaboss-chat-model-v1";
 const CHAT_THINKING_STORAGE_KEY = "holaboss-chat-thinking-v1";
 const CHAT_MODEL_USE_RUNTIME_DEFAULT = "__runtime_default__";
@@ -430,6 +450,53 @@ function displayModelLabel(model: string) {
     .join(" ");
 }
 
+function compactComposerModelLabel(label: string) {
+  const normalizedLabel = label.trim();
+  if (!normalizedLabel) {
+    return "Model";
+  }
+
+  const autoMatch = normalizedLabel.match(/^Auto \((.+)\)$/i);
+  if (autoMatch?.[1]) {
+    return autoMatch[1].trim();
+  }
+
+  const segments = normalizedLabel
+    .split("·")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  return segments[segments.length - 1] ?? normalizedLabel;
+}
+
+function displayThinkingValueLabel(value: string) {
+  const normalizedValue = value.trim().toLowerCase();
+  if (!normalizedValue) {
+    return "Thinking";
+  }
+
+  if (normalizedValue === "xhigh") {
+    return "Extra High";
+  }
+  if (
+    normalizedValue === "none" ||
+    normalizedValue === "minimal" ||
+    normalizedValue === "low" ||
+    normalizedValue === "medium" ||
+    normalizedValue === "high" ||
+    normalizedValue === "max"
+  ) {
+    return `${normalizedValue[0]?.toUpperCase() ?? ""}${normalizedValue.slice(1)}`;
+  }
+  if (/^-?\d+$/.test(normalizedValue)) {
+    return Number(normalizedValue).toLocaleString();
+  }
+  return normalizedValue
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
+    .join(" ");
+}
+
 function runtimeModelDisplayLabel(model: RuntimeProviderModelPayload) {
   return model.label?.trim() || displayModelLabel(model.modelId || model.token);
 }
@@ -494,8 +561,7 @@ function hasRenderableMessageContent(
 function hasRenderableAssistantTurn(message: ChatMessage) {
   return (
     hasRenderableMessageContent(message.text, message.attachments ?? []) ||
-    Boolean(message.thinkingText) ||
-    (message.traceSteps?.length ?? 0) > 0 ||
+    (message.executionItems?.length ?? 0) > 0 ||
     (message.outputs?.length ?? 0) > 0 ||
     (message.memoryProposals?.length ?? 0) > 0
   );
@@ -1692,14 +1758,103 @@ function finalizeTraceSteps(
   );
 }
 
+function appendExecutionTimelineThinkingDelta(
+  previous: ChatExecutionTimelineItem[],
+  delta: string,
+  order: number,
+) {
+  if (!delta) {
+    return previous;
+  }
+
+  const lastItem = previous[previous.length - 1];
+  if (lastItem?.kind === "thinking") {
+    const nextItem: ChatExecutionTimelineItem = {
+      ...lastItem,
+      text: `${lastItem.text}${delta}`,
+    };
+    return [
+      ...previous.slice(0, -1),
+      nextItem,
+    ];
+  }
+
+  const nextItem: ChatExecutionTimelineItem = {
+    id: `thinking:${order}`,
+    kind: "thinking",
+    text: delta,
+    order,
+  };
+  return [
+    ...previous,
+    nextItem,
+  ];
+}
+
+function upsertExecutionTimelineTraceItem(
+  previous: ChatExecutionTimelineItem[],
+  step: ChatTraceStep,
+) {
+  const existingIndex = previous.findIndex(
+    (item) => item.kind === "trace_step" && item.step.id === step.id,
+  );
+  if (existingIndex < 0) {
+    const nextItem: ChatExecutionTimelineItem = {
+      id: `trace:${step.id}`,
+      kind: "trace_step",
+      step,
+      order: step.order,
+    };
+    return [...previous, nextItem].sort((left, right) => left.order - right.order);
+  }
+
+  return previous.map((item, index) =>
+    index === existingIndex && item.kind === "trace_step"
+      ? ({
+          ...item,
+          step: {
+            ...item.step,
+            ...step,
+            order: Math.min(item.step.order, step.order),
+          },
+        } satisfies ChatExecutionTimelineItem)
+      : item,
+  );
+}
+
+function finalizeExecutionTimelineTraceItems(
+  previous: ChatExecutionTimelineItem[],
+  status: Extract<ChatTraceStepStatus, "completed" | "error" | "waiting">,
+) {
+  return previous.map((item) =>
+    item.kind === "trace_step" && item.step.status === "running"
+      ? {
+          ...item,
+          step: {
+            ...item.step,
+            status,
+          },
+        }
+      : item,
+  );
+}
+
+function traceStepsFromExecutionItems(items: ChatExecutionTimelineItem[]) {
+  return items
+    .filter(
+      (item): item is Extract<ChatExecutionTimelineItem, { kind: "trace_step" }> =>
+        item.kind === "trace_step",
+    )
+    .map((item) => item.step);
+}
+
 function assistantHistoryStateFromOutputEvents(
   outputEvents: SessionOutputEventPayload[],
 ) {
   const orderedEvents = [...outputEvents].sort(
     (left, right) => left.sequence - right.sequence || left.id - right.id,
   );
-  let thinkingText = "";
-  let traceSteps: ChatTraceStep[] = [];
+  let executionItems: ChatExecutionTimelineItem[] = [];
 
   for (const event of orderedEvents) {
     const eventPayload = isRecord(event.payload) ? event.payload : {};
@@ -1707,9 +1862,11 @@ function assistantHistoryStateFromOutputEvents(
     if (event.event_type === "thinking_delta") {
       const delta =
         typeof eventPayload.delta === "string" ? eventPayload.delta : "";
-      if (delta) {
-        thinkingText = `${thinkingText}${delta}`;
-      }
+      executionItems = appendExecutionTimelineThinkingDelta(
+        executionItems,
+        delta,
+        event.sequence,
+      );
     }
 
     const phaseStep = phaseTraceStepFromEvent(
@@ -1718,7 +1875,10 @@ function assistantHistoryStateFromOutputEvents(
       event.sequence,
     );
     if (phaseStep) {
-      traceSteps = upsertTraceStep(traceSteps, phaseStep);
+      executionItems = upsertExecutionTimelineTraceItem(
+        executionItems,
+        phaseStep,
+      );
     }
 
     const toolStep = toolTraceStepFromEvent(
@@ -1727,7 +1887,10 @@ function assistantHistoryStateFromOutputEvents(
       event.sequence,
     );
     if (toolStep) {
-      traceSteps = upsertTraceStep(traceSteps, toolStep);
+      executionItems = upsertExecutionTimelineTraceItem(
+        executionItems,
+        toolStep,
+      );
     }
 
     if (event.event_type === "run_completed") {
@@ -1735,20 +1898,22 @@ function assistantHistoryStateFromOutputEvents(
         typeof eventPayload.status === "string"
           ? eventPayload.status.trim().toLowerCase()
           : "";
-      traceSteps = finalizeTraceSteps(
-        traceSteps,
+      executionItems = finalizeExecutionTimelineTraceItems(
+        executionItems,
         completedStatus === "paused" || completedStatus === "waiting_user"
           ? "waiting"
           : "completed",
       );
     } else if (event.event_type === "run_failed") {
-      traceSteps = finalizeTraceSteps(traceSteps, "error");
+      executionItems = finalizeExecutionTimelineTraceItems(
+        executionItems,
+        "error",
+      );
     }
   }
 
   return {
-    thinkingText: thinkingText || undefined,
-    traceSteps: traceSteps.length > 0 ? traceSteps : undefined,
+    executionItems: executionItems.length > 0 ? executionItems : undefined,
   };
 }
 
@@ -1888,12 +2053,10 @@ export function ChatPane({
     WorkspaceOutputRecordPayload[]
   >([]);
   const [liveAssistantText, setLiveAssistantText] = useState("");
-  const [liveThinkingText, setLiveThinkingText] = useState("");
-  const [liveThinkingExpanded, setLiveThinkingExpanded] = useState(false);
   const [liveAgentStatus, setLiveAgentStatus] = useState("");
-  const [liveTraceSteps, setLiveTraceSteps] = useState<ChatTraceStep[]>([]);
-  const [collapsedThinkingByMessageId, setCollapsedThinkingByMessageId] =
-    useState<Record<string, boolean>>({});
+  const [liveExecutionItems, setLiveExecutionItems] = useState<
+    ChatExecutionTimelineItem[]
+  >([]);
   const [collapsedTraceByStepId, setCollapsedTraceByStepId] = useState<
     Record<string, boolean>
   >({});
@@ -1981,9 +2144,7 @@ export function ChatPane({
     useRef<ChatPaneSessionOpenRequest | null>(null);
   const draftParentSessionIdRef = useRef<string | null>(null);
   const liveAssistantTextRef = useRef("");
-  const liveThinkingTextRef = useRef("");
-  const liveThinkingExpandedRef = useRef(false);
-  const liveTraceStepsRef = useRef<ChatTraceStep[]>([]);
+  const liveExecutionItemsRef = useRef<ChatExecutionTimelineItem[]>([]);
   const historyViewportGenerationRef = useRef(0);
   const [activeSessionId, setActiveSessionId] = useState("");
   const effectiveSessionOpenRequest =
@@ -2141,15 +2302,11 @@ export function ChatPane({
 
   function resetLiveTurn() {
     liveAssistantTextRef.current = "";
-    liveThinkingTextRef.current = "";
-    liveThinkingExpandedRef.current = false;
-    liveTraceStepsRef.current = [];
+    liveExecutionItemsRef.current = [];
     activeAssistantMessageIdRef.current = null;
     setLiveAssistantText("");
-    setLiveThinkingText("");
-    setLiveThinkingExpanded(false);
     setLiveAgentStatus("");
-    setLiveTraceSteps([]);
+    setLiveExecutionItems([]);
   }
 
   function clearSessionView() {
@@ -2162,7 +2319,6 @@ export function ChatPane({
     setEditingMemoryProposalId(null);
     setMemoryProposalDrafts({});
     resetLiveTurn();
-    setCollapsedThinkingByMessageId({});
     setCollapsedTraceByStepId({});
     shouldAutoScrollRef.current = true;
   }
@@ -2245,11 +2401,8 @@ export function ChatPane({
             const turnMemoryProposals = sortMemoryUpdateProposals(
               memoryProposalsByInputId.get(inputId) ?? [],
             );
-            if (restoredAssistantState.thinkingText) {
-              nextMessage.thinkingText = restoredAssistantState.thinkingText;
-            }
-            if (restoredAssistantState.traceSteps) {
-              nextMessage.traceSteps = restoredAssistantState.traceSteps;
+            if (restoredAssistantState.executionItems) {
+              nextMessage.executionItems = restoredAssistantState.executionItems;
             }
             if (turnMemoryProposals.length > 0) {
               nextMessage.memoryProposals = turnMemoryProposals;
@@ -2428,15 +2581,13 @@ export function ChatPane({
     });
   }
 
-  function appendLiveThinkingDelta(delta: string) {
+  function appendLiveThinkingDelta(delta: string, order: number) {
     flushSync(() => {
-      setLiveThinkingText((prev) => {
-        const next = `${prev}${delta}`;
-        liveThinkingTextRef.current = next;
+      setLiveExecutionItems((prev) => {
+        const next = appendExecutionTimelineThinkingDelta(prev, delta, order);
+        liveExecutionItemsRef.current = next;
         return next;
       });
-      liveThinkingExpandedRef.current = true;
-      setLiveThinkingExpanded(true);
     });
   }
 
@@ -2444,9 +2595,8 @@ export function ChatPane({
     const messageId =
       activeAssistantMessageIdRef.current ?? `assistant-${Date.now()}`;
     const assistantText = liveAssistantTextRef.current;
-    const thinkingText = liveThinkingTextRef.current;
-    const traceSteps = liveTraceStepsRef.current;
-    if (!assistantText && !thinkingText && traceSteps.length === 0) {
+    const executionItems = liveExecutionItemsRef.current;
+    if (!assistantText && executionItems.length === 0) {
       resetLiveTurn();
       return;
     }
@@ -2457,14 +2607,9 @@ export function ChatPane({
         id: messageId,
         role: "assistant",
         text: assistantText,
-        thinkingText: thinkingText || undefined,
-        traceSteps: traceSteps.length > 0 ? traceSteps : undefined,
+        executionItems: executionItems.length > 0 ? executionItems : undefined,
       },
     ]);
-    setCollapsedThinkingByMessageId((prev) => ({
-      ...prev,
-      [messageId]: true,
-    }));
     resetLiveTurn();
   }
 
@@ -2575,13 +2720,6 @@ export function ChatPane({
     }
   }
 
-  function toggleThinkingPanel(messageId: string) {
-    setCollapsedThinkingByMessageId((prev) => ({
-      ...prev,
-      [messageId]: !prev[messageId],
-    }));
-  }
-
   function toggleTraceStep(stepId: string) {
     setCollapsedTraceByStepId((prev) => ({
       ...prev,
@@ -2589,9 +2727,9 @@ export function ChatPane({
     }));
   }
 
-  function setLiveTraceStepsState(nextSteps: ChatTraceStep[]) {
-    liveTraceStepsRef.current = nextSteps;
-    setLiveTraceSteps(nextSteps);
+  function setLiveExecutionItemsState(nextItems: ChatExecutionTimelineItem[]) {
+    liveExecutionItemsRef.current = nextItems;
+    setLiveExecutionItems(nextItems);
   }
 
   function syncChatScrollMetrics(container?: HTMLDivElement | null) {
@@ -2735,15 +2873,21 @@ export function ChatPane({
   }
 
   function upsertLiveTraceStep(step: ChatTraceStep) {
-    const next = upsertTraceStep(liveTraceStepsRef.current, step);
-    setLiveTraceStepsState(next);
+    const next = upsertExecutionTimelineTraceItem(
+      liveExecutionItemsRef.current,
+      step,
+    );
+    setLiveExecutionItemsState(next);
   }
 
   function finalizeLiveTraceSteps(
     status: Extract<ChatTraceStepStatus, "completed" | "error" | "waiting">,
   ) {
-    const next = finalizeTraceSteps(liveTraceStepsRef.current, status);
-    setLiveTraceStepsState(next);
+    const next = finalizeExecutionTimelineTraceItems(
+      liveExecutionItemsRef.current,
+      status,
+    );
+    setLiveExecutionItemsState(next);
   }
 
   useEffect(() => {
@@ -2764,8 +2908,7 @@ export function ChatPane({
     isHistoryViewportPending,
     isResponding,
     liveAssistantText,
-    liveThinkingText,
-    liveTraceSteps,
+    liveExecutionItems,
     messages,
   ]);
 
@@ -3618,7 +3761,7 @@ export function ChatPane({
             });
             return;
           }
-          appendLiveThinkingDelta(delta);
+          appendLiveThinkingDelta(delta, eventSequence);
           appendStreamTelemetry({
             streamId: payload.streamId,
             transportType: payload.type,
@@ -3638,8 +3781,7 @@ export function ChatPane({
           finalizeLiveTraceSteps("error");
           if (
             liveAssistantTextRef.current ||
-            liveThinkingTextRef.current ||
-            liveTraceStepsRef.current.length > 0
+            liveExecutionItemsRef.current.length > 0
           ) {
             commitLiveAssistantMessage();
           }
@@ -4161,8 +4303,7 @@ export function ChatPane({
   const showLiveAssistantTurn =
     isResponding ||
     Boolean(liveAssistantText) ||
-    Boolean(liveThinkingText) ||
-    liveTraceSteps.length > 0;
+    liveExecutionItems.length > 0;
   const hasMessages = messages.length > 0 || showLiveAssistantTurn;
   const streamTelemetryTail = useMemo(
     () => streamTelemetry.slice(-80).reverse(),
@@ -4548,8 +4689,7 @@ export function ChatPane({
     composerBlockHeight,
     hasMessages,
     liveAssistantText,
-    liveThinkingText,
-    liveTraceSteps,
+    liveExecutionItems,
     messages,
   ]);
 
@@ -4787,12 +4927,7 @@ export function ChatPane({
                         label={assistantLabel}
                         mode={assistantMode}
                         text={message.text}
-                        thinkingText={message.thinkingText}
-                        thinkingCollapsed={
-                          collapsedThinkingByMessageId[message.id] ?? true
-                        }
-                        onToggleThinking={() => toggleThinkingPanel(message.id)}
-                        traceSteps={message.traceSteps ?? []}
+                        executionItems={message.executionItems ?? []}
                         memoryProposals={message.memoryProposals ?? []}
                         outputs={message.outputs ?? []}
                         sessionOutputs={sessionOutputs}
@@ -4838,14 +4973,7 @@ export function ChatPane({
                       label={assistantLabel}
                       mode={assistantMode}
                       text={liveAssistantText}
-                      thinkingText={liveThinkingText}
-                      thinkingCollapsed={!liveThinkingExpanded}
-                      onToggleThinking={() => {
-                        const next = !liveThinkingExpandedRef.current;
-                        liveThinkingExpandedRef.current = next;
-                        setLiveThinkingExpanded(next);
-                      }}
-                      traceSteps={liveTraceSteps}
+                      executionItems={liveExecutionItems}
                       memoryProposals={[]}
                       outputs={[]}
                       sessionOutputs={sessionOutputs}
@@ -5322,13 +5450,6 @@ interface ComposerProps {
   onRemoveAttachment: (attachmentId: string) => void;
 }
 
-interface ThinkingPanelProps {
-  text: string;
-  collapsed: boolean;
-  onToggle: () => void;
-  live?: boolean;
-}
-
 function UserTurn({
   text,
   createdAt,
@@ -5427,10 +5548,7 @@ function AssistantTurn({
   label,
   mode,
   text,
-  thinkingText,
-  thinkingCollapsed,
-  onToggleThinking,
-  traceSteps,
+  executionItems,
   memoryProposals,
   outputs,
   sessionOutputs,
@@ -5452,10 +5570,7 @@ function AssistantTurn({
   label: string;
   mode: string;
   text: string;
-  thinkingText?: string;
-  thinkingCollapsed: boolean;
-  onToggleThinking: () => void;
-  traceSteps: ChatTraceStep[];
+  executionItems: ChatExecutionTimelineItem[];
   memoryProposals: MemoryUpdateProposalRecordPayload[];
   outputs: WorkspaceOutputRecordPayload[];
   sessionOutputs: WorkspaceOutputRecordPayload[];
@@ -5480,11 +5595,11 @@ function AssistantTurn({
   live?: boolean;
 }) {
   const normalizedStatus = status.replace(/\.+$/, "").trim();
+  const traceSteps = traceStepsFromExecutionItems(executionItems);
   const showStatusPlaceholder =
     Boolean(normalizedStatus) &&
     !text &&
-    traceSteps.length === 0 &&
-    !thinkingText;
+    executionItems.length === 0;
 
   return (
     <div className="flex min-w-0 justify-start">
@@ -5499,22 +5614,14 @@ function AssistantTurn({
           </div>
         ) : null}
 
-        {traceSteps.length > 0 ? (
+        {executionItems.length > 0 ? (
           <TraceStepGroup
-            steps={traceSteps}
+            items={executionItems}
             collapsedByStepId={collapsedTraceByStepId}
             onToggleStep={onToggleTraceStep}
             live={live}
             liveOutputStarted={live && Boolean(text)}
-          />
-        ) : null}
-
-        {thinkingText ? (
-          <ThinkingPanel
-            text={thinkingText}
-            collapsed={thinkingCollapsed}
-            onToggle={onToggleThinking}
-            live={live}
+            onLinkClick={onLinkClick}
           />
         ) : null}
 
@@ -6079,19 +6186,111 @@ function LiveStatusEllipsis() {
   );
 }
 
+function summarizeThinking(text: string) {
+  const firstContentLine =
+    text
+      .split("\n")
+      .map((line) => line.replace(/[*_`#>-]/g, "").trim())
+      .find(Boolean) || "Reasoning available";
+
+  return firstContentLine.length > 88
+    ? `${firstContentLine.slice(0, 85).trimEnd()}...`
+    : firstContentLine;
+}
+
+function TraceTimelineStepEntry({
+  step,
+  collapsedByStepId,
+  onToggleStep,
+}: {
+  step: ChatTraceStep;
+  collapsedByStepId: Record<string, boolean>;
+  onToggleStep: (stepId: string) => void;
+}) {
+  const expanded = !(collapsedByStepId[step.id] ?? true);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => step.details.length > 0 && onToggleStep(step.id)}
+        className={`flex w-full items-start gap-2 rounded-md px-2.5 -ml-2.5 py-1 text-left text-xs transition-colors ${step.details.length > 0 ? "hover:bg-muted/50 cursor-pointer" : "cursor-default"}`}
+      >
+        <span className="mt-0.5 shrink-0">
+          {step.status === "completed" ? (
+            <Check size={12} className="text-emerald-500" />
+          ) : step.status === "error" ? (
+            <AlertTriangle size={12} className="text-destructive" />
+          ) : step.status === "running" ? (
+            <Loader2 size={12} className="animate-spin text-muted-foreground" />
+          ) : (
+            <Clock3 size={12} className="text-muted-foreground" />
+          )}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="font-medium text-foreground/80">{step.title}</span>
+          {step.details.length > 0 ? (
+            <span className="ml-1.5 text-muted-foreground/70">
+              {step.details[0]}
+            </span>
+          ) : null}
+        </span>
+        {step.details.length > 1 ? (
+          <ChevronDown
+            size={12}
+            className={`mt-0.5 shrink-0 text-muted-foreground/50 transition-transform ${expanded ? "rotate-180" : ""}`}
+          />
+        ) : null}
+      </button>
+      {expanded && step.details.length > 1 ? (
+        <div className="ml-6 mt-0.5 mb-1 rounded-md border border-border/30 bg-muted/30 px-3 py-2 text-[11px] leading-5 text-muted-foreground whitespace-pre-wrap">
+          {step.details.slice(1).join("\n")}
+        </div>
+      ) : null}
+      {step.status === "error" ? (
+        <IntegrationErrorBanner details={step.details} />
+      ) : null}
+    </div>
+  );
+}
+
+function ExecutionTimelineThinkingEntry({
+  text,
+  onLinkClick,
+}: {
+  text: string;
+  onLinkClick?: (url: string) => void;
+}) {
+  return (
+    <div className="py-1">
+      <div className="-ml-2.5 w-[calc(100%+0.625rem)] rounded-[16px] border border-border/25 bg-muted/30 px-3.5 py-3">
+        <SimpleMarkdown
+          className="chat-markdown chat-thinking-markdown max-w-full text-foreground/82"
+          onLinkClick={onLinkClick}
+        >
+          {text}
+        </SimpleMarkdown>
+      </div>
+    </div>
+  );
+}
+
 function TraceStepGroup({
-  steps,
+  items,
   collapsedByStepId,
   onToggleStep,
   live = false,
   liveOutputStarted = false,
+  onLinkClick,
 }: {
-  steps: ChatTraceStep[];
+  items: ChatExecutionTimelineItem[];
   collapsedByStepId: Record<string, boolean>;
   onToggleStep: (stepId: string) => void;
   live?: boolean;
   liveOutputStarted?: boolean;
+  onLinkClick?: (url: string) => void;
 }) {
+  const steps = traceStepsFromExecutionItems(items);
   const [groupExpanded, setGroupExpanded] = useState(
     live && !liveOutputStarted,
   );
@@ -6122,157 +6321,84 @@ function TraceStepGroup({
       .find((step) => step.status === "running" || step.status === "waiting") ??
     null;
   const latestStep = steps.length > 0 ? steps[steps.length - 1] : null;
+  const latestThinkingItem =
+    [...items]
+      .reverse()
+      .find(
+        (
+          item,
+        ): item is Extract<ChatExecutionTimelineItem, { kind: "thinking" }> =>
+          item.kind === "thinking",
+      ) ?? null;
   const summaryStep = activeStep ?? (groupIsLive ? latestStep : null);
   const summarySuffix = groupHasTerminalError
     ? ` (${terminalErrorCount} failed)`
     : "";
+  const summaryLabel = summaryStep
+    ? summaryStep === activeStep || summaryStep.status === "waiting"
+      ? `${traceStatusLabel(summaryStep.status)}: ${summaryStep.title}`
+      : groupIsLive
+        ? summaryStep.title
+        : `${traceStatusLabel(summaryStep.status)}: ${summaryStep.title}`
+    : groupIsLive
+      ? latestThinkingItem
+        ? summarizeThinking(latestThinkingItem.text)
+        : stepCount > 0
+          ? `Working through ${stepLabel}...`
+          : "Thinking..."
+      : runningCount > 0
+        ? `Running ${stepLabel}...`
+        : latestThinkingItem
+          ? summarizeThinking(latestThinkingItem.text)
+          : stepCount > 0
+            ? `Used ${stepLabel}`
+            : "Execution trace";
 
   return (
     <div className="mt-3">
       <button
         type="button"
         onClick={() => setGroupExpanded((v) => !v)}
-        className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 -ml-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60"
+        className="flex w-full items-start gap-2 rounded-lg px-2.5 py-1.5 -ml-2.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/60"
       >
         {groupHasTerminalError ? (
-          <AlertTriangle size={13} className="text-destructive" />
+          <AlertTriangle size={13} className="mt-0.5 shrink-0 text-destructive" />
         ) : groupIsLive || runningCount > 0 ? (
-          <Loader2 size={13} className="animate-spin text-muted-foreground" />
+          <Loader2
+            size={13}
+            className="mt-0.5 shrink-0 animate-spin text-muted-foreground"
+          />
         ) : (
-          <Check size={13} className="text-emerald-500" />
+          <Check size={13} className="mt-0.5 shrink-0 text-emerald-500" />
         )}
-        <span>
-          {summaryStep
-            ? summaryStep === activeStep || summaryStep.status === "waiting"
-              ? `${traceStatusLabel(summaryStep.status)}: ${summaryStep.title}`
-              : groupIsLive
-                ? summaryStep.title
-                : `${traceStatusLabel(summaryStep.status)}: ${summaryStep.title}`
-            : groupIsLive
-              ? `Working through ${stepLabel}...`
-              : runningCount > 0
-                ? `Running ${stepLabel}...`
-                : `Used ${stepLabel}`}
+        <span className="min-w-0 flex-1 leading-5">
+          {summaryLabel}
           {summarySuffix}
         </span>
         <ChevronDown
           size={12}
-          className={`transition-transform ${groupExpanded ? "rotate-180" : ""}`}
+          className={`mt-0.5 shrink-0 transition-transform ${groupExpanded ? "rotate-180" : ""}`}
         />
       </button>
 
       {groupExpanded ? (
         <div className="mt-1 ml-1 space-y-0.5">
-          {steps.map((step) => {
-            const expanded = !(collapsedByStepId[step.id] ?? true);
-            return (
-              <div key={step.id}>
-                <button
-                  type="button"
-                  onClick={() =>
-                    step.details.length > 0 && onToggleStep(step.id)
-                  }
-                  className={`flex w-full items-start gap-2 rounded-md px-2.5 -ml-2.5 py-1 text-left text-xs transition-colors ${step.details.length > 0 ? "hover:bg-muted/50 cursor-pointer" : "cursor-default"}`}
-                >
-                  <span className="mt-0.5 shrink-0">
-                    {step.status === "completed" ? (
-                      <Check size={12} className="text-emerald-500" />
-                    ) : step.status === "error" ? (
-                      <AlertTriangle size={12} className="text-destructive" />
-                    ) : step.status === "running" ? (
-                      <Loader2
-                        size={12}
-                        className="animate-spin text-muted-foreground"
-                      />
-                    ) : (
-                      <Clock3 size={12} className="text-muted-foreground" />
-                    )}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="font-medium text-foreground/80">
-                      {step.title}
-                    </span>
-                    {step.details.length > 0 ? (
-                      <span className="ml-1.5 text-muted-foreground/70">
-                        {step.details[0]}
-                      </span>
-                    ) : null}
-                  </span>
-                  {step.details.length > 1 ? (
-                    <ChevronDown
-                      size={12}
-                      className={`mt-0.5 shrink-0 text-muted-foreground/50 transition-transform ${expanded ? "rotate-180" : ""}`}
-                    />
-                  ) : null}
-                </button>
-                {expanded && step.details.length > 1 ? (
-                  <div className="ml-6 mt-0.5 mb-1 rounded-md border border-border/30 bg-muted/30 px-3 py-2 text-[11px] leading-5 text-muted-foreground whitespace-pre-wrap">
-                    {step.details.slice(1).join("\n")}
-                  </div>
-                ) : null}
-                {step.status === "error" ? (
-                  <IntegrationErrorBanner details={step.details} />
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function summarizeThinking(text: string) {
-  const firstContentLine =
-    text
-      .split("\n")
-      .map((line) => line.replace(/[*_`#>-]/g, "").trim())
-      .find(Boolean) || "Reasoning available";
-
-  return firstContentLine.length > 88
-    ? `${firstContentLine.slice(0, 85).trimEnd()}...`
-    : firstContentLine;
-}
-
-function ThinkingPanel({
-  text,
-  collapsed,
-  onToggle,
-  live = false,
-}: ThinkingPanelProps) {
-  const summary = summarizeThinking(text);
-
-  return (
-    <div className="mt-4">
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={!collapsed}
-        className="bg-muted flex w-full items-center justify-between gap-3 rounded-[18px] border border-border/35 px-3.5 py-3 text-left transition hover:border-border/55"
-      >
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-              {live ? "Thinking" : "Reasoning"}
-            </span>
-            {live ? (
-              <span className="rounded-full border border-[rgba(247,90,84,0.18)] bg-[rgba(247,90,84,0.08)] px-2 py-0.5 text-[9px] uppercase tracking-[0.14em] text-[rgba(206,92,84,0.92)]">
-                LIVE
-              </span>
-            ) : null}
-          </div>
-          <div className="mt-1 truncate text-[12px] text-muted-foreground/76">
-            {collapsed ? summary : "Expanded reasoning trace"}
-          </div>
-        </div>
-        <ChevronDown
-          size={14}
-          className={`shrink-0 text-muted-foreground transition ${collapsed ? "" : "rotate-180"}`}
-        />
-      </button>
-      {!collapsed ? (
-        <div className="theme-chat-thinking-inner mt-2 whitespace-pre-wrap rounded-[18px] border border-border/30 px-4 py-3 text-[12px] leading-6 text-muted-foreground/86">
-          {text}
+          {items.map((item) =>
+            item.kind === "thinking" ? (
+              <ExecutionTimelineThinkingEntry
+                key={item.id}
+                text={item.text}
+                onLinkClick={onLinkClick}
+              />
+            ) : (
+              <TraceTimelineStepEntry
+                key={item.id}
+                step={item.step}
+                collapsedByStepId={collapsedByStepId}
+                onToggleStep={onToggleStep}
+              />
+            ),
+          )}
         </div>
       ) : null}
     </div>
@@ -6330,6 +6456,7 @@ function ModelCombobox({
   modelOptions,
   modelOptionGroups,
   disabled,
+  compact = false,
   onModelChange,
 }: {
   selectedModel: string;
@@ -6339,6 +6466,7 @@ function ModelCombobox({
   modelOptions: ChatModelOption[];
   modelOptionGroups: ChatModelOptionGroup[];
   disabled: boolean;
+  compact?: boolean;
   onModelChange: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -6401,6 +6529,7 @@ function ModelCombobox({
     selectedModel === CHAT_MODEL_USE_RUNTIME_DEFAULT
       ? `Auto (${runtimeDefaultModelLabel})`
       : selectedModelLabel || "Select model";
+  const compactLabel = compactComposerModelLabel(displayLabel);
 
   const hasFilteredOptions =
     Boolean(filteredAutoOption) ||
@@ -6456,9 +6585,21 @@ function ModelCombobox({
           <Button
             variant="outline"
             size="lg"
-            className="w-full justify-between text-xs font-medium"
+            className={`w-full justify-between rounded-[11px] bg-card text-xs font-medium ${
+              compact ? "px-2.5" : ""
+            }`}
           >
-            <span className="truncate">{displayLabel}</span>
+            {compact ? (
+              <span className="flex min-w-0 items-center gap-2">
+                <Waypoints
+                  size={13}
+                  className="shrink-0 text-muted-foreground"
+                />
+                <span className="truncate">{compactLabel}</span>
+              </span>
+            ) : (
+              <span className="truncate">{displayLabel}</span>
+            )}
             <ChevronDown size={13} className="shrink-0 text-muted-foreground" />
           </Button>
         }
@@ -6516,16 +6657,19 @@ function ThinkingValueSelect({
   selectedThinkingValue,
   thinkingValues,
   disabled,
+  compact = false,
   onThinkingValueChange,
 }: {
   selectedThinkingValue: string | null;
   thinkingValues: string[];
   disabled: boolean;
+  compact?: boolean;
   onThinkingValueChange: (value: string | null) => void;
 }) {
   if (thinkingValues.length === 0 || !selectedThinkingValue) {
     return null;
   }
+  const selectedThinkingLabel = displayThinkingValueLabel(selectedThinkingValue);
 
   return (
     <Select
@@ -6533,13 +6677,30 @@ function ThinkingValueSelect({
       onValueChange={onThinkingValueChange}
       disabled={disabled}
     >
-      <SelectTrigger className="h-11 rounded-[11px] bg-card text-xs font-medium">
-        <SelectValue placeholder="Thinking" />
+      <SelectTrigger
+        aria-label={
+          compact ? `Reasoning effort: ${selectedThinkingLabel}` : undefined
+        }
+        className={`h-11 rounded-[11px] bg-card text-xs font-medium ${
+          compact ? "w-full min-w-0 px-2.5" : ""
+        }`}
+      >
+        {compact ? (
+          <span className="flex min-w-0 flex-1 items-center gap-1.5">
+            <Lightbulb
+              size={13}
+              className="shrink-0 text-muted-foreground"
+            />
+            <span className="truncate">{selectedThinkingLabel}</span>
+          </span>
+        ) : (
+          <SelectValue placeholder="Thinking" />
+        )}
       </SelectTrigger>
       <SelectContent side="top" align="end">
         {thinkingValues.map((value) => (
           <SelectItem key={value} value={value} className="text-xs">
-            {value}
+            {displayThinkingValueLabel(value)}
           </SelectItem>
         ))}
       </SelectContent>
@@ -6583,6 +6744,13 @@ function Composer({
   onRemoveAttachment,
 }: ComposerProps) {
   const [isDragActive, setIsDragActive] = useState(false);
+  const composerFooterRef = useRef<HTMLDivElement | null>(null);
+  const composerActionsRef = useRef<HTMLDivElement | null>(null);
+  const [composerFooterLayout, setComposerFooterLayout] = useState({
+    width: 0,
+    actionsWidth: 0,
+    wraps: false,
+  });
   const noAvailableModels =
     !runtimeDefaultModelAvailable &&
     modelOptions.length === 0 &&
@@ -6600,6 +6768,125 @@ function Composer({
       ?.selectedLabel ??
     modelOptions.find((option) => option.value === selectedModel)?.label ??
     resolvedModelLabel;
+  const syncComposerFooterLayout = () => {
+    const footer = composerFooterRef.current;
+    if (!footer) {
+      return;
+    }
+    const footerStyle = window.getComputedStyle(footer);
+    const horizontalPadding =
+      Number.parseFloat(footerStyle.paddingLeft || "0") +
+      Number.parseFloat(footerStyle.paddingRight || "0");
+    const width = Math.max(
+      0,
+      Math.round(footer.clientWidth - horizontalPadding),
+    );
+    const actionsWidth = Math.round(
+      composerActionsRef.current?.getBoundingClientRect().width ?? 0,
+    );
+    const visibleRowOffsets = Array.from(footer.children)
+      .filter(
+        (child): child is HTMLElement =>
+          child instanceof HTMLElement && child.offsetParent !== null,
+      )
+      .map((child) => child.offsetTop);
+    const wraps = new Set(visibleRowOffsets).size > 1;
+    setComposerFooterLayout((current) =>
+      current.width === width &&
+      current.actionsWidth === actionsWidth &&
+      current.wraps === wraps
+        ? current
+        : { width, actionsWidth, wraps },
+    );
+  };
+  useLayoutEffect(() => {
+    const footer = composerFooterRef.current;
+    if (!footer) {
+      return;
+    }
+
+    syncComposerFooterLayout();
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const resizeObserver = new ResizeObserver(() => {
+      syncComposerFooterLayout();
+    });
+    resizeObserver.observe(footer);
+    if (composerActionsRef.current) {
+      resizeObserver.observe(composerActionsRef.current);
+    }
+    Array.from(footer.children).forEach((child) => {
+      if (child instanceof HTMLElement) {
+        resizeObserver.observe(child);
+      }
+    });
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [
+    noAvailableModels,
+    resolvedModelLabel,
+    runtimeDefaultModelAvailable,
+    selectedModel,
+    selectedModelOptionLabel,
+    selectedThinkingValue,
+    showModelSelector,
+    showThinkingValueSelector,
+    thinkingValues,
+  ]);
+  const visibleFooterControlCount =
+    1 + (showThinkingValueSelector ? 1 : 0) + 1;
+  const fullPrimaryControlWidth = showModelSelector
+    ? noAvailableModels
+      ? COMPOSER_FULL_PROVIDER_SETUP_WIDTH_PX
+      : COMPOSER_FULL_MODEL_CONTROL_WIDTH_PX
+    : 0;
+  const fullFooterControlWidth =
+    fullPrimaryControlWidth +
+    (showThinkingValueSelector ? COMPOSER_FULL_THINKING_CONTROL_WIDTH_PX : 0) +
+    composerFooterLayout.actionsWidth +
+    Math.max(0, visibleFooterControlCount - 1) * COMPOSER_FOOTER_GAP_PX;
+  const compactFooterControlWidth = Math.max(
+    0,
+    composerFooterLayout.width -
+      composerFooterLayout.actionsWidth -
+      Math.max(0, visibleFooterControlCount - 1) * COMPOSER_FOOTER_GAP_PX,
+  );
+  const compactComposerControls =
+    showModelSelector &&
+    (composerFooterLayout.wraps ||
+      (composerFooterLayout.width > 0 &&
+        composerFooterLayout.actionsWidth > 0 &&
+        composerFooterLayout.width < fullFooterControlWidth));
+  const compactModelControlWidth = compactComposerControls
+    ? Math.min(
+        COMPOSER_COMPACT_MODEL_CONTROL_MAX_WIDTH_PX,
+        Math.max(
+          0,
+          compactFooterControlWidth -
+            (showThinkingValueSelector
+              ? Math.min(
+                  COMPOSER_COMPACT_THINKING_CONTROL_MIN_WIDTH_PX,
+                  compactFooterControlWidth,
+                )
+              : 0),
+        ),
+      )
+    : 0;
+  const compactThinkingControlWidth = showThinkingValueSelector
+    ? Math.max(
+        Math.min(
+          COMPOSER_COMPACT_THINKING_CONTROL_MAX_WIDTH_PX,
+          compactFooterControlWidth - compactModelControlWidth,
+        ),
+        Math.min(
+          COMPOSER_COMPACT_THINKING_CONTROL_MIN_WIDTH_PX,
+          compactFooterControlWidth,
+        ),
+      )
+    : 0;
 
   const allowAttachmentDrop = (dataTransfer: DataTransfer | null) => {
     if (!dataTransfer || disabled || isResponding) {
@@ -6711,13 +6998,27 @@ function Composer({
         />
       </div>
 
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-3 border-t border-border/20 px-3 py-3 text-muted-foreground">
+      <div
+        ref={composerFooterRef}
+        className={`border-t border-border/20 px-3 py-3 text-muted-foreground ${
+          compactComposerControls
+            ? "flex items-center gap-2 overflow-hidden"
+            : "flex flex-wrap items-center gap-2"
+        }`}
+      >
         {showModelSelector ? (
           <div
             className={
-              noAvailableModels
-                ? "min-w-0 basis-full flex flex-wrap items-center gap-3 sm:flex-1 sm:flex-nowrap"
-                : "min-w-0 grow basis-[172px] sm:max-w-[208px] sm:basis-[208px] sm:grow-0"
+              compactComposerControls
+                ? "min-w-0 shrink-0"
+                : noAvailableModels
+                  ? "min-w-0 flex flex-1 basis-full flex-wrap items-center gap-2"
+                  : "min-w-0 flex-1 basis-[220px] max-w-[240px]"
+            }
+            style={
+              compactComposerControls
+                ? { width: `${compactModelControlWidth}px` }
+                : undefined
             }
           >
             {noAvailableModels ? (
@@ -6727,7 +7028,9 @@ function Composer({
                   variant="outline"
                   size="lg"
                   onClick={onOpenModelProviders}
-                  className="shrink-0 justify-between rounded-[11px] bg-card text-[12px] font-semibold hover:border-primary/35 hover:bg-card/92"
+                  className={`shrink-0 justify-between rounded-[11px] bg-card text-[12px] font-semibold hover:border-primary/35 hover:bg-card/92 ${
+                    compactComposerControls ? "px-2.5" : ""
+                  }`}
                   aria-label="Configure model providers"
                 >
                   <span className="flex min-w-0 items-center gap-2">
@@ -6735,14 +7038,20 @@ function Composer({
                       size={13}
                       className="shrink-0 text-muted-foreground"
                     />
-                    <span className="truncate">Set up providers</span>
+                    <span className="truncate">
+                      {compactComposerControls ? "Providers" : "Set up providers"}
+                    </span>
                   </span>
                   <ArrowRight
                     size={14}
                     className="shrink-0 text-muted-foreground"
                   />
                 </Button>
-                <div className="min-w-0 text-[10px] leading-5 text-muted-foreground">
+                <div
+                  className={`min-w-0 text-[10px] leading-5 text-muted-foreground ${
+                    compactComposerControls ? "hidden" : ""
+                  }`}
+                >
                   Open provider settings to connect a model.
                 </div>
               </>
@@ -6755,6 +7064,7 @@ function Composer({
                 modelOptions={modelOptions}
                 modelOptionGroups={modelOptionGroups}
                 disabled={isResponding}
+                compact={compactComposerControls}
                 onModelChange={onModelChange}
               />
             )}
@@ -6766,17 +7076,32 @@ function Composer({
         )}
 
         {showThinkingValueSelector ? (
-          <div className="min-w-[112px] shrink-0 sm:w-[112px]">
+          <div
+            className={
+              compactComposerControls
+                ? "shrink-0"
+                : "min-w-[112px] shrink-0 sm:w-[112px]"
+            }
+            style={
+              compactComposerControls
+                ? { width: `${compactThinkingControlWidth}px` }
+                : undefined
+            }
+          >
             <ThinkingValueSelect
               selectedThinkingValue={selectedThinkingValue}
               thinkingValues={thinkingValues}
               disabled={isResponding}
+              compact={compactComposerControls}
               onThinkingValueChange={onThinkingValueChange}
             />
           </div>
         ) : null}
 
-        <div className="ml-auto flex shrink-0 items-center gap-2">
+        <div
+          ref={composerActionsRef}
+          className="ml-auto flex shrink-0 items-center gap-2"
+        >
           <Button
             variant="outline"
             size="icon"

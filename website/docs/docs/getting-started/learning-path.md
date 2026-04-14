@@ -22,7 +22,7 @@ Read [Workspace Model](/holaos/workspace-model) and [Memory and Continuity](/hol
   </DocStep>
   <DocStep title="Understand the execution boundary">
 
-Read [Agent Harness](/holaos/agent-harness/) and [Runtime APIs](/build-on-holaos/runtime-apis) to see what the runtime passes into the executor and which operational surfaces exist around it.
+Read [Agent Harness](/holaos/agent-harness/) and [Runtime APIs](/build-on-holaos/runtime/apis) to see what the runtime passes into the executor and which operational surfaces exist around it.
 
   </DocStep>
   <DocStep title="Start developing locally">

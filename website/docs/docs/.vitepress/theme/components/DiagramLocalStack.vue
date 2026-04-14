@@ -18,7 +18,7 @@
         <div class="hb-diagram-stack__runtime-grid">
           <div class="hb-diagram-stack__node">
             <span class="hb-diagram-stack__node-name">Embedded Runtime API</span>
-            <span class="hb-diagram-stack__node-meta">Fastify :5060 in desktop dev</span>
+            <span class="hb-diagram-stack__node-meta">Fastify :5160 in desktop dev</span>
           </div>
           <div class="hb-diagram-stack__node">
             <span class="hb-diagram-stack__node-name">State Store</span>

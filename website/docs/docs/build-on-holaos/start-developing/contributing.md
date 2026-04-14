@@ -39,6 +39,17 @@ Add `npm run desktop:e2e` when the change crosses renderer, preload, main-proces
 - Include the validation commands you ran in the commit body when they are important to understanding the change.
 - PRs should call out user-visible behavior changes, migrations, workspace-format changes, new env vars, and any required follow-up deploy steps.
 
+Representative commit shape:
+
+```text
+feat: add reasoning effort selection across desktop and runtime
+
+- add catalog-driven reasoning metadata to desktop model configuration
+- pass thinking_value through queued inputs and the reduced harness request
+- map provider-native reasoning values onto the harness runtime config
+- Validation: npm run desktop:typecheck; npm run runtime:test; npm run docs:test
+```
+
 ## Review expectations
 
 - Keep PRs narrow enough that reviewers can reason about behavior changes without reconstructing the entire system.

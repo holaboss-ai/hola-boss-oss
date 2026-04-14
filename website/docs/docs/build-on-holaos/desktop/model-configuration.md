@@ -2,7 +2,9 @@
 
 ![Model Settings](/images/model-settings.png)
 
-Holaboss ships with a default model setup. In most cases, you do not need to edit `runtime-config.json` by hand, because the desktop app already exposes the main configuration surfaces for provider connection, background tasks, recall embeddings, and image generation.
+Holaboss ships with a default model setup. In most cases, you do not need to edit `runtime-config.json` by hand, because the desktop app already exposes the main configuration surfaces for provider connection, managed model catalogs, background tasks, recall embeddings, and image generation.
+
+This page is the configuration reference for operators and builders. For the Electron IPC path, runtime model-catalog refresh flow, queued `thinking_value` handoff, and other execution internals, continue into [Desktop Internals](/build-on-holaos/desktop/internals) and [Runtime APIs](/build-on-holaos/runtime/apis).
 
 The baseline defaults are:
 
@@ -35,6 +37,53 @@ Holaboss already provides model configuration in the desktop app:
 - changes autosave to `runtime-config.json`, and the chat model picker uses the configured provider models
 
 When the first direct provider is connected, the desktop seeds background tasks to that provider and its built-in default background model. Holaboss-managed sessions can also inject managed background and embedding defaults through the runtime binding. For `ollama_direct`, the provider can be selected, but you must choose a model explicitly before background LLM tasks are enabled.
+
+## Catalog-driven chat models
+
+The current desktop no longer treats chat models as only freeform strings.
+
+- Direct providers use the shipped fallback catalog in `desktop/shared/model-catalog.ts`.
+- Signed-in Holaboss-managed sessions can also fetch a managed runtime model catalog from the control plane.
+- The desktop merges that managed catalog with the locally persisted `runtime-config.json` and exposes the result as `providerModelGroups` in the runtime-config snapshot.
+- Managed defaults for background tasks, embeddings, and image generation are also carried with that snapshot as `defaultBackgroundModel`, `defaultEmbeddingModel`, and `defaultImageModel`.
+
+In practice, that means the model picker and settings UI are both catalog-aware:
+
+- `Settings -> Model Providers` uses the catalog to seed provider defaults and suggestions.
+- The chat composer uses the resolved provider groups to show only the models that are actually available for the current runtime.
+- Deprecated or unsupported model ids are filtered before they reach the renderer.
+
+## Reasoning effort in chat
+
+Reasoning effort is selected in the chat composer, not in `runtime-config.json`.
+
+The current flow is:
+
+1. select a chat model in the composer
+2. if that model advertises `reasoning: true` and has non-empty `thinkingValues`, the composer shows a `Thinking` selector
+3. the desktop remembers the last selected value per resolved model locally
+4. when the message is queued, the desktop sends both `model` and `thinking_value` to `/api/v1/agent-sessions/queue`
+
+That `thinking_value` is run-scoped metadata. It does not become a new global default model setting.
+
+## Current shipped reasoning-value sets
+
+The shipped fallback catalog currently exposes these reasoning controls:
+
+| Provider / model | Reasoning values |
+| --- | --- |
+| `openai_direct/gpt-5.4` | `none`, `low`, `medium`, `high`, `xhigh` |
+| `openai_direct/gpt-5.3-codex` | `low`, `medium`, `high`, `xhigh` |
+| `anthropic_direct/claude-sonnet-4-6` | `low`, `medium`, `high` |
+| `anthropic_direct/claude-opus-4-6` | `low`, `medium`, `high`, `max` |
+| `anthropic_direct/claude-haiku-4-5` | `1024`, `2048`, `8192`, `16384` |
+| `openrouter_direct/*` shipped chat models | `minimal`, `low`, `medium`, `high` |
+| `gemini_direct/gemini-2.5-pro` | `-1`, `128`, `2048`, `8192`, `32768` |
+| `gemini_direct/gemini-2.5-flash` | `0`, `-1`, `128`, `2048`, `8192`, `24576` |
+| `ollama_direct/*` shipped models | no reasoning selector |
+| `minimax_direct/*` shipped models | no reasoning selector |
+
+For Holaboss Proxy, the managed catalog can provide explicit reasoning metadata. If it does not, the desktop falls back to provider-mapped metadata for known OpenAI, Anthropic, Gemini, and shipped OpenRouter models.
 
 ## Customization mode
 
@@ -97,6 +146,8 @@ You can override that path with:
   - default model selection
 - `HOLABOSS_DEFAULT_MODEL`
   - environment override for the default model
+
+There is no `runtime.thinking_value` field. Reasoning effort is chosen per run in the chat composer and queued with the session input.
 
 ## Background task provider defaults
 

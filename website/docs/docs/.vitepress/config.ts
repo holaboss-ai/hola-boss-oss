@@ -130,7 +130,11 @@ export default defineConfig({
             items: [
               {
                 text: "Workspace Experience",
-                link: "/desktop/workspace-experience",
+                link: "/build-on-holaos/desktop/workspace-experience",
+              },
+              {
+                text: "Model Configuration",
+                link: "/build-on-holaos/desktop/model-configuration",
               },
               {
                 text: "Desktop Internals",
@@ -142,7 +146,7 @@ export default defineConfig({
             text: "Runtime",
             collapsed: true,
             items: [
-              { text: "Runtime APIs", link: "/build-on-holaos/runtime-apis" },
+              { text: "Runtime APIs", link: "/build-on-holaos/runtime/apis" },
               {
                 text: "Run Compilation",
                 link: "/build-on-holaos/runtime/run-compilation",
@@ -153,7 +157,7 @@ export default defineConfig({
               },
               {
                 text: "Independent Deploy",
-                link: "/build-on-holaos/independent-deploy",
+                link: "/build-on-holaos/runtime/independent-deploy",
               },
             ],
           },
@@ -161,10 +165,6 @@ export default defineConfig({
             text: "Agent Harness",
             collapsed: true,
             items: [
-              {
-                text: "Model Configuration",
-                link: "/desktop/model-configuration",
-              },
               {
                 text: "Internals and Contracts",
                 link: "/build-on-holaos/agent-harness/internals",
