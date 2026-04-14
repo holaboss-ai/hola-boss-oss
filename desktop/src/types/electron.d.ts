@@ -102,7 +102,7 @@ declare global {
     height: number;
   }
 
-  type UiSettingsPaneSection = "account" | "billing" | "providers" | "integrations" | "submissions" | "settings" | "about";
+  type UiSettingsPaneSection = "account" | "billing" | "providers" | "integrations" | "submissions" | "settings" | "automations" | "about";
 
   interface BrowserStatePayload {
     id: string;
@@ -979,7 +979,6 @@ declare global {
     skill_file_path: string;
     title: string;
     summary: string;
-    enabled: boolean;
     modified_at: string;
   }
 
@@ -987,8 +986,6 @@ declare global {
     workspace_id: string;
     workspace_root: string;
     skills_path: string;
-    enabled_skill_ids: string[];
-    missing_enabled_skill_ids: string[];
     skills: WorkspaceSkillRecordPayload[];
   }
 

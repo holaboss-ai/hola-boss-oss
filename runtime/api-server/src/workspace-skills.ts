@@ -49,41 +49,6 @@ function embeddedSkillsRoot(): string {
   return path.join(runtimeRootDir(), "harnesses", "src", "embedded-skills");
 }
 
-function readWorkspaceYamlMapping(workspaceDir: string): Record<string, unknown> {
-  const workspaceYamlPath = path.join(path.resolve(workspaceDir), "workspace.yaml");
-  if (!fs.existsSync(workspaceYamlPath)) {
-    return {};
-  }
-  try {
-    const loaded = yaml.load(fs.readFileSync(workspaceYamlPath, "utf8"));
-    return loaded && typeof loaded === "object" && !Array.isArray(loaded) ? (loaded as Record<string, unknown>) : {};
-  } catch {
-    return {};
-  }
-}
-
-function workspaceEnabledSkillIds(payload: Record<string, unknown>): string[] {
-  const skills = payload.skills;
-  if (!skills || typeof skills !== "object" || Array.isArray(skills)) {
-    return [];
-  }
-  const enabled = (skills as Record<string, unknown>).enabled;
-  if (!Array.isArray(enabled)) {
-    return [];
-  }
-  const ordered: string[] = [];
-  const seen = new Set<string>();
-  for (const item of enabled) {
-    const skillId = normalizeSkillId(item);
-    if (!skillId || seen.has(skillId)) {
-      continue;
-    }
-    seen.add(skillId);
-    ordered.push(skillId);
-  }
-  return ordered;
-}
-
 function skillFrontmatter(content: string): Record<string, unknown> | null {
   const normalized = content.replace(/^\uFEFF/, "");
   const match = normalized.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
@@ -195,8 +160,6 @@ function resolveWorkspaceLocalSkills(workspaceDirInput: string): ResolvedWorkspa
 }
 
 export function resolveWorkspaceSkills(workspaceDirInput: string): ResolvedWorkspaceSkill[] {
-  const payload = readWorkspaceYamlMapping(workspaceDirInput);
-  const enabledSkillIds = workspaceEnabledSkillIds(payload);
   const embeddedSkills = listSkillsInRoot(embeddedSkillsRoot(), "embedded");
   const workspaceSkills = resolveWorkspaceLocalSkills(workspaceDirInput);
 
@@ -208,21 +171,18 @@ export function resolveWorkspaceSkills(workspaceDirInput: string): ResolvedWorks
     resolvedById.set(skill.skill_id, skill);
   }
 
-  const orderedSkillIds =
-    enabledSkillIds.length > 0
-      ? enabledSkillIds
-      : (() => {
-          const ordered: string[] = [];
-          const seen = new Set<string>();
-          for (const skill of [...embeddedSkills, ...workspaceSkills]) {
-            if (seen.has(skill.skill_id)) {
-              continue;
-            }
-            seen.add(skill.skill_id);
-            ordered.push(skill.skill_id);
-          }
-          return ordered;
-        })();
+  const orderedSkillIds = (() => {
+    const ordered: string[] = [];
+    const seen = new Set<string>();
+    for (const skill of [...embeddedSkills, ...workspaceSkills]) {
+      if (seen.has(skill.skill_id)) {
+        continue;
+      }
+      seen.add(skill.skill_id);
+      ordered.push(skill.skill_id);
+    }
+    return ordered;
+  })();
 
   return orderedSkillIds
     .map((skillId) => {

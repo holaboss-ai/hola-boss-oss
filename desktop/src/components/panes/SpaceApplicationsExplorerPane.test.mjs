@@ -16,5 +16,5 @@ test("space applications explorer renders the add app action in the header", asy
     /<div className="flex items-center justify-between gap-3 border-b border-border\/45 px-3 py-2\.5">/,
   );
   assert.match(source, /onClick=\{onAddApp\}/);
-  assert.match(source, /Add app/);
+  assert.match(source, /Add apps/);
 });

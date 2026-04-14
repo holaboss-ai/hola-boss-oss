@@ -90,7 +90,7 @@ interface BrowserAnchorBoundsPayload {
   height: number;
 }
 
-type UiSettingsPaneSection = "account" | "billing" | "providers" | "settings" | "about";
+type UiSettingsPaneSection = "account" | "billing" | "providers" | "integrations" | "submissions" | "settings" | "automations" | "about";
 
 interface DesktopWindowStatePayload {
   isFullScreen: boolean;

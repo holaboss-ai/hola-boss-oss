@@ -414,11 +414,6 @@ test("processClaimedInput promotes accepted evolve skill candidates into live wo
   const { store, memoryService } = makeRuntimeState("hb-evolve-skill-promotion-");
   seedWorkspace(store);
   const workspaceDir = store.workspaceDir("workspace-1");
-  fs.writeFileSync(
-    path.join(workspaceDir, "workspace.yaml"),
-    ["skills:", "  enabled:", "    - skill-creator", ""].join("\n"),
-    "utf8"
-  );
   store.ensureSession({
     workspaceId: "workspace-1",
     sessionId: "session-review",
@@ -536,7 +531,6 @@ test("processClaimedInput promotes accepted evolve skill candidates into live wo
   assert.equal(fs.readFileSync(liveSkillPath, "utf8"), draftMarkdown);
   assert.equal(store.getEvolveSkillCandidate("evolve-skill-input-10")?.status, "promoted");
   assert.ok(store.getEvolveSkillCandidate("evolve-skill-input-10")?.promotedAt);
-  assert.match(fs.readFileSync(path.join(workspaceDir, "workspace.yaml"), "utf8"), /release-verification/);
   store.close();
 });
 

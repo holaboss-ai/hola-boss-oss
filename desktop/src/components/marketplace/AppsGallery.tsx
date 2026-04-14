@@ -75,9 +75,6 @@ export function AppsGallery() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          Install apps into your workspace.
-        </p>
         <Button
           variant="ghost"
           size="sm"

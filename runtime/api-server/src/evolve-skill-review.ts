@@ -8,7 +8,6 @@ import type {
   RuntimeStateStore,
   TurnResultRecord,
 } from "@holaboss/runtime-state-store";
-import yaml from "js-yaml";
 
 import type { MemoryModelClientConfig } from "./memory-model-client.js";
 import { queryMemoryModelJson } from "./memory-model-client.js";
@@ -209,44 +208,6 @@ async function upsertWorkspaceMemoryFileIfChanged(params: {
 
 function activeCandidate(records: EvolveSkillCandidateRecord[]): EvolveSkillCandidateRecord[] {
   return records.filter((record) => !["dismissed", "discarded"].includes(record.status));
-}
-
-function readWorkspaceYamlDocument(workspaceDir: string): Record<string, unknown> | null {
-  const workspaceYamlPath = path.join(workspaceDir, "workspace.yaml");
-  if (!fs.existsSync(workspaceYamlPath)) {
-    return null;
-  }
-  try {
-    const parsed = yaml.load(fs.readFileSync(workspaceYamlPath, "utf8"));
-    return isRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeWorkspaceYamlDocument(workspaceDir: string, document: Record<string, unknown>): void {
-  const workspaceYamlPath = path.join(workspaceDir, "workspace.yaml");
-  fs.writeFileSync(workspaceYamlPath, yaml.dump(document, { sortKeys: false, noRefs: true }), "utf8");
-}
-
-function ensureWorkspaceSkillEnabled(workspaceDir: string, slug: string): void {
-  const document = readWorkspaceYamlDocument(workspaceDir);
-  if (!document) {
-    return;
-  }
-  const skills = isRecord(document.skills) ? { ...document.skills } : null;
-  if (!skills || !Array.isArray(skills.enabled)) {
-    return;
-  }
-  const enabled = skills.enabled
-    .map((item) => (typeof item === "string" ? item.trim() : ""))
-    .filter(Boolean);
-  if (enabled.includes(slug)) {
-    return;
-  }
-  skills.enabled = [...enabled, slug];
-  document.skills = skills;
-  writeWorkspaceYamlDocument(workspaceDir, document);
 }
 
 function liveWorkspaceSkillExists(workspaceDir: string, slug: string): boolean {
@@ -551,7 +512,6 @@ export async function promoteAcceptedSkillCandidate(params: {
   }
 
   const workspaceDir = params.store.workspaceDir(candidate.workspaceId);
-  ensureWorkspaceSkillEnabled(workspaceDir, candidate.slug);
   if (liveWorkspaceSkillExists(workspaceDir, candidate.slug)) {
     params.store.updateEvolveSkillCandidate({
       candidateId: candidate.candidateId,
@@ -578,7 +538,6 @@ export async function promoteAcceptedSkillCandidate(params: {
   if (existing !== draftMarkdown) {
     fs.writeFileSync(targetFilePath, draftMarkdown, "utf8");
   }
-  ensureWorkspaceSkillEnabled(workspaceDir, candidate.slug);
   if (!liveWorkspaceSkillExists(workspaceDir, candidate.slug)) {
     return { status: "invalid_live_skill", targetSkillPath };
   }

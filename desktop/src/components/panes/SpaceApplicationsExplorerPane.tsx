@@ -41,7 +41,7 @@ export function SpaceApplicationsExplorerPane({
           className="h-7 gap-1.5 rounded-md px-2.5 text-[11px]"
         >
           <Plus size={12} />
-          Add app
+          Add apps
         </Button>
       </div>
 

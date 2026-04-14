@@ -66,15 +66,49 @@ test("app shell restores the last app surface when returning to the applications
   );
   assert.match(
     source,
-    /const restoreLastSpaceAppDisplayView = useCallback\(\(\) => \{\s*if \(!selectedWorkspaceId\) \{\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*const lastAppDisplayView =\s*lastRestorableSpaceAppDisplayViewByWorkspaceRef\.current\[\s*selectedWorkspaceId\s*\];\s*if \(lastAppDisplayView\) \{\s*setSpaceDisplayView\(lastAppDisplayView\);\s*return;\s*\}\s*restoreLastSpaceDisplayView\(\);\s*\}, \[restoreLastSpaceDisplayView, selectedWorkspaceId\]\);/,
+    /const restoreLastSpaceAppDisplayView = useCallback\(\(\) => \{\s*if \(!selectedWorkspaceId\) \{\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*const lastAppDisplayView =\s*lastRestorableSpaceAppDisplayViewByWorkspaceRef\.current\[\s*selectedWorkspaceId\s*\];\s*if \(lastAppDisplayView\) \{\s*setSpaceDisplayView\(lastAppDisplayView\);\s*return;\s*\}\s*setSpaceDisplayView\(spaceDisplayView\);\s*\}, \[selectedWorkspaceId, spaceDisplayView\]\);/,
   );
   assert.match(
     source,
-    /if \(mode === "browser"\) \{\s*setSpaceDisplayView\(\{\s*type: "browser",\s*\}\);\s*\} else if \(mode === "applications"\) \{\s*restoreLastSpaceAppDisplayView\(\);\s*\} else \{\s*restoreLastSpaceDisplayView\(\);\s*\}/,
+    /if \(mode === "browser"\) \{\s*setSpaceDisplayView\(\{\s*type: "browser",\s*\}\);\s*\} else if \(mode === "applications"\) \{\s*restoreLastSpaceAppDisplayView\(\);\s*\} else \{\s*restoreLastSpaceFileDisplayView\(\);\s*\}/,
   );
   assert.match(
     source,
     /onClick=\{\(\) => \{\s*setSpaceExplorerMode\("applications"\);\s*restoreLastSpaceAppDisplayView\(\);\s*setSpaceExplorerCollapsed\(false\);\s*\}\}/,
+  );
+});
+
+test("app shell opens the centered add apps dialog from the applications explorer", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /import \{ WorkspaceAppsDialog \} from "@\/components\/layout\/WorkspaceAppsDialog";/);
+  assert.match(
+    source,
+    /const \[workspaceAppsDialogOpen, setWorkspaceAppsDialogOpen\] =\s*useState\(false\);/,
+  );
+  assert.match(
+    source,
+    /const handleAddApp = \(\) => \{\s*setWorkspaceAppsDialogOpen\(true\);\s*\};/,
+  );
+  assert.match(
+    source,
+    /useEffect\(\(\) => \{\s*if \(selectedWorkspaceId\) \{\s*return;\s*\}\s*setWorkspaceAppsDialogOpen\(false\);\s*\}, \[selectedWorkspaceId\]\);/,
+  );
+  assert.match(
+    source,
+    /<SpaceApplicationsExplorerPane[\s\S]*onAddApp=\{handleAddApp\}/,
+  );
+  assert.match(
+    source,
+    /<WorkspaceAppsDialog[\s\S]*open=\{workspaceAppsDialogOpen\}[\s\S]*onClose=\{\(\) => setWorkspaceAppsDialogOpen\(false\)\}/,
+  );
+  assert.match(
+    source,
+    /const shouldSuspendBrowserNativeView =\s*[\s\S]*workspaceAppsDialogOpen[\s\S]*createWorkspacePanelOpen[\s\S]*publishOpen;/,
+  );
+  assert.doesNotMatch(
+    source,
+    /const handleAddApp = \(\) => \{\s*handleOpenMarketplace\("apps"\);\s*\};/,
   );
 });
 
@@ -93,16 +127,16 @@ test("app shell clears a consumed file explorer focus request", async () => {
   );
 });
 
-test("app shell restores the last non-browser display when returning to files mode", async () => {
+test("app shell restores the last internal display and otherwise keeps the current display when returning to files mode", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(
     source,
-    /type RestorableSpaceDisplayView = Exclude<\s*SpaceDisplayView,\s*\{ type: "browser" \} \| \{ type: "empty" \}\s*>;/,
+    /type RestorableSpaceFileDisplayView = Extract<\s*SpaceDisplayView,\s*\{ type: "internal" \}\s*>;/,
   );
   assert.match(
     source,
-    /const lastRestorableSpaceDisplayViewByWorkspaceRef =\s*useRef<\s*Record<string, RestorableSpaceDisplayView>\s*>\(\{\}\);/,
+    /const lastRestorableSpaceFileDisplayViewByWorkspaceRef =\s*useRef<\s*Record<string, RestorableSpaceFileDisplayView>\s*>\(\{\}\);/,
   );
   assert.match(
     source,
@@ -126,23 +160,23 @@ test("app shell restores the last non-browser display when returning to files mo
   );
   assert.match(
     source,
-    /if \(\s*!selectedWorkspaceId \|\|\s*spaceDisplayView\.type === "browser" \|\|\s*spaceDisplayView\.type === "empty"\s*\) \{\s*return;\s*\}\s*lastRestorableSpaceDisplayViewByWorkspaceRef\.current\[selectedWorkspaceId\] =\s*spaceDisplayView;/,
+    /if \(!selectedWorkspaceId \|\| spaceDisplayView\.type !== "internal"\) \{\s*return;\s*\}\s*lastRestorableSpaceFileDisplayViewByWorkspaceRef\.current\[\s*selectedWorkspaceId\s*\]\s*=\s*spaceDisplayView;/,
   );
   assert.match(
     source,
-    /const restoreLastSpaceDisplayView = useCallback\(\(\) => \{\s*if \(!selectedWorkspaceId\) \{\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*const lastDisplayView =\s*lastRestorableSpaceDisplayViewByWorkspaceRef\.current\[\s*selectedWorkspaceId\s*\];\s*const nextDisplayView = lastDisplayView \?\? \{ type: "browser" \};\s*setSpaceDisplayView\(nextDisplayView\);\s*syncFileExplorerFocusWithDisplayView\(nextDisplayView\);\s*\}, \[selectedWorkspaceId, syncFileExplorerFocusWithDisplayView\]\);/,
+    /const restoreLastSpaceFileDisplayView = useCallback\(\(\) => \{\s*if \(!selectedWorkspaceId\) \{\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*const lastDisplayView =\s*lastRestorableSpaceFileDisplayViewByWorkspaceRef\.current\[\s*selectedWorkspaceId\s*\];\s*const nextDisplayView = lastDisplayView \?\? spaceDisplayView;\s*setSpaceDisplayView\(nextDisplayView\);\s*syncFileExplorerFocusWithDisplayView\(nextDisplayView\);\s*\}, \[selectedWorkspaceId, spaceDisplayView, syncFileExplorerFocusWithDisplayView\]\);/,
   );
   assert.match(
     source,
-    /useEffect\(\(\) => \{\s*if \(!selectedWorkspaceId\) \{\s*setSpaceExplorerMode\("browser"\);\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*const nextDisplayView =\s*lastRestorableSpaceDisplayViewByWorkspaceRef\.current\[\s*selectedWorkspaceId\s*\];\s*if \(!nextDisplayView\) \{\s*setSpaceExplorerMode\("browser"\);\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*setSpaceDisplayView\(nextDisplayView\);\s*syncFileExplorerFocusWithDisplayView\(nextDisplayView\);\s*\}, \[selectedWorkspaceId, syncFileExplorerFocusWithDisplayView\]\);/,
+    /useEffect\(\(\) => \{\s*if \(!selectedWorkspaceId\) \{\s*setSpaceExplorerMode\("browser"\);\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*const nextDisplayView =\s*lastRestorableSpaceFileDisplayViewByWorkspaceRef\.current\[\s*selectedWorkspaceId\s*\];\s*if \(!nextDisplayView\) \{\s*setSpaceExplorerMode\("browser"\);\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*setSpaceDisplayView\(nextDisplayView\);\s*syncFileExplorerFocusWithDisplayView\(nextDisplayView\);\s*\}, \[selectedWorkspaceId, syncFileExplorerFocusWithDisplayView\]\);/,
   );
   assert.match(
     source,
-    /onValueChange=\{\(value\) => \{\s*const mode = value as SpaceExplorerMode;\s*setSpaceExplorerMode\(mode\);\s*if \(mode === "browser"\) \{\s*setSpaceDisplayView\(\{\s*type: "browser",\s*\}\);\s*\} else if \(mode === "applications"\) \{\s*restoreLastSpaceAppDisplayView\(\);\s*\} else \{\s*restoreLastSpaceDisplayView\(\);\s*\}\s*\}\}/,
+    /onValueChange=\{\(value\) => \{\s*const mode = value as SpaceExplorerMode;\s*setSpaceExplorerMode\(mode\);\s*if \(mode === "browser"\) \{\s*setSpaceDisplayView\(\{\s*type: "browser",\s*\}\);\s*\} else if \(mode === "applications"\) \{\s*restoreLastSpaceAppDisplayView\(\);\s*\} else \{\s*restoreLastSpaceFileDisplayView\(\);\s*\}\s*\}\}/,
   );
   assert.match(
     source,
-    /onClick=\{\(\) => \{\s*setSpaceExplorerMode\("files"\);\s*restoreLastSpaceDisplayView\(\);\s*setSpaceExplorerCollapsed\(false\);\s*\}\}/,
+    /onClick=\{\(\) => \{\s*setSpaceExplorerMode\("files"\);\s*restoreLastSpaceFileDisplayView\(\);\s*setSpaceExplorerCollapsed\(false\);\s*\}\}/,
   );
 });
 
@@ -329,22 +363,22 @@ test("app shell always opens the file explorer at minimum width", async () => {
 test("app shell uses the top toolbar for shell navigation and removes the left rail", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /type ShellView = "space" \| "automations" \| "marketplace";/);
+  assert.match(source, /type ShellView = "space";/);
   assert.match(source, /const \[activeShellView, setActiveShellView\] = useState<ShellView>\("space"\);/);
-  assert.match(source, /const handleOpenSpace = useCallback\(\(\) => \{/);
-  assert.match(source, /const handleOpenMarketplace = useCallback\(/);
-  assert.match(source, /const handleOpenAutomations = useCallback\(\(\) => \{/);
-  assert.match(source, /<TopTabsBar[\s\S]*onOpenSpace=\{handleOpenSpace\}/);
-  assert.match(source, /<TopTabsBar[\s\S]*isSpaceActive=\{spaceMode\}/);
-  assert.match(source, /<TopTabsBar[\s\S]*onOpenAutomations=\{handleOpenAutomations\}/);
-  assert.match(
-    source,
-    /<TopTabsBar[\s\S]*isAutomationsActive=\{activeShellView === "automations"\}/,
-  );
-  assert.match(
-    source,
-    /<TopTabsBar[\s\S]*onOpenMarketplace=\{\(\) => handleOpenMarketplace\("templates"\)\}/,
-  );
+  assert.match(source, /<SettingsDialog[\s\S]*onOpenAutomationRunSession=\{\(workspaceId, sessionId\) => \{/);
+  assert.match(source, /<SettingsDialog[\s\S]*onCreateAutomationSchedule=\{\(workspaceId\) => \{/);
+  assert.match(source, /<SettingsDialog[\s\S]*onEditAutomationSchedule=\{\(workspaceId, job\) => \{/);
+  assert.match(source, /setSettingsDialogOpen\(false\);[\s\S]*handleOpenAutomationRunSession\(sessionId, workspaceId\);/);
+  assert.match(source, /setSettingsDialogOpen\(false\);[\s\S]*handleCreateScheduleInChat\(workspaceId\);/);
+  assert.match(source, /setSettingsDialogOpen\(false\);[\s\S]*handleEditScheduleInChat\(job, workspaceId\);/);
+  assert.doesNotMatch(source, /handleOpenMarketplace/);
+  assert.doesNotMatch(source, /MarketplacePane/);
+  assert.doesNotMatch(source, /activeShellView === "marketplace"/);
+  assert.doesNotMatch(source, /handleOpenSpace = useCallback/);
+  assert.doesNotMatch(source, /onOpenSpace=\{handleOpenSpace\}/);
+  assert.doesNotMatch(source, /isSpaceActive=\{spaceMode\}/);
+  assert.doesNotMatch(source, /handleOpenAutomations/);
+  assert.doesNotMatch(source, /activeShellView === "automations"/);
   assert.doesNotMatch(source, /LeftNavigationRail/);
 });
 
@@ -527,16 +561,31 @@ test("app shell can route new schedule creation into a prefilled workspace chat"
   assert.match(source, /const chatComposerPrefillRequestKeyRef = useRef\(0\);/);
   assert.match(source, /const nextChatSessionOpenRequestKey = useCallback\(\(\) => \{\s*chatSessionOpenRequestKeyRef\.current \+= 1;\s*return chatSessionOpenRequestKeyRef\.current;\s*\}, \[\]\);/);
   assert.match(source, /const nextChatComposerPrefillRequestKey = useCallback\(\(\) => \{\s*chatComposerPrefillRequestKeyRef\.current \+= 1;\s*return chatComposerPrefillRequestKeyRef\.current;\s*\}, \[\]\);/);
-  assert.match(source, /const handleCreateScheduleInChat = useCallback\(\(\) => \{/);
+  assert.match(source, /const handleCreateScheduleInChat = useCallback\(\(\s*workspaceId\?: string \| null\) => \{/);
+  assert.match(source, /const normalizedWorkspaceId =\s*workspaceId\?\.trim\(\) \|\| selectedWorkspaceId\?\.trim\(\) \|\| "";/);
+  assert.match(source, /if \(normalizedWorkspaceId !== \(selectedWorkspaceId\?\.trim\(\) \|\| ""\)\) \{\s*setSelectedWorkspaceId\(normalizedWorkspaceId\);\s*\}/);
   assert.match(source, /setActiveShellView\("space"\);/);
   assert.match(source, /setSpaceVisibility\(\(previous\) => \(\{\s*\.\.\.previous,\s*agent: true,\s*\}\)\);/);
   assert.match(source, /setAgentView\(\{ type: "chat" \}\);/);
   assert.match(source, /setChatSessionJumpRequest\(null\);/);
-  assert.match(source, /setChatSessionOpenRequest\(\s*activeChatSessionId\s*\?\s*\{\s*sessionId: activeChatSessionId,\s*requestKey: nextChatSessionOpenRequestKey\(\),\s*\}\s*:\s*null,\s*\);/);
+  assert.match(source, /setChatSessionOpenRequest\(\{\s*sessionId: "",\s*mode: "draft",\s*parentSessionId: null,\s*requestKey: nextChatSessionOpenRequestKey\(\),\s*\}\);/);
   assert.match(source, /setChatComposerPrefillRequest\(\{\s*text: "Create a cronjob for ",\s*requestKey: nextChatComposerPrefillRequestKey\(\),\s*\}\);/);
   assert.match(source, /composerPrefillRequest=\{chatComposerPrefillRequest\}/);
   assert.match(source, /onComposerPrefillConsumed=\{handleChatComposerPrefillConsumed\}/);
-  assert.match(source, /onCreateSchedule=\{handleCreateScheduleInChat\}/);
+  assert.match(source, /onCreateAutomationSchedule=\{\(workspaceId\) => \{/);
+  assert.match(source, /handleCreateScheduleInChat\(workspaceId\);/);
+});
+
+test("app shell can route schedule edits into a prefilled workspace chat", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /const handleEditScheduleInChat = useCallback\(\(\s*job: CronjobRecordPayload,\s*workspaceId\?: string \| null,\s*\) => \{/);
+  assert.match(source, /const jobName =\s*job\.name\?\.trim\(\) \|\| job\.description\?\.trim\(\) \|\| "Untitled schedule";/);
+  assert.match(source, /const instruction = job\.instruction\?\.trim\(\) \|\| job\.description\?\.trim\(\) \|\| "";/);
+  assert.match(source, /Edit cronjob "\$\{jobName\}" \(id: \$\{job\.id\}\)\. Current cron: \$\{job\.cron\}\./);
+  assert.match(source, /Current instruction: \$\{instruction\}\\n\\nUpdate it to:/);
+  assert.match(source, /onEditAutomationSchedule=\{\(workspaceId, job\) => \{/);
+  assert.match(source, /handleEditScheduleInChat\(job, workspaceId\);/);
 });
 
 test("app shell passes new session requests into the chat pane selector", async () => {

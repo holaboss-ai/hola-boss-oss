@@ -194,7 +194,6 @@ interface ChatComposerSlashCommandOption {
 interface ChatComposerQuotedSkillItem {
   skillId: string;
   title: string;
-  enabled: boolean;
 }
 
 interface StreamTelemetryEntry {
@@ -229,7 +228,7 @@ const COMPOSER_FULL_THINKING_CONTROL_WIDTH_PX = 88;
 const COMPOSER_FULL_PROVIDER_SETUP_WIDTH_PX = 320;
 const COMPOSER_COMPACT_MODEL_CONTROL_MAX_WIDTH_PX = 168;
 const COMPOSER_COMPACT_THINKING_CONTROL_MIN_WIDTH_PX = 56;
-const COMPOSER_COMPACT_THINKING_CONTROL_MAX_WIDTH_PX = 56;
+const COMPOSER_COMPACT_THINKING_CONTROL_MAX_WIDTH_PX = 124;
 const CHAT_MODEL_STORAGE_KEY = "holaboss-chat-model-v1";
 const CHAT_THINKING_STORAGE_KEY = "holaboss-chat-thinking-v1";
 const CHAT_MODEL_USE_RUNTIME_DEFAULT = "__runtime_default__";
@@ -499,7 +498,6 @@ function buildComposerSlashCommandOptions(
   skills: WorkspaceSkillRecordPayload[],
 ): ChatComposerSlashCommandOption[] {
   return skills
-    .filter((skill) => skill.enabled)
     .map((skill) => ({
       key: `skill:${skill.skill_id}`,
       kind: "skill" as const,
@@ -3105,34 +3103,66 @@ export function ChatPane({
   useEffect(() => {
     if (!selectedWorkspaceId) {
       setAvailableWorkspaceSkills([]);
+      setQuotedSkillIds([]);
       return;
     }
 
     let cancelled = false;
-    void window.electronAPI.workspace
-      .listSkills(selectedWorkspaceId)
-      .then((result) => {
+    let requestInFlight = false;
+
+    const loadAvailableWorkspaceSkills = async () => {
+      if (requestInFlight) {
+        return;
+      }
+      requestInFlight = true;
+      try {
+        const result = await window.electronAPI.workspace.listSkills(
+          selectedWorkspaceId,
+        );
         if (cancelled) {
           return;
         }
         setAvailableWorkspaceSkills(result.skills);
         setQuotedSkillIds((current) =>
           current.filter((skillId) =>
-            result.skills.some(
-              (skill) => skill.enabled && skill.skill_id === skillId,
-            ),
+            result.skills.some((skill) => skill.skill_id === skillId),
           ),
         );
-      })
-      .catch(() => {
+      } catch {
         if (!cancelled) {
           setAvailableWorkspaceSkills([]);
           setQuotedSkillIds([]);
         }
-      });
+      } finally {
+        requestInFlight = false;
+      }
+    };
+
+    const refreshVisibleWorkspaceSkills = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      void loadAvailableWorkspaceSkills();
+    };
+
+    void loadAvailableWorkspaceSkills();
+    const intervalId = window.setInterval(() => {
+      refreshVisibleWorkspaceSkills();
+    }, 1200);
+    window.addEventListener("focus", refreshVisibleWorkspaceSkills);
+    document.addEventListener(
+      "visibilitychange",
+      refreshVisibleWorkspaceSkills,
+    );
 
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshVisibleWorkspaceSkills);
+      document.removeEventListener(
+        "visibilitychange",
+        refreshVisibleWorkspaceSkills,
+      );
     };
   }, [selectedWorkspaceId]);
 
@@ -4558,7 +4588,6 @@ export function ChatPane({
         return {
           skillId,
           title: skill?.title ?? skillId,
-          enabled: skill?.enabled ?? false,
         };
       }),
     [availableWorkspaceSkillMap, quotedSkillIds],
@@ -7102,9 +7131,11 @@ function Composer({
   >("menu");
   const [skillPickerQuery, setSkillPickerQuery] = useState("");
   const [caretIndex, setCaretIndex] = useState(0);
+  const [dismissedSlashCommandKey, setDismissedSlashCommandKey] = useState("");
   const [highlightedSlashIndex, setHighlightedSlashIndex] = useState(0);
   const composerFooterRef = useRef<HTMLDivElement | null>(null);
   const composerActionsRef = useRef<HTMLDivElement | null>(null);
+  const slashCommandMenuRef = useRef<HTMLDivElement | null>(null);
   const [composerFooterLayout, setComposerFooterLayout] = useState({
     width: 0,
     actionsWidth: 0,
@@ -7119,7 +7150,13 @@ function Composer({
     () => findActiveSlashCommandRange(input, caretIndex),
     [caretIndex, input],
   );
-  const showSlashCommandMenu = !inputDisabled && activeSlashRange !== null;
+  const activeSlashCommandKey = activeSlashRange
+    ? `${activeSlashRange.start}:${activeSlashRange.end}:${activeSlashRange.query}`
+    : "";
+  const showSlashCommandMenu =
+    !inputDisabled &&
+    activeSlashRange !== null &&
+    activeSlashCommandKey !== dismissedSlashCommandKey;
   const filteredSlashCommands = useMemo(() => {
     if (inputDisabled || !activeSlashRange) {
       return [];
@@ -7233,12 +7270,44 @@ function Composer({
     setHighlightedSlashIndex(0);
   }, [activeSlashRange?.query, filteredSlashCommands.length]);
   useEffect(() => {
+    if (!dismissedSlashCommandKey) {
+      return;
+    }
+    if (!activeSlashCommandKey) {
+      setDismissedSlashCommandKey("");
+      return;
+    }
+    if (dismissedSlashCommandKey !== activeSlashCommandKey) {
+      setDismissedSlashCommandKey("");
+    }
+  }, [activeSlashCommandKey, dismissedSlashCommandKey]);
+  useEffect(() => {
     if (inputDisabled) {
       setComposerActionsMenuOpen(false);
       setComposerActionsView("menu");
       setSkillPickerQuery("");
+      setDismissedSlashCommandKey("");
     }
   }, [inputDisabled]);
+  useEffect(() => {
+    if (!showSlashCommandMenu) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const menu = slashCommandMenuRef.current;
+      const target = event.target;
+      if (!menu || !(target instanceof Node) || menu.contains(target)) {
+        return;
+      }
+      setDismissedSlashCommandKey(activeSlashCommandKey);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [activeSlashCommandKey, showSlashCommandMenu]);
   const visibleFooterControlCount =
     1 + (showThinkingValueSelector ? 1 : 0) + 1;
   const fullPrimaryControlWidth = showModelSelector
@@ -7460,10 +7529,10 @@ function Composer({
     <div className="relative">
       {showSlashCommandMenu ? (
         <div className="pointer-events-none absolute left-3 right-3 top-4 z-20 -translate-y-[calc(100%+2px)]">
-          <div className="pointer-events-auto overflow-hidden rounded-[24px] border border-border/55 bg-popover shadow-2xl ring-1 ring-foreground/5">
-            <div className="border-b border-border/30 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/75">
-              Slash commands
-            </div>
+          <div
+            ref={slashCommandMenuRef}
+            className="pointer-events-auto overflow-hidden rounded-[24px] border border-border/55 bg-popover shadow-2xl ring-1 ring-foreground/5"
+          >
             {filteredSlashCommands.length > 0 ? (
               <div className="max-h-[280px] overflow-y-auto py-1.5">
                 {filteredSlashCommands.map((command, index) => (
@@ -7484,12 +7553,6 @@ function Composer({
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-medium">
                         {command.label}
-                      </span>
-                      <span className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
-                        <span className="truncate">{command.command}</span>
-                        {command.description ? (
-                          <span className="truncate">{command.description}</span>
-                        ) : null}
                       </span>
                     </span>
                   </button>
@@ -7535,15 +7598,11 @@ function Composer({
               {quotedSkills.map((skill) => (
                 <div
                   key={skill.skillId}
-                  className={`inline-flex max-w-full items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] ${
-                    skill.enabled
-                      ? "border-primary/20 bg-primary/8 text-foreground/88"
-                      : "border-destructive/25 bg-destructive/8 text-destructive"
-                  }`}
+                  className="inline-flex max-w-full items-center gap-2 rounded-full border border-primary/20 bg-primary/8 px-3 py-1.5 text-[11px] text-foreground/88"
                 >
                   <Sparkles
                     size={12}
-                    className={skill.enabled ? "text-primary/80" : "text-destructive"}
+                    className="text-primary/80"
                   />
                   <span className="truncate">{skill.title}</span>
                   <button
@@ -7722,11 +7781,11 @@ function Composer({
               >
                 {composerActionsView === "skills" ? (
                   <div className="flex flex-col">
-                    <div className="border-b border-border/30 px-3 py-3">
-                      <div className="relative rounded-lg bg-transparent">
+                    <div className="border-b border-border/40 p-2">
+                      <div className="relative flex items-center rounded-[10px] border border-border/40 bg-muted/35 px-2.5 transition-colors focus-within:border-border/55 focus-within:bg-background/70">
                         <Search
-                          size={14}
-                          className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                          size={13}
+                          className="shrink-0 text-muted-foreground"
                         />
                         <input
                           value={skillPickerQuery}
@@ -7734,7 +7793,7 @@ function Composer({
                             setSkillPickerQuery(event.target.value)
                           }
                           placeholder="Search skills..."
-                          className="h-9 w-full border-0 bg-transparent pl-9 text-xs text-foreground outline-none placeholder:text-muted-foreground"
+                          className="embedded-input h-8 w-full bg-transparent pl-2 text-xs text-foreground outline-none placeholder:text-muted-foreground/60"
                           autoFocus
                         />
                       </div>
@@ -7774,9 +7833,6 @@ function Composer({
                                       Added
                                     </span>
                                   ) : null}
-                                </span>
-                                <span className="mt-1 block truncate text-[11px] text-muted-foreground">
-                                  {command.description || command.command}
                                 </span>
                               </span>
                               {isSelected ? (
