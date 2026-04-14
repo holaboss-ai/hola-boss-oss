@@ -96,6 +96,22 @@ Also verify that:
 - `apps/<app-id>/app.runtime.yaml` declares the expected setup and start commands
 - the app manifest points at the expected MCP path, if the app exposes MCP tools
 - the runtime can still resolve the app's assigned ports through `/api/v1/apps/ports`
+- `POST /api/v1/apps/install-archive` is not already running for the same `(workspace_id, app_id)` pair. A concurrent attempt now returns `409` with `app install already in progress for this id`.
+
+When setup still fails, inspect the per-app setup logs first:
+
+```bash
+curl \
+  'http://127.0.0.1:5160/api/v1/apps/my_app/setup-log?workspace_id=workspace-1'
+```
+
+This returns the tail of `<workspace>/apps/my_app/.holaboss/logs/setup.latest.log` and recent lifecycle events from `events.ndjson`.
+
+## Workspace creation fails mid-bootstrap
+
+Workspace creation now emits structured stage logs from Electron main with the `[holaboss.createWorkspace]` prefix.
+
+If first-workspace onboarding appears stuck around template apply, runtime record creation, or activation, inspect those stage lines in desktop logs before changing runtime code.
 
 ## Browser tools are missing during agent runs
 

@@ -6,6 +6,7 @@ import {
   Home,
   LayoutGrid,
   Loader2,
+  MessageSquareText,
   Minus,
   Plus,
   Search,
@@ -14,6 +15,7 @@ import {
   Trash2,
   Upload,
   User2,
+  Workflow,
   X,
 } from "lucide-react";
 import {
@@ -46,6 +48,10 @@ interface TopTabsBarProps {
   integratedTitleBar?: boolean;
   desktopPlatform?: string | null;
   onWorkspaceSwitcherVisibilityChange?: (open: boolean) => void;
+  onOpenSpace?: () => void;
+  isSpaceActive?: boolean;
+  onOpenAutomations?: () => void;
+  isAutomationsActive?: boolean;
   onOpenMarketplace?: () => void;
   isMarketplaceActive?: boolean;
   onOpenWorkspaceCreatePanel?: () => void;
@@ -60,6 +66,10 @@ export function TopTabsBar({
   integratedTitleBar = false,
   desktopPlatform = null,
   onWorkspaceSwitcherVisibilityChange,
+  onOpenSpace,
+  isSpaceActive = false,
+  onOpenAutomations,
+  isAutomationsActive = false,
   onOpenMarketplace,
   isMarketplaceActive = false,
   onOpenWorkspaceCreatePanel,
@@ -361,6 +371,30 @@ export function TopTabsBar({
         <div
           className={`${integratedTitleBar ? "window-no-drag " : ""}flex items-center justify-self-end gap-1.5`}
         >
+          {onOpenSpace ? (
+            <Button
+              variant={isSpaceActive ? "secondary" : "outline"}
+              size="sm"
+              aria-label="Space"
+              onClick={onOpenSpace}
+              className="h-7 gap-1.5 px-2 rounded-lg text-xs"
+            >
+              <MessageSquareText size={12} />
+              <span className="hidden sm:inline">Space</span>
+            </Button>
+          ) : null}
+          {onOpenAutomations ? (
+            <Button
+              variant={isAutomationsActive ? "secondary" : "outline"}
+              size="sm"
+              aria-label="Automations"
+              onClick={onOpenAutomations}
+              className="h-7 gap-1.5 px-2 rounded-lg text-xs"
+            >
+              <Workflow size={12} />
+              <span className="hidden sm:inline">Automations</span>
+            </Button>
+          ) : null}
           {onOpenMarketplace ? (
             <Button
               variant={isMarketplaceActive ? "secondary" : "outline"}

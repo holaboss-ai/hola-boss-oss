@@ -1,8 +1,4 @@
 import { appShellMainGridClassName } from "@/components/layout/appShellLayout";
-import {
-  LeftNavigationRail,
-  type LeftRailItem,
-} from "@/components/layout/LeftNavigationRail";
 import { NotificationToastStack } from "@/components/layout/NotificationToastStack";
 import {
   OperationsInboxPane,
@@ -12,7 +8,6 @@ import { SettingsDialog } from "@/components/layout/SettingsDialog";
 import { TopTabsBar } from "@/components/layout/TopTabsBar";
 import { FirstWorkspacePane } from "@/components/onboarding";
 import { AppSurfacePane } from "@/components/panes/AppSurfacePane";
-import { resolveAppSurfacePath } from "@/components/panes/appSurfaceRoute";
 import { AutomationsPane } from "@/components/panes/AutomationsPane";
 import { BrowserPane } from "@/components/panes/BrowserPane";
 import { ChatPane } from "@/components/panes/ChatPane";
@@ -23,6 +18,7 @@ import {
 import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
 import { MarketplacePane } from "@/components/panes/MarketplacePane";
 import { OnboardingPane } from "@/components/panes/OnboardingPane";
+import { SpaceApplicationsExplorerPane } from "@/components/panes/SpaceApplicationsExplorerPane";
 import { SpaceBrowserDisplayPane } from "@/components/panes/SpaceBrowserDisplayPane";
 import { SpaceBrowserExplorerPane } from "@/components/panes/SpaceBrowserExplorerPane";
 import { PublishDialog } from "@/components/publish/PublishDialog";
@@ -45,6 +41,7 @@ import {
   Folder,
   Globe,
   Inbox,
+  LayoutGrid,
   Loader2,
   PanelLeftClose,
   PanelLeftOpen,
@@ -64,6 +61,7 @@ const THEME_STORAGE_KEY = "holaboss-theme-v1";
 const DEV_APP_UPDATE_PREVIEW_STORAGE_KEY = "holaboss-dev-app-update-preview-v1";
 const DEV_NOTIFICATION_TOAST_PREVIEW_ID_PREFIX =
   "dev-notification-toast-preview:";
+const TASK_PROPOSAL_TOAST_ID_PREFIX = "task-proposal-toast:";
 const OPERATIONS_DRAWER_OPEN_STORAGE_KEY = "holaboss-operations-drawer-open-v1";
 const OPERATIONS_DRAWER_TAB_STORAGE_KEY = "holaboss-operations-drawer-tab-v1";
 const TASK_PROPOSAL_SEEN_STORAGE_KEY = "holaboss-task-proposal-seen-v1";
@@ -104,7 +102,8 @@ const MAX_SEEN_TASK_PROPOSAL_IDS_PER_WORKSPACE = 200;
 type SpaceComponentId = "agent" | "files" | "browser";
 type UtilityPaneId = "files" | "browser";
 type DevAppUpdatePreviewMode = "off" | "downloading" | "ready";
-type SpaceExplorerMode = "files" | "browser";
+type SpaceExplorerMode = "files" | "browser" | "applications";
+type ShellView = "space" | "automations" | "marketplace";
 
 type SpaceVisibilityState = Record<SpaceComponentId, boolean>;
 
@@ -168,6 +167,7 @@ type AgentView =
   | {
       type: "app";
       appId: string;
+      path?: string | null;
       resourceId?: string | null;
       view?: string | null;
     }
@@ -183,6 +183,7 @@ type SpaceDisplayView =
   | {
       type: "app";
       appId: string;
+      path?: string | null;
       resourceId?: string | null;
       view?: string | null;
     }
@@ -198,6 +199,7 @@ type RestorableSpaceDisplayView = Exclude<
   SpaceDisplayView,
   { type: "browser" } | { type: "empty" }
 >;
+type RestorableSpaceAppDisplayView = Extract<SpaceDisplayView, { type: "app" }>;
 
 type ChatSessionOpenRequest = {
   sessionId: string;
@@ -215,6 +217,7 @@ type WorkspaceOutputNavigationTarget =
   | {
       type: "app";
       appId: string;
+      path?: string | null;
       resourceId?: string | null;
       view?: string | null;
     }
@@ -289,28 +292,29 @@ function buildReportedSurfaceFromAppView(params: {
   view: Extract<AgentView, { type: "app" }> | Extract<SpaceDisplayView, { type: "app" }>;
 }): OperatorSurfacePayload {
   const resourceId = nonEmptySurfaceText(params.view.resourceId);
+  const routePath = nonEmptySurfaceText(params.view.path);
   const viewId = nonEmptySurfaceText(params.view.view);
   const ownerLabel = params.owner === "user" ? "User" : "Agent";
   const mutability: OperatorSurfaceMutability =
     params.owner === "agent" ? "agent_owned" : "inspect_only";
   return {
-    surface_id: `app_surface:${params.owner}:${params.view.appId}:${resourceId || viewId || "current"}`,
+    surface_id: `app_surface:${params.owner}:${params.view.appId}:${resourceId || routePath || viewId || "current"}`,
     surface_type: "app_surface",
     owner: params.owner,
     active: params.active,
     mutability,
-    summary: `${ownerLabel} is currently viewing workspace app \`${params.view.appId}\`${resourceId ? ` resource \`${resourceId}\`` : ""}${viewId ? ` in view \`${viewId}\`` : ""}.`,
+    summary: `${ownerLabel} is currently viewing workspace app \`${params.view.appId}\`${resourceId ? ` resource \`${resourceId}\`` : routePath ? ` route \`${routePath}\`` : ""}${viewId ? ` in view \`${viewId}\`` : ""}.`,
   };
 }
 
 function buildReportedOperatorSurfaceContext(params: {
-  activeLeftRailItem: LeftRailItem;
+  activeShellView: ShellView;
   agentView: AgentView;
   spaceDisplayView: SpaceDisplayView;
 }): ReportedOperatorSurfaceContext | null {
   const surfaces: OperatorSurfacePayload[] = [];
 
-  if (params.activeLeftRailItem === "space") {
+  if (params.activeShellView === "space") {
     if (params.spaceDisplayView.type === "internal") {
       const surface = buildReportedSurfaceFromInternalView({
         owner: "user",
@@ -348,17 +352,6 @@ function buildReportedOperatorSurfaceContext(params: {
         }),
       );
     }
-  } else if (
-    params.activeLeftRailItem === "app" &&
-    params.agentView.type === "app"
-  ) {
-    surfaces.push(
-      buildReportedSurfaceFromAppView({
-        owner: "user",
-        active: true,
-        view: params.agentView,
-      }),
-    );
   }
 
   if (surfaces.length === 0) {
@@ -378,6 +371,10 @@ function utilityPaneMinWidth(paneId: UtilityPaneId): number {
 
 function isDevNotificationToastPreviewId(notificationId: string): boolean {
   return notificationId.startsWith(DEV_NOTIFICATION_TOAST_PREVIEW_ID_PREFIX);
+}
+
+function isTaskProposalToastId(notificationId: string): boolean {
+  return notificationId.startsWith(TASK_PROPOSAL_TOAST_ID_PREFIX);
 }
 
 function buildDevNotificationToastPreviewNotifications(
@@ -467,6 +464,43 @@ function appUpdateChangelogUrl(status: AppUpdateStatusPayload): string | null {
     return null;
   }
   return `${APP_UPDATE_CHANGELOG_BASE_URL}/holaboss-${version}`;
+}
+
+function buildTaskProposalToastNotification(params: {
+  workspaceId: string;
+  workspaceName?: string | null;
+  proposals: TaskProposalRecordPayload[];
+}): RuntimeNotificationRecordPayload {
+  const now = new Date().toISOString();
+  const proposalCount = params.proposals.length;
+  const firstProposalName =
+    params.proposals[0]?.task_name?.trim() || "Untitled task";
+  const workspaceName = params.workspaceName?.trim() || "";
+  const workspaceQualifier = workspaceName ? ` in ${workspaceName}` : "";
+
+  return {
+    id: `${TASK_PROPOSAL_TOAST_ID_PREFIX}${crypto.randomUUID()}`,
+    workspace_id: params.workspaceId,
+    cronjob_id: null,
+    source_type: "task_proposal",
+    source_label: "Task proposals",
+    title:
+      proposalCount === 1 ? "Task proposal ready" : "Task proposals ready",
+    message:
+      proposalCount === 1
+        ? `"${firstProposalName}" is ready to review in the inbox${workspaceQualifier}.`
+        : `${proposalCount} task proposals are ready to review in the inbox${workspaceQualifier}.`,
+    level: "info",
+    priority: "high",
+    state: "unread",
+    metadata: {
+      proposal_ids: params.proposals.map((proposal) => proposal.proposal_id),
+    },
+    read_at: null,
+    dismissed_at: null,
+    created_at: now,
+    updated_at: now,
+  };
 }
 
 function notificationMetadataString(
@@ -673,16 +707,6 @@ function buildDevAppUpdatePreviewStatus(
   };
 }
 
-function compactAppVersionLabel(version: string): string {
-  const trimmed = version.trim();
-  if (!trimmed) {
-    return "";
-  }
-
-  const releaseMatch = trimmed.match(/^\d{4}\.(\d+\.\d+)$/);
-  return releaseMatch ? releaseMatch[1] : trimmed;
-}
-
 function spaceComponentLabel(componentId: SpaceComponentId) {
   if (componentId === "agent") {
     return "Agent";
@@ -765,10 +789,8 @@ function workspaceOutputNavigationTarget(
     return {
       type: "app",
       appId: moduleId,
-      resourceId:
-        hasAppPresentation && presentation?.path
-          ? presentation.path
-          : output.module_resource_id || output.artifact_id || output.id,
+      path: hasAppPresentation ? presentation?.path || null : null,
+      resourceId: output.module_resource_id || output.artifact_id || output.id,
       view: hasAppPresentation
         ? presentation.view
         : output.output_type || "home",
@@ -1022,9 +1044,9 @@ function AppShellContent() {
     createWorkspacePanelAnchorWorkspaceId,
     setCreateWorkspacePanelAnchorWorkspaceId,
   ] = useState("");
-  const [activeLeftRailItem, setActiveLeftRailItem] =
-    useState<LeftRailItem>("space");
-  const [spaceLeftRailVisible, setSpaceLeftRailVisible] = useState(false);
+  const [activeShellView, setActiveShellView] = useState<ShellView>("space");
+  const [marketplaceInitialTab, setMarketplaceInitialTab] =
+    useState<"templates" | "apps">("templates");
   const [agentView, setAgentView] = useState<AgentView>({ type: "chat" });
   const [chatFocusRequestKey, setChatFocusRequestKey] = useState(1);
   const [chatSessionJumpRequest, setChatSessionJumpRequest] = useState<{
@@ -1119,6 +1141,8 @@ function AppShellContent() {
   const [toastNotifications, setToastNotifications] = useState<
     RuntimeNotificationRecordPayload[]
   >([]);
+  const [taskProposalToastNotifications, setTaskProposalToastNotifications] =
+    useState<RuntimeNotificationRecordPayload[]>([]);
   const [devNotificationToastPreview, setDevNotificationToastPreview] =
     useState<RuntimeNotificationRecordPayload[]>([]);
   const utilityPaneHostRef = useRef<HTMLDivElement | null>(null);
@@ -1129,8 +1153,14 @@ function AppShellContent() {
   const spaceVisibilityRef = useRef(spaceVisibility);
   const notificationsHydratedRef = useRef(false);
   const seenNotificationIdsRef = useRef(new Set<string>());
+  const knownTaskProposalIdsByWorkspaceRef = useRef<Record<string, string[]>>(
+    {},
+  );
   const lastRestorableSpaceDisplayViewByWorkspaceRef = useRef<
     Record<string, RestorableSpaceDisplayView>
+  >({});
+  const lastRestorableSpaceAppDisplayViewByWorkspaceRef = useRef<
+    Record<string, RestorableSpaceAppDisplayView>
   >({});
   const spaceDisplayResizeStateRef = useRef<{
     startWidth: number;
@@ -1189,8 +1219,17 @@ function AppShellContent() {
     () =>
       devNotificationToastPreview.length > 0
         ? devNotificationToastPreview
-        : toastNotifications,
-    [devNotificationToastPreview, toastNotifications],
+        : [...taskProposalToastNotifications, ...toastNotifications]
+            .sort(
+              (left, right) =>
+                Date.parse(right.created_at) - Date.parse(left.created_at),
+            )
+            .slice(0, 4),
+    [
+      devNotificationToastPreview,
+      taskProposalToastNotifications,
+      toastNotifications,
+    ],
   );
   const runtimeNotificationById = useMemo(
     () =>
@@ -1198,6 +1237,16 @@ function AppShellContent() {
         notifications.map((notification) => [notification.id, notification]),
       ),
     [notifications],
+  );
+  const taskProposalToastById = useMemo(
+    () =>
+      new Map(
+        taskProposalToastNotifications.map((notification) => [
+          notification.id,
+          notification,
+        ]),
+      ),
+    [taskProposalToastNotifications],
   );
   const unreadTaskProposalCount = useMemo(() => {
     if (!selectedWorkspaceId || taskProposals.length === 0) {
@@ -1259,6 +1308,100 @@ function AppShellContent() {
       });
     },
     [],
+  );
+
+  const dismissTaskProposalToast = useCallback((notificationId: string) => {
+    setTaskProposalToastNotifications((current) =>
+      current.filter((item) => item.id !== notificationId),
+    );
+  }, []);
+
+  const openTaskProposalInbox = useCallback(
+    (workspaceId?: string | null) => {
+      const normalizedWorkspaceId =
+        workspaceId?.trim() || selectedWorkspaceId || "";
+      if (normalizedWorkspaceId) {
+        setSelectedWorkspaceId(normalizedWorkspaceId);
+      }
+      setActiveShellView("space");
+      setSpaceVisibility((previous) => ({
+        ...previous,
+        agent: true,
+      }));
+      setAgentView({ type: "inbox" });
+      if (
+        normalizedWorkspaceId &&
+        normalizedWorkspaceId === selectedWorkspaceId &&
+        taskProposals.length > 0
+      ) {
+        markTaskProposalsSeen(normalizedWorkspaceId, taskProposals);
+      }
+    },
+    [
+      markTaskProposalsSeen,
+      selectedWorkspaceId,
+      setSelectedWorkspaceId,
+      taskProposals,
+    ],
+  );
+
+  const applyTaskProposals = useCallback(
+    (
+      workspaceId: string | null | undefined,
+      workspaceName: string | null | undefined,
+      proposals: TaskProposalRecordPayload[],
+      options?: { notify?: boolean },
+    ) => {
+      setTaskProposals(proposals);
+
+      const normalizedWorkspaceId = workspaceId?.trim() || "";
+      if (!normalizedWorkspaceId) {
+        return;
+      }
+
+      const knownProposalIds = new Set(
+        knownTaskProposalIdsByWorkspaceRef.current[normalizedWorkspaceId] ?? [],
+      );
+      const pendingNewProposals = proposals.filter((proposal) => {
+        const proposalId = proposal.proposal_id.trim();
+        if (!proposalId) {
+          return false;
+        }
+        const isNew = !knownProposalIds.has(proposalId);
+        knownProposalIds.add(proposalId);
+        return isNew && proposal.state.trim().toLowerCase() === "pending";
+      });
+      knownTaskProposalIdsByWorkspaceRef.current[normalizedWorkspaceId] =
+        Array.from(knownProposalIds).slice(
+          -MAX_SEEN_TASK_PROPOSAL_IDS_PER_WORKSPACE,
+        );
+
+      if (options?.notify === false || pendingNewProposals.length === 0) {
+        return;
+      }
+
+      const inboxVisible =
+        agentView.type === "inbox" ||
+        (operationsDrawerOpen && activeOperationsTab === "inbox");
+      if (inboxVisible && normalizedWorkspaceId === selectedWorkspaceId) {
+        return;
+      }
+
+      const toast = buildTaskProposalToastNotification({
+        workspaceId: normalizedWorkspaceId,
+        workspaceName,
+        proposals: pendingNewProposals,
+      });
+      setTaskProposalToastNotifications((current) =>
+        [toast, ...current].slice(0, 4),
+      );
+    },
+    [
+      activeOperationsTab,
+      agentView.type,
+      operationsDrawerOpen,
+      selectedWorkspaceId,
+    ],
   );
 
   const clampUtilityPaneWidth = useCallback(
@@ -1526,7 +1669,7 @@ function AppShellContent() {
 
         const targetBrowserSpace = payload.space === "agent" ? "agent" : "user";
         const openBrowserPane = () => {
-          setActiveLeftRailItem("space");
+          setActiveShellView("space");
           setSpaceExplorerMode("browser");
           setSpaceBrowserSpace(targetBrowserSpace);
           setSpaceDisplayView({ type: "browser" });
@@ -1699,7 +1842,7 @@ function AppShellContent() {
         if (targetWorkspaceId) {
           setSelectedWorkspaceId(targetWorkspaceId);
         }
-        setActiveLeftRailItem("space");
+        setActiveShellView("space");
         setSpaceVisibility((previous) => ({
           ...previous,
           agent: true,
@@ -1765,9 +1908,23 @@ function AppShellContent() {
         );
         return;
       }
+      if (isTaskProposalToastId(notificationId)) {
+        const notification = taskProposalToastById.get(notificationId);
+        if (!notification) {
+          return;
+        }
+        dismissTaskProposalToast(notificationId);
+        openTaskProposalInbox(notification.workspace_id);
+        return;
+      }
       await handleActivateNotification(notificationId);
     },
-    [handleActivateNotification],
+    [
+      dismissTaskProposalToast,
+      handleActivateNotification,
+      openTaskProposalInbox,
+      taskProposalToastById,
+    ],
   );
 
   const handleCloseDisplayedNotification = useCallback(
@@ -1778,9 +1935,13 @@ function AppShellContent() {
         );
         return;
       }
+      if (isTaskProposalToastId(notificationId)) {
+        dismissTaskProposalToast(notificationId);
+        return;
+      }
       await handleDismissNotification(notificationId);
     },
-    [handleDismissNotification],
+    [dismissTaskProposalToast, handleDismissNotification],
   );
 
   useEffect(() => {
@@ -1804,7 +1965,7 @@ function AppShellContent() {
   }, []);
 
   const revealBrowserPane = useCallback((space: BrowserSpaceId = "user") => {
-    setActiveLeftRailItem("space");
+    setActiveShellView("space");
     setSpaceExplorerMode("browser");
     setSpaceBrowserSpace(space);
     setSpaceDisplayView({ type: "browser" });
@@ -2081,7 +2242,9 @@ function AppShellContent() {
 
   async function refreshTaskProposals() {
     if (!selectedWorkspaceId || !selectedWorkspace) {
-      setTaskProposals([]);
+      applyTaskProposals(selectedWorkspaceId, selectedWorkspace?.name, [], {
+        notify: false,
+      });
       setTaskProposalStatusMessage("");
       return;
     }
@@ -2092,7 +2255,11 @@ function AppShellContent() {
       const response = await window.electronAPI.workspace.listTaskProposals(
         selectedWorkspace.id,
       );
-      setTaskProposals(response.proposals);
+      applyTaskProposals(
+        selectedWorkspace.id,
+        selectedWorkspace.name,
+        response.proposals,
+      );
     } catch (error) {
       setTaskProposalStatusMessage(normalizeErrorMessage(error));
     } finally {
@@ -2202,7 +2369,9 @@ function AppShellContent() {
 
   useEffect(() => {
     if (!selectedWorkspaceId || !selectedWorkspace) {
-      setTaskProposals([]);
+      applyTaskProposals(selectedWorkspaceId, selectedWorkspace?.name, [], {
+        notify: false,
+      });
       setTaskProposalStatusMessage("");
       setIsLoadingTaskProposals(false);
       return;
@@ -2216,7 +2385,11 @@ function AppShellContent() {
           selectedWorkspace.id,
         );
         if (!cancelled) {
-          setTaskProposals(response.proposals);
+          applyTaskProposals(
+            selectedWorkspace.id,
+            selectedWorkspace.name,
+            response.proposals,
+          );
         }
       } catch (error) {
         if (!cancelled) {
@@ -2240,7 +2413,7 @@ function AppShellContent() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [selectedWorkspace, selectedWorkspaceId]);
+  }, [applyTaskProposals, selectedWorkspace, selectedWorkspaceId]);
 
   useEffect(() => {
     if (
@@ -2394,25 +2567,61 @@ function AppShellContent() {
     [installedApps],
   );
 
-  const handleLeftRailSelect = (item: LeftRailItem) => {
-    if (item === "space") {
-      setActiveLeftRailItem("space");
-      if (agentView.type === "app") {
-        setAgentView({ type: "chat" });
-      }
-      setChatFocusRequestKey((current) => current + 1);
-      return;
+  const handleOpenSpace = useCallback(() => {
+    setActiveShellView("space");
+    if (agentView.type === "app") {
+      setAgentView({ type: "chat" });
     }
-    setActiveLeftRailItem(item);
+    setChatFocusRequestKey((current) => current + 1);
+  }, [agentView.type]);
+
+  const handleOpenMarketplace = useCallback(
+    (initialTab: "templates" | "apps" = "templates") => {
+      setMarketplaceInitialTab(initialTab);
+      setActiveShellView("marketplace");
+    },
+    [],
+  );
+
+  const handleOpenAutomations = useCallback(() => {
+    setActiveShellView("automations");
+  }, []);
+
+  const handleAddApp = () => {
+    handleOpenMarketplace("apps");
   };
 
-  const handleOpenInstalledApp = (appId: string) => {
-    setActiveLeftRailItem("app");
-    setAgentView({
-      type: "app",
-      appId,
-    });
-  };
+  const handleOpenSpaceApp = useCallback(
+    (
+      appId: string,
+      options?: {
+        path?: string | null;
+        resourceId?: string | null;
+        view?: string | null;
+        resetAgentView?: boolean;
+      },
+    ) => {
+      setActiveShellView("space");
+      setSpaceExplorerMode("applications");
+      setSpaceExplorerCollapsed(false);
+      setSpaceVisibility((previous) => ({
+        ...previous,
+        agent: true,
+        files: true,
+      }));
+      if (options?.resetAgentView) {
+        setAgentView({ type: "chat" });
+      }
+      setSpaceDisplayView({
+        type: "app",
+        appId,
+        path: options?.path,
+        resourceId: options?.resourceId,
+        view: options?.view,
+      });
+    },
+    [],
+  );
 
   const handleOpenAutomationRunSession = useCallback((sessionId: string) => {
     const normalizedSessionId = sessionId.trim();
@@ -2420,7 +2629,7 @@ function AppShellContent() {
       return;
     }
 
-    setActiveLeftRailItem("space");
+    setActiveShellView("space");
     setSpaceVisibility((previous) => ({
       ...previous,
       agent: true,
@@ -2444,7 +2653,7 @@ function AppShellContent() {
   }, []);
 
   const handleCreateScheduleInChat = useCallback(() => {
-    setActiveLeftRailItem("space");
+    setActiveShellView("space");
     setSpaceVisibility((previous) => ({
       ...previous,
       agent: true,
@@ -2481,7 +2690,7 @@ function AppShellContent() {
         return;
       }
 
-      setActiveLeftRailItem("space");
+      setActiveShellView("space");
       setSpaceVisibility((previous) => ({
         ...previous,
         agent: true,
@@ -2502,16 +2711,8 @@ function AppShellContent() {
   );
 
   const handleOpenInboxPane = useCallback(() => {
-    setActiveLeftRailItem("space");
-    setSpaceVisibility((previous) => ({
-      ...previous,
-      agent: true,
-    }));
-    setAgentView({ type: "inbox" });
-    if (selectedWorkspaceId && taskProposals.length > 0) {
-      markTaskProposalsSeen(selectedWorkspaceId, taskProposals);
-    }
-  }, [markTaskProposalsSeen, selectedWorkspaceId, taskProposals]);
+    openTaskProposalInbox(selectedWorkspaceId);
+  }, [openTaskProposalInbox, selectedWorkspaceId]);
 
   const handleReturnToChatPane = useCallback(() => {
     setAgentView({ type: "chat" });
@@ -2557,11 +2758,11 @@ function AppShellContent() {
   const reportedOperatorSurfaceContext = useMemo(
     () =>
       buildReportedOperatorSurfaceContext({
-        activeLeftRailItem,
+        activeShellView,
         agentView,
         spaceDisplayView,
       }),
-    [activeLeftRailItem, agentView, spaceDisplayView],
+    [activeShellView, agentView, spaceDisplayView],
   );
 
   useEffect(() => {
@@ -2576,6 +2777,15 @@ function AppShellContent() {
       spaceDisplayView;
   }, [selectedWorkspaceId, spaceDisplayView]);
 
+  useEffect(() => {
+    if (!selectedWorkspaceId || spaceDisplayView.type !== "app") {
+      return;
+    }
+    lastRestorableSpaceAppDisplayViewByWorkspaceRef.current[
+      selectedWorkspaceId
+    ] = spaceDisplayView;
+  }, [selectedWorkspaceId, spaceDisplayView]);
+
   const restoreLastSpaceDisplayView = useCallback(() => {
     if (!selectedWorkspaceId) {
       setSpaceDisplayView({ type: "browser" });
@@ -2588,6 +2798,24 @@ function AppShellContent() {
     setSpaceDisplayView(nextDisplayView);
     syncFileExplorerFocusWithDisplayView(nextDisplayView);
   }, [selectedWorkspaceId, syncFileExplorerFocusWithDisplayView]);
+
+  const restoreLastSpaceAppDisplayView = useCallback(() => {
+    if (!selectedWorkspaceId) {
+      setSpaceDisplayView({ type: "browser" });
+      return;
+    }
+
+    const lastAppDisplayView =
+      lastRestorableSpaceAppDisplayViewByWorkspaceRef.current[
+        selectedWorkspaceId
+      ];
+    if (lastAppDisplayView) {
+      setSpaceDisplayView(lastAppDisplayView);
+      return;
+    }
+
+    restoreLastSpaceDisplayView();
+  }, [restoreLastSpaceDisplayView, selectedWorkspaceId]);
 
   useEffect(() => {
     if (!selectedWorkspaceId) {
@@ -2648,33 +2876,13 @@ function AppShellContent() {
   const handleOpenWorkspaceOutput = useCallback(
     (output: WorkspaceOutputRecordPayload) => {
       const target = workspaceOutputNavigationTarget(output, installedAppIds);
-      if (target.type === "app" && selectedWorkspaceId) {
-        // target.resourceId is already a full route path (e.g. "/drafts/abc")
-        // when derived from presentation.path — pass it as `path` so
-        // resolveAppSurfacePath uses it directly instead of nesting it under view.
-        const routePath = resolveAppSurfacePath({
-          path: target.resourceId,
+      if (target.type === "app") {
+        handleOpenSpaceApp(target.appId, {
+          path: target.path,
+          resourceId: target.resourceId,
           view: target.view,
+          resetAgentView: true,
         });
-        void window.electronAPI.appSurface
-          .resolveUrl(selectedWorkspaceId, target.appId, routePath)
-          .then((url) => {
-            revealBrowserPane("user");
-            void window.electronAPI.browser
-              .setActiveWorkspace(selectedWorkspaceId)
-              .then(() => window.electronAPI.browser.navigate(url))
-              .catch(() => undefined);
-          })
-          .catch(() => {
-            setActiveLeftRailItem("space");
-            setSpaceDisplayView({
-              type: "app",
-              appId: target.appId,
-              resourceId: target.resourceId,
-              view: target.view,
-            });
-            setAgentView({ type: "chat" });
-          });
         return;
       }
 
@@ -2683,7 +2891,7 @@ function AppShellContent() {
           (target.surface === "document" || target.surface === "file") &&
           target.resourceId?.trim()
         ) {
-          setActiveLeftRailItem("space");
+          setActiveShellView("space");
           setSpaceExplorerMode("files");
           setSpaceExplorerCollapsed(false);
           setSpaceVisibility((previous) => ({
@@ -2704,7 +2912,7 @@ function AppShellContent() {
           return;
         }
 
-        setActiveLeftRailItem("space");
+        setActiveShellView("space");
         setSpaceVisibility((previous) => ({
           ...previous,
           agent: true,
@@ -2718,7 +2926,7 @@ function AppShellContent() {
         });
       }
     },
-    [installedAppIds, selectedWorkspaceId, revealBrowserPane],
+    [handleOpenSpaceApp, installedAppIds],
   );
 
   const handleOpenRunningSession = (sessionId: string) => {
@@ -2727,7 +2935,7 @@ function AppShellContent() {
       return;
     }
 
-    setActiveLeftRailItem("space");
+    setActiveShellView("space");
     setSpaceVisibility((previous) => ({
       ...previous,
       agent: true,
@@ -2740,10 +2948,13 @@ function AppShellContent() {
     });
   };
 
-  const spaceMode = activeLeftRailItem === "space";
-  const appMode = activeLeftRailItem === "app";
+  const spaceMode = activeShellView === "space";
   const activeAppId =
-    appMode && agentView.type === "app" ? agentView.appId : null;
+    agentView.type === "app"
+      ? agentView.appId
+      : spaceDisplayView.type === "app"
+        ? spaceDisplayView.appId
+        : null;
   const activeApp = getWorkspaceAppDefinition(activeAppId, installedApps);
   const hasWorkspaces = workspaces.length > 0;
   const hasSelectedWorkspace = Boolean(selectedWorkspace);
@@ -2760,8 +2971,6 @@ function AppShellContent() {
   const shouldShowAppUpdateReminder = Boolean(
     effectiveAppUpdateStatus && effectiveAppUpdateStatus.downloaded,
   );
-  const appVersionLabel =
-    compactAppVersionLabel(effectiveAppUpdateStatus?.currentVersion || "");
   const shouldSuspendBrowserNativeView =
     isUtilityPaneResizing ||
     workspaceSwitcherOpen ||
@@ -2798,13 +3007,6 @@ function AppShellContent() {
     hasWorkspaces &&
     hasSelectedWorkspace &&
     onboardingModeActive;
-  const shouldOverlayLeftRail = spaceMode;
-
-  useEffect(() => {
-    if (spaceMode) {
-      setSpaceLeftRailVisible(false);
-    }
-  }, [spaceMode]);
 
   const agentContent = useMemo(() => {
     if (!hasSelectedWorkspace) {
@@ -2910,6 +3112,7 @@ function AppShellContent() {
               ? activeApp
               : getWorkspaceAppDefinition(agentView.appId, installedApps)
           }
+          path={agentView.path}
           resourceId={agentView.resourceId}
           view={agentView.view}
         />
@@ -2994,6 +3197,7 @@ function AppShellContent() {
                     installedApps,
                   )
             }
+            path={spaceDisplayView.path}
             resourceId={spaceDisplayView.resourceId}
             view={spaceDisplayView.view}
           />
@@ -3371,8 +3575,12 @@ function AppShellContent() {
               integratedTitleBar={hasIntegratedTitleBar}
               desktopPlatform={desktopPlatform}
               onWorkspaceSwitcherVisibilityChange={setWorkspaceSwitcherOpen}
-              onOpenMarketplace={() => handleLeftRailSelect("marketplace")}
-              isMarketplaceActive={activeLeftRailItem === "marketplace"}
+              onOpenSpace={handleOpenSpace}
+              isSpaceActive={spaceMode}
+              onOpenAutomations={handleOpenAutomations}
+              isAutomationsActive={activeShellView === "automations"}
+              onOpenMarketplace={() => handleOpenMarketplace("templates")}
+              isMarketplaceActive={activeShellView === "marketplace"}
               onOpenWorkspaceCreatePanel={handleOpenCreateWorkspacePanel}
               onOpenSettings={() => {
                 setSettingsDialogSection("settings");
@@ -3405,70 +3613,27 @@ function AppShellContent() {
         ) : showOnboardingTakeover ? (
           <WorkspaceOnboardingTakeover focusRequestKey={chatFocusRequestKey} />
         ) : (
-          <div
-            className={`relative grid h-full min-h-0 gap-y-3 overflow-hidden transition-[grid-template-columns,column-gap] duration-300 ease-in-out ${
-              shouldOverlayLeftRail
-                ? "lg:grid-cols-[minmax(0,1fr)]"
-                : "lg:grid-cols-[60px_minmax(0,1fr)]"
-            }`}
-            style={{ columnGap: shouldOverlayLeftRail ? "0rem" : "0.5rem" }}
-          >
-            {shouldOverlayLeftRail ? (
-              <>
-                <div
-                  className="absolute inset-y-0 left-0 z-30 hidden w-4 lg:block"
-                  onMouseEnter={() => setSpaceLeftRailVisible(true)}
-                  aria-hidden="true"
-                />
-                <div
-                  className={`absolute inset-y-0 left-0 z-40 hidden transition-transform duration-200 ease-out lg:block ${
-                    spaceLeftRailVisible ? "translate-x-0" : "-translate-x-full"
-                  }`}
-                  onMouseEnter={() => setSpaceLeftRailVisible(true)}
-                  onMouseLeave={() => setSpaceLeftRailVisible(false)}
-                >
-                  <LeftNavigationRail
-                    activeItem={activeLeftRailItem}
-                    onSelectItem={handleLeftRailSelect}
-                    installedApps={installedApps}
-                    activeAppId={activeAppId}
-                    onSelectApp={handleOpenInstalledApp}
-                    appVersionLabel={appVersionLabel}
-                  />
-                </div>
-              </>
-            ) : (
-              <LeftNavigationRail
-                activeItem={activeLeftRailItem}
-                onSelectItem={handleLeftRailSelect}
-                installedApps={installedApps}
-                activeAppId={activeAppId}
-                onSelectApp={handleOpenInstalledApp}
-                appVersionLabel={appVersionLabel}
-              />
-            )}
-
-            <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
-              <div className="min-h-0 flex-1 overflow-hidden">
-                {spaceMode ? (
-                  <div className="relative flex h-full min-h-0 min-w-0 overflow-hidden">
-                    <div
-                      ref={utilityPaneHostRef}
-                      className="flex min-h-0 min-w-0 flex-1 items-stretch overflow-hidden"
-                    >
-                      <section className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
-                        <div
-                          className="shrink-0 overflow-hidden border-r border-border/45 bg-card/45 transition-[width] duration-200 ease-out"
-                          style={{
-                            width: `${showSpaceExplorer ? SPACE_EXPLORER_WIDTH : SPACE_EXPLORER_COLLAPSED_WIDTH}px`,
-                          }}
-                        >
-                          <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-                            {showSpaceExplorer ? (
-                              <>
-                                <div className="flex shrink-0 items-center gap-2 border-b border-border/45 px-3 py-2.5">
-                                  <Tabs
-                                    value={spaceExplorerMode}
+          <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
+            <div className="min-h-0 flex-1 overflow-hidden">
+              {spaceMode ? (
+                <div className="relative flex h-full min-h-0 min-w-0 overflow-hidden">
+                  <div
+                    ref={utilityPaneHostRef}
+                    className="flex min-h-0 min-w-0 flex-1 items-stretch overflow-hidden"
+                  >
+                    <section className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
+                      <div
+                        className="shrink-0 overflow-hidden border-r border-border/45 bg-card/45 transition-[width] duration-200 ease-out"
+                        style={{
+                          width: `${showSpaceExplorer ? SPACE_EXPLORER_WIDTH : SPACE_EXPLORER_COLLAPSED_WIDTH}px`,
+                        }}
+                      >
+                        <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+                          {showSpaceExplorer ? (
+                            <>
+                              <div className="flex shrink-0 items-center gap-2 border-b border-border/45 px-3 py-2.5">
+                                <Tabs
+                                  value={spaceExplorerMode}
                                     onValueChange={(value) => {
                                       const mode = value as SpaceExplorerMode;
                                       setSpaceExplorerMode(mode);
@@ -3476,212 +3641,225 @@ function AppShellContent() {
                                         setSpaceDisplayView({
                                           type: "browser",
                                         });
+                                      } else if (mode === "applications") {
+                                        restoreLastSpaceAppDisplayView();
                                       } else {
                                         restoreLastSpaceDisplayView();
                                       }
                                     }}
                                     className="min-w-0 flex-1"
-                                  >
-                                    <TabsList className="w-full">
-                                      <TabsTrigger
-                                        value="files"
-                                        className="min-w-0 flex-1 basis-0 gap-1.5"
-                                      >
-                                        <Folder />
+                                >
+                                  <TabsList className="w-full">
+                                    <TabsTrigger
+                                      value="files"
+                                      className="group min-w-0 grow-0 basis-9 gap-0 px-0 duration-200 ease-out data-active:grow data-active:basis-0 data-active:justify-start data-active:gap-1.5 data-active:px-3"
+                                    >
+                                      <Folder />
+                                      <span className="ml-0 inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-200 ease-out group-data-active:max-w-[120px] group-data-active:opacity-100">
                                         Files
-                                      </TabsTrigger>
-                                      <TabsTrigger
-                                        value="browser"
-                                        className="min-w-0 flex-1 basis-0 gap-1.5"
-                                      >
-                                        <Globe />
+                                      </span>
+                                    </TabsTrigger>
+                                    <TabsTrigger
+                                      value="browser"
+                                      className="group min-w-0 grow-0 basis-9 gap-0 px-0 duration-200 ease-out data-active:grow data-active:basis-0 data-active:justify-start data-active:gap-1.5 data-active:px-3"
+                                    >
+                                      <Globe />
+                                      <span className="ml-0 inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-200 ease-out group-data-active:max-w-[120px] group-data-active:opacity-100">
                                         Browser
-                                      </TabsTrigger>
-                                    </TabsList>
-                                  </Tabs>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon-sm"
-                                    onClick={() =>
-                                      setSpaceExplorerCollapsed(true)
-                                    }
-                                    aria-label="Collapse explorer"
-                                  >
-                                    <PanelLeftClose />
-                                  </Button>
-                                </div>
-
-                                <div className="min-h-0 flex-1 overflow-hidden">
-                                  {spaceExplorerMode === "files" ? (
-                                    <FileExplorerPane
-                                      focusRequest={fileExplorerFocusRequest}
-                                      onFocusRequestConsumed={(requestKey) => {
-                                        setFileExplorerFocusRequest(
-                                          (current) =>
-                                            current?.requestKey === requestKey
-                                              ? null
-                                              : current,
-                                        );
-                                      }}
-                                      previewInPane={false}
-                                      embedded
-                                      onFileOpen={(path) => {
-                                        setSpaceDisplayView({
-                                          type: "internal",
-                                          surface: "file",
-                                          resourceId: path,
-                                        });
-                                      }}
-                                    />
-                                  ) : spaceExplorerMode === "browser" ? (
-                                    <SpaceBrowserExplorerPane
-                                      browserSpace={spaceBrowserSpace}
-                                      onBrowserSpaceChange={(space) => {
-                                        setSpaceBrowserSpace(space);
-                                        setSpaceDisplayView({
-                                          type: "browser",
-                                        });
-                                      }}
-                                      onActivateDisplay={() =>
-                                        setSpaceDisplayView({ type: "browser" })
-                                      }
-                                    />
-                                  ) : null}
-                                </div>
-                              </>
-                            ) : (
-                              <div className="flex h-full min-h-0 flex-col items-center gap-2 px-2 py-3">
+                                      </span>
+                                    </TabsTrigger>
+                                    <TabsTrigger
+                                      value="applications"
+                                      className="group min-w-0 grow-0 basis-9 gap-0 px-0 duration-200 ease-out data-active:grow data-active:basis-0 data-active:justify-start data-active:gap-1.5 data-active:px-3"
+                                    >
+                                      <LayoutGrid />
+                                      <span className="ml-0 inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-200 ease-out group-data-active:max-w-[120px] group-data-active:opacity-100">
+                                        Apps
+                                      </span>
+                                    </TabsTrigger>
+                                  </TabsList>
+                                </Tabs>
                                 <Button
-                                  variant={
-                                    spaceExplorerMode === "files"
-                                      ? "outline"
-                                      : "ghost"
-                                  }
-                                  size="icon"
-                                  onClick={() => {
-                                    setSpaceExplorerMode("files");
-                                    restoreLastSpaceDisplayView();
-                                    setSpaceExplorerCollapsed(false);
-                                  }}
-                                  aria-label="Open file explorer"
-                                  className={
-                                    spaceExplorerMode === "files"
-                                      ? "border-primary/40 bg-primary/10 text-primary"
-                                      : "text-muted-foreground"
-                                  }
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  onClick={() => setSpaceExplorerCollapsed(true)}
+                                  aria-label="Collapse explorer"
                                 >
-                                  <Folder />
-                                </Button>
-                                <Button
-                                  variant={
-                                    spaceExplorerMode === "browser"
-                                      ? "outline"
-                                      : "ghost"
-                                  }
-                                  size="icon"
-                                  onClick={() => {
-                                    setSpaceExplorerMode("browser");
-                                    setSpaceDisplayView({ type: "browser" });
-                                    setSpaceExplorerCollapsed(false);
-                                  }}
-                                  aria-label="Open browser explorer"
-                                  className={
-                                    spaceExplorerMode === "browser"
-                                      ? "border-primary/40 bg-primary/10 text-primary"
-                                      : "text-muted-foreground"
-                                  }
-                                >
-                                  <Globe />
-                                </Button>
-                                <div className="min-h-0 flex-1" />
-                                <Button
-                                  variant="outline"
-                                  size="icon"
-                                  onClick={() =>
-                                    setSpaceExplorerCollapsed(false)
-                                  }
-                                  aria-label="Expand explorer"
-                                >
-                                  <PanelLeftOpen />
+                                  <PanelLeftClose />
                                 </Button>
                               </div>
-                            )}
-                          </div>
-                        </div>
 
-                        <div
-                          className="min-h-0 min-w-0 flex-1 overflow-hidden"
-                          style={{ minWidth: `${SPACE_DISPLAY_MIN_WIDTH}px` }}
-                        >
-                          {spaceDisplayContent}
+                              <div className="min-h-0 flex-1 overflow-hidden">
+                                {spaceExplorerMode === "files" ? (
+                                  <FileExplorerPane
+                                    focusRequest={fileExplorerFocusRequest}
+                                    onFocusRequestConsumed={(requestKey) => {
+                                      setFileExplorerFocusRequest((current) =>
+                                        current?.requestKey === requestKey
+                                          ? null
+                                          : current,
+                                      );
+                                    }}
+                                    previewInPane={false}
+                                    embedded
+                                    onFileOpen={(path) => {
+                                      setSpaceDisplayView({
+                                        type: "internal",
+                                        surface: "file",
+                                        resourceId: path,
+                                      });
+                                    }}
+                                  />
+                                ) : spaceExplorerMode === "applications" ? (
+                                  <SpaceApplicationsExplorerPane
+                                    installedApps={installedApps}
+                                    activeAppId={
+                                      spaceDisplayView.type === "app"
+                                        ? spaceDisplayView.appId
+                                        : null
+                                    }
+                                    onAddApp={handleAddApp}
+                                    onSelectApp={(appId) =>
+                                      handleOpenSpaceApp(appId)
+                                    }
+                                  />
+                                ) : spaceExplorerMode === "browser" ? (
+                                  <SpaceBrowserExplorerPane
+                                    browserSpace={spaceBrowserSpace}
+                                    onBrowserSpaceChange={(space) => {
+                                      setSpaceBrowserSpace(space);
+                                      setSpaceDisplayView({
+                                        type: "browser",
+                                      });
+                                    }}
+                                    onActivateDisplay={() =>
+                                      setSpaceDisplayView({ type: "browser" })
+                                    }
+                                  />
+                                ) : null}
+                              </div>
+                            </>
+                          ) : (
+                            <div className="flex h-full min-h-0 flex-col items-center gap-2 px-2 py-3">
+                              <Button
+                                variant={
+                                  spaceExplorerMode === "files"
+                                    ? "outline"
+                                    : "ghost"
+                                }
+                                size="icon"
+                                onClick={() => {
+                                  setSpaceExplorerMode("files");
+                                  restoreLastSpaceDisplayView();
+                                  setSpaceExplorerCollapsed(false);
+                                }}
+                                aria-label="Open file explorer"
+                                className={
+                                  spaceExplorerMode === "files"
+                                    ? "border-primary/40 bg-primary/10 text-primary"
+                                    : "text-muted-foreground"
+                                }
+                              >
+                                <Folder />
+                              </Button>
+                              <Button
+                                variant={
+                                  spaceExplorerMode === "browser"
+                                    ? "outline"
+                                    : "ghost"
+                                }
+                                size="icon"
+                                onClick={() => {
+                                  setSpaceExplorerMode("browser");
+                                  setSpaceDisplayView({ type: "browser" });
+                                  setSpaceExplorerCollapsed(false);
+                                }}
+                                aria-label="Open browser explorer"
+                                className={
+                                  spaceExplorerMode === "browser"
+                                    ? "border-primary/40 bg-primary/10 text-primary"
+                                    : "text-muted-foreground"
+                                }
+                              >
+                                <Globe />
+                              </Button>
+                              <Button
+                                variant={
+                                  spaceExplorerMode === "applications"
+                                    ? "outline"
+                                    : "ghost"
+                                }
+                                size="icon"
+                                onClick={() => {
+                                  setSpaceExplorerMode("applications");
+                                  restoreLastSpaceAppDisplayView();
+                                  setSpaceExplorerCollapsed(false);
+                                }}
+                                aria-label="Open applications explorer"
+                                className={
+                                  spaceExplorerMode === "applications"
+                                    ? "border-primary/40 bg-primary/10 text-primary"
+                                    : "text-muted-foreground"
+                                }
+                              >
+                                <LayoutGrid />
+                              </Button>
+                              <div className="min-h-0 flex-1" />
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                onClick={() => setSpaceExplorerCollapsed(false)}
+                                aria-label="Expand explorer"
+                              >
+                                <PanelLeftOpen />
+                              </Button>
+                            </div>
+                          )}
                         </div>
-                      </section>
-
-                      <div
-                        role="separator"
-                        aria-label="Resize display pane"
-                        aria-orientation="vertical"
-                        onPointerDown={startSpaceDisplayResize}
-                        className="group relative z-10 flex w-4 shrink-0 cursor-col-resize touch-none items-center justify-center"
-                      >
-                        <div className="pointer-events-none absolute inset-y-2 left-1/2 w-px -translate-x-1/2 rounded-full bg-border/55 transition-all duration-150 group-hover:w-0.5 group-hover:bg-[rgba(247,90,84,0.5)]" />
-                        <div className="pointer-events-none absolute left-1/2 top-1/2 h-14 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[rgba(247,90,84,0.08)] opacity-0 transition duration-150 group-hover:opacity-100" />
                       </div>
 
                       <div
-                        className="min-h-0 shrink-0 overflow-hidden rounded-xl"
-                        style={{
-                          width: `${spaceAgentPaneWidth}px`,
-                          minWidth: `${MIN_AGENT_CONTENT_WIDTH}px`,
-                        }}
+                        className="min-h-0 min-w-0 flex-1 overflow-hidden"
+                        style={{ minWidth: `${SPACE_DISPLAY_MIN_WIDTH}px` }}
                       >
-                        {agentContent}
+                        {spaceDisplayContent}
                       </div>
+                    </section>
+
+                    <div
+                      role="separator"
+                      aria-label="Resize display pane"
+                      aria-orientation="vertical"
+                      onPointerDown={startSpaceDisplayResize}
+                      className="group relative z-10 flex w-4 shrink-0 cursor-col-resize touch-none items-center justify-center"
+                    >
+                      <div className="pointer-events-none absolute inset-y-2 left-1/2 w-px -translate-x-1/2 rounded-full bg-border/55 transition-all duration-150 group-hover:w-0.5 group-hover:bg-[rgba(247,90,84,0.5)]" />
+                      <div className="pointer-events-none absolute left-1/2 top-1/2 h-14 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[rgba(247,90,84,0.08)] opacity-0 transition duration-150 group-hover:opacity-100" />
+                    </div>
+
+                    <div
+                      className="min-h-0 shrink-0 overflow-hidden rounded-xl"
+                      style={{
+                        width: `${spaceAgentPaneWidth}px`,
+                        minWidth: `${MIN_AGENT_CONTENT_WIDTH}px`,
+                      }}
+                    >
+                      {agentContent}
                     </div>
                   </div>
-                ) : activeLeftRailItem === "app" ? (
-                  <div className="h-full min-h-0 overflow-hidden rounded-xl">
-                    {agentView.type === "app" ? (
-                      <AppSurfacePane
-                        appId={agentView.appId}
-                        app={
-                          activeAppId === agentView.appId
-                            ? activeApp
-                            : getWorkspaceAppDefinition(
-                                agentView.appId,
-                                installedApps,
-                              )
-                        }
-                        resourceId={agentView.resourceId}
-                        view={agentView.view}
-                      />
-                    ) : (
-                      <section className="theme-shell flex h-full min-h-0 items-center justify-center rounded-xl border border-border/45 shadow-lg">
-                        <div className="max-w-[360px] px-6 text-center">
-                          <div className="text-[22px] font-medium tracking-[-0.03em] text-foreground">
-                            Choose an app
-                          </div>
-                          <div className="mt-3 text-[13px] leading-6 text-muted-foreground/78">
-                            Select a workspace app from the left rail to open
-                            its dedicated screen.
-                          </div>
-                        </div>
-                      </section>
-                    )}
-                  </div>
-                ) : activeLeftRailItem === "automations" ? (
-                  <div className="h-full min-h-0 overflow-hidden rounded-xl">
-                    <AutomationsPane
-                      onOpenRunSession={handleOpenAutomationRunSession}
-                      onCreateSchedule={handleCreateScheduleInChat}
-                    />
-                  </div>
-                ) : (
-                  <div className="h-full min-h-0 overflow-hidden rounded-xl">
-                    <MarketplacePane />
-                  </div>
-                )}
-              </div>
+                </div>
+              ) : activeShellView === "automations" ? (
+                <div className="h-full min-h-0 overflow-hidden rounded-xl">
+                  <AutomationsPane
+                    onOpenRunSession={handleOpenAutomationRunSession}
+                    onCreateSchedule={handleCreateScheduleInChat}
+                  />
+                </div>
+              ) : (
+                <div className="h-full min-h-0 overflow-hidden rounded-xl">
+                  <MarketplacePane initialTab={marketplaceInitialTab} />
+                </div>
+              )}
             </div>
           </div>
         )}

@@ -180,6 +180,8 @@ const presentation = buildAppResourcePresentation({
 
 The helper normalizes `path` so it always starts with `/`.
 
+In the current desktop shell, that presentation no longer falls back through the browser. App-linked outputs and artifacts open the owning workspace app inside the embedded app surface, and `path` is used as the in-app deep link when present.
+
 ## Production Rules
 
 - use the bridge for runtime-owned integrations, not direct provider secrets

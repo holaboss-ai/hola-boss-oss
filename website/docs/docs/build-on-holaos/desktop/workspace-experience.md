@@ -12,6 +12,8 @@ The workspace is the operator's entrypoint into the `holaOS` environment. The UI
 
 At the product level, a workspace is where the operator understands what this environment is for, what capabilities are currently available, what state should persist, and what changed since the last session.
 
+In the current desktop shell that means the workspace chrome cannot just be a file tree. The top toolbar and the space explorer together need to expose the active workspace across files, browser surfaces, installed applications, and automations without forcing the operator to translate everything back into raw paths or URLs.
+
 ## What a workspace represents
 
 A workspace is a stable operating context for one workflow. In the UI, that context includes:
@@ -41,6 +43,7 @@ The workspace UI should make these areas discoverable:
 | Recent session state | What happened most recently? | Helps the operator continue work without starting from scratch. |
 | Durable memory | What should persist beyond one run? | Keeps long-horizon context visible and reviewable. |
 | Outputs | What has this workspace produced? | Gives the operator reviewable results instead of hidden side effects. |
+| Proposed next work | What new task suggestions are waiting for review? | Keeps proactive work discoverable without requiring the operator to poll the inbox manually. |
 
 ## What the UI should help the operator answer quickly
 
@@ -76,6 +79,46 @@ Avoid these failure modes:
 - surfacing raw internals before the operator is oriented
 
 The workspace should feel inspectable and powerful, but still organized around the operator's need to understand and direct work.
+
+## Explorer lanes
+
+The space-mode explorer now has three first-class lanes:
+
+- `Files` for workspace-owned documents and editable local state
+- `Browser` for user and agent browser surfaces
+- `Apps` for installed workspace apps
+
+Those lanes are parallel views into one workspace, not separate products. The operator should be able to switch between them without losing the current display surface unless the lane itself requires a different one.
+
+The `Add app` entry point belongs inside the `Apps` lane rather than in top-level shell navigation. App installation is a workspace-app concern, so the control should live next to the installed app list it affects.
+
+## Shell navigation
+
+The top toolbar owns shell-level navigation:
+
+- `Space` returns the operator to the workspace surface
+- `Automations` opens the cronjob and proactive-work surface
+- `Marketplace` opens the install and template catalog
+
+That separation matters because shell destinations are product-level views, while the space explorer lanes are workspace-level surfaces inside `Space`.
+
+## App outputs and artifacts
+
+When an output or artifact belongs to a workspace app, the desktop should reopen it inside that app's surface, not by bouncing the operator out into the browser.
+
+The current contract is:
+
+- app-linked outputs should activate the `Apps` explorer lane
+- the corresponding app should open inside the shared display surface
+- if the output or artifact includes a presentation `path`, the app surface should deep-link directly to that route
+
+That keeps app results grounded in the app that owns them instead of degrading them into generic links.
+
+## Proposal visibility
+
+Task proposals should not be discoverable only if the operator happens to have the inbox open. The workspace surface should surface newly generated proposals as a toast-level event and route the operator into the inbox for review.
+
+That behavior matters because proactive work is part of the workspace state, not just a hidden background subsystem.
 
 ## Relationship to the rest of the system
 

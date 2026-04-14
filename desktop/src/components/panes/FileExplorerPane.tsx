@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type DragEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowLeft,
@@ -182,6 +189,165 @@ type FileExplorerVisibleRow =
       tone: "loading" | "error";
       message: string;
     };
+
+type ExplorerExternalImportEntry =
+  | {
+      kind: "directory";
+      relativePath: string;
+    }
+  | {
+      kind: "file";
+      relativePath: string;
+      content: Uint8Array;
+    };
+
+type ExplorerExternalDropEntry = FileSystemEntry;
+
+type ExplorerExternalDropDataTransferItem = DataTransferItem & {
+  webkitGetAsEntry?: () => ExplorerExternalDropEntry | null;
+};
+
+function joinExplorerImportPath(parentPath: string, name: string) {
+  const trimmedName = name.trim().replace(/[\\/]+/g, "/").replace(/^\/+|\/+$/g, "");
+  if (!parentPath) {
+    return trimmedName;
+  }
+  return trimmedName ? `${parentPath}/${trimmedName}` : parentPath;
+}
+
+async function readExternalDropDirectoryEntries(
+  entry: FileSystemDirectoryEntry,
+) {
+  const reader = entry.createReader();
+  const entries: ExplorerExternalDropEntry[] = [];
+
+  while (true) {
+    const nextBatch = await new Promise<ExplorerExternalDropEntry[]>(
+      (resolve, reject) => {
+        reader.readEntries(resolve, (error) => {
+          reject(error ?? new Error(`Failed to read ${entry.name}.`));
+        });
+      },
+    );
+    if (nextBatch.length === 0) {
+      break;
+    }
+    entries.push(...nextBatch);
+  }
+
+  return entries;
+}
+
+async function readExternalDropFile(
+  entry: FileSystemFileEntry,
+) {
+  return new Promise<File>((resolve, reject) => {
+    entry.file(resolve, (error) => {
+      reject(error ?? new Error(`Failed to read ${entry.name}.`));
+    });
+  });
+}
+
+async function collectDroppedExternalEntriesFromEntry(
+  entry: ExplorerExternalDropEntry,
+  parentRelativePath = "",
+): Promise<ExplorerExternalImportEntry[]> {
+  const relativePath = joinExplorerImportPath(parentRelativePath, entry.name);
+  if (!relativePath) {
+    return [];
+  }
+
+  if (entry.isFile) {
+    const file = await readExternalDropFile(entry as FileSystemFileEntry);
+    return [
+      {
+        kind: "file",
+        relativePath,
+        content: new Uint8Array(await file.arrayBuffer()),
+      },
+    ];
+  }
+
+  const childEntries = await readExternalDropDirectoryEntries(
+    entry as FileSystemDirectoryEntry,
+  );
+  const importedEntries: ExplorerExternalImportEntry[] = [
+    { kind: "directory", relativePath },
+  ];
+  for (const childEntry of childEntries) {
+    importedEntries.push(
+      ...(await collectDroppedExternalEntriesFromEntry(childEntry, relativePath)),
+    );
+  }
+  return importedEntries;
+}
+
+function dedupeExplorerExternalImportEntries(
+  entries: ExplorerExternalImportEntry[],
+) {
+  const seen = new Set<string>();
+  return entries.filter((entry) => {
+    const key = `${entry.kind}:${entry.relativePath}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function hasExternalExplorerDropData(dataTransfer: DataTransfer | null) {
+  if (!dataTransfer) {
+    return false;
+  }
+
+  const types = Array.from(dataTransfer.types ?? []);
+  if (types.includes(EXPLORER_ATTACHMENT_DRAG_TYPE)) {
+    return false;
+  }
+
+  if ((dataTransfer.files?.length ?? 0) > 0) {
+    return true;
+  }
+
+  return Array.from(dataTransfer.items ?? []).some((item) => item.kind === "file");
+}
+
+async function collectDroppedExternalEntries(dataTransfer: DataTransfer | null) {
+  if (!dataTransfer) {
+    return [];
+  }
+
+  const importedEntries: ExplorerExternalImportEntry[] = [];
+  for (const item of Array.from(dataTransfer.items ?? [])) {
+    if (item.kind !== "file") {
+      continue;
+    }
+
+    const filesystemEntry = (
+      item as ExplorerExternalDropDataTransferItem
+    ).webkitGetAsEntry?.();
+    if (!filesystemEntry) {
+      continue;
+    }
+    importedEntries.push(
+      ...(await collectDroppedExternalEntriesFromEntry(filesystemEntry)),
+    );
+  }
+
+  if (importedEntries.length > 0) {
+    return dedupeExplorerExternalImportEntries(importedEntries);
+  }
+
+  const fileEntries = await Promise.all(
+    Array.from(dataTransfer.files ?? []).map(async (file) => ({
+      kind: "file" as const,
+      relativePath: file.name,
+      content: new Uint8Array(await file.arrayBuffer()),
+    })),
+  );
+  return dedupeExplorerExternalImportEntries(fileEntries);
+}
 
 function getComparableFileName(targetName: string) {
   const normalized = targetName
@@ -615,6 +781,7 @@ export function FileExplorerPane({
   const renameInFlightRef = useRef(false);
   const createInFlightRef = useRef(false);
   const moveInFlightRef = useRef(false);
+  const importInFlightRef = useRef(false);
   const dragPreviewRef = useRef<HTMLDivElement | null>(null);
   const lastSyncedWorkspaceRootRef = useRef<{
     workspaceId: string;
@@ -622,6 +789,8 @@ export function FileExplorerPane({
   } | null>(null);
   const lastProcessedFocusRequestKeyRef = useRef<number | null>(null);
   const currentPathRef = useRef("");
+  const isDirtyRef = useRef(false);
+  const isSavingRef = useRef(false);
   const [currentPath, setCurrentPath] = useState<string>("");
   const [entries, setEntries] = useState<LocalFileEntry[]>([]);
   const [directoryEntriesByPath, setDirectoryEntriesByPath] = useState<
@@ -665,6 +834,7 @@ export function FileExplorerPane({
   const [directoryDropTargetPath, setDirectoryDropTargetPath] = useState<
     string | null
   >(null);
+  const [paneExternalDropTarget, setPaneExternalDropTarget] = useState(false);
   const { selectedWorkspaceId } = useWorkspaceSelection();
 
   currentPathRef.current = currentPath;
@@ -772,48 +942,92 @@ export function FileExplorerPane({
     let cancelled = false;
     let refreshInFlight = false;
 
-    const refreshCurrentDirectory = async () => {
+    const refreshLoadedDirectories = async () => {
       if (cancelled || refreshInFlight) {
         return;
       }
 
       refreshInFlight = true;
       try {
-        const payload = await window.electronAPI.fs.listDirectory(
+        const refreshTargets = [
           currentPath,
-          selectedWorkspaceId ?? null,
+          ...Object.entries(expandedDirectoryPaths)
+            .filter(([, isExpanded]) => isExpanded)
+            .map(([targetPath]) => targetPath),
+        ].filter(
+          (targetPath, index, paths) =>
+            Boolean(targetPath) &&
+            paths.findIndex(
+              (candidatePath) =>
+                normalizeComparablePath(candidatePath) ===
+                normalizeComparablePath(targetPath),
+            ) === index,
         );
-        if (cancelled || payload.currentPath !== currentPath) {
+        const refreshedDirectories = await Promise.allSettled(
+          refreshTargets.map((targetPath) =>
+            window.electronAPI.fs.listDirectory(
+              targetPath,
+              selectedWorkspaceId ?? null,
+            ),
+          ),
+        );
+        if (cancelled) {
           return;
         }
-        setEntries(payload.entries);
-        setDirectoryEntriesByPath((current) => ({
-          ...current,
-          [payload.currentPath]: payload.entries,
-        }));
+
+        let currentDirectoryPayload: LocalDirectoryResponse | null = null;
+        const refreshedEntriesByPath: Record<string, LocalFileEntry[]> = {};
+
+        for (const refreshedDirectory of refreshedDirectories) {
+          if (refreshedDirectory.status !== "fulfilled") {
+            continue;
+          }
+          const payload = refreshedDirectory.value;
+          refreshedEntriesByPath[payload.currentPath] = payload.entries;
+          if (
+            normalizeComparablePath(payload.currentPath) ===
+            normalizeComparablePath(currentPath)
+          ) {
+            currentDirectoryPayload = payload;
+          }
+        }
+
+        if (Object.keys(refreshedEntriesByPath).length > 0) {
+          setDirectoryEntriesByPath((current) => ({
+            ...current,
+            ...refreshedEntriesByPath,
+          }));
+        }
+        if (!currentDirectoryPayload) {
+          return;
+        }
+
+        setEntries(currentDirectoryPayload.entries);
         setSelectedPath((prev) =>
           !prev ||
-          (!payload.entries.some((entry) => entry.absolutePath === prev) &&
-            !isPathWithin(payload.currentPath, prev))
-            ? (payload.entries[0]?.absolutePath ?? "")
+          (!currentDirectoryPayload.entries.some(
+            (entry) => entry.absolutePath === prev,
+          ) &&
+            !isPathWithin(currentDirectoryPayload.currentPath, prev))
+            ? (currentDirectoryPayload.entries[0]?.absolutePath ?? "")
             : prev,
         );
       } catch {
-        // Best-effort background refresh; keep current listing on transient failures.
+        // Best-effort background refresh; keep current listings on transient failures.
       } finally {
         refreshInFlight = false;
       }
     };
 
     const timer = window.setInterval(() => {
-      void refreshCurrentDirectory();
+      void refreshLoadedDirectories();
     }, 1200);
 
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [currentPath, selectedWorkspaceId]);
+  }, [currentPath, expandedDirectoryPaths, selectedWorkspaceId]);
 
   useEffect(() => {
     let mounted = true;
@@ -943,6 +1157,14 @@ export function FileExplorerPane({
   const isMarkdownPreview = isMarkdownPreviewPayload(preview);
   const isHtmlPreview = isHtmlPreviewPayload(preview);
   const supportsRenderedTextPreview = isMarkdownPreview || isHtmlPreview;
+
+  useEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
+
+  useEffect(() => {
+    isSavingRef.current = saving;
+  }, [saving]);
 
   const openPreviewLink = useCallback((url: string) => {
     void window.electronAPI.ui.openExternalUrl(url);
@@ -1191,6 +1413,75 @@ export function FileExplorerPane({
     setRenameDraft("");
     setRenameSaving(false);
   }, []);
+
+  useEffect(() => {
+    const watchedPath = preview?.absolutePath?.trim() || "";
+    if (!previewInPane || !watchedPath) {
+      return;
+    }
+
+    let cancelled = false;
+    let subscriptionId = "";
+    let refreshInFlight = false;
+
+    const refreshPreviewFromDisk = async () => {
+      if (
+        cancelled ||
+        refreshInFlight ||
+        isDirtyRef.current ||
+        isSavingRef.current
+      ) {
+        return;
+      }
+
+      refreshInFlight = true;
+      try {
+        const nextPreview = await window.electronAPI.fs.readFilePreview(
+          watchedPath,
+          selectedWorkspaceId ?? null,
+        );
+        if (cancelled) {
+          return;
+        }
+        setPreview(nextPreview);
+        setPreviewDraft(nextPreview.content ?? "");
+        setTablePreviewDraft(cloneTablePreviewSheets(nextPreview.tableSheets));
+      } catch {
+        // The agent may still be writing or replacing the file; wait for the next event.
+      } finally {
+        refreshInFlight = false;
+      }
+    };
+
+    const unsubscribe = window.electronAPI.fs.onFileChange((payload) => {
+      if (
+        normalizeComparablePath(payload.absolutePath) !==
+        normalizeComparablePath(watchedPath)
+      ) {
+        return;
+      }
+      void refreshPreviewFromDisk();
+    });
+
+    void window.electronAPI.fs
+      .watchFile(watchedPath, selectedWorkspaceId ?? null)
+      .then((subscription) => {
+        if (cancelled) {
+          void window.electronAPI.fs.unwatchFile(subscription.subscriptionId);
+          return;
+        }
+        subscriptionId = subscription.subscriptionId;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+      if (subscriptionId) {
+        void window.electronAPI.fs.unwatchFile(subscriptionId);
+      }
+    };
+  }, [preview?.absolutePath, previewInPane, selectedWorkspaceId]);
 
   const startRenamingEntry = useCallback(
     (entry: LocalFileEntry) => {
@@ -1582,6 +1873,74 @@ export function FileExplorerPane({
     ],
   );
 
+  const importExternalEntriesToDirectory = useCallback(
+    async (dataTransfer: DataTransfer | null, destinationDirectoryPath: string) => {
+      const normalizedDestinationDirectoryPath = destinationDirectoryPath.trim();
+      if (!normalizedDestinationDirectoryPath || importInFlightRef.current) {
+        return;
+      }
+
+      closeContextMenu();
+      stopRenamingEntry();
+      setDirectoryDropTargetPath(null);
+      setPaneExternalDropTarget(false);
+      setError("");
+      importInFlightRef.current = true;
+
+      try {
+        const importedEntries = await collectDroppedExternalEntries(dataTransfer);
+        if (importedEntries.length === 0) {
+          return;
+        }
+
+        const payload = await window.electronAPI.fs.importExternalEntries(
+          normalizedDestinationDirectoryPath,
+          importedEntries,
+          selectedWorkspaceId ?? null,
+        );
+        setExpandedDirectoryPaths((current) => ({
+          ...current,
+          [normalizedDestinationDirectoryPath]: true,
+        }));
+
+        const refreshTargets = [
+          normalizedDestinationDirectoryPath,
+          getParentFolderPath(normalizedDestinationDirectoryPath),
+        ].filter(
+          (targetPath, index, paths) =>
+            Boolean(targetPath) &&
+            paths.findIndex(
+              (candidatePath) =>
+                normalizeComparablePath(candidatePath ?? "") ===
+                normalizeComparablePath(targetPath ?? ""),
+            ) === index,
+        ) as string[];
+        await Promise.all(
+          refreshTargets.map((targetPath) => refreshDirectoryEntries(targetPath)),
+        );
+
+        const firstImportedPath = payload.absolutePaths[0] ?? "";
+        if (firstImportedPath) {
+          await revealPathInTree(firstImportedPath);
+          setSelectedPath(firstImportedPath);
+        }
+      } catch (cause) {
+        const message =
+          cause instanceof Error ? cause.message : "Failed to import items.";
+        setError(message);
+      } finally {
+        importInFlightRef.current = false;
+      }
+    },
+    [
+      closeContextMenu,
+      refreshDirectoryEntries,
+      revealPathInTree,
+      selectedWorkspaceId,
+      stopRenamingEntry,
+    ],
+  );
+
   const moveEntryToDirectory = useCallback(
     async (sourcePath: string, destinationDirectoryPath: string) => {
       const normalizedSourcePath = sourcePath.trim();
@@ -1706,6 +2065,61 @@ export function FileExplorerPane({
       );
     },
     [draggedEntryPath],
+  );
+
+  const onPaneDragOver = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      if (
+        !hasExternalExplorerDropData(event.dataTransfer) ||
+        !currentPathRef.current
+      ) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = "copy";
+      setDirectoryDropTargetPath(null);
+      if (!paneExternalDropTarget) {
+        setPaneExternalDropTarget(true);
+      }
+    },
+    [paneExternalDropTarget],
+  );
+
+  const onPaneDragLeave = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      if (!paneExternalDropTarget) {
+        return;
+      }
+      const relatedTarget = event.relatedTarget;
+      if (
+        typeof Node !== "undefined" &&
+        relatedTarget instanceof Node &&
+        event.currentTarget.contains(relatedTarget)
+      ) {
+        return;
+      }
+      setPaneExternalDropTarget(false);
+    },
+    [paneExternalDropTarget],
+  );
+
+  const onPaneDrop = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      if (
+        !hasExternalExplorerDropData(event.dataTransfer) ||
+        !currentPathRef.current
+      ) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      void importExternalEntriesToDirectory(
+        event.dataTransfer,
+        currentPathRef.current,
+      );
+    },
+    [importExternalEntriesToDirectory],
   );
 
   const deleteEntryFromContextMenu = useCallback(
@@ -2008,7 +2422,16 @@ export function FileExplorerPane({
           </div>
         </div>
 
-        <div className="chat-scrollbar-hidden min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-1.5 pb-1.5 pt-1">
+        <div
+          className={`chat-scrollbar-hidden min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-1.5 pb-1.5 pt-1 ${
+            paneExternalDropTarget
+              ? "rounded-md bg-emerald-500/10 ring-1 ring-emerald-500/30"
+              : ""
+          }`}
+          onDragOver={onPaneDragOver}
+          onDragLeave={onPaneDragLeave}
+          onDrop={onPaneDrop}
+        >
           {loading ? (
             <div className="px-2 py-4 text-xs text-muted-foreground">
               Loading directory...
@@ -2144,18 +2567,28 @@ export function FileExplorerPane({
                     className={rowClassName}
                     title={
                       entry.isDirectory
-                        ? `${entry.name} — click to ${isExpanded ? "collapse" : "expand"} folder, drop a file to move it here`
+                        ? `${entry.name} — click to ${isExpanded ? "collapse" : "expand"} folder, drop files or folders here`
                         : previewInPane
                           ? `${entry.name} — drag into chat to attach`
                           : `${entry.name} — click to open file, drag into chat to attach`
                     }
                     onDragOver={(event) => {
-                      if (!canDropDraggedEntryIntoDirectory(entry)) {
+                      const canMoveDraggedEntry =
+                        canDropDraggedEntryIntoDirectory(entry);
+                      const canImportExternalEntries = hasExternalExplorerDropData(
+                        event.dataTransfer,
+                      );
+                      if (!canMoveDraggedEntry && !canImportExternalEntries) {
                         return;
                       }
                       event.preventDefault();
                       event.stopPropagation();
-                      event.dataTransfer.dropEffect = "move";
+                      event.dataTransfer.dropEffect = canMoveDraggedEntry
+                        ? "move"
+                        : "copy";
+                      if (paneExternalDropTarget) {
+                        setPaneExternalDropTarget(false);
+                      }
                       if (directoryDropTargetPath !== entry.absolutePath) {
                         setDirectoryDropTargetPath(entry.absolutePath);
                       }
@@ -2175,16 +2608,28 @@ export function FileExplorerPane({
                       setDirectoryDropTargetPath(null);
                     }}
                     onDrop={(event) => {
+                      const canMoveDraggedEntry =
+                        canDropDraggedEntryIntoDirectory(entry);
+                      const canImportExternalEntries = hasExternalExplorerDropData(
+                        event.dataTransfer,
+                      );
                       if (
-                        !canDropDraggedEntryIntoDirectory(entry) ||
-                        !draggedEntryPath
+                        !canMoveDraggedEntry &&
+                        !canImportExternalEntries
                       ) {
                         return;
                       }
                       event.preventDefault();
                       event.stopPropagation();
-                      void moveEntryToDirectory(
-                        draggedEntryPath,
+                      if (canMoveDraggedEntry && draggedEntryPath) {
+                        void moveEntryToDirectory(
+                          draggedEntryPath,
+                          entry.absolutePath,
+                        );
+                        return;
+                      }
+                      void importExternalEntriesToDirectory(
+                        event.dataTransfer,
                         entry.absolutePath,
                       );
                     }}
@@ -2254,7 +2699,7 @@ export function FileExplorerPane({
                           className="w-full min-w-0 cursor-pointer text-left"
                           title={
                             entry.isDirectory
-                              ? `${entry.name} — click to ${isExpanded ? "collapse" : "expand"} folder, drop a file to move it here`
+                              ? `${entry.name} — click to ${isExpanded ? "collapse" : "expand"} folder, drop files or folders here`
                               : previewInPane
                                 ? `${entry.name} — drag into chat to attach`
                                 : `${entry.name} — click to open file, drag into chat to attach`

@@ -15,13 +15,16 @@ That means desktop work is usually spread across four boundaries: React renderer
 
 ## Main code seams
 
-- `desktop/src/components/layout/AppShell.tsx`: the shell composition and top-level product routing. This is where the agent pane, browser panes, file explorer, app surfaces, operations drawer, notifications, settings overlays, and reported non-browser operator surfaces are coordinated.
+- `desktop/src/components/layout/AppShell.tsx`: the shell composition and top-level product routing. This is where the top-toolbar shell navigation, agent pane, browser panes, file explorer, applications explorer, app surfaces, operations drawer, task-proposal toasts, settings overlays, and reported non-browser operator surfaces are coordinated.
+- `desktop/src/components/layout/TopTabsBar.tsx`: the shared desktop toolbar, including workspace switching and the shell-level `Space`, `Automations`, and `Marketplace` entry points.
+- `desktop/src/components/onboarding/FirstWorkspacePane.tsx`, `ConfigureStep.tsx`, `BrowserProfileStep.tsx`, and `CreatingView.tsx`: first-workspace flow, including empty/template workspace creation and browser-profile bootstrap choices.
 - `desktop/shared/model-catalog.ts`: shipped fallback model metadata for direct providers and Holaboss Proxy model mapping, including reasoning support, allowed thinking values, and input modalities.
 - `desktop/src/lib/workspaceDesktop.tsx` and `desktop/src/lib/workspaceSelection.tsx`: renderer-side workspace state and shell coordination.
 - `desktop/src/components/auth/AuthPanel.tsx`: provider settings, catalog-backed defaults, background-task selection, recall embeddings, and image-generation configuration.
 - `desktop/src/components/panes/ChatPane.tsx`: model picker, per-model reasoning-effort selector, queued chat inputs, and stream/timeline rendering.
 - `desktop/src/components/panes/BrowserPane.tsx`, `SpaceBrowserExplorerPane.tsx`, and `SpaceBrowserDisplayPane.tsx`: the browser-space UI for the `user` and `agent` browser surfaces.
-- `desktop/src/components/panes/FileExplorerPane.tsx`: workspace file explorer, previews, editing, bookmarking, and file-watch behavior.
+- `desktop/src/components/panes/FileExplorerPane.tsx`: workspace file explorer, previews, editing, bookmarking, drag-and-drop imports, and file-watch behavior.
+- `desktop/src/components/panes/SpaceApplicationsExplorerPane.tsx`: workspace app list for the space explorer, parallel to files and browser, including the `Add app` action that routes into the Marketplace apps tab.
 - `desktop/src/components/layout/NotificationToastStack.tsx`: runtime-backed notification rendering and activation behavior.
 - `desktop/electron/preload.ts`: the renderer-to-main bridge exposed on `window.electronAPI`.
 - `desktop/src/types/electron.d.ts`: the typed source of truth for the preload bridge. If the renderer can call it, it should be declared here.
@@ -118,6 +121,30 @@ handleTrustedIpc("workspace:queueSessionInput", ["main"], async (_event, payload
   queueSessionInput(payload),
 );
 ```
+
+## Workspace bootstrap flow
+
+Workspace bootstrap now has two phases:
+
+1. `workspace:createWorkspace` in Electron main materializes template/empty content, writes workspace files, and activates the runtime record.
+2. renderer-side workspace bootstrap in `workspaceDesktop.tsx` can then copy browser profile state from another workspace or import browser data from Chrome/Edge/Arc/Safari.
+
+Representative post-create browser bootstrap calls from the renderer:
+
+```ts
+await window.electronAPI.workspace.copyBrowserWorkspaceProfile({
+  sourceWorkspaceId,
+  targetWorkspaceId: createdWorkspaceId,
+});
+
+await window.electronAPI.workspace.importBrowserProfile({
+  workspaceId: createdWorkspaceId,
+  source: browserImportSource,
+  profileDir: browserImportProfileDir.trim() || undefined,
+});
+```
+
+`createWorkspace()` in `desktop/electron/main.ts` now also emits structured stage logs with the `[holaboss.createWorkspace]` prefix for debugging create failures across materialization, runtime record creation, template apply, and workspace activation.
 
 ## Browser protocol
 
@@ -235,6 +262,26 @@ if (/^claude-/i.test(normalizedModelId)) {
 
 That is how a managed proxy model like `gpt-5.4` or `claude-sonnet-4-6` can still light up the desktop reasoning selector even if the control plane catalog did not provide explicit `thinking_values`.
 
+## Composer skill entry points
+
+Skill usage is now composer-first rather than a standalone pane:
+
+- slash commands in the composer (`/skill_id`)
+- quoted skill chips attached to the pending message
+- `Use Skills` picker inside composer actions
+
+`ChatPane.tsx` serializes selected skills into a leading slash block before queueing:
+
+```ts
+const serializedPrompt = serializeQuotedSkillPrompt(trimmed, quotedSkillIds);
+await window.electronAPI.workspace.queueSessionInput({
+  text: serializedPrompt,
+  // other fields omitted
+});
+```
+
+If you change skill discoverability or prompt shaping, inspect both the desktop serialization path and the harness-host prompt-expansion path.
+
 ## File explorer contract
 
 The file explorer goes through the `fs:*` IPC namespace rather than reading files directly from the renderer.
@@ -254,6 +301,14 @@ The current contract includes:
 
 That keeps file access centralized in the main process and makes workspace-relative behavior auditable.
 
+The explorer is also no longer files-only. In space mode the left explorer rail now has three modes:
+
+- `files` for workspace filesystem inspection and editing
+- `browser` for user and agent browser surfaces
+- `applications` for installed workspace apps
+
+App outputs that carry app-resource presentation metadata now route into that applications explorer path and open through `AppSurfacePane` rather than resolving into the browser first.
+
 ## Notification and runtime-backed product state
 
 Desktop notifications are runtime-backed, not purely renderer-local.
@@ -268,12 +323,14 @@ The current path is:
 
 So if you are changing notification behavior, inspect both the desktop shell and the runtime notification model.
 
+Task-proposal toasts are the current exception. The proposals themselves remain runtime-backed and are polled from `workspace:listTaskProposals`, but the "new proposal ready" toast is synthesized in `AppShell` by diffing newly seen pending proposal ids per workspace and feeding that local toast record into the same stack. Activating that toast opens the inbox for the corresponding workspace instead of updating runtime notification state.
+
 ## Display-surface model
 
 The shell maintains a central display surface that can project:
 
 - browser content
-- app content
+- app content, including app-resource deep links from outputs and artifacts
 - internal surfaces
 
 That routing currently lives in `AppShell.tsx` through `spaceDisplayView`. If you are adding a new display mode, start there and trace the corresponding pane/component path.

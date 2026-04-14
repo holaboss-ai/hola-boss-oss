@@ -54,6 +54,21 @@ interface FileSystemMutationPayload {
   absolutePath: string;
 }
 
+type ExplorerExternalImportEntryPayload =
+  | {
+      kind: "directory";
+      relativePath: string;
+    }
+  | {
+      kind: "file";
+      relativePath: string;
+      content: Uint8Array;
+    };
+
+interface ExplorerExternalImportResultPayload {
+  absolutePaths: string[];
+}
+
 interface DiagnosticsExportPayload {
   bundlePath: string;
   fileName: string;
@@ -998,6 +1013,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
       workspaceId?: string | null,
     ) =>
       ipcRenderer.invoke("fs:createPath", parentPath, kind, workspaceId) as Promise<FileSystemMutationPayload>,
+    importExternalEntries: (
+      destinationDirectoryPath: string,
+      entries: ExplorerExternalImportEntryPayload[],
+      workspaceId?: string | null,
+    ) =>
+      ipcRenderer.invoke(
+        "fs:importExternalEntries",
+        destinationDirectoryPath,
+        entries,
+        workspaceId,
+      ) as Promise<ExplorerExternalImportResultPayload>,
     renamePath: (targetPath: string, nextName: string, workspaceId?: string | null) =>
       ipcRenderer.invoke("fs:renamePath", targetPath, nextName, workspaceId) as Promise<FileSystemMutationPayload>,
     movePath: (

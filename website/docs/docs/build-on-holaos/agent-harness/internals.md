@@ -87,6 +87,34 @@ const settingsManager = SettingsManager.inMemory({
 });
 ```
 
+## Quoted workspace skill expansion
+
+The current prompt path supports leading slash skill references from the composer.
+
+When the request instruction starts with lines like:
+
+```text
+/customer_lookup
+/sales_policy
+
+Review this lead and draft next-step guidance.
+```
+
+`buildPiPromptPayload()` resolves those ids against `workspace_skill_dirs`, injects canonical `<skill ...>` blocks, and leaves the remainder as the instruction body:
+
+```ts
+const quotedSkills = resolveQuotedSkillSections(
+  request.instruction,
+  request.workspace_skill_dirs,
+);
+if (quotedSkills.blocks.length > 0) {
+  sections.push(["Quoted workspace skills:", ...quotedSkills.blocks].join("\n\n"));
+}
+const instruction = quotedSkills.body.trim();
+```
+
+If a quoted skill id is missing, the host appends an explicit warning section rather than silently dropping it. Keep this behavior stable so composer-selected skills remain inspectable in runtime traces and harness prompts.
+
 ## Change the right seam
 
 - If you are changing prompt layers, model selection, or capability projection, start in `runtime/api-server/src/agent-runtime-config.ts`.
