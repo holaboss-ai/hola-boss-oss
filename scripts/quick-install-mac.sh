@@ -39,8 +39,8 @@ require_cmd npm
 
 NODE_VERSION="$(node -v)"
 NODE_MAJOR="$(echo "$NODE_VERSION" | sed -E 's/^v([0-9]+).*/\1/')"
-if (( NODE_MAJOR < 22 )); then
-  echo "Node.js 22+ is required. Found: $NODE_VERSION"
+if (( NODE_MAJOR < 24 )); then
+  echo "Node.js 24+ is required. Found: $NODE_VERSION"
   exit 1
 fi
 

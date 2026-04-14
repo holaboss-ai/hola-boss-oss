@@ -7,6 +7,7 @@ DEFAULT_INSTALL_DIR="${HOLABOSS_INSTALL_DIR:-$HOME/holaboss-ai}"
 HOLABOSS_HOME="${HOLABOSS_HOME:-$HOME/.holaboss}"
 MANAGED_NODE_DIR="${HOLABOSS_HOME}/node"
 LOCAL_BIN_DIR="${HOME}/.local/bin"
+MANAGED_NODE_VERSION="24.14.1"
 
 INSTALL_DIR="${DEFAULT_INSTALL_DIR}"
 REF="${HOLABOSS_INSTALL_REF:-main}"
@@ -261,12 +262,12 @@ install_managed_node() {
     *) fail "Unsupported architecture for managed Node.js install: $(uname -m)" ;;
   esac
 
-  shasums_url="https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt"
-  log_info "Installing managed Node.js 22 and npm"
+  shasums_url="https://nodejs.org/dist/v${MANAGED_NODE_VERSION}/SHASUMS256.txt"
+  log_info "Installing managed Node.js ${MANAGED_NODE_VERSION} and npm"
 
   tarball_name="$(
     curl -fsSL "${shasums_url}" \
-      | grep -E " node-v22\\.[0-9]+\\.[0-9]+-${node_os}-${node_arch}\\.tar\\.gz$" \
+      | grep -E " node-v${MANAGED_NODE_VERSION//./\\.}-${node_os}-${node_arch}\\.tar\\.gz$" \
       | awk '{print $2}' \
       | head -1
   )"
@@ -274,15 +275,15 @@ install_managed_node() {
   if [[ -z "${tarball_name}" ]]; then
     tarball_name="$(
       curl -fsSL "${shasums_url}" \
-        | grep -E " node-v22\\.[0-9]+\\.[0-9]+-${node_os}-${node_arch}\\.tar\\.xz$" \
+        | grep -E " node-v${MANAGED_NODE_VERSION//./\\.}-${node_os}-${node_arch}\\.tar\\.xz$" \
         | awk '{print $2}' \
         | head -1
     )"
   fi
 
-  [[ -n "${tarball_name}" ]] || fail "Could not resolve a Node.js 22 binary for ${node_os}-${node_arch}"
+  [[ -n "${tarball_name}" ]] || fail "Could not resolve a Node.js ${MANAGED_NODE_VERSION} binary for ${node_os}-${node_arch}"
 
-  archive_url="https://nodejs.org/dist/latest-v22.x/${tarball_name}"
+  archive_url="https://nodejs.org/dist/v${MANAGED_NODE_VERSION}/${tarball_name}"
   tmp_dir="$(mktemp -d)"
 
   curl -fsSL "${archive_url}" -o "${tmp_dir}/${tarball_name}"
@@ -293,7 +294,7 @@ install_managed_node() {
     tar -xJf "${tmp_dir}/${tarball_name}" -C "${tmp_dir}"
   fi
 
-  extracted_dir="$(find "${tmp_dir}" -maxdepth 1 -type d -name 'node-v22*' | head -1)"
+  extracted_dir="$(find "${tmp_dir}" -maxdepth 1 -type d -name "node-v${MANAGED_NODE_VERSION}*" | head -1)"
   [[ -n "${extracted_dir}" ]] || fail "Node.js archive extracted but no runtime directory was found"
 
   mkdir -p "${HOLABOSS_HOME}"
@@ -319,15 +320,15 @@ ensure_node_and_npm() {
   if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
     node_version="$(node --version 2>/dev/null || true)"
     node_major="$(printf '%s' "${node_version}" | sed -E 's/^v([0-9]+).*/\1/')"
-    if [[ "${node_major}" =~ ^[0-9]+$ ]] && (( node_major >= 22 )); then
+    if [[ "${node_major}" =~ ^[0-9]+$ ]] && (( node_major >= 24 )); then
       log_success "Node.js found (${node_version})"
       log_success "npm found ($(npm --version))"
       return
     fi
 
-    log_warn "Node.js 22+ is required. Found ${node_version:-unknown}; installing managed Node.js 22."
+    log_warn "Node.js 24+ is required. Found ${node_version:-unknown}; installing managed Node.js ${MANAGED_NODE_VERSION}."
   else
-    log_info "Node.js 22 and npm are missing; installing managed Node.js 22"
+    log_info "Node.js 24 and npm are missing; installing managed Node.js ${MANAGED_NODE_VERSION}"
   fi
 
   install_managed_node
