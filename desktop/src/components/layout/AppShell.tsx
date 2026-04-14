@@ -199,6 +199,7 @@ type RestorableSpaceDisplayView = Exclude<
   SpaceDisplayView,
   { type: "browser" } | { type: "empty" }
 >;
+type RestorableSpaceAppDisplayView = Extract<SpaceDisplayView, { type: "app" }>;
 
 type ChatSessionOpenRequest = {
   sessionId: string;
@@ -1157,6 +1158,9 @@ function AppShellContent() {
   );
   const lastRestorableSpaceDisplayViewByWorkspaceRef = useRef<
     Record<string, RestorableSpaceDisplayView>
+  >({});
+  const lastRestorableSpaceAppDisplayViewByWorkspaceRef = useRef<
+    Record<string, RestorableSpaceAppDisplayView>
   >({});
   const spaceDisplayResizeStateRef = useRef<{
     startWidth: number;
@@ -2773,6 +2777,15 @@ function AppShellContent() {
       spaceDisplayView;
   }, [selectedWorkspaceId, spaceDisplayView]);
 
+  useEffect(() => {
+    if (!selectedWorkspaceId || spaceDisplayView.type !== "app") {
+      return;
+    }
+    lastRestorableSpaceAppDisplayViewByWorkspaceRef.current[
+      selectedWorkspaceId
+    ] = spaceDisplayView;
+  }, [selectedWorkspaceId, spaceDisplayView]);
+
   const restoreLastSpaceDisplayView = useCallback(() => {
     if (!selectedWorkspaceId) {
       setSpaceDisplayView({ type: "browser" });
@@ -2785,6 +2798,24 @@ function AppShellContent() {
     setSpaceDisplayView(nextDisplayView);
     syncFileExplorerFocusWithDisplayView(nextDisplayView);
   }, [selectedWorkspaceId, syncFileExplorerFocusWithDisplayView]);
+
+  const restoreLastSpaceAppDisplayView = useCallback(() => {
+    if (!selectedWorkspaceId) {
+      setSpaceDisplayView({ type: "browser" });
+      return;
+    }
+
+    const lastAppDisplayView =
+      lastRestorableSpaceAppDisplayViewByWorkspaceRef.current[
+        selectedWorkspaceId
+      ];
+    if (lastAppDisplayView) {
+      setSpaceDisplayView(lastAppDisplayView);
+      return;
+    }
+
+    restoreLastSpaceDisplayView();
+  }, [restoreLastSpaceDisplayView, selectedWorkspaceId]);
 
   useEffect(() => {
     if (!selectedWorkspaceId) {
@@ -3603,18 +3634,20 @@ function AppShellContent() {
                               <div className="flex shrink-0 items-center gap-2 border-b border-border/45 px-3 py-2.5">
                                 <Tabs
                                   value={spaceExplorerMode}
-                                  onValueChange={(value) => {
-                                    const mode = value as SpaceExplorerMode;
-                                    setSpaceExplorerMode(mode);
-                                    if (mode === "browser") {
-                                      setSpaceDisplayView({
-                                        type: "browser",
-                                      });
-                                    } else {
-                                      restoreLastSpaceDisplayView();
-                                    }
-                                  }}
-                                  className="min-w-0 flex-1"
+                                    onValueChange={(value) => {
+                                      const mode = value as SpaceExplorerMode;
+                                      setSpaceExplorerMode(mode);
+                                      if (mode === "browser") {
+                                        setSpaceDisplayView({
+                                          type: "browser",
+                                        });
+                                      } else if (mode === "applications") {
+                                        restoreLastSpaceAppDisplayView();
+                                      } else {
+                                        restoreLastSpaceDisplayView();
+                                      }
+                                    }}
+                                    className="min-w-0 flex-1"
                                 >
                                   <TabsList className="w-full">
                                     <TabsTrigger
@@ -3759,6 +3792,7 @@ function AppShellContent() {
                                 size="icon"
                                 onClick={() => {
                                   setSpaceExplorerMode("applications");
+                                  restoreLastSpaceAppDisplayView();
                                   setSpaceExplorerCollapsed(false);
                                 }}
                                 aria-label="Open applications explorer"

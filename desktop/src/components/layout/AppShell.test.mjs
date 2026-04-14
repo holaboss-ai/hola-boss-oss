@@ -49,6 +49,35 @@ test("app shell routes app outputs into the applications explorer and app surfac
   assert.doesNotMatch(source, /window\.electronAPI\.appSurface\.resolveUrl/);
 });
 
+test("app shell restores the last app surface when returning to the applications explorer lane", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(
+    source,
+    /type RestorableSpaceAppDisplayView = Extract<SpaceDisplayView, \{ type: "app" \}>;/,
+  );
+  assert.match(
+    source,
+    /const lastRestorableSpaceAppDisplayViewByWorkspaceRef =\s*useRef<\s*Record<string, RestorableSpaceAppDisplayView>\s*>\(\{\}\);/,
+  );
+  assert.match(
+    source,
+    /if \(!selectedWorkspaceId \|\| spaceDisplayView\.type !== "app"\) \{\s*return;\s*\}\s*lastRestorableSpaceAppDisplayViewByWorkspaceRef\.current\[\s*selectedWorkspaceId\s*\]\s*=\s*spaceDisplayView;/,
+  );
+  assert.match(
+    source,
+    /const restoreLastSpaceAppDisplayView = useCallback\(\(\) => \{\s*if \(!selectedWorkspaceId\) \{\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*const lastAppDisplayView =\s*lastRestorableSpaceAppDisplayViewByWorkspaceRef\.current\[\s*selectedWorkspaceId\s*\];\s*if \(lastAppDisplayView\) \{\s*setSpaceDisplayView\(lastAppDisplayView\);\s*return;\s*\}\s*restoreLastSpaceDisplayView\(\);\s*\}, \[restoreLastSpaceDisplayView, selectedWorkspaceId\]\);/,
+  );
+  assert.match(
+    source,
+    /if \(mode === "browser"\) \{\s*setSpaceDisplayView\(\{\s*type: "browser",\s*\}\);\s*\} else if \(mode === "applications"\) \{\s*restoreLastSpaceAppDisplayView\(\);\s*\} else \{\s*restoreLastSpaceDisplayView\(\);\s*\}/,
+  );
+  assert.match(
+    source,
+    /onClick=\{\(\) => \{\s*setSpaceExplorerMode\("applications"\);\s*restoreLastSpaceAppDisplayView\(\);\s*setSpaceExplorerCollapsed\(false\);\s*\}\}/,
+  );
+});
+
 test("app shell clears a consumed file explorer focus request", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
@@ -109,7 +138,7 @@ test("app shell restores the last non-browser display when returning to files mo
   );
   assert.match(
     source,
-    /onValueChange=\{\(value\) => \{\s*const mode = value as SpaceExplorerMode;\s*setSpaceExplorerMode\(mode\);\s*if \(mode === "browser"\) \{\s*setSpaceDisplayView\(\{\s*type: "browser",\s*\}\);\s*\} else \{\s*restoreLastSpaceDisplayView\(\);\s*\}\s*\}\}/,
+    /onValueChange=\{\(value\) => \{\s*const mode = value as SpaceExplorerMode;\s*setSpaceExplorerMode\(mode\);\s*if \(mode === "browser"\) \{\s*setSpaceDisplayView\(\{\s*type: "browser",\s*\}\);\s*\} else if \(mode === "applications"\) \{\s*restoreLastSpaceAppDisplayView\(\);\s*\} else \{\s*restoreLastSpaceDisplayView\(\);\s*\}\s*\}\}/,
   );
   assert.match(
     source,
