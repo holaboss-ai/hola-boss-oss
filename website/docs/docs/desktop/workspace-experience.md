@@ -4,6 +4,8 @@ This page defines the design contract for the workspace surface in Holaboss Desk
 
 Use it when you are building or refining the workspace UI. For the underlying filesystem and runtime model, see [Workspace Model](/holaos/workspace-model).
 
+This page is about the operator-facing surface, not the Electron implementation seam. For IPC contracts, embedded-runtime launch behavior, BrowserView ownership, and the browser service, continue into [Desktop Internals](/build-on-holaos/desktop/internals).
+
 ## Why the workspace surface matters
 
 The workspace is the operator's entrypoint into the `holaOS` environment. The UI should not behave like a generic folder browser. It should expose the operating context the agent is actually working inside.
@@ -21,6 +23,7 @@ A workspace is a stable operating context for one workflow. In the UI, that cont
 - its session and continuity state
 - its memory and outputs
 - its model and provider settings
+- its active reasoning profile for the next run when the selected model supports it
 
 That means the desktop is not just opening a folder. It is opening a complete operating environment.
 
@@ -31,7 +34,7 @@ The workspace UI should make these areas discoverable:
 | Area | What the operator should be able to answer | Why it matters |
 | --- | --- | --- |
 | Workspace identity | Which workspace is open right now? | Prevents work in the wrong context. |
-| Active configuration | Which model, provider, and runtime settings are in effect? | Determines how the next run will behave. |
+| Active configuration | Which model, provider, reasoning profile, and runtime settings are in effect? | Determines how the next run will behave. |
 | Active operator surface | Where is the user currently working, and which surfaces belong to the agent instead? | Keeps "here", "this page", and "continue from this" grounded in the right place. |
 | Apps and capabilities | What can this workspace do right now? | Shows the actual capability surface, not just installed code. |
 | Integrations | Which external accounts are connected? | Determines whether apps can use external services. |
