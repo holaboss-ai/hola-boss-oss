@@ -55,6 +55,34 @@ export interface AppLifecycleExecutorLike {
     resolvedApp?: ResolvedApplicationRuntime;
   }): Promise<AppLifecycleActionResult>;
   shutdownAll(params?: LifecycleShutdownParams): Promise<LifecycleShutdownResult>;
+  /**
+   * Returns true when this executor currently has an in-process child
+   * tracked for the given workspace+app. Used by callers that need to
+   * distinguish "the port is responding because WE are running the app"
+   * from "the port is responding because something else is on it"
+   * (orphan from a crashed runtime, port collision, etc).
+   *
+   * Optional so test doubles can omit it. Callers should treat a
+   * missing implementation as "tracking is unknown" (i.e. trust health).
+   */
+  isTrackingApp?(params: { workspaceId?: string; appId: string }): boolean;
+}
+
+/** Returns true if the in-memory shell-lifecycle map currently tracks a
+ *  child process for the given workspace+app. Lives at module scope so
+ *  the runtime can reach it without instantiating an executor. */
+export function isShellLifecycleAppTracked(workspaceId: string | undefined, appId: string): boolean {
+  const proc = shellLifecycleProcesses.get(lifecycleMapKey(workspaceId, appId));
+  if (!proc) {
+    return false;
+  }
+  // A tracked entry whose exitCode is set means the child died but no
+  // one cleaned the map. Treat as untracked.
+  if (typeof proc.exitCode === "number") {
+    shellLifecycleProcesses.delete(lifecycleMapKey(workspaceId, appId));
+    return false;
+  }
+  return true;
 }
 
 export class AppLifecycleExecutorError extends Error {
@@ -214,6 +242,11 @@ function hasNativeStartCommandLifecycle(params: {
   return Boolean(params.resolvedApp.startCommand.trim());
 }
 
+// Bounded captures so a runaway lifecycle command can't OOM the runtime
+// just by logging gigabytes to stderr. ~1 MiB each is plenty for setup
+// failure diagnostics; everything beyond is dropped on the floor.
+const MAX_RUN_SPAWN_CAPTURE_BYTES = 1024 * 1024;
+
 async function runSpawn(
   spawnImpl: SpawnLike,
   command: string,
@@ -228,7 +261,9 @@ async function runSpawn(
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return await new Promise((resolve, reject) => {
     let stdout = "";
+    let stdoutDropped = false;
     let stderr = "";
+    let stderrDropped = false;
     const child = spawnImpl(command, args, {
       cwd: options.cwd,
       env: options.env,
@@ -238,17 +273,35 @@ async function runSpawn(
     if (options.captureStdout && child.stdout) {
       child.stdout.setEncoding("utf8");
       child.stdout.on("data", (chunk: string) => {
+        if (stdout.length >= MAX_RUN_SPAWN_CAPTURE_BYTES) {
+          stdoutDropped = true;
+          return;
+        }
         stdout += chunk;
+        if (stdout.length > MAX_RUN_SPAWN_CAPTURE_BYTES) {
+          stdout = stdout.slice(0, MAX_RUN_SPAWN_CAPTURE_BYTES);
+          stdoutDropped = true;
+        }
       });
     }
     if (options.captureStderr && child.stderr) {
       child.stderr.setEncoding("utf8");
       child.stderr.on("data", (chunk: string) => {
+        if (stderr.length >= MAX_RUN_SPAWN_CAPTURE_BYTES) {
+          stderrDropped = true;
+          return;
+        }
         stderr += chunk;
+        if (stderr.length > MAX_RUN_SPAWN_CAPTURE_BYTES) {
+          stderr = stderr.slice(0, MAX_RUN_SPAWN_CAPTURE_BYTES);
+          stderrDropped = true;
+        }
       });
     }
     child.on("error", reject);
     child.on("close", (code) => {
+      if (stdoutDropped) stdout += "\n[truncated]";
+      if (stderrDropped) stderr += "\n[truncated]";
       resolve({ code: code ?? 0, stdout: stdout.trim(), stderr: stderr.trim() });
     });
   });
@@ -308,9 +361,25 @@ async function runLifecycleSetup(params: {
     return;
   }
   const spawnImpl = params.spawnImpl ?? spawn;
+  // Defense-in-depth against supply-chain attacks via marketplace apps:
+  // disable npm/pnpm/yarn lifecycle scripts during install by default.
+  // This blocks dependency `preinstall`/`install`/`postinstall` and the
+  // app's own install scripts, but does NOT block `npm run build` and
+  // similar explicit invocations the setup command actually wants.
+  // An app that legitimately requires install scripts can override this
+  // by exporting `NPM_CONFIG_IGNORE_SCRIPTS=false` inline before its
+  // install command in lifecycle.setup; the explicit override is
+  // intentionally noisy so reviewers notice.
+  const setupEnv = buildShellLifecycleEnv(params);
+  if (setupEnv.NPM_CONFIG_IGNORE_SCRIPTS === undefined) {
+    setupEnv.NPM_CONFIG_IGNORE_SCRIPTS = "true";
+  }
+  if (setupEnv.npm_config_ignore_scripts === undefined) {
+    setupEnv.npm_config_ignore_scripts = "true";
+  }
   const result = await runSpawn(spawnImpl, setupCommand, [], {
     cwd: params.appDir,
-    env: buildShellLifecycleEnv(params),
+    env: setupEnv,
     shell: true,
     captureStderr: true
   });
@@ -319,6 +388,42 @@ async function runLifecycleSetup(params: {
       `App '${params.appId}' lifecycle.setup failed (rc=${result.code}): ${result.stderr.slice(0, 500)}`
     );
   }
+}
+
+// Attach light-weight pipe consumers to a long-running child so its
+// stdout/stderr buffers don't fill up and stall the process. We do not
+// log these by default — they would flood the runtime log — but we keep
+// the last ~64 KiB tail in memory for post-crash diagnostics. If you need
+// real-time logs, run the app's lifecycle.start under your own logger.
+const TRACKED_TAIL_BYTES = 64 * 1024;
+const trackedProcessTails = new WeakMap<ChildLike, { stdout: string; stderr: string }>();
+
+function attachTrackedPipeConsumers(child: ChildLike): void {
+  const tails = { stdout: "", stderr: "" };
+  trackedProcessTails.set(child, tails);
+  if (child.stdout) {
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      tails.stdout = (tails.stdout + chunk).slice(-TRACKED_TAIL_BYTES);
+    });
+    // Discard errors silently; the child is allowed to close its pipes.
+    child.stdout.on("error", () => undefined);
+  }
+  if (child.stderr) {
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      tails.stderr = (tails.stderr + chunk).slice(-TRACKED_TAIL_BYTES);
+    });
+    child.stderr.on("error", () => undefined);
+  }
+}
+
+/** Best-effort accessor for the stdout/stderr tails of a tracked child.
+ *  Returns null if the child was never tracked or has been GCed. */
+export function getTrackedProcessTails(workspaceId: string | undefined, appId: string): { stdout: string; stderr: string } | null {
+  const proc = shellLifecycleProcesses.get(lifecycleMapKey(workspaceId, appId));
+  if (!proc) return null;
+  return trackedProcessTails.get(proc) ?? null;
 }
 
 async function killTrackedProcess(proc: ChildLike, timeoutMs: number): Promise<void> {
@@ -342,9 +447,13 @@ async function killTrackedProcess(proc: ChildLike, timeoutMs: number): Promise<v
   }
 }
 
-async function killAllocatedPortListeners(appId: string, appDir: string, ports: ShellLifecyclePorts): Promise<void> {
+async function killAllocatedPortListeners(mapKey: string, appDir: string, ports: ShellLifecyclePorts): Promise<void> {
   await killPortListeners([ports.http, ports.mcp], appDir);
-  shellLifecyclePorts.delete(appId);
+  // Use the composite mapKey so we don't leak entries when multiple
+  // workspaces share the same appId. Previously this used a bare appId
+  // which silently failed to delete the map entry for any non-default
+  // workspace and slowly grew shellLifecyclePorts unbounded.
+  shellLifecyclePorts.delete(mapKey);
 }
 
 /** Kill any process listening on the given ports. Exported for use as a
@@ -451,6 +560,7 @@ export async function isAppHealthy(
     httpPort: number;
     mcpPort: number;
     fetchImpl?: typeof fetch;
+    probeTimeoutMs?: number;
   }
 ): Promise<boolean> {
   const fetchImpl = params.fetchImpl ?? fetch;
@@ -458,12 +568,18 @@ export async function isAppHealthy(
   if (probes.length === 0) {
     return false;
   }
+  // Probe timeout defaults to 3s but can be overridden — and on slow
+  // hosts we let the per-probe timeout grow with the configured health
+  // check interval so we don't pre-fail apps that respond in 4–8s.
+  const probeTimeoutMs =
+    params.probeTimeoutMs ??
+    Math.max(3000, params.resolvedApp.healthCheck.intervalS * 1000);
   for (const probe of probes) {
     try {
       const response = await fetchImpl(probe.url, {
         method: "GET",
         redirect: "manual",
-        signal: AbortSignal.timeout(3000)
+        signal: AbortSignal.timeout(probeTimeoutMs)
       });
       if (probe.kind === "http") {
         if (response.status >= 200 && response.status < 400) {
@@ -622,6 +738,7 @@ export async function startShellLifecycleAppTarget(params: {
     });
     shellLifecycleProcesses.set(mapKey, child);
     shellLifecyclePorts.set(mapKey, { http: params.httpPort, mcp: params.mcpPort });
+    attachTrackedPipeConsumers(child);
 
     await waitHealthy(params);
     return {
@@ -675,6 +792,7 @@ export async function startSubprocessAppTarget(params: {
     });
     shellLifecycleProcesses.set(mapKey, child);
     shellLifecyclePorts.set(mapKey, { http: params.httpPort, mcp: params.mcpPort });
+    attachTrackedPipeConsumers(child);
 
     await waitHealthy(params);
     return {
@@ -730,17 +848,19 @@ export async function stopShellLifecycleAppTarget(params: {
     } catch (error) {
       stopError = error instanceof Error ? error : new Error(String(error));
     }
-  } else if (trackedProc) {
-    await killTrackedProcess(trackedProc, 10000);
   }
 
+  // Always make sure the tracked child process is dead. killTrackedProcess
+  // is idempotent (it short-circuits on a non-null exitCode), but we used
+  // to call it twice via an else-if + an unconditional branch which made
+  // the intent ambiguous and could cause spurious signals on slow exits.
   if (trackedProc) {
     await killTrackedProcess(trackedProc, 10000);
   }
   shellLifecycleProcesses.delete(mapKey);
   const ports = shellLifecyclePorts.get(mapKey);
   if (ports) {
-    await killAllocatedPortListeners(params.appId, params.appDir, ports);
+    await killAllocatedPortListeners(mapKey, params.appDir, ports);
   }
 
   if (stopError) {
@@ -768,7 +888,7 @@ export async function stopSubprocessAppTarget(params: {
   shellLifecycleProcesses.delete(mapKey);
   const ports = shellLifecyclePorts.get(mapKey);
   if (ports) {
-    await killAllocatedPortListeners(params.appId, params.appDir, ports);
+    await killAllocatedPortListeners(mapKey, params.appDir, ports);
   }
   return {
     app_id: params.appId,
@@ -948,5 +1068,9 @@ export class RuntimeAppLifecycleExecutor implements AppLifecycleExecutorLike {
       return { stopped: [], failed: [] };
     }
     return await shutdownComposeTargets(targets);
+  }
+
+  isTrackingApp(params: { workspaceId?: string; appId: string }): boolean {
+    return isShellLifecycleAppTracked(params.workspaceId, params.appId);
   }
 }

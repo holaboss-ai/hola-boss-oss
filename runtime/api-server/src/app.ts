@@ -1321,11 +1321,30 @@ export function isAllowedArchiveUrl(url: string): boolean {
   const allPrefixes = [...defaultPrefixes, ...extraPrefixes];
 
   // http:// only allowed if explicitly in the override list
-  if (parsed.protocol === "http:") {
-    return extraPrefixes.some((prefix) => url.startsWith(prefix));
-  }
+  const eligiblePrefixes = parsed.protocol === "http:" ? extraPrefixes : allPrefixes;
 
-  return allPrefixes.some((prefix) => url.startsWith(prefix));
+  // Stricter than `url.startsWith(prefix)`: re-parse each prefix and
+  // compare host + pathname so an attacker can't smuggle a lookalike
+  // domain like `https://github.com.attacker.com/...` past a
+  // `https://github.com/...` prefix. The parsed-host comparison closes
+  // the suffix-attack vector entirely.
+  return eligiblePrefixes.some((prefix) => {
+    let prefixUrl: URL;
+    try {
+      prefixUrl = new URL(prefix);
+    } catch {
+      return false;
+    }
+    if (prefixUrl.protocol !== parsed.protocol) {
+      return false;
+    }
+    if (prefixUrl.host !== parsed.host) {
+      return false;
+    }
+    // Ensure the path of the request URL begins with the prefix path so
+    // we don't accept arbitrary paths under a matching host.
+    return parsed.pathname.startsWith(prefixUrl.pathname);
+  });
 }
 
 async function downloadArchiveToTemp(url: string, appId: string): Promise<string> {
@@ -1721,6 +1740,11 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const backgroundTasks = new Set<Promise<void>>();
   const appSetupTasks = new Map<string, Promise<void>>();
   const appEnsureRunningTasks = new Map<string, Promise<void>>();
+  // Serializes /api/v1/apps/install-archive against itself for the same
+  // (workspaceId, appId). Without this, two concurrent installs both pass
+  // the empty-appDir check, both extract on top of each other, and both
+  // race-write app.runtime.yaml producing corrupt state.
+  const appInstallTasks = new Map<string, Promise<unknown>>();
   const appLifecycleExecutor = options.appLifecycleExecutor ?? new RuntimeAppLifecycleExecutor({ store });
   const memoryService = options.memoryService ?? new FilesystemMemoryService({ workspaceRoot: store.workspaceRoot });
   const runtimeConfigService = options.runtimeConfigService ?? new FileRuntimeConfigService();
@@ -1792,6 +1816,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     workspaceDir: string,
     appId: string,
     resolved: { ports: { mcp: number }; resolvedApp: { mcpTools: string[]; mcp: { path: string } } },
+    options: { bumpStartedAt?: boolean } = {},
   ): void {
     if (resolved.resolvedApp.mcpTools.length === 0) {
       return;
@@ -1803,6 +1828,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         mcpPath: resolved.resolvedApp.mcp.path || "/mcp/sse",
         mcpTimeoutMs: 30000,
         mcpPort: resolved.ports.mcp,
+        bumpStartedAt: options.bumpStartedAt === true,
       });
     } catch (error) {
       app.log.warn(
@@ -1829,16 +1855,47 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       });
 
       // Already healthy — sync DB and return.
-      if (
-        await isAppHealthy({
-          resolvedApp: resolved.resolvedApp,
-          httpPort: resolved.ports.http,
-          mcpPort: resolved.ports.mcp
-        })
-      ) {
+      //
+      // For shell-style lifecycles (lifecycle.start or startCommand) we
+      // ALSO require that the executor is currently tracking a child
+      // process. Otherwise the port could be responding because of an
+      // orphan process from a previous runtime (e.g. crashed without
+      // cleanup) or a port collision. Trusting such a process means we
+      // can never cleanly stop or restart the app, so we fall through
+      // to the start path which will re-spawn under our control.
+      //
+      // Compose-managed apps are owned by docker, not by us, so the
+      // tracking check doesn't apply there — trust isAppHealthy.
+      const isShellManaged =
+        Boolean(resolved.resolvedApp.lifecycle.start?.trim()) ||
+        Boolean(resolved.resolvedApp.startCommand?.trim());
+      const healthy = await isAppHealthy({
+        resolvedApp: resolved.resolvedApp,
+        httpPort: resolved.ports.http,
+        mcpPort: resolved.ports.mcp
+      });
+      // When the executor doesn't expose isTrackingApp (e.g. test doubles)
+      // fall back to trusting the health probe — preserves prior behavior.
+      const tracked = appLifecycleExecutor.isTrackingApp
+        ? appLifecycleExecutor.isTrackingApp({ workspaceId, appId })
+        : true;
+      if (healthy && (!isShellManaged || tracked)) {
         store.upsertAppBuild({ workspaceId, appId, status: "running" });
         reconcileAppMcpRegistry(workspaceDir, appId, resolved);
         return;
+      }
+      if (healthy && isShellManaged) {
+        app.log.warn(
+          { workspaceId, appId, http: resolved.ports.http, mcp: resolved.ports.mcp },
+          "ensureAppRunning: port reports healthy but no tracked process; treating as orphan and restarting",
+        );
+        // Best-effort kill of any process on these ports before we
+        // start a fresh one so we don't dual-bind.
+        try {
+          await killPortListeners([resolved.ports.http, resolved.ports.mcp]);
+        } catch {
+          // best-effort
+        }
       }
 
       // Setup needed?
@@ -1880,7 +1937,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         status: result.status === "started" ? "running" : result.status
       });
 
-      reconcileAppMcpRegistry(workspaceDir, appId, resolved);
+      // Bump started_at on the post-start path so any MCP client watching
+      // workspace.yaml can drop cached SSE streams and reconnect. The
+      // "already healthy" path above does NOT bump (idempotent).
+      reconcileAppMcpRegistry(workspaceDir, appId, resolved, { bumpStartedAt: true });
     })();
 
     appEnsureRunningTasks.set(taskKey, task);
@@ -2093,8 +2153,30 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
     healthMonitorTimer = setInterval(() => {
       void runHealthMonitorCycle();
+      // Reconcile orphan processes on a slower cadence (every Nth tick).
+      // Doing this on every tick would be wasteful; doing it only at
+      // startup means that if a workspace is deleted while the runtime
+      // is running and stopWorkspaceApplicationsForDeletion misses a
+      // process, we would never clean it up until the next runtime
+      // restart.
+      orphanCleanupTickCounter += 1;
+      if (orphanCleanupTickCounter >= ORPHAN_CLEANUP_EVERY_N_TICKS) {
+        orphanCleanupTickCounter = 0;
+        void cleanupOrphanAppProcesses(store, app.log).catch((err) => {
+          app.log.warn(
+            { err: err instanceof Error ? err.message : String(err) },
+            "periodic orphan app process cleanup failed",
+          );
+        });
+      }
     }, HEALTH_MONITOR_INTERVAL_MS);
   }
+
+  // Run orphan cleanup roughly every 10 health-monitor ticks. With the
+  // default 30s interval that's once every ~5 minutes — frequent enough
+  // to catch leaks while still cheap.
+  let orphanCleanupTickCounter = 0;
+  const ORPHAN_CLEANUP_EVERY_N_TICKS = 10;
 
   async function runHealthMonitorCycle(): Promise<void> {
     let workspaces: WorkspaceRecord[];
@@ -2147,22 +2229,85 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         const key = `${ws.id}:${appId}`;
         if (healthy) {
           autoRestartAttempts.delete(key);
+          // Persistent counter is also reset so the next runtime restart
+          // starts from a clean slate when this app is currently healthy.
+          if ((build?.restartAttempts ?? 0) > 0) {
+            store.setAppBuildRestartAttempts({
+              workspaceId: ws.id,
+              appId,
+              attempts: 0,
+            });
+          }
           if (build?.status !== "running") {
             store.upsertAppBuild({ workspaceId: ws.id, appId, status: "running" });
           }
           continue;
         }
 
-        const attempts = (autoRestartAttempts.get(key) ?? 0) + 1;
+        // Seed the in-memory counter from the persistent column so that a
+        // crash-loop survives runtime restarts and eventually trips the
+        // circuit breaker instead of looping forever.
+        const persistedAttempts = build?.restartAttempts ?? 0;
+        const previousInMemory = autoRestartAttempts.get(key) ?? persistedAttempts;
+        const attempts = previousInMemory + 1;
         autoRestartAttempts.set(key, attempts);
+        try {
+          store.setAppBuildRestartAttempts({
+            workspaceId: ws.id,
+            appId,
+            attempts,
+          });
+        } catch (err) {
+          app.log.debug(
+            { workspaceId: ws.id, appId, err: err instanceof Error ? err.message : String(err) },
+            "health monitor: failed to persist restart_attempts",
+          );
+        }
         if (attempts <= MAX_AUTO_RESTART_ATTEMPTS) {
           app.log.info({ workspaceId: ws.id, appId, attempt: attempts }, "health monitor: restarting unhealthy app");
-          void ensureAppRunning(ws.id, appId).catch((err) => {
-            Sentry.captureException(err, {
-              extra: { workspaceId: ws.id, appId },
-            });
-            app.log.error({ workspaceId: ws.id, appId, err: err instanceof Error ? err.message : String(err) }, "health monitor: restart failed");
-          });
+          // Stop the (possibly half-dead) tracked process and free its
+          // ports BEFORE asking ensureAppRunning to start a fresh one.
+          // Otherwise a zombie listener can keep the port bound and the
+          // restart spawn fails immediately. Both calls are best-effort.
+          void (async () => {
+            try {
+              await appLifecycleExecutor.stopApp({
+                appId,
+                appDir: resolved.appDir,
+                workspaceId: ws.id,
+                resolvedApp: resolved.resolvedApp,
+              });
+            } catch (stopErr) {
+              app.log.debug(
+                {
+                  workspaceId: ws.id,
+                  appId,
+                  err: stopErr instanceof Error ? stopErr.message : String(stopErr),
+                },
+                "health monitor: best-effort stopApp before restart failed",
+              );
+            }
+            try {
+              await killPortListeners([resolved.ports.http, resolved.ports.mcp]);
+            } catch {
+              // best-effort
+            }
+            try {
+              await ensureAppRunning(ws.id, appId);
+            } catch (err) {
+              Sentry.captureException(err, {
+                extra: { workspaceId: ws.id, appId },
+              });
+              app.log.error(
+                {
+                  workspaceId: ws.id,
+                  appId,
+                  err: err instanceof Error ? err.message : String(err),
+                },
+                "health monitor: restart failed",
+              );
+            }
+          })();
         } else if (attempts === MAX_AUTO_RESTART_ATTEMPTS + 1) {
           app.log.error({ workspaceId: ws.id, appId, attempts: attempts - 1 }, "health monitor: max restart attempts exceeded");
           Sentry.captureException(new Error(`App ${appId} crashed and failed to recover after ${MAX_AUTO_RESTART_ATTEMPTS} attempts`), {
@@ -3806,6 +3951,15 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, error instanceof Error ? error.message : "invalid app_id");
     }
 
+    // Serialize concurrent installs for the same (workspaceId, appId).
+    const installKey = `${workspaceId}:${appId}`;
+    const inFlightInstall = appInstallTasks.get(installKey);
+    if (inFlightInstall) {
+      // Another install for the same app is already running; tell the
+      // caller to retry later rather than racing on the filesystem.
+      return sendError(reply, 409, "app install already in progress for this id");
+    }
+
     const rawArchivePath =
       typeof request.body.archive_path === "string" ? request.body.archive_path : "";
     const rawArchiveUrl =
@@ -3845,6 +3999,14 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       }
     }
 
+    // Mark this install as in-flight before any filesystem mutation so a
+    // racing request hits the early-return 409 above.
+    let installPromiseResolve!: () => void;
+    const installMarker = new Promise<void>((resolve) => {
+      installPromiseResolve = resolve;
+    });
+    appInstallTasks.set(installKey, installMarker);
+
     const workspaceDir = store.workspaceDir(workspaceId);
     const appDir = path.join(workspaceDir, "apps", appId);
     if (fs.existsSync(appDir) && fs.readdirSync(appDir).length > 0) {
@@ -3857,7 +4019,41 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
     try {
       try {
-        await tar.x({ file: archivePath, cwd: appDir, strict: true });
+        await tar.x({
+          file: archivePath,
+          cwd: appDir,
+          strict: true,
+          // Defense-in-depth against malicious archives:
+          // - portable: drop owner uid/gid metadata so we don't honor
+          //   archive-controlled ownership.
+          // - filter: reject absolute paths and ".." segments before
+          //   tar's own check (it does too, but we want a hard belt).
+          //   Also strip the executable bit from regular files; the
+          //   start command is the only intended execution surface.
+          portable: true,
+          filter: (extractPath, entry) => {
+            // Reject entries whose normalized path escapes appDir.
+            const normalized = path.posix.normalize(extractPath);
+            if (
+              normalized.startsWith("/") ||
+              normalized.startsWith("..") ||
+              normalized.split("/").includes("..")
+            ) {
+              return false;
+            }
+            // Strip executable bits from regular files at extraction
+            // time. Directories keep their default mode; symlinks are
+            // already disallowed by `strict: true`. The entry parameter
+            // is typed as `Stats | ReadEntry` for the generic filter
+            // signature; narrow it via the `type` field which only
+            // ReadEntry exposes.
+            const readEntry = entry as { type?: string; mode?: number };
+            if (readEntry.type === "File" && typeof readEntry.mode === "number") {
+              readEntry.mode = readEntry.mode & ~0o111;
+            }
+            return true;
+          },
+        });
       } catch (error) {
         fs.rmSync(appDir, { recursive: true, force: true });
         return sendError(
@@ -3980,6 +4176,8 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
           /* best effort cleanup */
         }
       }
+      appInstallTasks.delete(installKey);
+      installPromiseResolve();
     }
   });
 
