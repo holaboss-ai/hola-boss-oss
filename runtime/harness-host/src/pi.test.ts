@@ -2071,7 +2071,7 @@ test("buildPiPromptPayload expands leading slash skill references into quoted sk
     });
 
     assert.match(prompt.text, /Quoted workspace skills:/);
-    assert.match(prompt.text, /<skill name="Customer Lookup" location=".*customer_lookup\/SKILL\.md">/);
+    assert.match(prompt.text, /<skill name="customer_lookup" location=".*customer_lookup\/SKILL\.md">/);
     assert.match(prompt.text, /References are relative to .*customer_lookup/);
     assert.match(prompt.text, /Check the customer profile before writing the response\./);
     assert.match(prompt.text, /Draft the follow-up email\./);
