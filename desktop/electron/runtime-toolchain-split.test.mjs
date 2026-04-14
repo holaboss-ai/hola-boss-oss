@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,6 +27,12 @@ test("packaged config records the runtime toolchain manifest for the current sta
   assert.match(source, /const toolchainManifest = await loadRuntimeToolchainManifest\(\);/);
   assert.match(source, /toolchainManifest,/);
   assert.match(source, /toolchain_id/);
+});
+
+test("packaged config script stays valid plain JavaScript", () => {
+  execFileSync(process.execPath, ["--check", packagedConfigPath], {
+    stdio: "pipe",
+  });
 });
 
 test("runtime startup installs and resolves a managed toolchain outside the embedded runtime root", async () => {

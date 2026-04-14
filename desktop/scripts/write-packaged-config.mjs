@@ -39,8 +39,8 @@ async function loadRuntimeToolchainManifest() {
     fs.readFile(runtimeMetadataPath, "utf8"),
     fs.readFile(runtimePackageMetadataPath, "utf8"),
   ]);
-  const runtimeMetadata = JSON.parse(runtimeMetadataRaw) as Record<string, unknown>;
-  const packageMetadata = JSON.parse(packageMetadataRaw) as Record<string, unknown>;
+  const runtimeMetadata = JSON.parse(runtimeMetadataRaw);
+  const packageMetadata = JSON.parse(packageMetadataRaw);
 
   const runtimeVersion =
     typeof runtimeMetadata.runtime_version === "string"
