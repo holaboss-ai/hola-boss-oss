@@ -17,6 +17,11 @@ const runtimeRoot = path.resolve(scriptDir, "..");
 const repoRoot = path.resolve(runtimeRoot, "..");
 
 function resolveWindowsNpmCliPath() {
+  const explicitCliPath = process.env.HOLABOSS_RUNTIME_BUILD_NPM_CLI?.trim();
+  if (explicitCliPath && existsSync(explicitCliPath)) {
+    return explicitCliPath;
+  }
+
   const envExecPath = process.env.npm_execpath?.trim();
   if (envExecPath && existsSync(envExecPath)) {
     return envExecPath;
@@ -25,6 +30,18 @@ function resolveWindowsNpmCliPath() {
   const bundledCliPath = path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
   if (existsSync(bundledCliPath)) {
     return bundledCliPath;
+  }
+
+  const siblingCliPath = path.join(
+    path.dirname(process.execPath),
+    "..",
+    "..",
+    "npm",
+    "bin",
+    "npm-cli.js",
+  );
+  if (existsSync(siblingCliPath)) {
+    return siblingCliPath;
   }
 
   throw new Error("failed to resolve npm CLI entrypoint on Windows");
