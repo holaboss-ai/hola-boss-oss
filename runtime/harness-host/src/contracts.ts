@@ -39,6 +39,7 @@ export interface RunnerRequest {
   attachments?: HarnessHostInputAttachmentPayload[];
   context: JsonObject;
   model?: string | null;
+  thinking_value?: string | null;
   debug: boolean;
 }
 
@@ -68,6 +69,7 @@ export interface HarnessHostPiRequest {
   input_id: string;
   instruction: string;
   attachments?: HarnessHostInputAttachmentPayload[];
+  thinking_value?: string | null;
   debug: boolean;
   harness_session_id?: string | null;
   persisted_harness_session_id?: string | null;
@@ -337,6 +339,7 @@ export function decodeRunnerRequestBase64(encoded: string): RunnerRequest {
     attachments: inputAttachments(parsed.attachments, "attachments"),
     context: jsonObject(parsed.context),
     model: optionalString(parsed.model),
+    thinking_value: optionalString(parsed.thinking_value),
     debug: optionalBoolean(parsed.debug, false),
   };
 }
@@ -354,6 +357,7 @@ export function decodeHarnessHostPiRequestBase64(encoded: string): HarnessHostPi
     input_id: requiredString(parsed.input_id, "input_id"),
     instruction: requiredString(parsed.instruction, "instruction"),
     attachments: inputAttachments(parsed.attachments, "attachments"),
+    thinking_value: optionalString(parsed.thinking_value),
     debug: optionalBoolean(parsed.debug, false),
     harness_session_id: optionalString(parsed.harness_session_id),
     persisted_harness_session_id: optionalString(parsed.persisted_harness_session_id),

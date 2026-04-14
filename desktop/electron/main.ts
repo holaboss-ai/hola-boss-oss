@@ -70,6 +70,10 @@ import {
   listMarketplaceTemplates as sdkListMarketplaceTemplates,
   materializeMarketplaceTemplate as sdkMaterializeMarketplaceTemplate,
 } from "@holaboss/app-sdk/core";
+import {
+  type ModelCatalogInputModality,
+} from "../shared/model-catalog.js";
+import * as modelCatalog from "../shared/model-catalog.js";
 import { buildAppSdkClient } from "./appSdkClient.js";
 import { ensureWorkspaceGitRepo } from "./workspace-git.js";
 
@@ -495,6 +499,11 @@ interface RuntimeConfigPayload {
 interface RuntimeProviderModelPayload {
   token: string;
   modelId: string;
+  label?: string;
+  reasoning?: boolean;
+  thinkingValues?: string[];
+  defaultThinkingValue?: string | null;
+  inputModalities?: ModelCatalogInputModality[];
   capabilities?: string[];
 }
 
@@ -2519,6 +2528,7 @@ interface HolabossQueueSessionInputPayload {
   idempotency_key?: string | null;
   priority?: number;
   model?: string | null;
+  thinking_value?: string | null;
 }
 
 interface HolabossPauseSessionRunPayload {
@@ -4566,6 +4576,127 @@ function runtimeModelCapabilityList(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
+function normalizeRuntimeModelThinkingValues(rawValues: unknown[]): string[] {
+  const seen = new Set<string>();
+  const thinkingValues: string[] = [];
+  for (const value of rawValues) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    const normalized = value.trim();
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    thinkingValues.push(normalized);
+  }
+  return thinkingValues;
+}
+
+function runtimeModelThinkingValueList(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function normalizeRuntimeModelInputModality(
+  value: string,
+): ModelCatalogInputModality | "" {
+  const normalized = value.trim().toLowerCase();
+  switch (normalized) {
+    case "text":
+    case "image":
+    case "audio":
+    case "video":
+      return normalized;
+    default:
+      return "";
+  }
+}
+
+function normalizeRuntimeModelInputModalities(
+  rawValues: unknown[],
+): ModelCatalogInputModality[] {
+  const seen = new Set<ModelCatalogInputModality>();
+  const inputModalities: ModelCatalogInputModality[] = [];
+  for (const value of rawValues) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    const normalized = normalizeRuntimeModelInputModality(value);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    inputModalities.push(normalized);
+  }
+  return inputModalities;
+}
+
+function runtimeModelInputModalityList(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function runtimeModelMetadataFromPayload(
+  providerId: string,
+  modelId: string,
+  payload: Record<string, unknown>,
+): Partial<RuntimeProviderModelPayload> {
+  const fallback = modelCatalog.catalogMetadataForProviderModel(
+    providerId,
+    modelId,
+  );
+  const label =
+    runtimeFirstNonEmptyString(
+      payload.label as string | undefined,
+      payload.display_label as string | undefined,
+      payload.displayLabel as string | undefined,
+      payload.name as string | undefined,
+    ) || fallback?.label;
+  const explicitReasoning =
+    typeof payload.reasoning === "boolean" ? payload.reasoning : undefined;
+  const useFallbackReasoningMetadata = explicitReasoning !== false;
+  const explicitThinkingValues = normalizeRuntimeModelThinkingValues([
+    ...runtimeModelThinkingValueList(payload.thinking_values),
+    ...runtimeModelThinkingValueList(payload.thinkingValues),
+  ]);
+  const explicitInputModalities = normalizeRuntimeModelInputModalities([
+    ...runtimeModelInputModalityList(payload.input_modalities),
+    ...runtimeModelInputModalityList(payload.inputModalities),
+    ...runtimeModelInputModalityList(payload.input),
+  ]);
+  const explicitDefaultThinkingValue =
+    payload.default_thinking_value === null || payload.defaultThinkingValue === null
+      ? null
+      : runtimeFirstNonEmptyString(
+          payload.default_thinking_value as string | undefined,
+          payload.defaultThinkingValue as string | undefined,
+        );
+  const thinkingValues =
+    explicitThinkingValues.length > 0
+      ? explicitThinkingValues
+      : useFallbackReasoningMetadata
+        ? fallback?.thinkingValues
+        : [];
+  const inputModalities =
+    explicitInputModalities.length > 0
+      ? explicitInputModalities
+      : fallback?.inputModalities;
+  const defaultThinkingValue =
+    explicitDefaultThinkingValue !== undefined
+      ? explicitDefaultThinkingValue
+      : useFallbackReasoningMetadata
+        ? fallback?.defaultThinkingValue
+        : null;
+  const reasoning = explicitReasoning ?? fallback?.reasoning;
+
+  return {
+    ...(label ? { label } : {}),
+    ...(reasoning !== undefined ? { reasoning } : {}),
+    ...(thinkingValues !== undefined ? { thinkingValues } : {}),
+    ...(defaultThinkingValue !== undefined ? { defaultThinkingValue } : {}),
+    ...(inputModalities !== undefined ? { inputModalities } : {}),
+  };
+}
+
 function upsertRuntimeProviderModel(
   models: Map<string, RuntimeProviderModelPayload>,
   payload: RuntimeProviderModelPayload,
@@ -4578,6 +4709,29 @@ function upsertRuntimeProviderModel(
   models.set(payload.token, {
     token: payload.token,
     modelId: payload.modelId,
+    ...(payload.label?.trim() || existing?.label
+      ? { label: payload.label?.trim() || existing?.label }
+      : {}),
+    ...(payload.reasoning !== undefined
+      ? { reasoning: payload.reasoning }
+      : existing?.reasoning !== undefined
+        ? { reasoning: existing.reasoning }
+        : {}),
+    ...(payload.thinkingValues !== undefined
+      ? { thinkingValues: [...payload.thinkingValues] }
+      : existing?.thinkingValues !== undefined
+        ? { thinkingValues: [...existing.thinkingValues] }
+        : {}),
+    ...(payload.defaultThinkingValue !== undefined
+      ? { defaultThinkingValue: payload.defaultThinkingValue }
+      : existing?.defaultThinkingValue !== undefined
+        ? { defaultThinkingValue: existing.defaultThinkingValue }
+        : {}),
+    ...(payload.inputModalities !== undefined
+      ? { inputModalities: [...payload.inputModalities] }
+      : existing?.inputModalities !== undefined
+        ? { inputModalities: [...existing.inputModalities] }
+        : {}),
     ...(mergedCapabilities.length > 0
       ? { capabilities: mergedCapabilities }
       : {}),
@@ -4673,9 +4827,15 @@ function normalizeRuntimeProviderModelGroups(
         ...runtimeModelCapabilityList(modelPayload.modalities),
         ...runtimeModelCapabilityList(modelPayload.model_modalities),
       ]);
+      const metadata = runtimeModelMetadataFromPayload(
+        providerId,
+        modelId,
+        modelPayload,
+      );
       upsertRuntimeProviderModel(ensureProviderGroup(providerId), {
         token,
         modelId,
+        ...metadata,
         ...(capabilities.length > 0 ? { capabilities } : {}),
       });
     }
@@ -4747,6 +4907,7 @@ function runtimeProviderModelGroups(
     token: string,
     modelId: string,
     capabilities?: string[],
+    metadata?: Partial<RuntimeProviderModelPayload>,
   ) => {
     const normalizedProviderId = canonicalRuntimeProviderId(providerId);
     const normalizedModelId = normalizeRuntimeProviderModelId(
@@ -4780,6 +4941,7 @@ function runtimeProviderModelGroups(
     upsertRuntimeProviderModel(group, {
       token: normalizedToken,
       modelId: normalizedModelId,
+      ...(metadata ?? {}),
       ...(Array.isArray(capabilities) && capabilities.length > 0
         ? { capabilities }
         : {}),
@@ -4804,6 +4966,21 @@ function runtimeProviderModelGroups(
           model.token,
           model.modelId,
           Array.isArray(model.capabilities) ? model.capabilities : [],
+          {
+            ...(model.label ? { label: model.label } : {}),
+            ...(model.reasoning !== undefined
+              ? { reasoning: model.reasoning }
+              : {}),
+            ...(model.thinkingValues !== undefined
+              ? { thinkingValues: [...model.thinkingValues] }
+              : {}),
+            ...(model.defaultThinkingValue !== undefined
+              ? { defaultThinkingValue: model.defaultThinkingValue }
+              : {}),
+            ...(model.inputModalities !== undefined
+              ? { inputModalities: [...model.inputModalities] }
+              : {}),
+          },
         );
       }
     }
@@ -4864,7 +5041,17 @@ function runtimeProviderModelGroups(
         continue;
       }
       if (providers.has(normalizedProviderId)) {
-        addModel(normalizedProviderId, token, modelId);
+        addModel(
+          normalizedProviderId,
+          token,
+          modelId,
+          undefined,
+          runtimeModelMetadataFromPayload(
+            normalizedProviderId,
+            modelId,
+            modelPayload,
+          ),
+        );
       }
     }
   }
@@ -10850,6 +11037,7 @@ async function queueSessionInput(
       idempotency_key: idempotencyKey,
       priority: payload.priority ?? 0,
       model: payload.model,
+      thinking_value: payload.thinking_value ?? null,
     },
     retryTransientErrors: true,
   });

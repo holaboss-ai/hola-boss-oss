@@ -65,6 +65,21 @@ export interface PiDeps {
   createSession: (request: HarnessHostPiRequest) => Promise<PiSessionHandle>;
 }
 
+type PiThinkingLevel =
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh";
+type PiRequestedThinkingLevel = PiThinkingLevel | "off";
+type PiThinkingBudgetLevel = Exclude<PiThinkingLevel, "xhigh">;
+
+interface PiThinkingSelection {
+  rawValue: string | null;
+  level: PiRequestedThinkingLevel | null;
+  thinkingBudgets?: Partial<Record<PiThinkingBudgetLevel, number>>;
+}
+
 const PI_AGENT_STATE_DIR = ".holaboss/pi-agent";
 const PI_SESSION_DIR = ".holaboss/pi-sessions";
 const PI_HARNESS_CLIENT_NAME = "holaboss-pi-harness";
@@ -3155,6 +3170,9 @@ function piApiForRequest(request: HarnessHostPiRequest): Api {
   if (shouldUseNativeGoogleProvider(request)) {
     return "google-generative-ai";
   }
+  if (shouldUseOpenAiResponsesProvider(request)) {
+    return "openai-responses";
+  }
   return "openai-completions";
 }
 
@@ -3162,6 +3180,41 @@ function shouldUseNativeGoogleProvider(request: HarnessHostPiRequest): boolean {
   const normalizedProvider = request.model_client.model_proxy_provider.trim().toLowerCase();
   const providerId = request.provider_id.trim().toLowerCase();
   return normalizedProvider === "google_compatible" && providerId === "gemini_direct";
+}
+
+function normalizedPiModelId(request: Pick<HarnessHostPiRequest, "model_id">): string {
+  const normalizedModelId = request.model_id.trim().toLowerCase();
+  if (!normalizedModelId) {
+    return "";
+  }
+  if (normalizedModelId.startsWith("openai/")) {
+    return normalizedModelId.slice("openai/".length);
+  }
+  if (normalizedModelId.startsWith("holaboss_model_proxy/")) {
+    return normalizedModelId.slice("holaboss_model_proxy/".length);
+  }
+  return normalizedModelId;
+}
+
+function isOpenAiGpt5Model(modelId: string): boolean {
+  return /^gpt-5(?:[.-]|$)/.test(modelId);
+}
+
+function shouldUseOpenAiResponsesProvider(request: HarnessHostPiRequest): boolean {
+  const normalizedProvider = request.model_client.model_proxy_provider.trim().toLowerCase();
+  const providerId = request.provider_id.trim().toLowerCase();
+  if (normalizedProvider !== "openai_compatible") {
+    return false;
+  }
+  if (
+    providerId !== "openai_direct" &&
+    providerId !== "openai" &&
+    providerId !== "holaboss_model_proxy" &&
+    providerId !== "holaboss"
+  ) {
+    return false;
+  }
+  return isOpenAiGpt5Model(normalizedPiModelId(request));
 }
 
 function piGoogleGenerativeAiBaseUrlForRequest(request: HarnessHostPiRequest): string {
@@ -3197,6 +3250,197 @@ function piOpenAiCompatForRequest(request: HarnessHostPiRequest): Model<"openai-
   return undefined;
 }
 
+function mergePiOpenAiCompat(
+  base: Model<"openai-completions">["compat"] | undefined,
+  extra: Model<"openai-completions">["compat"] | undefined,
+): Model<"openai-completions">["compat"] | undefined {
+  if (!base) {
+    return extra;
+  }
+  if (!extra) {
+    return base;
+  }
+  return {
+    ...base,
+    ...extra,
+    ...(base.reasoningEffortMap || extra.reasoningEffortMap
+      ? {
+          reasoningEffortMap: {
+            ...(base.reasoningEffortMap ?? {}),
+            ...(extra.reasoningEffortMap ?? {}),
+          },
+        }
+      : {}),
+  };
+}
+
+function piInputModalitiesForRequest(
+  request: HarnessHostPiRequest,
+): Array<"text" | "image"> {
+  const providerId = request.provider_id.trim().toLowerCase();
+  const modelId = request.model_id.trim().toLowerCase();
+  if (
+    providerId.includes("ollama") ||
+    providerId.includes("minimax") ||
+    modelId.startsWith("llama") ||
+    modelId.startsWith("qwen3:") ||
+    modelId.startsWith("gpt-oss:")
+  ) {
+    return ["text"];
+  }
+  return ["text", "image"];
+}
+
+export function requestedPiThinkingLevel(
+  request: Pick<HarnessHostPiRequest, "thinking_value">,
+): PiRequestedThinkingLevel | null {
+  return piThinkingSelectionForRequest(request).level;
+}
+
+function piNumericThinkingLevel(value: number): PiThinkingBudgetLevel | "off" {
+  if (value === 0) {
+    return "off";
+  }
+  if (value < 0) {
+    return "high";
+  }
+  if (value <= 1024) {
+    return "minimal";
+  }
+  if (value <= 4096) {
+    return "low";
+  }
+  if (value <= 12288) {
+    return "medium";
+  }
+  return "high";
+}
+
+function piThinkingSelectionForRequest(
+  request: Pick<HarnessHostPiRequest, "thinking_value">,
+): PiThinkingSelection {
+  const rawValue = request.thinking_value?.trim() ?? "";
+  const normalizedValue = rawValue.toLowerCase();
+  if (!normalizedValue) {
+    return {
+      rawValue: null,
+      level: null,
+    };
+  }
+  if (
+    normalizedValue === "off" ||
+    normalizedValue === "none" ||
+    normalizedValue === "false"
+  ) {
+    return {
+      rawValue,
+      level: "off",
+    };
+  }
+  if (
+    normalizedValue === "minimal" ||
+    normalizedValue === "low" ||
+    normalizedValue === "medium" ||
+    normalizedValue === "high" ||
+    normalizedValue === "xhigh"
+  ) {
+    return {
+      rawValue,
+      level: normalizedValue,
+    };
+  }
+  if (normalizedValue === "max") {
+    return {
+      rawValue,
+      level: "xhigh",
+    };
+  }
+  if (normalizedValue === "default") {
+    return {
+      rawValue,
+      level: "low",
+    };
+  }
+  if (normalizedValue === "true" || normalizedValue === "enabled") {
+    return {
+      rawValue,
+      level: "medium",
+    };
+  }
+  const numericValue = Number(normalizedValue);
+  if (!Number.isFinite(numericValue)) {
+    return {
+      rawValue,
+      level: null,
+    };
+  }
+  const level = piNumericThinkingLevel(numericValue);
+  if (level === "off") {
+    return {
+      rawValue,
+      level,
+    };
+  }
+  return {
+    rawValue,
+    level,
+    thinkingBudgets: {
+      [level]: numericValue,
+    },
+  };
+}
+
+function piOpenAiCompatForThinkingSelection(
+  selection: PiThinkingSelection,
+): Model<"openai-completions">["compat"] | undefined {
+  if (!selection.rawValue || !selection.level || selection.level === "off") {
+    return undefined;
+  }
+  const normalizedLevel = selection.level.toLowerCase();
+  const normalizedRawValue = selection.rawValue.trim().toLowerCase();
+  if (
+    normalizedRawValue === normalizedLevel ||
+    Number.isFinite(Number(normalizedRawValue))
+  ) {
+    return undefined;
+  }
+  return {
+    reasoningEffortMap: {
+      [selection.level]: selection.rawValue,
+    },
+  };
+}
+
+export function requestedPiThinkingBudgets(
+  request: Pick<HarnessHostPiRequest, "thinking_value">,
+): Partial<Record<PiThinkingBudgetLevel, number>> | undefined {
+  const selection = piThinkingSelectionForRequest(request);
+  return selection.thinkingBudgets
+    ? { ...selection.thinkingBudgets }
+    : undefined;
+}
+
+function requestedPiOpenAiCompat(
+  request: Pick<HarnessHostPiRequest, "thinking_value">,
+): Model<"openai-completions">["compat"] | undefined {
+  return piOpenAiCompatForThinkingSelection(
+    piThinkingSelectionForRequest(request),
+  );
+}
+
+export function requestedPiThinkingConfig(
+  request: Pick<HarnessHostPiRequest, "thinking_value">,
+): PiThinkingSelection {
+  const selection = piThinkingSelectionForRequest(request);
+  return {
+    rawValue: selection.rawValue,
+    level: selection.level,
+    ...(selection.thinkingBudgets
+      ? { thinkingBudgets: { ...selection.thinkingBudgets } }
+      : {}),
+  };
+}
+
 export function buildPiProviderConfig(request: HarnessHostPiRequest) {
   const providerHeaders = isRecord(request.model_client.default_headers)
     ? Object.fromEntries(
@@ -3218,7 +3462,12 @@ export function buildPiProviderConfig(request: HarnessHostPiRequest) {
     throw new Error(`Pi provider ${request.provider_id} is missing a model client base URL`);
   }
 
-  const compat = api === "openai-completions" ? piOpenAiCompatForRequest(request) : undefined;
+  const compat =
+    api === "openai-completions" ? piOpenAiCompatForRequest(request) : undefined;
+  const requestedThinking = requestedPiThinkingLevel(request);
+  const requestedCompat =
+    api === "openai-completions" ? requestedPiOpenAiCompat(request) : undefined;
+  const mergedCompat = mergePiOpenAiCompat(compat, requestedCompat);
 
   return {
     baseUrl,
@@ -3232,8 +3481,8 @@ export function buildPiProviderConfig(request: HarnessHostPiRequest) {
         id: request.model_id,
         name: request.model_id,
         api,
-        reasoning: false,
-        input: ["text", "image"] as Array<"text" | "image">,
+        reasoning: requestedThinking !== null,
+        input: piInputModalitiesForRequest(request),
         cost: {
           input: 0,
           output: 0,
@@ -3242,7 +3491,7 @@ export function buildPiProviderConfig(request: HarnessHostPiRequest) {
         },
         contextWindow: 65536,
         maxTokens: 8192,
-        ...(compat ? { compat } : {}),
+        ...(mergedCompat ? { compat: mergedCompat } : {}),
       },
     ],
   };
@@ -3264,10 +3513,15 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
   modelRegistry.registerProvider(request.provider_id, buildPiProviderConfig(request));
 
   const model = resolvePiModel(request, modelRegistry);
+  const requestedThinking = requestedPiThinkingLevel(request) ?? "off";
+  const requestedThinkingBudgets = requestedPiThinkingBudgets(request);
   const settingsManager = SettingsManager.inMemory({
     defaultProvider: request.provider_id,
     defaultModel: request.model_id,
-    defaultThinkingLevel: "medium",
+    defaultThinkingLevel: requestedThinking,
+    ...(requestedThinkingBudgets
+      ? { thinkingBudgets: requestedThinkingBudgets }
+      : {}),
   });
   const skillDirs = resolvePiSkillDirs(request);
   const loadedSkills = loadPiSkills(skillDirs);
@@ -3807,6 +4061,12 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
   };
 
   const handle = await deps.createSession(request);
+  const requestedThinking = requestedPiThinkingLevel(request) ?? "off";
+  (
+    handle.session as AgentSession & {
+      setThinkingLevel?: (level: PiThinkingLevel) => void;
+    }
+  ).setThinkingLevel?.(requestedThinking);
   const state = createPiEventMapperState(handle.mcpToolMetadata, handle.skillMetadataByAlias);
   let terminalEmitted = false;
   const stateDir = resolvePiStateDir(request.workspace_dir);

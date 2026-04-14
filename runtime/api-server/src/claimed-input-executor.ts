@@ -794,6 +794,7 @@ export async function processClaimedInput(params: {
     attachments,
     context: runtimeContext,
     model: record.payload.model ?? null,
+    thinking_value: record.payload.thinking_value ?? null,
     debug: false
   };
   const memoryWritebackModelContext = writebackModelContext({

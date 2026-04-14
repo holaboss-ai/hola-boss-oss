@@ -47,6 +47,7 @@ export const piHarnessDefinition: HarnessDefinition = {
           params.runtimeConfig.context_messages
         ),
         attachments: params.request.attachments ?? [],
+        thinking_value: params.request.thinking_value ?? null,
         debug: Boolean(params.request.debug),
         harness_session_id: params.bootstrap.requestedHarnessSessionId,
         persisted_harness_session_id: params.bootstrap.persistedHarnessSessionId,

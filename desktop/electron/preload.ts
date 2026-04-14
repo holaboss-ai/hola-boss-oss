@@ -199,6 +199,11 @@ interface RuntimeConfigPayload {
 interface RuntimeProviderModelPayload {
   token: string;
   modelId: string;
+  label?: string;
+  reasoning?: boolean;
+  thinkingValues?: string[];
+  defaultThinkingValue?: string | null;
+  inputModalities?: ("text" | "image" | "audio" | "video")[];
   capabilities?: string[];
 }
 
@@ -710,10 +715,12 @@ interface HolabossQueueSessionInputPayload {
   text: string;
   workspace_id: string;
   image_urls: string[] | null;
+  attachments?: SessionInputAttachmentPayload[] | null;
   session_id?: string | null;
   idempotency_key?: string | null;
   priority?: number;
   model?: string | null;
+  thinking_value?: string | null;
 }
 
 interface HolabossPauseSessionRunPayload {

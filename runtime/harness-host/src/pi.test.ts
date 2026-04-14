@@ -18,6 +18,9 @@ import {
   createPiEventMapperState,
   createPiMcpCustomTools,
   mapPiSessionEvent,
+  requestedPiThinkingBudgets,
+  requestedPiThinkingConfig,
+  requestedPiThinkingLevel,
   resolvePiSkillDirs,
   workspaceBoundaryOverrideRequested,
   workspaceBoundaryViolationForToolCall,
@@ -1279,6 +1282,123 @@ test("buildPiProviderConfig preserves direct OpenRouter endpoints and headers", 
   assert.equal(providerConfig.models[0]?.id, "openai/gpt-5.4");
   assert.equal(providerConfig.models[0]?.api, "openai-completions");
   assert.equal(providerConfig.models[0]?.compat, undefined);
+});
+
+test("buildPiProviderConfig uses OpenAI Responses API for direct GPT-5 models", () => {
+  const providerConfig = buildPiProviderConfig({
+    ...baseRequest(),
+    provider_id: "openai_direct",
+    model_id: "gpt-5.4",
+    model_client: {
+      model_proxy_provider: "openai_compatible",
+      api_key: "sk-openai-test",
+      base_url: "https://api.openai.com/v1",
+    },
+  });
+
+  assert.equal(providerConfig.api, "openai-responses");
+  assert.equal(providerConfig.models[0]?.api, "openai-responses");
+  assert.equal(providerConfig.models[0]?.compat, undefined);
+});
+
+test("buildPiProviderConfig uses OpenAI Responses API for managed Holaboss GPT-5 models", () => {
+  const providerConfig = buildPiProviderConfig({
+    ...baseRequest(),
+    provider_id: "holaboss_model_proxy",
+    model_id: "gpt-5.4",
+    model_client: {
+      model_proxy_provider: "openai_compatible",
+      api_key: "hbmk-test",
+      base_url: "http://127.0.0.1:3060/api/v1/model-proxy/openai/v1",
+      default_headers: {
+        "X-Holaboss-User-Id": "user-1",
+      },
+    },
+  });
+
+  assert.equal(providerConfig.api, "openai-responses");
+  assert.equal(providerConfig.models[0]?.api, "openai-responses");
+  assert.deepEqual(providerConfig.headers, {
+    "X-Holaboss-User-Id": "user-1",
+  });
+});
+
+test("buildPiProviderConfig uses Anthropic Messages API for managed Holaboss Claude models", () => {
+  const providerConfig = buildPiProviderConfig({
+    ...baseRequest(),
+    provider_id: "holaboss_model_proxy",
+    model_id: "claude-sonnet-4-6",
+    model_client: {
+      model_proxy_provider: "anthropic_native",
+      api_key: "hbmk-test",
+      base_url: "http://127.0.0.1:3060/api/v1/model-proxy/anthropic/v1",
+      default_headers: {
+        "X-Holaboss-User-Id": "user-1",
+      },
+    },
+  });
+
+  assert.equal(providerConfig.api, "anthropic-messages");
+  assert.equal(providerConfig.models[0]?.api, "anthropic-messages");
+  assert.deepEqual(providerConfig.headers, {
+    "X-Holaboss-User-Id": "user-1",
+  });
+});
+
+test("requestedPiThinkingLevel maps provider-native values into Pi thinking levels", () => {
+  assert.equal(requestedPiThinkingLevel({ thinking_value: "none" }), "off");
+  assert.equal(requestedPiThinkingLevel({ thinking_value: "minimal" }), "minimal");
+  assert.equal(requestedPiThinkingLevel({ thinking_value: "8192" }), "medium");
+  assert.equal(requestedPiThinkingLevel({ thinking_value: "32768" }), "high");
+  assert.equal(requestedPiThinkingLevel({ thinking_value: "-1" }), "high");
+  assert.equal(requestedPiThinkingLevel({ thinking_value: "max" }), "xhigh");
+  assert.equal(requestedPiThinkingLevel({ thinking_value: null }), null);
+});
+
+test("requestedPiThinkingConfig preserves provider-native numeric budgets", () => {
+  assert.deepEqual(requestedPiThinkingConfig({ thinking_value: "-1" }), {
+    rawValue: "-1",
+    level: "high",
+    thinkingBudgets: { high: -1 },
+  });
+  assert.deepEqual(requestedPiThinkingConfig({ thinking_value: "24576" }), {
+    rawValue: "24576",
+    level: "high",
+    thinkingBudgets: { high: 24576 },
+  });
+  assert.deepEqual(requestedPiThinkingBudgets({ thinking_value: "128" }), {
+    minimal: 128,
+  });
+});
+
+test("buildPiProviderConfig enables reasoning only when a thinking value is requested", () => {
+  const withoutThinking = buildPiProviderConfig(baseRequest());
+  const withThinking = buildPiProviderConfig({
+    ...baseRequest(),
+    thinking_value: "medium",
+  });
+
+  assert.equal(withoutThinking.models[0]?.reasoning, false);
+  assert.equal(withThinking.models[0]?.reasoning, true);
+});
+
+test("buildPiProviderConfig preserves provider-native reasoning labels for generic OpenAI-compatible routes", () => {
+  const providerConfig = buildPiProviderConfig({
+    ...baseRequest(),
+    provider_id: "custom_openai_compat",
+    model_id: "custom-reasoner",
+    model_client: {
+      model_proxy_provider: "openai_compatible",
+      api_key: "custom-key",
+      base_url: "https://api.example.com/v1",
+    },
+    thinking_value: "default",
+  });
+
+  assert.equal(providerConfig.api, "openai-completions");
+  assert.deepEqual(providerConfig.models[0]?.compat?.reasoningEffortMap, {
+    low: "default",
+  });
 });
 
 test("buildPiProviderConfig uses pi-ai native Google provider for direct Gemini models", () => {

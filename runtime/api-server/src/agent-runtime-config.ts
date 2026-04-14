@@ -327,7 +327,6 @@ function modelProxyProviderForConfiguredProvider(provider: ConfiguredRuntimeProv
 function providerRequiresUnscopedModelId(kind: string): boolean {
   const normalizedKind = kind.trim().toLowerCase();
   return (
-    normalizedKind === PROVIDER_KIND_HOLABOSS_PROXY ||
     normalizedKind === PROVIDER_KIND_OPENAI_COMPATIBLE ||
     normalizedKind === PROVIDER_KIND_ANTHROPIC_NATIVE
   );
