@@ -925,7 +925,7 @@ function handleTrustedIpc<Args extends unknown[], Result>(
 // We reject path separators, whitespace, control chars, and anything that
 // could break out of an URL path segment. These are NOT user-facing labels;
 // they are workspace UUIDs and slug-style app ids.
-const SAFE_ID_REGEX = /^[A-Za-z0-9._-]{1,128}$/;
+const SAFE_ID_REGEX = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 function assertSafeId(value: unknown, fieldName: string): string {
   if (typeof value !== "string") {
@@ -10699,12 +10699,39 @@ function renderEmptyOnboardingGuide() {
 async function createWorkspace(
   payload: HolabossCreateWorkspacePayload,
 ): Promise<WorkspaceResponsePayload> {
+  // Structured stage logs for workspace create/install debugging. These
+  // go to the Electron main process stdout; in dev they appear in the
+  // terminal, in packaged builds they land in the platform log dir
+  // under `holaboss-local/logs/main.log` (handled by Electron).
+  const stageLog = (event: string, data?: Record<string, unknown>): void => {
+    const line = { event: `desktop.${event}`, ts: new Date().toISOString(), ...(data ?? {}) };
+    // eslint-disable-next-line no-console
+    console.info(`[holaboss.createWorkspace] ${JSON.stringify(line)}`);
+  };
+  const stageError = (event: string, err: unknown, data?: Record<string, unknown>): void => {
+    const line = {
+      event: `desktop.${event}`,
+      ts: new Date().toISOString(),
+      err: err instanceof Error ? err.message : String(err),
+      ...(data ?? {}),
+    };
+    // eslint-disable-next-line no-console
+    console.error(`[holaboss.createWorkspace] ${JSON.stringify(line)}`);
+  };
+
   const harness = normalizeRequestedWorkspaceHarness(payload.harness);
   const templateMode = requestedWorkspaceTemplateMode(payload);
   const templateRootPath = payload.template_root_path?.trim() || "";
   const templateName = payload.template_name?.trim() || "";
   const requiresRuntimeBinding =
     templateMode !== "empty" && !templateRootPath && Boolean(templateName);
+  stageLog("begin", {
+    templateMode,
+    templateName,
+    hasTemplateRootPath: Boolean(templateRootPath),
+    harness,
+    requiresRuntimeBinding,
+  });
   if (requiresRuntimeBinding) {
     await ensureRuntimeBindingReadyForWorkspaceFlow("workspace_create");
   }
@@ -10715,12 +10742,17 @@ async function createWorkspace(
   if (templateMode === "empty") {
     resolvedTemplate = null;
   } else if (templateRootPath) {
+    stageLog("materialize_local_template.start", { templateRootPath });
     try {
       materializedTemplate = await materializeLocalTemplate({
         template_root_path: templateRootPath,
       });
       resolvedTemplate = materializedTemplate.template;
+      stageLog("materialize_local_template.ok", {
+        fileCount: materializedTemplate.files.length,
+      });
     } catch (error) {
+      stageError("materialize_local_template.failed", error, { templateRootPath });
       throw new Error(
         contextualWorkspaceCreateError(
           "Couldn't materialize the local template",
@@ -10729,6 +10761,7 @@ async function createWorkspace(
       );
     }
   } else if (templateName) {
+    stageLog("materialize_marketplace_template.start", { templateName });
     try {
       materializedTemplate = await materializeMarketplaceTemplate({
         holaboss_user_id: payload.holaboss_user_id,
@@ -10737,7 +10770,12 @@ async function createWorkspace(
         template_commit: payload.template_commit,
       });
       resolvedTemplate = materializedTemplate.template;
+      stageLog("materialize_marketplace_template.ok", {
+        templateName,
+        fileCount: materializedTemplate.files.length,
+      });
     } catch (error) {
+      stageError("materialize_marketplace_template.failed", error, { templateName });
       throw new Error(
         contextualWorkspaceCreateError(
           `Couldn't materialize the marketplace template '${templateName}'`,
@@ -10749,6 +10787,7 @@ async function createWorkspace(
     throw new Error("Choose a local folder or a marketplace template first.");
   }
   let created: WorkspaceResponsePayload;
+  stageLog("runtime_post_workspaces.start");
   try {
     created = await requestRuntimeJson<WorkspaceResponsePayload>({
       method: "POST",
@@ -10760,7 +10799,9 @@ async function createWorkspace(
         onboarding_status: "not_required",
       },
     });
+    stageLog("runtime_post_workspaces.ok", { workspaceId: created.workspace.id });
   } catch (error) {
+    stageError("runtime_post_workspaces.failed", error);
     throw new Error(
       contextualWorkspaceCreateError(
         "Couldn't create the workspace record",
@@ -10772,6 +10813,7 @@ async function createWorkspace(
 
   try {
     const workspaceDir = workspaceDirectoryPath(workspaceId);
+    stageLog("workspace_dir_resolved", { workspaceId, workspaceDir });
     const workspaceAgentsPath = path.join(workspaceDir, "AGENTS.md");
     const workspaceYamlPath = path.join(workspaceDir, "workspace.yaml");
     const workspaceOnboardPath = path.join(workspaceDir, "ONBOARD.md");
@@ -10793,15 +10835,32 @@ async function createWorkspace(
         );
       }
     } else if (materializedTemplate && resolvedTemplate) {
-      await applyMaterializedTemplateToWorkspace(
+      stageLog("apply_template.start", {
         workspaceId,
-        materializedTemplate.files,
-      );
-      if (templateRootPath) {
-        await copyLocalTemplateAppNodeModulesToWorkspace(
-          templateRootPath,
+        fileCount: materializedTemplate.files.length,
+      });
+      try {
+        await applyMaterializedTemplateToWorkspace(
           workspaceId,
+          materializedTemplate.files,
         );
+        stageLog("apply_template.ok", { workspaceId });
+      } catch (error) {
+        stageError("apply_template.failed", error, { workspaceId });
+        throw error;
+      }
+      if (templateRootPath) {
+        stageLog("copy_local_node_modules.start", { workspaceId, templateRootPath });
+        try {
+          await copyLocalTemplateAppNodeModulesToWorkspace(
+            templateRootPath,
+            workspaceId,
+          );
+          stageLog("copy_local_node_modules.ok", { workspaceId });
+        } catch (error) {
+          stageError("copy_local_node_modules.failed", error, { workspaceId });
+          throw error;
+        }
       }
 
       let workspaceYamlExists = true;
@@ -10840,16 +10899,24 @@ async function createWorkspace(
       onboardingSessionId = null;
     }
 
-    let updated = await requestRuntimeJson<WorkspaceResponsePayload>({
-      method: "PATCH",
-      path: `/api/v1/workspaces/${workspaceId}`,
-      payload: {
-        status: "active",
-        onboarding_status: onboardingStatus.toLowerCase(),
-        onboarding_session_id: onboardingSessionId,
-        error_message: null,
-      },
-    });
+    stageLog("activate_workspace.start", { workspaceId, onboardingStatus });
+    let updated: WorkspaceResponsePayload;
+    try {
+      updated = await requestRuntimeJson<WorkspaceResponsePayload>({
+        method: "PATCH",
+        path: `/api/v1/workspaces/${workspaceId}`,
+        payload: {
+          status: "active",
+          onboarding_status: onboardingStatus.toLowerCase(),
+          onboarding_session_id: onboardingSessionId,
+          error_message: null,
+        },
+      });
+      stageLog("activate_workspace.ok", { workspaceId });
+    } catch (error) {
+      stageError("activate_workspace.failed", error, { workspaceId });
+      throw error;
+    }
 
     // --- Auto-bind integrations (best-effort) ---
     if (materializedTemplate) {

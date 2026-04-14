@@ -2982,7 +2982,7 @@ test("app setup timeout honors configured timeout", async () => {
     await new Promise((resolve) => setTimeout(resolve, 200));
     const build = store.getAppBuild({ workspaceId: workspace.id, appId: "app-a" });
     assert.equal(build?.status, "failed");
-    assert.equal(build?.error, "setup timed out after 1s");
+    assert.match(build?.error ?? "", /^setup timed out after 1s(?: — see .+setup\.latest\.log| — see .+setup-.+\.log)?$/);
   } finally {
     if (previousTimeout === undefined) {
       delete process.env.HB_APP_SETUP_TIMEOUT_MS;

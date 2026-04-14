@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 
 import { type RuntimeStateStore } from "@holaboss/runtime-state-store";
 
@@ -346,6 +347,51 @@ function buildShellLifecycleEnv(
   return env;
 }
 
+/** Resolve the persistent install-log directory for an app. Stored at
+ *  `<appDir>/.holaboss/logs/` so it survives across runtime restarts
+ *  and stays scoped to the app. Each setup run writes a timestamped
+ *  file plus mirrors the latest into `setup.latest.log` so the UI can
+ *  surface "most recent setup" without parsing filenames. */
+function appInstallLogDir(appDir: string): string {
+  return path.join(appDir, ".holaboss", "logs");
+}
+
+/** Best-effort accessor — returns the path to the latest setup log for
+ *  an app, or null if the log directory doesn't exist yet. Used by
+ *  install-archive and agent APIs to surface logs for debugging. */
+export function latestSetupLogPath(appDir: string): string | null {
+  const logPath = path.join(appInstallLogDir(appDir), "setup.latest.log");
+  return fs.existsSync(logPath) ? logPath : null;
+}
+
+/** Writes a newline-delimited lifecycle event to `<appDir>/.holaboss/
+ *  logs/events.ndjson`. Small, append-only, survives restarts, and is
+ *  cheap to tail from the CLI. Schema is intentionally narrow so the
+ *  reader doesn't have to deal with optional fields. */
+function writeAppLifecycleEvent(
+  appDir: string,
+  event: Record<string, unknown>,
+): void {
+  try {
+    const dir = appInstallLogDir(appDir);
+    fs.mkdirSync(dir, { recursive: true });
+    const line = `${JSON.stringify({ ts: new Date().toISOString(), ...event })}\n`;
+    fs.appendFileSync(path.join(dir, "events.ndjson"), line, "utf8");
+  } catch {
+    // Best-effort: logging must never bring down a lifecycle op.
+  }
+}
+
+export interface AppSetupLogResult {
+  /** Path to the per-run timestamped log file. */
+  logPath: string;
+  /** Path to the stable "latest" symlink-style mirror. */
+  latestLogPath: string;
+  exitCode: number;
+  stdoutTail: string;
+  stderrTail: string;
+}
+
 async function runLifecycleSetup(params: {
   appId: string;
   appDir: string;
@@ -355,39 +401,137 @@ async function runLifecycleSetup(params: {
   holabossUserId?: string;
   integrationEnv?: NodeJS.ProcessEnv;
   spawnImpl?: SpawnLike;
-}): Promise<void> {
+  logger?: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void; error: (...args: unknown[]) => void };
+}): Promise<AppSetupLogResult | null> {
   const setupCommand = params.resolvedApp.lifecycle.setup.trim();
   if (!setupCommand) {
-    return;
+    return null;
   }
   const spawnImpl = params.spawnImpl ?? spawn;
-  // Defense-in-depth against supply-chain attacks via marketplace apps:
-  // disable npm/pnpm/yarn lifecycle scripts during install by default.
-  // This blocks dependency `preinstall`/`install`/`postinstall` and the
-  // app's own install scripts, but does NOT block `npm run build` and
-  // similar explicit invocations the setup command actually wants.
-  // An app that legitimately requires install scripts can override this
-  // by exporting `NPM_CONFIG_IGNORE_SCRIPTS=false` inline before its
-  // install command in lifecycle.setup; the explicit override is
-  // intentionally noisy so reviewers notice.
+  // NOTE: we intentionally do NOT default NPM_CONFIG_IGNORE_SCRIPTS=true
+  // here. Module apps (e.g. TanStack Start + better-sqlite3/esbuild/swc)
+  // legitimately rely on dependency postinstall scripts to fetch native
+  // binaries or build addons. Blocking them by default makes `npm run
+  // build` fail on a fresh workspace create with "vite: command not
+  // found" or similar. Supply-chain defense for marketplace apps is a
+  // curation/allowlist problem, not a runtime env problem — enforce it
+  // at the isAllowedArchiveUrl gate instead.
   const setupEnv = buildShellLifecycleEnv(params);
-  if (setupEnv.NPM_CONFIG_IGNORE_SCRIPTS === undefined) {
-    setupEnv.NPM_CONFIG_IGNORE_SCRIPTS = "true";
+
+  // Prepare persistent log file for forensic debugging. Timestamped
+  // per-run file + a stable "latest" mirror. Missing dir is created on
+  // demand and written with best-effort IO (never throws upward).
+  const logDir = appInstallLogDir(params.appDir);
+  const runTimestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const logPath = path.join(logDir, `setup-${runTimestamp}.log`);
+  const latestLogPath = path.join(logDir, "setup.latest.log");
+  try {
+    fs.mkdirSync(logDir, { recursive: true });
+  } catch {
+    // best-effort; the write below will surface the error if dir is missing
   }
-  if (setupEnv.npm_config_ignore_scripts === undefined) {
-    setupEnv.npm_config_ignore_scripts = "true";
+
+  const header = [
+    `=== app lifecycle setup ===`,
+    `app_id:   ${params.appId}`,
+    `app_dir:  ${params.appDir}`,
+    `command:  ${setupCommand}`,
+    `started:  ${new Date().toISOString()}`,
+    `pid:      ${process.pid}`,
+    `==========================`,
+    ``,
+  ].join("\n");
+  try {
+    fs.writeFileSync(logPath, header, "utf8");
+  } catch {
+    // best-effort
   }
+
+  params.logger?.info(
+    { appId: params.appId, appDir: params.appDir, logPath },
+    "lifecycle.setup starting",
+  );
+  writeAppLifecycleEvent(params.appDir, {
+    event: "setup.start",
+    app_id: params.appId,
+    command: setupCommand,
+    log_path: logPath,
+  });
+
   const result = await runSpawn(spawnImpl, setupCommand, [], {
     cwd: params.appDir,
     env: setupEnv,
     shell: true,
-    captureStderr: true
+    captureStdout: true,
+    captureStderr: true,
   });
+
+  const body = [
+    header,
+    `--- STDOUT ---`,
+    result.stdout,
+    ``,
+    `--- STDERR ---`,
+    result.stderr,
+    ``,
+    `--- END ---`,
+    `exit_code: ${result.code}`,
+    `finished:  ${new Date().toISOString()}`,
+    ``,
+  ].join("\n");
+  try {
+    fs.writeFileSync(logPath, body, "utf8");
+    fs.writeFileSync(latestLogPath, body, "utf8");
+  } catch {
+    // best-effort
+  }
+
+  const logResult: AppSetupLogResult = {
+    logPath,
+    latestLogPath,
+    exitCode: result.code,
+    stdoutTail: result.stdout.slice(-2000),
+    stderrTail: result.stderr.slice(-2000),
+  };
+
   if (result.code !== 0) {
-    throw new Error(
-      `App '${params.appId}' lifecycle.setup failed (rc=${result.code}): ${result.stderr.slice(0, 500)}`
+    params.logger?.error(
+      {
+        appId: params.appId,
+        appDir: params.appDir,
+        logPath,
+        exitCode: result.code,
+        stderrTail: logResult.stderrTail,
+      },
+      "lifecycle.setup failed",
+    );
+    writeAppLifecycleEvent(params.appDir, {
+      event: "setup.failed",
+      app_id: params.appId,
+      exit_code: result.code,
+      log_path: logPath,
+    });
+    throw Object.assign(
+      new Error(
+        `App '${params.appId}' lifecycle.setup failed (rc=${result.code}). See log at ${logPath}\n` +
+          `--- stderr tail ---\n${logResult.stderrTail}`,
+      ),
+      { setupLogPath: logPath, exitCode: result.code },
     );
   }
+
+  params.logger?.info(
+    { appId: params.appId, appDir: params.appDir, logPath, stdoutBytes: result.stdout.length },
+    "lifecycle.setup completed",
+  );
+  writeAppLifecycleEvent(params.appDir, {
+    event: "setup.success",
+    app_id: params.appId,
+    log_path: logPath,
+    stdout_bytes: result.stdout.length,
+  });
+
+  return logResult;
 }
 
 // Attach light-weight pipe consumers to a long-running child so its
