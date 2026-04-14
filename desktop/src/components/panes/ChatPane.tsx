@@ -69,8 +69,7 @@ interface ChatMessage {
   text: string;
   createdAt?: string;
   attachments?: ChatAttachment[];
-  thinkingText?: string;
-  traceSteps?: ChatTraceStep[];
+  executionItems?: ChatExecutionTimelineItem[];
   outputs?: WorkspaceOutputRecordPayload[];
   memoryProposals?: MemoryUpdateProposalRecordPayload[];
 }
@@ -85,6 +84,20 @@ interface ChatTraceStep {
   details: string[];
   order: number;
 }
+
+type ChatExecutionTimelineItem =
+  | {
+      id: string;
+      kind: "thinking";
+      text: string;
+      order: number;
+    }
+  | {
+      id: string;
+      kind: "trace_step";
+      step: ChatTraceStep;
+      order: number;
+    };
 
 type ChatTodoStatus =
   | "pending"
@@ -429,8 +442,7 @@ function hasRenderableMessageContent(
 function hasRenderableAssistantTurn(message: ChatMessage) {
   return (
     hasRenderableMessageContent(message.text, message.attachments ?? []) ||
-    Boolean(message.thinkingText) ||
-    (message.traceSteps?.length ?? 0) > 0 ||
+    (message.executionItems?.length ?? 0) > 0 ||
     (message.outputs?.length ?? 0) > 0 ||
     (message.memoryProposals?.length ?? 0) > 0
   );
@@ -1627,14 +1639,103 @@ function finalizeTraceSteps(
   );
 }
 
+function appendExecutionTimelineThinkingDelta(
+  previous: ChatExecutionTimelineItem[],
+  delta: string,
+  order: number,
+) {
+  if (!delta) {
+    return previous;
+  }
+
+  const lastItem = previous[previous.length - 1];
+  if (lastItem?.kind === "thinking") {
+    const nextItem: ChatExecutionTimelineItem = {
+      ...lastItem,
+      text: `${lastItem.text}${delta}`,
+    };
+    return [
+      ...previous.slice(0, -1),
+      nextItem,
+    ];
+  }
+
+  const nextItem: ChatExecutionTimelineItem = {
+    id: `thinking:${order}`,
+    kind: "thinking",
+    text: delta,
+    order,
+  };
+  return [
+    ...previous,
+    nextItem,
+  ];
+}
+
+function upsertExecutionTimelineTraceItem(
+  previous: ChatExecutionTimelineItem[],
+  step: ChatTraceStep,
+) {
+  const existingIndex = previous.findIndex(
+    (item) => item.kind === "trace_step" && item.step.id === step.id,
+  );
+  if (existingIndex < 0) {
+    const nextItem: ChatExecutionTimelineItem = {
+      id: `trace:${step.id}`,
+      kind: "trace_step",
+      step,
+      order: step.order,
+    };
+    return [...previous, nextItem].sort((left, right) => left.order - right.order);
+  }
+
+  return previous.map((item, index) =>
+    index === existingIndex && item.kind === "trace_step"
+      ? ({
+          ...item,
+          step: {
+            ...item.step,
+            ...step,
+            order: Math.min(item.step.order, step.order),
+          },
+        } satisfies ChatExecutionTimelineItem)
+      : item,
+  );
+}
+
+function finalizeExecutionTimelineTraceItems(
+  previous: ChatExecutionTimelineItem[],
+  status: Extract<ChatTraceStepStatus, "completed" | "error" | "waiting">,
+) {
+  return previous.map((item) =>
+    item.kind === "trace_step" && item.step.status === "running"
+      ? {
+          ...item,
+          step: {
+            ...item.step,
+            status,
+          },
+        }
+      : item,
+  );
+}
+
+function traceStepsFromExecutionItems(items: ChatExecutionTimelineItem[]) {
+  return items
+    .filter(
+      (item): item is Extract<ChatExecutionTimelineItem, { kind: "trace_step" }> =>
+        item.kind === "trace_step",
+    )
+    .map((item) => item.step);
+}
+
 function assistantHistoryStateFromOutputEvents(
   outputEvents: SessionOutputEventPayload[],
 ) {
   const orderedEvents = [...outputEvents].sort(
     (left, right) => left.sequence - right.sequence || left.id - right.id,
   );
-  let thinkingText = "";
-  let traceSteps: ChatTraceStep[] = [];
+  let executionItems: ChatExecutionTimelineItem[] = [];
 
   for (const event of orderedEvents) {
     const eventPayload = isRecord(event.payload) ? event.payload : {};
@@ -1642,9 +1743,11 @@ function assistantHistoryStateFromOutputEvents(
     if (event.event_type === "thinking_delta") {
       const delta =
         typeof eventPayload.delta === "string" ? eventPayload.delta : "";
-      if (delta) {
-        thinkingText = `${thinkingText}${delta}`;
-      }
+      executionItems = appendExecutionTimelineThinkingDelta(
+        executionItems,
+        delta,
+        event.sequence,
+      );
     }
 
     const phaseStep = phaseTraceStepFromEvent(
@@ -1653,7 +1756,10 @@ function assistantHistoryStateFromOutputEvents(
       event.sequence,
     );
     if (phaseStep) {
-      traceSteps = upsertTraceStep(traceSteps, phaseStep);
+      executionItems = upsertExecutionTimelineTraceItem(
+        executionItems,
+        phaseStep,
+      );
     }
 
     const toolStep = toolTraceStepFromEvent(
@@ -1662,7 +1768,10 @@ function assistantHistoryStateFromOutputEvents(
       event.sequence,
     );
     if (toolStep) {
-      traceSteps = upsertTraceStep(traceSteps, toolStep);
+      executionItems = upsertExecutionTimelineTraceItem(
+        executionItems,
+        toolStep,
+      );
     }
 
     if (event.event_type === "run_completed") {
@@ -1670,20 +1779,22 @@ function assistantHistoryStateFromOutputEvents(
         typeof eventPayload.status === "string"
           ? eventPayload.status.trim().toLowerCase()
           : "";
-      traceSteps = finalizeTraceSteps(
-        traceSteps,
+      executionItems = finalizeExecutionTimelineTraceItems(
+        executionItems,
         completedStatus === "paused" || completedStatus === "waiting_user"
           ? "waiting"
           : "completed",
       );
     } else if (event.event_type === "run_failed") {
-      traceSteps = finalizeTraceSteps(traceSteps, "error");
+      executionItems = finalizeExecutionTimelineTraceItems(
+        executionItems,
+        "error",
+      );
     }
   }
 
   return {
-    thinkingText: thinkingText || undefined,
-    traceSteps: traceSteps.length > 0 ? traceSteps : undefined,
+    executionItems: executionItems.length > 0 ? executionItems : undefined,
   };
 }
 
@@ -1823,12 +1934,10 @@ export function ChatPane({
     WorkspaceOutputRecordPayload[]
   >([]);
   const [liveAssistantText, setLiveAssistantText] = useState("");
-  const [liveThinkingText, setLiveThinkingText] = useState("");
-  const [liveThinkingExpanded, setLiveThinkingExpanded] = useState(false);
   const [liveAgentStatus, setLiveAgentStatus] = useState("");
-  const [liveTraceSteps, setLiveTraceSteps] = useState<ChatTraceStep[]>([]);
-  const [collapsedThinkingByMessageId, setCollapsedThinkingByMessageId] =
-    useState<Record<string, boolean>>({});
+  const [liveExecutionItems, setLiveExecutionItems] = useState<
+    ChatExecutionTimelineItem[]
+  >([]);
   const [collapsedTraceByStepId, setCollapsedTraceByStepId] = useState<
     Record<string, boolean>
   >({});
@@ -1913,9 +2022,7 @@ export function ChatPane({
     useRef<ChatPaneSessionOpenRequest | null>(null);
   const draftParentSessionIdRef = useRef<string | null>(null);
   const liveAssistantTextRef = useRef("");
-  const liveThinkingTextRef = useRef("");
-  const liveThinkingExpandedRef = useRef(false);
-  const liveTraceStepsRef = useRef<ChatTraceStep[]>([]);
+  const liveExecutionItemsRef = useRef<ChatExecutionTimelineItem[]>([]);
   const historyViewportGenerationRef = useRef(0);
   const [activeSessionId, setActiveSessionId] = useState("");
   const effectiveSessionOpenRequest =
@@ -2073,15 +2180,11 @@ export function ChatPane({
 
   function resetLiveTurn() {
     liveAssistantTextRef.current = "";
-    liveThinkingTextRef.current = "";
-    liveThinkingExpandedRef.current = false;
-    liveTraceStepsRef.current = [];
+    liveExecutionItemsRef.current = [];
     activeAssistantMessageIdRef.current = null;
     setLiveAssistantText("");
-    setLiveThinkingText("");
-    setLiveThinkingExpanded(false);
     setLiveAgentStatus("");
-    setLiveTraceSteps([]);
+    setLiveExecutionItems([]);
   }
 
   function clearSessionView() {
@@ -2094,7 +2197,6 @@ export function ChatPane({
     setEditingMemoryProposalId(null);
     setMemoryProposalDrafts({});
     resetLiveTurn();
-    setCollapsedThinkingByMessageId({});
     setCollapsedTraceByStepId({});
     shouldAutoScrollRef.current = true;
   }
@@ -2177,11 +2279,8 @@ export function ChatPane({
             const turnMemoryProposals = sortMemoryUpdateProposals(
               memoryProposalsByInputId.get(inputId) ?? [],
             );
-            if (restoredAssistantState.thinkingText) {
-              nextMessage.thinkingText = restoredAssistantState.thinkingText;
-            }
-            if (restoredAssistantState.traceSteps) {
-              nextMessage.traceSteps = restoredAssistantState.traceSteps;
+            if (restoredAssistantState.executionItems) {
+              nextMessage.executionItems = restoredAssistantState.executionItems;
             }
             if (turnMemoryProposals.length > 0) {
               nextMessage.memoryProposals = turnMemoryProposals;
@@ -2360,15 +2459,13 @@ export function ChatPane({
     });
   }
 
-  function appendLiveThinkingDelta(delta: string) {
+  function appendLiveThinkingDelta(delta: string, order: number) {
     flushSync(() => {
-      setLiveThinkingText((prev) => {
-        const next = `${prev}${delta}`;
-        liveThinkingTextRef.current = next;
+      setLiveExecutionItems((prev) => {
+        const next = appendExecutionTimelineThinkingDelta(prev, delta, order);
+        liveExecutionItemsRef.current = next;
         return next;
       });
-      liveThinkingExpandedRef.current = true;
-      setLiveThinkingExpanded(true);
     });
   }
 
@@ -2376,9 +2473,8 @@ export function ChatPane({
     const messageId =
       activeAssistantMessageIdRef.current ?? `assistant-${Date.now()}`;
     const assistantText = liveAssistantTextRef.current;
-    const thinkingText = liveThinkingTextRef.current;
-    const traceSteps = liveTraceStepsRef.current;
-    if (!assistantText && !thinkingText && traceSteps.length === 0) {
+    const executionItems = liveExecutionItemsRef.current;
+    if (!assistantText && executionItems.length === 0) {
       resetLiveTurn();
       return;
     }
@@ -2389,14 +2485,9 @@ export function ChatPane({
         id: messageId,
         role: "assistant",
         text: assistantText,
-        thinkingText: thinkingText || undefined,
-        traceSteps: traceSteps.length > 0 ? traceSteps : undefined,
+        executionItems: executionItems.length > 0 ? executionItems : undefined,
       },
     ]);
-    setCollapsedThinkingByMessageId((prev) => ({
-      ...prev,
-      [messageId]: true,
-    }));
     resetLiveTurn();
   }
 
@@ -2507,13 +2598,6 @@ export function ChatPane({
     }
   }
 
-  function toggleThinkingPanel(messageId: string) {
-    setCollapsedThinkingByMessageId((prev) => ({
-      ...prev,
-      [messageId]: !prev[messageId],
-    }));
-  }
-
   function toggleTraceStep(stepId: string) {
     setCollapsedTraceByStepId((prev) => ({
       ...prev,
@@ -2521,9 +2605,9 @@ export function ChatPane({
     }));
   }
 
-  function setLiveTraceStepsState(nextSteps: ChatTraceStep[]) {
-    liveTraceStepsRef.current = nextSteps;
-    setLiveTraceSteps(nextSteps);
+  function setLiveExecutionItemsState(nextItems: ChatExecutionTimelineItem[]) {
+    liveExecutionItemsRef.current = nextItems;
+    setLiveExecutionItems(nextItems);
   }
 
   function syncChatScrollMetrics(container?: HTMLDivElement | null) {
@@ -2667,15 +2751,21 @@ export function ChatPane({
   }
 
   function upsertLiveTraceStep(step: ChatTraceStep) {
-    const next = upsertTraceStep(liveTraceStepsRef.current, step);
-    setLiveTraceStepsState(next);
+    const next = upsertExecutionTimelineTraceItem(
+      liveExecutionItemsRef.current,
+      step,
+    );
+    setLiveExecutionItemsState(next);
   }
 
   function finalizeLiveTraceSteps(
     status: Extract<ChatTraceStepStatus, "completed" | "error" | "waiting">,
   ) {
-    const next = finalizeTraceSteps(liveTraceStepsRef.current, status);
-    setLiveTraceStepsState(next);
+    const next = finalizeExecutionTimelineTraceItems(
+      liveExecutionItemsRef.current,
+      status,
+    );
+    setLiveExecutionItemsState(next);
   }
 
   useEffect(() => {
@@ -2696,8 +2786,7 @@ export function ChatPane({
     isHistoryViewportPending,
     isResponding,
     liveAssistantText,
-    liveThinkingText,
-    liveTraceSteps,
+    liveExecutionItems,
     messages,
   ]);
 
@@ -3539,7 +3628,7 @@ export function ChatPane({
             });
             return;
           }
-          appendLiveThinkingDelta(delta);
+          appendLiveThinkingDelta(delta, eventSequence);
           appendStreamTelemetry({
             streamId: payload.streamId,
             transportType: payload.type,
@@ -3559,8 +3648,7 @@ export function ChatPane({
           finalizeLiveTraceSteps("error");
           if (
             liveAssistantTextRef.current ||
-            liveThinkingTextRef.current ||
-            liveTraceStepsRef.current.length > 0
+            liveExecutionItemsRef.current.length > 0
           ) {
             commitLiveAssistantMessage();
           }
@@ -4081,8 +4169,7 @@ export function ChatPane({
   const showLiveAssistantTurn =
     isResponding ||
     Boolean(liveAssistantText) ||
-    Boolean(liveThinkingText) ||
-    liveTraceSteps.length > 0;
+    liveExecutionItems.length > 0;
   const hasMessages = messages.length > 0 || showLiveAssistantTurn;
   const streamTelemetryTail = useMemo(
     () => streamTelemetry.slice(-80).reverse(),
@@ -4399,8 +4486,7 @@ export function ChatPane({
     composerBlockHeight,
     hasMessages,
     liveAssistantText,
-    liveThinkingText,
-    liveTraceSteps,
+    liveExecutionItems,
     messages,
   ]);
 
@@ -4638,12 +4724,7 @@ export function ChatPane({
                         label={assistantLabel}
                         mode={assistantMode}
                         text={message.text}
-                        thinkingText={message.thinkingText}
-                        thinkingCollapsed={
-                          collapsedThinkingByMessageId[message.id] ?? true
-                        }
-                        onToggleThinking={() => toggleThinkingPanel(message.id)}
-                        traceSteps={message.traceSteps ?? []}
+                        executionItems={message.executionItems ?? []}
                         memoryProposals={message.memoryProposals ?? []}
                         outputs={message.outputs ?? []}
                         sessionOutputs={sessionOutputs}
@@ -4689,14 +4770,7 @@ export function ChatPane({
                       label={assistantLabel}
                       mode={assistantMode}
                       text={liveAssistantText}
-                      thinkingText={liveThinkingText}
-                      thinkingCollapsed={!liveThinkingExpanded}
-                      onToggleThinking={() => {
-                        const next = !liveThinkingExpandedRef.current;
-                        liveThinkingExpandedRef.current = next;
-                        setLiveThinkingExpanded(next);
-                      }}
-                      traceSteps={liveTraceSteps}
+                      executionItems={liveExecutionItems}
                       memoryProposals={[]}
                       outputs={[]}
                       sessionOutputs={sessionOutputs}
@@ -5161,13 +5235,6 @@ interface ComposerProps {
   onRemoveAttachment: (attachmentId: string) => void;
 }
 
-interface ThinkingPanelProps {
-  text: string;
-  collapsed: boolean;
-  onToggle: () => void;
-  live?: boolean;
-}
-
 function UserTurn({
   text,
   createdAt,
@@ -5266,10 +5333,7 @@ function AssistantTurn({
   label,
   mode,
   text,
-  thinkingText,
-  thinkingCollapsed,
-  onToggleThinking,
-  traceSteps,
+  executionItems,
   memoryProposals,
   outputs,
   sessionOutputs,
@@ -5291,10 +5355,7 @@ function AssistantTurn({
   label: string;
   mode: string;
   text: string;
-  thinkingText?: string;
-  thinkingCollapsed: boolean;
-  onToggleThinking: () => void;
-  traceSteps: ChatTraceStep[];
+  executionItems: ChatExecutionTimelineItem[];
   memoryProposals: MemoryUpdateProposalRecordPayload[];
   outputs: WorkspaceOutputRecordPayload[];
   sessionOutputs: WorkspaceOutputRecordPayload[];
@@ -5319,11 +5380,11 @@ function AssistantTurn({
   live?: boolean;
 }) {
   const normalizedStatus = status.replace(/\.+$/, "").trim();
+  const traceSteps = traceStepsFromExecutionItems(executionItems);
   const showStatusPlaceholder =
     Boolean(normalizedStatus) &&
     !text &&
-    traceSteps.length === 0 &&
-    !thinkingText;
+    executionItems.length === 0;
 
   return (
     <div className="flex min-w-0 justify-start">
@@ -5338,22 +5399,14 @@ function AssistantTurn({
           </div>
         ) : null}
 
-        {traceSteps.length > 0 ? (
+        {executionItems.length > 0 ? (
           <TraceStepGroup
-            steps={traceSteps}
+            items={executionItems}
             collapsedByStepId={collapsedTraceByStepId}
             onToggleStep={onToggleTraceStep}
             live={live}
             liveOutputStarted={live && Boolean(text)}
-          />
-        ) : null}
-
-        {thinkingText ? (
-          <ThinkingPanel
-            text={thinkingText}
-            collapsed={thinkingCollapsed}
-            onToggle={onToggleThinking}
-            live={live}
+            onLinkClick={onLinkClick}
           />
         ) : null}
 
@@ -5918,19 +5971,109 @@ function LiveStatusEllipsis() {
   );
 }
 
+function summarizeThinking(text: string) {
+  const firstContentLine =
+    text
+      .split("\n")
+      .map((line) => line.replace(/[*_`#>-]/g, "").trim())
+      .find(Boolean) || "Reasoning available";
+
+  return firstContentLine.length > 88
+    ? `${firstContentLine.slice(0, 85).trimEnd()}...`
+    : firstContentLine;
+}
+
+function TraceTimelineStepEntry({
+  step,
+  collapsedByStepId,
+  onToggleStep,
+}: {
+  step: ChatTraceStep;
+  collapsedByStepId: Record<string, boolean>;
+  onToggleStep: (stepId: string) => void;
+}) {
+  const expanded = !(collapsedByStepId[step.id] ?? true);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => step.details.length > 0 && onToggleStep(step.id)}
+        className={`flex w-full items-start gap-2 rounded-md px-2.5 -ml-2.5 py-1 text-left text-xs transition-colors ${step.details.length > 0 ? "hover:bg-muted/50 cursor-pointer" : "cursor-default"}`}
+      >
+        <span className="mt-0.5 shrink-0">
+          {step.status === "completed" ? (
+            <Check size={12} className="text-emerald-500" />
+          ) : step.status === "error" ? (
+            <AlertTriangle size={12} className="text-destructive" />
+          ) : step.status === "running" ? (
+            <Loader2 size={12} className="animate-spin text-muted-foreground" />
+          ) : (
+            <Clock3 size={12} className="text-muted-foreground" />
+          )}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="font-medium text-foreground/80">{step.title}</span>
+          {step.details.length > 0 ? (
+            <span className="ml-1.5 text-muted-foreground/70">
+              {step.details[0]}
+            </span>
+          ) : null}
+        </span>
+        {step.details.length > 1 ? (
+          <ChevronDown
+            size={12}
+            className={`mt-0.5 shrink-0 text-muted-foreground/50 transition-transform ${expanded ? "rotate-180" : ""}`}
+          />
+        ) : null}
+      </button>
+      {expanded && step.details.length > 1 ? (
+        <div className="ml-6 mt-0.5 mb-1 rounded-md border border-border/30 bg-muted/30 px-3 py-2 text-[11px] leading-5 text-muted-foreground whitespace-pre-wrap">
+          {step.details.slice(1).join("\n")}
+        </div>
+      ) : null}
+      {step.status === "error" ? (
+        <IntegrationErrorBanner details={step.details} />
+      ) : null}
+    </div>
+  );
+}
+
+function ExecutionTimelineThinkingEntry({
+  text,
+  onLinkClick,
+}: {
+  text: string;
+  onLinkClick?: (url: string) => void;
+}) {
+  return (
+    <div className="ml-5 mr-1 rounded-[16px] border border-border/25 bg-muted/30 px-3.5 py-3">
+      <SimpleMarkdown
+        className="chat-markdown chat-assistant-markdown max-w-full text-[12px] leading-6 text-foreground/82"
+        onLinkClick={onLinkClick}
+      >
+        {text}
+      </SimpleMarkdown>
+    </div>
+  );
+}
+
 function TraceStepGroup({
-  steps,
+  items,
   collapsedByStepId,
   onToggleStep,
   live = false,
   liveOutputStarted = false,
+  onLinkClick,
 }: {
-  steps: ChatTraceStep[];
+  items: ChatExecutionTimelineItem[];
   collapsedByStepId: Record<string, boolean>;
   onToggleStep: (stepId: string) => void;
   live?: boolean;
   liveOutputStarted?: boolean;
+  onLinkClick?: (url: string) => void;
 }) {
+  const steps = traceStepsFromExecutionItems(items);
   const [groupExpanded, setGroupExpanded] = useState(
     live && !liveOutputStarted,
   );
@@ -5961,10 +6104,38 @@ function TraceStepGroup({
       .find((step) => step.status === "running" || step.status === "waiting") ??
     null;
   const latestStep = steps.length > 0 ? steps[steps.length - 1] : null;
+  const latestThinkingItem =
+    [...items]
+      .reverse()
+      .find(
+        (
+          item,
+        ): item is Extract<ChatExecutionTimelineItem, { kind: "thinking" }> =>
+          item.kind === "thinking",
+      ) ?? null;
   const summaryStep = activeStep ?? (groupIsLive ? latestStep : null);
   const summarySuffix = groupHasTerminalError
     ? ` (${terminalErrorCount} failed)`
     : "";
+  const summaryLabel = summaryStep
+    ? summaryStep === activeStep || summaryStep.status === "waiting"
+      ? `${traceStatusLabel(summaryStep.status)}: ${summaryStep.title}`
+      : groupIsLive
+        ? summaryStep.title
+        : `${traceStatusLabel(summaryStep.status)}: ${summaryStep.title}`
+    : groupIsLive
+      ? latestThinkingItem
+        ? summarizeThinking(latestThinkingItem.text)
+        : stepCount > 0
+          ? `Working through ${stepLabel}...`
+          : "Thinking..."
+      : runningCount > 0
+        ? `Running ${stepLabel}...`
+        : latestThinkingItem
+          ? summarizeThinking(latestThinkingItem.text)
+          : stepCount > 0
+            ? `Used ${stepLabel}`
+            : "Execution trace";
 
   return (
     <div className="mt-3">
@@ -5981,17 +6152,7 @@ function TraceStepGroup({
           <Check size={13} className="text-emerald-500" />
         )}
         <span>
-          {summaryStep
-            ? summaryStep === activeStep || summaryStep.status === "waiting"
-              ? `${traceStatusLabel(summaryStep.status)}: ${summaryStep.title}`
-              : groupIsLive
-                ? summaryStep.title
-                : `${traceStatusLabel(summaryStep.status)}: ${summaryStep.title}`
-            : groupIsLive
-              ? `Working through ${stepLabel}...`
-              : runningCount > 0
-                ? `Running ${stepLabel}...`
-                : `Used ${stepLabel}`}
+          {summaryLabel}
           {summarySuffix}
         </span>
         <ChevronDown
@@ -6002,116 +6163,22 @@ function TraceStepGroup({
 
       {groupExpanded ? (
         <div className="mt-1 ml-1 space-y-0.5">
-          {steps.map((step) => {
-            const expanded = !(collapsedByStepId[step.id] ?? true);
-            return (
-              <div key={step.id}>
-                <button
-                  type="button"
-                  onClick={() =>
-                    step.details.length > 0 && onToggleStep(step.id)
-                  }
-                  className={`flex w-full items-start gap-2 rounded-md px-2.5 -ml-2.5 py-1 text-left text-xs transition-colors ${step.details.length > 0 ? "hover:bg-muted/50 cursor-pointer" : "cursor-default"}`}
-                >
-                  <span className="mt-0.5 shrink-0">
-                    {step.status === "completed" ? (
-                      <Check size={12} className="text-emerald-500" />
-                    ) : step.status === "error" ? (
-                      <AlertTriangle size={12} className="text-destructive" />
-                    ) : step.status === "running" ? (
-                      <Loader2
-                        size={12}
-                        className="animate-spin text-muted-foreground"
-                      />
-                    ) : (
-                      <Clock3 size={12} className="text-muted-foreground" />
-                    )}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="font-medium text-foreground/80">
-                      {step.title}
-                    </span>
-                    {step.details.length > 0 ? (
-                      <span className="ml-1.5 text-muted-foreground/70">
-                        {step.details[0]}
-                      </span>
-                    ) : null}
-                  </span>
-                  {step.details.length > 1 ? (
-                    <ChevronDown
-                      size={12}
-                      className={`mt-0.5 shrink-0 text-muted-foreground/50 transition-transform ${expanded ? "rotate-180" : ""}`}
-                    />
-                  ) : null}
-                </button>
-                {expanded && step.details.length > 1 ? (
-                  <div className="ml-6 mt-0.5 mb-1 rounded-md border border-border/30 bg-muted/30 px-3 py-2 text-[11px] leading-5 text-muted-foreground whitespace-pre-wrap">
-                    {step.details.slice(1).join("\n")}
-                  </div>
-                ) : null}
-                {step.status === "error" ? (
-                  <IntegrationErrorBanner details={step.details} />
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function summarizeThinking(text: string) {
-  const firstContentLine =
-    text
-      .split("\n")
-      .map((line) => line.replace(/[*_`#>-]/g, "").trim())
-      .find(Boolean) || "Reasoning available";
-
-  return firstContentLine.length > 88
-    ? `${firstContentLine.slice(0, 85).trimEnd()}...`
-    : firstContentLine;
-}
-
-function ThinkingPanel({
-  text,
-  collapsed,
-  onToggle,
-  live = false,
-}: ThinkingPanelProps) {
-  const summary = summarizeThinking(text);
-
-  return (
-    <div className="mt-4">
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={!collapsed}
-        className="bg-muted flex w-full items-center justify-between gap-3 rounded-[18px] border border-border/35 px-3.5 py-3 text-left transition hover:border-border/55"
-      >
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-              {live ? "Thinking" : "Reasoning"}
-            </span>
-            {live ? (
-              <span className="rounded-full border border-[rgba(247,90,84,0.18)] bg-[rgba(247,90,84,0.08)] px-2 py-0.5 text-[9px] uppercase tracking-[0.14em] text-[rgba(206,92,84,0.92)]">
-                LIVE
-              </span>
-            ) : null}
-          </div>
-          <div className="mt-1 truncate text-[12px] text-muted-foreground/76">
-            {collapsed ? summary : "Expanded reasoning trace"}
-          </div>
-        </div>
-        <ChevronDown
-          size={14}
-          className={`shrink-0 text-muted-foreground transition ${collapsed ? "" : "rotate-180"}`}
-        />
-      </button>
-      {!collapsed ? (
-        <div className="theme-chat-thinking-inner mt-2 whitespace-pre-wrap rounded-[18px] border border-border/30 px-4 py-3 text-[12px] leading-6 text-muted-foreground/86">
-          {text}
+          {items.map((item) =>
+            item.kind === "thinking" ? (
+              <ExecutionTimelineThinkingEntry
+                key={item.id}
+                text={item.text}
+                onLinkClick={onLinkClick}
+              />
+            ) : (
+              <TraceTimelineStepEntry
+                key={item.id}
+                step={item.step}
+                collapsedByStepId={collapsedByStepId}
+                onToggleStep={onToggleStep}
+              />
+            ),
+          )}
         </div>
       ) : null}
     </div>
@@ -6511,13 +6578,13 @@ function Composer({
         />
       </div>
 
-      <div className="flex items-center justify-between gap-2 border-t border-border/20 px-3 py-3 text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-2 border-t border-border/20 px-3 py-3 text-muted-foreground">
         {showModelSelector ? (
           <div
             className={
               noAvailableModels
-                ? "min-w-0 flex flex-1 items-center gap-3"
-                : "w-[172px] shrink-0 sm:w-[208px]"
+                ? "min-w-0 flex flex-1 basis-full flex-wrap items-center gap-2"
+                : "min-w-0 flex-1 basis-[220px] max-w-[240px]"
             }
           >
             {noAvailableModels ? (

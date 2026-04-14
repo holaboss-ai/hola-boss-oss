@@ -67,7 +67,7 @@ test("chat pane shows provider setup CTA when no chat models are available", asy
   assert.match(source, /Open provider settings to connect a model\./);
   assert.match(
     source,
-    /className=\{[\s\S]*noAvailableModels[\s\S]*\? "min-w-0 flex flex-1 items-center gap-3"[\s\S]*: "w-\[172px\] shrink-0 sm:w-\[208px\]"[\s\S]*\}/,
+    /className=\{[\s\S]*noAvailableModels[\s\S]*\? "min-w-0 flex flex-1 basis-full flex-wrap items-center gap-2"[\s\S]*: "min-w-0 flex-1 basis-\[220px\] max-w-\[240px\]"[\s\S]*\}/,
   );
   assert.doesNotMatch(source, /title=\{modelSelectionUnavailableReason\}/);
   assert.doesNotMatch(
@@ -92,6 +92,17 @@ test("chat pane falls back to provider setup instead of holaboss pending state w
     source,
     /const requiresModelProviderSetup =\s*!hasConfiguredProviderCatalog && !holabossProxyModelsAvailable;/,
   );
+});
+
+test("chat composer footer wraps controls based on available pane width instead of viewport breakpoints", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /<div className="flex flex-wrap items-center gap-2 border-t border-border\/20 px-3 py-3 text-muted-foreground">/,
+  );
+  assert.match(source, /className="ml-auto flex items-center gap-2"/);
+  assert.doesNotMatch(source, /sm:w-\[208px\]/);
 });
 
 test("chat trace summary only surfaces terminal run failures in the summary label", async () => {
@@ -174,7 +185,27 @@ test("chat pane renders live placeholder status as faint text with animated trai
   assert.doesNotMatch(source, /Queued\.\.\./);
   assert.doesNotMatch(source, /Working\.\.\./);
   assert.doesNotMatch(source, /Checking workspace context\.\.\./);
-  assert.doesNotMatch(source, /Thinking\.\.\./);
+});
+
+test("chat pane renders an execution timeline that interleaves thinking segments with trace entries", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /executionItems\?: ChatExecutionTimelineItem\[];/);
+  assert.match(source, /function appendExecutionTimelineThinkingDelta\(/);
+  assert.match(source, /function upsertExecutionTimelineTraceItem\(/);
+  assert.match(source, /function traceStepsFromExecutionItems\(items: ChatExecutionTimelineItem\[]\)/);
+  assert.match(source, /assistantHistoryStateFromOutputEvents[\s\S]*executionItems = appendExecutionTimelineThinkingDelta\(/);
+  assert.match(source, /assistantHistoryStateFromOutputEvents[\s\S]*executionItems = upsertExecutionTimelineTraceItem\(/);
+  assert.match(source, /appendLiveThinkingDelta\(delta: string, order: number\)/);
+  assert.match(source, /appendExecutionTimelineThinkingDelta\(prev, delta, order\)/);
+  assert.match(source, /<AssistantTurn[\s\S]*executionItems=\{message\.executionItems \?\? \[\]\}/);
+  assert.match(source, /<AssistantTurn[\s\S]*executionItems=\{liveExecutionItems\}/);
+  assert.match(source, /<TraceStepGroup[\s\S]*items=\{executionItems\}/);
+  assert.match(source, /<ExecutionTimelineThinkingEntry/);
+  assert.match(source, /<TraceTimelineStepEntry/);
+  assert.doesNotMatch(source, /<ThinkingPanel/);
+  assert.doesNotMatch(source, /thinkingCollapsed/);
+  assert.doesNotMatch(source, /onToggleThinking/);
 });
 
 test("chat trace tool errors surface stderr text instead of a generic error label", async () => {
@@ -560,8 +591,9 @@ test("live trace auto-expands during the run and collapses when output starts", 
 
   assert.match(
     source,
-    /function TraceStepGroup\(\{[\s\S]*live = false,[\s\S]*liveOutputStarted = false,/,
+    /function TraceStepGroup\(\{[\s\S]*items,[\s\S]*live = false,[\s\S]*liveOutputStarted = false,/,
   );
+  assert.match(source, /const steps = traceStepsFromExecutionItems\(items\);/);
   assert.match(
     source,
     /const \[groupExpanded, setGroupExpanded\] = useState\(\s*live && !liveOutputStarted,\s*\);/,
@@ -576,7 +608,7 @@ test("live trace auto-expands during the run and collapses when output starts", 
   );
   assert.match(
     source,
-    /<TraceStepGroup[\s\S]*live=\{live\}[\s\S]*liveOutputStarted=\{live && Boolean\(text\)\}/,
+    /<TraceStepGroup[\s\S]*items=\{executionItems\}[\s\S]*live=\{live\}[\s\S]*liveOutputStarted=\{live && Boolean\(text\)\}/,
   );
 });
 
