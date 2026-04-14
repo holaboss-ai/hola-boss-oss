@@ -2982,7 +2982,7 @@ test("app setup timeout honors configured timeout", async () => {
     await new Promise((resolve) => setTimeout(resolve, 200));
     const build = store.getAppBuild({ workspaceId: workspace.id, appId: "app-a" });
     assert.equal(build?.status, "failed");
-    assert.equal(build?.error, "setup timed out after 1s");
+    assert.match(build?.error ?? "", /^setup timed out after 1s(?: — see .+setup\.latest\.log| — see .+setup-.+\.log)?$/);
   } finally {
     if (previousTimeout === undefined) {
       delete process.env.HB_APP_SETUP_TIMEOUT_MS;
@@ -5318,6 +5318,148 @@ test("POST /apps/install-archive with archive_url downloads and installs", async
     const body = res.json();
     assert.equal(body.app_id, "minimal");
 
+    const installed = path.join(
+      store.workspaceDir(workspace.id),
+      "apps",
+      "minimal",
+      "app.runtime.yaml",
+    );
+    assert.equal(fs.existsSync(installed), true);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((err) => (err ? reject(err) : resolve())),
+    );
+    if (savedEnv === undefined) {
+      delete process.env.HOLABOSS_APP_ARCHIVE_URL_ALLOWLIST;
+    } else {
+      process.env.HOLABOSS_APP_ARCHIVE_URL_ALLOWLIST = savedEnv;
+    }
+    await app.close();
+    store.close();
+  }
+});
+
+// Regression: a 409 "already installed" must release the install lock so the
+// same (workspaceId, appId) can be retried. Previously the lock was set before
+// the early return but the try/finally only wrapped the later flow, so a single
+// failed reinstall pinned the app id until the runtime restarted.
+test("POST /apps/install-archive releases install lock on already-installed 409", async () => {
+  const root = makeTempDir("hb-runtime-api-install-archive-lock-release-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Test Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+  const preDir = path.join(workspaceDir, "apps", "minimal");
+  fs.mkdirSync(preDir, { recursive: true });
+  fs.writeFileSync(path.join(preDir, "sentinel.txt"), "existing");
+  const app = buildTestRuntimeApiServer({ store });
+
+  const stagedArchive = path.join(os.tmpdir(), `install-archive-lock-release-${Date.now()}.tar.gz`);
+  fs.copyFileSync(MINIMAL_APP_FIXTURE, stagedArchive);
+
+  try {
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/v1/apps/install-archive",
+      payload: {
+        workspace_id: workspace.id,
+        app_id: "minimal",
+        archive_path: stagedArchive,
+      },
+    });
+    assert.equal(first.statusCode, 409);
+    assert.match(first.json().detail ?? "", /already installed/);
+
+    // Second request for the same (workspaceId, appId) must still hit the
+    // "already installed" branch — NOT "install already in progress", which
+    // would indicate a stale lock.
+    const second = await app.inject({
+      method: "POST",
+      url: "/api/v1/apps/install-archive",
+      payload: {
+        workspace_id: workspace.id,
+        app_id: "minimal",
+        archive_path: stagedArchive,
+      },
+    });
+    assert.equal(second.statusCode, 409);
+    assert.match(second.json().detail ?? "", /already installed/);
+    assert.doesNotMatch(second.json().detail ?? "", /install already in progress/);
+  } finally {
+    fs.rmSync(stagedArchive, { force: true });
+    await app.close();
+    store.close();
+  }
+});
+
+// Regression: concurrent archive_url installs for the same (workspaceId, appId)
+// must be serialized. Previously the install lock was only set after the await
+// on downloadArchiveToTemp, so two simultaneous requests could both pass the
+// in-flight check, both download, and both reach extraction/registration.
+test("POST /apps/install-archive serializes concurrent archive_url installs", async () => {
+  const root = makeTempDir("hb-runtime-api-install-archive-url-race-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Test Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const fixtureBuf = fs.readFileSync(MINIMAL_APP_FIXTURE);
+  // Delay every response by 300ms so the first download is still in flight
+  // when the second request arrives, exercising the in-flight guard.
+  const server = http.createServer((_req, res) => {
+    setTimeout(() => {
+      res.writeHead(200, { "Content-Type": "application/gzip" });
+      res.end(fixtureBuf);
+    }, 300);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const addr = server.address();
+  if (!addr || typeof addr === "string") throw new Error("no server address");
+  const url = `http://127.0.0.1:${addr.port}/minimal.tar.gz`;
+
+  const savedEnv = process.env.HOLABOSS_APP_ARCHIVE_URL_ALLOWLIST;
+  process.env.HOLABOSS_APP_ARCHIVE_URL_ALLOWLIST = `http://127.0.0.1:${addr.port}/`;
+
+  try {
+    const payload = {
+      workspace_id: workspace.id,
+      app_id: "minimal",
+      archive_url: url,
+    };
+    const [a, b] = await Promise.all([
+      app.inject({ method: "POST", url: "/api/v1/apps/install-archive", payload }),
+      app.inject({ method: "POST", url: "/api/v1/apps/install-archive", payload }),
+    ]);
+
+    const codes = [a.statusCode, b.statusCode].sort((x, y) => x - y);
+    assert.deepEqual(codes, [200, 409], `expected one 200 and one 409, got ${codes.join(",")}`);
+
+    const loser = a.statusCode === 409 ? a : b;
+    assert.match(
+      loser.json().detail ?? "",
+      /install already in progress/,
+      "losing concurrent request must be rejected by the in-flight guard",
+    );
+
+    // Winner must have actually installed — exactly one install should win.
     const installed = path.join(
       store.workspaceDir(workspace.id),
       "apps",

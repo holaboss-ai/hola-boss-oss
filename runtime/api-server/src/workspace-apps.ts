@@ -314,6 +314,11 @@ export interface McpRegistryEntryParams {
   mcpPath: string | null;
   mcpTimeoutMs: number;
   mcpPort: number | null;
+  /** When true, force-bump the per-server `started_at` timestamp even if
+   *  the rest of the entry is byte-identical. Lets MCP clients that watch
+   *  workspace.yaml notice "the underlying app process restarted, drop
+   *  any cached SSE stream and reconnect". */
+  bumpStartedAt?: boolean;
 }
 
 export function writeWorkspaceMcpRegistryEntry(
@@ -338,11 +343,16 @@ export function writeWorkspaceMcpRegistryEntry(
   // Replace this app's server entry
   const port = params.mcpPort ?? 13100;
   const mcpPath = params.mcpPath || "/mcp/sse";
+  const previousServer = isRecord(servers[appId]) ? (servers[appId] as Record<string, unknown>) : null;
+  const startedAt = params.bumpStartedAt
+    ? new Date().toISOString()
+    : (typeof previousServer?.started_at === "string" ? previousServer.started_at : new Date().toISOString());
   servers[appId] = {
     type: "remote",
     url: `http://localhost:${port}${mcpPath}`,
     enabled: true,
     timeout_ms: params.mcpTimeoutMs,
+    started_at: startedAt,
   };
 
   // Replace this app's tool ids: drop existing entries prefixed with `${appId}.`,

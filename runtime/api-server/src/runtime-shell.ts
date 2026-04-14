@@ -135,7 +135,14 @@ export function buildPortListenerKillCommand(
     ].join(" ");
   }
 
+  // CRITICAL: restrict to LISTEN state. Without `-sTCP:LISTEN`, lsof also
+  // returns PIDs with ESTABLISHED/CLOSE_WAIT sockets on the same port —
+  // including the runtime process itself when it has just probed the app's
+  // /healthz. That turned orphan cleanup into a self-kill loop.
   return normalizedPorts
-    .map((port) => `kill $(lsof -t -i :${port} 2>/dev/null) 2>/dev/null || true`)
+    .map(
+      (port) =>
+        `kill $(lsof -nP -iTCP:${port} -sTCP:LISTEN -t 2>/dev/null) 2>/dev/null || true`,
+    )
     .join(" ; ");
 }

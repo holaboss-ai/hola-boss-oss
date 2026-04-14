@@ -56,6 +56,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { URL } from "node:url";
 import ExcelJS from "exceljs";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
@@ -633,6 +634,8 @@ const filePreviewWatchSubscriptions = new Map<
   }
 >();
 let runtimeProcess: ChildProcessWithoutNullStreams | null = null;
+const intentionallyStoppedRuntimeProcesses =
+  new WeakSet<ChildProcessWithoutNullStreams>();
 let appQuitCleanupPromise: Promise<void> | null = null;
 let appQuitCleanupFinished = false;
 let pendingAuthUser: AuthUserPayload | null = null;
@@ -916,6 +919,38 @@ function handleTrustedIpc<Args extends unknown[], Result>(
     assertTrustedIpcSender(event, channel, allowedScopes);
     return handler(event, ...args);
   });
+}
+
+// Allowed characters for ids that originate from the renderer and end up
+// being interpolated into URLs, file paths, or SQL bind parameters in the
+// embedded runtime. Conservative on purpose: alnum, dash, underscore, dot.
+// We reject path separators, whitespace, control chars, and anything that
+// could break out of an URL path segment. These are NOT user-facing labels;
+// they are workspace UUIDs and slug-style app ids.
+const SAFE_ID_REGEX = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+function assertSafeId(value: unknown, fieldName: string): string {
+  if (typeof value !== "string") {
+    throw new Error(`Invalid ${fieldName}: must be a string`);
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error(`Invalid ${fieldName}: must not be empty`);
+  }
+  if (!SAFE_ID_REGEX.test(trimmed)) {
+    throw new Error(
+      `Invalid ${fieldName}: must match /[A-Za-z0-9._-]{1,128}/`,
+    );
+  }
+  return trimmed;
+}
+
+function assertSafeWorkspaceId(value: unknown): string {
+  return assertSafeId(value, "workspaceId");
+}
+
+function assertSafeAppId(value: unknown): string {
+  return assertSafeId(value, "appId");
 }
 
 function configureStableUserDataPath() {
@@ -7281,44 +7316,82 @@ async function listAppTemplatesViaControlPlane(): Promise<AppTemplateListRespons
   };
 }
 
+// Hard cap on archive size to prevent runaway downloads from filling disk
+// or OOMing the Electron main process. App tarballs are normally well under
+// 50 MB; 500 MB leaves headroom while still bounding the worst case.
+const MAX_APP_ARCHIVE_BYTES = 500 * 1024 * 1024;
+// Whole-download timeout. Streaming progress doesn't reset this.
+const APP_ARCHIVE_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+
 async function downloadAppArchive(url: string, appId: string): Promise<string> {
   const dir = path.join(os.tmpdir(), "holaboss-app-archives");
   mkdirSync(dir, { recursive: true });
   const filePath = path.join(dir, `${appId}-${Date.now()}.tar.gz`);
 
-  const res = await fetch(url, { method: "GET" });
-  if (!res.ok || !res.body) {
-    throw new Error(`Download failed: ${res.status} ${res.statusText}`);
-  }
-  const totalHeader = res.headers.get("content-length");
-  const total = totalHeader ? Number.parseInt(totalHeader, 10) : 0;
-  let received = 0;
+  const abortController = new AbortController();
+  const timeoutHandle = setTimeout(() => {
+    abortController.abort(new Error("Download timed out"));
+  }, APP_ARCHIVE_DOWNLOAD_TIMEOUT_MS);
 
-  const fileStream = createWriteStream(filePath);
-  const reader = res.body.getReader();
+  let fileStream: ReturnType<typeof createWriteStream> | null = null;
   try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (value) {
-        fileStream.write(value);
-        received += value.byteLength;
-        mainWindow?.webContents.send("app-install-progress", {
-          appId,
-          phase: "downloading",
-          bytes: received,
-          total,
-        });
-      }
+    const res = await fetch(url, { method: "GET", signal: abortController.signal });
+    if (!res.ok || !res.body) {
+      throw new Error(`Download failed: ${res.status} ${res.statusText}`);
     }
-  } finally {
-    fileStream.end();
-    await new Promise<void>((resolve, reject) => {
-      fileStream.on("finish", () => resolve());
-      fileStream.on("error", reject);
+    const totalHeader = res.headers.get("content-length");
+    const total = totalHeader ? Number.parseInt(totalHeader, 10) : 0;
+    if (total > MAX_APP_ARCHIVE_BYTES) {
+      throw new Error(
+        `App archive too large: ${total} bytes (max ${MAX_APP_ARCHIVE_BYTES})`,
+      );
+    }
+    let received = 0;
+
+    // Rewrap the WHATWG ReadableStream as a Node Readable, then pipeline
+    // it into the file writer. pipeline() guarantees both sides see errors
+    // and resources are torn down on failure — the previous hand-rolled
+    // loop swallowed write() errors and attached its error handler too
+    // late to catch them.
+    const source = Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]);
+    source.on("data", (chunk: Buffer) => {
+      received += chunk.byteLength;
+      if (received > MAX_APP_ARCHIVE_BYTES) {
+        source.destroy(
+          new Error(
+            `App archive exceeded ${MAX_APP_ARCHIVE_BYTES} bytes during download`,
+          ),
+        );
+        return;
+      }
+      mainWindow?.webContents.send("app-install-progress", {
+        appId,
+        phase: "downloading",
+        bytes: received,
+        total,
+      });
     });
+
+    fileStream = createWriteStream(filePath);
+    await pipeline(source, fileStream);
+    return filePath;
+  } catch (error) {
+    // Best-effort cleanup of the partially written archive so the temp dir
+    // doesn't accumulate junk on every failed download.
+    try {
+      fileStream?.destroy();
+    } catch {
+      // ignore
+    }
+    try {
+      await fs.rm(filePath, { force: true });
+    } catch {
+      // ignore
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutHandle);
   }
-  return filePath;
 }
 
 async function listTaskProposals(
@@ -9345,7 +9418,23 @@ function requestedWorkspaceTemplateMode(
 }
 
 function workspaceDirectoryPath(workspaceId: string) {
-  return path.join(runtimeWorkspaceRoot(), workspaceId);
+  // Hard-validate before path.join so a renderer can't smuggle ".." or
+  // path separators in a workspace id and escape the workspace root.
+  // assertSafeWorkspaceId rejects /, \, NUL, whitespace, and limits length.
+  const safeId = assertSafeWorkspaceId(workspaceId);
+  const root = runtimeWorkspaceRoot();
+  const joined = path.join(root, safeId);
+  // Belt-and-suspenders: even if SAFE_ID_REGEX is later relaxed, ensure
+  // the resolved path is still under the workspace root.
+  const resolved = path.resolve(joined);
+  const resolvedRoot = path.resolve(root);
+  if (
+    resolved !== resolvedRoot &&
+    !resolved.startsWith(resolvedRoot + path.sep)
+  ) {
+    throw new Error(`workspaceId resolves outside workspace root: ${workspaceId}`);
+  }
+  return joined;
 }
 
 function resolveWorkspaceDownloadTargetPath(
@@ -9963,6 +10052,11 @@ async function installAppFromCatalog(params: {
   appId: string;
   source: "marketplace" | "local";
 }): Promise<InstallAppFromCatalogResponse> {
+  params = {
+    ...params,
+    workspaceId: assertSafeWorkspaceId(params.workspaceId),
+    appId: assertSafeAppId(params.appId),
+  };
   const listing = await listAppCatalog({ source: params.source });
   const entry = listing.entries.find((e) => e.app_id === params.appId);
   if (!entry) {
@@ -10017,9 +10111,11 @@ async function installAppFromCatalog(params: {
     return resp;
   } finally {
     if (cleanupTempFile) {
+      // Use the already-imported fs/promises namespace instead of a
+      // dynamic import. The dynamic import could itself throw under
+      // certain ESM-loader edge cases, leaving the temp archive on disk.
       try {
-        const { rmSync } = await import("node:fs");
-        rmSync(archivePath, { force: true });
+        await fs.rm(archivePath, { force: true });
       } catch {
         /* best effort */
       }
@@ -10053,11 +10149,13 @@ async function removeInstalledApp(
   workspaceId: string,
   appId: string,
 ): Promise<void> {
+  const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
+  const safeAppId = assertSafeAppId(appId);
   await requestRuntimeJson<Record<string, unknown>>({
     method: "DELETE",
-    path: `/api/v1/apps/${encodeURIComponent(appId)}`,
+    path: `/api/v1/apps/${encodeURIComponent(safeAppId)}`,
     payload: {
-      workspace_id: workspaceId,
+      workspace_id: safeWorkspaceId,
     },
     timeoutMs: 30000,
   });
@@ -10172,22 +10270,23 @@ async function getWorkspaceLifecycle(
   workspaceId: string,
 ): Promise<WorkspaceLifecyclePayload> {
   // Desktop always uses local runtime for workspace lifecycle.
-  return getWorkspaceLifecycleViaRuntime(workspaceId);
+  return getWorkspaceLifecycleViaRuntime(assertSafeWorkspaceId(workspaceId));
 }
 
 async function activateWorkspace(
   workspaceId: string,
 ): Promise<WorkspaceLifecyclePayload> {
+  const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
   // Desktop always activates via local runtime.
   // Ensure all enabled apps are running in parallel via the runtime.
   await requestRuntimeJson<Record<string, unknown>>({
     method: "POST",
     path: "/api/v1/apps/ensure-running",
-    payload: { workspace_id: workspaceId },
+    payload: { workspace_id: safeWorkspaceId },
     timeoutMs: 300000,
     retryTransientErrors: true,
   });
-  return getWorkspaceLifecycleViaRuntime(workspaceId);
+  return getWorkspaceLifecycleViaRuntime(safeWorkspaceId);
 }
 
 async function getWorkspaceLifecycleViaRuntime(
@@ -10602,12 +10701,39 @@ function renderEmptyOnboardingGuide() {
 async function createWorkspace(
   payload: HolabossCreateWorkspacePayload,
 ): Promise<WorkspaceResponsePayload> {
+  // Structured stage logs for workspace create/install debugging. These
+  // go to the Electron main process stdout; in dev they appear in the
+  // terminal, in packaged builds they land in the platform log dir
+  // under `holaboss-local/logs/main.log` (handled by Electron).
+  const stageLog = (event: string, data?: Record<string, unknown>): void => {
+    const line = { event: `desktop.${event}`, ts: new Date().toISOString(), ...(data ?? {}) };
+    // eslint-disable-next-line no-console
+    console.info(`[holaboss.createWorkspace] ${JSON.stringify(line)}`);
+  };
+  const stageError = (event: string, err: unknown, data?: Record<string, unknown>): void => {
+    const line = {
+      event: `desktop.${event}`,
+      ts: new Date().toISOString(),
+      err: err instanceof Error ? err.message : String(err),
+      ...(data ?? {}),
+    };
+    // eslint-disable-next-line no-console
+    console.error(`[holaboss.createWorkspace] ${JSON.stringify(line)}`);
+  };
+
   const harness = normalizeRequestedWorkspaceHarness(payload.harness);
   const templateMode = requestedWorkspaceTemplateMode(payload);
   const templateRootPath = payload.template_root_path?.trim() || "";
   const templateName = payload.template_name?.trim() || "";
   const requiresRuntimeBinding =
     templateMode !== "empty" && !templateRootPath && Boolean(templateName);
+  stageLog("begin", {
+    templateMode,
+    templateName,
+    hasTemplateRootPath: Boolean(templateRootPath),
+    harness,
+    requiresRuntimeBinding,
+  });
   if (requiresRuntimeBinding) {
     await ensureRuntimeBindingReadyForWorkspaceFlow("workspace_create");
   }
@@ -10618,12 +10744,17 @@ async function createWorkspace(
   if (templateMode === "empty") {
     resolvedTemplate = null;
   } else if (templateRootPath) {
+    stageLog("materialize_local_template.start", { templateRootPath });
     try {
       materializedTemplate = await materializeLocalTemplate({
         template_root_path: templateRootPath,
       });
       resolvedTemplate = materializedTemplate.template;
+      stageLog("materialize_local_template.ok", {
+        fileCount: materializedTemplate.files.length,
+      });
     } catch (error) {
+      stageError("materialize_local_template.failed", error, { templateRootPath });
       throw new Error(
         contextualWorkspaceCreateError(
           "Couldn't materialize the local template",
@@ -10632,6 +10763,7 @@ async function createWorkspace(
       );
     }
   } else if (templateName) {
+    stageLog("materialize_marketplace_template.start", { templateName });
     try {
       materializedTemplate = await materializeMarketplaceTemplate({
         holaboss_user_id: payload.holaboss_user_id,
@@ -10640,7 +10772,12 @@ async function createWorkspace(
         template_commit: payload.template_commit,
       });
       resolvedTemplate = materializedTemplate.template;
+      stageLog("materialize_marketplace_template.ok", {
+        templateName,
+        fileCount: materializedTemplate.files.length,
+      });
     } catch (error) {
+      stageError("materialize_marketplace_template.failed", error, { templateName });
       throw new Error(
         contextualWorkspaceCreateError(
           `Couldn't materialize the marketplace template '${templateName}'`,
@@ -10652,6 +10789,7 @@ async function createWorkspace(
     throw new Error("Choose a local folder or a marketplace template first.");
   }
   let created: WorkspaceResponsePayload;
+  stageLog("runtime_post_workspaces.start");
   try {
     created = await requestRuntimeJson<WorkspaceResponsePayload>({
       method: "POST",
@@ -10663,7 +10801,9 @@ async function createWorkspace(
         onboarding_status: "not_required",
       },
     });
+    stageLog("runtime_post_workspaces.ok", { workspaceId: created.workspace.id });
   } catch (error) {
+    stageError("runtime_post_workspaces.failed", error);
     throw new Error(
       contextualWorkspaceCreateError(
         "Couldn't create the workspace record",
@@ -10675,6 +10815,7 @@ async function createWorkspace(
 
   try {
     const workspaceDir = workspaceDirectoryPath(workspaceId);
+    stageLog("workspace_dir_resolved", { workspaceId, workspaceDir });
     const workspaceAgentsPath = path.join(workspaceDir, "AGENTS.md");
     const workspaceYamlPath = path.join(workspaceDir, "workspace.yaml");
     const workspaceOnboardPath = path.join(workspaceDir, "ONBOARD.md");
@@ -10696,15 +10837,32 @@ async function createWorkspace(
         );
       }
     } else if (materializedTemplate && resolvedTemplate) {
-      await applyMaterializedTemplateToWorkspace(
+      stageLog("apply_template.start", {
         workspaceId,
-        materializedTemplate.files,
-      );
-      if (templateRootPath) {
-        await copyLocalTemplateAppNodeModulesToWorkspace(
-          templateRootPath,
+        fileCount: materializedTemplate.files.length,
+      });
+      try {
+        await applyMaterializedTemplateToWorkspace(
           workspaceId,
+          materializedTemplate.files,
         );
+        stageLog("apply_template.ok", { workspaceId });
+      } catch (error) {
+        stageError("apply_template.failed", error, { workspaceId });
+        throw error;
+      }
+      if (templateRootPath) {
+        stageLog("copy_local_node_modules.start", { workspaceId, templateRootPath });
+        try {
+          await copyLocalTemplateAppNodeModulesToWorkspace(
+            templateRootPath,
+            workspaceId,
+          );
+          stageLog("copy_local_node_modules.ok", { workspaceId });
+        } catch (error) {
+          stageError("copy_local_node_modules.failed", error, { workspaceId });
+          throw error;
+        }
       }
 
       let workspaceYamlExists = true;
@@ -10743,16 +10901,24 @@ async function createWorkspace(
       onboardingSessionId = null;
     }
 
-    let updated = await requestRuntimeJson<WorkspaceResponsePayload>({
-      method: "PATCH",
-      path: `/api/v1/workspaces/${workspaceId}`,
-      payload: {
-        status: "active",
-        onboarding_status: onboardingStatus.toLowerCase(),
-        onboarding_session_id: onboardingSessionId,
-        error_message: null,
-      },
-    });
+    stageLog("activate_workspace.start", { workspaceId, onboardingStatus });
+    let updated: WorkspaceResponsePayload;
+    try {
+      updated = await requestRuntimeJson<WorkspaceResponsePayload>({
+        method: "PATCH",
+        path: `/api/v1/workspaces/${workspaceId}`,
+        payload: {
+          status: "active",
+          onboarding_status: onboardingStatus.toLowerCase(),
+          onboarding_session_id: onboardingSessionId,
+          error_message: null,
+        },
+      });
+      stageLog("activate_workspace.ok", { workspaceId });
+    } catch (error) {
+      stageError("activate_workspace.failed", error, { workspaceId });
+      throw error;
+    }
 
     // --- Auto-bind integrations (best-effort) ---
     if (materializedTemplate) {
@@ -10801,6 +10967,47 @@ async function createWorkspace(
       } catch {
         // Auto-bind is best-effort; do not fail workspace creation.
       }
+    }
+
+    const templateAppNames = (payload.template_apps ?? []).filter(
+      (name) => typeof name === "string" && name.trim(),
+    );
+    if (templateAppNames.length > 0) {
+      stageLog("install_template_apps.start", {
+        workspaceId,
+        apps: templateAppNames,
+      });
+      try {
+        await syncAppCatalog({ source: "marketplace" });
+        stageLog("install_template_apps.catalog_synced", { workspaceId });
+      } catch (error) {
+        stageError("install_template_apps.catalog_sync_failed", error, {
+          workspaceId,
+        });
+      }
+      for (const appName of templateAppNames) {
+        try {
+          stageLog("install_template_apps.installing", {
+            workspaceId,
+            appId: appName,
+          });
+          await installAppFromCatalog({
+            workspaceId,
+            appId: appName,
+            source: "marketplace",
+          });
+          stageLog("install_template_apps.installed", {
+            workspaceId,
+            appId: appName,
+          });
+        } catch (error) {
+          stageError("install_template_apps.failed", error, {
+            workspaceId,
+            appId: appName,
+          });
+        }
+      }
+      stageLog("install_template_apps.done", { workspaceId });
     }
 
     if (onboardingSessionId) {
@@ -10883,9 +11090,10 @@ async function createWorkspace(
 async function deleteWorkspace(
   workspaceId: string,
 ): Promise<WorkspaceResponsePayload> {
+  const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
   return requestRuntimeJson<WorkspaceResponsePayload>({
     method: "DELETE",
-    path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}`,
+    path: `/api/v1/workspaces/${encodeURIComponent(safeWorkspaceId)}`,
   });
 }
 
@@ -11776,6 +11984,7 @@ async function stopEmbeddedRuntime() {
       const onExit = () => settle();
       running.once("exit", onExit);
 
+      intentionallyStoppedRuntimeProcesses.add(running);
       if (process.platform === "win32") {
         void killWindowsProcessTree(running.pid).finally(() => {
           forceSettleTimer = setTimeout(() => settle(), 1000);
@@ -11993,6 +12202,8 @@ async function startEmbeddedRuntime() {
       });
 
       child.once("exit", (code, signal) => {
+        const wasIntentional =
+          intentionallyStoppedRuntimeProcesses.delete(child);
         if (runtimeProcess === child) {
           runtimeProcess = null;
         }
@@ -12003,26 +12214,28 @@ async function startEmbeddedRuntime() {
             return;
           }
 
+          const cleanExit = wasIntentional || code === 0;
+          const nextStatus = cleanExit ? "stopped" : "error";
+          const nextError = cleanExit
+            ? ""
+            : `Runtime exited unexpectedly (code=${code ?? "null"}, signal=${signal ?? "null"}).`;
           runtimeStatus = withDesktopBrowserStatus({
             ...runtimeStatus,
-            status: code === 0 ? "stopped" : "error",
+            status: nextStatus,
             pid: null,
-            lastError:
-              code === 0
-                ? ""
-                : `Runtime exited unexpectedly (code=${code ?? "null"}, signal=${signal ?? "null"}).`,
+            lastError: nextError,
           });
           persistRuntimeProcessState({
             pid: null,
-            status: code === 0 ? "stopped" : "error",
+            status: nextStatus,
             lastStoppedAt: utcNowIso(),
-            lastError: runtimeStatus.lastError,
+            lastError: nextError,
           });
           appendRuntimeEventLog({
             category: "runtime",
             event: "embedded_runtime.exit",
-            outcome: code === 0 ? "success" : "error",
-            detail: `code=${code ?? "null"} signal=${signal ?? "null"}`,
+            outcome: cleanExit ? "success" : "error",
+            detail: `code=${code ?? "null"} signal=${signal ?? "null"}${wasIntentional ? " intentional=true" : ""}`,
           });
           emitRuntimeState();
         })();

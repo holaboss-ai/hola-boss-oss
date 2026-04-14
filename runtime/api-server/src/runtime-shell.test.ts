@@ -53,7 +53,7 @@ test("shellPathDelimiter follows platform rules", () => {
 test("buildPortListenerKillCommand emits POSIX lsof command", () => {
   assert.equal(
     buildPortListenerKillCommand([8080, 4100], "linux"),
-    "kill $(lsof -t -i :8080 2>/dev/null) 2>/dev/null || true ; kill $(lsof -t -i :4100 2>/dev/null) 2>/dev/null || true",
+    "kill $(lsof -nP -iTCP:8080 -sTCP:LISTEN -t 2>/dev/null) 2>/dev/null || true ; kill $(lsof -nP -iTCP:4100 -sTCP:LISTEN -t 2>/dev/null) 2>/dev/null || true",
   );
 });
 

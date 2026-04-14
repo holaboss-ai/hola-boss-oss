@@ -1321,11 +1321,30 @@ export function isAllowedArchiveUrl(url: string): boolean {
   const allPrefixes = [...defaultPrefixes, ...extraPrefixes];
 
   // http:// only allowed if explicitly in the override list
-  if (parsed.protocol === "http:") {
-    return extraPrefixes.some((prefix) => url.startsWith(prefix));
-  }
+  const eligiblePrefixes = parsed.protocol === "http:" ? extraPrefixes : allPrefixes;
 
-  return allPrefixes.some((prefix) => url.startsWith(prefix));
+  // Stricter than `url.startsWith(prefix)`: re-parse each prefix and
+  // compare host + pathname so an attacker can't smuggle a lookalike
+  // domain like `https://github.com.attacker.com/...` past a
+  // `https://github.com/...` prefix. The parsed-host comparison closes
+  // the suffix-attack vector entirely.
+  return eligiblePrefixes.some((prefix) => {
+    let prefixUrl: URL;
+    try {
+      prefixUrl = new URL(prefix);
+    } catch {
+      return false;
+    }
+    if (prefixUrl.protocol !== parsed.protocol) {
+      return false;
+    }
+    if (prefixUrl.host !== parsed.host) {
+      return false;
+    }
+    // Ensure the path of the request URL begins with the prefix path so
+    // we don't accept arbitrary paths under a matching host.
+    return parsed.pathname.startsWith(prefixUrl.pathname);
+  });
 }
 
 async function downloadArchiveToTemp(url: string, appId: string): Promise<string> {
@@ -1523,8 +1542,74 @@ async function runAppSetup(params: {
   workspaceId: string;
   appId: string;
   setupCommand: string;
+  logger?: {
+    info: (obj: Record<string, unknown>, msg?: string) => void;
+    warn: (obj: Record<string, unknown>, msg?: string) => void;
+    error: (obj: Record<string, unknown>, msg?: string) => void;
+  };
 }): Promise<void> {
   const appDir = path.join(params.workspaceDir, "apps", params.appId);
+  // Per-app log dir: <appDir>/.holaboss/logs. Survives across runtime
+  // restarts; timestamped + "latest" mirror for easy tail by UI/CLI.
+  const logDir = path.join(appDir, ".holaboss", "logs");
+  const runTimestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const logPath = path.join(logDir, `setup-${runTimestamp}.log`);
+  const latestLogPath = path.join(logDir, "setup.latest.log");
+  const eventsPath = path.join(logDir, "events.ndjson");
+
+  try {
+    fs.mkdirSync(logDir, { recursive: true });
+  } catch {
+    // best-effort
+  }
+
+  const logHeader = [
+    `=== app setup ===`,
+    `workspace_id: ${params.workspaceId}`,
+    `app_id:       ${params.appId}`,
+    `app_dir:      ${appDir}`,
+    `command:      ${params.setupCommand}`,
+    `started:      ${new Date().toISOString()}`,
+    `pid:          ${process.pid}`,
+    `================`,
+    ``,
+  ].join("\n");
+  try {
+    fs.writeFileSync(logPath, logHeader, "utf8");
+  } catch {
+    // best-effort
+  }
+  const appendEvent = (event: Record<string, unknown>): void => {
+    try {
+      fs.appendFileSync(
+        eventsPath,
+        `${JSON.stringify({ ts: new Date().toISOString(), ...event })}\n`,
+        "utf8",
+      );
+    } catch {
+      // best-effort
+    }
+  };
+
+  params.logger?.info(
+    {
+      event: "app.setup.start",
+      workspaceId: params.workspaceId,
+      appId: params.appId,
+      appDir,
+      logPath,
+      command: params.setupCommand,
+    },
+    "runAppSetup: starting",
+  );
+  appendEvent({
+    event: "setup.start",
+    app_id: params.appId,
+    workspace_id: params.workspaceId,
+    command: params.setupCommand,
+    log_path: logPath,
+  });
+
   params.store.upsertAppBuild({
     workspaceId: params.workspaceId,
     appId: params.appId,
@@ -1533,14 +1618,19 @@ async function runAppSetup(params: {
   const setupTimeoutMs = appSetupTimeoutMs();
 
   try {
-    const result = await new Promise<{ code: number | null; timedOut: boolean; stderr: string }>((resolve, reject) => {
+    const result = await new Promise<{ code: number | null; timedOut: boolean; stdout: string; stderr: string }>((resolve, reject) => {
+      // Captures are bounded at ~256 KiB per stream for the log file but
+      // only the last 4 KiB is kept in memory for the DB/error message,
+      // so runaway output can't OOM the runtime.
+      const MAX_CAPTURE_BYTES = 256 * 1024;
+      let stdout = "";
       let stderr = "";
       let settled = false;
       const child = spawn(params.setupCommand, {
         cwd: appDir,
         env: buildAppSetupEnv(appDir),
         shell: true,
-        stdio: ["ignore", "ignore", "pipe"]
+        stdio: ["ignore", "pipe", "pipe"]
       });
       const timeoutHandle = setTimeout(() => {
         if (settled) {
@@ -1548,15 +1638,22 @@ async function runAppSetup(params: {
         }
         settled = true;
         killChildProcess(child, "SIGKILL");
-        resolve({ code: null, timedOut: true, stderr });
+        resolve({ code: null, timedOut: true, stdout, stderr });
       }, setupTimeoutMs);
 
-      child.stderr?.on("data", (chunk: Buffer | string) => {
-        if (stderr.length >= 2000) {
+      child.stdout?.on("data", (chunk: Buffer | string) => {
+        if (stdout.length >= MAX_CAPTURE_BYTES) {
           return;
         }
         const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-        stderr = `${stderr}${text}`.slice(0, 2000);
+        stdout = `${stdout}${text}`.slice(0, MAX_CAPTURE_BYTES);
+      });
+      child.stderr?.on("data", (chunk: Buffer | string) => {
+        if (stderr.length >= MAX_CAPTURE_BYTES) {
+          return;
+        }
+        const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+        stderr = `${stderr}${text}`.slice(0, MAX_CAPTURE_BYTES);
       });
       child.on("error", (error) => {
         if (settled) {
@@ -1572,40 +1669,136 @@ async function runAppSetup(params: {
         }
         settled = true;
         clearTimeout(timeoutHandle);
-        resolve({ code, timedOut: false, stderr });
+        resolve({ code, timedOut: false, stdout, stderr });
       });
     });
 
+    // Always write the full captured output to the log file so
+    // debugging doesn't require re-running the setup.
+    const body = [
+      logHeader,
+      `--- STDOUT ---`,
+      result.stdout,
+      ``,
+      `--- STDERR ---`,
+      result.stderr,
+      ``,
+      `--- END ---`,
+      `exit_code: ${result.code ?? "null (killed)"}`,
+      `timed_out: ${result.timedOut}`,
+      `finished:  ${new Date().toISOString()}`,
+      ``,
+    ].join("\n");
+    try {
+      fs.writeFileSync(logPath, body, "utf8");
+      fs.writeFileSync(latestLogPath, body, "utf8");
+    } catch {
+      // best-effort
+    }
+
     if (result.timedOut) {
       const timeoutSeconds = Math.max(1, Math.round(setupTimeoutMs / 1000));
+      const msg = `setup timed out after ${timeoutSeconds}s — see ${logPath}`;
+      params.logger?.error(
+        {
+          event: "app.setup.timeout",
+          workspaceId: params.workspaceId,
+          appId: params.appId,
+          logPath,
+          timeoutSeconds,
+          stderrTail: result.stderr.slice(-1000),
+        },
+        "runAppSetup: timed out",
+      );
+      appendEvent({
+        event: "setup.timeout",
+        app_id: params.appId,
+        timeout_seconds: timeoutSeconds,
+        log_path: logPath,
+      });
       params.store.upsertAppBuild({
         workspaceId: params.workspaceId,
         appId: params.appId,
         status: "failed",
-        error: `setup timed out after ${timeoutSeconds}s`
+        error: msg,
       });
       return;
     }
     if ((result.code ?? 0) !== 0) {
+      const errorMsg = [
+        `setup exited with code ${result.code} — see ${logPath}`,
+        ``,
+        result.stderr.slice(-1500),
+      ].join("\n");
+      params.logger?.error(
+        {
+          event: "app.setup.failed",
+          workspaceId: params.workspaceId,
+          appId: params.appId,
+          logPath,
+          exitCode: result.code,
+          stderrTail: result.stderr.slice(-2000),
+          stdoutTail: result.stdout.slice(-2000),
+        },
+        "runAppSetup: exited non-zero",
+      );
+      appendEvent({
+        event: "setup.failed",
+        app_id: params.appId,
+        exit_code: result.code,
+        log_path: logPath,
+      });
       params.store.upsertAppBuild({
         workspaceId: params.workspaceId,
         appId: params.appId,
         status: "failed",
-        error: result.stderr
+        error: errorMsg.slice(0, 2000),
       });
       return;
     }
+    params.logger?.info(
+      {
+        event: "app.setup.completed",
+        workspaceId: params.workspaceId,
+        appId: params.appId,
+        logPath,
+        stdoutBytes: result.stdout.length,
+      },
+      "runAppSetup: completed",
+    );
+    appendEvent({
+      event: "setup.success",
+      app_id: params.appId,
+      log_path: logPath,
+    });
     params.store.upsertAppBuild({
       workspaceId: params.workspaceId,
       appId: params.appId,
       status: "completed"
     });
   } catch (error) {
+    const errMsg = (error instanceof Error ? error.message : String(error)).slice(0, 2000);
+    params.logger?.error(
+      {
+        event: "app.setup.exception",
+        workspaceId: params.workspaceId,
+        appId: params.appId,
+        logPath,
+        err: errMsg,
+      },
+      "runAppSetup: threw",
+    );
+    appendEvent({
+      event: "setup.exception",
+      app_id: params.appId,
+      err: errMsg,
+      log_path: logPath,
+    });
     params.store.upsertAppBuild({
       workspaceId: params.workspaceId,
       appId: params.appId,
       status: "failed",
-      error: (error instanceof Error ? error.message : String(error)).slice(0, 2000)
+      error: `${errMsg} (see ${logPath})`.slice(0, 2000)
     });
   }
 }
@@ -1721,6 +1914,11 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const backgroundTasks = new Set<Promise<void>>();
   const appSetupTasks = new Map<string, Promise<void>>();
   const appEnsureRunningTasks = new Map<string, Promise<void>>();
+  // Serializes /api/v1/apps/install-archive against itself for the same
+  // (workspaceId, appId). Without this, two concurrent installs both pass
+  // the empty-appDir check, both extract on top of each other, and both
+  // race-write app.runtime.yaml producing corrupt state.
+  const appInstallTasks = new Map<string, Promise<unknown>>();
   const appLifecycleExecutor = options.appLifecycleExecutor ?? new RuntimeAppLifecycleExecutor({ store });
   const memoryService = options.memoryService ?? new FilesystemMemoryService({ workspaceRoot: store.workspaceRoot });
   const runtimeConfigService = options.runtimeConfigService ?? new FileRuntimeConfigService();
@@ -1792,6 +1990,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     workspaceDir: string,
     appId: string,
     resolved: { ports: { mcp: number }; resolvedApp: { mcpTools: string[]; mcp: { path: string } } },
+    options: { bumpStartedAt?: boolean } = {},
   ): void {
     if (resolved.resolvedApp.mcpTools.length === 0) {
       return;
@@ -1803,6 +2002,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         mcpPath: resolved.resolvedApp.mcp.path || "/mcp/sse",
         mcpTimeoutMs: 30000,
         mcpPort: resolved.ports.mcp,
+        bumpStartedAt: options.bumpStartedAt === true,
       });
     } catch (error) {
       app.log.warn(
@@ -1821,38 +2021,114 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
 
     const task = (async () => {
+      app.log.info(
+        { event: "app.ensure_running.start", workspaceId, appId },
+        "ensureAppRunning: begin",
+      );
       const workspaceDir = store.workspaceDir(workspaceId);
-      const resolved = resolveWorkspaceAppRuntime(workspaceDir, appId, {
-        store,
-        workspaceId,
-        allocatePorts: true
-      });
+      let resolved;
+      try {
+        resolved = resolveWorkspaceAppRuntime(workspaceDir, appId, {
+          store,
+          workspaceId,
+          allocatePorts: true
+        });
+      } catch (error) {
+        app.log.error(
+          {
+            event: "app.ensure_running.resolve_failed",
+            workspaceId,
+            appId,
+            err: error instanceof Error ? error.message : String(error),
+          },
+          "ensureAppRunning: resolveWorkspaceAppRuntime threw",
+        );
+        throw error;
+      }
+      app.log.info(
+        {
+          event: "app.ensure_running.resolved",
+          workspaceId,
+          appId,
+          appDir: resolved.appDir,
+          httpPort: resolved.ports.http,
+          mcpPort: resolved.ports.mcp,
+        },
+        "ensureAppRunning: resolved runtime",
+      );
 
       // Already healthy — sync DB and return.
-      if (
-        await isAppHealthy({
-          resolvedApp: resolved.resolvedApp,
-          httpPort: resolved.ports.http,
-          mcpPort: resolved.ports.mcp
-        })
-      ) {
+      //
+      // For shell-style lifecycles (lifecycle.start or startCommand) we
+      // ALSO require that the executor is currently tracking a child
+      // process. Otherwise the port could be responding because of an
+      // orphan process from a previous runtime (e.g. crashed without
+      // cleanup) or a port collision. Trusting such a process means we
+      // can never cleanly stop or restart the app, so we fall through
+      // to the start path which will re-spawn under our control.
+      //
+      // Compose-managed apps are owned by docker, not by us, so the
+      // tracking check doesn't apply there — trust isAppHealthy.
+      const isShellManaged =
+        Boolean(resolved.resolvedApp.lifecycle.start?.trim()) ||
+        Boolean(resolved.resolvedApp.startCommand?.trim());
+      const healthy = await isAppHealthy({
+        resolvedApp: resolved.resolvedApp,
+        httpPort: resolved.ports.http,
+        mcpPort: resolved.ports.mcp
+      });
+      // When the executor doesn't expose isTrackingApp (e.g. test doubles)
+      // fall back to trusting the health probe — preserves prior behavior.
+      const tracked = appLifecycleExecutor.isTrackingApp
+        ? appLifecycleExecutor.isTrackingApp({ workspaceId, appId })
+        : true;
+      if (healthy && (!isShellManaged || tracked)) {
+        app.log.info(
+          { event: "app.ensure_running.already_healthy", workspaceId, appId },
+          "ensureAppRunning: already healthy, short-circuiting",
+        );
         store.upsertAppBuild({ workspaceId, appId, status: "running" });
         reconcileAppMcpRegistry(workspaceDir, appId, resolved);
         return;
       }
+      if (healthy && isShellManaged) {
+        app.log.warn(
+          { event: "app.ensure_running.orphan_detected", workspaceId, appId, http: resolved.ports.http, mcp: resolved.ports.mcp },
+          "ensureAppRunning: port reports healthy but no tracked process; treating as orphan and restarting",
+        );
+        // Best-effort kill of any process on these ports before we
+        // start a fresh one so we don't dual-bind.
+        try {
+          await killPortListeners([resolved.ports.http, resolved.ports.mcp]);
+        } catch {
+          // best-effort
+        }
+      }
 
       // Setup needed?
       const build = store.getAppBuild({ workspaceId, appId });
-      if (
+      const needsSetup =
         !appBuildHasCompletedSetup(build?.status) &&
-        resolved.resolvedApp.lifecycle.setup.trim().length > 0
-      ) {
+        resolved.resolvedApp.lifecycle.setup.trim().length > 0;
+      app.log.info(
+        {
+          event: "app.ensure_running.setup_gate",
+          workspaceId,
+          appId,
+          buildStatus: build?.status ?? null,
+          hasSetupCommand: resolved.resolvedApp.lifecycle.setup.trim().length > 0,
+          needsSetup,
+        },
+        "ensureAppRunning: setup gate",
+      );
+      if (needsSetup) {
         await runAppSetup({
           store,
           workspaceDir,
           workspaceId,
           appId,
-          setupCommand: resolved.resolvedApp.lifecycle.setup
+          setupCommand: resolved.resolvedApp.lifecycle.setup,
+          logger: app.log,
         });
         const afterSetup = store.getAppBuild({ workspaceId, appId });
         if (afterSetup?.status === "failed") {
@@ -1860,27 +2136,56 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
             new Error(afterSetup.error ?? "setup failed"),
             { sentryExtras: { workspaceId, appId } },
           );
+          app.log.error(
+            { event: "app.ensure_running.setup_failed", workspaceId, appId, err: afterSetup.error },
+            "ensureAppRunning: setup failed, aborting start",
+          );
           throw setupError;
         }
       }
 
       // Start app process.
-      const result = await appLifecycleExecutor.startApp({
-        appId,
-        appDir: resolved.appDir,
-        httpPort: resolved.ports.http,
-        mcpPort: resolved.ports.mcp,
-        workspaceId,
-        resolvedApp: resolved.resolvedApp,
-        skipSetup: true
-      });
+      app.log.info(
+        { event: "app.ensure_running.start_spawn", workspaceId, appId, appDir: resolved.appDir },
+        "ensureAppRunning: spawning lifecycle.start",
+      );
+      let result;
+      try {
+        result = await appLifecycleExecutor.startApp({
+          appId,
+          appDir: resolved.appDir,
+          httpPort: resolved.ports.http,
+          mcpPort: resolved.ports.mcp,
+          workspaceId,
+          resolvedApp: resolved.resolvedApp,
+          skipSetup: true
+        });
+      } catch (error) {
+        app.log.error(
+          {
+            event: "app.ensure_running.start_failed",
+            workspaceId,
+            appId,
+            err: error instanceof Error ? error.message : String(error),
+          },
+          "ensureAppRunning: startApp threw",
+        );
+        throw error;
+      }
       store.upsertAppBuild({
         workspaceId,
         appId,
         status: result.status === "started" ? "running" : result.status
       });
+      app.log.info(
+        { event: "app.ensure_running.started", workspaceId, appId, status: result.status },
+        "ensureAppRunning: started",
+      );
 
-      reconcileAppMcpRegistry(workspaceDir, appId, resolved);
+      // Bump started_at on the post-start path so any MCP client watching
+      // workspace.yaml can drop cached SSE streams and reconnect. The
+      // "already healthy" path above does NOT bump (idempotent).
+      reconcileAppMcpRegistry(workspaceDir, appId, resolved, { bumpStartedAt: true });
     })();
 
     appEnsureRunningTasks.set(taskKey, task);
@@ -2093,8 +2398,30 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
     healthMonitorTimer = setInterval(() => {
       void runHealthMonitorCycle();
+      // Reconcile orphan processes on a slower cadence (every Nth tick).
+      // Doing this on every tick would be wasteful; doing it only at
+      // startup means that if a workspace is deleted while the runtime
+      // is running and stopWorkspaceApplicationsForDeletion misses a
+      // process, we would never clean it up until the next runtime
+      // restart.
+      orphanCleanupTickCounter += 1;
+      if (orphanCleanupTickCounter >= ORPHAN_CLEANUP_EVERY_N_TICKS) {
+        orphanCleanupTickCounter = 0;
+        void cleanupOrphanAppProcesses(store, app.log).catch((err) => {
+          app.log.warn(
+            { err: err instanceof Error ? err.message : String(err) },
+            "periodic orphan app process cleanup failed",
+          );
+        });
+      }
     }, HEALTH_MONITOR_INTERVAL_MS);
   }
+
+  // Run orphan cleanup roughly every 10 health-monitor ticks. With the
+  // default 30s interval that's once every ~5 minutes — frequent enough
+  // to catch leaks while still cheap.
+  let orphanCleanupTickCounter = 0;
+  const ORPHAN_CLEANUP_EVERY_N_TICKS = 10;
 
   async function runHealthMonitorCycle(): Promise<void> {
     let workspaces: WorkspaceRecord[];
@@ -2147,22 +2474,85 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         const key = `${ws.id}:${appId}`;
         if (healthy) {
           autoRestartAttempts.delete(key);
+          // Persistent counter is also reset so the next runtime restart
+          // starts from a clean slate when this app is currently healthy.
+          if ((build?.restartAttempts ?? 0) > 0) {
+            store.setAppBuildRestartAttempts({
+              workspaceId: ws.id,
+              appId,
+              attempts: 0,
+            });
+          }
           if (build?.status !== "running") {
             store.upsertAppBuild({ workspaceId: ws.id, appId, status: "running" });
           }
           continue;
         }
 
-        const attempts = (autoRestartAttempts.get(key) ?? 0) + 1;
+        // Seed the in-memory counter from the persistent column so that a
+        // crash-loop survives runtime restarts and eventually trips the
+        // circuit breaker instead of looping forever.
+        const persistedAttempts = build?.restartAttempts ?? 0;
+        const previousInMemory = autoRestartAttempts.get(key) ?? persistedAttempts;
+        const attempts = previousInMemory + 1;
         autoRestartAttempts.set(key, attempts);
+        try {
+          store.setAppBuildRestartAttempts({
+            workspaceId: ws.id,
+            appId,
+            attempts,
+          });
+        } catch (err) {
+          app.log.debug(
+            { workspaceId: ws.id, appId, err: err instanceof Error ? err.message : String(err) },
+            "health monitor: failed to persist restart_attempts",
+          );
+        }
         if (attempts <= MAX_AUTO_RESTART_ATTEMPTS) {
           app.log.info({ workspaceId: ws.id, appId, attempt: attempts }, "health monitor: restarting unhealthy app");
-          void ensureAppRunning(ws.id, appId).catch((err) => {
-            Sentry.captureException(err, {
-              extra: { workspaceId: ws.id, appId },
-            });
-            app.log.error({ workspaceId: ws.id, appId, err: err instanceof Error ? err.message : String(err) }, "health monitor: restart failed");
-          });
+          // Stop the (possibly half-dead) tracked process and free its
+          // ports BEFORE asking ensureAppRunning to start a fresh one.
+          // Otherwise a zombie listener can keep the port bound and the
+          // restart spawn fails immediately. Both calls are best-effort.
+          void (async () => {
+            try {
+              await appLifecycleExecutor.stopApp({
+                appId,
+                appDir: resolved.appDir,
+                workspaceId: ws.id,
+                resolvedApp: resolved.resolvedApp,
+              });
+            } catch (stopErr) {
+              app.log.debug(
+                {
+                  workspaceId: ws.id,
+                  appId,
+                  err: stopErr instanceof Error ? stopErr.message : String(stopErr),
+                },
+                "health monitor: best-effort stopApp before restart failed",
+              );
+            }
+            try {
+              await killPortListeners([resolved.ports.http, resolved.ports.mcp]);
+            } catch {
+              // best-effort
+            }
+            try {
+              await ensureAppRunning(ws.id, appId);
+            } catch (err) {
+              Sentry.captureException(err, {
+                extra: { workspaceId: ws.id, appId },
+              });
+              app.log.error(
+                {
+                  workspaceId: ws.id,
+                  appId,
+                  err: err instanceof Error ? err.message : String(err),
+                },
+                "health monitor: restart failed",
+              );
+            }
+          })();
         } else if (attempts === MAX_AUTO_RESTART_ATTEMPTS + 1) {
           app.log.error({ workspaceId: ws.id, appId, attempts: attempts - 1 }, "health monitor: max restart attempts exceeded");
           Sentry.captureException(new Error(`App ${appId} crashed and failed to recover after ${MAX_AUTO_RESTART_ATTEMPTS} attempts`), {
@@ -3672,6 +4062,65 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
+  // Returns the latest setup log tail for an app. Used by the desktop
+  // UI and operators to diagnose install/build failures without having
+  // to ssh into the workspace directory. 404 if the app has never run
+  // its lifecycle setup (e.g. pre-built archives where setup is "true").
+  app.get("/api/v1/apps/:appId/setup-log", async (request, reply) => {
+    const params = request.params as { appId: string };
+    const query = isRecord(request.query) ? request.query : {};
+    const workspaceId = requiredString(query.workspace_id, "workspace_id");
+    let appId: string;
+    try {
+      appId = sanitizeAppId(params.appId);
+    } catch (error) {
+      return sendError(reply, 400, error instanceof Error ? error.message : "invalid app_id");
+    }
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+    const workspaceDir = store.workspaceDir(workspaceId);
+    const appDir = path.join(workspaceDir, "apps", appId);
+    const logDir = path.join(appDir, ".holaboss", "logs");
+    const latest = path.join(logDir, "setup.latest.log");
+    if (!fs.existsSync(latest)) {
+      return sendError(reply, 404, "no setup log found for this app");
+    }
+    const bytes = optionalInteger(query.bytes, 32 * 1024);
+    const stat = fs.statSync(latest);
+    const readBytes = Math.min(Math.max(1024, bytes), 512 * 1024);
+    // Read only the tail to avoid dumping multi-MB logs over IPC.
+    const fd = fs.openSync(latest, "r");
+    try {
+      const start = Math.max(0, stat.size - readBytes);
+      const buf = Buffer.alloc(stat.size - start);
+      fs.readSync(fd, buf, 0, buf.length, start);
+      const events: unknown[] = [];
+      const eventsPath = path.join(logDir, "events.ndjson");
+      if (fs.existsSync(eventsPath)) {
+        const lines = fs.readFileSync(eventsPath, "utf8").trim().split("\n").slice(-50);
+        for (const line of lines) {
+          try {
+            events.push(JSON.parse(line));
+          } catch {
+            // ignore malformed lines
+          }
+        }
+      }
+      return {
+        app_id: appId,
+        workspace_id: workspaceId,
+        log_path: latest,
+        log_size_bytes: stat.size,
+        log_tail: buf.toString("utf8"),
+        recent_events: events,
+      };
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
+
   app.get("/api/v1/apps/:appId/build-status", async (request, reply) => {
     const params = request.params as { appId: string };
     const query = isRecord(request.query) ? request.query : {};
@@ -3805,60 +4254,148 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     } catch (error) {
       return sendError(reply, 400, error instanceof Error ? error.message : "invalid app_id");
     }
+    app.log.info(
+      { event: "app.install_archive.begin", workspaceId, appId },
+      "install-archive: request received",
+    );
 
-    const rawArchivePath =
-      typeof request.body.archive_path === "string" ? request.body.archive_path : "";
-    const rawArchiveUrl =
-      typeof request.body.archive_url === "string" ? request.body.archive_url : "";
-
-    if (rawArchivePath && rawArchiveUrl) {
-      return sendError(reply, 400, "provide either archive_path or archive_url, not both");
+    // Serialize concurrent installs for the same (workspaceId, appId).
+    const installKey = `${workspaceId}:${appId}`;
+    const inFlightInstall = appInstallTasks.get(installKey);
+    if (inFlightInstall) {
+      // Another install for the same app is already running; tell the
+      // caller to retry later rather than racing on the filesystem.
+      return sendError(reply, 409, "app install already in progress for this id");
     }
-    if (!rawArchivePath && !rawArchiveUrl) {
-      return sendError(reply, 400, "archive_path or archive_url is required");
-    }
 
-    let archivePath: string;
+    // Claim the install lock before ANY async work, early return, or
+    // filesystem mutation. Two bugs hide in delaying this:
+    //   1. Concurrent archive_url requests both pass the in-flight check
+    //      above, both await downloadArchiveToTemp, and both reach
+    //      extraction/registration — the download was the race window.
+    //   2. Any early return taken before the try/finally leaves the lock
+    //      set, pinning that (workspaceId, appId) until the runtime
+    //      restarts (e.g. the "app already installed" path).
+    // Every exit path below now runs through the finally that clears it.
+    let installPromiseResolve!: () => void;
+    const installMarker = new Promise<void>((resolve) => {
+      installPromiseResolve = resolve;
+    });
+    appInstallTasks.set(installKey, installMarker);
+
+    let archivePath = "";
     let cleanupTempFile = false;
 
-    if (rawArchiveUrl) {
-      if (!isAllowedArchiveUrl(rawArchiveUrl)) {
-        return sendError(reply, 400, "archive_url outside allowlist");
-      }
-      try {
-        archivePath = await downloadArchiveToTemp(rawArchiveUrl, appId);
-        cleanupTempFile = true;
-      } catch (error) {
-        return sendError(
-          reply,
-          400,
-          `archive download failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    } else {
-      archivePath = rawArchivePath;
-      if (!isAllowedArchivePath(archivePath)) {
-        return sendError(reply, 400, "archive_path outside allowed roots");
-      }
-      if (!fs.existsSync(archivePath) || !fs.statSync(archivePath).isFile()) {
-        return sendError(reply, 400, "archive_path does not exist");
-      }
-    }
-
-    const workspaceDir = store.workspaceDir(workspaceId);
-    const appDir = path.join(workspaceDir, "apps", appId);
-    if (fs.existsSync(appDir) && fs.readdirSync(appDir).length > 0) {
-      if (cleanupTempFile) {
-        try { fs.rmSync(archivePath, { force: true }); } catch { /* best effort */ }
-      }
-      return sendError(reply, 409, "app already installed — uninstall first");
-    }
-    fs.mkdirSync(appDir, { recursive: true });
-
     try {
+      const rawArchivePath =
+        typeof request.body.archive_path === "string" ? request.body.archive_path : "";
+      const rawArchiveUrl =
+        typeof request.body.archive_url === "string" ? request.body.archive_url : "";
+
+      if (rawArchivePath && rawArchiveUrl) {
+        return sendError(reply, 400, "provide either archive_path or archive_url, not both");
+      }
+      if (!rawArchivePath && !rawArchiveUrl) {
+        return sendError(reply, 400, "archive_path or archive_url is required");
+      }
+
+      if (rawArchiveUrl) {
+        if (!isAllowedArchiveUrl(rawArchiveUrl)) {
+          app.log.warn(
+            { event: "app.install_archive.url_denied", workspaceId, appId, url: rawArchiveUrl },
+            "install-archive: archive_url outside allowlist",
+          );
+          return sendError(reply, 400, "archive_url outside allowlist");
+        }
+        try {
+          app.log.info(
+            { event: "app.install_archive.download_start", workspaceId, appId, url: rawArchiveUrl },
+            "install-archive: downloading",
+          );
+          archivePath = await downloadArchiveToTemp(rawArchiveUrl, appId);
+          cleanupTempFile = true;
+          app.log.info(
+            { event: "app.install_archive.download_complete", workspaceId, appId, archivePath },
+            "install-archive: download complete",
+          );
+        } catch (error) {
+          app.log.error(
+            {
+              event: "app.install_archive.download_failed",
+              workspaceId,
+              appId,
+              url: rawArchiveUrl,
+              err: error instanceof Error ? error.message : String(error),
+            },
+            "install-archive: download failed",
+          );
+          return sendError(
+            reply,
+            400,
+            `archive download failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      } else {
+        archivePath = rawArchivePath;
+        if (!isAllowedArchivePath(archivePath)) {
+          return sendError(reply, 400, "archive_path outside allowed roots");
+        }
+        if (!fs.existsSync(archivePath) || !fs.statSync(archivePath).isFile()) {
+          return sendError(reply, 400, "archive_path does not exist");
+        }
+      }
+
+      const workspaceDir = store.workspaceDir(workspaceId);
+      const appDir = path.join(workspaceDir, "apps", appId);
+      if (fs.existsSync(appDir) && fs.readdirSync(appDir).length > 0) {
+        return sendError(reply, 409, "app already installed — uninstall first");
+      }
+      fs.mkdirSync(appDir, { recursive: true });
+
+      app.log.info(
+        { event: "app.install_archive.extract_start", workspaceId, appId, appDir },
+        "install-archive: extracting tarball",
+      );
       try {
-        await tar.x({ file: archivePath, cwd: appDir, strict: true });
+        await tar.x({
+          file: archivePath,
+          cwd: appDir,
+          strict: true,
+          // Defense-in-depth: drop owner uid/gid metadata via portable
+          // so archives can't smuggle ownership, and reject entries
+          // whose normalized path escapes appDir. We do NOT strip the
+          // executable bit: prebuilt marketplace archives ship with
+          // `node_modules/.bin/*` shebang scripts that need +x to run
+          // (`npm run build` → `vite`), and turning them into plain
+          // files would break every app that uses pnpm/vite/esbuild.
+          portable: true,
+          filter: (entryPath) => {
+            const normalized = path.posix.normalize(entryPath);
+            if (
+              normalized.startsWith("/") ||
+              normalized.startsWith("..") ||
+              normalized.split("/").includes("..")
+            ) {
+              return false;
+            }
+            return true;
+          },
+        });
+        app.log.info(
+          { event: "app.install_archive.extract_complete", workspaceId, appId, appDir },
+          "install-archive: extraction complete",
+        );
       } catch (error) {
+        app.log.error(
+          {
+            event: "app.install_archive.extract_failed",
+            workspaceId,
+            appId,
+            appDir,
+            err: error instanceof Error ? error.message : String(error),
+          },
+          "install-archive: tar extraction threw",
+        );
         fs.rmSync(appDir, { recursive: true, force: true });
         return sendError(
           reply,
@@ -3869,6 +4406,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
       const appYamlPath = path.join(appDir, "app.runtime.yaml");
       if (!fs.existsSync(appYamlPath)) {
+        app.log.error(
+          { event: "app.install_archive.yaml_missing", workspaceId, appId, appYamlPath },
+          "install-archive: app.runtime.yaml missing after extract",
+        );
         fs.rmSync(appDir, { recursive: true, force: true });
         return sendError(reply, 400, "app.runtime.yaml not found in archive root");
       }
@@ -3936,13 +4477,25 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         lifecycle: Object.keys(lifecycle).length > 0 ? lifecycle : null,
       });
 
+      app.log.info(
+        { event: "app.install_archive.registered", workspaceId, appId, configPath: parsed.configPath },
+        "install-archive: appended to workspace.yaml, handing off to ensureAppRunning",
+      );
       let runResult: { ready: boolean; error: string | null; detail: string };
       try {
         await ensureAppRunning(workspaceId, appId);
         runResult = { ready: true, error: null, detail: "App installed and running" };
+        app.log.info(
+          { event: "app.install_archive.ensure_running_ok", workspaceId, appId },
+          "install-archive: ensureAppRunning succeeded",
+        );
       } catch (error) {
         const message = (error instanceof Error ? error.message : String(error)).slice(0, 2000);
         runResult = { ready: false, error: message, detail: message };
+        app.log.error(
+          { event: "app.install_archive.ensure_running_failed", workspaceId, appId, err: message },
+          "install-archive: ensureAppRunning threw",
+        );
       }
 
       // Write the MCP registry entry now that ensureAppRunning has allocated ports.
@@ -3980,6 +4533,8 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
           /* best effort cleanup */
         }
       }
+      appInstallTasks.delete(installKey);
+      installPromiseResolve();
     }
   });
 
