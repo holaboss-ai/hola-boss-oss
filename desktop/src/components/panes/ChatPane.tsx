@@ -6359,22 +6359,25 @@ function TraceStepGroup({
       <button
         type="button"
         onClick={() => setGroupExpanded((v) => !v)}
-        className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 -ml-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60"
+        className="flex w-full items-start gap-2 rounded-lg px-2.5 py-1.5 -ml-2.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/60"
       >
         {groupHasTerminalError ? (
-          <AlertTriangle size={13} className="text-destructive" />
+          <AlertTriangle size={13} className="mt-0.5 shrink-0 text-destructive" />
         ) : groupIsLive || runningCount > 0 ? (
-          <Loader2 size={13} className="animate-spin text-muted-foreground" />
+          <Loader2
+            size={13}
+            className="mt-0.5 shrink-0 animate-spin text-muted-foreground"
+          />
         ) : (
-          <Check size={13} className="text-emerald-500" />
+          <Check size={13} className="mt-0.5 shrink-0 text-emerald-500" />
         )}
-        <span>
+        <span className="min-w-0 flex-1 leading-5">
           {summaryLabel}
           {summarySuffix}
         </span>
         <ChevronDown
           size={12}
-          className={`transition-transform ${groupExpanded ? "rotate-180" : ""}`}
+          className={`mt-0.5 shrink-0 transition-transform ${groupExpanded ? "rotate-180" : ""}`}
         />
       </button>
 

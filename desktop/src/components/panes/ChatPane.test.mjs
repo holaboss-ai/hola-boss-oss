@@ -223,6 +223,11 @@ test("chat trace collapsed summary surfaces the current active step", async () =
     source,
     /summaryStep[\s\S]*summaryStep === activeStep \|\| summaryStep\.status === "waiting"[\s\S]*`\$\{traceStatusLabel\(summaryStep\.status\)\}: \$\{summaryStep\.title\}`[\s\S]*groupIsLive[\s\S]*summaryStep\.title/,
   );
+  assert.match(
+    source,
+    /className="flex w-full items-start gap-2 rounded-lg px-2\.5 py-1\.5 -ml-2\.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted\/60"/,
+  );
+  assert.match(source, /<span className="min-w-0 flex-1 leading-5">/);
 });
 
 test("chat pane keeps compaction restore inside bootstrap status instead of a standalone phase card", async () => {
