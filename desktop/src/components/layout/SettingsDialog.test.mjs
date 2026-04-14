@@ -7,6 +7,7 @@ const SETTINGS_DIALOG_PATH = new URL("./SettingsDialog.tsx", import.meta.url);
 test("settings dialog includes an automations section with a workspace selector", async () => {
   const source = await readFile(SETTINGS_DIALOG_PATH, "utf8");
 
+  assert.match(source, /appVersion: string;/);
   assert.match(source, /import \{ AutomationsPane \} from "@\/components\/panes\/AutomationsPane";/);
   assert.match(source, /import \{ useWorkspaceDesktop \} from "@\/lib\/workspaceDesktop";/);
   assert.match(source, /import \{\s*Select,\s*SelectContent,\s*SelectItem,\s*SelectTrigger,\s*SelectValue,\s*\} from "@\/components\/ui\/select";/);
@@ -25,6 +26,16 @@ test("settings dialog includes an automations section with a workspace selector"
   assert.match(source, /<AutomationsPane[\s\S]*workspaceId=\{automationsWorkspaceId \|\| null\}[\s\S]*showHeader=\{false\}[\s\S]*toolbarLeading=\{/);
   assert.match(source, /onEditSchedule=\{\(job\) => \{/);
   assert.match(source, /onEditAutomationSchedule\(automationsWorkspaceId, job\);/);
+});
+
+test("settings dialog about section shows the app version", async () => {
+  const source = await readFile(SETTINGS_DIALOG_PATH, "utf8");
+
+  assert.match(source, /const displayAppVersion = appVersion\.trim\(\) \|\| "Unavailable";/);
+  assert.match(source, /activeSection === "about" \? \(/);
+  assert.match(source, /Holaboss Desktop/);
+  assert.match(source, /Version/);
+  assert.match(source, /v\{displayAppVersion\}/);
 });
 
 test("settings nav lists automations below model providers", async () => {

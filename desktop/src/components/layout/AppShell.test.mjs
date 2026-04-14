@@ -112,6 +112,15 @@ test("app shell opens the centered add apps dialog from the applications explore
   );
 });
 
+test("app shell passes the current app version into the settings dialog", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(
+    source,
+    /<SettingsDialog[\s\S]*appVersion=\{effectiveAppUpdateStatus\?\.currentVersion \|\| ""\}/,
+  );
+});
+
 test("app shell clears a consumed file explorer focus request", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 

@@ -51,6 +51,7 @@ const THEME_SWATCHES: Record<string, [string, string, string]> = {
 interface SettingsDialogProps {
   open: boolean;
   activeSection: UiSettingsPaneSection;
+  appVersion: string;
   onSectionChange: (section: UiSettingsPaneSection) => void;
   onClose: () => void;
   theme: string;
@@ -141,6 +142,7 @@ function prettifyThemeLabel(theme: string): string {
 export function SettingsDialog({
   open,
   activeSection,
+  appVersion,
   onSectionChange,
   onClose,
   theme,
@@ -152,6 +154,7 @@ export function SettingsDialog({
   onEditAutomationSchedule,
 }: SettingsDialogProps) {
   const { workspaces, selectedWorkspace } = useWorkspaceDesktop();
+  const displayAppVersion = appVersion.trim() || "Unavailable";
   const [automationsWorkspaceId, setAutomationsWorkspaceId] = useState("");
   const [diagnosticsExportState, setDiagnosticsExportState] = useState<{
     status: "idle" | "exporting" | "success" | "error";
@@ -424,6 +427,30 @@ export function SettingsDialog({
 
             {activeSection === "about" ? (
               <div className="grid max-w-[720px] gap-8">
+                <section className="theme-subtle-surface rounded-[24px] border border-border/40 p-5">
+                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                    App
+                  </div>
+
+                  <div className="mt-5 flex items-center justify-between gap-4 rounded-[18px] border border-border/40 bg-card/80 px-4 py-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-foreground">
+                        Holaboss Desktop
+                      </div>
+                      <div className="mt-1 text-sm text-muted-foreground">
+                        Version
+                      </div>
+                    </div>
+
+                    <Badge
+                      variant="outline"
+                      className="rounded-full border-border/45 bg-background/80 font-mono text-xs text-foreground"
+                    >
+                      v{displayAppVersion}
+                    </Badge>
+                  </div>
+                </section>
+
                 <section className="theme-subtle-surface rounded-[24px] border border-border/40 p-5">
                   <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
                     Links

@@ -3918,6 +3918,7 @@ function AppShellContent() {
       <SettingsDialog
         open={settingsDialogOpen}
         activeSection={settingsDialogSection}
+        appVersion={effectiveAppUpdateStatus?.currentVersion || ""}
         onSectionChange={setSettingsDialogSection}
         onClose={() => setSettingsDialogOpen(false)}
         theme={theme}
