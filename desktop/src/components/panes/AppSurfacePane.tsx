@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, LoaderCircle, Plug, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { providerIcon } from "@/components/onboarding/constants";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import { getWorkspaceAppDefinition, type WorkspaceAppDefinition, type WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
@@ -30,7 +31,8 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
   const ready = app && "ready" in app ? app.ready : false;
   const error = app && "error" in app && typeof app.error === "string" ? app.error : null;
   const summary = app?.summary ?? "";
-  const accentClassName = app && "accentClassName" in app ? app.accentClassName : "bg-muted-foreground/40";
+  const brandIcon = providerIcon(appId, 22);
+  const iconFallback = label.slice(0, 2).toUpperCase();
 
   const routePath = useMemo(
     () => resolveAppSurfacePath({ resourceId, view }),
@@ -141,7 +143,7 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
   if (!ready && !error) {
     return (
       <div className="flex h-full min-h-0 gap-2">
-        <section className="flex w-[260px] shrink-0 items-center justify-center rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
+        <section className="flex w-[260px] shrink-0 items-center justify-center rounded-xl border border-border bg-card/80 shadow-xs backdrop-blur-sm">
           <div className="max-w-[200px] text-center">
             <LoaderCircle size={20} className="mx-auto animate-spin text-muted-foreground" />
             <div className="mt-3 text-sm font-medium text-foreground">{label}</div>
@@ -150,7 +152,7 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
             </div>
           </div>
         </section>
-        <section className="flex min-w-0 flex-1 items-center justify-center rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
+        <section className="flex min-w-0 flex-1 items-center justify-center rounded-xl border border-border bg-card/80 shadow-xs backdrop-blur-sm">
           <div className="text-center">
             <LoaderCircle size={16} className="mx-auto animate-spin text-muted-foreground" />
             <div className="mt-2 text-xs text-muted-foreground">Waiting for app...</div>
@@ -164,7 +166,7 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
   if (!ready && error) {
     return (
       <div className="flex h-full min-h-0 gap-2">
-        <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card/80 p-4 shadow-md backdrop-blur-sm">
+        <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card/80 p-4 shadow-xs backdrop-blur-sm">
           <div className="flex items-center gap-2 text-destructive">
             <Activity size={14} />
             <span className="text-[10px] uppercase tracking-widest">App error</span>
@@ -191,7 +193,7 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
             </div>
           ) : null}
         </section>
-        <section className="flex min-w-0 flex-1 items-center justify-center rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
+        <section className="flex min-w-0 flex-1 items-center justify-center rounded-xl border border-border bg-card/80 shadow-xs backdrop-blur-sm">
           <div className="text-center">
             <Activity size={18} className="mx-auto text-destructive" />
             <div className="mt-2 text-xs text-muted-foreground">App failed to start</div>
@@ -205,33 +207,38 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
   return (
     <div className="flex h-full min-h-0 gap-2">
       {/* Left: App info card */}
-      <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
+      <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card/80 shadow-xs backdrop-blur-sm">
         <div className="chat-scrollbar-hidden flex-1 overflow-y-auto p-4">
-          <div className="flex items-center gap-2.5">
-            <span className={`size-2.5 shrink-0 rounded-full ${accentClassName}`} />
-            <span className="text-sm font-semibold text-foreground">{label}</span>
+          <div className="flex items-center gap-3">
+            <span className="grid size-10 shrink-0 place-items-center rounded-lg border border-border bg-muted/40 text-[11px] font-semibold uppercase text-muted-foreground">
+              {brandIcon ?? iconFallback}
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-semibold text-foreground">{label}</div>
+              <div className="mt-0.5 flex items-center gap-1.5 text-[11px] font-medium text-emerald-500">
+                <span className="size-1.5 rounded-full bg-emerald-500" />
+                Running
+              </div>
+            </div>
           </div>
 
           {summary ? (
-            <p className="mt-2.5 text-xs leading-5 text-muted-foreground">{summary}</p>
+            <p className="mt-3 text-xs leading-5 text-muted-foreground">{summary}</p>
           ) : null}
 
-          <div className="mt-4 space-y-1.5">
-            <div className="flex items-center justify-between rounded-md border border-border bg-muted/50 px-3 py-2">
-              <span className="text-xs text-muted-foreground">Status</span>
-              <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-500">
-                <span className="size-1.5 rounded-full bg-emerald-500" />
-                Running
-              </span>
+          {resourceId ? (
+            <div className="mt-4 flex items-center justify-between rounded-md border border-border bg-muted/50 px-3 py-2">
+              <span className="text-xs text-muted-foreground">Resource</span>
+              <span className="max-w-[120px] truncate text-xs font-medium text-foreground">{resourceId}</span>
             </div>
-            {resourceId ? (
-              <div className="flex items-center justify-between rounded-md border border-border bg-muted/50 px-3 py-2">
-                <span className="text-xs text-muted-foreground">Resource</span>
-                <span className="max-w-[120px] truncate text-xs font-medium text-foreground">{resourceId}</span>
+          ) : null}
+
+          {integrationStatus ? (
+            <div className="mt-4">
+              <div className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+                Integrations
               </div>
-            ) : null}
-            {integrationStatus ? (
-              <div className="flex items-center justify-between rounded-md border border-border bg-muted/50 px-3 py-2">
+              <div className="mt-2 flex items-center justify-between rounded-md border border-border bg-muted/50 px-3 py-2">
                 <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <Plug size={11} />
                   {integrationStatus.providerName}
@@ -241,8 +248,8 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
                   {integrationStatus.connected ? "Connected" : "Not connected"}
                 </span>
               </div>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
 
           {app && "tools" in app && app.tools && app.tools.length > 0 ? (
             <div className="mt-4">
@@ -319,8 +326,8 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
       </section>
 
       {/* Right: App iframe */}
-      <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-md shadow-black/5">
-        <div className="relative min-h-0 flex-1 ring-1 ring-inset ring-border/50 shadow-[inset_0_2px_6px_rgba(0,0,0,0.08)]" style={{ borderRadius: "inherit" }}>
+      <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-xs">
+        <div className="relative min-h-0 flex-1" style={{ borderRadius: "inherit" }}>
           {frameUrl ? (
             <iframe
               key={`${frameUrl}:${reloadKey}`}
