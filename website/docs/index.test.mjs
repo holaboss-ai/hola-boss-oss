@@ -126,6 +126,10 @@ const TEMPLATES_VERSIONING_PATH = new URL(
   "./docs/templates/versioning.md",
   import.meta.url
 );
+const MODEL_CONFIGURATION_PATH = new URL(
+  "./docs/desktop/model-configuration.md",
+  import.meta.url
+);
 const LEARNING_PATH_PATH = new URL(
   "./docs/getting-started/learning-path.md",
   import.meta.url
@@ -279,6 +283,7 @@ test("build on holaOS pages expose the real developer seams and validation paths
   const buildOnOverview = await readFile(BUILD_ON_OVERVIEW_PATH, "utf8");
   const startDeveloping = await readFile(START_DEVELOPING_PATH, "utf8");
   const contributing = await readFile(CONTRIBUTING_PATH, "utf8");
+  const modelConfiguration = await readFile(MODEL_CONFIGURATION_PATH, "utf8");
   const desktopInternals = await readFile(DESKTOP_INTERNALS_PATH, "utf8");
   const runtimeApis = await readFile(RUNTIME_APIS_PATH, "utf8");
   const runtimeRunCompilation = await readFile(
@@ -297,17 +302,29 @@ test("build on holaOS pages expose the real developer seams and validation paths
   assert.match(startDeveloping, /npm run desktop:dev/);
   assert.match(startDeveloping, /desktop\/scripts\/watch-runtime-bundle\.mjs/);
   assert.match(startDeveloping, /desktop\/out\/runtime-<platform>/);
-  assert.match(startDeveloping, /http:\/\/127\.0\.0\.1:5060/);
+  assert.match(startDeveloping, /http:\/\/127\.0\.0\.1:5160/);
+  assert.match(startDeveloping, /blocked port/);
 
   assert.match(contributing, /Conventional Commits/);
   assert.match(contributing, /npm run docs:test/);
   assert.match(contributing, /desktop\/electron\/preload\.ts/);
+
+  assert.match(modelConfiguration, /desktop\/shared\/model-catalog\.ts/);
+  assert.match(modelConfiguration, /providerModelGroups/);
+  assert.match(modelConfiguration, /thinking_value/);
+  assert.match(modelConfiguration, /gpt-5\.4/);
+  assert.match(modelConfiguration, /gemini-2\.5-pro/);
+  assert.match(modelConfiguration, /There is no `runtime\.thinking_value` field/);
 
   assert.match(desktopInternals, /handleTrustedIpc/);
   assert.match(desktopInternals, /HB_SANDBOX_ROOT/);
   assert.match(desktopInternals, /runtime\.log/);
   assert.match(desktopInternals, /operator-surface-context/);
   assert.match(desktopInternals, /workspace\.setOperatorSurfaceContext/);
+  assert.match(desktopInternals, /desktop\/shared\/model-catalog\.ts/);
+  assert.match(desktopInternals, /providerModelGroups/);
+  assert.match(desktopInternals, /thinking_value/);
+  assert.match(desktopInternals, /5160/);
 
   assert.match(runtimeApis, /runtime\/api-server\/src\/app\.ts/);
   assert.match(runtimeApis, /\/api\/v1\/agent-runs\/stream/);
@@ -317,12 +334,15 @@ test("build on holaOS pages expose the real developer seams and validation paths
   assert.match(runtimeApis, /\/build-on-holaos\/runtime\/run-compilation/);
   assert.match(runtimeApis, /\/api\/v1\/capabilities\/runtime-tools\/reports/);
   assert.match(runtimeApis, /x-holaboss-selected-model/);
+  assert.match(runtimeApis, /thinking_value/);
+  assert.match(runtimeApis, /127\.0\.0\.1:5160/);
 
   assert.match(runtimeRunCompilation, /workspace-runtime-plan\.ts/);
   assert.match(runtimeRunCompilation, /workspace_config_checksum/);
   assert.match(runtimeRunCompilation, /persist_turn_request_snapshot/);
   assert.match(runtimeRunCompilation, /runtime\/api-server\/src\/ts-runner\.ts/);
   assert.match(runtimeRunCompilation, /operator surface context/);
+  assert.match(runtimeRunCompilation, /thinking_value/);
 
   assert.match(runtimeStateStore, /runtime\/state-store\/src\/store\.ts/);
   assert.match(runtimeStateStore, /HOLABOSS_RUNTIME_DB_PATH/);
@@ -341,11 +361,13 @@ test("build on holaOS pages expose the real developer seams and validation paths
   assert.match(harnessInternals, /npm run runtime:harness-host:test/);
   assert.match(harnessInternals, /write_report/);
   assert.match(harnessInternals, /pi-runtime-tools\.ts/);
+  assert.match(harnessInternals, /thinking_value/);
 
   assert.match(troubleshooting, /desktop\/scripts\/check-runtime-status\.sh/);
   assert.match(troubleshooting, /HOLABOSS_BACKEND_BASE_URL/);
   assert.match(troubleshooting, /workspace_session/);
   assert.match(troubleshooting, /desktop\/out\/runtime-/);
+  assert.match(troubleshooting, /127\.0\.0\.1:5160/);
 });
 
 test("app development and templates pages expose runtime-true developer contracts", async () => {

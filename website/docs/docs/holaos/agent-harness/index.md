@@ -46,6 +46,7 @@ Today the runtime prepares a harness request that includes:
 - workspace, session, and input identity
 - the current instruction and staged input attachments
 - selected provider and model client configuration
+- requested reasoning effort for this run when the operator selected one
 - the composed system prompt and runtime context messages
 - workspace skill directories
 - resolved MCP servers and allowlisted MCP tool refs

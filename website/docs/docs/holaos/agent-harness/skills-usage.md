@@ -22,13 +22,3 @@ Skill frontmatter can grant additional managed tools or workspace commands for t
 - `holaboss_granted_commands`
 
 So the skill system is not just about loading instructions. It can also widen the effective tool or command surface in a controlled, inspectable way.
-
-## What this changes
-
-This keeps skills aligned with the environment model:
-
-- skills are explicit artifacts in the workspace
-- widening is tied to metadata rather than hidden state
-- the runtime and host can audit how capability changed during the run
-
-That is much more coherent than burying extra permissions inside executor-specific prompt logic.

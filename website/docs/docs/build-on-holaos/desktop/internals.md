@@ -16,7 +16,10 @@ That means desktop work is usually spread across four boundaries: React renderer
 ## Main code seams
 
 - `desktop/src/components/layout/AppShell.tsx`: the shell composition and top-level product routing. This is where the agent pane, browser panes, file explorer, app surfaces, operations drawer, notifications, settings overlays, and reported non-browser operator surfaces are coordinated.
+- `desktop/shared/model-catalog.ts`: shipped fallback model metadata for direct providers and Holaboss Proxy model mapping, including reasoning support, allowed thinking values, and input modalities.
 - `desktop/src/lib/workspaceDesktop.tsx` and `desktop/src/lib/workspaceSelection.tsx`: renderer-side workspace state and shell coordination.
+- `desktop/src/components/auth/AuthPanel.tsx`: provider settings, catalog-backed defaults, background-task selection, recall embeddings, and image-generation configuration.
+- `desktop/src/components/panes/ChatPane.tsx`: model picker, per-model reasoning-effort selector, queued chat inputs, and stream/timeline rendering.
 - `desktop/src/components/panes/BrowserPane.tsx`, `SpaceBrowserExplorerPane.tsx`, and `SpaceBrowserDisplayPane.tsx`: the browser-space UI for the `user` and `agent` browser surfaces.
 - `desktop/src/components/panes/FileExplorerPane.tsx`: workspace file explorer, previews, editing, bookmarking, and file-watch behavior.
 - `desktop/src/components/layout/NotificationToastStack.tsx`: runtime-backed notification rendering and activation behavior.
@@ -30,7 +33,7 @@ The desktop does not talk to the runtime through a vague helper. `desktop/electr
 
 1. Resolve the staged runtime bundle under `desktop/out/runtime-<platform>` or an override such as `HOLABOSS_RUNTIME_ROOT`.
 2. Validate that the bundle includes the executable, packaged Node runtime, packaged Python runtime, `package-metadata.json`, and `runtime/api-server/dist/index.mjs`.
-3. Spawn `bin/sandbox-runtime` with desktop-owned env such as `HB_SANDBOX_ROOT`, `SANDBOX_AGENT_BIND_HOST=127.0.0.1`, `SANDBOX_AGENT_BIND_PORT=5060`, `SANDBOX_AGENT_HARNESS`, `HOLABOSS_RUNTIME_DB_PATH`, and the bridge settings.
+3. Spawn `bin/sandbox-runtime` with desktop-owned env such as `HB_SANDBOX_ROOT`, `SANDBOX_AGENT_BIND_HOST=127.0.0.1`, `SANDBOX_AGENT_BIND_PORT=5160`, `SANDBOX_AGENT_HARNESS`, `HOLABOSS_RUNTIME_DB_PATH`, and the bridge settings.
 4. Wait for the embedded runtime health check to pass.
 5. Stream stdout and stderr into `runtime.log` under the Electron `userData` directory.
 6. On app quit, block final Electron exit until desktop-owned cleanup tears down the embedded runtime and browser service.
@@ -75,6 +78,16 @@ Important behavior to understand:
 The desktop browser service is now more than a browser-tool bridge. In addition to page and tab routes, it exposes `/api/v1/browser/operator-surface-context`, which lets the embedded runtime load the current active operator surfaces for the workspace. That payload combines browser-owned surfaces with the non-browser surfaces `AppShell` reports through `workspace.setOperatorSurfaceContext(...)`.
 
 This split is why browser behavior belongs to desktop internals, not to generic UI code alone.
+
+## Model catalog and reasoning controls
+
+The desktop model path is now catalog-driven rather than a flat model string list.
+
+- `desktop/electron/main.ts` refreshes a managed runtime model catalog from the control plane when a signed-in Holaboss session is active, caches that catalog, and merges it with the locally persisted `runtime-config.json`.
+- The merged runtime-config snapshot exposes `providerModelGroups`, `catalogVersion`, and managed defaults for background tasks, embeddings, and image generation.
+- `AuthPanel.tsx` uses that snapshot to show the actual configured provider/model surface instead of a blind text field.
+- `ChatPane.tsx` uses the same provider groups plus the local fallback catalog to decide whether the selected model supports reasoning and which `thinking_value` choices to show.
+- The selected `thinking_value` is a chat-composer preference, not a `runtime-config.json` field. On submit the renderer queues it with the session input so the runtime can apply it per run.
 
 ## File explorer contract
 

@@ -10,7 +10,7 @@ For the desktop dev loop:
 
 ```bash
 npm run desktop:typecheck
-curl http://127.0.0.1:5060/healthz
+curl http://127.0.0.1:5160/healthz
 bash desktop/scripts/check-runtime-status.sh
 ```
 
@@ -27,12 +27,13 @@ Most early failures happen in the desktop `predev` hook, before the app window e
 
 ## The embedded runtime does not pass health checks
 
-In desktop dev, the embedded runtime is supposed to come up on `127.0.0.1:5060`, not `8080` or `3060`.
+In desktop dev, the embedded runtime is supposed to come up on `127.0.0.1:5160`, not `8080` or `3060`.
 
-- Check `curl http://127.0.0.1:5060/healthz`.
+- Check `curl http://127.0.0.1:5160/healthz`.
 - Inspect `runtime.log` under the Electron `userData` directory.
 - Inspect the embedded sandbox root under `sandbox-host/`, especially `sandbox-host/state/runtime-config.json` and `sandbox-host/state/runtime.db`.
 - If you set a custom user-data path, make sure you are looking in `HOLABOSS_DESKTOP_USER_DATA_PATH`. Otherwise `desktop:dev` defaults to an Electron `userData` directory derived from `HOLABOSS_DESKTOP_USER_DATA_DIR=holaboss-local-dev`.
+- The desktop code pins `5160` because Node's fetch stack blocks `5060` as a bad port.
 
 ## The runtime bundle is stale
 
@@ -49,7 +50,7 @@ If you want to throw away the staged bundle entirely, delete `desktop/out/runtim
 
 The launch mode controls the default port:
 
-- embedded desktop runtime: `5060`
+- embedded desktop runtime: `5160`
 - packaged launcher: `8080`
 - raw `runtime/api-server/dist/index.mjs`: `3060`
 

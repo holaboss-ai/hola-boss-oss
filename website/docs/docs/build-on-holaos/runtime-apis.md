@@ -19,7 +19,7 @@ The same API server shows up under different ports depending on how you started 
 
 - Running `runtime/api-server/dist/index.mjs` directly defaults to `0.0.0.0:3060` unless `SANDBOX_RUNTIME_API_PORT`, `SANDBOX_AGENT_BIND_PORT`, or `PORT` is set.
 - The packaged runtime launcher defaults to `0.0.0.0:8080` through `runtime/deploy/bootstrap/shared.sh`.
-- The embedded desktop runtime binds to `127.0.0.1:5060` because `desktop/electron/main.ts` launches it that way.
+- The embedded desktop runtime binds to `127.0.0.1:5160` because `desktop/electron/main.ts` launches it that way.
 
 Use the right port before you assume a route is broken.
 
@@ -46,6 +46,20 @@ Runtime-tool routes are not generic anonymous helpers. The runtime and harness h
 - `x-holaboss-selected-model`
 
 That is how `write_report` and other runtime tools can persist outputs with stable session and input context instead of falling back to detached file writes.
+
+## Queue requests can carry model and reasoning overrides
+
+The desktop chat surface does not only queue raw text. `POST /api/v1/agent-sessions/queue` can also carry:
+
+- `model`
+- `thinking_value`
+
+The runtime stores both on the queued input record, then `claimed-input-executor.ts` forwards them into the `TsRunnerRequest`. The important split is:
+
+- `model` is resolved into the run's provider and model client later by the runtime config path
+- `thinking_value` stays as request-scoped execution metadata that the harness host maps onto executor-native reasoning controls
+
+If a run is using the right model but the wrong reasoning effort, inspect both the queue payload and the harness-host mapping instead of only the runtime config file.
 
 ## Streaming surfaces
 
@@ -79,8 +93,8 @@ That path now matters for report artifacts because the runtime can persist them 
 For a local embedded desktop runtime:
 
 ```bash
-curl http://127.0.0.1:5060/healthz
-curl http://127.0.0.1:5060/api/v1/runtime/status
+curl http://127.0.0.1:5160/healthz
+curl http://127.0.0.1:5160/api/v1/runtime/status
 ```
 
 For standalone runtime debugging, change the port to the one you actually bound, usually `8080` or `3060`.

@@ -63,7 +63,8 @@ Use the package-specific test commands when you are only touching one slice. Use
 
 ## Fast local checks
 
-- The embedded desktop runtime binds to `http://127.0.0.1:5060`. That is the right health endpoint for `npm run desktop:dev`.
+- The embedded desktop runtime binds to `http://127.0.0.1:5160`. That is the right health endpoint for `npm run desktop:dev`.
+- The desktop main process deliberately uses `5160` instead of `5060` because Node's fetch stack treats `5060` as a blocked port.
 - A packaged standalone runtime usually binds to `8080` unless you override `SANDBOX_AGENT_BIND_PORT`.
 - Running `runtime/api-server/dist/index.mjs` directly defaults to `3060` unless `SANDBOX_RUNTIME_API_PORT`, `SANDBOX_AGENT_BIND_PORT`, or `PORT` is set.
 - The staged runtime bundle should exist under `desktop/out/runtime-<platform>` and include `package-metadata.json`, `runtime/metadata.json`, and `runtime/api-server/dist/index.mjs`.

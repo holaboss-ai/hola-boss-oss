@@ -21,6 +21,7 @@ A workspace is a stable operating context for one workflow. In the UI, that cont
 - its session and continuity state
 - its memory and outputs
 - its model and provider settings
+- its active reasoning profile for the next run when the selected model supports it
 
 That means the desktop is not just opening a folder. It is opening a complete operating environment.
 
@@ -31,7 +32,7 @@ The workspace UI should make these areas discoverable:
 | Area | What the operator should be able to answer | Why it matters |
 | --- | --- | --- |
 | Workspace identity | Which workspace is open right now? | Prevents work in the wrong context. |
-| Active configuration | Which model, provider, and runtime settings are in effect? | Determines how the next run will behave. |
+| Active configuration | Which model, provider, reasoning profile, and runtime settings are in effect? | Determines how the next run will behave. |
 | Active operator surface | Where is the user currently working, and which surfaces belong to the agent instead? | Keeps "here", "this page", and "continue from this" grounded in the right place. |
 | Apps and capabilities | What can this workspace do right now? | Shows the actual capability surface, not just installed code. |
 | Integrations | Which external accounts are connected? | Determines whether apps can use external services. |
