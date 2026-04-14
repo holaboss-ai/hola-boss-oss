@@ -32,6 +32,7 @@ The workspace UI should make these areas discoverable:
 | --- | --- | --- |
 | Workspace identity | Which workspace is open right now? | Prevents work in the wrong context. |
 | Active configuration | Which model, provider, and runtime settings are in effect? | Determines how the next run will behave. |
+| Active operator surface | Where is the user currently working, and which surfaces belong to the agent instead? | Keeps "here", "this page", and "continue from this" grounded in the right place. |
 | Apps and capabilities | What can this workspace do right now? | Shows the actual capability surface, not just installed code. |
 | Integrations | Which external accounts are connected? | Determines whether apps can use external services. |
 | Recent session state | What happened most recently? | Helps the operator continue work without starting from scratch. |
@@ -66,6 +67,7 @@ Avoid these failure modes:
 
 - treating the workspace as only a file tree
 - hiding capability state behind too many nested screens
+- collapsing user-owned and agent-owned surfaces into one ambiguous active context
 - mixing durable memory with transient session state
 - making outputs indistinguishable from local app records
 - surfacing raw internals before the operator is oriented

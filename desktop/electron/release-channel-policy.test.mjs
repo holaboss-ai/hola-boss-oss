@@ -12,21 +12,21 @@ const stageRuntimeBundlePath = path.join(
   "scripts",
   "stage-runtime-bundle.mjs",
 );
-const publishRuntimeWorkflowPath = path.join(
+const ciWorkflowPath = path.join(
   __dirname,
   "..",
   "..",
   ".github",
   "workflows",
-  "publish-runtime-bundles.yml",
+  "ci.yml",
 );
-const releaseMacosWorkflowPath = path.join(
+const docsWorkflowPath = path.join(
   __dirname,
   "..",
   "..",
   ".github",
   "workflows",
-  "release-macos-desktop.yml",
+  "deploy-docs.yml",
 );
 
 test("desktop updater uses electron-updater and exposes install-now state", async () => {
@@ -45,67 +45,67 @@ test("desktop updater uses electron-updater and exposes install-now state", asyn
   assert.match(source, /autoUpdater\.quitAndInstall\(true, true\);/);
 });
 
-test("runtime staging searches the runtime release channel before any legacy fallback", async () => {
+test("runtime staging prefers an explicit release tag, then stable releases, then prerelease fallback", async () => {
   const source = await readFile(stageRuntimeBundlePath, "utf8");
 
-  assert.match(source, /const runtimeReleaseTagPrefix = "holaboss-runtime-";/);
+  assert.match(source, /const sourceRepo = process\.env\.HOLABOSS_RUNTIME_SOURCE_REPO\?\.trim\(\) \|\| "holaboss-ai\/holaOS";/);
+  assert.match(source, /const requestedReleaseTag = process\.env\.HOLABOSS_RUNTIME_RELEASE_TAG\?\.trim\(\) \|\| "";/);
   assert.match(
     source,
-    /https:\/\/api\.github\.com\/repos\/\$\{owner\}\/\$\{repo\}\/releases\?per_page=\$\{githubReleaseListPageSize\}/,
+    /const requestedRelease = sortedReleases\.find\(\(release\) => \{[\s\S]*isRequestedRelease\(release\) && findRuntimeReleaseAsset\(release\)[\s\S]*\}\) \?\? null;/,
   );
   assert.match(
     source,
-    /function isRuntimeChannelRelease\(release\) \{[\s\S]*tag\.startsWith\(runtimeReleaseTagPrefix\)/,
+    /const stableRelease = sortedReleases\.find\(\(release\) => \{[\s\S]*isStableRelease\(release\) && findRuntimeReleaseAsset\(release\)[\s\S]*\}\) \?\? null;/,
   );
   assert.match(
     source,
-    /const runtimeRelease = sortReleasesByPublishedAtDescending\(releases\)\.find\(\(release\) => \{[\s\S]*isRuntimeChannelRelease\(release\) && findRuntimeReleaseAsset\(release\)/,
+    /const prereleaseRelease = sortedReleases\.find\(\(release\) => \{[\s\S]*isPrerelease\(release\) && findRuntimeReleaseAsset\(release\)[\s\S]*\}\) \?\? null;/,
+  );
+  assert.match(source, /const release = requestedRelease \?\? stableRelease \?\? prereleaseRelease;/);
+  assert.match(
+    source,
+    /requested runtime release \$\{requestedReleaseTag\} is unavailable; falling back to the latest eligible release asset/,
   );
   assert.match(
     source,
-    /falling back to legacy stable runtime asset release/,
+    /no stable release runtime asset was found; falling back to prerelease \$\{normalizedReleaseTag\(prereleaseRelease\)\}/,
   );
 });
 
-test("runtime workflow publishes runtime-only releases under a prerelease-only runtime tag namespace", async () => {
-  const source = await readFile(publishRuntimeWorkflowPath, "utf8");
+test("manual CI workflow creates combined desktop releases with bundled runtime assets", async () => {
+  const source = await readFile(ciWorkflowPath, "utf8");
 
-  assert.match(source, /release_tag="holaboss-runtime-\$\{release_date\}"/);
-  assert.match(source, /release_tag="holaboss-runtime-\$\{GITHUB_REF_NAME\}-\$\{release_date\}"/);
-  assert.match(source, /release_pattern='holaboss-runtime-\[0-9\]\*'/);
-  assert.match(source, /release_pattern="holaboss-runtime-\$\{GITHUB_REF_NAME\}-\*"/);
-  assert.match(source, /prerelease_flag=\(--prerelease\)/);
-  assert.match(source, /gh release edit "\$\{RELEASE_TAG\}" \\\n\s+--prerelease \\/);
-});
-
-test("desktop release workflow uploads the macOS auto-update artifacts", async () => {
-  const source = await readFile(releaseMacosWorkflowPath, "utf8");
-
-  assert.match(source, /--mac dmg zip \\/);
+  assert.match(source, /^name: CI$/m);
+  assert.match(source, /workflow_dispatch:\n\s+inputs:\n\s+ref:/);
+  assert.match(source, /release_tag:\n\s+description: GitHub release tag to create or update/);
+  assert.match(source, /release_title:\n\s+description: Optional GitHub release title/);
+  assert.match(source, /prerelease:\n\s+description: Mark the GitHub release as a prerelease/);
+  assert.match(source, /release_tag must match holaboss-desktop-YYYY\.MDD\.R/);
+  assert.match(source, /release_version="\$\{release_tag#holaboss-desktop-\}"/);
+  assert.match(source, /release_title="Holaboss \$\{release_version\}"/);
+  assert.match(source, /RUNTIME_ASSET_NAME: holaboss-runtime-linux\.tar\.gz/);
+  assert.match(source, /RUNTIME_ASSET_NAME: holaboss-runtime-macos\.tar\.gz/);
+  assert.match(source, /RUNTIME_ASSET_NAME: holaboss-runtime-windows\.tar\.gz/);
+  assert.match(source, /gh release upload "\$\{RELEASE_TAG\}" "out\/\$\{RUNTIME_ASSET_NAME\}" --clobber/);
+  assert.match(source, /--prepackaged "\$\{app_path\}" \\\n\s+--mac dmg zip \\/);
   assert.match(source, /latest-mac\.yml was not generated/);
-  assert.match(source, /desktop\/out\/release\/\*\.zip/);
-  assert.match(source, /desktop\/out\/release\/\*\.blockmap/);
-  assert.match(source, /desktop\/out\/release\/latest-mac\.yml/);
-  assert.match(source, /upload_paths=\([\s\S]*"\$\{manifest_path\}"/);
+  assert.match(source, /latest\.yml was not generated/);
+  assert.match(source, /app-update\.yml is missing from notarized app bundle/);
+  assert.match(source, /Desktop typecheck/);
+  assert.match(source, /Runtime harness host tests/);
 });
 
-test("desktop release workflow uploads the Windows auto-update artifacts", async () => {
-  const source = await readFile(
-    path.join(__dirname, "..", "..", ".github", "workflows", "release-windows-desktop.yml"),
-    "utf8",
-  );
+test("docs workflow remains independent and CI ignores docs-only changes", async () => {
+  const [ciSource, docsSource] = await Promise.all([
+    readFile(ciWorkflowPath, "utf8"),
+    readFile(docsWorkflowPath, "utf8"),
+  ]);
 
-  assert.match(source, /WINDOWS_CERTIFICATE: \$\{\{ secrets\.WINDOWS_CERTIFICATE \}\}/);
-  assert.match(source, /WINDOWS_CERTIFICATE_PASSWORD: \$\{\{ secrets\.WINDOWS_CERTIFICATE_PASSWORD \}\}/);
-  assert.match(
-    source,
-    /throw "Windows desktop release requires WINDOWS_CERTIFICATE and WINDOWS_CERTIFICATE_PASSWORD so the public installer is code-signed\."/,
-  );
-  assert.match(source, /generated_installer_path=/);
-  assert.match(source, /latest\.yml was not generated/);
-  assert.match(source, /desktop\/out\/release\/\*\.yml/);
-  assert.match(source, /desktop\/out\/release\/\*\.blockmap/);
-  assert.match(source, /\$manifestPath = Join-Path \$PWD "desktop\/out\/release\/latest\.yml"/);
-  assert.match(source, /\$uploadPaths \+= \$manifestPath/);
-  assert.match(source, /gh release upload \$env:RELEASE_TAG @uploadPaths --clobber/);
+  assert.match(ciSource, /paths-ignore:\n\s+- \.github\/workflows\/deploy-docs\.yml\n\s+- website\/docs\/\*\*/);
+  assert.match(docsSource, /^name: Deploy Docs$/m);
+  assert.match(docsSource, /pull_request:\n\s+paths:\n\s+- \.github\/workflows\/deploy-docs\.yml\n\s+- website\/docs\/\*\*/);
+  assert.match(docsSource, /push:\n\s+branches:\n\s+- main\n\s+paths:\n\s+- \.github\/workflows\/deploy-docs\.yml\n\s+- website\/docs\/\*\*/);
+  assert.match(docsSource, /run: npm run docs:test/);
+  assert.match(docsSource, /run: npm run docs:build/);
 });

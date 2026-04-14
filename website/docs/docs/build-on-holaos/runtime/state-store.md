@@ -66,6 +66,7 @@ Both support:
 - worker lease windows through `claimed_until`
 - expired-claim recovery through `listExpiredClaimedInputs()` and `listExpiredClaimedPostRunJobs()`
 - optional `distinctSessions` claiming so one worker does not take multiple queued items from the same session in one batch
+- input claiming can also exclude specific session ids so queue workers do not claim a second active run for a session that is already executing
 
 This is the runtime’s queue and lease model. If job pickup or replay behavior is wrong, inspect these records before you patch workers.
 
@@ -119,12 +120,14 @@ The queue behavior is worth treating as a first-class contract.
 Current important behavior from `store.ts` and `store.test.ts`:
 
 - queued inputs and post-run jobs are claimed in priority order
+- queue workers only claim up to their currently available concurrency slots
+- `claimInputs()` can exclude session ids that already have an active claimed run
 - claims update `claimed_by` and `claimed_until`
 - expired claims can be listed and recovered
 - session runtime state separately tracks `lease_until`, `heartbeat_at`, and `last_error`
 - runtime-state status is normalized to values such as `IDLE`, `BUSY`, `WAITING_USER`, `ERROR`, `QUEUED`, and `PAUSED`
 
-If you change queue semantics, you are changing scheduling behavior for the whole runtime, not just one worker.
+If you change queue semantics, you are changing scheduling behavior for the whole runtime, not just one worker. The current contract is intentionally trying to prevent the same session from being processed twice in parallel when global concurrency is greater than one.
 
 ## Database vs Filesystem Contract
 

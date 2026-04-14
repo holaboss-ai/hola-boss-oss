@@ -1,6 +1,6 @@
 function usage() {
   process.stderr.write(
-    "Usage: node scripts/release-version.mjs [release-number] [--date YYYY-MM-DD]\n",
+    "Usage: node scripts/release-version.mjs [release-number] [--date YYYY-MM-DD] [--tag]\n",
   );
 }
 
@@ -40,11 +40,21 @@ function releaseVersion(date, releaseNumber) {
   return `${year}.${month}${day}.${releaseNumber}`;
 }
 
+function desktopReleaseTag(version) {
+  return `holaboss-desktop-${version}`;
+}
+
 let releaseNumber = 1;
 let date = new Date();
+let printTag = false;
 
 for (let index = 2; index < process.argv.length; index += 1) {
   const argument = process.argv[index];
+  if (argument === "--tag") {
+    printTag = true;
+    continue;
+  }
+
   if (argument === "--date") {
     const value = process.argv[index + 1];
     if (!value) {
@@ -71,4 +81,5 @@ for (let index = 2; index < process.argv.length; index += 1) {
   releaseNumber = parsedReleaseNumber;
 }
 
-process.stdout.write(`${releaseVersion(date, releaseNumber)}\n`);
+const version = releaseVersion(date, releaseNumber);
+process.stdout.write(`${printTag ? desktopReleaseTag(version) : version}\n`);

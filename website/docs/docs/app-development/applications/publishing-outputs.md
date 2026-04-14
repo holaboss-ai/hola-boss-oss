@@ -101,6 +101,8 @@ if (turn) {
 - optional `artifactId`
 - optional `changeType`
 
+The same session-artifact surface is also what the runtime now uses for first-class report artifacts. Runtime-managed `write_report` artifacts are persisted as session outputs with `artifact_type: "report"`, so app code should not create a duplicate artifact for the same report just because it also wrote a file.
+
 ## Recovering Turn Context
 
 `resolveHolabossTurnContext(headers)` reads:

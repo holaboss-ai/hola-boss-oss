@@ -15,7 +15,7 @@ That means desktop work is usually spread across four boundaries: React renderer
 
 ## Main code seams
 
-- `desktop/src/components/layout/AppShell.tsx`: the shell composition and top-level product routing. This is where the agent pane, browser panes, file explorer, app surfaces, operations drawer, notifications, and settings overlays are coordinated.
+- `desktop/src/components/layout/AppShell.tsx`: the shell composition and top-level product routing. This is where the agent pane, browser panes, file explorer, app surfaces, operations drawer, notifications, settings overlays, and reported non-browser operator surfaces are coordinated.
 - `desktop/src/lib/workspaceDesktop.tsx` and `desktop/src/lib/workspaceSelection.tsx`: renderer-side workspace state and shell coordination.
 - `desktop/src/components/panes/BrowserPane.tsx`, `SpaceBrowserExplorerPane.tsx`, and `SpaceBrowserDisplayPane.tsx`: the browser-space UI for the `user` and `agent` browser surfaces.
 - `desktop/src/components/panes/FileExplorerPane.tsx`: workspace file explorer, previews, editing, bookmarking, and file-watch behavior.
@@ -33,6 +33,7 @@ The desktop does not talk to the runtime through a vague helper. `desktop/electr
 3. Spawn `bin/sandbox-runtime` with desktop-owned env such as `HB_SANDBOX_ROOT`, `SANDBOX_AGENT_BIND_HOST=127.0.0.1`, `SANDBOX_AGENT_BIND_PORT=5060`, `SANDBOX_AGENT_HARNESS`, `HOLABOSS_RUNTIME_DB_PATH`, and the bridge settings.
 4. Wait for the embedded runtime health check to pass.
 5. Stream stdout and stderr into `runtime.log` under the Electron `userData` directory.
+6. On app quit, block final Electron exit until desktop-owned cleanup tears down the embedded runtime and browser service.
 
 If you are debugging runtime startup from desktop, inspect `runtime.log` and the `sandbox-host` directory under Electron `userData` before you change UI code.
 
@@ -44,7 +45,7 @@ Important namespaces include:
 
 - `fs`: directory listing, previews, writes, file watches, and bookmarks
 - `browser`: browser workspace selection, tab state, navigation, history, downloads, suggestions, and bounds syncing
-- `workspace`: workspace lifecycle, sessions, apps, outputs, cronjobs, notifications, memory proposals, integrations, and packaging flows
+- `workspace`: workspace lifecycle, sessions, apps, outputs, cronjobs, notifications, memory proposals, integrations, packaging flows, and reported operator-surface context
 - `runtime`: runtime status, runtime config, profile, binding exchange, and restart flows
 - `auth`: desktop sign-in and runtime binding exchange
 - `billing`: subscription and usage surfaces
@@ -69,7 +70,9 @@ Important behavior to understand:
 - browser state is workspace-aware
 - browser spaces are explicit: `user` and `agent`
 - the renderer activates tabs and navigation through `electronAPI.browser`
-- the main process owns actual BrowserView attachment, persistence, downloads, history, and popup windows
+- the main process owns actual BrowserView attachment, persistence, downloads, history, popup windows, and the desktop browser service
+
+The desktop browser service is now more than a browser-tool bridge. In addition to page and tab routes, it exposes `/api/v1/browser/operator-surface-context`, which lets the embedded runtime load the current active operator surfaces for the workspace. That payload combines browser-owned surfaces with the non-browser surfaces `AppShell` reports through `workspace.setOperatorSurfaceContext(...)`.
 
 This split is why browser behavior belongs to desktop internals, not to generic UI code alone.
 
@@ -120,5 +123,6 @@ That routing currently lives in `AppShell.tsx` through `spaceDisplayView`. If yo
 
 - `npm run desktop:typecheck` is the minimum validation for every desktop change.
 - Run `npm run desktop:e2e` when the change crosses renderer, preload, main-process, or embedded-runtime boundaries.
+- Use `desktop/electron/browser-operator-surface-context.test.mjs` and `desktop/electron/runtime-quit-cleanup.test.mjs` as the fastest regression checks when you are touching browser-service context or app-quit cleanup.
 - Use `bash desktop/scripts/check-runtime-status.sh` when the embedded runtime fails to start, a workspace looks corrupted, or app lifecycle behavior diverges from the desktop UI.
 - Preserve the renderer/main boundary. Do not move file system access, BrowserView ownership, or runtime process management back into React state.

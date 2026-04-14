@@ -28,13 +28,24 @@ Use the right port before you assume a route is broken.
 | Area | Representative routes | Backing modules and usual change points |
 | --- | --- | --- |
 | Health, config, and profile | `/healthz`, `/api/v1/runtime/config`, `/api/v1/runtime/status`, `/api/v1/runtime/profile` | `runtime-config.ts` and the runtime-config service tests |
-| Browser and runtime tools | `/api/v1/capabilities/browser`, `/api/v1/capabilities/browser/tools/:toolId`, `/api/v1/capabilities/runtime-tools/*` | `desktop-browser-tools.ts`, `runtime-agent-tools.ts`, and harness/tool projection code |
+| Browser and runtime tools | `/api/v1/capabilities/browser`, `/api/v1/capabilities/browser/tools/:toolId`, `/api/v1/capabilities/runtime-tools/*`, `/api/v1/capabilities/runtime-tools/reports` | `desktop-browser-tools.ts`, `runtime-agent-tools.ts`, and harness/tool projection code |
 | Workspaces and files | `/api/v1/workspaces`, `/api/v1/workspaces/:workspaceId/files/*`, `/apply-template`, `/export`, `/snapshot` | `workspace-apps.ts`, `workspace-snapshot.ts`, and workspace materialization helpers |
-| Agent runs and sessions | `/api/v1/agent-runs`, `/api/v1/agent-runs/stream`, `/api/v1/agent-sessions/*` | `runner-worker.ts`, `ts-runner.ts`, `turn-result-summary.ts`, and state-store session tables |
+| Agent runs and sessions | `/api/v1/agent-runs`, `/api/v1/agent-runs/stream`, `/api/v1/agent-sessions/*`, `/api/v1/agent-sessions/:sessionId/artifacts`, `/api/v1/agent-sessions/by-workspace/:workspaceId/with-artifacts` | `runner-worker.ts`, `ts-runner.ts`, `turn-result-summary.ts`, and state-store session tables |
 | Integrations and auth flows | `/api/v1/integrations/*`, `/api/v1/integrations/oauth/*`, `/api/v1/integrations/broker/*` | `integrations.ts`, `integration-broker.ts`, `oauth-service.ts`, and `composio-service.ts` |
 | Memory and post-run system state | `/api/v1/memory/*`, `/api/v1/memory-update-proposals*`, `/api/v1/task-proposals*` | `memory.js`, `user-memory-proposals.js`, `turn-memory-writeback.js`, and queue or evolve workers |
 | Apps and resolved-app orchestration | `/api/v1/apps/*`, `/api/v1/internal/workspaces/:workspaceId/resolved-apps/start` | `workspace-apps.ts`, `app-lifecycle-worker.ts`, and `resolved-app-bootstrap.ts` |
-| Outputs, notifications, and cronjobs | `/api/v1/outputs*`, `/api/v1/output-folders*`, `/api/v1/notifications*`, `/api/v1/cronjobs*` | `cron-worker.ts`, state-store output tables, and the desktop surfaces that render this state |
+| Outputs, notifications, and cronjobs | `/api/v1/outputs*`, `/api/v1/output-folders*`, `/api/v1/notifications*`, `/api/v1/cronjobs*` | `cron-worker.ts`, state-store output tables, session artifact helpers, and the desktop surfaces that render this state |
+
+## Runtime-tool request metadata
+
+Runtime-tool routes are not generic anonymous helpers. The runtime and harness host now propagate turn-aware headers so the API can associate tool mutations with the current run:
+
+- `x-holaboss-workspace-id`
+- `x-holaboss-session-id`
+- `x-holaboss-input-id`
+- `x-holaboss-selected-model`
+
+That is how `write_report` and other runtime tools can persist outputs with stable session and input context instead of falling back to detached file writes.
 
 ## Streaming surfaces
 
@@ -47,12 +58,21 @@ The runtime has several streaming endpoints. If you change event shape or long-r
 
 Execution usually crosses `runtime/api-server/src/ts-runner.ts`, the harness registry, the harness host, and the state store before the desktop sees the result.
 
+If you change a runtime-tool route that creates outputs or artifacts, also inspect:
+
+- `runtime/api-server/src/runtime-agent-tools.ts`
+- `runtime/harness-host/src/pi-runtime-tools.ts`
+- `runtime/api-server/src/claimed-input-executor.ts`
+
+That path now matters for report artifacts because the runtime can persist them during the run and the post-turn file capture path must not duplicate them later.
+
 ## How to change the API safely
 
 1. Add or update the route in `runtime/api-server/src/app.ts`.
 2. Keep the backing service, worker, or state-store contract in sync.
 3. Add or adjust tests in `runtime/api-server/src/app.test.ts` or the focused package test file.
-4. If the desktop consumes the route, update the Electron IPC bridge and renderer call site too.
+4. If the route is also surfaced through the harness, keep `runtime/harness-host/src/pi-runtime-tools.ts` and the shared runtime-tool definitions in sync.
+5. If the desktop consumes the route, update the Electron IPC bridge and renderer call site too.
 
 ## Minimal smoke checks
 

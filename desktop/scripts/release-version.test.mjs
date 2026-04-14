@@ -19,6 +19,17 @@ test("release version helper prints YYYY.MDD.R for a specific day", () => {
   assert.equal(runReleaseVersion("3", "--date", "2026-11-13"), "2026.1113.3");
 });
 
+test("release version helper can print the full desktop release tag", () => {
+  assert.equal(
+    runReleaseVersion("--tag", "--date", "2026-04-10"),
+    "holaboss-desktop-2026.410.1",
+  );
+  assert.equal(
+    runReleaseVersion("--tag", "2", "--date", "2026-04-10"),
+    "holaboss-desktop-2026.410.2",
+  );
+});
+
 test("release version helper rejects invalid release numbers", () => {
   assert.throws(
     () =>

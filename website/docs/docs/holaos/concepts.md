@@ -28,6 +28,10 @@ In this model, `holaOS` is the environment layer: the workspace contract, the ru
   A workspace is the operating context for one workflow. It carries the authored files, installed apps, skills, and configuration that define how the workflow should behave. In the `holaOS` model, it is the primary environment artifact. Memory and continuity are resolved around the workspace by the runtime rather than collapsed into one file.
 </DocDefinition>
 
+<DocDefinition term="Operator Surface" meta="active work surface">
+  An operator surface is a user-owned or agent-owned place where work is currently happening: a browser tab, file view, terminal, app surface, preview, or similar active context. In `holaOS`, these surfaces matter because the runtime can use them as continuity anchors for references like "here", "this page", or "what I'm looking at right now".
+</DocDefinition>
+
 <DocDefinition term="Memory" meta="durable recall surface">
   Memory is the durable knowledge surface around the workspace: recalled facts, procedures, preferences, identity, and other information that should survive across runs. In `holaOS`, memory is not the same thing as the workspace root and not the same thing as short-lived run state.
 </DocDefinition>

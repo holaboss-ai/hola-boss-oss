@@ -306,6 +306,8 @@ test("build on holaOS pages expose the real developer seams and validation paths
   assert.match(desktopInternals, /handleTrustedIpc/);
   assert.match(desktopInternals, /HB_SANDBOX_ROOT/);
   assert.match(desktopInternals, /runtime\.log/);
+  assert.match(desktopInternals, /operator-surface-context/);
+  assert.match(desktopInternals, /workspace\.setOperatorSurfaceContext/);
 
   assert.match(runtimeApis, /runtime\/api-server\/src\/app\.ts/);
   assert.match(runtimeApis, /\/api\/v1\/agent-runs\/stream/);
@@ -313,17 +315,21 @@ test("build on holaOS pages expose the real developer seams and validation paths
   assert.match(runtimeApis, /runtime\/api-server\/src\/app\.test\.ts/);
   assert.match(runtimeApis, /\/build-on-holaos\/runtime\/state-store/);
   assert.match(runtimeApis, /\/build-on-holaos\/runtime\/run-compilation/);
+  assert.match(runtimeApis, /\/api\/v1\/capabilities\/runtime-tools\/reports/);
+  assert.match(runtimeApis, /x-holaboss-selected-model/);
 
   assert.match(runtimeRunCompilation, /workspace-runtime-plan\.ts/);
   assert.match(runtimeRunCompilation, /workspace_config_checksum/);
   assert.match(runtimeRunCompilation, /persist_turn_request_snapshot/);
   assert.match(runtimeRunCompilation, /runtime\/api-server\/src\/ts-runner\.ts/);
+  assert.match(runtimeRunCompilation, /operator surface context/);
 
   assert.match(runtimeStateStore, /runtime\/state-store\/src\/store\.ts/);
   assert.match(runtimeStateStore, /HOLABOSS_RUNTIME_DB_PATH/);
   assert.match(runtimeStateStore, /sqlite-vec/);
   assert.match(runtimeStateStore, /claimInputs/);
   assert.match(runtimeStateStore, /runtime:state-store:test/);
+  assert.match(runtimeStateStore, /exclude specific session ids/);
 
   assert.match(independentDeploy, /package-metadata\.json/);
   assert.match(independentDeploy, /runtime\/metadata\.json/);
@@ -333,6 +339,8 @@ test("build on holaOS pages expose the real developer seams and validation paths
   assert.match(harnessInternals, /runtime\/api-server\/src\/ts-runner\.ts/);
   assert.match(harnessInternals, /runtime\/harness-host\/src\/pi\.ts/);
   assert.match(harnessInternals, /npm run runtime:harness-host:test/);
+  assert.match(harnessInternals, /write_report/);
+  assert.match(harnessInternals, /pi-runtime-tools\.ts/);
 
   assert.match(troubleshooting, /desktop\/scripts\/check-runtime-status\.sh/);
   assert.match(troubleshooting, /HOLABOSS_BACKEND_BASE_URL/);
@@ -378,6 +386,7 @@ test("app development and templates pages expose runtime-true developer contract
   assert.match(publishingOutputs, /publishSessionArtifact/);
   assert.match(publishingOutputs, /x-holaboss-session-id/);
   assert.match(publishingOutputs, /buildAppResourcePresentation/);
+  assert.match(publishingOutputs, /artifact_type: "report"/);
 
   assert.match(templatesOverview, /empty_onboarding/);
   assert.match(templatesOverview, /@holaboss\/app-sdk/);
@@ -411,6 +420,7 @@ test("high-level docs route developers into the concrete builder pages", async (
   assert.match(holaosApps, /applications:/);
   assert.match(holaosApps, /mcp\.tools/);
   assert.match(concepts, /workspace registers it under `applications\[\]`/);
+  assert.match(concepts, /Operator Surface/);
   assert.match(concepts, /\/build-on-holaos\//);
   assert.match(workspaceModel, /applications\[\]\.app_id/);
   assert.match(workspaceModel, /\/templates\/materialization/);

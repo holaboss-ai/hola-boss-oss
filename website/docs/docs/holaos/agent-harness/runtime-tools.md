@@ -71,3 +71,11 @@ These tools only appear for workspace sessions when the desktop browser bridge i
 | Tool | What it does |
 | --- | --- |
 | `image_generate` | Generate an image file in the current workspace using the configured image generation provider and model. |
+
+## Reports
+
+| Tool | What it does |
+| --- | --- |
+| `write_report` | Create a report artifact for the current workspace session, save it under `outputs/reports/`, and return stable report metadata so the chat reply can stay brief. |
+
+`write_report` exists for answers that should become a durable artifact instead of a long chat message. It is meant for research summaries, investigations, audits, plans, reviews, comparisons, timelines, and other evidence-heavy findings the operator may want to revisit later.

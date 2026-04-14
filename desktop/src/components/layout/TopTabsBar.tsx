@@ -257,10 +257,10 @@ export function TopTabsBar({
       }`;
 
   const windowControlButtonClassName =
-    "window-no-drag flex h-6 w-6 items-center justify-center rounded-[8px] border border-transparent text-muted-foreground/72 transition-colors duration-150 hover:bg-foreground/6 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
+    "window-no-drag flex h-5 w-5 items-center justify-center rounded-[7px] border border-transparent text-muted-foreground/72 transition-colors duration-150 hover:bg-foreground/6 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
   const workspaceSwitcherContainerClassName = `${integratedTitleBar ? "window-no-drag " : ""}relative min-w-55 max-w-full`;
   const workspaceSwitcherButtonClassName =
-    "h-8 w-full justify-start gap-2 px-2.5 rounded-lg text-[13px]";
+    "h-7 w-full justify-start gap-1.5 px-2 rounded-lg text-xs";
 
   return (
     <header
@@ -273,7 +273,7 @@ export function TopTabsBar({
             <img
               src={holabossLogoUrl}
               alt="Holaboss"
-              className="size-8 shrink-0 rounded-[10px] border border-border overflow-hidden"
+              className="size-7 shrink-0 rounded-[9px] border border-border overflow-hidden"
             />
           </div>
         ) : (
@@ -281,7 +281,7 @@ export function TopTabsBar({
             <img
               src={holabossLogoUrl}
               alt="Holaboss"
-              className="size-8 shrink-0 rounded-[10px] border border-border overflow-hidden"
+              className="size-7 shrink-0 rounded-[9px] border border-border overflow-hidden"
             />
             <div
               ref={workspaceSwitcherRef}
@@ -306,12 +306,12 @@ export function TopTabsBar({
                 }}
                 className={workspaceSwitcherButtonClassName}
               >
-                <FolderKanban size={14} className="shrink-0 text-primary" />
+                <FolderKanban size={13} className="shrink-0 text-primary" />
                 <span className="min-w-0 flex-1 truncate text-left font-medium">
                   {selectedWorkspace?.name || "Select workspace"}
                 </span>
                 <ChevronDown
-                  size={13}
+                  size={12}
                   className={`shrink-0 text-muted-foreground transition-transform ${workspaceSwitcherOpen ? "rotate-180" : ""}`}
                 />
               </Button>
@@ -343,12 +343,12 @@ export function TopTabsBar({
                 }}
                 className={workspaceSwitcherButtonClassName}
               >
-                <FolderKanban size={14} className="shrink-0 text-primary" />
+                <FolderKanban size={13} className="shrink-0 text-primary" />
                 <span className="min-w-0 flex-1 truncate text-left font-medium">
                   {selectedWorkspace?.name || "Select workspace"}
                 </span>
                 <ChevronDown
-                  size={13}
+                  size={12}
                   className={`shrink-0 text-muted-foreground transition-transform ${workspaceSwitcherOpen ? "rotate-180" : ""}`}
                 />
               </Button>
@@ -364,12 +364,12 @@ export function TopTabsBar({
           {onOpenMarketplace ? (
             <Button
               variant={isMarketplaceActive ? "secondary" : "outline"}
-              size="default"
+              size="sm"
               aria-label="Marketplace"
               onClick={onOpenMarketplace}
-              className="gap-2 rounded-lg text-[13px]"
+              className="h-7 gap-1.5 px-2 rounded-lg text-xs"
             >
-              <LayoutGrid size={13} />
+              <LayoutGrid size={12} />
               <span className="hidden sm:inline">Marketplace</span>
             </Button>
           ) : null}
@@ -384,7 +384,7 @@ export function TopTabsBar({
           <DropdownMenu>
             <DropdownMenuTrigger
               ref={userButtonRef}
-              render={<Button variant="outline" size="icon" className="relative rounded-lg" />}
+              render={<Button variant="outline" size="icon-sm" className="relative rounded-lg" />}
             >
               <User2 />
               <span

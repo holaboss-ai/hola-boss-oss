@@ -123,7 +123,7 @@ When adding a new package (e.g. `@holaboss/mcp`):
      - bridge
      - mcp    # add here
    ```
-3. Add a CI job in `.github/workflows/oss-ci.yml` (copy the `sdk-bridge` job pattern)
+3. Add a CI job in `.github/workflows/ci.yml` (copy the `sdk-bridge` job pattern)
 4. Add root scripts in `package.json`:
    ```json
    "sdk:mcp:install": "bun install --cwd sdk/mcp",

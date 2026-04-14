@@ -17,7 +17,7 @@ For the shipped path, a run moves through these stages:
 1. collect the workspace references the runtime needs
 2. compile `workspace.yaml` plus those references into a `CompiledWorkspaceRuntimePlan`
 3. stage runtime-owned capability surfaces such as browser tools, runtime tools, MCP, skills, and commands
-4. load recent runtime context, session resume context, recalled memory, and pending user-memory proposals
+4. load recent runtime context, session resume context, recalled memory, operator surface context, and pending user-memory proposals
 5. project the final runtime config passed into the harness
 6. build the harness-host request, persist a sanitized request snapshot, and launch the host
 
@@ -78,7 +78,7 @@ If you are changing config shape, start here before you touch the harness or des
 Before the harness launch it also:
 
 - stages browser tools through the selected harness plugin
-- stages runtime tools through the selected harness plugin
+- stages runtime tools through the selected harness plugin, including runtime-owned mutate paths such as `write_report`
 - resolves workspace skills
 - optionally stages skills and workspace commands depending on the runner prep plan
 - maps logical MCP server ids to physical server ids with `mcpServerIdMap()`
@@ -95,6 +95,7 @@ The runner then loads the context that is specific to this run:
 - session resume context from artifacts, compaction boundaries, and session-memory files
 - recalled memory context from the memory registry and vector recall path
 - current user profile context
+- operator surface context from the desktop browser capability base URL when desktop browser tooling is active
 - pending user-memory proposals for the current input
 
 Those inputs come from both filesystem state and `runtime.db`. They are runtime-owned context, not authored workspace config.
@@ -118,7 +119,7 @@ Important outputs include:
 - `workspace_config_checksum`
 - `capability_manifest`
 
-If the harness sees the wrong tools, wrong prompt layers, wrong selected model, or wrong output schema, this is usually the page and code seam you wanted.
+This is also where response-delivery guidance and operator surface context become prompt-visible context for the run. If the harness sees the wrong tools, wrong prompt layers, wrong selected model, or wrong output schema, this is usually the page and code seam you wanted.
 
 ## Stage 6: Build the Harness Request and Snapshot It
 
@@ -145,6 +146,7 @@ That snapshot is the runtime’s replay and debugging seam. It is how the system
 
 - `workspace_config_checksum` changing unexpectedly usually means the authored workspace input changed, not the harness.
 - Missing MCP tools often come from `mcp_registry` compile rules or server-id mapping, not from the host implementation.
+- Ambiguous `here`, `this page`, or `what am I looking at` behavior usually comes from operator surface context loading, not from `workspace.yaml`.
 - Wrong prompt context often comes from runtime context loading or `projectAgentRuntimeConfig()`, not from `workspace.yaml`.
 - If the runtime-plan compile fails before a run starts, use the dedicated workspace-runtime-plan CLI entrypoint from `runtime/api-server`.
 

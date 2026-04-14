@@ -1,6 +1,10 @@
 name: Deploy Docs
 
 on:
+  pull_request:
+    paths:
+      - .github/workflows/deploy-docs.yml
+      - website/docs/**
   push:
     branches:
       - main
@@ -34,6 +38,12 @@ jobs:
 
       - name: Install docs dependencies
         run: npm --prefix website/docs ci
+
+      - name: Docs tests
+        run: npm run docs:test
+
+      - name: Docs build
+        run: npm run docs:build
 
       - name: Deploy docs to production
         if: ${{ github.event_name == 'push' }}
