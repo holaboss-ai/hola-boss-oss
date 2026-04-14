@@ -4,11 +4,6 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { providerIcon } from "@/components/onboarding/constants";
 
-/** Maps app_id → providerIcon key when they differ */
-const APP_PROVIDER_MAP: Record<string, string> = {
-  sheets: "googlesheets",
-};
-
 type AppCardState = "available" | "installing" | "installed";
 
 interface AppCatalogCardProps {
@@ -21,8 +16,7 @@ interface AppCatalogCardProps {
 export function AppCatalogCard({ entry, state, disabled, onInstall }: AppCatalogCardProps) {
   const label = entry.name || entry.app_id;
   const description = entry.description ?? "";
-  const providerKey = APP_PROVIDER_MAP[entry.app_id] ?? entry.app_id;
-  const icon = providerIcon(providerKey, 22);
+  const icon = providerIcon(entry.app_id, 22);
   return (
     <Card size="sm">
       <CardHeader>
