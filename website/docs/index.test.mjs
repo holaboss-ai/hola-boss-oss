@@ -354,6 +354,11 @@ test("build on holaOS pages expose the real developer seams and validation paths
   assert.match(desktopInternals, /PROVIDER_MODEL_CATALOG/);
   assert.match(desktopInternals, /catalogConfigShapeForProviderModel/);
   assert.match(desktopInternals, /mappedHolabossProxyProviderModel/);
+  assert.match(desktopInternals, /copyBrowserWorkspaceProfile/);
+  assert.match(desktopInternals, /importBrowserProfile/);
+  assert.match(desktopInternals, /\[holaboss\.createWorkspace\]/);
+  assert.match(desktopInternals, /serializeQuotedSkillPrompt/);
+  assert.match(desktopInternals, /Use Skills/);
 
   assert.match(runtimeApis, /runtime\/api-server\/src\/app\.ts/);
   assert.match(runtimeApis, /\/api\/v1\/agent-runs\/stream/);
@@ -367,6 +372,9 @@ test("build on holaOS pages expose the real developer seams and validation paths
   assert.match(runtimeApis, /127\.0\.0\.1:5160/);
   assert.match(runtimeApis, /POST \/api\/v1\/agent-sessions\/queue/);
   assert.match(runtimeApis, /curl -X POST http:\/\/127\.0\.0\.1:5160\/api\/v1\/capabilities\/runtime-tools\/reports/);
+  assert.match(runtimeApis, /\/api\/v1\/apps\/:appId\/setup-log/);
+  assert.match(runtimeApis, /app install already in progress for this id/);
+  assert.match(runtimeApis, /\.holaboss\/logs\//);
   assert.match(
     runtimeApis,
     /api\/v1\/agent-sessions\/session-main\/outputs\/stream/
@@ -389,6 +397,7 @@ test("build on holaOS pages expose the real developer seams and validation paths
   assert.match(runtimeStateStore, /exclude specific session ids/);
   assert.match(runtimeStateStore, /distinctSessions:\s*true/);
   assert.match(runtimeStateStore, /claim-inputs --request-base64/);
+  assert.match(runtimeStateStore, /restart_attempts/);
 
   assert.match(independentDeploy, /package-metadata\.json/);
   assert.match(independentDeploy, /runtime\/metadata\.json/);
@@ -406,6 +415,8 @@ test("build on holaOS pages expose the real developer seams and validation paths
   assert.match(harnessInternals, /instructionWithContextMessages/);
   assert.match(harnessInternals, /tool_execution_start/);
   assert.match(harnessInternals, /defaultThinkingLevel/);
+  assert.match(harnessInternals, /resolveQuotedSkillSections/);
+  assert.match(harnessInternals, /Quoted workspace skills:/);
 
   assert.match(troubleshooting, /desktop\/scripts\/check-runtime-status\.sh/);
   assert.match(troubleshooting, /HOLABOSS_BACKEND_BASE_URL/);
@@ -414,6 +425,9 @@ test("build on holaOS pages expose the real developer seams and validation paths
   assert.match(troubleshooting, /127\.0\.0\.1:5160/);
   assert.match(troubleshooting, /rm -rf desktop\/out\/runtime-<platform>/);
   assert.match(troubleshooting, /\/api\/v1\/runtime\/status/);
+  assert.match(troubleshooting, /\/api\/v1\/apps\/my_app\/setup-log/);
+  assert.match(troubleshooting, /events\.ndjson/);
+  assert.match(troubleshooting, /\[holaboss\.createWorkspace\]/);
 });
 
 test("app development and templates pages expose runtime-true developer contracts", async () => {
@@ -440,6 +454,8 @@ test("app development and templates pages expose runtime-true developer contract
   assert.match(appAnatomy, /HOLABOSS_APP_GRANT/);
 
   assert.match(firstApp, /POST \/api\/v1\/apps\/install-archive/);
+  assert.match(firstApp, /GET \/api\/v1\/apps\/:appId\/setup-log/);
+  assert.match(firstApp, /already in progress/);
   assert.match(firstApp, /workspace\.yaml/);
   assert.match(firstApp, /mcp\.tools/);
 
@@ -449,6 +465,7 @@ test("app development and templates pages expose runtime-true developer contract
 
   assert.match(mcpTools, /writeWorkspaceMcpRegistryEntry/);
   assert.match(mcpTools, /app_id\.tool_name/);
+  assert.match(mcpTools, /started_at/);
   assert.match(mcpTools, /runtime\/api-server\/src\/app\.test\.ts/);
 
   assert.match(publishingOutputs, /publishSessionArtifact/);
@@ -460,6 +477,8 @@ test("app development and templates pages expose runtime-true developer contract
   assert.match(templatesOverview, /@holaboss\/app-sdk/);
 
   assert.match(templatesMaterialization, /apply-template-from-url/);
+  assert.match(templatesMaterialization, /copyBrowserWorkspaceProfile/);
+  assert.match(templatesMaterialization, /importBrowserProfile/);
   assert.match(templatesMaterialization, /replace_existing/);
   assert.match(templatesMaterialization, /GET \/api\/v1\/workspaces\/:workspaceId\/export/);
 

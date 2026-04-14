@@ -33,7 +33,7 @@ Use the right port before you assume a route is broken.
 | Agent runs and sessions | `/api/v1/agent-runs`, `/api/v1/agent-runs/stream`, `/api/v1/agent-sessions/*`, `/api/v1/agent-sessions/:sessionId/artifacts`, `/api/v1/agent-sessions/by-workspace/:workspaceId/with-artifacts` | `runner-worker.ts`, `ts-runner.ts`, `turn-result-summary.ts`, and state-store session tables |
 | Integrations and auth flows | `/api/v1/integrations/*`, `/api/v1/integrations/oauth/*`, `/api/v1/integrations/broker/*` | `integrations.ts`, `integration-broker.ts`, `oauth-service.ts`, and `composio-service.ts` |
 | Memory and post-run system state | `/api/v1/memory/*`, `/api/v1/memory-update-proposals*`, `/api/v1/task-proposals*` | `memory.js`, `user-memory-proposals.js`, `turn-memory-writeback.js`, and queue or evolve workers |
-| Apps and resolved-app orchestration | `/api/v1/apps/*`, `/api/v1/internal/workspaces/:workspaceId/resolved-apps/start` | `workspace-apps.ts`, `app-lifecycle-worker.ts`, and `resolved-app-bootstrap.ts` |
+| Apps and resolved-app orchestration | `/api/v1/apps/*`, `/api/v1/apps/:appId/setup-log`, `/api/v1/apps/install-archive`, `/api/v1/internal/workspaces/:workspaceId/resolved-apps/start` | `workspace-apps.ts`, `app-lifecycle-worker.ts`, and `resolved-app-bootstrap.ts` |
 | Outputs, notifications, and cronjobs | `/api/v1/outputs*`, `/api/v1/output-folders*`, `/api/v1/notifications*`, `/api/v1/cronjobs*` | `cron-worker.ts`, state-store output tables, session artifact helpers, and the desktop surfaces that render this state |
 
 ## Runtime-tool request metadata
@@ -118,6 +118,26 @@ If you change a runtime-tool route that creates outputs or artifacts, also inspe
 - `runtime/api-server/src/claimed-input-executor.ts`
 
 That path now matters for report artifacts because the runtime can persist them during the run and the post-turn file capture path must not duplicate them later.
+
+## App install and setup diagnostics
+
+The app install path has two operational contracts worth treating as API behavior, not implementation detail:
+
+- `POST /api/v1/apps/install-archive` serializes installs per `(workspace_id, app_id)` and returns `409` with `app install already in progress for this id` when a second install races the same target.
+- `GET /api/v1/apps/:appId/setup-log?workspace_id=...` returns the latest setup log tail plus recent structured events from `<workspace>/apps/<appId>/.holaboss/logs/`.
+
+Representative setup-log debug call:
+
+```bash
+curl \
+  'http://127.0.0.1:5160/api/v1/apps/my_app/setup-log?workspace_id=workspace-1'
+```
+
+The response includes:
+
+- `log_path` and `log_size_bytes`
+- `log_tail` (bounded tail of `setup.latest.log`)
+- `recent_events` (last lifecycle events from `events.ndjson`)
 
 ## How to change the API safely
 

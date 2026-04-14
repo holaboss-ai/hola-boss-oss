@@ -165,13 +165,22 @@ test("chat composer switches model and thinking selectors into icon-led compact 
     source,
     /const selectedThinkingLabel = displayThinkingValueLabel\(selectedThinkingValue\);/,
   );
+  assert.match(source, /const \[open, setOpen\] = useState\(false\);/);
   assert.match(
     source,
     /aria-label=\{\s*compact \? `Reasoning effort: \$\{selectedThinkingLabel\}` : undefined\s*\}/,
   );
   assert.match(
     source,
-    /compact \? \(\s*<span className="flex min-w-0 flex-1 items-center gap-1\.5">[\s\S]*<Lightbulb[\s\S]*<span className="truncate">\{selectedThinkingLabel\}<\/span>/,
+    /compact\s*\?\s*showCompactLabel\s*\?\s*"min-w-0 justify-between px-2\.5"\s*:\s*"min-w-0 justify-start gap-1\.5 px-2\.5"/,
+  );
+  assert.match(
+    source,
+    /compact \? \(\s*showCompactLabel \? \(\s*<>\s*<span className="flex min-w-0 items-center gap-1\.5">[\s\S]*<Lightbulb[\s\S]*<span className="truncate">\{selectedThinkingLabel\}<\/span>[\s\S]*<ChevronDown[\s\S]*<\/>\s*\) : \(\s*<span className="flex min-w-0 items-center gap-1\.5">[\s\S]*<Lightbulb[\s\S]*<ChevronDown/,
+  );
+  assert.match(
+    source,
+    /<PopoverContent[\s\S]*align="start"[\s\S]*side="top"[\s\S]*sideOffset=\{8\}[\s\S]*className="w-\[220px\] p-0"[\s\S]*Reasoning effort[\s\S]*thinkingValues\.map\(\(value\) => renderOption\(value\)\)/,
   );
 });
 

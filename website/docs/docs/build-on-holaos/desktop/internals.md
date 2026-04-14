@@ -16,6 +16,7 @@ That means desktop work is usually spread across four boundaries: React renderer
 ## Main code seams
 
 - `desktop/src/components/layout/AppShell.tsx`: the shell composition and top-level product routing. This is where the agent pane, browser panes, file explorer, app surfaces, operations drawer, notifications, settings overlays, and reported non-browser operator surfaces are coordinated.
+- `desktop/src/components/onboarding/FirstWorkspacePane.tsx`, `ConfigureStep.tsx`, `BrowserProfileStep.tsx`, and `CreatingView.tsx`: first-workspace flow, including empty/template workspace creation and browser-profile bootstrap choices.
 - `desktop/shared/model-catalog.ts`: shipped fallback model metadata for direct providers and Holaboss Proxy model mapping, including reasoning support, allowed thinking values, and input modalities.
 - `desktop/src/lib/workspaceDesktop.tsx` and `desktop/src/lib/workspaceSelection.tsx`: renderer-side workspace state and shell coordination.
 - `desktop/src/components/auth/AuthPanel.tsx`: provider settings, catalog-backed defaults, background-task selection, recall embeddings, and image-generation configuration.
@@ -118,6 +119,30 @@ handleTrustedIpc("workspace:queueSessionInput", ["main"], async (_event, payload
   queueSessionInput(payload),
 );
 ```
+
+## Workspace bootstrap flow
+
+Workspace bootstrap now has two phases:
+
+1. `workspace:createWorkspace` in Electron main materializes template/empty content, writes workspace files, and activates the runtime record.
+2. renderer-side workspace bootstrap in `workspaceDesktop.tsx` can then copy browser profile state from another workspace or import browser data from Chrome/Edge/Arc/Safari.
+
+Representative post-create browser bootstrap calls from the renderer:
+
+```ts
+await window.electronAPI.workspace.copyBrowserWorkspaceProfile({
+  sourceWorkspaceId,
+  targetWorkspaceId: createdWorkspaceId,
+});
+
+await window.electronAPI.workspace.importBrowserProfile({
+  workspaceId: createdWorkspaceId,
+  source: browserImportSource,
+  profileDir: browserImportProfileDir.trim() || undefined,
+});
+```
+
+`createWorkspace()` in `desktop/electron/main.ts` now also emits structured stage logs with the `[holaboss.createWorkspace]` prefix for debugging create failures across materialization, runtime record creation, template apply, and workspace activation.
 
 ## Browser protocol
 
@@ -234,6 +259,26 @@ if (/^claude-/i.test(normalizedModelId)) {
 ```
 
 That is how a managed proxy model like `gpt-5.4` or `claude-sonnet-4-6` can still light up the desktop reasoning selector even if the control plane catalog did not provide explicit `thinking_values`.
+
+## Composer skill entry points
+
+Skill usage is now composer-first rather than a standalone pane:
+
+- slash commands in the composer (`/skill_id`)
+- quoted skill chips attached to the pending message
+- `Use Skills` picker inside composer actions
+
+`ChatPane.tsx` serializes selected skills into a leading slash block before queueing:
+
+```ts
+const serializedPrompt = serializeQuotedSkillPrompt(trimmed, quotedSkillIds);
+await window.electronAPI.workspace.queueSessionInput({
+  text: serializedPrompt,
+  // other fields omitted
+});
+```
+
+If you change skill discoverability or prompt shaping, inspect both the desktop serialization path and the harness-host prompt-expansion path.
 
 ## File explorer contract
 

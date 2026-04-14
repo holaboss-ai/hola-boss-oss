@@ -45,13 +45,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
 import {
   EXPLORER_ATTACHMENT_DRAG_TYPE,
@@ -235,8 +228,8 @@ const COMPOSER_FULL_MODEL_CONTROL_WIDTH_PX = 168;
 const COMPOSER_FULL_THINKING_CONTROL_WIDTH_PX = 88;
 const COMPOSER_FULL_PROVIDER_SETUP_WIDTH_PX = 320;
 const COMPOSER_COMPACT_MODEL_CONTROL_MAX_WIDTH_PX = 168;
-const COMPOSER_COMPACT_THINKING_CONTROL_MIN_WIDTH_PX = 72;
-const COMPOSER_COMPACT_THINKING_CONTROL_MAX_WIDTH_PX = 120;
+const COMPOSER_COMPACT_THINKING_CONTROL_MIN_WIDTH_PX = 56;
+const COMPOSER_COMPACT_THINKING_CONTROL_MAX_WIDTH_PX = 56;
 const CHAT_MODEL_STORAGE_KEY = "holaboss-chat-model-v1";
 const CHAT_THINKING_STORAGE_KEY = "holaboss-chat-thinking-v1";
 const CHAT_MODEL_USE_RUNTIME_DEFAULT = "__runtime_default__";
@@ -6949,6 +6942,8 @@ function ThinkingValueSelect({
   compactWidth?: number;
   onThinkingValueChange: (value: string | null) => void;
 }) {
+  const [open, setOpen] = useState(false);
+
   if (thinkingValues.length === 0 || !selectedThinkingValue) {
     return null;
   }
@@ -6959,46 +6954,105 @@ function ThinkingValueSelect({
     typeof compactWidth !== "number" ||
     compactWidth >= compactLabelMinWidth;
 
-  return (
-    <Select
-      value={selectedThinkingValue}
-      onValueChange={onThinkingValueChange}
-      disabled={disabled}
-    >
-      <SelectTrigger
-        aria-label={
-          compact ? `Reasoning effort: ${selectedThinkingLabel}` : undefined
-        }
-        className={`h-11 rounded-[11px] bg-card text-xs font-medium ${
-          compact ? "w-full min-w-0 px-2.5" : ""
+  const renderOption = (value: string) => {
+    const active = value === selectedThinkingValue;
+    return (
+      <button
+        key={value}
+        type="button"
+        onClick={() => {
+          onThinkingValueChange(value);
+          setOpen(false);
+        }}
+        className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs transition-colors ${
+          active
+            ? "bg-accent text-accent-foreground"
+            : "text-foreground hover:bg-accent/50"
         }`}
       >
-        {compact ? (
-          <span
-            className={`flex min-w-0 flex-1 items-center ${
-              showCompactLabel ? "gap-1.5" : "justify-center"
+        <span className="truncate">{displayThinkingValueLabel(value)}</span>
+        {active ? (
+          <Check size={13} className="shrink-0 text-primary" />
+        ) : null}
+      </button>
+    );
+  };
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+      }}
+    >
+      <PopoverTrigger
+        disabled={disabled}
+        render={
+          <Button
+            variant="outline"
+            size="lg"
+            aria-label={
+              compact ? `Reasoning effort: ${selectedThinkingLabel}` : undefined
+            }
+            className={`w-full rounded-[11px] bg-card text-xs font-medium ${
+              compact
+                ? showCompactLabel
+                  ? "min-w-0 justify-between px-2.5"
+                  : "min-w-0 justify-start gap-1.5 px-2.5"
+                : "justify-between"
             }`}
           >
-            <Lightbulb
-              size={13}
-              className="shrink-0 text-muted-foreground"
-            />
-            {showCompactLabel ? (
-              <span className="truncate">{selectedThinkingLabel}</span>
-            ) : null}
-          </span>
-        ) : (
-          <SelectValue placeholder="Thinking" />
-        )}
-      </SelectTrigger>
-      <SelectContent side="top" align="end">
-        {thinkingValues.map((value) => (
-          <SelectItem key={value} value={value} className="text-xs">
-            {displayThinkingValueLabel(value)}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+            {compact ? (
+              showCompactLabel ? (
+                <>
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <Lightbulb
+                      size={13}
+                      className="shrink-0 text-muted-foreground"
+                    />
+                    <span className="truncate">{selectedThinkingLabel}</span>
+                  </span>
+                  <ChevronDown
+                    size={13}
+                    className="shrink-0 text-muted-foreground"
+                  />
+                </>
+              ) : (
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <Lightbulb
+                    size={13}
+                    className="shrink-0 text-muted-foreground"
+                  />
+                  <ChevronDown
+                    size={13}
+                    className="shrink-0 text-muted-foreground"
+                  />
+                </span>
+              )
+            ) : (
+              <>
+                <span className="truncate">{selectedThinkingLabel}</span>
+                <ChevronDown
+                  size={13}
+                  className="shrink-0 text-muted-foreground"
+                />
+              </>
+            )}
+          </Button>
+        }
+      />
+      <PopoverContent
+        align="start"
+        side="top"
+        sideOffset={8}
+        className="w-[220px] p-0"
+      >
+        <div className="border-b border-border/40 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/70">
+          Reasoning effort
+        </div>
+        <div className="py-1">{thinkingValues.map((value) => renderOption(value))}</div>
+      </PopoverContent>
+    </Popover>
   );
 }
 

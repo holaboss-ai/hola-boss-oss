@@ -59,6 +59,13 @@ After the template files are materialized, `createWorkspace()`:
 
 That means a template is not finished when it can be downloaded. It is finished when the materialized workspace can be opened and used without repair.
 
+The desktop renderer can then run optional browser bootstrap after workspace creation:
+
+- copy browser profile state from another workspace through `workspace.copyBrowserWorkspaceProfile(...)`
+- import browser data from Chrome, Edge, Arc, or Safari through `workspace.importBrowserProfile(...)`
+
+Those are post-create bootstrap actions. They do not replace template materialization.
+
 ## Applying Templates Through the Runtime API
 
 The runtime exposes two workspace template application routes:

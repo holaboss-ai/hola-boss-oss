@@ -24,16 +24,57 @@ test("file explorer syncs the workspace root only when the selected workspace ch
   assert.doesNotMatch(source, /currentPath === workspaceRoot/);
 });
 
-test("file explorer polls the current directory to surface live file changes", async () => {
+test("file explorer refreshes the current directory and expanded folders to surface live file changes", async () => {
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(
     source,
-    /const payload = await window\.electronAPI\.fs\.listDirectory\(\s*currentPath,\s*selectedWorkspaceId \?\? null,\s*\);/,
+    /const refreshTargets = \[\s*currentPath,\s*\.\.\.Object\.entries\(expandedDirectoryPaths\)[\s\S]*\.filter\(\s*\(\[, isExpanded\]\) => isExpanded\s*\)[\s\S]*\.map\(\(\[targetPath\]\) => targetPath\),\s*\]\.filter\(/,
   );
-  assert.match(source, /const timer = window\.setInterval\(\(\) => \{\s*void refreshCurrentDirectory\(\);\s*\}, 1200\);/);
+  assert.match(source, /const refreshedDirectories = await Promise\.allSettled\(/);
+  assert.match(source, /refreshTargets\.map\(\(targetPath\) =>/);
+  assert.match(
+    source,
+    /window\.electronAPI\.fs\.listDirectory\(\s*targetPath,\s*selectedWorkspaceId \?\? null,\s*\)/,
+  );
+  assert.match(
+    source,
+    /setDirectoryEntriesByPath\(\(current\) => \(\{\s*\.\.\.current,\s*\.\.\.refreshedEntriesByPath,\s*\}\)\);/,
+  );
+  assert.match(source, /const timer = window\.setInterval\(\(\) => \{\s*void refreshLoadedDirectories\(\);\s*\}, 1200\);/);
   assert.match(source, /window\.clearInterval\(timer\);/);
-  assert.match(source, /\}, \[currentPath, selectedWorkspaceId\]\);/);
+  assert.match(source, /\}, \[currentPath, expandedDirectoryPaths, selectedWorkspaceId\]\);/);
+});
+
+test("file explorer live-refreshes inline previews from file watch events without overwriting dirty edits", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /const isDirtyRef = useRef\(false\);/);
+  assert.match(source, /const isSavingRef = useRef\(false\);/);
+  assert.match(source, /isDirtyRef\.current = isDirty;/);
+  assert.match(source, /isSavingRef\.current = saving;/);
+  assert.match(
+    source,
+    /const watchedPath = preview\?\.absolutePath\?\.trim\(\) \|\| "";\s*if \(!previewInPane \|\| !watchedPath\) \{\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /window\.electronAPI\.fs\.onFileChange\(\(payload\) => \{\s*if \(\s*normalizeComparablePath\(payload\.absolutePath\) !==\s*normalizeComparablePath\(watchedPath\)\s*\) \{\s*return;\s*\}\s*void refreshPreviewFromDisk\(\);\s*\}\);/,
+  );
+  assert.match(
+    source,
+    /window\.electronAPI\.fs[\s\S]*\.watchFile\(/,
+  );
+  assert.match(source, /watchedPath,\s*selectedWorkspaceId \?\? null/);
+  assert.match(
+    source,
+    /if \(\s*cancelled \|\|\s*refreshInFlight \|\|\s*isDirtyRef\.current \|\|\s*isSavingRef\.current\s*\) \{\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /const nextPreview = await window\.electronAPI\.fs\.readFilePreview\(\s*watchedPath,\s*selectedWorkspaceId \?\? null,\s*\);[\s\S]*setPreview\(nextPreview\);[\s\S]*setPreviewDraft\(nextPreview\.content \?\? ""\);/,
+  );
+  assert.match(source, /void window\.electronAPI\.fs\.unwatchFile\(subscriptionId\);/);
 });
 
 test("file explorer switches folders to inline tree expansion and keeps explorer-only file opening", async () => {
@@ -295,7 +336,10 @@ test("file explorer can move dragged files into folder rows", async () => {
     /const \[directoryDropTargetPath, setDirectoryDropTargetPath\] = useState<[\s\S]*string \| null[\s\S]*>\(null\);/,
   );
   assert.match(source, /const canDropDraggedEntryIntoDirectory = useCallback\(/);
-  assert.match(source, /event\.dataTransfer\.dropEffect = "move";/);
+  assert.match(
+    source,
+    /event\.dataTransfer\.dropEffect = canMoveDraggedEntry\s*\?\s*"move"\s*:\s*"copy";/,
+  );
   assert.match(
     source,
     /void moveEntryToDirectory\(\s*draggedEntryPath,\s*entry\.absolutePath,\s*\);/,
@@ -312,6 +356,41 @@ test("file explorer can move dragged files into folder rows", async () => {
     source,
     /await Promise\.all\(\s*refreshTargets\.map\(\(targetPath\) => refreshDirectoryEntries\(targetPath\)\),\s*\);/,
   );
+});
+
+test("file explorer imports dragged external files and folders into the tree", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /type ExplorerExternalImportEntry =/);
+  assert.match(source, /webkitGetAsEntry\?: \(\) => ExplorerExternalDropEntry \| null;/);
+  assert.match(source, /async function collectDroppedExternalEntriesFromEntry\(/);
+  assert.match(
+    source,
+    /const childEntries = await readExternalDropDirectoryEntries\(\s*entry as FileSystemDirectoryEntry,\s*\);/,
+  );
+  assert.match(source, /content: new Uint8Array\(await file\.arrayBuffer\(\)\),/);
+  assert.match(source, /function hasExternalExplorerDropData\(dataTransfer: DataTransfer \| null\)/);
+  assert.match(source, /const \[paneExternalDropTarget, setPaneExternalDropTarget\] = useState\(false\);/);
+  assert.match(source, /const importExternalEntriesToDirectory = useCallback\(/);
+  assert.match(
+    source,
+    /window\.electronAPI\.fs\.importExternalEntries\(\s*normalizedDestinationDirectoryPath,\s*importedEntries,\s*selectedWorkspaceId \?\? null,\s*\)/,
+  );
+  assert.match(
+    source,
+    /const refreshTargets = \[\s*normalizedDestinationDirectoryPath,\s*getParentFolderPath\(normalizedDestinationDirectoryPath\),\s*\]\.filter\(/,
+  );
+  assert.match(source, /event\.dataTransfer\.dropEffect = canMoveDraggedEntry\s*\?\s*"move"\s*:\s*"copy";/);
+  assert.match(
+    source,
+    /void importExternalEntriesToDirectory\(\s*event\.dataTransfer,\s*entry\.absolutePath,\s*\);/,
+  );
+  assert.match(
+    source,
+    /className=\{`chat-scrollbar-hidden min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-1\.5 pb-1\.5 pt-1 \$\{[\s\S]*paneExternalDropTarget[\s\S]*"rounded-md bg-emerald-500\/10 ring-1 ring-emerald-500\/30"[\s\S]*\}`\}/,
+  );
+  assert.match(source, /onDragOver=\{onPaneDragOver\}/);
+  assert.match(source, /onDrop=\{onPaneDrop\}/);
 });
 
 test("file explorer does not expose a pane-level close action", async () => {

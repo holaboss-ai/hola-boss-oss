@@ -84,6 +84,18 @@ test("desktop file explorer enforces the selected workspace root as a filesystem
     source,
     /"fs:createPath"[\s\S]*parentPath: string \| null \| undefined,[\s\S]*kind: FileSystemCreateKind,[\s\S]*createExplorerPath\(parentPath, kind, workspaceId\)/,
   );
+  assert.match(source, /type ExplorerExternalImportEntryPayload =/);
+  assert.match(source, /interface ExplorerExternalImportResultPayload \{\s*absolutePaths: string\[];\s*\}/);
+  assert.match(source, /function normalizeExplorerImportRelativePath\(/);
+  assert.match(source, /function normalizeExplorerImportEntries\(/);
+  assert.match(source, /async function importExternalExplorerEntries\(/);
+  assert.match(source, /await nextAvailableExplorerCreatePath\(\s*destinationAbsolutePath,\s*rootName,\s*\)/);
+  assert.match(source, /await fs\.mkdir\(absolutePath, \{ recursive: true \}\);/);
+  assert.match(source, /await fs\.writeFile\(absolutePath, Buffer\.from\(fileEntry\.content\)\);/);
+  assert.match(
+    source,
+    /"fs:importExternalEntries"[\s\S]*destinationDirectoryPath: string,[\s\S]*entries: ExplorerExternalImportEntryPayload\[\],[\s\S]*importExternalExplorerEntries\(\s*destinationDirectoryPath,\s*entries,\s*workspaceId,\s*\)/,
+  );
   assert.match(
     source,
     /"fs:watchFile"[\s\S]*async \(_event, targetPath: string, workspaceId\?: string \| null\) =>\s*watchFilePreviewPath\(targetPath, workspaceId\)/,
@@ -117,6 +129,11 @@ test("desktop preload exposes file preview watch subscriptions and change events
   assert.match(
     source,
     /createPath: \(\s*parentPath: string \| null \| undefined,\s*kind: "file" \| "directory",\s*workspaceId\?: string \| null,\s*\) =>[\s\S]*ipcRenderer\.invoke\("fs:createPath", parentPath, kind, workspaceId\) as Promise<FileSystemMutationPayload>/,
+  );
+  assert.match(source, /type ExplorerExternalImportEntryPayload =/);
+  assert.match(
+    source,
+    /importExternalEntries: \(\s*destinationDirectoryPath: string,\s*entries: ExplorerExternalImportEntryPayload\[\],\s*workspaceId\?: string \| null,\s*\) =>[\s\S]*ipcRenderer\.invoke\(\s*"fs:importExternalEntries",\s*destinationDirectoryPath,\s*entries,\s*workspaceId,\s*\) as Promise<ExplorerExternalImportResultPayload>/,
   );
   assert.match(
     source,
