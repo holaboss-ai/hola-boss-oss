@@ -1,8 +1,4 @@
 import { appShellMainGridClassName } from "@/components/layout/appShellLayout";
-import {
-  LeftNavigationRail,
-  type LeftRailItem,
-} from "@/components/layout/LeftNavigationRail";
 import { NotificationToastStack } from "@/components/layout/NotificationToastStack";
 import {
   OperationsInboxPane,
@@ -107,6 +103,7 @@ type SpaceComponentId = "agent" | "files" | "browser";
 type UtilityPaneId = "files" | "browser";
 type DevAppUpdatePreviewMode = "off" | "downloading" | "ready";
 type SpaceExplorerMode = "files" | "browser" | "applications";
+type ShellView = "space" | "automations" | "marketplace";
 
 type SpaceVisibilityState = Record<SpaceComponentId, boolean>;
 
@@ -310,13 +307,13 @@ function buildReportedSurfaceFromAppView(params: {
 }
 
 function buildReportedOperatorSurfaceContext(params: {
-  activeLeftRailItem: LeftRailItem;
+  activeShellView: ShellView;
   agentView: AgentView;
   spaceDisplayView: SpaceDisplayView;
 }): ReportedOperatorSurfaceContext | null {
   const surfaces: OperatorSurfacePayload[] = [];
 
-  if (params.activeLeftRailItem === "space") {
+  if (params.activeShellView === "space") {
     if (params.spaceDisplayView.type === "internal") {
       const surface = buildReportedSurfaceFromInternalView({
         owner: "user",
@@ -354,17 +351,6 @@ function buildReportedOperatorSurfaceContext(params: {
         }),
       );
     }
-  } else if (
-    params.activeLeftRailItem === "app" &&
-    params.agentView.type === "app"
-  ) {
-    surfaces.push(
-      buildReportedSurfaceFromAppView({
-        owner: "user",
-        active: true,
-        view: params.agentView,
-      }),
-    );
   }
 
   if (surfaces.length === 0) {
@@ -720,16 +706,6 @@ function buildDevAppUpdatePreviewStatus(
   };
 }
 
-function compactAppVersionLabel(version: string): string {
-  const trimmed = version.trim();
-  if (!trimmed) {
-    return "";
-  }
-
-  const releaseMatch = trimmed.match(/^\d{4}\.(\d+\.\d+)$/);
-  return releaseMatch ? releaseMatch[1] : trimmed;
-}
-
 function spaceComponentLabel(componentId: SpaceComponentId) {
   if (componentId === "agent") {
     return "Agent";
@@ -1067,11 +1043,9 @@ function AppShellContent() {
     createWorkspacePanelAnchorWorkspaceId,
     setCreateWorkspacePanelAnchorWorkspaceId,
   ] = useState("");
-  const [activeLeftRailItem, setActiveLeftRailItem] =
-    useState<LeftRailItem>("space");
+  const [activeShellView, setActiveShellView] = useState<ShellView>("space");
   const [marketplaceInitialTab, setMarketplaceInitialTab] =
     useState<"templates" | "apps">("templates");
-  const [spaceLeftRailVisible, setSpaceLeftRailVisible] = useState(false);
   const [agentView, setAgentView] = useState<AgentView>({ type: "chat" });
   const [chatFocusRequestKey, setChatFocusRequestKey] = useState(1);
   const [chatSessionJumpRequest, setChatSessionJumpRequest] = useState<{
@@ -1345,7 +1319,7 @@ function AppShellContent() {
       if (normalizedWorkspaceId) {
         setSelectedWorkspaceId(normalizedWorkspaceId);
       }
-      setActiveLeftRailItem("space");
+      setActiveShellView("space");
       setSpaceVisibility((previous) => ({
         ...previous,
         agent: true,
@@ -1691,7 +1665,7 @@ function AppShellContent() {
 
         const targetBrowserSpace = payload.space === "agent" ? "agent" : "user";
         const openBrowserPane = () => {
-          setActiveLeftRailItem("space");
+          setActiveShellView("space");
           setSpaceExplorerMode("browser");
           setSpaceBrowserSpace(targetBrowserSpace);
           setSpaceDisplayView({ type: "browser" });
@@ -1864,7 +1838,7 @@ function AppShellContent() {
         if (targetWorkspaceId) {
           setSelectedWorkspaceId(targetWorkspaceId);
         }
-        setActiveLeftRailItem("space");
+        setActiveShellView("space");
         setSpaceVisibility((previous) => ({
           ...previous,
           agent: true,
@@ -1987,7 +1961,7 @@ function AppShellContent() {
   }, []);
 
   const revealBrowserPane = useCallback((space: BrowserSpaceId = "user") => {
-    setActiveLeftRailItem("space");
+    setActiveShellView("space");
     setSpaceExplorerMode("browser");
     setSpaceBrowserSpace(space);
     setSpaceDisplayView({ type: "browser" });
@@ -2589,32 +2563,28 @@ function AppShellContent() {
     [installedApps],
   );
 
-  const handleLeftRailSelect = (item: LeftRailItem) => {
-    if (item === "space") {
-      setActiveLeftRailItem("space");
-      if (agentView.type === "app") {
-        setAgentView({ type: "chat" });
-      }
-      setChatFocusRequestKey((current) => current + 1);
-      return;
+  const handleOpenSpace = useCallback(() => {
+    setActiveShellView("space");
+    if (agentView.type === "app") {
+      setAgentView({ type: "chat" });
     }
-    if (item === "marketplace") {
-      setMarketplaceInitialTab("templates");
-    }
-    setActiveLeftRailItem(item);
-  };
+    setChatFocusRequestKey((current) => current + 1);
+  }, [agentView.type]);
+
+  const handleOpenMarketplace = useCallback(
+    (initialTab: "templates" | "apps" = "templates") => {
+      setMarketplaceInitialTab(initialTab);
+      setActiveShellView("marketplace");
+    },
+    [],
+  );
+
+  const handleOpenAutomations = useCallback(() => {
+    setActiveShellView("automations");
+  }, []);
 
   const handleAddApp = () => {
-    setMarketplaceInitialTab("apps");
-    setActiveLeftRailItem("marketplace");
-  };
-
-  const handleOpenInstalledApp = (appId: string) => {
-    setActiveLeftRailItem("app");
-    setAgentView({
-      type: "app",
-      appId,
-    });
+    handleOpenMarketplace("apps");
   };
 
   const handleOpenSpaceApp = useCallback(
@@ -2627,7 +2597,7 @@ function AppShellContent() {
         resetAgentView?: boolean;
       },
     ) => {
-      setActiveLeftRailItem("space");
+      setActiveShellView("space");
       setSpaceExplorerMode("applications");
       setSpaceExplorerCollapsed(false);
       setSpaceVisibility((previous) => ({
@@ -2655,7 +2625,7 @@ function AppShellContent() {
       return;
     }
 
-    setActiveLeftRailItem("space");
+    setActiveShellView("space");
     setSpaceVisibility((previous) => ({
       ...previous,
       agent: true,
@@ -2679,7 +2649,7 @@ function AppShellContent() {
   }, []);
 
   const handleCreateScheduleInChat = useCallback(() => {
-    setActiveLeftRailItem("space");
+    setActiveShellView("space");
     setSpaceVisibility((previous) => ({
       ...previous,
       agent: true,
@@ -2716,7 +2686,7 @@ function AppShellContent() {
         return;
       }
 
-      setActiveLeftRailItem("space");
+      setActiveShellView("space");
       setSpaceVisibility((previous) => ({
         ...previous,
         agent: true,
@@ -2784,11 +2754,11 @@ function AppShellContent() {
   const reportedOperatorSurfaceContext = useMemo(
     () =>
       buildReportedOperatorSurfaceContext({
-        activeLeftRailItem,
+        activeShellView,
         agentView,
         spaceDisplayView,
       }),
-    [activeLeftRailItem, agentView, spaceDisplayView],
+    [activeShellView, agentView, spaceDisplayView],
   );
 
   useEffect(() => {
@@ -2890,7 +2860,7 @@ function AppShellContent() {
           (target.surface === "document" || target.surface === "file") &&
           target.resourceId?.trim()
         ) {
-          setActiveLeftRailItem("space");
+          setActiveShellView("space");
           setSpaceExplorerMode("files");
           setSpaceExplorerCollapsed(false);
           setSpaceVisibility((previous) => ({
@@ -2911,7 +2881,7 @@ function AppShellContent() {
           return;
         }
 
-        setActiveLeftRailItem("space");
+        setActiveShellView("space");
         setSpaceVisibility((previous) => ({
           ...previous,
           agent: true,
@@ -2934,7 +2904,7 @@ function AppShellContent() {
       return;
     }
 
-    setActiveLeftRailItem("space");
+    setActiveShellView("space");
     setSpaceVisibility((previous) => ({
       ...previous,
       agent: true,
@@ -2947,10 +2917,13 @@ function AppShellContent() {
     });
   };
 
-  const spaceMode = activeLeftRailItem === "space";
-  const appMode = activeLeftRailItem === "app";
+  const spaceMode = activeShellView === "space";
   const activeAppId =
-    appMode && agentView.type === "app" ? agentView.appId : null;
+    agentView.type === "app"
+      ? agentView.appId
+      : spaceDisplayView.type === "app"
+        ? spaceDisplayView.appId
+        : null;
   const activeApp = getWorkspaceAppDefinition(activeAppId, installedApps);
   const hasWorkspaces = workspaces.length > 0;
   const hasSelectedWorkspace = Boolean(selectedWorkspace);
@@ -2967,8 +2940,6 @@ function AppShellContent() {
   const shouldShowAppUpdateReminder = Boolean(
     effectiveAppUpdateStatus && effectiveAppUpdateStatus.downloaded,
   );
-  const appVersionLabel =
-    compactAppVersionLabel(effectiveAppUpdateStatus?.currentVersion || "");
   const shouldSuspendBrowserNativeView =
     isUtilityPaneResizing ||
     workspaceSwitcherOpen ||
@@ -3005,13 +2976,6 @@ function AppShellContent() {
     hasWorkspaces &&
     hasSelectedWorkspace &&
     onboardingModeActive;
-  const shouldOverlayLeftRail = spaceMode;
-
-  useEffect(() => {
-    if (spaceMode) {
-      setSpaceLeftRailVisible(false);
-    }
-  }, [spaceMode]);
 
   const agentContent = useMemo(() => {
     if (!hasSelectedWorkspace) {
@@ -3580,8 +3544,12 @@ function AppShellContent() {
               integratedTitleBar={hasIntegratedTitleBar}
               desktopPlatform={desktopPlatform}
               onWorkspaceSwitcherVisibilityChange={setWorkspaceSwitcherOpen}
-              onOpenMarketplace={() => handleLeftRailSelect("marketplace")}
-              isMarketplaceActive={activeLeftRailItem === "marketplace"}
+              onOpenSpace={handleOpenSpace}
+              isSpaceActive={spaceMode}
+              onOpenAutomations={handleOpenAutomations}
+              isAutomationsActive={activeShellView === "automations"}
+              onOpenMarketplace={() => handleOpenMarketplace("templates")}
+              isMarketplaceActive={activeShellView === "marketplace"}
               onOpenWorkspaceCreatePanel={handleOpenCreateWorkspacePanel}
               onOpenSettings={() => {
                 setSettingsDialogSection("settings");
@@ -3614,330 +3582,250 @@ function AppShellContent() {
         ) : showOnboardingTakeover ? (
           <WorkspaceOnboardingTakeover focusRequestKey={chatFocusRequestKey} />
         ) : (
-          <div
-            className={`relative grid h-full min-h-0 gap-y-3 overflow-hidden transition-[grid-template-columns,column-gap] duration-300 ease-in-out ${
-              shouldOverlayLeftRail
-                ? "lg:grid-cols-[minmax(0,1fr)]"
-                : "lg:grid-cols-[60px_minmax(0,1fr)]"
-            }`}
-            style={{ columnGap: shouldOverlayLeftRail ? "0rem" : "0.5rem" }}
-          >
-            {shouldOverlayLeftRail ? (
-              <>
-                <div
-                  className="absolute inset-y-0 left-0 z-30 hidden w-4 lg:block"
-                  onMouseEnter={() => setSpaceLeftRailVisible(true)}
-                  aria-hidden="true"
-                />
-                <div
-                  className={`absolute inset-y-0 left-0 z-40 hidden transition-transform duration-200 ease-out lg:block ${
-                    spaceLeftRailVisible ? "translate-x-0" : "-translate-x-full"
-                  }`}
-                  onMouseEnter={() => setSpaceLeftRailVisible(true)}
-                  onMouseLeave={() => setSpaceLeftRailVisible(false)}
-                >
-                  <LeftNavigationRail
-                    activeItem={activeLeftRailItem}
-                    onSelectItem={handleLeftRailSelect}
-                    onAddApp={handleAddApp}
-                    installedApps={installedApps}
-                    activeAppId={activeAppId}
-                    onSelectApp={handleOpenInstalledApp}
-                    appVersionLabel={appVersionLabel}
-                  />
-                </div>
-              </>
-            ) : (
-              <LeftNavigationRail
-                activeItem={activeLeftRailItem}
-                onSelectItem={handleLeftRailSelect}
-                onAddApp={handleAddApp}
-                installedApps={installedApps}
-                activeAppId={activeAppId}
-                onSelectApp={handleOpenInstalledApp}
-                appVersionLabel={appVersionLabel}
-              />
-            )}
-
-            <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
-              <div className="min-h-0 flex-1 overflow-hidden">
-                {spaceMode ? (
-                  <div className="relative flex h-full min-h-0 min-w-0 overflow-hidden">
-                    <div
-                      ref={utilityPaneHostRef}
-                      className="flex min-h-0 min-w-0 flex-1 items-stretch overflow-hidden"
-                    >
-                      <section className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
-                        <div
-                          className="shrink-0 overflow-hidden border-r border-border/45 bg-card/45 transition-[width] duration-200 ease-out"
-                          style={{
-                            width: `${showSpaceExplorer ? SPACE_EXPLORER_WIDTH : SPACE_EXPLORER_COLLAPSED_WIDTH}px`,
-                          }}
-                        >
-                          <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-                            {showSpaceExplorer ? (
-                              <>
-                                <div className="flex shrink-0 items-center gap-2 border-b border-border/45 px-3 py-2.5">
-                                  <Tabs
-                                    value={spaceExplorerMode}
-                                    onValueChange={(value) => {
-                                      const mode = value as SpaceExplorerMode;
-                                      setSpaceExplorerMode(mode);
-                                      if (mode === "browser") {
-                                        setSpaceDisplayView({
-                                          type: "browser",
-                                        });
-                                      } else {
-                                        restoreLastSpaceDisplayView();
-                                      }
-                                    }}
-                                    className="min-w-0 flex-1"
-                                  >
-                                    <TabsList className="w-full">
-                                      <TabsTrigger
-                                        value="files"
-                                        className="group min-w-0 grow-0 basis-9 gap-0 px-0 duration-200 ease-out data-active:grow data-active:basis-0 data-active:justify-start data-active:gap-1.5 data-active:px-3"
-                                      >
-                                        <Folder />
-                                        <span className="ml-0 inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-200 ease-out group-data-active:max-w-[120px] group-data-active:opacity-100">
-                                          Files
-                                        </span>
-                                      </TabsTrigger>
-                                      <TabsTrigger
-                                        value="browser"
-                                        className="group min-w-0 grow-0 basis-9 gap-0 px-0 duration-200 ease-out data-active:grow data-active:basis-0 data-active:justify-start data-active:gap-1.5 data-active:px-3"
-                                      >
-                                        <Globe />
-                                        <span className="ml-0 inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-200 ease-out group-data-active:max-w-[120px] group-data-active:opacity-100">
-                                          Browser
-                                        </span>
-                                      </TabsTrigger>
-                                      <TabsTrigger
-                                        value="applications"
-                                        className="group min-w-0 grow-0 basis-9 gap-0 px-0 duration-200 ease-out data-active:grow data-active:basis-0 data-active:justify-start data-active:gap-1.5 data-active:px-3"
-                                      >
-                                        <LayoutGrid />
-                                        <span className="ml-0 inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-200 ease-out group-data-active:max-w-[120px] group-data-active:opacity-100">
-                                          Apps
-                                        </span>
-                                      </TabsTrigger>
-                                    </TabsList>
-                                  </Tabs>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon-sm"
-                                    onClick={() =>
-                                      setSpaceExplorerCollapsed(true)
-                                    }
-                                    aria-label="Collapse explorer"
-                                  >
-                                    <PanelLeftClose />
-                                  </Button>
-                                </div>
-
-                                <div className="min-h-0 flex-1 overflow-hidden">
-                                  {spaceExplorerMode === "files" ? (
-                                    <FileExplorerPane
-                                      focusRequest={fileExplorerFocusRequest}
-                                      onFocusRequestConsumed={(requestKey) => {
-                                        setFileExplorerFocusRequest(
-                                          (current) =>
-                                            current?.requestKey === requestKey
-                                              ? null
-                                              : current,
-                                        );
-                                      }}
-                                      previewInPane={false}
-                                      embedded
-                                      onFileOpen={(path) => {
-                                        setSpaceDisplayView({
-                                          type: "internal",
-                                          surface: "file",
-                                          resourceId: path,
-                                        });
-                                      }}
-                                    />
-                                  ) : spaceExplorerMode === "applications" ? (
-                                    <SpaceApplicationsExplorerPane
-                                      installedApps={installedApps}
-                                      activeAppId={
-                                        spaceDisplayView.type === "app"
-                                          ? spaceDisplayView.appId
-                                          : null
-                                      }
-                                      onSelectApp={(appId) =>
-                                        handleOpenSpaceApp(appId)
-                                      }
-                                    />
-                                  ) : spaceExplorerMode === "browser" ? (
-                                    <SpaceBrowserExplorerPane
-                                      browserSpace={spaceBrowserSpace}
-                                      onBrowserSpaceChange={(space) => {
-                                        setSpaceBrowserSpace(space);
-                                        setSpaceDisplayView({
-                                          type: "browser",
-                                        });
-                                      }}
-                                      onActivateDisplay={() =>
-                                        setSpaceDisplayView({ type: "browser" })
-                                      }
-                                    />
-                                  ) : null}
-                                </div>
-                              </>
-                            ) : (
-                              <div className="flex h-full min-h-0 flex-col items-center gap-2 px-2 py-3">
-                                <Button
-                                  variant={
-                                    spaceExplorerMode === "files"
-                                      ? "outline"
-                                      : "ghost"
-                                  }
-                                  size="icon"
-                                  onClick={() => {
-                                    setSpaceExplorerMode("files");
-                                    restoreLastSpaceDisplayView();
-                                    setSpaceExplorerCollapsed(false);
-                                  }}
-                                  aria-label="Open file explorer"
-                                  className={
-                                    spaceExplorerMode === "files"
-                                      ? "border-primary/40 bg-primary/10 text-primary"
-                                      : "text-muted-foreground"
-                                  }
-                                >
-                                  <Folder />
-                                </Button>
-                                <Button
-                                  variant={
-                                    spaceExplorerMode === "applications"
-                                      ? "outline"
-                                      : "ghost"
-                                  }
-                                  size="icon"
-                                  onClick={() => {
-                                    setSpaceExplorerMode("applications");
-                                    setSpaceExplorerCollapsed(false);
-                                  }}
-                                  aria-label="Open applications explorer"
-                                  className={
-                                    spaceExplorerMode === "applications"
-                                      ? "border-primary/40 bg-primary/10 text-primary"
-                                      : "text-muted-foreground"
-                                  }
-                                >
-                                  <LayoutGrid />
-                                </Button>
-                                <Button
-                                  variant={
-                                    spaceExplorerMode === "browser"
-                                      ? "outline"
-                                      : "ghost"
-                                  }
-                                  size="icon"
-                                  onClick={() => {
-                                    setSpaceExplorerMode("browser");
-                                    setSpaceDisplayView({ type: "browser" });
-                                    setSpaceExplorerCollapsed(false);
-                                  }}
-                                  aria-label="Open browser explorer"
-                                  className={
-                                    spaceExplorerMode === "browser"
-                                      ? "border-primary/40 bg-primary/10 text-primary"
-                                      : "text-muted-foreground"
-                                  }
-                                >
-                                  <Globe />
-                                </Button>
-                                <div className="min-h-0 flex-1" />
-                                <Button
-                                  variant="outline"
-                                  size="icon"
-                                  onClick={() =>
-                                    setSpaceExplorerCollapsed(false)
-                                  }
-                                  aria-label="Expand explorer"
-                                >
-                                  <PanelLeftOpen />
-                                </Button>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        <div
-                          className="min-h-0 min-w-0 flex-1 overflow-hidden"
-                          style={{ minWidth: `${SPACE_DISPLAY_MIN_WIDTH}px` }}
-                        >
-                          {spaceDisplayContent}
-                        </div>
-                      </section>
-
+          <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
+            <div className="min-h-0 flex-1 overflow-hidden">
+              {spaceMode ? (
+                <div className="relative flex h-full min-h-0 min-w-0 overflow-hidden">
+                  <div
+                    ref={utilityPaneHostRef}
+                    className="flex min-h-0 min-w-0 flex-1 items-stretch overflow-hidden"
+                  >
+                    <section className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
                       <div
-                        role="separator"
-                        aria-label="Resize display pane"
-                        aria-orientation="vertical"
-                        onPointerDown={startSpaceDisplayResize}
-                        className="group relative z-10 flex w-4 shrink-0 cursor-col-resize touch-none items-center justify-center"
-                      >
-                        <div className="pointer-events-none absolute inset-y-2 left-1/2 w-px -translate-x-1/2 rounded-full bg-border/55 transition-all duration-150 group-hover:w-0.5 group-hover:bg-[rgba(247,90,84,0.5)]" />
-                        <div className="pointer-events-none absolute left-1/2 top-1/2 h-14 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[rgba(247,90,84,0.08)] opacity-0 transition duration-150 group-hover:opacity-100" />
-                      </div>
-
-                      <div
-                        className="min-h-0 shrink-0 overflow-hidden rounded-xl"
+                        className="shrink-0 overflow-hidden border-r border-border/45 bg-card/45 transition-[width] duration-200 ease-out"
                         style={{
-                          width: `${spaceAgentPaneWidth}px`,
-                          minWidth: `${MIN_AGENT_CONTENT_WIDTH}px`,
+                          width: `${showSpaceExplorer ? SPACE_EXPLORER_WIDTH : SPACE_EXPLORER_COLLAPSED_WIDTH}px`,
                         }}
                       >
-                        {agentContent}
+                        <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+                          {showSpaceExplorer ? (
+                            <>
+                              <div className="flex shrink-0 items-center gap-2 border-b border-border/45 px-3 py-2.5">
+                                <Tabs
+                                  value={spaceExplorerMode}
+                                  onValueChange={(value) => {
+                                    const mode = value as SpaceExplorerMode;
+                                    setSpaceExplorerMode(mode);
+                                    if (mode === "browser") {
+                                      setSpaceDisplayView({
+                                        type: "browser",
+                                      });
+                                    } else {
+                                      restoreLastSpaceDisplayView();
+                                    }
+                                  }}
+                                  className="min-w-0 flex-1"
+                                >
+                                  <TabsList className="w-full">
+                                    <TabsTrigger
+                                      value="files"
+                                      className="group min-w-0 grow-0 basis-9 gap-0 px-0 duration-200 ease-out data-active:grow data-active:basis-0 data-active:justify-start data-active:gap-1.5 data-active:px-3"
+                                    >
+                                      <Folder />
+                                      <span className="ml-0 inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-200 ease-out group-data-active:max-w-[120px] group-data-active:opacity-100">
+                                        Files
+                                      </span>
+                                    </TabsTrigger>
+                                    <TabsTrigger
+                                      value="browser"
+                                      className="group min-w-0 grow-0 basis-9 gap-0 px-0 duration-200 ease-out data-active:grow data-active:basis-0 data-active:justify-start data-active:gap-1.5 data-active:px-3"
+                                    >
+                                      <Globe />
+                                      <span className="ml-0 inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-200 ease-out group-data-active:max-w-[120px] group-data-active:opacity-100">
+                                        Browser
+                                      </span>
+                                    </TabsTrigger>
+                                    <TabsTrigger
+                                      value="applications"
+                                      className="group min-w-0 grow-0 basis-9 gap-0 px-0 duration-200 ease-out data-active:grow data-active:basis-0 data-active:justify-start data-active:gap-1.5 data-active:px-3"
+                                    >
+                                      <LayoutGrid />
+                                      <span className="ml-0 inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-200 ease-out group-data-active:max-w-[120px] group-data-active:opacity-100">
+                                        Apps
+                                      </span>
+                                    </TabsTrigger>
+                                  </TabsList>
+                                </Tabs>
+                                <Button
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  onClick={() => setSpaceExplorerCollapsed(true)}
+                                  aria-label="Collapse explorer"
+                                >
+                                  <PanelLeftClose />
+                                </Button>
+                              </div>
+
+                              <div className="min-h-0 flex-1 overflow-hidden">
+                                {spaceExplorerMode === "files" ? (
+                                  <FileExplorerPane
+                                    focusRequest={fileExplorerFocusRequest}
+                                    onFocusRequestConsumed={(requestKey) => {
+                                      setFileExplorerFocusRequest((current) =>
+                                        current?.requestKey === requestKey
+                                          ? null
+                                          : current,
+                                      );
+                                    }}
+                                    previewInPane={false}
+                                    embedded
+                                    onFileOpen={(path) => {
+                                      setSpaceDisplayView({
+                                        type: "internal",
+                                        surface: "file",
+                                        resourceId: path,
+                                      });
+                                    }}
+                                  />
+                                ) : spaceExplorerMode === "applications" ? (
+                                  <SpaceApplicationsExplorerPane
+                                    installedApps={installedApps}
+                                    activeAppId={
+                                      spaceDisplayView.type === "app"
+                                        ? spaceDisplayView.appId
+                                        : null
+                                    }
+                                    onAddApp={handleAddApp}
+                                    onSelectApp={(appId) =>
+                                      handleOpenSpaceApp(appId)
+                                    }
+                                  />
+                                ) : spaceExplorerMode === "browser" ? (
+                                  <SpaceBrowserExplorerPane
+                                    browserSpace={spaceBrowserSpace}
+                                    onBrowserSpaceChange={(space) => {
+                                      setSpaceBrowserSpace(space);
+                                      setSpaceDisplayView({
+                                        type: "browser",
+                                      });
+                                    }}
+                                    onActivateDisplay={() =>
+                                      setSpaceDisplayView({ type: "browser" })
+                                    }
+                                  />
+                                ) : null}
+                              </div>
+                            </>
+                          ) : (
+                            <div className="flex h-full min-h-0 flex-col items-center gap-2 px-2 py-3">
+                              <Button
+                                variant={
+                                  spaceExplorerMode === "files"
+                                    ? "outline"
+                                    : "ghost"
+                                }
+                                size="icon"
+                                onClick={() => {
+                                  setSpaceExplorerMode("files");
+                                  restoreLastSpaceDisplayView();
+                                  setSpaceExplorerCollapsed(false);
+                                }}
+                                aria-label="Open file explorer"
+                                className={
+                                  spaceExplorerMode === "files"
+                                    ? "border-primary/40 bg-primary/10 text-primary"
+                                    : "text-muted-foreground"
+                                }
+                              >
+                                <Folder />
+                              </Button>
+                              <Button
+                                variant={
+                                  spaceExplorerMode === "applications"
+                                    ? "outline"
+                                    : "ghost"
+                                }
+                                size="icon"
+                                onClick={() => {
+                                  setSpaceExplorerMode("applications");
+                                  setSpaceExplorerCollapsed(false);
+                                }}
+                                aria-label="Open applications explorer"
+                                className={
+                                  spaceExplorerMode === "applications"
+                                    ? "border-primary/40 bg-primary/10 text-primary"
+                                    : "text-muted-foreground"
+                                }
+                              >
+                                <LayoutGrid />
+                              </Button>
+                              <Button
+                                variant={
+                                  spaceExplorerMode === "browser"
+                                    ? "outline"
+                                    : "ghost"
+                                }
+                                size="icon"
+                                onClick={() => {
+                                  setSpaceExplorerMode("browser");
+                                  setSpaceDisplayView({ type: "browser" });
+                                  setSpaceExplorerCollapsed(false);
+                                }}
+                                aria-label="Open browser explorer"
+                                className={
+                                  spaceExplorerMode === "browser"
+                                    ? "border-primary/40 bg-primary/10 text-primary"
+                                    : "text-muted-foreground"
+                                }
+                              >
+                                <Globe />
+                              </Button>
+                              <div className="min-h-0 flex-1" />
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                onClick={() => setSpaceExplorerCollapsed(false)}
+                                aria-label="Expand explorer"
+                              >
+                                <PanelLeftOpen />
+                              </Button>
+                            </div>
+                          )}
+                        </div>
                       </div>
+
+                      <div
+                        className="min-h-0 min-w-0 flex-1 overflow-hidden"
+                        style={{ minWidth: `${SPACE_DISPLAY_MIN_WIDTH}px` }}
+                      >
+                        {spaceDisplayContent}
+                      </div>
+                    </section>
+
+                    <div
+                      role="separator"
+                      aria-label="Resize display pane"
+                      aria-orientation="vertical"
+                      onPointerDown={startSpaceDisplayResize}
+                      className="group relative z-10 flex w-4 shrink-0 cursor-col-resize touch-none items-center justify-center"
+                    >
+                      <div className="pointer-events-none absolute inset-y-2 left-1/2 w-px -translate-x-1/2 rounded-full bg-border/55 transition-all duration-150 group-hover:w-0.5 group-hover:bg-[rgba(247,90,84,0.5)]" />
+                      <div className="pointer-events-none absolute left-1/2 top-1/2 h-14 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[rgba(247,90,84,0.08)] opacity-0 transition duration-150 group-hover:opacity-100" />
+                    </div>
+
+                    <div
+                      className="min-h-0 shrink-0 overflow-hidden rounded-xl"
+                      style={{
+                        width: `${spaceAgentPaneWidth}px`,
+                        minWidth: `${MIN_AGENT_CONTENT_WIDTH}px`,
+                      }}
+                    >
+                      {agentContent}
                     </div>
                   </div>
-                ) : activeLeftRailItem === "app" ? (
-                  <div className="h-full min-h-0 overflow-hidden rounded-xl">
-                    {agentView.type === "app" ? (
-                      <AppSurfacePane
-                        appId={agentView.appId}
-                        app={
-                          activeAppId === agentView.appId
-                            ? activeApp
-                            : getWorkspaceAppDefinition(
-                                agentView.appId,
-                                installedApps,
-                              )
-                        }
-                        resourceId={agentView.resourceId}
-                        view={agentView.view}
-                      />
-                    ) : (
-                      <section className="theme-shell flex h-full min-h-0 items-center justify-center rounded-xl border border-border/45 shadow-lg">
-                        <div className="max-w-[360px] px-6 text-center">
-                          <div className="text-[22px] font-medium tracking-[-0.03em] text-foreground">
-                            Choose an app
-                          </div>
-                          <div className="mt-3 text-[13px] leading-6 text-muted-foreground/78">
-                            Select a workspace app from the left rail to open
-                            its dedicated screen.
-                          </div>
-                        </div>
-                      </section>
-                    )}
-                  </div>
-                ) : activeLeftRailItem === "automations" ? (
-                  <div className="h-full min-h-0 overflow-hidden rounded-xl">
-                    <AutomationsPane
-                      onOpenRunSession={handleOpenAutomationRunSession}
-                      onCreateSchedule={handleCreateScheduleInChat}
-                    />
-                  </div>
-                ) : (
-                  <div className="h-full min-h-0 overflow-hidden rounded-xl">
-                    <MarketplacePane initialTab={marketplaceInitialTab} />
-                  </div>
-                )}
-              </div>
+                </div>
+              ) : activeShellView === "automations" ? (
+                <div className="h-full min-h-0 overflow-hidden rounded-xl">
+                  <AutomationsPane
+                    onOpenRunSession={handleOpenAutomationRunSession}
+                    onCreateSchedule={handleCreateScheduleInChat}
+                  />
+                </div>
+              ) : (
+                <div className="h-full min-h-0 overflow-hidden rounded-xl">
+                  <MarketplacePane initialTab={marketplaceInitialTab} />
+                </div>
+              )}
             </div>
           </div>
         )}

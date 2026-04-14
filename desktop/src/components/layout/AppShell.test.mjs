@@ -297,28 +297,35 @@ test("app shell always opens the file explorer at minimum width", async () => {
   assert.doesNotMatch(source, /holaboss-files-pane-width-v1/);
 });
 
-test("app shell passes the app version label into the left rail", async () => {
+test("app shell uses the top toolbar for shell navigation and removes the left rail", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /function compactAppVersionLabel\(version: string\): string \{/);
-  assert.match(source, /const releaseMatch = trimmed\.match\(\/\^\\d\{4\}\\\.\(\\d\+\\\.\\d\+\)\$\/\);/);
-  assert.match(source, /const appVersionLabel =[\s\S]*compactAppVersionLabel\(effectiveAppUpdateStatus\?\.currentVersion \|\| ""\);/);
-  assert.match(source, /<LeftNavigationRail[\s\S]*appVersionLabel=\{appVersionLabel\}/);
-  assert.doesNotMatch(source, /absolute bottom-3 left-4/);
+  assert.match(source, /type ShellView = "space" \| "automations" \| "marketplace";/);
+  assert.match(source, /const \[activeShellView, setActiveShellView\] = useState<ShellView>\("space"\);/);
+  assert.match(source, /const handleOpenSpace = useCallback\(\(\) => \{/);
+  assert.match(source, /const handleOpenMarketplace = useCallback\(/);
+  assert.match(source, /const handleOpenAutomations = useCallback\(\(\) => \{/);
+  assert.match(source, /<TopTabsBar[\s\S]*onOpenSpace=\{handleOpenSpace\}/);
+  assert.match(source, /<TopTabsBar[\s\S]*isSpaceActive=\{spaceMode\}/);
+  assert.match(source, /<TopTabsBar[\s\S]*onOpenAutomations=\{handleOpenAutomations\}/);
+  assert.match(
+    source,
+    /<TopTabsBar[\s\S]*isAutomationsActive=\{activeShellView === "automations"\}/,
+  );
+  assert.match(
+    source,
+    /<TopTabsBar[\s\S]*onOpenMarketplace=\{\(\) => handleOpenMarketplace\("templates"\)\}/,
+  );
+  assert.doesNotMatch(source, /LeftNavigationRail/);
 });
 
-test("app shell hides the left rail in space mode until the cursor reaches the left edge", async () => {
+test("app shell no longer renders the dedicated app mode after removing the left rail", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /const \[spaceLeftRailVisible, setSpaceLeftRailVisible\] = useState\(false\);/);
-  assert.match(source, /const shouldOverlayLeftRail = spaceMode;/);
-  assert.match(source, /useEffect\(\(\) => \{\s*if \(spaceMode\) \{\s*setSpaceLeftRailVisible\(false\);\s*\}\s*\}, \[spaceMode\]\);/);
-  assert.match(source, /shouldOverlayLeftRail\s*\?\s*"lg:grid-cols-\[minmax\(0,1fr\)\]"\s*:\s*"lg:grid-cols-\[60px_minmax\(0,1fr\)\]"/);
-  assert.match(source, /style=\{\{ columnGap: shouldOverlayLeftRail \? "0rem" : "0\.5rem" \}\}/);
-  assert.match(source, /className="absolute inset-y-0 left-0 z-30 hidden w-4 lg:block"/);
-  assert.match(source, /onMouseEnter=\{\(\) => setSpaceLeftRailVisible\(true\)\}/);
-  assert.match(source, /spaceLeftRailVisible\s*\?\s*"translate-x-0"\s*:\s*"-translate-x-full"/);
-  assert.match(source, /onMouseLeave=\{\(\) => setSpaceLeftRailVisible\(false\)\}/);
+  assert.doesNotMatch(source, /activeShellView === "app"/);
+  assert.doesNotMatch(source, /handleOpenInstalledApp/);
+  assert.doesNotMatch(source, /Choose an app/);
+  assert.doesNotMatch(source, /left rail/);
 });
 
 test("app shell requests remote task proposal generation without a separate success banner", async () => {
@@ -401,6 +408,7 @@ test("app shell renders a collapsible explorer and universal display in space mo
   assert.match(source, /<FileExplorerPane[\s\S]*focusRequest=\{fileExplorerFocusRequest\}/);
   assert.match(source, /<FileExplorerPane[\s\S]*previewInPane=\{false\}/);
   assert.match(source, /<SpaceApplicationsExplorerPane[\s\S]*installedApps=\{installedApps\}/);
+  assert.match(source, /<SpaceApplicationsExplorerPane[\s\S]*onAddApp=\{handleAddApp\}/);
   assert.match(source, /<SpaceBrowserExplorerPane[\s\S]*browserSpace=\{spaceBrowserSpace\}/);
   assert.match(source, /<SpaceBrowserDisplayPane[\s\S]*layoutSyncKey=\{spaceDisplayLayoutSyncKey\}/);
   assert.match(source, /<SpaceBrowserDisplayPane[\s\S]*embedded/);
@@ -469,7 +477,7 @@ test("app shell no longer renders a separate right panel in space mode", async (
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(source, /const showOperationsDrawer = false;/);
-  assert.match(source, /lg:grid-cols-\[60px_minmax\(0,1fr\)\]/);
+  assert.match(source, /const mainGridClassName = appShellMainGridClassName\(\{/);
   assert.doesNotMatch(source, /lg:grid-cols-\[60px_minmax\(0,1fr\)_336px\]/);
   assert.doesNotMatch(source, /<OperationsDrawer(?:\s|>)/);
   assert.doesNotMatch(source, /aria-label="Open inbox panel"/);
@@ -487,7 +495,7 @@ test("app shell can route new schedule creation into a prefilled workspace chat"
   assert.match(source, /const nextChatSessionOpenRequestKey = useCallback\(\(\) => \{\s*chatSessionOpenRequestKeyRef\.current \+= 1;\s*return chatSessionOpenRequestKeyRef\.current;\s*\}, \[\]\);/);
   assert.match(source, /const nextChatComposerPrefillRequestKey = useCallback\(\(\) => \{\s*chatComposerPrefillRequestKeyRef\.current \+= 1;\s*return chatComposerPrefillRequestKeyRef\.current;\s*\}, \[\]\);/);
   assert.match(source, /const handleCreateScheduleInChat = useCallback\(\(\) => \{/);
-  assert.match(source, /setActiveLeftRailItem\("space"\);/);
+  assert.match(source, /setActiveShellView\("space"\);/);
   assert.match(source, /setSpaceVisibility\(\(previous\) => \(\{\s*\.\.\.previous,\s*agent: true,\s*\}\)\);/);
   assert.match(source, /setAgentView\(\{ type: "chat" \}\);/);
   assert.match(source, /setChatSessionJumpRequest\(null\);/);

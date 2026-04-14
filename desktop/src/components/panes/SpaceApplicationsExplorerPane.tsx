@@ -1,4 +1,4 @@
-import { AppWindow, CheckCircle2, LoaderCircle, TriangleAlert } from "lucide-react";
+import { AppWindow, CheckCircle2, LoaderCircle, Plus, TriangleAlert } from "lucide-react";
 import { providerIcon } from "@/components/onboarding/constants";
 import { Button } from "@/components/ui/button";
 import type { WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
@@ -7,6 +7,7 @@ interface SpaceApplicationsExplorerPaneProps {
   installedApps: WorkspaceInstalledAppDefinition[];
   activeAppId?: string | null;
   onSelectApp: (appId: string) => void;
+  onAddApp: () => void;
 }
 
 function appInitials(label: string): string {
@@ -24,13 +25,24 @@ export function SpaceApplicationsExplorerPane({
   installedApps,
   activeAppId = null,
   onSelectApp,
+  onAddApp,
 }: SpaceApplicationsExplorerPaneProps) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-transparent">
-      <div className="border-b border-border/45 px-3 py-2.5">
+      <div className="flex items-center justify-between gap-3 border-b border-border/45 px-3 py-2.5">
         <div className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground/70">
           Applications
         </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={onAddApp}
+          className="h-7 gap-1.5 rounded-md px-2.5 text-[11px]"
+        >
+          <Plus size={12} />
+          Add app
+        </Button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-3">

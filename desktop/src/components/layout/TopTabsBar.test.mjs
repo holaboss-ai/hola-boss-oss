@@ -18,6 +18,10 @@ test("top tabs bar renders custom compact window controls for Windows title bar 
   const source = await readFile(TOP_TABS_BAR_PATH, "utf8");
 
   assert.match(source, /desktopPlatform\?: string \| null;/);
+  assert.match(source, /onOpenSpace\?: \(\) => void;/);
+  assert.match(source, /isSpaceActive\?: boolean;/);
+  assert.match(source, /onOpenAutomations\?: \(\) => void;/);
+  assert.match(source, /isAutomationsActive\?: boolean;/);
   assert.match(
     source,
     /const isWindowsIntegratedTitleBar =\s*integratedTitleBar && desktopPlatform === "win32";/,
@@ -45,6 +49,10 @@ test("top tabs bar renders custom compact window controls for Windows title bar 
   assert.match(source, /className="size-7 shrink-0 rounded-\[9px\] border border-border overflow-hidden"/);
   assert.match(source, /<FolderKanban size=\{13\} className="shrink-0 text-primary" \/>/);
   assert.match(source, /<ChevronDown\s+size=\{12\}/);
+  assert.match(source, /size="sm"\s+aria-label="Space"/);
+  assert.match(source, /<MessageSquareText size=\{12\} \/>/);
+  assert.match(source, /size="sm"\s+aria-label="Automations"/);
+  assert.match(source, /<Workflow size=\{12\} \/>/);
   assert.match(source, /size="sm"\s+aria-label="Marketplace"/);
   assert.match(source, /className="h-7 gap-1\.5 px-2 rounded-lg text-xs"/);
   assert.match(source, /<LayoutGrid size=\{12\} \/>/);
