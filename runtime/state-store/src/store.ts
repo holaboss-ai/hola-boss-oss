@@ -323,6 +323,11 @@ export interface AppBuildRecord {
   startedAt: string | null;
   completedAt: string | null;
   error: string | null;
+  /** Cumulative auto-restart attempts since the last successful health
+   *  probe. Persisted across runtime restarts so a perpetually-crashing
+   *  app eventually trips the max-attempts circuit breaker instead of
+   *  looping forever after every desktop relaunch. */
+  restartAttempts: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -3265,6 +3270,21 @@ export class RuntimeStateStore {
     return result.changes > 0;
   }
 
+  /** Set the persistent restart-attempts counter for an app build row.
+   *  No-op if the build row does not exist. */
+  setAppBuildRestartAttempts(params: {
+    workspaceId: string;
+    appId: string;
+    attempts: number;
+  }): void {
+    const safeAttempts = Math.max(0, Math.floor(params.attempts) || 0);
+    this.db()
+      .prepare(
+        "UPDATE app_builds SET restart_attempts = ?, updated_at = ? WHERE workspace_id = ? AND app_id = ?",
+      )
+      .run(safeAttempts, utcNowIso(), params.workspaceId, params.appId);
+  }
+
   // --- App Ports ---
 
   allocateAppPort(params: { workspaceId: string; appId: string }): AppPortRecord {
@@ -4724,6 +4744,7 @@ export class RuntimeStateStore {
     this.migrateLegacySessionArtifactsToOutputs(db);
     this.migrateRuntimeNotificationPriority(db);
     this.migrateCronjobInstructions(db);
+    this.migrateAppBuildRestartAttempts(db);
   }
 
   private ensureSessionRuntimeStateTableSchema(db: Database.Database): void {
@@ -4809,6 +4830,15 @@ export class RuntimeStateStore {
       db.exec("ALTER TABLE cronjobs ADD COLUMN instruction TEXT NOT NULL DEFAULT '';");
     }
     db.exec("UPDATE cronjobs SET instruction = description WHERE trim(coalesce(instruction, '')) = '';");
+  }
+
+  private migrateAppBuildRestartAttempts(db: Database.Database): void {
+    const columns = new Set<string>(
+      (db.prepare("PRAGMA table_info(app_builds)").all() as Array<{ name: string }>).map((row) => row.name)
+    );
+    if (!columns.has("restart_attempts")) {
+      db.exec("ALTER TABLE app_builds ADD COLUMN restart_attempts INTEGER NOT NULL DEFAULT 0;");
+    }
   }
 
   private migrateLegacySessionArtifactsToOutputs(db: Database.Database): void {
@@ -5948,6 +5978,10 @@ export class RuntimeStateStore {
       startedAt: row.started_at == null ? null : String(row.started_at),
       completedAt: row.completed_at == null ? null : String(row.completed_at),
       error: row.error == null ? null : String(row.error),
+      restartAttempts:
+        row.restart_attempts == null
+          ? 0
+          : Math.max(0, Number(row.restart_attempts) || 0),
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at)
     };

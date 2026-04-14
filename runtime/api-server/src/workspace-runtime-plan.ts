@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import yaml from "js-yaml";
@@ -981,6 +982,17 @@ async function main(): Promise<void> {
   process.exitCode = await runWorkspaceRuntimePlanCli(process.argv.slice(2));
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+// The usual `import.meta.url === pathToFileURL(argv[1])` guard fires for
+// EVERY bundled module when tsup collapses these source files into
+// dist/index.mjs, because all modules share the same bundle URL. That made
+// booting index.mjs spuriously run this CLI with empty argv and print
+// "operation is required" on stderr. We also match on the invoked script's
+// basename so only a direct `node workspace-runtime-plan.mjs …` call runs.
+const WORKSPACE_RUNTIME_PLAN_CLI_BASENAME = "workspace-runtime-plan";
+if (
+  import.meta.url === pathToFileURL(process.argv[1] ?? "").href &&
+  path.basename(process.argv[1] ?? "", path.extname(process.argv[1] ?? "")) ===
+    WORKSPACE_RUNTIME_PLAN_CLI_BASENAME
+) {
   await main();
 }

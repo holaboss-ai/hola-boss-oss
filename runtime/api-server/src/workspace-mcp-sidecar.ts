@@ -354,6 +354,13 @@ async function main(): Promise<void> {
   process.exitCode = await runWorkspaceMcpSidecarCli(process.argv.slice(2));
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+// See workspace-runtime-plan.ts for why the usual import.meta.url guard
+// isn't sufficient when these files are re-bundled into dist/index.mjs.
+const WORKSPACE_MCP_SIDECAR_CLI_BASENAME = "workspace-mcp-sidecar";
+if (
+  import.meta.url === pathToFileURL(process.argv[1] ?? "").href &&
+  path.basename(process.argv[1] ?? "", path.extname(process.argv[1] ?? "")) ===
+    WORKSPACE_MCP_SIDECAR_CLI_BASENAME
+) {
   await main();
 }

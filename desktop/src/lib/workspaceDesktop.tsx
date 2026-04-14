@@ -815,9 +815,14 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       });
       await window.electronAPI.ui.openExternalUrl(link.redirect_url);
 
-      // Poll for completion
-      for (let i = 0; i < 100; i++) {
-        await new Promise((r) => setTimeout(r, 3000));
+      // Poll for completion. Window: ~5 minutes (100 ticks × 3s). On
+      // timeout we surface a user-readable error below — silent failures
+      // here used to confuse users into thinking install was in progress.
+      const COMPOSIO_POLL_INTERVAL_MS = 3000;
+      const COMPOSIO_POLL_MAX_TICKS = 100;
+      let connected = false;
+      for (let tick = 0; tick < COMPOSIO_POLL_MAX_TICKS; tick++) {
+        await new Promise((r) => setTimeout(r, COMPOSIO_POLL_INTERVAL_MS));
         const status = await window.electronAPI.workspace.composioAccountStatus(
           link.connected_account_id,
         );
@@ -830,10 +835,17 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
           });
           // Connection done — now install the app
           await doInstallApp(appId);
+          connected = true;
           return;
         }
       }
-      setAppCatalogError("Connection timed out. Please try again.");
+      if (!connected) {
+        setAppCatalogError(
+          `Connection to ${provider} timed out after ${
+            (COMPOSIO_POLL_MAX_TICKS * COMPOSIO_POLL_INTERVAL_MS) / 1000
+          }s. Please try again.`,
+        );
+      }
     } catch (error) {
       setAppCatalogError(normalizeErrorMessage(error));
     } finally {
