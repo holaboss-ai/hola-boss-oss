@@ -318,7 +318,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${RELEASE_TAG}" "out/${RUNTIME_ASSET_NAME}" --clobber
 
-  build-signed-macos-app:
+  release-macos-desktop:
     if: ${{ github.event_name == 'workflow_dispatch' }}
     needs: ensure-release
     permissions:
@@ -327,10 +327,13 @@ jobs:
     env:
       RELEASE_TAG: ${{ needs.ensure-release.outputs.release_tag }}
       RUNTIME_ASSET_NAME: holaboss-runtime-macos.tar.gz
-      RUNTIME_ARTIFACT_NAME: holaboss-runtime-macos
-      SIGNED_APP_ARTIFACT_NAME: holaboss-desktop-signed-macos-app
+      DESKTOP_ASSET_PREFIX: holaboss-desktop-macos
+      DESKTOP_RELEASE_ASSET_NAME: Holaboss-macos-arm64.dmg
       MAC_CERTIFICATE: ${{ secrets.MAC_CERTIFICATE }}
       MAC_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -365,16 +368,6 @@ jobs:
       - name: Archive macOS runtime bundle
         run: tar -C out -czf "out/${RUNTIME_ASSET_NAME}" runtime-macos
 
-      - name: Upload macOS runtime bundle artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ env.RUNTIME_ARTIFACT_NAME }}-${{ inputs.release_tag }}
-          path: |
-            out/${{ env.RUNTIME_ASSET_NAME }}
-            out/runtime-macos/package-metadata.json
-            out/runtime-macos/runtime/metadata.json
-          if-no-files-found: error
-
       - name: Upload macOS runtime release asset
         env:
           GH_TOKEN: ${{ github.token }}
@@ -383,13 +376,16 @@ jobs:
       - name: Prepare desktop (build SDK + install desktop deps)
         run: npm run desktop:prepare
 
-      - name: Require mac signing credentials
+      - name: Require mac signing and notarization credentials
         run: |
           missing=()
           [ -n "${MAC_CERTIFICATE}" ] || missing+=("MAC_CERTIFICATE")
           [ -n "${MAC_CERTIFICATE_PASSWORD}" ] || missing+=("MAC_CERTIFICATE_PASSWORD")
+          [ -n "${APPLE_ID}" ] || missing+=("APPLE_ID")
+          [ -n "${APPLE_APP_SPECIFIC_PASSWORD}" ] || missing+=("APPLE_APP_SPECIFIC_PASSWORD")
+          [ -n "${APPLE_TEAM_ID}" ] || missing+=("APPLE_TEAM_ID")
           if [ "${#missing[@]}" -gt 0 ]; then
-            echo "missing required mac signing secrets: ${missing[*]}" >&2
+            echo "missing required mac release secrets: ${missing[*]}" >&2
             exit 1
           fi
 
@@ -430,7 +426,7 @@ jobs:
           node scripts/run-electron-builder.mjs \
             --projectDir "$PWD" \
             --publish never \
-            --mac dir zip \
+            --mac dir \
             --arm64 \
             --config.mac.notarize=false
           app_path="$(find out/release -maxdepth 2 -name '*.app' -print -quit)"
@@ -468,98 +464,13 @@ jobs:
             exit 1
           fi
 
-      - name: Archive signed macOS app bundle
-        working-directory: desktop
-        id: archive_signed_app
-        run: |
-          app_path="${{ steps.build_signed_app.outputs.app_path }}"
-          archive_path="out/ci-artifacts/holaboss-signed-macos-app.tar.gz"
-          mkdir -p "$(dirname "${archive_path}")"
-          tar -C "$(dirname "${app_path}")" -czf "${archive_path}" "$(basename "${app_path}")"
-          echo "archive_path=${PWD}/${archive_path}" >> "${GITHUB_OUTPUT}"
-
-      - name: Upload signed macOS app bundle artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ env.SIGNED_APP_ARTIFACT_NAME }}
-          path: ${{ steps.archive_signed_app.outputs.archive_path }}
-          if-no-files-found: error
-
-  notarize-macos-app:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
-    needs:
-      - ensure-release
-      - build-signed-macos-app
-    runs-on: macos-latest
-    env:
-      NOTARIZED_APP_ARTIFACT_NAME: holaboss-desktop-notarized-macos-app
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.ensure-release.outputs.release_ref }}
-
-      - name: Setup Node 24
-        uses: actions/setup-node@v6
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            sdk/app-sdk/package-lock.json
-            desktop/package-lock.json
-
-      - name: Prepare desktop (build SDK + install desktop deps)
-        run: npm run desktop:prepare
-
-      - name: Require mac notarization credentials
-        run: |
-          missing=()
-          [ -n "${APPLE_ID}" ] || missing+=("APPLE_ID")
-          [ -n "${APPLE_APP_SPECIFIC_PASSWORD}" ] || missing+=("APPLE_APP_SPECIFIC_PASSWORD")
-          [ -n "${APPLE_TEAM_ID}" ] || missing+=("APPLE_TEAM_ID")
-          if [ "${#missing[@]}" -gt 0 ]; then
-            echo "missing required mac notarization secrets: ${missing[*]}" >&2
-            exit 1
-          fi
-
-      - name: Download signed macOS app bundle artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: holaboss-desktop-signed-macos-app
-          path: out/downloaded-signed-app
-
-      - name: Extract signed macOS app bundle
-        id: extract_signed_app
-        shell: bash
-        run: |
-          archive_path="$(find out/downloaded-signed-app -maxdepth 2 -name '*.tar.gz' -print -quit)"
-          if [ -z "${archive_path}" ]; then
-            echo "signed app artifact archive was not downloaded" >&2
-            exit 1
-          fi
-          extract_dir="out/notarization-input"
-          rm -rf "${extract_dir}"
-          mkdir -p "${extract_dir}"
-          tar -C "${extract_dir}" -xzf "${archive_path}"
-          app_path="$(find "${extract_dir}" -maxdepth 2 -name '*.app' -print -quit)"
-          if [ -z "${app_path}" ]; then
-            echo "no .app bundle found after extracting signed app artifact" >&2
-            exit 1
-          fi
-          app_path="$(cd "$(dirname "${app_path}")" && pwd)/$(basename "${app_path}")"
-          echo "app_path=${app_path}" >> "${GITHUB_OUTPUT}"
-
       - name: Notarize signed macOS app bundle
         working-directory: desktop
         shell: bash
         run: |
-          app_path="${{ steps.extract_signed_app.outputs.app_path }}"
+          app_path="${{ steps.build_signed_app.outputs.app_path }}"
           if [ -z "${app_path}" ] || [ ! -d "${app_path}" ]; then
-            echo "signed app bundle was not extracted correctly: ${app_path}" >&2
+            echo "signed app bundle was not produced correctly: ${app_path}" >&2
             exit 1
           fi
           max_attempts=3
@@ -598,7 +509,7 @@ jobs:
       - name: Validate notarized macOS app bundle
         shell: bash
         run: |
-          app_path="${{ steps.extract_signed_app.outputs.app_path }}"
+          app_path="${{ steps.build_signed_app.outputs.app_path }}"
           if [ -z "${app_path}" ] || [ ! -d "${app_path}" ]; then
             echo "notarized app bundle was not produced: ${app_path}" >&2
             exit 1
@@ -611,90 +522,15 @@ jobs:
             exit 1
           fi
 
-      - name: Archive notarized macOS app bundle
-        id: archive_notarized_app
-        shell: bash
-        run: |
-          app_path="${{ steps.extract_signed_app.outputs.app_path }}"
-          archive_path="out/ci-artifacts/holaboss-notarized-macos-app.tar.gz"
-          mkdir -p "$(dirname "${archive_path}")"
-          tar -C "$(dirname "${app_path}")" -czf "${archive_path}" "$(basename "${app_path}")"
-          echo "archive_path=${PWD}/${archive_path}" >> "${GITHUB_OUTPUT}"
-
-      - name: Upload notarized macOS app bundle artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ env.NOTARIZED_APP_ARTIFACT_NAME }}
-          path: ${{ steps.archive_notarized_app.outputs.archive_path }}
-          if-no-files-found: error
-
-  release-macos-desktop:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
-    needs:
-      - ensure-release
-      - notarize-macos-app
-    permissions:
-      contents: write
-    runs-on: macos-latest
-    env:
-      RELEASE_TAG: ${{ needs.ensure-release.outputs.release_tag }}
-      DESKTOP_ASSET_PREFIX: holaboss-desktop-macos
-      DESKTOP_RELEASE_ASSET_NAME: Holaboss-macos-arm64.dmg
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.ensure-release.outputs.release_ref }}
-
-      - name: Setup Node 24
-        uses: actions/setup-node@v6
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            sdk/app-sdk/package-lock.json
-            desktop/package-lock.json
-
-      - name: Prepare desktop (build SDK + install desktop deps)
-        run: npm run desktop:prepare
-
-      - name: Download notarized macOS app bundle artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: holaboss-desktop-notarized-macos-app
-          path: out/downloaded-notarized-app
-
-      - name: Extract notarized macOS app bundle
-        id: extract_notarized_app
-        shell: bash
-        run: |
-          archive_path="$(find out/downloaded-notarized-app -maxdepth 2 -name '*.tar.gz' -print -quit)"
-          if [ -z "${archive_path}" ]; then
-            echo "notarized app artifact archive was not downloaded" >&2
-            exit 1
-          fi
-          extract_dir="out/prepackaged-app"
-          rm -rf "${extract_dir}"
-          mkdir -p "${extract_dir}"
-          tar -C "${extract_dir}" -xzf "${archive_path}"
-          app_path="$(find "${extract_dir}" -maxdepth 2 -name '*.app' -print -quit)"
-          if [ -z "${app_path}" ]; then
-            echo "no .app bundle found after extracting notarized app artifact" >&2
-            exit 1
-          fi
-          app_path="$(cd "$(dirname "${app_path}")" && pwd)/$(basename "${app_path}")"
-          echo "app_path=${app_path}" >> "${GITHUB_OUTPUT}"
-
       - name: Build macOS desktop release artifacts from notarized app bundle
         working-directory: desktop
         shell: bash
         env:
           HOLABOSS_RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: |
-          app_path="${{ steps.extract_notarized_app.outputs.app_path }}"
+          app_path="${{ steps.build_signed_app.outputs.app_path }}"
           if [ -z "${app_path}" ] || [ ! -d "${app_path}" ]; then
-            echo "notarized app bundle was not extracted correctly: ${app_path}" >&2
+            echo "notarized app bundle was not produced correctly: ${app_path}" >&2
             exit 1
           fi
           rm -rf out/release
