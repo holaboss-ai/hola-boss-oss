@@ -634,6 +634,8 @@ const filePreviewWatchSubscriptions = new Map<
   }
 >();
 let runtimeProcess: ChildProcessWithoutNullStreams | null = null;
+const intentionallyStoppedRuntimeProcesses =
+  new WeakSet<ChildProcessWithoutNullStreams>();
 let appQuitCleanupPromise: Promise<void> | null = null;
 let appQuitCleanupFinished = false;
 let pendingAuthUser: AuthUserPayload | null = null;
@@ -10967,6 +10969,47 @@ async function createWorkspace(
       }
     }
 
+    const templateAppNames = (payload.template_apps ?? []).filter(
+      (name) => typeof name === "string" && name.trim(),
+    );
+    if (templateAppNames.length > 0) {
+      stageLog("install_template_apps.start", {
+        workspaceId,
+        apps: templateAppNames,
+      });
+      try {
+        await syncAppCatalog({ source: "marketplace" });
+        stageLog("install_template_apps.catalog_synced", { workspaceId });
+      } catch (error) {
+        stageError("install_template_apps.catalog_sync_failed", error, {
+          workspaceId,
+        });
+      }
+      for (const appName of templateAppNames) {
+        try {
+          stageLog("install_template_apps.installing", {
+            workspaceId,
+            appId: appName,
+          });
+          await installAppFromCatalog({
+            workspaceId,
+            appId: appName,
+            source: "marketplace",
+          });
+          stageLog("install_template_apps.installed", {
+            workspaceId,
+            appId: appName,
+          });
+        } catch (error) {
+          stageError("install_template_apps.failed", error, {
+            workspaceId,
+            appId: appName,
+          });
+        }
+      }
+      stageLog("install_template_apps.done", { workspaceId });
+    }
+
     if (onboardingSessionId) {
       try {
         await requestRuntimeJson<EnqueueSessionInputResponsePayload>({
@@ -11941,6 +11984,7 @@ async function stopEmbeddedRuntime() {
       const onExit = () => settle();
       running.once("exit", onExit);
 
+      intentionallyStoppedRuntimeProcesses.add(running);
       if (process.platform === "win32") {
         void killWindowsProcessTree(running.pid).finally(() => {
           forceSettleTimer = setTimeout(() => settle(), 1000);
@@ -12158,6 +12202,8 @@ async function startEmbeddedRuntime() {
       });
 
       child.once("exit", (code, signal) => {
+        const wasIntentional =
+          intentionallyStoppedRuntimeProcesses.delete(child);
         if (runtimeProcess === child) {
           runtimeProcess = null;
         }
@@ -12168,26 +12214,28 @@ async function startEmbeddedRuntime() {
             return;
           }
 
+          const cleanExit = wasIntentional || code === 0;
+          const nextStatus = cleanExit ? "stopped" : "error";
+          const nextError = cleanExit
+            ? ""
+            : `Runtime exited unexpectedly (code=${code ?? "null"}, signal=${signal ?? "null"}).`;
           runtimeStatus = withDesktopBrowserStatus({
             ...runtimeStatus,
-            status: code === 0 ? "stopped" : "error",
+            status: nextStatus,
             pid: null,
-            lastError:
-              code === 0
-                ? ""
-                : `Runtime exited unexpectedly (code=${code ?? "null"}, signal=${signal ?? "null"}).`,
+            lastError: nextError,
           });
           persistRuntimeProcessState({
             pid: null,
-            status: code === 0 ? "stopped" : "error",
+            status: nextStatus,
             lastStoppedAt: utcNowIso(),
-            lastError: runtimeStatus.lastError,
+            lastError: nextError,
           });
           appendRuntimeEventLog({
             category: "runtime",
             event: "embedded_runtime.exit",
-            outcome: code === 0 ? "success" : "error",
-            detail: `code=${code ?? "null"} signal=${signal ?? "null"}`,
+            outcome: cleanExit ? "success" : "error",
+            detail: `code=${code ?? "null"} signal=${signal ?? "null"}${wasIntentional ? " intentional=true" : ""}`,
           });
           emitRuntimeState();
         })();
