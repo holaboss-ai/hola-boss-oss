@@ -3684,24 +3684,30 @@ function AppShellContent() {
                                     <TabsList className="w-full">
                                       <TabsTrigger
                                         value="files"
-                                        className="min-w-0 flex-1 basis-0 gap-1.5"
+                                        className="group min-w-0 grow-0 basis-9 gap-0 px-0 duration-200 ease-out data-active:grow data-active:basis-0 data-active:justify-start data-active:gap-1.5 data-active:px-3"
                                       >
                                         <Folder />
-                                        Files
+                                        <span className="ml-0 inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-200 ease-out group-data-active:max-w-[120px] group-data-active:opacity-100">
+                                          Files
+                                        </span>
                                       </TabsTrigger>
                                       <TabsTrigger
                                         value="browser"
-                                        className="min-w-0 flex-1 basis-0 gap-1.5"
+                                        className="group min-w-0 grow-0 basis-9 gap-0 px-0 duration-200 ease-out data-active:grow data-active:basis-0 data-active:justify-start data-active:gap-1.5 data-active:px-3"
                                       >
                                         <Globe />
-                                        Browser
+                                        <span className="ml-0 inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-200 ease-out group-data-active:max-w-[120px] group-data-active:opacity-100">
+                                          Browser
+                                        </span>
                                       </TabsTrigger>
                                       <TabsTrigger
                                         value="applications"
-                                        className="min-w-0 flex-1 basis-0 gap-1.5"
+                                        className="group min-w-0 grow-0 basis-9 gap-0 px-0 duration-200 ease-out data-active:grow data-active:basis-0 data-active:justify-start data-active:gap-1.5 data-active:px-3"
                                       >
                                         <LayoutGrid />
-                                        Apps
+                                        <span className="ml-0 inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-200 ease-out group-data-active:max-w-[120px] group-data-active:opacity-100">
+                                          Apps
+                                        </span>
                                       </TabsTrigger>
                                     </TabsList>
                                   </Tabs>
