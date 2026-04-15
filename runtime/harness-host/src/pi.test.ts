@@ -59,6 +59,18 @@ function baseRequest(): HarnessHostPiRequest {
   };
 }
 
+function withoutPiNativeEvents<T extends { event_type: string }>(events: readonly T[]): T[] {
+  return events.filter((event) => event.event_type !== "pi_native_event");
+}
+
+function onlyPiNativeEvents<T extends { event_type: string; payload: Record<string, unknown> }>(events: readonly T[]): T[] {
+  return events.filter((event) => event.event_type === "pi_native_event");
+}
+
+function derivedPiEvents(...args: Parameters<typeof mapPiSessionEvent>) {
+  return withoutPiNativeEvents(mapPiSessionEvent(...args));
+}
+
 test("pi normalizes array-wrapped openai-compatible error bodies", async () => {
   const { APIError } = await import("openai");
   const error = APIError.generate(
@@ -88,7 +100,7 @@ test("mapPiSessionEvent extracts nested Gemini provider error messages", () => {
   const sessionFile = "/tmp/pi-session.jsonl";
 
   assert.deepEqual(
-    mapPiSessionEvent(
+    derivedPiEvents(
       {
         type: "message_end",
         message: {
@@ -130,6 +142,96 @@ test("mapPiSessionEvent extracts nested Gemini provider error messages", () => {
       },
     ]
   );
+});
+
+test("mapPiSessionEvent emits a pi_native_event passthrough for native Pi session events", () => {
+  const sessionFile = "/tmp/pi-session.jsonl";
+  const cases = [
+    {
+      event: { type: "agent_start" } as const,
+      nativeType: "agent_start",
+    },
+    {
+      event: { type: "turn_start" } as const,
+      nativeType: "turn_start",
+    },
+    {
+      event: {
+        type: "message_start",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "hello" }],
+          timestamp: 1,
+        },
+      } as const,
+      nativeType: "message_start",
+    },
+    {
+      event: {
+        type: "message_update",
+        message: {} as never,
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: "Hello",
+          partial: {} as never,
+        },
+      } as const,
+      nativeType: "message_update",
+    },
+    {
+      event: {
+        type: "tool_execution_update",
+        toolCallId: "call-1",
+        toolName: "read",
+        args: { path: "README.md" },
+        partialResult: { progress: "halfway" },
+      } as const,
+      nativeType: "tool_execution_update",
+    },
+    {
+      event: {
+        type: "queue_update",
+        steering: ["check logs"],
+        followUp: [],
+      } as const,
+      nativeType: "queue_update",
+    },
+    {
+      event: {
+        type: "auto_retry_start",
+        attempt: 1,
+        maxAttempts: 3,
+        delayMs: 1000,
+        errorMessage: "provider overloaded",
+      } as const,
+      nativeType: "auto_retry_start",
+    },
+    {
+      event: {
+        type: "auto_retry_end",
+        success: true,
+        attempt: 1,
+      } as const,
+      nativeType: "auto_retry_end",
+    },
+  ];
+
+  for (const { event, nativeType } of cases) {
+    const nativeEvents = onlyPiNativeEvents(mapPiSessionEvent(event as never, sessionFile, createPiEventMapperState()));
+
+    assert.equal(nativeEvents.length, 1);
+    assert.deepEqual(nativeEvents[0], {
+      event_type: "pi_native_event",
+      payload: {
+        native_type: nativeType,
+        native_event: JSON.parse(JSON.stringify(event)),
+        event: nativeType,
+        source: "pi",
+        harness_session_id: sessionFile,
+      },
+    });
+  }
 });
 
 async function createDocxBuffer(lines: string[]): Promise<Buffer> {
@@ -220,7 +322,7 @@ test("mapPiSessionEvent maps text, thinking, tool, and completion events", () =>
   const sessionFile = "/tmp/pi-session.jsonl";
 
   assert.deepEqual(
-    mapPiSessionEvent(
+    derivedPiEvents(
       {
         type: "message_update",
         message: {} as never,
@@ -249,7 +351,7 @@ test("mapPiSessionEvent maps text, thinking, tool, and completion events", () =>
   );
 
   assert.deepEqual(
-    mapPiSessionEvent(
+    derivedPiEvents(
       {
         type: "message_update",
         message: {} as never,
@@ -278,7 +380,7 @@ test("mapPiSessionEvent maps text, thinking, tool, and completion events", () =>
   );
 
   assert.deepEqual(
-    mapPiSessionEvent(
+    derivedPiEvents(
       {
         type: "message_end",
         message: {
@@ -321,7 +423,7 @@ test("mapPiSessionEvent maps text, thinking, tool, and completion events", () =>
   );
 
   assert.deepEqual(
-    mapPiSessionEvent(
+    derivedPiEvents(
       {
         type: "agent_end",
         messages: [],
@@ -336,7 +438,7 @@ test("mapPiSessionEvent maps text, thinking, tool, and completion events", () =>
   );
 
   assert.deepEqual(
-    mapPiSessionEvent(
+    derivedPiEvents(
       {
         type: "tool_execution_start",
         toolCallId: "call-1",
@@ -367,7 +469,7 @@ test("mapPiSessionEvent maps text, thinking, tool, and completion events", () =>
   );
 
   assert.deepEqual(
-    mapPiSessionEvent(
+    derivedPiEvents(
       {
         type: "tool_execution_end",
         toolCallId: "call-1",
@@ -399,7 +501,7 @@ test("mapPiSessionEvent maps text, thinking, tool, and completion events", () =>
   );
 
   assert.deepEqual(
-    mapPiSessionEvent(
+    derivedPiEvents(
       {
         type: "tool_execution_start",
         toolCallId: "skill-call-1",
@@ -444,7 +546,7 @@ test("mapPiSessionEvent maps text, thinking, tool, and completion events", () =>
   );
 
   assert.deepEqual(
-    mapPiSessionEvent(
+    derivedPiEvents(
       {
         type: "tool_execution_end",
         toolCallId: "skill-call-1",
@@ -529,7 +631,7 @@ test("mapPiSessionEvent maps text, thinking, tool, and completion events", () =>
   );
 
   assert.deepEqual(
-    mapPiSessionEvent(
+    derivedPiEvents(
       {
         type: "compaction_start",
         reason: "threshold",
@@ -550,7 +652,7 @@ test("mapPiSessionEvent maps text, thinking, tool, and completion events", () =>
   );
 
   assert.deepEqual(
-    mapPiSessionEvent(
+    derivedPiEvents(
       {
         type: "compaction_end",
         reason: "threshold",
@@ -592,7 +694,7 @@ test("mapPiSessionEvent maps text, thinking, tool, and completion events", () =>
   );
 
   assert.deepEqual(
-    mapPiSessionEvent(
+    derivedPiEvents(
       {
         type: "agent_end",
         messages: [],
@@ -1664,19 +1766,24 @@ test("runPi emits run_started and terminal success when the session completes", 
     });
 
     assert.equal(exitCode, 0);
+    const derivedEvents = withoutPiNativeEvents(events);
     assert.deepEqual(
-      events.map((event) => event.event_type),
+      derivedEvents.map((event) => event.event_type),
       ["run_started", "output_delta", "auto_compaction_start", "auto_compaction_end", "run_completed"]
     );
     assert.deepEqual(sentContent, [{ type: "text", text: "List the files" }]);
     assert.equal(events[0]?.payload.harness_session_id, "/tmp/pi-session.jsonl");
-    assert.equal(events[4]?.payload.harness_session_id, "/tmp/pi-session.jsonl");
-    assert.equal(events[2]?.payload.reason, "threshold");
-    assert.deepEqual(events[3]?.payload.result, {
+    assert.equal(derivedEvents[4]?.payload.harness_session_id, "/tmp/pi-session.jsonl");
+    assert.equal(derivedEvents[2]?.payload.reason, "threshold");
+    assert.deepEqual(derivedEvents[3]?.payload.result, {
       summary: "Compacted older context.",
       firstKeptEntryId: "entry-1",
       tokensBefore: 1234,
     });
+    assert.deepEqual(
+      onlyPiNativeEvents(events).map((event) => event.payload.native_type),
+      ["message_update", "compaction_start", "compaction_end", "agent_end"]
+    );
   } finally {
     process.stdout.write = originalWrite;
   }
@@ -1745,12 +1852,17 @@ test("runPi emits terminal failure from assistant error messages and suppresses 
     });
 
     assert.equal(exitCode, 0);
+    const derivedEvents = withoutPiNativeEvents(events);
     assert.deepEqual(
-      events.map((event) => event.event_type),
+      derivedEvents.map((event) => event.event_type),
       ["run_started", "run_failed"]
     );
-    assert.equal(events[1]?.payload.message, "404 Not Found");
-    assert.equal(events[1]?.payload.harness_session_id, "/tmp/pi-session.jsonl");
+    assert.equal(derivedEvents[1]?.payload.message, "404 Not Found");
+    assert.equal(derivedEvents[1]?.payload.harness_session_id, "/tmp/pi-session.jsonl");
+    assert.deepEqual(
+      onlyPiNativeEvents(events).map((event) => event.payload.native_type),
+      ["message_end", "agent_end"]
+    );
   } finally {
     process.stdout.write = originalWrite;
   }
@@ -1848,11 +1960,12 @@ test("runPi emits waiting_user and blocks the active todo when the question tool
     });
 
     assert.equal(exitCode, 0);
+    const derivedEvents = withoutPiNativeEvents(events);
     assert.deepEqual(
-      events.map((event) => event.event_type),
+      derivedEvents.map((event) => event.event_type),
       ["run_started", "tool_call", "tool_call", "run_completed"]
     );
-    assert.equal(events[3]?.payload.status, "waiting_user");
+    assert.equal(derivedEvents[3]?.payload.status, "waiting_user");
 
     const persistedStatePath = path.join(stateDir, "todos", "session-1.json");
     const persisted = JSON.parse(fs.readFileSync(persistedStatePath, "utf8"));
@@ -1944,11 +2057,12 @@ test("runPi emits waiting_user when a persisted todo is still blocked at run com
     });
 
     assert.equal(exitCode, 0);
+    const derivedEvents = withoutPiNativeEvents(events);
     assert.deepEqual(
-      events.map((event) => event.event_type),
+      derivedEvents.map((event) => event.event_type),
       ["run_started", "run_completed"]
     );
-    assert.equal(events[1]?.payload.status, "waiting_user");
+    assert.equal(derivedEvents[1]?.payload.status, "waiting_user");
   } finally {
     process.stdout.write = originalWrite;
     fs.rmSync(workspaceDir, { recursive: true, force: true });

@@ -3998,15 +3998,30 @@ function maybeMapAssistantTerminalFailure(
   ];
 }
 
+function mapNativePiEvent(event: AgentSessionEvent, sessionFile: string): PiMappedEvent {
+  return {
+    event_type: "pi_native_event",
+    payload: {
+      native_type: event.type,
+      native_event: jsonValue(event),
+      event: event.type,
+      source: "pi",
+      harness_session_id: sessionFile,
+    },
+  };
+}
+
 function mapPiEvent(
   event: AgentSessionEvent,
   sessionFile: string,
   state: PiEventMapperState
 ): PiMappedEvent[] {
+  const nativeEvent = mapNativePiEvent(event, sessionFile);
   switch (event.type) {
     case "message_update":
       if (event.assistantMessageEvent.type === "text_delta") {
         return [
+          nativeEvent,
           {
             event_type: "output_delta",
             payload: {
@@ -4021,6 +4036,7 @@ function mapPiEvent(
       }
       if (event.assistantMessageEvent.type === "thinking_delta") {
         return [
+          nativeEvent,
           {
             event_type: "thinking_delta",
             payload: {
@@ -4033,14 +4049,17 @@ function mapPiEvent(
           },
         ];
       }
-      return [];
+      return [nativeEvent];
     case "message_end":
-    case "turn_end":
-      return maybeMapAssistantTerminalFailure(event, sessionFile, state) ?? [];
+    case "turn_end": {
+      const terminalFailure = maybeMapAssistantTerminalFailure(event, sessionFile, state);
+      return terminalFailure == null ? [nativeEvent] : [nativeEvent, ...terminalFailure];
+    }
     case "tool_execution_start": {
       state.toolArgsByCallId.set(event.toolCallId, jsonValue(event.args));
       const metadata = state.mcpToolMetadata.get(event.toolName);
       const mapped: PiMappedEvent[] = [
+        nativeEvent,
         {
           event_type: "tool_call",
           payload: {
@@ -4075,6 +4094,7 @@ function mapPiEvent(
       const metadata = state.mcpToolMetadata.get(event.toolName);
       const toolName = metadata?.toolName ?? event.toolName;
       const mapped: PiMappedEvent[] = [
+        nativeEvent,
         {
           event_type: "tool_call",
           payload: {
@@ -4107,6 +4127,7 @@ function mapPiEvent(
     }
     case "compaction_start":
       return [
+        nativeEvent,
         {
           event_type: "auto_compaction_start",
           payload: {
@@ -4118,6 +4139,7 @@ function mapPiEvent(
       ];
     case "compaction_end":
       return [
+        nativeEvent,
         {
           event_type: "auto_compaction_end",
           payload: {
@@ -4132,10 +4154,11 @@ function mapPiEvent(
       ];
     case "agent_end":
       if (state.terminalState === "failed") {
-        return [];
+        return [nativeEvent];
       }
       state.terminalState = "completed";
       return [
+        nativeEvent,
         {
           event_type: "run_completed",
           payload: {
@@ -4147,7 +4170,7 @@ function mapPiEvent(
         },
       ];
     default:
-      return [];
+      return [nativeEvent];
   }
 }
 

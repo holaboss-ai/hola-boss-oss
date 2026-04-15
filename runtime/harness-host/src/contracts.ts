@@ -7,6 +7,7 @@ export type JsonObject = { [key: string]: JsonValue };
 export type KnownRunnerEventType =
   | "run_claimed"
   | "run_started"
+  | "pi_native_event"
   | "thinking_delta"
   | "output_delta"
   | "tool_call"
