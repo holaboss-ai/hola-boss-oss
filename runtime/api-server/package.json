@@ -23,7 +23,7 @@
     "@sentry/node": "^10.48.0",
     "@types/js-yaml": "^4.0.9",
     "cron-parser": "^5.5.0",
-    "fastify": "^5.6.1",
+    "fastify": "^5.8.5",
     "js-yaml": "^4.1.1",
     "tar": "^7.5.13",
     "yauzl": "^3.2.1",
