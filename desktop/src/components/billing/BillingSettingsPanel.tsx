@@ -32,10 +32,17 @@ function formatBillingDateTime(value: string) {
   return `${datePart} · ${timePart}`;
 }
 
-// Friendly labels for known service types emitted by the backend quota
-// transactions. Keep this list in sync with `AgentServiceEnum` in
-// `backend/src/core/domain/agent_service_enum.py` — any unmapped value falls
-// through to a snake_case → Title Case formatter below.
+// Friendly labels for known high-level categories from `quota_transactions.category`.
+const CATEGORY_LABELS: Record<string, string> = {
+  llm: "Model",
+  integration: "Integration",
+  proactive: "Background work",
+  workspace: "Workspace",
+};
+
+// Friendly labels for legacy `serviceType` rows (pre-category migration).
+// Keep in sync with `AgentServiceEnum` in
+// `backend/src/core/domain/agent_service_enum.py`.
 const SERVICE_TYPE_LABELS: Record<string, string> = {
   workspace: "Workspace chat",
   "model-proxy": "Model proxy",
@@ -48,14 +55,10 @@ const SERVICE_TYPE_LABELS: Record<string, string> = {
   cronjobs: "Scheduled task",
   daily_work: "Daily work",
   campaign: "Campaign",
+  integration: "Integration",
 };
 
-function humanizeServiceType(raw: string): string {
-  const mapped = SERVICE_TYPE_LABELS[raw];
-  if (mapped) {
-    return mapped;
-  }
-  // snake_case / kebab-case → Title Case fallback.
+function titleCase(raw: string): string {
   return raw
     .split(/[_-]+/)
     .filter(Boolean)
@@ -63,29 +66,90 @@ function humanizeServiceType(raw: string): string {
     .join(" ");
 }
 
-// Primary label for a usage row. Tries: serviceType label → custom reason →
-// "Credits added" for positive-amount allocations → transaction type as a
-// last resort.
-function resolveUsageTitle(
-  item: { type: string; reason: string | null; serviceType: string | null; amount: number },
-): string {
+function humanizeCategory(raw: string): string {
+  return CATEGORY_LABELS[raw] ?? titleCase(raw);
+}
+
+function humanizeServiceType(raw: string): string {
+  return SERVICE_TYPE_LABELS[raw] ?? titleCase(raw);
+}
+
+function readMetadataString(
+  metadata: Record<string, unknown> | null,
+  key: string
+): string | null {
+  if (!metadata) {
+    return null;
+  }
+  const value = metadata[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+// Primary label for a usage row. Rich shape (category + metadata) wins over
+// legacy shape (serviceType). Priority:
+//   1. LLM calls  → provider/modelId from metadata (e.g. "openai · gpt-5.4")
+//   2. Integration calls → integrationId + operation
+//   3. Category label (Model / Integration / Background work)
+//   4. Legacy serviceType label
+//   5. "Credits added" for positive-amount allocations
+//   6. Reason / transaction type as a last resort
+function resolveUsageTitle(item: {
+  type: string;
+  reason: string | null;
+  serviceType: string | null;
+  category: string | null;
+  metadata: Record<string, unknown> | null;
+  amount: number;
+}): string {
+  const category = item.category ?? null;
+  const provider = readMetadataString(item.metadata, "provider");
+  const modelId = readMetadataString(item.metadata, "modelId");
+  const integrationId = readMetadataString(item.metadata, "integrationId");
+
+  if (category === "llm" && modelId) {
+    return provider ? `${provider} · ${modelId}` : modelId;
+  }
+  if (category === "integration" && integrationId) {
+    return titleCase(integrationId);
+  }
+  if (category) {
+    return humanizeCategory(category);
+  }
   if (item.serviceType) {
     return humanizeServiceType(item.serviceType);
   }
   if (item.type === "allocate" || item.amount > 0) {
     return "Credits added";
   }
-  if (item.reason && item.reason.trim() && item.reason !== "Service consumption") {
+  if (
+    item.reason &&
+    item.reason.trim() &&
+    item.reason !== "Service consumption"
+  ) {
     return item.reason;
   }
   return humanizeServiceType(item.type);
 }
 
-// Optional sub-line under the title: show `reason` only when it adds info
-// beyond the generic "Service consumption" label or the service type itself.
-function resolveUsageSubtitle(
-  item: { reason: string | null; serviceType: string | null },
-): string | null {
+// Optional sub-line under the title. Surfaces the most useful detail we have
+// that isn't already in the title — typically the operation name, workspace,
+// or a non-generic reason.
+function resolveUsageSubtitle(item: {
+  reason: string | null;
+  serviceType: string | null;
+  category: string | null;
+  metadata: Record<string, unknown> | null;
+}): string | null {
+  const operation = readMetadataString(item.metadata, "operation");
+  const workspaceId = readMetadataString(item.metadata, "workspaceId");
+  const modelId = readMetadataString(item.metadata, "modelId");
+
+  if (operation && operation !== modelId) {
+    return operation;
+  }
+  if (item.category === "llm" && workspaceId) {
+    return `Workspace ${workspaceId.slice(0, 8)}`;
+  }
   const reason = (item.reason ?? "").trim();
   if (!reason || reason === "Service consumption") {
     return null;
@@ -140,12 +204,12 @@ export function BillingSettingsPanel() {
         error={error}
         onRefresh={() => void refresh()}
       />
-      <section className="grid gap-3 rounded-[24px] border border-border/40 bg-card/40 px-4 py-4">
+      <section className="grid gap-2 rounded-[24px] border border-border/40 bg-card/40 px-4 py-3">
         <div className="text-lg font-semibold text-foreground">
           Usage record
         </div>
 
-        <div className="grid grid-cols-[minmax(0,1fr)_200px_120px] gap-3 border-b border-border/40 pb-3 text-sm text-muted-foreground">
+        <div className="grid grid-cols-[minmax(0,1fr)_200px_120px] gap-3 border-b border-border/40 pb-2 text-xs text-muted-foreground">
           <div>Channel</div>
           <div>Time</div>
           <div className="text-right">Credits change</div>
@@ -153,7 +217,7 @@ export function BillingSettingsPanel() {
 
         <div className="grid gap-0">
           {usageItems.length === 0 ? (
-            <div className="py-4 text-sm text-muted-foreground">
+            <div className="py-3 text-sm text-muted-foreground">
               {isLoading ? "Loading usage..." : "No usage yet."}
             </div>
           ) : (
@@ -163,19 +227,19 @@ export function BillingSettingsPanel() {
               return (
                 <div
                   key={item.id}
-                  className="grid grid-cols-[minmax(0,1fr)_200px_120px] gap-3 border-b border-border/30 py-4 text-sm last:border-b-0"
+                  className="grid grid-cols-[minmax(0,1fr)_200px_120px] items-center gap-3 border-b border-border/30 py-2.5 text-sm last:border-b-0"
                 >
-                  <div className="min-w-0">
+                  <div className="min-w-0 leading-tight">
                     <div className="truncate font-medium text-foreground">
                       {title}
                     </div>
                     {subtitle ? (
-                      <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                      <div className="mt-0.5 truncate text-muted-foreground text-xs">
                         {subtitle}
                       </div>
                     ) : null}
                   </div>
-                  <div className="tabular-nums text-muted-foreground">
+                  <div className="text-muted-foreground text-xs tabular-nums">
                     {formatBillingDateTime(item.createdAt)}
                   </div>
                   <div
