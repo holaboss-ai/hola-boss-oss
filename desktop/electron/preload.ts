@@ -730,6 +730,8 @@ interface DesktopBillingUsageItemPayload {
   reason: string | null;
   serviceType: string | null;
   serviceId: string | null;
+  category: string | null;
+  metadata: Record<string, unknown> | null;
   amount: number;
   absoluteAmount: number;
   createdAt: string;
