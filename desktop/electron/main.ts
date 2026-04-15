@@ -152,6 +152,9 @@ const TOOLCHAIN_RELEASE_ASSET_NAMES = {
   linux: "holaboss-toolchain-linux.tar.gz",
   windows: "holaboss-toolchain-windows.tar.gz",
 } as const;
+const BUNDLED_TOOLCHAIN_SEED_DIR = "toolchain-seed";
+const TOOLCHAIN_DOWNLOAD_MAX_ATTEMPTS = 3;
+const TOOLCHAIN_DOWNLOAD_RETRY_DELAY_MS = 2_000;
 const APP_UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const APP_UPDATE_SUPPORTED_PLATFORMS = new Set(["darwin", "win32"]);
 const LOCAL_OSS_TEMPLATE_USER_ID = "local-oss";
@@ -1317,12 +1320,55 @@ function currentToolchainAssetName() {
   return TOOLCHAIN_RELEASE_ASSET_NAMES[CURRENT_RUNTIME_PLATFORM];
 }
 
+function bundledToolchainSeedPath() {
+  if (!app.isPackaged) {
+    return "";
+  }
+  return path.join(
+    process.resourcesPath,
+    BUNDLED_TOOLCHAIN_SEED_DIR,
+    currentToolchainAssetName(),
+  );
+}
+
 function currentToolchainReleaseAssetUrl() {
   const releaseTag = currentDesktopReleaseTag();
   if (!releaseTag) {
     return "";
   }
   return `https://github.com/${GITHUB_RELEASES_OWNER}/${GITHUB_RELEASES_REPO}/releases/download/${releaseTag}/${currentToolchainAssetName()}`;
+}
+
+function toolchainDownloadFailureMessage(assetUrl: string, detail = "") {
+  const trimmedDetail = detail.trim();
+  const detailSuffix =
+    trimmedDetail && !trimmedDetail.toLowerCase().includes("fetch failed")
+      ? ` ${trimmedDetail}`
+      : "";
+  return `Couldn't download the local runtime required to start Holaboss. Check your internet connection and relaunch the app.${detailSuffix} Asset: ${assetUrl}`;
+}
+
+function shouldRetryToolchainDownload(error: unknown) {
+  if (error instanceof TypeError) {
+    return true;
+  }
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("fetch failed") ||
+    message.includes("timed out") ||
+    message.includes("econnreset") ||
+    message.includes("econnrefused") ||
+    message.includes("socket hang up") ||
+    message.includes("(408 ") ||
+    message.includes("(429 ") ||
+    message.includes("(500 ") ||
+    message.includes("(502 ") ||
+    message.includes("(503 ") ||
+    message.includes("(504 ")
+  );
 }
 
 function appUpdateSupported() {
@@ -13586,6 +13632,14 @@ async function validateRuntimeToolchainRoot(toolchainRoot: string) {
   return null;
 }
 
+async function resolveBundledToolchainSeedPath() {
+  const seedPath = bundledToolchainSeedPath();
+  if (!seedPath) {
+    return null;
+  }
+  return (await fileExists(seedPath)) ? seedPath : null;
+}
+
 function packagedRuntimeToolchainManifest(): RuntimeToolchainManifest | null {
   const manifest = packagedDesktopConfig.toolchainManifest;
   if (!manifest) {
@@ -13676,14 +13730,42 @@ async function downloadCurrentToolchainReleaseAsset(destinationPath: string) {
   if (githubToken) {
     headers.Authorization = `Bearer ${githubToken}`;
   }
-  const response = await fetch(assetUrl, { headers, redirect: "follow" });
-  if (!response.ok) {
-    throw new Error(
-      `Failed to download ${currentToolchainAssetName()} from ${assetUrl} (${response.status} ${response.statusText}).`,
-    );
+  let lastError: unknown = null;
+  for (
+    let attempt = 1;
+    attempt <= TOOLCHAIN_DOWNLOAD_MAX_ATTEMPTS;
+    attempt += 1
+  ) {
+    try {
+      const response = await fetch(assetUrl, { headers, redirect: "follow" });
+      if (!response.ok) {
+        throw new Error(
+          `Release asset request returned ${response.status} ${response.statusText}.`,
+        );
+      }
+      const body = Buffer.from(await response.arrayBuffer());
+      await fs.writeFile(destinationPath, body);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (
+        attempt >= TOOLCHAIN_DOWNLOAD_MAX_ATTEMPTS ||
+        !shouldRetryToolchainDownload(error)
+      ) {
+        break;
+      }
+      void appendRuntimeLog(
+        `[embedded-runtime] retrying toolchain download (${attempt}/${TOOLCHAIN_DOWNLOAD_MAX_ATTEMPTS}) after ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+      await sleep(TOOLCHAIN_DOWNLOAD_RETRY_DELAY_MS);
+    }
   }
-  const body = Buffer.from(await response.arrayBuffer());
-  await fs.writeFile(destinationPath, body);
+  throw new Error(
+    toolchainDownloadFailureMessage(
+      assetUrl,
+      lastError instanceof Error ? lastError.message : String(lastError ?? ""),
+    ),
+  );
 }
 
 async function ensureManagedRuntimeToolchainInstalled() {
@@ -13713,14 +13795,25 @@ async function ensureManagedRuntimeToolchainInstalled() {
         managedRuntimeToolchainsRoot(),
         `.staging-${manifest.toolchainId}-${process.pid}-${Date.now()}`,
       );
-      const downloadDir = await fs.mkdtemp(
-        path.join(os.tmpdir(), "holaboss-toolchain-download-"),
-      );
-      const tarballPath = path.join(downloadDir, currentToolchainAssetName());
+      const bundledSeedPath = await resolveBundledToolchainSeedPath();
+      const downloadDir = bundledSeedPath
+        ? null
+        : await fs.mkdtemp(
+            path.join(os.tmpdir(), "holaboss-toolchain-download-"),
+          );
+      const tarballPath =
+        bundledSeedPath ||
+        path.join(downloadDir ?? os.tmpdir(), currentToolchainAssetName());
       await fs.rm(stageRoot, { recursive: true, force: true });
       await fs.mkdir(stageRoot, { recursive: true });
       try {
-        await downloadCurrentToolchainReleaseAsset(tarballPath);
+        if (bundledSeedPath) {
+          void appendRuntimeLog(
+            `[embedded-runtime] using bundled toolchain seed ${bundledSeedPath}\n`,
+          );
+        } else {
+          await downloadCurrentToolchainReleaseAsset(tarballPath);
+        }
         execFileSync("tar", ["-xzf", tarballPath, "-C", stageRoot], {
           stdio: ["ignore", "pipe", "pipe"],
         });
@@ -13743,9 +13836,11 @@ async function ensureManagedRuntimeToolchainInstalled() {
         await fs.rm(stageRoot, { recursive: true, force: true }).catch(
           () => undefined,
         );
-        await fs.rm(downloadDir, { recursive: true, force: true }).catch(
-          () => undefined,
-        );
+        if (downloadDir) {
+          await fs.rm(downloadDir, { recursive: true, force: true }).catch(
+            () => undefined,
+          );
+        }
       }
     })().finally(() => {
       managedRuntimeToolchainSyncPromise = null;
@@ -20285,7 +20380,11 @@ app.whenReady().then(async () => {
     lastError: "",
   });
   emitRuntimeState();
-  void ensureManagedRuntimeToolchainInstalled();
+  void ensureManagedRuntimeToolchainInstalled().catch((error) => {
+    void appendRuntimeLog(
+      `[embedded-runtime] toolchain bootstrap prefetch failed: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+  });
   void startEmbeddedRuntime();
   startupAuthSyncPromise = syncPersistedAuthSessionOnStartup()
     .catch(() => undefined)

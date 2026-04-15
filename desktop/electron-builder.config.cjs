@@ -36,6 +36,16 @@ const windowsSigningConfigured = Boolean(
 const configuredReleaseChannel = (
   process.env.HOLABOSS_RELEASE_CHANNEL || ""
 ).trim().toLowerCase();
+const bundleToolchainSeed = /^(1|true|yes)$/i.test(
+  (process.env.HOLABOSS_BUNDLE_TOOLCHAIN_SEED || "").trim(),
+);
+const configuredToolchainTarball = (
+  process.env.HOLABOSS_TOOLCHAIN_TARBALL || ""
+).trim();
+const toolchainSeedDestination = path.posix.join(
+  "toolchain-seed",
+  `holaboss-toolchain-${runtimePlatform}.tar.gz`,
+);
 
 function resolveReleaseChannel() {
   if (!configuredReleaseChannel || configuredReleaseChannel === "latest") {
@@ -50,6 +60,32 @@ function resolveReleaseChannel() {
 }
 
 const releaseChannel = resolveReleaseChannel();
+const extraResources = [
+  {
+    from: "resources/icon.png",
+    to: "icon.png"
+  },
+  {
+    from: "out/holaboss-config.json",
+    to: "holaboss-config.json"
+  },
+  {
+    from: runtimeBundlePath,
+    to: runtimeBundleDir,
+    filter: [
+      "bin/**/*",
+      "package-metadata.json",
+      "runtime/**/*"
+    ]
+  }
+];
+
+if (bundleToolchainSeed) {
+  extraResources.push({
+    from: configuredToolchainTarball,
+    to: toolchainSeedDestination,
+  });
+}
 
 module.exports = {
   appId: "com.holaboss.workspace",
@@ -63,25 +99,7 @@ module.exports = {
     "out/dist-electron/**/*",
     "package.json"
   ],
-  extraResources: [
-    {
-      from: "resources/icon.png",
-      to: "icon.png"
-    },
-    {
-      from: "out/holaboss-config.json",
-      to: "holaboss-config.json"
-    },
-    {
-      from: runtimeBundlePath,
-      to: runtimeBundleDir,
-      filter: [
-        "bin/**/*",
-        "package-metadata.json",
-        "runtime/**/*"
-      ]
-    }
-  ],
+  extraResources,
   asar: true,
   protocols: [
     {
@@ -129,6 +147,18 @@ module.exports = {
       throw new Error(
         `Missing staged runtime bundle at ${runtimeBundlePath}. Run the matching prepare:runtime command before packaging.`
       );
+    }
+    if (bundleToolchainSeed) {
+      if (!configuredToolchainTarball) {
+        throw new Error(
+          "HOLABOSS_TOOLCHAIN_TARBALL must be set when HOLABOSS_BUNDLE_TOOLCHAIN_SEED is enabled.",
+        );
+      }
+      if (!fs.existsSync(configuredToolchainTarball)) {
+        throw new Error(
+          `Missing staged runtime toolchain tarball at ${configuredToolchainTarball}.`,
+        );
+      }
     }
   },
   afterPack: async (context) => {

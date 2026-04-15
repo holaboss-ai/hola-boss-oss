@@ -449,8 +449,7 @@ jobs:
             exit 1
           fi
 
-      - name: Build signed macOS app bundle
-        id: build_signed_app
+      - name: Build desktop code for macOS release
         working-directory: desktop
         shell: bash
         env:
@@ -482,24 +481,6 @@ jobs:
           npm run prepare:runtime
           npm run prepare:packaged-config
           npm run build
-          rm -rf out/release
-          node scripts/run-electron-builder.mjs \
-            --projectDir "$PWD" \
-            --publish never \
-            --mac dir \
-            --arm64 \
-            --config.mac.notarize=false
-          app_path="$(find out/release -maxdepth 2 -name '*.app' -print -quit)"
-          if [ -z "${app_path}" ]; then
-            echo "no .app bundle found under desktop/out/release" >&2
-            exit 1
-          fi
-          app_path="$(cd "$(dirname "${app_path}")" && pwd)/$(basename "${app_path}")"
-          if [ ! -f "${app_path}/Contents/Resources/app-update.yml" ]; then
-            echo "app-update.yml is missing from signed macOS app bundle" >&2
-            exit 1
-          fi
-          echo "app_path=${app_path}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload desktop Sentry source maps
         if: ${{ env.SENTRY_AUTH_TOKEN != '' }}
@@ -514,21 +495,57 @@ jobs:
             --url-prefix "~/" \
             out/dist out/dist-electron
 
-      - name: Validate signed macOS app bundle
+      - name: Build signed stripped macOS app bundle
+        id: build_stripped_app
+        working-directory: desktop
+        shell: bash
+        env:
+          HOLABOSS_RELEASE_TAG: ${{ env.RELEASE_TAG }}
+          HOLABOSS_BUNDLE_TOOLCHAIN_SEED: "0"
+          CSC_LINK: ${{ env.MAC_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ env.MAC_CERTIFICATE_PASSWORD }}
+        run: |
+          rm -rf out/release
+          node scripts/run-electron-builder.mjs \
+            --projectDir "$PWD" \
+            --publish never \
+            --mac dir \
+            --arm64 \
+            --config.mac.notarize=false
+          app_path="$(find out/release -maxdepth 2 -name '*.app' -print -quit)"
+          if [ -z "${app_path}" ]; then
+            echo "no stripped .app bundle found under desktop/out/release" >&2
+            exit 1
+          fi
+          app_path="$(cd "$(dirname "${app_path}")" && pwd)/$(basename "${app_path}")"
+          if [ ! -f "${app_path}/Contents/Resources/app-update.yml" ]; then
+            echo "app-update.yml is missing from stripped macOS app bundle" >&2
+            exit 1
+          fi
+          if [ -f "${app_path}/Contents/Resources/toolchain-seed/${TOOLCHAIN_ASSET_NAME}" ]; then
+            echo "stripped macOS app bundle unexpectedly includes a bundled toolchain seed" >&2
+            exit 1
+          fi
+          packaged_app="${RUNNER_TEMP}/Holaboss-stripped.app"
+          rm -rf "${packaged_app}"
+          ditto "${app_path}" "${packaged_app}"
+          echo "app_path=${packaged_app}" >> "${GITHUB_OUTPUT}"
+
+      - name: Validate signed stripped macOS app bundle
         working-directory: desktop
         run: |
-          app_path="${{ steps.build_signed_app.outputs.app_path }}"
+          app_path="${{ steps.build_stripped_app.outputs.app_path }}"
           if [ -z "${app_path}" ] || [ ! -d "${app_path}" ]; then
             echo "signed app bundle was not produced or no longer exists: ${app_path}" >&2
             exit 1
           fi
           codesign --verify --deep --strict --verbose=2 "${app_path}"
 
-      - name: Notarize signed macOS app bundle
+      - name: Notarize signed stripped macOS app bundle
         working-directory: desktop
         shell: bash
         run: |
-          app_path="${{ steps.build_signed_app.outputs.app_path }}"
+          app_path="${{ steps.build_stripped_app.outputs.app_path }}"
           if [ -z "${app_path}" ] || [ ! -d "${app_path}" ]; then
             echo "signed app bundle was not produced correctly: ${app_path}" >&2
             exit 1
@@ -566,10 +583,10 @@ jobs:
             attempt=$((attempt + 1))
           done
 
-      - name: Validate notarized macOS app bundle
+      - name: Validate notarized stripped macOS app bundle
         shell: bash
         run: |
-          app_path="${{ steps.build_signed_app.outputs.app_path }}"
+          app_path="${{ steps.build_stripped_app.outputs.app_path }}"
           if [ -z "${app_path}" ] || [ ! -d "${app_path}" ]; then
             echo "notarized app bundle was not produced: ${app_path}" >&2
             exit 1
@@ -578,28 +595,144 @@ jobs:
           spctl -a -vv -t exec "${app_path}"
           xcrun stapler validate "${app_path}"
 
-      - name: Build macOS desktop release artifacts from notarized app bundle
+      - name: Build signed seeded macOS app bundle
+        id: build_seeded_app
+        working-directory: desktop
+        shell: bash
+        env:
+          HOLABOSS_RELEASE_TAG: ${{ env.RELEASE_TAG }}
+          HOLABOSS_BUNDLE_TOOLCHAIN_SEED: "1"
+          HOLABOSS_TOOLCHAIN_TARBALL: ${{ github.workspace }}/out/${{ env.TOOLCHAIN_ASSET_NAME }}
+          CSC_LINK: ${{ env.MAC_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ env.MAC_CERTIFICATE_PASSWORD }}
+        run: |
+          rm -rf out/release
+          node scripts/run-electron-builder.mjs \
+            --projectDir "$PWD" \
+            --publish never \
+            --mac dir \
+            --arm64 \
+            --config.mac.notarize=false
+          app_path="$(find out/release -maxdepth 2 -name '*.app' -print -quit)"
+          if [ -z "${app_path}" ]; then
+            echo "no seeded .app bundle found under desktop/out/release" >&2
+            exit 1
+          fi
+          app_path="$(cd "$(dirname "${app_path}")" && pwd)/$(basename "${app_path}")"
+          if [ ! -f "${app_path}/Contents/Resources/app-update.yml" ]; then
+            echo "app-update.yml is missing from seeded macOS app bundle" >&2
+            exit 1
+          fi
+          if [ ! -f "${app_path}/Contents/Resources/toolchain-seed/${TOOLCHAIN_ASSET_NAME}" ]; then
+            echo "seeded macOS app bundle is missing the bundled toolchain seed" >&2
+            exit 1
+          fi
+          packaged_app="${RUNNER_TEMP}/Holaboss-installer.app"
+          rm -rf "${packaged_app}"
+          ditto "${app_path}" "${packaged_app}"
+          echo "app_path=${packaged_app}" >> "${GITHUB_OUTPUT}"
+
+      - name: Validate signed seeded macOS app bundle
+        working-directory: desktop
+        run: |
+          app_path="${{ steps.build_seeded_app.outputs.app_path }}"
+          if [ -z "${app_path}" ] || [ ! -d "${app_path}" ]; then
+            echo "seeded app bundle was not produced or no longer exists: ${app_path}" >&2
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "${app_path}"
+
+      - name: Notarize signed seeded macOS app bundle
+        working-directory: desktop
+        shell: bash
+        run: |
+          app_path="${{ steps.build_seeded_app.outputs.app_path }}"
+          if [ -z "${app_path}" ] || [ ! -d "${app_path}" ]; then
+            echo "seeded app bundle was not produced correctly: ${app_path}" >&2
+            exit 1
+          fi
+          max_attempts=3
+          attempt=1
+          while true; do
+            log_path="${RUNNER_TEMP}/notarize-seeded-app-attempt-${attempt}.log"
+            echo "notarization attempt ${attempt}/${max_attempts}"
+
+            if node scripts/notarize-app.mjs "${app_path}" 2>&1 | tee "${log_path}"; then
+              break
+            fi
+
+            if [ "${attempt}" -ge "${max_attempts}" ]; then
+              echo "notarization failed after ${attempt} attempts" >&2
+              exit 1
+            fi
+
+            if ! grep -Fq "Failed to notarize via notarytool" "${log_path}"; then
+              echo "notarization failed with a non-notarytool error; not retrying" >&2
+              exit 1
+            fi
+
+            if ! grep -Eq \
+              'The Internet connection appears to be offline|NSURLErrorDomain Code=-1009|network connection was lost|timed out|temporarily unavailable|could not connect to the server|A server with the specified hostname could not be found' \
+              "${log_path}"; then
+              echo "notarization failed with a non-retryable error; not retrying" >&2
+              exit 1
+            fi
+
+            sleep_seconds=$((attempt * 60))
+            echo "transient notarization failure detected; retrying after ${sleep_seconds}s" >&2
+            sleep "${sleep_seconds}"
+            attempt=$((attempt + 1))
+          done
+
+      - name: Validate notarized seeded macOS app bundle
+        shell: bash
+        run: |
+          app_path="${{ steps.build_seeded_app.outputs.app_path }}"
+          if [ -z "${app_path}" ] || [ ! -d "${app_path}" ]; then
+            echo "notarized seeded app bundle was not produced: ${app_path}" >&2
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "${app_path}"
+          spctl -a -vv -t exec "${app_path}"
+          xcrun stapler validate "${app_path}"
+
+      - name: Build macOS desktop release artifacts from notarized app bundles
         working-directory: desktop
         shell: bash
         env:
           HOLABOSS_RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: |
-          app_path="${{ steps.build_signed_app.outputs.app_path }}"
-          if [ -z "${app_path}" ] || [ ! -d "${app_path}" ]; then
-            echo "notarized app bundle was not produced correctly: ${app_path}" >&2
+          stripped_app_path="${{ steps.build_stripped_app.outputs.app_path }}"
+          seeded_app_path="${{ steps.build_seeded_app.outputs.app_path }}"
+          if [ -z "${stripped_app_path}" ] || [ ! -d "${stripped_app_path}" ]; then
+            echo "notarized stripped app bundle was not produced correctly: ${stripped_app_path}" >&2
             exit 1
           fi
-          prepackaged_app="${RUNNER_TEMP}/Holaboss.app"
-          rm -rf "${prepackaged_app}"
-          ditto "${app_path}" "${prepackaged_app}"
+          if [ -z "${seeded_app_path}" ] || [ ! -d "${seeded_app_path}" ]; then
+            echo "notarized seeded app bundle was not produced correctly: ${seeded_app_path}" >&2
+            exit 1
+          fi
+          zip_artifacts_dir="${RUNNER_TEMP}/mac-zip-artifacts"
+          rm -rf "${zip_artifacts_dir}"
+          mkdir -p "${zip_artifacts_dir}"
           rm -rf out/release
           node scripts/run-electron-builder.mjs \
             --projectDir "$PWD" \
             --publish never \
-            --prepackaged "${prepackaged_app}" \
-            --mac dmg zip \
+            --prepackaged "${stripped_app_path}" \
+            --mac zip \
             --arm64 \
             --config.mac.notarize=false
+          find out/release -maxdepth 1 \( -name '*.zip' -o -name '*.blockmap' -o -name '*-mac.yml' \) -exec cp {} "${zip_artifacts_dir}/" \;
+          rm -rf out/release
+          node scripts/run-electron-builder.mjs \
+            --projectDir "$PWD" \
+            --publish never \
+            --prepackaged "${seeded_app_path}" \
+            --mac dmg \
+            --arm64 \
+            --config.mac.notarize=false
+          cp "${zip_artifacts_dir}/"* out/release/
 
       - name: Validate macOS auto-update artifacts
         shell: bash
