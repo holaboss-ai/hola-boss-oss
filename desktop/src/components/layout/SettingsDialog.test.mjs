@@ -38,6 +38,7 @@ test("settings dialog settings section shows the app controls above appearance",
   assert.match(source, /const \[appUpdateChannelPending, setAppUpdateChannelPending\] = useState\(false\);/);
   assert.match(source, /const appUpdateState = aboutAppUpdateState\(appUpdateStatus\);/);
   assert.match(source, /window\.electronAPI\.appUpdate\.getStatus\(\)/);
+  assert.match(source, /window\.electronAPI\.appUpdate\.checkNow\(\)/);
   assert.match(source, /window\.electronAPI\.appUpdate\.onStateChange\(\(status\) => \{/);
   assert.match(source, /async function handleSetBetaChannel\(checked: boolean\)/);
   assert.match(source, /window\.electronAPI\.appUpdate\.setChannel\(\s*checked \? "beta" : "latest",?\s*\)/);

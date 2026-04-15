@@ -269,13 +269,26 @@ export function SettingsDialog({
       return;
     }
 
+    let cancelled = false;
     void window.electronAPI.appUpdate.getStatus().then((status) => {
-      setAppUpdateStatus(status);
+      if (!cancelled) {
+        setAppUpdateStatus(status);
+      }
+    });
+    void window.electronAPI.appUpdate.checkNow().then((status) => {
+      if (!cancelled) {
+        setAppUpdateStatus(status);
+      }
     });
     const unsubscribe = window.electronAPI.appUpdate.onStateChange((status) => {
-      setAppUpdateStatus(status);
+      if (!cancelled) {
+        setAppUpdateStatus(status);
+      }
     });
-    return unsubscribe;
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, [open]);
 
   useEffect(() => {
