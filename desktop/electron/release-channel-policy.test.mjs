@@ -81,6 +81,7 @@ test("manual CI workflow creates combined desktop releases with bundled runtime 
   assert.match(source, /release_tag:\n\s+description: GitHub release tag to create or update/);
   assert.match(source, /release_title:\n\s+description: Optional GitHub release title/);
   assert.match(source, /prerelease:\n\s+description: Mark the GitHub release as a prerelease/);
+  assert.match(source, /release_windows:\n\s+description: Build and publish the Windows desktop installer/);
   assert.match(source, /release_tag must match holaboss-desktop-YYYY\.MDD\.R/);
   assert.match(source, /release_version="\$\{release_tag#holaboss-desktop-\}"/);
   assert.match(source, /release_title="Holaboss \$\{release_version\}"/);

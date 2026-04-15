@@ -31,6 +31,11 @@ on:
         required: true
         default: false
         type: boolean
+      release_windows:
+        description: Build and publish the Windows desktop installer
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -608,7 +613,7 @@ jobs:
             --clobber
 
   release-windows-desktop:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_windows }}
     needs: ensure-release
     permissions:
       contents: write
