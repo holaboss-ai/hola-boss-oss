@@ -192,7 +192,7 @@ jobs:
   ensure-release:
     if: ${{ github.event_name == 'workflow_dispatch' }}
     permissions:
-      contents: write
+      contents: read
     runs-on: ubuntu-latest
     outputs:
       release_ref: ${{ steps.release_meta.outputs.release_ref }}
@@ -243,67 +243,28 @@ jobs:
             echo "release_channel=${release_channel}"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Ensure release exists
+      - name: Ensure release tag is available
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ steps.release_meta.outputs.release_sha }}
           RELEASE_TAG: ${{ steps.release_meta.outputs.release_tag }}
-          RELEASE_TITLE: ${{ steps.release_meta.outputs.release_title }}
-          PRERELEASE: ${{ inputs.prerelease }}
         run: |
-          notes_path="$(mktemp)"
-          trap 'rm -f "${notes_path}"' EXIT
-
-          existing_tag_sha="$(git rev-list -n1 "${RELEASE_TAG}" 2>/dev/null || true)"
-          if [ -n "${existing_tag_sha}" ] && [ "${existing_tag_sha}" != "${RELEASE_SHA}" ]; then
-            echo "release tag ${RELEASE_TAG} already points to ${existing_tag_sha}, not ${RELEASE_SHA}" >&2
+          remote_tag_sha="$(
+            git ls-remote --tags origin "refs/tags/${RELEASE_TAG}" | awk '{print $1}' | head -n1
+          )"
+          if [ -n "${remote_tag_sha}" ] && [ "${remote_tag_sha}" != "${RELEASE_SHA}" ]; then
+            echo "release tag ${RELEASE_TAG} already points to ${remote_tag_sha}, not ${RELEASE_SHA}" >&2
             exit 1
           fi
 
-          generate_notes_args=(
-            "repos/${GITHUB_REPOSITORY}/releases/generate-notes"
-            --method POST
-            -f "tag_name=${RELEASE_TAG}"
-            -f "target_commitish=${RELEASE_SHA}"
-          )
-
-          if ! git rev-parse -q --verify "refs/tags/${RELEASE_TAG}" >/dev/null; then
-            gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
-              --method POST \
-              -f "ref=refs/tags/${RELEASE_TAG}" \
-              -f "sha=${RELEASE_SHA}" >/dev/null
-          fi
-
-          gh api "${generate_notes_args[@]}" --jq '.body' > "${notes_path}"
-
-          if ! gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-            prerelease_flag=()
-            if [ "${PRERELEASE}" = "true" ]; then
-              prerelease_flag+=(--prerelease)
-            fi
-
-            gh release create "${RELEASE_TAG}" \
-              --title "${RELEASE_TITLE}" \
-              --notes-file "${notes_path}" \
-              --draft \
-              "${prerelease_flag[@]}"
-          else
-            prerelease_flag=()
-            if [ "${PRERELEASE}" = "true" ]; then
-              prerelease_flag+=(--prerelease)
-            fi
-            gh release edit "${RELEASE_TAG}" \
-              --title "${RELEASE_TITLE}" \
-              --notes-file "${notes_path}" \
-              --draft \
-              "${prerelease_flag[@]}"
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "release ${RELEASE_TAG} already exists on GitHub" >&2
+            exit 1
           fi
 
   build-linux-runtime:
     if: ${{ github.event_name == 'workflow_dispatch' }}
     needs: ensure-release
-    permissions:
-      contents: write
     runs-on: ubuntu-latest
     env:
       RELEASE_TAG: ${{ needs.ensure-release.outputs.release_tag }}
@@ -351,22 +312,14 @@ jobs:
             out/runtime-linux/runtime/metadata.json
           if-no-files-found: error
 
-      - name: Upload Linux runtime release asset
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${RELEASE_TAG}" "out/${RUNTIME_ASSET_NAME}" --clobber
-
   release-macos-desktop:
     if: ${{ github.event_name == 'workflow_dispatch' }}
     needs: ensure-release
-    permissions:
-      contents: write
     runs-on: macos-latest
     env:
       RELEASE_TAG: ${{ needs.ensure-release.outputs.release_tag }}
       RELEASE_CHANNEL: ${{ needs.ensure-release.outputs.release_channel }}
       HOLABOSS_RELEASE_CHANNEL: ${{ needs.ensure-release.outputs.release_channel }}
-      GH_REPO: holaboss-ai/holaOS
       RUNTIME_ASSET_NAME: holaboss-runtime-macos.tar.gz
       DESKTOP_ASSET_PREFIX: holaboss-desktop-macos
       DESKTOP_RELEASE_ASSET_NAME: Holaboss-macos-arm64.dmg
@@ -408,11 +361,6 @@ jobs:
 
       - name: Archive macOS runtime bundle
         run: tar -C out -czf "out/${RUNTIME_ASSET_NAME}" runtime-macos
-
-      - name: Upload macOS runtime release asset
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${RELEASE_TAG}" "out/${RUNTIME_ASSET_NAME}" --clobber
 
       - name: Prepare desktop (build SDK + install desktop deps)
         run: npm run desktop:prepare
@@ -644,133 +592,30 @@ jobs:
           spctl -a -vv -t exec "${extracted_app}"
           xcrun stapler validate "${extracted_app}"
 
+      - name: Normalize macOS desktop release asset names
+        shell: bash
+        run: |
+          dmg_path="$(find desktop/out/release -maxdepth 1 -name '*.dmg' -print -quit)"
+          if [ -z "${dmg_path}" ]; then
+            echo "no DMG found in desktop/out/release" >&2
+            exit 1
+          fi
+          cp "${dmg_path}" "desktop/out/release/${DESKTOP_RELEASE_ASSET_NAME}"
+
       - name: Upload macOS desktop release artifacts
         uses: actions/upload-artifact@v7
         with:
           name: ${{ env.DESKTOP_ASSET_PREFIX }}-${{ inputs.release_tag }}
           path: |
-            desktop/out/release/*.dmg
+            desktop/out/release/${{ env.DESKTOP_RELEASE_ASSET_NAME }}
             desktop/out/release/*.zip
             desktop/out/release/*.blockmap
             desktop/out/release/*-mac.yml
           if-no-files-found: error
 
-      - name: Upload macOS desktop release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          dmg_path="$(find desktop/out/release -maxdepth 1 -name '*.dmg' -print -quit)"
-          zip_path="$(find desktop/out/release -maxdepth 1 -name '*.zip' ! -name '*.blockmap' -print -quit)"
-          stable_path="desktop/out/release/${DESKTOP_RELEASE_ASSET_NAME}"
-          cp "${dmg_path}" "${stable_path}"
-          upload_paths=(
-            "${stable_path}"
-            "${zip_path}"
-          )
-          while IFS= read -r manifest_path; do
-            upload_paths+=("${manifest_path}")
-          done < <(find desktop/out/release -maxdepth 1 -name '*-mac.yml' -print | sort)
-          while IFS= read -r blockmap_path; do
-            upload_paths+=("${blockmap_path}")
-          done < <(find desktop/out/release -maxdepth 1 -name '*.blockmap' -print)
-          gh release upload "${RELEASE_TAG}" \
-            "${upload_paths[@]}" \
-            --clobber
-
-      - name: Verify published macOS release assets from GitHub
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          verify_dir="${RUNNER_TEMP}/mac-release-verify"
-          rm -rf "${verify_dir}"
-          mkdir -p "${verify_dir}"
-          primary_channel="${RELEASE_CHANNEL:-latest}"
-          if [ "${primary_channel}" = "beta" ]; then
-            primary_manifest_name="beta-mac.yml"
-          else
-            primary_manifest_name="latest-mac.yml"
-          fi
-          gh release download "${RELEASE_TAG}" \
-            --dir "${verify_dir}" \
-            --pattern 'Holaboss-*-arm64-mac.zip' \
-            --pattern "${primary_manifest_name}" \
-            --clobber
-          if [ "${primary_channel}" = "latest" ]; then
-            gh release download "${RELEASE_TAG}" \
-              --dir "${verify_dir}" \
-              --pattern 'beta-mac.yml' \
-              --clobber
-          fi
-          zip_path="$(find "${verify_dir}" -maxdepth 1 -name 'Holaboss-*-arm64-mac.zip' -print -quit)"
-          manifest_path="${verify_dir}/${primary_manifest_name}"
-          if [ -z "${zip_path}" ] || [ ! -f "${zip_path}" ]; then
-            echo "failed to download the published macOS zip asset from GitHub" >&2
-            exit 1
-          fi
-          if [ ! -f "${manifest_path}" ]; then
-            echo "failed to download ${primary_manifest_name} from GitHub" >&2
-            exit 1
-          fi
-          if [ "${primary_channel}" = "latest" ] && [ ! -f "${verify_dir}/beta-mac.yml" ]; then
-            echo "failed to download beta-mac.yml from GitHub" >&2
-            exit 1
-          fi
-          if ! zipinfo -1 "${zip_path}" | grep -Eq '^Holaboss\.app/'; then
-            echo "published macOS zip does not contain Holaboss.app as the root app bundle" >&2
-            exit 1
-          fi
-          if ! zipinfo -1 "${zip_path}" | grep -Fxq 'Holaboss.app/Contents/Resources/app-update.yml'; then
-            echo "published macOS zip is missing Holaboss.app/Contents/Resources/app-update.yml" >&2
-            exit 1
-          fi
-
-          ruby - "${zip_path}" "${manifest_path}" "${verify_dir}/beta-mac.yml" "${primary_channel}" <<'RUBY'
-          require "yaml"
-
-          zip_path = ARGV.fetch(0)
-          manifest_path = ARGV.fetch(1)
-          beta_manifest_path = ARGV.fetch(2)
-          primary_channel = ARGV.fetch(3)
-          zip_basename = File.basename(zip_path)
-
-          app_update_yaml = IO.popen(["unzip", "-p", zip_path, "Holaboss.app/Contents/Resources/app-update.yml"], &:read)
-          raise "unable to read app-update.yml from #{zip_basename}" if app_update_yaml.nil? || app_update_yaml.strip.empty?
-
-          app_update = YAML.safe_load(app_update_yaml, permitted_classes: [], aliases: false)
-          raise "app-update provider is not github" unless app_update["provider"] == "github"
-          raise "app-update owner is not holaboss-ai" unless app_update["owner"] == "holaboss-ai"
-          raise "app-update repo is not holaOS" unless app_update["repo"] == "holaOS"
-          raise "unexpected updater cache dir #{app_update["updaterCacheDirName"].inspect}" unless app_update["updaterCacheDirName"] == "holaboss-local-updater"
-
-          latest_manifest = YAML.safe_load(File.read(manifest_path), permitted_classes: [], aliases: false)
-          raise "latest-mac.yml path does not match uploaded zip" unless latest_manifest["path"] == zip_basename
-
-          files = latest_manifest["files"]
-          if files.is_a?(Array) && !files.empty?
-            unless files.any? { |entry| entry.is_a?(Hash) && entry["url"] == zip_basename }
-              raise "latest-mac.yml files[] does not reference #{zip_basename}"
-            end
-          end
-
-          if primary_channel == "latest"
-            raise "beta-mac.yml was not downloaded alongside the stable release" unless File.exist?(beta_manifest_path)
-            beta_manifest = YAML.safe_load(File.read(beta_manifest_path), permitted_classes: [], aliases: false)
-            raise "beta-mac.yml path does not match uploaded zip" unless beta_manifest["path"] == zip_basename
-            beta_files = beta_manifest["files"]
-            if beta_files.is_a?(Array) && !beta_files.empty?
-              unless beta_files.any? { |entry| entry.is_a?(Hash) && entry["url"] == zip_basename }
-                raise "beta-mac.yml files[] does not reference #{zip_basename}"
-              end
-            end
-          end
-          RUBY
-
   release-windows-desktop:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_windows }}
     needs: ensure-release
-    permissions:
-      contents: write
     runs-on: windows-latest
     env:
       RELEASE_TAG: ${{ needs.ensure-release.outputs.release_tag }}
@@ -905,47 +750,6 @@ jobs:
             desktop/out/runtime-windows/runtime/metadata.json
           if-no-files-found: error
 
-      - name: Upload Windows release assets
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GENERATED_INSTALLER_PATH: ${{ steps.build_windows_installer.outputs.generated_installer_path }}
-          INSTALLER_PATH: ${{ steps.build_windows_installer.outputs.installer_path }}
-          RUNTIME_ASSET_PATH: ${{ steps.build_windows_installer.outputs.runtime_asset_path }}
-        run: |
-          if (-not $env:INSTALLER_PATH) {
-            throw "Installer path output was not set."
-          }
-
-          if (-not $env:GENERATED_INSTALLER_PATH) {
-            throw "Generated installer path output was not set."
-          }
-
-          if (-not $env:RUNTIME_ASSET_PATH) {
-            throw "Runtime asset path output was not set."
-          }
-
-          $uploadPaths = @($env:INSTALLER_PATH)
-          if ($env:GENERATED_INSTALLER_PATH -ne $env:INSTALLER_PATH) {
-            $uploadPaths += $env:GENERATED_INSTALLER_PATH
-          }
-          $manifestPaths = Get-ChildItem -Path desktop/out/release -File -Filter *.yml |
-            ForEach-Object { $_.FullName }
-          if (-not $manifestPaths) {
-            throw "No Windows update manifest was produced under desktop/out/release."
-          }
-          $uploadPaths += $manifestPaths
-          $uploadPaths += $env:RUNTIME_ASSET_PATH
-
-          $blockmapPaths = Get-ChildItem -Path desktop/out/release -File -Filter *.blockmap |
-            ForEach-Object { $_.FullName }
-          if (-not $blockmapPaths) {
-            throw "No Windows blockmap was produced under desktop/out/release."
-          }
-          $uploadPaths += $blockmapPaths
-
-          gh release upload $env:RELEASE_TAG @uploadPaths --clobber
-
   publish-release:
     if: >-
       ${{
@@ -962,9 +766,11 @@ jobs:
       - release-macos-desktop
       - release-windows-desktop
     permissions:
+      actions: read
       contents: write
     runs-on: ubuntu-latest
     env:
+      RELEASE_SHA: ${{ needs.ensure-release.outputs.release_sha }}
       RELEASE_TAG: ${{ needs.ensure-release.outputs.release_tag }}
       RELEASE_TITLE: ${{ needs.ensure-release.outputs.release_title }}
       RELEASE_CHANNEL: ${{ needs.ensure-release.outputs.release_channel }}
@@ -972,15 +778,95 @@ jobs:
       PRERELEASE: ${{ inputs.prerelease }}
       GH_REPO: holaboss-ai/holaOS
     steps:
-      - name: Publish verified GitHub release
+      - name: Download Linux runtime release artifacts
+        uses: actions/download-artifact@v5
+        with:
+          name: holaboss-runtime-linux-${{ inputs.release_tag }}
+          path: release-assets/linux-runtime
+
+      - name: Download macOS desktop release artifacts
+        uses: actions/download-artifact@v5
+        with:
+          name: holaboss-desktop-macos-${{ inputs.release_tag }}
+          path: release-assets/macos-desktop
+
+      - name: Download Windows desktop release artifacts
+        if: ${{ inputs.release_windows }}
+        uses: actions/download-artifact@v5
+        with:
+          name: holaboss-desktop-windows-${{ inputs.release_tag }}
+          path: release-assets/windows-desktop
+
+      - name: Publish validated GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          notes_path="$(mktemp)"
+          trap 'rm -f "${notes_path}"' EXIT
+
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "release ${RELEASE_TAG} already exists on GitHub" >&2
+            exit 1
+          fi
+
+          if git ls-remote --tags "https://github.com/${GH_REPO}.git" "refs/tags/${RELEASE_TAG}" | grep -q .; then
+            echo "release tag ${RELEASE_TAG} already exists on origin" >&2
+            exit 1
+          fi
+
+          gh api "repos/${GH_REPO}/releases/generate-notes" \
+            --method POST \
+            -f "tag_name=${RELEASE_TAG}" \
+            -f "target_commitish=${RELEASE_SHA}" \
+            --jq '.body' > "${notes_path}"
+
+          linux_runtime_asset="release-assets/linux-runtime/holaboss-runtime-linux.tar.gz"
+          mac_dmg_asset="release-assets/macos-desktop/Holaboss-macos-arm64.dmg"
+          mac_zip_asset="$(find release-assets/macos-desktop -maxdepth 1 -name 'Holaboss-*-arm64-mac.zip' -print -quit)"
+          if [ ! -f "${linux_runtime_asset}" ]; then
+            echo "missing Linux runtime release asset" >&2
+            exit 1
+          fi
+          if [ ! -f "${mac_dmg_asset}" ]; then
+            echo "missing macOS DMG release asset" >&2
+            exit 1
+          fi
+          if [ -z "${mac_zip_asset}" ] || [ ! -f "${mac_zip_asset}" ]; then
+            echo "missing macOS zip release asset" >&2
+            exit 1
+          fi
+
+          upload_paths=(
+            "${linux_runtime_asset}"
+            "${mac_dmg_asset}"
+            "${mac_zip_asset}"
+          )
+
+          while IFS= read -r manifest_path; do
+            upload_paths+=("${manifest_path}")
+          done < <(find release-assets/macos-desktop -maxdepth 1 -name '*-mac.yml' -print | sort)
+          while IFS= read -r blockmap_path; do
+            upload_paths+=("${blockmap_path}")
+          done < <(find release-assets/macos-desktop -maxdepth 1 -name '*.blockmap' -print | sort)
+
+          if [ "${{ inputs.release_windows }}" = "true" ]; then
+            while IFS= read -r windows_asset; do
+              upload_paths+=("${windows_asset}")
+            done < <(
+              find release-assets/windows-desktop -maxdepth 1 -type f \
+                \( -name '*.exe' -o -name '*.yml' -o -name '*.blockmap' -o -name 'holaboss-runtime-windows.tar.gz' \) \
+                -print | sort
+            )
+          fi
+
           prerelease_flag=()
           if [ "${PRERELEASE}" = "true" ]; then
             prerelease_flag+=(--prerelease)
           fi
-          gh release edit "${RELEASE_TAG}" \
+
+          gh release create "${RELEASE_TAG}" \
+            --target "${RELEASE_SHA}" \
             --title "${RELEASE_TITLE}" \
-            --draft=false \
-            "${prerelease_flag[@]}"
+            --notes-file "${notes_path}" \
+            "${prerelease_flag[@]}" \
+            "${upload_paths[@]}"

@@ -120,13 +120,15 @@ test("manual CI workflow creates combined desktop releases with bundled runtime 
   assert.match(source, /release_channel="\$\{\{ inputs\.release_channel \}\}"/);
   assert.match(source, /beta channel releases must be marked as prerelease/);
   assert.match(source, /latest channel releases must not be marked as prerelease/);
-  assert.match(source, /gh release create "\$\{RELEASE_TAG\}" \\\n\s+--title "\$\{RELEASE_TITLE\}" \\\n\s+--notes-file "\$\{notes_path\}" \\\n\s+--draft/);
-  assert.match(source, /gh release edit "\$\{RELEASE_TAG\}" \\\n\s+--title "\$\{RELEASE_TITLE\}" \\\n\s+--notes-file "\$\{notes_path\}" \\\n\s+--draft/);
+  assert.match(source, /Ensure release tag is available/);
+  assert.match(source, /release tag \$\{RELEASE_TAG\} already points to \$\{remote_tag_sha\}, not \$\{RELEASE_SHA\}/);
+  assert.match(source, /release \$\{RELEASE_TAG\} already exists on GitHub/);
+  assert.doesNotMatch(source, /gh release create "\$\{RELEASE_TAG\}" \\\n\s+--title "\$\{RELEASE_TITLE\}" \\\n\s+--notes-file "\$\{notes_path\}" \\\n\s+--draft/);
+  assert.doesNotMatch(source, /gh release edit "\$\{RELEASE_TAG\}" \\\n\s+--title "\$\{RELEASE_TITLE\}" \\\n\s+--notes-file "\$\{notes_path\}" \\\n\s+--draft/);
   assert.match(source, /RUNTIME_ASSET_NAME: holaboss-runtime-linux\.tar\.gz/);
   assert.match(source, /RUNTIME_ASSET_NAME: holaboss-runtime-macos\.tar\.gz/);
   assert.match(source, /RUNTIME_ASSET_NAME: holaboss-runtime-windows\.tar\.gz/);
-  assert.match(source, /release-macos-desktop:[\s\S]*?runs-on: macos-latest\s+env:\s+RELEASE_TAG:[\s\S]*?GH_REPO: holaboss-ai\/holaOS\s+RUNTIME_ASSET_NAME: holaboss-runtime-macos\.tar\.gz/);
-  assert.match(source, /gh release upload "\$\{RELEASE_TAG\}" "out\/\$\{RUNTIME_ASSET_NAME\}" --clobber/);
+  assert.doesNotMatch(source, /gh release upload "\$\{RELEASE_TAG\}"/);
   assert.match(source, /Build desktop code for macOS release/);
   assert.match(source, /Build signed macOS app bundle/);
   assert.match(source, /app-update\.yml is missing from signed app bundle/);
@@ -144,29 +146,36 @@ test("manual CI workflow creates combined desktop releases with bundled runtime 
   assert.match(source, /codesign --verify --deep --strict --verbose=2 "\$\{extracted_app\}"/);
   assert.match(source, /spctl -a -vv -t exec "\$\{extracted_app\}"/);
   assert.match(source, /xcrun stapler validate "\$\{extracted_app\}"/);
-  assert.match(source, /Verify published macOS release assets from GitHub/);
-  assert.match(source, /gh release download "\$\{RELEASE_TAG\}" \\\n\s+--dir "\$\{verify_dir\}" \\\n\s+--pattern 'Holaboss-\*-arm64-mac\.zip'/);
-  assert.match(source, /failed to download beta-mac\.yml from GitHub/);
-  assert.match(source, /published macOS zip is missing Holaboss\.app\/Contents\/Resources\/app-update\.yml/);
-  assert.match(
-    source,
-    /ruby - "\$\{zip_path\}" "\$\{manifest_path\}" "\$\{verify_dir\}\/beta-mac\.yml" "\$\{primary_channel\}" <<'RUBY'/,
-  );
-  assert.doesNotMatch(
-    source,
-    /ruby "\$\{zip_path\}" "\$\{manifest_path\}" "\$\{verify_dir\}\/beta-mac\.yml" "\$\{primary_channel\}" <<'RUBY'/,
-  );
-  assert.match(source, /raise "app-update repo is not holaOS"/);
-  assert.match(source, /raise "latest-mac\.yml path does not match uploaded zip"/);
-  assert.match(source, /raise "beta-mac\.yml path does not match uploaded zip"/);
-  assert.doesNotMatch(source, /verify-macos-release-assets:/);
+  assert.doesNotMatch(source, /Verify published macOS release assets from GitHub/);
+  assert.doesNotMatch(source, /gh release download "\$\{RELEASE_TAG\}"/);
+  assert.doesNotMatch(source, /published macOS zip is missing Holaboss\.app\/Contents\/Resources\/app-update\.yml/);
+  assert.doesNotMatch(source, /raise "latest-mac\.yml path does not match uploaded zip"/);
+  assert.doesNotMatch(source, /raise "beta-mac\.yml path does not match uploaded zip"/);
   assert.match(source, /publish-release:/);
+  assert.match(source, /Download Linux runtime release artifacts/);
+  assert.match(source, /name: holaboss-runtime-linux-\$\{\{ inputs\.release_tag \}\}/);
+  assert.match(source, /Download macOS desktop release artifacts/);
+  assert.match(source, /name: holaboss-desktop-macos-\$\{\{ inputs\.release_tag \}\}/);
+  assert.match(source, /Download Windows desktop release artifacts/);
+  assert.match(source, /name: holaboss-desktop-windows-\$\{\{ inputs\.release_tag \}\}/);
+  assert.match(source, /repos\/\$\{GH_REPO\}\/releases\/generate-notes/);
+  assert.match(source, /tag_name=\$\{RELEASE_TAG\}/);
+  assert.match(source, /target_commitish=\$\{RELEASE_SHA\}/);
+  assert.match(source, /linux_runtime_asset="release-assets\/linux-runtime\/holaboss-runtime-linux\.tar\.gz"/);
+  assert.match(source, /mac_dmg_asset="release-assets\/macos-desktop\/Holaboss-macos-arm64\.dmg"/);
+  assert.match(source, /mac_zip_asset="\$\(find release-assets\/macos-desktop -maxdepth 1 -name 'Holaboss-\*-arm64-mac\.zip' -print -quit\)"/);
+  assert.match(source, /upload_paths=\(/);
+  assert.match(source, /while IFS= read -r manifest_path; do\s+upload_paths\+=\("\$\{manifest_path\}"\)/);
+  assert.match(source, /while IFS= read -r blockmap_path; do\s+upload_paths\+=\("\$\{blockmap_path\}"\)/);
+  assert.match(source, /if \[ "\$\{\{ inputs\.release_windows \}\}" = "true" \]; then/);
+  assert.match(source, /find release-assets\/windows-desktop -maxdepth 1 -type f/);
+  assert.match(source, /prerelease_flag=\(\)/);
+  assert.match(source, /if \[ "\$\{PRERELEASE\}" = "true" \]; then\s+prerelease_flag\+=\(--prerelease\)/);
   assert.match(
     source,
-    /publish-release:[\s\S]*?runs-on: ubuntu-latest\s+env:\s+RELEASE_TAG:[\s\S]*?GH_REPO: holaboss-ai\/holaOS\s+steps:/,
+    /gh release create "\$\{RELEASE_TAG\}" \\\n\s+--target "\$\{RELEASE_SHA\}" \\\n\s+--title "\$\{RELEASE_TITLE\}" \\\n\s+--notes-file "\$\{notes_path\}" \\\n\s+"\$\{prerelease_flag\[@\]\}" \\\n\s+"\$\{upload_paths\[@\]\}"/,
   );
-  assert.doesNotMatch(source, /needs\.verify-macos-release-assets\.result == 'success'/);
-  assert.match(source, /gh release edit "\$\{RELEASE_TAG\}" \\\n\s+--title "\$\{RELEASE_TITLE\}" \\\n\s+--draft=false/);
+  assert.doesNotMatch(source, /gh release edit "\$\{RELEASE_TAG\}" \\\n\s+--draft=false/);
   assert.match(source, /\$manifestName = if \(\$primaryChannel -eq "beta"\) \{ "beta\.yml" \} else \{ "latest\.yml" \}/);
   assert.match(source, /beta\.yml was not generated for stable-channel compatibility/);
   assert.match(builderConfig, /repo: "holaOS"/);
