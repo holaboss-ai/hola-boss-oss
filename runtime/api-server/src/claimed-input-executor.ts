@@ -842,6 +842,7 @@ export async function processClaimedInput(params: {
   let stopReason: string | null = null;
   let tokenUsage: Record<string, unknown> | null = null;
   let activeLeaseUntil = record.claimedUntil ?? claimLeaseUntilIso(leaseSeconds);
+  let lastClaimRenewalAtMs = 0;
   let promptSectionIds: string[] = [];
   let capabilityManifestFingerprint: string | null = null;
   let requestSnapshotFingerprint: string | null = null;
@@ -863,30 +864,45 @@ export async function processClaimedInput(params: {
     workspaceFileManifestBefore = null;
   }
 
+  const EVENT_CLAIM_RENEWAL_MIN_INTERVAL_MS = 250;
+  const renewClaimLease = (source: "heartbeat" | "event") => {
+    const nowMs = Date.now();
+    if (
+      source === "event" &&
+      nowMs - lastClaimRenewalAtMs < EVENT_CLAIM_RENEWAL_MIN_INTERVAL_MS
+    ) {
+      return;
+    }
+
+    const renewedClaim = store.renewInputClaim({
+      inputId: record.inputId,
+      claimedBy,
+      leaseSeconds,
+    });
+    if (renewedClaim?.claimedUntil) {
+      activeLeaseUntil = renewedClaim.claimedUntil;
+    }
+    lastClaimRenewalAtMs = nowMs;
+    store.updateRuntimeState({
+      workspaceId: record.workspaceId,
+      sessionId: record.sessionId,
+      status: "BUSY",
+      currentInputId: record.inputId,
+      currentWorkerId: claimedBy,
+      leaseUntil: activeLeaseUntil,
+      lastError: null
+    });
+  };
+
   try {
     const executeRunner = params.executeRunnerRequestFn ?? executeRunnerRequest;
     const execution = await executeRunner(payload, {
       signal: params.abortSignal,
       onHeartbeat: () => {
-        const renewedClaim = store.renewInputClaim({
-          inputId: record.inputId,
-          claimedBy,
-          leaseSeconds,
-        });
-        if (renewedClaim?.claimedUntil) {
-          activeLeaseUntil = renewedClaim.claimedUntil;
-        }
-        store.updateRuntimeState({
-          workspaceId: record.workspaceId,
-          sessionId: record.sessionId,
-          status: "BUSY",
-          currentInputId: record.inputId,
-          currentWorkerId: claimedBy,
-          leaseUntil: activeLeaseUntil,
-          lastError: null
-        });
+        renewClaimLease("heartbeat");
       },
       onEvent: async (event) => {
+        renewClaimLease("event");
         const sequence = typeof event.sequence === "number" ? event.sequence : 0;
         lastSequence = Math.max(lastSequence, sequence);
         const eventPayload = payloadForEvent(event);

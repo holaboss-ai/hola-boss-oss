@@ -33,6 +33,9 @@ test("desktop auth callback recovery reuses the dev server and user-data path fo
     source,
     /const explicit =\s*process\.env\.HOLABOSS_DESKTOP_USER_DATA_PATH\?\.trim\(\)\s*\|\|\s*recoveredDevLaunchContext\?\.userDataPath\?\.trim\(\)\s*\|\|\s*"";/,
   );
-  assert.match(source, /configureStableUserDataPath\(\);\s*persistDevLaunchContext\(\);/);
+  assert.match(
+    source,
+    /configureStableUserDataPath\(\);\s*resolvedRuntimeApiPort = resolveRuntimeApiPort\(\);\s*persistDevLaunchContext\(\);/,
+  );
   assert.match(source, /if \(isDev\) \{\s*void win\.loadURL\(RESOLVED_DEV_SERVER_URL\);\s*\}/);
 });

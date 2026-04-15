@@ -6220,23 +6220,20 @@ function AssistantTurn({
   live?: boolean;
 }) {
   const normalizedStatus = status.replace(/\.+$/, "").trim();
-  const traceSteps = traceStepsFromExecutionItems(executionItems);
   const showStatusPlaceholder =
+    live &&
     Boolean(normalizedStatus) &&
     !text &&
     executionItems.length === 0;
+  const showWorkingStatusLine =
+    live &&
+    (executionItems.length > 0 || Boolean(text));
 
   return (
     <div className="flex min-w-0 justify-start">
       <article className="min-w-0 flex-1">
         {showStatusPlaceholder ? (
-          <div
-            aria-live="polite"
-            className="inline-flex items-baseline gap-0.5 text-[12px] leading-6 text-muted-foreground/72"
-          >
-            <span>{normalizedStatus}</span>
-            <LiveStatusEllipsis />
-          </div>
+          <LiveStatusLine label={normalizedStatus} />
         ) : null}
 
         {executionItems.length > 0 ? (
@@ -6247,6 +6244,13 @@ function AssistantTurn({
             live={live}
             liveOutputStarted={live && Boolean(text)}
             onLinkClick={onLinkClick}
+          />
+        ) : null}
+
+        {showWorkingStatusLine ? (
+          <LiveStatusLine
+            label="Working"
+            className={executionItems.length > 0 ? "mt-1" : ""}
           />
         ) : null}
 
@@ -6811,6 +6815,29 @@ function LiveStatusEllipsis() {
   );
 }
 
+function LiveStatusLine({
+  label,
+  className = "",
+}: {
+  label: string;
+  className?: string;
+}) {
+  const normalizedLabel = label.replace(/\.+$/, "").trim();
+  if (!normalizedLabel) {
+    return null;
+  }
+
+  return (
+    <div
+      aria-live="polite"
+      className={`inline-flex items-baseline gap-0.5 text-[12px] leading-6 text-muted-foreground/72 ${className}`.trim()}
+    >
+      <span>{normalizedLabel}</span>
+      <LiveStatusEllipsis />
+    </div>
+  );
+}
+
 function summarizeThinking(text: string) {
   const firstContentLine =
     text
@@ -6959,6 +6986,8 @@ function TraceStepGroup({
   const summarySuffix = groupHasTerminalError
     ? ` (${terminalErrorCount} failed)`
     : "";
+  const showLiveSummarySpinner =
+    (groupIsLive || runningCount > 0) && !groupExpanded;
   const summaryLabel = summaryStep
     ? summaryStep === activeStep || summaryStep.status === "waiting"
       ? `${traceStatusLabel(summaryStep.status)}: ${summaryStep.title}`
@@ -6984,17 +7013,19 @@ function TraceStepGroup({
       <button
         type="button"
         onClick={() => setGroupExpanded((v) => !v)}
-        className="flex w-full items-start gap-2 rounded-lg px-2.5 py-1.5 -ml-2.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/60"
+        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 -ml-2.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/60"
       >
         {groupHasTerminalError ? (
-          <AlertTriangle size={13} className="mt-0.5 shrink-0 text-destructive" />
-        ) : groupIsLive || runningCount > 0 ? (
+          <AlertTriangle size={13} className="shrink-0 text-destructive" />
+        ) : showLiveSummarySpinner ? (
           <Loader2
             size={13}
-            className="mt-0.5 shrink-0 animate-spin text-muted-foreground"
+            className="shrink-0 animate-spin text-muted-foreground"
           />
+        ) : groupIsLive || runningCount > 0 ? (
+          <Clock3 size={13} className="shrink-0 text-muted-foreground" />
         ) : (
-          <Check size={13} className="mt-0.5 shrink-0 text-emerald-500" />
+          <Check size={13} className="shrink-0 text-emerald-500" />
         )}
         <span className="min-w-0 flex-1 leading-5">
           {summaryLabel}
@@ -7002,7 +7033,7 @@ function TraceStepGroup({
         </span>
         <ChevronDown
           size={12}
-          className={`mt-0.5 shrink-0 transition-transform ${groupExpanded ? "rotate-180" : ""}`}
+          className={`shrink-0 transition-transform ${groupExpanded ? "rotate-180" : ""}`}
         />
       </button>
 
