@@ -907,6 +907,7 @@ interface PackagedDesktopConfig {
   projectsUrl?: string;
   marketplaceUrl?: string;
   proactiveUrl?: string;
+  updateChannel?: string;
   toolchainManifest?: RuntimeToolchainManifest;
 }
 
@@ -954,6 +955,28 @@ function loadPackagedDesktopConfig(): PackagedDesktopConfig {
 }
 
 const packagedDesktopConfig = loadPackagedDesktopConfig();
+type AppUpdateChannel = "latest" | "beta";
+
+function normalizeAppUpdateChannel(
+  value: string | null | undefined,
+): AppUpdateChannel | null {
+  const normalized = value?.trim().toLowerCase() || "";
+  if (!normalized) {
+    return null;
+  }
+  if (normalized === "latest") {
+    return "latest";
+  }
+  if (normalized === "beta") {
+    return "beta";
+  }
+  return null;
+}
+
+const CONFIGURED_APP_UPDATE_CHANNEL =
+  normalizeAppUpdateChannel(process.env.HOLABOSS_APP_UPDATE_CHANNEL) ??
+  normalizeAppUpdateChannel(packagedDesktopConfig.updateChannel) ??
+  "latest";
 const INTERNAL_DEV_BACKEND_OVERRIDES_ENABLED =
   Boolean(RESOLVED_DEV_SERVER_URL) ||
   process.env.HOLABOSS_INTERNAL_DEV?.trim() === "1";
@@ -1364,7 +1387,10 @@ function configureAutoUpdater() {
   appUpdateEventsConfigured = true;
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.allowPrerelease = false;
+  autoUpdater.allowPrerelease = CONFIGURED_APP_UPDATE_CHANNEL === "beta";
+  if (CONFIGURED_APP_UPDATE_CHANNEL === "beta") {
+    autoUpdater.channel = "beta";
+  }
 
   autoUpdater.on("checking-for-update", () => {
     appUpdateStatus = {

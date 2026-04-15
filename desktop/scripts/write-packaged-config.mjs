@@ -15,6 +15,17 @@ const runtimeBundleRoot = path.join(outputDir, runtimeBundleDirName(runtimePlatf
 const runtimeMetadataPath = path.join(runtimeBundleRoot, "runtime", "metadata.json");
 const runtimePackageMetadataPath = path.join(runtimeBundleRoot, "package-metadata.json");
 
+function resolveUpdateChannel() {
+  const rawValue = (process.env.HOLABOSS_RELEASE_CHANNEL || "").trim().toLowerCase();
+  if (!rawValue || rawValue === "latest") {
+    return "latest";
+  }
+  if (rawValue === "beta") {
+    return "beta";
+  }
+  throw new Error(`Unsupported HOLABOSS_RELEASE_CHANNEL: ${rawValue}`);
+}
+
 async function loadDesktopEnvDefaults() {
   const envCandidates = [
     path.join(desktopRoot, ".env"),
@@ -85,6 +96,7 @@ async function loadRuntimeToolchainManifest() {
 
 const desktopEnvDefaults = await loadDesktopEnvDefaults();
 const toolchainManifest = await loadRuntimeToolchainManifest();
+const updateChannel = resolveUpdateChannel();
 
 function resolveEnvValue(...names) {
   for (const name of names) {
@@ -119,6 +131,7 @@ const config = {
     "HOLABOSS_PROACTIVE_URL",
     "HOLABOSS_CLI_PROACTIVE_URL"
   ),
+  ...(updateChannel === "beta" ? { updateChannel } : {}),
   toolchainManifest,
 };
 

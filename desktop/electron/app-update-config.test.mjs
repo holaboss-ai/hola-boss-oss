@@ -39,6 +39,38 @@ test("write-app-update-config writes the packaged github updater metadata", asyn
     assert.equal(updaterConfig.owner, "holaboss-ai");
     assert.equal(updaterConfig.repo, "holaOS");
     assert.equal(updaterConfig.updaterCacheDirName, "holaboss-local-updater");
+    assert.equal(updaterConfig.channel, undefined);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("write-app-update-config includes the beta channel when requested", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "holaboss-app-update-beta-"));
+  const appBundlePath = path.join(tempRoot, "Holaboss.app");
+  const resourcesPath = path.join(appBundlePath, "Contents", "Resources");
+  await mkdir(resourcesPath, { recursive: true });
+
+  try {
+    await execFileAsync(process.execPath, [writeAppUpdateConfigPath, appBundlePath], {
+      cwd: desktopRoot,
+      env: {
+        ...process.env,
+        HOLABOSS_RELEASE_CHANNEL: "beta",
+      },
+    });
+
+    const writtenConfig = await readFile(
+      path.join(resourcesPath, "app-update.yml"),
+      "utf8",
+    );
+    const updaterConfig = YAML.parse(writtenConfig);
+
+    assert.equal(updaterConfig.provider, "github");
+    assert.equal(updaterConfig.owner, "holaboss-ai");
+    assert.equal(updaterConfig.repo, "holaOS");
+    assert.equal(updaterConfig.channel, "beta");
+    assert.equal(updaterConfig.updaterCacheDirName, "holaboss-local-updater");
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
