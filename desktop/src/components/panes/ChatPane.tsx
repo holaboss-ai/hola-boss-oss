@@ -1494,6 +1494,123 @@ function inputIdFromMessageId(messageId: string, role: "user" | "assistant") {
   return messageId.startsWith(prefix) ? messageId.slice(prefix.length) : "";
 }
 
+function normalizeWorkspaceFileSyncPath(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim().replace(/^["'`]+|["'`]+$/g, "");
+  if (!normalized) {
+    return null;
+  }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(normalized)) {
+    return null;
+  }
+  if (
+    normalized === "." ||
+    normalized === ".." ||
+    normalized.endsWith("/..") ||
+    normalized.endsWith("\\..")
+  ) {
+    return null;
+  }
+  return normalized;
+}
+
+function syncableWorkspacePathFromRecord(
+  value: unknown,
+  preferredKeys: string[],
+): string | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  for (const key of preferredKeys) {
+    const match = normalizeWorkspaceFileSyncPath(value[key]);
+    if (match) {
+      return match;
+    }
+  }
+  for (const [key, candidate] of Object.entries(value)) {
+    if (!/(?:^|_)(?:path|file|filepath|filename|target|destination)$/i.test(key)) {
+      continue;
+    }
+    const match = normalizeWorkspaceFileSyncPath(candidate);
+    if (match) {
+      return match;
+    }
+  }
+  return null;
+}
+
+function fileDisplaySyncTargetFromToolPayload(
+  payload: Record<string, unknown>,
+): string | null {
+  const toolName =
+    typeof payload.tool_name === "string"
+      ? payload.tool_name.trim().toLowerCase()
+      : "";
+  const phase =
+    typeof payload.phase === "string" ? payload.phase.trim().toLowerCase() : "";
+  if (!toolName || payload.error === true) {
+    return null;
+  }
+
+  if (toolName === "write_report" || toolName === "image_generate") {
+    if (phase !== "completed") {
+      return null;
+    }
+    return syncableWorkspacePathFromRecord(payload.result, [
+      "file_path",
+      "path",
+    ]);
+  }
+
+  if (toolName === "cp" || toolName === "mv") {
+    if (phase !== "completed") {
+      return null;
+    }
+    return syncableWorkspacePathFromRecord(payload.tool_args, [
+      "destination_path",
+      "destination",
+      "to_path",
+      "to",
+      "target_path",
+      "target",
+      "file_path",
+      "path",
+    ]);
+  }
+
+  if (toolName === "write") {
+    if (phase !== "completed") {
+      return null;
+    }
+    return syncableWorkspacePathFromRecord(payload.tool_args, [
+      "file_path",
+      "path",
+      "target_path",
+      "target",
+      "filename",
+      "file",
+    ]);
+  }
+
+  if (toolName === "read" || toolName === "edit") {
+    if (phase !== "started" && phase !== "completed") {
+      return null;
+    }
+    return syncableWorkspacePathFromRecord(payload.tool_args, [
+      "file_path",
+      "path",
+      "target_path",
+      "target",
+      "filename",
+      "file",
+    ]);
+  }
+
+  return null;
+}
+
 function extractMcpErrorText(result: unknown): string {
   if (!isRecord(result) || result.isError !== true) {
     return "";
@@ -2164,6 +2281,7 @@ interface ChatPaneComposerPrefillRequest {
 
 interface ChatPaneProps {
   onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
+  onSyncFileDisplayFromAgentOperation?: (path: string) => void;
   focusRequestKey?: number;
   variant?: ChatPaneVariant;
   onOpenLinkInBrowser?: (url: string) => void;
@@ -2181,6 +2299,7 @@ interface ChatPaneProps {
 
 export function ChatPane({
   onOpenOutput,
+  onSyncFileDisplayFromAgentOperation,
   focusRequestKey = 0,
   variant = "default",
   onOpenLinkInBrowser,
@@ -2300,6 +2419,7 @@ export function ChatPane({
   const activeSessionIdRef = useRef<string | null>(null);
   const activeStreamIdRef = useRef<string | null>(null);
   const activeAssistantMessageIdRef = useRef<string | null>(null);
+  const lastSyncedAgentOperationFileKeyRef = useRef("");
   const pendingInputIdRef = useRef<string | null>(null);
   const seenMainDebugKeysRef = useRef<Set<string>>(new Set());
   const selectedWorkspaceRef = useRef<WorkspaceRecordPayload | null>(null);
@@ -2474,6 +2594,7 @@ export function ChatPane({
     liveAssistantTextRef.current = "";
     liveExecutionItemsRef.current = [];
     activeAssistantMessageIdRef.current = null;
+    lastSyncedAgentOperationFileKeyRef.current = "";
     setLiveAssistantText("");
     setLiveAgentStatus("");
     setLiveExecutionItems([]);
@@ -3949,6 +4070,24 @@ export function ChatPane({
           setCurrentTodoPlan(nextTodoPlan);
         }
 
+        if (eventType === "tool_call") {
+          const fileDisplayTarget =
+            fileDisplaySyncTargetFromToolPayload(eventPayload);
+          if (fileDisplayTarget) {
+            const callId =
+              typeof eventPayload.call_id === "string"
+                ? eventPayload.call_id.trim()
+                : "";
+            const syncKey = callId
+              ? `${callId}:${fileDisplayTarget}`
+              : fileDisplayTarget;
+            if (lastSyncedAgentOperationFileKeyRef.current !== syncKey) {
+              lastSyncedAgentOperationFileKeyRef.current = syncKey;
+              onSyncFileDisplayFromAgentOperation?.(fileDisplayTarget);
+            }
+          }
+        }
+
         if (eventType === "output_delta") {
           const delta =
             typeof eventPayload.delta === "string" ? eventPayload.delta : "";
@@ -4074,7 +4213,11 @@ export function ChatPane({
     return () => {
       unsubscribe();
     };
-  }, [refreshWorkspaceData, selectedWorkspaceId]);
+  }, [
+    onSyncFileDisplayFromAgentOperation,
+    refreshWorkspaceData,
+    selectedWorkspaceId,
+  ]);
 
   useEffect(() => {
     if (!isResponding || !selectedWorkspaceId || !activeSessionId) {

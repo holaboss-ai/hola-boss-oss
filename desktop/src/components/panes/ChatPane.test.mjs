@@ -485,6 +485,39 @@ test("chat pane exposes an in-pane session dropdown for switching agent sessions
   );
 });
 
+test("chat pane syncs the shared file display from live file-oriented tool calls", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /onSyncFileDisplayFromAgentOperation\?: \(path: string\) => void;/,
+  );
+  assert.match(
+    source,
+    /function fileDisplaySyncTargetFromToolPayload\(\s*payload: Record<string, unknown>,\s*\): string \| null \{/,
+  );
+  assert.match(
+    source,
+    /const lastSyncedAgentOperationFileKeyRef = useRef\(""\);/,
+  );
+  assert.match(
+    source,
+    /toolName === "write_report" \|\| toolName === "image_generate"/,
+  );
+  assert.match(
+    source,
+    /syncableWorkspacePathFromRecord\(payload\.result,\s*\[\s*"file_path",\s*"path",\s*\]\)/,
+  );
+  assert.match(
+    source,
+    /toolName === "read" \|\| toolName === "edit"/,
+  );
+  assert.match(
+    source,
+    /if \(eventType === "tool_call"\) \{\s*const fileDisplayTarget =\s*fileDisplaySyncTargetFromToolPayload\(eventPayload\);[\s\S]*onSyncFileDisplayFromAgentOperation\?\.\(fileDisplayTarget\);/,
+  );
+});
+
 test("chat pane keeps local picker session requests from overriding a newer shell session request", async () => {
   const source = await readFile(sourcePath, "utf8");
 

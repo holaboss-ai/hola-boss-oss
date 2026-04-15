@@ -2930,6 +2930,35 @@ function AppShellContent() {
     };
   }, [reportedOperatorSurfaceContext, selectedWorkspaceId]);
 
+  const handleSyncAgentOperationFileDisplay = useCallback(
+    (path: string) => {
+      const targetPath = path.trim();
+      if (!targetPath) {
+        return;
+      }
+
+      setActiveShellView("space");
+      setSpaceExplorerMode("files");
+      setSpaceExplorerCollapsed(false);
+      setSpaceVisibility((previous) => ({
+        ...previous,
+        agent: true,
+        files: true,
+      }));
+      setAgentView({ type: "chat" });
+      setSpaceDisplayView({
+        type: "internal",
+        surface: "file",
+        resourceId: targetPath,
+      });
+      setFileExplorerFocusRequest({
+        path: targetPath,
+        requestKey: Date.now(),
+      });
+    },
+    [],
+  );
+
   const handleOpenWorkspaceOutput = useCallback(
     (output: WorkspaceOutputRecordPayload) => {
       const target = workspaceOutputNavigationTarget(output, installedAppIds);
@@ -3140,11 +3169,17 @@ function AppShellContent() {
       return onboardingModeActive ? (
         <OnboardingPane
           onOpenOutput={handleOpenWorkspaceOutput}
+          onSyncFileDisplayFromAgentOperation={
+            handleSyncAgentOperationFileDisplay
+          }
           focusRequestKey={chatFocusRequestKey}
         />
       ) : (
         <ChatPane
           onOpenOutput={handleOpenWorkspaceOutput}
+          onSyncFileDisplayFromAgentOperation={
+            handleSyncAgentOperationFileDisplay
+          }
           focusRequestKey={chatFocusRequestKey}
           onOpenLinkInBrowser={handleOpenLinkInAppBrowser}
           sessionJumpSessionId={chatSessionJumpRequest?.sessionId ?? null}
@@ -3199,6 +3234,7 @@ function AppShellContent() {
     handleProactiveHeartbeatCronChange,
     handleProactiveWorkspaceEnabledChange,
     handleOpenLinkInAppBrowser,
+    handleSyncAgentOperationFileDisplay,
     handleOpenWorkspaceOutput,
     hasSelectedWorkspace,
     isLoadingProactiveHeartbeatConfig,

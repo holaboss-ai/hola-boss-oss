@@ -136,6 +136,34 @@ test("app shell clears a consumed file explorer focus request", async () => {
   );
 });
 
+test("app shell syncs file-oriented agent operations into the explorer and display", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(
+    source,
+    /const handleSyncAgentOperationFileDisplay = useCallback\(\s*\(path: string\) => \{/,
+  );
+  assert.match(source, /const targetPath = path\.trim\(\);/);
+  assert.match(source, /setSpaceExplorerMode\("files"\);/);
+  assert.match(source, /setSpaceExplorerCollapsed\(false\);/);
+  assert.match(
+    source,
+    /setSpaceDisplayView\(\{\s*type: "internal",\s*surface: "file",\s*resourceId: targetPath,\s*\}\);/,
+  );
+  assert.match(
+    source,
+    /setFileExplorerFocusRequest\(\{\s*path: targetPath,\s*requestKey: Date\.now\(\),\s*\}\);/,
+  );
+  assert.match(
+    source,
+    /<OnboardingPane[\s\S]*onSyncFileDisplayFromAgentOperation=\{\s*handleSyncAgentOperationFileDisplay\s*\}/,
+  );
+  assert.match(
+    source,
+    /<ChatPane[\s\S]*onSyncFileDisplayFromAgentOperation=\{\s*handleSyncAgentOperationFileDisplay\s*\}/,
+  );
+});
+
 test("app shell restores the last internal display and otherwise keeps the current display when returning to files mode", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
