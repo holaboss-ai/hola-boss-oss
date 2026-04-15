@@ -8,6 +8,7 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDir, "..");
 const outputDir = path.join(desktopRoot, "out");
 const outputPath = path.join(outputDir, "holaboss-config.json");
+
 function resolveUpdateChannel() {
   const rawValue = (process.env.HOLABOSS_RELEASE_CHANNEL || "").trim().toLowerCase();
   if (!rawValue || rawValue === "latest") {
@@ -17,6 +18,26 @@ function resolveUpdateChannel() {
     return "beta";
   }
   throw new Error(`Unsupported HOLABOSS_RELEASE_CHANNEL: ${rawValue}`);
+}
+
+function resolveAppUpdateEnabled() {
+  const explicitValue = (
+    process.env.HOLABOSS_ENABLE_APP_UPDATES || ""
+  )
+    .trim()
+    .toLowerCase();
+  if (["1", "true", "yes", "on"].includes(explicitValue)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(explicitValue)) {
+    return false;
+  }
+
+  const releaseTag =
+    process.env.RELEASE_TAG?.trim() ||
+    process.env.HOLABOSS_RELEASE_TAG?.trim() ||
+    "";
+  return Boolean(releaseTag);
 }
 
 async function loadDesktopEnvDefaults() {
@@ -40,6 +61,7 @@ async function loadDesktopEnvDefaults() {
 
 const desktopEnvDefaults = await loadDesktopEnvDefaults();
 const updateChannel = resolveUpdateChannel();
+const appUpdateEnabled = resolveAppUpdateEnabled();
 
 function resolveEnvValue(...names) {
   for (const name of names) {
@@ -74,6 +96,7 @@ const config = {
     "HOLABOSS_PROACTIVE_URL",
     "HOLABOSS_CLI_PROACTIVE_URL"
   ),
+  appUpdateEnabled,
   ...(updateChannel === "beta" ? { updateChannel } : {}),
 };
 

@@ -908,6 +908,7 @@ interface PackagedDesktopConfig {
   projectsUrl?: string;
   marketplaceUrl?: string;
   proactiveUrl?: string;
+  appUpdateEnabled?: boolean;
   updateChannel?: string;
 }
 
@@ -1281,13 +1282,25 @@ function currentAppVersion() {
   return normalizeReleaseVersion(app.getVersion());
 }
 
+function isReleaseStyleAppVersion(version: string) {
+  return /^\d{4}\.\d+\.\d+$/.test(version.trim());
+}
+
 function currentDesktopReleaseTag() {
   const version = currentAppVersion();
   return version ? `holaboss-desktop-${version}` : "";
 }
 
 function appUpdateSupported() {
-  return app.isPackaged && APP_UPDATE_SUPPORTED_PLATFORMS.has(process.platform);
+  if (!app.isPackaged || !APP_UPDATE_SUPPORTED_PLATFORMS.has(process.platform)) {
+    return false;
+  }
+
+  if (typeof packagedDesktopConfig.appUpdateEnabled === "boolean") {
+    return packagedDesktopConfig.appUpdateEnabled;
+  }
+
+  return isReleaseStyleAppVersion(currentAppVersion());
 }
 
 function dismissedAppUpdateVersion() {

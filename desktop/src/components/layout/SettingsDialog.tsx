@@ -648,22 +648,22 @@ export function SettingsDialog({
             ) : null}
 
             {activeSection === "about" ? (
-              <div className="grid max-w-[720px] gap-8">
-                <section className="theme-subtle-surface rounded-[24px] border border-border/40 p-5">
+              <div className="grid max-w-[720px] gap-6">
+                <section>
                   <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
                     Links
                   </div>
 
-                  <div className="mt-5 grid gap-3">
+                  <div className="mt-4 grid gap-3">
                     {ABOUT_LINKS.map(({ id, label, icon: Icon, href }) => (
                       <button
                         key={id}
                         type="button"
                         onClick={() => onOpenExternalUrl(href)}
-                        className="flex items-center justify-between gap-3 rounded-[18px] border border-border/40 bg-card/80 px-4 py-3 text-left transition hover:border-primary/30 hover:bg-accent"
+                        className="flex items-center justify-between gap-3 rounded-xl border border-border/35 bg-background/70 px-4 py-3 text-left transition hover:border-border/60 hover:bg-accent/40"
                       >
                         <span className="flex min-w-0 items-center gap-3">
-                          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-border/35 text-muted-foreground/82">
+                          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border/35 bg-background/80 text-muted-foreground/82">
                             <Icon size={16} />
                           </span>
                           <span className="min-w-0 text-sm font-medium text-foreground">
@@ -679,47 +679,50 @@ export function SettingsDialog({
                   </div>
                 </section>
 
-                <section className="theme-subtle-surface rounded-[24px] border border-border/40 p-5">
+                <section>
                   <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
                     Diagnostics
                   </div>
-                  <div className="mt-3 max-w-[620px] text-sm leading-6 text-muted-foreground">
-                    Export a local diagnostics bundle with <code>runtime.log</code>,
-                    a consistent snapshot of <code>runtime.db</code>, and a
-                    redacted runtime config file. No upload happens automatically.
-                  </div>
-                  <div className="mt-5 flex flex-wrap items-center gap-3">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void handleExportDiagnosticsBundle()}
-                      disabled={diagnosticsExportState.status === "exporting"}
-                    >
-                      {diagnosticsExportState.status === "exporting" ? (
-                        <Loader2 className="size-4 animate-spin" />
-                      ) : (
-                        <FileArchive className="size-4" />
-                      )}
-                      Export Diagnostics Bundle
-                    </Button>
-                  </div>
-                  {diagnosticsExportState.message ? (
-                    <div
-                      className={`mt-4 rounded-[18px] border px-4 py-3 text-sm ${
-                        diagnosticsExportState.status === "error"
-                          ? "border-destructive/30 bg-destructive/5 text-destructive"
-                          : "border-border/40 bg-card/70 text-foreground"
-                      }`}
-                    >
-                      <div>{diagnosticsExportState.message}</div>
-                      {diagnosticsExportState.bundlePath ? (
-                        <div className="mt-2 break-all font-mono text-xs text-muted-foreground">
-                          {diagnosticsExportState.bundlePath}
-                        </div>
-                      ) : null}
+                  <div className="mt-4 rounded-xl border border-border/35 bg-background/70 px-4 py-4">
+                    <div className="max-w-[620px] text-sm leading-6 text-muted-foreground">
+                      Export a local diagnostics bundle with <code>runtime.log</code>,
+                      a consistent snapshot of <code>runtime.db</code>, and a
+                      redacted runtime config file. No upload happens automatically.
                     </div>
-                  ) : null}
+                    <div className="mt-5 flex flex-wrap items-center gap-3">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void handleExportDiagnosticsBundle()}
+                        disabled={diagnosticsExportState.status === "exporting"}
+                        className="border-border/40 bg-background/80"
+                      >
+                        {diagnosticsExportState.status === "exporting" ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          <FileArchive className="size-4" />
+                        )}
+                        Export Diagnostics Bundle
+                      </Button>
+                    </div>
+                    {diagnosticsExportState.message ? (
+                      <div
+                        className={`mt-4 rounded-xl border px-4 py-3 text-sm ${
+                          diagnosticsExportState.status === "error"
+                            ? "border-destructive/25 bg-destructive/5 text-destructive"
+                            : "border-border/35 bg-background/80 text-foreground"
+                        }`}
+                      >
+                        <div>{diagnosticsExportState.message}</div>
+                        {diagnosticsExportState.bundlePath ? (
+                          <div className="mt-2 break-all font-mono text-xs text-muted-foreground">
+                            {diagnosticsExportState.bundlePath}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
                 </section>
               </div>
             ) : null}

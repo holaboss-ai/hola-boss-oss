@@ -22,10 +22,15 @@ test("desktop packager embeds the full bundled runtime including node and python
   assert.doesNotMatch(builderConfigSource, /HOLABOSS_TOOLCHAIN_TARBALL/);
 });
 
-test("packaged config only records release-channel metadata for the desktop shell", async () => {
+test("packaged config records release-channel metadata and updater enablement for the desktop shell", async () => {
   const source = await readFile(packagedConfigPath, "utf8");
 
   assert.match(source, /function resolveUpdateChannel\(\)/);
+  assert.match(source, /function resolveAppUpdateEnabled\(\)/);
+  assert.match(source, /process\.env\.RELEASE_TAG\?\.trim\(\) \|\|/);
+  assert.match(source, /process\.env\.HOLABOSS_RELEASE_TAG\?\.trim\(\) \|\|/);
+  assert.match(source, /const appUpdateEnabled = resolveAppUpdateEnabled\(\);/);
+  assert.match(source, /appUpdateEnabled,/);
   assert.match(source, /\.\.\.\(updateChannel === "beta" \? \{ updateChannel \} : \{\}\),/);
   assert.doesNotMatch(source, /toolchainManifest/);
   assert.doesNotMatch(source, /toolchain_id/);
@@ -45,6 +50,9 @@ test("runtime startup resolves everything from the embedded runtime root", async
   assert.match(source, /runtimeBundleNpmRelativePaths\(CURRENT_RUNTIME_PLATFORM\)/);
   assert.match(source, /runtimeBundlePythonRelativePaths\(CURRENT_RUNTIME_PLATFORM\)/);
   assert.match(source, /async function resolveRuntimeLaunchSpec\(\s*runtimeRoot: string,\s*executablePath: string,\s*\): Promise<RuntimeLaunchSpec \| null>/);
+  assert.match(source, /function isReleaseStyleAppVersion\(version: string\)/);
+  assert.match(source, /if \(typeof packagedDesktopConfig\.appUpdateEnabled === "boolean"\) \{\s*return packagedDesktopConfig\.appUpdateEnabled;\s*\}/);
+  assert.match(source, /return isReleaseStyleAppVersion\(currentAppVersion\(\)\);/);
   assert.match(source, /const hasBundle = Boolean\(runtimeRoot && executablePath\);/);
   assert.match(source, /status: runtimeUnavailableStatus\(hasBundle\),/);
   assert.match(source, /const launchSpec = await resolveRuntimeLaunchSpec\(\s*runtimeRoot,\s*executablePath,\s*\);/);

@@ -60,7 +60,13 @@ test("desktop updater uses electron-updater and exposes install-now state", asyn
   assert.match(source, /handleTrustedIpc\(\s*"appUpdate:setChannel",\s*\["main"\],\s*async \(_event, channel: AppUpdateChannel\) => setAppUpdateChannel\(channel\),/);
   assert.match(source, /handleTrustedIpc\("appUpdate:installNow", \["main"\], async \(\) => \{/);
   assert.match(source, /autoUpdater\.quitAndInstall\(true, true\);/);
+  assert.match(source, /if \(!app\.isPackaged \|\| !APP_UPDATE_SUPPORTED_PLATFORMS\.has\(process\.platform\)\) \{\s*return false;\s*\}/);
+  assert.match(source, /if \(typeof packagedDesktopConfig\.appUpdateEnabled === "boolean"\) \{\s*return packagedDesktopConfig\.appUpdateEnabled;\s*\}/);
+  assert.match(source, /return isReleaseStyleAppVersion\(currentAppVersion\(\)\);/);
   assert.match(packagedConfigSource, /function resolveUpdateChannel\(\)/);
+  assert.match(packagedConfigSource, /function resolveAppUpdateEnabled\(\)/);
+  assert.match(packagedConfigSource, /const appUpdateEnabled = resolveAppUpdateEnabled\(\);/);
+  assert.match(packagedConfigSource, /appUpdateEnabled,/);
   assert.match(packagedConfigSource, /\.\.\.\(updateChannel === "beta" \? \{ updateChannel \} : \{\}\),/);
 });
 
