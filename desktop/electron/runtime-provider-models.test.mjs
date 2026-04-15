@@ -16,17 +16,14 @@ const chatPaneSourcePath = path.join(
 );
 const sharedCatalogPath = path.join(__dirname, "..", "shared", "model-catalog.ts");
 
-test("desktop runtime uses the managed holaboss catalog instead of local seed catalogs", async () => {
+test("desktop runtime uses the managed holaboss catalog instead of local seed catalogs or local suppression", async () => {
   const source = await readFile(mainSourcePath, "utf8");
 
   assert.match(source, /function normalizeRuntimeProviderModelGroups\(/);
   assert.match(source, /mergeManagedCatalog\(managedCatalogGroups\);/);
   assert.match(source, /function syncRuntimeModelCatalogFromBinding\(/);
-  assert.match(source, /function isClaudeRuntimeModelId\(modelId: string\): boolean/);
-  assert.match(
-    source,
-    /isUnsupportedHolabossRuntimeModel\(\s*normalizedProviderId,\s*normalizedModelId,\s*\)/,
-  );
+  assert.doesNotMatch(source, /function isClaudeRuntimeModelId\(modelId: string\): boolean/);
+  assert.doesNotMatch(source, /isUnsupportedHolabossRuntimeModel\(/);
   assert.doesNotMatch(source, /seedLegacyHolabossProxyModels/);
   assert.doesNotMatch(source, /RUNTIME_HOLABOSS_LEGACY_PROXY_MODELS/);
 });

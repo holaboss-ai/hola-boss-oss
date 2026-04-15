@@ -44,6 +44,7 @@ test("windows packaging config and CI workflow support optional signing and NSIS
 
   assert.match(workflowSource, /^name: CI$/m);
   assert.match(workflowSource, /release-windows-desktop:/);
+  assert.match(workflowSource, /if: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.release_windows \}\}/);
   assert.match(workflowSource, /runs-on: windows-latest/);
   assert.match(workflowSource, /release_tag must match holaboss-desktop-YYYY\.MDD\.R/);
   assert.match(workflowSource, /DESKTOP_RELEASE_ASSET_NAME: Holaboss-windows-x64-setup\.exe/);

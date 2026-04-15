@@ -93,6 +93,7 @@ function promptChannelContents(
 
 test("projectAgentRuntimeConfig returns ordered prompt layers and renders system prompt from runtime_config layers", () => {
   process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
+  process.env.HOLABOSS_USER_ID = "user-1";
   try {
     const result = projectAgentRuntimeConfig({
       session_id: "session-1",
@@ -205,6 +206,7 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
 
 test("projectAgentRuntimeConfig includes resume context sections when provided", () => {
   process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
+  process.env.HOLABOSS_USER_ID = "user-1";
   try {
     const result = projectAgentRuntimeConfig({
       session_id: "session-1",
@@ -309,6 +311,7 @@ test("projectAgentRuntimeConfig includes resume context sections when provided",
 
 test("projectAgentRuntimeConfig includes current user context as a context message", () => {
   process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
+  process.env.HOLABOSS_USER_ID = "user-1";
   try {
     const result = projectAgentRuntimeConfig({
       session_id: "session-1",
@@ -359,6 +362,7 @@ test("projectAgentRuntimeConfig includes current user context as a context messa
 
 test("projectAgentRuntimeConfig includes operator surface context as a context message", () => {
   process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
+  process.env.HOLABOSS_USER_ID = "user-1";
   try {
     const result = projectAgentRuntimeConfig({
       session_id: "session-1",
@@ -424,6 +428,7 @@ test("projectAgentRuntimeConfig includes operator surface context as a context m
 
 test("projectAgentRuntimeConfig includes pending user memory context as a context message", () => {
   process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
+  process.env.HOLABOSS_USER_ID = "user-1";
   try {
     const result = projectAgentRuntimeConfig({
       session_id: "session-1",
@@ -480,6 +485,7 @@ test("projectAgentRuntimeConfig includes pending user memory context as a contex
 
 test("projectAgentRuntimeConfig omits workspace and recent-runtime layers when not provided", () => {
   process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
+  process.env.HOLABOSS_USER_ID = "user-1";
   try {
     const result = projectAgentRuntimeConfig({
       session_id: "session-1",
@@ -528,6 +534,7 @@ test("projectAgentRuntimeConfig omits workspace and recent-runtime layers when n
 
 test("projectAgentRuntimeConfig includes recalled durable memory in context messages", () => {
   process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
+  process.env.HOLABOSS_USER_ID = "user-1";
   try {
     const result = projectAgentRuntimeConfig({
       session_id: "session-1",
@@ -1091,6 +1098,11 @@ test("projectAgentRuntimeConfig preserves namespaced Holaboss OpenRouter model i
         api_key: "hb-token"
       }
     },
+    integrations: {
+      holaboss: {
+        user_id: "user-1"
+      }
+    },
     models: {
       "holaboss_model_proxy/xiaomi/mimo-v2-pro": {
         provider_id: "holaboss_model_proxy",
@@ -1133,6 +1145,72 @@ test("projectAgentRuntimeConfig preserves namespaced Holaboss OpenRouter model i
   assert.equal(result.model_client.model_proxy_provider, "openai_compatible");
   assert.equal(result.model_client.api_key, "hb-runtime-token");
   assert.equal(result.model_client.base_url, "https://proxy.example/api/v1/model-proxy/openai/v1");
+  assert.deepEqual(result.model_client.default_headers, {
+    "X-API-Key": "hb-runtime-token",
+    "X-Holaboss-User-Id": "user-1",
+    "X-Holaboss-Sandbox-Id": "sandbox-from-exec-context",
+    "X-Holaboss-Session-Id": "session-1",
+    "X-Holaboss-Workspace-Id": "workspace-1",
+    "X-Holaboss-Input-Id": "input-1",
+    "X-Holaboss-Run-Id": "run-1"
+  });
+});
+
+test("projectAgentRuntimeConfig requires a Holaboss user id for managed proxy runtime-exec requests", () => {
+  const root = makeTempDir("hb-agent-runtime-config-");
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
+    runtime: {
+      sandbox_id: "sandbox-from-runtime",
+      default_provider: "holaboss_model_proxy"
+    },
+    providers: {
+      holaboss_model_proxy: {
+        kind: "holaboss_proxy",
+        base_url: "https://proxy.example/api/v1/model-proxy",
+        api_key: "hb-token"
+      }
+    },
+    models: {
+      "holaboss_model_proxy/xiaomi/mimo-v2-pro": {
+        provider_id: "holaboss_model_proxy",
+        model_id: "xiaomi/mimo-v2-pro"
+      }
+    }
+  });
+
+  assert.throws(
+    () =>
+      projectAgentRuntimeConfig({
+        session_id: "session-1",
+        workspace_id: "workspace-1",
+        input_id: "input-1",
+        session_kind: "workspace_session",
+        harness_id: "pi",
+        browser_tools_available: false,
+        browser_tool_ids: [],
+        runtime_tool_ids: [],
+        workspace_command_ids: [],
+        runtime_exec_model_proxy_api_key: "hb-runtime-token",
+        runtime_exec_sandbox_id: "sandbox-from-exec-context",
+        runtime_exec_run_id: "run-1",
+        selected_model: "holaboss_model_proxy/xiaomi/mimo-v2-pro",
+        default_provider_id: "holaboss_model_proxy",
+        session_mode: "code",
+        workspace_config_checksum: "checksum-1",
+        workspace_skill_ids: [],
+        default_tools: ["read"],
+        extra_tools: [],
+        resolved_mcp_tool_refs: [],
+        resolved_output_schemas: {},
+        agent: {
+          id: "workspace.general",
+          model: "gpt-5.2",
+          prompt: "You are concise."
+        }
+      }),
+    /HOLABOSS_USER_ID|runtime-config\.json:user_id is required/
+  );
 });
 
 test("resolveRuntimeModelReference infers bare Gemini models as Google-compatible without configured providers", () => {

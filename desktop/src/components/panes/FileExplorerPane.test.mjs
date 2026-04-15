@@ -378,7 +378,7 @@ test("file explorer imports dragged external files and folders into the tree", a
   );
   assert.match(
     source,
-    /const refreshTargets = \[\s*normalizedDestinationDirectoryPath,\s*getParentFolderPath\(normalizedDestinationDirectoryPath\),\s*\]\.filter\(/,
+    /const refreshTargets = \[\s*normalizedDestinationDirectoryPath\s*\]\.filter\(/,
   );
   assert.match(source, /event\.dataTransfer\.dropEffect = canMoveDraggedEntry\s*\?\s*"move"\s*:\s*"copy";/);
   assert.match(

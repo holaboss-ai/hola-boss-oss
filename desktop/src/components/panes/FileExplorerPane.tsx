@@ -1903,10 +1903,7 @@ export function FileExplorerPane({
           [normalizedDestinationDirectoryPath]: true,
         }));
 
-        const refreshTargets = [
-          normalizedDestinationDirectoryPath,
-          getParentFolderPath(normalizedDestinationDirectoryPath),
-        ].filter(
+        const refreshTargets = [normalizedDestinationDirectoryPath].filter(
           (targetPath, index, paths) =>
             Boolean(targetPath) &&
             paths.findIndex(

@@ -1022,8 +1022,15 @@ function resolveModelClientConfig(request: ModelClientResolutionContext, target:
   const sandboxId = request.runtime_exec_sandbox_id?.trim() ?? "";
   const runId = request.runtime_exec_run_id?.trim() ?? "";
   if (proxyApiKey && sandboxId) {
+    const holabossUserId = resolveProductRuntimeConfig({
+      requireAuth: false,
+      requireUser: true,
+      requireBaseUrl: false,
+      includeDefaultBaseUrl: false
+    }).userId;
     const headers: Record<string, string> = {
       "X-API-Key": proxyApiKey,
+      "X-Holaboss-User-Id": holabossUserId,
       "X-Holaboss-Sandbox-Id": sandboxId,
       "X-Holaboss-Session-Id": request.session_id,
       "X-Holaboss-Workspace-Id": request.workspace_id,

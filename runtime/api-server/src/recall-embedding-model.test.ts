@@ -56,11 +56,13 @@ test('createRecallEmbeddingModelClient prefers holaboss embeddings when the prox
           holaboss: {
             auth_token: 'hbmk.test-token',
             sandbox_id: 'desktop:test-sandbox',
+            user_id: 'user-1',
           },
         },
         holaboss: {
           auth_token: 'hbmk.test-token',
           sandbox_id: 'desktop:test-sandbox',
+          user_id: 'user-1',
           model_proxy_api_key: 'hbmk.test-token',
           model_proxy_base_url: 'https://proxy.example/api/v1/model-proxy',
         },
