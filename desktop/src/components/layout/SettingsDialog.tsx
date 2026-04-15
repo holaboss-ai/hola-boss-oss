@@ -140,6 +140,83 @@ function prettifyThemeLabel(theme: string): string {
     .join(" ");
 }
 
+function aboutAppUpdateState(status: AppUpdateStatusPayload | null): {
+  badge: string;
+  message: string;
+  progressPercent: number | null;
+  error: boolean;
+} {
+  if (!status) {
+    return {
+      badge: "Loading",
+      message: "Loading desktop update status.",
+      progressPercent: null,
+      error: false,
+    };
+  }
+
+  const latestVersion = status.latestVersion?.trim()
+    ? `v${status.latestVersion.trim()}`
+    : "the latest release";
+  const channelLabel = status.channel === "beta" ? "beta" : "stable";
+
+  if (!status.supported) {
+    return {
+      badge: "Unavailable",
+      message: "In-app desktop updates are unavailable on this build.",
+      progressPercent: null,
+      error: false,
+    };
+  }
+
+  if (status.error) {
+    return {
+      badge: "Error",
+      message: status.error,
+      progressPercent: null,
+      error: true,
+    };
+  }
+
+  if (status.downloaded) {
+    return {
+      badge: "Ready",
+      message: `${latestVersion} has finished downloading and will install after you restart Holaboss.`,
+      progressPercent: 100,
+      error: false,
+    };
+  }
+
+  if (status.available) {
+    const progressPercent =
+      typeof status.downloadProgressPercent === "number"
+        ? Math.max(0, Math.min(100, Math.round(status.downloadProgressPercent)))
+        : 0;
+    return {
+      badge: "Downloading",
+      message: `Downloading ${latestVersion} in the background.`,
+      progressPercent,
+      error: false,
+    };
+  }
+
+  if (status.checking) {
+    return {
+      badge: "Checking",
+      message: `Checking for the latest ${channelLabel} desktop release.`,
+      progressPercent: null,
+      error: false,
+    };
+  }
+
+  return {
+    badge: "Current",
+    message: `This device is up to date on the ${channelLabel} channel.`,
+    progressPercent: null,
+    error: false,
+  };
+}
+
 export function SettingsDialog({
   open,
   activeSection,
@@ -255,6 +332,7 @@ export function SettingsDialog({
   const appUpdateChannelUnavailable = appUpdateStatus
     ? !appUpdateStatus.supported
     : true;
+  const appUpdateState = aboutAppUpdateState(appUpdateStatus);
 
   return (
     <div className="pointer-events-none absolute inset-0 z-50 grid place-items-center px-4 py-6">
@@ -338,6 +416,115 @@ export function SettingsDialog({
 
             {activeSection === "settings" ? (
               <div className="grid gap-5">
+                <section>
+                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                    App
+                  </div>
+
+                  <div className="mt-4 grid gap-3">
+                    <div className="flex items-center justify-between gap-4 rounded-xl border border-border/35 bg-background/70 px-4 py-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-foreground">
+                          Holaboss Desktop
+                        </div>
+                        <div className="mt-1 text-sm text-muted-foreground">
+                          Version
+                        </div>
+                      </div>
+
+                      <Badge
+                        variant="outline"
+                        className="rounded-full border-border/40 bg-background/80 font-mono text-xs text-foreground"
+                      >
+                        v{displayAppVersion}
+                      </Badge>
+                    </div>
+
+                    <div
+                      aria-live="polite"
+                      className="rounded-xl border border-border/35 bg-background/70 px-4 py-3"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                            <span>Desktop updates</span>
+                            <Badge
+                              variant="outline"
+                              className={`rounded-full border-border/40 bg-background/80 text-[11px] ${
+                                appUpdateState.error
+                                  ? "text-destructive"
+                                  : "text-muted-foreground"
+                              }`}
+                            >
+                              {appUpdateState.badge}
+                            </Badge>
+                          </div>
+                          <div
+                            className={`mt-1 text-sm ${
+                              appUpdateState.error
+                                ? "text-destructive"
+                                : "text-muted-foreground"
+                            }`}
+                          >
+                            {appUpdateState.message}
+                          </div>
+                        </div>
+
+                        {appUpdateState.progressPercent !== null ? (
+                          <div className="shrink-0 text-sm font-medium tabular-nums text-foreground">
+                            {appUpdateState.progressPercent}%
+                          </div>
+                        ) : null}
+                      </div>
+
+                      {appUpdateState.progressPercent !== null ? (
+                        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-border/35">
+                          <div
+                            className={`h-full rounded-full transition-all ${
+                              appUpdateState.error
+                                ? "bg-destructive"
+                                : "bg-primary/80"
+                            }`}
+                            style={{
+                              width: `${appUpdateState.progressPercent}%`,
+                            }}
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="flex items-center justify-between gap-4 rounded-xl border border-border/35 bg-background/70 px-4 py-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                          <span>Beta updates</span>
+                          <Badge
+                            variant="outline"
+                            className="rounded-full border-border/40 bg-background/80 text-[11px] text-muted-foreground"
+                          >
+                            {betaChannelEnabled ? "Beta" : "Latest"}
+                          </Badge>
+                        </div>
+                        <div className="mt-1 text-sm text-muted-foreground">
+                          {appUpdateChannelUnavailable
+                            ? "In-app update channels are unavailable on this build."
+                            : "Opt into beta desktop releases before they reach the stable channel."}
+                        </div>
+                      </div>
+
+                      <Switch
+                        checked={betaChannelEnabled}
+                        disabled={
+                          appUpdateChannelPending || appUpdateChannelUnavailable
+                        }
+                        onCheckedChange={(checked) => {
+                          void handleSetBetaChannel(checked);
+                        }}
+                        aria-label="Enable beta updates"
+                      />
+                    </div>
+                  </div>
+                </section>
+
                 <section>
                   <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
                     Appearance
@@ -462,60 +649,6 @@ export function SettingsDialog({
 
             {activeSection === "about" ? (
               <div className="grid max-w-[720px] gap-8">
-                <section className="theme-subtle-surface rounded-[24px] border border-border/40 p-5">
-                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                    App
-                  </div>
-
-                  <div className="mt-5 flex items-center justify-between gap-4 rounded-[18px] border border-border/40 bg-card/80 px-4 py-3">
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-foreground">
-                        Holaboss Desktop
-                      </div>
-                      <div className="mt-1 text-sm text-muted-foreground">
-                        Version
-                      </div>
-                    </div>
-
-                    <Badge
-                      variant="outline"
-                      className="rounded-full border-border/45 bg-background/80 font-mono text-xs text-foreground"
-                    >
-                      v{displayAppVersion}
-                    </Badge>
-                  </div>
-
-                  <div className="mt-3 flex items-center justify-between gap-4 rounded-[18px] border border-border/40 bg-card/80 px-4 py-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                        <span>Beta updates</span>
-                        <Badge
-                          variant="outline"
-                          className="rounded-full border-border/45 bg-background/80 text-[11px] text-muted-foreground"
-                        >
-                          {betaChannelEnabled ? "Beta" : "Latest"}
-                        </Badge>
-                      </div>
-                      <div className="mt-1 text-sm text-muted-foreground">
-                        {appUpdateChannelUnavailable
-                          ? "In-app update channels are unavailable on this build."
-                          : "Opt into beta desktop releases before they reach the stable channel."}
-                      </div>
-                    </div>
-
-                    <Switch
-                      checked={betaChannelEnabled}
-                      disabled={
-                        appUpdateChannelPending || appUpdateChannelUnavailable
-                      }
-                      onCheckedChange={(checked) => {
-                        void handleSetBetaChannel(checked);
-                      }}
-                      aria-label="Enable beta updates"
-                    />
-                  </div>
-                </section>
-
                 <section className="theme-subtle-surface rounded-[24px] border border-border/40 p-5">
                   <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
                     Links

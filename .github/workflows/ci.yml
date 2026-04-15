@@ -311,7 +311,6 @@ jobs:
       HOLABOSS_RELEASE_CHANNEL: ${{ needs.ensure-release.outputs.release_channel }}
       GH_REPO: holaboss-ai/holaOS
       RUNTIME_ASSET_NAME: holaboss-runtime-linux.tar.gz
-      TOOLCHAIN_ASSET_NAME: holaboss-toolchain-linux.tar.gz
       RUNTIME_ARTIFACT_NAME: holaboss-runtime-linux
     steps:
       - name: Checkout
@@ -342,16 +341,12 @@ jobs:
       - name: Archive Linux runtime bundle
         run: tar -C out -czf "out/${RUNTIME_ASSET_NAME}" runtime-linux
 
-      - name: Archive Linux toolchain bundle
-        run: tar -C out/runtime-linux -czf "out/${TOOLCHAIN_ASSET_NAME}" package-metadata.json node-runtime python-runtime
-
       - name: Upload Linux runtime bundle artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ env.RUNTIME_ARTIFACT_NAME }}-${{ inputs.release_tag }}
           path: |
             out/${{ env.RUNTIME_ASSET_NAME }}
-            out/${{ env.TOOLCHAIN_ASSET_NAME }}
             out/runtime-linux/package-metadata.json
             out/runtime-linux/runtime/metadata.json
           if-no-files-found: error
@@ -360,11 +355,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${RELEASE_TAG}" "out/${RUNTIME_ASSET_NAME}" --clobber
-
-      - name: Upload Linux toolchain release asset
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${RELEASE_TAG}" "out/${TOOLCHAIN_ASSET_NAME}" --clobber
 
   release-macos-desktop:
     if: ${{ github.event_name == 'workflow_dispatch' }}
@@ -378,7 +368,6 @@ jobs:
       HOLABOSS_RELEASE_CHANNEL: ${{ needs.ensure-release.outputs.release_channel }}
       GH_REPO: holaboss-ai/holaOS
       RUNTIME_ASSET_NAME: holaboss-runtime-macos.tar.gz
-      TOOLCHAIN_ASSET_NAME: holaboss-toolchain-macos.tar.gz
       DESKTOP_ASSET_PREFIX: holaboss-desktop-macos
       DESKTOP_RELEASE_ASSET_NAME: Holaboss-macos-arm64.dmg
       MAC_CERTIFICATE: ${{ secrets.MAC_CERTIFICATE }}
@@ -420,18 +409,10 @@ jobs:
       - name: Archive macOS runtime bundle
         run: tar -C out -czf "out/${RUNTIME_ASSET_NAME}" runtime-macos
 
-      - name: Archive macOS toolchain bundle
-        run: tar -C out/runtime-macos -czf "out/${TOOLCHAIN_ASSET_NAME}" package-metadata.json node-runtime python-runtime
-
       - name: Upload macOS runtime release asset
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${RELEASE_TAG}" "out/${RUNTIME_ASSET_NAME}" --clobber
-
-      - name: Upload macOS toolchain release asset
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${RELEASE_TAG}" "out/${TOOLCHAIN_ASSET_NAME}" --clobber
 
       - name: Prepare desktop (build SDK + install desktop deps)
         run: npm run desktop:prepare
@@ -495,13 +476,12 @@ jobs:
             --url-prefix "~/" \
             out/dist out/dist-electron
 
-      - name: Build signed stripped macOS app bundle
-        id: build_stripped_app
+      - name: Build signed macOS app bundle
+        id: build_signed_app
         working-directory: desktop
         shell: bash
         env:
           HOLABOSS_RELEASE_TAG: ${{ env.RELEASE_TAG }}
-          HOLABOSS_BUNDLE_TOOLCHAIN_SEED: "0"
           CSC_LINK: ${{ env.MAC_CERTIFICATE }}
           CSC_KEY_PASSWORD: ${{ env.MAC_CERTIFICATE_PASSWORD }}
         run: |
@@ -514,38 +494,34 @@ jobs:
             --config.mac.notarize=false
           app_path="$(find out/release -maxdepth 2 -name '*.app' -print -quit)"
           if [ -z "${app_path}" ]; then
-            echo "no stripped .app bundle found under desktop/out/release" >&2
+            echo "no .app bundle found under desktop/out/release" >&2
             exit 1
           fi
           app_path="$(cd "$(dirname "${app_path}")" && pwd)/$(basename "${app_path}")"
           if [ ! -f "${app_path}/Contents/Resources/app-update.yml" ]; then
-            echo "app-update.yml is missing from stripped macOS app bundle" >&2
+            echo "app-update.yml is missing from signed app bundle" >&2
             exit 1
           fi
-          if [ -f "${app_path}/Contents/Resources/toolchain-seed/${TOOLCHAIN_ASSET_NAME}" ]; then
-            echo "stripped macOS app bundle unexpectedly includes a bundled toolchain seed" >&2
-            exit 1
-          fi
-          packaged_app="${RUNNER_TEMP}/Holaboss-stripped.app"
+          packaged_app="${RUNNER_TEMP}/Holaboss.app"
           rm -rf "${packaged_app}"
           ditto "${app_path}" "${packaged_app}"
           echo "app_path=${packaged_app}" >> "${GITHUB_OUTPUT}"
 
-      - name: Validate signed stripped macOS app bundle
+      - name: Validate signed macOS app bundle
         working-directory: desktop
         run: |
-          app_path="${{ steps.build_stripped_app.outputs.app_path }}"
+          app_path="${{ steps.build_signed_app.outputs.app_path }}"
           if [ -z "${app_path}" ] || [ ! -d "${app_path}" ]; then
             echo "signed app bundle was not produced or no longer exists: ${app_path}" >&2
             exit 1
           fi
           codesign --verify --deep --strict --verbose=2 "${app_path}"
 
-      - name: Notarize signed stripped macOS app bundle
+      - name: Notarize signed macOS app bundle
         working-directory: desktop
         shell: bash
         run: |
-          app_path="${{ steps.build_stripped_app.outputs.app_path }}"
+          app_path="${{ steps.build_signed_app.outputs.app_path }}"
           if [ -z "${app_path}" ] || [ ! -d "${app_path}" ]; then
             echo "signed app bundle was not produced correctly: ${app_path}" >&2
             exit 1
@@ -583,10 +559,10 @@ jobs:
             attempt=$((attempt + 1))
           done
 
-      - name: Validate notarized stripped macOS app bundle
+      - name: Validate notarized macOS app bundle
         shell: bash
         run: |
-          app_path="${{ steps.build_stripped_app.outputs.app_path }}"
+          app_path="${{ steps.build_signed_app.outputs.app_path }}"
           if [ -z "${app_path}" ] || [ ! -d "${app_path}" ]; then
             echo "notarized app bundle was not produced: ${app_path}" >&2
             exit 1
@@ -595,144 +571,25 @@ jobs:
           spctl -a -vv -t exec "${app_path}"
           xcrun stapler validate "${app_path}"
 
-      - name: Build signed seeded macOS app bundle
-        id: build_seeded_app
-        working-directory: desktop
-        shell: bash
-        env:
-          HOLABOSS_RELEASE_TAG: ${{ env.RELEASE_TAG }}
-          HOLABOSS_BUNDLE_TOOLCHAIN_SEED: "1"
-          HOLABOSS_TOOLCHAIN_TARBALL: ${{ github.workspace }}/out/${{ env.TOOLCHAIN_ASSET_NAME }}
-          CSC_LINK: ${{ env.MAC_CERTIFICATE }}
-          CSC_KEY_PASSWORD: ${{ env.MAC_CERTIFICATE_PASSWORD }}
-        run: |
-          rm -rf out/release
-          node scripts/run-electron-builder.mjs \
-            --projectDir "$PWD" \
-            --publish never \
-            --mac dir \
-            --arm64 \
-            --config.mac.notarize=false
-          app_path="$(find out/release -maxdepth 2 -name '*.app' -print -quit)"
-          if [ -z "${app_path}" ]; then
-            echo "no seeded .app bundle found under desktop/out/release" >&2
-            exit 1
-          fi
-          app_path="$(cd "$(dirname "${app_path}")" && pwd)/$(basename "${app_path}")"
-          if [ ! -f "${app_path}/Contents/Resources/app-update.yml" ]; then
-            echo "app-update.yml is missing from seeded macOS app bundle" >&2
-            exit 1
-          fi
-          if [ ! -f "${app_path}/Contents/Resources/toolchain-seed/${TOOLCHAIN_ASSET_NAME}" ]; then
-            echo "seeded macOS app bundle is missing the bundled toolchain seed" >&2
-            exit 1
-          fi
-          packaged_app="${RUNNER_TEMP}/Holaboss-installer.app"
-          rm -rf "${packaged_app}"
-          ditto "${app_path}" "${packaged_app}"
-          echo "app_path=${packaged_app}" >> "${GITHUB_OUTPUT}"
-
-      - name: Validate signed seeded macOS app bundle
-        working-directory: desktop
-        run: |
-          app_path="${{ steps.build_seeded_app.outputs.app_path }}"
-          if [ -z "${app_path}" ] || [ ! -d "${app_path}" ]; then
-            echo "seeded app bundle was not produced or no longer exists: ${app_path}" >&2
-            exit 1
-          fi
-          codesign --verify --deep --strict --verbose=2 "${app_path}"
-
-      - name: Notarize signed seeded macOS app bundle
-        working-directory: desktop
-        shell: bash
-        run: |
-          app_path="${{ steps.build_seeded_app.outputs.app_path }}"
-          if [ -z "${app_path}" ] || [ ! -d "${app_path}" ]; then
-            echo "seeded app bundle was not produced correctly: ${app_path}" >&2
-            exit 1
-          fi
-          max_attempts=3
-          attempt=1
-          while true; do
-            log_path="${RUNNER_TEMP}/notarize-seeded-app-attempt-${attempt}.log"
-            echo "notarization attempt ${attempt}/${max_attempts}"
-
-            if node scripts/notarize-app.mjs "${app_path}" 2>&1 | tee "${log_path}"; then
-              break
-            fi
-
-            if [ "${attempt}" -ge "${max_attempts}" ]; then
-              echo "notarization failed after ${attempt} attempts" >&2
-              exit 1
-            fi
-
-            if ! grep -Fq "Failed to notarize via notarytool" "${log_path}"; then
-              echo "notarization failed with a non-notarytool error; not retrying" >&2
-              exit 1
-            fi
-
-            if ! grep -Eq \
-              'The Internet connection appears to be offline|NSURLErrorDomain Code=-1009|network connection was lost|timed out|temporarily unavailable|could not connect to the server|A server with the specified hostname could not be found' \
-              "${log_path}"; then
-              echo "notarization failed with a non-retryable error; not retrying" >&2
-              exit 1
-            fi
-
-            sleep_seconds=$((attempt * 60))
-            echo "transient notarization failure detected; retrying after ${sleep_seconds}s" >&2
-            sleep "${sleep_seconds}"
-            attempt=$((attempt + 1))
-          done
-
-      - name: Validate notarized seeded macOS app bundle
-        shell: bash
-        run: |
-          app_path="${{ steps.build_seeded_app.outputs.app_path }}"
-          if [ -z "${app_path}" ] || [ ! -d "${app_path}" ]; then
-            echo "notarized seeded app bundle was not produced: ${app_path}" >&2
-            exit 1
-          fi
-          codesign --verify --deep --strict --verbose=2 "${app_path}"
-          spctl -a -vv -t exec "${app_path}"
-          xcrun stapler validate "${app_path}"
-
-      - name: Build macOS desktop release artifacts from notarized app bundles
+      - name: Build macOS desktop release artifacts from notarized app bundle
         working-directory: desktop
         shell: bash
         env:
           HOLABOSS_RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: |
-          stripped_app_path="${{ steps.build_stripped_app.outputs.app_path }}"
-          seeded_app_path="${{ steps.build_seeded_app.outputs.app_path }}"
-          if [ -z "${stripped_app_path}" ] || [ ! -d "${stripped_app_path}" ]; then
-            echo "notarized stripped app bundle was not produced correctly: ${stripped_app_path}" >&2
+          app_path="${{ steps.build_signed_app.outputs.app_path }}"
+          if [ -z "${app_path}" ] || [ ! -d "${app_path}" ]; then
+            echo "notarized app bundle was not produced correctly: ${app_path}" >&2
             exit 1
           fi
-          if [ -z "${seeded_app_path}" ] || [ ! -d "${seeded_app_path}" ]; then
-            echo "notarized seeded app bundle was not produced correctly: ${seeded_app_path}" >&2
-            exit 1
-          fi
-          zip_artifacts_dir="${RUNNER_TEMP}/mac-zip-artifacts"
-          rm -rf "${zip_artifacts_dir}"
-          mkdir -p "${zip_artifacts_dir}"
           rm -rf out/release
           node scripts/run-electron-builder.mjs \
             --projectDir "$PWD" \
             --publish never \
-            --prepackaged "${stripped_app_path}" \
-            --mac zip \
+            --prepackaged "${app_path}" \
+            --mac dmg zip \
             --arm64 \
             --config.mac.notarize=false
-          find out/release -maxdepth 1 \( -name '*.zip' -o -name '*.blockmap' -o -name '*-mac.yml' \) -exec cp {} "${zip_artifacts_dir}/" \;
-          rm -rf out/release
-          node scripts/run-electron-builder.mjs \
-            --projectDir "$PWD" \
-            --publish never \
-            --prepackaged "${seeded_app_path}" \
-            --mac dmg \
-            --arm64 \
-            --config.mac.notarize=false
-          cp "${zip_artifacts_dir}/"* out/release/
 
       - name: Validate macOS auto-update artifacts
         shell: bash
@@ -922,7 +779,6 @@ jobs:
       DESKTOP_ASSET_PREFIX: holaboss-desktop-windows
       DESKTOP_RELEASE_ASSET_NAME: Holaboss-windows-x64-setup.exe
       RUNTIME_ASSET_NAME: holaboss-runtime-windows.tar.gz
-      TOOLCHAIN_ASSET_NAME: holaboss-toolchain-windows.tar.gz
       WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
       WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
     steps:
@@ -990,17 +846,14 @@ jobs:
           }
 
           tar -C out -czf "out/$env:RUNTIME_ASSET_NAME" runtime-windows
-          tar -C out/runtime-windows -czf "out/$env:TOOLCHAIN_ASSET_NAME" package-metadata.json node-runtime python-runtime
 
           $installerPath = $installer.FullName
           $stablePath = Join-Path $PWD "out/release/$env:DESKTOP_RELEASE_ASSET_NAME"
           $runtimeAssetPath = Join-Path $PWD "out/$env:RUNTIME_ASSET_NAME"
-          $toolchainAssetPath = Join-Path $PWD "out/$env:TOOLCHAIN_ASSET_NAME"
           Copy-Item -LiteralPath $installerPath -Destination $stablePath -Force
           Add-Content -Path $env:GITHUB_OUTPUT -Value "generated_installer_path=$installerPath"
           Add-Content -Path $env:GITHUB_OUTPUT -Value "installer_path=$stablePath"
           Add-Content -Path $env:GITHUB_OUTPUT -Value "runtime_asset_path=$runtimeAssetPath"
-          Add-Content -Path $env:GITHUB_OUTPUT -Value "toolchain_asset_path=$toolchainAssetPath"
 
       - name: Upload desktop Sentry source maps
         if: ${{ env.SENTRY_AUTH_TOKEN != '' }}
@@ -1048,7 +901,6 @@ jobs:
             desktop/out/release/*.yml
             desktop/out/release/*.blockmap
             desktop/out/${{ env.RUNTIME_ASSET_NAME }}
-            desktop/out/${{ env.TOOLCHAIN_ASSET_NAME }}
             desktop/out/runtime-windows/package-metadata.json
             desktop/out/runtime-windows/runtime/metadata.json
           if-no-files-found: error
@@ -1060,7 +912,6 @@ jobs:
           GENERATED_INSTALLER_PATH: ${{ steps.build_windows_installer.outputs.generated_installer_path }}
           INSTALLER_PATH: ${{ steps.build_windows_installer.outputs.installer_path }}
           RUNTIME_ASSET_PATH: ${{ steps.build_windows_installer.outputs.runtime_asset_path }}
-          TOOLCHAIN_ASSET_PATH: ${{ steps.build_windows_installer.outputs.toolchain_asset_path }}
         run: |
           if (-not $env:INSTALLER_PATH) {
             throw "Installer path output was not set."
@@ -1074,10 +925,6 @@ jobs:
             throw "Runtime asset path output was not set."
           }
 
-          if (-not $env:TOOLCHAIN_ASSET_PATH) {
-            throw "Toolchain asset path output was not set."
-          }
-
           $uploadPaths = @($env:INSTALLER_PATH)
           if ($env:GENERATED_INSTALLER_PATH -ne $env:INSTALLER_PATH) {
             $uploadPaths += $env:GENERATED_INSTALLER_PATH
@@ -1089,7 +936,6 @@ jobs:
           }
           $uploadPaths += $manifestPaths
           $uploadPaths += $env:RUNTIME_ASSET_PATH
-          $uploadPaths += $env:TOOLCHAIN_ASSET_PATH
 
           $blockmapPaths = Get-ChildItem -Path desktop/out/release -File -Filter *.blockmap |
             ForEach-Object { $_.FullName }

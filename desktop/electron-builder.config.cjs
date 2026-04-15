@@ -36,16 +36,6 @@ const windowsSigningConfigured = Boolean(
 const configuredReleaseChannel = (
   process.env.HOLABOSS_RELEASE_CHANNEL || ""
 ).trim().toLowerCase();
-const bundleToolchainSeed = /^(1|true|yes)$/i.test(
-  (process.env.HOLABOSS_BUNDLE_TOOLCHAIN_SEED || "").trim(),
-);
-const configuredToolchainTarball = (
-  process.env.HOLABOSS_TOOLCHAIN_TARBALL || ""
-).trim();
-const toolchainSeedDestination = path.posix.join(
-  "toolchain-seed",
-  `holaboss-toolchain-${runtimePlatform}.tar.gz`,
-);
 
 function resolveReleaseChannel() {
   if (!configuredReleaseChannel || configuredReleaseChannel === "latest") {
@@ -74,18 +64,13 @@ const extraResources = [
     to: runtimeBundleDir,
     filter: [
       "bin/**/*",
+      "node-runtime/**/*",
       "package-metadata.json",
+      "python-runtime/**/*",
       "runtime/**/*"
     ]
   }
 ];
-
-if (bundleToolchainSeed) {
-  extraResources.push({
-    from: configuredToolchainTarball,
-    to: toolchainSeedDestination,
-  });
-}
 
 module.exports = {
   appId: "com.holaboss.workspace",
@@ -147,18 +132,6 @@ module.exports = {
       throw new Error(
         `Missing staged runtime bundle at ${runtimeBundlePath}. Run the matching prepare:runtime command before packaging.`
       );
-    }
-    if (bundleToolchainSeed) {
-      if (!configuredToolchainTarball) {
-        throw new Error(
-          "HOLABOSS_TOOLCHAIN_TARBALL must be set when HOLABOSS_BUNDLE_TOOLCHAIN_SEED is enabled.",
-        );
-      }
-      if (!fs.existsSync(configuredToolchainTarball)) {
-        throw new Error(
-          `Missing staged runtime toolchain tarball at ${configuredToolchainTarball}.`,
-        );
-      }
     }
   },
   afterPack: async (context) => {

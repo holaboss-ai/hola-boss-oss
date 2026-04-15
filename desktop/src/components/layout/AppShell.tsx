@@ -58,8 +58,6 @@ import {
 
 const THEME_STORAGE_KEY = "holaboss-theme-v1";
 const DEV_APP_UPDATE_PREVIEW_STORAGE_KEY = "holaboss-dev-app-update-preview-v1";
-const DEV_RUNTIME_BOOTSTRAP_PREVIEW_STORAGE_KEY =
-  "holaboss-dev-runtime-bootstrap-preview-v1";
 const DEV_NOTIFICATION_TOAST_PREVIEW_ID_PREFIX =
   "dev-notification-toast-preview:";
 const TASK_PROPOSAL_TOAST_ID_PREFIX = "task-proposal-toast:";
@@ -103,10 +101,8 @@ const MAX_SEEN_TASK_PROPOSAL_IDS_PER_WORKSPACE = 200;
 type SpaceComponentId = "agent" | "files" | "browser";
 type UtilityPaneId = "files" | "browser";
 type DevAppUpdatePreviewMode = "off" | "downloading" | "ready";
-type DevRuntimeBootstrapPreviewMode = "off" | "toolchain";
 type SpaceExplorerMode = "files" | "browser" | "applications";
 type ShellView = "space";
-type WorkspaceBootstrapPaneMode = "default" | "toolchain";
 
 type SpaceVisibilityState = Record<SpaceComponentId, boolean>;
 
@@ -139,10 +135,6 @@ declare global {
     __holabossDevUpdatePreview?: {
       downloading: () => void;
       ready: () => void;
-      clear: () => void;
-    };
-    __holabossDevRuntimeBootstrapPreview?: {
-      toolchain: () => void;
       clear: () => void;
     };
     __holabossDevNotificationToastPreview?: {
@@ -719,29 +711,6 @@ function buildDevAppUpdatePreviewStatus(
   };
 }
 
-function normalizeDevRuntimeBootstrapPreviewMode(
-  value: string | null | undefined,
-): DevRuntimeBootstrapPreviewMode {
-  if (value === "toolchain") {
-    return value;
-  }
-  return "off";
-}
-
-function loadDevRuntimeBootstrapPreviewMode(): DevRuntimeBootstrapPreviewMode {
-  if (!import.meta.env.DEV) {
-    return "off";
-  }
-
-  try {
-    return normalizeDevRuntimeBootstrapPreviewMode(
-      localStorage.getItem(DEV_RUNTIME_BOOTSTRAP_PREVIEW_STORAGE_KEY),
-    );
-  } catch {
-    return "off";
-  }
-}
-
 function spaceComponentLabel(componentId: SpaceComponentId) {
   if (componentId === "agent") {
     return "Agent";
@@ -850,40 +819,16 @@ function EmptyWorkspacePane() {
   );
 }
 
-function workspaceBootstrapPaneMode(
-  runtimeStatus: RuntimeStatusPayload | null,
-): WorkspaceBootstrapPaneMode {
-  if (
-    runtimeStatus?.status === "starting" &&
-    !runtimeStatus.available &&
-    Boolean(runtimeStatus.runtimeRoot && runtimeStatus.executablePath)
-  ) {
-    return "toolchain";
-  }
-  return "default";
-}
-
-function WorkspaceBootstrapPane({
-  mode = "default",
-}: {
-  mode?: WorkspaceBootstrapPaneMode;
-}) {
-  const title =
-    mode === "toolchain" ? "Preparing local runtime..." : "Preparing desktop...";
-  const description =
-    mode === "toolchain"
-      ? "Holaboss is setting up the local runtime it needs on this device. This can take a moment on first launch and after some updates."
-      : "Restoring workspace state and attaching surfaces.";
-
+function WorkspaceBootstrapPane() {
   return (
     <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden px-6">
       <div className="flex flex-col items-center text-center">
         <Loader2 size={20} className="animate-spin text-muted-foreground/60" />
         <h2 className="mt-5 text-[17px] font-medium tracking-[-0.01em] text-foreground">
-          {title}
+          Preparing desktop...
         </h2>
         <p className="mt-2 max-w-sm text-[13px] leading-6 text-muted-foreground/70">
-          {description}
+          Restoring workspace state and attaching surfaces.
         </p>
       </div>
     </section>
@@ -1093,10 +1038,6 @@ function AppShellContent() {
     useState<AppUpdateStatusPayload | null>(null);
   const [devAppUpdatePreviewMode, setDevAppUpdatePreviewMode] =
     useState<DevAppUpdatePreviewMode>(loadDevAppUpdatePreviewMode);
-  const [devRuntimeBootstrapPreviewMode, setDevRuntimeBootstrapPreviewMode] =
-    useState<DevRuntimeBootstrapPreviewMode>(
-      loadDevRuntimeBootstrapPreviewMode,
-    );
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [settingsDialogSection, setSettingsDialogSection] =
     useState<UiSettingsPaneSection>("settings");
@@ -1294,12 +1235,6 @@ function AppShellContent() {
       toastNotifications,
     ],
   );
-  const effectiveWorkspaceBootstrapPaneMode =
-    devRuntimeBootstrapPreviewMode === "toolchain"
-      ? "toolchain"
-      : workspaceBootstrapPaneMode(runtimeStatus);
-  const showDevRuntimeBootstrapPreview =
-    import.meta.env.DEV && devRuntimeBootstrapPreviewMode !== "off";
   const runtimeNotificationById = useMemo(
     () =>
       new Map(
@@ -1678,34 +1613,6 @@ function AppShellContent() {
 
     return () => {
       delete window.__holabossDevUpdatePreview;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!import.meta.env.DEV) {
-      return;
-    }
-
-    const updateMode = (mode: DevRuntimeBootstrapPreviewMode) => {
-      setDevRuntimeBootstrapPreviewMode(mode);
-      try {
-        if (mode === "off") {
-          localStorage.removeItem(DEV_RUNTIME_BOOTSTRAP_PREVIEW_STORAGE_KEY);
-        } else {
-          localStorage.setItem(DEV_RUNTIME_BOOTSTRAP_PREVIEW_STORAGE_KEY, mode);
-        }
-      } catch {
-        // Ignore localStorage failures in dev preview mode.
-      }
-    };
-
-    window.__holabossDevRuntimeBootstrapPreview = {
-      toolchain: () => updateMode("toolchain"),
-      clear: () => updateMode("off"),
-    };
-
-    return () => {
-      delete window.__holabossDevRuntimeBootstrapPreview;
     };
   }, []);
 
@@ -3781,13 +3688,11 @@ function AppShellContent() {
           </div>
         ) : null}
 
-        {showDevRuntimeBootstrapPreview ? (
-          <WorkspaceBootstrapPane mode={effectiveWorkspaceBootstrapPaneMode} />
-        ) : !hasHydratedWorkspaceList ? (
+        {!hasHydratedWorkspaceList ? (
           bootstrapErrorMessage ? (
             <WorkspaceStartupErrorPane message={bootstrapErrorMessage} />
           ) : (
-            <WorkspaceBootstrapPane mode={effectiveWorkspaceBootstrapPaneMode} />
+            <WorkspaceBootstrapPane />
           )
         ) : hydratedRuntimeErrorMessage ? (
           <WorkspaceStartupErrorPane message={hydratedRuntimeErrorMessage} />

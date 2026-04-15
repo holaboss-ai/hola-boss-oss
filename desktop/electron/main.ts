@@ -147,14 +147,6 @@ const APP_THEMES = new Set([
 ]);
 const GITHUB_RELEASES_OWNER = "holaboss-ai";
 const GITHUB_RELEASES_REPO = "holaOS";
-const TOOLCHAIN_RELEASE_ASSET_NAMES = {
-  macos: "holaboss-toolchain-macos.tar.gz",
-  linux: "holaboss-toolchain-linux.tar.gz",
-  windows: "holaboss-toolchain-windows.tar.gz",
-} as const;
-const BUNDLED_TOOLCHAIN_SEED_DIR = "toolchain-seed";
-const TOOLCHAIN_DOWNLOAD_MAX_ATTEMPTS = 3;
-const TOOLCHAIN_DOWNLOAD_RETRY_DELAY_MS = 2_000;
 const APP_UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const APP_UPDATE_SUPPORTED_PLATFORMS = new Set(["darwin", "win32"]);
 const LOCAL_OSS_TEMPLATE_USER_ID = "local-oss";
@@ -779,7 +771,6 @@ let appUpdateCheckTimer: NodeJS.Timeout | null = null;
 let appUpdateCheckPromise: Promise<AppUpdateStatusPayload> | null = null;
 let appUpdateEventsConfigured = false;
 let appUpdatePreferences: AppUpdatePreferencesPayload = {};
-let managedRuntimeToolchainSyncPromise: Promise<void> | null = null;
 let runtimeModelCatalogState: RuntimeModelCatalogPayload = {
   catalogVersion: null,
   defaultBackgroundModel: null,
@@ -918,32 +909,11 @@ interface PackagedDesktopConfig {
   marketplaceUrl?: string;
   proactiveUrl?: string;
   updateChannel?: string;
-  toolchainManifest?: RuntimeToolchainManifest;
 }
 
 interface RuntimeLaunchSpec {
   command: string;
   args: string[];
-}
-
-interface RuntimeToolchainManifest {
-  runtimeVersion: string;
-  runtimeSchemaVersion: string | null;
-  platform: "macos" | "linux" | "windows";
-  toolchainId: string;
-  nodeVersion: string | null;
-  npmVersion: string | null;
-  pythonVersion: string | null;
-  pythonTarget: string | null;
-}
-
-interface RuntimeToolchainPackageMetadata {
-  platform: "macos" | "linux" | "windows";
-  toolchainId: string;
-  nodeVersion: string | null;
-  npmVersion: string | null;
-  pythonVersion: string | null;
-  pythonTarget: string | null;
 }
 
 function loadPackagedDesktopConfig(): PackagedDesktopConfig {
@@ -1314,61 +1284,6 @@ function currentAppVersion() {
 function currentDesktopReleaseTag() {
   const version = currentAppVersion();
   return version ? `holaboss-desktop-${version}` : "";
-}
-
-function currentToolchainAssetName() {
-  return TOOLCHAIN_RELEASE_ASSET_NAMES[CURRENT_RUNTIME_PLATFORM];
-}
-
-function bundledToolchainSeedPath() {
-  if (!app.isPackaged) {
-    return "";
-  }
-  return path.join(
-    process.resourcesPath,
-    BUNDLED_TOOLCHAIN_SEED_DIR,
-    currentToolchainAssetName(),
-  );
-}
-
-function currentToolchainReleaseAssetUrl() {
-  const releaseTag = currentDesktopReleaseTag();
-  if (!releaseTag) {
-    return "";
-  }
-  return `https://github.com/${GITHUB_RELEASES_OWNER}/${GITHUB_RELEASES_REPO}/releases/download/${releaseTag}/${currentToolchainAssetName()}`;
-}
-
-function toolchainDownloadFailureMessage(assetUrl: string, detail = "") {
-  const trimmedDetail = detail.trim();
-  const detailSuffix =
-    trimmedDetail && !trimmedDetail.toLowerCase().includes("fetch failed")
-      ? ` ${trimmedDetail}`
-      : "";
-  return `Couldn't download the local runtime required to start Holaboss. Check your internet connection and relaunch the app.${detailSuffix} Asset: ${assetUrl}`;
-}
-
-function shouldRetryToolchainDownload(error: unknown) {
-  if (error instanceof TypeError) {
-    return true;
-  }
-  if (!(error instanceof Error)) {
-    return false;
-  }
-  const message = error.message.toLowerCase();
-  return (
-    message.includes("fetch failed") ||
-    message.includes("timed out") ||
-    message.includes("econnreset") ||
-    message.includes("econnrefused") ||
-    message.includes("socket hang up") ||
-    message.includes("(408 ") ||
-    message.includes("(429 ") ||
-    message.includes("(500 ") ||
-    message.includes("(502 ") ||
-    message.includes("(503 ") ||
-    message.includes("(504 ")
-  );
 }
 
 function appUpdateSupported() {
@@ -4761,18 +4676,6 @@ function runtimeDatabasePath() {
 
 function runtimeWorkspaceRoot() {
   return path.join(runtimeSandboxRoot(), "workspace");
-}
-
-function managedRuntimeToolchainsRoot() {
-  return path.join(
-    app.getPath("userData"),
-    "runtime-toolchains",
-    CURRENT_RUNTIME_PLATFORM,
-  );
-}
-
-function managedRuntimeToolchainRoot(toolchainId: string) {
-  return path.join(managedRuntimeToolchainsRoot(), toolchainId);
 }
 
 function diagnosticsBundleFileName(date = new Date()) {
@@ -13511,15 +13414,11 @@ async function fileExists(targetPath: string) {
 const REQUIRED_RUNTIME_ROOT_PATH_GROUPS = [
   runtimeBundleExecutableRelativePaths(CURRENT_RUNTIME_PLATFORM),
   ["package-metadata.json"],
-  [path.join("runtime", "metadata.json")],
-  [path.join("runtime", "api-server", "dist", "index.mjs")],
-];
-
-const REQUIRED_RUNTIME_TOOLCHAIN_PATH_GROUPS = [
-  ["package-metadata.json"],
   runtimeBundleNodeRelativePaths(CURRENT_RUNTIME_PLATFORM),
   runtimeBundleNpmRelativePaths(CURRENT_RUNTIME_PLATFORM),
   runtimeBundlePythonRelativePaths(CURRENT_RUNTIME_PLATFORM),
+  [path.join("runtime", "metadata.json")],
+  [path.join("runtime", "api-server", "dist", "index.mjs")],
 ];
 
 async function firstExistingRelativePath(
@@ -13545,22 +13444,21 @@ async function resolveRuntimeExecutablePath(
 }
 
 async function resolveRuntimeNodePath(
-  toolchainRoot: string,
+  runtimeRoot: string,
 ): Promise<string | null> {
   return firstExistingRelativePath(
-    toolchainRoot,
+    runtimeRoot,
     runtimeBundleNodeRelativePaths(CURRENT_RUNTIME_PLATFORM),
   );
 }
 
 async function resolveRuntimeLaunchSpec(
   runtimeRoot: string,
-  toolchainRoot: string,
   executablePath: string,
 ): Promise<RuntimeLaunchSpec | null> {
   const extension = path.extname(executablePath).toLowerCase();
   if (extension === ".mjs") {
-    const nodePath = await resolveRuntimeNodePath(toolchainRoot);
+    const nodePath = await resolveRuntimeNodePath(runtimeRoot);
     if (!nodePath) {
       return null;
     }
@@ -13620,265 +13518,6 @@ async function validateRuntimeRoot(runtimeRoot: string) {
   }
 
   return null;
-}
-
-async function validateRuntimeToolchainRoot(toolchainRoot: string) {
-  for (const relativePaths of REQUIRED_RUNTIME_TOOLCHAIN_PATH_GROUPS) {
-    if (!(await firstExistingRelativePath(toolchainRoot, relativePaths))) {
-      return `Runtime toolchain is incomplete. Missing ${relativePaths.join(" or ")} under ${toolchainRoot}. Reinstall or redownload ${currentToolchainAssetName()}.`;
-    }
-  }
-
-  return null;
-}
-
-async function resolveBundledToolchainSeedPath() {
-  const seedPath = bundledToolchainSeedPath();
-  if (!seedPath) {
-    return null;
-  }
-  return (await fileExists(seedPath)) ? seedPath : null;
-}
-
-function packagedRuntimeToolchainManifest(): RuntimeToolchainManifest | null {
-  const manifest = packagedDesktopConfig.toolchainManifest;
-  if (!manifest) {
-    return null;
-  }
-  return manifest.platform === CURRENT_RUNTIME_PLATFORM &&
-    typeof manifest.toolchainId === "string" &&
-    manifest.toolchainId.trim() &&
-    typeof manifest.runtimeVersion === "string" &&
-    manifest.runtimeVersion.trim()
-    ? manifest
-    : null;
-}
-
-async function readRuntimeToolchainPackageMetadata(
-  toolchainRoot: string,
-): Promise<RuntimeToolchainPackageMetadata | null> {
-  try {
-    const raw = await fs.readFile(
-      path.join(toolchainRoot, "package-metadata.json"),
-      "utf-8",
-    );
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const platform =
-      typeof parsed.platform === "string"
-        ? parsed.platform.trim().toLowerCase()
-        : "";
-    const toolchainId =
-      typeof parsed.toolchain_id === "string" ? parsed.toolchain_id.trim() : "";
-    if (
-      (platform !== "macos" && platform !== "linux" && platform !== "windows") ||
-      !toolchainId
-    ) {
-      return null;
-    }
-    return {
-      platform,
-      toolchainId,
-      nodeVersion:
-        typeof parsed.bundled_node_version === "string"
-          ? parsed.bundled_node_version.trim() || null
-          : null,
-      npmVersion:
-        typeof parsed.bundled_npm_version === "string"
-          ? parsed.bundled_npm_version.trim() || null
-          : null,
-      pythonVersion:
-        typeof parsed.bundled_python_version === "string"
-          ? parsed.bundled_python_version.trim() || null
-          : null,
-      pythonTarget:
-        typeof parsed.bundled_python_target === "string"
-          ? parsed.bundled_python_target.trim() || null
-          : null,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function runtimeToolchainMatchesManifest(
-  candidate: RuntimeToolchainPackageMetadata | null,
-  manifest: RuntimeToolchainManifest,
-) {
-  return (
-    candidate !== null &&
-    candidate.platform === manifest.platform &&
-    candidate.toolchainId === manifest.toolchainId &&
-    candidate.nodeVersion === manifest.nodeVersion &&
-    candidate.npmVersion === manifest.npmVersion &&
-    candidate.pythonVersion === manifest.pythonVersion &&
-    candidate.pythonTarget === manifest.pythonTarget
-  );
-}
-
-async function downloadCurrentToolchainReleaseAsset(destinationPath: string) {
-  const assetUrl = currentToolchainReleaseAssetUrl();
-  if (!assetUrl) {
-    throw new Error("Unable to resolve the current desktop release tag for toolchain download.");
-  }
-  const headers: Record<string, string> = {
-    "User-Agent": "holaboss-desktop-toolchain-installer",
-  };
-  const githubToken =
-    process.env.HOLABOSS_GITHUB_TOKEN?.trim() ||
-    process.env.GITHUB_TOKEN?.trim() ||
-    "";
-  if (githubToken) {
-    headers.Authorization = `Bearer ${githubToken}`;
-  }
-  let lastError: unknown = null;
-  for (
-    let attempt = 1;
-    attempt <= TOOLCHAIN_DOWNLOAD_MAX_ATTEMPTS;
-    attempt += 1
-  ) {
-    try {
-      const response = await fetch(assetUrl, { headers, redirect: "follow" });
-      if (!response.ok) {
-        throw new Error(
-          `Release asset request returned ${response.status} ${response.statusText}.`,
-        );
-      }
-      const body = Buffer.from(await response.arrayBuffer());
-      await fs.writeFile(destinationPath, body);
-      return;
-    } catch (error) {
-      lastError = error;
-      if (
-        attempt >= TOOLCHAIN_DOWNLOAD_MAX_ATTEMPTS ||
-        !shouldRetryToolchainDownload(error)
-      ) {
-        break;
-      }
-      void appendRuntimeLog(
-        `[embedded-runtime] retrying toolchain download (${attempt}/${TOOLCHAIN_DOWNLOAD_MAX_ATTEMPTS}) after ${error instanceof Error ? error.message : String(error)}\n`,
-      );
-      await sleep(TOOLCHAIN_DOWNLOAD_RETRY_DELAY_MS);
-    }
-  }
-  throw new Error(
-    toolchainDownloadFailureMessage(
-      assetUrl,
-      lastError instanceof Error ? lastError.message : String(lastError ?? ""),
-    ),
-  );
-}
-
-async function ensureManagedRuntimeToolchainInstalled() {
-  const manifest = packagedRuntimeToolchainManifest();
-  if (
-    !app.isPackaged ||
-    process.env.HOLABOSS_RUNTIME_TOOLCHAIN_ROOT?.trim() ||
-    !manifest
-  ) {
-    return;
-  }
-  if (!managedRuntimeToolchainSyncPromise) {
-    managedRuntimeToolchainSyncPromise = (async () => {
-      const targetRoot = managedRuntimeToolchainRoot(manifest.toolchainId);
-      const existingValidationError = await validateRuntimeToolchainRoot(targetRoot);
-      if (!existingValidationError) {
-        const existingMetadata = await readRuntimeToolchainPackageMetadata(
-          targetRoot,
-        );
-        if (runtimeToolchainMatchesManifest(existingMetadata, manifest)) {
-          return;
-        }
-      }
-
-      await fs.mkdir(managedRuntimeToolchainsRoot(), { recursive: true });
-      const stageRoot = path.join(
-        managedRuntimeToolchainsRoot(),
-        `.staging-${manifest.toolchainId}-${process.pid}-${Date.now()}`,
-      );
-      const bundledSeedPath = await resolveBundledToolchainSeedPath();
-      const downloadDir = bundledSeedPath
-        ? null
-        : await fs.mkdtemp(
-            path.join(os.tmpdir(), "holaboss-toolchain-download-"),
-          );
-      const tarballPath =
-        bundledSeedPath ||
-        path.join(downloadDir ?? os.tmpdir(), currentToolchainAssetName());
-      await fs.rm(stageRoot, { recursive: true, force: true });
-      await fs.mkdir(stageRoot, { recursive: true });
-      try {
-        if (bundledSeedPath) {
-          void appendRuntimeLog(
-            `[embedded-runtime] using bundled toolchain seed ${bundledSeedPath}\n`,
-          );
-        } else {
-          await downloadCurrentToolchainReleaseAsset(tarballPath);
-        }
-        execFileSync("tar", ["-xzf", tarballPath, "-C", stageRoot], {
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-        const stagedValidationError = await validateRuntimeToolchainRoot(stageRoot);
-        if (stagedValidationError) {
-          throw new Error(stagedValidationError);
-        }
-        const stagedMetadata = await readRuntimeToolchainPackageMetadata(stageRoot);
-        if (!runtimeToolchainMatchesManifest(stagedMetadata, manifest)) {
-          throw new Error(
-            `Downloaded toolchain under ${stageRoot} does not match packaged toolchain manifest ${manifest.toolchainId}.`,
-          );
-        }
-        await fs.rm(targetRoot, { recursive: true, force: true });
-        await fs.rename(stageRoot, targetRoot);
-        void appendRuntimeLog(
-          `[embedded-runtime] staged managed toolchain ${manifest.toolchainId} at ${targetRoot}\n`,
-        );
-      } finally {
-        await fs.rm(stageRoot, { recursive: true, force: true }).catch(
-          () => undefined,
-        );
-        if (downloadDir) {
-          await fs.rm(downloadDir, { recursive: true, force: true }).catch(
-            () => undefined,
-          );
-        }
-      }
-    })().finally(() => {
-      managedRuntimeToolchainSyncPromise = null;
-    });
-  }
-  return managedRuntimeToolchainSyncPromise;
-}
-
-async function resolveRuntimeToolchainRoot(runtimeRoot: string | null) {
-  const packagedManagedRoot = (() => {
-    const manifest = packagedRuntimeToolchainManifest();
-    return manifest ? managedRuntimeToolchainRoot(manifest.toolchainId) : null;
-  })();
-  const candidates = [
-    process.env.HOLABOSS_RUNTIME_TOOLCHAIN_ROOT,
-    packagedManagedRoot,
-    runtimeRoot,
-  ].filter((value): value is string => Boolean(value && value.trim().length > 0));
-
-  let firstInvalidError: string | null = null;
-  for (const candidate of candidates) {
-    const resolved = path.resolve(candidate);
-    const validationError = await validateRuntimeToolchainRoot(resolved);
-    if (!validationError) {
-      return {
-        toolchainRoot: resolved,
-        validationError: null,
-      };
-    }
-    if (!firstInvalidError) {
-      firstInvalidError = validationError;
-    }
-  }
-
-  return {
-    toolchainRoot: null,
-    validationError: firstInvalidError,
-  };
 }
 
 async function resolveRuntimeRoot() {
@@ -13957,27 +13596,8 @@ async function isRuntimeHealthy(url: string) {
   });
 }
 
-function runtimeToolchainBootstrapPending(
-  runtimeRoot: string | null,
-  executablePath: string | null,
-  toolchainRoot: string | null,
-) {
-  return Boolean(
-    app.isPackaged &&
-      runtimeRoot &&
-      executablePath &&
-      !toolchainRoot &&
-      packagedRuntimeToolchainManifest() &&
-      !process.env.HOLABOSS_RUNTIME_TOOLCHAIN_ROOT?.trim() &&
-      (managedRuntimeToolchainSyncPromise || runtimeStartupInFlight),
-  );
-}
-
-function runtimeUnavailableStatus(
-  hasBundle: boolean,
-  toolchainBootstrapPending = false,
-): RuntimeStatus {
-  if ((runtimeStartupInFlight && hasBundle) || toolchainBootstrapPending) {
+function runtimeUnavailableStatus(hasBundle: boolean): RuntimeStatus {
+  if (runtimeStartupInFlight && hasBundle) {
     return "starting";
   }
   if (runtimeProcess) {
@@ -13996,23 +13616,16 @@ function runtimeUnavailableStatus(
 
 async function refreshRuntimeStatus() {
   const { runtimeRoot, validationError } = await resolveRuntimeRoot();
-  const { toolchainRoot, validationError: toolchainValidationError } =
-    await resolveRuntimeToolchainRoot(runtimeRoot);
   const executablePath = runtimeRoot
     ? await resolveRuntimeExecutablePath(runtimeRoot)
     : null;
-  const toolchainBootstrapPending = runtimeToolchainBootstrapPending(
-    runtimeRoot,
-    executablePath,
-    toolchainRoot,
-  );
   const sandboxRoot = runtimeSandboxRoot();
   const harness = process.env.HOLABOSS_RUNTIME_HARNESS || "pi";
   const workflowBackend =
     process.env.HOLABOSS_RUNTIME_WORKFLOW_BACKEND || "remote_api";
   const url = `http://127.0.0.1:${RUNTIME_API_PORT}`;
   const healthy = await isRuntimeHealthy(url);
-  const hasBundle = Boolean(runtimeRoot && executablePath && toolchainRoot);
+  const hasBundle = Boolean(runtimeRoot && executablePath);
 
   if (healthy) {
     persistRuntimeProcessState({
@@ -14023,7 +13636,7 @@ async function refreshRuntimeStatus() {
     });
     runtimeStatus = withDesktopBrowserStatus({
       status: "running",
-      available: Boolean(runtimeRoot && executablePath && toolchainRoot),
+      available: hasBundle,
       runtimeRoot,
       sandboxRoot,
       executablePath,
@@ -14044,14 +13657,13 @@ async function refreshRuntimeStatus() {
     executablePath,
     url,
     harness,
-    status: runtimeUnavailableStatus(hasBundle, toolchainBootstrapPending),
+    status: runtimeUnavailableStatus(hasBundle),
     lastError:
-      hasBundle || toolchainBootstrapPending
-        ? runtimeStartupInFlight || toolchainBootstrapPending
+      hasBundle
+        ? runtimeStartupInFlight
           ? ""
           : runtimeStatus.lastError
         : validationError ||
-          toolchainValidationError ||
           `Runtime bundle not found. Set HOLABOSS_RUNTIME_ROOT or package ${RUNTIME_BUNDLE_DIR} into app resources.`,
   });
   emitRuntimeState();
@@ -14169,10 +13781,7 @@ async function startEmbeddedRuntime() {
         return refreshRuntimeStatus();
       }
 
-      await ensureManagedRuntimeToolchainInstalled();
       const { runtimeRoot, validationError } = await resolveRuntimeRoot();
-      const { toolchainRoot, validationError: toolchainValidationError } =
-        await resolveRuntimeToolchainRoot(runtimeRoot);
       const executablePath = runtimeRoot
         ? await resolveRuntimeExecutablePath(runtimeRoot)
         : null;
@@ -14192,9 +13801,8 @@ async function startEmbeddedRuntime() {
 
       runtimeStatus = withDesktopBrowserStatus({
         ...runtimeStatus,
-        status:
-          runtimeRoot && executablePath && toolchainRoot ? "starting" : "missing",
-        available: Boolean(runtimeRoot && executablePath && toolchainRoot),
+        status: runtimeRoot && executablePath ? "starting" : "missing",
+        available: Boolean(runtimeRoot && executablePath),
         runtimeRoot,
         sandboxRoot,
         executablePath,
@@ -14202,15 +13810,14 @@ async function startEmbeddedRuntime() {
         pid: null,
         harness,
         lastError:
-          runtimeRoot && executablePath && toolchainRoot
+          runtimeRoot && executablePath
             ? ""
             : validationError ||
-              toolchainValidationError ||
               `Runtime bundle not found. Set HOLABOSS_RUNTIME_ROOT or package ${RUNTIME_BUNDLE_DIR} into app resources.`,
       });
       emitRuntimeState();
 
-      if (!runtimeRoot || !executablePath || !toolchainRoot) {
+      if (!runtimeRoot || !executablePath) {
         persistRuntimeProcessState({
           pid: null,
           status: "missing",
@@ -14252,11 +13859,10 @@ async function startEmbeddedRuntime() {
 
       const launchSpec = await resolveRuntimeLaunchSpec(
         runtimeRoot,
-        toolchainRoot,
         executablePath,
       );
       if (!launchSpec) {
-        const launchError = `Runtime toolchain is incomplete. Missing ${runtimeBundleNodeRelativePaths(CURRENT_RUNTIME_PLATFORM).join(" or ")} under ${toolchainRoot}. Reinstall or redownload ${currentToolchainAssetName()}.`;
+        const launchError = `Runtime bundle is incomplete. Missing ${runtimeBundleNodeRelativePaths(CURRENT_RUNTIME_PLATFORM).join(" or ")} under ${runtimeRoot}. Rebuild or restage ${RUNTIME_BUNDLE_DIR}.`;
         runtimeStatus = withDesktopBrowserStatus({
           ...runtimeStatus,
           status: "error",
@@ -14289,7 +13895,6 @@ async function startEmbeddedRuntime() {
           HOLABOSS_EMBEDDED_RUNTIME: "1",
           SANDBOX_AGENT_HARNESS: harness,
           HOLABOSS_RUNTIME_WORKFLOW_BACKEND: workflowBackend,
-          HOLABOSS_RUNTIME_TOOLCHAIN_ROOT: toolchainRoot,
           HOLABOSS_RUNTIME_DB_PATH: runtimeDatabasePath(),
           PROACTIVE_ENABLE_REMOTE_BRIDGE: "1",
           PROACTIVE_BRIDGE_BASE_URL: runtimeProactiveBridgeBaseUrl(),
@@ -20380,11 +19985,6 @@ app.whenReady().then(async () => {
     lastError: "",
   });
   emitRuntimeState();
-  void ensureManagedRuntimeToolchainInstalled().catch((error) => {
-    void appendRuntimeLog(
-      `[embedded-runtime] toolchain bootstrap prefetch failed: ${error instanceof Error ? error.message : String(error)}\n`,
-    );
-  });
   void startEmbeddedRuntime();
   startupAuthSyncPromise = syncPersistedAuthSessionOnStartup()
     .catch(() => undefined)

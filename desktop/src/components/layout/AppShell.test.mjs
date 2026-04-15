@@ -238,32 +238,11 @@ test("app shell treats missing or stopped runtime states as startup blockers", a
   );
   assert.match(
     source,
-    /function workspaceBootstrapPaneMode\(\s*runtimeStatus: RuntimeStatusPayload \| null,\s*\): WorkspaceBootstrapPaneMode \{/,
-  );
-  assert.match(
-    source,
-    /runtimeStatus\?\.status === "starting" &&\s*!runtimeStatus\.available &&\s*Boolean\(runtimeStatus\.runtimeRoot && runtimeStatus\.executablePath\)/,
-  );
-  assert.match(source, /Preparing local runtime\.\.\./);
-  assert.match(
-    source,
-    /Holaboss is setting up the local runtime it needs on this device\./,
-  );
-  assert.match(
-    source,
     /const bootstrapErrorMessage =\s*!hasHydratedWorkspaceList\s*\?\s*runtimeStartupBlockedMessage\(runtimeStatus, workspaceErrorMessage\)\s*:\s*"";/,
   );
   assert.match(
     source,
-    /const effectiveWorkspaceBootstrapPaneMode =\s*devRuntimeBootstrapPreviewMode === "toolchain"\s*\?\s*"toolchain"\s*:\s*workspaceBootstrapPaneMode\(runtimeStatus\);/,
-  );
-  assert.match(
-    source,
     /const hydratedRuntimeErrorMessage =\s*hasHydratedWorkspaceList &&\s*runtimeStartupBlockedDetail &&\s*\(!hasWorkspaces \|\| !workspaceAppsReady\)\s*\?\s*runtimeStartupBlockedDetail\s*:\s*"";/,
-  );
-  assert.match(
-    source,
-    /showDevRuntimeBootstrapPreview \? \(\s*<WorkspaceBootstrapPane mode=\{effectiveWorkspaceBootstrapPaneMode\} \/>\s*\) : !hasHydratedWorkspaceList \?/,
   );
   assert.match(
     source,
@@ -319,16 +298,6 @@ test("app shell exposes a dev-only app update preview hook", async () => {
   assert.match(source, /ready: \(\) => updateMode\("ready"\)/);
   assert.match(source, /clear: \(\) => updateMode\("off"\)/);
   assert.match(source, /buildDevAppUpdatePreviewStatus\(/);
-});
-
-test("app shell exposes a dev-only runtime bootstrap preview hook", async () => {
-  const source = await readFile(APP_SHELL_PATH, "utf8");
-
-  assert.match(source, /const DEV_RUNTIME_BOOTSTRAP_PREVIEW_STORAGE_KEY =\s*"holaboss-dev-runtime-bootstrap-preview-v1";/);
-  assert.match(source, /type DevRuntimeBootstrapPreviewMode = "off" \| "toolchain";/);
-  assert.match(source, /window\.__holabossDevRuntimeBootstrapPreview = \{/);
-  assert.match(source, /toolchain: \(\) => updateMode\("toolchain"\)/);
-  assert.match(source, /clear: \(\) => updateMode\("off"\)/);
 });
 
 test("app shell exposes a dev-only notification toast preview hook", async () => {

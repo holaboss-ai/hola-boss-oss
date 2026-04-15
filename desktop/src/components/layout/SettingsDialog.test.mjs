@@ -29,21 +29,42 @@ test("settings dialog includes an automations section with a workspace selector"
   assert.match(source, /onEditAutomationSchedule\(automationsWorkspaceId, job\);/);
 });
 
-test("settings dialog about section shows the app version", async () => {
+test("settings dialog settings section shows the app controls above appearance", async () => {
   const source = await readFile(SETTINGS_DIALOG_PATH, "utf8");
 
   assert.match(source, /const displayAppVersion = appVersion\.trim\(\) \|\| "Unavailable";/);
+  assert.match(source, /function aboutAppUpdateState\(status: AppUpdateStatusPayload \| null\): \{/);
   assert.match(source, /const \[appUpdateStatus, setAppUpdateStatus\] =\s*useState<AppUpdateStatusPayload \| null>\(null\);/);
   assert.match(source, /const \[appUpdateChannelPending, setAppUpdateChannelPending\] = useState\(false\);/);
+  assert.match(source, /const appUpdateState = aboutAppUpdateState\(appUpdateStatus\);/);
   assert.match(source, /window\.electronAPI\.appUpdate\.getStatus\(\)/);
   assert.match(source, /window\.electronAPI\.appUpdate\.onStateChange\(\(status\) => \{/);
   assert.match(source, /async function handleSetBetaChannel\(checked: boolean\)/);
   assert.match(source, /window\.electronAPI\.appUpdate\.setChannel\(\s*checked \? "beta" : "latest",?\s*\)/);
   assert.match(source, /activeSection === "about" \? \(/);
-  assert.match(source, /Holaboss Desktop/);
-  assert.match(source, /Version/);
+
+  const settingsSectionIndex = source.indexOf('activeSection === "settings" ? (');
+  const appLabelIndex = source.indexOf("Holaboss Desktop");
+  const desktopUpdatesIndex = source.indexOf("Desktop updates");
+  const betaUpdatesIndex = source.indexOf("Beta updates");
+  const appearanceIndex = source.indexOf("Appearance");
+  const aboutSectionIndex = source.indexOf('activeSection === "about" ? (');
+
+  assert.notEqual(settingsSectionIndex, -1);
+  assert.notEqual(appLabelIndex, -1);
+  assert.notEqual(desktopUpdatesIndex, -1);
+  assert.notEqual(betaUpdatesIndex, -1);
+  assert.notEqual(appearanceIndex, -1);
+  assert.notEqual(aboutSectionIndex, -1);
+  assert.ok(settingsSectionIndex < appLabelIndex);
+  assert.ok(appLabelIndex < desktopUpdatesIndex);
+  assert.ok(desktopUpdatesIndex < betaUpdatesIndex);
+  assert.ok(betaUpdatesIndex < appearanceIndex);
+  assert.ok(appearanceIndex < aboutSectionIndex);
   assert.match(source, /v\{displayAppVersion\}/);
-  assert.match(source, /Beta updates/);
+  assert.match(source, /aria-live="polite"/);
+  assert.match(source, /appUpdateState\.progressPercent !== null/);
+  assert.match(source, /width: `\$\{appUpdateState\.progressPercent\}%`/);
   assert.match(source, /Opt into beta desktop releases before they reach the stable channel\./);
   assert.match(source, /<Switch[\s\S]*checked=\{betaChannelEnabled\}/);
   assert.match(source, /aria-label="Enable beta updates"/);

@@ -13,19 +13,11 @@ test("desktop runtime status stays in starting while launch is in flight", async
   assert.match(source, /let runtimeStartupInFlight = false;/);
   assert.match(
     source,
-    /function runtimeToolchainBootstrapPending\(\s*runtimeRoot: string \| null,\s*executablePath: string \| null,\s*toolchainRoot: string \| null,\s*\)/,
+    /function runtimeUnavailableStatus\(hasBundle: boolean\): RuntimeStatus \{/,
   );
   assert.match(
     source,
-    /managedRuntimeToolchainSyncPromise \|\| runtimeStartupInFlight/,
-  );
-  assert.match(
-    source,
-    /function runtimeUnavailableStatus\(\s*hasBundle: boolean,\s*toolchainBootstrapPending = false,\s*\): RuntimeStatus \{/,
-  );
-  assert.match(
-    source,
-    /if \(\(runtimeStartupInFlight && hasBundle\) \|\| toolchainBootstrapPending\) \{\s*return "starting";\s*\}/,
+    /if \(runtimeStartupInFlight && hasBundle\) \{\s*return "starting";\s*\}/,
   );
   assert.match(
     source,
@@ -33,15 +25,11 @@ test("desktop runtime status stays in starting while launch is in flight", async
   );
   assert.match(
     source,
-    /const toolchainBootstrapPending = runtimeToolchainBootstrapPending\(\s*runtimeRoot,\s*executablePath,\s*toolchainRoot,\s*\);/,
+    /status: runtimeUnavailableStatus\(hasBundle\),/,
   );
   assert.match(
     source,
-    /status: runtimeUnavailableStatus\(hasBundle, toolchainBootstrapPending\),/,
-  );
-  assert.match(
-    source,
-    /hasBundle \|\| toolchainBootstrapPending\s*\?\s*runtimeStartupInFlight \|\| toolchainBootstrapPending\s*\?\s*""\s*:\s*runtimeStatus\.lastError/,
+    /hasBundle\s*\?\s*runtimeStartupInFlight\s*\?\s*""\s*:\s*runtimeStatus\.lastError/,
   );
   assert.match(
     source,

@@ -10,13 +10,17 @@ const ensureRuntimeBundlePath = path.join(__dirname, "..", "scripts", "ensure-ru
 const stageRuntimeBundlePath = path.join(__dirname, "..", "scripts", "stage-runtime-bundle.mjs");
 const runtimeBundlePath = path.join(__dirname, "..", "scripts", "runtime-bundle.mjs");
 
-test("desktop runtime validation requires the bundled node binary", async () => {
+test("desktop runtime validation treats the packaged runtime as self-contained", async () => {
   const source = await readFile(mainPath, "utf8");
 
   assert.match(source, /"node-runtime",\s*"bin",\s*"node\.exe"/);
   assert.match(source, /path\.join\("python-runtime", "bin", "python"\)/);
-  assert.match(source, /const REQUIRED_RUNTIME_TOOLCHAIN_PATH_GROUPS = \[/);
-  assert.match(source, /async function validateRuntimeToolchainRoot\(toolchainRoot: string\)/);
+  assert.match(source, /const REQUIRED_RUNTIME_ROOT_PATH_GROUPS = \[/);
+  assert.match(source, /runtimeBundleNodeRelativePaths\(CURRENT_RUNTIME_PLATFORM\)/);
+  assert.match(source, /runtimeBundleNpmRelativePaths\(CURRENT_RUNTIME_PLATFORM\)/);
+  assert.match(source, /runtimeBundlePythonRelativePaths\(CURRENT_RUNTIME_PLATFORM\)/);
+  assert.doesNotMatch(source, /REQUIRED_RUNTIME_TOOLCHAIN_PATH_GROUPS/);
+  assert.doesNotMatch(source, /validateRuntimeToolchainRoot/);
 });
 
 test("desktop runtime staging checks the bundled runtime requirement groups", async () => {
