@@ -32,10 +32,28 @@ const runtimeBundlePath = path.join(__dirname, "out", runtimeBundleDir);
 const windowsSigningConfigured = Boolean(
   (process.env.WIN_CSC_LINK || process.env.CSC_LINK || "").trim(),
 );
+const configuredReleaseChannel = (
+  process.env.HOLABOSS_RELEASE_CHANNEL || ""
+).trim().toLowerCase();
+
+function resolveReleaseChannel() {
+  if (!configuredReleaseChannel || configuredReleaseChannel === "latest") {
+    return "latest";
+  }
+  if (configuredReleaseChannel === "beta") {
+    return "beta";
+  }
+  throw new Error(
+    `Unsupported HOLABOSS_RELEASE_CHANNEL: ${configuredReleaseChannel}`,
+  );
+}
+
+const releaseChannel = resolveReleaseChannel();
 
 module.exports = {
   appId: "com.holaboss.workspace",
   productName: "Holaboss",
+  generateUpdatesFilesForAllChannels: true,
   directories: {
     output: "out/release"
   },
@@ -85,7 +103,8 @@ module.exports = {
     {
       provider: "github",
       owner: "holaboss-ai",
-      repo: "holaOS"
+      repo: "holaOS",
+      ...(releaseChannel === "beta" ? { channel: releaseChannel } : {})
     }
   ],
   win: {

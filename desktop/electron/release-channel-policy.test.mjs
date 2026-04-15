@@ -7,6 +7,12 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const mainSourcePath = path.join(__dirname, "main.ts");
 const electronBuilderConfigPath = path.join(__dirname, "..", "electron-builder.config.cjs");
+const packagedConfigScriptPath = path.join(
+  __dirname,
+  "..",
+  "scripts",
+  "write-packaged-config.mjs",
+);
 const stageRuntimeBundlePath = path.join(
   __dirname,
   "..",
@@ -31,20 +37,27 @@ const docsWorkflowPath = path.join(
 );
 
 test("desktop updater uses electron-updater and exposes install-now state", async () => {
-  const source = await readFile(mainSourcePath, "utf8");
+  const [source, packagedConfigSource] = await Promise.all([
+    readFile(mainSourcePath, "utf8"),
+    readFile(packagedConfigScriptPath, "utf8"),
+  ]);
 
   assert.match(source, /import \{[\s\S]*autoUpdater,[\s\S]*\} from "electron-updater";/);
   assert.match(source, /const APP_UPDATE_SUPPORTED_PLATFORMS = new Set\(\["darwin", "win32"\]\);/);
   assert.match(source, /const GITHUB_RELEASES_REPO = "holaOS";/);
+  assert.match(source, /const CONFIGURED_APP_UPDATE_CHANNEL =/);
   assert.match(source, /autoUpdater\.autoDownload = true;/);
   assert.match(source, /autoUpdater\.autoInstallOnAppQuit = true;/);
-  assert.match(source, /autoUpdater\.allowPrerelease = false;/);
+  assert.match(source, /autoUpdater\.allowPrerelease = CONFIGURED_APP_UPDATE_CHANNEL === "beta";/);
+  assert.match(source, /if \(CONFIGURED_APP_UPDATE_CHANNEL === "beta"\) \{\s*autoUpdater\.channel = "beta";\s*\}/);
   assert.match(source, /autoUpdater\.on\("update-available"/);
   assert.match(source, /autoUpdater\.on\("download-progress"/);
   assert.match(source, /autoUpdater\.on\("update-downloaded"/);
   assert.match(source, /await autoUpdater\.checkForUpdates\(\);/);
   assert.match(source, /handleTrustedIpc\("appUpdate:installNow", \["main"\], async \(\) => \{/);
   assert.match(source, /autoUpdater\.quitAndInstall\(true, true\);/);
+  assert.match(packagedConfigSource, /function resolveUpdateChannel\(\)/);
+  assert.match(packagedConfigSource, /\.\.\.\(updateChannel === "beta" \? \{ updateChannel \} : \{\}\),/);
 });
 
 test("runtime staging prefers an explicit release tag, then stable releases, then prerelease fallback", async () => {
@@ -86,10 +99,19 @@ test("manual CI workflow creates combined desktop releases with bundled runtime 
   assert.match(source, /release_tag:\n\s+description: GitHub release tag to create or update/);
   assert.match(source, /release_title:\n\s+description: Optional GitHub release title/);
   assert.match(source, /prerelease:\n\s+description: Mark the GitHub release as a prerelease/);
+  assert.match(source, /release_channel:\n\s+description: Auto-update channel to publish for desktop clients/);
+  assert.match(source, /default: latest/);
+  assert.match(source, /type: choice/);
+  assert.match(source, /options:\n\s+- latest\n\s+- beta/);
   assert.match(source, /release_windows:\n\s+description: Build and publish the Windows desktop installer/);
   assert.match(source, /release_tag must match holaboss-desktop-YYYY\.MDD\.R/);
   assert.match(source, /release_version="\$\{release_tag#holaboss-desktop-\}"/);
   assert.match(source, /release_title="Holaboss \$\{release_version\}"/);
+  assert.match(source, /release_channel="\$\{\{ inputs\.release_channel \}\}"/);
+  assert.match(source, /beta channel releases must be marked as prerelease/);
+  assert.match(source, /latest channel releases must not be marked as prerelease/);
+  assert.match(source, /gh release create "\$\{RELEASE_TAG\}" \\\n\s+--title "\$\{RELEASE_TITLE\}" \\\n\s+--notes-file "\$\{notes_path\}" \\\n\s+--draft/);
+  assert.match(source, /gh release edit "\$\{RELEASE_TAG\}" \\\n\s+--title "\$\{RELEASE_TITLE\}" \\\n\s+--notes-file "\$\{notes_path\}" \\\n\s+--draft/);
   assert.match(source, /RUNTIME_ASSET_NAME: holaboss-runtime-linux\.tar\.gz/);
   assert.match(source, /RUNTIME_ASSET_NAME: holaboss-runtime-macos\.tar\.gz/);
   assert.match(source, /RUNTIME_ASSET_NAME: holaboss-runtime-windows\.tar\.gz/);
@@ -100,16 +122,39 @@ test("manual CI workflow creates combined desktop releases with bundled runtime 
   assert.match(source, /tar -C out\/runtime-macos -czf "out\/\$\{TOOLCHAIN_ASSET_NAME\}" package-metadata\.json node-runtime python-runtime/);
   assert.match(source, /gh release upload "\$\{RELEASE_TAG\}" "out\/\$\{RUNTIME_ASSET_NAME\}" --clobber/);
   assert.match(source, /gh release upload "\$\{RELEASE_TAG\}" "out\/\$\{TOOLCHAIN_ASSET_NAME\}" --clobber/);
+  assert.match(source, /node scripts\/write-app-update-config\.mjs "\$\{app_path\}"/);
+  assert.match(source, /app-update\.yml is missing from signed macOS app bundle/);
   assert.match(source, /prepackaged_app="\$\{RUNNER_TEMP\}\/Holaboss\.app"/);
   assert.match(source, /ditto "\$\{app_path\}" "\$\{prepackaged_app\}"/);
-  assert.match(source, /node scripts\/write-app-update-config\.mjs "\$\{prepackaged_app\}"/);
-  assert.match(source, /app-update\.yml is missing from prepackaged macOS app bundle/);
+  assert.doesNotMatch(source, /node scripts\/write-app-update-config\.mjs "\$\{prepackaged_app\}"/);
+  assert.doesNotMatch(source, /app-update\.yml is missing from prepackaged macOS app bundle/);
   assert.match(source, /--prepackaged "\$\{prepackaged_app\}" \\\n\s+--mac dmg zip \\/);
-  assert.match(source, /latest-mac\.yml was not generated/);
+  assert.match(source, /primary_manifest_name="beta-mac\.yml"/);
+  assert.match(source, /primary_manifest_name="latest-mac\.yml"/);
+  assert.match(source, /beta-mac\.yml was not generated for stable-channel compatibility/);
   assert.match(source, /macOS zip does not contain Holaboss\.app as the root app bundle/);
   assert.match(source, /app-update\.yml is missing from final macOS zip/);
-  assert.match(source, /latest\.yml was not generated/);
+  assert.match(source, /extract_dir="\$\{RUNNER_TEMP\}\/mac-zip-signature-verify"/);
+  assert.match(source, /Holaboss\.app was not extracted from the final macOS zip/);
+  assert.match(source, /codesign --verify --deep --strict --verbose=2 "\$\{extracted_app\}"/);
+  assert.match(source, /spctl -a -vv -t exec "\$\{extracted_app\}"/);
+  assert.match(source, /xcrun stapler validate "\$\{extracted_app\}"/);
+  assert.match(source, /verify-macos-release-assets:/);
+  assert.match(source, /release \$\{RELEASE_TAG\} must remain a draft until asset verification succeeds/);
+  assert.match(source, /gh release download "\$\{RELEASE_TAG\}" \\\n\s+--dir "\$\{verify_dir\}" \\\n\s+--pattern 'Holaboss-\*-arm64-mac\.zip'/);
+  assert.match(source, /failed to download beta-mac\.yml from GitHub/);
+  assert.match(source, /published macOS zip is missing Holaboss\.app\/Contents\/Resources\/app-update\.yml/);
+  assert.match(source, /raise "app-update repo is not holaOS"/);
+  assert.match(source, /raise "latest-mac\.yml path does not match uploaded zip"/);
+  assert.match(source, /raise "beta-mac\.yml path does not match uploaded zip"/);
+  assert.match(source, /publish-release:/);
+  assert.match(source, /needs\.verify-macos-release-assets\.result == 'success'/);
+  assert.match(source, /gh release edit "\$\{RELEASE_TAG\}" \\\n\s+--title "\$\{RELEASE_TITLE\}" \\\n\s+--draft=false/);
+  assert.match(source, /\$manifestName = if \(\$primaryChannel -eq "beta"\) \{ "beta\.yml" \} else \{ "latest\.yml" \}/);
+  assert.match(source, /beta\.yml was not generated for stable-channel compatibility/);
   assert.match(builderConfig, /repo: "holaOS"/);
+  assert.match(builderConfig, /generateUpdatesFilesForAllChannels: true/);
+  assert.match(builderConfig, /\.\.\.\(releaseChannel === "beta" \? \{ channel: releaseChannel \} : \{\}\)/);
   assert.match(source, /Desktop typecheck/);
   assert.match(source, /Runtime harness host tests/);
 });
