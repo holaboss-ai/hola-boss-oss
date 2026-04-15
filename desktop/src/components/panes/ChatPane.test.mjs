@@ -198,7 +198,11 @@ test("chat trace summary only surfaces terminal run failures in the summary labe
   );
   assert.match(
     source,
-    /groupHasTerminalError[\s\S]*groupIsLive \|\| runningCount > 0[\s\S]*<Check size=\{13\} className="text-emerald-500" \/>/,
+    /const showLiveSummarySpinner =[\s\S]*\(groupIsLive \|\| runningCount > 0\) && !groupExpanded;/,
+  );
+  assert.match(
+    source,
+    /groupHasTerminalError[\s\S]*showLiveSummarySpinner[\s\S]*groupIsLive \|\| runningCount > 0[\s\S]*<Clock3 size=\{13\} className="mt-0\.5 shrink-0 text-muted-foreground" \/>[\s\S]*<Check size=\{13\} className="mt-0\.5 shrink-0 text-emerald-500" \/>/,
   );
 });
 
@@ -234,7 +238,7 @@ test("chat trace collapsed summary surfaces the current active step", async () =
   );
   assert.match(
     source,
-    /className="flex w-full items-start gap-2 rounded-lg px-2\.5 py-1\.5 -ml-2\.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted\/60"/,
+    /className="flex w-full items-center gap-2 rounded-lg px-2\.5 py-1\.5 -ml-2\.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted\/60"/,
   );
   assert.match(source, /<span className="min-w-0 flex-1 leading-5">/);
 });
@@ -256,9 +260,11 @@ test("chat pane renders live placeholder status as faint text with animated trai
 
   assert.match(source, /aria-live="polite"/);
   assert.match(source, /const normalizedStatus = status\.replace\(\/\\\.\+\$\/, ""\)\.trim\(\);/);
+  assert.match(source, /function LiveStatusLine\(/);
+  assert.match(source, /const normalizedLabel = label\.replace\(\/\\\.\+\$\/, ""\)\.trim\(\);/);
   assert.match(
     source,
-    /className="inline-flex items-baseline gap-0\.5 text-\[12px\] leading-6 text-muted-foreground\/72"/,
+    /className=\{`inline-flex items-baseline gap-0\.5 text-\[12px\] leading-6 text-muted-foreground\/72 \$\{className\}`\.trim\(\)\}/,
   );
   assert.match(source, /function LiveStatusEllipsis\(\)/);
   assert.match(source, /@keyframes status-dot-wave/);
@@ -269,6 +275,23 @@ test("chat pane renders live placeholder status as faint text with animated trai
   assert.doesNotMatch(source, /Queued\.\.\./);
   assert.doesNotMatch(source, /Working\.\.\./);
   assert.doesNotMatch(source, /Checking workspace context\.\.\./);
+});
+
+test("chat pane keeps a persistent working line visible once the live run has streamed content", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const showWorkingStatusLine =\s*live &&\s*\(executionItems\.length > 0 \|\| Boolean\(text\)\);/,
+  );
+  assert.match(
+    source,
+    /showStatusPlaceholder =[\s\S]*live &&[\s\S]*Boolean\(normalizedStatus\) &&[\s\S]*!text &&[\s\S]*executionItems\.length === 0;/,
+  );
+  assert.match(
+    source,
+    /{showWorkingStatusLine \? \(\s*<LiveStatusLine[\s\S]*label="Working"[\s\S]*className=\{executionItems\.length > 0 \? "mt-1" : ""\}/,
+  );
 });
 
 test("chat pane renders an execution timeline that interleaves thinking segments with trace entries", async () => {
@@ -797,6 +820,10 @@ test("live trace auto-expands during the run and collapses when output starts", 
   assert.match(
     source,
     /if \(live && liveOutputStarted && !previousLiveOutputStartedRef\.current\) \{\s*setGroupExpanded\(false\);\s*\}/,
+  );
+  assert.match(
+    source,
+    /const showLiveSummarySpinner =[\s\S]*\(groupIsLive \|\| runningCount > 0\) && !groupExpanded;/,
   );
   assert.match(
     source,
