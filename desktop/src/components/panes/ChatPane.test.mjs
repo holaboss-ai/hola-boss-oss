@@ -334,7 +334,7 @@ test("chat pane groups configured models under provider headings", async () => {
   assert.doesNotMatch(source, /filteredOptions\.map/);
 });
 
-test("chat pane suppresses claude options for the holaboss proxy fallback path", async () => {
+test("chat pane does not suppress claude options for the holaboss proxy fallback path", async () => {
   const source = await readFile(sourcePath, "utf8");
   const presetBlock =
     source.match(/const CHAT_MODEL_PRESETS = \[[\s\S]*?\] as const;/)?.[0] ?? "";
@@ -342,15 +342,51 @@ test("chat pane suppresses claude options for the holaboss proxy fallback path",
   assert.doesNotMatch(presetBlock, /claude-/);
   assert.match(source, /normalized\.startsWith\("google\/"\)/);
   assert.match(source, /normalized\.startsWith\("gemini-"\)/);
-  assert.match(source, /function isClaudeChatModel\(model: string\)/);
   assert.match(
     source,
-    /isUnsupportedHolabossProxyModel\(\s*providerGroup\.providerId,\s*model\.modelId \|\| normalizedToken,\s*\)/,
+    /const runtimeDefaultModelAvailable =[\s\S]*\(holabossProxyModelsAvailable \|\|[\s\S]*!isHolabossProxyModel\(runtimeDefaultModel\)\);/,
   );
-  assert.match(source, /!isClaudeChatModel\(runtimeDefaultModel\)/);
   assert.match(
     source,
-    /!isClaudeChatModel\(model\) &&[\s\S]*holabossProxyModelsAvailable \|\| !isHolabossProxyModel\(model\)/,
+    /holabossProxyModelsAvailable \|\| !isHolabossProxyModel\(model\)/,
+  );
+  assert.doesNotMatch(source, /function isClaudeChatModel\(model: string\)/);
+  assert.doesNotMatch(source, /isUnsupportedHolabossProxyModel\(/);
+  assert.doesNotMatch(source, /!isClaudeChatModel\(runtimeDefaultModel\)/);
+  assert.doesNotMatch(source, /!isClaudeChatModel\(model\) &&/);
+});
+
+test("chat pane gates image attachments using model input modalities metadata", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /function supportsImageInput\(inputModalities\?: readonly string\[\] \| null\): boolean/);
+  assert.match(
+    source,
+    /const selectedInputModalities = selectedConfiguredModel[\s\S]*selectedFallbackModelMetadata\?\.inputModalities \?\? \[\];/,
+  );
+  assert.match(
+    source,
+    /const selectedModelSupportsImageInput = supportsImageInput\(\s*selectedInputModalities,\s*\);/,
+  );
+  assert.match(
+    source,
+    /attachmentLooksLikeImage\(file\.name,\s*file\.type\)/,
+  );
+  assert.match(
+    source,
+    /inferDraggedAttachmentKind\(file\.name,\s*file\.mimeType\) === "image"/,
+  );
+  assert.match(
+    source,
+    /const pendingImageInputUnsupportedMessage =[\s\S]*Remove the attached image or switch models\./,
+  );
+  assert.match(
+    source,
+    /if \(pendingImageInputUnsupportedMessage\) \{\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /submitDisabled=\{Boolean\(\s*pendingImageInputUnsupportedMessage,\s*\)\}/,
   );
 });
 

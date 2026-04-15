@@ -85,7 +85,7 @@ module.exports = {
     {
       provider: "github",
       owner: "holaboss-ai",
-      repo: "holaboss-ai"
+      repo: "holaOS"
     }
   ],
   win: {

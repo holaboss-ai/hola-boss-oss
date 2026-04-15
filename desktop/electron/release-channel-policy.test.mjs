@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const mainSourcePath = path.join(__dirname, "main.ts");
+const electronBuilderConfigPath = path.join(__dirname, "..", "electron-builder.config.cjs");
 const stageRuntimeBundlePath = path.join(
   __dirname,
   "..",
@@ -34,6 +35,7 @@ test("desktop updater uses electron-updater and exposes install-now state", asyn
 
   assert.match(source, /import \{[\s\S]*autoUpdater,[\s\S]*\} from "electron-updater";/);
   assert.match(source, /const APP_UPDATE_SUPPORTED_PLATFORMS = new Set\(\["darwin", "win32"\]\);/);
+  assert.match(source, /const GITHUB_RELEASES_REPO = "holaOS";/);
   assert.match(source, /autoUpdater\.autoDownload = true;/);
   assert.match(source, /autoUpdater\.autoInstallOnAppQuit = true;/);
   assert.match(source, /autoUpdater\.allowPrerelease = false;/);
@@ -74,7 +76,10 @@ test("runtime staging prefers an explicit release tag, then stable releases, the
 });
 
 test("manual CI workflow creates combined desktop releases with bundled runtime assets", async () => {
-  const source = await readFile(ciWorkflowPath, "utf8");
+  const [source, builderConfig] = await Promise.all([
+    readFile(ciWorkflowPath, "utf8"),
+    readFile(electronBuilderConfigPath, "utf8"),
+  ]);
 
   assert.match(source, /^name: CI$/m);
   assert.match(source, /workflow_dispatch:\n\s+inputs:\n\s+ref:/);
@@ -95,13 +100,16 @@ test("manual CI workflow creates combined desktop releases with bundled runtime 
   assert.match(source, /tar -C out\/runtime-macos -czf "out\/\$\{TOOLCHAIN_ASSET_NAME\}" package-metadata\.json node-runtime python-runtime/);
   assert.match(source, /gh release upload "\$\{RELEASE_TAG\}" "out\/\$\{RUNTIME_ASSET_NAME\}" --clobber/);
   assert.match(source, /gh release upload "\$\{RELEASE_TAG\}" "out\/\$\{TOOLCHAIN_ASSET_NAME\}" --clobber/);
-  assert.match(source, /prepackaged_app="\$\{RUNNER_TEMP\}\/Holaboss-prepackaged\.app"/);
+  assert.match(source, /prepackaged_app="\$\{RUNNER_TEMP\}\/Holaboss\.app"/);
   assert.match(source, /ditto "\$\{app_path\}" "\$\{prepackaged_app\}"/);
+  assert.match(source, /node scripts\/write-app-update-config\.mjs "\$\{prepackaged_app\}"/);
+  assert.match(source, /app-update\.yml is missing from prepackaged macOS app bundle/);
   assert.match(source, /--prepackaged "\$\{prepackaged_app\}" \\\n\s+--mac dmg zip \\/);
   assert.match(source, /latest-mac\.yml was not generated/);
+  assert.match(source, /macOS zip does not contain Holaboss\.app as the root app bundle/);
+  assert.match(source, /app-update\.yml is missing from final macOS zip/);
   assert.match(source, /latest\.yml was not generated/);
-  assert.doesNotMatch(source, /app-update\.yml is missing from signed app bundle/);
-  assert.doesNotMatch(source, /app-update\.yml is missing from notarized app bundle/);
+  assert.match(builderConfig, /repo: "holaOS"/);
   assert.match(source, /Desktop typecheck/);
   assert.match(source, /Runtime harness host tests/);
 });

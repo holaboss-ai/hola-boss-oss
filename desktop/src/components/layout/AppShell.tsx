@@ -94,7 +94,7 @@ const SPACE_DISPLAY_MIN_WIDTH = 420;
 const SPACE_EXPLORER_COLLAPSED_WIDTH = 68;
 const UTILITY_PANE_RESIZER_WIDTH = 16;
 const APP_UPDATE_CHANGELOG_BASE_URL =
-  "https://github.com/holaboss-ai/holaboss-ai/releases/tag";
+  "https://github.com/holaboss-ai/holaOS/releases/tag";
 const DEFAULT_PROACTIVE_HEARTBEAT_CRON = "0 9 * * *";
 const MAX_SEEN_TASK_PROPOSAL_IDS_PER_WORKSPACE = 200;
 

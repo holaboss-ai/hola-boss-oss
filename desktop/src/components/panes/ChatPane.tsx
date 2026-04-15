@@ -158,6 +158,44 @@ type PendingAttachment =
   | PendingLocalAttachmentFile
   | PendingExplorerAttachmentFile;
 
+function attachmentLooksLikeImage(
+  name: string,
+  mimeType?: string | null,
+): boolean {
+  const normalizedMimeType = (mimeType ?? "").trim().toLowerCase();
+  if (normalizedMimeType.startsWith("image/")) {
+    return true;
+  }
+  return /\.(avif|bmp|gif|heic|heif|ico|jpe?g|png|svg|webp)$/i.test(
+    name.trim(),
+  );
+}
+
+function pendingAttachmentIsImage(attachment: PendingAttachment): boolean {
+  if (attachment.source === "local-file") {
+    return attachmentLooksLikeImage(attachment.file.name, attachment.file.type);
+  }
+  return (
+    attachment.kind === "image" ||
+    attachmentLooksLikeImage(attachment.name, attachment.mime_type)
+  );
+}
+
+function supportsImageInput(inputModalities?: readonly string[] | null): boolean {
+  if (!Array.isArray(inputModalities) || inputModalities.length === 0) {
+    return true;
+  }
+  return inputModalities.includes("image");
+}
+
+function imageInputUnsupportedMessage(modelLabel: string): string {
+  const normalizedModelLabel = modelLabel.trim();
+  if (!normalizedModelLabel) {
+    return "The selected model doesn't support image inputs.";
+  }
+  return `${normalizedModelLabel} doesn't support image inputs.`;
+}
+
 interface ChatModelOption {
   value: string;
   label: string;
@@ -282,13 +320,6 @@ function isHolabossProxyModel(model: string) {
   );
 }
 
-function isClaudeChatModel(model: string) {
-  const normalized = model.trim().toLowerCase();
-  return /^((openai|anthropic|holaboss|holaboss_model_proxy)\/)*claude-/.test(
-    normalized,
-  );
-}
-
 function isHolabossProviderId(providerId: string) {
   const normalized = providerId.trim().toLowerCase();
   return (
@@ -296,10 +327,6 @@ function isHolabossProviderId(providerId: string) {
     normalized === "holaboss" ||
     normalized.includes("holaboss")
   );
-}
-
-function isUnsupportedHolabossProxyModel(providerId: string, model: string) {
-  return isHolabossProviderId(providerId) && isClaudeChatModel(model);
 }
 
 function isDeprecatedChatModel(model: string) {
@@ -2210,6 +2237,7 @@ export function ChatPane({
   const [isResponding, setIsResponding] = useState(false);
   const [isPausePending, setIsPausePending] = useState(false);
   const [chatErrorMessage, setChatErrorMessage] = useState("");
+  const [attachmentGateMessage, setAttachmentGateMessage] = useState("");
   const [verboseTelemetryEnabled, setVerboseTelemetryEnabled] = useState(false);
   const [composerBlockHeight, setComposerBlockHeight] = useState(0);
   const [chatModelPreference, setChatModelPreference] = useState(
@@ -4162,6 +4190,9 @@ export function ChatPane({
       );
       return;
     }
+    if (pendingImageInputUnsupportedMessage) {
+      return;
+    }
     const pendingSessionTarget = pendingSessionTargetForSend();
     let targetSessionId =
       pendingSessionTarget?.mode === "session"
@@ -4444,9 +4475,30 @@ export function ChatPane({
       return;
     }
 
+    const acceptedFiles: File[] = [];
+    let rejectedImageCount = 0;
+    for (const file of files) {
+      if (
+        !selectedModelSupportsImageInput &&
+        attachmentLooksLikeImage(file.name, file.type)
+      ) {
+        rejectedImageCount += 1;
+        continue;
+      }
+      acceptedFiles.push(file);
+    }
+    setAttachmentGateMessage(
+      rejectedImageCount > 0
+        ? `${imageInputUnsupportedMessage(selectedModelDisplayLabel)} Skipped ${rejectedImageCount} image attachment${rejectedImageCount === 1 ? "" : "s"}.`
+        : "",
+    );
+    if (acceptedFiles.length === 0) {
+      return;
+    }
+
     setPendingAttachments((prev) => [
       ...prev,
-      ...files.map((file) => ({
+      ...acceptedFiles.map((file) => ({
         id: pendingAttachmentId(
           `${file.name}-${file.size}-${file.lastModified}`,
         ),
@@ -4463,9 +4515,30 @@ export function ChatPane({
       return;
     }
 
+    const acceptedFiles: ExplorerAttachmentDragPayload[] = [];
+    let rejectedImageCount = 0;
+    for (const file of files) {
+      if (
+        !selectedModelSupportsImageInput &&
+        inferDraggedAttachmentKind(file.name, file.mimeType) === "image"
+      ) {
+        rejectedImageCount += 1;
+        continue;
+      }
+      acceptedFiles.push(file);
+    }
+    setAttachmentGateMessage(
+      rejectedImageCount > 0
+        ? `${imageInputUnsupportedMessage(selectedModelDisplayLabel)} Skipped ${rejectedImageCount} image attachment${rejectedImageCount === 1 ? "" : "s"}.`
+        : "",
+    );
+    if (acceptedFiles.length === 0) {
+      return;
+    }
+
     setPendingAttachments((prev) => [
       ...prev,
-      ...files.map((file) => ({
+      ...acceptedFiles.map((file) => ({
         id: pendingAttachmentId(`${file.absolutePath}-${file.size}`),
         source: "explorer-path" as const,
         absolutePath: file.absolutePath,
@@ -4653,14 +4726,6 @@ export function ChatPane({
         if (!runtimeModelHasChatCapability(model)) {
           return false;
         }
-        if (
-          isUnsupportedHolabossProxyModel(
-            providerGroup.providerId,
-            model.modelId || normalizedToken,
-          )
-        ) {
-          return false;
-        }
         return true;
       }),
     }))
@@ -4688,7 +4753,6 @@ export function ChatPane({
   const runtimeDefaultModelAvailable =
     !requiresModelProviderSetup &&
     !hasConfiguredProviderCatalog &&
-    !isClaudeChatModel(runtimeDefaultModel) &&
     (holabossProxyModelsAvailable ||
       !isHolabossProxyModel(runtimeDefaultModel));
   const availableChatModelOptionGroups: ChatModelOptionGroup[] =
@@ -4733,8 +4797,7 @@ export function ChatPane({
           .filter((model) => !isDeprecatedChatModel(model))
           .filter(
             (model) =>
-              !isClaudeChatModel(model) &&
-              (holabossProxyModelsAvailable || !isHolabossProxyModel(model)),
+              holabossProxyModelsAvailable || !isHolabossProxyModel(model),
           )
           .map((model) => ({
             value: model,
@@ -4789,6 +4852,16 @@ export function ChatPane({
   const selectedModelSupportsReasoning = selectedConfiguredModel
     ? selectedConfiguredModel.reasoning === true
     : Boolean(selectedFallbackModelMetadata?.reasoning);
+  const selectedInputModalities = selectedConfiguredModel
+    ? selectedConfiguredModel.inputModalities ?? []
+    : selectedFallbackModelMetadata?.inputModalities ?? [];
+  const selectedModelDisplayLabel = selectedConfiguredModel
+    ? runtimeModelDisplayLabel(selectedConfiguredModel)
+    : selectedFallbackModelMetadata?.label?.trim() ||
+      (resolvedChatModel ? displayModelLabel(resolvedChatModel) : "");
+  const selectedModelSupportsImageInput = supportsImageInput(
+    selectedInputModalities,
+  );
   const selectedThinkingValues = selectedConfiguredModel
     ? runtimeModelThinkingValues(selectedConfiguredModel)
     : selectedFallbackModelMetadata?.thinkingValues ?? [];
@@ -4849,6 +4922,11 @@ export function ChatPane({
     composerBaseDisabledReason ||
     (isResponding ? "Current run is still in progress." : "");
   const composerDisabled = Boolean(composerDisabledReason);
+  const pendingImageInputUnsupportedMessage =
+    pendingAttachments.some((attachment) => pendingAttachmentIsImage(attachment)) &&
+    !selectedModelSupportsImageInput
+      ? `${imageInputUnsupportedMessage(selectedModelDisplayLabel)} Remove the attached image or switch models.`
+      : "";
   const showLowBalanceWarning =
     usesHostedManagedCredits && isLowBalance && !isOutOfCredits;
   const showOutOfCreditsWarning = usesHostedManagedCredits && isOutOfCredits;
@@ -4877,6 +4955,10 @@ export function ChatPane({
       };
     });
   }, [effectiveThinkingValue, resolvedChatModel]);
+
+  useEffect(() => {
+    setAttachmentGateMessage("");
+  }, [resolvedChatModel]);
 
   const textareaPlaceholder = isOnboardingVariant
     ? "Answer the onboarding prompt or share setup details"
@@ -5107,11 +5189,26 @@ export function ChatPane({
           </div>
         ) : null}
 
-        {chatErrorMessage || verboseTelemetryEnabled ? (
+        {chatErrorMessage ||
+        attachmentGateMessage ||
+        pendingImageInputUnsupportedMessage ||
+        verboseTelemetryEnabled ? (
           <div className="shrink-0 px-4 pt-3 sm:px-5">
             {chatErrorMessage ? (
               <div className="theme-chat-system-bubble rounded-[14px] border px-3 py-2 text-[11px]">
                 {chatErrorMessage}
+              </div>
+            ) : null}
+
+            {attachmentGateMessage ? (
+              <div className="theme-chat-system-bubble mt-3 rounded-[14px] border px-3 py-2 text-[11px]">
+                {attachmentGateMessage}
+              </div>
+            ) : null}
+
+            {!attachmentGateMessage && pendingImageInputUnsupportedMessage ? (
+              <div className="theme-chat-system-bubble mt-3 rounded-[14px] border px-3 py-2 text-[11px]">
+                {pendingImageInputUnsupportedMessage}
               </div>
             ) : null}
 
@@ -5327,6 +5424,9 @@ export function ChatPane({
                         modelSelectionUnavailableReason={
                           modelSelectionUnavailableReason
                         }
+                        submitDisabled={Boolean(
+                          pendingImageInputUnsupportedMessage,
+                        )}
                         placeholder={textareaPlaceholder}
                         showModelSelector={!isOnboardingVariant}
                         onModelChange={setChatModelPreference}
@@ -5449,6 +5549,9 @@ export function ChatPane({
                     modelSelectionUnavailableReason={
                       modelSelectionUnavailableReason
                     }
+                    submitDisabled={Boolean(
+                      pendingImageInputUnsupportedMessage,
+                    )}
                     placeholder={textareaPlaceholder}
                     showModelSelector={!isOnboardingVariant}
                     onModelChange={setChatModelPreference}
@@ -5716,6 +5819,7 @@ interface ComposerProps {
   thinkingValues: string[];
   showThinkingValueSelector: boolean;
   modelSelectionUnavailableReason: string;
+  submitDisabled?: boolean;
   placeholder: string;
   showModelSelector: boolean;
   onModelChange: (value: string) => void;
@@ -7105,6 +7209,7 @@ function Composer({
   thinkingValues,
   showThinkingValueSelector,
   modelSelectionUnavailableReason,
+  submitDisabled = false,
   placeholder,
   showModelSelector,
   onModelChange,
@@ -7909,7 +8014,8 @@ function Composer({
                   (!input.trim() &&
                     attachments.length === 0 &&
                     quotedSkills.length === 0) ||
-                  disabled
+                  disabled ||
+                  submitDisabled
                 }
                 render={<button type="submit" />}
                 className="rounded-full"

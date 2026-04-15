@@ -549,9 +549,14 @@ jobs:
             echo "notarized app bundle was not produced correctly: ${app_path}" >&2
             exit 1
           fi
-          prepackaged_app="${RUNNER_TEMP}/Holaboss-prepackaged.app"
+          prepackaged_app="${RUNNER_TEMP}/Holaboss.app"
           rm -rf "${prepackaged_app}"
           ditto "${app_path}" "${prepackaged_app}"
+          node scripts/write-app-update-config.mjs "${prepackaged_app}"
+          if [ ! -f "${prepackaged_app}/Contents/Resources/app-update.yml" ]; then
+            echo "app-update.yml is missing from prepackaged macOS app bundle" >&2
+            exit 1
+          fi
           rm -rf out/release
           node scripts/run-electron-builder.mjs \
             --projectDir "$PWD" \
@@ -577,6 +582,14 @@ jobs:
           fi
           if [ ! -f "${manifest_path}" ]; then
             echo "latest-mac.yml was not generated" >&2
+            exit 1
+          fi
+          if ! zipinfo -1 "${zip_path}" | grep -Eq '^Holaboss\.app/'; then
+            echo "macOS zip does not contain Holaboss.app as the root app bundle" >&2
+            exit 1
+          fi
+          if ! zipinfo -1 "${zip_path}" | grep -Fxq 'Holaboss.app/Contents/Resources/app-update.yml'; then
+            echo "app-update.yml is missing from final macOS zip" >&2
             exit 1
           fi
 

@@ -146,7 +146,7 @@ const APP_THEMES = new Set([
   "graphite",
 ]);
 const GITHUB_RELEASES_OWNER = "holaboss-ai";
-const GITHUB_RELEASES_REPO = "holaboss-ai";
+const GITHUB_RELEASES_REPO = "holaOS";
 const TOOLCHAIN_RELEASE_ASSET_NAMES = {
   macos: "holaboss-toolchain-macos.tar.gz",
   linux: "holaboss-toolchain-linux.tar.gz",
@@ -6381,25 +6381,6 @@ function isDeprecatedRuntimeModelId(modelId: string): boolean {
   return RUNTIME_DEPRECATED_MODEL_IDS.has(normalized);
 }
 
-function isClaudeRuntimeModelId(modelId: string): boolean {
-  const normalized = modelId.trim().toLowerCase();
-  return /^((openai|anthropic|holaboss|holaboss_model_proxy)\/)*claude-/.test(
-    normalized,
-  );
-}
-
-function isUnsupportedHolabossRuntimeModel(
-  providerId: string,
-  modelId: string,
-): boolean {
-  const normalizedProviderId = canonicalRuntimeProviderId(providerId);
-  return (
-    RUNTIME_HOLABOSS_PROVIDER_ALIASES.some(
-      (alias) => alias === normalizedProviderId,
-    ) && isClaudeRuntimeModelId(modelId)
-  );
-}
-
 const RUNTIME_MODEL_CAPABILITY_ALIASES: Record<string, string> = {
   chat: "chat",
   text: "chat",
@@ -6672,8 +6653,7 @@ function normalizeRuntimeProviderModelGroups(
       );
       if (
         !modelId ||
-        isDeprecatedRuntimeModelId(modelId) ||
-        isUnsupportedHolabossRuntimeModel(providerId, modelId)
+        isDeprecatedRuntimeModelId(modelId)
       ) {
         continue;
       }
@@ -6738,7 +6718,6 @@ function normalizeRuntimeHolabossCatalogDefaultModelId(
   );
   if (
     !modelId ||
-    isUnsupportedHolabossRuntimeModel(RUNTIME_HOLABOSS_PROVIDER_ID, modelId) ||
     isDeprecatedRuntimeModelId(modelId)
   ) {
     return "";
@@ -6785,10 +6764,6 @@ function runtimeProviderModelGroups(
     if (
       !normalizedProviderId ||
       !normalizedModelId ||
-      isUnsupportedHolabossRuntimeModel(
-        normalizedProviderId,
-        normalizedModelId,
-      ) ||
       isDeprecatedRuntimeModelId(normalizedModelId)
     ) {
       return;
