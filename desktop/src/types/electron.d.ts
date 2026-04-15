@@ -250,6 +250,7 @@ declare global {
   }
 
   type RuntimeUserProfileNameSource = "manual" | "agent" | "authFallback";
+  type AppUpdateChannel = "latest" | "beta";
 
   interface RuntimeUserProfilePayload {
     profileId: string;
@@ -278,6 +279,8 @@ declare global {
     dismissedVersion: string | null;
     lastCheckedAt: string | null;
     error: string;
+    channel: AppUpdateChannel;
+    preferredChannel: AppUpdateChannel | null;
   }
 
   interface DesktopWindowStatePayload {
@@ -1328,6 +1331,7 @@ declare global {
       getStatus: () => Promise<AppUpdateStatusPayload>;
       checkNow: () => Promise<AppUpdateStatusPayload>;
       dismiss: (version?: string | null) => Promise<AppUpdateStatusPayload>;
+      setChannel: (channel: AppUpdateChannel) => Promise<AppUpdateStatusPayload>;
       installNow: () => Promise<void>;
       onStateChange: (listener: (status: AppUpdateStatusPayload) => void) => () => void;
     };

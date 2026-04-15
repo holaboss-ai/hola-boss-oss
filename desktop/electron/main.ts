@@ -670,9 +670,12 @@ interface AuthErrorPayload {
   path: string;
 }
 
+type AppUpdateChannel = "latest" | "beta";
+
 interface AppUpdatePreferencesPayload {
   dismissedVersion?: string | null;
   dismissedReleaseTag?: string | null;
+  preferredChannel?: AppUpdateChannel | null;
 }
 
 interface AppUpdateStatusPayload {
@@ -688,6 +691,8 @@ interface AppUpdateStatusPayload {
   dismissedVersion: string | null;
   lastCheckedAt: string | null;
   error: string;
+  channel: AppUpdateChannel;
+  preferredChannel: AppUpdateChannel | null;
 }
 
 interface DesktopWindowStatePayload {
@@ -796,6 +801,8 @@ let appUpdateStatus: AppUpdateStatusPayload = {
   dismissedVersion: null,
   lastCheckedAt: null,
   error: "",
+  channel: "latest",
+  preferredChannel: null,
 };
 
 // Port 5060 is SIP — blocked by Node.js fetch (undici "bad port").
@@ -955,7 +962,6 @@ function loadPackagedDesktopConfig(): PackagedDesktopConfig {
 }
 
 const packagedDesktopConfig = loadPackagedDesktopConfig();
-type AppUpdateChannel = "latest" | "beta";
 
 function normalizeAppUpdateChannel(
   value: string | null | undefined,
@@ -973,10 +979,28 @@ function normalizeAppUpdateChannel(
   return null;
 }
 
-const CONFIGURED_APP_UPDATE_CHANNEL =
-  normalizeAppUpdateChannel(process.env.HOLABOSS_APP_UPDATE_CHANNEL) ??
-  normalizeAppUpdateChannel(packagedDesktopConfig.updateChannel) ??
-  "latest";
+const DEFAULT_APP_UPDATE_CHANNEL =
+  normalizeAppUpdateChannel(packagedDesktopConfig.updateChannel) ?? "latest";
+
+function preferredAppUpdateChannel(): AppUpdateChannel | null {
+  return normalizeAppUpdateChannel(appUpdatePreferences.preferredChannel);
+}
+
+function effectiveAppUpdateChannel(): AppUpdateChannel {
+  return (
+    normalizeAppUpdateChannel(process.env.HOLABOSS_APP_UPDATE_CHANNEL) ??
+    preferredAppUpdateChannel() ??
+    DEFAULT_APP_UPDATE_CHANNEL
+  );
+}
+
+function syncAppUpdateChannelState() {
+  appUpdateStatus = {
+    ...appUpdateStatus,
+    channel: effectiveAppUpdateChannel(),
+    preferredChannel: preferredAppUpdateChannel(),
+  };
+}
 const INTERNAL_DEV_BACKEND_OVERRIDES_ENABLED =
   Boolean(RESOLVED_DEV_SERVER_URL) ||
   process.env.HOLABOSS_INTERNAL_DEV?.trim() === "1";
@@ -1379,6 +1403,13 @@ function clampDownloadProgressPercent(progress: ProgressInfo) {
   return Math.max(0, Math.min(100, progress.percent));
 }
 
+function applyAutoUpdaterChannelConfiguration() {
+  const channel = effectiveAppUpdateChannel();
+  autoUpdater.allowPrerelease = channel === "beta";
+  autoUpdater.channel = channel;
+  syncAppUpdateChannelState();
+}
+
 function configureAutoUpdater() {
   if (!appUpdateSupported() || appUpdateEventsConfigured) {
     return;
@@ -1387,10 +1418,7 @@ function configureAutoUpdater() {
   appUpdateEventsConfigured = true;
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.allowPrerelease = CONFIGURED_APP_UPDATE_CHANNEL === "beta";
-  if (CONFIGURED_APP_UPDATE_CHANNEL === "beta") {
-    autoUpdater.channel = "beta";
-  }
+  applyAutoUpdaterChannelConfiguration();
 
   autoUpdater.on("checking-for-update", () => {
     appUpdateStatus = {
@@ -1563,6 +1591,51 @@ async function dismissAppUpdate(
   return appUpdateStatus;
 }
 
+async function setAppUpdateChannel(
+  channel: AppUpdateChannel,
+): Promise<AppUpdateStatusPayload> {
+  const nextChannel = normalizeAppUpdateChannel(channel);
+  if (!nextChannel) {
+    throw new Error("Unsupported app update channel.");
+  }
+
+  const previousEffectiveChannel = effectiveAppUpdateChannel();
+  const previousPreferredChannel = preferredAppUpdateChannel();
+  appUpdatePreferences = {
+    ...appUpdatePreferences,
+    preferredChannel: nextChannel,
+  };
+  await persistAppUpdatePreferences();
+  syncAppUpdateChannelState();
+
+  const effectiveChannelChanged =
+    effectiveAppUpdateChannel() !== previousEffectiveChannel;
+  const preferredChannelChanged = previousPreferredChannel !== nextChannel;
+  if (!appUpdateSupported() || (!effectiveChannelChanged && !preferredChannelChanged)) {
+    emitAppUpdateState();
+    return appUpdateStatus;
+  }
+
+  configureAutoUpdater();
+  applyAutoUpdaterChannelConfiguration();
+  appUpdateStatus = {
+    ...appUpdateStatus,
+    checking: false,
+    available: false,
+    downloaded: false,
+    downloadProgressPercent: null,
+    latestVersion: null,
+    releaseName: null,
+    publishedAt: null,
+    lastCheckedAt: null,
+    error: "",
+    currentVersion: currentAppVersion(),
+    dismissedVersion: dismissedAppUpdateVersion(),
+  };
+  emitAppUpdateState();
+  return checkForAppUpdates();
+}
+
 function installAppUpdateNow() {
   if (!appUpdateSupported()) {
     throw new Error("In-app updates are unavailable on this build.");
@@ -1604,6 +1677,8 @@ appUpdateStatus = {
   ...appUpdateStatus,
   supported: appUpdateSupported(),
   dismissedVersion: dismissedAppUpdateVersion(),
+  channel: effectiveAppUpdateChannel(),
+  preferredChannel: preferredAppUpdateChannel(),
 };
 
 const desktopAuthClient =
@@ -19188,6 +19263,11 @@ app.whenReady().then(async () => {
     "appUpdate:dismiss",
     ["main"],
     async (_event, version?: string | null) => dismissAppUpdate(version),
+  );
+  handleTrustedIpc(
+    "appUpdate:setChannel",
+    ["main"],
+    async (_event, channel: AppUpdateChannel) => setAppUpdateChannel(channel),
   );
   handleTrustedIpc("appUpdate:installNow", ["main"], async () => {
     installAppUpdateNow();

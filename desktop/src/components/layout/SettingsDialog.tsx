@@ -29,6 +29,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 
 const THEME_SWATCHES: Record<string, [string, string, string]> = {
@@ -165,6 +166,9 @@ export function SettingsDialog({
     message: "",
     bundlePath: "",
   });
+  const [appUpdateStatus, setAppUpdateStatus] =
+    useState<AppUpdateStatusPayload | null>(null);
+  const [appUpdateChannelPending, setAppUpdateChannelPending] = useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -182,6 +186,20 @@ export function SettingsDialog({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [open, onClose]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    void window.electronAPI.appUpdate.getStatus().then((status) => {
+      setAppUpdateStatus(status);
+    });
+    const unsubscribe = window.electronAPI.appUpdate.onStateChange((status) => {
+      setAppUpdateStatus(status);
+    });
+    return unsubscribe;
+  }, [open]);
 
   useEffect(() => {
     if (!open) {
@@ -217,9 +235,26 @@ export function SettingsDialog({
     }
   }
 
+  async function handleSetBetaChannel(checked: boolean) {
+    setAppUpdateChannelPending(true);
+    try {
+      const status = await window.electronAPI.appUpdate.setChannel(
+        checked ? "beta" : "latest",
+      );
+      setAppUpdateStatus(status);
+    } finally {
+      setAppUpdateChannelPending(false);
+    }
+  }
+
   if (!open) {
     return null;
   }
+
+  const betaChannelEnabled = appUpdateStatus?.channel === "beta";
+  const appUpdateChannelUnavailable = appUpdateStatus
+    ? !appUpdateStatus.supported
+    : true;
 
   return (
     <div className="pointer-events-none absolute inset-0 z-50 grid place-items-center px-4 py-6">
@@ -448,6 +483,36 @@ export function SettingsDialog({
                     >
                       v{displayAppVersion}
                     </Badge>
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between gap-4 rounded-[18px] border border-border/40 bg-card/80 px-4 py-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                        <span>Beta updates</span>
+                        <Badge
+                          variant="outline"
+                          className="rounded-full border-border/45 bg-background/80 text-[11px] text-muted-foreground"
+                        >
+                          {betaChannelEnabled ? "Beta" : "Latest"}
+                        </Badge>
+                      </div>
+                      <div className="mt-1 text-sm text-muted-foreground">
+                        {appUpdateChannelUnavailable
+                          ? "In-app update channels are unavailable on this build."
+                          : "Opt into beta desktop releases before they reach the stable channel."}
+                      </div>
+                    </div>
+
+                    <Switch
+                      checked={betaChannelEnabled}
+                      disabled={
+                        appUpdateChannelPending || appUpdateChannelUnavailable
+                      }
+                      onCheckedChange={(checked) => {
+                        void handleSetBetaChannel(checked);
+                      }}
+                      aria-label="Enable beta updates"
+                    />
                   </div>
                 </section>
 

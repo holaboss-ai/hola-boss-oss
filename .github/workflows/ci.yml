@@ -493,7 +493,6 @@ jobs:
             exit 1
           fi
           app_path="$(cd "$(dirname "${app_path}")" && pwd)/$(basename "${app_path}")"
-          node scripts/write-app-update-config.mjs "${app_path}"
           if [ ! -f "${app_path}/Contents/Resources/app-update.yml" ]; then
             echo "app-update.yml is missing from signed macOS app bundle" >&2
             exit 1

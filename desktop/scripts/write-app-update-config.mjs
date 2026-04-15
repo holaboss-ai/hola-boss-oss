@@ -42,14 +42,10 @@ function resolveUpdaterCacheDirName() {
   return `${sanitizeFileName(packageJson.name).toLowerCase()}-updater`;
 }
 
-async function main() {
-  const appBundlePath = process.argv[2]?.trim();
-  if (!appBundlePath) {
-    throw new Error(
-      "Usage: node scripts/write-app-update-config.mjs <path-to-app-bundle>",
-    );
+export async function writeAppUpdateConfig(appBundlePath) {
+  if (!appBundlePath?.trim()) {
+    throw new Error("A macOS app bundle path is required.");
   }
-
   const publishConfig = resolveAppUpdatePublishConfig();
   const updaterConfig = {
     ...publishConfig,
@@ -67,4 +63,16 @@ async function main() {
   process.stdout.write(`[app-update-config] wrote ${path.relative(desktopRoot, outputPath)}\n`);
 }
 
-await main();
+async function main() {
+  const appBundlePath = process.argv[2]?.trim();
+  if (!appBundlePath) {
+    throw new Error(
+      "Usage: node scripts/write-app-update-config.mjs <path-to-app-bundle>",
+    );
+  }
+  await writeAppUpdateConfig(appBundlePath);
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  await main();
+}

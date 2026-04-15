@@ -11,6 +11,7 @@ test("settings dialog includes an automations section with a workspace selector"
   assert.match(source, /import \{ AutomationsPane \} from "@\/components\/panes\/AutomationsPane";/);
   assert.match(source, /import \{ useWorkspaceDesktop \} from "@\/lib\/workspaceDesktop";/);
   assert.match(source, /import \{\s*Select,\s*SelectContent,\s*SelectItem,\s*SelectTrigger,\s*SelectValue,\s*\} from "@\/components\/ui\/select";/);
+  assert.match(source, /import \{ Switch \} from "@\/components\/ui\/switch";/);
   assert.match(source, /\{ id: "automations", label: "Automations", icon: Workflow \}/);
   assert.match(source, /case "automations":\s*return "Automations";/);
   assert.match(source, /const \{ workspaces, selectedWorkspace \} = useWorkspaceDesktop\(\);/);
@@ -32,10 +33,20 @@ test("settings dialog about section shows the app version", async () => {
   const source = await readFile(SETTINGS_DIALOG_PATH, "utf8");
 
   assert.match(source, /const displayAppVersion = appVersion\.trim\(\) \|\| "Unavailable";/);
+  assert.match(source, /const \[appUpdateStatus, setAppUpdateStatus\] =\s*useState<AppUpdateStatusPayload \| null>\(null\);/);
+  assert.match(source, /const \[appUpdateChannelPending, setAppUpdateChannelPending\] = useState\(false\);/);
+  assert.match(source, /window\.electronAPI\.appUpdate\.getStatus\(\)/);
+  assert.match(source, /window\.electronAPI\.appUpdate\.onStateChange\(\(status\) => \{/);
+  assert.match(source, /async function handleSetBetaChannel\(checked: boolean\)/);
+  assert.match(source, /window\.electronAPI\.appUpdate\.setChannel\(\s*checked \? "beta" : "latest",?\s*\)/);
   assert.match(source, /activeSection === "about" \? \(/);
   assert.match(source, /Holaboss Desktop/);
   assert.match(source, /Version/);
   assert.match(source, /v\{displayAppVersion\}/);
+  assert.match(source, /Beta updates/);
+  assert.match(source, /Opt into beta desktop releases before they reach the stable channel\./);
+  assert.match(source, /<Switch[\s\S]*checked=\{betaChannelEnabled\}/);
+  assert.match(source, /aria-label="Enable beta updates"/);
 });
 
 test("settings nav lists automations below model providers", async () => {

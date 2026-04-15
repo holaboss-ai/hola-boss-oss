@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 
 function resolveRuntimePlatform() {
   const explicitPlatform = (process.env.HOLABOSS_RUNTIME_PLATFORM || "").trim().toLowerCase();
@@ -129,5 +130,20 @@ module.exports = {
         `Missing staged runtime bundle at ${runtimeBundlePath}. Run the matching prepare:runtime command before packaging.`
       );
     }
+  },
+  afterPack: async (context) => {
+    if (context.electronPlatformName !== "darwin") {
+      return;
+    }
+    const { writeAppUpdateConfig } = await import(
+      pathToFileURL(
+        path.join(__dirname, "scripts", "write-app-update-config.mjs")
+      ).href
+    );
+    const appBundlePath = path.join(
+      context.appOutDir,
+      `${context.packager.appInfo.productFilename}.app`
+    );
+    await writeAppUpdateConfig(appBundlePath);
   }
 };

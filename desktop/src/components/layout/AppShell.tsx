@@ -706,6 +706,8 @@ function buildDevAppUpdatePreviewStatus(
     dismissedVersion: null,
     lastCheckedAt: now,
     error: "",
+    channel: "latest",
+    preferredChannel: null,
   };
 }
 

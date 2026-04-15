@@ -242,6 +242,8 @@ interface RuntimeConfigUpdatePayload {
   controlPlaneBaseUrl?: string | null;
 }
 
+type AppUpdateChannel = "latest" | "beta";
+
 interface AppUpdateStatusPayload {
   supported: boolean;
   checking: boolean;
@@ -255,6 +257,8 @@ interface AppUpdateStatusPayload {
   dismissedVersion: string | null;
   lastCheckedAt: string | null;
   error: string;
+  channel: AppUpdateChannel;
+  preferredChannel: AppUpdateChannel | null;
 }
 
 interface WorkbenchOpenBrowserPayload {
@@ -1118,6 +1122,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getStatus: () => ipcRenderer.invoke("appUpdate:getStatus") as Promise<AppUpdateStatusPayload>,
     checkNow: () => ipcRenderer.invoke("appUpdate:checkNow") as Promise<AppUpdateStatusPayload>,
     dismiss: (version?: string | null) => ipcRenderer.invoke("appUpdate:dismiss", version) as Promise<AppUpdateStatusPayload>,
+    setChannel: (channel: AppUpdateChannel) => ipcRenderer.invoke("appUpdate:setChannel", channel) as Promise<AppUpdateStatusPayload>,
     installNow: () => ipcRenderer.invoke("appUpdate:installNow") as Promise<void>,
     onStateChange: (listener: (status: AppUpdateStatusPayload) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, status: AppUpdateStatusPayload) => listener(status);
