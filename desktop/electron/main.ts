@@ -90,6 +90,7 @@ import { ensureWorkspaceGitRepo } from "./workspace-git.js";
 
 const APP_DISPLAY_NAME = "Holaboss";
 const AUTH_CALLBACK_PROTOCOL = "ai.holaboss.app";
+const DESKTOP_LAUNCH_ID = randomUUID();
 const verboseTelemetryEnabled =
   process.env.HOLABOSS_VERBOSE_TELEMETRY?.trim() === "1";
 const chromiumStderrLoggingEnabled =
@@ -4929,6 +4930,23 @@ function migrateRuntimeInstallationStateTable(database: Database.Database) {
   `);
 }
 
+function migrateRuntimeProcessStateTable(database: Database.Database) {
+  const tableInfo = database
+    .prepare("PRAGMA table_info(runtime_process_state)")
+    .all() as Array<{ name: string }>;
+  if (!tableInfo.length) {
+    return;
+  }
+
+  const columns = new Set(tableInfo.map((column) => column.name));
+  if (!columns.has("launch_id")) {
+    database.exec("ALTER TABLE runtime_process_state ADD COLUMN launch_id TEXT;");
+  }
+  if (!columns.has("sandbox_root")) {
+    database.exec("ALTER TABLE runtime_process_state ADD COLUMN sandbox_root TEXT;");
+  }
+}
+
 async function bootstrapRuntimeDatabase() {
   await fs.mkdir(path.dirname(runtimeDatabasePath()), { recursive: true });
 
@@ -4936,6 +4954,7 @@ async function bootstrapRuntimeDatabase() {
   try {
     migrateLocalWorkspacesTable(database);
     migrateRuntimeInstallationStateTable(database);
+    migrateRuntimeProcessStateTable(database);
     database.exec(`
       CREATE TABLE IF NOT EXISTS runtime_installation_state (
         installation_key TEXT PRIMARY KEY,
@@ -5074,6 +5093,8 @@ async function bootstrapRuntimeDatabase() {
         bind_host TEXT,
         bind_port INTEGER,
         base_url TEXT,
+        launch_id TEXT,
+        sandbox_root TEXT,
         last_started_at TEXT,
         last_stopped_at TEXT,
         last_healthy_at TEXT,
@@ -5170,6 +5191,8 @@ function persistRuntimeProcessState(update: {
           bind_host,
           bind_port,
           base_url,
+          launch_id,
+          sandbox_root,
           last_started_at,
           last_stopped_at,
           last_healthy_at,
@@ -5182,6 +5205,8 @@ function persistRuntimeProcessState(update: {
           @bind_host,
           @bind_port,
           @base_url,
+          @launch_id,
+          @sandbox_root,
           @last_started_at,
           @last_stopped_at,
           @last_healthy_at,
@@ -5194,6 +5219,8 @@ function persistRuntimeProcessState(update: {
           bind_host = excluded.bind_host,
           bind_port = excluded.bind_port,
           base_url = excluded.base_url,
+          launch_id = excluded.launch_id,
+          sandbox_root = excluded.sandbox_root,
           last_started_at = COALESCE(excluded.last_started_at, runtime_process_state.last_started_at),
           last_stopped_at = COALESCE(excluded.last_stopped_at, runtime_process_state.last_stopped_at),
           last_healthy_at = COALESCE(excluded.last_healthy_at, runtime_process_state.last_healthy_at),
@@ -5208,12 +5235,93 @@ function persistRuntimeProcessState(update: {
         bind_host: "127.0.0.1",
         bind_port: runtimeApiPort(),
         base_url: runtimeBaseUrl(),
+        launch_id: DESKTOP_LAUNCH_ID,
+        sandbox_root: runtimeSandboxRoot(),
         last_started_at: update.lastStartedAt ?? null,
         last_stopped_at: update.lastStoppedAt ?? null,
         last_healthy_at: update.lastHealthyAt ?? null,
         last_error: update.lastError ?? null,
         updated_at: utcNowIso(),
       });
+  } finally {
+    database.close();
+  }
+}
+
+type PersistedRuntimeProcessStateRecord = {
+  pid: number | null;
+  status: string;
+  bindHost: string | null;
+  bindPort: number | null;
+  baseUrl: string | null;
+  launchId: string | null;
+  sandboxRoot: string | null;
+  lastStartedAt: string | null;
+  lastStoppedAt: string | null;
+  lastHealthyAt: string | null;
+  lastError: string | null;
+  updatedAt: string;
+};
+
+function readPersistedRuntimeProcessState(): PersistedRuntimeProcessStateRecord | null {
+  const database = openRuntimeDatabase();
+  try {
+    const row = database
+      .prepare(
+        `
+        SELECT
+          pid,
+          status,
+          bind_host,
+          bind_port,
+          base_url,
+          launch_id,
+          sandbox_root,
+          last_started_at,
+          last_stopped_at,
+          last_healthy_at,
+          last_error,
+          updated_at
+        FROM runtime_process_state
+        WHERE process_key = ?
+        LIMIT 1
+      `,
+      )
+      .get("embedded-runtime") as
+      | {
+          pid: number | null;
+          status: string;
+          bind_host: string | null;
+          bind_port: number | null;
+          base_url: string | null;
+          launch_id: string | null;
+          sandbox_root: string | null;
+          last_started_at: string | null;
+          last_stopped_at: string | null;
+          last_healthy_at: string | null;
+          last_error: string | null;
+          updated_at: string;
+        }
+      | undefined;
+    if (!row) {
+      return null;
+    }
+    return {
+      pid: typeof row.pid === "number" ? row.pid : null,
+      status: row.status,
+      bindHost: row.bind_host,
+      bindPort: typeof row.bind_port === "number" ? row.bind_port : null,
+      baseUrl: row.base_url,
+      launchId: row.launch_id,
+      sandboxRoot: row.sandbox_root,
+      lastStartedAt: row.last_started_at,
+      lastStoppedAt: row.last_stopped_at,
+      lastHealthyAt: row.last_healthy_at,
+      lastError: row.last_error,
+      updatedAt: row.updated_at,
+    };
+  } catch {
+    return null;
   } finally {
     database.close();
   }
@@ -13653,6 +13761,199 @@ async function isRuntimeHealthy(url: string) {
   });
 }
 
+function persistedRuntimeMatchesCurrentLaunch(
+  record: PersistedRuntimeProcessStateRecord | null,
+  sandboxRoot: string,
+) {
+  return (
+    record?.launchId === DESKTOP_LAUNCH_ID &&
+    record?.sandboxRoot === sandboxRoot
+  );
+}
+
+function processExists(pid: number) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException | undefined)?.code !== "ESRCH";
+  }
+}
+
+async function killRuntimeProcessByPid(pid: number) {
+  if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) {
+    return false;
+  }
+
+  if (process.platform === "win32") {
+    await killWindowsProcessTree(pid);
+    return !processExists(pid);
+  }
+
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return !processExists(pid);
+  }
+
+  for (let attempt = 0; attempt < 15; attempt += 1) {
+    if (!processExists(pid)) {
+      return true;
+    }
+    await sleep(100);
+  }
+
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    return !processExists(pid);
+  }
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if (!processExists(pid)) {
+      return true;
+    }
+    await sleep(100);
+  }
+
+  return !processExists(pid);
+}
+
+function windowsPowerShellPath() {
+  const systemRoot = (process.env.SystemRoot ?? process.env.windir ?? "C:\\Windows").trim();
+  if (!systemRoot) {
+    return "powershell.exe";
+  }
+  return path.win32.join(
+    systemRoot,
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  );
+}
+
+function killRuntimePortListener(port: number) {
+  if (!Number.isInteger(port) || port <= 0) {
+    return;
+  }
+
+  try {
+    if (process.platform === "win32") {
+      execFileSync(
+        windowsPowerShellPath(),
+        [
+          "-NoLogo",
+          "-NoProfile",
+          "-NonInteractive",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-Command",
+          [
+            `$port = ${port};`,
+            "Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue |",
+            "  Where-Object { $_.State -eq 'Listen' } |",
+            "  Select-Object -ExpandProperty OwningProcess -Unique |",
+            "  ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }",
+          ].join(" "),
+        ],
+        {
+          stdio: "ignore",
+          windowsHide: true,
+        },
+      );
+      return;
+    }
+
+    // Restrict to LISTEN state so health-check sockets do not kill the caller.
+    execFileSync(
+      "/bin/bash",
+      [
+        "-lc",
+        `command -v lsof >/dev/null 2>&1 && kill $(lsof -nP -iTCP:${port} -sTCP:LISTEN -t 2>/dev/null) 2>/dev/null || true`,
+      ],
+      {
+        stdio: "ignore",
+      },
+    );
+  } catch {
+    // Ignore best-effort stale-port cleanup failures.
+  }
+}
+
+async function waitForRuntimeShutdown(
+  url: string,
+  attempts = 20,
+  delayMs = 150,
+) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (!(await isRuntimeHealthy(url))) {
+      return true;
+    }
+    await sleep(delayMs);
+  }
+  return !(await isRuntimeHealthy(url));
+}
+
+async function terminateDetachedRuntime(params: {
+  reason: string;
+  url: string;
+  sandboxRoot: string;
+}) {
+  const persisted = readPersistedRuntimeProcessState();
+  const pid = persisted?.pid ?? null;
+  if (pid !== null) {
+    await killRuntimeProcessByPid(pid);
+  }
+  let stopped = await waitForRuntimeShutdown(params.url, 10, 150);
+  if (!stopped) {
+    killRuntimePortListener(runtimeApiPort());
+    stopped = await waitForRuntimeShutdown(params.url, 20, 150);
+  }
+
+  appendRuntimeEventLog({
+    category: "runtime",
+    event: "embedded_runtime.detached_cleanup",
+    outcome: stopped ? "success" : "error",
+    detail: `reason=${params.reason} launch_id=${persisted?.launchId ?? "unknown"} pid=${pid ?? "null"} sandbox_root=${persisted?.sandboxRoot ?? params.sandboxRoot}`,
+  });
+
+  if (stopped) {
+    persistRuntimeProcessState({
+      pid: null,
+      status: "stopped",
+      lastStoppedAt: utcNowIso(),
+      lastError: "",
+    });
+  }
+
+  return {
+    stopped,
+    persisted,
+  };
+}
+
+async function ensureRuntimePortAvailable(params: {
+  url: string;
+  sandboxRoot: string;
+  reason: string;
+}) {
+  if (!(await isRuntimeHealthy(params.url))) {
+    return "available" as const;
+  }
+
+  const persisted = readPersistedRuntimeProcessState();
+  if (persistedRuntimeMatchesCurrentLaunch(persisted, params.sandboxRoot)) {
+    return "reused" as const;
+  }
+
+  const { stopped } = await terminateDetachedRuntime(params);
+  return stopped ? ("available" as const) : ("blocked" as const);
+}
+
 function runtimeUnavailableStatus(hasBundle: boolean): RuntimeStatus {
   if (runtimeStartupInFlight && hasBundle) {
     return "starting";
@@ -13677,6 +13978,13 @@ async function refreshRuntimeStatus() {
     ? await resolveRuntimeExecutablePath(runtimeRoot)
     : null;
   const sandboxRoot = runtimeSandboxRoot();
+  const persisted = readPersistedRuntimeProcessState();
+  const persistedPid = persistedRuntimeMatchesCurrentLaunch(
+    persisted,
+    sandboxRoot,
+  )
+    ? persisted?.pid ?? null
+    : null;
   const harness = process.env.HOLABOSS_RUNTIME_HARNESS || "pi";
   const workflowBackend =
     process.env.HOLABOSS_RUNTIME_WORKFLOW_BACKEND || "remote_api";
@@ -13686,7 +13994,7 @@ async function refreshRuntimeStatus() {
 
   if (healthy) {
     persistRuntimeProcessState({
-      pid: runtimeProcess?.pid ?? null,
+      pid: runtimeProcess?.pid ?? persistedPid,
       status: "running",
       lastHealthyAt: utcNowIso(),
       lastError: "",
@@ -13698,7 +14006,7 @@ async function refreshRuntimeStatus() {
       sandboxRoot,
       executablePath,
       url,
-      pid: runtimeProcess?.pid ?? null,
+      pid: runtimeProcess?.pid ?? persistedPid,
       harness,
       lastError: "",
     });
@@ -13732,6 +14040,34 @@ async function stopEmbeddedRuntime() {
     const running = runtimeProcess;
     runtimeProcess = null;
     if (!running) {
+      const url = runtimeBaseUrl();
+      if (await isRuntimeHealthy(url)) {
+        const { stopped } = await terminateDetachedRuntime({
+          reason: "quit_without_child_handle",
+          url,
+          sandboxRoot: runtimeSandboxRoot(),
+        });
+        const nextStatus = stopped ? "stopped" : "error";
+        const nextError = stopped
+          ? ""
+          : "Runtime is still responding after detached cleanup.";
+        runtimeStatus = withDesktopBrowserStatus({
+          ...runtimeStatus,
+          status: nextStatus,
+          pid: null,
+          lastError: nextError,
+        });
+        if (!stopped) {
+          persistRuntimeProcessState({
+            pid: null,
+            status: "error",
+            lastStoppedAt: utcNowIso(),
+            lastError: nextError,
+          });
+        }
+        emitRuntimeState();
+        return;
+      }
       if (
         runtimeStatus.status === "running" ||
         runtimeStatus.status === "starting"
@@ -13848,12 +14184,39 @@ async function startEmbeddedRuntime() {
         process.env.HOLABOSS_RUNTIME_WORKFLOW_BACKEND || "remote_api";
       const url = runtimeBaseUrl();
 
-      // A previous Electron process can leave the embedded runtime alive across
-      // an app restart or upgrade. Reuse that healthy process without emitting a
-      // synthetic "starting" state that would bounce the renderer back into
-      // workspace activation.
-      if (await isRuntimeHealthy(url)) {
+      await fs.mkdir(sandboxRoot, { recursive: true });
+      await bootstrapRuntimeDatabase();
+
+      const preflightRuntimePort = await ensureRuntimePortAvailable({
+        url,
+        sandboxRoot,
+        reason: "startup_preflight",
+      });
+      if (preflightRuntimePort === "reused") {
         return refreshRuntimeStatus();
+      }
+      if (preflightRuntimePort === "blocked") {
+        const portCleanupError =
+          "A stale runtime is still bound to the profile runtime port. Quit the other desktop instance or kill the orphaned runtime process.";
+        runtimeStatus = withDesktopBrowserStatus({
+          ...runtimeStatus,
+          status: "error",
+          available: Boolean(runtimeRoot && executablePath),
+          runtimeRoot,
+          sandboxRoot,
+          executablePath,
+          url,
+          pid: null,
+          harness,
+          lastError: portCleanupError,
+        });
+        persistRuntimeProcessState({
+          pid: null,
+          status: "error",
+          lastError: portCleanupError,
+        });
+        emitRuntimeState();
+        return runtimeStatus;
       }
 
       runtimeStatus = withDesktopBrowserStatus({
@@ -13907,11 +14270,36 @@ async function startEmbeddedRuntime() {
         return runtimeStatus;
       }
 
-      await fs.mkdir(sandboxRoot, { recursive: true });
-      await bootstrapRuntimeDatabase();
-
-      if (await isRuntimeHealthy(url)) {
+      const launchRuntimePort = await ensureRuntimePortAvailable({
+        url,
+        sandboxRoot,
+        reason: "startup_before_spawn",
+      });
+      if (launchRuntimePort === "reused") {
         return refreshRuntimeStatus();
+      }
+      if (launchRuntimePort === "blocked") {
+        const launchBlockedError =
+          "A stale runtime reclaimed the profile runtime port before startup completed.";
+        runtimeStatus = withDesktopBrowserStatus({
+          ...runtimeStatus,
+          status: "error",
+          pid: null,
+          lastError: launchBlockedError,
+        });
+        persistRuntimeProcessState({
+          pid: null,
+          status: "error",
+          lastError: launchBlockedError,
+        });
+        appendRuntimeEventLog({
+          category: "runtime",
+          event: "embedded_runtime.launch_blocked",
+          outcome: "error",
+          detail: launchBlockedError,
+        });
+        emitRuntimeState();
+        return runtimeStatus;
       }
 
       const launchSpec = await resolveRuntimeLaunchSpec(
