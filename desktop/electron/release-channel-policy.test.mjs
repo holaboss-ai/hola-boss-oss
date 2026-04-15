@@ -94,7 +94,9 @@ test("manual CI workflow creates combined desktop releases with bundled runtime 
   assert.match(source, /tar -C out\/runtime-macos -czf "out\/\$\{TOOLCHAIN_ASSET_NAME\}" package-metadata\.json node-runtime python-runtime/);
   assert.match(source, /gh release upload "\$\{RELEASE_TAG\}" "out\/\$\{RUNTIME_ASSET_NAME\}" --clobber/);
   assert.match(source, /gh release upload "\$\{RELEASE_TAG\}" "out\/\$\{TOOLCHAIN_ASSET_NAME\}" --clobber/);
-  assert.match(source, /--prepackaged "\$\{app_path\}" \\\n\s+--mac dmg zip \\/);
+  assert.match(source, /prepackaged_app="\$\{RUNNER_TEMP\}\/Holaboss-prepackaged\.app"/);
+  assert.match(source, /ditto "\$\{app_path\}" "\$\{prepackaged_app\}"/);
+  assert.match(source, /--prepackaged "\$\{prepackaged_app\}" \\\n\s+--mac dmg zip \\/);
   assert.match(source, /latest-mac\.yml was not generated/);
   assert.match(source, /latest\.yml was not generated/);
   assert.doesNotMatch(source, /app-update\.yml is missing from signed app bundle/);

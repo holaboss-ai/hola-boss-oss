@@ -544,11 +544,14 @@ jobs:
             echo "notarized app bundle was not produced correctly: ${app_path}" >&2
             exit 1
           fi
+          prepackaged_app="${RUNNER_TEMP}/Holaboss-prepackaged.app"
+          rm -rf "${prepackaged_app}"
+          ditto "${app_path}" "${prepackaged_app}"
           rm -rf out/release
           node scripts/run-electron-builder.mjs \
             --projectDir "$PWD" \
             --publish never \
-            --prepackaged "${app_path}" \
+            --prepackaged "${prepackaged_app}" \
             --mac dmg zip \
             --arm64 \
             --config.mac.notarize=false
