@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { ExternalLink, LoaderCircle, RotateCw } from "lucide-react";
+import { ExternalLink, LoaderCircle } from "lucide-react";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { Button } from "@/components/ui/button";
 import {
@@ -74,20 +74,8 @@ export function AppsGallery() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center justify-between">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => void refreshAppCatalog()}
-          disabled={isLoadingAppCatalog || anyInstalling}
-        >
-          <RotateCw size={12} />
-          Refresh
-        </Button>
-      </div>
-
       {workspaceGated ? (
-        <p className="mt-3 text-xs text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           Select a workspace to install apps.
         </p>
       ) : null}
@@ -98,45 +86,62 @@ export function AppsGallery() {
         </div>
       ) : null}
 
-      {/* Integration connection prompt */}
       {pendingAppInstall ? (
-        <Card size="sm" className="mt-3 p-4">
-          <p className="text-sm font-medium text-foreground">
-            Connect {PROVIDER_DISPLAY[pendingAppInstall.provider] ?? pendingAppInstall.provider}
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {pendingAppInstall.appId} requires a connected{" "}
-            {PROVIDER_DISPLAY[pendingAppInstall.provider] ?? pendingAppInstall.provider}{" "}
-            account to work. Connect it first, then the app will be installed automatically.
-          </p>
-          <div className="mt-3 flex items-center gap-2">
-            <Button
-              size="sm"
-              disabled={isConnectingAppIntegration}
-              onClick={() => void connectAndInstallApp()}
-            >
-              {isConnectingAppIntegration ? (
-                <>
-                  <LoaderCircle size={13} className="animate-spin" />
-                  Waiting for authorization…
-                </>
-              ) : (
-                <>
-                  <ExternalLink size={13} />
-                  Connect account
-                </>
-              )}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={isConnectingAppIntegration}
-              onClick={clearPendingAppInstall}
-            >
-              Cancel
-            </Button>
+        <div className="fixed inset-0 z-[60] grid place-items-center px-4 py-6">
+          <button
+            type="button"
+            aria-label="Cancel connect account"
+            onClick={clearPendingAppInstall}
+            disabled={isConnectingAppIntegration}
+            className="absolute inset-0 bg-[rgba(7,10,14,0.46)] backdrop-blur-sm"
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Connect account"
+            className="relative z-10 w-[min(440px,calc(100vw-32px))] rounded-2xl border border-border/55 bg-background p-5 shadow-2xl"
+          >
+            <p className="text-[15px] font-semibold text-foreground">
+              Connect{" "}
+              {PROVIDER_DISPLAY[pendingAppInstall.provider] ??
+                pendingAppInstall.provider}
+            </p>
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              {pendingAppInstall.appId} requires a connected{" "}
+              {PROVIDER_DISPLAY[pendingAppInstall.provider] ??
+                pendingAppInstall.provider}{" "}
+              account to work. Connect it first, then the app will be installed
+              automatically.
+            </p>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={isConnectingAppIntegration}
+                onClick={clearPendingAppInstall}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                disabled={isConnectingAppIntegration}
+                onClick={() => void connectAndInstallApp()}
+              >
+                {isConnectingAppIntegration ? (
+                  <>
+                    <LoaderCircle size={13} className="animate-spin" />
+                    Waiting for authorization…
+                  </>
+                ) : (
+                  <>
+                    <ExternalLink size={13} />
+                    Connect account
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
-        </Card>
+        </div>
       ) : null}
 
       {isLoadingAppCatalog && appCatalog.length === 0 ? (
