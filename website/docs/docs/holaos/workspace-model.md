@@ -159,6 +159,12 @@ For app development, two fields matter immediately:
 - `applications[].app_id`
 - `applications[].config_path`
 
+For workspace-level MCP, the main authored surface is `mcp_registry`:
+
+- `mcp_registry.servers.<server-id>` declares local or remote MCP servers
+- `mcp_registry.allowlist.tool_ids` optionally narrows visibility to explicit `server.tool` ids
+- when `mcp_registry.allowlist.tool_ids` is omitted or empty, the runtime exposes all discovered tools from the enabled configured MCP servers for that run
+
 Those entries are how the runtime finds each app manifest under `apps/`.
 
 ### `.git/`

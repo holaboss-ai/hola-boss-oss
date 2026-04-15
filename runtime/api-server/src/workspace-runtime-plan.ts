@@ -137,6 +137,11 @@ type McpRegistryCompileResult = {
   workspace_catalog: WorkspaceMcpCatalogEntry[];
 };
 
+type AllowlistParseResult = {
+  resolved_tool_refs: ResolvedMcpToolRef[];
+  specified: boolean;
+};
+
 type WorkspaceRuntimePlanReferenceResponse =
   | {
       ok: true;
@@ -429,8 +434,11 @@ function parseStringPairs(value: unknown, path: string): Array<[string, string]>
   return pairs;
 }
 
-function readAllowlist(registry: JsonRecord): ResolvedMcpToolRef[] {
+function readAllowlist(registry: JsonRecord): AllowlistParseResult {
   const allowlist = registry.allowlist;
+  if (allowlist === undefined || allowlist === null) {
+    return { resolved_tool_refs: [], specified: false };
+  }
   if (!isRecord(allowlist)) {
     err({
       code: "workspace_mcp_registry_missing",
@@ -439,12 +447,18 @@ function readAllowlist(registry: JsonRecord): ResolvedMcpToolRef[] {
     });
   }
   const toolIds = allowlist.tool_ids;
+  if (toolIds === undefined || toolIds === null) {
+    return { resolved_tool_refs: [], specified: false };
+  }
   if (!Array.isArray(toolIds)) {
     err({
       code: "workspace_mcp_tool_id_invalid",
       path: "mcp_registry.allowlist.tool_ids",
       message: "expected list field 'tool_ids'"
     });
+  }
+  if (toolIds.length === 0) {
+    return { resolved_tool_refs: [], specified: false };
   }
   const refs: ResolvedMcpToolRef[] = [];
   const seen = new Set<string>();
@@ -479,7 +493,7 @@ function readAllowlist(registry: JsonRecord): ResolvedMcpToolRef[] {
       tool_name: parsed[1]
     });
   }
-  return refs;
+  return { resolved_tool_refs: refs, specified: true };
 }
 
 function readServers(registry: JsonRecord): Record<string, ServerConfig> {
@@ -670,54 +684,83 @@ function resolveMcpRegistry(config: JsonRecord): McpRegistryCompileResult {
     });
   }
 
-  const toolRefs = readAllowlist(registry);
+  const allowlist = readAllowlist(registry);
+  const toolRefs = allowlist.resolved_tool_refs;
   const servers = ensureWorkspaceServerConfig(readServers(registry));
   const catalog = readCatalog(registry);
 
   const referencedServerIds: string[] = [];
   const seenServerIds = new Set<string>();
-  for (const [index, toolRef] of toolRefs.entries()) {
-    const server = servers[toolRef.server_id];
-    if (!server) {
-      err({
-        code: "workspace_mcp_server_unknown",
-        path: `mcp_registry.allowlist.tool_ids[${index}]`,
-        message: `unknown MCP server '${toolRef.server_id}' for tool '${toolRef.tool_id}'`,
-        hint: "add server config under mcp_registry.servers"
-      });
+  if (allowlist.specified) {
+    for (const [index, toolRef] of toolRefs.entries()) {
+      const server = servers[toolRef.server_id];
+      if (!server) {
+        err({
+          code: "workspace_mcp_server_unknown",
+          path: `mcp_registry.allowlist.tool_ids[${index}]`,
+          message: `unknown MCP server '${toolRef.server_id}' for tool '${toolRef.tool_id}'`,
+          hint: "add server config under mcp_registry.servers"
+        });
+      }
+      if (!server.enabled) {
+        err({
+          code: "workspace_mcp_server_unknown",
+          path: `mcp_registry.allowlist.tool_ids[${index}]`,
+          message: `MCP server '${toolRef.server_id}' is disabled for tool '${toolRef.tool_id}'`
+        });
+      }
+      if (!seenServerIds.has(toolRef.server_id)) {
+        seenServerIds.add(toolRef.server_id);
+        referencedServerIds.push(toolRef.server_id);
+      }
     }
-    if (!server.enabled) {
-      err({
-        code: "workspace_mcp_server_unknown",
-        path: `mcp_registry.allowlist.tool_ids[${index}]`,
-        message: `MCP server '${toolRef.server_id}' is disabled for tool '${toolRef.tool_id}'`
-      });
-    }
-    if (!seenServerIds.has(toolRef.server_id)) {
-      seenServerIds.add(toolRef.server_id);
-      referencedServerIds.push(toolRef.server_id);
+  } else {
+    for (const server of Object.values(servers)) {
+      if (!server.enabled || server.server_id === WORKSPACE_SERVER_ID) {
+        continue;
+      }
+      seenServerIds.add(server.server_id);
+      referencedServerIds.push(server.server_id);
     }
   }
 
   const workspaceCatalog: WorkspaceMcpCatalogEntry[] = [];
-  for (const [index, toolRef] of toolRefs.entries()) {
-    if (toolRef.server_id !== WORKSPACE_SERVER_ID) {
-      continue;
-    }
-    const catalogEntry = catalog[toolRef.tool_id];
-    if (!catalogEntry) {
-      err({
-        code: "workspace_mcp_catalog_missing",
-        path: `mcp_registry.allowlist.tool_ids[${index}]`,
-        message: `workspace tool '${toolRef.tool_id}' is missing catalog entry in mcp_registry.catalog`
+  if (allowlist.specified) {
+    for (const [index, toolRef] of toolRefs.entries()) {
+      if (toolRef.server_id !== WORKSPACE_SERVER_ID) {
+        continue;
+      }
+      const catalogEntry = catalog[toolRef.tool_id];
+      if (!catalogEntry) {
+        err({
+          code: "workspace_mcp_catalog_missing",
+          path: `mcp_registry.allowlist.tool_ids[${index}]`,
+          message: `workspace tool '${toolRef.tool_id}' is missing catalog entry in mcp_registry.catalog`
+        });
+      }
+      workspaceCatalog.push({
+        tool_id: toolRef.tool_id,
+        tool_name: toolRef.tool_name,
+        module_path: catalogEntry.module_path,
+        symbol_name: catalogEntry.symbol_name
       });
     }
-    workspaceCatalog.push({
-      tool_id: toolRef.tool_id,
-      tool_name: toolRef.tool_name,
-      module_path: catalogEntry.module_path,
-      symbol_name: catalogEntry.symbol_name
-    });
+  } else {
+    for (const [toolId, catalogEntry] of Object.entries(catalog)) {
+      const parsedToolId = parseToolId(toolId);
+      if (!parsedToolId || parsedToolId[0] !== WORKSPACE_SERVER_ID) {
+        continue;
+      }
+      workspaceCatalog.push({
+        tool_id: toolId,
+        tool_name: parsedToolId[1],
+        module_path: catalogEntry.module_path,
+        symbol_name: catalogEntry.symbol_name
+      });
+    }
+  }
+  if (workspaceCatalog.length > 0 && !seenServerIds.has(WORKSPACE_SERVER_ID)) {
+    referencedServerIds.push(WORKSPACE_SERVER_ID);
   }
 
   return {

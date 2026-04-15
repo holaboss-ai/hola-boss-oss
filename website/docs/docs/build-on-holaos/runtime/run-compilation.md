@@ -100,7 +100,8 @@ This is the runtime-owned interpretation of the authored workspace, not a loose 
 - `workspace.yaml` must parse to a mapping object
 - `mcp_registry` is required
 - `tool_registry` is explicitly unsupported
-- allowlisted MCP tool ids must be `server.tool`
+- when `mcp_registry.allowlist.tool_ids` is provided and non-empty, MCP tool ids must be `server.tool`
+- when `mcp_registry.allowlist.tool_ids` is omitted or empty, the runtime exposes all enabled configured MCP servers for that run
 - `mcp_registry.servers.workspace` must be local
 - `applications` must be a list of mappings
 - `applications[].app_id` must be unique

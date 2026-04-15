@@ -1535,6 +1535,49 @@ test("createPiMcpCustomTools filters discovery to allowlisted tools and forwards
   assert.match(String((result.content[0] as { text: string }).text), /"ok": true/);
 });
 
+test("createPiMcpCustomTools exposes all discovered tools when no MCP allowlist is provided", async () => {
+  const request: HarnessHostPiRequest = {
+    ...baseRequest(),
+    mcp_servers: [
+      {
+        name: "context7",
+        config: {
+          type: "remote",
+          enabled: true,
+          url: "https://mcp.context7.com/mcp",
+          timeout: 12000,
+        },
+      },
+    ],
+    mcp_tool_refs: [],
+  };
+
+  const runtime = {
+    listTools: async () => [
+      {
+        name: "lookup",
+        description: "Look something up",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "search",
+        description: "Search docs",
+        inputSchema: { type: "object", properties: {} },
+      },
+    ],
+    callTool: async () => ({ structuredContent: { ok: true } }),
+  };
+
+  const bindings = buildPiMcpServerBindings(request);
+  const toolset = await createPiMcpCustomTools(request, runtime as never, bindings);
+
+  assert.equal(toolset.customTools.length, 2);
+  assert.deepEqual(
+    Array.from(toolset.mcpToolMetadata.values()).map((metadata) => metadata.toolId).sort(),
+    ["context7.lookup", "context7.search"]
+  );
+});
+
 test("createPiMcpCustomTools retries discovery until allowlisted MCP tools appear", async () => {
   const request: HarnessHostPiRequest = {
     ...baseRequest(),
