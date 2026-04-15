@@ -143,7 +143,10 @@ test("manual CI workflow creates combined desktop releases with bundled runtime 
   assert.match(source, /spctl -a -vv -t exec "\$\{extracted_app\}"/);
   assert.match(source, /xcrun stapler validate "\$\{extracted_app\}"/);
   assert.match(source, /verify-macos-release-assets:/);
-  assert.match(source, /verify-macos-release-assets:[\s\S]*GH_REPO: holaboss-ai\/holaOS/);
+  assert.match(
+    source,
+    /verify-macos-release-assets:[\s\S]*?runs-on: ubuntu-latest\s+env:\s+RELEASE_TAG:[\s\S]*?GH_REPO: holaboss-ai\/holaOS\s+steps:/,
+  );
   assert.match(source, /release \$\{RELEASE_TAG\} must remain a draft until asset verification succeeds/);
   assert.match(source, /gh release download "\$\{RELEASE_TAG\}" \\\n\s+--dir "\$\{verify_dir\}" \\\n\s+--pattern 'Holaboss-\*-arm64-mac\.zip'/);
   assert.match(source, /failed to download beta-mac\.yml from GitHub/);
@@ -152,7 +155,10 @@ test("manual CI workflow creates combined desktop releases with bundled runtime 
   assert.match(source, /raise "latest-mac\.yml path does not match uploaded zip"/);
   assert.match(source, /raise "beta-mac\.yml path does not match uploaded zip"/);
   assert.match(source, /publish-release:/);
-  assert.match(source, /publish-release:[\s\S]*GH_REPO: holaboss-ai\/holaOS/);
+  assert.match(
+    source,
+    /publish-release:[\s\S]*?runs-on: ubuntu-latest\s+env:\s+RELEASE_TAG:[\s\S]*?GH_REPO: holaboss-ai\/holaOS\s+steps:/,
+  );
   assert.match(source, /needs\.verify-macos-release-assets\.result == 'success'/);
   assert.match(source, /gh release edit "\$\{RELEASE_TAG\}" \\\n\s+--title "\$\{RELEASE_TITLE\}" \\\n\s+--draft=false/);
   assert.match(source, /\$manifestName = if \(\$primaryChannel -eq "beta"\) \{ "beta\.yml" \} else \{ "latest\.yml" \}/);

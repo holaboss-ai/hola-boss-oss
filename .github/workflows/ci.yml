@@ -698,6 +698,7 @@ jobs:
       RELEASE_TAG: ${{ needs.ensure-release.outputs.release_tag }}
       RELEASE_CHANNEL: ${{ needs.ensure-release.outputs.release_channel }}
       HOLABOSS_RELEASE_CHANNEL: ${{ needs.ensure-release.outputs.release_channel }}
+      GH_REPO: holaboss-ai/holaOS
     steps:
       - name: Verify release remains draft before publish
         env:
