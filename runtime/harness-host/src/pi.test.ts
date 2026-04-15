@@ -1341,6 +1341,7 @@ test("buildPiProviderConfig uses Anthropic Messages API for managed Holaboss Cla
   });
 
   assert.equal(providerConfig.api, "anthropic-messages");
+  assert.equal(providerConfig.baseUrl, "http://127.0.0.1:3060/api/v1/model-proxy/anthropic");
   assert.equal(providerConfig.models[0]?.api, "anthropic-messages");
   assert.deepEqual(providerConfig.headers, {
     "X-Holaboss-User-Id": "user-1",

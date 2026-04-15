@@ -3323,6 +3323,15 @@ function piGoogleGenerativeAiBaseUrlForRequest(request: HarnessHostPiRequest): s
   return normalized.replace(/\/openai$/i, "") || "https://generativelanguage.googleapis.com/v1beta";
 }
 
+function piAnthropicBaseUrlForRequest(request: HarnessHostPiRequest): string {
+  const baseUrl = firstNonEmptyString(request.model_client.base_url);
+  const normalized = baseUrl ? baseUrl.replace(/\/+$/, "") : "";
+  if (!normalized) {
+    return "";
+  }
+  return normalized.replace(/\/v1$/i, "");
+}
+
 function piOpenAiCompatForRequest(request: HarnessHostPiRequest): Model<"openai-completions">["compat"] | undefined {
   const modelProxyProvider = request.model_client.model_proxy_provider.trim().toLowerCase();
   const providerId = request.provider_id.trim().toLowerCase();
@@ -3554,6 +3563,8 @@ export function buildPiProviderConfig(request: HarnessHostPiRequest) {
   const baseUrl =
     api === "google-generative-ai"
       ? piGoogleGenerativeAiBaseUrlForRequest(request)
+      : api === "anthropic-messages"
+        ? piAnthropicBaseUrlForRequest(request)
       : firstNonEmptyString(request.model_client.base_url);
   if (!baseUrl) {
     throw new Error(`Pi provider ${request.provider_id} is missing a model client base URL`);
