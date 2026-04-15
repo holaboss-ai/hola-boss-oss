@@ -4,7 +4,11 @@ import { Button } from "@/components/ui/button";
 import { providerIcon } from "@/components/onboarding/constants";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
-import { getWorkspaceAppDefinition, type WorkspaceAppDefinition, type WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
+import {
+  getWorkspaceAppDefinition,
+  type WorkspaceAppDefinition,
+  type WorkspaceInstalledAppDefinition,
+} from "@/lib/workspaceApps";
 import { resolveAppSurfacePath } from "./appSurfaceRoute";
 
 interface AppSurfacePaneProps {
@@ -30,13 +34,15 @@ export function AppSurfacePane({
   const [reloadKey, setReloadKey] = useState(0);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [actionError, setActionError] = useState("");
+  const [wasRemoved, setWasRemoved] = useState(false);
   const [frameUrl, setFrameUrl] = useState("");
   const [frameLoading, setFrameLoading] = useState(false);
   const [frameError, setFrameError] = useState("");
 
   const label = app?.label ?? appId;
   const ready = app && "ready" in app ? app.ready : false;
-  const error = app && "error" in app && typeof app.error === "string" ? app.error : null;
+  const error =
+    app && "error" in app && typeof app.error === "string" ? app.error : null;
   const summary = app?.summary ?? "";
   const brandIcon = providerIcon(appId, 22);
   const iconFallback = label.slice(0, 2).toUpperCase();
@@ -47,30 +53,53 @@ export function AppSurfacePane({
   );
 
   // Integration connection status for this app
-  const [integrationStatus, setIntegrationStatus] = useState<{ connected: boolean; providerName: string } | null>(null);
+  const [integrationStatus, setIntegrationStatus] = useState<{
+    connected: boolean;
+    providerName: string;
+  } | null>(null);
 
   const checkIntegration = useCallback(async () => {
     if (!selectedWorkspaceId) return;
     try {
-      const { connections } = await window.electronAPI.workspace.listIntegrationConnections();
-      const { providers } = await window.electronAPI.workspace.listIntegrationCatalog();
-      const bindings = await window.electronAPI.workspace.listIntegrationBindings(selectedWorkspaceId);
+      const { connections } =
+        await window.electronAPI.workspace.listIntegrationConnections();
+      const { providers } =
+        await window.electronAPI.workspace.listIntegrationCatalog();
+      const bindings =
+        await window.electronAPI.workspace.listIntegrationBindings(
+          selectedWorkspaceId,
+        );
       const appBinding = bindings.bindings.find(
         (b) => b.target_type === "app" && b.target_id === appId,
       );
       if (appBinding) {
-        const conn = connections.find((c) => c.connection_id === appBinding.connection_id);
-        const provider = providers.find((p) => p.provider_id === appBinding.integration_key);
+        const conn = connections.find(
+          (c) => c.connection_id === appBinding.connection_id,
+        );
+        const provider = providers.find(
+          (p) => p.provider_id === appBinding.integration_key,
+        );
         setIntegrationStatus({
           connected: conn?.status === "active",
           providerName: provider?.display_name ?? appBinding.integration_key,
         });
       } else {
-        const knownProviders: Record<string, string> = { gmail: "gmail", sheets: "googlesheets", github: "github", reddit: "reddit", twitter: "twitter", linkedin: "linkedin" };
+        const knownProviders: Record<string, string> = {
+          gmail: "gmail",
+          sheets: "googlesheets",
+          github: "github",
+          reddit: "reddit",
+          twitter: "twitter",
+          linkedin: "linkedin",
+        };
         const expectedProvider = knownProviders[appId.toLowerCase()];
         if (expectedProvider) {
-          const conn = connections.find((c) => c.provider_id === expectedProvider && c.status === "active");
-          const provider = providers.find((p) => p.provider_id === expectedProvider);
+          const conn = connections.find(
+            (c) => c.provider_id === expectedProvider && c.status === "active",
+          );
+          const provider = providers.find(
+            (p) => p.provider_id === expectedProvider,
+          );
           setIntegrationStatus({
             connected: Boolean(conn),
             providerName: provider?.display_name ?? expectedProvider,
@@ -99,22 +128,23 @@ export function AppSurfacePane({
     setFrameLoading(true);
     setFrameError("");
 
-    void window.electronAPI.appSurface.resolveUrl(
-      selectedWorkspaceId,
-      appId,
-      routePath,
-    )
+    void window.electronAPI.appSurface
+      .resolveUrl(selectedWorkspaceId, appId, routePath)
       .then((url) => {
         if (!cancelled) setFrameUrl(url);
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          setFrameError(err instanceof Error ? err.message : "Failed to resolve app URL.");
+          setFrameError(
+            err instanceof Error ? err.message : "Failed to resolve app URL.",
+          );
           setFrameLoading(false);
         }
       });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [appId, ready, reloadKey, routePath, selectedWorkspaceId]);
 
   async function handleRemove() {
@@ -123,8 +153,11 @@ export function AppSurfacePane({
     setActionError("");
     try {
       await removeInstalledApp(appId);
+      setWasRemoved(true);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Failed to remove app.");
+      setActionError(
+        err instanceof Error ? err.message : "Failed to remove app.",
+      );
     } finally {
       setIsRemoving(false);
       setConfirmRemove(false);
@@ -146,23 +179,81 @@ export function AppSurfacePane({
     }
   }
 
+  // Removed state — render blank after successful removal
+  if (wasRemoved) {
+    return <div className="h-full min-h-0" />;
+  }
+
   // Initializing state
   if (!ready && !error) {
     return (
       <div className="flex h-full min-h-0 gap-2">
-        <section className="flex w-[260px] shrink-0 items-center justify-center rounded-xl border border-border bg-card/80 shadow-xs backdrop-blur-sm">
-          <div className="max-w-[200px] text-center">
-            <LoaderCircle size={20} className="mx-auto animate-spin text-muted-foreground" />
-            <div className="mt-3 text-sm font-medium text-foreground">{label}</div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              Initializing... This may take a few minutes on first setup.
+        <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card/80 shadow-xs backdrop-blur-sm">
+          <div className="flex flex-1 items-center justify-center p-4">
+            <div className="max-w-[200px] text-center">
+              <LoaderCircle
+                size={20}
+                className="mx-auto animate-spin text-muted-foreground"
+              />
+              <div className="mt-3 text-sm font-medium text-foreground">
+                {label}
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                Initializing... This may take a few minutes on first setup.
+              </div>
             </div>
+          </div>
+          <div className="border-t border-border p-3">
+            {confirmRemove ? (
+              <div className="flex items-center gap-1.5">
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => void handleRemove()}
+                  disabled={isRemoving}
+                  className="flex-1 justify-center"
+                >
+                  {isRemoving ? "Removing..." : "Confirm"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setConfirmRemove(false)}
+                  className="flex-1 justify-center"
+                >
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                onClick={() => setConfirmRemove(true)}
+                className="w-full justify-center border border-destructive/30 font-semibold"
+              >
+                <Trash2 size={12} />
+                Remove app
+              </Button>
+            )}
+            {actionError ? (
+              <div className="mt-2 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
+                {actionError}
+              </div>
+            ) : null}
           </div>
         </section>
         <section className="flex min-w-0 flex-1 items-center justify-center rounded-xl border border-border bg-card/80 shadow-xs backdrop-blur-sm">
           <div className="text-center">
-            <LoaderCircle size={16} className="mx-auto animate-spin text-muted-foreground" />
-            <div className="mt-2 text-xs text-muted-foreground">Waiting for app...</div>
+            <LoaderCircle
+              size={16}
+              className="mx-auto animate-spin text-muted-foreground"
+            />
+            <div className="mt-2 text-xs text-muted-foreground">
+              Waiting for app...
+            </div>
           </div>
         </section>
       </div>
@@ -176,21 +267,30 @@ export function AppSurfacePane({
         <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card/80 p-4 shadow-xs backdrop-blur-sm">
           <div className="flex items-center gap-2 text-destructive">
             <Activity size={14} />
-            <span className="text-[10px] uppercase tracking-widest">App error</span>
+            <span className="text-[10px] uppercase tracking-widest">
+              App error
+            </span>
           </div>
-          <div className="mt-3 text-sm font-semibold text-foreground">{label}</div>
+          <div className="mt-3 text-sm font-semibold text-foreground">
+            {label}
+          </div>
           <div className="mt-3 rounded-lg border border-destructive/25 bg-destructive/5 p-3">
             <div className="text-xs leading-5 text-foreground">{error}</div>
           </div>
           <div className="mt-3">
             <Button
               type="button"
-              variant="outline"
-              size="default"
+              variant="destructive"
+              size="sm"
               onClick={() => void handleRemove()}
               disabled={isRemoving}
+              className="border border-destructive/30 font-semibold"
             >
-              {isRemoving ? <LoaderCircle size={13} className="animate-spin" /> : <Trash2 size={13} />}
+              {isRemoving ? (
+                <LoaderCircle size={13} className="animate-spin" />
+              ) : (
+                <Trash2 size={13} />
+              )}
               Remove
             </Button>
           </div>
@@ -203,7 +303,9 @@ export function AppSurfacePane({
         <section className="flex min-w-0 flex-1 items-center justify-center rounded-xl border border-border bg-card/80 shadow-xs backdrop-blur-sm">
           <div className="text-center">
             <Activity size={18} className="mx-auto text-destructive" />
-            <div className="mt-2 text-xs text-muted-foreground">App failed to start</div>
+            <div className="mt-2 text-xs text-muted-foreground">
+              App failed to start
+            </div>
           </div>
         </section>
       </div>
@@ -221,7 +323,9 @@ export function AppSurfacePane({
               {brandIcon ?? iconFallback}
             </span>
             <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-semibold text-foreground">{label}</div>
+              <div className="truncate text-sm font-semibold text-foreground">
+                {label}
+              </div>
               <div className="mt-0.5 flex items-center gap-1.5 text-[11px] font-medium text-emerald-500">
                 <span className="size-1.5 rounded-full bg-emerald-500" />
                 Running
@@ -230,7 +334,9 @@ export function AppSurfacePane({
           </div>
 
           {summary ? (
-            <p className="mt-3 text-xs leading-5 text-muted-foreground">{summary}</p>
+            <p className="mt-3 text-xs leading-5 text-muted-foreground">
+              {summary}
+            </p>
           ) : null}
 
           {resourceId || path ? (
@@ -254,8 +360,12 @@ export function AppSurfacePane({
                   <Plug size={11} />
                   {integrationStatus.providerName}
                 </span>
-                <span className={`flex items-center gap-1.5 text-xs font-medium ${integrationStatus.connected ? "text-emerald-500" : "text-destructive"}`}>
-                  <span className={`size-1.5 rounded-full ${integrationStatus.connected ? "bg-emerald-500" : "bg-destructive"}`} />
+                <span
+                  className={`flex items-center gap-1.5 text-xs font-medium ${integrationStatus.connected ? "text-emerald-500" : "text-destructive"}`}
+                >
+                  <span
+                    className={`size-1.5 rounded-full ${integrationStatus.connected ? "bg-emerald-500" : "bg-destructive"}`}
+                  />
                   {integrationStatus.connected ? "Connected" : "Not connected"}
                 </span>
               </div>
@@ -270,8 +380,12 @@ export function AppSurfacePane({
               <div className="mt-2 space-y-0.5">
                 {app.tools.map((tool) => (
                   <div key={tool.name} className="rounded-md px-2 py-1.5">
-                    <div className="text-[11px] font-medium text-foreground/80">{tool.name}</div>
-                    <div className="text-[10px] leading-relaxed text-muted-foreground">{tool.description}</div>
+                    <div className="text-[11px] font-medium text-foreground/80">
+                      {tool.name}
+                    </div>
+                    <div className="text-[10px] leading-relaxed text-muted-foreground">
+                      {tool.description}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -285,7 +399,7 @@ export function AppSurfacePane({
             <Button
               type="button"
               variant="outline"
-              size="default"
+              size="sm"
               onClick={() => setReloadKey((k) => k + 1)}
               className="w-full justify-center"
             >
@@ -297,7 +411,7 @@ export function AppSurfacePane({
                 <Button
                   type="button"
                   variant="destructive"
-                  size="default"
+                  size="sm"
                   onClick={() => void handleRemove()}
                   disabled={isRemoving}
                   className="flex-1 justify-center"
@@ -307,7 +421,7 @@ export function AppSurfacePane({
                 <Button
                   type="button"
                   variant="outline"
-                  size="default"
+                  size="sm"
                   onClick={() => setConfirmRemove(false)}
                   className="flex-1 justify-center"
                 >
@@ -317,10 +431,10 @@ export function AppSurfacePane({
             ) : (
               <Button
                 type="button"
-                variant="outline"
-                size="default"
+                variant="destructive"
+                size="sm"
                 onClick={() => setConfirmRemove(true)}
-                className="w-full justify-center"
+                className="w-full justify-center border border-destructive/30 font-semibold"
               >
                 <Trash2 size={12} />
                 Remove app
@@ -338,7 +452,10 @@ export function AppSurfacePane({
 
       {/* Right: App iframe */}
       <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-xs">
-        <div className="relative min-h-0 flex-1" style={{ borderRadius: "inherit" }}>
+        <div
+          className="relative min-h-0 flex-1"
+          style={{ borderRadius: "inherit" }}
+        >
           {frameUrl ? (
             <iframe
               key={`${frameUrl}:${reloadKey}`}
@@ -354,16 +471,25 @@ export function AppSurfacePane({
           {frameLoading ? (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/80">
               <div className="text-center">
-                <LoaderCircle size={18} className="mx-auto animate-spin text-muted-foreground" />
-                <div className="mt-2 text-xs text-muted-foreground">Loading {label}...</div>
+                <LoaderCircle
+                  size={18}
+                  className="mx-auto animate-spin text-muted-foreground"
+                />
+                <div className="mt-2 text-xs text-muted-foreground">
+                  Loading {label}...
+                </div>
               </div>
             </div>
           ) : null}
           {frameError ? (
             <div className="absolute inset-0 flex items-center justify-center px-6">
               <div className="max-w-sm rounded-lg border border-destructive/25 bg-destructive/5 p-4 text-center">
-                <div className="text-sm font-medium text-foreground">App preview unavailable</div>
-                <div className="mt-2 text-xs leading-5 text-muted-foreground">{frameError}</div>
+                <div className="text-sm font-medium text-foreground">
+                  App preview unavailable
+                </div>
+                <div className="mt-2 text-xs leading-5 text-muted-foreground">
+                  {frameError}
+                </div>
                 <Button
                   type="button"
                   variant="outline"
