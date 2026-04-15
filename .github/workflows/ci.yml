@@ -735,7 +735,7 @@ jobs:
             exit 1
           fi
 
-          ruby "${zip_path}" "${manifest_path}" "${verify_dir}/beta-mac.yml" "${primary_channel}" <<'RUBY'
+          ruby - "${zip_path}" "${manifest_path}" "${verify_dir}/beta-mac.yml" "${primary_channel}" <<'RUBY'
           require "yaml"
 
           zip_path = ARGV.fetch(0)

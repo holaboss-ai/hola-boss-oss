@@ -145,11 +145,19 @@ test("manual CI workflow creates combined desktop releases with bundled runtime 
   assert.match(source, /xcrun stapler validate "\$\{extracted_app\}"/);
   assert.match(source, /Verify published macOS release assets from GitHub/);
   assert.match(source, /gh release download "\$\{RELEASE_TAG\}" \\\n\s+--dir "\$\{verify_dir\}" \\\n\s+--pattern 'Holaboss-\*-arm64-mac\.zip'/);
-  assert.match(source, /failed to download beta-mac\.yml from GitHub/);
-  assert.match(source, /published macOS zip is missing Holaboss\.app\/Contents\/Resources\/app-update\.yml/);
-  assert.match(source, /raise "app-update repo is not holaOS"/);
-  assert.match(source, /raise "latest-mac\.yml path does not match uploaded zip"/);
-  assert.match(source, /raise "beta-mac\.yml path does not match uploaded zip"/);
+      assert.match(source, /failed to download beta-mac\.yml from GitHub/);
+      assert.match(source, /published macOS zip is missing Holaboss\.app\/Contents\/Resources\/app-update\.yml/);
+      assert.match(
+        source,
+        /ruby - "\$\{zip_path\}" "\$\{manifest_path\}" "\$\{verify_dir\}\/beta-mac\.yml" "\$\{primary_channel\}" <<'RUBY'/,
+      );
+      assert.doesNotMatch(
+        source,
+        /ruby "\$\{zip_path\}" "\$\{manifest_path\}" "\$\{verify_dir\}\/beta-mac\.yml" "\$\{primary_channel\}" <<'RUBY'/,
+      );
+      assert.match(source, /raise "app-update repo is not holaOS"/);
+      assert.match(source, /raise "latest-mac\.yml path does not match uploaded zip"/);
+      assert.match(source, /raise "beta-mac\.yml path does not match uploaded zip"/);
   assert.doesNotMatch(source, /verify-macos-release-assets:/);
   assert.match(source, /publish-release:/);
   assert.match(
