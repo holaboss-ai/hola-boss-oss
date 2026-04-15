@@ -13786,8 +13786,27 @@ async function isRuntimeHealthy(url: string) {
   });
 }
 
-function runtimeUnavailableStatus(hasBundle: boolean): RuntimeStatus {
-  if (runtimeStartupInFlight && hasBundle) {
+function runtimeToolchainBootstrapPending(
+  runtimeRoot: string | null,
+  executablePath: string | null,
+  toolchainRoot: string | null,
+) {
+  return Boolean(
+    app.isPackaged &&
+      runtimeRoot &&
+      executablePath &&
+      !toolchainRoot &&
+      packagedRuntimeToolchainManifest() &&
+      !process.env.HOLABOSS_RUNTIME_TOOLCHAIN_ROOT?.trim() &&
+      (managedRuntimeToolchainSyncPromise || runtimeStartupInFlight),
+  );
+}
+
+function runtimeUnavailableStatus(
+  hasBundle: boolean,
+  toolchainBootstrapPending = false,
+): RuntimeStatus {
+  if ((runtimeStartupInFlight && hasBundle) || toolchainBootstrapPending) {
     return "starting";
   }
   if (runtimeProcess) {
@@ -13811,6 +13830,11 @@ async function refreshRuntimeStatus() {
   const executablePath = runtimeRoot
     ? await resolveRuntimeExecutablePath(runtimeRoot)
     : null;
+  const toolchainBootstrapPending = runtimeToolchainBootstrapPending(
+    runtimeRoot,
+    executablePath,
+    toolchainRoot,
+  );
   const sandboxRoot = runtimeSandboxRoot();
   const harness = process.env.HOLABOSS_RUNTIME_HARNESS || "pi";
   const workflowBackend =
@@ -13849,10 +13873,10 @@ async function refreshRuntimeStatus() {
     executablePath,
     url,
     harness,
-    status: runtimeUnavailableStatus(hasBundle),
+    status: runtimeUnavailableStatus(hasBundle, toolchainBootstrapPending),
     lastError:
-      hasBundle
-        ? runtimeStartupInFlight
+      hasBundle || toolchainBootstrapPending
+        ? runtimeStartupInFlight || toolchainBootstrapPending
           ? ""
           : runtimeStatus.lastError
         : validationError ||
