@@ -800,7 +800,50 @@ let appUpdateStatus: AppUpdateStatusPayload = {
 };
 
 // Port 5060 is SIP — blocked by Node.js fetch (undici "bad port").
-const RUNTIME_API_PORT = 5160;
+const RUNTIME_API_PORT_FALLBACK = 5160;
+const RUNTIME_API_PORT_RANGE_START = 39160;
+const RUNTIME_API_PORT_RANGE_SIZE = 2000;
+let resolvedRuntimeApiPort = RUNTIME_API_PORT_FALLBACK;
+
+function parseRuntimeApiPort(value: string): number | null {
+  if (!/^\d+$/.test(value)) {
+    return null;
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 1024 || parsed > 65535) {
+    return null;
+  }
+  if (parsed === 5060) {
+    return null;
+  }
+  return parsed;
+}
+
+function runtimeApiPortForUserDataPath(userDataPath: string): number {
+  const hash = Number.parseInt(
+    createHash("sha256")
+      .update(path.resolve(userDataPath), "utf8")
+      .digest("hex")
+      .slice(0, 8),
+    16,
+  );
+  return RUNTIME_API_PORT_RANGE_START + (hash % RUNTIME_API_PORT_RANGE_SIZE);
+}
+
+function resolveRuntimeApiPort(): number {
+  const explicit = parseRuntimeApiPort(
+    process.env.HOLABOSS_RUNTIME_API_PORT?.trim() || "",
+  );
+  if (explicit !== null) {
+    return explicit;
+  }
+  return runtimeApiPortForUserDataPath(app.getPath("userData"));
+}
+
+function runtimeApiPort(): number {
+  return resolvedRuntimeApiPort;
+}
+
 function runtimePlatformFromProcessPlatform(
   platform: NodeJS.Platform = process.platform,
 ): "macos" | "linux" | "windows" {
@@ -1644,6 +1687,7 @@ function emitOpenSettingsPane(section: UiSettingsPaneSection = "settings") {
 }
 
 configureStableUserDataPath();
+resolvedRuntimeApiPort = resolveRuntimeApiPort();
 persistDevLaunchContext();
 appUpdatePreferences = loadAppUpdatePreferences();
 runtimeModelCatalogState = loadRuntimeModelCatalogCache();
@@ -5156,14 +5200,14 @@ function persistRuntimeProcessState(update: {
           last_error = excluded.last_error,
           updated_at = excluded.updated_at
       `,
-      )
+        )
       .run({
         process_key: "embedded-runtime",
         pid: update.pid ?? null,
         status: update.status,
         bind_host: "127.0.0.1",
-        bind_port: RUNTIME_API_PORT,
-        base_url: `http://127.0.0.1:${RUNTIME_API_PORT}`,
+        bind_port: runtimeApiPort(),
+        base_url: runtimeBaseUrl(),
         last_started_at: update.lastStartedAt ?? null,
         last_stopped_at: update.lastStoppedAt ?? null,
         last_healthy_at: update.lastHealthyAt ?? null,
@@ -11069,7 +11113,7 @@ async function pickTemplateFolder(): Promise<TemplateFolderSelectionPayload> {
 }
 
 function runtimeBaseUrl() {
-  return `http://127.0.0.1:${RUNTIME_API_PORT}`;
+  return `http://127.0.0.1:${runtimeApiPort()}`;
 }
 
 async function ensureRuntimeReady() {
@@ -13636,7 +13680,7 @@ async function refreshRuntimeStatus() {
   const harness = process.env.HOLABOSS_RUNTIME_HARNESS || "pi";
   const workflowBackend =
     process.env.HOLABOSS_RUNTIME_WORKFLOW_BACKEND || "remote_api";
-  const url = `http://127.0.0.1:${RUNTIME_API_PORT}`;
+  const url = runtimeBaseUrl();
   const healthy = await isRuntimeHealthy(url);
   const hasBundle = Boolean(runtimeRoot && executablePath);
 
@@ -13802,7 +13846,7 @@ async function startEmbeddedRuntime() {
       const harness = process.env.HOLABOSS_RUNTIME_HARNESS || "pi";
       const workflowBackend =
         process.env.HOLABOSS_RUNTIME_WORKFLOW_BACKEND || "remote_api";
-      const url = `http://127.0.0.1:${RUNTIME_API_PORT}`;
+      const url = runtimeBaseUrl();
 
       // A previous Electron process can leave the embedded runtime alive across
       // an app restart or upgrade. Reuse that healthy process without emitting a
@@ -13904,7 +13948,7 @@ async function startEmbeddedRuntime() {
           ...process.env,
           HB_SANDBOX_ROOT: sandboxRoot,
           SANDBOX_AGENT_BIND_HOST: "127.0.0.1",
-          SANDBOX_AGENT_BIND_PORT: String(RUNTIME_API_PORT),
+          SANDBOX_AGENT_BIND_PORT: String(runtimeApiPort()),
           HOLABOSS_EMBEDDED_RUNTIME: "1",
           SANDBOX_AGENT_HARNESS: harness,
           HOLABOSS_RUNTIME_WORKFLOW_BACKEND: workflowBackend,
@@ -19992,7 +20036,7 @@ app.whenReady().then(async () => {
   runtimeStatus = withDesktopBrowserStatus({
     ...runtimeStatus,
     status: "starting",
-    url: `http://127.0.0.1:${RUNTIME_API_PORT}`,
+    url: runtimeBaseUrl(),
     sandboxRoot: runtimeSandboxRoot(),
     harness: process.env.HOLABOSS_RUNTIME_HARNESS || "pi",
     lastError: "",

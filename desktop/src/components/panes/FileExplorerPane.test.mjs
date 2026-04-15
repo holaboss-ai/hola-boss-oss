@@ -393,6 +393,35 @@ test("file explorer imports dragged external files and folders into the tree", a
   assert.match(source, /onDrop=\{onPaneDrop\}/);
 });
 
+test("file explorer preserves multi-file external drops when entry-backed items are incomplete", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /if \(importedEntries\.length === 0\) \{\s*return dedupeExplorerExternalImportEntries\(fileEntries\);\s*\}/,
+  );
+  assert.match(
+    source,
+    /const hasImportedDirectories = importedEntries\.some\(\s*\(entry\) => entry\.kind === "directory",\s*\);/,
+  );
+  assert.match(
+    source,
+    /if \(hasImportedDirectories\) \{\s*return dedupeExplorerExternalImportEntries\(importedEntries\);\s*\}/,
+  );
+  assert.match(
+    source,
+    /const importedFilePaths = new Set\(\s*importedEntries[\s\S]*\.map\(\(entry\) => entry\.relativePath\),\s*\);/,
+  );
+  assert.match(
+    source,
+    /const hasUnmatchedDroppedFiles = fileEntries\.some\(\s*\(entry\) => !importedFilePaths\.has\(entry\.relativePath\),\s*\);/,
+  );
+  assert.match(
+    source,
+    /return dedupeExplorerExternalImportEntries\(\[\s*\.\.\.importedEntries,\s*\.\.\.fileEntries,\s*\]\);/,
+  );
+});
+
 test("file explorer does not expose a pane-level close action", async () => {
   const source = await readFile(sourcePath, "utf8");
 

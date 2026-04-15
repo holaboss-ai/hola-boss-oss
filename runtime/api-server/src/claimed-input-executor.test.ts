@@ -719,6 +719,66 @@ test("claimed input renews its claim lease while the runner is still healthy", a
   store.close();
 });
 
+test("claimed input treats streamed runner events as lease activity", async () => {
+  const store = makeStore("hb-claimed-input-event-lease-renewal-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "hello" }
+  });
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 1
+  });
+  const claimedUntilBefore = claimed[0]?.claimedUntil ?? null;
+  let claimedUntilDuringRun: string | null = null;
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {}
+      });
+      claimedUntilDuringRun = store.getInput(String(payload.input_id))?.claimedUntil ?? null;
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "run_completed",
+        payload: { status: "ok" }
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true
+      };
+    }
+  });
+
+  assert.ok(claimedUntilBefore);
+  assert.ok(claimedUntilDuringRun);
+  assert.notEqual(claimedUntilDuringRun, claimedUntilBefore);
+  assert.ok(Date.parse(claimedUntilDuringRun) > Date.parse(claimedUntilBefore));
+
+  store.close();
+});
+
 test("claimed input honors a persisted failure terminal after claim recovery aborts the runner", async () => {
   const store = makeStore("hb-claimed-input-persisted-terminal-");
   const workspace = store.createWorkspace({

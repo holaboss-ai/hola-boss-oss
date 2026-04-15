@@ -335,10 +335,6 @@ async function collectDroppedExternalEntries(dataTransfer: DataTransfer | null) 
     );
   }
 
-  if (importedEntries.length > 0) {
-    return dedupeExplorerExternalImportEntries(importedEntries);
-  }
-
   const fileEntries = await Promise.all(
     Array.from(dataTransfer.files ?? []).map(async (file) => ({
       kind: "file" as const,
@@ -346,7 +342,38 @@ async function collectDroppedExternalEntries(dataTransfer: DataTransfer | null) 
       content: new Uint8Array(await file.arrayBuffer()),
     })),
   );
-  return dedupeExplorerExternalImportEntries(fileEntries);
+  if (importedEntries.length === 0) {
+    return dedupeExplorerExternalImportEntries(fileEntries);
+  }
+
+  const hasImportedDirectories = importedEntries.some(
+    (entry) => entry.kind === "directory",
+  );
+  if (hasImportedDirectories) {
+    return dedupeExplorerExternalImportEntries(importedEntries);
+  }
+
+  const importedFilePaths = new Set(
+    importedEntries
+      .filter(
+        (
+          entry,
+        ): entry is Extract<ExplorerExternalImportEntry, { kind: "file" }> =>
+          entry.kind === "file",
+      )
+      .map((entry) => entry.relativePath),
+  );
+  const hasUnmatchedDroppedFiles = fileEntries.some(
+    (entry) => !importedFilePaths.has(entry.relativePath),
+  );
+  if (!hasUnmatchedDroppedFiles) {
+    return dedupeExplorerExternalImportEntries(importedEntries);
+  }
+
+  return dedupeExplorerExternalImportEntries([
+    ...importedEntries,
+    ...fileEntries,
+  ]);
 }
 
 function getComparableFileName(targetName: string) {

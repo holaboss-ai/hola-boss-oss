@@ -9,6 +9,6 @@ test("startEmbeddedRuntime reuses an already-healthy runtime before emitting sta
 
   assert.match(
     source,
-    /async function startEmbeddedRuntime\(\) \{[\s\S]*const url = `http:\/\/127\.0\.0\.1:\$\{RUNTIME_API_PORT\}`;[\s\S]*if \(await isRuntimeHealthy\(url\)\) \{\s*return refreshRuntimeStatus\(\);\s*\}[\s\S]*runtimeStatus = withDesktopBrowserStatus\(\{\s*\.\.\.runtimeStatus,\s*status: runtimeRoot && executablePath \? "starting" : "missing",/,
+    /async function startEmbeddedRuntime\(\) \{[\s\S]*const url = runtimeBaseUrl\(\);[\s\S]*if \(await isRuntimeHealthy\(url\)\) \{\s*return refreshRuntimeStatus\(\);\s*\}[\s\S]*runtimeStatus = withDesktopBrowserStatus\(\{\s*\.\.\.runtimeStatus,\s*status: runtimeRoot && executablePath \? "starting" : "missing",/,
   );
 });
