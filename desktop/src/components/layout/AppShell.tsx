@@ -2000,6 +2000,26 @@ function AppShellContent() {
     [revealBrowserPane, selectedWorkspaceId],
   );
 
+  const handleOpenLinkInNewAppBrowserTab = useCallback(
+    (url: string, workspaceIdOverride?: string | null) => {
+      const normalizedUrl = url.trim();
+      if (!normalizedUrl) {
+        return;
+      }
+
+      revealBrowserPane("user");
+      const targetWorkspaceId =
+        workspaceIdOverride !== undefined
+          ? workspaceIdOverride
+          : selectedWorkspaceId || null;
+      void window.electronAPI.browser
+        .setActiveWorkspace(targetWorkspaceId, "user")
+        .then(() => window.electronAPI.browser.newTab(normalizedUrl))
+        .catch(() => undefined);
+    },
+    [revealBrowserPane, selectedWorkspaceId],
+  );
+
   const handleOpenCreateWorkspacePanel = useCallback(() => {
     setCreateWorkspacePanelAnchorWorkspaceId(selectedWorkspaceId || "");
     setCreateWorkspacePanelOpen(true);
@@ -3217,6 +3237,7 @@ function AppShellContent() {
         surface={agentView.surface}
         resourceId={agentView.resourceId}
         htmlContent={agentView.htmlContent}
+        onOpenLinkInBrowser={handleOpenLinkInNewAppBrowserTab}
       />
     );
   }, [
@@ -3231,6 +3252,7 @@ function AppShellContent() {
     handleOpenInboxPane,
     handleReturnToChatPane,
     handleCreateSession,
+    handleOpenLinkInNewAppBrowserTab,
     handleProactiveHeartbeatCronChange,
     handleProactiveWorkspaceEnabledChange,
     handleOpenLinkInAppBrowser,
@@ -3306,6 +3328,7 @@ function AppShellContent() {
             surface={spaceDisplayView.surface}
             resourceId={spaceDisplayView.resourceId}
             htmlContent={spaceDisplayView.htmlContent}
+            onOpenLinkInBrowser={handleOpenLinkInNewAppBrowserTab}
           />
         </div>
       );
@@ -3323,6 +3346,7 @@ function AppShellContent() {
   }, [
     activeApp,
     activeAppId,
+    handleOpenLinkInNewAppBrowserTab,
     hasSelectedWorkspace,
     installedApps,
     shouldSuspendBrowserNativeView,
@@ -3356,6 +3380,7 @@ function AppShellContent() {
                   current?.requestKey === requestKey ? null : current,
                 );
               }}
+              onOpenLinkInBrowser={handleOpenLinkInNewAppBrowserTab}
             />
           ) : (
             <BrowserPane
@@ -3370,6 +3395,7 @@ function AppShellContent() {
       fileExplorerFocusRequest,
       filesPaneWidth,
       flexSpacePaneId,
+      handleOpenLinkInNewAppBrowserTab,
       shouldSuspendBrowserNativeView,
       showOperationsDrawer,
       visibleSpacePaneIds,
@@ -3788,6 +3814,9 @@ function AppShellContent() {
                                           : current,
                                       );
                                     }}
+                                    onOpenLinkInBrowser={
+                                      handleOpenLinkInNewAppBrowserTab
+                                    }
                                     previewInPane={false}
                                     embedded
                                     onFileOpen={(path) => {

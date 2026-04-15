@@ -10,14 +10,17 @@ const sourcePath = path.join(__dirname, "FileExplorerPane.tsx");
 test("file explorer syncs the workspace root only when the selected workspace changes", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /const lastSyncedWorkspaceRootRef = useRef<\{ workspaceId: string; rootPath: string \} \| null>\(null\);/);
+  assert.match(
+    source,
+    /const lastSyncedWorkspaceRootRef = useRef<\{[\s\S]*workspaceId: string;[\s\S]*rootPath: string;[\s\S]*\} \| null>\(null\);/,
+  );
   assert.match(
     source,
     /window\.electronAPI\.fs\.listDirectory\(\s*targetPath \?\? null,\s*selectedWorkspaceId \?\? null,\s*\)/,
   );
   assert.match(
     source,
-    /lastSyncedWorkspaceRootRef\.current = \{\s*workspaceId: selectedWorkspaceId,\s*rootPath: workspaceRoot\s*\};/
+    /lastSyncedWorkspaceRootRef\.current = \{\s*workspaceId: selectedWorkspaceId,\s*rootPath: workspaceRoot,\s*\};/
   );
   assert.match(source, /\}, \[loadDirectory, selectedWorkspaceId\]\);/);
   assert.doesNotMatch(source, /\}, \[currentPath, loadDirectory, selectedWorkspaceId\]\);/);
@@ -140,10 +143,13 @@ test("file explorer accepts one-shot focus requests for artifact files", async (
   assert.match(source, /export type FileExplorerFocusRequest = \{\s*path: string;\s*requestKey: number;\s*\};/);
   assert.match(
     source,
-    /interface FileExplorerPaneProps \{\s*focusRequest\?: FileExplorerFocusRequest \| null;\s*onFocusRequestConsumed\?: \(requestKey: number\) => void;\s*previewInPane\?: boolean;\s*onFileOpen\?: \(path: string\) => void;\s*embedded\?: boolean;\s*\}/,
+    /interface FileExplorerPaneProps \{\s*focusRequest\?: FileExplorerFocusRequest \| null;\s*onFocusRequestConsumed\?: \(requestKey: number\) => void;\s*previewInPane\?: boolean;\s*onFileOpen\?: \(path: string\) => void;\s*onOpenLinkInBrowser\?: \(url: string\) => void;\s*embedded\?: boolean;\s*\}/,
   );
   assert.match(source, /const request = focusRequest;\s*if \(lastProcessedFocusRequestKeyRef\.current === request\.requestKey\) \{\s*return;\s*\}/);
-  assert.match(source, /const workspaceRoot =\s*workspaceRootPath \?\?\s*\(await window\.electronAPI\.workspace\.getWorkspaceRoot\(selectedWorkspaceId\)\);/);
+  assert.match(
+    source,
+    /const workspaceRoot =[\s\S]*workspaceRootPath \?\?[\s\S]*await window\.electronAPI\.workspace\.getWorkspaceRoot\(\s*selectedWorkspaceId,\s*\)\);/,
+  );
   assert.match(source, /targetPath = resolveWorkspaceTargetPath\(workspaceRoot, targetPath\);/);
   assert.match(source, /const revealPathInTree = useCallback\(/);
   assert.match(source, /await openFileTarget\(targetPath, \{ syncDirectory: true \}\);/);
@@ -177,8 +183,9 @@ test("file explorer adds a markdown preview mode while keeping text editing inli
   assert.match(source, /<SimpleMarkdown[\s\S]*className="chat-markdown text-sm leading-7 text-foreground"[\s\S]*onLinkClick=\{openPreviewLink\}[\s\S]*\{previewDraft\}[\s\S]*<\/SimpleMarkdown>/);
   assert.match(source, /const supportsRenderedTextPreview = isMarkdownPreview \|\| isHtmlPreview;/);
   assert.match(source, /readOnly=\{!preview\.isEditable\}/);
-  assert.match(source, />\s*Preview\s*<\/button>/);
-  assert.match(source, />\s*Edit\s*<\/button>/);
+  assert.match(source, />\s*Preview\s*<\/Button>/);
+  assert.match(source, />\s*Edit\s*<\/Button>/);
+  assert.match(source, /if \(onOpenLinkInBrowser\) \{\s*onOpenLinkInBrowser\(url\);\s*return;\s*\}/);
   assert.match(source, /window\.electronAPI\.ui\.openExternalUrl\(url\)/);
   assert.match(
     source,
@@ -243,14 +250,20 @@ test("file explorer warns users to save before leaving an unsaved file", async (
 test("file explorer assigns richer icons for common file types", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /FileBadge2,[\s\S]*FileSpreadsheet,[\s\S]*FileVideoCamera,[\s\S]*Shield,/);
+  assert.match(source, /FileBadge2,/);
+  assert.match(source, /FileSpreadsheet,/);
+  assert.match(source, /FileVideoCamera,/);
+  assert.match(source, /Shield,/);
   assert.match(source, /const SPECIAL_POLICY_FILENAMES = new Set\(\[\s*"agents\.md"\s*\]\);/);
   assert.match(source, /const normalizedFileName = getComparableFileName\(targetName\);/);
   assert.match(source, /if \(SPECIAL_POLICY_FILENAMES\.has\(normalizedFileName\)\) \{\s*return \{\s*Icon: Shield,/);
   assert.match(source, /if \(SPREADSHEET_EXTENSIONS\.has\(extension\)\) \{\s*return \{\s*Icon: FileSpreadsheet,/);
   assert.match(source, /if \(extension === ".pdf"\) \{\s*return \{\s*Icon: FileBadge2,/);
   assert.match(source, /if \(JSON_EXTENSIONS\.has\(extension\)\) \{\s*return \{\s*Icon: FileJson,/);
-  assert.match(source, /const \{ Icon, className \} = getExplorerIconDescriptor\(\s*entry\.name,\s*entry\.isDirectory\s*\);/);
+  assert.match(
+    source,
+    /const \{ Icon, className \} = getExplorerIconDescriptor\(\s*entry\.name,\s*entry\.isDirectory,\s*\);/,
+  );
 });
 
 test("file explorer exposes right-click rename and delete actions for entries", async () => {
@@ -396,6 +409,12 @@ test("file explorer imports dragged external files and folders into the tree", a
 test("file explorer preserves multi-file external drops when entry-backed items are incomplete", async () => {
   const source = await readFile(sourcePath, "utf8");
 
+  assert.match(source, /function droppedFileRelativePath\(file: File\)/);
+  assert.match(
+    source,
+    /"webkitRelativePath" in file && typeof file\.webkitRelativePath === "string"/,
+  );
+  assert.match(source, /const file = item\.getAsFile\(\);/);
   assert.match(
     source,
     /if \(importedEntries\.length === 0\) \{\s*return dedupeExplorerExternalImportEntries\(fileEntries\);\s*\}/,
@@ -427,11 +446,11 @@ test("file explorer does not expose a pane-level close action", async () => {
 
   assert.match(
     source,
-    /interface FileExplorerPaneProps \{\s*focusRequest\?: FileExplorerFocusRequest \| null;\s*onFocusRequestConsumed\?: \(requestKey: number\) => void;\s*previewInPane\?: boolean;\s*onFileOpen\?: \(path: string\) => void;\s*embedded\?: boolean;\s*\}/,
+    /interface FileExplorerPaneProps \{\s*focusRequest\?: FileExplorerFocusRequest \| null;\s*onFocusRequestConsumed\?: \(requestKey: number\) => void;\s*previewInPane\?: boolean;\s*onFileOpen\?: \(path: string\) => void;\s*onOpenLinkInBrowser\?: \(url: string\) => void;\s*embedded\?: boolean;\s*\}/,
   );
   assert.match(
     source,
-    /export function FileExplorerPane\(\{\s*focusRequest = null,\s*onFocusRequestConsumed,\s*previewInPane = true,\s*onFileOpen,\s*embedded = false,\s*}: FileExplorerPaneProps\)/,
+    /export function FileExplorerPane\(\{\s*focusRequest = null,\s*onFocusRequestConsumed,\s*previewInPane = true,\s*onFileOpen,\s*onOpenLinkInBrowser,\s*embedded = false,\s*}: FileExplorerPaneProps\)/,
   );
   assert.doesNotMatch(source, /label="Close file explorer"/);
   assert.doesNotMatch(source, /icon=\{<X size=\{1[23]\} \/>/);

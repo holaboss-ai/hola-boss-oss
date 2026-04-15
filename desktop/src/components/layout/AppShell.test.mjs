@@ -506,7 +506,9 @@ test("app shell renders a collapsible explorer and universal display in space mo
     /<section className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-card\/80 shadow-md backdrop-blur-sm">/,
   );
   assert.match(source, /<FileExplorerPane[\s\S]*focusRequest=\{fileExplorerFocusRequest\}/);
+  assert.match(source, /<FileExplorerPane[\s\S]*onOpenLinkInBrowser=\{handleOpenLinkInNewAppBrowserTab\}/);
   assert.match(source, /<FileExplorerPane[\s\S]*previewInPane=\{false\}/);
+  assert.match(source, /<InternalSurfacePane[\s\S]*onOpenLinkInBrowser=\{handleOpenLinkInNewAppBrowserTab\}/);
   assert.match(source, /<SpaceApplicationsExplorerPane[\s\S]*installedApps=\{installedApps\}/);
   assert.match(source, /<SpaceApplicationsExplorerPane[\s\S]*onAddApp=\{handleAddApp\}/);
   assert.match(source, /<SpaceBrowserExplorerPane[\s\S]*browserSpace=\{spaceBrowserSpace\}/);
@@ -532,6 +534,8 @@ test("app shell routes agent-originated browser opens into the agent browser spa
   assert.match(source, /const targetBrowserSpace =\s*payload\.space === "agent" \? "agent" : "user";/);
   assert.match(source, /\.setActiveWorkspace\(\s*payload\.workspaceId \?\? selectedWorkspaceId \?\? null,\s*targetBrowserSpace,\s*\)/);
   assert.match(source, /\.setActiveWorkspace\(targetWorkspaceId, "user"\)/);
+  assert.match(source, /const handleOpenLinkInNewAppBrowserTab = useCallback\(/);
+  assert.match(source, /\.then\(\(\) => window\.electronAPI\.browser\.newTab\(normalizedUrl\)\)/);
 });
 
 test("app shell reports active non-browser operator surfaces back to Electron", async () => {

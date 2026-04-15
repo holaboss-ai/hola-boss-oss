@@ -62,6 +62,7 @@ interface FileExplorerPaneProps {
   onFocusRequestConsumed?: (requestKey: number) => void;
   previewInPane?: boolean;
   onFileOpen?: (path: string) => void;
+  onOpenLinkInBrowser?: (url: string) => void;
   embedded?: boolean;
 }
 
@@ -215,6 +216,14 @@ function joinExplorerImportPath(parentPath: string, name: string) {
   return trimmedName ? `${parentPath}/${trimmedName}` : parentPath;
 }
 
+function droppedFileRelativePath(file: File) {
+  const relativePath =
+    "webkitRelativePath" in file && typeof file.webkitRelativePath === "string"
+      ? file.webkitRelativePath.trim()
+      : "";
+  return relativePath || file.name;
+}
+
 async function readExternalDropDirectoryEntries(
   entry: FileSystemDirectoryEntry,
 ) {
@@ -327,18 +336,28 @@ async function collectDroppedExternalEntries(dataTransfer: DataTransfer | null) 
     const filesystemEntry = (
       item as ExplorerExternalDropDataTransferItem
     ).webkitGetAsEntry?.();
-    if (!filesystemEntry) {
+    if (filesystemEntry) {
+      importedEntries.push(
+        ...(await collectDroppedExternalEntriesFromEntry(filesystemEntry)),
+      );
       continue;
     }
-    importedEntries.push(
-      ...(await collectDroppedExternalEntriesFromEntry(filesystemEntry)),
-    );
+
+    const file = item.getAsFile();
+    if (!file) {
+      continue;
+    }
+    importedEntries.push({
+      kind: "file",
+      relativePath: droppedFileRelativePath(file),
+      content: new Uint8Array(await file.arrayBuffer()),
+    });
   }
 
   const fileEntries = await Promise.all(
     Array.from(dataTransfer.files ?? []).map(async (file) => ({
       kind: "file" as const,
-      relativePath: file.name,
+      relativePath: droppedFileRelativePath(file),
       content: new Uint8Array(await file.arrayBuffer()),
     })),
   );
@@ -800,6 +819,7 @@ export function FileExplorerPane({
   onFocusRequestConsumed,
   previewInPane = true,
   onFileOpen,
+  onOpenLinkInBrowser,
   embedded = false,
 }: FileExplorerPaneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -1194,8 +1214,12 @@ export function FileExplorerPane({
   }, [saving]);
 
   const openPreviewLink = useCallback((url: string) => {
+    if (onOpenLinkInBrowser) {
+      onOpenLinkInBrowser(url);
+      return;
+    }
     void window.electronAPI.ui.openExternalUrl(url);
-  }, []);
+  }, [onOpenLinkInBrowser]);
 
   const closeContextMenu = useCallback(() => {
     setContextMenu(null);

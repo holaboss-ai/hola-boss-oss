@@ -36,13 +36,18 @@ test("settings dialog settings section shows the app controls above appearance",
   assert.match(source, /function aboutAppUpdateState\(status: AppUpdateStatusPayload \| null\): \{/);
   assert.match(source, /const \[appUpdateStatus, setAppUpdateStatus\] =\s*useState<AppUpdateStatusPayload \| null>\(null\);/);
   assert.match(source, /const \[appUpdateChannelPending, setAppUpdateChannelPending\] = useState\(false\);/);
+  assert.match(source, /const \[appUpdateInstallPending, setAppUpdateInstallPending\] = useState\(false\);/);
   assert.match(source, /const appUpdateState = aboutAppUpdateState\(appUpdateStatus\);/);
   assert.match(source, /window\.electronAPI\.appUpdate\.getStatus\(\)/);
   assert.match(source, /window\.electronAPI\.appUpdate\.checkNow\(\)/);
   assert.match(source, /window\.electronAPI\.appUpdate\.onStateChange\(\(status\) => \{/);
   assert.match(source, /async function handleSetBetaChannel\(checked: boolean\)/);
+  assert.match(source, /function handleInstallAppUpdateNow\(\) \{/);
+  assert.match(source, /void window\.electronAPI\.appUpdate\.installNow\(\)\.catch\(\(error\) => \{/);
   assert.match(source, /window\.electronAPI\.appUpdate\.setChannel\(\s*checked \? "beta" : "latest",?\s*\)/);
   assert.match(source, /activeSection === "about" \? \(/);
+  assert.match(source, /if \(status\.downloaded\) \{\s*return \{\s*badge: "Ready",[\s\S]*progressPercent: null,[\s\S]*readyToInstall: true,/);
+  assert.doesNotMatch(source, /if \(status\.downloaded\) \{\s*return \{[\s\S]*progressPercent: 100,/);
 
   const settingsSectionIndex = source.indexOf('activeSection === "settings" ? (');
   const appLabelIndex = source.indexOf("Holaboss Desktop");
@@ -65,7 +70,10 @@ test("settings dialog settings section shows the app controls above appearance",
   assert.match(source, /v\{displayAppVersion\}/);
   assert.match(source, /aria-live="polite"/);
   assert.match(source, /appUpdateState\.progressPercent !== null/);
+  assert.match(source, /appUpdateState\.readyToInstall \? \(/);
   assert.match(source, /width: `\$\{appUpdateState\.progressPercent\}%`/);
+  assert.match(source, /Update and Restart Now/);
+  assert.match(source, /Restarting\.\.\./);
   assert.match(source, /Opt into beta desktop releases before they reach the stable channel\./);
   assert.match(source, /<Switch[\s\S]*checked=\{betaChannelEnabled\}/);
   assert.match(source, /aria-label="Enable beta updates"/);

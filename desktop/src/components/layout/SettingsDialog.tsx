@@ -7,6 +7,7 @@ import {
   Info,
   Loader2,
   Plug,
+  RotateCcw,
   Send,
   Settings2,
   User2,
@@ -145,6 +146,7 @@ function aboutAppUpdateState(status: AppUpdateStatusPayload | null): {
   message: string;
   progressPercent: number | null;
   error: boolean;
+  readyToInstall: boolean;
 } {
   if (!status) {
     return {
@@ -152,6 +154,7 @@ function aboutAppUpdateState(status: AppUpdateStatusPayload | null): {
       message: "Loading desktop update status.",
       progressPercent: null,
       error: false,
+      readyToInstall: false,
     };
   }
 
@@ -166,6 +169,7 @@ function aboutAppUpdateState(status: AppUpdateStatusPayload | null): {
       message: "In-app desktop updates are unavailable on this build.",
       progressPercent: null,
       error: false,
+      readyToInstall: false,
     };
   }
 
@@ -175,15 +179,17 @@ function aboutAppUpdateState(status: AppUpdateStatusPayload | null): {
       message: status.error,
       progressPercent: null,
       error: true,
+      readyToInstall: false,
     };
   }
 
   if (status.downloaded) {
     return {
       badge: "Ready",
-      message: `${latestVersion} has finished downloading and will install after you restart Holaboss.`,
-      progressPercent: 100,
+      message: `${latestVersion} has finished downloading and is ready to install.`,
+      progressPercent: null,
       error: false,
+      readyToInstall: true,
     };
   }
 
@@ -197,6 +203,7 @@ function aboutAppUpdateState(status: AppUpdateStatusPayload | null): {
       message: `Downloading ${latestVersion} in the background.`,
       progressPercent,
       error: false,
+      readyToInstall: false,
     };
   }
 
@@ -206,6 +213,7 @@ function aboutAppUpdateState(status: AppUpdateStatusPayload | null): {
       message: `Checking for the latest ${channelLabel} desktop release.`,
       progressPercent: null,
       error: false,
+      readyToInstall: false,
     };
   }
 
@@ -214,6 +222,7 @@ function aboutAppUpdateState(status: AppUpdateStatusPayload | null): {
     message: `This device is up to date on the ${channelLabel} channel.`,
     progressPercent: null,
     error: false,
+    readyToInstall: false,
   };
 }
 
@@ -246,6 +255,7 @@ export function SettingsDialog({
   const [appUpdateStatus, setAppUpdateStatus] =
     useState<AppUpdateStatusPayload | null>(null);
   const [appUpdateChannelPending, setAppUpdateChannelPending] = useState(false);
+  const [appUpdateInstallPending, setAppUpdateInstallPending] = useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -299,6 +309,12 @@ export function SettingsDialog({
     setAutomationsWorkspaceId(selectedWorkspace?.id ?? workspaces[0]?.id ?? "");
   }, [open, selectedWorkspace?.id, workspaces]);
 
+  useEffect(() => {
+    if (!appUpdateStatus?.downloaded) {
+      setAppUpdateInstallPending(false);
+    }
+  }, [appUpdateStatus?.downloaded]);
+
   async function handleExportDiagnosticsBundle() {
     setDiagnosticsExportState({
       status: "exporting",
@@ -335,6 +351,18 @@ export function SettingsDialog({
     } finally {
       setAppUpdateChannelPending(false);
     }
+  }
+
+  function handleInstallAppUpdateNow() {
+    if (appUpdateInstallPending) {
+      return;
+    }
+
+    setAppUpdateInstallPending(true);
+    void window.electronAPI.appUpdate.installNow().catch((error) => {
+      console.error("Failed to install the downloaded desktop update.", error);
+      setAppUpdateInstallPending(false);
+    });
   }
 
   if (!open) {
@@ -502,6 +530,26 @@ export function SettingsDialog({
                               width: `${appUpdateState.progressPercent}%`,
                             }}
                           />
+                        </div>
+                      ) : null}
+
+                      {appUpdateState.readyToInstall ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={handleInstallAppUpdateNow}
+                            disabled={appUpdateInstallPending}
+                          >
+                            {appUpdateInstallPending ? (
+                              <Loader2 className="size-4 animate-spin" />
+                            ) : (
+                              <RotateCcw className="size-4" />
+                            )}
+                            {appUpdateInstallPending
+                              ? "Restarting..."
+                              : "Update and Restart Now"}
+                          </Button>
                         </div>
                       ) : null}
                     </div>
