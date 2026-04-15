@@ -81,6 +81,7 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
           store: this.#store,
           record,
           claimedBy: this.#claimedBy,
+          leaseSeconds: this.#leaseSeconds,
           memoryService: options.memoryService ?? null,
           wakeDurableMemoryWorker: options.wakeDurableMemoryWorker ?? null,
           abortSignal: executionOptions?.signal,
@@ -238,6 +239,7 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
   #recoverExpiredClaims(): number {
     const expired = this.#store.listExpiredClaimedInputs();
     for (const record of expired) {
+      this.#activeRuns.get(record.inputId)?.controller.abort("claim_expired");
       const events = this.#store.listOutputEvents({
         sessionId: record.sessionId,
         inputId: record.inputId

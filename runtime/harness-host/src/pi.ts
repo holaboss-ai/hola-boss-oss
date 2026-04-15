@@ -906,6 +906,12 @@ function hasPersistedPiTodoState(stateDir: string, sessionId: string): boolean {
   return countPiTodoTasks(readPiTodoState(stateDir, sessionId).phases) > 0;
 }
 
+function hasBlockedPersistedPiTodoState(stateDir: string, sessionId: string): boolean {
+  return readPiTodoState(stateDir, sessionId).phases
+    .flatMap((phase) => phase.tasks)
+    .some((task) => task.status === "blocked");
+}
+
 function shouldRequireTodoReadBeforePrompt(request: HarnessHostPiRequest): boolean {
   return Boolean(
     resolveRequestedSessionFile(request) &&
@@ -918,15 +924,17 @@ function resumeTodoReadInstruction(request: HarnessHostPiRequest): string {
     return "";
   }
   return [
-    "Resumed session requirement:",
+    "Resumed session note:",
     "A persisted phased todo plan already exists for this session.",
-    "Before any other substantive work, call `todoread` to restore that plan and recover the current phase/task ids.",
-    "Continue from the restored plan, and update it with `todowrite` if it is stale before proceeding.",
+    "Treat the user's newest message as the primary instruction for this turn.",
+    "Use `todoread` when you need the current phase/task ids before continuing or updating the persisted plan.",
+    "Only restore and continue the persisted todo immediately when the user's newest message clearly asks to continue it or clearly advances the same work.",
+    "If the user's newest message is conversational, brief, acknowledges prior progress, or is otherwise ambiguous about continuation, respond to that message directly first and ask whether they want to continue the unfinished work.",
     `When you use \`todowrite\`, valid \`op\` values are exactly ${PI_TODO_WRITE_OPS_TEXT}.`,
     PI_TODO_WRITE_ALIAS_WARNING,
-    "After restoring the plan, continue executing it until the recorded work is complete or genuinely blocked.",
-    "Do not stop only to give progress updates or ask whether to continue while executable todo items remain.",
-    "If the user's newest message clearly redirects to unrelated work, handle that new request first after restoring the todo, keep the restored todo marked unfinished, and then propose continuing it once the unrelated request is complete.",
+    "When you do resume the plan, continue executing it until the recorded work is complete or genuinely blocked.",
+    "Once the user has clearly asked you to continue an unfinished plan and executable todo items remain, do not stop only to give progress updates or ask whether to continue.",
+    "If the user's newest message clearly redirects to unrelated work, handle that new request first, keep the restored todo marked unfinished, and then propose continuing it once the unrelated request is complete.",
   ].join("\n");
 }
 
@@ -1840,10 +1848,13 @@ export function createPiTodoToolDefinitions(params: { stateDir: string; sessionI
       "todoread: Read the current phased todo plan for this session and recover the phase/task ids needed for later `todowrite` mutations.",
     promptGuidelines: [
       "Use todoread before changing an existing phased plan when current todo state may matter.",
-      "When resuming a session that already has todo state, call todoread before other substantive work.",
+      "When resuming a session that already has todo state, call todoread before continuing that plan if you need the current phase/task ids.",
       "Use todoread to recover the exact phase ids and task ids before calling `update`, `add_task`, or `remove_task` on an existing plan.",
-      "After reading an existing todo, continue executing it until the recorded work is complete or genuinely blocked.",
-      "Do not stop only to give progress updates or ask whether to continue while executable todo items remain.",
+      "Treat the user's newest message as the primary instruction for the current turn.",
+      "If the user's newest message clearly asks to continue the unfinished plan or clearly advances it, resume the plan after reading it.",
+      "If the user's newest message is conversational, brief, acknowledges prior progress, or is otherwise ambiguous about continuation, respond first and ask whether they want to continue before resuming the unfinished plan.",
+      "After reading an existing todo that the user has clearly asked you to continue, keep executing it until the recorded work is complete or genuinely blocked.",
+      "Once the user has clearly asked you to continue an unfinished plan, do not stop only to give progress updates or ask whether to continue while executable todo items remain.",
       "If the user's newest message is clearly unrelated to the unfinished todo, preserve that todo as unfinished, handle the new request first, and then propose continuing the unfinished work.",
     ],
     execute: async (_toolCallId, _toolParams, signal) => {
@@ -1879,8 +1890,10 @@ export function createPiTodoToolDefinitions(params: { stateDir: string; sessionI
     promptGuidelines: [
       "Use todowrite for complex or long-running tasks that benefit from an explicit phased plan.",
       "The top-level phases are grouped tasks, and each phase's `tasks` entries are the actionable task items within that grouped task.",
-      "When you choose to use a todo, keep executing it until the recorded work is complete or genuinely blocked.",
-      "Do not stop only to give progress updates or ask whether to continue while executable todo items remain.",
+      "Treat the user's newest message as the primary instruction for the current turn even when an unfinished todo already exists.",
+      "When the user has clearly asked you to continue an unfinished todo, keep executing it until the recorded work is complete or genuinely blocked.",
+      "If the user's newest message is conversational, brief, acknowledges prior progress, or is otherwise ambiguous about continuation, respond directly and ask whether they want to continue instead of auto-resuming the unfinished todo.",
+      "Once the user has clearly asked you to continue an unfinished todo, do not stop only to give progress updates or ask whether to continue while executable todo items remain.",
       "If a new user message clearly redirects to unrelated work, do that work first without marking the existing unfinished todo complete, then propose resuming the unfinished work afterward.",
       `Valid \`op\` values are exactly ${PI_TODO_WRITE_OPS_TEXT}.`,
       PI_TODO_WRITE_ALIAS_WARNING,
@@ -4176,10 +4189,20 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
     }
   ).setThinkingLevel?.(requestedThinking);
   const state = createPiEventMapperState(handle.mcpToolMetadata, handle.skillMetadataByAlias);
+  const shouldEmitWaitingUser = () =>
+    state.waitingForUser || hasBlockedPersistedPiTodoState(stateDir, request.session_id);
   let terminalEmitted = false;
   const stateDir = resolvePiStateDir(request.workspace_dir);
   const unsubscribe = handle.session.subscribe((event) => {
     for (const mapped of mapPiEvent(event, handle.sessionFile, state)) {
+      if (
+        mapped.event_type === "run_completed" &&
+        typeof mapped.payload.status === "string" &&
+        mapped.payload.status.trim().toLowerCase() !== "waiting_user" &&
+        shouldEmitWaitingUser()
+      ) {
+        mapped.payload.status = "waiting_user";
+      }
       if (
         mapped.event_type === "tool_call" &&
         mapped.payload.phase === "completed" &&
@@ -4225,7 +4248,7 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
     await handle.session.sendUserMessage(await promptContentForRequest(request));
     if (!terminalEmitted) {
       emitRunnerEvent(request, nextSequence(), "run_completed", {
-        status: state.waitingForUser ? "waiting_user" : "success",
+        status: shouldEmitWaitingUser() ? "waiting_user" : "success",
         source: "pi",
         event: "send_user_message_resolved",
         harness_session_id: handle.sessionFile,

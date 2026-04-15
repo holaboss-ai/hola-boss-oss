@@ -23,6 +23,8 @@ const ONBOARD_PROMPT_HEADER = "[Holaboss Workspace Onboarding v1]";
 const RUNTIME_EXEC_CONTEXT_KEY = "_sandbox_runtime_exec_v1";
 const RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY = "model_proxy_api_key";
 const RUNTIME_EXEC_SANDBOX_ID_KEY = "sandbox_id";
+const DEFAULT_CLAIM_LEASE_SECONDS = 300;
+const TERMINAL_OUTPUT_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
 
 interface SessionInputAttachment {
   id: string;
@@ -244,6 +246,28 @@ function tokenUsageFromPayload(payload: Record<string, unknown>): Record<string,
     return direct;
   }
   return jsonRecord(payload.usage);
+}
+
+function claimLeaseUntilIso(leaseSeconds: number, nowIso = new Date().toISOString()): string {
+  if (leaseSeconds <= 0) {
+    return nowIso;
+  }
+  const now = new Date(nowIso);
+  return new Date(now.getTime() + leaseSeconds * 1000).toISOString();
+}
+
+function latestPersistedTerminalOutputEvent(params: {
+  store: RuntimeStateStore;
+  sessionId: string;
+  inputId: string;
+}) {
+  return params.store
+    .listOutputEvents({
+      sessionId: params.sessionId,
+      inputId: params.inputId,
+    })
+    .filter((event) => TERMINAL_OUTPUT_EVENT_TYPES.has(event.eventType))
+    .at(-1);
 }
 
 function stopReasonForTerminalEvent(params: {
@@ -680,6 +704,7 @@ export async function processClaimedInput(params: {
   store: RuntimeStateStore;
   record: SessionInputRecord;
   claimedBy?: string;
+  leaseSeconds?: number;
   memoryService?: MemoryServiceLike | null;
   runEvolveTasksFn?: typeof runEvolveTasks;
   wakeDurableMemoryWorker?: (() => void) | null;
@@ -689,6 +714,8 @@ export async function processClaimedInput(params: {
   abortSignal?: AbortSignal;
 }): Promise<void> {
   const { store, record } = params;
+  const claimedBy = params.claimedBy ?? record.claimedBy ?? "sandbox-agent-ts-worker";
+  const leaseSeconds = params.leaseSeconds ?? DEFAULT_CLAIM_LEASE_SECONDS;
   const turnStartedAt = new Date().toISOString();
   const workspace = store.getWorkspace(record.workspaceId);
   if (!workspace) {
@@ -756,8 +783,8 @@ export async function processClaimedInput(params: {
     sessionId: record.sessionId,
     status: "BUSY",
     currentInputId: record.inputId,
-    currentWorkerId: params.claimedBy ?? "sandbox-agent-ts-worker",
-    leaseUntil: record.claimedUntil,
+    currentWorkerId: claimedBy,
+    leaseUntil: record.claimedUntil ?? claimLeaseUntilIso(leaseSeconds),
     heartbeatAt: undefined,
     lastError: null
   });
@@ -814,6 +841,7 @@ export async function processClaimedInput(params: {
   let completedAt: string | null = null;
   let stopReason: string | null = null;
   let tokenUsage: Record<string, unknown> | null = null;
+  let activeLeaseUntil = record.claimedUntil ?? claimLeaseUntilIso(leaseSeconds);
   let promptSectionIds: string[] = [];
   let capabilityManifestFingerprint: string | null = null;
   let requestSnapshotFingerprint: string | null = null;
@@ -840,13 +868,21 @@ export async function processClaimedInput(params: {
     const execution = await executeRunner(payload, {
       signal: params.abortSignal,
       onHeartbeat: () => {
+        const renewedClaim = store.renewInputClaim({
+          inputId: record.inputId,
+          claimedBy,
+          leaseSeconds,
+        });
+        if (renewedClaim?.claimedUntil) {
+          activeLeaseUntil = renewedClaim.claimedUntil;
+        }
         store.updateRuntimeState({
           workspaceId: record.workspaceId,
           sessionId: record.sessionId,
           status: "BUSY",
           currentInputId: record.inputId,
-          currentWorkerId: params.claimedBy ?? "sandbox-agent-ts-worker",
-          leaseUntil: record.claimedUntil,
+          currentWorkerId: claimedBy,
+          leaseUntil: activeLeaseUntil,
           lastError: null
         });
       },
@@ -1017,33 +1053,98 @@ export async function processClaimedInput(params: {
       }
     });
 
-    if (execution.aborted && !execution.sawTerminal) {
-      const pausedAt = new Date().toISOString();
-      const completed = buildRunCompletedEvent({
-        sessionId: record.sessionId,
-        inputId: record.inputId,
-        sequence: lastSequence + 1,
-        payload: {
-          status: "paused",
-          stop_reason: "paused",
-          message: "Run paused by user request",
-        },
-      });
-      const completedPayload = payloadForEvent(completed);
-      lastSequence = Math.max(lastSequence, typeof completed.sequence === "number" ? completed.sequence : lastSequence + 1);
-      deferredTerminalEvent = {
-        eventType: "run_completed",
-        payload: completedPayload,
-        createdAt: pausedAt,
-      };
-      terminalStatus = "PAUSED";
-      lastError = null;
-      completedAt = pausedAt;
-      stopReason = stopReasonForTerminalEvent({
-        eventType: "run_completed",
-        payload: completedPayload,
-        terminalStatus,
-      });
+    const persistedTerminalEvent = latestPersistedTerminalOutputEvent({
+      store,
+      sessionId: record.sessionId,
+      inputId: record.inputId,
+    });
+
+    if (persistedTerminalEvent) {
+      const persistedPayload = persistedTerminalEvent.payload;
+      deferredTerminalEvent = null;
+      if (persistedTerminalEvent.eventType === "run_completed") {
+        terminalStatus = terminalStatusForCompletedPayload(
+          persistedPayload,
+          harnessSupportsWaitingUser,
+        );
+        lastError = null;
+        completedAt = persistedTerminalEvent.createdAt;
+        stopReason = stopReasonForTerminalEvent({
+          eventType: "run_completed",
+          payload: persistedPayload,
+          terminalStatus,
+        });
+        tokenUsage = tokenUsageFromPayload(persistedPayload) ?? tokenUsage;
+      } else {
+        terminalStatus = "ERROR";
+        lastError = persistedPayload;
+        completedAt = persistedTerminalEvent.createdAt;
+        stopReason = stopReasonForTerminalEvent({
+          eventType: "run_failed",
+          payload: persistedPayload,
+          terminalStatus,
+        });
+        tokenUsage = tokenUsageFromPayload(persistedPayload) ?? tokenUsage;
+      }
+    } else if (execution.aborted && !execution.sawTerminal) {
+      if (execution.abortReason === "user_requested_pause") {
+        const pausedAt = new Date().toISOString();
+        const completed = buildRunCompletedEvent({
+          sessionId: record.sessionId,
+          inputId: record.inputId,
+          sequence: lastSequence + 1,
+          payload: {
+            status: "paused",
+            stop_reason: "paused",
+            message: "Run paused by user request",
+          },
+        });
+        const completedPayload = payloadForEvent(completed);
+        lastSequence = Math.max(lastSequence, typeof completed.sequence === "number" ? completed.sequence : lastSequence + 1);
+        deferredTerminalEvent = {
+          eventType: "run_completed",
+          payload: completedPayload,
+          createdAt: pausedAt,
+        };
+        terminalStatus = "PAUSED";
+        lastError = null;
+        completedAt = pausedAt;
+        stopReason = stopReasonForTerminalEvent({
+          eventType: "run_completed",
+          payload: completedPayload,
+          terminalStatus,
+        });
+      } else {
+        const failedAt = new Date().toISOString();
+        const failure = buildRunFailedEvent({
+          sessionId: record.sessionId,
+          inputId: record.inputId,
+          sequence: lastSequence + 1,
+          message:
+            execution.abortReason === "claim_expired"
+              ? "claimed input lease expired before the runner emitted a terminal event"
+              : execution.stderr.trim() ||
+                (execution.abortReason
+                  ? `runner aborted before terminal event: ${execution.abortReason}`
+                  : "runner aborted before terminal event"),
+          errorType: "RuntimeError"
+        });
+        const failurePayload = payloadForEvent(failure);
+        lastSequence = Math.max(lastSequence, typeof failure.sequence === "number" ? failure.sequence : lastSequence + 1);
+        deferredTerminalEvent = {
+          eventType: "run_failed",
+          payload: failurePayload,
+          createdAt: failedAt,
+        };
+        terminalStatus = "ERROR";
+        lastError = failurePayload;
+        completedAt = failedAt;
+        stopReason = stopReasonForTerminalEvent({
+          eventType: "run_failed",
+          payload: failurePayload,
+          terminalStatus,
+        });
+      }
     } else if (!execution.sawTerminal) {
       const details = execution.skippedLines.length > 0 ? execution.skippedLines.slice(0, 3).join("; ") : "";
       const suffix = details ? ` (skipped output: ${details})` : "";

@@ -237,6 +237,7 @@ function recentRuntimeContextPromptSection(context: AgentRecentRuntimeContext | 
   if (stopReason) {
     lines.push(`Previous stop reason: ${stopReason}.`);
   }
+  lines.push("The user's newest message is the primary instruction for this turn. Use unfinished prior work only as continuity context.");
   if (context.waiting_for_user === true) {
     lines.push("The previous run paused waiting for user input. Do not treat that state as completed work.");
   }
@@ -245,7 +246,10 @@ function recentRuntimeContextPromptSection(context: AgentRecentRuntimeContext | 
   }
   if (context.waiting_for_user === true || stopReason === "paused") {
     lines.push(
-      "If the user's latest message clearly redirects to a new unrelated task, handle that new request first, keep the unfinished prior work marked unfinished, and then propose continuing it after the new task is done."
+      "Only resume the unfinished prior work immediately when the user's newest message clearly asks to continue it or clearly advances the same task."
+    );
+    lines.push(
+      "If the user's newest message is conversational, brief, acknowledges the prior result, or is otherwise ambiguous about continuation, respond to that message directly and ask whether they want to continue the unfinished work instead of resuming it automatically."
     );
   }
   if (lastError) {
@@ -420,6 +424,8 @@ function sessionResumeContextPromptSection(context: AgentSessionResumeContext | 
   const lines = [
     "Session resume context:",
     "Use this as continuity context derived from persisted turn results and selected prior session messages. Verify current workspace state before acting on details that may have changed.",
+    "Treat the user's newest message as authoritative for this turn. Do not resume unfinished prior work unless that newest message clearly asks to continue it or clearly advances the same task.",
+    "If the newest message is conversational, brief, or ambiguous about continuation, respond to it directly first and ask whether the user wants to continue the unfinished prior work.",
   ];
 
   if (compactionBoundaryId || compactionBoundarySummary || restorationOrder.length > 0) {
@@ -570,8 +576,10 @@ export function buildBaseAgentPromptSections(
     "Block path traversal and cross-workspace access by default, including parent-directory paths, absolute external paths, and symlink escapes.",
     "Only cross the workspace boundary when the user explicitly insists, and then keep scope minimal and clearly tied to that instruction.",
     "Keep plans and missing decisions explicit: use coordination capabilities such as question, todo, and skill access instead of relying on hidden state.",
-    "If you create or resume a todo, treat it as the active execution contract: continue working through its unfinished items until the todo is complete or a real blocker requires user or external input.",
-    "Do not stop merely to provide an intermediate progress update or ask whether to continue while executable todo items remain.",
+    "If you create or resume a todo, use it as continuity for the current turn, but the user's newest message remains the primary instruction.",
+    "Resume unfinished todo work immediately only when the user's newest message clearly asks to continue it or clearly advances that same work.",
+    "If the user's newest message is conversational, brief, acknowledges prior progress, or is otherwise ambiguous about continuation, respond to that message directly and ask whether they want to continue the unfinished work instead of resuming it automatically.",
+    "Once the user has clearly asked you to continue an unfinished todo and executable items remain, do not stop merely to provide an intermediate progress update or ask whether to continue.",
     "If a task requires the user's name or other personal identity details and current user context does not provide them, ask the user explicitly instead of guessing.",
     "On the first strong signal that user input describes a reusable workflow, procedure, or operating pattern, proactively create or update a workspace-local skill instead of waiting for an explicit skill request.",
     "Do not create skills for transient runtime state, one-off task details, or information that only belongs in session continuity.",

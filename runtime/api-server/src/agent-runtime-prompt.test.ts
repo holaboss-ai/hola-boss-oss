@@ -164,11 +164,15 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   );
   assert.match(
     prompt.systemPrompt,
-    /If you create or resume a todo, treat it as the active execution contract: continue working through its unfinished items until the todo is complete or a real blocker requires user or external input\./
+    /If you create or resume a todo, use it as continuity for the current turn, but the user's newest message remains the primary instruction\./
   );
   assert.match(
     prompt.systemPrompt,
-    /Do not stop merely to provide an intermediate progress update or ask whether to continue while executable todo items remain\./
+    /If the user's newest message is conversational, brief, acknowledges prior progress, or is otherwise ambiguous about continuation, respond to that message directly and ask whether they want to continue the unfinished work instead of resuming it automatically\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Once the user has clearly asked you to continue an unfinished todo and executable items remain, do not stop merely to provide an intermediate progress update or ask whether to continue\./
   );
   assert.doesNotMatch(
     prompt.systemPrompt,
@@ -243,7 +247,12 @@ test("composeBaseAgentPrompt includes recent runtime context only when provided"
   assert.match(prompt.contextMessages.join("\n\n"), /Recent runtime context:/);
   assert.match(prompt.contextMessages.join("\n\n"), /Last run failed after editing config\./);
   assert.match(prompt.contextMessages.join("\n\n"), /Previous stop reason: runner_failed\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /The user's newest message is the primary instruction for this turn\./);
   assert.match(prompt.contextMessages.join("\n\n"), /waiting for user input/i);
+  assert.match(
+    prompt.contextMessages.join("\n\n"),
+    /If the user's newest message is conversational, brief, acknowledges the prior result, or is otherwise ambiguous about continuation, respond to that message directly and ask whether they want to continue the unfinished work instead of resuming it automatically\./,
+  );
   assert.match(prompt.contextMessages.join("\n\n"), /Previous runtime error: config parse error\./);
 });
 
@@ -270,7 +279,11 @@ test("composeBaseAgentPrompt warns when the previous run was user-paused", () =>
   );
   assert.match(
     prompt.contextMessages.join("\n\n"),
-    /If the user's latest message clearly redirects to a new unrelated task, handle that new request first, keep the unfinished prior work marked unfinished, and then propose continuing it after the new task is done\./,
+    /Only resume the unfinished prior work immediately when the user's newest message clearly asks to continue it or clearly advances the same task\./,
+  );
+  assert.match(
+    prompt.contextMessages.join("\n\n"),
+    /If the user's newest message is conversational, brief, acknowledges the prior result, or is otherwise ambiguous about continuation, respond to that message directly and ask whether they want to continue the unfinished work instead of resuming it automatically\./,
   );
 });
 
@@ -484,6 +497,11 @@ test("composeBaseAgentPrompt includes session resume context only when provided"
   assert.doesNotMatch(prompt.systemPrompt, /Session resume context:/);
   assert.match(prompt.contextMessages.join("\n\n"), /Session resume context:/);
   assert.match(prompt.contextMessages.join("\n\n"), /persisted turn results and selected prior session messages/i);
+  assert.match(prompt.contextMessages.join("\n\n"), /Treat the user's newest message as authoritative for this turn\./);
+  assert.match(
+    prompt.contextMessages.join("\n\n"),
+    /If the newest message is conversational, brief, or ambiguous about continuation, respond to it directly first and ask whether the user wants to continue the unfinished prior work\./,
+  );
   assert.match(prompt.contextMessages.join("\n\n"), /compaction boundary `compaction:input-1`/i);
   assert.match(prompt.contextMessages.join("\n\n"), /Boundary summary: Deploy failed because policy denied the action\./);
   assert.match(prompt.contextMessages.join("\n\n"), /Restoration order: `boundary_summary` -> `recent_runtime_context` -> `session_resume_context` -> `preserved_turn_input_ids` -> `restored_memory_paths`\./);

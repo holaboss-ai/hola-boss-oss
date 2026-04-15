@@ -1868,6 +1868,93 @@ test("runPi emits waiting_user and blocks the active todo when the question tool
   }
 });
 
+test("runPi emits waiting_user when a persisted todo is still blocked at run completion", async () => {
+  const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-run-blocked-todo-"));
+  const stateDir = path.join(workspaceDir, ".holaboss", "pi-agent");
+  const [, todoWrite] = createPiTodoToolDefinitions({
+    stateDir,
+    sessionId: "session-1",
+  });
+  await todoWrite.execute(
+    "call-seed",
+    {
+      ops: [
+        {
+          op: "replace",
+          phases: [
+            {
+              name: "Outreach",
+              tasks: [
+                {
+                  content: "Continue the blocked DM attempt after the user decides what to do next",
+                  status: "blocked",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    undefined,
+    undefined,
+    {} as never
+  );
+
+  const request = {
+    ...baseRequest(),
+    workspace_dir: workspaceDir,
+  };
+  const events: Array<{ event_type: string; payload: Record<string, unknown> }> = [];
+  const originalWrite = process.stdout.write.bind(process.stdout);
+  const fakeSession = {
+    subscribe(listener: (event: unknown) => void) {
+      this.listener = listener;
+      return () => {};
+    },
+    async sendUserMessage() {
+      this.listener?.({
+        type: "agent_end",
+        messages: [],
+      });
+    },
+    async abort() {},
+    dispose() {},
+    listener: undefined as ((event: unknown) => void) | undefined,
+  };
+
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    const lines = String(chunk)
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { event_type: string; payload: Record<string, unknown> });
+    events.push(...lines);
+    return true;
+  }) as typeof process.stdout.write;
+
+  try {
+    const exitCode = await runPi(request, {
+      createSession: async () => ({
+        session: fakeSession as never,
+        sessionFile: "/tmp/pi-session.jsonl",
+        mcpToolMetadata: new Map(),
+        skillMetadataByAlias: new Map(),
+        dispose: async () => {},
+      }),
+    });
+
+    assert.equal(exitCode, 0);
+    assert.deepEqual(
+      events.map((event) => event.event_type),
+      ["run_started", "run_completed"]
+    );
+    assert.equal(events[1]?.payload.status, "waiting_user");
+  } finally {
+    process.stdout.write = originalWrite;
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+  }
+});
+
 test("buildPiPromptPayload inlines native images, extracts common document formats, and falls back for binary files", async () => {
   const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-attachments-"));
   const attachmentsDir = path.join(workspaceDir, ".holaboss", "input-attachments", "batch-1");
@@ -1990,7 +2077,7 @@ test("buildPiPromptPayload inlines native images, extracts common document forma
   }
 });
 
-test("buildPiPromptPayload requires todoread first when resuming with persisted todo state", async () => {
+test("buildPiPromptPayload frames persisted todo state as advisory continuity when resuming", async () => {
   const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-resume-todo-"));
   const stateDir = path.join(workspaceDir, ".holaboss", "pi-agent");
   fs.mkdirSync(path.join(workspaceDir, ".holaboss", "pi-sessions"), { recursive: true });
@@ -2028,9 +2115,11 @@ test("buildPiPromptPayload requires todoread first when resuming with persisted 
       persisted_harness_session_id: persistedSessionPath,
     });
 
-    assert.match(prompt.text, /Resumed session requirement:/);
-    assert.match(prompt.text, /call `todoread` to restore that plan and recover the current phase\/task ids/i);
-    assert.match(prompt.text, /Continue from the restored plan, and update it with `todowrite`/i);
+    assert.match(prompt.text, /Resumed session note:/);
+    assert.match(prompt.text, /Treat the user's newest message as the primary instruction for this turn\./i);
+    assert.match(prompt.text, /Use `todoread` when you need the current phase\/task ids before continuing or updating the persisted plan\./i);
+    assert.match(prompt.text, /Only restore and continue the persisted todo immediately when the user's newest message clearly asks to continue it or clearly advances the same work\./i);
+    assert.match(prompt.text, /If the user's newest message is conversational, brief, acknowledges prior progress, or is otherwise ambiguous about continuation, respond to that message directly first and ask whether they want to continue the unfinished work\./i);
     assert.match(
       prompt.text,
       /valid `op` values are exactly `replace`, `add_phase`, `add_task`, `update`, and `remove_task`/i

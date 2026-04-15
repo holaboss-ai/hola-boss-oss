@@ -409,6 +409,37 @@ test("chat pane prefixes run failures with provider and model context", async ()
   assert.match(source, /const detail = runFailedDetail\(eventPayload\);/);
 });
 
+test("chat pane stops rebuilding assistant history after the first terminal output event", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /function isTerminalSessionOutputEventType\(eventType: string\)/);
+  assert.match(source, /let encounteredTerminalEvent = false;/);
+  assert.match(source, /if \(encounteredTerminalEvent\) \{\s*continue;\s*\}/);
+  assert.match(
+    source,
+    /if \(isTerminalSessionOutputEventType\(event\.event_type\)\) \{\s*encounteredTerminalEvent = true;\s*\}/,
+  );
+});
+
+test("chat pane ignores duplicate or conflicting terminal stream events for the same input", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const terminalEventTypeByInputIdRef = useRef<[\s\S]*new Map\(\)\);/,
+  );
+  assert.match(source, /function recordTerminalEventForInput\(/);
+  assert.match(source, /terminalEventTypeByInputIdRef\.current\.clear\(\);/);
+  assert.match(
+    source,
+    /const priorTerminalEventType = recordTerminalEventForInput\(\s*eventInputId,\s*"run_failed",\s*\);[\s\S]*action: "skip_terminal_after_terminal"/,
+  );
+  assert.match(
+    source,
+    /const priorTerminalEventType = recordTerminalEventForInput\(\s*eventInputId,\s*"run_completed",\s*\);[\s\S]*action: "skip_terminal_after_terminal"/,
+  );
+});
+
 test("chat pane binds in-flight stream attach to the current runtime input on session reload", async () => {
   const source = await readFile(sourcePath, "utf8");
 

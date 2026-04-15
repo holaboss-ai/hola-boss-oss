@@ -409,6 +409,89 @@ test("runtime queue worker recovers expired claimed input before processing fres
   store.close();
 });
 
+test("runtime queue worker aborts an active run when recovering an expired claim", async () => {
+  const root = makeTempDir("hb-runtime-queue-worker-expired-abort-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    payload: { text: "stale" }
+  });
+  const started = deferred<void>();
+  let abortReason: unknown = null;
+  const worker = new RuntimeQueueWorker({
+    store,
+    executeClaimedInput: async (_record, options = {}) => {
+      started.resolve();
+      await new Promise<void>((resolve) => {
+        if (options.signal?.aborted) {
+          abortReason = options.signal.reason;
+          resolve();
+          return;
+        }
+        options.signal?.addEventListener(
+          "abort",
+          () => {
+            abortReason = options.signal?.reason;
+            resolve();
+          },
+          { once: true },
+        );
+      });
+    }
+  });
+
+  const firstProcessed = await worker.processAvailableInputsOnce();
+  assert.equal(firstProcessed, 1);
+  await started.promise;
+
+  store.updateInput(queued.inputId, {
+    claimedUntil: "2000-01-01T00:00:00.000Z"
+  });
+  store.updateRuntimeState({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    status: "BUSY",
+    currentInputId: queued.inputId,
+    currentWorkerId: "sandbox-agent-ts-worker",
+    leaseUntil: "2000-01-01T00:00:00.000Z",
+    heartbeatAt: "2000-01-01T00:00:00.000Z",
+    lastError: null
+  });
+
+  const secondProcessed = await worker.processAvailableInputsOnce();
+  await worker.close();
+
+  const updated = store.getInput(queued.inputId);
+  const runtimeState = store.getRuntimeState({
+    workspaceId: "workspace-1",
+    sessionId: "session-main"
+  });
+  const events = store.listOutputEvents({
+    sessionId: "session-main",
+    inputId: queued.inputId
+  });
+
+  assert.equal(secondProcessed, 1);
+  assert.equal(abortReason, "claim_expired");
+  assert.ok(updated);
+  assert.equal(updated.status, "FAILED");
+  assert.ok(runtimeState);
+  assert.equal(runtimeState.status, "ERROR");
+  assert.equal(events.at(-1)?.eventType, "run_failed");
+
+  store.close();
+});
+
 test("queue route wakes configured queue worker", async () => {
   const root = makeTempDir("hb-runtime-queue-worker-");
   const store = new RuntimeStateStore({

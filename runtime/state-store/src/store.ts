@@ -1542,6 +1542,32 @@ export class RuntimeStateStore {
     return this.getInput(inputId);
   }
 
+  renewInputClaim(params: {
+    inputId: string;
+    claimedBy: string;
+    leaseSeconds: number;
+    nowIso?: string;
+  }): SessionInputRecord | null {
+    const now = params.nowIso ? new Date(params.nowIso) : new Date();
+    const nowIso = params.nowIso ?? now.toISOString();
+    const claimedUntilIso =
+      params.leaseSeconds > 0 ? new Date(now.getTime() + params.leaseSeconds * 1000).toISOString() : nowIso;
+    const result = this.db()
+      .prepare(`
+        UPDATE agent_session_inputs
+        SET claimed_until = ?,
+            updated_at = ?
+        WHERE input_id = ?
+          AND status = 'CLAIMED'
+          AND claimed_by = ?
+      `)
+      .run(claimedUntilIso, nowIso, params.inputId, params.claimedBy);
+    if (result.changes === 0) {
+      return null;
+    }
+    return this.getInput(params.inputId);
+  }
+
   claimInputs(params: {
     limit: number;
     claimedBy: string;

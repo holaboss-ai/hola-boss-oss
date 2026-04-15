@@ -658,6 +658,160 @@ test("claimed input captures file outputs and persists an assistant turn for out
   store.close();
 });
 
+test("claimed input renews its claim lease while the runner is still healthy", async () => {
+  const store = makeStore("hb-claimed-input-lease-renewal-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "hello" }
+  });
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 1
+  });
+  const claimedUntilBefore = claimed[0]?.claimedUntil ?? null;
+  let claimedUntilDuringRun: string | null = null;
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      await options.onHeartbeat?.();
+      claimedUntilDuringRun = store.getInput(String(payload.input_id))?.claimedUntil ?? null;
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {}
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "run_completed",
+        payload: { status: "ok" }
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true
+      };
+    }
+  });
+
+  assert.ok(claimedUntilBefore);
+  assert.ok(claimedUntilDuringRun);
+  assert.notEqual(claimedUntilDuringRun, claimedUntilBefore);
+  assert.ok(Date.parse(claimedUntilDuringRun) > Date.parse(claimedUntilBefore));
+
+  store.close();
+});
+
+test("claimed input honors a persisted failure terminal after claim recovery aborts the runner", async () => {
+  const store = makeStore("hb-claimed-input-persisted-terminal-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "hello" }
+  });
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {}
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "output_delta",
+        payload: { delta: "Partial answer" }
+      });
+      store.appendOutputEvent({
+        workspaceId: workspace.id,
+        sessionId: String(payload.session_id),
+        inputId: String(payload.input_id),
+        sequence: 3,
+        eventType: "run_failed",
+        payload: {
+          type: "RuntimeError",
+          message: "claimed input lease expired before the runner emitted a terminal event",
+        }
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 130,
+        sawTerminal: false,
+        aborted: true,
+        abortReason: "claim_expired",
+      };
+    }
+  });
+
+  const updated = store.getInput(queued.inputId);
+  const runtimeState = store.getRuntimeState({
+    workspaceId: workspace.id,
+    sessionId: "session-main"
+  });
+  const events = store.listOutputEvents({
+    sessionId: "session-main",
+    inputId: queued.inputId
+  });
+  const messages = store.listSessionMessages({
+    workspaceId: workspace.id,
+    sessionId: "session-main"
+  });
+  const turnResult = store.getTurnResult({ inputId: queued.inputId });
+
+  assert.ok(updated);
+  assert.equal(updated.status, "FAILED");
+  assert.ok(runtimeState);
+  assert.equal(runtimeState.status, "ERROR");
+  assert.deepEqual(
+    events.map((event) => event.eventType),
+    ["run_started", "output_delta", "run_failed"]
+  );
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]?.text, "Partial answer");
+  assert.ok(turnResult);
+  assert.equal(turnResult.status, "failed");
+  assert.equal(turnResult.stopReason, "RuntimeError");
+
+  store.close();
+});
+
 test("claimed input does not duplicate a file output already persisted earlier in the same turn", async () => {
   const store = makeStore("hb-claimed-input-file-output-dedupe-");
   const workspace = store.createWorkspace({

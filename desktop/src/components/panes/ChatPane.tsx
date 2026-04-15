@@ -2130,6 +2130,10 @@ function traceStepsFromExecutionItems(items: ChatExecutionTimelineItem[]) {
     .map((item) => item.step);
 }
 
+function isTerminalSessionOutputEventType(eventType: string) {
+  return eventType === "run_completed" || eventType === "run_failed";
+}
+
 function assistantHistoryStateFromOutputEvents(
   outputEvents: SessionOutputEventPayload[],
 ) {
@@ -2137,8 +2141,12 @@ function assistantHistoryStateFromOutputEvents(
     (left, right) => left.sequence - right.sequence || left.id - right.id,
   );
   let executionItems: ChatExecutionTimelineItem[] = [];
+  let encounteredTerminalEvent = false;
 
   for (const event of orderedEvents) {
+    if (encounteredTerminalEvent) {
+      continue;
+    }
     const eventPayload = isRecord(event.payload) ? event.payload : {};
 
     if (event.event_type === "thinking_delta") {
@@ -2191,6 +2199,10 @@ function assistantHistoryStateFromOutputEvents(
         executionItems,
         "error",
       );
+    }
+
+    if (isTerminalSessionOutputEventType(event.event_type)) {
+      encounteredTerminalEvent = true;
     }
   }
 
@@ -2418,6 +2430,9 @@ export function ChatPane({
   const chatScrollbarBodyCursorRef = useRef<string | null>(null);
   const activeSessionIdRef = useRef<string | null>(null);
   const activeStreamIdRef = useRef<string | null>(null);
+  const terminalEventTypeByInputIdRef = useRef<
+    Map<string, "run_completed" | "run_failed">
+  >(new Map());
   const activeAssistantMessageIdRef = useRef<string | null>(null);
   const lastSyncedAgentOperationFileKeyRef = useRef("");
   const pendingInputIdRef = useRef<string | null>(null);
@@ -2611,7 +2626,33 @@ export function ChatPane({
     setMemoryProposalDrafts({});
     resetLiveTurn();
     setCollapsedTraceByStepId({});
+    terminalEventTypeByInputIdRef.current.clear();
     shouldAutoScrollRef.current = true;
+  }
+
+  function recordTerminalEventForInput(
+    inputId: string,
+    eventType: "run_completed" | "run_failed",
+  ) {
+    const normalizedInputId = inputId.trim();
+    if (!normalizedInputId) {
+      return null;
+    }
+    const priorEventType =
+      terminalEventTypeByInputIdRef.current.get(normalizedInputId) ?? null;
+    if (priorEventType) {
+      return priorEventType;
+    }
+    terminalEventTypeByInputIdRef.current.set(normalizedInputId, eventType);
+    while (terminalEventTypeByInputIdRef.current.size > 64) {
+      const oldestInputId =
+        terminalEventTypeByInputIdRef.current.keys().next().value;
+      if (typeof oldestInputId !== "string") {
+        break;
+      }
+      terminalEventTypeByInputIdRef.current.delete(oldestInputId);
+    }
+    return null;
   }
 
   function historyMessagesFromSessionState(
@@ -4156,6 +4197,23 @@ export function ChatPane({
         }
 
         if (eventType === "run_failed") {
+          const priorTerminalEventType = recordTerminalEventForInput(
+            eventInputId,
+            "run_failed",
+          );
+          if (priorTerminalEventType) {
+            appendStreamTelemetry({
+              streamId: payload.streamId,
+              transportType: payload.type,
+              eventName,
+              eventType,
+              inputId: eventInputId,
+              sessionId: eventSessionId,
+              action: "skip_terminal_after_terminal",
+              detail: `prior=${priorTerminalEventType}`,
+            });
+            return;
+          }
           const detail = runFailedDetail(eventPayload);
           setChatErrorMessage(detail);
           finalizeLiveTraceSteps("error");
@@ -4183,6 +4241,23 @@ export function ChatPane({
         }
 
         if (eventType === "run_completed") {
+          const priorTerminalEventType = recordTerminalEventForInput(
+            eventInputId,
+            "run_completed",
+          );
+          if (priorTerminalEventType) {
+            appendStreamTelemetry({
+              streamId: payload.streamId,
+              transportType: payload.type,
+              eventName,
+              eventType,
+              inputId: eventInputId,
+              sessionId: eventSessionId,
+              action: "skip_terminal_after_terminal",
+              detail: `prior=${priorTerminalEventType}`,
+            });
+            return;
+          }
           const completedStatus =
             typeof eventPayload.status === "string"
               ? eventPayload.status.trim().toLowerCase()
