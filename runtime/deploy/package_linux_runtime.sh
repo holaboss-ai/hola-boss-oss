@@ -75,19 +75,37 @@ esac
 TOOLCHAIN_ID_RAW="linux-node${NODE_VERSION}-npm${NPM_VERSION}-python${PYTHON_VERSION}-${PYTHON_TARGET}"
 TOOLCHAIN_ID="$(printf '%s' "${TOOLCHAIN_ID_RAW}" | tr -c '[:alnum:]._-' '_')"
 
+run_build_runtime_root() {
+  local attempt=1
+  local max_attempts=3
+
+  while true; do
+    rm -rf "${STAGING_ROOT}/runtime-root"
+    if [ "${SKIP_NODE_DEPS}" != "1" ]; then
+      PATH="${BUILD_NODE_RUNTIME_DIR}/node_modules/node/bin:${BUILD_NODE_RUNTIME_DIR}/node_modules/.bin:${PATH}" \
+        "${BUILD_NODE_BIN}" "${SCRIPT_DIR}/build_runtime_root.mjs" "${STAGING_ROOT}/runtime-root" && return 0
+    else
+      require_cmd node
+      node "${SCRIPT_DIR}/build_runtime_root.mjs" "${STAGING_ROOT}/runtime-root" && return 0
+    fi
+
+    if [ "${attempt}" -ge "${max_attempts}" ]; then
+      return 1
+    fi
+
+    echo "runtime root assembly failed on attempt ${attempt}/${max_attempts}; retrying" >&2
+    attempt=$((attempt + 1))
+    sleep "${attempt}"
+  done
+}
+
 if [ "${SKIP_NODE_DEPS}" != "1" ]; then
   require_cmd npm
   mkdir -p "${BUILD_NODE_RUNTIME_DIR}"
   npm install --prefix "${BUILD_NODE_RUNTIME_DIR}" "node@${NODE_VERSION}" "npm@${NPM_VERSION}"
 fi
 
-if [ "${SKIP_NODE_DEPS}" != "1" ]; then
-  PATH="${BUILD_NODE_RUNTIME_DIR}/node_modules/node/bin:${BUILD_NODE_RUNTIME_DIR}/node_modules/.bin:${PATH}" \
-    "${BUILD_NODE_BIN}" "${SCRIPT_DIR}/build_runtime_root.mjs" "${STAGING_ROOT}/runtime-root"
-else
-  require_cmd node
-  node "${SCRIPT_DIR}/build_runtime_root.mjs" "${STAGING_ROOT}/runtime-root"
-fi
+run_build_runtime_root
 
 rm -rf "${OUTPUT_ROOT}"
 mkdir -p "${OUTPUT_ROOT}"

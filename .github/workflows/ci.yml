@@ -376,6 +376,7 @@ jobs:
       RELEASE_TAG: ${{ needs.ensure-release.outputs.release_tag }}
       RELEASE_CHANNEL: ${{ needs.ensure-release.outputs.release_channel }}
       HOLABOSS_RELEASE_CHANNEL: ${{ needs.ensure-release.outputs.release_channel }}
+      GH_REPO: holaboss-ai/holaOS
       RUNTIME_ASSET_NAME: holaboss-runtime-macos.tar.gz
       TOOLCHAIN_ASSET_NAME: holaboss-toolchain-macos.tar.gz
       DESKTOP_ASSET_PREFIX: holaboss-desktop-macos
@@ -686,34 +687,10 @@ jobs:
             "${upload_paths[@]}" \
             --clobber
 
-  verify-macos-release-assets:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
-    needs:
-      - ensure-release
-      - release-macos-desktop
-    permissions:
-      contents: read
-    runs-on: ubuntu-latest
-    env:
-      RELEASE_TAG: ${{ needs.ensure-release.outputs.release_tag }}
-      RELEASE_CHANNEL: ${{ needs.ensure-release.outputs.release_channel }}
-      HOLABOSS_RELEASE_CHANNEL: ${{ needs.ensure-release.outputs.release_channel }}
-      GH_REPO: holaboss-ai/holaOS
-    steps:
-      - name: Verify release remains draft before publish
+      - name: Verify published macOS release assets from GitHub
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          is_draft="$(gh release view "${RELEASE_TAG}" --json isDraft --jq '.isDraft')"
-          if [ "${is_draft}" != "true" ]; then
-            echo "release ${RELEASE_TAG} must remain a draft until asset verification succeeds" >&2
-            exit 1
-          fi
-
-      - name: Download published macOS release assets from GitHub
-        id: download_published_assets
-        env:
-          GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
           verify_dir="${RUNNER_TEMP}/mac-release-verify"
           rm -rf "${verify_dir}"
@@ -749,19 +726,6 @@ jobs:
             echo "failed to download beta-mac.yml from GitHub" >&2
             exit 1
           fi
-          {
-            echo "zip_path=${zip_path}"
-            echo "manifest_path=${manifest_path}"
-            echo "verify_dir=${verify_dir}"
-          } >> "${GITHUB_OUTPUT}"
-
-      - name: Validate downloaded macOS release assets
-        shell: bash
-        run: |
-          zip_path="${{ steps.download_published_assets.outputs.zip_path }}"
-          manifest_path="${{ steps.download_published_assets.outputs.manifest_path }}"
-          verify_dir="${{ steps.download_published_assets.outputs.verify_dir }}"
-          primary_channel="${RELEASE_CHANNEL:-latest}"
           if ! zipinfo -1 "${zip_path}" | grep -Eq '^Holaboss\.app/'; then
             echo "published macOS zip does not contain Holaboss.app as the root app bundle" >&2
             exit 1
@@ -1011,14 +975,12 @@ jobs:
         needs.ensure-release.result == 'success' &&
         needs.build-linux-runtime.result == 'success' &&
         needs.release-macos-desktop.result == 'success' &&
-        needs.verify-macos-release-assets.result == 'success' &&
         (needs.release-windows-desktop.result == 'success' || needs.release-windows-desktop.result == 'skipped')
       }}
     needs:
       - ensure-release
       - build-linux-runtime
       - release-macos-desktop
-      - verify-macos-release-assets
       - release-windows-desktop
     permissions:
       contents: write

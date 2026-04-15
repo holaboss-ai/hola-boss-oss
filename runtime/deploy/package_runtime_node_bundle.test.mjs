@@ -39,6 +39,13 @@ for (const targetPath of [macosPackagerPath, linuxPackagerPath]) {
     assert.match(source, /"bundled_python_target":/);
     assert.equal(/npm install --global --prefix "\$\{NODE_RUNTIME_DIR\}"/.test(source), false);
     assert.equal(/HOLABOSS_INSTALL_[A-Z_]+/.test(source), false);
+
+    if (targetPlatform === "linux") {
+      assert.match(source, /run_build_runtime_root\(\) \{/);
+      assert.match(source, /local max_attempts=3/);
+      assert.match(source, /runtime root assembly failed on attempt \$\{attempt\}\/\$\{max_attempts\}; retrying/);
+      assert.match(source, /run_build_runtime_root/);
+    }
   });
 }
 
