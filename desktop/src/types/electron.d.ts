@@ -830,6 +830,8 @@ declare global {
     type: string;
     sourceType: string | null;
     reason: string | null;
+    serviceType: string | null;
+    serviceId: string | null;
     amount: number;
     absoluteAmount: number;
     createdAt: string;

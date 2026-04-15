@@ -2714,6 +2714,8 @@ interface DesktopBillingTransactionRpcPayload {
   type: string;
   sourceType: string | null;
   reason: string | null;
+  serviceType: string | null;
+  serviceId: string | null;
   amount: number;
   createdAt: string;
 }
@@ -8197,6 +8199,8 @@ async function getDesktopBillingUsage(
         type: transaction.type,
         sourceType: transaction.sourceType,
         reason: transaction.reason,
+        serviceType: transaction.serviceType,
+        serviceId: transaction.serviceId,
         amount,
         absoluteAmount: Math.abs(amount),
         createdAt: transaction.createdAt,
