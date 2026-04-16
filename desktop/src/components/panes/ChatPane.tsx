@@ -521,6 +521,19 @@ function parseSerializedQuotedSkillPrompt(
   };
 }
 
+function appendComposerPrefillText(currentInput: string, text: string) {
+  const normalizedText = text.trim();
+  if (!normalizedText) {
+    return currentInput;
+  }
+  if (!currentInput.trim()) {
+    return normalizedText;
+  }
+  return /[\s(]$/.test(currentInput)
+    ? `${currentInput}${normalizedText}`
+    : `${currentInput} ${normalizedText}`;
+}
+
 function buildComposerSlashCommandOptions(
   skills: WorkspaceSkillRecordPayload[],
 ): ChatComposerSlashCommandOption[] {
@@ -2289,6 +2302,12 @@ interface PendingSessionTarget {
 interface ChatPaneComposerPrefillRequest {
   text: string;
   requestKey: number;
+  mode?: "replace" | "append";
+}
+
+interface ChatPaneExplorerAttachmentRequest {
+  files: ExplorerAttachmentDragPayload[];
+  requestKey: number;
 }
 
 interface ChatPaneProps {
@@ -2303,6 +2322,8 @@ interface ChatPaneProps {
   onSessionOpenRequestConsumed?: (requestKey: number) => void;
   composerPrefillRequest?: ChatPaneComposerPrefillRequest | null;
   onComposerPrefillConsumed?: (requestKey: number) => void;
+  explorerAttachmentRequest?: ChatPaneExplorerAttachmentRequest | null;
+  onExplorerAttachmentRequestConsumed?: (requestKey: number) => void;
   onActiveSessionIdChange?: (sessionId: string | null) => void;
   onOpenInbox?: () => void;
   inboxUnreadCount?: number;
@@ -2321,6 +2342,8 @@ export function ChatPane({
   onSessionOpenRequestConsumed,
   composerPrefillRequest = null,
   onComposerPrefillConsumed,
+  explorerAttachmentRequest = null,
+  onExplorerAttachmentRequestConsumed,
   onActiveSessionIdChange,
   onOpenInbox,
   inboxUnreadCount = 0,
@@ -2444,6 +2467,7 @@ export function ChatPane({
   const lastHandledExternalSessionOpenRequestKeyRef = useRef(0);
   const lastHandledLocalSessionOpenRequestKeyRef = useRef(0);
   const lastHandledComposerPrefillRequestKeyRef = useRef(0);
+  const lastHandledExplorerAttachmentRequestKeyRef = useRef(0);
   const consumedSessionOpenRequestKeysRef = useRef<Set<number>>(new Set());
   const localSessionOpenRequestRef =
     useRef<ChatPaneSessionOpenRequest | null>(null);
@@ -3366,14 +3390,22 @@ export function ChatPane({
     }
 
     lastHandledComposerPrefillRequestKeyRef.current = requestKey;
-    const parsedPrefill = parseSerializedQuotedSkillPrompt(
-      composerPrefillRequest?.text ?? "",
-    );
-    setInput(parsedPrefill.body);
-    setQuotedSkillIds(parsedPrefill.skillIds);
-    setPendingAttachments([]);
+    const prefillMode = composerPrefillRequest?.mode ?? "replace";
+    if (prefillMode === "append") {
+      setInput((current) =>
+        appendComposerPrefillText(current, composerPrefillRequest?.text ?? ""),
+      );
+    } else {
+      const parsedPrefill = parseSerializedQuotedSkillPrompt(
+        composerPrefillRequest?.text ?? "",
+      );
+      setInput(parsedPrefill.body);
+      setQuotedSkillIds(parsedPrefill.skillIds);
+      setPendingAttachments([]);
+    }
     onComposerPrefillConsumed?.(requestKey);
   }, [
+    composerPrefillRequest?.mode,
     composerPrefillRequest?.requestKey,
     composerPrefillRequest?.text,
     onComposerPrefillConsumed,
@@ -4767,6 +4799,24 @@ export function ChatPane({
       })),
     ]);
   }
+
+  useEffect(() => {
+    const requestKey = explorerAttachmentRequest?.requestKey ?? 0;
+    if (
+      requestKey <= 0 ||
+      requestKey === lastHandledExplorerAttachmentRequestKeyRef.current
+    ) {
+      return;
+    }
+
+    lastHandledExplorerAttachmentRequestKeyRef.current = requestKey;
+    appendPendingExplorerAttachments(explorerAttachmentRequest?.files ?? []);
+    onExplorerAttachmentRequestConsumed?.(requestKey);
+  }, [
+    explorerAttachmentRequest?.files,
+    explorerAttachmentRequest?.requestKey,
+    onExplorerAttachmentRequestConsumed,
+  ]);
 
   function onAttachmentInputChange(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);

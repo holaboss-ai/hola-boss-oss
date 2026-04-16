@@ -24,6 +24,7 @@ import { PublishDialog } from "@/components/publish/PublishDialog";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
+import { type ExplorerAttachmentDragPayload } from "@/lib/attachmentDrag";
 import { DesktopBillingProvider } from "@/lib/billing/useDesktopBilling";
 import { getWorkspaceAppDefinition } from "@/lib/workspaceApps";
 import {
@@ -212,6 +213,12 @@ type ChatSessionOpenRequest = {
 
 type ChatComposerPrefillRequest = {
   text: string;
+  requestKey: number;
+  mode?: "replace" | "append";
+};
+
+type ChatExplorerAttachmentRequest = {
+  files: ExplorerAttachmentDragPayload[];
   requestKey: number;
 };
 
@@ -1061,6 +1068,8 @@ function AppShellContent() {
     useState<ChatSessionOpenRequest | null>(null);
   const [chatComposerPrefillRequest, setChatComposerPrefillRequest] =
     useState<ChatComposerPrefillRequest | null>(null);
+  const [chatExplorerAttachmentRequest, setChatExplorerAttachmentRequest] =
+    useState<ChatExplorerAttachmentRequest | null>(null);
   const [fileExplorerFocusRequest, setFileExplorerFocusRequest] =
     useState<FileExplorerFocusRequest | null>(null);
   const [spaceExplorerMode, setSpaceExplorerMode] =
@@ -1114,6 +1123,7 @@ function AppShellContent() {
   // Keep request keys monotonic even after the request object is consumed.
   const chatSessionOpenRequestKeyRef = useRef(0);
   const chatComposerPrefillRequestKeyRef = useRef(0);
+  const chatExplorerAttachmentRequestKeyRef = useRef(0);
   const [
     isUpdatingProactiveTaskProposalsEnabled,
     setIsUpdatingProactiveTaskProposalsEnabled,
@@ -2675,6 +2685,11 @@ function AppShellContent() {
     return chatComposerPrefillRequestKeyRef.current;
   }, []);
 
+  const nextChatExplorerAttachmentRequestKey = useCallback(() => {
+    chatExplorerAttachmentRequestKeyRef.current += 1;
+    return chatExplorerAttachmentRequestKeyRef.current;
+  }, []);
+
   const handleCreateScheduleInChat = useCallback((workspaceId?: string | null) => {
     const normalizedWorkspaceId =
       workspaceId?.trim() || selectedWorkspaceId?.trim() || "";
@@ -2702,6 +2717,7 @@ function AppShellContent() {
     setChatComposerPrefillRequest({
       text: "Create a cronjob for ",
       requestKey: nextChatComposerPrefillRequestKey(),
+      mode: "replace",
     });
     setChatFocusRequestKey((current) => current + 1);
   }, [
@@ -2746,6 +2762,7 @@ function AppShellContent() {
         `Edit cronjob "${jobName}" (id: ${job.id}). Current cron: ${job.cron}. ` +
         `Current instruction: ${instruction}\n\nUpdate it to: `,
       requestKey: nextChatComposerPrefillRequestKey(),
+      mode: "replace",
     });
     setChatFocusRequestKey((current) => current + 1);
   }, [
@@ -2795,9 +2812,61 @@ function AppShellContent() {
     setChatFocusRequestKey((current) => current + 1);
   }, []);
 
+  const handleReferenceWorkspacePathInChat = useCallback(
+    (entry: LocalFileEntry, referenceText: string) => {
+      const normalizedReferenceText = referenceText.trim();
+      const normalizedAbsolutePath = entry.absolutePath.trim();
+      const normalizedName = entry.name.trim();
+      if (
+        (entry.isDirectory && !normalizedReferenceText) ||
+        (!entry.isDirectory && (!normalizedAbsolutePath || !normalizedName))
+      ) {
+        return;
+      }
+      setActiveShellView("space");
+      setSpaceVisibility((previous) => ({
+        ...previous,
+        agent: true,
+      }));
+      setAgentView({ type: "chat" });
+      if (entry.isDirectory) {
+        setChatComposerPrefillRequest({
+          text: normalizedReferenceText,
+          requestKey: nextChatComposerPrefillRequestKey(),
+          mode: "append",
+        });
+      } else {
+        setChatExplorerAttachmentRequest({
+          files: [
+            {
+              absolutePath: normalizedAbsolutePath,
+              name: normalizedName,
+              size: Number.isFinite(entry.size) ? Math.max(0, entry.size) : 0,
+            },
+          ],
+          requestKey: nextChatExplorerAttachmentRequestKey(),
+        });
+      }
+      setChatFocusRequestKey((current) => current + 1);
+    },
+    [
+      nextChatComposerPrefillRequestKey,
+      nextChatExplorerAttachmentRequestKey,
+    ],
+  );
+
   const handleChatComposerPrefillConsumed = useCallback(
     (requestKey: number) => {
       setChatComposerPrefillRequest((current) =>
+        current?.requestKey === requestKey ? null : current,
+      );
+    },
+    [],
+  );
+
+  const handleChatExplorerAttachmentRequestConsumed = useCallback(
+    (requestKey: number) => {
+      setChatExplorerAttachmentRequest((current) =>
         current?.requestKey === requestKey ? null : current,
       );
     },
@@ -3208,6 +3277,10 @@ function AppShellContent() {
           onSessionOpenRequestConsumed={handleChatSessionOpenRequestConsumed}
           composerPrefillRequest={chatComposerPrefillRequest}
           onComposerPrefillConsumed={handleChatComposerPrefillConsumed}
+          explorerAttachmentRequest={chatExplorerAttachmentRequest}
+          onExplorerAttachmentRequestConsumed={
+            handleChatExplorerAttachmentRequestConsumed
+          }
           onActiveSessionIdChange={setActiveChatSessionId}
           onOpenInbox={handleOpenInboxPane}
           inboxUnreadCount={unreadTaskProposalCount}
@@ -3380,6 +3453,7 @@ function AppShellContent() {
                   current?.requestKey === requestKey ? null : current,
                 );
               }}
+              onReferenceInChat={handleReferenceWorkspacePathInChat}
               onOpenLinkInBrowser={handleOpenLinkInNewAppBrowserTab}
             />
           ) : (
@@ -3395,6 +3469,7 @@ function AppShellContent() {
       fileExplorerFocusRequest,
       filesPaneWidth,
       flexSpacePaneId,
+      handleReferenceWorkspacePathInChat,
       handleOpenLinkInNewAppBrowserTab,
       shouldSuspendBrowserNativeView,
       showOperationsDrawer,
@@ -3814,6 +3889,9 @@ function AppShellContent() {
                                           : current,
                                       );
                                     }}
+                                    onReferenceInChat={
+                                      handleReferenceWorkspacePathInChat
+                                    }
                                     onOpenLinkInBrowser={
                                       handleOpenLinkInNewAppBrowserTab
                                     }
