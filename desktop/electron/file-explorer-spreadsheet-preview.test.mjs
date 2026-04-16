@@ -86,20 +86,47 @@ test("desktop file explorer enforces the selected workspace root as a filesystem
   );
   assert.match(source, /type ExplorerExternalImportEntryPayload =/);
   assert.match(source, /interface ExplorerExternalImportResultPayload \{\s*absolutePaths: string\[];\s*\}/);
+  assert.match(source, /function describeProtectedWorkspaceExplorerPath\(/);
+  assert.match(
+    source,
+    /if \(normalizedRelativePath === "skills"\) \{\s*return "skills";\s*\}/,
+  );
+  assert.doesNotMatch(source, /normalizedRelativePath\.startsWith\("skills\/"\)/);
+  assert.match(source, /function protectedWorkspaceExplorerPathMessage\(/);
+  assert.match(source, /function assertWorkspaceExplorerPathModifiable\(/);
   assert.match(source, /function normalizeExplorerImportRelativePath\(/);
   assert.match(source, /function normalizeExplorerImportEntries\(/);
   assert.match(source, /async function importExternalExplorerEntries\(/);
+  assert.match(source, /assertWorkspaceExplorerPathModifiable\(workspaceRoot, absolutePath\);/);
+  assert.match(source, /assertWorkspaceExplorerPathModifiable\(workspaceRoot, sourceAbsolutePath\);/);
+  assert.match(source, /assertWorkspaceExplorerPathModifiable\(workspaceRoot, destinationAbsolutePath\);/);
+  assert.doesNotMatch(source, /assertWorkspaceExplorerPathModifiable\(workspaceRoot, parentAbsolutePath\);/);
+  assert.match(source, /isEditable: kind === "text",/);
+  assert.doesNotMatch(source, /protectedReadOnlyReason/);
+  assert.doesNotMatch(source, /isEditable: kind === "text" && !protectedPathLabel,/);
   assert.match(source, /await nextAvailableExplorerCreatePath\(\s*destinationAbsolutePath,\s*rootName,\s*\)/);
   assert.match(source, /await fs\.mkdir\(absolutePath, \{ recursive: true \}\);/);
   assert.match(source, /await fs\.writeFile\(absolutePath, Buffer\.from\(fileEntry\.content\)\);/);
   assert.match(source, /const hideWorkspaceManagedRootEntries = normalizedCurrent === normalizedRoot;/);
   assert.match(
     source,
-    /if \(\s*hideWorkspaceManagedRootEntries &&\s*\(\(dirEntry\.isDirectory\(\) && dirEntry\.name === "apps"\) \|\|\s*\(!dirEntry\.isDirectory\(\) && dirEntry\.name === "workspace\.yaml"\)\s*\)\s*\) \{\s*continue;\s*\}/,
+    /if \(\s*hideWorkspaceManagedRootEntries &&\s*dirEntry\.isDirectory\(\) &&\s*dirEntry\.name === "apps"\s*\) \{\s*continue;\s*\}/,
+  );
+  assert.doesNotMatch(
+    source,
+    /!dirEntry\.isDirectory\(\) && dirEntry\.name === "workspace\.yaml"/,
   );
   assert.match(
     source,
     /"fs:importExternalEntries"[\s\S]*destinationDirectoryPath: string,[\s\S]*entries: ExplorerExternalImportEntryPayload\[\],[\s\S]*importExternalExplorerEntries\(\s*destinationDirectoryPath,\s*entries,\s*workspaceId,\s*\)/,
+  );
+  assert.match(
+    source,
+    /async function writeTextFile\([\s\S]*const \{ absolutePath \} = await resolveWorkspaceScopedExplorerPath\([\s\S]*await fs\.writeFile\(absolutePath, content, "utf-8"\);[\s\S]*return readFilePreview\(absolutePath, workspaceId\);/,
+  );
+  assert.match(
+    source,
+    /async function writeTableFile\([\s\S]*const \{ absolutePath \} = await resolveWorkspaceScopedExplorerPath\([\s\S]*const stat = await fs\.stat\(absolutePath\);/,
   );
   assert.match(
     source,

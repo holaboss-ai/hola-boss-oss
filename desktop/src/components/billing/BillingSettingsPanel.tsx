@@ -1,7 +1,22 @@
-import { AlertCircle } from "lucide-react";
+import { useMemo, useState } from "react";
+import {
+  AlertCircle,
+  ArrowDownLeft,
+  ArrowUpRight,
+  ChevronRight,
+  Gift,
+  ShoppingCart,
+  Sparkles,
+  UserCog,
+  Zap,
+} from "lucide-react";
 import { BillingSummaryCard } from "@/components/billing/BillingSummaryCard";
 import { Button } from "@/components/ui/button";
 import { useDesktopBilling } from "@/lib/billing/useDesktopBilling";
+
+// ============================================================================
+// Helpers
+// ============================================================================
 
 function formatBillingDate(value: string) {
   return new Date(value).toLocaleDateString(undefined, {
@@ -10,6 +25,341 @@ function formatBillingDate(value: string) {
     year: "numeric",
   });
 }
+
+function formatBillingDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  const datePart = date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  const timePart = date.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  return `${datePart} · ${timePart}`;
+}
+
+const CATEGORY_LABELS: Record<string, string> = {
+  llm: "Model",
+  integration: "Integration",
+  proactive: "Background work",
+  workspace: "Workspace",
+};
+
+function titleCase(raw: string): string {
+  return raw
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function humanizeCategory(raw: string): string {
+  return CATEGORY_LABELS[raw] ?? titleCase(raw);
+}
+
+function readMetadataString(
+  metadata: Record<string, unknown> | null,
+  key: string,
+): string | null {
+  if (!metadata) {
+    return null;
+  }
+  const value = metadata[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+type UsageItem = DesktopBillingUsageItemPayload;
+
+function resolveUsageTitle(item: UsageItem): string {
+  const category = item.category ?? null;
+  const provider = readMetadataString(item.metadata, "provider");
+  const modelId = readMetadataString(item.metadata, "modelId");
+  const integrationId = readMetadataString(item.metadata, "integrationId");
+
+  if (category === "llm" && modelId) {
+    return provider ? `${provider} · ${modelId}` : modelId;
+  }
+  if (category === "integration" && integrationId) {
+    return titleCase(integrationId);
+  }
+  if (category) {
+    return humanizeCategory(category);
+  }
+  if (item.serviceType) {
+    return titleCase(item.serviceType);
+  }
+  if (item.type === "allocate" || item.amount > 0) {
+    return "Credits added";
+  }
+  if (
+    item.reason &&
+    item.reason.trim() &&
+    item.reason !== "Service consumption" &&
+    !item.reason.startsWith("Service consumption:")
+  ) {
+    return item.reason;
+  }
+  return titleCase(item.type);
+}
+
+function resolveUsageSubtitle(item: UsageItem): string | null {
+  const operation = readMetadataString(item.metadata, "operation");
+  const workspaceId = readMetadataString(item.metadata, "workspaceId");
+  const modelId = readMetadataString(item.metadata, "modelId");
+
+  if (operation && operation !== modelId) {
+    return operation;
+  }
+  if (item.category === "llm" && workspaceId) {
+    return `Workspace ${workspaceId.slice(0, 8)}`;
+  }
+  const reason = (item.reason ?? "").trim();
+  if (!reason || reason.startsWith("Service consumption")) {
+    return null;
+  }
+  return reason;
+}
+
+// ============================================================================
+// Session Grouping
+// ============================================================================
+
+interface UsageGroup {
+  key: string;
+  items: UsageItem[];
+  totalAmount: number;
+  firstCreatedAt: string;
+}
+
+function groupBySession(items: UsageItem[]): UsageGroup[] {
+  const groups: UsageGroup[] = [];
+  let currentSessionId: string | null = null;
+  let currentGroup: UsageGroup | null = null;
+
+  for (const item of items) {
+    const sessionId = readMetadataString(item.metadata, "sessionId");
+
+    if (sessionId && sessionId === currentSessionId && currentGroup) {
+      currentGroup.items.push(item);
+      currentGroup.totalAmount += item.amount;
+    } else {
+      currentGroup = {
+        key: sessionId ?? item.id,
+        items: [item],
+        totalAmount: item.amount,
+        firstCreatedAt: item.createdAt,
+      };
+      groups.push(currentGroup);
+      currentSessionId = sessionId;
+    }
+  }
+  return groups;
+}
+
+function resolveGroupTitle(group: UsageGroup): string {
+  const first = group.items[0];
+  if (group.items.length === 1) {
+    return resolveUsageTitle(first);
+  }
+  const modelId = readMetadataString(first.metadata, "modelId");
+  const provider = readMetadataString(first.metadata, "provider");
+
+  let label: string;
+  if (first.category === "llm" && modelId) {
+    label = provider ? `${provider} · ${modelId}` : modelId;
+  } else if (first.category) {
+    label = humanizeCategory(first.category);
+  } else {
+    label = "Chat";
+  }
+  return `${label} · ${group.items.length} calls`;
+}
+
+function resolveGroupSubtitle(group: UsageGroup): string | null {
+  if (group.items.length <= 1) {
+    return null;
+  }
+  const first = group.items[0];
+  const sessionId = readMetadataString(first.metadata, "sessionId");
+  const workspaceId = readMetadataString(first.metadata, "workspaceId");
+
+  const parts: string[] = [];
+  if (sessionId) {
+    parts.push(`Session ${sessionId.slice(0, 8)}`);
+  }
+  if (workspaceId) {
+    parts.push(`Workspace ${workspaceId.slice(0, 8)}`);
+  }
+  if (parts.length > 0) {
+    return parts.join(" · ");
+  }
+  return null;
+}
+
+// ============================================================================
+// Icons
+// ============================================================================
+
+function UsageIcon({ item }: { item: UsageItem }) {
+  if (item.type === "consume") {
+    return <Zap size={14} />;
+  }
+  switch (item.sourceType) {
+    case "signup":
+      return <Gift size={14} />;
+    case "purchase":
+      return <ShoppingCart size={14} />;
+    case "admin":
+      return <UserCog size={14} />;
+    default:
+      return <Sparkles size={14} />;
+  }
+}
+
+// ============================================================================
+// Row Components (matching web style)
+// ============================================================================
+
+function UsageRow({ item }: { item: UsageItem }) {
+  const isCredit = item.amount > 0;
+  const title = resolveUsageTitle(item);
+  const subtitle = resolveUsageSubtitle(item);
+
+  return (
+    <div className="flex items-center justify-between gap-3 py-2">
+      <div className="flex min-w-0 items-center gap-2.5">
+        <div
+          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
+            isCredit
+              ? "bg-green-500/10 text-green-600"
+              : "bg-red-500/10 text-red-600"
+          }`}
+        >
+          <UsageIcon item={item} />
+        </div>
+        <div className="min-w-0 leading-tight">
+          <p className="truncate font-medium text-sm text-foreground">
+            {title}
+          </p>
+          <p className="truncate text-muted-foreground text-xs tabular-nums">
+            {subtitle ? `${subtitle} · ` : ""}
+            {formatBillingDateTime(item.createdAt)}
+          </p>
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        {isCredit ? (
+          <ArrowDownLeft size={14} className="text-green-600" />
+        ) : (
+          <ArrowUpRight size={14} className="text-red-600" />
+        )}
+        <span
+          className={`font-semibold text-sm tabular-nums ${
+            isCredit ? "text-green-600" : "text-red-600"
+          }`}
+        >
+          {isCredit ? "+" : "-"}
+          {Math.abs(item.amount).toLocaleString()}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function UsageGroupRow({
+  group,
+  expanded,
+  onToggle,
+}: {
+  group: UsageGroup;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  if (group.items.length <= 1) {
+    return <UsageRow item={group.items[0]} />;
+  }
+
+  const title = resolveGroupTitle(group);
+  const subtitle = resolveGroupSubtitle(group);
+  const isCredit = group.totalAmount > 0;
+
+  return (
+    <div>
+      {/* Group header */}
+      <div
+        className="flex cursor-pointer items-center justify-between gap-3 py-2 transition-colors hover:bg-accent/30"
+        onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+        role="button"
+        tabIndex={0}
+      >
+        <div className="flex min-w-0 items-center gap-2.5">
+          <div
+            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
+              isCredit
+                ? "bg-green-500/10 text-green-600"
+                : "bg-red-500/10 text-red-600"
+            }`}
+          >
+            <ChevronRight
+              size={14}
+              className={`transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}
+            />
+          </div>
+          <div className="min-w-0 leading-tight">
+            <p className="truncate font-medium text-sm text-foreground">
+              {title}
+            </p>
+            <p className="truncate text-muted-foreground text-xs tabular-nums">
+              {subtitle ? `${subtitle} · ` : ""}
+              {formatBillingDateTime(group.firstCreatedAt)}
+            </p>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {isCredit ? (
+            <ArrowDownLeft size={14} className="text-green-600" />
+          ) : (
+            <ArrowUpRight size={14} className="text-red-600" />
+          )}
+          <span
+            className={`font-semibold text-sm tabular-nums ${
+              isCredit ? "text-green-600" : "text-red-600"
+            }`}
+          >
+            {isCredit ? "+" : "-"}
+            {Math.abs(group.totalAmount).toLocaleString()}
+          </span>
+        </div>
+      </div>
+
+      {/* Expanded children */}
+      {expanded && (
+        <div className="ml-9 border-l border-border/30 pl-2">
+          {group.items.map((item) => (
+            <UsageRow key={item.id} item={item} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Main
+// ============================================================================
 
 function openBillingLink(url: string | null | undefined) {
   const normalizedUrl = (url ?? "").trim();
@@ -25,6 +375,25 @@ export function BillingSettingsPanel() {
 
   const showExpirationBanner = Boolean(overview?.expiresAt);
   const usageItems = usage?.items ?? [];
+  const groups = useMemo(
+    () => groupBySession(usageItems.slice(0, 30)),
+    [usageItems],
+  );
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
+    () => new Set(),
+  );
+
+  const toggleGroup = (key: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
 
   return (
     <div className="grid max-w-[760px] gap-4">
@@ -55,41 +424,24 @@ export function BillingSettingsPanel() {
         error={error}
         onRefresh={() => void refresh()}
       />
-      <section className="grid gap-3 rounded-[24px] border border-border/40 bg-card/40 px-4 py-4">
+      <section className="grid gap-2 rounded-[24px] border border-border/40 bg-card/40 px-4 py-3">
         <div className="text-lg font-semibold text-foreground">
           Usage record
         </div>
 
-        <div className="grid grid-cols-[minmax(0,1fr)_140px_120px] gap-3 border-b border-border/40 pb-3 text-sm text-muted-foreground">
-          <div>Details</div>
-          <div>Date</div>
-          <div className="text-right">Credits change</div>
-        </div>
-
-        <div className="grid gap-0">
-          {usageItems.length === 0 ? (
-            <div className="py-4 text-sm text-muted-foreground">
+        <div className="divide-y divide-border/30">
+          {groups.length === 0 ? (
+            <div className="py-3 text-sm text-muted-foreground">
               {isLoading ? "Loading usage..." : "No usage yet."}
             </div>
           ) : (
-            usageItems.slice(0, 8).map((item) => (
-              <div
-                key={item.id}
-                className="grid grid-cols-[minmax(0,1fr)_140px_120px] gap-3 border-b border-border/30 py-4 text-sm last:border-b-0"
-              >
-                <div className="truncate text-foreground">
-                  {item.reason || item.type}
-                </div>
-                <div className="text-muted-foreground">
-                  {formatBillingDate(item.createdAt)}
-                </div>
-                <div
-                  className={`text-right tabular-nums ${item.amount > 0 ? "text-foreground" : "text-muted-foreground"}`}
-                >
-                  {item.amount > 0 ? "+" : ""}
-                  {item.amount.toLocaleString()}
-                </div>
-              </div>
+            groups.map((group) => (
+              <UsageGroupRow
+                key={group.key}
+                group={group}
+                expanded={expandedGroups.has(group.key)}
+                onToggle={() => toggleGroup(group.key)}
+              />
             ))
           )}
         </div>

@@ -11,7 +11,7 @@ test("internal surface renders markdown files with the shared markdown renderer"
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(source, /import \{ SimpleMarkdown \} from "@\/components\/marketplace\/SimpleMarkdown";/);
-  assert.match(source, /const MARKDOWN_PREVIEW_EXTENSIONS = new Set\(\[\s*"\.md",\s*"\.mdx",\s*"\.markdown",\s*\]\);/);
+  assert.match(source, /const MARKDOWN_PREVIEW_EXTENSIONS = new Set\(\[\s*"\.md",\s*"\.mdx",\s*"\.markdown"\s*\]\);/);
   assert.match(source, /const HTML_PREVIEW_EXTENSIONS = new Set\(\[\s*"\.html",\s*"\.htm"\s*\]\);/);
   assert.match(source, /function isMarkdownPreviewPayload\(/);
   assert.match(source, /function isHtmlPreviewPayload\(/);
@@ -23,6 +23,7 @@ test("internal surface renders markdown files with the shared markdown renderer"
   assert.match(source, /isHtmlPreview && textPreviewMode === "preview"/);
   assert.match(source, /<iframe[\s\S]*title=\{preview\.name\}[\s\S]*sandbox=""[\s\S]*srcDoc=\{previewDraft\}[\s\S]*className="h-full w-full rounded-lg border border-border bg-white"/);
   assert.match(source, /Empty file — switch to Edit to add markup\./);
+  assert.match(source, /if \(onOpenLinkInBrowser\) \{\s*onOpenLinkInBrowser\(url\);\s*return;\s*\}/);
   assert.match(source, /window\.electronAPI\.ui\.openExternalUrl\(url\)/);
 });
 

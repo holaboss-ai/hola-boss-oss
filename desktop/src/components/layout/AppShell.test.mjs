@@ -506,7 +506,9 @@ test("app shell renders a collapsible explorer and universal display in space mo
     /<section className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-card\/80 shadow-md backdrop-blur-sm">/,
   );
   assert.match(source, /<FileExplorerPane[\s\S]*focusRequest=\{fileExplorerFocusRequest\}/);
+  assert.match(source, /<FileExplorerPane[\s\S]*onOpenLinkInBrowser=\{handleOpenLinkInNewAppBrowserTab\}/);
   assert.match(source, /<FileExplorerPane[\s\S]*previewInPane=\{false\}/);
+  assert.match(source, /<InternalSurfacePane[\s\S]*onOpenLinkInBrowser=\{handleOpenLinkInNewAppBrowserTab\}/);
   assert.match(source, /<SpaceApplicationsExplorerPane[\s\S]*installedApps=\{installedApps\}/);
   assert.match(source, /<SpaceApplicationsExplorerPane[\s\S]*onAddApp=\{handleAddApp\}/);
   assert.match(source, /<SpaceBrowserExplorerPane[\s\S]*browserSpace=\{spaceBrowserSpace\}/);
@@ -532,6 +534,8 @@ test("app shell routes agent-originated browser opens into the agent browser spa
   assert.match(source, /const targetBrowserSpace =\s*payload\.space === "agent" \? "agent" : "user";/);
   assert.match(source, /\.setActiveWorkspace\(\s*payload\.workspaceId \?\? selectedWorkspaceId \?\? null,\s*targetBrowserSpace,\s*\)/);
   assert.match(source, /\.setActiveWorkspace\(targetWorkspaceId, "user"\)/);
+  assert.match(source, /const handleOpenLinkInNewAppBrowserTab = useCallback\(/);
+  assert.match(source, /\.then\(\(\) => window\.electronAPI\.browser\.newTab\(normalizedUrl\)\)/);
 });
 
 test("app shell reports active non-browser operator surfaces back to Electron", async () => {
@@ -593,6 +597,7 @@ test("app shell no longer renders a separate right panel in space mode", async (
 test("app shell can route new schedule creation into a prefilled workspace chat", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
+  assert.match(source, /type ChatComposerPrefillRequest = \{\s*text: string;\s*requestKey: number;\s*mode\?: "replace" \| "append";\s*\};/);
   assert.match(source, /const \[chatComposerPrefillRequest, setChatComposerPrefillRequest\] =\s*useState<ChatComposerPrefillRequest \| null>\(null\);/);
   assert.match(source, /const chatSessionOpenRequestKeyRef = useRef\(0\);/);
   assert.match(source, /const chatComposerPrefillRequestKeyRef = useRef\(0\);/);
@@ -606,7 +611,7 @@ test("app shell can route new schedule creation into a prefilled workspace chat"
   assert.match(source, /setAgentView\(\{ type: "chat" \}\);/);
   assert.match(source, /setChatSessionJumpRequest\(null\);/);
   assert.match(source, /setChatSessionOpenRequest\(\{\s*sessionId: "",\s*mode: "draft",\s*parentSessionId: null,\s*requestKey: nextChatSessionOpenRequestKey\(\),\s*\}\);/);
-  assert.match(source, /setChatComposerPrefillRequest\(\{\s*text: "Create a cronjob for ",\s*requestKey: nextChatComposerPrefillRequestKey\(\),\s*\}\);/);
+  assert.match(source, /setChatComposerPrefillRequest\(\{\s*text: "Create a cronjob for ",\s*requestKey: nextChatComposerPrefillRequestKey\(\),\s*mode: "replace",\s*\}\);/);
   assert.match(source, /composerPrefillRequest=\{chatComposerPrefillRequest\}/);
   assert.match(source, /onComposerPrefillConsumed=\{handleChatComposerPrefillConsumed\}/);
   assert.match(source, /onCreateAutomationSchedule=\{\(workspaceId\) => \{/);
@@ -621,8 +626,50 @@ test("app shell can route schedule edits into a prefilled workspace chat", async
   assert.match(source, /const instruction = job\.instruction\?\.trim\(\) \|\| job\.description\?\.trim\(\) \|\| "";/);
   assert.match(source, /Edit cronjob "\$\{jobName\}" \(id: \$\{job\.id\}\)\. Current cron: \$\{job\.cron\}\./);
   assert.match(source, /Current instruction: \$\{instruction\}\\n\\nUpdate it to:/);
+  assert.match(source, /mode: "replace"/);
   assert.match(source, /onEditAutomationSchedule=\{\(workspaceId, job\) => \{/);
   assert.match(source, /handleEditScheduleInChat\(job, workspaceId\);/);
+});
+
+test("app shell can route explorer references into chat attachments or text prefills", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(
+    source,
+    /type ChatExplorerAttachmentRequest = \{\s*files: ExplorerAttachmentDragPayload\[];\s*requestKey: number;\s*\};/,
+  );
+  assert.match(
+    source,
+    /const \[chatExplorerAttachmentRequest, setChatExplorerAttachmentRequest\] =\s*useState<ChatExplorerAttachmentRequest \| null>\(null\);/,
+  );
+  assert.match(
+    source,
+    /const handleReferenceWorkspacePathInChat = useCallback\(\s*\(entry: LocalFileEntry, referenceText: string\) => \{/,
+  );
+  assert.match(source, /const normalizedReferenceText = referenceText\.trim\(\);/);
+  assert.match(source, /const normalizedAbsolutePath = entry\.absolutePath\.trim\(\);/);
+  assert.match(source, /const normalizedName = entry\.name\.trim\(\);/);
+  assert.match(
+    source,
+    /if \(\s*\(entry\.isDirectory && !normalizedReferenceText\) \|\|\s*\(!entry\.isDirectory && \(!normalizedAbsolutePath \|\| !normalizedName\)\)\s*\) \{\s*return;\s*\}/,
+  );
+  assert.match(source, /setActiveShellView\("space"\);/);
+  assert.match(source, /setSpaceVisibility\(\(previous\) => \(\{\s*\.\.\.previous,\s*agent: true,\s*\}\)\);/);
+  assert.match(source, /setAgentView\(\{ type: "chat" \}\);/);
+  assert.match(
+    source,
+    /if \(entry\.isDirectory\) \{\s*setChatComposerPrefillRequest\(\{\s*text: normalizedReferenceText,\s*requestKey: nextChatComposerPrefillRequestKey\(\),\s*mode: "append",\s*\}\);\s*\} else \{\s*setChatExplorerAttachmentRequest\(\{\s*files: \[\s*\{\s*absolutePath: normalizedAbsolutePath,\s*name: normalizedName,\s*size: Number\.isFinite\(entry\.size\) \? Math\.max\(0, entry\.size\) : 0,\s*\},\s*\],\s*requestKey: nextChatExplorerAttachmentRequestKey\(\),\s*\}\);\s*\}/,
+  );
+  assert.match(source, /setChatFocusRequestKey\(\(current\) => current \+ 1\);/);
+  assert.match(
+    source,
+    /explorerAttachmentRequest=\{chatExplorerAttachmentRequest\}/,
+  );
+  assert.match(
+    source,
+    /onExplorerAttachmentRequestConsumed=\{\s*handleChatExplorerAttachmentRequestConsumed\s*\}/,
+  );
+  assert.match(source, /<FileExplorerPane[\s\S]*onReferenceInChat=\{handleReferenceWorkspacePathInChat\}/);
 });
 
 test("app shell passes new session requests into the chat pane selector", async () => {

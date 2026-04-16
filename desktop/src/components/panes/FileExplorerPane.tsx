@@ -8,6 +8,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import {
+  AtSign,
   ArrowLeft,
   ChevronRight,
   FileArchive,
@@ -46,9 +47,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  EXPLORER_ATTACHMENT_DRAG_TYPE,
   inferDraggedAttachmentKind,
-  serializeExplorerAttachmentDragPayload,
 } from "@/lib/attachmentDrag";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
@@ -62,6 +61,8 @@ interface FileExplorerPaneProps {
   onFocusRequestConsumed?: (requestKey: number) => void;
   previewInPane?: boolean;
   onFileOpen?: (path: string) => void;
+  onReferenceInChat?: (entry: LocalFileEntry, referenceText: string) => void;
+  onOpenLinkInBrowser?: (url: string) => void;
   embedded?: boolean;
 }
 
@@ -151,6 +152,8 @@ const SPECIAL_POLICY_FILENAMES = new Set(["agents.md"]);
 
 const MARKDOWN_PREVIEW_EXTENSIONS = new Set([".md", ".mdx", ".markdown"]);
 const HTML_PREVIEW_EXTENSIONS = new Set([".html", ".htm"]);
+const EXPLORER_INTERNAL_MOVE_DRAG_TYPE =
+  "application/x-holaboss-file-explorer-move";
 
 type TextPreviewMode = "edit" | "preview";
 
@@ -190,6 +193,11 @@ type FileExplorerVisibleRow =
       message: string;
     };
 
+type FileExplorerVisibleSection = {
+  id: "protected" | "workspace";
+  rows: FileExplorerVisibleRow[];
+};
+
 type ExplorerExternalImportEntry =
   | {
       kind: "directory";
@@ -213,6 +221,14 @@ function joinExplorerImportPath(parentPath: string, name: string) {
     return trimmedName;
   }
   return trimmedName ? `${parentPath}/${trimmedName}` : parentPath;
+}
+
+function droppedFileRelativePath(file: File) {
+  const relativePath =
+    "webkitRelativePath" in file && typeof file.webkitRelativePath === "string"
+      ? file.webkitRelativePath.trim()
+      : "";
+  return relativePath || file.name;
 }
 
 async function readExternalDropDirectoryEntries(
@@ -301,11 +317,6 @@ function hasExternalExplorerDropData(dataTransfer: DataTransfer | null) {
     return false;
   }
 
-  const types = Array.from(dataTransfer.types ?? []);
-  if (types.includes(EXPLORER_ATTACHMENT_DRAG_TYPE)) {
-    return false;
-  }
-
   if ((dataTransfer.files?.length ?? 0) > 0) {
     return true;
   }
@@ -327,18 +338,28 @@ async function collectDroppedExternalEntries(dataTransfer: DataTransfer | null) 
     const filesystemEntry = (
       item as ExplorerExternalDropDataTransferItem
     ).webkitGetAsEntry?.();
-    if (!filesystemEntry) {
+    if (filesystemEntry) {
+      importedEntries.push(
+        ...(await collectDroppedExternalEntriesFromEntry(filesystemEntry)),
+      );
       continue;
     }
-    importedEntries.push(
-      ...(await collectDroppedExternalEntriesFromEntry(filesystemEntry)),
-    );
+
+    const file = item.getAsFile();
+    if (!file) {
+      continue;
+    }
+    importedEntries.push({
+      kind: "file",
+      relativePath: droppedFileRelativePath(file),
+      content: new Uint8Array(await file.arrayBuffer()),
+    });
   }
 
   const fileEntries = await Promise.all(
     Array.from(dataTransfer.files ?? []).map(async (file) => ({
       kind: "file" as const,
-      relativePath: file.name,
+      relativePath: droppedFileRelativePath(file),
       content: new Uint8Array(await file.arrayBuffer()),
     })),
   );
@@ -589,6 +610,87 @@ function resolveWorkspaceTargetPath(workspaceRoot: string, targetPath: string) {
   return `${normalizedRoot}${separator}${normalizedTarget}`;
 }
 
+function buildChatReferenceText(
+  workspaceRoot: string | null | undefined,
+  targetPath: string,
+) {
+  const normalizedTargetPath = normalizeComparablePath(targetPath);
+  if (!normalizedTargetPath) {
+    return "";
+  }
+  const normalizedWorkspaceRoot = normalizeComparablePath(workspaceRoot ?? "");
+  const referencePath =
+    normalizedWorkspaceRoot &&
+    isPathWithin(normalizedWorkspaceRoot, normalizedTargetPath)
+      ? normalizedTargetPath
+          .slice(normalizedWorkspaceRoot.length)
+          .replace(/^\/+/, "")
+      : normalizedTargetPath;
+  if (!referencePath) {
+    return "";
+  }
+  if (/[`"\s]/.test(referencePath)) {
+    return `@"${referencePath.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  }
+  return `@${referencePath}`;
+}
+
+function getProtectedWorkspacePathLabel(
+  workspaceRoot: string | null | undefined,
+  targetPath: string | null | undefined,
+): "workspace.yaml" | "AGENTS.md" | "skills" | null {
+  const normalizedWorkspaceRoot = normalizeComparablePath(workspaceRoot ?? "");
+  const normalizedTargetPath = normalizeComparablePath(targetPath ?? "");
+  if (
+    !normalizedWorkspaceRoot ||
+    !normalizedTargetPath ||
+    !isPathWithin(normalizedWorkspaceRoot, normalizedTargetPath)
+  ) {
+    return null;
+  }
+
+  const relativePath = normalizedTargetPath
+    .slice(normalizedWorkspaceRoot.length)
+    .replace(/^\/+/, "");
+  if (!relativePath) {
+    return null;
+  }
+  if (relativePath === "workspace.yaml") {
+    return "workspace.yaml";
+  }
+  if (relativePath === "agents.md") {
+    return "AGENTS.md";
+  }
+  if (relativePath === "skills") {
+    return "skills";
+  }
+  return null;
+}
+
+function protectedWorkspacePathMessage(
+  workspaceRoot: string | null | undefined,
+  targetPath: string | null | undefined,
+) {
+  const protectedPathLabel = getProtectedWorkspacePathLabel(
+    workspaceRoot,
+    targetPath,
+  );
+  if (!protectedPathLabel) {
+    return "";
+  }
+  if (protectedPathLabel === "skills") {
+    return "The skills folder cannot be renamed, moved, or deleted from the file explorer.";
+  }
+  return `${protectedPathLabel} cannot be renamed, moved, or deleted from the file explorer.`;
+}
+
+function isProtectedWorkspacePath(
+  workspaceRoot: string | null | undefined,
+  targetPath: string | null | undefined,
+) {
+  return Boolean(getProtectedWorkspacePathLabel(workspaceRoot, targetPath));
+}
+
 function findLoadedEntry(
   entries: LocalFileEntry[],
   targetPath: string,
@@ -710,6 +812,19 @@ function buildVisibleExplorerRows(
   return rows;
 }
 
+function isWorkspaceRootExplorerView(
+  currentPath: string | null | undefined,
+  workspaceRootPath: string | null | undefined,
+) {
+  const normalizedCurrentPath = normalizeComparablePath(currentPath ?? "");
+  const normalizedWorkspaceRoot = normalizeComparablePath(workspaceRootPath ?? "");
+  return Boolean(
+    normalizedCurrentPath &&
+      normalizedWorkspaceRoot &&
+      normalizedCurrentPath === normalizedWorkspaceRoot,
+  );
+}
+
 function formatFileSize(size: number) {
   if (size <= 0) return "-";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -800,6 +915,8 @@ export function FileExplorerPane({
   onFocusRequestConsumed,
   previewInPane = true,
   onFileOpen,
+  onReferenceInChat,
+  onOpenLinkInBrowser,
   embedded = false,
 }: FileExplorerPaneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -1143,22 +1260,63 @@ export function FileExplorerPane({
 
   const filteredEntries = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    return buildVisibleExplorerRows(
-      entries,
-      directoryEntriesByPath,
-      expandedDirectoryPaths,
-      directoryLoadingByPath,
-      directoryErrorByPath,
-      normalizedQuery,
+    const buildRows = (targetEntries: LocalFileEntry[]) =>
+      buildVisibleExplorerRows(
+        targetEntries,
+        directoryEntriesByPath,
+        expandedDirectoryPaths,
+        directoryLoadingByPath,
+        directoryErrorByPath,
+        normalizedQuery,
+      );
+
+    if (!isWorkspaceRootExplorerView(currentPath, workspaceRootPath)) {
+      return [
+        {
+          id: "workspace" as const,
+          rows: buildRows(entries),
+        },
+      ];
+    }
+
+    const protectedRootEntries = entries.filter((entry) =>
+      isProtectedWorkspacePath(workspaceRootPath, entry.absolutePath),
     );
+    const workspaceEntries = entries.filter(
+      (entry) => !isProtectedWorkspacePath(workspaceRootPath, entry.absolutePath),
+    );
+    const protectedRows = buildRows(protectedRootEntries);
+    const workspaceRows = buildRows(workspaceEntries);
+    const sections: FileExplorerVisibleSection[] = [];
+
+    if (protectedRows.length > 0) {
+      sections.push({
+        id: "protected",
+        rows: protectedRows,
+      });
+    }
+    if (workspaceRows.length > 0) {
+      sections.push({
+        id: "workspace",
+        rows: workspaceRows,
+      });
+    }
+
+    return sections;
   }, [
+    currentPath,
     directoryEntriesByPath,
     directoryErrorByPath,
     directoryLoadingByPath,
     entries,
     expandedDirectoryPaths,
     query,
+    workspaceRootPath,
   ]);
+  const visibleRows = useMemo(
+    () => filteredEntries.flatMap((section) => section.rows),
+    [filteredEntries],
+  );
 
   const selectedEntry = useMemo(
     () => findLoadedEntry(entries, selectedPath, directoryEntriesByPath),
@@ -1172,9 +1330,6 @@ export function FileExplorerPane({
     : selectedEntry
       ? getParentFolderPath(selectedEntry.absolutePath) ?? currentPath
       : currentPath;
-  const creationTargetDirectoryLabel = creationTargetDirectoryPath
-    ? getFolderName(creationTargetDirectoryPath)
-    : "workspace";
   const isDirty =
     preview?.kind === "text" && preview.isEditable
       ? previewDraft !== (preview.content ?? "")
@@ -1194,8 +1349,12 @@ export function FileExplorerPane({
   }, [saving]);
 
   const openPreviewLink = useCallback((url: string) => {
+    if (onOpenLinkInBrowser) {
+      onOpenLinkInBrowser(url);
+      return;
+    }
     void window.electronAPI.ui.openExternalUrl(url);
-  }, []);
+  }, [onOpenLinkInBrowser]);
 
   const closeContextMenu = useCallback(() => {
     setContextMenu(null);
@@ -1512,13 +1671,22 @@ export function FileExplorerPane({
 
   const startRenamingEntry = useCallback(
     (entry: LocalFileEntry) => {
+      const protectedMessage = protectedWorkspacePathMessage(
+        workspaceRootPath,
+        entry.absolutePath,
+      );
+      if (protectedMessage) {
+        closeContextMenu();
+        setError(protectedMessage);
+        return;
+      }
       closeContextMenu();
       setError("");
       setSelectedPath(entry.absolutePath);
       setRenamingPath(entry.absolutePath);
       setRenameDraft(entry.name);
     },
-    [closeContextMenu],
+    [closeContextMenu, workspaceRootPath],
   );
 
   const openFilePreview = async (
@@ -1792,6 +1960,23 @@ export function FileExplorerPane({
     [closeContextMenu, openFileTarget, toggleDirectoryExpansion],
   );
 
+  const referenceEntryInChat = useCallback(
+    (entry: LocalFileEntry) => {
+      const referenceText = buildChatReferenceText(
+        workspaceRootPath,
+        entry.absolutePath,
+      );
+      if (!referenceText) {
+        return;
+      }
+      closeContextMenu();
+      setSelectedPath(entry.absolutePath);
+      setError("");
+      onReferenceInChat?.(entry, referenceText);
+    },
+    [closeContextMenu, onReferenceInChat, workspaceRootPath],
+  );
+
   const submitRenameEntry = useCallback(async () => {
     if (!renamingEntry || renameInFlightRef.current) {
       return;
@@ -1988,6 +2173,16 @@ export function FileExplorerPane({
       ) {
         return;
       }
+      const protectedMessage =
+        protectedWorkspacePathMessage(workspaceRootPath, normalizedSourcePath) ||
+        protectedWorkspacePathMessage(
+          workspaceRootPath,
+          normalizedDestinationDirectoryPath,
+        );
+      if (protectedMessage) {
+        setError(protectedMessage);
+        return;
+      }
 
       const shouldRetargetExternalFile =
         !previewInPane &&
@@ -2062,6 +2257,7 @@ export function FileExplorerPane({
       revealPathInTree,
       selectedPath,
       selectedWorkspaceId,
+      workspaceRootPath,
     ],
   );
 
@@ -2081,6 +2277,12 @@ export function FileExplorerPane({
       if (normalizedDraggedEntryPath === normalizedTargetPath) {
         return false;
       }
+      if (
+        isProtectedWorkspacePath(workspaceRootPath, normalizedDraggedEntryPath) ||
+        isProtectedWorkspacePath(workspaceRootPath, normalizedTargetPath)
+      ) {
+        return false;
+      }
 
       const draggedEntryParentPath = getParentFolderPath(draggedEntryPath ?? "");
       return (
@@ -2088,7 +2290,7 @@ export function FileExplorerPane({
         normalizedTargetPath
       );
     },
-    [draggedEntryPath],
+    [draggedEntryPath, workspaceRootPath],
   );
 
   const onPaneDragOver = useCallback(
@@ -2149,6 +2351,14 @@ export function FileExplorerPane({
   const deleteEntryFromContextMenu = useCallback(
     async (entry: LocalFileEntry) => {
       closeContextMenu();
+      const protectedMessage = protectedWorkspacePathMessage(
+        workspaceRootPath,
+        entry.absolutePath,
+      );
+      if (protectedMessage) {
+        setError(protectedMessage);
+        return;
+      }
       const confirmed = window.confirm(
         entry.isDirectory
           ? `Delete folder "${entry.name}" and all of its contents? This cannot be undone.`
@@ -2174,7 +2384,7 @@ export function FileExplorerPane({
         setError(message);
       }
     },
-    [closeContextMenu, refreshDirectoryEntries, selectedWorkspaceId],
+    [closeContextMenu, refreshDirectoryEntries, selectedWorkspaceId, workspaceRootPath],
   );
 
   const contextMenuPosition = useMemo(() => {
@@ -2466,14 +2676,21 @@ export function FileExplorerPane({
             <div className="px-2 py-3 text-xs text-destructive">{error}</div>
           ) : null}
 
-          {!loading && !error && filteredEntries.length === 0 ? (
+          {!loading && !error && visibleRows.length === 0 ? (
             <div className="px-2 py-4 text-xs text-muted-foreground">
               No files matched your search.
             </div>
           ) : null}
 
           {!loading && !error
-            ? filteredEntries.map((row) => {
+            ? filteredEntries.map((section, sectionIndex) => (
+                <div
+                  key={section.id}
+                  className={
+                    sectionIndex > 0 ? "mt-3 border-t border-border/40 pt-2" : ""
+                  }
+                >
+                  {section.rows.map((row) => {
                 if (row.type === "feedback") {
                   return (
                     <div
@@ -2495,12 +2712,21 @@ export function FileExplorerPane({
                   entry.name,
                   entry.isDirectory,
                 );
+                const entryIsProtected = isProtectedWorkspacePath(
+                  workspaceRootPath,
+                  entry.absolutePath,
+                );
                 const selected = selectedPath === entry.absolutePath;
                 const isRenaming = renamingPath === entry.absolutePath;
                 const isDirectoryDropTarget =
                   directoryDropTargetPath === entry.absolutePath;
                 const isContextMenuTarget =
                   contextMenu?.entry.absolutePath === entry.absolutePath;
+                const rowHoverActionsClassName = `${
+                  selected || isContextMenuTarget
+                    ? "opacity-100"
+                    : "opacity-0 pointer-events-none group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
+                }`;
                 const rowClassName = `group mb-0.5 w-full rounded-md px-2 py-1.5 text-left transition-colors ${
                   selected
                     ? "bg-primary/10 text-primary"
@@ -2591,17 +2817,17 @@ export function FileExplorerPane({
                     className={rowClassName}
                     title={
                       entry.isDirectory
-                        ? `${entry.name} — click to ${isExpanded ? "collapse" : "expand"} folder, drop files or folders here`
+                        ? `${entry.name} — click to ${isExpanded ? "collapse" : "expand"} folder, use @ to reference in chat, drop files or folders here`
                         : previewInPane
-                          ? `${entry.name} — drag into chat to attach`
-                          : `${entry.name} — click to open file, drag into chat to attach`
+                          ? `${entry.name} — double-click to open file, use @ to attach in chat`
+                          : `${entry.name} — click to open file, use @ to attach in chat`
                     }
                     onDragOver={(event) => {
                       const canMoveDraggedEntry =
                         canDropDraggedEntryIntoDirectory(entry);
-                      const canImportExternalEntries = hasExternalExplorerDropData(
-                        event.dataTransfer,
-                      );
+                      const canImportExternalEntries =
+                        entry.isDirectory &&
+                        hasExternalExplorerDropData(event.dataTransfer);
                       if (!canMoveDraggedEntry && !canImportExternalEntries) {
                         return;
                       }
@@ -2634,9 +2860,9 @@ export function FileExplorerPane({
                     onDrop={(event) => {
                       const canMoveDraggedEntry =
                         canDropDraggedEntryIntoDirectory(entry);
-                      const canImportExternalEntries = hasExternalExplorerDropData(
-                        event.dataTransfer,
-                      );
+                      const canImportExternalEntries =
+                        entry.isDirectory &&
+                        hasExternalExplorerDropData(event.dataTransfer);
                       if (
                         !canMoveDraggedEntry &&
                         !canImportExternalEntries
@@ -2674,7 +2900,7 @@ export function FileExplorerPane({
                       <div className="flex w-full min-w-0 items-start gap-1">
                         <button
                           type="button"
-                          draggable={!entry.isDirectory}
+                          draggable={!entry.isDirectory && !entryIsProtected}
                           onClick={() => {
                             setSelectedPath(entry.absolutePath);
                             closeContextMenu();
@@ -2692,23 +2918,18 @@ export function FileExplorerPane({
                             }
                           }}
                           onDragStart={(event) => {
-                            if (entry.isDirectory) {
+                            if (entry.isDirectory || entryIsProtected) {
                               event.preventDefault();
                               return;
                             }
 
                             setDraggedEntryPath(entry.absolutePath);
                             setDirectoryDropTargetPath(null);
-                            event.dataTransfer.effectAllowed = "copyMove";
+                            event.dataTransfer.effectAllowed = "move";
                             event.dataTransfer.setData(
-                              EXPLORER_ATTACHMENT_DRAG_TYPE,
-                              serializeExplorerAttachmentDragPayload({
-                                absolutePath: entry.absolutePath,
-                                name: entry.name,
-                                size: entry.size,
-                              }),
+                              EXPLORER_INTERNAL_MOVE_DRAG_TYPE,
+                              entry.absolutePath,
                             );
-                            event.dataTransfer.setData("text/plain", entry.name);
                             const preview = createAttachmentDragPreview(entry);
                             dragPreviewRef.current?.remove();
                             dragPreviewRef.current = preview;
@@ -2723,41 +2944,60 @@ export function FileExplorerPane({
                           className="w-full min-w-0 cursor-pointer text-left"
                           title={
                             entry.isDirectory
-                              ? `${entry.name} — click to ${isExpanded ? "collapse" : "expand"} folder, drop files or folders here`
+                              ? `${entry.name} — click to ${isExpanded ? "collapse" : "expand"} folder, use @ to reference in chat, drop files or folders here`
                               : previewInPane
-                                ? `${entry.name} — drag into chat to attach`
-                                : `${entry.name} — click to open file, drag into chat to attach`
+                                ? `${entry.name} — double-click to open file, use @ to attach in chat`
+                                : `${entry.name} — click to open file, use @ to attach in chat`
                           }
                         >
                           {rowContent}
                         </button>
-                        {entry.isDirectory ? (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon-xs"
-                            aria-label={`More actions for ${entry.name}`}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              openEntryContextMenu(entry, {
-                                anchorRect:
-                                  event.currentTarget.getBoundingClientRect(),
-                              });
-                            }}
-                            className={`mt-0.5 shrink-0 text-muted-foreground transition-opacity ${
-                              selected || isContextMenuTarget
-                                ? "opacity-100"
-                                : "opacity-0 pointer-events-none group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
-                            }`}
-                          >
-                            <MoreHorizontal size={12} />
-                          </Button>
-                        ) : null}
+                        <div className="mt-0.5 flex shrink-0 items-center gap-0.5">
+                          {onReferenceInChat ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              aria-label={
+                                entry.isDirectory
+                                  ? `Reference ${entry.name} in chat`
+                                  : `Attach ${entry.name} to chat`
+                              }
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                referenceEntryInChat(entry);
+                              }}
+                              className={`shrink-0 text-[11px] font-semibold text-muted-foreground transition-opacity ${rowHoverActionsClassName}`}
+                            >
+                              <AtSign size={12} />
+                            </Button>
+                          ) : null}
+                          {entry.isDirectory ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              aria-label={`More actions for ${entry.name}`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openEntryContextMenu(entry, {
+                                  anchorRect:
+                                    event.currentTarget.getBoundingClientRect(),
+                                });
+                              }}
+                              className={`shrink-0 text-muted-foreground transition-opacity ${rowHoverActionsClassName}`}
+                            >
+                              <MoreHorizontal size={12} />
+                            </Button>
+                          ) : null}
+                        </div>
                       </div>
                     )}
                   </div>
                 );
-              })
+                  })}
+                </div>
+              ))
             : null}
         </div>
       </div>
@@ -2841,6 +3081,16 @@ export function FileExplorerPane({
       {content}
     </PaneCard>
   );
+  const contextMenuTargetDirectoryPath = contextMenu?.entry.isDirectory
+    ? contextMenu.entry.absolutePath
+    : contextMenu
+      ? getParentFolderPath(contextMenu.entry.absolutePath) ??
+        currentPathRef.current
+      : "";
+  const contextMenuEntryIsProtected = isProtectedWorkspacePath(
+    workspaceRootPath,
+    contextMenu?.entry.absolutePath,
+  );
 
   return (
     <>
@@ -2872,11 +3122,7 @@ export function FileExplorerPane({
                 variant="ghost"
                 size="default"
                 onClick={() => {
-                  const targetDirectoryPath = contextMenu.entry.isDirectory
-                    ? contextMenu.entry.absolutePath
-                    : getParentFolderPath(contextMenu.entry.absolutePath) ??
-                      currentPathRef.current;
-                  void createEntry("file", targetDirectoryPath);
+                  void createEntry("file", contextMenuTargetDirectoryPath);
                 }}
                 className="w-full justify-start"
               >
@@ -2887,11 +3133,7 @@ export function FileExplorerPane({
                 variant="ghost"
                 size="default"
                 onClick={() => {
-                  const targetDirectoryPath = contextMenu.entry.isDirectory
-                    ? contextMenu.entry.absolutePath
-                    : getParentFolderPath(contextMenu.entry.absolutePath) ??
-                      currentPathRef.current;
-                  void createEntry("directory", targetDirectoryPath);
+                  void createEntry("directory", contextMenuTargetDirectoryPath);
                 }}
                 className="w-full justify-start"
               >
@@ -2901,6 +3143,7 @@ export function FileExplorerPane({
                 type="button"
                 variant="ghost"
                 size="default"
+                disabled={contextMenuEntryIsProtected}
                 onClick={() => {
                   void renameEntryFromContextMenu(contextMenu.entry);
                 }}
@@ -2912,6 +3155,7 @@ export function FileExplorerPane({
                 type="button"
                 variant="ghost"
                 size="default"
+                disabled={contextMenuEntryIsProtected}
                 onClick={() => {
                   void deleteEntryFromContextMenu(contextMenu.entry);
                 }}

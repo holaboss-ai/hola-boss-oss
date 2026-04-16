@@ -15,6 +15,7 @@ interface InternalSurfacePaneProps {
   surface: InternalSurfaceType;
   resourceId?: string | null;
   htmlContent?: string | null;
+  onOpenLinkInBrowser?: (url: string) => void;
 }
 
 const MARKDOWN_PREVIEW_EXTENSIONS = new Set([".md", ".mdx", ".markdown"]);
@@ -45,6 +46,7 @@ export function InternalSurfacePane({
   surface,
   resourceId,
   htmlContent,
+  onOpenLinkInBrowser,
 }: InternalSurfacePaneProps) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const [preview, setPreview] = useState<FilePreviewPayload | null>(null);
@@ -62,8 +64,12 @@ export function InternalSurfacePane({
   const isSavingRef = useRef(false);
   const pendingExternalRefreshPathRef = useRef<string | null>(null);
   const openPreviewLink = useCallback((url: string) => {
+    if (onOpenLinkInBrowser) {
+      onOpenLinkInBrowser(url);
+      return;
+    }
     void window.electronAPI.ui.openExternalUrl(url);
-  }, []);
+  }, [onOpenLinkInBrowser]);
 
   const loadPreviewFromDisk = useCallback(
     async (
