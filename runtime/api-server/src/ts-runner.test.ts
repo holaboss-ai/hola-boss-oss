@@ -2814,6 +2814,110 @@ test("runTsRunnerCli pushes emitted events with retry semantics", async () => {
   assert.equal(stdout.trim().split("\n").length, 3);
 });
 
+test("runTsRunnerCli passes prepared MCP server ids into runtime config when no explicit MCP tool refs are resolved", { concurrency: false }, async () => {
+  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-pi-mcp-server-ids-"));
+  process.env.HB_SANDBOX_ROOT = sandboxRoot;
+  const piHarnessAdapter = requireRuntimeHarnessAdapter("pi");
+  const originalBuildRunnerPrepPlan = piHarnessAdapter.buildRunnerPrepPlan;
+  let capturedProjectRequest: Record<string, unknown> | null = null;
+  let capturedHarnessRequest: Record<string, unknown> | null = null;
+
+  piHarnessAdapter.buildRunnerPrepPlan = () => ({
+    stageWorkspaceSkills: true,
+    stageWorkspaceCommands: false,
+    prepareMcpTooling: true,
+    startWorkspaceMcpSidecar: false,
+    bootstrapResolvedApplications: false
+  });
+  try {
+    const exitCode = await runTsRunnerCli(
+      [
+        "--request-base64",
+        encodeRequest({
+          ...baseRequest(),
+          context: {
+            _sandbox_runtime_exec_v1: {
+              harness: "pi"
+            }
+          }
+        })
+      ],
+      {
+        deps: {
+          ...testDeps(),
+          compilePlan: () =>
+            ({
+              ...baseCompiledPlan(),
+              resolved_mcp_servers: [
+                {
+                  server_id: "context7",
+                  type: "remote",
+                  url: "https://mcp.context7.com/mcp",
+                  headers: [],
+                  environment: [],
+                  timeout_ms: 15000,
+                  enabled: true,
+                  command: null
+                }
+              ],
+            }) as never,
+          projectAgentRuntimeConfig: (request) => {
+            capturedProjectRequest = request as unknown as Record<string, unknown>;
+            return {
+              provider_id: "openai",
+              model_id: "gpt-5.4",
+              mode: "code",
+              system_prompt: "You are concise.",
+              model_client: {
+                model_proxy_provider: "openai_compatible",
+                api_key: "token",
+                base_url: "http://127.0.0.1:4000/openai/v1",
+                default_headers: { "X-Test": "1" }
+              },
+              tools: { read: true },
+              workspace_tool_ids: [],
+              workspace_skill_ids: [],
+              output_schema_member_id: null,
+              output_format: null,
+              workspace_config_checksum: "checksum-1"
+            };
+          },
+          runHarnessHost: async ({ requestPayload }) => {
+            capturedHarnessRequest = requestPayload;
+            return {
+              exitCode: 0,
+              stderr: "",
+              sawEvent: false,
+              terminalEmitted: false,
+              lastSequence: 0
+            };
+          }
+        },
+        io: {
+          stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
+          stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
+        }
+      }
+    );
+
+    assert.equal(exitCode, 0);
+    assert.deepEqual(
+      (capturedProjectRequest as { resolved_mcp_server_ids: string[] }).resolved_mcp_server_ids,
+      ["context7"]
+    );
+    assert.deepEqual(
+      (capturedProjectRequest as { resolved_mcp_tool_refs: Array<Record<string, string>> }).resolved_mcp_tool_refs,
+      []
+    );
+    assert.deepEqual((capturedHarnessRequest as { mcp_servers: Array<{ name: string }> }).mcp_servers.map((server) => server.name), [
+      "context7"
+    ]);
+    assert.deepEqual((capturedHarnessRequest as { mcp_tool_refs: unknown[] }).mcp_tool_refs, []);
+  } finally {
+    piHarnessAdapter.buildRunnerPrepPlan = originalBuildRunnerPrepPlan;
+  }
+});
+
 test("runTsRunnerCli synthesizes run_failed when harness-host ends without a terminal event", async () => {
   const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-no-terminal-"));
   process.env.HB_SANDBOX_ROOT = sandboxRoot;

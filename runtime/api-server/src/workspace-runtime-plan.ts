@@ -714,6 +714,17 @@ function resolveMcpRegistry(config: JsonRecord): McpRegistryCompileResult {
         referencedServerIds.push(toolRef.server_id);
       }
     }
+    for (const server of Object.values(servers)) {
+      if (
+        !server.enabled ||
+        server.server_id === WORKSPACE_SERVER_ID ||
+        seenServerIds.has(server.server_id)
+      ) {
+        continue;
+      }
+      seenServerIds.add(server.server_id);
+      referencedServerIds.push(server.server_id);
+    }
   } else {
     for (const server of Object.values(servers)) {
       if (!server.enabled || server.server_id === WORKSPACE_SERVER_ID) {

@@ -235,6 +235,7 @@ test("decodeAgentRuntimeConfigCliRequestBase64 defaults optional arrays and obje
     extra_tools: [],
     tool_server_id_map: null,
     resolved_mcp_tool_refs: [],
+    resolved_mcp_server_ids: [],
     resolved_output_schemas: {},
     agent: {
       id: "agent-1",

@@ -101,7 +101,8 @@ This is the runtime-owned interpretation of the authored workspace, not a loose 
 - `mcp_registry` is required
 - `tool_registry` is explicitly unsupported
 - when `mcp_registry.allowlist.tool_ids` is provided and non-empty, MCP tool ids must be `server.tool`
-- when `mcp_registry.allowlist.tool_ids` is omitted or empty, the runtime exposes all enabled configured MCP servers for that run
+- when `mcp_registry.allowlist.tool_ids` is omitted or empty, the runtime keeps all enabled configured MCP servers for that run and lets the host discover all tools from those servers at runtime
+- when some servers have explicit allowlisted tool ids and others do not, the runtime carries both: explicit `resolved_mcp_tool_refs` for the constrained servers and connected server payloads for the still-discoverable servers
 - `mcp_registry.servers.workspace` must be local
 - `applications` must be a list of mappings
 - `applications[].app_id` must be unique
@@ -126,6 +127,31 @@ Before the harness launch it also:
 - bootstraps resolved applications and merges app-provided MCP servers into the prepared MCP payloads
 
 This is where runtime-owned tool visibility stops being a static config file and becomes a run-specific capability surface.
+
+For remote MCP auth values, `runner-prep.ts` also resolves header and environment placeholders of the form `{env:ENV_VAR_NAME}` before the host request is built. That syntax expects an environment variable name, not a literal secret value.
+
+Correct:
+
+```yaml
+headers:
+  CONTEXT7_API_KEY: "{env:CONTEXT7_API_KEY}"
+```
+
+Also correct:
+
+```yaml
+headers:
+  CONTEXT7_API_KEY: "ctx7sk-..."
+```
+
+Incorrect:
+
+```yaml
+headers:
+  CONTEXT7_API_KEY: "{env:ctx7sk-...}"
+```
+
+That last shape is now rejected during runner prep instead of being forwarded as a bogus remote header.
 
 ## Stage 4: Load Runtime Context
 
@@ -160,6 +186,17 @@ Important outputs include:
 - `capability_manifest`
 
 This is also where response-delivery guidance and operator surface context become prompt-visible context for the run. If the harness sees the wrong tools, wrong prompt layers, wrong selected model, or wrong output schema, this is usually the page and code seam you wanted.
+
+For MCP, this stage now distinguishes two cases:
+
+- explicit allowlist:
+  `resolved_mcp_tool_refs` contains concrete tool ids, so the capability manifest and prompt can list them directly
+- omitted or empty allowlist:
+  `resolved_mcp_tool_refs` may stay empty while the runtime still carries connected MCP server ids into the runtime config; the prompt can then say which servers are connected even though the host will discover the concrete tool names later
+- mixed mode:
+  `resolved_mcp_tool_refs` can contain concrete tool ids for some servers while other connected servers remain discovery-backed for that run
+
+That keeps the prompt aligned with runtime truth without turning prompt text into the enforcement boundary.
 
 Model selection and reasoning effort split here:
 
@@ -213,6 +250,8 @@ That snapshot is the runtime’s replay and debugging seam. It is how the system
 
 - `workspace_config_checksum` changing unexpectedly usually means the authored workspace input changed, not the harness.
 - Missing MCP tools often come from `mcp_registry` compile rules or server-id mapping, not from the host implementation.
+- If MCP is configured but the prompt only summarizes connected server ids, that usually means the allowlist was omitted and concrete tool names will be discovered in the host at runtime.
+- If a remote MCP server reports invalid auth and your header value looks like `{env:ctx7sk-...}`, that is a config mistake. Use a literal `ctx7sk-...` value or `{env:CONTEXT7_API_KEY}`.
 - Ambiguous `here`, `this page`, or `what am I looking at` behavior usually comes from operator surface context loading, not from `workspace.yaml`.
 - Wrong prompt context often comes from runtime context loading or `projectAgentRuntimeConfig()`, not from `workspace.yaml`.
 - Wrong reasoning effort usually comes from the queued `thinking_value`, catalog metadata, or harness-host normalization, not from `workspace.yaml`.

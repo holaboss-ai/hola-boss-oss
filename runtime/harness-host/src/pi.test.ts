@@ -1680,6 +1680,86 @@ test("createPiMcpCustomTools exposes all discovered tools when no MCP allowlist 
   );
 });
 
+test("createPiMcpCustomTools keeps unrestricted discovery for servers without explicit tool refs even when other servers are allowlisted", async () => {
+  const request: HarnessHostPiRequest = {
+    ...baseRequest(),
+    mcp_servers: [
+      {
+        name: "gmail",
+        config: {
+          type: "remote",
+          enabled: true,
+          url: "http://127.0.0.1:7000/mcp",
+          timeout: 12000,
+        },
+      },
+      {
+        name: "context7",
+        config: {
+          type: "remote",
+          enabled: true,
+          url: "https://mcp.context7.com/mcp",
+          timeout: 12000,
+        },
+      },
+    ],
+    mcp_tool_refs: [
+      {
+        tool_id: "gmail.gmail_search",
+        server_id: "gmail",
+        tool_name: "gmail_search",
+      },
+    ],
+  };
+
+  const runtime = {
+    listTools: async (serverId: string) => {
+      if (serverId === "gmail") {
+        return [
+          {
+            name: "gmail_search",
+            description: "Search Gmail",
+            inputSchema: { type: "object", properties: {} },
+          },
+          {
+            name: "gmail_delete_thread",
+            description: "Should not be exposed",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ];
+      }
+      return [
+        {
+          name: "lookup",
+          description: "Look something up",
+          inputSchema: { type: "object", properties: {} },
+        },
+        {
+          name: "search",
+          description: "Search docs",
+          inputSchema: { type: "object", properties: {} },
+        },
+      ];
+    },
+    callTool: async () => ({ structuredContent: { ok: true } }),
+  };
+
+  const toolset = await createPiMcpCustomTools(request, runtime as never, buildPiMcpServerBindings(request));
+
+  assert.deepEqual(
+    toolset.customTools.map((tool) => tool.name).sort(),
+    [
+      buildPiMcpToolName("context7", "lookup"),
+      buildPiMcpToolName("context7", "search"),
+      buildPiMcpToolName("gmail", "gmail_search"),
+    ]
+  );
+  assert.deepEqual(
+    Array.from(toolset.mcpToolMetadata.values()).map((metadata) => metadata.toolId).sort(),
+    ["context7.lookup", "context7.search", "gmail.gmail_search"]
+  );
+});
+
 test("createPiMcpCustomTools retries discovery until allowlisted MCP tools appear", async () => {
   const request: HarnessHostPiRequest = {
     ...baseRequest(),

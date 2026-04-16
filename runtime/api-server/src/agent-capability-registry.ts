@@ -85,6 +85,7 @@ export interface AgentCapabilityPolicyContext {
   browser_tool_ids: string[];
   runtime_tool_ids: string[];
   workspace_command_ids: string[];
+  mcp_server_ids?: string[];
   workspace_commands_available?: boolean;
   workspace_skills_available?: boolean;
   mcp_tools_available?: boolean;
@@ -170,6 +171,7 @@ export interface BuildAgentCapabilityManifestParams {
   extraTools: string[];
   workspaceSkillIds: string[];
   resolvedMcpToolRefs: AgentCapabilityMcpToolRef[];
+  resolvedMcpServerIds?: string[] | null;
   toolServerIdMap?: Readonly<Record<string, string>> | null;
 }
 
@@ -867,19 +869,25 @@ function buildPolicyContext(
       ? params.runtimeToolIds
       : params.extraTools.filter((toolName) => RUNTIME_TOOL_DEFINITIONS.has(normalizedToken(toolName)))
   );
+  const mcpServerIds = uniqueSorted((params.resolvedMcpServerIds ?? []).map((serverId) => serverId.trim()));
   const workspaceCommands = uniqueSorted((params.workspaceCommandIds ?? []).map((commandId) => commandId.trim()));
   const workspaceSkills = uniqueSorted(params.workspaceSkillIds.map((skillId) => skillId.trim()));
+  const context: AgentCapabilityPolicyContext = {
+    harness_id: (params.harnessId ?? "").trim() || null,
+    session_kind: (params.sessionKind ?? "").trim() || null,
+    browser_tools_available:
+      typeof params.browserToolsAvailable === "boolean" ? params.browserToolsAvailable : null,
+    browser_tool_ids: browserToolIds,
+    runtime_tool_ids: runtimeToolIds,
+    workspace_command_ids: workspaceCommands,
+  };
+
+  if (mcpServerIds.length > 0) {
+    context.mcp_server_ids = mcpServerIds;
+  }
 
   return {
-    context: {
-      harness_id: (params.harnessId ?? "").trim() || null,
-      session_kind: (params.sessionKind ?? "").trim() || null,
-      browser_tools_available:
-        typeof params.browserToolsAvailable === "boolean" ? params.browserToolsAvailable : null,
-      browser_tool_ids: browserToolIds,
-      runtime_tool_ids: runtimeToolIds,
-      workspace_command_ids: workspaceCommands,
-    },
+    context,
     workspaceCommands,
     workspaceSkills,
   };
@@ -1187,7 +1195,8 @@ function projectAgentCapabilityManifest(
         : browserTools.length > 0,
     workspace_commands_available: evaluatedSet.workspace_commands.length > 0,
     workspace_skills_available: evaluatedSet.workspace_skills.length > 0,
-    mcp_tools_available: mcpToolAliases.length > 0,
+    mcp_tools_available:
+      mcpToolAliases.length > 0 || (evaluatedSet.context.mcp_server_ids?.length ?? 0) > 0,
   };
 
   return {
@@ -1283,6 +1292,11 @@ export function renderCapabilityPolicyPromptSection(manifest: AgentCapabilityMan
   if (manifest.mcp_tools.length > 0) {
     lines.push(
       `Connected MCP tools available now: ${summarizeList(manifest.mcp_tools.map((capability) => capability.id), 6)}`
+    );
+  } else if ((manifest.context.mcp_server_ids?.length ?? 0) > 0) {
+    lines.push(`Connected MCP servers available now: ${summarizeList(manifest.context.mcp_server_ids ?? [], 6)}`);
+    lines.push(
+      "Specific MCP tool names may be surfaced dynamically by the runtime even when this prompt section does not pre-enumerate them."
     );
   }
 

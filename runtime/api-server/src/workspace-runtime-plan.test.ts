@@ -180,6 +180,41 @@ env_contract:
   assert.deepEqual(plan.schema_aliases, {});
 });
 
+test("compileWorkspaceRuntimePlan keeps other enabled remote MCP servers even when some tool ids are explicitly allowlisted", () => {
+  const plan = compileWorkspaceRuntimePlan({
+    workspace_id: "ws-mixed-mcp",
+    workspace_yaml: `
+agents:
+  id: workspace.general
+  model: openai/gpt-5
+mcp_registry:
+  allowlist:
+    tool_ids:
+      - gmail.gmail_search
+  servers:
+    gmail:
+      type: remote
+      url: "http://localhost:3099/mcp"
+      enabled: true
+    context7:
+      type: remote
+      url: "https://mcp.context7.com/mcp"
+      enabled: true
+`,
+    references: {}
+  });
+
+  assert.deepEqual(plan.mcp_tool_allowlist, ["gmail.gmail_search"]);
+  assert.deepEqual(plan.resolved_mcp_tool_refs, [
+    {
+      tool_id: "gmail.gmail_search",
+      server_id: "gmail",
+      tool_name: "gmail_search",
+    },
+  ]);
+  assert.deepEqual(plan.resolved_mcp_servers.map((server) => server.server_id), ["gmail", "context7"]);
+});
+
 test("compileWorkspaceRuntimePlan parses application integrations", () => {
   const plan = compileWorkspaceRuntimePlan({
     workspace_id: "ws-integrations",
