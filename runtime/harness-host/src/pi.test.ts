@@ -2191,6 +2191,16 @@ test("buildPiPromptPayload inlines native images, extracts common document forma
   }
 });
 
+test("buildPiPromptPayload explicitly marks when attachments and image inputs are absent", async () => {
+  const prompt = await buildPiPromptPayload({
+    ...baseRequest(),
+    attachments: [],
+  });
+
+  assert.match(prompt.text, /^List the files\s+Attachments: none\.\s+Image inputs: none\.$/);
+  assert.deepEqual(prompt.images, []);
+});
+
 test("buildPiPromptPayload frames persisted todo state as advisory continuity when resuming", async () => {
   const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-resume-todo-"));
   const stateDir = path.join(workspaceDir, ".holaboss", "pi-agent");

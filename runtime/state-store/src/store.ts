@@ -1992,6 +1992,25 @@ export class RuntimeStateStore {
       );
   }
 
+  countSessionMessages(params: {
+    workspaceId: string;
+    sessionId: string;
+    role?: string;
+  }): number {
+    let query = `
+      SELECT COUNT(*) AS total
+      FROM session_messages
+      WHERE workspace_id = ? AND session_id = ?
+    `;
+    const values: string[] = [params.workspaceId, params.sessionId];
+    if (params.role) {
+      query += " AND role = ?";
+      values.push(params.role);
+    }
+    const row = this.db().prepare(query).get(...values) as { total: number } | undefined;
+    return Number(row?.total ?? 0);
+  }
+
   listSessionMessages(params: {
     workspaceId: string;
     sessionId: string;

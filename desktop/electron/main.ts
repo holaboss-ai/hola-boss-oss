@@ -2624,6 +2624,14 @@ interface SessionHistoryResponsePayload {
   raw: unknown | null;
 }
 
+interface SessionHistoryRequestPayload {
+  sessionId: string;
+  workspaceId: string;
+  limit?: number;
+  offset?: number;
+  order?: "asc" | "desc";
+}
+
 interface SessionOutputEventPayload {
   id: number;
   workspace_id: string;
@@ -2633,6 +2641,11 @@ interface SessionOutputEventPayload {
   event_type: string;
   payload: Record<string, unknown>;
   created_at: string;
+}
+
+interface SessionOutputEventListRequestPayload {
+  sessionId: string;
+  inputId?: string | null;
 }
 
 interface SessionOutputEventListResponsePayload {
@@ -13067,6 +13080,7 @@ function isWorkspaceNotFoundError(error: unknown): boolean {
 function emptySessionHistoryPayload(
   sessionId: string,
   workspaceId: string,
+  request: Pick<SessionHistoryRequestPayload, "limit" | "offset"> = {},
 ): SessionHistoryResponsePayload {
   return {
     workspace_id: workspaceId,
@@ -13077,24 +13091,24 @@ function emptySessionHistoryPayload(
     messages: [],
     count: 0,
     total: 0,
-    limit: 200,
-    offset: 0,
+    limit: request.limit ?? 200,
+    offset: request.offset ?? 0,
     raw: null,
   };
 }
 
 async function getSessionHistory(
-  sessionId: string,
-  workspaceId: string,
+  payload: SessionHistoryRequestPayload,
 ): Promise<SessionHistoryResponsePayload> {
   try {
     return await requestRuntimeJson<SessionHistoryResponsePayload>({
       method: "GET",
-      path: `/api/v1/agent-sessions/${sessionId}/history`,
+      path: `/api/v1/agent-sessions/${payload.sessionId}/history`,
       params: {
-        workspace_id: workspaceId,
-        limit: 200,
-        offset: 0,
+        workspace_id: payload.workspaceId,
+        limit: payload.limit ?? 200,
+        offset: payload.offset ?? 0,
+        order: payload.order ?? "asc",
       },
     });
   } catch (error) {
@@ -13102,19 +13116,24 @@ async function getSessionHistory(
       isMissingSessionBindingError(error) ||
       isWorkspaceNotFoundError(error)
     ) {
-      return emptySessionHistoryPayload(sessionId, workspaceId);
+      return emptySessionHistoryPayload(
+        payload.sessionId,
+        payload.workspaceId,
+        payload,
+      );
     }
     throw error;
   }
 }
 
 async function getSessionOutputEvents(
-  sessionId: string,
+  payload: SessionOutputEventListRequestPayload,
 ): Promise<SessionOutputEventListResponsePayload> {
   return requestRuntimeJson<SessionOutputEventListResponsePayload>({
     method: "GET",
-    path: `/api/v1/agent-sessions/${encodeURIComponent(sessionId)}/outputs/events`,
+    path: `/api/v1/agent-sessions/${encodeURIComponent(payload.sessionId)}/outputs/events`,
     params: {
+      input_id: payload.inputId ?? undefined,
       include_history: true,
       after_event_id: 0,
     },
@@ -19808,14 +19827,14 @@ app.whenReady().then(async () => {
   handleTrustedIpc(
     "workspace:getSessionHistory",
     ["main"],
-    async (_event, payload: { sessionId: string; workspaceId: string }) =>
-      getSessionHistory(payload.sessionId, payload.workspaceId),
+    async (_event, payload: SessionHistoryRequestPayload) =>
+      getSessionHistory(payload),
   );
   handleTrustedIpc(
     "workspace:getSessionOutputEvents",
     ["main"],
-    async (_event, payload: { sessionId: string }) =>
-      getSessionOutputEvents(payload.sessionId),
+    async (_event, payload: SessionOutputEventListRequestPayload) =>
+      getSessionOutputEvents(payload),
   );
   handleTrustedIpc(
     "workspace:stageSessionAttachments",

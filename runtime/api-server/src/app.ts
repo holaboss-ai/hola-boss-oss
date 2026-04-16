@@ -4992,9 +4992,16 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
     const limit = Math.max(1, Math.min(1000, optionalInteger(query.limit, 200)));
     const offset = Math.max(0, optionalInteger(query.offset, 0));
-    const allMessages = store.listSessionMessages({ workspaceId, sessionId: params.sessionId });
-    const messages = allMessages
-      .slice(offset, offset + limit)
+    const order = optionalString(query.order) === "desc" ? "desc" : "asc";
+    const total = store.countSessionMessages({ workspaceId, sessionId: params.sessionId });
+    const messages = store
+      .listSessionMessages({
+        workspaceId,
+        sessionId: params.sessionId,
+        limit,
+        offset,
+        order
+      })
       .map((message: SessionMessageRecord) => {
         const inputId = message.role === "user" && message.id.startsWith("user-") ? message.id.slice(5) : "";
         const inputAttachments = inputId ? attachmentsFromInputPayload(store.getInput(inputId)?.payload.attachments) : [];
@@ -5009,7 +5016,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       source: "sandbox_local_storage",
       messages,
       count: messages.length,
-      total: allMessages.length,
+      total,
       limit,
       offset,
       raw: null

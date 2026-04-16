@@ -6,6 +6,7 @@
 import { memo, useMemo } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { normalizeWrappedMarkdownFence } from "./markdownFenceNormalization.mjs";
 
 function appendClassName(current: string | undefined, next: string): string {
   return current ? `${current} ${next}` : next;
@@ -124,6 +125,10 @@ function SimpleMarkdownComponent({
   className = "",
   onLinkClick,
 }: SimpleMarkdownProps) {
+  const normalizedChildren = useMemo(
+    () => normalizeWrappedMarkdownFence(children),
+    [children],
+  );
   const components = useMemo(
     () => createMarkdownComponents(onLinkClick),
     [onLinkClick],
@@ -137,7 +142,7 @@ function SimpleMarkdownComponent({
         skipHtml
         urlTransform={defaultUrlTransform}
       >
-        {children}
+        {normalizedChildren}
       </ReactMarkdown>
     </div>
   );

@@ -148,6 +148,10 @@ function nonEmptyText(value: string | null | undefined): string {
   return (value ?? "").trim();
 }
 
+function isInternalRuntimeMemoryPath(value: string): boolean {
+  return /^workspace\/[^/]+\/runtime\//.test(value.trim());
+}
+
 function linesSection(lines: string[]): string {
   return lines.filter((line) => line.trim().length > 0).join("\n").trim();
 }
@@ -402,6 +406,12 @@ function sessionResumeContextPromptSection(context: AgentSessionResumeContext | 
   const restoredMemoryPaths = Array.isArray(context.restored_memory_paths)
     ? context.restored_memory_paths.map((value) => nonEmptyText(value)).filter(Boolean)
     : [];
+  const internalRuntimeMemoryPaths = restoredMemoryPaths.filter((value) =>
+    isInternalRuntimeMemoryPath(value),
+  );
+  const externalRestoredMemoryPaths = restoredMemoryPaths.filter(
+    (value) => !isInternalRuntimeMemoryPath(value),
+  );
   const sessionMemoryPath = nonEmptyText(context.session_memory_path);
   const sessionMemoryExcerpt = nonEmptyText(context.session_memory_excerpt);
   const compactionBoundaryId = nonEmptyText(context.compaction_boundary_id);
@@ -447,20 +457,35 @@ function sessionResumeContextPromptSection(context: AgentSessionResumeContext | 
     lines.push("", `Preserved turn ids: ${preservedTurnInputIds.map((value) => `\`${value}\``).join(", ")}.`);
   }
 
-  if (restoredMemoryPaths.length > 0) {
-    lines.push("", "Restored memory paths:");
-    for (const memoryPath of restoredMemoryPaths.slice(0, 5)) {
+  if (internalRuntimeMemoryPaths.length > 0) {
+    lines.push(
+      "",
+      `Internal runtime memory was restored from ${internalRuntimeMemoryPaths.length} runtime-managed record${internalRuntimeMemoryPaths.length === 1 ? "" : "s"}.`,
+      "These runtime-managed records are continuity metadata, not workspace files or folders for you to create, rename, or edit.",
+      "Do not create or modify a `runtime/` directory in the workspace unless the user explicitly asks for that exact directory."
+    );
+  }
+
+  if (externalRestoredMemoryPaths.length > 0) {
+    lines.push("", "Restored memory references:");
+    for (const memoryPath of externalRestoredMemoryPaths.slice(0, 5)) {
       lines.push(`- \`${memoryPath}\``);
     }
-    if (restoredMemoryPaths.length > 5) {
-      lines.push(`- ...and ${restoredMemoryPaths.length - 5} more restored memory paths.`);
+    if (externalRestoredMemoryPaths.length > 5) {
+      lines.push(
+        `- ...and ${externalRestoredMemoryPaths.length - 5} more restored memory references.`
+      );
     }
   }
 
   if (sessionMemoryPath || sessionMemoryExcerpt) {
     lines.push("", "Session memory:");
     if (sessionMemoryPath) {
-      lines.push(`- Path: \`${sessionMemoryPath}\``);
+      if (isInternalRuntimeMemoryPath(sessionMemoryPath)) {
+        lines.push("- Source: internal runtime-managed session memory.");
+      } else {
+        lines.push(`- Path: \`${sessionMemoryPath}\``);
+      }
     }
     if (sessionMemoryExcerpt) {
       lines.push(`- Excerpt: ${sessionMemoryExcerpt}`);
