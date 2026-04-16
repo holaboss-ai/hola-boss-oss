@@ -5,6 +5,7 @@ import {
   FormEvent,
   KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
   type RefObject,
   useEffect,
   useLayoutEffect,
@@ -65,12 +66,25 @@ import * as modelCatalog from "../../../shared/model-catalog.js";
 type ChatAttachment = SessionInputAttachmentPayload;
 type ChatPaneVariant = "default" | "onboarding";
 
+type ChatAssistantSegment =
+  | {
+      kind: "execution";
+      items: ChatExecutionTimelineItem[];
+    }
+  | {
+      kind: "output";
+      text: string;
+      tone?: "default" | "error";
+    };
+
 interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
+  tone?: "default" | "error";
   createdAt?: string;
   attachments?: ChatAttachment[];
+  segments?: ChatAssistantSegment[];
   executionItems?: ChatExecutionTimelineItem[];
   outputs?: WorkspaceOutputRecordPayload[];
   memoryProposals?: MemoryUpdateProposalRecordPayload[];
@@ -79,6 +93,22 @@ interface ChatMessage {
 interface ChatSerializedQuotedSkillBlock {
   skillIds: string[];
   body: string;
+}
+
+function initialBrowserState(space: BrowserSpaceId): BrowserTabListPayload {
+  return {
+    space,
+    activeTabId: "",
+    tabs: [],
+    tabCounts: {
+      user: 0,
+      agent: 0,
+    },
+    sessionId: null,
+    lifecycleState: null,
+    controlMode: "none",
+    controlSessionId: null,
+  };
 }
 
 type ChatTraceStepStatus = "running" | "completed" | "error" | "waiting";
@@ -745,9 +775,80 @@ function hasRenderableMessageContent(
 function hasRenderableAssistantTurn(message: ChatMessage) {
   return (
     hasRenderableMessageContent(message.text, message.attachments ?? []) ||
+    (message.segments?.some((segment) =>
+      segment.kind === "output"
+        ? Boolean(segment.text.trim())
+        : segment.items.length > 0,
+    ) ??
+      false) ||
     (message.executionItems?.length ?? 0) > 0 ||
     (message.outputs?.length ?? 0) > 0 ||
     (message.memoryProposals?.length ?? 0) > 0
+  );
+}
+
+function appendAssistantOutputSegment(
+  segments: ChatAssistantSegment[],
+  text: string,
+  tone: ChatMessage["tone"] = "default",
+): ChatAssistantSegment[] {
+  if (!text) {
+    return segments;
+  }
+  const next = [...segments];
+  const previous = next[next.length - 1];
+  if (
+    previous?.kind === "output" &&
+    (previous.tone ?? "default") === tone
+  ) {
+    next[next.length - 1] = {
+      ...previous,
+      text: `${previous.text}${text}`,
+    };
+    return next;
+  }
+  next.push({
+    kind: "output",
+    text,
+    tone,
+  });
+  return next;
+}
+
+function appendAssistantExecutionSegment(
+  segments: ChatAssistantSegment[],
+  items: ChatExecutionTimelineItem[],
+): ChatAssistantSegment[] {
+  if (items.length === 0) {
+    return segments;
+  }
+  return [
+    ...segments,
+    {
+      kind: "execution",
+      items,
+    },
+  ];
+}
+
+function liveAssistantSegmentsForRender(
+  segments: ChatAssistantSegment[],
+  executionItems: ChatExecutionTimelineItem[],
+  text: string,
+) {
+  let next = segments;
+  if (executionItems.length > 0) {
+    next = appendAssistantExecutionSegment(next, executionItems);
+  }
+  if (text) {
+    next = appendAssistantOutputSegment(next, text, "default");
+  }
+  return next;
+}
+
+function assistantSegmentsIncludeOutput(segments: ChatAssistantSegment[]) {
+  return segments.some(
+    (segment) => segment.kind === "output" && Boolean(segment.text.trim()),
   );
 }
 
@@ -1513,6 +1614,13 @@ function inputIdFromMessageId(messageId: string, role: "user" | "assistant") {
   return messageId.startsWith(prefix) ? messageId.slice(prefix.length) : "";
 }
 
+function inputIdFromHistoryMessage(message: SessionHistoryMessagePayload) {
+  if (message.role === "user" || message.role === "assistant") {
+    return inputIdFromMessageId(message.id, message.role);
+  }
+  return "";
+}
+
 function historyMessagesInDisplayOrder(
   messages: SessionHistoryMessagePayload[],
   order: "asc" | "desc",
@@ -1520,16 +1628,13 @@ function historyMessagesInDisplayOrder(
   return order === "desc" ? [...messages].reverse() : messages;
 }
 
-function assistantInputIdsFromHistoryMessages(
+function turnInputIdsFromHistoryMessages(
   messages: SessionHistoryMessagePayload[],
 ) {
   const seen = new Set<string>();
   const inputIds: string[] = [];
   for (const message of messages) {
-    if (message.role !== "assistant") {
-      continue;
-    }
-    const inputId = inputIdFromMessageId(message.id, "assistant");
+    const inputId = inputIdFromHistoryMessage(message);
     if (!inputId || seen.has(inputId)) {
       continue;
     }
@@ -2226,8 +2331,36 @@ function assistantHistoryStateFromOutputEvents(
   const orderedEvents = [...outputEvents].sort(
     (left, right) => left.sequence - right.sequence || left.id - right.id,
   );
+  let segments: ChatAssistantSegment[] = [];
   let executionItems: ChatExecutionTimelineItem[] = [];
+  let outputText = "";
+  let outputTone: ChatMessage["tone"] = "default";
   let encounteredTerminalEvent = false;
+  let failureText = "";
+  let terminalCreatedAt = "";
+
+  const flushExecutionSegment = () => {
+    if (executionItems.length === 0) {
+      return;
+    }
+    segments = appendAssistantExecutionSegment(segments, executionItems);
+    executionItems = [];
+  };
+
+  const flushOutputSegment = () => {
+    if (!outputText) {
+      return;
+    }
+    segments = appendAssistantOutputSegment(segments, outputText, outputTone);
+    outputText = "";
+    outputTone = "default";
+  };
+
+  const hasAssistantOutput =
+    outputText.trim().length > 0 ||
+    segments.some(
+      (segment) => segment.kind === "output" && segment.text.trim().length > 0,
+    );
 
   for (const event of orderedEvents) {
     if (encounteredTerminalEvent) {
@@ -2236,6 +2369,7 @@ function assistantHistoryStateFromOutputEvents(
     const eventPayload = isRecord(event.payload) ? event.payload : {};
 
     if (event.event_type === "thinking_delta") {
+      flushOutputSegment();
       const delta =
         typeof eventPayload.delta === "string" ? eventPayload.delta : "";
       executionItems = appendExecutionTimelineThinkingDelta(
@@ -2251,6 +2385,7 @@ function assistantHistoryStateFromOutputEvents(
       event.sequence,
     );
     if (phaseStep) {
+      flushOutputSegment();
       executionItems = upsertExecutionTimelineTraceItem(
         executionItems,
         phaseStep,
@@ -2263,10 +2398,18 @@ function assistantHistoryStateFromOutputEvents(
       event.sequence,
     );
     if (toolStep) {
+      flushOutputSegment();
       executionItems = upsertExecutionTimelineTraceItem(
         executionItems,
         toolStep,
       );
+    }
+
+    if (event.event_type === "output_delta") {
+      flushExecutionSegment();
+      const delta =
+        typeof eventPayload.delta === "string" ? eventPayload.delta : "";
+      outputText = `${outputText}${delta}`;
     }
 
     if (event.event_type === "run_completed") {
@@ -2285,6 +2428,13 @@ function assistantHistoryStateFromOutputEvents(
         executionItems,
         "error",
       );
+      failureText = runFailedDetail(eventPayload);
+      terminalCreatedAt = event.created_at;
+      if (!hasAssistantOutput) {
+        flushExecutionSegment();
+        outputText = failureText;
+        outputTone = "error";
+      }
     }
 
     if (isTerminalSessionOutputEventType(event.event_type)) {
@@ -2292,8 +2442,14 @@ function assistantHistoryStateFromOutputEvents(
     }
   }
 
+  flushOutputSegment();
+  flushExecutionSegment();
+
   return {
+    segments: segments.length > 0 ? segments : undefined,
     executionItems: executionItems.length > 0 ? executionItems : undefined,
+    failureText: failureText || undefined,
+    terminalCreatedAt: terminalCreatedAt || undefined,
   };
 }
 
@@ -2383,6 +2539,11 @@ interface ChatPaneExplorerAttachmentRequest {
   requestKey: number;
 }
 
+interface ChatPaneBrowserJumpRequest {
+  sessionId: string;
+  requestKey: number;
+}
+
 interface ChatPaneProps {
   onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
   onSyncFileDisplayFromAgentOperation?: (path: string) => void;
@@ -2398,6 +2559,12 @@ interface ChatPaneProps {
   explorerAttachmentRequest?: ChatPaneExplorerAttachmentRequest | null;
   onExplorerAttachmentRequestConsumed?: (requestKey: number) => void;
   onActiveSessionIdChange?: (sessionId: string | null) => void;
+  browserJumpRequest?: ChatPaneBrowserJumpRequest | null;
+  onBrowserJumpRequestConsumed?: (
+    sessionId: string,
+    requestKey: number,
+  ) => void;
+  onJumpToSessionBrowser?: (sessionId: string, requestKey: number) => void;
   onOpenInbox?: () => void;
   inboxUnreadCount?: number;
   onRequestCreateSession?: (request: ChatPaneSessionOpenRequest) => void;
@@ -2418,6 +2585,9 @@ export function ChatPane({
   explorerAttachmentRequest = null,
   onExplorerAttachmentRequestConsumed,
   onActiveSessionIdChange,
+  browserJumpRequest = null,
+  onBrowserJumpRequestConsumed,
+  onJumpToSessionBrowser,
   onOpenInbox,
   inboxUnreadCount = 0,
   onRequestCreateSession,
@@ -2443,6 +2613,9 @@ export function ChatPane({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessionOutputs, setSessionOutputs] = useState<
     WorkspaceOutputRecordPayload[]
+  >([]);
+  const [liveAssistantSegments, setLiveAssistantSegments] = useState<
+    ChatAssistantSegment[]
   >([]);
   const [liveAssistantText, setLiveAssistantText] = useState("");
   const [liveAgentStatus, setLiveAgentStatus] = useState("");
@@ -2515,6 +2688,8 @@ export function ChatPane({
   const [availableSessionsError, setAvailableSessionsError] = useState("");
   const [localSessionOpenRequest, setLocalSessionOpenRequest] =
     useState<ChatPaneSessionOpenRequest | null>(null);
+  const [visibleBrowserState, setVisibleBrowserState] =
+    useState<BrowserTabListPayload>(() => initialBrowserState("user"));
   const messagesRef = useRef<HTMLDivElement>(null);
   const messagesContentRef = useRef<HTMLDivElement>(null);
   const chatScrollbarThumbRef = useRef<HTMLDivElement>(null);
@@ -2554,6 +2729,7 @@ export function ChatPane({
   const localSessionOpenRequestRef =
     useRef<ChatPaneSessionOpenRequest | null>(null);
   const draftParentSessionIdRef = useRef<string | null>(null);
+  const liveAssistantSegmentsRef = useRef<ChatAssistantSegment[]>([]);
   const liveAssistantTextRef = useRef("");
   const liveExecutionItemsRef = useRef<ChatExecutionTimelineItem[]>([]);
   const historyViewportGenerationRef = useRef(0);
@@ -2712,10 +2888,12 @@ export function ChatPane({
   }
 
   function resetLiveTurn() {
+    liveAssistantSegmentsRef.current = [];
     liveAssistantTextRef.current = "";
     liveExecutionItemsRef.current = [];
     activeAssistantMessageIdRef.current = null;
     lastSyncedAgentOperationFileKeyRef.current = "";
+    setLiveAssistantSegments([]);
     setLiveAssistantText("");
     setLiveAgentStatus("");
     setLiveExecutionItems([]);
@@ -2826,8 +3004,15 @@ export function ChatPane({
       }
     }
 
+    const assistantHistoryInputIds = new Set(
+      historyMessages
+        .filter((message) => message.role === "assistant")
+        .map((message) => inputIdFromMessageId(message.id, "assistant"))
+        .filter(Boolean),
+    );
+
     return historyMessages
-      .map((message) => {
+      .flatMap((message) => {
         const attachments = attachmentsFromMetadata(message.metadata);
         const nextMessage: ChatMessage = {
           id:
@@ -2838,6 +3023,7 @@ export function ChatPane({
           createdAt: message.created_at || undefined,
           attachments,
         };
+        const renderedMessages: ChatMessage[] = [nextMessage];
 
         if (nextMessage.role === "assistant") {
           const inputId = inputIdFromMessageId(nextMessage.id, "assistant");
@@ -2852,8 +3038,20 @@ export function ChatPane({
             const turnMemoryProposals = sortMemoryUpdateProposals(
               memoryProposalsByInputId.get(inputId) ?? [],
             );
-            if (restoredAssistantState.executionItems) {
+            if (restoredAssistantState.segments) {
+              nextMessage.segments = restoredAssistantState.segments;
+              nextMessage.text = "";
+              nextMessage.executionItems = undefined;
+            } else if (restoredAssistantState.executionItems) {
               nextMessage.executionItems = restoredAssistantState.executionItems;
+            }
+            if (
+              !nextMessage.text &&
+              !nextMessage.segments &&
+              restoredAssistantState.failureText
+            ) {
+              nextMessage.text = restoredAssistantState.failureText;
+              nextMessage.tone = "error";
             }
             if (turnMemoryProposals.length > 0) {
               nextMessage.memoryProposals = turnMemoryProposals;
@@ -2864,7 +3062,50 @@ export function ChatPane({
           }
         }
 
-        return nextMessage;
+        const userInputId =
+          nextMessage.role === "user"
+            ? inputIdFromMessageId(nextMessage.id, "user")
+            : "";
+        if (
+          nextMessage.role === "user" &&
+          userInputId &&
+          !assistantHistoryInputIds.has(userInputId)
+        ) {
+          const restoredAssistantState = assistantHistoryStateFromOutputEvents(
+            outputEventsByInputId.get(userInputId) ?? [],
+          );
+          const turnOutputs = sortOutputs(outputsByInputId.get(userInputId) ?? []);
+          const turnMemoryProposals = sortMemoryUpdateProposals(
+            memoryProposalsByInputId.get(userInputId) ?? [],
+          );
+          const syntheticAssistantMessage: ChatMessage = {
+            id: `assistant-${userInputId}`,
+            role: "assistant",
+            text:
+              restoredAssistantState.segments || !restoredAssistantState.failureText
+                ? ""
+                : restoredAssistantState.failureText,
+            tone:
+              restoredAssistantState.segments || !restoredAssistantState.failureText
+                ? "default"
+                : "error",
+            createdAt:
+              restoredAssistantState.terminalCreatedAt || nextMessage.createdAt,
+            segments: restoredAssistantState.segments,
+            executionItems:
+              restoredAssistantState.segments
+                ? undefined
+                : restoredAssistantState.executionItems,
+            outputs: turnOutputs.length > 0 ? turnOutputs : undefined,
+            memoryProposals:
+              turnMemoryProposals.length > 0 ? turnMemoryProposals : undefined,
+          };
+          if (hasRenderableAssistantTurn(syntheticAssistantMessage)) {
+            renderedMessages.push(syntheticAssistantMessage);
+          }
+        }
+
+        return renderedMessages;
       })
       .filter(
         (message) =>
@@ -2906,7 +3147,7 @@ export function ChatPane({
       history.messages,
       params.order,
     );
-    const assistantInputIds = assistantInputIdsFromHistoryMessages(
+    const assistantInputIds = turnInputIdsFromHistoryMessages(
       historyMessages,
     );
     if (assistantInputIds.length === 0) {
@@ -3218,7 +3459,48 @@ export function ChatPane({
     }
   }
 
+  function setLiveAssistantSegmentsState(nextSegments: ChatAssistantSegment[]) {
+    liveAssistantSegmentsRef.current = nextSegments;
+    setLiveAssistantSegments(nextSegments);
+  }
+
+  function flushLiveAssistantOutputSegment(
+    tone: ChatMessage["tone"] = "default",
+  ) {
+    if (!liveAssistantTextRef.current) {
+      return;
+    }
+    flushSync(() => {
+      setLiveAssistantSegmentsState(
+        appendAssistantOutputSegment(
+          liveAssistantSegmentsRef.current,
+          liveAssistantTextRef.current,
+          tone,
+        ),
+      );
+      liveAssistantTextRef.current = "";
+      setLiveAssistantText("");
+    });
+  }
+
+  function flushLiveExecutionSegment() {
+    if (liveExecutionItemsRef.current.length === 0) {
+      return;
+    }
+    flushSync(() => {
+      setLiveAssistantSegmentsState(
+        appendAssistantExecutionSegment(
+          liveAssistantSegmentsRef.current,
+          liveExecutionItemsRef.current,
+        ),
+      );
+      liveExecutionItemsRef.current = [];
+      setLiveExecutionItems([]);
+    });
+  }
+
   function appendLiveAssistantDelta(delta: string) {
+    flushLiveExecutionSegment();
     flushSync(() => {
       setLiveAssistantText((prev) => {
         const next = `${prev}${delta}`;
@@ -3229,6 +3511,7 @@ export function ChatPane({
   }
 
   function appendLiveThinkingDelta(delta: string, order: number) {
+    flushLiveAssistantOutputSegment();
     flushSync(() => {
       setLiveExecutionItems((prev) => {
         const next = appendExecutionTimelineThinkingDelta(prev, delta, order);
@@ -3238,14 +3521,44 @@ export function ChatPane({
     });
   }
 
-  function commitLiveAssistantMessage() {
+  function commitLiveAssistantMessage(options?: {
+    fallbackText?: string;
+    tone?: ChatMessage["tone"];
+  }) {
     const messageId =
       activeAssistantMessageIdRef.current ?? `assistant-${Date.now()}`;
-    const assistantText = liveAssistantTextRef.current;
-    const executionItems = liveExecutionItemsRef.current;
-    if (!assistantText && executionItems.length === 0) {
+    let nextSegments = liveAssistantSegmentsRef.current;
+
+    if (liveExecutionItemsRef.current.length > 0) {
+      nextSegments = appendAssistantExecutionSegment(
+        nextSegments,
+        liveExecutionItemsRef.current,
+      );
+    }
+
+    if (liveAssistantTextRef.current) {
+      nextSegments = appendAssistantOutputSegment(
+        nextSegments,
+        liveAssistantTextRef.current,
+        "default",
+      );
+    }
+
+    const hasOutputSegment = nextSegments.some(
+      (segment) =>
+        segment.kind === "output" && Boolean(segment.text.trim()),
+    );
+    if (options?.fallbackText && !hasOutputSegment) {
+      nextSegments = appendAssistantOutputSegment(
+        nextSegments,
+        options.fallbackText,
+        options.tone ?? "default",
+      );
+    }
+
+    if (nextSegments.length === 0) {
       resetLiveTurn();
-      return;
+      return false;
     }
 
     setMessages((prev) => [
@@ -3253,11 +3566,13 @@ export function ChatPane({
       {
         id: messageId,
         role: "assistant",
-        text: assistantText,
-        executionItems: executionItems.length > 0 ? executionItems : undefined,
+        text: "",
+        tone: "default",
+        segments: nextSegments,
       },
     ]);
     resetLiveTurn();
+    return true;
   }
 
   function scheduleConversationRefresh(
@@ -3520,6 +3835,7 @@ export function ChatPane({
   }
 
   function upsertLiveTraceStep(step: ChatTraceStep) {
+    flushLiveAssistantOutputSegment();
     const next = upsertExecutionTimelineTraceItem(
       liveExecutionItemsRef.current,
       step,
@@ -3554,6 +3870,7 @@ export function ChatPane({
   }, [
     isHistoryViewportPending,
     isResponding,
+    liveAssistantSegments,
     liveAssistantText,
     liveExecutionItems,
     messages,
@@ -4553,14 +4870,17 @@ export function ChatPane({
             return;
           }
           const detail = runFailedDetail(eventPayload);
-          setChatErrorMessage(detail);
           finalizeLiveTraceSteps("error");
-          if (
-            liveAssistantTextRef.current ||
-            liveExecutionItemsRef.current.length > 0
-          ) {
-            commitLiveAssistantMessage();
-          }
+          const shouldPersistFailureText =
+            !liveAssistantTextRef.current &&
+            !assistantSegmentsIncludeOutput(liveAssistantSegmentsRef.current);
+          const committedFailureMessage = commitLiveAssistantMessage({
+            fallbackText: shouldPersistFailureText ? detail : undefined,
+            tone: shouldPersistFailureText ? "error" : "default",
+          });
+          setChatErrorMessage(
+            committedFailureMessage && shouldPersistFailureText ? "" : detail,
+          );
           setIsResponding(false);
           activeStreamIdRef.current = null;
           pendingInputIdRef.current = null;
@@ -4679,11 +4999,22 @@ export function ChatPane({
           activeStreamIdRef.current = null;
         }
         setIsResponding(false);
-        resetLiveTurn();
 
         if (status === "ERROR") {
           const detail = runtimeStateErrorDetail(currentState.last_error);
-          setChatErrorMessage(detail);
+          finalizeLiveTraceSteps("error");
+          const shouldPersistFailureText =
+            !liveAssistantTextRef.current &&
+            !assistantSegmentsIncludeOutput(liveAssistantSegmentsRef.current);
+          const committedFailureMessage = commitLiveAssistantMessage({
+            fallbackText: shouldPersistFailureText ? detail : undefined,
+            tone: shouldPersistFailureText ? "error" : "default",
+          });
+          setChatErrorMessage(
+            committedFailureMessage && shouldPersistFailureText ? "" : detail,
+          );
+        } else {
+          resetLiveTurn();
         }
         pendingInputIdRef.current = null;
       } catch {
@@ -5124,6 +5455,25 @@ export function ChatPane({
     onExplorerAttachmentRequestConsumed,
   ]);
 
+  useEffect(() => {
+    let mounted = true;
+
+    const applyVisibleBrowserState = (state: BrowserTabListPayload) => {
+      if (mounted) {
+        setVisibleBrowserState(state);
+      }
+    };
+
+    void window.electronAPI.browser.getState().then(applyVisibleBrowserState);
+    const unsubscribe =
+      window.electronAPI.browser.onStateChange(applyVisibleBrowserState);
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, []);
+
   function onAttachmentInputChange(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     appendPendingLocalFiles(files);
@@ -5151,6 +5501,16 @@ export function ChatPane({
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     void sendMessage(input);
+  };
+
+  const jumpToSessionBrowser = () => {
+    if (!browserJumpRequest || browserJumpRequest.sessionId !== activeSessionId) {
+      return;
+    }
+    onJumpToSessionBrowser?.(
+      browserJumpRequest.sessionId,
+      browserJumpRequest.requestKey,
+    );
   };
 
   const onComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -5191,8 +5551,25 @@ export function ChatPane({
         selectedWorkspace?.harness,
         runtimeConfig?.defaultModel,
       );
+  const visibleAgentBrowserSessionId =
+    visibleBrowserState.space === "agent"
+      ? visibleBrowserState.controlSessionId || visibleBrowserState.sessionId || ""
+      : "";
+  const showSessionBrowserJumpCta = Boolean(
+    browserJumpRequest &&
+      activeSessionId &&
+      browserJumpRequest.sessionId === activeSessionId &&
+      (visibleBrowserState.space !== "agent" ||
+        visibleAgentBrowserSessionId !== activeSessionId),
+  );
+  const renderedLiveAssistantSegments = liveAssistantSegmentsForRender(
+    liveAssistantSegments,
+    liveExecutionItems,
+    liveAssistantText,
+  );
   const showLiveAssistantTurn =
     isResponding ||
+    liveAssistantSegments.length > 0 ||
     Boolean(liveAssistantText) ||
     liveExecutionItems.length > 0;
   const hasMessages = messages.length > 0 || showLiveAssistantTurn;
@@ -5221,6 +5598,31 @@ export function ChatPane({
       })),
     [pendingAttachments],
   );
+
+  useEffect(() => {
+    if (
+      !browserJumpRequest ||
+      !activeSessionId ||
+      browserJumpRequest.sessionId !== activeSessionId
+    ) {
+      return;
+    }
+    if (
+      visibleBrowserState.space === "agent" &&
+      visibleAgentBrowserSessionId === activeSessionId
+    ) {
+      onBrowserJumpRequestConsumed?.(
+        activeSessionId,
+        browserJumpRequest.requestKey,
+      );
+    }
+  }, [
+    activeSessionId,
+    browserJumpRequest,
+    onBrowserJumpRequestConsumed,
+    visibleAgentBrowserSessionId,
+    visibleBrowserState.space,
+  ]);
   const availableWorkspaceSkillMap = useMemo(
     () =>
       new Map(
@@ -5880,6 +6282,8 @@ export function ChatPane({
                         label={assistantLabel}
                         mode={assistantMode}
                         text={message.text}
+                        tone={message.tone ?? "default"}
+                        segments={message.segments ?? []}
                         executionItems={message.executionItems ?? []}
                         memoryProposals={message.memoryProposals ?? []}
                         outputs={message.outputs ?? []}
@@ -5926,6 +6330,8 @@ export function ChatPane({
                       label={assistantLabel}
                       mode={assistantMode}
                       text={liveAssistantText}
+                      tone="default"
+                      segments={renderedLiveAssistantSegments}
                       executionItems={liveExecutionItems}
                       memoryProposals={[]}
                       outputs={[]}
@@ -5946,6 +6352,20 @@ export function ChatPane({
                       onToggleTraceStep={toggleTraceStep}
                       onLinkClick={onOpenLinkInBrowser}
                       live
+                      statusAccessory={
+                        showSessionBrowserJumpCta ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={jumpToSessionBrowser}
+                            className="rounded-full"
+                          >
+                            <span>Jump to browser</span>
+                            <ArrowRight size={13} />
+                          </Button>
+                        ) : null
+                      }
                       status={
                         liveAgentStatus || (isResponding ? "Working" : "")
                       }
@@ -6545,6 +6965,8 @@ function AssistantTurn({
   label,
   mode,
   text,
+  tone = "default",
+  segments,
   executionItems,
   memoryProposals,
   outputs,
@@ -6563,10 +6985,13 @@ function AssistantTurn({
   onLinkClick,
   status = "",
   live = false,
+  statusAccessory = null,
 }: {
   label: string;
   mode: string;
   text: string;
+  tone?: ChatMessage["tone"];
+  segments: ChatAssistantSegment[];
   executionItems: ChatExecutionTimelineItem[];
   memoryProposals: MemoryUpdateProposalRecordPayload[];
   outputs: WorkspaceOutputRecordPayload[];
@@ -6590,49 +7015,111 @@ function AssistantTurn({
   onLinkClick?: (url: string) => void;
   status?: string;
   live?: boolean;
+  statusAccessory?: ReactNode;
 }) {
   const normalizedStatus = status.replace(/\.+$/, "").trim();
+  const renderedSegments =
+    segments.length > 0
+      ? segments
+      : executionItems.length > 0 || Boolean(text)
+        ? [
+            ...(executionItems.length > 0
+              ? ([
+                  {
+                    kind: "execution",
+                    items: executionItems,
+                  },
+                ] as ChatAssistantSegment[])
+              : []),
+            ...(text
+              ? ([
+                  {
+                    kind: "output",
+                    text,
+                    tone,
+                  },
+                ] as ChatAssistantSegment[])
+              : []),
+          ]
+        : [];
   const showStatusPlaceholder =
     live &&
     Boolean(normalizedStatus) &&
-    !text &&
-    executionItems.length === 0;
+    renderedSegments.length === 0;
   const showWorkingStatusLine =
     live &&
-    (executionItems.length > 0 || Boolean(text));
+    renderedSegments.length > 0;
+  const renderStatusLine = (nextLabel: string, className = "") => {
+    if (!statusAccessory) {
+      return <LiveStatusLine label={nextLabel} className={className} />;
+    }
+    return (
+      <div
+        className={`flex min-w-0 items-center justify-between gap-3 ${className}`.trim()}
+      >
+        <LiveStatusLine label={nextLabel} className="min-w-0" />
+        <div className="shrink-0">{statusAccessory}</div>
+      </div>
+    );
+  };
 
   return (
     <div className="flex min-w-0 justify-start">
       <article className="min-w-0 flex-1">
-        {showStatusPlaceholder ? (
-          <LiveStatusLine label={normalizedStatus} />
-        ) : null}
+        {showStatusPlaceholder ? renderStatusLine(normalizedStatus) : null}
 
-        {executionItems.length > 0 ? (
-          <TraceStepGroup
-            items={executionItems}
-            collapsedByStepId={collapsedTraceByStepId}
-            onToggleStep={onToggleTraceStep}
-            live={live}
-            liveOutputStarted={live && Boolean(text)}
-            onLinkClick={onLinkClick}
-          />
-        ) : null}
+        {renderedSegments.map((segment, index) =>
+          segment.kind === "execution" ? (
+            <TraceStepGroup
+              key={`execution-${index}`}
+              items={segment.items}
+              collapsedByStepId={collapsedTraceByStepId}
+              onToggleStep={onToggleTraceStep}
+              live={live}
+              liveOutputStarted={
+                live &&
+                renderedSegments
+                  .slice(index + 1)
+                  .some((nextSegment) => nextSegment.kind === "output")
+              }
+              onLinkClick={onLinkClick}
+            />
+          ) : segment.tone === "error" ? (
+            <div
+              key={`output-${index}`}
+              className="theme-chat-system-bubble mt-2 rounded-[14px] border px-3 py-2.5 text-[12px] text-foreground"
+            >
+              <div className="flex items-start gap-2">
+                <AlertTriangle
+                  size={14}
+                  className="mt-0.5 shrink-0 text-destructive"
+                />
+                <SimpleMarkdown
+                  className="chat-markdown max-w-full text-foreground"
+                  onLinkClick={onLinkClick}
+                >
+                  {segment.text}
+                </SimpleMarkdown>
+              </div>
+            </div>
+          ) : (
+            <SimpleMarkdown
+              key={`output-${index}`}
+              className="chat-markdown chat-assistant-markdown mt-2 max-w-full text-foreground"
+              onLinkClick={onLinkClick}
+            >
+              {segment.text}
+            </SimpleMarkdown>
+          ),
+        )}
 
         {showWorkingStatusLine ? (
-          <LiveStatusLine
-            label="Working"
-            className={executionItems.length > 0 ? "mt-1" : ""}
-          />
-        ) : null}
-
-        {text ? (
-          <SimpleMarkdown
-            className="chat-markdown chat-assistant-markdown mt-2 max-w-full text-foreground"
-            onLinkClick={onLinkClick}
-          >
-            {text}
-          </SimpleMarkdown>
+          renderStatusLine(
+            "Working",
+            renderedSegments.some((segment) => segment.kind === "execution")
+              ? "mt-1"
+              : "",
+          )
         ) : null}
 
         {memoryProposals.length > 0 ? (

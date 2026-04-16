@@ -22,6 +22,7 @@ test("desktop browser exposes operator surface context for user and agent spaces
   assert.match(source, /surface_id: `browser:\$\{space\}`/);
   assert.match(source, /surface_type: "browser"/);
   assert.match(source, /owner: space === "user" \? "user" : "agent"/);
-  assert.match(source, /mutability: space === "agent" \? "agent_owned" : "inspect_only"/);
+  assert.match(source, /mutability: space === "agent" \? "agent_owned" : "takeover_allowed"/);
+  assert.match(source, /Exclusive control is currently held by agent session/);
   assert.match(source, /It shares the workspace browser session and auth state with the other browser surface\./);
 });

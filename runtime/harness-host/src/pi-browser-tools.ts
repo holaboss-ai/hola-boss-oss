@@ -17,6 +17,8 @@ const DEFAULT_BROWSER_TOOL_TIMEOUT_MS = 30000;
 export interface PiDesktopBrowserToolOptions {
   runtimeApiBaseUrl: string;
   workspaceId?: string | null;
+  sessionId?: string | null;
+  space?: "agent" | "user" | null;
   fetchImpl?: typeof fetch;
 }
 
@@ -36,11 +38,22 @@ function browserCapabilityToolUrl(runtimeApiBaseUrl: string, toolId: DesktopBrow
   return `${runtimeApiBaseUrl}${BROWSER_CAPABILITY_TOOL_PATH}/${toolId}`;
 }
 
-function browserCapabilityHeaders(workspaceId?: string | null): Record<string, string> {
+function browserCapabilityHeaders(
+  workspaceId?: string | null,
+  sessionId?: string | null,
+  space?: "agent" | "user" | null,
+): Record<string, string> {
   const headers: Record<string, string> = {};
   const normalizedWorkspaceId = typeof workspaceId === "string" ? workspaceId.trim() : "";
   if (normalizedWorkspaceId) {
     headers["x-holaboss-workspace-id"] = normalizedWorkspaceId;
+  }
+  const normalizedSessionId = typeof sessionId === "string" ? sessionId.trim() : "";
+  if (normalizedSessionId) {
+    headers["x-holaboss-session-id"] = normalizedSessionId;
+  }
+  if (space === "agent" || space === "user") {
+    headers["x-holaboss-browser-space"] = space;
   }
   return headers;
 }
@@ -226,6 +239,8 @@ async function executeBrowserTool(params: {
   toolParams: unknown;
   runtimeApiBaseUrl: string;
   workspaceId?: string | null;
+  sessionId?: string | null;
+  space?: "agent" | "user" | null;
   fetchImpl?: typeof fetch;
   signal: AbortSignal | undefined;
 }) {
@@ -238,7 +253,11 @@ async function executeBrowserTool(params: {
           method: "POST",
           headers: {
             "content-type": "application/json; charset=utf-8",
-            ...browserCapabilityHeaders(params.workspaceId),
+            ...browserCapabilityHeaders(
+              params.workspaceId,
+              params.sessionId,
+              params.space,
+            ),
           },
           body,
           signal,
@@ -254,7 +273,11 @@ async function executeBrowserTool(params: {
         method: "POST",
         headers: {
           "content-type": "application/json; charset=utf-8",
-          ...browserCapabilityHeaders(params.workspaceId),
+          ...browserCapabilityHeaders(
+            params.workspaceId,
+            params.sessionId,
+            params.space,
+          ),
         },
         body,
         signal,
@@ -291,6 +314,8 @@ export function createPiDesktopBrowserToolDefinition(
         toolParams,
         runtimeApiBaseUrl: options.runtimeApiBaseUrl,
         workspaceId: options.workspaceId,
+        sessionId: options.sessionId,
+        space: options.space,
         fetchImpl,
         signal,
       }),
@@ -309,6 +334,8 @@ export async function resolvePiDesktopBrowserToolDefinitions(
   options: {
     runtimeApiBaseUrl?: string | null;
     workspaceId?: string | null;
+    sessionId?: string | null;
+    space?: "agent" | "user" | null;
     fetchImpl?: typeof fetch;
   } = {}
 ): Promise<ToolDefinition[]> {
@@ -323,7 +350,11 @@ export async function resolvePiDesktopBrowserToolDefinitions(
       ? await (async () => {
           const raw = await fetchImpl(browserCapabilityStatusUrl(runtimeApiBaseUrl), {
             method: "GET",
-            headers: browserCapabilityHeaders(options.workspaceId),
+            headers: browserCapabilityHeaders(
+              options.workspaceId,
+              options.sessionId,
+              options.space,
+            ),
             signal: AbortSignal.timeout(2000),
           });
           return {
@@ -335,7 +366,11 @@ export async function resolvePiDesktopBrowserToolDefinitions(
       : await nodeRequestJson({
           url: browserCapabilityStatusUrl(runtimeApiBaseUrl),
           method: "GET",
-          headers: browserCapabilityHeaders(options.workspaceId),
+          headers: browserCapabilityHeaders(
+            options.workspaceId,
+            options.sessionId,
+            options.space,
+          ),
           signal: AbortSignal.timeout(2000),
         });
     if (!response.ok || !isRecord(response.payload) || response.payload.available !== true) {
@@ -348,6 +383,8 @@ export async function resolvePiDesktopBrowserToolDefinitions(
   return createPiDesktopBrowserToolDefinitions({
     runtimeApiBaseUrl,
     workspaceId: options.workspaceId,
+    sessionId: options.sessionId,
+    space: options.space,
     fetchImpl,
   });
 }

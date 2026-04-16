@@ -112,6 +112,10 @@ const ADDRESS_SUGGESTIONS_POPUP_MIN_HEIGHT = 88;
 const ADDRESS_SUGGESTIONS_POPUP_MAX_HEIGHT = 320;
 const MAIN_WINDOW_CLOSED_LISTENER_BUFFER = 8;
 const MAIN_WINDOW_MIN_LISTENER_BUDGET = 32;
+const USER_BROWSER_LOCK_TIMEOUT_MS = 15_000;
+const SESSION_BROWSER_BUSY_CHECK_MS = 15_000;
+const SESSION_BROWSER_COMPLETED_GRACE_MS = 30_000;
+const SESSION_BROWSER_WARM_TTL_MS = 2 * 60 * 1000;
 const CHROME_HISTORY_IMPORT_LIMIT = 500;
 const CHROME_COOKIE_SAFE_STORAGE_SERVICE_NAMES = [
   "Chrome Safe Storage",
@@ -366,7 +370,14 @@ interface BrowserTabListPayload {
   activeTabId: string;
   tabs: BrowserStatePayload[];
   tabCounts: BrowserTabCountsPayload;
+  sessionId: string | null;
+  lifecycleState: BrowserSurfaceLifecycleState | null;
+  controlMode: BrowserSurfaceControlMode;
+  controlSessionId: string | null;
 }
+
+type BrowserSurfaceLifecycleState = "active" | "suspended";
+type BrowserSurfaceControlMode = "none" | "user_locked" | "session_owned";
 
 type OperatorSurfaceType = "browser" | "editor" | "terminal" | "app_surface";
 type OperatorSurfaceOwner = "user" | "agent";
@@ -397,9 +408,20 @@ interface BrowserTabRecord {
   popupOpenedAtMs?: number;
 }
 
+interface BrowserUserLockState {
+  sessionId: string;
+  acquiredAt: string;
+  heartbeatAt: string;
+  reason: string | null;
+}
+
 interface BrowserTabSpaceState {
   tabs: Map<string, BrowserTabRecord>;
   activeTabId: string;
+  persistedTabs: BrowserWorkspaceTabPersistencePayload[];
+  lifecycleState: BrowserSurfaceLifecycleState;
+  lastTouchedAt: string;
+  suspendTimer: ReturnType<typeof setTimeout> | null;
 }
 
 interface BrowserWorkspaceTabPersistencePayload {
@@ -420,6 +442,8 @@ interface BrowserWorkspacePersistencePayload {
   spaces?: Partial<
     Record<BrowserSpaceId, BrowserWorkspaceTabSpacePersistencePayload>
   >;
+  activeAgentSessionId?: string | null;
+  agentSessions?: Record<string, BrowserWorkspaceTabSpacePersistencePayload>;
   bookmarks: BrowserBookmarkPayload[];
   downloads: BrowserDownloadPayload[];
   history: BrowserHistoryEntryPayload[];
@@ -431,6 +455,9 @@ interface BrowserWorkspaceState {
   session: Session;
   browserIdentity: BrowserSessionIdentity;
   spaces: Record<BrowserSpaceId, BrowserTabSpaceState>;
+  userBrowserLock: BrowserUserLockState | null;
+  activeAgentSessionId: string | null;
+  agentSessionSpaces: Map<string, BrowserTabSpaceState>;
   bookmarks: BrowserBookmarkPayload[];
   downloads: BrowserDownloadPayload[];
   history: BrowserHistoryEntryPayload[];
@@ -700,6 +727,7 @@ interface WorkbenchOpenBrowserPayload {
   workspaceId?: string | null;
   url?: string | null;
   space?: BrowserSpaceId | null;
+  sessionId?: string | null;
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -723,7 +751,13 @@ let addressSuggestionsState: {
 };
 let activeBrowserWorkspaceId = "";
 let activeBrowserSpaceId: BrowserSpaceId = "user";
+let activeBrowserSessionId = "";
 const browserWorkspaces = new Map<string, BrowserWorkspaceState>();
+const sessionRuntimeStateCache = new Map<
+  string,
+  Map<string, SessionRuntimeRecordPayload>
+>();
+const userBrowserInterruptPrompts = new Set<string>();
 const reportedOperatorSurfaceContexts = new Map<
   string,
   ReportedOperatorSurfaceContextPayload
@@ -4574,10 +4608,13 @@ async function copyBrowserWorkspaceProfile(
   for (const browserSpace of BROWSER_SPACE_IDS) {
     const sourceSpace = sourceWorkspace.spaces[browserSpace];
     const targetSpace = targetWorkspace.spaces[browserSpace];
+    clearBrowserTabSpaceSuspendTimer(targetSpace);
     for (const tab of targetSpace.tabs.values()) {
       closeBrowserTabRecord(tab);
     }
     targetSpace.tabs.clear();
+    targetSpace.persistedTabs = [];
+    targetSpace.lifecycleState = "active";
 
     const tabIdMap = new Map<string, string>();
     for (const sourceTab of sourceSpace.tabs.values()) {
@@ -4602,6 +4639,16 @@ async function copyBrowserWorkspaceProfile(
         ? mappedActiveTabId
         : Array.from(targetSpace.tabs.keys())[0]) || "";
   }
+  for (const tabSpace of targetWorkspace.agentSessionSpaces.values()) {
+    clearBrowserTabSpaceSuspendTimer(tabSpace);
+    for (const tab of tabSpace.tabs.values()) {
+      closeBrowserTabRecord(tab);
+    }
+    tabSpace.tabs.clear();
+  }
+  targetWorkspace.agentSessionSpaces.clear();
+  targetWorkspace.userBrowserLock = null;
+  targetWorkspace.activeAgentSessionId = null;
 
   const cookieSummary = await copyCookiesBetweenBrowserSessions(
     sourceWorkspace.session,
@@ -5564,6 +5611,23 @@ async function updateDesktopBrowserCapabilityConfig(update: {
   });
 }
 
+function currentDesktopBrowserCapabilityConfig() {
+  const enabled = Boolean(
+    desktopBrowserServiceUrl.trim() && desktopBrowserServiceAuthToken.trim(),
+  );
+  return {
+    enabled,
+    url: enabled ? desktopBrowserServiceUrl : undefined,
+    authToken: enabled ? desktopBrowserServiceAuthToken : undefined,
+  };
+}
+
+async function syncDesktopBrowserCapabilityConfig(): Promise<void> {
+  await updateDesktopBrowserCapabilityConfig(
+    currentDesktopBrowserCapabilityConfig(),
+  );
+}
+
 function desktopBrowserServiceTokenFromRequest(
   request: IncomingMessage,
 ): string {
@@ -5582,6 +5646,26 @@ function desktopBrowserWorkspaceIdFromRequest(
     return (raw[0] || "").trim();
   }
   return typeof raw === "string" ? raw.trim() : "";
+}
+
+function desktopBrowserSessionIdFromRequest(
+  request: IncomingMessage,
+): string {
+  const raw = request.headers["x-holaboss-session-id"];
+  if (Array.isArray(raw)) {
+    return (raw[0] || "").trim();
+  }
+  return typeof raw === "string" ? raw.trim() : "";
+}
+
+function desktopBrowserSpaceFromRequest(
+  request: IncomingMessage,
+): BrowserSpaceId {
+  const raw = request.headers["x-holaboss-browser-space"];
+  if (Array.isArray(raw)) {
+    return browserSpaceId(raw[0] || "", "agent");
+  }
+  return browserSpaceId(typeof raw === "string" ? raw.trim() : "", "agent");
 }
 
 function writeBrowserServiceJson(
@@ -5708,15 +5792,32 @@ function browserSurfaceSummary(
   visibleInApp: boolean,
 ): string {
   const workspace = browserWorkspaceFromMap(workspaceId);
-  const tabSpace = browserTabSpaceState(workspace, space);
+  const tabSpace = browserTabSpaceState(workspace, space, null, {
+    useVisibleAgentSession: true,
+  });
   const activeTabId = tabSpace?.activeTabId ?? "";
   if (activeTabId) {
-    syncBrowserState(workspaceId, activeTabId, space);
+    syncBrowserState(
+      workspaceId,
+      activeTabId,
+      space,
+      space === "agent" ? browserVisibleAgentSessionId(workspace) : null,
+    );
   }
   const refreshedWorkspace = browserWorkspaceFromMap(workspaceId);
-  const refreshedTabSpace = browserTabSpaceState(refreshedWorkspace, space);
-  const tabCount = refreshedTabSpace?.tabs.size ?? 0;
-  const activeTab = activeTabId ? refreshedTabSpace?.tabs.get(activeTabId) ?? null : null;
+  const refreshedTabSpace = browserTabSpaceState(
+    refreshedWorkspace,
+    space,
+    null,
+    {
+      useVisibleAgentSession: true,
+    },
+  );
+  const tabCount = browserTabSpaceTabCount(refreshedTabSpace);
+  const activeTab =
+    activeTabId && refreshedTabSpace?.tabs.size
+      ? refreshedTabSpace.tabs.get(activeTabId) ?? null
+      : null;
   const spaceLabel = space === "user" ? "User browser" : "Agent browser";
   const tabSummary = `${tabCount} open ${tabCount === 1 ? "tab" : "tabs"}`;
   const summaryParts = [`${spaceLabel} surface with ${tabSummary}.`];
@@ -5729,6 +5830,21 @@ function browserSurfaceSummary(
   }
   if (visibleInApp) {
     summaryParts.push("This surface is currently visible in the app.");
+  }
+  if (space === "user") {
+    const userLock = activeUserBrowserLock(refreshedWorkspace);
+    if (userLock) {
+      summaryParts.push(
+        `Exclusive control is currently held by agent session ${userLock.sessionId}.`,
+      );
+      summaryParts.push(
+        "User interaction is intercepted first and only pauses the controlling session after explicit confirmation.",
+      );
+    } else {
+      summaryParts.push(
+        "Agent takeover is allowed through an exclusive workspace lock on this shared browser surface.",
+      );
+    }
   }
   summaryParts.push("It shares the workspace browser session and auth state with the other browser surface.");
   return summaryParts.join(" ");
@@ -5751,7 +5867,7 @@ function operatorSurfaceContextPayload(workspaceId: string): OperatorSurfaceCont
         ? activeReportedSurfaceId === `browser:${space}`
         : normalizedWorkspaceId === activeBrowserWorkspaceId &&
           activeBrowserSpaceId === space,
-    mutability: space === "agent" ? "agent_owned" : "inspect_only",
+    mutability: space === "agent" ? "agent_owned" : "takeover_allowed",
     summary: browserSurfaceSummary(
       normalizedWorkspaceId,
       space,
@@ -5825,9 +5941,15 @@ async function navigateActiveBrowserTab(
   workspaceId: string,
   targetUrl: string,
   space: BrowserSpaceId = activeBrowserSpaceId,
+  sessionId?: string | null,
 ): Promise<BrowserTabListPayload> {
-  await ensureBrowserWorkspace(workspaceId, space);
-  const activeTab = getActiveBrowserTab(workspaceId, space);
+  await ensureBrowserWorkspace(workspaceId, space, sessionId);
+  if (space === "agent" && browserSessionId(sessionId)) {
+    touchAgentSessionBrowserSpace(workspaceId, sessionId);
+  }
+  const activeTab = getActiveBrowserTab(workspaceId, space, sessionId, {
+    useVisibleAgentSession: !browserSessionId(sessionId),
+  });
   if (!activeTab) {
     throw new Error("No active browser tab is available.");
   }
@@ -5837,7 +5959,9 @@ async function navigateActiveBrowserTab(
     await activeTab.view.webContents.loadURL(targetUrl);
   } catch (error) {
     if (isAbortedBrowserLoadError(error)) {
-      return browserWorkspaceSnapshot(workspaceId, space);
+      return browserWorkspaceSnapshot(workspaceId, space, sessionId, {
+        useVisibleAgentSession: !browserSessionId(sessionId),
+      });
     }
     activeTab.state = {
       ...activeTab.state,
@@ -5848,7 +5972,9 @@ async function navigateActiveBrowserTab(
     throw error;
   }
 
-  return browserWorkspaceSnapshot(workspaceId, space);
+  return browserWorkspaceSnapshot(workspaceId, space, sessionId, {
+    useVisibleAgentSession: !browserSessionId(sessionId),
+  });
 }
 
 async function handleDesktopBrowserServiceRequest(
@@ -5859,7 +5985,9 @@ async function handleDesktopBrowserServiceRequest(
     const requestUrl = new URL(request.url || "/", "http://127.0.0.1");
     const pathname = requestUrl.pathname;
     const method = (request.method || "GET").toUpperCase();
+    const targetSpace = desktopBrowserSpaceFromRequest(request);
     const requestedWorkspaceId = desktopBrowserWorkspaceIdFromRequest(request);
+    const requestedSessionId = desktopBrowserSessionIdFromRequest(request);
     const targetWorkspaceId = requestedWorkspaceId || activeBrowserWorkspaceId;
 
     if (
@@ -5883,26 +6011,78 @@ async function handleDesktopBrowserServiceRequest(
       return;
     }
 
+    const ensuredSessionId = targetSpace === "agent" ? requestedSessionId : null;
+    const ensureTargetBrowserSpace = async (
+      reason: string,
+    ): Promise<BrowserWorkspaceState | null> => {
+      const workspace = await ensureBrowserWorkspace(
+        targetWorkspaceId,
+        targetSpace,
+        ensuredSessionId,
+      );
+      if (!workspace) {
+        return null;
+      }
+      if (targetSpace === "user") {
+        if (!requestedSessionId) {
+          writeBrowserServiceJson(response, 400, {
+            error:
+              "Header 'x-holaboss-session-id' is required when targeting the user browser.",
+          });
+          return null;
+        }
+        const lockResult = ensureUserBrowserLock(
+          targetWorkspaceId,
+          requestedSessionId,
+          reason,
+        );
+        if (!lockResult.ok) {
+          writeBrowserServiceJson(response, 409, {
+            error: "User browser is locked by another agent session.",
+            code: "user_browser_locked",
+            lock_holder_session_id: lockResult.lockHolderSessionId,
+          });
+          return null;
+        }
+      } else if (requestedSessionId) {
+        touchAgentSessionBrowserSpace(targetWorkspaceId, requestedSessionId);
+      }
+      return workspace;
+    };
+
     if (method === "GET" && pathname === "/api/v1/browser/tabs") {
-      await ensureBrowserWorkspace(targetWorkspaceId, "agent");
+      const workspace = await ensureTargetBrowserSpace("tabs");
+      if (!workspace) {
+        return;
+      }
       writeBrowserServiceJson(
         response,
         200,
-        browserWorkspaceSnapshot(targetWorkspaceId, "agent"),
+        browserWorkspaceSnapshot(targetWorkspaceId, targetSpace, ensuredSessionId, {
+          useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId,
+        }),
       );
       return;
     }
 
     if (method === "GET" && pathname === "/api/v1/browser/page") {
-      await ensureBrowserWorkspace(targetWorkspaceId, "agent");
-      const activeTab = getActiveBrowserTab(targetWorkspaceId, "agent");
+      const workspace = await ensureTargetBrowserSpace("page");
+      if (!workspace) {
+        return;
+      }
+      const activeTab = getActiveBrowserTab(
+        targetWorkspaceId,
+        targetSpace,
+        ensuredSessionId,
+        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
+      );
       if (!activeTab) {
         writeBrowserServiceJson(response, 409, {
           error: "No active browser tab is available.",
         });
         return;
       }
-      syncBrowserState(targetWorkspaceId, activeTab.state.id, "agent");
+      syncBrowserState(targetWorkspaceId, activeTab.state.id, targetSpace, ensuredSessionId);
       writeBrowserServiceJson(response, 200, browserPagePayload(activeTab));
       return;
     }
@@ -5924,17 +6104,23 @@ async function handleDesktopBrowserServiceRequest(
         });
         return;
       }
+      const workspace = await ensureTargetBrowserSpace("navigate");
+      if (!workspace) {
+        return;
+      }
       if (targetWorkspaceId && targetWorkspaceId === activeBrowserWorkspaceId) {
         emitWorkbenchOpenBrowser({
           workspaceId: targetWorkspaceId,
           url: targetUrl,
-          space: "agent",
+          space: targetSpace,
+          sessionId: requestedSessionId || null,
         });
       }
       const snapshot = await navigateActiveBrowserTab(
         targetWorkspaceId,
         targetUrl,
-        "agent",
+        targetSpace,
+        ensuredSessionId,
       );
       writeBrowserServiceJson(response, 200, snapshot);
       return;
@@ -5947,11 +6133,11 @@ async function handleDesktopBrowserServiceRequest(
           ? payload.url.trim()
           : HOME_URL;
       const background = payload.background === true;
-      const workspace = await ensureBrowserWorkspace(
-        targetWorkspaceId,
-        "agent",
-      );
-      const tabSpace = browserTabSpaceState(workspace, "agent");
+      const workspace = await ensureTargetBrowserSpace("tabs:create");
+      const tabSpace = browserTabSpaceState(workspace, targetSpace, ensuredSessionId, {
+        createIfMissing: targetSpace === "agent" && Boolean(requestedSessionId),
+        useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId,
+      });
       if (!workspace) {
         writeBrowserServiceJson(response, 409, {
           error: "No active browser workspace is available.",
@@ -5961,7 +6147,8 @@ async function handleDesktopBrowserServiceRequest(
 
       const nextTabId = createBrowserTab(targetWorkspaceId, {
         url: targetUrl,
-        browserSpace: "agent",
+        browserSpace: targetSpace,
+        sessionId: ensuredSessionId,
       });
       if (!nextTabId) {
         writeBrowserServiceJson(response, 500, {
@@ -5977,12 +6164,14 @@ async function handleDesktopBrowserServiceRequest(
         }
       }
 
-      emitBrowserState(targetWorkspaceId, "agent");
+      emitBrowserState(targetWorkspaceId, targetSpace);
       await persistBrowserWorkspace(targetWorkspaceId);
       writeBrowserServiceJson(
         response,
         200,
-        browserWorkspaceSnapshot(targetWorkspaceId, "agent"),
+        browserWorkspaceSnapshot(targetWorkspaceId, targetSpace, ensuredSessionId, {
+          useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId,
+        }),
       );
       return;
     }
@@ -5998,8 +6187,16 @@ async function handleDesktopBrowserServiceRequest(
         return;
       }
 
-      await ensureBrowserWorkspace(targetWorkspaceId, "agent");
-      const activeTab = getActiveBrowserTab(targetWorkspaceId, "agent");
+      const workspace = await ensureTargetBrowserSpace("evaluate");
+      if (!workspace) {
+        return;
+      }
+      const activeTab = getActiveBrowserTab(
+        targetWorkspaceId,
+        targetSpace,
+        ensuredSessionId,
+        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
+      );
       if (!activeTab) {
         writeBrowserServiceJson(response, 409, {
           error: "No active browser tab is available.",
@@ -6018,8 +6215,16 @@ async function handleDesktopBrowserServiceRequest(
 
     if (method === "POST" && pathname === "/api/v1/browser/screenshot") {
       const payload = await readBrowserServiceJsonBody(request);
-      await ensureBrowserWorkspace(targetWorkspaceId, "agent");
-      const activeTab = getActiveBrowserTab(targetWorkspaceId, "agent");
+      const workspace = await ensureTargetBrowserSpace("screenshot");
+      if (!workspace) {
+        return;
+      }
+      const activeTab = getActiveBrowserTab(
+        targetWorkspaceId,
+        targetSpace,
+        ensuredSessionId,
+        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
+      );
       if (!activeTab) {
         writeBrowserServiceJson(response, 409, {
           error: "No active browser tab is available.",
@@ -6084,11 +6289,7 @@ async function startDesktopBrowserService(): Promise<void> {
     ...runtimeStatus,
   });
   emitRuntimeState();
-  await updateDesktopBrowserCapabilityConfig({
-    enabled: true,
-    url: desktopBrowserServiceUrl,
-    authToken,
-  });
+  await syncDesktopBrowserCapabilityConfig();
 }
 
 async function stopDesktopBrowserService(): Promise<void> {
@@ -6107,7 +6308,7 @@ async function stopDesktopBrowserService(): Promise<void> {
     ...runtimeStatus,
   });
   emitRuntimeState();
-  await updateDesktopBrowserCapabilityConfig({ enabled: false });
+  await syncDesktopBrowserCapabilityConfig();
 }
 
 function desktopBrowserStatusFields() {
@@ -6203,7 +6404,7 @@ function canUsePersistedRuntimeBindingWithoutAuth(
 }
 
 async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
-  return withRuntimeConfigMutationLock(async () => {
+  const next = await withRuntimeConfigMutationLock(async () => {
     const current = await readRuntimeConfigFile();
     const currentDocument = await readRuntimeConfigDocument();
     const runtimePayload = runtimeConfigObject(currentDocument.runtime);
@@ -6404,6 +6605,8 @@ async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
     );
     return next;
   });
+  await syncDesktopBrowserCapabilityConfig();
+  return next;
 }
 
 function runtimeConfigField(value: string | undefined): string {
@@ -7595,6 +7798,7 @@ async function setRuntimeConfigDocument(
       shouldRestartRuntime = true;
     }
   });
+  await syncDesktopBrowserCapabilityConfig();
 
   if (shouldRestartRuntime) {
     await stopEmbeddedRuntime();
@@ -11884,6 +12088,103 @@ function upsertRuntimeState(record: {
   }
 }
 
+function cloneRuntimeStateRecord(
+  record: SessionRuntimeRecordPayload,
+): SessionRuntimeRecordPayload {
+  return {
+    ...record,
+    last_error:
+      record.last_error && typeof record.last_error === "object"
+        ? { ...record.last_error }
+        : null,
+  };
+}
+
+function normalizeRuntimeStateRecord(
+  record: SessionRuntimeRecordPayload,
+): SessionRuntimeRecordPayload | null {
+  const workspaceId = record.workspace_id.trim();
+  const sessionId = browserSessionId(record.session_id);
+  if (!workspaceId || !sessionId) {
+    return null;
+  }
+  const now = utcNowIso();
+  return {
+    workspace_id: workspaceId,
+    session_id: sessionId,
+    status: record.status?.trim() || "IDLE",
+    current_input_id: record.current_input_id ?? null,
+    current_worker_id: record.current_worker_id ?? null,
+    lease_until: record.lease_until ?? null,
+    heartbeat_at: record.heartbeat_at ?? null,
+    last_error:
+      record.last_error && typeof record.last_error === "object"
+        ? { ...record.last_error }
+        : null,
+    last_turn_status: record.last_turn_status ?? null,
+    last_turn_completed_at: record.last_turn_completed_at ?? null,
+    last_turn_stop_reason: record.last_turn_stop_reason ?? null,
+    created_at: record.created_at || now,
+    updated_at: record.updated_at || now,
+  };
+}
+
+function cacheRuntimeStateRecords(
+  workspaceId: string,
+  items: SessionRuntimeRecordPayload[],
+): SessionRuntimeRecordPayload[] {
+  const normalizedWorkspaceId = workspaceId.trim();
+  if (!normalizedWorkspaceId) {
+    return [];
+  }
+  const workspaceRecords = new Map<string, SessionRuntimeRecordPayload>();
+  const normalizedItems: SessionRuntimeRecordPayload[] = [];
+  for (const item of items) {
+    const normalized = normalizeRuntimeStateRecord({
+      ...item,
+      workspace_id: normalizedWorkspaceId,
+    });
+    if (!normalized) {
+      continue;
+    }
+    workspaceRecords.set(normalized.session_id, normalized);
+    normalizedItems.push(cloneRuntimeStateRecord(normalized));
+  }
+  sessionRuntimeStateCache.set(normalizedWorkspaceId, workspaceRecords);
+  return normalizedItems;
+}
+
+function upsertCachedRuntimeStateRecord(
+  record: SessionRuntimeRecordPayload,
+): SessionRuntimeRecordPayload | null {
+  const normalized = normalizeRuntimeStateRecord(record);
+  if (!normalized) {
+    return null;
+  }
+  let workspaceRecords = sessionRuntimeStateCache.get(normalized.workspace_id);
+  if (!workspaceRecords) {
+    workspaceRecords = new Map<string, SessionRuntimeRecordPayload>();
+    sessionRuntimeStateCache.set(normalized.workspace_id, workspaceRecords);
+  }
+  workspaceRecords.set(normalized.session_id, normalized);
+  return cloneRuntimeStateRecord(normalized);
+}
+
+function getCachedRuntimeStateRecord(
+  workspaceId: string,
+  sessionId: string,
+): SessionRuntimeRecordPayload | null {
+  const normalizedWorkspaceId = workspaceId.trim();
+  const normalizedSessionId = browserSessionId(sessionId);
+  if (!normalizedWorkspaceId || !normalizedSessionId) {
+    return null;
+  }
+  const record = sessionRuntimeStateCache
+    .get(normalizedWorkspaceId)
+    ?.get(normalizedSessionId);
+  return record ? cloneRuntimeStateRecord(record) : null;
+}
+
 function updateQueuedInputStatus(inputId: string, status: string) {
   const database = openRuntimeDatabase();
   try {
@@ -13018,7 +13319,7 @@ async function deleteWorkspace(
 async function listRuntimeStates(
   workspaceId: string,
 ): Promise<SessionRuntimeStateListResponsePayload> {
-  return requestRuntimeJson<SessionRuntimeStateListResponsePayload>({
+  const response = await requestRuntimeJson<SessionRuntimeStateListResponsePayload>({
     method: "GET",
     path: `/api/v1/agent-sessions/by-workspace/${workspaceId}/runtime-states`,
     params: {
@@ -13026,6 +13327,12 @@ async function listRuntimeStates(
       offset: 0,
     },
   });
+  const items = cacheRuntimeStateRecords(workspaceId, response.items ?? []);
+  return {
+    ...response,
+    items,
+    count: items.length,
+  };
 }
 
 async function listAgentSessions(
@@ -13152,13 +13459,14 @@ function contextualWorkspaceCreateError(stage: string, error: unknown) {
 async function queueSessionInput(
   payload: HolabossQueueSessionInputPayload,
 ): Promise<EnqueueSessionInputResponsePayload> {
+  await syncDesktopBrowserCapabilityConfig();
   const currentConfig = await readRuntimeConfigFile();
   if (sessionQueueRequiresRuntimeBinding(currentConfig, payload.model)) {
     await ensureRuntimeBindingReadyForWorkspaceFlow("session_queue");
   }
   const idempotencyKey =
     payload.idempotency_key?.trim() || `desktop-session-input:${randomUUID()}`;
-  return requestRuntimeJson<EnqueueSessionInputResponsePayload>({
+  const response = await requestRuntimeJson<EnqueueSessionInputResponsePayload>({
     method: "POST",
     path: "/api/v1/agent-sessions/queue",
     payload: {
@@ -13174,18 +13482,50 @@ async function queueSessionInput(
     },
     retryTransientErrors: true,
   });
+  upsertCachedRuntimeStateRecord({
+    workspace_id: payload.workspace_id,
+    session_id: response.session_id,
+    status: response.status || "QUEUED",
+    current_input_id: response.input_id,
+    current_worker_id: null,
+    lease_until: null,
+    heartbeat_at: null,
+    last_error: null,
+    last_turn_status: null,
+    last_turn_completed_at: null,
+    last_turn_stop_reason: null,
+    created_at: utcNowIso(),
+    updated_at: utcNowIso(),
+  });
+  return response;
 }
 
 async function pauseSessionRun(
   payload: HolabossPauseSessionRunPayload,
 ): Promise<PauseSessionRunResponsePayload> {
-  return requestRuntimeJson<PauseSessionRunResponsePayload>({
+  const response = await requestRuntimeJson<PauseSessionRunResponsePayload>({
     method: "POST",
     path: `/api/v1/agent-sessions/${encodeURIComponent(payload.session_id)}/pause`,
     payload: {
       workspace_id: payload.workspace_id,
     },
   });
+  upsertCachedRuntimeStateRecord({
+    workspace_id: payload.workspace_id,
+    session_id: response.session_id || payload.session_id,
+    status: response.status || "PAUSED",
+    current_input_id: response.input_id || null,
+    current_worker_id: null,
+    lease_until: null,
+    heartbeat_at: null,
+    last_error: null,
+    last_turn_status: null,
+    last_turn_completed_at: null,
+    last_turn_stop_reason: null,
+    created_at: utcNowIso(),
+    updated_at: utcNowIso(),
+  });
+  return response;
 }
 
 async function* iterSseEvents(stream: NodeJS.ReadableStream) {
@@ -14370,6 +14710,13 @@ async function startEmbeddedRuntime() {
           SANDBOX_AGENT_HARNESS: harness,
           HOLABOSS_RUNTIME_WORKFLOW_BACKEND: workflowBackend,
           HOLABOSS_RUNTIME_DB_PATH: runtimeDatabasePath(),
+          HOLABOSS_DESKTOP_BROWSER_ENABLED: currentDesktopBrowserCapabilityConfig()
+            .enabled
+            ? "true"
+            : "false",
+          HOLABOSS_DESKTOP_BROWSER_URL: desktopBrowserServiceUrl,
+          HOLABOSS_DESKTOP_BROWSER_AUTH_TOKEN:
+            desktopBrowserServiceAuthToken,
           PROACTIVE_ENABLE_REMOTE_BRIDGE: "1",
           PROACTIVE_BRIDGE_BASE_URL: runtimeProactiveBridgeBaseUrl(),
           PYTHONDONTWRITEBYTECODE: "1",
@@ -14528,11 +14875,75 @@ function browserSpaceId(
   return value === "agent" ? "agent" : value === "user" ? "user" : fallback;
 }
 
+function browserSessionId(value?: string | null): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 function createBrowserTabSpaceState(): BrowserTabSpaceState {
+  const now = new Date().toISOString();
   return {
     tabs: new Map<string, BrowserTabRecord>(),
     activeTabId: "",
+    persistedTabs: [],
+    lifecycleState: "active",
+    lastTouchedAt: now,
+    suspendTimer: null,
   };
+}
+
+function browserTabSpaceTouch(tabSpace: BrowserTabSpaceState): void {
+  tabSpace.lastTouchedAt = new Date().toISOString();
+}
+
+function clearBrowserTabSpaceSuspendTimer(tabSpace: BrowserTabSpaceState): void {
+  if (!tabSpace.suspendTimer) {
+    return;
+  }
+  clearTimeout(tabSpace.suspendTimer);
+  tabSpace.suspendTimer = null;
+}
+
+function browserTabSpaceTabCount(tabSpace: BrowserTabSpaceState | null | undefined): number {
+  if (!tabSpace) {
+    return 0;
+  }
+  return tabSpace.tabs.size > 0 ? tabSpace.tabs.size : tabSpace.persistedTabs.length;
+}
+
+function browserTabSpacePersistencePayload(
+  tabSpace: BrowserTabSpaceState,
+): BrowserWorkspaceTabSpacePersistencePayload {
+  return {
+    activeTabId: tabSpace.activeTabId,
+    tabs:
+      tabSpace.tabs.size > 0
+        ? serializedBrowserWorkspaceTabs(tabSpace)
+        : [...tabSpace.persistedTabs],
+  };
+}
+
+function browserStateFromPersistedTab(
+  tab: BrowserWorkspaceTabPersistencePayload,
+): BrowserStatePayload {
+  return createBrowserState({
+    id: tab.id,
+    url: tab.url,
+    title: tab.title,
+    faviconUrl: tab.faviconUrl,
+    initialized: true,
+  });
+}
+
+function browserTabSpaceStates(
+  tabSpace: BrowserTabSpaceState | null | undefined,
+): BrowserStatePayload[] {
+  if (!tabSpace) {
+    return [];
+  }
+  if (tabSpace.tabs.size > 0 || tabSpace.lifecycleState === "active") {
+    return Array.from(tabSpace.tabs.values(), ({ state }) => state);
+  }
+  return tabSpace.persistedTabs.map((tab) => browserStateFromPersistedTab(tab));
 }
 
 function emptyBrowserTabCountsPayload(): BrowserTabCountsPayload {
@@ -14550,6 +14961,10 @@ function emptyBrowserTabListPayload(
     activeTabId: "",
     tabs: [],
     tabCounts: emptyBrowserTabCountsPayload(),
+    sessionId: space === "agent" ? (browserSessionId(activeBrowserSessionId) || null) : null,
+    lifecycleState: null,
+    controlMode: "none",
+    controlSessionId: null,
   };
 }
 
@@ -14561,6 +14976,8 @@ function defaultBrowserWorkspacePersistence(): BrowserWorkspacePersistencePayloa
       user: { activeTabId: "", tabs: [] },
       agent: { activeTabId: "", tabs: [] },
     },
+    activeAgentSessionId: null,
+    agentSessions: {},
     bookmarks: [],
     downloads: [],
     history: [],
@@ -14753,14 +15170,94 @@ function browserWorkspaceOrEmpty(
   return browserWorkspaceFromMap(normalizedWorkspaceId);
 }
 
-function browserTabSpaceState(
+function browserVisibleAgentSessionId(
   workspace: BrowserWorkspaceState | null | undefined,
-  space: BrowserSpaceId,
+): string {
+  if (!workspace) {
+    return "";
+  }
+  if (
+    workspace.workspaceId === activeBrowserWorkspaceId &&
+    activeBrowserSpaceId === "agent"
+  ) {
+    return (
+      browserSessionId(activeBrowserSessionId) ||
+      browserSessionId(workspace.activeAgentSessionId)
+    );
+  }
+  return browserSessionId(workspace.activeAgentSessionId);
+}
+
+function browserAgentSessionSpaceState(
+  workspace: BrowserWorkspaceState | null | undefined,
+  sessionId?: string | null,
+  options?: {
+    createIfMissing?: boolean;
+  },
 ): BrowserTabSpaceState | null {
   if (!workspace) {
     return null;
   }
-  return workspace.spaces[space] ?? null;
+  const normalizedSessionId = browserSessionId(sessionId);
+  if (!normalizedSessionId) {
+    return null;
+  }
+  let tabSpace = workspace.agentSessionSpaces.get(normalizedSessionId) ?? null;
+  if (!tabSpace && options?.createIfMissing) {
+    tabSpace = createBrowserTabSpaceState();
+    workspace.agentSessionSpaces.set(normalizedSessionId, tabSpace);
+  }
+  return tabSpace;
+}
+
+function browserFallbackAgentSessionId(
+  workspace: BrowserWorkspaceState | null | undefined,
+): string {
+  if (!workspace) {
+    return "";
+  }
+  const persistedVisibleSessionId = browserSessionId(workspace.activeAgentSessionId);
+  if (
+    persistedVisibleSessionId &&
+    browserAgentSessionSpaceState(workspace, persistedVisibleSessionId)
+  ) {
+    return persistedVisibleSessionId;
+  }
+  for (const sessionId of workspace.agentSessionSpaces.keys()) {
+    return browserSessionId(sessionId);
+  }
+  return "";
+}
+
+function browserTabSpaceState(
+  workspace: BrowserWorkspaceState | null | undefined,
+  space: BrowserSpaceId,
+  sessionId?: string | null,
+  options?: {
+    createIfMissing?: boolean;
+    useVisibleAgentSession?: boolean;
+  },
+): BrowserTabSpaceState | null {
+  if (!workspace) {
+    return null;
+  }
+  if (space === "user") {
+    return workspace.spaces.user ?? null;
+  }
+  const explicitSessionId = browserSessionId(sessionId);
+  if (explicitSessionId) {
+    return browserAgentSessionSpaceState(workspace, explicitSessionId, options);
+  }
+  if (options?.useVisibleAgentSession) {
+    const visibleSessionId = browserVisibleAgentSessionId(workspace);
+    const visibleSessionSpace = visibleSessionId
+      ? browserAgentSessionSpaceState(workspace, visibleSessionId)
+      : null;
+    if (visibleSessionSpace) {
+      return visibleSessionSpace;
+    }
+  }
+  return workspace.spaces.agent ?? null;
 }
 
 function oppositeBrowserSpaceId(space: BrowserSpaceId): BrowserSpaceId {
@@ -14773,9 +15270,12 @@ function browserWorkspaceTabCounts(
   if (!workspace) {
     return emptyBrowserTabCountsPayload();
   }
+  const visibleAgentSpace = browserTabSpaceState(workspace, "agent", null, {
+    useVisibleAgentSession: true,
+  });
   return {
-    user: workspace.spaces.user.tabs.size,
-    agent: workspace.spaces.agent.tabs.size,
+    user: browserTabSpaceTabCount(workspace.spaces.user),
+    agent: browserTabSpaceTabCount(visibleAgentSpace ?? workspace.spaces.agent),
   };
 }
 
@@ -14795,17 +15295,20 @@ function serializeBrowserWorkspace(
 ): BrowserWorkspacePersistencePayload {
   return {
     activeTabId: workspace.spaces.user.activeTabId,
-    tabs: serializedBrowserWorkspaceTabs(workspace.spaces.user),
+    tabs: browserTabSpacePersistencePayload(workspace.spaces.user).tabs,
     spaces: {
-      user: {
-        activeTabId: workspace.spaces.user.activeTabId,
-        tabs: serializedBrowserWorkspaceTabs(workspace.spaces.user),
-      },
-      agent: {
-        activeTabId: workspace.spaces.agent.activeTabId,
-        tabs: serializedBrowserWorkspaceTabs(workspace.spaces.agent),
-      },
+      user: browserTabSpacePersistencePayload(workspace.spaces.user),
+      agent: browserTabSpacePersistencePayload(workspace.spaces.agent),
     },
+    activeAgentSessionId: browserSessionId(workspace.activeAgentSessionId) || null,
+    agentSessions: Object.fromEntries(
+      Array.from(workspace.agentSessionSpaces.entries()).map(
+        ([sessionId, tabSpace]) => [
+          sessionId,
+          browserTabSpacePersistencePayload(tabSpace),
+        ],
+      ),
+    ),
     bookmarks: workspace.bookmarks,
     downloads: workspace.downloads,
     history: workspace.history,
@@ -14839,12 +15342,452 @@ function createBrowserWorkspaceState(
       user: createBrowserTabSpaceState(),
       agent: createBrowserTabSpaceState(),
     },
+    userBrowserLock: null,
+    activeAgentSessionId: null,
+    agentSessionSpaces: new Map<string, BrowserTabSpaceState>(),
     bookmarks: [],
     downloads: [],
     history: [],
     downloadTrackingRegistered: false,
     pendingDownloadOverrides: [],
   };
+}
+
+function setVisibleAgentBrowserSession(
+  workspace: BrowserWorkspaceState | null | undefined,
+  sessionId?: string | null,
+) {
+  if (!workspace) {
+    return;
+  }
+  const normalizedSessionId = browserSessionId(sessionId);
+  workspace.activeAgentSessionId = normalizedSessionId || null;
+  if (
+    workspace.workspaceId === activeBrowserWorkspaceId &&
+    activeBrowserSpaceId === "agent"
+  ) {
+    activeBrowserSessionId = normalizedSessionId;
+  }
+}
+
+function seedVisibleAgentBrowserSession(
+  workspace: BrowserWorkspaceState | null | undefined,
+  sessionId?: string | null,
+) {
+  if (!workspace) {
+    return;
+  }
+  const normalizedSessionId = browserSessionId(sessionId);
+  const currentVisibleSessionId = browserSessionId(workspace.activeAgentSessionId);
+  if (currentVisibleSessionId) {
+    return;
+  }
+  if (!normalizedSessionId) {
+    return;
+  }
+  workspace.activeAgentSessionId = normalizedSessionId;
+  if (
+    workspace.workspaceId === activeBrowserWorkspaceId &&
+    activeBrowserSpaceId === "agent" &&
+    !browserSessionId(activeBrowserSessionId)
+  ) {
+    activeBrowserSessionId = normalizedSessionId;
+  }
+}
+
+function isVisibleAgentBrowserSession(
+  workspaceId: string,
+  sessionId?: string | null,
+): boolean {
+  return (
+    activeBrowserWorkspaceId === workspaceId &&
+    activeBrowserSpaceId === "agent" &&
+    browserSessionId(activeBrowserSessionId) === browserSessionId(sessionId)
+  );
+}
+
+function activeUserBrowserLock(
+  workspace: BrowserWorkspaceState | null | undefined,
+): BrowserUserLockState | null {
+  if (!workspace?.userBrowserLock) {
+    return null;
+  }
+  const heartbeatAtMs = Date.parse(workspace.userBrowserLock.heartbeatAt);
+  if (
+    !Number.isFinite(heartbeatAtMs) ||
+    Date.now() - heartbeatAtMs > USER_BROWSER_LOCK_TIMEOUT_MS
+  ) {
+    workspace.userBrowserLock = null;
+    return null;
+  }
+  return workspace.userBrowserLock;
+}
+
+function releaseUserBrowserLock(
+  workspaceId: string,
+  sessionId?: string | null,
+): boolean {
+  const workspace = browserWorkspaceFromMap(workspaceId);
+  const activeLock = activeUserBrowserLock(workspace);
+  const normalizedSessionId = browserSessionId(sessionId);
+  if (
+    !workspace ||
+    !activeLock ||
+    (normalizedSessionId && activeLock.sessionId !== normalizedSessionId)
+  ) {
+    return false;
+  }
+  workspace.userBrowserLock = null;
+  return true;
+}
+
+function ensureUserBrowserLock(
+  workspaceId: string,
+  sessionId?: string | null,
+  reason?: string | null,
+): { ok: true; lock: BrowserUserLockState } | {
+  ok: false;
+  lockHolderSessionId: string;
+} {
+  const workspace = browserWorkspaceFromMap(workspaceId);
+  const normalizedSessionId = browserSessionId(sessionId);
+  if (!workspace || !normalizedSessionId) {
+    return { ok: false, lockHolderSessionId: "" };
+  }
+  const existing = activeUserBrowserLock(workspace);
+  if (existing && existing.sessionId !== normalizedSessionId) {
+    return { ok: false, lockHolderSessionId: existing.sessionId };
+  }
+  const now = new Date().toISOString();
+  workspace.userBrowserLock = existing
+    ? {
+        ...existing,
+        heartbeatAt: now,
+        reason:
+          typeof reason === "string" && reason.trim()
+            ? reason.trim()
+            : existing.reason,
+      }
+    : {
+        sessionId: normalizedSessionId,
+        acquiredAt: now,
+        heartbeatAt: now,
+        reason:
+          typeof reason === "string" && reason.trim() ? reason.trim() : null,
+      };
+  return { ok: true, lock: workspace.userBrowserLock };
+}
+
+async function pauseBrowserControlSession(
+  workspaceId: string,
+  sessionId: string,
+): Promise<void> {
+  try {
+    await pauseSessionRun({
+      workspace_id: workspaceId,
+      session_id: sessionId,
+    });
+  } finally {
+    releaseUserBrowserLock(workspaceId, sessionId);
+  }
+}
+
+function agentBrowserSessionNeedsInterrupt(
+  workspaceId: string,
+  sessionId?: string | null,
+): boolean {
+  const normalizedSessionId =
+    browserSessionId(sessionId) ||
+    browserSessionId(browserWorkspaceFromMap(workspaceId)?.activeAgentSessionId);
+  if (!workspaceId.trim() || !normalizedSessionId) {
+    return false;
+  }
+  const runtimeRecord = getCachedRuntimeStateRecord(
+    workspaceId,
+    normalizedSessionId,
+  );
+  const status = runtimeRecord?.status?.trim().toUpperCase() ?? "";
+  return status === "BUSY" || status === "QUEUED" || status === "PAUSING";
+}
+
+async function confirmBrowserInterrupt(
+  workspaceId: string,
+  sessionId: string,
+): Promise<void> {
+  if (userBrowserInterruptPrompts.has(workspaceId)) {
+    return;
+  }
+  userBrowserInterruptPrompts.add(workspaceId);
+  try {
+    const ownerWindow =
+      mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+    const { response } = ownerWindow
+      ? await dialog.showMessageBox(ownerWindow, {
+          type: "warning",
+          buttons: ["Let agent continue", "Interrupt and take over"],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+          title: "Agent Controlling Browser",
+          message: "The agent is currently controlling this browser.",
+          detail:
+            "Your input will only go through if you interrupt. Interrupting will pause the active agent session and return control to you.",
+        })
+      : await dialog.showMessageBox({
+          type: "warning",
+          buttons: ["Let agent continue", "Interrupt and take over"],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+          title: "Agent Controlling Browser",
+          message: "The agent is currently controlling this browser.",
+          detail:
+            "Your input will only go through if you interrupt. Interrupting will pause the active agent session and return control to you.",
+        });
+    if (response !== 1) {
+      return;
+    }
+    await pauseBrowserControlSession(workspaceId, sessionId);
+  } catch (error) {
+    const ownerWindow =
+      mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+    const messageBoxOptions = {
+      type: "error",
+      title: "Could Not Interrupt Agent",
+      message: "The agent session could not be paused.",
+      detail:
+        error instanceof Error
+          ? error.message
+          : "The browser remained under agent control.",
+    } as const;
+    if (ownerWindow) {
+      await dialog.showMessageBox(ownerWindow, messageBoxOptions);
+    } else {
+      await dialog.showMessageBox(messageBoxOptions);
+    }
+  } finally {
+    userBrowserInterruptPrompts.delete(workspaceId);
+  }
+}
+
+function maybePromptBrowserInterrupt(
+  workspaceId: string,
+  space: BrowserSpaceId,
+  sessionId?: string | null,
+): boolean {
+  if (space === "user") {
+    const workspace = browserWorkspaceFromMap(workspaceId);
+    const lock = activeUserBrowserLock(workspace);
+    if (!lock) {
+      return false;
+    }
+    void confirmBrowserInterrupt(workspaceId, lock.sessionId);
+    return true;
+  }
+
+  const controllingSessionId = browserSessionId(sessionId);
+  if (!agentBrowserSessionNeedsInterrupt(workspaceId, controllingSessionId)) {
+    return false;
+  }
+  void confirmBrowserInterrupt(workspaceId, controllingSessionId);
+  return true;
+}
+
+function hydrateAgentSessionBrowserSpace(
+  workspaceId: string,
+  sessionId?: string | null,
+): BrowserTabSpaceState | null {
+  const workspace = browserWorkspaceFromMap(workspaceId);
+  const normalizedSessionId = browserSessionId(sessionId);
+  const tabSpace = browserAgentSessionSpaceState(workspace, normalizedSessionId, {
+    createIfMissing: Boolean(normalizedSessionId),
+  });
+  if (!workspace || !tabSpace || !normalizedSessionId) {
+    return null;
+  }
+  clearBrowserTabSpaceSuspendTimer(tabSpace);
+  if (tabSpace.lifecycleState !== "suspended") {
+    browserTabSpaceTouch(tabSpace);
+    return tabSpace;
+  }
+
+  const persistedTabs = [...tabSpace.persistedTabs];
+  const persistedActiveTabId = tabSpace.activeTabId;
+  tabSpace.persistedTabs = [];
+  tabSpace.lifecycleState = "active";
+  for (const persistedTab of persistedTabs) {
+    createBrowserTab(workspaceId, {
+      browserSpace: "agent",
+      sessionId: normalizedSessionId,
+      id: typeof persistedTab.id === "string" ? persistedTab.id : undefined,
+      url:
+        typeof persistedTab.url === "string" && persistedTab.url.trim()
+          ? persistedTab.url.trim()
+          : HOME_URL,
+      title:
+        typeof persistedTab.title === "string"
+          ? persistedTab.title
+          : NEW_TAB_TITLE,
+      faviconUrl:
+        typeof persistedTab.faviconUrl === "string"
+          ? persistedTab.faviconUrl
+          : undefined,
+      skipInitialHistoryRecord: true,
+    });
+  }
+  tabSpace.activeTabId = tabSpace.tabs.has(persistedActiveTabId)
+    ? persistedActiveTabId
+    : (Array.from(tabSpace.tabs.keys())[0] ?? "");
+  if (tabSpace.tabs.size === 0) {
+    ensureBrowserTabSpaceInitialized(workspaceId, "agent", normalizedSessionId);
+  }
+  browserTabSpaceTouch(tabSpace);
+  return tabSpace;
+}
+
+function suspendAgentSessionBrowserSpace(
+  workspaceId: string,
+  sessionId?: string | null,
+): boolean {
+  const workspace = browserWorkspaceFromMap(workspaceId);
+  const normalizedSessionId = browserSessionId(sessionId);
+  const tabSpace = browserAgentSessionSpaceState(workspace, normalizedSessionId);
+  if (!workspace || !tabSpace || !normalizedSessionId) {
+    return false;
+  }
+  clearBrowserTabSpaceSuspendTimer(tabSpace);
+  if (isVisibleAgentBrowserSession(workspaceId, normalizedSessionId)) {
+    return false;
+  }
+  if (tabSpace.lifecycleState === "suspended") {
+    return true;
+  }
+  const persisted = browserTabSpacePersistencePayload(tabSpace);
+  for (const tab of tabSpace.tabs.values()) {
+    closeBrowserTabRecord(tab);
+  }
+  tabSpace.tabs.clear();
+  tabSpace.activeTabId = persisted.activeTabId;
+  tabSpace.persistedTabs = persisted.tabs;
+  tabSpace.lifecycleState = "suspended";
+  emitBrowserState(workspaceId, "agent");
+  void persistBrowserWorkspace(workspaceId);
+  return true;
+}
+
+function scheduleAgentSessionBrowserLifecycleCheck(
+  workspaceId: string,
+  sessionId?: string | null,
+  delayMs = SESSION_BROWSER_BUSY_CHECK_MS,
+): void {
+  const workspace = browserWorkspaceFromMap(workspaceId);
+  const normalizedSessionId = browserSessionId(sessionId);
+  const tabSpace = browserAgentSessionSpaceState(workspace, normalizedSessionId);
+  if (!tabSpace || !normalizedSessionId) {
+    return;
+  }
+  clearBrowserTabSpaceSuspendTimer(tabSpace);
+  tabSpace.suspendTimer = setTimeout(() => {
+    void reconcileAgentSessionBrowserSpace(workspaceId, normalizedSessionId);
+  }, Math.max(1_000, Math.round(delayMs)));
+}
+
+function touchAgentSessionBrowserSpace(
+  workspaceId: string,
+  sessionId?: string | null,
+): void {
+  const workspace = browserWorkspaceFromMap(workspaceId);
+  const normalizedSessionId = browserSessionId(sessionId);
+  const tabSpace = browserAgentSessionSpaceState(workspace, normalizedSessionId);
+  if (!tabSpace || !normalizedSessionId) {
+    return;
+  }
+  tabSpace.lifecycleState = "active";
+  browserTabSpaceTouch(tabSpace);
+  scheduleAgentSessionBrowserLifecycleCheck(workspaceId, normalizedSessionId);
+}
+
+async function reconcileAgentSessionBrowserSpace(
+  workspaceId: string,
+  sessionId?: string | null,
+): Promise<void> {
+  const workspace = browserWorkspaceFromMap(workspaceId);
+  const normalizedSessionId = browserSessionId(sessionId);
+  const tabSpace = browserAgentSessionSpaceState(workspace, normalizedSessionId);
+  if (!workspace || !tabSpace || !normalizedSessionId) {
+    return;
+  }
+  clearBrowserTabSpaceSuspendTimer(tabSpace);
+  if (isVisibleAgentBrowserSession(workspaceId, normalizedSessionId)) {
+    scheduleAgentSessionBrowserLifecycleCheck(
+      workspaceId,
+      normalizedSessionId,
+      SESSION_BROWSER_BUSY_CHECK_MS,
+    );
+    return;
+  }
+
+  let runtimeRecord: SessionRuntimeRecordPayload | null = null;
+  try {
+    const runtimeStates = await listRuntimeStates(workspaceId);
+    runtimeRecord =
+      runtimeStates.items.find(
+        (item) => browserSessionId(item.session_id) === normalizedSessionId,
+      ) ?? null;
+  } catch {
+    runtimeRecord = null;
+  }
+
+  const status = runtimeRecord?.status?.trim().toUpperCase() ?? "";
+  const lastTurnStatus =
+    runtimeRecord?.last_turn_status?.trim().toLowerCase() ?? "";
+  const touchedAtMs = Date.parse(tabSpace.lastTouchedAt);
+  const ageMs = Number.isFinite(touchedAtMs)
+    ? Math.max(0, Date.now() - touchedAtMs)
+    : Number.MAX_SAFE_INTEGER;
+
+  if (status === "BUSY" || status === "QUEUED" || status === "PAUSING") {
+    scheduleAgentSessionBrowserLifecycleCheck(
+      workspaceId,
+      normalizedSessionId,
+      SESSION_BROWSER_BUSY_CHECK_MS,
+    );
+    return;
+  }
+
+  if (
+    (status === "WAITING_USER" || status === "PAUSED") &&
+    ageMs < SESSION_BROWSER_WARM_TTL_MS
+  ) {
+    scheduleAgentSessionBrowserLifecycleCheck(
+      workspaceId,
+      normalizedSessionId,
+      SESSION_BROWSER_WARM_TTL_MS - ageMs,
+    );
+    return;
+  }
+
+  if (
+    !(
+      status === "WAITING_USER" || status === "PAUSED"
+    ) &&
+    (status === "IDLE" ||
+      status === "ERROR" ||
+      !runtimeRecord ||
+      lastTurnStatus === "completed" ||
+      lastTurnStatus === "failed" ||
+      lastTurnStatus === "error") &&
+    ageMs < SESSION_BROWSER_COMPLETED_GRACE_MS
+  ) {
+    scheduleAgentSessionBrowserLifecycleCheck(
+      workspaceId,
+      normalizedSessionId,
+      SESSION_BROWSER_COMPLETED_GRACE_MS - ageMs,
+    );
+    return;
+  }
+
+  suspendAgentSessionBrowserSpace(workspaceId, normalizedSessionId);
 }
 
 const TEXT_FILE_EXTENSIONS = new Set([
@@ -16790,29 +17733,77 @@ async function recordHistoryVisit(
 function browserWorkspaceSnapshot(
   workspaceId?: string | null,
   space?: BrowserSpaceId | null,
+  sessionId?: string | null,
+  options?: {
+    useVisibleAgentSession?: boolean;
+  },
 ): BrowserTabListPayload {
   const browserSpace = browserSpaceId(space);
   const workspace = browserWorkspaceOrEmpty(workspaceId);
   if (!workspace) {
     return emptyBrowserTabListPayload(browserSpace);
   }
-  const tabSpace = browserTabSpaceState(workspace, browserSpace);
-  const tabs = Array.from(tabSpace?.tabs.values() ?? [], ({ state }) => state);
+  const normalizedSessionId = browserSessionId(sessionId);
+  const tabSpace = browserTabSpaceState(
+    workspace,
+    browserSpace,
+    normalizedSessionId,
+    options,
+  );
+  const tabs = browserTabSpaceStates(tabSpace);
+  const visibleSessionId =
+    browserSpace === "agent" && options?.useVisibleAgentSession
+      ? browserVisibleAgentSessionId(workspace)
+      : "";
+  const resolvedSessionId =
+    browserSpace === "agent"
+      ? normalizedSessionId ||
+        (visibleSessionId &&
+        browserAgentSessionSpaceState(workspace, visibleSessionId) === tabSpace
+          ? visibleSessionId
+          : "")
+      : "";
+  const lockSessionId =
+    browserSpace === "user" ? activeUserBrowserLock(workspace)?.sessionId ?? "" : "";
   return {
     space: browserSpace,
     activeTabId: tabSpace?.activeTabId || tabs[0]?.id || "",
     tabs,
     tabCounts: browserWorkspaceTabCounts(workspace),
+    sessionId: resolvedSessionId || null,
+    lifecycleState:
+      browserSpace === "agent" ? tabSpace?.lifecycleState ?? null : null,
+    controlMode:
+      browserSpace === "user"
+        ? lockSessionId
+          ? "user_locked"
+          : "none"
+        : resolvedSessionId
+          ? "session_owned"
+          : "none",
+    controlSessionId:
+      browserSpace === "user"
+        ? lockSessionId || null
+        : resolvedSessionId || null,
   };
 }
 
 function getActiveBrowserTab(
   workspaceId?: string | null,
   space?: BrowserSpaceId | null,
+  sessionId?: string | null,
+  options?: {
+    useVisibleAgentSession?: boolean;
+  },
 ): BrowserTabRecord | null {
   const browserSpace = browserSpaceId(space);
   const workspace = browserWorkspaceOrEmpty(workspaceId);
-  const tabSpace = browserTabSpaceState(workspace, browserSpace);
+  const tabSpace = browserTabSpaceState(
+    workspace,
+    browserSpace,
+    sessionId,
+    options,
+  );
   if (!tabSpace || !tabSpace.activeTabId) {
     return null;
   }
@@ -16842,9 +17833,12 @@ function applyBoundsToTab(
   workspaceId: string,
   tabId: string,
   space: BrowserSpaceId = activeBrowserSpaceId,
+  sessionId?: string | null,
 ) {
   const workspace = browserWorkspaceFromMap(workspaceId);
-  const tab = browserTabSpaceState(workspace, space)?.tabs.get(tabId);
+  const tab = browserTabSpaceState(workspace, space, sessionId, {
+    useVisibleAgentSession: !browserSessionId(sessionId),
+  })?.tabs.get(tabId);
   if (!tab) {
     return;
   }
@@ -16875,7 +17869,9 @@ function emitBrowserState(
   }
   mainWindow.webContents.send(
     "browser:state",
-    browserWorkspaceSnapshot(normalizedWorkspaceId, browserSpace),
+    browserWorkspaceSnapshot(normalizedWorkspaceId, browserSpace, null, {
+      useVisibleAgentSession: true,
+    }),
   );
 }
 
@@ -16944,11 +17940,22 @@ function destroyBrowserWorkspace(workspaceId: string) {
     return;
   }
   for (const browserSpace of BROWSER_SPACE_IDS) {
+    clearBrowserTabSpaceSuspendTimer(workspace.spaces[browserSpace]);
     for (const tab of workspace.spaces[browserSpace].tabs.values()) {
       closeBrowserTabRecord(tab);
     }
     workspace.spaces[browserSpace].tabs.clear();
   }
+  for (const tabSpace of workspace.agentSessionSpaces.values()) {
+    clearBrowserTabSpaceSuspendTimer(tabSpace);
+    for (const tab of tabSpace.tabs.values()) {
+      closeBrowserTabRecord(tab);
+    }
+    tabSpace.tabs.clear();
+  }
+  workspace.userBrowserLock = null;
+  workspace.agentSessionSpaces.clear();
+  sessionRuntimeStateCache.delete(workspaceId);
   browserWorkspaces.delete(workspaceId);
 }
 
@@ -16959,6 +17966,8 @@ function updateAttachedBrowserView() {
   const activeTab = getActiveBrowserTab(
     activeBrowserWorkspaceId,
     activeBrowserSpaceId,
+    null,
+    { useVisibleAgentSession: true },
   );
   if (!activeTab || !hasVisibleBrowserBounds()) {
     if (attachedBrowserTabView) {
@@ -16976,6 +17985,7 @@ function updateAttachedBrowserView() {
     activeBrowserWorkspaceId,
     activeTab.state.id,
     activeBrowserSpaceId,
+    activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
   );
 }
 
@@ -16983,11 +17993,19 @@ function syncBrowserState(
   workspaceId: string,
   tabId: string,
   space: BrowserSpaceId,
+  sessionId?: string | null,
 ) {
   const workspace = browserWorkspaceFromMap(workspaceId);
-  const tab = browserTabSpaceState(workspace, space)?.tabs.get(tabId);
+  const tabSpace = browserTabSpaceState(workspace, space, sessionId);
+  const tab = tabSpace?.tabs.get(tabId);
   if (!workspace || !tab) {
     return;
+  }
+  if (tabSpace) {
+    browserTabSpaceTouch(tabSpace);
+  }
+  if (space === "agent" && browserSessionId(sessionId)) {
+    scheduleAgentSessionBrowserLifecycleCheck(workspaceId, sessionId);
   }
 
   const viewContents = tab.view.webContents;
@@ -17031,8 +18049,13 @@ function focusBrowserTabInSpace(
   tabSpace: BrowserTabSpaceState,
   tabId: string,
   space: BrowserSpaceId,
+  sessionId?: string | null,
 ) {
   tabSpace.activeTabId = tabId;
+  browserTabSpaceTouch(tabSpace);
+  if (space === "agent" && browserSessionId(sessionId)) {
+    scheduleAgentSessionBrowserLifecycleCheck(workspaceId, sessionId);
+  }
   if (workspaceId === activeBrowserWorkspaceId && space === activeBrowserSpaceId) {
     updateAttachedBrowserView();
   }
@@ -17046,6 +18069,7 @@ function handleBrowserWindowOpenAsTab(
   disposition: string,
   frameName: string,
   space: BrowserSpaceId,
+  sessionId?: string | null,
 ) {
   const normalizedUrl = targetUrl.trim();
   if (!normalizedUrl) {
@@ -17063,7 +18087,9 @@ function handleBrowserWindowOpenAsTab(
   }
 
   const workspace = browserWorkspaceFromMap(workspaceId);
-  const tabSpace = browserTabSpaceState(workspace, space);
+  const tabSpace = browserTabSpaceState(workspace, space, sessionId, {
+    createIfMissing: true,
+  });
   if (!workspace || !tabSpace) {
     return;
   }
@@ -17100,7 +18126,7 @@ function handleBrowserWindowOpenAsTab(
       });
     }
     if (disposition !== "background-tab") {
-      focusBrowserTabInSpace(workspaceId, tabSpace, existingTabId, space);
+      focusBrowserTabInSpace(workspaceId, tabSpace, existingTabId, space, sessionId);
     }
     return;
   }
@@ -17108,6 +18134,7 @@ function handleBrowserWindowOpenAsTab(
   const nextTabId = createBrowserTab(workspaceId, {
     url: normalizedUrl,
     browserSpace: space,
+    sessionId,
     popupFrameName: normalizedFrameName,
     popupOpenedAtMs: now,
   });
@@ -17116,7 +18143,7 @@ function handleBrowserWindowOpenAsTab(
   }
 
   if (disposition !== "background-tab") {
-    focusBrowserTabInSpace(workspaceId, tabSpace, nextTabId, space);
+    focusBrowserTabInSpace(workspaceId, tabSpace, nextTabId, space, sessionId);
     return;
   }
 
@@ -17194,10 +18221,11 @@ function consumeBrowserDownloadOverride(
 function showBrowserViewContextMenu(params: {
   workspaceId: string;
   space: BrowserSpaceId;
+  sessionId?: string | null;
   view: BrowserView;
   context: ContextMenuParams;
 }) {
-  const { workspaceId, space, view, context } = params;
+  const { workspaceId, space, sessionId, view, context } = params;
   const template: MenuItemConstructorOptions[] = [];
   const selectionText = context.selectionText.trim();
   const linkUrl = context.linkURL.trim();
@@ -17218,6 +18246,7 @@ function showBrowserViewContextMenu(params: {
             "foreground-tab",
             "",
             space,
+            sessionId,
           ),
       },
       {
@@ -17247,6 +18276,7 @@ function showBrowserViewContextMenu(params: {
             "foreground-tab",
             "",
             space,
+            sessionId,
           ),
       },
       {
@@ -17334,6 +18364,7 @@ function createBrowserTab(
   workspaceId: string,
   options: {
     browserSpace?: BrowserSpaceId;
+    sessionId?: string | null;
     id?: string;
     url?: string;
     title?: string;
@@ -17345,10 +18376,20 @@ function createBrowserTab(
 ) {
   const workspace = browserWorkspaceFromMap(workspaceId);
   const browserSpace = browserSpaceId(options.browserSpace);
-  const tabSpace = browserTabSpaceState(workspace, browserSpace);
+  const normalizedSessionId = browserSessionId(options.sessionId);
+  const tabSpace = browserTabSpaceState(
+    workspace,
+    browserSpace,
+    normalizedSessionId,
+    {
+      createIfMissing: Boolean(normalizedSessionId),
+    },
+  );
   if (!mainWindow || !workspace || !tabSpace) {
     return null;
   }
+  tabSpace.lifecycleState = "active";
+  browserTabSpaceTouch(tabSpace);
 
   const tabId =
     options.id?.trim() ||
@@ -17433,6 +18474,7 @@ function createBrowserTab(
         disposition,
         frameName,
         browserSpace,
+        normalizedSessionId,
       );
     }
     return { action: "deny" };
@@ -17441,40 +18483,69 @@ function createBrowserTab(
   view.webContents.setZoomFactor(1);
   view.webContents.setVisualZoomLevelLimits(1, 1).catch(() => undefined);
 
-  view.webContents.on("dom-ready", () => {
-    const currentTab = browserTabSpaceState(
+  const currentTabRecord = () =>
+    browserTabSpaceState(
       browserWorkspaceFromMap(workspaceId),
       browserSpace,
+      normalizedSessionId,
     )?.tabs.get(tabId);
+
+  view.webContents.on("before-input-event", (event, input) => {
+    if (
+      (input.type === "keyDown" ||
+        input.type === "keyUp" ||
+        input.type === "char" ||
+        input.type === "rawKeyDown") &&
+      maybePromptBrowserInterrupt(
+        workspaceId,
+        browserSpace,
+        normalizedSessionId,
+      )
+    ) {
+      event.preventDefault();
+    }
+  });
+
+  view.webContents.on("before-mouse-event", (event, mouse) => {
+    if (
+      mouse.type !== "mouseMove" &&
+      mouse.type !== "mouseEnter" &&
+      mouse.type !== "mouseLeave" &&
+      maybePromptBrowserInterrupt(
+        workspaceId,
+        browserSpace,
+        normalizedSessionId,
+      )
+    ) {
+      event.preventDefault();
+    }
+  });
+
+  view.webContents.on("dom-ready", () => {
+    const currentTab = currentTabRecord();
     if (!currentTab) {
       return;
     }
     currentTab.state = { ...currentTab.state, initialized: true, error: "" };
-    syncBrowserState(workspaceId, tabId, browserSpace);
+    syncBrowserState(workspaceId, tabId, browserSpace, normalizedSessionId);
   });
 
   view.webContents.on("did-start-loading", () => {
-    const currentTab = browserTabSpaceState(
-      browserWorkspaceFromMap(workspaceId),
-      browserSpace,
-    )?.tabs.get(tabId);
+    const currentTab = currentTabRecord();
     if (!currentTab) {
       return;
     }
     currentTab.state = { ...currentTab.state, loading: true, error: "" };
-    syncBrowserState(workspaceId, tabId, browserSpace);
+    syncBrowserState(workspaceId, tabId, browserSpace, normalizedSessionId);
   });
 
   view.webContents.on("did-stop-loading", () => {
-    const currentTab = browserTabSpaceState(
-      browserWorkspaceFromMap(workspaceId),
-      browserSpace,
-    )?.tabs.get(tabId);
+    const currentTab = currentTabRecord();
     if (!currentTab) {
       return;
     }
     currentTab.state = { ...currentTab.state, loading: false, error: "" };
-    syncBrowserState(workspaceId, tabId, browserSpace);
+    syncBrowserState(workspaceId, tabId, browserSpace, normalizedSessionId);
     if (suppressNextHistoryEntry) {
       suppressNextHistoryEntry = false;
       return;
@@ -17487,14 +18558,11 @@ function createBrowserTab(
   });
 
   view.webContents.on("page-title-updated", () => {
-    syncBrowserState(workspaceId, tabId, browserSpace);
+    syncBrowserState(workspaceId, tabId, browserSpace, normalizedSessionId);
   });
 
   view.webContents.on("page-favicon-updated", (_event, favicons) => {
-    const currentTab = browserTabSpaceState(
-      browserWorkspaceFromMap(workspaceId),
-      browserSpace,
-    )?.tabs.get(tabId);
+    const currentTab = currentTabRecord();
     if (!currentTab) {
       return;
     }
@@ -17507,17 +18575,18 @@ function createBrowserTab(
   });
 
   view.webContents.on("did-navigate", () => {
-    syncBrowserState(workspaceId, tabId, browserSpace);
+    syncBrowserState(workspaceId, tabId, browserSpace, normalizedSessionId);
   });
 
   view.webContents.on("did-navigate-in-page", () => {
-    syncBrowserState(workspaceId, tabId, browserSpace);
+    syncBrowserState(workspaceId, tabId, browserSpace, normalizedSessionId);
   });
 
   view.webContents.on("context-menu", (_event, params) => {
     showBrowserViewContextMenu({
       workspaceId,
       space: browserSpace,
+      sessionId: normalizedSessionId,
       view,
       context: params,
     });
@@ -17532,10 +18601,7 @@ function createBrowserTab(
       ) {
         return;
       }
-      const currentTab = browserTabSpaceState(
-        browserWorkspaceFromMap(workspaceId),
-        browserSpace,
-      )?.tabs.get(tabId);
+      const currentTab = currentTabRecord();
       if (!currentTab) {
         return;
       }
@@ -17555,10 +18621,7 @@ function createBrowserTab(
       if (isAbortedBrowserLoadError(error)) {
         return;
       }
-      const currentTab = browserTabSpaceState(
-        browserWorkspaceFromMap(workspaceId),
-        browserSpace,
-      )?.tabs.get(tabId);
+      const currentTab = currentTabRecord();
       if (!currentTab) {
         return;
       }
@@ -17572,12 +18635,17 @@ function createBrowserTab(
     });
   }
 
+  if (browserSpace === "agent" && normalizedSessionId) {
+    scheduleAgentSessionBrowserLifecycleCheck(workspaceId, normalizedSessionId);
+  }
+
   return tabId;
 }
 
 function initialBrowserTabSeed(
   workspaceId: string,
   space: BrowserSpaceId,
+  sessionId?: string | null,
 ): {
   url: string;
   title?: string;
@@ -17585,16 +18653,30 @@ function initialBrowserTabSeed(
   skipInitialHistoryRecord: boolean;
 } {
   const workspace = browserWorkspaceFromMap(workspaceId);
+  const sourceSpaceId = oppositeBrowserSpaceId(space);
+  const sourceSessionId =
+    sourceSpaceId === "agent" ? browserSessionId(sessionId) : "";
   const sourceSpace = browserTabSpaceState(
     workspace,
-    oppositeBrowserSpaceId(space),
+    sourceSpaceId,
+    sourceSessionId,
+    {
+      useVisibleAgentSession: sourceSpaceId === "agent" && !sourceSessionId,
+    },
   );
   const sourceTab =
     (sourceSpace?.activeTabId
       ? sourceSpace.tabs.get(sourceSpace.activeTabId)
       : null) ??
     (sourceSpace ? Array.from(sourceSpace.tabs.values())[0] ?? null : null);
-  if (!sourceTab) {
+  const sourceState =
+    sourceTab?.state ??
+    (sourceSpace?.activeTabId
+      ? browserTabSpaceStates(sourceSpace).find(
+          (state) => state.id === sourceSpace.activeTabId,
+        ) ?? null
+      : browserTabSpaceStates(sourceSpace)[0] ?? null);
+  if (!sourceState) {
     return {
       url: HOME_URL,
       title: NEW_TAB_TITLE,
@@ -17602,11 +18684,16 @@ function initialBrowserTabSeed(
     };
   }
 
-  const sourceContents = sourceTab.view.webContents;
   return {
-    url: sourceContents.getURL() || sourceTab.state.url || HOME_URL,
-    title: sourceContents.getTitle() || sourceTab.state.title || NEW_TAB_TITLE,
-    faviconUrl: sourceTab.state.faviconUrl,
+    url:
+      sourceTab?.view.webContents.getURL() ||
+      sourceState.url ||
+      HOME_URL,
+    title:
+      sourceTab?.view.webContents.getTitle() ||
+      sourceState.title ||
+      NEW_TAB_TITLE,
+    faviconUrl: sourceState.faviconUrl,
     // Mirrored first-tab seeding should not create duplicate history entries.
     skipInitialHistoryRecord: true,
   };
@@ -17615,19 +18702,38 @@ function initialBrowserTabSeed(
 function ensureBrowserTabSpaceInitialized(
   workspaceId: string,
   space: BrowserSpaceId,
+  sessionId?: string | null,
 ): boolean {
   const workspace = browserWorkspaceFromMap(workspaceId);
-  const tabSpace = browserTabSpaceState(workspace, space);
-  if (!workspace || !tabSpace || tabSpace.tabs.size > 0) {
+  const normalizedSessionId = browserSessionId(sessionId);
+  const tabSpace = browserTabSpaceState(
+    workspace,
+    space,
+    normalizedSessionId,
+    {
+      createIfMissing: Boolean(normalizedSessionId),
+      useVisibleAgentSession: !normalizedSessionId,
+    },
+  );
+  if (
+    !workspace ||
+    !tabSpace ||
+    tabSpace.tabs.size > 0 ||
+    tabSpace.persistedTabs.length > 0
+  ) {
     return false;
   }
 
-  const seed = initialBrowserTabSeed(workspaceId, space);
+  const seed = initialBrowserTabSeed(workspaceId, space, normalizedSessionId);
   const initialTabId = createBrowserTab(workspaceId, {
     ...seed,
     browserSpace: space,
+    sessionId: normalizedSessionId,
   });
   tabSpace.activeTabId = initialTabId ?? "";
+  if (space === "agent" && normalizedSessionId) {
+    seedVisibleAgentBrowserSession(workspace, normalizedSessionId);
+  }
   return true;
 }
 
@@ -17734,20 +18840,33 @@ function ensureBrowserWorkspaceDownloadTracking(
 async function ensureBrowserWorkspace(
   workspaceId?: string | null,
   space?: BrowserSpaceId | null,
+  sessionId?: string | null,
 ): Promise<BrowserWorkspaceState | null> {
   const normalizedWorkspaceId =
     typeof workspaceId === "string"
       ? workspaceId.trim()
       : activeBrowserWorkspaceId;
   const browserSpace = browserSpaceId(space);
+  const normalizedSessionId = browserSessionId(sessionId);
   if (!normalizedWorkspaceId) {
     return null;
   }
 
   const existing = browserWorkspaceFromMap(normalizedWorkspaceId);
   if (existing) {
-    if (ensureBrowserTabSpaceInitialized(normalizedWorkspaceId, browserSpace)) {
+    if (
+      ensureBrowserTabSpaceInitialized(
+        normalizedWorkspaceId,
+        browserSpace,
+        normalizedSessionId,
+      )
+    ) {
       void persistBrowserWorkspace(normalizedWorkspaceId);
+    }
+    if (browserSpace === "agent" && normalizedSessionId) {
+      hydrateAgentSessionBrowserSpace(normalizedWorkspaceId, normalizedSessionId);
+      seedVisibleAgentBrowserSession(existing, normalizedSessionId);
+      touchAgentSessionBrowserSpace(normalizedWorkspaceId, normalizedSessionId);
     }
     return existing;
   }
@@ -17767,6 +18886,8 @@ async function ensureBrowserWorkspace(
     ? persisted.downloads
     : [];
   workspace.history = Array.isArray(persisted.history) ? persisted.history : [];
+  workspace.activeAgentSessionId =
+    browserSessionId(persisted.activeAgentSessionId) || null;
 
   const persistedSpaces =
     persisted.spaces && typeof persisted.spaces === "object"
@@ -17819,8 +18940,54 @@ async function ensureBrowserWorkspace(
       : (Array.from(tabSpace.tabs.keys())[0] ?? "");
   }
 
-  if (ensureBrowserTabSpaceInitialized(normalizedWorkspaceId, browserSpace)) {
+  const persistedAgentSessions =
+    persisted.agentSessions && typeof persisted.agentSessions === "object"
+      ? persisted.agentSessions
+      : {};
+  for (const [persistedSessionId, storedTabSpace] of Object.entries(
+    persistedAgentSessions,
+  )) {
+    const normalizedPersistedSessionId = browserSessionId(persistedSessionId);
+    if (!normalizedPersistedSessionId) {
+      continue;
+    }
+    const agentTabSpace = browserAgentSessionSpaceState(
+      workspace,
+      normalizedPersistedSessionId,
+      { createIfMissing: true },
+    );
+    if (!agentTabSpace) {
+      continue;
+    }
+    const persistedTabs = Array.isArray(storedTabSpace?.tabs)
+      ? storedTabSpace.tabs.filter(
+          (persistedTab): persistedTab is BrowserWorkspaceTabPersistencePayload =>
+            Boolean(persistedTab) && typeof persistedTab === "object",
+        )
+      : [];
+    const persistedActiveTabId =
+      typeof storedTabSpace?.activeTabId === "string"
+        ? storedTabSpace.activeTabId.trim()
+        : "";
+    agentTabSpace.activeTabId = persistedActiveTabId;
+    agentTabSpace.persistedTabs = persistedTabs;
+    agentTabSpace.lifecycleState =
+      persistedTabs.length > 0 ? "suspended" : "active";
+  }
+
+  if (
+    ensureBrowserTabSpaceInitialized(
+      normalizedWorkspaceId,
+      browserSpace,
+      normalizedSessionId,
+    )
+  ) {
     void persistBrowserWorkspace(normalizedWorkspaceId);
+  }
+  if (browserSpace === "agent" && normalizedSessionId) {
+    hydrateAgentSessionBrowserSpace(normalizedWorkspaceId, normalizedSessionId);
+    seedVisibleAgentBrowserSession(workspace, normalizedSessionId);
+    touchAgentSessionBrowserSpace(normalizedWorkspaceId, normalizedSessionId);
   }
   return workspace;
 }
@@ -17828,13 +18995,26 @@ async function ensureBrowserWorkspace(
 async function setActiveBrowserWorkspace(
   workspaceId: string | null | undefined,
   space?: BrowserSpaceId | null,
+  sessionId?: string | null,
 ) {
+  const previousWorkspaceId = activeBrowserWorkspaceId;
+  const previousSpace = activeBrowserSpaceId;
+  const previousSessionId = activeBrowserSessionId;
   const normalizedWorkspaceId =
     typeof workspaceId === "string" ? workspaceId.trim() : "";
   const browserSpace = browserSpaceId(space);
+  const normalizedSessionId = browserSessionId(sessionId);
   activeBrowserWorkspaceId = normalizedWorkspaceId;
   activeBrowserSpaceId = browserSpace;
+  activeBrowserSessionId = browserSpace === "agent" ? normalizedSessionId : "";
   if (!normalizedWorkspaceId) {
+    if (previousSpace === "agent" && browserSessionId(previousSessionId)) {
+      scheduleAgentSessionBrowserLifecycleCheck(
+        previousWorkspaceId,
+        previousSessionId,
+        SESSION_BROWSER_BUSY_CHECK_MS,
+      );
+    }
     emitBrowserState();
     emitBookmarksState();
     emitDownloadsState();
@@ -17842,27 +19022,88 @@ async function setActiveBrowserWorkspace(
     return emptyBrowserTabListPayload(browserSpace);
   }
 
-  await ensureBrowserWorkspace(normalizedWorkspaceId, browserSpace);
+  const workspace = await ensureBrowserWorkspace(
+    normalizedWorkspaceId,
+    browserSpace,
+    normalizedSessionId,
+  );
+  if (browserSpace === "agent") {
+    if (normalizedSessionId) {
+      hydrateAgentSessionBrowserSpace(normalizedWorkspaceId, normalizedSessionId);
+      setVisibleAgentBrowserSession(workspace, normalizedSessionId);
+      touchAgentSessionBrowserSpace(normalizedWorkspaceId, normalizedSessionId);
+    } else {
+      const visibleSessionId =
+        browserVisibleAgentSessionId(workspace) ||
+        browserFallbackAgentSessionId(workspace);
+      activeBrowserSessionId = browserAgentSessionSpaceState(
+        workspace,
+        visibleSessionId,
+      )
+        ? visibleSessionId
+        : "";
+      if (activeBrowserSessionId) {
+        hydrateAgentSessionBrowserSpace(normalizedWorkspaceId, activeBrowserSessionId);
+        touchAgentSessionBrowserSpace(normalizedWorkspaceId, activeBrowserSessionId);
+      }
+    }
+  }
+  if (
+    previousSpace === "agent" &&
+    browserSessionId(previousSessionId) &&
+    (previousWorkspaceId !== normalizedWorkspaceId ||
+      browserSpace !== "agent" ||
+      browserSessionId(previousSessionId) !== browserSessionId(activeBrowserSessionId))
+  ) {
+    scheduleAgentSessionBrowserLifecycleCheck(
+      previousWorkspaceId,
+      previousSessionId,
+      SESSION_BROWSER_BUSY_CHECK_MS,
+    );
+  }
   updateAttachedBrowserView();
   emitBrowserState(normalizedWorkspaceId, browserSpace);
   emitBookmarksState(normalizedWorkspaceId);
   emitDownloadsState(normalizedWorkspaceId);
   emitHistoryState(normalizedWorkspaceId);
-  return browserWorkspaceSnapshot(normalizedWorkspaceId, browserSpace);
+  return browserWorkspaceSnapshot(
+    normalizedWorkspaceId,
+    browserSpace,
+    browserSpace === "agent" ? activeBrowserSessionId : null,
+    { useVisibleAgentSession: true },
+  );
 }
 
 async function setActiveBrowserTab(
   tabId: string,
   space?: BrowserSpaceId | null,
+  sessionId?: string | null,
 ) {
   const browserSpace = browserSpaceId(space);
-  const workspace = await ensureBrowserWorkspace(undefined, browserSpace);
-  const tabSpace = browserTabSpaceState(workspace, browserSpace);
+  const normalizedSessionId =
+    browserSpace === "agent"
+      ? browserSessionId(sessionId) || browserSessionId(activeBrowserSessionId)
+      : "";
+  const workspace = await ensureBrowserWorkspace(
+    undefined,
+    browserSpace,
+    normalizedSessionId,
+  );
+  const tabSpace = browserTabSpaceState(workspace, browserSpace, normalizedSessionId, {
+    useVisibleAgentSession: !normalizedSessionId,
+  });
   if (!workspace || !tabSpace || !tabSpace.tabs.has(tabId)) {
-    return browserWorkspaceSnapshot(undefined, browserSpace);
+    return browserWorkspaceSnapshot(undefined, browserSpace, normalizedSessionId, {
+      useVisibleAgentSession: true,
+    });
   }
 
   tabSpace.activeTabId = tabId;
+  browserTabSpaceTouch(tabSpace);
+  if (browserSpace === "agent" && normalizedSessionId) {
+    setVisibleAgentBrowserSession(workspace, normalizedSessionId);
+    scheduleAgentSessionBrowserLifecycleCheck(workspace.workspaceId, normalizedSessionId);
+  }
   if (
     workspace.workspaceId === activeBrowserWorkspaceId &&
     browserSpace === activeBrowserSpaceId
@@ -17871,27 +19112,50 @@ async function setActiveBrowserTab(
   }
   emitBrowserState(workspace.workspaceId, browserSpace);
   await persistBrowserWorkspace(workspace.workspaceId);
-  return browserWorkspaceSnapshot(workspace.workspaceId, browserSpace);
+  return browserWorkspaceSnapshot(
+    workspace.workspaceId,
+    browserSpace,
+    normalizedSessionId,
+    { useVisibleAgentSession: true },
+  );
 }
 
-async function closeBrowserTab(tabId: string, space?: BrowserSpaceId | null) {
+async function closeBrowserTab(
+  tabId: string,
+  space?: BrowserSpaceId | null,
+  sessionId?: string | null,
+) {
   const browserSpace = browserSpaceId(space);
-  const workspace = await ensureBrowserWorkspace(undefined, browserSpace);
-  const tabSpace = browserTabSpaceState(workspace, browserSpace);
+  const normalizedSessionId =
+    browserSpace === "agent"
+      ? browserSessionId(sessionId) || browserSessionId(activeBrowserSessionId)
+      : "";
+  const workspace = await ensureBrowserWorkspace(
+    undefined,
+    browserSpace,
+    normalizedSessionId,
+  );
+  const tabSpace = browserTabSpaceState(workspace, browserSpace, normalizedSessionId, {
+    useVisibleAgentSession: !normalizedSessionId,
+  });
   const tab = tabSpace?.tabs.get(tabId);
   if (!workspace || !tabSpace || !tab) {
-    return browserWorkspaceSnapshot(undefined, browserSpace);
+    return browserWorkspaceSnapshot(undefined, browserSpace, normalizedSessionId, {
+      useVisibleAgentSession: true,
+    });
   }
 
   const tabIds = Array.from(tabSpace.tabs.keys());
   const closedIndex = tabIds.indexOf(tabId);
   tabSpace.tabs.delete(tabId);
   closeBrowserTabRecord(tab);
+  browserTabSpaceTouch(tabSpace);
 
   if (tabSpace.tabs.size === 0) {
     const replacementTabId = createBrowserTab(workspace.workspaceId, {
       url: HOME_URL,
       browserSpace,
+      sessionId: normalizedSessionId,
     });
     tabSpace.activeTabId = replacementTabId ?? "";
   } else if (tabSpace.activeTabId === tabId) {
@@ -17906,9 +19170,17 @@ async function closeBrowserTab(tabId: string, space?: BrowserSpaceId | null) {
   ) {
     updateAttachedBrowserView();
   }
+  if (browserSpace === "agent" && normalizedSessionId) {
+    scheduleAgentSessionBrowserLifecycleCheck(workspace.workspaceId, normalizedSessionId);
+  }
   emitBrowserState(workspace.workspaceId, browserSpace);
   await persistBrowserWorkspace(workspace.workspaceId);
-  return browserWorkspaceSnapshot(workspace.workspaceId, browserSpace);
+  return browserWorkspaceSnapshot(
+    workspace.workspaceId,
+    browserSpace,
+    normalizedSessionId,
+    { useVisibleAgentSession: true },
+  );
 }
 
 function setBrowserBounds(bounds: BrowserBoundsPayload) {
@@ -17922,6 +19194,8 @@ function setBrowserBounds(bounds: BrowserBoundsPayload) {
   const activeTab = getActiveBrowserTab(
     activeBrowserWorkspaceId,
     activeBrowserSpaceId,
+    activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+    { useVisibleAgentSession: true },
   );
   if (!activeTab || !hasVisibleBrowserBounds()) {
     mainWindow?.setBrowserView(null);
@@ -19028,6 +20302,7 @@ function createMainWindow() {
   browserBounds = { x: 0, y: 0, width: 0, height: 0 };
   activeBrowserWorkspaceId = "";
   activeBrowserSpaceId = "user";
+  activeBrowserSessionId = "";
   for (const workspaceId of Array.from(browserWorkspaces.keys())) {
     destroyBrowserWorkspace(workspaceId);
   }
@@ -19117,6 +20392,7 @@ function createMainWindow() {
     }
     activeBrowserWorkspaceId = "";
     activeBrowserSpaceId = "user";
+    activeBrowserSessionId = "";
     attachedBrowserTabView = null;
     attachedAppSurfaceView = null;
     closeAllFilePreviewWatchSubscriptions();
@@ -20185,78 +21461,246 @@ app.whenReady().then(async () => {
       _event,
       workspaceId?: string | null,
       space?: BrowserSpaceId | null,
+      sessionId?: string | null,
     ) => {
-      return setActiveBrowserWorkspace(workspaceId, space);
+      return setActiveBrowserWorkspace(workspaceId, space, sessionId);
     },
   );
   ipcMain.handle("browser:getState", async () => {
-    await ensureBrowserWorkspace(undefined, activeBrowserSpaceId);
-    return browserWorkspaceSnapshot(undefined, activeBrowserSpaceId);
+    await ensureBrowserWorkspace(
+      undefined,
+      activeBrowserSpaceId,
+      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+    );
+    return browserWorkspaceSnapshot(
+      undefined,
+      activeBrowserSpaceId,
+      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+      { useVisibleAgentSession: true },
+    );
   });
   ipcMain.handle(
     "browser:setBounds",
     async (_event, bounds: BrowserBoundsPayload) => {
       setBrowserBounds(bounds);
-      return browserWorkspaceSnapshot(undefined, activeBrowserSpaceId);
+      return browserWorkspaceSnapshot(
+        undefined,
+        activeBrowserSpaceId,
+        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+        { useVisibleAgentSession: true },
+      );
     },
   );
   ipcMain.handle("browser:navigate", async (_event, targetUrl: string) => {
     if (!activeBrowserWorkspaceId) {
       return emptyBrowserTabListPayload(activeBrowserSpaceId);
     }
+    if (
+      maybePromptBrowserInterrupt(
+        activeBrowserWorkspaceId,
+        activeBrowserSpaceId,
+        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+      )
+    ) {
+      return browserWorkspaceSnapshot(
+        activeBrowserWorkspaceId,
+        activeBrowserSpaceId,
+        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+        { useVisibleAgentSession: true },
+      );
+    }
     return navigateActiveBrowserTab(
       activeBrowserWorkspaceId,
       targetUrl,
       activeBrowserSpaceId,
+      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
     );
   });
   ipcMain.handle("browser:back", async () => {
-    await ensureBrowserWorkspace(undefined, activeBrowserSpaceId);
-    const activeTab = getActiveBrowserTab(undefined, activeBrowserSpaceId);
+    if (
+      activeBrowserWorkspaceId &&
+      maybePromptBrowserInterrupt(
+        activeBrowserWorkspaceId,
+        activeBrowserSpaceId,
+        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+      )
+    ) {
+      return browserWorkspaceSnapshot(
+        activeBrowserWorkspaceId,
+        activeBrowserSpaceId,
+        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+        { useVisibleAgentSession: true },
+      );
+    }
+    await ensureBrowserWorkspace(
+      undefined,
+      activeBrowserSpaceId,
+      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+    );
+    const activeTab = getActiveBrowserTab(
+      undefined,
+      activeBrowserSpaceId,
+      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+      { useVisibleAgentSession: true },
+    );
     if (activeTab?.view.webContents.navigationHistory.canGoBack()) {
       activeTab.view.webContents.navigationHistory.goBack();
     }
-    return browserWorkspaceSnapshot(undefined, activeBrowserSpaceId);
+    return browserWorkspaceSnapshot(
+      undefined,
+      activeBrowserSpaceId,
+      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+      { useVisibleAgentSession: true },
+    );
   });
   ipcMain.handle("browser:forward", async () => {
-    await ensureBrowserWorkspace(undefined, activeBrowserSpaceId);
-    const activeTab = getActiveBrowserTab(undefined, activeBrowserSpaceId);
+    if (
+      activeBrowserWorkspaceId &&
+      maybePromptBrowserInterrupt(
+        activeBrowserWorkspaceId,
+        activeBrowserSpaceId,
+        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+      )
+    ) {
+      return browserWorkspaceSnapshot(
+        activeBrowserWorkspaceId,
+        activeBrowserSpaceId,
+        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+        { useVisibleAgentSession: true },
+      );
+    }
+    await ensureBrowserWorkspace(
+      undefined,
+      activeBrowserSpaceId,
+      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+    );
+    const activeTab = getActiveBrowserTab(
+      undefined,
+      activeBrowserSpaceId,
+      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+      { useVisibleAgentSession: true },
+    );
     if (activeTab?.view.webContents.navigationHistory.canGoForward()) {
       activeTab.view.webContents.navigationHistory.goForward();
     }
-    return browserWorkspaceSnapshot(undefined, activeBrowserSpaceId);
+    return browserWorkspaceSnapshot(
+      undefined,
+      activeBrowserSpaceId,
+      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+      { useVisibleAgentSession: true },
+    );
   });
   ipcMain.handle("browser:reload", async () => {
-    await ensureBrowserWorkspace(undefined, activeBrowserSpaceId);
+    if (
+      activeBrowserWorkspaceId &&
+      maybePromptBrowserInterrupt(
+        activeBrowserWorkspaceId,
+        activeBrowserSpaceId,
+        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+      )
+    ) {
+      return browserWorkspaceSnapshot(
+        activeBrowserWorkspaceId,
+        activeBrowserSpaceId,
+        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+        { useVisibleAgentSession: true },
+      );
+    }
+    await ensureBrowserWorkspace(
+      undefined,
+      activeBrowserSpaceId,
+      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+    );
     getActiveBrowserTab(
       undefined,
       activeBrowserSpaceId,
+      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+      { useVisibleAgentSession: true },
     )?.view.webContents.reload();
-    return browserWorkspaceSnapshot(undefined, activeBrowserSpaceId);
+    return browserWorkspaceSnapshot(
+      undefined,
+      activeBrowserSpaceId,
+      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+      { useVisibleAgentSession: true },
+    );
   });
   ipcMain.handle("browser:stopLoading", async () => {
-    await ensureBrowserWorkspace(undefined, activeBrowserSpaceId);
-    const activeTab = getActiveBrowserTab(undefined, activeBrowserSpaceId);
+    if (
+      activeBrowserWorkspaceId &&
+      maybePromptBrowserInterrupt(
+        activeBrowserWorkspaceId,
+        activeBrowserSpaceId,
+        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+      )
+    ) {
+      return browserWorkspaceSnapshot(
+        activeBrowserWorkspaceId,
+        activeBrowserSpaceId,
+        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+        { useVisibleAgentSession: true },
+      );
+    }
+    await ensureBrowserWorkspace(
+      undefined,
+      activeBrowserSpaceId,
+      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+    );
+    const activeTab = getActiveBrowserTab(
+      undefined,
+      activeBrowserSpaceId,
+      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+      { useVisibleAgentSession: true },
+    );
     if (activeTab?.view.webContents.isLoadingMainFrame()) {
       activeTab.view.webContents.stop();
     }
-    return browserWorkspaceSnapshot(undefined, activeBrowserSpaceId);
+    return browserWorkspaceSnapshot(
+      undefined,
+      activeBrowserSpaceId,
+      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+      { useVisibleAgentSession: true },
+    );
   });
   ipcMain.handle("browser:newTab", async (_event, targetUrl?: string) => {
+    if (
+      activeBrowserWorkspaceId &&
+      maybePromptBrowserInterrupt(
+        activeBrowserWorkspaceId,
+        activeBrowserSpaceId,
+        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+      )
+    ) {
+      return browserWorkspaceSnapshot(
+        activeBrowserWorkspaceId,
+        activeBrowserSpaceId,
+        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+        { useVisibleAgentSession: true },
+      );
+    }
     const workspace = await ensureBrowserWorkspace(
       undefined,
       activeBrowserSpaceId,
+      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
     );
-    const tabSpace = browserTabSpaceState(workspace, activeBrowserSpaceId);
+    const tabSpace = browserTabSpaceState(
+      workspace,
+      activeBrowserSpaceId,
+      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+      { useVisibleAgentSession: true },
+    );
     if (!workspace) {
       return emptyBrowserTabListPayload(activeBrowserSpaceId);
     }
     const nextTabId = createBrowserTab(workspace.workspaceId, {
       url: targetUrl,
       browserSpace: activeBrowserSpaceId,
+      sessionId: activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
     });
     if (nextTabId && tabSpace) {
       tabSpace.activeTabId = nextTabId;
+      if (activeBrowserSpaceId === "agent" && activeBrowserSessionId) {
+        setVisibleAgentBrowserSession(workspace, activeBrowserSessionId);
+      }
       updateAttachedBrowserView();
       emitBrowserState(workspace.workspaceId, activeBrowserSpaceId);
       await persistBrowserWorkspace(workspace.workspaceId);
@@ -20264,15 +21708,63 @@ app.whenReady().then(async () => {
     return browserWorkspaceSnapshot(
       workspace.workspaceId,
       activeBrowserSpaceId,
+      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+      { useVisibleAgentSession: true },
     );
   });
   ipcMain.handle("browser:setActiveTab", async (_event, tabId: string) => {
-    await ensureBrowserWorkspace(undefined, activeBrowserSpaceId);
-    return setActiveBrowserTab(tabId, activeBrowserSpaceId);
+    if (
+      activeBrowserWorkspaceId &&
+      maybePromptBrowserInterrupt(
+        activeBrowserWorkspaceId,
+        activeBrowserSpaceId,
+        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+      )
+    ) {
+      return browserWorkspaceSnapshot(
+        activeBrowserWorkspaceId,
+        activeBrowserSpaceId,
+        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+        { useVisibleAgentSession: true },
+      );
+    }
+    await ensureBrowserWorkspace(
+      undefined,
+      activeBrowserSpaceId,
+      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+    );
+    return setActiveBrowserTab(
+      tabId,
+      activeBrowserSpaceId,
+      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+    );
   });
   ipcMain.handle("browser:closeTab", async (_event, tabId: string) => {
-    await ensureBrowserWorkspace(undefined, activeBrowserSpaceId);
-    return closeBrowserTab(tabId, activeBrowserSpaceId);
+    if (
+      activeBrowserWorkspaceId &&
+      maybePromptBrowserInterrupt(
+        activeBrowserWorkspaceId,
+        activeBrowserSpaceId,
+        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+      )
+    ) {
+      return browserWorkspaceSnapshot(
+        activeBrowserWorkspaceId,
+        activeBrowserSpaceId,
+        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+        { useVisibleAgentSession: true },
+      );
+    }
+    await ensureBrowserWorkspace(
+      undefined,
+      activeBrowserSpaceId,
+      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+    );
+    return closeBrowserTab(
+      tabId,
+      activeBrowserSpaceId,
+      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+    );
   });
   ipcMain.handle("browser:getBookmarks", async () => {
     const workspace = await ensureBrowserWorkspace();
@@ -20287,7 +21779,12 @@ app.whenReady().then(async () => {
         return workspace?.bookmarks ?? [];
       }
 
-      const activeTab = getActiveBrowserTab(undefined, activeBrowserSpaceId);
+      const activeTab = getActiveBrowserTab(
+        undefined,
+        activeBrowserSpaceId,
+        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+        { useVisibleAgentSession: true },
+      );
       const faviconUrl =
         activeTab?.state.url === url ? activeTab.state.faviconUrl : undefined;
 
@@ -20455,13 +21952,39 @@ app.whenReady().then(async () => {
   ipcMain.handle(
     "browser:openHistoryUrl",
     async (_event, targetUrl: string) => {
+      if (
+        activeBrowserWorkspaceId &&
+        maybePromptBrowserInterrupt(
+          activeBrowserWorkspaceId,
+          activeBrowserSpaceId,
+          activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+        )
+      ) {
+        return browserWorkspaceSnapshot(
+          activeBrowserWorkspaceId,
+          activeBrowserSpaceId,
+          activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+          { useVisibleAgentSession: true },
+        );
+      }
       const workspace = await ensureBrowserWorkspace(
         undefined,
         activeBrowserSpaceId,
+        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
       );
-      const activeTab = getActiveBrowserTab(undefined, activeBrowserSpaceId);
+      const activeTab = getActiveBrowserTab(
+        undefined,
+        activeBrowserSpaceId,
+        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+        { useVisibleAgentSession: true },
+      );
       if (!workspace || !activeTab) {
-        return browserWorkspaceSnapshot(undefined, activeBrowserSpaceId);
+        return browserWorkspaceSnapshot(
+          undefined,
+          activeBrowserSpaceId,
+          activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+          { useVisibleAgentSession: true },
+        );
       }
 
       try {
@@ -20470,7 +21993,12 @@ app.whenReady().then(async () => {
         await activeTab.view.webContents.loadURL(targetUrl);
       } catch (error) {
         if (isAbortedBrowserLoadError(error)) {
-          return browserWorkspaceSnapshot(workspace.workspaceId, activeBrowserSpaceId);
+          return browserWorkspaceSnapshot(
+            workspace.workspaceId,
+            activeBrowserSpaceId,
+            activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+            { useVisibleAgentSession: true },
+          );
         }
         activeTab.state = {
           ...activeTab.state,
@@ -20483,6 +22011,8 @@ app.whenReady().then(async () => {
       return browserWorkspaceSnapshot(
         workspace.workspaceId,
         activeBrowserSpaceId,
+        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+        { useVisibleAgentSession: true },
       );
     },
   );

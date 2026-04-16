@@ -22,6 +22,10 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PaneCard } from "@/components/ui/PaneCard";
+import {
+  browserSurfaceStatusSummary,
+} from "@/components/panes/browserSessionUi";
+import { useBrowserGlowPreview } from "@/components/panes/useBrowserGlowPreview";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 const HOME_URL = "https://www.google.com";
@@ -30,6 +34,7 @@ const EXPLICIT_SCHEME_PATTERN = /^[a-zA-Z][a-zA-Z\d+\-.]*:/;
 const LOCALHOST_PATTERN = /^localhost(?::\d+)?(?:[/?#]|$)/i;
 const IPV4_HOST_PATTERN = /^(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?(?:[/?#]|$)/;
 const IPV6_HOST_PATTERN = /^\[[0-9a-fA-F:]+\](?::\d+)?(?:[/?#]|$)/;
+const BROWSER_SESSION_POLL_INTERVAL_MS = 2000;
 
 const EMPTY_BROWSER_STATE: BrowserStatePayload = {
   id: "",
@@ -50,7 +55,21 @@ const INITIAL_STATE: BrowserTabListPayload = {
     user: 0,
     agent: 0,
   },
+  sessionId: null,
+  lifecycleState: null,
+  controlMode: "none",
+  controlSessionId: null,
 };
+
+function runtimeStateIndex(
+  items: SessionRuntimeRecordPayload[],
+): Record<string, SessionRuntimeRecordPayload> {
+  return Object.fromEntries(
+    items
+      .filter((item) => Boolean(item.session_id.trim()))
+      .map((item) => [item.session_id, item]),
+  );
+}
 
 function normalizeUrl(rawInput: string) {
   const trimmed = rawInput.trim();
@@ -98,6 +117,9 @@ export function BrowserPane({
   const [historyEntries, setHistoryEntries] = useState<
     BrowserHistoryEntryPayload[]
   >([]);
+  const [runtimeStatesBySessionId, setRuntimeStatesBySessionId] = useState<
+    Record<string, SessionRuntimeRecordPayload>
+  >({});
   const [addressFocused, setAddressFocused] = useState(false);
   const [highlightedSuggestionIndex, setHighlightedSuggestionIndex] =
     useState(-1);
@@ -174,6 +196,46 @@ export function BrowserPane({
       unsubscribe();
     };
   }, [selectedWorkspaceId, visibleBrowserSpace]);
+
+  useEffect(() => {
+    if (!selectedWorkspaceId) {
+      setRuntimeStatesBySessionId({});
+      return;
+    }
+
+    let cancelled = false;
+    let requestInFlight = false;
+
+    const loadSessionState = async () => {
+      if (requestInFlight) {
+        return;
+      }
+      requestInFlight = true;
+      try {
+        const runtimeStatesResponse =
+          await window.electronAPI.workspace.listRuntimeStates(
+            selectedWorkspaceId,
+          );
+        if (cancelled) {
+          return;
+        }
+        setRuntimeStatesBySessionId(runtimeStateIndex(runtimeStatesResponse.items));
+      } finally {
+        requestInFlight = false;
+      }
+    };
+
+    void loadSessionState();
+    const intervalId = window.setInterval(
+      () => void loadSessionState(),
+      BROWSER_SESSION_POLL_INTERVAL_MS,
+    );
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [selectedWorkspaceId]);
 
   useEffect(() => {
     let mounted = true;
@@ -300,6 +362,11 @@ export function BrowserPane({
       observer.disconnect();
       window.removeEventListener("resize", queueSync);
       window.cancelAnimationFrame(rafId);
+    };
+  }, [layoutSyncKey, suspendNativeView]);
+
+  useEffect(() => {
+    return () => {
       void window.electronAPI.browser.setBounds({
         x: 0,
         y: 0,
@@ -307,7 +374,7 @@ export function BrowserPane({
         height: 0,
       });
     };
-  }, [layoutSyncKey, suspendNativeView]);
+  }, []);
 
   const navigateTo = (rawInput: string) => {
     const nextUrl = normalizeUrl(rawInput);
@@ -357,6 +424,33 @@ export function BrowserPane({
       downloads.filter((download) => download.status === "progressing").length,
     [downloads],
   );
+  const currentSessionId = useMemo(
+    () => browserState.controlSessionId || browserState.sessionId || null,
+    [browserState.controlSessionId, browserState.sessionId],
+  );
+  const currentRuntimeState = useMemo(
+    () =>
+      currentSessionId ? runtimeStatesBySessionId[currentSessionId] ?? null : null,
+    [currentSessionId, runtimeStatesBySessionId],
+  );
+  const sessionBrowserStatus = useMemo(
+    () =>
+      browserSurfaceStatusSummary({
+        browserSpace: visibleBrowserSpace,
+        controlMode: browserState.controlMode,
+        lifecycleState: browserState.lifecycleState,
+        runtimeState: currentRuntimeState,
+      }),
+    [
+      browserState.controlMode,
+      browserState.lifecycleState,
+      currentRuntimeState,
+      visibleBrowserSpace,
+    ],
+  );
+  const glowPreviewEnabled = useBrowserGlowPreview();
+  const showAgentActivityHighlight =
+    sessionBrowserStatus?.tone === "active" || glowPreviewEnabled;
   const historySuggestions = useMemo(() => {
     if (!addressFocused) {
       return [];
@@ -747,7 +841,6 @@ export function BrowserPane({
               </div>
             </form>
           </div>
-
           {showBookmarkStrip ? (
             <div className="flex min-h-6 items-center gap-0.5 overflow-x-auto px-1.5 py-0.5">
               {bookmarks.slice(0, 12).map((bookmark) => (
@@ -783,8 +876,27 @@ export function BrowserPane({
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-px pb-px">
           <div
             ref={viewportRef}
-            className="relative min-h-0 flex-1 overflow-hidden rounded-b-xl bg-card"
+            className={`relative min-h-0 flex-1 overflow-hidden rounded-b-xl border bg-card transition-all ${
+              showAgentActivityHighlight
+                ? "border-primary/70"
+                : "border-transparent"
+            }`}
+            style={
+              showAgentActivityHighlight
+                ? {
+                    boxShadow:
+                      "0 0 40px color-mix(in oklch, var(--primary) 34%, transparent)",
+                  }
+                : undefined
+            }
           >
+            {showAgentActivityHighlight ? (
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 rounded-[inherit] border-2 border-primary/60 shadow-[inset_0_0_0_1px_color-mix(in_oklch,var(--primary)_30%,transparent)]"
+              />
+            ) : null}
+
             {!activeTab.initialized ? (
               <div className="absolute inset-0 grid place-items-center bg-card p-6 text-center">
                 <div className="pointer-events-none w-full max-w-[320px] rounded-[24px] border border-border/55 bg-card px-5 py-5 shadow-xl backdrop-blur">

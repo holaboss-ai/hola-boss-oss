@@ -30,6 +30,25 @@ test("browser pane exposes a single inline browser-space switcher", async () => 
   assert.doesNotMatch(source, /aria-label="Downloads"/);
 });
 
+test("browser pane keeps control treatment without a session selector in the chrome", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.doesNotMatch(source, /Choose session browser/);
+  assert.doesNotMatch(source, /No session browsers/);
+  assert.doesNotMatch(source, /onSelectAgentSessionBrowser/);
+  assert.match(source, /const glowPreviewEnabled = useBrowserGlowPreview\(\);/);
+  assert.match(
+    source,
+    /const showAgentActivityHighlight =\s*sessionBrowserStatus\?\.tone === "active" \|\| glowPreviewEnabled;/,
+  );
+  assert.doesNotMatch(source, /Shared agent browser/);
+  assert.doesNotMatch(source, /<span className="truncate">\{sessionBrowserStatus\.detail\}<\/span>/);
+  assert.match(source, /border-primary\/70/);
+  assert.match(source, /boxShadow:\s*"0 0 40px color-mix\(in oklch, var\(--primary\) 34%, transparent\)"/);
+  assert.match(source, /rounded-\[inherit\] border-2 border-primary\/60/);
+  assert.doesNotMatch(source, /absolute left-3 top-3 inline-flex items-center gap-1\.5 rounded-full/);
+});
+
 test("browser pane preserves explicit URL schemes and supports localhost-style input", async () => {
   const source = await readFile(sourcePath, "utf8");
 
@@ -88,4 +107,12 @@ test("browser pane keeps loading state in the address bar and turns refresh into
   );
   assert.doesNotMatch(source, /tab\.loading \? \(\s*<Loader2 size=\{11\} className="shrink-0 animate-spin" \/>\s*\) : null/);
   assert.doesNotMatch(source, /activeTab\.initialized && activeTab\.loading/);
+});
+
+test("browser pane only clears native browser bounds on suspend or unmount, not every layout sync", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /if \(suspendNativeView\) \{\s*void window\.electronAPI\.browser\.setBounds\(\{\s*x: 0,\s*y: 0,\s*width: 0,\s*height: 0,\s*\}\);\s*return;\s*\}/s);
+  assert.match(source, /useLayoutEffect\(\(\) => \{[\s\S]*window\.setTimeout\(queueSync, 400\);[\s\S]*return \(\) => \{\s*observer\.disconnect\(\);[\s\S]*window\.cancelAnimationFrame\(rafId\);\s*\};\s*\}, \[layoutSyncKey, suspendNativeView\]\);/s);
+  assert.match(source, /useEffect\(\(\) => \{\s*return \(\) => \{\s*void window\.electronAPI\.browser\.setBounds\(\{\s*x: 0,\s*y: 0,\s*width: 0,\s*height: 0,\s*\}\);\s*\};\s*\}, \[\]\);/s);
 });

@@ -17,6 +17,10 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  browserSurfaceStatusSummary,
+} from "@/components/panes/browserSessionUi";
+import { useBrowserGlowPreview } from "@/components/panes/useBrowserGlowPreview";
 import { useWorkspaceBrowser } from "@/components/panes/useWorkspaceBrowser";
 
 const HOME_URL = "https://www.google.com";
@@ -70,9 +74,38 @@ export function SpaceBrowserDisplayPane({
   const addressInputRef = useRef<HTMLInputElement | null>(null);
   const addressFieldRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
-  const { activeTab, activeBookmark, historyEntries, isBookmarked } =
-    useWorkspaceBrowser(browserSpace, { includeHistory: true });
+  const {
+    activeTab,
+    activeBookmark,
+    historyEntries,
+    isBookmarked,
+    browserState,
+    currentRuntimeState,
+  } = useWorkspaceBrowser(browserSpace, {
+    includeHistory: true,
+    includeSessions: true,
+  });
   const isActiveTabBusy = activeTab.loading || !activeTab.initialized;
+
+  const sessionBrowserStatus = useMemo(
+    () =>
+      browserSurfaceStatusSummary({
+        browserSpace,
+        controlMode: browserState.controlMode,
+        lifecycleState: browserState.lifecycleState,
+        runtimeState: currentRuntimeState,
+      }),
+    [
+      browserSpace,
+      browserState.controlMode,
+      browserState.lifecycleState,
+      currentRuntimeState,
+    ],
+  );
+  const glowPreviewEnabled = useBrowserGlowPreview();
+
+  const showAgentActivityHighlight =
+    sessionBrowserStatus?.tone === "active" || glowPreviewEnabled;
 
   useEffect(() => {
     setInputValue(activeTab.url || "");
@@ -122,6 +155,11 @@ export function SpaceBrowserDisplayPane({
       observer.disconnect();
       window.removeEventListener("resize", queueSync);
       window.cancelAnimationFrame(rafId);
+    };
+  }, [layoutSyncKey, suspendNativeView]);
+
+  useEffect(() => {
+    return () => {
       void window.electronAPI.browser.setBounds({
         x: 0,
         y: 0,
@@ -129,7 +167,7 @@ export function SpaceBrowserDisplayPane({
         height: 0,
       });
     };
-  }, [layoutSyncKey, suspendNativeView]);
+  }, []);
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -305,7 +343,7 @@ export function SpaceBrowserDisplayPane({
       }`}
     >
       <div className="shrink-0 border-b border-border/45 px-4 py-2">
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           <Button
             variant="ghost"
             size="icon-sm"
@@ -391,14 +429,34 @@ export function SpaceBrowserDisplayPane({
           >
             <Star size={13} fill={isBookmarked ? "currentColor" : "none"} />
           </Button>
+
         </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden p-3">
         <div
           ref={viewportRef}
-          className="relative h-full min-h-0 overflow-hidden rounded-xl border border-border bg-card"
+          className={`relative h-full min-h-0 overflow-hidden rounded-xl border bg-card transition-all ${
+            showAgentActivityHighlight
+              ? "border-primary/70"
+              : "border-border"
+          }`}
+          style={
+            showAgentActivityHighlight
+              ? {
+                  boxShadow:
+                    "0 0 40px color-mix(in oklch, var(--primary) 34%, transparent)",
+                }
+              : undefined
+          }
         >
+          {showAgentActivityHighlight ? (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 rounded-[inherit] border-2 border-primary/60 shadow-[inset_0_0_0_1px_color-mix(in_oklch,var(--primary)_30%,transparent)]"
+            />
+          ) : null}
+
           {!activeTab.initialized ? (
             <div className="absolute inset-0 grid place-items-center bg-card p-6 text-center">
               <div className="pointer-events-none w-full max-w-[360px] rounded-[24px] border border-border bg-card/92 px-6 py-6 shadow-lg backdrop-blur-sm">

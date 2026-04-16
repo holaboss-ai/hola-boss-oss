@@ -140,6 +140,10 @@ interface BrowserTabListPayload {
   activeTabId: string;
   tabs: BrowserStatePayload[];
   tabCounts: BrowserTabCountsPayload;
+  sessionId: string | null;
+  lifecycleState: "active" | "suspended" | null;
+  controlMode: "none" | "user_locked" | "session_owned";
+  controlSessionId: string | null;
 }
 
 interface BrowserBookmarkPayload {
@@ -265,6 +269,7 @@ interface WorkbenchOpenBrowserPayload {
   workspaceId?: string | null;
   url?: string | null;
   space?: BrowserSpaceId | null;
+  sessionId?: string | null;
 }
 
 interface TemplateAgentInfoPayload {
@@ -1385,8 +1390,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }
   },
   browser: {
-    setActiveWorkspace: (workspaceId?: string | null, space?: BrowserSpaceId | null) =>
-      ipcRenderer.invoke("browser:setActiveWorkspace", workspaceId, space) as Promise<BrowserTabListPayload>,
+    setActiveWorkspace: (
+      workspaceId?: string | null,
+      space?: BrowserSpaceId | null,
+      sessionId?: string | null,
+    ) =>
+      ipcRenderer.invoke("browser:setActiveWorkspace", workspaceId, space, sessionId) as Promise<BrowserTabListPayload>,
     getState: () => ipcRenderer.invoke("browser:getState") as Promise<BrowserTabListPayload>,
     setBounds: (bounds: BrowserBoundsPayload) => ipcRenderer.invoke("browser:setBounds", bounds) as Promise<BrowserTabListPayload>,
     navigate: (targetUrl: string) => ipcRenderer.invoke("browser:navigate", targetUrl) as Promise<BrowserTabListPayload>,
