@@ -2901,6 +2901,7 @@ test("runTsRunnerCli passes prepared MCP server ids into runtime config when no 
     );
 
     assert.equal(exitCode, 0);
+    assert.ok(capturedProjectRequest);
     assert.deepEqual(
       (capturedProjectRequest as { resolved_mcp_server_ids: string[] }).resolved_mcp_server_ids,
       ["context7"]
@@ -2909,6 +2910,7 @@ test("runTsRunnerCli passes prepared MCP server ids into runtime config when no 
       (capturedProjectRequest as { resolved_mcp_tool_refs: Array<Record<string, string>> }).resolved_mcp_tool_refs,
       []
     );
+    assert.ok(capturedHarnessRequest);
     assert.deepEqual((capturedHarnessRequest as { mcp_servers: Array<{ name: string }> }).mcp_servers.map((server) => server.name), [
       "context7"
     ]);
