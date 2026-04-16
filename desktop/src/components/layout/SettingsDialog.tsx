@@ -388,7 +388,7 @@ export function SettingsDialog({
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
-        className="pointer-events-auto relative z-10 grid h-[min(680px,calc(100vh-32px))] w-[min(880px,calc(100vw-24px))] min-w-0 overflow-hidden rounded-2xl border border-border bg-background shadow-lg grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[220px_minmax(0,1fr)] lg:grid-rows-1"
+        className="pointer-events-auto relative z-10 grid h-[min(780px,calc(100vh-32px))] w-[min(980px,calc(100vw-24px))] min-w-0 overflow-hidden rounded-2xl border border-border bg-background shadow-lg grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[220px_minmax(0,1fr)] lg:grid-rows-1"
       >
         <aside className="border-b border-sidebar-border bg-sidebar p-4 text-sidebar-foreground lg:border-b-0 lg:border-r">
           <nav className="mt-6 grid gap-1">

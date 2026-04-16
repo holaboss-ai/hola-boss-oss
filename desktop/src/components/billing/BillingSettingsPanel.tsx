@@ -1,8 +1,22 @@
 import { useMemo, useState } from "react";
-import { AlertCircle, ChevronRight } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowDownLeft,
+  ArrowUpRight,
+  ChevronRight,
+  Gift,
+  ShoppingCart,
+  Sparkles,
+  UserCog,
+  Zap,
+} from "lucide-react";
 import { BillingSummaryCard } from "@/components/billing/BillingSummaryCard";
 import { Button } from "@/components/ui/button";
 import { useDesktopBilling } from "@/lib/billing/useDesktopBilling";
+
+// ============================================================================
+// Helpers
+// ============================================================================
 
 function formatBillingDate(value: string) {
   return new Date(value).toLocaleDateString(undefined, {
@@ -31,40 +45,11 @@ function formatBillingDateTime(value: string) {
   return `${datePart} · ${timePart}`;
 }
 
-// Short time only (no date) for child rows inside a group.
-function formatBillingTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleTimeString(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
-}
-
 const CATEGORY_LABELS: Record<string, string> = {
   llm: "Model",
   integration: "Integration",
   proactive: "Background work",
   workspace: "Workspace",
-};
-
-const SERVICE_TYPE_LABELS: Record<string, string> = {
-  workspace: "Workspace chat",
-  "model-proxy": "Model proxy",
-  compose: "Compose",
-  sourcing: "Sourcing",
-  hola_canvas: "Canvas",
-  growth_campaign: "Growth campaign",
-  marketplace: "Marketplace",
-  proactive: "Background work",
-  cronjobs: "Scheduled task",
-  daily_work: "Daily work",
-  campaign: "Campaign",
-  integration: "Integration",
 };
 
 function titleCase(raw: string): string {
@@ -77,10 +62,6 @@ function titleCase(raw: string): string {
 
 function humanizeCategory(raw: string): string {
   return CATEGORY_LABELS[raw] ?? titleCase(raw);
-}
-
-function humanizeServiceType(raw: string): string {
-  return SERVICE_TYPE_LABELS[raw] ?? titleCase(raw);
 }
 
 function readMetadataString(
@@ -112,7 +93,7 @@ function resolveUsageTitle(item: UsageItem): string {
     return humanizeCategory(category);
   }
   if (item.serviceType) {
-    return humanizeServiceType(item.serviceType);
+    return titleCase(item.serviceType);
   }
   if (item.type === "allocate" || item.amount > 0) {
     return "Credits added";
@@ -120,15 +101,34 @@ function resolveUsageTitle(item: UsageItem): string {
   if (
     item.reason &&
     item.reason.trim() &&
-    item.reason !== "Service consumption"
+    item.reason !== "Service consumption" &&
+    !item.reason.startsWith("Service consumption:")
   ) {
     return item.reason;
   }
-  return humanizeServiceType(item.type);
+  return titleCase(item.type);
+}
+
+function resolveUsageSubtitle(item: UsageItem): string | null {
+  const operation = readMetadataString(item.metadata, "operation");
+  const workspaceId = readMetadataString(item.metadata, "workspaceId");
+  const modelId = readMetadataString(item.metadata, "modelId");
+
+  if (operation && operation !== modelId) {
+    return operation;
+  }
+  if (item.category === "llm" && workspaceId) {
+    return `Workspace ${workspaceId.slice(0, 8)}`;
+  }
+  const reason = (item.reason ?? "").trim();
+  if (!reason || reason.startsWith("Service consumption")) {
+    return null;
+  }
+  return reason;
 }
 
 // ============================================================================
-// Session grouping
+// Session Grouping
 // ============================================================================
 
 interface UsageGroup {
@@ -136,7 +136,6 @@ interface UsageGroup {
   items: UsageItem[];
   totalAmount: number;
   firstCreatedAt: string;
-  lastCreatedAt: string;
 }
 
 function groupBySession(items: UsageItem[]): UsageGroup[] {
@@ -150,15 +149,12 @@ function groupBySession(items: UsageItem[]): UsageGroup[] {
     if (sessionId && sessionId === currentSessionId && currentGroup) {
       currentGroup.items.push(item);
       currentGroup.totalAmount += item.amount;
-      // items arrive createdAt DESC so "last" is actually the earliest
-      currentGroup.lastCreatedAt = item.createdAt;
     } else {
       currentGroup = {
         key: sessionId ?? item.id,
         items: [item],
         totalAmount: item.amount,
         firstCreatedAt: item.createdAt,
-        lastCreatedAt: item.createdAt,
       };
       groups.push(currentGroup);
       currentSessionId = sessionId;
@@ -167,29 +163,25 @@ function groupBySession(items: UsageItem[]): UsageGroup[] {
   return groups;
 }
 
-// Group header title: e.g. "Chat · 3 calls" or model name for single items.
 function resolveGroupTitle(group: UsageGroup): string {
   const first = group.items[0];
   if (group.items.length === 1) {
     return resolveUsageTitle(first);
   }
-  const category = first.category ?? null;
   const modelId = readMetadataString(first.metadata, "modelId");
   const provider = readMetadataString(first.metadata, "provider");
 
   let label: string;
-  if (category === "llm" && modelId) {
+  if (first.category === "llm" && modelId) {
     label = provider ? `${provider} · ${modelId}` : modelId;
-  } else if (category) {
-    label = humanizeCategory(category);
+  } else if (first.category) {
+    label = humanizeCategory(first.category);
   } else {
     label = "Chat";
   }
   return `${label} · ${group.items.length} calls`;
 }
 
-// Group subtitle: show session + workspace context so the user can tell
-// sessions apart even when the model is the same.
 function resolveGroupSubtitle(group: UsageGroup): string | null {
   if (group.items.length <= 1) {
     return null;
@@ -205,42 +197,77 @@ function resolveGroupSubtitle(group: UsageGroup): string | null {
   if (workspaceId) {
     parts.push(`Workspace ${workspaceId.slice(0, 8)}`);
   }
-  return parts.length > 0 ? parts.join(" · ") : null;
+  if (parts.length > 0) {
+    return parts.join(" · ");
+  }
+  return null;
 }
 
 // ============================================================================
-// Components
+// Icons
 // ============================================================================
 
-const GRID_COLS = "grid-cols-[minmax(0,1fr)_200px_120px]";
+function UsageIcon({ item }: { item: UsageItem }) {
+  if (item.type === "consume") {
+    return <Zap size={14} />;
+  }
+  switch (item.sourceType) {
+    case "signup":
+      return <Gift size={14} />;
+    case "purchase":
+      return <ShoppingCart size={14} />;
+    case "admin":
+      return <UserCog size={14} />;
+    default:
+      return <Sparkles size={14} />;
+  }
+}
 
-function UsageRow({
-  item,
-  indent = false,
-  compactTime = false,
-}: {
-  item: UsageItem;
-  indent?: boolean;
-  compactTime?: boolean;
-}) {
+// ============================================================================
+// Row Components (matching web style)
+// ============================================================================
+
+function UsageRow({ item }: { item: UsageItem }) {
+  const isCredit = item.amount > 0;
   const title = resolveUsageTitle(item);
+  const subtitle = resolveUsageSubtitle(item);
+
   return (
-    <div
-      className={`grid ${GRID_COLS} items-center gap-3 border-b border-border/30 py-2 text-sm last:border-b-0 ${indent ? "pl-5" : ""}`}
-    >
-      <div className="min-w-0 leading-tight">
-        <div className="truncate text-foreground text-xs">{title}</div>
+    <div className="flex items-center justify-between gap-3 py-2">
+      <div className="flex min-w-0 items-center gap-2.5">
+        <div
+          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
+            isCredit
+              ? "bg-green-500/10 text-green-600"
+              : "bg-red-500/10 text-red-600"
+          }`}
+        >
+          <UsageIcon item={item} />
+        </div>
+        <div className="min-w-0 leading-tight">
+          <p className="truncate font-medium text-sm text-foreground">
+            {title}
+          </p>
+          <p className="truncate text-muted-foreground text-xs tabular-nums">
+            {subtitle ? `${subtitle} · ` : ""}
+            {formatBillingDateTime(item.createdAt)}
+          </p>
+        </div>
       </div>
-      <div className="text-muted-foreground text-xs tabular-nums">
-        {compactTime
-          ? formatBillingTime(item.createdAt)
-          : formatBillingDateTime(item.createdAt)}
-      </div>
-      <div
-        className={`text-right text-xs tabular-nums ${item.amount > 0 ? "text-foreground" : "text-muted-foreground"}`}
-      >
-        {item.amount > 0 ? "+" : ""}
-        {item.amount.toLocaleString()}
+      <div className="flex shrink-0 items-center gap-1">
+        {isCredit ? (
+          <ArrowDownLeft size={14} className="text-green-600" />
+        ) : (
+          <ArrowUpRight size={14} className="text-red-600" />
+        )}
+        <span
+          className={`font-semibold text-sm tabular-nums ${
+            isCredit ? "text-green-600" : "text-red-600"
+          }`}
+        >
+          {isCredit ? "+" : "-"}
+          {Math.abs(item.amount).toLocaleString()}
+        </span>
       </div>
     </div>
   );
@@ -255,20 +282,19 @@ function UsageGroupRow({
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const collapsible = group.items.length > 1;
-
-  if (!collapsible) {
+  if (group.items.length <= 1) {
     return <UsageRow item={group.items[0]} />;
   }
 
   const title = resolveGroupTitle(group);
   const subtitle = resolveGroupSubtitle(group);
+  const isCredit = group.totalAmount > 0;
 
   return (
-    <div className="border-b border-border/30 last:border-b-0">
+    <div>
       {/* Group header */}
       <div
-        className={`grid ${GRID_COLS} cursor-pointer items-center gap-3 py-2.5 text-sm transition-colors hover:bg-accent/30`}
+        className="flex cursor-pointer items-center justify-between gap-3 py-2 transition-colors hover:bg-accent/30"
         onClick={onToggle}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -279,37 +305,61 @@ function UsageGroupRow({
         role="button"
         tabIndex={0}
       >
-        <div className="flex min-w-0 items-center gap-1.5 leading-tight">
-          <ChevronRight
-            size={14}
-            className={`shrink-0 text-muted-foreground transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}
-          />
-          <div className="min-w-0">
-            <div className="truncate font-medium text-foreground">{title}</div>
-            {subtitle ? (
-              <div className="mt-0.5 truncate text-muted-foreground text-xs">
-                {subtitle}
-              </div>
-            ) : null}
+        <div className="flex min-w-0 items-center gap-2.5">
+          <div
+            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
+              isCredit
+                ? "bg-green-500/10 text-green-600"
+                : "bg-red-500/10 text-red-600"
+            }`}
+          >
+            <ChevronRight
+              size={14}
+              className={`transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}
+            />
+          </div>
+          <div className="min-w-0 leading-tight">
+            <p className="truncate font-medium text-sm text-foreground">
+              {title}
+            </p>
+            <p className="truncate text-muted-foreground text-xs tabular-nums">
+              {subtitle ? `${subtitle} · ` : ""}
+              {formatBillingDateTime(group.firstCreatedAt)}
+            </p>
           </div>
         </div>
-        <div className="text-muted-foreground text-xs tabular-nums">
-          {formatBillingDateTime(group.firstCreatedAt)}
-        </div>
-        <div className="text-right tabular-nums text-muted-foreground">
-          {group.totalAmount > 0 ? "+" : ""}
-          {group.totalAmount.toLocaleString()}
+        <div className="flex shrink-0 items-center gap-1">
+          {isCredit ? (
+            <ArrowDownLeft size={14} className="text-green-600" />
+          ) : (
+            <ArrowUpRight size={14} className="text-red-600" />
+          )}
+          <span
+            className={`font-semibold text-sm tabular-nums ${
+              isCredit ? "text-green-600" : "text-red-600"
+            }`}
+          >
+            {isCredit ? "+" : "-"}
+            {Math.abs(group.totalAmount).toLocaleString()}
+          </span>
         </div>
       </div>
 
       {/* Expanded children */}
-      {expanded &&
-        group.items.map((item) => (
-          <UsageRow key={item.id} item={item} indent compactTime />
-        ))}
+      {expanded && (
+        <div className="ml-9 border-l border-border/30 pl-2">
+          {group.items.map((item) => (
+            <UsageRow key={item.id} item={item} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
+
+// ============================================================================
+// Main
+// ============================================================================
 
 function openBillingLink(url: string | null | undefined) {
   const normalizedUrl = (url ?? "").trim();
@@ -379,15 +429,7 @@ export function BillingSettingsPanel() {
           Usage record
         </div>
 
-        <div
-          className={`grid ${GRID_COLS} gap-3 border-b border-border/40 pb-2 text-xs text-muted-foreground`}
-        >
-          <div>Channel</div>
-          <div>Time</div>
-          <div className="text-right">Credits change</div>
-        </div>
-
-        <div className="grid gap-0">
+        <div className="divide-y divide-border/30">
           {groups.length === 0 ? (
             <div className="py-3 text-sm text-muted-foreground">
               {isLoading ? "Loading usage..." : "No usage yet."}
