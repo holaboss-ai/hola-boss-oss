@@ -55,8 +55,8 @@ test("desktop browser tool service reports unavailable when runtime lacks browse
   assert.equal(Array.isArray(status.tools), true);
 });
 
-test("desktop browser tool service executes browser_get_state against the desktop browser service", async () => {
-  const requests: Array<{ path: string; token: string; workspaceId: string; body: string }> = [];
+test("desktop browser tool service forwards workspace and session context to the desktop browser service", async () => {
+  const requests: Array<{ path: string; token: string; workspaceId: string; sessionId: string; body: string }> = [];
   const browserServer = await startBrowserServer(async (request, response) => {
     const chunks: Buffer[] = [];
     for await (const chunk of request) {
@@ -67,6 +67,7 @@ test("desktop browser tool service executes browser_get_state against the deskto
       path: request.url ?? "",
       token: String(request.headers["x-holaboss-desktop-token"] ?? ""),
       workspaceId: String(request.headers["x-holaboss-workspace-id"] ?? ""),
+      sessionId: String(request.headers["x-holaboss-session-id"] ?? ""),
       body
     });
     response.setHeader("content-type", "application/json; charset=utf-8");
@@ -129,7 +130,11 @@ test("desktop browser tool service executes browser_get_state against the deskto
       })
     });
 
-    const result = await service.execute("browser_get_state", { include_screenshot: true }, { workspaceId: "workspace-1" });
+    const result = await service.execute(
+      "browser_get_state",
+      { include_screenshot: true },
+      { workspaceId: "workspace-1", sessionId: "session-1" }
+    );
     assert.deepEqual(result, {
       ok: true,
       page: { tabId: "tab-1", url: "https://example.com", title: "Example" },
@@ -150,11 +155,11 @@ test("desktop browser tool service executes browser_get_state against the deskto
       }
     });
     assert.deepEqual(
-      requests.map((entry) => [entry.path, entry.token, entry.workspaceId]),
+      requests.map((entry) => [entry.path, entry.token, entry.workspaceId, entry.sessionId]),
       [
-        ["/api/v1/browser/page", "browser-token", "workspace-1"],
-        ["/api/v1/browser/evaluate", "browser-token", "workspace-1"],
-        ["/api/v1/browser/screenshot", "browser-token", "workspace-1"]
+        ["/api/v1/browser/page", "browser-token", "workspace-1", "session-1"],
+        ["/api/v1/browser/evaluate", "browser-token", "workspace-1", "session-1"],
+        ["/api/v1/browser/screenshot", "browser-token", "workspace-1", "session-1"]
       ]
     );
   } finally {
@@ -163,7 +168,7 @@ test("desktop browser tool service executes browser_get_state against the deskto
 });
 
 test("desktop browser tool service executes browser_open_tab against the desktop browser service", async () => {
-  const requests: Array<{ path: string; token: string; workspaceId: string; body: string }> = [];
+  const requests: Array<{ path: string; token: string; workspaceId: string; sessionId: string; body: string }> = [];
   const browserServer = await startBrowserServer(async (request, response) => {
     const chunks: Buffer[] = [];
     for await (const chunk of request) {
@@ -174,6 +179,7 @@ test("desktop browser tool service executes browser_open_tab against the desktop
       path: request.url ?? "",
       token: String(request.headers["x-holaboss-desktop-token"] ?? ""),
       workspaceId: String(request.headers["x-holaboss-workspace-id"] ?? ""),
+      sessionId: String(request.headers["x-holaboss-session-id"] ?? ""),
       body
     });
     response.setHeader("content-type", "application/json; charset=utf-8");
@@ -232,6 +238,7 @@ test("desktop browser tool service executes browser_open_tab against the desktop
         path: "/api/v1/browser/tabs",
         token: "browser-token",
         workspaceId: "workspace-1",
+        sessionId: "",
         body: JSON.stringify({ url: "https://example.org", background: true })
       }
     ]);

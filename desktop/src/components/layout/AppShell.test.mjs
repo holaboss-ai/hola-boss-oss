@@ -108,6 +108,10 @@ test("app shell opens the centered add apps dialog from the applications explore
   );
   assert.doesNotMatch(
     source,
+    /const shouldSuspendBrowserNativeView =\s*isUtilityPaneResizing \|\|/,
+  );
+  assert.doesNotMatch(
+    source,
     /const handleAddApp = \(\) => \{\s*handleOpenMarketplace\("apps"\);\s*\};/,
   );
 });
@@ -347,9 +351,21 @@ test("app shell no longer reserves a separate safe pane region for update toasts
   assert.doesNotMatch(source, /anchoredToastStackStyle/);
   assert.match(
     source,
-    /const shouldSuspendBrowserNativeView =\s*isUtilityPaneResizing \|\|[\s\S]*workspaceSwitcherOpen \|\|[\s\S]*settingsDialogOpen \|\|[\s\S]*createWorkspacePanelOpen \|\|[\s\S]*publishOpen;/,
+    /const shouldSuspendBrowserNativeView =\s*workspaceSwitcherOpen \|\|[\s\S]*settingsDialogOpen \|\|[\s\S]*createWorkspacePanelOpen \|\|[\s\S]*publishOpen;/,
+  );
+  assert.doesNotMatch(
+    source,
+    /const shouldSuspendBrowserNativeView =\s*isUtilityPaneResizing \|\|/,
   );
   assert.match(source, /<SpaceBrowserDisplayPane[\s\S]*suspendNativeView=\{shouldSuspendBrowserNativeView\}/);
+  assert.doesNotMatch(
+    source,
+    /const startSpaceDisplayResize = useCallback\([\s\S]*?window\.electronAPI\.browser\.setBounds\(/,
+  );
+  assert.doesNotMatch(
+    source,
+    /const startUtilityPaneResize = useCallback\([\s\S]*?window\.electronAPI\.browser\.setBounds\(/,
+  );
 });
 
 test("app shell keeps a fixed explorer width and resizes the display against chat in space mode", async () => {
@@ -464,6 +480,50 @@ test("app shell raises a local toast when fresh task proposals arrive and opens 
   assert.match(source, /openTaskProposalInbox\(notification\.workspace_id\);/);
 });
 
+test("app shell does not replay agent browser navigations through the user-facing browser IPC", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /window\.electronAPI\.workbench\.onOpenBrowser\(/);
+  assert.match(source, /const requestedUrl =\s*typeof payload\.url === "string" \? payload\.url\.trim\(\) : "";/);
+  assert.match(
+    source,
+    /if \(requestedUrl\) \{\s*openBrowserPane\(\);\s*void window\.electronAPI\.browser\s*\.setActiveWorkspace\(\s*payload\.workspaceId \?\? selectedWorkspaceId \?\? null,\s*targetBrowserSpace,\s*payload\.sessionId \?\? null,\s*\)\s*\.catch\(\(\) => undefined\);\s*return;\s*\}/,
+  );
+  assert.doesNotMatch(
+    source,
+    /if \(requestedUrl\) \{[\s\S]*browser\.navigate\(requestedUrl\)/,
+  );
+});
+
+test("app shell keeps agent browser open requests session-scoped until the user explicitly jumps to that browser", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(
+    source,
+    /const \[chatBrowserJumpRequestKeysBySessionId,\s*setChatBrowserJumpRequestKeysBySessionId\] =\s*useState<Record<string, number>>\(\{\}\);/,
+  );
+  assert.match(
+    source,
+    /const consumeChatBrowserJumpRequest = useCallback\([\s\S]*delete next\[normalizedSessionId\];[\s\S]*\);/,
+  );
+  assert.match(
+    source,
+    /const handleJumpToSessionBrowser = useCallback\([\s\S]*revealBrowserPane\("agent"\);[\s\S]*window\.electronAPI\.browser\s*\.setActiveWorkspace\(selectedWorkspaceId, "agent", normalizedSessionId\)/,
+  );
+  assert.match(
+    source,
+    /const activeChatBrowserJumpRequest = useMemo\(\(\) => \{[\s\S]*chatBrowserJumpRequestKeysBySessionId\[normalizedSessionId\] \?\? 0;/,
+  );
+  assert.match(
+    source,
+    /if \(targetBrowserSpace === "agent" && normalizedSessionId\) \{\s*setChatBrowserJumpRequestKeysBySessionId\(\(current\) => \(\{\s*\.\.\.current,\s*\[normalizedSessionId\]: Date\.now\(\),\s*\}\)\);\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /<ChatPane[\s\S]*browserJumpRequest=\{activeChatBrowserJumpRequest\}[\s\S]*onBrowserJumpRequestConsumed=\{consumeChatBrowserJumpRequest\}[\s\S]*onJumpToSessionBrowser=\{handleJumpToSessionBrowser\}/,
+  );
+});
+
 test("app shell tracks unread task proposals and badges the inbox control", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
@@ -532,7 +592,7 @@ test("app shell routes agent-originated browser opens into the agent browser spa
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(source, /const targetBrowserSpace =\s*payload\.space === "agent" \? "agent" : "user";/);
-  assert.match(source, /\.setActiveWorkspace\(\s*payload\.workspaceId \?\? selectedWorkspaceId \?\? null,\s*targetBrowserSpace,\s*\)/);
+  assert.match(source, /\.setActiveWorkspace\(\s*payload\.workspaceId \?\? selectedWorkspaceId \?\? null,\s*targetBrowserSpace,\s*payload\.sessionId \?\? null,\s*\)/);
   assert.match(source, /\.setActiveWorkspace\(targetWorkspaceId, "user"\)/);
   assert.match(source, /const handleOpenLinkInNewAppBrowserTab = useCallback\(/);
   assert.match(source, /\.then\(\(\) => window\.electronAPI\.browser\.newTab\(normalizedUrl\)\)/);

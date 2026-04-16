@@ -1094,6 +1094,8 @@ function AppShellContent() {
   } | null>(null);
   const [chatSessionOpenRequest, setChatSessionOpenRequest] =
     useState<ChatSessionOpenRequest | null>(null);
+  const [chatBrowserJumpRequestKeysBySessionId, setChatBrowserJumpRequestKeysBySessionId] =
+    useState<Record<string, number>>({});
   const [chatComposerPrefillRequest, setChatComposerPrefillRequest] =
     useState<ChatComposerPrefillRequest | null>(null);
   const [chatExplorerAttachmentRequest, setChatExplorerAttachmentRequest] =
@@ -1710,6 +1712,8 @@ function AppShellContent() {
         }
 
         const targetBrowserSpace = payload.space === "agent" ? "agent" : "user";
+        const normalizedSessionId =
+          typeof payload.sessionId === "string" ? payload.sessionId.trim() : "";
         const openBrowserPane = () => {
           setActiveShellView("space");
           setSpaceExplorerMode("browser");
@@ -1724,14 +1728,21 @@ function AppShellContent() {
 
         const requestedUrl =
           typeof payload.url === "string" ? payload.url.trim() : "";
+        if (targetBrowserSpace === "agent" && normalizedSessionId) {
+          setChatBrowserJumpRequestKeysBySessionId((current) => ({
+            ...current,
+            [normalizedSessionId]: Date.now(),
+          }));
+          return;
+        }
         if (requestedUrl) {
           openBrowserPane();
           void window.electronAPI.browser
             .setActiveWorkspace(
               payload.workspaceId ?? selectedWorkspaceId ?? null,
               targetBrowserSpace,
+              payload.sessionId ?? null,
             )
-            .then(() => window.electronAPI.browser.navigate(requestedUrl))
             .catch(() => undefined);
           return;
         }
@@ -1740,6 +1751,7 @@ function AppShellContent() {
           .setActiveWorkspace(
             payload.workspaceId ?? selectedWorkspaceId ?? null,
             targetBrowserSpace,
+            payload.sessionId ?? null,
           )
           .catch(() => undefined);
       },
@@ -2018,6 +2030,55 @@ function AppShellContent() {
     }));
   }, []);
 
+  const consumeChatBrowserJumpRequest = useCallback(
+    (sessionId: string, requestKey: number) => {
+      const normalizedSessionId = sessionId.trim();
+      if (!normalizedSessionId || requestKey <= 0) {
+        return;
+      }
+      setChatBrowserJumpRequestKeysBySessionId((current) => {
+        if ((current[normalizedSessionId] ?? 0) !== requestKey) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[normalizedSessionId];
+        return next;
+      });
+    },
+    [],
+  );
+
+  const handleJumpToSessionBrowser = useCallback(
+    (sessionId: string, requestKey: number) => {
+      const normalizedSessionId = sessionId.trim();
+      if (!selectedWorkspaceId || !normalizedSessionId) {
+        return;
+      }
+      revealBrowserPane("agent");
+      void window.electronAPI.browser
+        .setActiveWorkspace(selectedWorkspaceId, "agent", normalizedSessionId)
+        .catch(() => undefined);
+      consumeChatBrowserJumpRequest(normalizedSessionId, requestKey);
+    },
+    [consumeChatBrowserJumpRequest, revealBrowserPane, selectedWorkspaceId],
+  );
+
+  const activeChatBrowserJumpRequest = useMemo(() => {
+    const normalizedSessionId = (activeChatSessionId || "").trim();
+    if (!normalizedSessionId) {
+      return null;
+    }
+    const requestKey =
+      chatBrowserJumpRequestKeysBySessionId[normalizedSessionId] ?? 0;
+    if (requestKey <= 0) {
+      return null;
+    }
+    return {
+      sessionId: normalizedSessionId,
+      requestKey,
+    };
+  }, [activeChatSessionId, chatBrowserJumpRequestKeysBySessionId]);
+
   const handleOpenLinkInAppBrowser = useCallback(
     (url: string, workspaceIdOverride?: string | null) => {
       const normalizedUrl = url.trim();
@@ -2143,6 +2204,7 @@ function AppShellContent() {
 
   useEffect(() => {
     setChatSessionOpenRequest(null);
+    setChatBrowserJumpRequestKeysBySessionId({});
     setActiveChatSessionId(null);
   }, [selectedWorkspaceId]);
 
@@ -3267,7 +3329,6 @@ function AppShellContent() {
     effectiveAppUpdateStatus && effectiveAppUpdateStatus.downloaded,
   );
   const shouldSuspendBrowserNativeView =
-    isUtilityPaneResizing ||
     workspaceSwitcherOpen ||
     settingsDialogOpen ||
     workspaceAppsDialogOpen ||
@@ -3402,6 +3463,9 @@ function AppShellContent() {
             handleChatExplorerAttachmentRequestConsumed
           }
           onActiveSessionIdChange={setActiveChatSessionId}
+          browserJumpRequest={activeChatBrowserJumpRequest}
+          onBrowserJumpRequestConsumed={consumeChatBrowserJumpRequest}
+          onJumpToSessionBrowser={handleJumpToSessionBrowser}
           onOpenInbox={handleOpenInboxPane}
           inboxUnreadCount={unreadTaskProposalCount}
           onRequestCreateSession={(request) => void handleCreateSession(request)}
@@ -3439,10 +3503,13 @@ function AppShellContent() {
     activeAppId,
     agentView,
     chatFocusRequestKey,
+    activeChatBrowserJumpRequest,
     chatSessionJumpRequest,
     chatSessionOpenRequest,
     chatComposerPrefillRequest,
+    consumeChatBrowserJumpRequest,
     handleChatComposerPrefillConsumed,
+    handleJumpToSessionBrowser,
     handleMissingInternalResource,
     handleOpenInboxPane,
     handleReturnToChatPane,
@@ -3668,12 +3735,6 @@ function AppShellContent() {
       } catch {
         // BrowserView resizing falls back to the window listeners below.
       }
-      void window.electronAPI.browser.setBounds({
-        x: 0,
-        y: 0,
-        width: 0,
-        height: 0,
-      });
       setIsUtilityPaneResizing(true);
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
@@ -3756,14 +3817,6 @@ function AppShellContent() {
         event.currentTarget.setPointerCapture(event.pointerId);
       } catch {
         // BrowserView resizing falls back to the window listeners below.
-      }
-      if (spaceVisibility.browser) {
-        void window.electronAPI.browser.setBounds({
-          x: 0,
-          y: 0,
-          width: 0,
-          height: 0,
-        });
       }
       setIsUtilityPaneResizing(true);
       document.body.style.cursor = "col-resize";

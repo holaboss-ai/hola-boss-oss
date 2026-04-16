@@ -24,7 +24,7 @@ test("desktop runtime config mutations are serialized and written atomically", a
   );
   assert.match(
     source,
-    /async function writeRuntimeConfigTextAtomically\(nextText: string\): Promise<void> \{/,
+    /async function writeRuntimeConfigTextAtomically\(\s*nextText: string,\s*\): Promise<void> \{/,
   );
   assert.match(
     source,
@@ -57,11 +57,15 @@ test("desktop runtime config writers use the shared mutation lock", async () => 
 
   assert.match(
     writeRuntimeConfigSection,
-    /return withRuntimeConfigMutationLock\(async \(\) => \{/,
+    /const next = await withRuntimeConfigMutationLock\(async \(\) => \{/,
   );
   assert.match(
     writeRuntimeConfigSection,
     /await writeRuntimeConfigTextAtomically\(/,
+  );
+  assert.match(
+    writeRuntimeConfigSection,
+    /await syncDesktopBrowserCapabilityConfig\(\);\s*return next;/,
   );
   assert.match(
     browserCapabilitySection,
@@ -78,5 +82,38 @@ test("desktop runtime config writers use the shared mutation lock", async () => 
   assert.match(
     setRuntimeConfigDocumentSection,
     /await writeRuntimeConfigTextAtomically\(nextText\);/,
+  );
+  assert.match(
+    setRuntimeConfigDocumentSection,
+    /await syncDesktopBrowserCapabilityConfig\(\);/,
+  );
+});
+
+test("desktop runtime propagates the live browser capability into queued runs and embedded runtime env", async () => {
+  const source = await readFile(mainSourcePath, "utf8");
+  const queueSessionInputSection =
+    source.match(
+      /async function queueSessionInput\([\s\S]*?\n}\n\nasync function pauseSessionRun/,
+    )?.[0] ?? "";
+  const startEmbeddedRuntimeSection =
+    source.match(
+      /async function startEmbeddedRuntime\(\) \{[\s\S]*?\n}\n\nfunction persistFileBookmarks/,
+    )?.[0] ?? "";
+
+  assert.match(
+    queueSessionInputSection,
+    /await syncDesktopBrowserCapabilityConfig\(\);\s*const currentConfig = await readRuntimeConfigFile\(\);/,
+  );
+  assert.match(
+    startEmbeddedRuntimeSection,
+    /HOLABOSS_DESKTOP_BROWSER_ENABLED: currentDesktopBrowserCapabilityConfig\(\)\s*[\s\S]*?\.enabled\s*[\s\S]*?\?\s*"true"\s*:\s*"false"/,
+  );
+  assert.match(
+    startEmbeddedRuntimeSection,
+    /HOLABOSS_DESKTOP_BROWSER_URL: desktopBrowserServiceUrl,/,
+  );
+  assert.match(
+    startEmbeddedRuntimeSection,
+    /HOLABOSS_DESKTOP_BROWSER_AUTH_TOKEN:\s*desktopBrowserServiceAuthToken,/,
   );
 });

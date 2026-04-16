@@ -32,7 +32,12 @@ test("desktop file preview supports tabular spreadsheet kinds", async () => {
     /if \(kind === "table"\) \{[\s\S]*const tableSheets = await buildTablePreviewSheets\(buffer, extension\);/,
   );
   assert.match(source, /hasHeaderRow: boolean;/);
+  assert.match(source, /links\?: \(string \| null\)\[\]\[\];/);
   assert.match(source, /const hasHeaderRow =/);
+  assert.match(source, /function normalizePreviewTableLinkTarget\(/);
+  assert.match(source, /typeof cell\.hyperlink === "string" \? cell\.hyperlink : cell\.text/);
+  assert.match(source, /links,\s*totalRows: allRows\.length,/);
+  assert.match(source, /worksheetRow\.getCell\(columnIndex \+ 1\)\.value = hyperlink[\s\S]*\? \{ text: value, hyperlink \}[\s\S]*: value;/);
   assert.match(source, /async function writeTableFile\(/);
   assert.match(source, /async function writeCsvTablePreview\(/);
   assert.match(source, /async function writeWorkbookTablePreview\(/);
@@ -175,6 +180,7 @@ test("desktop preload exposes file preview watch subscriptions and change events
   const source = await readFile(preloadSourcePath, "utf8");
 
   assert.match(source, /hasHeaderRow: boolean;/);
+  assert.match(source, /links\?: \(string \| null\)\[\]\[\];/);
   assert.match(
     source,
     /createPath: \(\s*parentPath: string \| null \| undefined,\s*kind: "file" \| "directory",\s*workspaceId\?: string \| null,\s*\) =>[\s\S]*ipcRenderer\.invoke\("fs:createPath", parentPath, kind, workspaceId\) as Promise<FileSystemMutationPayload>/,
@@ -227,6 +233,6 @@ test("file explorer renders spreadsheet previews with the shared table editor", 
   );
   assert.match(
     source,
-    /<SpreadsheetEditor[\s\S]*sheets=\{previewTableSheets\}[\s\S]*onChange=\{setTablePreviewDraft\}/,
+    /<SpreadsheetEditor[\s\S]*sheets=\{previewTableSheets\}[\s\S]*onChange=\{setTablePreviewDraft\}[\s\S]*onOpenLinkInBrowser=\{openPreviewLink\}/,
   );
 });

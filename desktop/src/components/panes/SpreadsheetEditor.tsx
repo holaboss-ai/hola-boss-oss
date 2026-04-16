@@ -1,4 +1,5 @@
-import { Plus } from "lucide-react";
+import type { MouseEvent } from "react";
+import { ArrowUpRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface SpreadsheetEditorProps {
@@ -8,6 +9,52 @@ interface SpreadsheetEditorProps {
   editable?: boolean;
   readOnlyReason?: string | null;
   onChange?: (sheets: FilePreviewTableSheetPayload[]) => void;
+  onOpenLinkInBrowser?: (url: string) => void;
+}
+
+function normalizeSpreadsheetCellLinkTarget(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.startsWith("#")) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (/^localhost(?::\d+)?(?:[/?#]|$)/i.test(trimmed)) {
+    return `http://${trimmed}`;
+  }
+
+  if (
+    /^(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?(?:[/?#]|$)/.test(trimmed) ||
+    /^(?:www\.)?(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?::\d+)?(?:[/?#]|$)/.test(
+      trimmed,
+    )
+  ) {
+    return /^www\./i.test(trimmed) ? `https://${trimmed}` : `https://${trimmed}`;
+  }
+
+  return null;
+}
+
+function cloneTablePreviewSheetLinks(
+  links: (string | null)[][] | null | undefined,
+  rows: string[][],
+  columns: string[],
+): (string | null)[][] {
+  return rows.map((row, rowIndex) =>
+    Array.from(
+      { length: Math.max(columns.length, row.length, 1) },
+      (_unused, columnIndex) =>
+        normalizeSpreadsheetCellLinkTarget(links?.[rowIndex]?.[columnIndex]) ??
+        null,
+    ),
+  );
 }
 
 export function cloneTablePreviewSheets(
@@ -18,6 +65,7 @@ export function cloneTablePreviewSheets(
         ...sheet,
         columns: [...sheet.columns],
         rows: sheet.rows.map((row) => [...row]),
+        links: cloneTablePreviewSheetLinks(sheet.links, sheet.rows, sheet.columns),
       }))
     : [];
 }
@@ -52,6 +100,24 @@ export function areTablePreviewSheetsEqual(
 
     return (
       sheet.columns.every((column, columnIndex) => column === candidate.columns[columnIndex]) &&
+      cloneTablePreviewSheetLinks(sheet.links, sheet.rows, sheet.columns).every(
+        (row, rowIndex) =>
+          row.length ===
+            cloneTablePreviewSheetLinks(
+              candidate.links,
+              candidate.rows,
+              candidate.columns,
+            )[rowIndex]?.length &&
+          row.every(
+            (value, columnIndex) =>
+              value ===
+              cloneTablePreviewSheetLinks(
+                candidate.links,
+                candidate.rows,
+                candidate.columns,
+              )[rowIndex]?.[columnIndex],
+          ),
+      ) &&
       sheet.rows.every(
         (row, rowIndex) =>
           row.length === candidate.rows[rowIndex]?.length &&
@@ -84,9 +150,29 @@ export function SpreadsheetEditor({
   editable = false,
   readOnlyReason = null,
   onChange,
+  onOpenLinkInBrowser,
 }: SpreadsheetEditorProps) {
   const activeSheet =
     sheets[Math.min(activeSheetIndex, Math.max(sheets.length - 1, 0))] ?? null;
+
+  const openSpreadsheetCellLink = (url: string) => {
+    if (onOpenLinkInBrowser) {
+      onOpenLinkInBrowser(url);
+      return;
+    }
+    void window.electronAPI.ui.openExternalUrl(url);
+  };
+
+  const maybeOpenEditableSpreadsheetCellLink = (
+    event: MouseEvent<HTMLInputElement>,
+    url: string | null,
+  ) => {
+    if (!url || (!event.metaKey && !event.ctrlKey)) {
+      return;
+    }
+    event.preventDefault();
+    openSpreadsheetCellLink(url);
+  };
 
   const updateHeaderValue = (columnIndex: number, value: string) => {
     if (!editable || !onChange || !activeSheet) {
@@ -127,9 +213,20 @@ export function SpreadsheetEditor({
             nextRow.push("");
           }
           nextRows[rowIndex] = nextRow;
+          const nextLinks = cloneTablePreviewSheetLinks(
+            sheet.links,
+            nextRows,
+            sheet.columns,
+          );
+          nextLinks[rowIndex] = [
+            ...(nextLinks[rowIndex] ?? Array.from({ length: sheet.columns.length }, () => null)),
+          ];
+          nextLinks[rowIndex][columnIndex] =
+            normalizeSpreadsheetCellLinkTarget(value);
           return {
             ...sheet,
             rows: nextRows,
+            links: nextLinks,
           };
         },
         activeSheetIndex,
@@ -149,6 +246,10 @@ export function SpreadsheetEditor({
           rows: [
             ...sheet.rows,
             Array.from({ length: Math.max(sheet.columns.length, 1) }, () => ""),
+          ],
+          links: [
+            ...cloneTablePreviewSheetLinks(sheet.links, sheet.rows, sheet.columns),
+            Array.from({ length: Math.max(sheet.columns.length, 1) }, () => null),
           ],
           totalRows: Math.max(sheet.totalRows + 1, sheet.rows.length + 1),
         }),
@@ -170,10 +271,16 @@ export function SpreadsheetEditor({
             nextSpreadsheetColumnName(sheet.columns.length),
           ];
           const nextRows = sheet.rows.map((row) => [...row, ""]);
+          const nextLinks = cloneTablePreviewSheetLinks(
+            sheet.links,
+            nextRows,
+            nextColumns,
+          );
           return {
             ...sheet,
             columns: nextColumns,
             rows: nextRows,
+            links: nextLinks,
             totalColumns: Math.max(
               sheet.totalColumns + 1,
               sheet.columns.length + 1,
@@ -299,24 +406,59 @@ export function SpreadsheetEditor({
                   </td>
                   {activeSheet.columns.map((_column, columnIndex) => {
                     const value = row[columnIndex] ?? "";
+                    const cellLink =
+                      activeSheet.links?.[rowIndex]?.[columnIndex] ??
+                      normalizeSpreadsheetCellLinkTarget(value);
                     return (
                       <td
                         key={`cell-${rowIndex}-${columnIndex}`}
                         className="min-w-[164px] border-b border-r border-border px-0 py-0 align-top"
                       >
                         {editable ? (
-                          <input
-                            value={value}
-                            onChange={(event) =>
-                              updateCellValue(
-                                rowIndex,
-                                columnIndex,
-                                event.target.value,
-                              )
-                            }
-                            aria-label={`Row ${rowIndex + 1}, Column ${columnIndex + 1}`}
-                            className="embedded-input h-9 w-full border-0 bg-transparent px-3 text-xs text-foreground outline-none"
-                          />
+                          <div className="flex h-9 items-center gap-1 px-2">
+                            <input
+                              value={value}
+                              onChange={(event) =>
+                                updateCellValue(
+                                  rowIndex,
+                                  columnIndex,
+                                  event.target.value,
+                                )
+                              }
+                              onClick={(event) =>
+                                maybeOpenEditableSpreadsheetCellLink(
+                                  event,
+                                  cellLink,
+                                )
+                              }
+                              aria-label={`Row ${rowIndex + 1}, Column ${columnIndex + 1}`}
+                              className={`embedded-input h-full min-w-0 flex-1 border-0 bg-transparent px-1 text-xs outline-none ${
+                                cellLink
+                                  ? "text-primary underline underline-offset-2"
+                                  : "text-foreground"
+                              }`}
+                            />
+                            {cellLink ? (
+                              <button
+                                type="button"
+                                onClick={() => openSpreadsheetCellLink(cellLink)}
+                                aria-label={`Open link from row ${rowIndex + 1}, column ${columnIndex + 1}`}
+                                title={cellLink}
+                                className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-primary transition-colors hover:bg-primary/10 hover:text-primary/85"
+                              >
+                                <ArrowUpRight size={12} />
+                              </button>
+                            ) : null}
+                          </div>
+                        ) : cellLink ? (
+                          <button
+                            type="button"
+                            onClick={() => openSpreadsheetCellLink(cellLink)}
+                            title={cellLink}
+                            className="block h-full w-full cursor-pointer bg-transparent px-3 py-2 text-left text-xs break-words whitespace-pre-wrap text-primary underline underline-offset-2 transition-colors hover:text-primary/80"
+                          >
+                            {value || cellLink}
+                          </button>
                         ) : (
                           <div className="px-3 py-2 break-words whitespace-pre-wrap">
                             {value || "\u00a0"}

@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, test } from "node:test";
 
-import { FileRuntimeConfigService, runtimeConfigHeaders } from "./runtime-config.js";
+import {
+  FileRuntimeConfigService,
+  resolveProductRuntimeConfig,
+  runtimeConfigHeaders,
+} from "./runtime-config.js";
 
 const tempDirs: string[] = [];
 const envNames = [
@@ -14,6 +18,9 @@ const envNames = [
   "HOLABOSS_USER_ID",
   "HOLABOSS_MODEL_PROXY_BASE_URL",
   "HOLABOSS_DEFAULT_MODEL",
+  "HOLABOSS_DESKTOP_BROWSER_ENABLED",
+  "HOLABOSS_DESKTOP_BROWSER_URL",
+  "HOLABOSS_DESKTOP_BROWSER_AUTH_TOKEN",
   "SANDBOX_AGENT_HARNESS"
 ] as const;
 
@@ -206,6 +213,38 @@ test("file runtime config service treats pi harness as ready without extra harne
     browser_state: "unavailable",
     browser_url: null
   });
+});
+
+test("runtime config prefers live embedded desktop browser capability env over stale file state", () => {
+  const root = makeTempDir("hb-runtime-config-");
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = path.join(root, "state", "runtime-config.json");
+  process.env.HOLABOSS_DESKTOP_BROWSER_ENABLED = "true";
+  process.env.HOLABOSS_DESKTOP_BROWSER_URL = "http://127.0.0.1:8787/api/v1/browser";
+  process.env.HOLABOSS_DESKTOP_BROWSER_AUTH_TOKEN = "browser-token";
+
+  fs.mkdirSync(path.join(root, "state"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "state", "runtime-config.json"),
+    `${JSON.stringify({
+      capabilities: {
+        desktop_browser: {
+          enabled: false
+        }
+      }
+    }, null, 2)}\n`,
+    "utf8"
+  );
+
+  const config = resolveProductRuntimeConfig({
+    requireAuth: false,
+    requireUser: false,
+    requireBaseUrl: false
+  });
+
+  assert.equal(config.desktopBrowserEnabled, true);
+  assert.equal(config.desktopBrowserUrl, "http://127.0.0.1:8787/api/v1/browser");
+  assert.equal(config.desktopBrowserAuthToken, "browser-token");
 });
 
 test("runtime config headers reuse the shared runtime config parser", () => {
