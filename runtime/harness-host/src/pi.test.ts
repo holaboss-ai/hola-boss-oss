@@ -2239,6 +2239,7 @@ test("buildPiPromptPayload inlines native images, extracts common document forma
   const xlsxPath = path.join(attachmentsDir, "sheet.xlsx");
   const pdfPath = path.join(attachmentsDir, "summary.pdf");
   const binaryPath = path.join(attachmentsDir, "archive.bin");
+  const folderPath = path.join(workspaceDir, "docs");
   const imageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   const docxBytes = await createDocxBuffer(["Quarterly plan", "Ship the feature"]);
   const pptxBytes = await createPptxBuffer(["Roadmap", "Launch"]);
@@ -2256,6 +2257,8 @@ test("buildPiPromptPayload inlines native images, extracts common document forma
   fs.writeFileSync(xlsxPath, xlsxBytes);
   fs.writeFileSync(pdfPath, pdfBytes);
   fs.writeFileSync(binaryPath, Buffer.from([0x00, 0x01, 0x02, 0x03]));
+  fs.mkdirSync(folderPath, { recursive: true });
+  fs.writeFileSync(path.join(folderPath, "notes.md"), "# scoped folder\n", "utf8");
 
   try {
     const prompt = await buildPiPromptPayload({
@@ -2318,6 +2321,14 @@ test("buildPiPromptPayload inlines native images, extracts common document forma
           size_bytes: 4,
           workspace_path: ".holaboss/input-attachments/batch-1/archive.bin",
         },
+        {
+          id: "attachment-folder",
+          kind: "folder",
+          name: "docs",
+          mime_type: "inode/directory",
+          size_bytes: 0,
+          workspace_path: "docs",
+        },
       ],
     });
 
@@ -2337,6 +2348,10 @@ test("buildPiPromptPayload inlines native images, extracts common document forma
     assert.match(prompt.text, /\[Document: sheet\.xlsx\]/);
     assert.match(prompt.text, /<excel filename="sheet\.xlsx">/);
     assert.match(prompt.text, /Name,Value/);
+    assert.match(prompt.text, /Attached folders:/);
+    assert.match(prompt.text, /docs \(folder, inode\/directory\) at \.\/docs/);
+    assert.match(prompt.text, /Treat attached folders as scoped workspace context\./);
+    assert.doesNotMatch(prompt.text, /scoped folder/);
     assert.match(prompt.text, /Other attachments are staged in the workspace and should be inspected from these paths:/);
     assert.match(prompt.text, /archive\.bin \(file, application\/octet-stream\) at \.\/\.holaboss\/input-attachments\/batch-1\/archive\.bin/);
     assert.deepEqual(prompt.images, [

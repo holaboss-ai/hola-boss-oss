@@ -66,6 +66,15 @@ test("chat pane can consume a one-shot explorer attachment request", async () =>
     source,
     /function appendPendingExplorerAttachments\(\s*files: ExplorerAttachmentDragPayload\[],\s*\) \{/,
   );
+  assert.match(source, /resolveExplorerAttachmentKind\(file\) === "image"/);
+  assert.match(
+    source,
+    /kind: resolveExplorerAttachmentKind\(file\)/,
+  );
+  assert.match(
+    source,
+    /stageSessionAttachmentPaths\(\{\s*workspace_id: selectedWorkspace\.id,\s*files: explorerFiles\.map\(\(entry\) => \(\{\s*absolute_path: entry\.absolutePath,\s*name: entry\.name,\s*mime_type: entry\.mime_type \?\? null,\s*kind: entry\.kind,\s*\}\)\),\s*\}\)/,
+  );
   assert.match(
     source,
     /const requestKey = explorerAttachmentRequest\?\.requestKey \?\? 0;/,

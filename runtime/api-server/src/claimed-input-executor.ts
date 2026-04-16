@@ -28,7 +28,7 @@ const TERMINAL_OUTPUT_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
 
 interface SessionInputAttachment {
   id: string;
-  kind: "image" | "file";
+  kind: "image" | "file" | "folder";
   name: string;
   mime_type: string;
   size_bytes: number;
@@ -48,7 +48,18 @@ function parseSessionInputAttachment(value: unknown): SessionInputAttachment | n
   const mimeType = typeof value.mime_type === "string" ? value.mime_type.trim() : "";
   const workspacePath = typeof value.workspace_path === "string" ? value.workspace_path.trim() : "";
   const sizeBytes = typeof value.size_bytes === "number" && Number.isFinite(value.size_bytes) ? value.size_bytes : 0;
-  const kind = value.kind === "image" ? "image" : value.kind === "file" ? "file" : mimeType.startsWith("image/") ? "image" : "file";
+  const kind =
+    value.kind === "image"
+      ? "image"
+      : value.kind === "folder"
+        ? "folder"
+        : value.kind === "file"
+          ? "file"
+          : mimeType.startsWith("image/")
+            ? "image"
+            : mimeType === "inode/directory"
+              ? "folder"
+              : "file";
   if (!id || !name || !mimeType || !workspacePath) {
     return null;
   }
@@ -74,11 +85,19 @@ function defaultInstructionForAttachments(attachments: SessionInputAttachment[])
     return "";
   }
   if (attachments.length === 1) {
-    return attachments[0].kind === "image" ? "Review the attached image." : "Review the attached file.";
+    return attachments[0].kind === "image"
+      ? "Review the attached image."
+      : attachments[0].kind === "folder"
+        ? "Review the attached folder."
+        : "Review the attached file.";
   }
-  return attachments.some((attachment) => attachment.kind === "image")
-    ? "Review the attached files and images."
-    : "Review the attached files.";
+  if (attachments.some((attachment) => attachment.kind === "image")) {
+    return "Review the attached files, folders, and images.";
+  }
+  if (attachments.some((attachment) => attachment.kind === "folder")) {
+    return "Review the attached files and folders.";
+  }
+  return "Review the attached files.";
 }
 
 function selectedHarness(): string {

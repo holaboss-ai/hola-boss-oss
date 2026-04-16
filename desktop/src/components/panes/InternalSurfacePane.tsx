@@ -15,6 +15,7 @@ interface InternalSurfacePaneProps {
   surface: InternalSurfaceType;
   resourceId?: string | null;
   htmlContent?: string | null;
+  onResourceMissing?: (resourceId: string) => void;
   onOpenLinkInBrowser?: (url: string) => void;
 }
 
@@ -74,10 +75,21 @@ function isHtmlPreviewPayload(
   return HTML_PREVIEW_EXTENSIONS.has(preview.extension.trim().toLowerCase());
 }
 
+function isMissingFilePreviewError(cause: unknown) {
+  if (!(cause instanceof Error)) {
+    return false;
+  }
+  return (
+    /\bENOENT\b/i.test(cause.message) ||
+    /no such file or directory/i.test(cause.message)
+  );
+}
+
 export function InternalSurfacePane({
   surface,
   resourceId,
   htmlContent,
+  onResourceMissing,
   onOpenLinkInBrowser,
 }: InternalSurfacePaneProps) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
@@ -224,6 +236,12 @@ export function InternalSurfacePane({
         setTablePreviewDraft([]);
         setTextPreviewMode("edit");
         setActiveTableSheetIndex(0);
+        if (isMissingFilePreviewError(error)) {
+          setErrorMessage("");
+          onResourceMissing?.(targetPath);
+          setIsSaving(false);
+          return;
+        }
         setErrorMessage(
           error instanceof Error
             ? error.message
@@ -236,7 +254,7 @@ export function InternalSurfacePane({
         }
       }
     },
-    [resolveWorkspacePreviewPath, selectedWorkspaceId],
+    [onResourceMissing, resolveWorkspacePreviewPath, selectedWorkspaceId],
   );
 
   useEffect(() => {

@@ -246,7 +246,7 @@ type StringMap = Record<string, unknown>;
 
 interface SessionInputAttachmentPayload {
   id: string;
-  kind: "image" | "file";
+  kind: "image" | "file" | "folder";
   name: string;
   mime_type: string;
   size_bytes: number;
@@ -487,7 +487,18 @@ function parseSessionInputAttachment(value: unknown): SessionInputAttachmentPayl
   const mimeType = typeof value.mime_type === "string" ? value.mime_type.trim() : "";
   const workspacePath = typeof value.workspace_path === "string" ? value.workspace_path.trim() : "";
   const sizeBytes = typeof value.size_bytes === "number" && Number.isFinite(value.size_bytes) ? value.size_bytes : 0;
-  const kind = value.kind === "image" ? "image" : value.kind === "file" ? "file" : mimeType.startsWith("image/") ? "image" : "file";
+  const kind =
+    value.kind === "image"
+      ? "image"
+      : value.kind === "folder"
+        ? "folder"
+        : value.kind === "file"
+          ? "file"
+          : mimeType.startsWith("image/")
+            ? "image"
+            : mimeType === "inode/directory"
+              ? "folder"
+              : "file";
 
   if (!id || !name || !mimeType || !workspacePath) {
     return null;
@@ -518,7 +529,19 @@ function requiredSessionInputAttachments(value: unknown, workspaceDir: string): 
     }
 
     const fullPath = resolveWorkspaceFilePath(workspaceDir, attachment.workspace_path);
-    if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) {
+    if (!fs.existsSync(fullPath)) {
+      throw new Error(`attachment path not found: ${attachment.workspace_path}`);
+    }
+
+    const stat = fs.statSync(fullPath);
+    if (attachment.kind === "folder") {
+      if (!stat.isDirectory()) {
+        throw new Error(`attachment folder not found: ${attachment.workspace_path}`);
+      }
+      return attachment;
+    }
+
+    if (!stat.isFile()) {
       throw new Error(`attachment file not found: ${attachment.workspace_path}`);
     }
 

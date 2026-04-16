@@ -13,7 +13,7 @@ export interface HarnessToolRefPayload {
 
 export interface HarnessInputAttachmentPayload {
   id: string;
-  kind: "image" | "file";
+  kind: "image" | "file" | "folder";
   name: string;
   mime_type: string;
   size_bytes: number;

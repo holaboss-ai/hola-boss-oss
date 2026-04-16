@@ -4487,7 +4487,7 @@ test("queue route rejects inputs while workspace apps are still building", async
   store.close();
 });
 
-test("queue route accepts staged attachments and history hydrates attachment metadata", async () => {
+test("queue route accepts staged file and folder attachments and history hydrates attachment metadata", async () => {
   const root = makeTempDir("hb-runtime-api-queue-attachments-");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
@@ -4510,8 +4510,11 @@ test("queue route accepts staged attachments and history hydrates attachment met
 
   const workspaceDir = store.workspaceDir(workspace.id);
   const attachmentPath = path.join(workspaceDir, ".holaboss", "input-attachments", "batch-1", "diagram.png");
+  const attachedFolderPath = path.join(workspaceDir, "docs");
   fs.mkdirSync(path.dirname(attachmentPath), { recursive: true });
+  fs.mkdirSync(attachedFolderPath, { recursive: true });
   fs.writeFileSync(attachmentPath, "png-bytes", "utf8");
+  fs.writeFileSync(path.join(attachedFolderPath, "brief.md"), "# brief\n", "utf8");
 
   const response = await app.inject({
     method: "POST",
@@ -4527,6 +4530,14 @@ test("queue route accepts staged attachments and history hydrates attachment met
           mime_type: "image/png",
           size_bytes: 9,
           workspace_path: ".holaboss/input-attachments/batch-1/diagram.png"
+        },
+        {
+          id: "attachment-2",
+          kind: "folder",
+          name: "docs",
+          mime_type: "inode/directory",
+          size_bytes: 0,
+          workspace_path: "docs"
         }
       ]
     }
@@ -4543,6 +4554,14 @@ test("queue route accepts staged attachments and history hydrates attachment met
       mime_type: "image/png",
       size_bytes: 9,
       workspace_path: ".holaboss/input-attachments/batch-1/diagram.png"
+    },
+    {
+      id: "attachment-2",
+      kind: "folder",
+      name: "docs",
+      mime_type: "inode/directory",
+      size_bytes: 0,
+      workspace_path: "docs"
     }
   ]);
 
@@ -4567,6 +4586,14 @@ test("queue route accepts staged attachments and history hydrates attachment met
             mime_type: "image/png",
             size_bytes: 9,
             workspace_path: ".holaboss/input-attachments/batch-1/diagram.png"
+          },
+          {
+            id: "attachment-2",
+            kind: "folder",
+            name: "docs",
+            mime_type: "inode/directory",
+            size_bytes: 0,
+            workspace_path: "docs"
           }
         ]
       }

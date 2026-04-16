@@ -27,9 +27,15 @@ test("internal surface renders markdown files with the shared markdown renderer"
   assert.match(source, /Empty file — switch to Edit to add markup\./);
   assert.match(source, /if \(onOpenLinkInBrowser\) \{\s*onOpenLinkInBrowser\(url\);\s*return;\s*\}/);
   assert.match(source, /window\.electronAPI\.ui\.openExternalUrl\(url\)/);
+  assert.match(source, /onResourceMissing\?: \(resourceId: string\) => void;/);
   assert.match(
     source,
     /const resolvedTargetPath = await resolveWorkspacePreviewPath\(targetPath\);[\s\S]*if \(!resolvedTargetPath\) \{[\s\S]*setPreview\(null\);[\s\S]*setErrorMessage\(""\);[\s\S]*return;\s*\}[\s\S]*window\.electronAPI\.fs\.readFilePreview\(\s*resolvedTargetPath,\s*selectedWorkspaceId \?\? null,\s*\)/,
+  );
+  assert.match(source, /function isMissingFilePreviewError\(cause: unknown\)/);
+  assert.match(
+    source,
+    /if \(isMissingFilePreviewError\(error\)\) \{\s*setErrorMessage\(""\);[\s\S]*onResourceMissing\?\.\(targetPath\);[\s\S]*setIsSaving\(false\);[\s\S]*return;\s*\}/,
   );
 });
 

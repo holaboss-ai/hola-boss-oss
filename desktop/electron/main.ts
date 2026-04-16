@@ -2577,7 +2577,7 @@ interface SessionHistoryMessagePayload {
 
 interface SessionInputAttachmentPayload {
   id: string;
-  kind: "image" | "file";
+  kind: "image" | "file" | "folder";
   name: string;
   mime_type: string;
   size_bytes: number;
@@ -2599,6 +2599,7 @@ interface StageSessionAttachmentPathPayload {
   absolute_path: string;
   name?: string | null;
   mime_type?: string | null;
+  kind?: "image" | "file" | "folder" | null;
 }
 
 interface StageSessionAttachmentPathsPayload {
@@ -11580,6 +11581,21 @@ function attachmentKind(mimeType: string): "image" | "file" {
   return mimeType.startsWith("image/") ? "image" : "file";
 }
 
+function relativeWorkspaceAttachmentPath(
+  workspaceDir: string,
+  absolutePath: string,
+): string {
+  const relativePath = path.relative(workspaceDir, absolutePath);
+  if (
+    !relativePath ||
+    relativePath.startsWith("..") ||
+    path.isAbsolute(relativePath)
+  ) {
+    throw new Error("Folder attachments must stay inside the workspace.");
+  }
+  return relativePath.split(path.sep).join(path.posix.sep);
+}
+
 function resolveWorkspaceMaterializedFilePath(
   workspaceRoot: string,
   relativePath: string,
@@ -11736,16 +11752,8 @@ async function stageSessionAttachmentPaths(
   await fs.mkdir(workspaceDir, { recursive: true });
 
   const batchId = randomUUID();
-  const relativeRoot = path.posix.join(
-    ".holaboss",
-    "input-attachments",
-    batchId,
-  );
-  const absoluteRoot = resolveWorkspaceMaterializedFilePath(
-    workspaceDir,
-    relativeRoot,
-  );
-  await fs.mkdir(absoluteRoot, { recursive: true });
+  let relativeRoot: string | null = null;
+  let absoluteRoot: string | null = null;
 
   const usedNames = new Set<string>();
   const attachments: SessionInputAttachmentPayload[] = [];
@@ -11759,8 +11767,50 @@ async function stageSessionAttachmentPaths(
     }
 
     const stat = await fs.stat(absolutePath);
+    const requestedKind =
+      file?.kind === "folder"
+        ? "folder"
+        : file?.kind === "image"
+          ? "image"
+          : "file";
+
+    if (requestedKind === "folder") {
+      if (!stat.isDirectory()) {
+        throw new Error(`files[${index}] must reference a folder`);
+      }
+
+      attachments.push({
+        id: randomUUID(),
+        kind: "folder",
+        name:
+          sanitizeAttachmentName(file?.name ?? path.basename(absolutePath)) ||
+          path.basename(absolutePath) ||
+          "Folder",
+        mime_type: "inode/directory",
+        size_bytes: 0,
+        workspace_path: relativeWorkspaceAttachmentPath(
+          workspaceDir,
+          absolutePath,
+        ),
+      });
+      continue;
+    }
+
     if (!stat.isFile()) {
       throw new Error(`files[${index}] must reference a file`);
+    }
+
+    if (!relativeRoot || !absoluteRoot) {
+      relativeRoot = path.posix.join(
+        ".holaboss",
+        "input-attachments",
+        batchId,
+      );
+      absoluteRoot = resolveWorkspaceMaterializedFilePath(
+        workspaceDir,
+        relativeRoot,
+      );
+      await fs.mkdir(absoluteRoot, { recursive: true });
     }
 
     const name = dedupeAttachmentName(
@@ -15988,6 +16038,59 @@ async function moveExplorerPath(
   };
 }
 
+async function copyExplorerPath(
+  sourcePath: string,
+  destinationDirectoryPath: string,
+  workspaceId?: string | null,
+): Promise<FileSystemMutationPayload> {
+  const { absolutePath: sourceAbsolutePath, workspaceRoot } =
+    await resolveWorkspaceScopedExplorerPath(sourcePath, workspaceId);
+  const { absolutePath: destinationAbsolutePath } =
+    await resolveWorkspaceScopedExplorerPath(
+      destinationDirectoryPath,
+      workspaceId,
+    );
+
+  const sourceStat = await fs.stat(sourceAbsolutePath);
+  const destinationStat = await fs.stat(destinationAbsolutePath);
+  if (!destinationStat.isDirectory()) {
+    throw new Error("Destination is not a directory.");
+  }
+  if (
+    workspaceRoot &&
+    path.normalize(sourceAbsolutePath) === path.normalize(workspaceRoot)
+  ) {
+    throw new Error("Workspace root cannot be copied.");
+  }
+  assertWorkspaceExplorerPathModifiable(workspaceRoot, destinationAbsolutePath);
+  if (
+    sourceStat.isDirectory() &&
+    isSameOrDescendantPath(sourceAbsolutePath, destinationAbsolutePath)
+  ) {
+    throw new Error("Cannot copy a folder into itself.");
+  }
+
+  const nextAbsolutePath = await nextAvailableExplorerCreatePath(
+    destinationAbsolutePath,
+    path.basename(sourceAbsolutePath),
+  );
+  if (workspaceRoot && !isPathWithinRoot(workspaceRoot, nextAbsolutePath)) {
+    throw new Error("Copied path escapes workspace root.");
+  }
+
+  await fs.cp(sourceAbsolutePath, nextAbsolutePath, {
+    recursive: sourceStat.isDirectory(),
+    errorOnExist: true,
+    force: false,
+    preserveTimestamps: true,
+    verbatimSymlinks: true,
+  });
+
+  return {
+    absolutePath: nextAbsolutePath,
+  };
+}
+
 async function deleteExplorerPath(
   targetPath: string,
   workspaceId?: string | null,
@@ -19275,6 +19378,16 @@ app.whenReady().then(async () => {
       destinationDirectoryPath: string,
       workspaceId?: string | null,
     ) => moveExplorerPath(sourcePath, destinationDirectoryPath, workspaceId),
+  );
+  handleTrustedIpc(
+    "fs:copyPath",
+    ["main"],
+    async (
+      _event,
+      sourcePath: string,
+      destinationDirectoryPath: string,
+      workspaceId?: string | null,
+    ) => copyExplorerPath(sourcePath, destinationDirectoryPath, workspaceId),
   );
   handleTrustedIpc(
     "fs:deletePath",

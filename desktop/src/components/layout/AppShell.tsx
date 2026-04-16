@@ -252,6 +252,34 @@ function surfaceResourceLabel(resourceId: string): string {
   return segments[segments.length - 1] ?? normalized;
 }
 
+function normalizeComparablePath(targetPath: string) {
+  const trimmed = targetPath.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  let normalized = trimmed.replace(/\\/g, "/");
+  if (normalized.length > 1) {
+    normalized = normalized.replace(/\/+$/, "");
+  }
+  if (/^[a-zA-Z]:\//.test(normalized)) {
+    normalized = normalized.toLowerCase();
+  }
+  return normalized;
+}
+
+function isPathWithin(parentPath: string, targetPath: string) {
+  const normalizedParent = normalizeComparablePath(parentPath);
+  const normalizedTarget = normalizeComparablePath(targetPath);
+  if (!normalizedParent || !normalizedTarget) {
+    return false;
+  }
+  return (
+    normalizedTarget === normalizedParent ||
+    normalizedTarget.startsWith(`${normalizedParent}/`)
+  );
+}
+
 function buildReportedSurfaceFromInternalView(params: {
   owner: OperatorSurfaceOwner;
   active: boolean;
@@ -2813,14 +2841,10 @@ function AppShellContent() {
   }, []);
 
   const handleReferenceWorkspacePathInChat = useCallback(
-    (entry: LocalFileEntry, referenceText: string) => {
-      const normalizedReferenceText = referenceText.trim();
+    (entry: LocalFileEntry) => {
       const normalizedAbsolutePath = entry.absolutePath.trim();
       const normalizedName = entry.name.trim();
-      if (
-        (entry.isDirectory && !normalizedReferenceText) ||
-        (!entry.isDirectory && (!normalizedAbsolutePath || !normalizedName))
-      ) {
+      if (!normalizedAbsolutePath || !normalizedName) {
         return;
       }
       setActiveShellView("space");
@@ -2829,30 +2853,21 @@ function AppShellContent() {
         agent: true,
       }));
       setAgentView({ type: "chat" });
-      if (entry.isDirectory) {
-        setChatComposerPrefillRequest({
-          text: normalizedReferenceText,
-          requestKey: nextChatComposerPrefillRequestKey(),
-          mode: "append",
-        });
-      } else {
-        setChatExplorerAttachmentRequest({
-          files: [
-            {
-              absolutePath: normalizedAbsolutePath,
-              name: normalizedName,
-              size: Number.isFinite(entry.size) ? Math.max(0, entry.size) : 0,
-            },
-          ],
-          requestKey: nextChatExplorerAttachmentRequestKey(),
-        });
-      }
+      setChatExplorerAttachmentRequest({
+        files: [
+          {
+            absolutePath: normalizedAbsolutePath,
+            name: normalizedName,
+            size: Number.isFinite(entry.size) ? Math.max(0, entry.size) : 0,
+            mimeType: entry.isDirectory ? "inode/directory" : null,
+            kind: entry.isDirectory ? "folder" : undefined,
+          },
+        ],
+        requestKey: nextChatExplorerAttachmentRequestKey(),
+      });
       setChatFocusRequestKey((current) => current + 1);
     },
-    [
-      nextChatComposerPrefillRequestKey,
-      nextChatExplorerAttachmentRequestKey,
-    ],
+    [nextChatExplorerAttachmentRequestKey],
   );
 
   const handleChatComposerPrefillConsumed = useCallback(
@@ -2898,6 +2913,111 @@ function AppShellContent() {
       }
     },
     [],
+  );
+
+  const handleMissingInternalResource = useCallback(
+    (resourceId: string) => {
+      const normalizedResourceId = normalizeComparablePath(resourceId);
+      if (!normalizedResourceId) {
+        return;
+      }
+
+      setAgentView((current) => {
+        if (
+          current.type !== "internal" ||
+          (current.surface !== "document" && current.surface !== "file")
+        ) {
+          return current;
+        }
+        if (
+          normalizeComparablePath(current.resourceId?.trim() ?? "") !==
+          normalizedResourceId
+        ) {
+          return current;
+        }
+        return { type: "chat" };
+      });
+
+      setSpaceDisplayView((current) => {
+        if (
+          current.type !== "internal" ||
+          (current.surface !== "document" && current.surface !== "file")
+        ) {
+          return current;
+        }
+        if (
+          normalizeComparablePath(current.resourceId?.trim() ?? "") !==
+          normalizedResourceId
+        ) {
+          return current;
+        }
+        if (selectedWorkspaceId) {
+          delete lastRestorableSpaceFileDisplayViewByWorkspaceRef.current[
+            selectedWorkspaceId
+          ];
+        }
+        return { type: "empty" };
+      });
+
+      setFileExplorerFocusRequest((current) => {
+        if (
+          !current?.path ||
+          normalizeComparablePath(current.path) !== normalizedResourceId
+        ) {
+          return current;
+        }
+        return null;
+      });
+    },
+    [selectedWorkspaceId],
+  );
+
+  const handleDeleteWorkspaceEntry = useCallback(
+    (entry: LocalFileEntry) => {
+      const normalizedDeletedPath = normalizeComparablePath(entry.absolutePath);
+      if (!normalizedDeletedPath) {
+        return;
+      }
+
+      setAgentView((current) => {
+        if (
+          current.type !== "internal" ||
+          (current.surface !== "document" && current.surface !== "file")
+        ) {
+          return current;
+        }
+        if (!isPathWithin(normalizedDeletedPath, current.resourceId?.trim() ?? "")) {
+          return current;
+        }
+        return { type: "chat" };
+      });
+
+      setSpaceDisplayView((current) => {
+        if (
+          current.type !== "internal" ||
+          (current.surface !== "document" && current.surface !== "file")
+        ) {
+          return current;
+        }
+        if (!isPathWithin(normalizedDeletedPath, current.resourceId?.trim() ?? "")) {
+          return current;
+        }
+        if (selectedWorkspaceId) {
+          delete lastRestorableSpaceFileDisplayViewByWorkspaceRef.current[
+            selectedWorkspaceId
+          ];
+        }
+        return { type: "empty" };
+      });
+
+      setFileExplorerFocusRequest((current) => {
+        if (!current?.path || !isPathWithin(normalizedDeletedPath, current.path)) {
+          return current;
+        }
+        return null;
+      });
+    },
+    [selectedWorkspaceId],
   );
 
   const reportedOperatorSurfaceContext = useMemo(
@@ -3310,6 +3430,7 @@ function AppShellContent() {
         surface={agentView.surface}
         resourceId={agentView.resourceId}
         htmlContent={agentView.htmlContent}
+        onResourceMissing={handleMissingInternalResource}
         onOpenLinkInBrowser={handleOpenLinkInNewAppBrowserTab}
       />
     );
@@ -3322,6 +3443,7 @@ function AppShellContent() {
     chatSessionOpenRequest,
     chatComposerPrefillRequest,
     handleChatComposerPrefillConsumed,
+    handleMissingInternalResource,
     handleOpenInboxPane,
     handleReturnToChatPane,
     handleCreateSession,
@@ -3401,6 +3523,7 @@ function AppShellContent() {
             surface={spaceDisplayView.surface}
             resourceId={spaceDisplayView.resourceId}
             htmlContent={spaceDisplayView.htmlContent}
+            onResourceMissing={handleMissingInternalResource}
             onOpenLinkInBrowser={handleOpenLinkInNewAppBrowserTab}
           />
         </div>
@@ -3419,6 +3542,7 @@ function AppShellContent() {
   }, [
     activeApp,
     activeAppId,
+    handleMissingInternalResource,
     handleOpenLinkInNewAppBrowserTab,
     hasSelectedWorkspace,
     installedApps,
@@ -3454,6 +3578,7 @@ function AppShellContent() {
                 );
               }}
               onReferenceInChat={handleReferenceWorkspacePathInChat}
+              onDeleteEntry={handleDeleteWorkspaceEntry}
               onOpenLinkInBrowser={handleOpenLinkInNewAppBrowserTab}
             />
           ) : (
@@ -3469,6 +3594,7 @@ function AppShellContent() {
       fileExplorerFocusRequest,
       filesPaneWidth,
       flexSpacePaneId,
+      handleDeleteWorkspaceEntry,
       handleReferenceWorkspacePathInChat,
       handleOpenLinkInNewAppBrowserTab,
       shouldSuspendBrowserNativeView,
@@ -3892,6 +4018,7 @@ function AppShellContent() {
                                     onReferenceInChat={
                                       handleReferenceWorkspacePathInChat
                                     }
+                                    onDeleteEntry={handleDeleteWorkspaceEntry}
                                     onOpenLinkInBrowser={
                                       handleOpenLinkInNewAppBrowserTab
                                     }

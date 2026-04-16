@@ -1047,6 +1047,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ) as Promise<ExplorerExternalImportResultPayload>,
     renamePath: (targetPath: string, nextName: string, workspaceId?: string | null) =>
       ipcRenderer.invoke("fs:renamePath", targetPath, nextName, workspaceId) as Promise<FileSystemMutationPayload>,
+    copyPath: (
+      sourcePath: string,
+      destinationDirectoryPath: string,
+      workspaceId?: string | null,
+    ) =>
+      ipcRenderer.invoke("fs:copyPath", sourcePath, destinationDirectoryPath, workspaceId) as Promise<FileSystemMutationPayload>,
     movePath: (
       sourcePath: string,
       destinationDirectoryPath: string,
