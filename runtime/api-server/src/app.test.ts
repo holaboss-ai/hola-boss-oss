@@ -1802,6 +1802,14 @@ test("output events endpoint supports incremental fetches and tail mode", async 
     sessionId: "session-main",
     inputId: "input-1",
     sequence: 2,
+    eventType: "pi_native_event",
+    payload: { native_type: "message_update", native_event: { type: "message_update" } }
+  });
+  store.appendOutputEvent({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: "input-1",
+    sequence: 3,
     eventType: "output_delta",
     payload: { delta: "hi" }
   });
@@ -1814,6 +1822,10 @@ test("output events endpoint supports incremental fetches and tail mode", async 
     method: "GET",
     url: "/api/v1/agent-sessions/session-main/outputs/events?input_id=input-1&include_history=false"
   });
+  const withNative = await app.inject({
+    method: "GET",
+    url: "/api/v1/agent-sessions/session-main/outputs/events?input_id=input-1&after_event_id=0&include_native=true"
+  });
 
   assert.equal(incremental.statusCode, 200);
   assert.equal(incremental.json().count, 1);
@@ -1822,7 +1834,15 @@ test("output events endpoint supports incremental fetches and tail mode", async 
 
   assert.equal(tailed.statusCode, 200);
   assert.equal(tailed.json().count, 0);
-  assert.ok(tailed.json().last_event_id >= 2);
+  assert.ok(tailed.json().last_event_id >= 3);
+
+  assert.equal(withNative.statusCode, 200);
+  assert.deepEqual(
+    withNative
+      .json()
+      .items.map((item: { event_type: string }) => item.event_type),
+    ["run_started", "pi_native_event", "output_delta"]
+  );
 
   await app.close();
   store.close();
@@ -1855,6 +1875,14 @@ test("output stream endpoint emits SSE events and stops on terminal", async () =
     sessionId: "session-main",
     inputId: "input-1",
     sequence: 2,
+    eventType: "pi_native_event",
+    payload: { native_type: "message_update", native_event: { type: "message_update" } }
+  });
+  store.appendOutputEvent({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: "input-1",
+    sequence: 3,
     eventType: "run_completed",
     payload: { status: "success" }
   });
@@ -1868,6 +1896,15 @@ test("output stream endpoint emits SSE events and stops on terminal", async () =
   assert.equal(response.statusCode, 200);
   assert.match(body, /event: run_started/);
   assert.match(body, /event: run_completed/);
+  assert.doesNotMatch(body, /event: pi_native_event/);
+
+  const responseWithNative = await app.inject({
+    method: "GET",
+    url: "/api/v1/agent-sessions/session-main/outputs/stream?input_id=input-1&include_native=true"
+  });
+
+  assert.equal(responseWithNative.statusCode, 200);
+  assert.match(responseWithNative.body, /event: pi_native_event/);
 
   await app.close();
   store.close();

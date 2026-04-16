@@ -144,7 +144,7 @@ test("mapPiSessionEvent extracts nested Gemini provider error messages", () => {
   );
 });
 
-test("mapPiSessionEvent emits a pi_native_event passthrough for native Pi session events", () => {
+test("mapPiSessionEvent emits a pi_native_event passthrough for non-streaming Pi session events", () => {
   const sessionFile = "/tmp/pi-session.jsonl";
   const cases = [
     {
@@ -165,19 +165,6 @@ test("mapPiSessionEvent emits a pi_native_event passthrough for native Pi sessio
         },
       } as const,
       nativeType: "message_start",
-    },
-    {
-      event: {
-        type: "message_update",
-        message: {} as never,
-        assistantMessageEvent: {
-          type: "text_delta",
-          contentIndex: 0,
-          delta: "Hello",
-          partial: {} as never,
-        },
-      } as const,
-      nativeType: "message_update",
     },
     {
       event: {
@@ -232,6 +219,51 @@ test("mapPiSessionEvent emits a pi_native_event passthrough for native Pi sessio
       },
     });
   }
+});
+
+test("mapPiSessionEvent trims cumulative partial state from message_update pi_native_event payloads", () => {
+  const sessionFile = "/tmp/pi-session.jsonl";
+  const nativeEvents = onlyPiNativeEvents(
+    mapPiSessionEvent(
+      {
+        type: "message_update",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "Hello world" }],
+        } as never,
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: "Hello",
+          partial: {
+            content: [{ type: "text", text: "Hello world" }],
+          } as never,
+        },
+      } as never,
+      sessionFile,
+      createPiEventMapperState()
+    )
+  );
+
+  assert.deepEqual(nativeEvents, [
+    {
+      event_type: "pi_native_event",
+      payload: {
+        native_type: "message_update",
+        native_event: {
+          type: "message_update",
+          assistantMessageEvent: {
+            type: "text_delta",
+            contentIndex: 0,
+            delta: "Hello",
+          },
+        },
+        event: "message_update",
+        source: "pi",
+        harness_session_id: sessionFile,
+      },
+    },
+  ]);
 });
 
 async function createDocxBuffer(lines: string[]): Promise<Buffer> {

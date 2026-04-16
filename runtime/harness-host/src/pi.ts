@@ -3999,11 +3999,22 @@ function maybeMapAssistantTerminalFailure(
 }
 
 function mapNativePiEvent(event: AgentSessionEvent, sessionFile: string): PiMappedEvent {
+  const nativeEventPayload =
+    event.type === "message_update"
+      ? jsonValue({
+          type: event.type,
+          assistantMessageEvent: Object.fromEntries(
+            Object.entries(isRecord(event.assistantMessageEvent) ? event.assistantMessageEvent : {}).filter(
+              ([key]) => key !== "partial"
+            )
+          ),
+        })
+      : jsonValue(event);
   return {
     event_type: "pi_native_event",
     payload: {
       native_type: event.type,
-      native_event: jsonValue(event),
+      native_event: nativeEventPayload,
       event: event.type,
       source: "pi",
       harness_session_id: sessionFile,
