@@ -1785,7 +1785,7 @@ function fileDisplaySyncTargetFromToolPayload(
     ]);
   }
 
-  if (toolName === "read" || toolName === "edit") {
+  if (toolName === "edit") {
     if (phase !== "started" && phase !== "completed") {
       return null;
     }

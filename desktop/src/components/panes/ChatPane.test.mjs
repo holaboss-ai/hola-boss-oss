@@ -623,10 +623,8 @@ test("chat pane syncs the shared file display from live file-oriented tool calls
     source,
     /syncableWorkspacePathFromRecord\(payload\.result,\s*\[\s*"file_path",\s*"path",\s*\]\)/,
   );
-  assert.match(
-    source,
-    /toolName === "read" \|\| toolName === "edit"/,
-  );
+  assert.doesNotMatch(source, /toolName === "read" \|\| toolName === "edit"/);
+  assert.match(source, /if \(toolName === "edit"\) \{/);
   assert.match(
     source,
     /if \(eventType === "tool_call"\) \{\s*const fileDisplayTarget =\s*fileDisplaySyncTargetFromToolPayload\(eventPayload\);[\s\S]*onSyncFileDisplayFromAgentOperation\?\.\(fileDisplayTarget\);/,

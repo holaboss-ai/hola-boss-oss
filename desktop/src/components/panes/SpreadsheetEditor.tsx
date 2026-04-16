@@ -1,4 +1,5 @@
-import { Plus } from "lucide-react";
+import type { MouseEvent } from "react";
+import { ArrowUpRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface SpreadsheetEditorProps {
@@ -160,6 +161,17 @@ export function SpreadsheetEditor({
       return;
     }
     void window.electronAPI.ui.openExternalUrl(url);
+  };
+
+  const maybeOpenEditableSpreadsheetCellLink = (
+    event: MouseEvent<HTMLInputElement>,
+    url: string | null,
+  ) => {
+    if (!url || (!event.metaKey && !event.ctrlKey)) {
+      return;
+    }
+    event.preventDefault();
+    openSpreadsheetCellLink(url);
   };
 
   const updateHeaderValue = (columnIndex: number, value: string) => {
@@ -403,18 +415,41 @@ export function SpreadsheetEditor({
                         className="min-w-[164px] border-b border-r border-border px-0 py-0 align-top"
                       >
                         {editable ? (
-                          <input
-                            value={value}
-                            onChange={(event) =>
-                              updateCellValue(
-                                rowIndex,
-                                columnIndex,
-                                event.target.value,
-                              )
-                            }
-                            aria-label={`Row ${rowIndex + 1}, Column ${columnIndex + 1}`}
-                            className="embedded-input h-9 w-full border-0 bg-transparent px-3 text-xs text-foreground outline-none"
-                          />
+                          <div className="flex h-9 items-center gap-1 px-2">
+                            <input
+                              value={value}
+                              onChange={(event) =>
+                                updateCellValue(
+                                  rowIndex,
+                                  columnIndex,
+                                  event.target.value,
+                                )
+                              }
+                              onClick={(event) =>
+                                maybeOpenEditableSpreadsheetCellLink(
+                                  event,
+                                  cellLink,
+                                )
+                              }
+                              aria-label={`Row ${rowIndex + 1}, Column ${columnIndex + 1}`}
+                              className={`embedded-input h-full min-w-0 flex-1 border-0 bg-transparent px-1 text-xs outline-none ${
+                                cellLink
+                                  ? "text-primary underline underline-offset-2"
+                                  : "text-foreground"
+                              }`}
+                            />
+                            {cellLink ? (
+                              <button
+                                type="button"
+                                onClick={() => openSpreadsheetCellLink(cellLink)}
+                                aria-label={`Open link from row ${rowIndex + 1}, column ${columnIndex + 1}`}
+                                title={cellLink}
+                                className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-primary transition-colors hover:bg-primary/10 hover:text-primary/85"
+                              >
+                                <ArrowUpRight size={12} />
+                              </button>
+                            ) : null}
+                          </div>
                         ) : cellLink ? (
                           <button
                             type="button"
