@@ -2900,6 +2900,7 @@ export function FileExplorerPane({
                   : null
             }
             onChange={setTablePreviewDraft}
+            onOpenLinkInBrowser={openPreviewLink}
           />
         ) : (
           <div className="flex h-full flex-col items-center justify-center rounded-lg border border-border bg-muted px-5 text-center">

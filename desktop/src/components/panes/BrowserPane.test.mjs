@@ -43,9 +43,11 @@ test("browser pane keeps control treatment without a session selector in the chr
   );
   assert.doesNotMatch(source, /Shared agent browser/);
   assert.doesNotMatch(source, /<span className="truncate">\{sessionBrowserStatus\.detail\}<\/span>/);
-  assert.match(source, /border-primary\/70/);
-  assert.match(source, /boxShadow:\s*"0 0 40px color-mix\(in oklch, var\(--primary\) 34%, transparent\)"/);
-  assert.match(source, /rounded-\[inherit\] border-2 border-primary\/60/);
+  assert.match(source, /browser-active-glow border-transparent/);
+  assert.match(source, /browser-active-glow-frame pointer-events-none absolute inset-0 rounded-\[inherit\]/);
+  assert.doesNotMatch(source, /border-primary\/70/);
+  assert.doesNotMatch(source, /browserBoundsRef/);
+  assert.match(source, /const rect = viewport\.getBoundingClientRect\(\);/);
   assert.doesNotMatch(source, /absolute left-3 top-3 inline-flex items-center gap-1\.5 rounded-full/);
 });
 

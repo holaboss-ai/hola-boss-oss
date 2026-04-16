@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sourcePath = path.join(__dirname, "SpaceBrowserDisplayPane.tsx");
 const glowPreviewHookPath = path.join(__dirname, "useBrowserGlowPreview.ts");
+const stylesPath = path.join(__dirname, "..", "..", "index.css");
 
 test("space browser display selects the full address when the navigation field is clicked", async () => {
   const source = await readFile(sourcePath, "utf8");
@@ -95,10 +96,25 @@ test("space browser display keeps takeover status without chrome session control
     /const showAgentActivityHighlight =\s*sessionBrowserStatus\?\.tone === "active" \|\| glowPreviewEnabled;/,
   );
   assert.doesNotMatch(source, /<span className="truncate">\{sessionBrowserStatus\.detail\}<\/span>/);
-  assert.match(source, /border-primary\/70/);
-  assert.match(source, /boxShadow:\s*"0 0 40px color-mix\(in oklch, var\(--primary\) 34%, transparent\)"/);
-  assert.match(source, /rounded-\[inherit\] border-2 border-primary\/60/);
+  assert.match(source, /browser-active-glow border-border\/45/);
+  assert.match(source, /browser-active-glow-frame pointer-events-none absolute inset-0 rounded-\[inherit\]/);
+  assert.doesNotMatch(source, /border-primary\/70/);
+  assert.doesNotMatch(source, /browserBoundsRef/);
+  assert.match(source, /const rect = viewport\.getBoundingClientRect\(\);/);
   assert.doesNotMatch(source, /absolute left-3 top-3 inline-flex items-center gap-1\.5 rounded-full/);
+});
+
+test("browser glow styles animate the active browser border", async () => {
+  const source = await readFile(stylesPath, "utf8");
+
+  assert.match(source, /@keyframes holaboss-browser-active-glow/);
+  assert.match(source, /@keyframes holaboss-browser-active-frame/);
+  assert.match(source, /0 0 44px color-mix\(in oklch, var\(--primary\) 56%, transparent\)/);
+  assert.match(source, /inset 0 0 72px color-mix\(in oklch, var\(--primary\) 24%, transparent\)/);
+  assert.match(source, /inset 0 0 38px color-mix\(in oklch, var\(--primary\) 30%, transparent\)/);
+  assert.match(source, /\.browser-active-glow \{[\s\S]*animation: holaboss-browser-active-glow 2\.8s ease-in-out infinite;/);
+  assert.match(source, /\.browser-active-glow-frame \{[\s\S]*animation: holaboss-browser-active-frame 2\.8s ease-in-out infinite;/);
+  assert.match(source, /@media \(prefers-reduced-motion: reduce\)/);
 });
 
 test("browser glow preview hook exposes a console toggle", async () => {

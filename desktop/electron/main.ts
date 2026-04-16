@@ -278,6 +278,7 @@ interface FilePreviewTableSheetPayload {
   index: number;
   columns: string[];
   rows: string[][];
+  links?: (string | null)[][];
   totalRows: number;
   totalColumns: number;
   truncated: boolean;
@@ -15878,22 +15879,73 @@ function trimTrailingEmptyTableCells(row: string[]): string[] {
   return row.slice(0, lastNonEmptyIndex + 1);
 }
 
-function worksheetPreviewRows(worksheet: ExcelJS.Worksheet): string[][] {
+function normalizePreviewTableLinkTarget(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.startsWith("#")) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (/^localhost(?::\d+)?(?:[/?#]|$)/i.test(trimmed)) {
+    return `http://${trimmed}`;
+  }
+
+  if (
+    /^(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?(?:[/?#]|$)/.test(trimmed) ||
+    /^(?:www\.)?(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?::\d+)?(?:[/?#]|$)/.test(
+      trimmed,
+    )
+  ) {
+    return /^www\./i.test(trimmed) ? `https://${trimmed}` : `https://${trimmed}`;
+  }
+
+  return null;
+}
+
+function trimTrailingEmptyTableLinkRow(
+  row: (string | null)[],
+  targetLength: number,
+): (string | null)[] {
+  return Array.from(
+    { length: targetLength },
+    (_unused, columnIndex) => row[columnIndex] ?? null,
+  );
+}
+
+function worksheetPreviewRows(worksheet: ExcelJS.Worksheet): {
+  rows: string[][];
+  links: (string | null)[][];
+} {
   const rows: string[][] = [];
+  const links: (string | null)[][] = [];
   worksheet.eachRow({ includeEmpty: false }, (row) => {
     const values: string[] = [];
+    const rowLinks: (string | null)[] = [];
     row.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
       values[columnNumber - 1] = toPreviewTableCellValue(cell.text);
+      rowLinks[columnNumber - 1] = normalizePreviewTableLinkTarget(
+        typeof cell.hyperlink === "string" ? cell.hyperlink : cell.text,
+      );
     });
-    rows.push(trimTrailingEmptyTableCells(values));
+    const trimmedValues = trimTrailingEmptyTableCells(values);
+    rows.push(trimmedValues);
+    links.push(trimTrailingEmptyTableLinkRow(rowLinks, trimmedValues.length));
   });
-  return rows;
+  return { rows, links };
 }
 
 function tablePreviewSheetFromRows(
   sheetName: string,
   sheetIndex: number,
   rawRows: string[][],
+  rawLinks: (string | null)[][],
   totalSheetCount: number,
 ): FilePreviewTableSheetPayload {
   const totalColumns = rawRows.reduce(
@@ -15910,6 +15962,12 @@ function tablePreviewSheetFromRows(
       (_unused, columnIndex) => row[columnIndex] ?? "",
     ),
   );
+  const paddedLinks = rawLinks.map((row) =>
+    Array.from(
+      { length: visibleColumnCount },
+      (_unused, columnIndex) => row[columnIndex] ?? null,
+    ),
+  );
   const hasHeaderRow =
     paddedRows.length > 0 &&
     paddedRows[0].some((cell) => cell.trim().length > 0);
@@ -15922,7 +15980,9 @@ function tablePreviewSheetFromRows(
         (_unused, columnIndex) => `Column ${columnIndex + 1}`,
       );
   const allRows = hasHeaderRow ? paddedRows.slice(1) : paddedRows;
+  const allLinks = hasHeaderRow ? paddedLinks.slice(1) : paddedLinks;
   const rows = allRows.slice(0, MAX_TABLE_PREVIEW_ROWS);
+  const links = allLinks.slice(0, MAX_TABLE_PREVIEW_ROWS);
   const truncated =
     allRows.length > rows.length ||
     totalColumns > visibleColumnCount ||
@@ -15933,6 +15993,7 @@ function tablePreviewSheetFromRows(
     index: sheetIndex,
     columns,
     rows,
+    links,
     totalRows: allRows.length,
     totalColumns,
     truncated,
@@ -15958,7 +16019,7 @@ function normalizeWritableTableSheets(
   }
 
   return value
-    .map((sheet, sheetIndex) => {
+    .map<FilePreviewTableSheetPayload | null>((sheet, sheetIndex) => {
       if (!sheet || typeof sheet !== "object") {
         return null;
       }
@@ -15976,6 +16037,13 @@ function normalizeWritableTableSheets(
               : [],
           )
         : [];
+      const links = Array.isArray(candidate.links)
+        ? candidate.links.map((row) =>
+            Array.isArray(row)
+              ? row.map((cell) => normalizePreviewTableLinkTarget(cell))
+              : [],
+          )
+        : rows.map((row) => row.map(() => null));
       const normalizedName =
         typeof candidate.name === "string" && candidate.name.trim()
           ? candidate.name.trim()
@@ -15990,6 +16058,7 @@ function normalizeWritableTableSheets(
             : sheetIndex,
         columns,
         rows,
+        links,
         totalRows:
           typeof candidate.totalRows === "number" &&
           Number.isFinite(candidate.totalRows)
@@ -16002,7 +16071,7 @@ function normalizeWritableTableSheets(
             : columns.length,
         truncated: Boolean(candidate.truncated),
         hasHeaderRow: candidate.hasHeaderRow !== false,
-      } satisfies FilePreviewTableSheetPayload;
+      };
     })
     .filter((sheet): sheet is FilePreviewTableSheetPayload => sheet !== null);
 }
@@ -16022,15 +16091,38 @@ function sourceRowsFromTablePreviewSheet(
   );
 }
 
+function sourceLinksFromTablePreviewSheet(
+  sheet: FilePreviewTableSheetPayload,
+): (string | null)[][] {
+  const visibleColumnCount = Math.max(sheet.columns.length, 1);
+  const bodyLinks = (sheet.links ?? []).map((row) =>
+    Array.from(
+      { length: visibleColumnCount },
+      (_unused, columnIndex) =>
+        normalizePreviewTableLinkTarget(row[columnIndex]) ?? null,
+    ),
+  );
+
+  if (sheet.hasHeaderRow) {
+    return [Array.from({ length: visibleColumnCount }, () => null), ...bodyLinks];
+  }
+
+  return bodyLinks;
+}
+
 function applyPreviewSheetEditsToWorksheet(
   worksheet: ExcelJS.Worksheet,
   sheet: FilePreviewTableSheetPayload,
 ) {
   const sourceRows = sourceRowsFromTablePreviewSheet(sheet);
+  const sourceLinks = sourceLinksFromTablePreviewSheet(sheet);
   for (const [rowIndex, row] of sourceRows.entries()) {
     const worksheetRow = worksheet.getRow(rowIndex + 1);
     for (const [columnIndex, value] of row.entries()) {
-      worksheetRow.getCell(columnIndex + 1).value = value;
+      const hyperlink = sourceLinks[rowIndex]?.[columnIndex] ?? null;
+      worksheetRow.getCell(columnIndex + 1).value = hyperlink
+        ? { text: value, hyperlink }
+        : value;
     }
     worksheetRow.commit();
   }
@@ -16090,12 +16182,16 @@ async function buildWorkbookPreviewSheets(
 
   const worksheets = workbook.worksheets.slice(0, MAX_TABLE_PREVIEW_SHEETS);
   return worksheets.map((worksheet, sheetIndex) =>
-    tablePreviewSheetFromRows(
-      worksheet.name,
-      sheetIndex,
-      worksheetPreviewRows(worksheet),
-      workbook.worksheets.length,
-    ),
+    {
+      const preview = worksheetPreviewRows(worksheet);
+      return tablePreviewSheetFromRows(
+        worksheet.name,
+        sheetIndex,
+        preview.rows,
+        preview.links,
+        workbook.worksheets.length,
+      );
+    },
   );
 }
 
@@ -16116,12 +16212,16 @@ async function buildCsvPreviewSheets(
   );
 
   return [
-    tablePreviewSheetFromRows(
-      worksheet.name,
-      0,
-      worksheetPreviewRows(worksheet),
-      1,
-    ),
+    (() => {
+      const preview = worksheetPreviewRows(worksheet);
+      return tablePreviewSheetFromRows(
+        worksheet.name,
+        0,
+        preview.rows,
+        preview.links,
+        1,
+      );
+    })(),
   ];
 }
 

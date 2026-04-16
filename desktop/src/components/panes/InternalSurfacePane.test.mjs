@@ -83,7 +83,7 @@ test("internal surface enables editing and saving for file displays", async () =
   );
   assert.match(
     source,
-    /<SpreadsheetEditor[\s\S]*sheets=\{tablePreviewDraft\}[\s\S]*editable=\{preview\.isEditable\}[\s\S]*onChange=\{setTablePreviewDraft\}/,
+    /<SpreadsheetEditor[\s\S]*sheets=\{tablePreviewDraft\}[\s\S]*editable=\{preview\.isEditable\}[\s\S]*onChange=\{setTablePreviewDraft\}[\s\S]*onOpenLinkInBrowser=\{openPreviewLink\}/,
   );
 });
 
@@ -103,7 +103,7 @@ test("internal surface renders editable spreadsheet previews", async () => {
   assert.match(source, /window\.electronAPI\.fs\.writeTableFile\(\s*preview\.absolutePath,\s*tablePreviewDraft,\s*selectedWorkspaceId \?\? null,\s*\)/);
   assert.match(
     source,
-    /<SpreadsheetEditor[\s\S]*sheets=\{tablePreviewDraft\}[\s\S]*editable=\{preview\.isEditable\}[\s\S]*onChange=\{setTablePreviewDraft\}/,
+    /<SpreadsheetEditor[\s\S]*sheets=\{tablePreviewDraft\}[\s\S]*editable=\{preview\.isEditable\}[\s\S]*onChange=\{setTablePreviewDraft\}[\s\S]*onOpenLinkInBrowser=\{openPreviewLink\}/,
   );
 });
 

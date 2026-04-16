@@ -878,22 +878,14 @@ export function BrowserPane({
             ref={viewportRef}
             className={`relative min-h-0 flex-1 overflow-hidden rounded-b-xl border bg-card transition-all ${
               showAgentActivityHighlight
-                ? "border-primary/70"
+                ? "browser-active-glow border-transparent"
                 : "border-transparent"
             }`}
-            style={
-              showAgentActivityHighlight
-                ? {
-                    boxShadow:
-                      "0 0 40px color-mix(in oklch, var(--primary) 34%, transparent)",
-                  }
-                : undefined
-            }
           >
             {showAgentActivityHighlight ? (
               <div
                 aria-hidden="true"
-                className="pointer-events-none absolute inset-0 rounded-[inherit] border-2 border-primary/60 shadow-[inset_0_0_0_1px_color-mix(in_oklch,var(--primary)_30%,transparent)]"
+                className="browser-active-glow-frame pointer-events-none absolute inset-0 rounded-[inherit]"
               />
             ) : null}
 

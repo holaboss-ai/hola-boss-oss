@@ -328,7 +328,7 @@ test("file explorer renders editable spreadsheet previews", async () => {
   assert.match(source, /window\.electronAPI\.fs\.writeTableFile\(\s*preview\.absolutePath,\s*tablePreviewDraft,\s*selectedWorkspaceId \?\? null,\s*\)/);
   assert.match(
     source,
-    /<SpreadsheetEditor[\s\S]*sheets=\{previewTableSheets\}[\s\S]*editable=\{preview\.isEditable\}[\s\S]*onChange=\{setTablePreviewDraft\}/,
+    /<SpreadsheetEditor[\s\S]*sheets=\{previewTableSheets\}[\s\S]*editable=\{preview\.isEditable\}[\s\S]*onChange=\{setTablePreviewDraft\}[\s\S]*onOpenLinkInBrowser=\{openPreviewLink\}/,
   );
 });
 

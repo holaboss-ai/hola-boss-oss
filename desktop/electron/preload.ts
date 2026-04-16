@@ -21,6 +21,7 @@ interface FilePreviewTableSheetPayload {
   index: number;
   columns: string[];
   rows: string[][];
+  links?: (string | null)[][];
   totalRows: number;
   totalColumns: number;
   truncated: boolean;
