@@ -773,6 +773,14 @@ declare global {
     raw: unknown | null;
   }
 
+  interface SessionHistoryRequestPayload {
+    sessionId: string;
+    workspaceId: string;
+    limit?: number;
+    offset?: number;
+    order?: "asc" | "desc";
+  }
+
   interface SessionOutputEventPayload {
     id: number;
     workspace_id: string;
@@ -782,6 +790,11 @@ declare global {
     event_type: string;
     payload: Record<string, unknown>;
     created_at: string;
+  }
+
+  interface SessionOutputEventListRequestPayload {
+    sessionId: string;
+    inputId?: string | null;
   }
 
   interface SessionOutputEventListResponsePayload {
@@ -1417,8 +1430,8 @@ declare global {
       listAgentSessions: (workspaceId: string) => Promise<AgentSessionListResponsePayload>;
       createAgentSession: (payload: CreateAgentSessionPayload) => Promise<CreateAgentSessionResponsePayload>;
       listRuntimeStates: (workspaceId: string) => Promise<SessionRuntimeStateListResponsePayload>;
-      getSessionHistory: (payload: { sessionId: string; workspaceId: string }) => Promise<SessionHistoryResponsePayload>;
-      getSessionOutputEvents: (payload: { sessionId: string }) => Promise<SessionOutputEventListResponsePayload>;
+      getSessionHistory: (payload: SessionHistoryRequestPayload) => Promise<SessionHistoryResponsePayload>;
+      getSessionOutputEvents: (payload: SessionOutputEventListRequestPayload) => Promise<SessionOutputEventListResponsePayload>;
       stageSessionAttachments: (payload: StageSessionAttachmentsPayload) => Promise<StageSessionAttachmentsResponsePayload>;
       stageSessionAttachmentPaths: (
         payload: StageSessionAttachmentPathsPayload

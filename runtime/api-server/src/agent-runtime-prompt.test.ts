@@ -506,7 +506,10 @@ test("composeBaseAgentPrompt includes session resume context only when provided"
   assert.match(prompt.contextMessages.join("\n\n"), /Boundary summary: Deploy failed because policy denied the action\./);
   assert.match(prompt.contextMessages.join("\n\n"), /Restoration order: `boundary_summary` -> `recent_runtime_context` -> `session_resume_context` -> `preserved_turn_input_ids` -> `restored_memory_paths`\./);
   assert.match(prompt.contextMessages.join("\n\n"), /Preserved turn ids: `input-1`\./);
-  assert.match(prompt.contextMessages.join("\n\n"), /workspace\/workspace-1\/runtime\/latest-turn\.md/);
+  assert.match(prompt.contextMessages.join("\n\n"), /Internal runtime memory was restored from 2 runtime-managed records\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /These runtime-managed records are continuity metadata, not workspace files or folders for you to create, rename, or edit\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Do not create or modify a `runtime\/` directory in the workspace unless the user explicitly asks for that exact directory\./);
+  assert.doesNotMatch(prompt.contextMessages.join("\n\n"), /workspace\/workspace-1\/runtime\/latest-turn\.md/);
   assert.match(prompt.contextMessages.join("\n\n"), /Recent prior turns:/);
   assert.match(prompt.contextMessages.join("\n\n"), /input-1/);
   assert.match(prompt.contextMessages.join("\n\n"), /permission_denied/);

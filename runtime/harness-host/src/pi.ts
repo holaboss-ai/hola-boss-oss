@@ -554,6 +554,7 @@ export async function buildPiPromptPayload(request: HarnessHostPiRequest): Promi
   const imageLines: string[] = [];
   const fallbackLines: string[] = [];
   const images: ImageContent[] = [];
+  const attachments = request.attachments ?? [];
 
   const todoResumeInstruction = resumeTodoReadInstruction(request);
   if (todoResumeInstruction) {
@@ -575,7 +576,7 @@ export async function buildPiPromptPayload(request: HarnessHostPiRequest): Promi
     sections.push(instruction);
   }
 
-  for (const attachment of request.attachments ?? []) {
+  for (const attachment of attachments) {
     if (attachment.kind === "image" || attachment.mime_type.startsWith("image/")) {
       const image = inlineImageAttachment(request, attachment);
       if (image) {
@@ -594,8 +595,12 @@ export async function buildPiPromptPayload(request: HarnessHostPiRequest): Promi
     fallbackLines.push(fallbackPromptLine(attachment));
   }
 
-  if (imageLines.length > 0) {
+  if (attachments.length === 0) {
+    sections.push(["Attachments: none.", "Image inputs: none."].join("\n"));
+  } else if (imageLines.length > 0) {
     sections.push(["Attached images:", ...imageLines].join("\n"));
+  } else {
+    sections.push("Image inputs: none.");
   }
   if (fallbackLines.length > 0) {
     sections.push(

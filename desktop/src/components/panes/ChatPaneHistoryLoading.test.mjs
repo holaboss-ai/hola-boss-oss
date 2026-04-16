@@ -2,20 +2,23 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
-const sourcePath = path.join(process.cwd(), "src/components/panes/ChatPane.tsx");
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const sourcePath = path.join(__dirname, "ChatPane.tsx");
 
 test("chat pane preserves message history when auxiliary session history fetches fail", async () => {
   const source = await readFile(sourcePath, "utf8");
 
+  assert.match(source, /const auxiliaryHistoryWarnings: string\[\] = \[\];/);
   assert.match(source, /await Promise\.allSettled\(\[/);
   assert.match(
     source,
-    /if \(historyResult\.status !== "fulfilled"\) \{\s*throw historyResult\.reason;\s*\}/,
+    /if \(outputEventsResult\.status !== "fulfilled"\) \{\s*auxiliaryHistoryWarnings\.push\(/,
   );
   assert.match(
     source,
-    /outputEventHistoryResult\.status === "fulfilled"[\s\S]*\{\s*items: \[\],\s*count: 0,\s*last_event_id: 0\s*\}/,
+    /outputEvents:\s*outputEventsResult\.status === "fulfilled"[\s\S]*\?\s*outputEventsResult\.value\.items[\s\S]*:\s*\[\],/,
   );
   assert.match(
     source,
@@ -23,6 +26,10 @@ test("chat pane preserves message history when auxiliary session history fetches
   );
   assert.match(
     source,
-    /setChatErrorMessage\(auxiliaryHistoryWarnings\.join\(" "\)\);/,
+    /warnings:\s*auxiliaryHistoryWarnings,/,
+  );
+  assert.match(
+    source,
+    /setChatErrorMessage\(page\.warnings\.join\(" "\)\);/,
   );
 });

@@ -671,6 +671,14 @@ interface SessionHistoryResponsePayload {
   raw: unknown | null;
 }
 
+interface SessionHistoryRequestPayload {
+  sessionId: string;
+  workspaceId: string;
+  limit?: number;
+  offset?: number;
+  order?: "asc" | "desc";
+}
+
 interface SessionOutputEventPayload {
   id: number;
   workspace_id: string;
@@ -680,6 +688,11 @@ interface SessionOutputEventPayload {
   event_type: string;
   payload: Record<string, unknown>;
   created_at: string;
+}
+
+interface SessionOutputEventListRequestPayload {
+  sessionId: string;
+  inputId?: string | null;
 }
 
 interface SessionOutputEventListResponsePayload {
@@ -1261,9 +1274,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:createAgentSession", payload) as Promise<CreateAgentSessionResponsePayload>,
     listRuntimeStates: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listRuntimeStates", workspaceId) as Promise<SessionRuntimeStateListResponsePayload>,
-    getSessionHistory: (payload: { sessionId: string; workspaceId: string }) =>
+    getSessionHistory: (payload: SessionHistoryRequestPayload) =>
       ipcRenderer.invoke("workspace:getSessionHistory", payload) as Promise<SessionHistoryResponsePayload>,
-    getSessionOutputEvents: (payload: { sessionId: string }) =>
+    getSessionOutputEvents: (payload: SessionOutputEventListRequestPayload) =>
       ipcRenderer.invoke("workspace:getSessionOutputEvents", payload) as Promise<SessionOutputEventListResponsePayload>,
     stageSessionAttachments: (payload: StageSessionAttachmentsPayload) =>
       ipcRenderer.invoke("workspace:stageSessionAttachments", payload) as Promise<StageSessionAttachmentsResponsePayload>,

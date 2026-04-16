@@ -950,6 +950,13 @@ test("session messages preserve ascending order and include metadata placeholder
       metadata: {}
     }
   ]);
+  assert.equal(
+    store.countSessionMessages({
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+    }),
+    2,
+  );
   assert.deepEqual(
     store.listSessionMessages({
       workspaceId: "workspace-1",
@@ -967,6 +974,24 @@ test("session messages preserve ascending order and include metadata placeholder
         metadata: {}
       }
     ]
+  );
+  assert.deepEqual(
+    store.listSessionMessages({
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      order: "desc",
+      limit: 1,
+      offset: 1,
+    }),
+    [
+      {
+        id: "m-1",
+        role: "user",
+        text: "hello",
+        createdAt: "2026-01-01T00:00:00+00:00",
+        metadata: {}
+      }
+    ],
   );
   store.close();
 });

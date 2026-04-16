@@ -1775,6 +1775,70 @@ test("runtime states and history endpoints read TS state store", async () => {
   store.close();
 });
 
+test("history endpoint paginates in requested order without hydrating the full response page", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.upsertBinding({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    harness: "pi",
+    harnessSessionId: "harness-1"
+  });
+  store.insertSessionMessage({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    role: "user",
+    text: "first",
+    messageId: "m-1",
+    createdAt: "2026-01-01T00:00:00.000Z"
+  });
+  store.insertSessionMessage({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    role: "assistant",
+    text: "second",
+    messageId: "m-2",
+    createdAt: "2026-01-01T00:00:01.000Z"
+  });
+  store.insertSessionMessage({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    role: "user",
+    text: "third",
+    messageId: "m-3",
+    createdAt: "2026-01-01T00:00:02.000Z"
+  });
+
+  const history = await app.inject({
+    method: "GET",
+    url: `/api/v1/agent-sessions/session-main/history?workspace_id=${workspace.id}&order=desc&limit=2&offset=1`
+  });
+
+  assert.equal(history.statusCode, 200);
+  assert.equal(history.json().count, 2);
+  assert.equal(history.json().total, 3);
+  assert.equal(history.json().limit, 2);
+  assert.equal(history.json().offset, 1);
+  assert.deepEqual(
+    history.json().messages.map((item: { id: string }) => item.id),
+    ["m-2", "m-1"],
+  );
+
+  await app.close();
+  store.close();
+});
+
 test("output events endpoint supports incremental fetches and tail mode", async () => {
   const root = makeTempDir("hb-runtime-api-");
   const store = new RuntimeStateStore({

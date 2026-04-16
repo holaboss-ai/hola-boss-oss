@@ -259,6 +259,8 @@ const STREAM_ATTACH_PENDING = "__stream_attach_pending__";
 const STREAM_TELEMETRY_LIMIT = 240;
 const TOOL_TRACE_TERMINAL_PHASES = new Set(["completed", "failed", "error"]);
 const CHAT_AUTO_SCROLL_THRESHOLD_PX = 72;
+const CHAT_HISTORY_PAGE_SIZE = 10;
+const CHAT_HISTORY_TOP_LOAD_THRESHOLD_PX = 96;
 const CHAT_SCROLLBAR_MIN_THUMB_HEIGHT_PX = 40;
 const COMPOSER_FOOTER_GAP_PX = 8;
 const COMPOSER_FULL_MODEL_CONTROL_WIDTH_PX = 168;
@@ -1511,6 +1513,73 @@ function inputIdFromMessageId(messageId: string, role: "user" | "assistant") {
   return messageId.startsWith(prefix) ? messageId.slice(prefix.length) : "";
 }
 
+function historyMessagesInDisplayOrder(
+  messages: SessionHistoryMessagePayload[],
+  order: "asc" | "desc",
+) {
+  return order === "desc" ? [...messages].reverse() : messages;
+}
+
+function assistantInputIdsFromHistoryMessages(
+  messages: SessionHistoryMessagePayload[],
+) {
+  const seen = new Set<string>();
+  const inputIds: string[] = [];
+  for (const message of messages) {
+    if (message.role !== "assistant") {
+      continue;
+    }
+    const inputId = inputIdFromMessageId(message.id, "assistant");
+    if (!inputId || seen.has(inputId)) {
+      continue;
+    }
+    seen.add(inputId);
+    inputIds.push(inputId);
+  }
+  return inputIds;
+}
+
+function mergeUniqueByKey<T>(
+  existing: T[],
+  incoming: T[],
+  keyForItem: (item: T) => string,
+) {
+  const merged = new Map<string, T>();
+  for (const item of [...existing, ...incoming]) {
+    const key = keyForItem(item);
+    if (!key) {
+      continue;
+    }
+    merged.set(key, item);
+  }
+  return Array.from(merged.values());
+}
+
+function mergeSessionOutputEvents(
+  existing: SessionOutputEventPayload[],
+  incoming: SessionOutputEventPayload[],
+) {
+  return mergeUniqueByKey(existing, incoming, (event) => String(event.id));
+}
+
+function mergeSessionOutputs(
+  existing: WorkspaceOutputRecordPayload[],
+  incoming: WorkspaceOutputRecordPayload[],
+) {
+  return sortOutputs(
+    mergeUniqueByKey(existing, incoming, (output) => output.id),
+  );
+}
+
+function mergeMemoryUpdateProposals(
+  existing: MemoryUpdateProposalRecordPayload[],
+  incoming: MemoryUpdateProposalRecordPayload[],
+) {
+  return sortMemoryUpdateProposals(
+    mergeUniqueByKey(existing, incoming, (proposal) => proposal.proposal_id),
+  );
+}
+
 function normalizeWorkspaceFileSyncPath(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
@@ -2392,6 +2461,9 @@ export function ChatPane({
     WorkspaceSkillRecordPayload[]
   >([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [isLoadingOlderHistory, setIsLoadingOlderHistory] = useState(false);
+  const [loadedHistoryMessageCount, setLoadedHistoryMessageCount] = useState(0);
+  const [totalHistoryMessageCount, setTotalHistoryMessageCount] = useState(0);
   const [isResponding, setIsResponding] = useState(false);
   const [isPausePending, setIsPausePending] = useState(false);
   const [chatErrorMessage, setChatErrorMessage] = useState("");
@@ -2463,6 +2535,12 @@ export function ChatPane({
   const activeAssistantMessageIdRef = useRef<string | null>(null);
   const lastSyncedAgentOperationFileKeyRef = useRef("");
   const pendingInputIdRef = useRef<string | null>(null);
+  const loadedHistoryOutputEventsRef = useRef<SessionOutputEventPayload[]>([]);
+  const liveTodoPlanOverrideRef = useRef<ChatTodoPlan | null>(null);
+  const pendingHistoryPrependRestoreRef = useRef<{
+    scrollHeight: number;
+    scrollTop: number;
+  } | null>(null);
   const seenMainDebugKeysRef = useRef<Set<string>>(new Set());
   const selectedWorkspaceRef = useRef<WorkspaceRecordPayload | null>(null);
   const isOnboardingVariant = variant === "onboarding";
@@ -2647,15 +2725,28 @@ export function ChatPane({
     setMessages([]);
     setSessionOutputs([]);
     setCurrentTodoPlan(null);
+    setLoadedHistoryMessageCount(0);
+    setTotalHistoryMessageCount(0);
+    setIsLoadingOlderHistory(false);
     setArtifactBrowserOpen(false);
     setArtifactBrowserFilter("all");
     setMemoryProposalAction(null);
     setEditingMemoryProposalId(null);
     setMemoryProposalDrafts({});
+    loadedHistoryOutputEventsRef.current = [];
+    liveTodoPlanOverrideRef.current = null;
+    pendingHistoryPrependRestoreRef.current = null;
     resetLiveTurn();
     setCollapsedTraceByStepId({});
     terminalEventTypeByInputIdRef.current.clear();
     shouldAutoScrollRef.current = true;
+  }
+
+  function isSessionHistoryTargetActive(sessionId: string, workspaceId: string) {
+    return (
+      activeSessionIdRef.current === sessionId &&
+      (selectedWorkspaceRef.current?.id || "").trim() === workspaceId
+    );
   }
 
   function recordTerminalEventForInput(
@@ -2787,6 +2878,146 @@ export function ChatPane({
       );
   }
 
+  async function loadSessionHistoryPage(
+    params: {
+      sessionId: string;
+      workspaceId: string;
+      limit: number;
+      offset: number;
+      order: "asc" | "desc";
+    },
+    options?: {
+      cancelled?: () => boolean;
+    },
+  ) {
+    const cancelled = options?.cancelled ?? (() => false);
+    const history = await window.electronAPI.workspace.getSessionHistory({
+      sessionId: params.sessionId,
+      workspaceId: params.workspaceId,
+      limit: params.limit,
+      offset: params.offset,
+      order: params.order,
+    });
+    if (cancelled()) {
+      return null;
+    }
+
+    const historyMessages = historyMessagesInDisplayOrder(
+      history.messages,
+      params.order,
+    );
+    const assistantInputIds = assistantInputIdsFromHistoryMessages(
+      historyMessages,
+    );
+    if (assistantInputIds.length === 0) {
+      return {
+        history,
+        historyMessages,
+        warnings: [] as string[],
+        outputEvents: [] as SessionOutputEventPayload[],
+        outputs: [] as WorkspaceOutputRecordPayload[],
+        memoryProposals: [] as MemoryUpdateProposalRecordPayload[],
+        renderedMessages: historyMessagesFromSessionState(
+          historyMessages,
+          [],
+          [],
+          [],
+        ),
+      };
+    }
+
+    const auxiliaryHistoryWarnings: string[] = [];
+    const artifactResponses = await Promise.all(
+      assistantInputIds.map(async (inputId) => {
+        const [outputEventsResult, outputListResult, memoryProposalListResult] =
+          await Promise.allSettled([
+            window.electronAPI.workspace.getSessionOutputEvents({
+              sessionId: params.sessionId,
+              inputId,
+            }),
+            window.electronAPI.workspace.listOutputs({
+              workspaceId: params.workspaceId,
+              sessionId: params.sessionId,
+              inputId,
+              limit: 200,
+            }),
+            window.electronAPI.workspace.listMemoryUpdateProposals({
+              workspaceId: params.workspaceId,
+              sessionId: params.sessionId,
+              inputId,
+              limit: 200,
+            }),
+          ]);
+        if (outputEventsResult.status !== "fulfilled") {
+          auxiliaryHistoryWarnings.push(
+            optionalHistoryLoadErrorMessage(
+              "Execution history",
+              outputEventsResult.reason,
+            ),
+          );
+        }
+        if (outputListResult.status !== "fulfilled") {
+          auxiliaryHistoryWarnings.push(
+            optionalHistoryLoadErrorMessage("Artifacts", outputListResult.reason),
+          );
+        }
+        if (memoryProposalListResult.status !== "fulfilled") {
+          auxiliaryHistoryWarnings.push(
+            optionalHistoryLoadErrorMessage(
+              "Memory proposals",
+              memoryProposalListResult.reason,
+            ),
+          );
+        }
+        return {
+          outputEvents:
+            outputEventsResult.status === "fulfilled"
+              ? outputEventsResult.value.items
+              : [],
+          outputs:
+            outputListResult.status === "fulfilled"
+              ? outputListResult.value.items
+              : [],
+          memoryProposals:
+            memoryProposalListResult.status === "fulfilled"
+              ? memoryProposalListResult.value.proposals
+              : [],
+        };
+      }),
+    );
+    if (cancelled()) {
+      return null;
+    }
+
+    const outputEvents = mergeSessionOutputEvents(
+      [],
+      artifactResponses.flatMap((entry) => entry.outputEvents),
+    );
+    const outputs = mergeSessionOutputs(
+      [],
+      artifactResponses.flatMap((entry) => entry.outputs),
+    );
+    const memoryProposals = mergeMemoryUpdateProposals(
+      [],
+      artifactResponses.flatMap((entry) => entry.memoryProposals),
+    );
+
+    return {
+      history,
+      historyMessages,
+      warnings: auxiliaryHistoryWarnings,
+      outputEvents,
+      outputs,
+      memoryProposals,
+      renderedMessages: historyMessagesFromSessionState(
+        historyMessages,
+        outputEvents,
+        outputs,
+        memoryProposals,
+      ),
+    };
+  }
+
   async function loadSessionConversation(
     nextSessionId: string | null,
     workspaceId: string,
@@ -2806,84 +3037,30 @@ export function ChatPane({
       return;
     }
 
-    const [
-      historyResult,
-      outputEventHistoryResult,
-      outputListResult,
-      memoryProposalListResult,
-    ] = await Promise.allSettled([
-      window.electronAPI.workspace.getSessionHistory({
+    const page = await loadSessionHistoryPage(
+      {
         sessionId: nextSessionId,
         workspaceId,
-      }),
-      window.electronAPI.workspace.getSessionOutputEvents({
-        sessionId: nextSessionId,
-      }),
-      window.electronAPI.workspace.listOutputs({
-        workspaceId,
-        sessionId: nextSessionId,
-        limit: 200,
-      }),
-      window.electronAPI.workspace.listMemoryUpdateProposals({
-        workspaceId,
-        sessionId: nextSessionId,
-        limit: 200,
-      }),
-    ]);
-    if (historyResult.status !== "fulfilled") {
-      throw historyResult.reason;
-    }
-    if (cancelled()) {
+        limit: CHAT_HISTORY_PAGE_SIZE,
+        offset: 0,
+        order: "desc",
+      },
+      { cancelled },
+    );
+    if (!page || cancelled()) {
       return;
     }
 
-    const auxiliaryHistoryWarnings: string[] = [];
-    const history = historyResult.value;
-    const outputEventHistory =
-      outputEventHistoryResult.status === "fulfilled"
-        ? outputEventHistoryResult.value
-        : { items: [], count: 0, last_event_id: 0 };
-    if (outputEventHistoryResult.status !== "fulfilled") {
-      auxiliaryHistoryWarnings.push(
-        optionalHistoryLoadErrorMessage(
-          "Execution history",
-          outputEventHistoryResult.reason,
-        ),
-      );
-    }
-    const outputList =
-      outputListResult.status === "fulfilled"
-        ? outputListResult.value
-        : { items: [], count: 0 };
-    if (outputListResult.status !== "fulfilled") {
-      auxiliaryHistoryWarnings.push(
-        optionalHistoryLoadErrorMessage("Artifacts", outputListResult.reason),
-      );
-    }
-    const memoryProposalList =
-      memoryProposalListResult.status === "fulfilled"
-        ? memoryProposalListResult.value
-        : { proposals: [] };
-    if (memoryProposalListResult.status !== "fulfilled") {
-      auxiliaryHistoryWarnings.push(
-        optionalHistoryLoadErrorMessage(
-          "Memory proposals",
-          memoryProposalListResult.reason,
-        ),
-      );
-    }
-
-    const nextOutputs = sortOutputs(outputList.items);
-    const nextMessages = historyMessagesFromSessionState(
-      history.messages,
-      outputEventHistory.items,
-      nextOutputs,
-      memoryProposalList.proposals,
-    );
-    setSessionOutputs(nextOutputs);
-    setCurrentTodoPlan(todoPlanFromOutputEvents(outputEventHistory.items));
-    setMessages(nextMessages);
-    setChatErrorMessage(auxiliaryHistoryWarnings.join(" "));
+    loadedHistoryOutputEventsRef.current = page.outputEvents;
+    liveTodoPlanOverrideRef.current = null;
+    setSessionOutputs(page.outputs);
+    setCurrentTodoPlan(todoPlanFromOutputEvents(page.outputEvents));
+    setMessages(page.renderedMessages);
+    setLoadedHistoryMessageCount(page.history.count);
+    setTotalHistoryMessageCount(page.history.total);
+    setIsLoadingOlderHistory(false);
+    pendingHistoryPrependRestoreRef.current = null;
+    setChatErrorMessage(page.warnings.join(" "));
     resetLiveTurn();
     requestHistoryViewportRestore();
 
@@ -2899,7 +3076,7 @@ export function ChatPane({
     const currentRuntimeInputId = (
       currentRuntimeState?.current_input_id || ""
     ).trim();
-    const hasAssistantMessage = nextMessages.some(
+    const hasAssistantMessage = page.renderedMessages.some(
       (message) => message.role === "assistant",
     );
     const shouldAttachLiveRunStream =
@@ -2973,6 +3150,72 @@ export function ChatPane({
     });
     const sessionId = created.session.session_id.trim();
     return sessionId || null;
+  }
+
+  async function loadOlderSessionHistory() {
+    const sessionId = (activeSessionIdRef.current || "").trim();
+    const workspaceId = (selectedWorkspaceRef.current?.id || "").trim();
+    if (
+      !sessionId ||
+      !workspaceId ||
+      isLoadingHistory ||
+      isLoadingOlderHistory ||
+      loadedHistoryMessageCount >= totalHistoryMessageCount
+    ) {
+      return;
+    }
+
+    const container = messagesRef.current;
+    if (container) {
+      pendingHistoryPrependRestoreRef.current = {
+        scrollHeight: container.scrollHeight,
+        scrollTop: container.scrollTop,
+      };
+    }
+    shouldAutoScrollRef.current = false;
+    setIsLoadingOlderHistory(true);
+
+    try {
+      const page = await loadSessionHistoryPage({
+        sessionId,
+        workspaceId,
+        limit: CHAT_HISTORY_PAGE_SIZE,
+        offset: loadedHistoryMessageCount,
+        order: "desc",
+      });
+      if (!page || !isSessionHistoryTargetActive(sessionId, workspaceId)) {
+        pendingHistoryPrependRestoreRef.current = null;
+        return;
+      }
+
+      loadedHistoryOutputEventsRef.current = mergeSessionOutputEvents(
+        loadedHistoryOutputEventsRef.current,
+        page.outputEvents,
+      );
+      setSessionOutputs((prev) => mergeSessionOutputs(prev, page.outputs));
+      setCurrentTodoPlan(
+        liveTodoPlanOverrideRef.current ??
+          todoPlanFromOutputEvents(loadedHistoryOutputEventsRef.current),
+      );
+      setLoadedHistoryMessageCount((current) =>
+        Math.max(current, page.history.offset + page.history.count),
+      );
+      setTotalHistoryMessageCount(page.history.total);
+      if (page.renderedMessages.length === 0) {
+        pendingHistoryPrependRestoreRef.current = null;
+        return;
+      }
+      setMessages((prev) => [...page.renderedMessages, ...prev]);
+    } catch (error) {
+      if (isSessionHistoryTargetActive(sessionId, workspaceId)) {
+        pendingHistoryPrependRestoreRef.current = null;
+        setChatErrorMessage(normalizeErrorMessage(error));
+      }
+    } finally {
+      if (isSessionHistoryTargetActive(sessionId, workspaceId)) {
+        setIsLoadingOlderHistory(false);
+      }
+    }
   }
 
   function appendLiveAssistantDelta(delta: string) {
@@ -3315,6 +3558,20 @@ export function ChatPane({
     liveExecutionItems,
     messages,
   ]);
+
+  useLayoutEffect(() => {
+    const pendingRestore = pendingHistoryPrependRestoreRef.current;
+    const container = messagesRef.current;
+    if (!pendingRestore || !container) {
+      return;
+    }
+
+    pendingHistoryPrependRestoreRef.current = null;
+    const scrollHeightDelta =
+      container.scrollHeight - pendingRestore.scrollHeight;
+    container.scrollTop = pendingRestore.scrollTop + scrollHeightDelta;
+    syncChatScrollMetrics(container);
+  }, [messages]);
 
   useLayoutEffect(() => {
     if (!isHistoryViewportPending || historyViewportRestoreGeneration <= 0) {
@@ -4188,6 +4445,7 @@ export function ChatPane({
 
         const nextTodoPlan = todoPlanFromToolPayload(eventPayload);
         if (nextTodoPlan !== undefined) {
+          liveTodoPlanOverrideRef.current = nextTodoPlan;
           setCurrentTodoPlan(nextTodoPlan);
         }
 
@@ -5581,6 +5839,12 @@ export function ChatPane({
                 const nearBottom = isNearChatBottom(currentTarget);
                 shouldAutoScrollRef.current = scrolledUp ? false : nearBottom;
                 syncChatScrollMetrics(currentTarget);
+                if (
+                  currentTarget.scrollTop <=
+                  CHAT_HISTORY_TOP_LOAD_THRESHOLD_PX
+                ) {
+                  void loadOlderSessionHistory();
+                }
               }}
               className={`chat-scrollbar-hidden h-full min-h-0 overflow-x-hidden overflow-y-auto ${hasMessages ? "" : "flex items-center justify-center"}`}
             >
@@ -5591,6 +5855,16 @@ export function ChatPane({
                     showHistoryRestoreScreen ? "invisible" : ""
                   }`}
                 >
+                  {isLoadingOlderHistory ||
+                  loadedHistoryMessageCount < totalHistoryMessageCount ? (
+                    <div className="flex justify-center">
+                      <div className="rounded-full border border-border/45 bg-muted/45 px-3 py-1 text-[11px] text-muted-foreground">
+                        {isLoadingOlderHistory
+                          ? "Loading earlier messages..."
+                          : "Scroll up for earlier messages"}
+                      </div>
+                    </div>
+                  ) : null}
                   {messages.map((message) =>
                     message.role === "user" ? (
                       <UserTurn
