@@ -1771,7 +1771,12 @@ test("runPi emits run_started and terminal success when the session completes", 
       derivedEvents.map((event) => event.event_type),
       ["run_started", "output_delta", "auto_compaction_start", "auto_compaction_end", "run_completed"]
     );
-    assert.deepEqual(sentContent, [{ type: "text", text: "List the files" }]);
+    assert.deepEqual(sentContent, [
+      {
+        type: "text",
+        text: "List the files\n\nAttachments: none.\nImage inputs: none.",
+      },
+    ]);
     assert.equal(events[0]?.payload.harness_session_id, "/tmp/pi-session.jsonl");
     assert.equal(derivedEvents[4]?.payload.harness_session_id, "/tmp/pi-session.jsonl");
     assert.equal(derivedEvents[2]?.payload.reason, "threshold");
