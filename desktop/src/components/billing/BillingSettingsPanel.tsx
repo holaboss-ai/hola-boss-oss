@@ -188,6 +188,26 @@ function resolveGroupTitle(group: UsageGroup): string {
   return `${label} · ${group.items.length} calls`;
 }
 
+// Group subtitle: show session + workspace context so the user can tell
+// sessions apart even when the model is the same.
+function resolveGroupSubtitle(group: UsageGroup): string | null {
+  if (group.items.length <= 1) {
+    return null;
+  }
+  const first = group.items[0];
+  const sessionId = readMetadataString(first.metadata, "sessionId");
+  const workspaceId = readMetadataString(first.metadata, "workspaceId");
+
+  const parts: string[] = [];
+  if (sessionId) {
+    parts.push(`Session ${sessionId.slice(0, 8)}`);
+  }
+  if (workspaceId) {
+    parts.push(`Workspace ${workspaceId.slice(0, 8)}`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
 // ============================================================================
 // Components
 // ============================================================================
@@ -242,6 +262,7 @@ function UsageGroupRow({
   }
 
   const title = resolveGroupTitle(group);
+  const subtitle = resolveGroupSubtitle(group);
 
   return (
     <div className="border-b border-border/30 last:border-b-0">
@@ -263,7 +284,14 @@ function UsageGroupRow({
             size={14}
             className={`shrink-0 text-muted-foreground transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}
           />
-          <span className="truncate font-medium text-foreground">{title}</span>
+          <div className="min-w-0">
+            <div className="truncate font-medium text-foreground">{title}</div>
+            {subtitle ? (
+              <div className="mt-0.5 truncate text-muted-foreground text-xs">
+                {subtitle}
+              </div>
+            ) : null}
+          </div>
         </div>
         <div className="text-muted-foreground text-xs tabular-nums">
           {formatBillingDateTime(group.firstCreatedAt)}
