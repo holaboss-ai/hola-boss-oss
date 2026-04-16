@@ -12,7 +12,7 @@ import {
 } from "./runtime-shell.js";
 
 const TERMINAL_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
-const HEARTBEAT_INTERVAL_MS = 5000;
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 5000;
 const DEFAULT_RUN_TIMEOUT_SECONDS = 1800;
 const DEFAULT_IDLE_TIMEOUT_SECONDS = 900;
 const DEFAULT_TASK_PROPOSAL_RUN_TIMEOUT_SECONDS = 7200;
@@ -132,6 +132,19 @@ function secondsFromEnv(
   return Math.max(options.min, Math.min(parsed, options.max));
 }
 
+function millisecondsFromEnv(
+  envName: string,
+  defaultValue: number,
+  options: { min: number; max: number }
+): number {
+  const raw = (process.env[envName] ?? String(defaultValue)).trim();
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) {
+    return defaultValue;
+  }
+  return Math.max(options.min, Math.min(parsed, options.max));
+}
+
 function runnerTimeoutSeconds(payload: Record<string, unknown>): number {
   const baseTimeoutSeconds = secondsFromEnv("SANDBOX_AGENT_RUN_TIMEOUT_S", DEFAULT_RUN_TIMEOUT_SECONDS, {
     min: 1,
@@ -160,6 +173,13 @@ function runnerIdleTimeoutSeconds(payload: Record<string, unknown>): number {
     runnerTimeoutSeconds(payload),
     { min: 1, max: 7200 }
   );
+}
+
+function runnerHeartbeatIntervalMs(): number {
+  return millisecondsFromEnv("SANDBOX_AGENT_RUNNER_HEARTBEAT_MS", DEFAULT_HEARTBEAT_INTERVAL_MS, {
+    min: 50,
+    max: 60_000,
+  });
 }
 
 function normalizeRuntimeApiHost(value: string): string {
@@ -435,8 +455,11 @@ export async function executeRunnerRequest(
   };
   resetIdleTimeout();
   const heartbeat = setInterval(() => {
+    // Keep silent-but-alive runs from tripping the idle watchdog while still
+    // letting the hard timeout cap total wall-clock execution.
+    resetIdleTimeout();
     void options.onHeartbeat?.();
-  }, HEARTBEAT_INTERVAL_MS);
+  }, runnerHeartbeatIntervalMs());
   const abortChild = () => {
     if (sawTerminal || timedOut || idleTimedOut || aborted) {
       return;
@@ -580,7 +603,7 @@ export class NativeRunnerExecutor implements RunnerExecutorLike {
       heartbeat = setTimeout(() => {
         stream.push(": ping\n\n");
         resetHeartbeat();
-      }, HEARTBEAT_INTERVAL_MS);
+      }, runnerHeartbeatIntervalMs());
     };
 
     resetHeartbeat();
