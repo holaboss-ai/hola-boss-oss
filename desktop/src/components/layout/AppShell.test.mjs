@@ -704,21 +704,20 @@ test("app shell can route explorer references into chat attachments or text pref
   );
   assert.match(
     source,
-    /const handleReferenceWorkspacePathInChat = useCallback\(\s*\(entry: LocalFileEntry, referenceText: string\) => \{/,
+    /const handleReferenceWorkspacePathInChat = useCallback\(\s*\(entry: LocalFileEntry\) => \{/,
   );
-  assert.match(source, /const normalizedReferenceText = referenceText\.trim\(\);/);
   assert.match(source, /const normalizedAbsolutePath = entry\.absolutePath\.trim\(\);/);
   assert.match(source, /const normalizedName = entry\.name\.trim\(\);/);
   assert.match(
     source,
-    /if \(\s*\(entry\.isDirectory && !normalizedReferenceText\) \|\|\s*\(!entry\.isDirectory && \(!normalizedAbsolutePath \|\| !normalizedName\)\)\s*\) \{\s*return;\s*\}/,
+    /if \(!normalizedAbsolutePath \|\| !normalizedName\) \{\s*return;\s*\}/,
   );
   assert.match(source, /setActiveShellView\("space"\);/);
   assert.match(source, /setSpaceVisibility\(\(previous\) => \(\{\s*\.\.\.previous,\s*agent: true,\s*\}\)\);/);
   assert.match(source, /setAgentView\(\{ type: "chat" \}\);/);
   assert.match(
     source,
-    /if \(entry\.isDirectory\) \{\s*setChatComposerPrefillRequest\(\{\s*text: normalizedReferenceText,\s*requestKey: nextChatComposerPrefillRequestKey\(\),\s*mode: "append",\s*\}\);\s*\} else \{\s*setChatExplorerAttachmentRequest\(\{\s*files: \[\s*\{\s*absolutePath: normalizedAbsolutePath,\s*name: normalizedName,\s*size: Number\.isFinite\(entry\.size\) \? Math\.max\(0, entry\.size\) : 0,\s*\},\s*\],\s*requestKey: nextChatExplorerAttachmentRequestKey\(\),\s*\}\);\s*\}/,
+    /setChatExplorerAttachmentRequest\(\{\s*files: \[\s*\{\s*absolutePath: normalizedAbsolutePath,\s*name: normalizedName,\s*size: Number\.isFinite\(entry\.size\) \? Math\.max\(0, entry\.size\) : 0,\s*mimeType: entry\.isDirectory \? "inode\/directory" : null,\s*kind: entry\.isDirectory \? "folder" : undefined,\s*\},\s*\],\s*requestKey: nextChatExplorerAttachmentRequestKey\(\),\s*\}\);/,
   );
   assert.match(source, /setChatFocusRequestKey\(\(current\) => current \+ 1\);/);
   assert.match(
@@ -730,6 +729,23 @@ test("app shell can route explorer references into chat attachments or text pref
     /onExplorerAttachmentRequestConsumed=\{\s*handleChatExplorerAttachmentRequestConsumed\s*\}/,
   );
   assert.match(source, /<FileExplorerPane[\s\S]*onReferenceInChat=\{handleReferenceWorkspacePathInChat\}/);
+});
+
+test("app shell clears missing internal file surfaces after explorer deletion or preview invalidation", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /function normalizeComparablePath\(targetPath: string\)/);
+  assert.match(source, /function isPathWithin\(parentPath: string, targetPath: string\)/);
+  assert.match(
+    source,
+    /const handleMissingInternalResource = useCallback\(\s*\(resourceId: string\) => \{[\s\S]*setAgentView\(\(current\) => \{[\s\S]*return \{ type: "chat" \};[\s\S]*\}\);[\s\S]*setSpaceDisplayView\(\(current\) => \{[\s\S]*delete lastRestorableSpaceFileDisplayViewByWorkspaceRef\.current\[[\s\S]*selectedWorkspaceId[\s\S]*\];[\s\S]*return \{ type: "empty" \};[\s\S]*\}\);/,
+  );
+  assert.match(
+    source,
+    /const handleDeleteWorkspaceEntry = useCallback\(\s*\(entry: LocalFileEntry\) => \{[\s\S]*const normalizedDeletedPath = normalizeComparablePath\(entry\.absolutePath\);[\s\S]*setSpaceDisplayView\(\(current\) => \{[\s\S]*if \(!isPathWithin\(normalizedDeletedPath, current\.resourceId\?\.trim\(\) \?\? ""\)\) \{\s*return current;\s*\}[\s\S]*return \{ type: "empty" \};[\s\S]*\}\);/,
+  );
+  assert.match(source, /<InternalSurfacePane[\s\S]*onResourceMissing=\{handleMissingInternalResource\}/);
+  assert.match(source, /<FileExplorerPane[\s\S]*onDeleteEntry=\{handleDeleteWorkspaceEntry\}/);
 });
 
 test("app shell passes new session requests into the chat pane selector", async () => {

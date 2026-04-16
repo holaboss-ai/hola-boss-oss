@@ -102,11 +102,38 @@ test("file explorer live-refreshes inline previews from file watch events withou
     source,
     /const \{ allowed, targetPath: validatedWatchedPath \} =\s*await validateWorkspaceScopedTargetPath\(watchedPath\);[\s\S]*if \(!allowed \|\| !validatedWatchedPath\) \{\s*return;\s*\}[\s\S]*const nextPreview = await window\.electronAPI\.fs\.readFilePreview\(\s*validatedWatchedPath,\s*selectedWorkspaceId \?\? null,\s*\);[\s\S]*setPreview\(nextPreview\);[\s\S]*setPreviewDraft\(nextPreview\.content \?\? ""\);/,
   );
+  assert.match(source, /function isMissingFilePreviewError\(cause: unknown\)/);
+  assert.match(
+    source,
+    /catch \(cause\) \{\s*if \(!cancelled && isMissingFilePreviewError\(cause\)\) \{\s*resetPreviewState\(\);[\s\S]*setSelectedPath\(\(current\) =>[\s\S]*normalizeComparablePath\(watchedPath\)[\s\S]*\? ""[\s\S]*: current,\s*\);[\s\S]*return;\s*\}[\s\S]*The agent may still be writing or replacing the file/,
+  );
   assert.match(
     source,
     /const \{ allowed, targetPath: validatedWatchedPath \} =\s*await validateWorkspaceScopedTargetPath\(watchedPath\);[\s\S]*if \(!allowed \|\| !validatedWatchedPath\) \{\s*return;\s*\}[\s\S]*window\.electronAPI\.fs\.watchFile\(\s*validatedWatchedPath,\s*selectedWorkspaceId \?\? null,\s*\)/,
   );
   assert.match(source, /void window\.electronAPI\.fs\.unwatchFile\(subscriptionId\);/);
+});
+
+test("file explorer clears affected preview state when deleting the active resource", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /onDeleteEntry\?: \(entry: LocalFileEntry\) => void;/);
+  assert.match(
+    source,
+    /const normalizedDeletedPath = normalizeComparablePath\(entry\.absolutePath\);[\s\S]*const normalizedSelectedPath = normalizeComparablePath\(selectedPath\);[\s\S]*const normalizedPreviewPath = normalizeComparablePath\(\s*preview\?\.absolutePath \?\? "",\s*\);/,
+  );
+  assert.match(
+    source,
+    /const deletedAffectsSelection =[\s\S]*isPathWithin\(normalizedDeletedPath, normalizedSelectedPath\);/,
+  );
+  assert.match(
+    source,
+    /const deletedAffectsPreview =[\s\S]*isPathWithin\(normalizedDeletedPath, normalizedPreviewPath\);/,
+  );
+  assert.match(
+    source,
+    /await refreshDirectoryEntries\(parentPath\);[\s\S]*if \(deletedAffectsPreview\) \{\s*resetPreviewState\(\);\s*\}[\s\S]*if \(deletedAffectsSelection\) \{\s*setSelectedPath\(""\);\s*\}[\s\S]*onDeleteEntry\?\.\(entry\);/,
+  );
 });
 
 test("file explorer switches folders to inline tree expansion and keeps explorer-only file opening", async () => {
@@ -133,25 +160,20 @@ test("file explorer switches folders to inline tree expansion and keeps explorer
     /onDoubleClick=\{\(\) => \{\s*if \(!entry\.isDirectory && previewInPane\) \{\s*void openFilePreview\(entry\.absolutePath\);\s*\}\s*\}\}/,
   );
   assert.match(source, /click to \$\{isExpanded \? "collapse" : "expand"\} folder/);
-  assert.match(source, /click to open file, use @ to attach in chat/);
+  assert.match(source, /click to open file, use @ or drag to attach in chat/);
 });
 
-test("file explorer adds explicit @ references and keeps drag gestures scoped to internal moves", async () => {
+test("file explorer attaches folders through @ and drag payloads while preserving internal move gestures", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /import \{\s*inferDraggedAttachmentKind,\s*\} from "@\/lib\/attachmentDrag";/);
-  assert.match(source, /function buildChatReferenceText\(/);
+  assert.match(
+    source,
+    /import \{\s*EXPLORER_ATTACHMENT_DRAG_TYPE,\s*inferDraggedAttachmentKind,\s*serializeExplorerAttachmentDragPayload,\s*\} from "@\/lib\/attachmentDrag";/,
+  );
   assert.match(source, /const entryIsProtected = isProtectedWorkspacePath\(\s*workspaceRootPath,\s*entry\.absolutePath,\s*\);/);
   assert.match(source, /const referenceEntryInChat = useCallback\(/);
-  assert.match(
-    source,
-    /const referenceText = buildChatReferenceText\(\s*workspaceRootPath,\s*entry\.absolutePath,\s*\);/,
-  );
-  assert.match(source, /onReferenceInChat\?\.\(entry, referenceText\);/);
-  assert.match(
-    source,
-    /aria-label=\{\s*entry\.isDirectory\s*\?\s*`Reference \$\{entry\.name\} in chat`\s*:\s*`Attach \$\{entry\.name\} to chat`\s*\}/,
-  );
+  assert.match(source, /onReferenceInChat\?\.\(entry\);/);
+  assert.match(source, /aria-label=\{`Attach \$\{entry\.name\} to chat`\}/);
   assert.match(source, /<AtSign size=\{12\} \/>/);
   assert.match(source, /const EXPLORER_INTERNAL_MOVE_DRAG_TYPE =\s*"application\/x-holaboss-file-explorer-move";/);
   assert.match(source, /const rowClassName = `group mb-0\.5 w-full rounded-md px-2 py-1\.5 text-left transition-colors/);
@@ -162,22 +184,25 @@ test("file explorer adds explicit @ references and keeps drag gestures scoped to
   assert.match(source, /className="w-full min-w-0 cursor-pointer text-left"/);
   assert.match(source, /className="flex min-w-0 flex-1 flex-col gap-0\.5"/);
   assert.match(source, /className="flex shrink-0 items-center gap-0\.5"/);
-  assert.match(source, /draggable=\{!entry\.isDirectory && !entryIsProtected\}/);
-  assert.match(source, /event\.dataTransfer\.effectAllowed = "move";/);
+  assert.match(source, /draggable=\{!entryIsProtected\}/);
+  assert.match(source, /event\.dataTransfer\.effectAllowed = "copyMove";/);
   assert.match(
     source,
     /event\.dataTransfer\.setData\(\s*EXPLORER_INTERNAL_MOVE_DRAG_TYPE,\s*entry\.absolutePath,\s*\);/,
   );
-  assert.match(source, /if \(entry\.isDirectory \|\| entryIsProtected\) \{\s*event\.preventDefault\(\);\s*return;\s*\}/);
+  assert.match(
+    source,
+    /event\.dataTransfer\.setData\(\s*EXPLORER_ATTACHMENT_DRAG_TYPE,\s*serializeExplorerAttachmentDragPayload\(\{[\s\S]*kind: entry\.isDirectory\s*\?\s*"folder"\s*:\s*inferDraggedAttachmentKind\(entry\.name\),[\s\S]*\}\),\s*\);/,
+  );
+  assert.match(source, /if \(entryIsProtected\) \{\s*event\.preventDefault\(\);\s*return;\s*\}/);
   assert.match(source, /const preview = createAttachmentDragPreview\(entry\);/);
-  assert.doesNotMatch(source, /serializeExplorerAttachmentDragPayload/);
-  assert.doesNotMatch(source, /EXPLORER_ATTACHMENT_DRAG_TYPE/);
   assert.doesNotMatch(source, /event\.dataTransfer\.setData\(\s*"text\/plain"/);
   assert.doesNotMatch(source, /cursor-grab/);
   assert.doesNotMatch(source, /cursor-grabbing/);
   assert.doesNotMatch(source, /className="flex min-w-0 items-center gap-2"\s*style=\{\{ paddingLeft: `\$\{depth \* 16\}px` \}\}/);
   assert.doesNotMatch(source, /className="flex min-w-0 items-center gap-2 pl-6 text-\[11px\] text-muted-foreground"/);
   assert.doesNotMatch(source, /className="mt-0\.5 flex shrink-0 items-center gap-0\.5"/);
+  assert.match(source, /use @ or drag to attach in chat/);
 });
 
 test("file explorer groups protected workspace system entries into a dedicated root section", async () => {
@@ -232,7 +257,7 @@ test("file explorer accepts one-shot focus requests for artifact files", async (
   assert.match(source, /export type FileExplorerFocusRequest = \{\s*path: string;\s*requestKey: number;\s*\};/);
   assert.match(
     source,
-    /interface FileExplorerPaneProps \{\s*focusRequest\?: FileExplorerFocusRequest \| null;\s*onFocusRequestConsumed\?: \(requestKey: number\) => void;\s*previewInPane\?: boolean;\s*onFileOpen\?: \(path: string\) => void;\s*onReferenceInChat\?: \(entry: LocalFileEntry, referenceText: string\) => void;\s*onOpenLinkInBrowser\?: \(url: string\) => void;\s*embedded\?: boolean;\s*\}/,
+    /interface FileExplorerPaneProps \{\s*focusRequest\?: FileExplorerFocusRequest \| null;\s*onFocusRequestConsumed\?: \(requestKey: number\) => void;\s*previewInPane\?: boolean;\s*onFileOpen\?: \(path: string\) => void;\s*onReferenceInChat\?: \(entry: LocalFileEntry\) => void;\s*onDeleteEntry\?: \(entry: LocalFileEntry\) => void;\s*onOpenLinkInBrowser\?: \(url: string\) => void;\s*embedded\?: boolean;\s*\}/,
   );
   assert.match(source, /const request = focusRequest;\s*if \(lastProcessedFocusRequestKeyRef\.current === request\.requestKey\) \{\s*return;\s*\}/);
   assert.match(
@@ -464,6 +489,61 @@ test("file explorer exposes right-click rename and delete actions for entries", 
   assert.match(source, /Delete…/);
 });
 
+test("file explorer supports keyboard and context-menu copy, cut, and paste for selected entries", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /type ExplorerClipboardMode = "copy" \| "cut";/);
+  assert.match(source, /type ExplorerClipboardEntry = \{/);
+  assert.match(source, /let explorerClipboardEntry: ExplorerClipboardEntry \| null = null;/);
+  assert.match(source, /function isEditableKeyboardTarget\(target: EventTarget \| null\)/);
+  assert.match(source, /const pasteInFlightRef = useRef\(false\);/);
+  assert.match(source, /const copyExplorerEntryToClipboard = useCallback\(/);
+  assert.match(
+    source,
+    /if \(mode === "cut"\) \{[\s\S]*protectedWorkspacePathMessage\(\s*workspaceRootPath,\s*normalizedSourcePath,\s*\);/,
+  );
+  assert.match(
+    source,
+    /explorerClipboardEntry = \{\s*mode,\s*sourcePath: normalizedSourcePath,\s*name: entry\.name\.trim\(\) \|\| getFolderName\(normalizedSourcePath\),\s*isDirectory: entry\.isDirectory,\s*workspaceId: normalizedWorkspaceId,\s*\};/,
+  );
+  assert.match(source, /const pasteExplorerClipboardIntoDirectory = useCallback\(/);
+  assert.match(
+    source,
+    /if \(clipboardEntry\.workspaceId !== normalizedWorkspaceId\) \{\s*setError\("Copy, cut, and paste only work within the current workspace\."\);\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /clipboardEntry\.mode === "cut"[\s\S]*await moveEntryToDirectory\(\s*clipboardEntry\.sourcePath,\s*normalizedDestinationDirectoryPath,\s*\)/,
+  );
+  assert.match(
+    source,
+    /window\.electronAPI\.fs\.copyPath\(\s*clipboardEntry\.sourcePath,\s*normalizedDestinationDirectoryPath,\s*selectedWorkspaceId \?\? null,\s*\)/,
+  );
+  assert.match(
+    source,
+    /window\.addEventListener\("keydown", handleKeyDown\);[\s\S]*window\.removeEventListener\("keydown", handleKeyDown\);/,
+  );
+  assert.match(
+    source,
+    /if \(isEditableKeyboardTarget\(focusTarget\)\) \{\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /if \(normalizedKey === "c"\) \{[\s\S]*copyExplorerEntryToClipboard\(selectedEntry, "copy"\);/,
+  );
+  assert.match(
+    source,
+    /if \(normalizedKey === "x"\) \{[\s\S]*copyExplorerEntryToClipboard\(selectedEntry, "cut"\);/,
+  );
+  assert.match(
+    source,
+    /if \(normalizedKey === "v"\) \{[\s\S]*void pasteExplorerClipboardIntoDirectory\(creationTargetDirectoryPath\);/,
+  );
+  assert.match(source, /Copy/);
+  assert.match(source, /Cut/);
+  assert.match(source, /Paste/);
+});
+
 test("file explorer can create new files and folders at the selected directory target", async () => {
   const source = await readFile(sourcePath, "utf8");
 
@@ -511,7 +591,7 @@ test("file explorer blocks renaming deleting and moving protected system entries
   );
   assert.match(
     source,
-    /const protectedMessage =\s*protectedWorkspacePathMessage\(workspaceRootPath, normalizedSourcePath\) \|\|\s*protectedWorkspacePathMessage\(\s*workspaceRootPath,\s*normalizedDestinationDirectoryPath,\s*\);\s*if \(protectedMessage\) \{\s*setError\(protectedMessage\);\s*return;\s*\}/,
+    /const protectedMessage =\s*protectedWorkspacePathMessage\(workspaceRootPath, normalizedSourcePath\) \|\|\s*protectedWorkspacePathMessage\(\s*workspaceRootPath,\s*normalizedDestinationDirectoryPath,\s*\);\s*if \(protectedMessage\) \{\s*setError\(protectedMessage\);\s*return false;\s*\}/,
   );
   assert.match(
     source,
@@ -530,7 +610,7 @@ test("file explorer blocks renaming deleting and moving protected system entries
     /return `\$\{protectedPathLabel\} cannot be renamed, moved, or deleted from the file explorer\.`;/,
   );
   assert.doesNotMatch(source, /creationTargetDirectoryIsProtected/);
-  assert.doesNotMatch(source, /contextMenuTargetDirectoryIsProtected/);
+  assert.match(source, /const contextMenuTargetDirectoryIsProtected = Boolean\(/);
 });
 
 test("file explorer can move dragged files into folder rows", async () => {
@@ -575,6 +655,8 @@ test("file explorer can move dragged files into folder rows", async () => {
 test("file explorer can move dragged files to the current directory from pane empty space", async () => {
   const source = await readFile(sourcePath, "utf8");
 
+  assert.match(source, /const clearActiveDropTargets = useCallback\(\(\) => \{/);
+  assert.match(source, /setDirectoryDropTargetPath\(null\);\s*setPaneExternalDropTarget\(false\);/);
   assert.match(
     source,
     /const canMoveDraggedEntry = canMoveDraggedEntryToDirectoryPath\(\s*currentPathRef\.current,\s*\);/,
@@ -593,7 +675,11 @@ test("file explorer can move dragged files to the current directory from pane em
   );
   assert.match(
     source,
-    /if \(canMoveDraggedEntry && draggedEntryPath\) \{\s*void moveEntryToDirectory\(draggedEntryPath,\s*currentPathRef\.current\);\s*return;\s*\}/,
+    /event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*clearActiveDropTargets\(\);\s*if \(canMoveDraggedEntry && draggedEntryPath\) \{\s*void moveEntryToDirectory\(draggedEntryPath,\s*currentPathRef\.current\);\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /onDragEnd=\{\(\) => \{\s*setDraggedEntryPath\(null\);\s*clearActiveDropTargets\(\);/,
   );
 });
 
@@ -676,11 +762,11 @@ test("file explorer does not expose a pane-level close action", async () => {
 
   assert.match(
     source,
-    /interface FileExplorerPaneProps \{\s*focusRequest\?: FileExplorerFocusRequest \| null;\s*onFocusRequestConsumed\?: \(requestKey: number\) => void;\s*previewInPane\?: boolean;\s*onFileOpen\?: \(path: string\) => void;\s*onReferenceInChat\?: \(entry: LocalFileEntry, referenceText: string\) => void;\s*onOpenLinkInBrowser\?: \(url: string\) => void;\s*embedded\?: boolean;\s*\}/,
+    /interface FileExplorerPaneProps \{\s*focusRequest\?: FileExplorerFocusRequest \| null;\s*onFocusRequestConsumed\?: \(requestKey: number\) => void;\s*previewInPane\?: boolean;\s*onFileOpen\?: \(path: string\) => void;\s*onReferenceInChat\?: \(entry: LocalFileEntry\) => void;\s*onDeleteEntry\?: \(entry: LocalFileEntry\) => void;\s*onOpenLinkInBrowser\?: \(url: string\) => void;\s*embedded\?: boolean;\s*\}/,
   );
   assert.match(
     source,
-    /export function FileExplorerPane\(\{\s*focusRequest = null,\s*onFocusRequestConsumed,\s*previewInPane = true,\s*onFileOpen,\s*onReferenceInChat,\s*onOpenLinkInBrowser,\s*embedded = false,\s*}: FileExplorerPaneProps\)/,
+    /export function FileExplorerPane\(\{\s*focusRequest = null,\s*onFocusRequestConsumed,\s*previewInPane = true,\s*onFileOpen,\s*onReferenceInChat,\s*onDeleteEntry,\s*onOpenLinkInBrowser,\s*embedded = false,\s*}: FileExplorerPaneProps\)/,
   );
   assert.doesNotMatch(source, /label="Close file explorer"/);
   assert.doesNotMatch(source, /icon=\{<X size=\{1[23]\} \/>/);

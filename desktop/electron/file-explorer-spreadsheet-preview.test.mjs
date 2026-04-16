@@ -145,6 +145,23 @@ test("desktop file explorer enforces the selected workspace root as a filesystem
     source,
     /"fs:renamePath"[\s\S]*targetPath: string,[\s\S]*nextName: string,[\s\S]*renameExplorerPath\(targetPath, nextName, workspaceId\)/,
   );
+  assert.match(source, /async function copyExplorerPath\(/);
+  assert.match(
+    source,
+    /assertWorkspaceExplorerPathModifiable\(workspaceRoot, destinationAbsolutePath\);/,
+  );
+  assert.match(
+    source,
+    /await nextAvailableExplorerCreatePath\(\s*destinationAbsolutePath,\s*path\.basename\(sourceAbsolutePath\),\s*\)/,
+  );
+  assert.match(
+    source,
+    /await fs\.cp\(sourceAbsolutePath, nextAbsolutePath, \{\s*recursive: sourceStat\.isDirectory\(\),[\s\S]*preserveTimestamps: true,[\s\S]*verbatimSymlinks: true,[\s\S]*\}\);/,
+  );
+  assert.match(
+    source,
+    /"fs:copyPath"[\s\S]*sourcePath: string,[\s\S]*destinationDirectoryPath: string,[\s\S]*copyExplorerPath\(sourcePath, destinationDirectoryPath, workspaceId\)/,
+  );
   assert.match(
     source,
     /"fs:movePath"[\s\S]*sourcePath: string,[\s\S]*destinationDirectoryPath: string,[\s\S]*moveExplorerPath\(sourcePath, destinationDirectoryPath, workspaceId\)/,
@@ -184,6 +201,10 @@ test("desktop preload exposes file preview watch subscriptions and change events
   assert.match(
     source,
     /unwatchFile: \(subscriptionId: string\) =>\s*ipcRenderer\.invoke\("fs:unwatchFile", subscriptionId\) as Promise<void>/,
+  );
+  assert.match(
+    source,
+    /copyPath: \(\s*sourcePath: string,\s*destinationDirectoryPath: string,\s*workspaceId\?: string \| null,\s*\) =>[\s\S]*ipcRenderer\.invoke\("fs:copyPath", sourcePath, destinationDirectoryPath, workspaceId\) as Promise<FileSystemMutationPayload>/,
   );
   assert.match(
     source,

@@ -458,7 +458,7 @@ test("chat pane gates image attachments using model input modalities metadata", 
   );
   assert.match(
     source,
-    /inferDraggedAttachmentKind\(file\.name,\s*file\.mimeType\) === "image"/,
+    /resolveExplorerAttachmentKind\(file\) === "image"/,
   );
   assert.match(
     source,

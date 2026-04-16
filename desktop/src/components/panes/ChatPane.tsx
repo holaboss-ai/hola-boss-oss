@@ -24,6 +24,7 @@ import {
   Clock3,
   Copy,
   FileText,
+  Folder,
   Image as ImageIcon,
   Inbox,
   Lightbulb,
@@ -50,8 +51,8 @@ import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
 import {
   EXPLORER_ATTACHMENT_DRAG_TYPE,
   type ExplorerAttachmentDragPayload,
-  inferDraggedAttachmentKind,
   parseExplorerAttachmentDragPayload,
+  resolveExplorerAttachmentKind,
 } from "@/lib/attachmentDrag";
 import {
   DEFAULT_RUNTIME_MODEL,
@@ -181,7 +182,7 @@ interface PendingExplorerAttachmentFile {
   name: string;
   mime_type?: string | null;
   size_bytes: number;
-  kind: "image" | "file";
+  kind: "image" | "file" | "folder";
 }
 
 type PendingAttachment =
@@ -733,6 +734,8 @@ function normalizeChatAttachment(value: unknown): ChatAttachment | null {
   const kind =
     value.kind === "image"
       ? "image"
+      : value.kind === "folder"
+        ? "folder"
       : value.kind === "file"
         ? "file"
         : mimeType.startsWith("image/")
@@ -5182,6 +5185,7 @@ export function ChatPane({
                   absolute_path: entry.absolutePath,
                   name: entry.name,
                   mime_type: entry.mime_type ?? null,
+                  kind: entry.kind,
                 })),
               })
             : Promise.resolve({ attachments: [] }),
@@ -5407,7 +5411,7 @@ export function ChatPane({
     for (const file of files) {
       if (
         !selectedModelSupportsImageInput &&
-        inferDraggedAttachmentKind(file.name, file.mimeType) === "image"
+        resolveExplorerAttachmentKind(file) === "image"
       ) {
         rejectedImageCount += 1;
         continue;
@@ -5432,7 +5436,7 @@ export function ChatPane({
         name: file.name,
         mime_type: file.mimeType ?? null,
         size_bytes: file.size,
-        kind: inferDraggedAttachmentKind(file.name, file.mimeType),
+        kind: resolveExplorerAttachmentKind(file),
       })),
     ]);
   }
@@ -6810,7 +6814,7 @@ interface ComposerProps {
   slashCommands: ChatComposerSlashCommandOption[];
   attachments: Array<{
     id: string;
-    kind: "image" | "file";
+    kind: "image" | "file" | "folder";
     name: string;
     size_bytes: number;
   }>;
@@ -7927,7 +7931,7 @@ function AttachmentList({
 }: {
   attachments: Array<{
     id: string;
-    kind: "image" | "file";
+    kind: "image" | "file" | "folder";
     name: string;
     size_bytes: number;
   }>;
@@ -7943,6 +7947,8 @@ function AttachmentList({
         >
           {attachment.kind === "image" ? (
             <ImageIcon size={12} className="shrink-0 text-primary/72" />
+          ) : attachment.kind === "folder" ? (
+            <Folder size={12} className="shrink-0 text-primary/72" />
           ) : (
             <FileText size={12} className="shrink-0 text-primary/72" />
           )}

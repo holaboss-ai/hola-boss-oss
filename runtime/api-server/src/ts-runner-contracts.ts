@@ -4,7 +4,7 @@ export type JsonObject = { [key: string]: JsonValue };
 
 export interface TsRunnerInputAttachment {
   id: string;
-  kind: "image" | "file";
+  kind: "image" | "file" | "folder";
   name: string;
   mime_type: string;
   size_bytes: number;
@@ -119,7 +119,17 @@ function attachments(value: unknown): TsRunnerInputAttachment[] {
       const workspacePath = typeof item.workspace_path === "string" ? item.workspace_path.trim() : "";
       const sizeBytes = typeof item.size_bytes === "number" && Number.isFinite(item.size_bytes) ? item.size_bytes : 0;
       const kind =
-        item.kind === "image" ? "image" : item.kind === "file" ? "file" : mimeType.startsWith("image/") ? "image" : "file";
+        item.kind === "image"
+          ? "image"
+          : item.kind === "folder"
+            ? "folder"
+            : item.kind === "file"
+              ? "file"
+              : mimeType.startsWith("image/")
+                ? "image"
+                : mimeType === "inode/directory"
+                  ? "folder"
+                  : "file";
       if (!id || !name || !mimeType || !workspacePath) {
         throw new TsRunnerRequestError("attachments entries must include id, name, mime_type, and workspace_path");
       }

@@ -46,7 +46,7 @@ export interface RunnerRequest {
 
 export interface HarnessHostInputAttachmentPayload {
   id: string;
-  kind: "image" | "file";
+  kind: "image" | "file" | "folder";
   name: string;
   mime_type: string;
   size_bytes: number;
@@ -276,7 +276,17 @@ function inputAttachments(value: unknown, fieldName: string): HarnessHostInputAt
     const workspacePath = requiredString(item.workspace_path, `${fieldName}[${index}].workspace_path`);
     const sizeBytes = item.size_bytes === undefined ? 0 : requiredNumber(item.size_bytes, `${fieldName}[${index}].size_bytes`);
     const kind =
-      item.kind === "image" ? "image" : item.kind === "file" ? "file" : mimeType.startsWith("image/") ? "image" : "file";
+      item.kind === "image"
+        ? "image"
+        : item.kind === "folder"
+          ? "folder"
+          : item.kind === "file"
+            ? "file"
+            : mimeType.startsWith("image/")
+              ? "image"
+              : mimeType === "inode/directory"
+                ? "folder"
+                : "file";
     return {
       id,
       kind,

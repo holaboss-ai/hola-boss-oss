@@ -381,8 +381,17 @@ function isExcelAttachment(attachment: PiAttachment): boolean {
 }
 
 function fallbackPromptLine(attachment: PiAttachment): string {
-  const label = attachment.kind === "image" ? "image" : "file";
+  const label =
+    attachment.kind === "image"
+      ? "image"
+      : attachment.kind === "folder"
+        ? "folder"
+        : "file";
   return `- ${attachment.name} (${label}, ${attachment.mime_type}) at ${attachmentPromptPath(attachment)}`;
+}
+
+function isFolderAttachment(attachment: PiAttachment): boolean {
+  return attachment.kind === "folder" || attachment.mime_type.trim().toLowerCase() === "inode/directory";
 }
 
 async function extractPdfAttachmentText(buffer: Buffer, fileName: string): Promise<string> {
@@ -516,6 +525,9 @@ async function extractAttachmentText(request: HarnessHostPiRequest, attachment: 
 }
 
 async function inlineDocumentAttachmentSection(request: HarnessHostPiRequest, attachment: PiAttachment): Promise<string | null> {
+  if (isFolderAttachment(attachment)) {
+    return null;
+  }
   const extractedText = await extractAttachmentText(request, attachment);
   if (!extractedText) {
     return null;
@@ -552,6 +564,7 @@ function inlineImageAttachment(request: HarnessHostPiRequest, attachment: PiAtta
 export async function buildPiPromptPayload(request: HarnessHostPiRequest): Promise<PiPromptPayload> {
   const sections: string[] = [];
   const imageLines: string[] = [];
+  const folderLines: string[] = [];
   const fallbackLines: string[] = [];
   const images: ImageContent[] = [];
   const attachments = request.attachments ?? [];
@@ -577,6 +590,10 @@ export async function buildPiPromptPayload(request: HarnessHostPiRequest): Promi
   }
 
   for (const attachment of attachments) {
+    if (isFolderAttachment(attachment)) {
+      folderLines.push(fallbackPromptLine(attachment));
+      continue;
+    }
     if (attachment.kind === "image" || attachment.mime_type.startsWith("image/")) {
       const image = inlineImageAttachment(request, attachment);
       if (image) {
@@ -601,6 +618,15 @@ export async function buildPiPromptPayload(request: HarnessHostPiRequest): Promi
     sections.push(["Attached images:", ...imageLines].join("\n"));
   } else {
     sections.push("Image inputs: none.");
+  }
+  if (folderLines.length > 0) {
+    sections.push(
+      [
+        "Attached folders:",
+        ...folderLines,
+        "Treat attached folders as scoped workspace context. Inspect relevant files inside them when needed; their contents are not inlined automatically.",
+      ].join("\n")
+    );
   }
   if (fallbackLines.length > 0) {
     sections.push(

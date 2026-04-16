@@ -732,7 +732,7 @@ declare global {
 
   interface SessionInputAttachmentPayload {
     id: string;
-    kind: "image" | "file";
+    kind: "image" | "file" | "folder";
     name: string;
     mime_type: string;
     size_bytes: number;
@@ -754,6 +754,7 @@ declare global {
     absolute_path: string;
     name?: string | null;
     mime_type?: string | null;
+    kind?: "image" | "file" | "folder" | null;
   }
 
   interface StageSessionAttachmentPathsPayload {
@@ -1304,6 +1305,11 @@ declare global {
         workspaceId?: string | null,
       ) => Promise<ExplorerExternalImportResultPayload>;
       renamePath: (targetPath: string, nextName: string, workspaceId?: string | null) => Promise<FileSystemMutationPayload>;
+      copyPath: (
+        sourcePath: string,
+        destinationDirectoryPath: string,
+        workspaceId?: string | null,
+      ) => Promise<FileSystemMutationPayload>;
       movePath: (
         sourcePath: string,
         destinationDirectoryPath: string,

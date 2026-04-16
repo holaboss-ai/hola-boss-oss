@@ -47,7 +47,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  EXPLORER_ATTACHMENT_DRAG_TYPE,
   inferDraggedAttachmentKind,
+  serializeExplorerAttachmentDragPayload,
 } from "@/lib/attachmentDrag";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
@@ -61,7 +63,8 @@ interface FileExplorerPaneProps {
   onFocusRequestConsumed?: (requestKey: number) => void;
   previewInPane?: boolean;
   onFileOpen?: (path: string) => void;
-  onReferenceInChat?: (entry: LocalFileEntry, referenceText: string) => void;
+  onReferenceInChat?: (entry: LocalFileEntry) => void;
+  onDeleteEntry?: (entry: LocalFileEntry) => void;
   onOpenLinkInBrowser?: (url: string) => void;
   embedded?: boolean;
 }
@@ -154,6 +157,7 @@ const MARKDOWN_PREVIEW_EXTENSIONS = new Set([".md", ".mdx", ".markdown"]);
 const HTML_PREVIEW_EXTENSIONS = new Set([".html", ".htm"]);
 const EXPLORER_INTERNAL_MOVE_DRAG_TYPE =
   "application/x-holaboss-file-explorer-move";
+let explorerClipboardEntry: ExplorerClipboardEntry | null = null;
 
 type TextPreviewMode = "edit" | "preview";
 
@@ -196,6 +200,16 @@ type FileExplorerVisibleRow =
 type FileExplorerVisibleSection = {
   id: "protected" | "workspace";
   rows: FileExplorerVisibleRow[];
+};
+
+type ExplorerClipboardMode = "copy" | "cut";
+
+type ExplorerClipboardEntry = {
+  mode: ExplorerClipboardMode;
+  sourcePath: string;
+  name: string;
+  isDirectory: boolean;
+  workspaceId: string;
 };
 
 type ExplorerExternalImportEntry =
@@ -595,6 +609,30 @@ function isAbsolutePath(targetPath: string) {
   return /^(?:[a-zA-Z]:[\\/]|\/)/.test(targetPath.trim());
 }
 
+function isMissingFilePreviewError(cause: unknown) {
+  if (!(cause instanceof Error)) {
+    return false;
+  }
+  return (
+    /\bENOENT\b/i.test(cause.message) ||
+    /no such file or directory/i.test(cause.message)
+  );
+}
+
+function isEditableKeyboardTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  if (target.isContentEditable) {
+    return true;
+  }
+  return Boolean(
+    target.closest(
+      'input, textarea, select, [contenteditable=""], [contenteditable="true"], [role="textbox"]',
+    ),
+  );
+}
+
 function remapPathAfterRename(
   sourcePath: string,
   nextPath: string,
@@ -690,31 +728,6 @@ function resolveWorkspaceTargetPath(workspaceRoot: string, targetPath: string) {
   const normalizedRoot = trimmedRoot.replace(/[\\/]+$/, "");
   const normalizedTarget = trimmedTarget.replace(/^[\\/]+/, "");
   return `${normalizedRoot}${separator}${normalizedTarget}`;
-}
-
-function buildChatReferenceText(
-  workspaceRoot: string | null | undefined,
-  targetPath: string,
-) {
-  const normalizedTargetPath = normalizeComparablePath(targetPath);
-  if (!normalizedTargetPath) {
-    return "";
-  }
-  const normalizedWorkspaceRoot = normalizeComparablePath(workspaceRoot ?? "");
-  const referencePath =
-    normalizedWorkspaceRoot &&
-    isPathWithin(normalizedWorkspaceRoot, normalizedTargetPath)
-      ? normalizedTargetPath
-          .slice(normalizedWorkspaceRoot.length)
-          .replace(/^\/+/, "")
-      : normalizedTargetPath;
-  if (!referencePath) {
-    return "";
-  }
-  if (/[`"\s]/.test(referencePath)) {
-    return `@"${referencePath.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-  }
-  return `@${referencePath}`;
 }
 
 function getProtectedWorkspacePathLabel(
@@ -950,13 +963,12 @@ function createAttachmentDragPreview(entry: LocalFileEntry) {
   preview.style.left = "-1000px";
   preview.style.display = "inline-flex";
   preview.style.alignItems = "center";
-  preview.style.gap = "8px";
-  preview.style.maxWidth = "280px";
-  preview.style.padding = "8px 12px";
+  preview.style.maxWidth = "220px";
+  preview.style.padding = "6px 10px";
   preview.style.border = "1px solid rgba(252, 127, 120, 0.34)";
   preview.style.borderRadius = "999px";
   preview.style.background = "rgba(255, 248, 247, 0.96)";
-  preview.style.boxShadow = "0 12px 30px rgba(45, 18, 16, 0.16)";
+  preview.style.boxShadow = "0 10px 24px rgba(45, 18, 16, 0.14)";
   preview.style.backdropFilter = "blur(10px)";
   preview.style.color = "rgba(49, 32, 29, 0.96)";
   preview.style.fontFamily =
@@ -964,31 +976,16 @@ function createAttachmentDragPreview(entry: LocalFileEntry) {
   preview.style.pointerEvents = "none";
   preview.style.zIndex = "2147483647";
 
-  const badge = document.createElement("span");
-  badge.textContent =
-    inferDraggedAttachmentKind(entry.name) === "image" ? "IMG" : "FILE";
-  badge.style.display = "inline-flex";
-  badge.style.alignItems = "center";
-  badge.style.justifyContent = "center";
-  badge.style.height = "20px";
-  badge.style.padding = "0 8px";
-  badge.style.borderRadius = "999px";
-  badge.style.background = "rgba(252, 127, 120, 0.12)";
-  badge.style.color = "rgba(209, 71, 63, 0.92)";
-  badge.style.fontSize = "10px";
-  badge.style.fontWeight = "700";
-  badge.style.letterSpacing = "0.12em";
-
   const label = document.createElement("span");
-  label.textContent =
-    `${entry.name} ${entry.isDirectory ? "" : `(${formatFileSize(entry.size)})`}`.trim();
+  label.textContent = entry.name;
   label.style.overflow = "hidden";
   label.style.textOverflow = "ellipsis";
   label.style.whiteSpace = "nowrap";
-  label.style.fontSize = "12px";
+  label.style.fontSize = "11px";
   label.style.fontWeight = "600";
+  label.style.lineHeight = "1.2";
 
-  preview.append(badge, label);
+  preview.append(label);
   document.body.append(preview);
   return preview;
 }
@@ -999,6 +996,7 @@ export function FileExplorerPane({
   previewInPane = true,
   onFileOpen,
   onReferenceInChat,
+  onDeleteEntry,
   onOpenLinkInBrowser,
   embedded = false,
 }: FileExplorerPaneProps) {
@@ -1009,6 +1007,7 @@ export function FileExplorerPane({
   const createInFlightRef = useRef(false);
   const moveInFlightRef = useRef(false);
   const importInFlightRef = useRef(false);
+  const pasteInFlightRef = useRef(false);
   const dragPreviewRef = useRef<HTMLDivElement | null>(null);
   const lastSyncedWorkspaceRootRef = useRef<{
     workspaceId: string;
@@ -1068,6 +1067,11 @@ export function FileExplorerPane({
   const { selectedWorkspaceId } = useWorkspaceSelection();
 
   currentPathRef.current = currentPath;
+
+  const clearActiveDropTargets = useCallback(() => {
+    setDirectoryDropTargetPath(null);
+    setPaneExternalDropTarget(false);
+  }, []);
 
   const resetPreviewState = useCallback(() => {
     previewRequestKeyRef.current += 1;
@@ -1835,6 +1839,39 @@ export function FileExplorerPane({
     setRenameSaving(false);
   }, []);
 
+  const copyExplorerEntryToClipboard = useCallback(
+    (entry: LocalFileEntry, mode: ExplorerClipboardMode) => {
+      const normalizedSourcePath = entry.absolutePath.trim();
+      const normalizedWorkspaceId = selectedWorkspaceId?.trim() || "";
+      if (!normalizedSourcePath) {
+        return false;
+      }
+      if (mode === "cut") {
+        const protectedMessage = protectedWorkspacePathMessage(
+          workspaceRootPath,
+          normalizedSourcePath,
+        );
+        if (protectedMessage) {
+          closeContextMenu();
+          setError(protectedMessage);
+          return false;
+        }
+      }
+
+      explorerClipboardEntry = {
+        mode,
+        sourcePath: normalizedSourcePath,
+        name: entry.name.trim() || getFolderName(normalizedSourcePath),
+        isDirectory: entry.isDirectory,
+        workspaceId: normalizedWorkspaceId,
+      };
+      closeContextMenu();
+      setError("");
+      return true;
+    },
+    [closeContextMenu, selectedWorkspaceId, workspaceRootPath],
+  );
+
   useEffect(() => {
     const watchedPath = preview?.absolutePath?.trim() || "";
     if (!previewInPane || !watchedPath) {
@@ -1872,7 +1909,17 @@ export function FileExplorerPane({
         setPreview(nextPreview);
         setPreviewDraft(nextPreview.content ?? "");
         setTablePreviewDraft(cloneTablePreviewSheets(nextPreview.tableSheets));
-      } catch {
+      } catch (cause) {
+        if (!cancelled && isMissingFilePreviewError(cause)) {
+          resetPreviewState();
+          setSelectedPath((current) =>
+            normalizeComparablePath(current) ===
+            normalizeComparablePath(watchedPath)
+              ? ""
+              : current,
+          );
+          return;
+        }
         // The agent may still be writing or replacing the file; wait for the next event.
       } finally {
         refreshInFlight = false;
@@ -1916,6 +1963,7 @@ export function FileExplorerPane({
   }, [
     preview?.absolutePath,
     previewInPane,
+    resetPreviewState,
     selectedWorkspaceId,
     validateWorkspaceScopedTargetPath,
   ]);
@@ -2247,19 +2295,12 @@ export function FileExplorerPane({
 
   const referenceEntryInChat = useCallback(
     (entry: LocalFileEntry) => {
-      const referenceText = buildChatReferenceText(
-        workspaceRootPath,
-        entry.absolutePath,
-      );
-      if (!referenceText) {
-        return;
-      }
       closeContextMenu();
       setSelectedPath(entry.absolutePath);
       setError("");
-      onReferenceInChat?.(entry, referenceText);
+      onReferenceInChat?.(entry);
     },
-    [closeContextMenu, onReferenceInChat, workspaceRootPath],
+    [closeContextMenu, onReferenceInChat],
   );
 
   const submitRenameEntry = useCallback(async () => {
@@ -2307,6 +2348,23 @@ export function FileExplorerPane({
       );
       await refreshDirectoryEntries(parentPath);
       await revealPathInTree(nextAbsolutePath);
+      if (explorerClipboardEntry) {
+        const remappedClipboardPath = remapPathAfterRename(
+          sourcePath,
+          nextAbsolutePath,
+          explorerClipboardEntry.sourcePath,
+        );
+        if (
+          remappedClipboardPath &&
+          remappedClipboardPath !== explorerClipboardEntry.sourcePath
+        ) {
+          explorerClipboardEntry = {
+            ...explorerClipboardEntry,
+            sourcePath: remappedClipboardPath,
+            name: getFolderName(remappedClipboardPath),
+          };
+        }
+      }
       setSelectedPath(nextAbsolutePath);
       setPreview((current) => {
         if (!current) {
@@ -2379,7 +2437,7 @@ export function FileExplorerPane({
       }
 
       closeContextMenu();
-      setDirectoryDropTargetPath(null);
+      clearActiveDropTargets();
       setError("");
       stopRenamingEntry();
       createInFlightRef.current = true;
@@ -2408,6 +2466,7 @@ export function FileExplorerPane({
       }
     },
     [
+      clearActiveDropTargets,
       closeContextMenu,
       refreshDirectoryEntries,
       revealPathInTree,
@@ -2425,8 +2484,7 @@ export function FileExplorerPane({
 
       closeContextMenu();
       stopRenamingEntry();
-      setDirectoryDropTargetPath(null);
-      setPaneExternalDropTarget(false);
+      clearActiveDropTargets();
       setError("");
       importInFlightRef.current = true;
 
@@ -2473,6 +2531,7 @@ export function FileExplorerPane({
       }
     },
     [
+      clearActiveDropTargets,
       closeContextMenu,
       refreshDirectoryEntries,
       revealPathInTree,
@@ -2491,18 +2550,18 @@ export function FileExplorerPane({
         !normalizedDestinationDirectoryPath ||
         moveInFlightRef.current
       ) {
-        return;
+        return false;
       }
 
       const sourceParentPath = getParentFolderPath(normalizedSourcePath);
       if (!sourceParentPath) {
-        return;
+        return false;
       }
       if (
         normalizeComparablePath(sourceParentPath) ===
         normalizeComparablePath(normalizedDestinationDirectoryPath)
       ) {
-        return;
+        return false;
       }
       const protectedMessage =
         protectedWorkspacePathMessage(workspaceRootPath, normalizedSourcePath) ||
@@ -2512,7 +2571,7 @@ export function FileExplorerPane({
         );
       if (protectedMessage) {
         setError(protectedMessage);
-        return;
+        return false;
       }
 
       const shouldRetargetExternalFile =
@@ -2521,7 +2580,7 @@ export function FileExplorerPane({
         normalizeComparablePath(selectedPath) ===
           normalizeComparablePath(normalizedSourcePath);
 
-      setDirectoryDropTargetPath(null);
+      clearActiveDropTargets();
       setError("");
       moveInFlightRef.current = true;
 
@@ -2552,6 +2611,23 @@ export function FileExplorerPane({
           refreshTargets.map((targetPath) => refreshDirectoryEntries(targetPath)),
         );
         await revealPathInTree(payload.absolutePath);
+        if (explorerClipboardEntry) {
+          const remappedClipboardPath = remapPathAfterRename(
+            normalizedSourcePath,
+            payload.absolutePath,
+            explorerClipboardEntry.sourcePath,
+          );
+          if (
+            remappedClipboardPath &&
+            remappedClipboardPath !== explorerClipboardEntry.sourcePath
+          ) {
+            explorerClipboardEntry = {
+              ...explorerClipboardEntry,
+              sourcePath: remappedClipboardPath,
+              name: getFolderName(remappedClipboardPath),
+            };
+          }
+        }
 
         setSelectedPath(payload.absolutePath);
         setPreview((current) => {
@@ -2572,16 +2648,19 @@ export function FileExplorerPane({
         if (shouldRetargetExternalFile) {
           onFileOpen?.(payload.absolutePath);
         }
+        return true;
       } catch (cause) {
         const message =
           cause instanceof Error ? cause.message : "Failed to move item.";
         setError(message);
+        return false;
       } finally {
         moveInFlightRef.current = false;
         setDraggedEntryPath(null);
       }
     },
     [
+      clearActiveDropTargets,
       onFileOpen,
       previewInPane,
       refreshDirectoryEntries,
@@ -2591,6 +2670,141 @@ export function FileExplorerPane({
       workspaceRootPath,
     ],
   );
+
+  const pasteExplorerClipboardIntoDirectory = useCallback(
+    async (destinationDirectoryPath?: string | null) => {
+      const clipboardEntry = explorerClipboardEntry;
+      const normalizedDestinationDirectoryPath =
+        (destinationDirectoryPath ?? "").trim() || currentPathRef.current.trim();
+      if (
+        !clipboardEntry ||
+        !normalizedDestinationDirectoryPath ||
+        pasteInFlightRef.current
+      ) {
+        return;
+      }
+
+      const normalizedWorkspaceId = selectedWorkspaceId?.trim() || "";
+      if (clipboardEntry.workspaceId !== normalizedWorkspaceId) {
+        setError("Copy, cut, and paste only work within the current workspace.");
+        return;
+      }
+
+      const protectedMessage = protectedWorkspacePathMessage(
+        workspaceRootPath,
+        normalizedDestinationDirectoryPath,
+      );
+      if (protectedMessage) {
+        setError(protectedMessage);
+        return;
+      }
+
+      closeContextMenu();
+      stopRenamingEntry();
+      clearActiveDropTargets();
+      setError("");
+      pasteInFlightRef.current = true;
+
+      try {
+        if (clipboardEntry.mode === "cut") {
+          const moved = await moveEntryToDirectory(
+            clipboardEntry.sourcePath,
+            normalizedDestinationDirectoryPath,
+          );
+          if (moved) {
+            explorerClipboardEntry = null;
+          }
+          return;
+        }
+
+        const payload = await window.electronAPI.fs.copyPath(
+          clipboardEntry.sourcePath,
+          normalizedDestinationDirectoryPath,
+          selectedWorkspaceId ?? null,
+        );
+        setExpandedDirectoryPaths((current) => ({
+          ...current,
+          [normalizedDestinationDirectoryPath]: true,
+        }));
+        await refreshDirectoryEntries(normalizedDestinationDirectoryPath);
+        await revealPathInTree(payload.absolutePath);
+        setSelectedPath(payload.absolutePath);
+      } catch (cause) {
+        const message =
+          cause instanceof Error ? cause.message : "Failed to paste item.";
+        setError(message);
+      } finally {
+        pasteInFlightRef.current = false;
+      }
+    },
+    [
+      clearActiveDropTargets,
+      closeContextMenu,
+      moveEntryToDirectory,
+      refreshDirectoryEntries,
+      revealPathInTree,
+      selectedWorkspaceId,
+      stopRenamingEntry,
+      workspaceRootPath,
+    ],
+  );
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || renamingPath) {
+        return;
+      }
+
+      const container = containerRef.current;
+      const focusTarget =
+        event.target instanceof Node ? event.target : document.activeElement;
+      if (!(focusTarget instanceof Node) || !container?.contains(focusTarget)) {
+        return;
+      }
+      if (isEditableKeyboardTarget(focusTarget)) {
+        return;
+      }
+
+      const primaryModifier = event.metaKey || event.ctrlKey;
+      if (!primaryModifier || event.altKey) {
+        return;
+      }
+
+      const normalizedKey = event.key.trim().toLowerCase();
+      if (normalizedKey === "c") {
+        if (!selectedEntry) {
+          return;
+        }
+        event.preventDefault();
+        copyExplorerEntryToClipboard(selectedEntry, "copy");
+        return;
+      }
+      if (normalizedKey === "x") {
+        if (!selectedEntry) {
+          return;
+        }
+        event.preventDefault();
+        copyExplorerEntryToClipboard(selectedEntry, "cut");
+        return;
+      }
+      if (normalizedKey === "v") {
+        if (!creationTargetDirectoryPath) {
+          return;
+        }
+        event.preventDefault();
+        void pasteExplorerClipboardIntoDirectory(creationTargetDirectoryPath);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    copyExplorerEntryToClipboard,
+    creationTargetDirectoryPath,
+    pasteExplorerClipboardIntoDirectory,
+    renamingPath,
+    selectedEntry,
+  ]);
 
   const canMoveDraggedEntryToDirectoryPath = useCallback(
     (targetDirectoryPath: string | null | undefined) => {
@@ -2685,6 +2899,7 @@ export function FileExplorerPane({
       }
       event.preventDefault();
       event.stopPropagation();
+      clearActiveDropTargets();
       if (canMoveDraggedEntry && draggedEntryPath) {
         void moveEntryToDirectory(draggedEntryPath, currentPathRef.current);
         return;
@@ -2696,6 +2911,7 @@ export function FileExplorerPane({
     },
     [
       canMoveDraggedEntryToDirectoryPath,
+      clearActiveDropTargets,
       draggedEntryPath,
       importExternalEntriesToDirectory,
       moveEntryToDirectory,
@@ -2723,6 +2939,19 @@ export function FileExplorerPane({
       }
 
       setError("");
+      const normalizedDeletedPath = normalizeComparablePath(entry.absolutePath);
+      const normalizedSelectedPath = normalizeComparablePath(selectedPath);
+      const normalizedPreviewPath = normalizeComparablePath(
+        preview?.absolutePath ?? "",
+      );
+      const deletedAffectsSelection =
+        Boolean(normalizedDeletedPath) &&
+        Boolean(normalizedSelectedPath) &&
+        isPathWithin(normalizedDeletedPath, normalizedSelectedPath);
+      const deletedAffectsPreview =
+        Boolean(normalizedDeletedPath) &&
+        Boolean(normalizedPreviewPath) &&
+        isPathWithin(normalizedDeletedPath, normalizedPreviewPath);
       try {
         await window.electronAPI.fs.deletePath(
           entry.absolutePath,
@@ -2731,14 +2960,35 @@ export function FileExplorerPane({
         const parentPath =
           getParentFolderPath(entry.absolutePath) ?? currentPathRef.current;
         await refreshDirectoryEntries(parentPath);
-        setSelectedPath("");
+        if (deletedAffectsPreview) {
+          resetPreviewState();
+        }
+        if (deletedAffectsSelection) {
+          setSelectedPath("");
+        }
+        if (
+          explorerClipboardEntry &&
+          isPathWithin(normalizedDeletedPath, explorerClipboardEntry.sourcePath)
+        ) {
+          explorerClipboardEntry = null;
+        }
+        onDeleteEntry?.(entry);
       } catch (cause) {
         const message =
           cause instanceof Error ? cause.message : "Failed to delete file.";
         setError(message);
       }
     },
-    [closeContextMenu, refreshDirectoryEntries, selectedWorkspaceId, workspaceRootPath],
+    [
+      closeContextMenu,
+      onDeleteEntry,
+      preview?.absolutePath,
+      refreshDirectoryEntries,
+      resetPreviewState,
+      selectedPath,
+      selectedWorkspaceId,
+      workspaceRootPath,
+    ],
   );
 
   const contextMenuPosition = useMemo(() => {
@@ -3171,10 +3421,10 @@ export function FileExplorerPane({
                     className={rowClassName}
                     title={
                       entry.isDirectory
-                        ? `${entry.name} — click to ${isExpanded ? "collapse" : "expand"} folder, use @ to reference in chat, drop files or folders here`
+                        ? `${entry.name} — click to ${isExpanded ? "collapse" : "expand"} folder, use @ or drag to attach in chat, drop files or folders here`
                         : previewInPane
-                          ? `${entry.name} — double-click to open file, use @ to attach in chat`
-                          : `${entry.name} — click to open file, use @ to attach in chat`
+                          ? `${entry.name} — double-click to open file, use @ or drag to attach in chat`
+                          : `${entry.name} — click to open file, use @ or drag to attach in chat`
                     }
                     onDragOver={(event) => {
                       const canMoveDraggedEntry =
@@ -3225,6 +3475,7 @@ export function FileExplorerPane({
                       }
                       event.preventDefault();
                       event.stopPropagation();
+                      clearActiveDropTargets();
                       if (canMoveDraggedEntry && draggedEntryPath) {
                         void moveEntryToDirectory(
                           draggedEntryPath,
@@ -3254,7 +3505,7 @@ export function FileExplorerPane({
                       <div className="flex w-full min-w-0 items-center gap-1">
                         <button
                           type="button"
-                          draggable={!entry.isDirectory && !entryIsProtected}
+                          draggable={!entryIsProtected}
                           onClick={() => {
                             setSelectedPath(entry.absolutePath);
                             closeContextMenu();
@@ -3272,17 +3523,33 @@ export function FileExplorerPane({
                             }
                           }}
                           onDragStart={(event) => {
-                            if (entry.isDirectory || entryIsProtected) {
+                            if (entryIsProtected) {
                               event.preventDefault();
                               return;
                             }
 
                             setDraggedEntryPath(entry.absolutePath);
-                            setDirectoryDropTargetPath(null);
-                            event.dataTransfer.effectAllowed = "move";
+                            clearActiveDropTargets();
+                            event.dataTransfer.effectAllowed = "copyMove";
                             event.dataTransfer.setData(
                               EXPLORER_INTERNAL_MOVE_DRAG_TYPE,
                               entry.absolutePath,
+                            );
+                            event.dataTransfer.setData(
+                              EXPLORER_ATTACHMENT_DRAG_TYPE,
+                              serializeExplorerAttachmentDragPayload({
+                                absolutePath: entry.absolutePath,
+                                name: entry.name,
+                                size: Number.isFinite(entry.size)
+                                  ? Math.max(0, entry.size)
+                                  : 0,
+                                mimeType: entry.isDirectory
+                                  ? "inode/directory"
+                                  : null,
+                                kind: entry.isDirectory
+                                  ? "folder"
+                                  : inferDraggedAttachmentKind(entry.name),
+                              }),
                             );
                             const preview = createAttachmentDragPreview(entry);
                             dragPreviewRef.current?.remove();
@@ -3291,17 +3558,17 @@ export function FileExplorerPane({
                           }}
                           onDragEnd={() => {
                             setDraggedEntryPath(null);
-                            setDirectoryDropTargetPath(null);
+                            clearActiveDropTargets();
                             dragPreviewRef.current?.remove();
                             dragPreviewRef.current = null;
                           }}
                           className="w-full min-w-0 cursor-pointer text-left"
                           title={
                             entry.isDirectory
-                              ? `${entry.name} — click to ${isExpanded ? "collapse" : "expand"} folder, use @ to reference in chat, drop files or folders here`
+                              ? `${entry.name} — click to ${isExpanded ? "collapse" : "expand"} folder, use @ or drag to attach in chat, drop files or folders here`
                               : previewInPane
-                                ? `${entry.name} — double-click to open file, use @ to attach in chat`
-                                : `${entry.name} — click to open file, use @ to attach in chat`
+                                ? `${entry.name} — double-click to open file, use @ or drag to attach in chat`
+                                : `${entry.name} — click to open file, use @ or drag to attach in chat`
                           }
                         >
                           {rowContent}
@@ -3312,11 +3579,7 @@ export function FileExplorerPane({
                               type="button"
                               variant="ghost"
                               size="icon-xs"
-                              aria-label={
-                                entry.isDirectory
-                                  ? `Reference ${entry.name} in chat`
-                                  : `Attach ${entry.name} to chat`
-                              }
+                              aria-label={`Attach ${entry.name} to chat`}
                               onClick={(event) => {
                                 event.stopPropagation();
                                 referenceEntryInChat(entry);
@@ -3443,6 +3706,13 @@ export function FileExplorerPane({
     workspaceRootPath,
     contextMenu?.entry.absolutePath,
   );
+  const contextMenuTargetDirectoryIsProtected = Boolean(
+    protectedWorkspacePathMessage(workspaceRootPath, contextMenuTargetDirectoryPath),
+  );
+  const canPasteIntoContextMenuTarget =
+    Boolean(explorerClipboardEntry) &&
+    Boolean(contextMenuTargetDirectoryPath) &&
+    !contextMenuTargetDirectoryIsProtected;
 
   return (
     <>
@@ -3475,6 +3745,43 @@ export function FileExplorerPane({
                 className="w-full justify-start"
               >
                 New folder
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="default"
+                onClick={() => {
+                  copyExplorerEntryToClipboard(contextMenu.entry, "copy");
+                }}
+                className="w-full justify-start"
+              >
+                Copy
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="default"
+                disabled={contextMenuEntryIsProtected}
+                onClick={() => {
+                  copyExplorerEntryToClipboard(contextMenu.entry, "cut");
+                }}
+                className="w-full justify-start"
+              >
+                Cut
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="default"
+                disabled={!canPasteIntoContextMenuTarget}
+                onClick={() => {
+                  void pasteExplorerClipboardIntoDirectory(
+                    contextMenuTargetDirectoryPath,
+                  );
+                }}
+                className="w-full justify-start"
+              >
+                Paste
               </Button>
               <Button
                 type="button"
