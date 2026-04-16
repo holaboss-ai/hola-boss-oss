@@ -14,7 +14,7 @@ import {
 const TERMINAL_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
 const HEARTBEAT_INTERVAL_MS = 5000;
 const DEFAULT_RUN_TIMEOUT_SECONDS = 1800;
-const DEFAULT_IDLE_TIMEOUT_SECONDS = 180;
+const DEFAULT_IDLE_TIMEOUT_SECONDS = 900;
 const DEFAULT_TASK_PROPOSAL_RUN_TIMEOUT_SECONDS = 7200;
 
 export interface RunnerExecutorLike {
