@@ -27,7 +27,11 @@ test("file explorer syncs the workspace root only when the selected workspace ch
   );
   assert.match(
     source,
-    /window\.electronAPI\.fs\.listDirectory\(\s*targetPath \?\? null,\s*selectedWorkspaceId \?\? null,\s*\)/,
+    /const validateWorkspaceScopedTargetPath = useCallback\(/,
+  );
+  assert.match(
+    source,
+    /const \{ allowed, targetPath: validatedTargetPath \} =\s*await validateWorkspaceScopedTargetPath\(targetPath \?\? null\);[\s\S]*window\.electronAPI\.fs\.listDirectory\(\s*validatedTargetPath,\s*selectedWorkspaceId \?\? null,\s*\)/,
   );
   assert.match(
     source,
@@ -35,7 +39,7 @@ test("file explorer syncs the workspace root only when the selected workspace ch
   );
   assert.match(
     source,
-    /if \(\s*workspaceSessionKey !== workspaceSessionKeyRef\.current \|\|\s*requestKey !== directoryLoadRequestKeyRef\.current\s*\) \{\s*return;\s*\}/,
+    /if \(\s*workspaceSessionKey !== workspaceSessionKeyRef\.current \|\|\s*requestKey !== directoryLoadRequestKeyRef\.current \|\|\s*!allowed\s*\) \{\s*return;\s*\}/,
   );
   assert.match(
     source,
@@ -57,7 +61,7 @@ test("file explorer refreshes the current directory and expanded folders to surf
   assert.match(source, /refreshTargets\.map\(\(targetPath\) =>/);
   assert.match(
     source,
-    /window\.electronAPI\.fs\.listDirectory\(\s*targetPath,\s*selectedWorkspaceId \?\? null,\s*\)/,
+    /const \{ allowed, targetPath: validatedTargetPath \} =\s*await validateWorkspaceScopedTargetPath\(targetPath\);[\s\S]*if \(!allowed \|\| !validatedTargetPath\) \{\s*return null;\s*\}[\s\S]*window\.electronAPI\.fs\.listDirectory\(\s*validatedTargetPath,\s*selectedWorkspaceId \?\? null,\s*\)/,
   );
   assert.match(
     source,
@@ -65,7 +69,10 @@ test("file explorer refreshes the current directory and expanded folders to surf
   );
   assert.match(source, /const timer = window\.setInterval\(\(\) => \{\s*void refreshLoadedDirectories\(\);\s*\}, 1200\);/);
   assert.match(source, /window\.clearInterval\(timer\);/);
-  assert.match(source, /\}, \[currentPath, expandedDirectoryPaths, selectedWorkspaceId\]\);/);
+  assert.match(
+    source,
+    /\}, \[\s*currentPath,\s*expandedDirectoryPaths,\s*selectedWorkspaceId,\s*validateWorkspaceScopedTargetPath,\s*\]\);/,
+  );
 });
 
 test("file explorer live-refreshes inline previews from file watch events without overwriting dirty edits", async () => {
@@ -87,14 +94,17 @@ test("file explorer live-refreshes inline previews from file watch events withou
     source,
     /window\.electronAPI\.fs[\s\S]*\.watchFile\(/,
   );
-  assert.match(source, /watchedPath,\s*selectedWorkspaceId \?\? null/);
   assert.match(
     source,
     /if \(\s*cancelled \|\|\s*refreshInFlight \|\|\s*isDirtyRef\.current \|\|\s*isSavingRef\.current\s*\) \{\s*return;\s*\}/,
   );
   assert.match(
     source,
-    /const nextPreview = await window\.electronAPI\.fs\.readFilePreview\(\s*watchedPath,\s*selectedWorkspaceId \?\? null,\s*\);[\s\S]*setPreview\(nextPreview\);[\s\S]*setPreviewDraft\(nextPreview\.content \?\? ""\);/,
+    /const \{ allowed, targetPath: validatedWatchedPath \} =\s*await validateWorkspaceScopedTargetPath\(watchedPath\);[\s\S]*if \(!allowed \|\| !validatedWatchedPath\) \{\s*return;\s*\}[\s\S]*const nextPreview = await window\.electronAPI\.fs\.readFilePreview\(\s*validatedWatchedPath,\s*selectedWorkspaceId \?\? null,\s*\);[\s\S]*setPreview\(nextPreview\);[\s\S]*setPreviewDraft\(nextPreview\.content \?\? ""\);/,
+  );
+  assert.match(
+    source,
+    /const \{ allowed, targetPath: validatedWatchedPath \} =\s*await validateWorkspaceScopedTargetPath\(watchedPath\);[\s\S]*if \(!allowed \|\| !validatedWatchedPath\) \{\s*return;\s*\}[\s\S]*window\.electronAPI\.fs\.watchFile\(\s*validatedWatchedPath,\s*selectedWorkspaceId \?\? null,\s*\)/,
   );
   assert.match(source, /void window\.electronAPI\.fs\.unwatchFile\(subscriptionId\);/);
 });
@@ -276,7 +286,7 @@ test("file explorer adds a markdown preview mode while keeping text editing inli
   assert.match(source, /window\.electronAPI\.ui\.openExternalUrl\(url\)/);
   assert.match(
     source,
-    /window\.electronAPI\.fs\.readFilePreview\(\s*targetPath,\s*selectedWorkspaceId \?\? null,\s*\)/,
+    /const \{ allowed, targetPath: validatedTargetPath \} =\s*await validateWorkspaceScopedTargetPath\(targetPath\);[\s\S]*window\.electronAPI\.fs\.readFilePreview\(\s*validatedTargetPath,\s*selectedWorkspaceId \?\? null,\s*\)/,
   );
   assert.match(
     source,

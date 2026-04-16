@@ -13,6 +13,8 @@ test("internal surface renders markdown files with the shared markdown renderer"
   assert.match(source, /import \{ SimpleMarkdown \} from "@\/components\/marketplace\/SimpleMarkdown";/);
   assert.match(source, /const MARKDOWN_PREVIEW_EXTENSIONS = new Set\(\[\s*"\.md",\s*"\.mdx",\s*"\.markdown"\s*\]\);/);
   assert.match(source, /const HTML_PREVIEW_EXTENSIONS = new Set\(\[\s*"\.html",\s*"\.htm"\s*\]\);/);
+  assert.match(source, /const \[workspaceRootPath, setWorkspaceRootPath\] = useState<string \| null>\(\s*null,\s*\);/);
+  assert.match(source, /const resolveWorkspacePreviewPath = useCallback\(/);
   assert.match(source, /function isMarkdownPreviewPayload\(/);
   assert.match(source, /function isHtmlPreviewPayload\(/);
   assert.match(source, /const \[textPreviewMode, setTextPreviewMode\] =\s*useState<TextPreviewMode>\("edit"\);/);
@@ -25,6 +27,10 @@ test("internal surface renders markdown files with the shared markdown renderer"
   assert.match(source, /Empty file — switch to Edit to add markup\./);
   assert.match(source, /if \(onOpenLinkInBrowser\) \{\s*onOpenLinkInBrowser\(url\);\s*return;\s*\}/);
   assert.match(source, /window\.electronAPI\.ui\.openExternalUrl\(url\)/);
+  assert.match(
+    source,
+    /const resolvedTargetPath = await resolveWorkspacePreviewPath\(targetPath\);[\s\S]*if \(!resolvedTargetPath\) \{[\s\S]*setPreview\(null\);[\s\S]*setErrorMessage\(""\);[\s\S]*return;\s*\}[\s\S]*window\.electronAPI\.fs\.readFilePreview\(\s*resolvedTargetPath,\s*selectedWorkspaceId \?\? null,\s*\)/,
+  );
 });
 
 test("internal surface renders html files inside a sandboxed iframe preview", async () => {
@@ -107,7 +113,10 @@ test("internal surface refreshes open file previews when the backing file change
   assert.match(source, /const isDirtyRef = useRef\(false\);/);
   assert.match(source, /const isSavingRef = useRef\(false\);/);
   assert.match(source, /const pendingExternalRefreshPathRef = useRef<string \| null>\(null\);/);
-  assert.match(source, /window\.electronAPI\.fs[\s\S]*\.watchFile\(watchedPath,\s*selectedWorkspaceId \?\? null\)/);
+  assert.match(
+    source,
+    /const resolvedWatchedPath =\s*await resolveWorkspacePreviewPath\(watchedPath\);[\s\S]*if \(!resolvedWatchedPath\) \{\s*return;\s*\}[\s\S]*window\.electronAPI\.fs\.watchFile\(\s*resolvedWatchedPath,\s*selectedWorkspaceId \?\? null,\s*\)/,
+  );
   assert.match(source, /const unsubscribe = window\.electronAPI\.fs\.onFileChange\(\(payload\) => \{/);
   assert.match(source, /if \(isDirtyRef\.current\) \{\s*pendingExternalRefreshPathRef\.current = changedPath;\s*return;\s*\}/);
   assert.match(source, /void loadPreviewFromDisk\(changedPath,\s*\{\s*preserveViewState: true,\s*showLoading: false,\s*\}\);/);

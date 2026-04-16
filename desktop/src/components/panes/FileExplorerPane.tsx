@@ -1083,16 +1083,72 @@ export function FileExplorerPane({
     setSaving(false);
   }, []);
 
+  const validateWorkspaceScopedTargetPath = useCallback(
+    async (targetPath?: string | null) => {
+      const normalizedWorkspaceId = selectedWorkspaceId?.trim() || "";
+      const normalizedTargetPath =
+        typeof targetPath === "string" ? targetPath.trim() : "";
+      const nextTargetPath = normalizedTargetPath || null;
+
+      if (
+        !normalizedWorkspaceId ||
+        !normalizedTargetPath ||
+        !isAbsolutePath(normalizedTargetPath)
+      ) {
+        return {
+          allowed: true,
+          targetPath: nextTargetPath,
+        };
+      }
+
+      let resolvedWorkspaceRoot = workspaceRootPath?.trim() || "";
+      if (!resolvedWorkspaceRoot) {
+        try {
+          resolvedWorkspaceRoot = (
+            await window.electronAPI.workspace.getWorkspaceRoot(
+              normalizedWorkspaceId,
+            )
+          ).trim();
+        } catch {
+          resolvedWorkspaceRoot = "";
+        }
+      }
+
+      if (!resolvedWorkspaceRoot) {
+        return {
+          allowed: false,
+          targetPath: nextTargetPath,
+        };
+      }
+
+      return {
+        allowed: isPathWithin(resolvedWorkspaceRoot, normalizedTargetPath),
+        targetPath: nextTargetPath,
+      };
+    },
+    [selectedWorkspaceId, workspaceRootPath],
+  );
+
   const loadDirectory = useCallback(
     async (targetPath?: string | null, pushHistory = true) => {
       const workspaceSessionKey = workspaceSessionKeyRef.current;
       const requestKey = ++directoryLoadRequestKeyRef.current;
+      const { allowed, targetPath: validatedTargetPath } =
+        await validateWorkspaceScopedTargetPath(targetPath ?? null);
+      if (
+        workspaceSessionKey !== workspaceSessionKeyRef.current ||
+        requestKey !== directoryLoadRequestKeyRef.current ||
+        !allowed
+      ) {
+        return;
+      }
+
       setLoading(true);
       setError("");
 
       try {
         const payload = await window.electronAPI.fs.listDirectory(
-          targetPath ?? null,
+          validatedTargetPath,
           selectedWorkspaceId ?? null,
         );
         if (
@@ -1146,7 +1202,7 @@ export function FileExplorerPane({
         }
       }
     },
-    [selectedWorkspaceId],
+    [selectedWorkspaceId, validateWorkspaceScopedTargetPath],
   );
 
   useEffect(() => {
@@ -1250,12 +1306,17 @@ export function FileExplorerPane({
             ) === index,
         );
         const refreshedDirectories = await Promise.allSettled(
-          refreshTargets.map((targetPath) =>
-            window.electronAPI.fs.listDirectory(
-              targetPath,
+          refreshTargets.map(async (targetPath) => {
+            const { allowed, targetPath: validatedTargetPath } =
+              await validateWorkspaceScopedTargetPath(targetPath);
+            if (!allowed || !validatedTargetPath) {
+              return null;
+            }
+            return window.electronAPI.fs.listDirectory(
+              validatedTargetPath,
               selectedWorkspaceId ?? null,
-            ),
-          ),
+            );
+          }),
         );
         if (cancelled) {
           return;
@@ -1265,7 +1326,10 @@ export function FileExplorerPane({
         const refreshedEntriesByPath: Record<string, LocalFileEntry[]> = {};
 
         for (const refreshedDirectory of refreshedDirectories) {
-          if (refreshedDirectory.status !== "fulfilled") {
+          if (
+            refreshedDirectory.status !== "fulfilled" ||
+            !refreshedDirectory.value
+          ) {
             continue;
           }
           const payload = refreshedDirectory.value;
@@ -1313,7 +1377,12 @@ export function FileExplorerPane({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [currentPath, expandedDirectoryPaths, selectedWorkspaceId]);
+  }, [
+    currentPath,
+    expandedDirectoryPaths,
+    selectedWorkspaceId,
+    validateWorkspaceScopedTargetPath,
+  ]);
 
   useEffect(() => {
     let mounted = true;
@@ -1554,26 +1623,32 @@ export function FileExplorerPane({
         return null;
       }
 
-      if (directoryEntriesByPath[normalizedTargetPath]) {
-        return directoryEntriesByPath[normalizedTargetPath];
+      const { allowed, targetPath: validatedTargetPath } =
+        await validateWorkspaceScopedTargetPath(normalizedTargetPath);
+      if (!allowed || !validatedTargetPath) {
+        return null;
+      }
+
+      if (directoryEntriesByPath[validatedTargetPath]) {
+        return directoryEntriesByPath[validatedTargetPath];
       }
 
       setDirectoryLoadingByPath((current) => ({
         ...current,
-        [normalizedTargetPath]: true,
+        [validatedTargetPath]: true,
       }));
       setDirectoryErrorByPath((current) => {
-        if (!current[normalizedTargetPath]) {
+        if (!current[validatedTargetPath]) {
           return current;
         }
         const next = { ...current };
-        delete next[normalizedTargetPath];
+        delete next[validatedTargetPath];
         return next;
       });
 
       try {
         const payload = await window.electronAPI.fs.listDirectory(
-          normalizedTargetPath,
+          validatedTargetPath,
           selectedWorkspaceId ?? null,
         );
         setDirectoryEntriesByPath((current) => ({
@@ -1586,21 +1661,21 @@ export function FileExplorerPane({
           cause instanceof Error ? cause.message : "Failed to open directory.";
         setDirectoryErrorByPath((current) => ({
           ...current,
-          [normalizedTargetPath]: message,
+          [validatedTargetPath]: message,
         }));
         return null;
       } finally {
         setDirectoryLoadingByPath((current) => {
-          if (!current[normalizedTargetPath]) {
+          if (!current[validatedTargetPath]) {
             return current;
           }
           const next = { ...current };
-          delete next[normalizedTargetPath];
+          delete next[validatedTargetPath];
           return next;
         });
       }
     },
-    [directoryEntriesByPath, selectedWorkspaceId],
+    [directoryEntriesByPath, selectedWorkspaceId, validateWorkspaceScopedTargetPath],
   );
 
   const refreshDirectoryEntries = useCallback(
@@ -1610,8 +1685,14 @@ export function FileExplorerPane({
         return;
       }
 
+      const { allowed, targetPath: validatedTargetPath } =
+        await validateWorkspaceScopedTargetPath(normalizedTargetPath);
+      if (!allowed || !validatedTargetPath) {
+        return;
+      }
+
       if (
-        normalizeComparablePath(normalizedTargetPath) ===
+        normalizeComparablePath(validatedTargetPath) ===
         normalizeComparablePath(currentPathRef.current)
       ) {
         await loadDirectory(currentPathRef.current, false);
@@ -1619,7 +1700,7 @@ export function FileExplorerPane({
       }
 
       const payload = await window.electronAPI.fs.listDirectory(
-        normalizedTargetPath,
+        validatedTargetPath,
         selectedWorkspaceId ?? null,
       );
       setDirectoryEntriesByPath((current) => ({
@@ -1635,7 +1716,7 @@ export function FileExplorerPane({
         return next;
       });
     },
-    [loadDirectory, selectedWorkspaceId],
+    [loadDirectory, selectedWorkspaceId, validateWorkspaceScopedTargetPath],
   );
 
   const revealPathInTree = useCallback(
@@ -1776,8 +1857,13 @@ export function FileExplorerPane({
 
       refreshInFlight = true;
       try {
+        const { allowed, targetPath: validatedWatchedPath } =
+          await validateWorkspaceScopedTargetPath(watchedPath);
+        if (!allowed || !validatedWatchedPath) {
+          return;
+        }
         const nextPreview = await window.electronAPI.fs.readFilePreview(
-          watchedPath,
+          validatedWatchedPath,
           selectedWorkspaceId ?? null,
         );
         if (cancelled) {
@@ -1803,16 +1889,22 @@ export function FileExplorerPane({
       void refreshPreviewFromDisk();
     });
 
-    void window.electronAPI.fs
-      .watchFile(watchedPath, selectedWorkspaceId ?? null)
-      .then((subscription) => {
-        if (cancelled) {
-          void window.electronAPI.fs.unwatchFile(subscription.subscriptionId);
-          return;
-        }
-        subscriptionId = subscription.subscriptionId;
-      })
-      .catch(() => undefined);
+    void (async () => {
+      const { allowed, targetPath: validatedWatchedPath } =
+        await validateWorkspaceScopedTargetPath(watchedPath);
+      if (!allowed || !validatedWatchedPath) {
+        return;
+      }
+      const subscription = await window.electronAPI.fs.watchFile(
+        validatedWatchedPath,
+        selectedWorkspaceId ?? null,
+      );
+      if (cancelled) {
+        void window.electronAPI.fs.unwatchFile(subscription.subscriptionId);
+        return;
+      }
+      subscriptionId = subscription.subscriptionId;
+    })().catch(() => undefined);
 
     return () => {
       cancelled = true;
@@ -1821,7 +1913,12 @@ export function FileExplorerPane({
         void window.electronAPI.fs.unwatchFile(subscriptionId);
       }
     };
-  }, [preview?.absolutePath, previewInPane, selectedWorkspaceId]);
+  }, [
+    preview?.absolutePath,
+    previewInPane,
+    selectedWorkspaceId,
+    validateWorkspaceScopedTargetPath,
+  ]);
 
   const startRenamingEntry = useCallback(
     (entry: LocalFileEntry) => {
@@ -1849,23 +1946,34 @@ export function FileExplorerPane({
   ) => {
     const workspaceSessionKey = workspaceSessionKeyRef.current;
     const requestKey = ++previewRequestKeyRef.current;
+    const { allowed, targetPath: validatedTargetPath } =
+      await validateWorkspaceScopedTargetPath(targetPath);
+    if (
+      workspaceSessionKey !== workspaceSessionKeyRef.current ||
+      requestKey !== previewRequestKeyRef.current ||
+      !allowed ||
+      !validatedTargetPath
+    ) {
+      return;
+    }
+
     const skipConfirm = options?.skipConfirm ?? false;
     if (!skipConfirm && !confirmDiscardIfDirty()) {
       return;
     }
 
     if (options?.syncDirectory) {
-      await revealPathInTree(targetPath);
+      await revealPathInTree(validatedTargetPath);
     }
 
-    setSelectedPath(targetPath);
+    setSelectedPath(validatedTargetPath);
     setPreviewLoading(true);
     setPreviewError("");
     setActiveTableSheetIndex(0);
 
     try {
       const payload = await window.electronAPI.fs.readFilePreview(
-        targetPath,
+        validatedTargetPath,
         selectedWorkspaceId ?? null,
       );
       if (
@@ -1913,18 +2021,24 @@ export function FileExplorerPane({
         return;
       }
 
+      const { allowed, targetPath: validatedTargetPath } =
+        await validateWorkspaceScopedTargetPath(targetPath);
+      if (!allowed || !validatedTargetPath) {
+        return;
+      }
+
       const skipConfirm = options?.skipConfirm ?? false;
       if (!skipConfirm && !confirmDiscardIfDirty()) {
         return;
       }
 
       if (options?.syncDirectory) {
-        await revealPathInTree(targetPath);
+        await revealPathInTree(validatedTargetPath);
       }
 
-      setSelectedPath(targetPath);
+      setSelectedPath(validatedTargetPath);
       resetPreviewState();
-      onFileOpen(targetPath);
+      onFileOpen(validatedTargetPath);
     },
     [
       confirmDiscardIfDirty,
@@ -1933,6 +2047,7 @@ export function FileExplorerPane({
       previewInPane,
       resetPreviewState,
       revealPathInTree,
+      validateWorkspaceScopedTargetPath,
     ],
   );
 

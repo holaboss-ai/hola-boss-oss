@@ -22,6 +22,38 @@ const MARKDOWN_PREVIEW_EXTENSIONS = new Set([".md", ".mdx", ".markdown"]);
 const HTML_PREVIEW_EXTENSIONS = new Set([".html", ".htm"]);
 type TextPreviewMode = "edit" | "preview";
 
+function normalizeComparablePath(targetPath: string) {
+  const trimmed = targetPath.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  let normalized = trimmed.replace(/\\/g, "/");
+  if (normalized.length > 1) {
+    normalized = normalized.replace(/\/+$/, "");
+  }
+  if (/^[a-zA-Z]:\//.test(normalized)) {
+    normalized = normalized.toLowerCase();
+  }
+  return normalized;
+}
+
+function isPathWithin(parentPath: string, targetPath: string) {
+  const normalizedParent = normalizeComparablePath(parentPath);
+  const normalizedTarget = normalizeComparablePath(targetPath);
+  if (!normalizedParent || !normalizedTarget) {
+    return false;
+  }
+  return (
+    normalizedTarget === normalizedParent ||
+    normalizedTarget.startsWith(`${normalizedParent}/`)
+  );
+}
+
+function isAbsolutePath(targetPath: string) {
+  return /^(?:[a-zA-Z]:[\\/]|\/)/.test(targetPath.trim());
+}
+
 function isMarkdownPreviewPayload(
   preview: Pick<FilePreviewPayload, "kind" | "extension"> | null | undefined,
 ): boolean {
@@ -49,6 +81,9 @@ export function InternalSurfacePane({
   onOpenLinkInBrowser,
 }: InternalSurfacePaneProps) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
+  const [workspaceRootPath, setWorkspaceRootPath] = useState<string | null>(
+    null,
+  );
   const [preview, setPreview] = useState<FilePreviewPayload | null>(null);
   const [previewDraft, setPreviewDraft] = useState("");
   const [tablePreviewDraft, setTablePreviewDraft] = useState<
@@ -71,6 +106,71 @@ export function InternalSurfacePane({
     void window.electronAPI.ui.openExternalUrl(url);
   }, [onOpenLinkInBrowser]);
 
+  useEffect(() => {
+    if (!selectedWorkspaceId) {
+      setWorkspaceRootPath(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    void window.electronAPI.workspace
+      .getWorkspaceRoot(selectedWorkspaceId)
+      .then((workspaceRoot) => {
+        if (cancelled) {
+          return;
+        }
+        setWorkspaceRootPath(workspaceRoot || null);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setWorkspaceRootPath(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedWorkspaceId]);
+
+  const resolveWorkspacePreviewPath = useCallback(
+    async (targetPath: string) => {
+      const normalizedTargetPath = targetPath.trim();
+      const normalizedWorkspaceId = selectedWorkspaceId?.trim() || "";
+
+      if (
+        !normalizedWorkspaceId ||
+        !normalizedTargetPath ||
+        !isAbsolutePath(normalizedTargetPath)
+      ) {
+        return normalizedTargetPath;
+      }
+
+      let resolvedWorkspaceRoot = workspaceRootPath?.trim() || "";
+      if (!resolvedWorkspaceRoot) {
+        try {
+          resolvedWorkspaceRoot = (
+            await window.electronAPI.workspace.getWorkspaceRoot(
+              normalizedWorkspaceId,
+            )
+          ).trim();
+        } catch {
+          resolvedWorkspaceRoot = "";
+        }
+      }
+
+      if (
+        !resolvedWorkspaceRoot ||
+        !isPathWithin(resolvedWorkspaceRoot, normalizedTargetPath)
+      ) {
+        return null;
+      }
+
+      return normalizedTargetPath;
+    },
+    [selectedWorkspaceId, workspaceRootPath],
+  );
+
   const loadPreviewFromDisk = useCallback(
     async (
       targetPath: string,
@@ -86,8 +186,19 @@ export function InternalSurfacePane({
       }
       setErrorMessage("");
       try {
+        const resolvedTargetPath = await resolveWorkspacePreviewPath(targetPath);
+        if (!resolvedTargetPath) {
+          setPreview(null);
+          setPreviewDraft("");
+          setTablePreviewDraft([]);
+          setTextPreviewMode("edit");
+          setActiveTableSheetIndex(0);
+          setErrorMessage("");
+          setIsSaving(false);
+          return;
+        }
         const nextPreview = await window.electronAPI.fs.readFilePreview(
-          targetPath,
+          resolvedTargetPath,
           selectedWorkspaceId ?? null,
         );
         setPreview(nextPreview);
@@ -125,7 +236,7 @@ export function InternalSurfacePane({
         }
       }
     },
-    [selectedWorkspaceId],
+    [resolveWorkspacePreviewPath, selectedWorkspaceId],
   );
 
   useEffect(() => {
@@ -173,10 +284,7 @@ export function InternalSurfacePane({
 
   useEffect(() => {
     const watchedPath = preview?.absolutePath?.trim() || "";
-    if (
-      !watchedPath ||
-      (surface !== "document" && surface !== "file")
-    ) {
+    if (!watchedPath || (surface !== "document" && surface !== "file")) {
       return;
     }
 
@@ -201,16 +309,22 @@ export function InternalSurfacePane({
       });
     });
 
-    void window.electronAPI.fs
-      .watchFile(watchedPath, selectedWorkspaceId ?? null)
-      .then((subscription) => {
-        if (cancelled) {
-          void window.electronAPI.fs.unwatchFile(subscription.subscriptionId);
-          return;
-        }
-        subscriptionId = subscription.subscriptionId;
-      })
-      .catch(() => undefined);
+    void (async () => {
+      const resolvedWatchedPath =
+        await resolveWorkspacePreviewPath(watchedPath);
+      if (!resolvedWatchedPath) {
+        return;
+      }
+      const subscription = await window.electronAPI.fs.watchFile(
+        resolvedWatchedPath,
+        selectedWorkspaceId ?? null,
+      );
+      if (cancelled) {
+        void window.electronAPI.fs.unwatchFile(subscription.subscriptionId);
+        return;
+      }
+      subscriptionId = subscription.subscriptionId;
+    })().catch(() => undefined);
 
     return () => {
       cancelled = true;
@@ -219,7 +333,13 @@ export function InternalSurfacePane({
         void window.electronAPI.fs.unwatchFile(subscriptionId);
       }
     };
-  }, [loadPreviewFromDisk, preview?.absolutePath, selectedWorkspaceId, surface]);
+  }, [
+    loadPreviewFromDisk,
+    preview?.absolutePath,
+    resolveWorkspacePreviewPath,
+    selectedWorkspaceId,
+    surface,
+  ]);
 
   useEffect(() => {
     if (isDirty || isSaving) {
