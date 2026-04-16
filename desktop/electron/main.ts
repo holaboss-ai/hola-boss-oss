@@ -13136,6 +13136,7 @@ async function getSessionOutputEvents(
       input_id: payload.inputId ?? undefined,
       include_history: true,
       after_event_id: 0,
+      include_native: false,
     },
   });
 }
@@ -13365,6 +13366,7 @@ async function openSessionOutputStream(
           payload.includeHistory ? "true" : "false",
         );
       }
+      url.searchParams.set("include_native", "false");
       if (payload.stopOnTerminal !== undefined) {
         url.searchParams.set(
           "stop_on_terminal",

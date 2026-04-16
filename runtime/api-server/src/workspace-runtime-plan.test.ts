@@ -77,6 +77,60 @@ mcp_registry:
   assert.deepEqual(plan.resolved_mcp_servers.map((server) => server.server_id), []);
 });
 
+test("compileWorkspaceRuntimePlan exposes configured remote MCP servers when no allowlist is indicated", () => {
+  const plan = compileWorkspaceRuntimePlan({
+    workspace_id: "workspace-remote-mcp",
+    workspace_yaml: `
+agents:
+  id: workspace.general
+  model: openai/gpt-5
+mcp_registry:
+  allowlist:
+    tool_ids: []
+  servers:
+    context7:
+      type: remote
+      url: "https://mcp.context7.com/mcp"
+      enabled: true
+`,
+    references: {}
+  });
+
+  assert.deepEqual(plan.mcp_tool_allowlist, []);
+  assert.deepEqual(plan.resolved_mcp_tool_refs, []);
+  assert.deepEqual(plan.resolved_mcp_servers.map((server) => server.server_id), ["context7"]);
+});
+
+test("compileWorkspaceRuntimePlan exposes workspace catalog tools when no allowlist is indicated", () => {
+  const plan = compileWorkspaceRuntimePlan({
+    workspace_id: "workspace-local-mcp",
+    workspace_yaml: `
+agents:
+  id: workspace.general
+  model: openai/gpt-5
+mcp_registry:
+  servers: {}
+  catalog:
+    workspace.echo:
+      module_path: tools.echo
+      symbol: echo_tool
+`,
+    references: {}
+  });
+
+  assert.deepEqual(plan.mcp_tool_allowlist, []);
+  assert.deepEqual(plan.resolved_mcp_tool_refs, []);
+  assert.deepEqual(plan.resolved_mcp_servers.map((server) => server.server_id), ["workspace"]);
+  assert.deepEqual(plan.workspace_mcp_catalog, [
+    {
+      tool_id: "workspace.echo",
+      tool_name: "echo",
+      module_path: "tools.echo",
+      symbol_name: "echo_tool"
+    }
+  ]);
+});
+
 test("compileWorkspaceRuntimePlan loads prompt and applications", () => {
   const plan = compileWorkspaceRuntimePlan({
     workspace_id: "ws-test",
@@ -124,6 +178,41 @@ env_contract:
   assert.equal(plan.resolved_applications[0]?.mcp.port, 3099);
   assert.deepEqual(plan.mcp_tool_allowlist, ["holaposter.create_post"]);
   assert.deepEqual(plan.schema_aliases, {});
+});
+
+test("compileWorkspaceRuntimePlan keeps other enabled remote MCP servers even when some tool ids are explicitly allowlisted", () => {
+  const plan = compileWorkspaceRuntimePlan({
+    workspace_id: "ws-mixed-mcp",
+    workspace_yaml: `
+agents:
+  id: workspace.general
+  model: openai/gpt-5
+mcp_registry:
+  allowlist:
+    tool_ids:
+      - gmail.gmail_search
+  servers:
+    gmail:
+      type: remote
+      url: "http://localhost:3099/mcp"
+      enabled: true
+    context7:
+      type: remote
+      url: "https://mcp.context7.com/mcp"
+      enabled: true
+`,
+    references: {}
+  });
+
+  assert.deepEqual(plan.mcp_tool_allowlist, ["gmail.gmail_search"]);
+  assert.deepEqual(plan.resolved_mcp_tool_refs, [
+    {
+      tool_id: "gmail.gmail_search",
+      server_id: "gmail",
+      tool_name: "gmail_search",
+    },
+  ]);
+  assert.deepEqual(plan.resolved_mcp_servers.map((server) => server.server_id), ["gmail", "context7"]);
 });
 
 test("compileWorkspaceRuntimePlan parses application integrations", () => {

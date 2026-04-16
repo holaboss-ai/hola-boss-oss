@@ -133,6 +133,7 @@ export interface AgentRuntimeConfigCliRequest {
   extra_tools: string[];
   tool_server_id_map?: Record<string, string> | null;
   resolved_mcp_tool_refs: Array<Record<string, string>>;
+  resolved_mcp_server_ids?: string[];
   resolved_output_schemas: Record<string, JsonObject>;
   agent: AgentRuntimeConfigGeneralMemberPayload;
 }
@@ -409,6 +410,7 @@ export function decodeAgentRuntimeConfigCliRequestBase64(encoded: string): Agent
     resolved_mcp_tool_refs: Array.isArray(parsed.resolved_mcp_tool_refs)
       ? parsed.resolved_mcp_tool_refs.filter(isRecord).map((item) => stringRecord(item))
       : [],
+    resolved_mcp_server_ids: stringArray(parsed.resolved_mcp_server_ids),
     resolved_output_schemas: isRecord(parsed.resolved_output_schemas)
       ? Object.fromEntries(
           Object.entries(parsed.resolved_output_schemas)

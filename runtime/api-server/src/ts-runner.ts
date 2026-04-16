@@ -1077,6 +1077,7 @@ function buildAgentRuntimeConfigRequest(params: {
   workspaceCommandIds: string[];
   toolServerIdMap: Readonly<Record<string, string>>;
   resolvedMcpToolRefs: CompiledWorkspaceRuntimePlan["resolved_mcp_tool_refs"];
+  resolvedMcpServerIds: string[];
   recentRuntimeContext?: AgentRecentRuntimeContext | null;
   sessionResumeContext?: AgentSessionResumeContext | null;
   recalledMemoryContext?: AgentRecalledMemoryContext | null;
@@ -1119,6 +1120,7 @@ function buildAgentRuntimeConfigRequest(params: {
       server_id: toolRef.server_id,
       tool_name: toolRef.tool_name
     })),
+    resolved_mcp_server_ids: [...params.resolvedMcpServerIds],
     resolved_output_schemas: {}
   };
   return {
@@ -1667,6 +1669,7 @@ export async function executeTsRunnerRequest(
           workspaceCommandIds: stagedCommands.commandIds,
           toolServerIdMap: serverIdMap,
           resolvedMcpToolRefs,
+          resolvedMcpServerIds: effectiveMcpServers.map((server) => server.name),
           recentRuntimeContext,
           sessionResumeContext,
           recalledMemoryContext,

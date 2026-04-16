@@ -2073,7 +2073,7 @@ export class RuntimeStateStore {
       );
   }
 
-  latestOutputEventId(params: { sessionId: string; inputId?: string }): number {
+  latestOutputEventId(params: { sessionId: string; inputId?: string; excludedEventTypes?: string[] }): number {
     let query = `
       SELECT MAX(id) AS max_id
       FROM session_output_events
@@ -2084,6 +2084,11 @@ export class RuntimeStateStore {
       query += " AND input_id = ?";
       values.push(params.inputId);
     }
+    const excludedEventTypes = (params.excludedEventTypes ?? []).filter((value) => Boolean(value && value.trim()));
+    if (excludedEventTypes.length > 0) {
+      query += ` AND event_type NOT IN (${excludedEventTypes.map(() => "?").join(", ")})`;
+      values.push(...excludedEventTypes);
+    }
     const row = this.db().prepare(query).get(...values) as { max_id: number | null } | undefined;
     return row?.max_id ?? 0;
   }
@@ -2093,6 +2098,7 @@ export class RuntimeStateStore {
     inputId?: string;
     includeHistory?: boolean;
     afterEventId?: number;
+    excludedEventTypes?: string[];
   }): OutputEventRecord[] {
     let query = `
       SELECT id, workspace_id, session_id, input_id, sequence, event_type, payload, created_at
@@ -2104,6 +2110,11 @@ export class RuntimeStateStore {
     if (params.inputId) {
       query += " AND input_id = ?";
       values.push(params.inputId);
+    }
+    const excludedEventTypes = (params.excludedEventTypes ?? []).filter((value) => Boolean(value && value.trim()));
+    if (excludedEventTypes.length > 0) {
+      query += ` AND event_type NOT IN (${excludedEventTypes.map(() => "?").join(", ")})`;
+      values.push(...excludedEventTypes);
     }
     if (params.includeHistory === false) {
       query += " AND 1 = 0";

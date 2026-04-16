@@ -144,7 +144,7 @@ test("mapPiSessionEvent extracts nested Gemini provider error messages", () => {
   );
 });
 
-test("mapPiSessionEvent emits a pi_native_event passthrough for native Pi session events", () => {
+test("mapPiSessionEvent emits a pi_native_event passthrough for non-streaming Pi session events", () => {
   const sessionFile = "/tmp/pi-session.jsonl";
   const cases = [
     {
@@ -165,19 +165,6 @@ test("mapPiSessionEvent emits a pi_native_event passthrough for native Pi sessio
         },
       } as const,
       nativeType: "message_start",
-    },
-    {
-      event: {
-        type: "message_update",
-        message: {} as never,
-        assistantMessageEvent: {
-          type: "text_delta",
-          contentIndex: 0,
-          delta: "Hello",
-          partial: {} as never,
-        },
-      } as const,
-      nativeType: "message_update",
     },
     {
       event: {
@@ -232,6 +219,51 @@ test("mapPiSessionEvent emits a pi_native_event passthrough for native Pi sessio
       },
     });
   }
+});
+
+test("mapPiSessionEvent trims cumulative partial state from message_update pi_native_event payloads", () => {
+  const sessionFile = "/tmp/pi-session.jsonl";
+  const nativeEvents = onlyPiNativeEvents(
+    mapPiSessionEvent(
+      {
+        type: "message_update",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "Hello world" }],
+        } as never,
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: "Hello",
+          partial: {
+            content: [{ type: "text", text: "Hello world" }],
+          } as never,
+        },
+      } as never,
+      sessionFile,
+      createPiEventMapperState()
+    )
+  );
+
+  assert.deepEqual(nativeEvents, [
+    {
+      event_type: "pi_native_event",
+      payload: {
+        native_type: "message_update",
+        native_event: {
+          type: "message_update",
+          assistantMessageEvent: {
+            type: "text_delta",
+            contentIndex: 0,
+            delta: "Hello",
+          },
+        },
+        event: "message_update",
+        source: "pi",
+        harness_session_id: sessionFile,
+      },
+    },
+  ]);
 });
 
 async function createDocxBuffer(lines: string[]): Promise<Buffer> {
@@ -1635,6 +1667,129 @@ test("createPiMcpCustomTools filters discovery to allowlisted tools and forwards
   ]);
   assert.equal(result.content[0]?.type, "text");
   assert.match(String((result.content[0] as { text: string }).text), /"ok": true/);
+});
+
+test("createPiMcpCustomTools exposes all discovered tools when no MCP allowlist is provided", async () => {
+  const request: HarnessHostPiRequest = {
+    ...baseRequest(),
+    mcp_servers: [
+      {
+        name: "context7",
+        config: {
+          type: "remote",
+          enabled: true,
+          url: "https://mcp.context7.com/mcp",
+          timeout: 12000,
+        },
+      },
+    ],
+    mcp_tool_refs: [],
+  };
+
+  const runtime = {
+    listTools: async () => [
+      {
+        name: "lookup",
+        description: "Look something up",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "search",
+        description: "Search docs",
+        inputSchema: { type: "object", properties: {} },
+      },
+    ],
+    callTool: async () => ({ structuredContent: { ok: true } }),
+  };
+
+  const bindings = buildPiMcpServerBindings(request);
+  const toolset = await createPiMcpCustomTools(request, runtime as never, bindings);
+
+  assert.equal(toolset.customTools.length, 2);
+  assert.deepEqual(
+    Array.from(toolset.mcpToolMetadata.values()).map((metadata) => metadata.toolId).sort(),
+    ["context7.lookup", "context7.search"]
+  );
+});
+
+test("createPiMcpCustomTools keeps unrestricted discovery for servers without explicit tool refs even when other servers are allowlisted", async () => {
+  const request: HarnessHostPiRequest = {
+    ...baseRequest(),
+    mcp_servers: [
+      {
+        name: "gmail",
+        config: {
+          type: "remote",
+          enabled: true,
+          url: "http://127.0.0.1:7000/mcp",
+          timeout: 12000,
+        },
+      },
+      {
+        name: "context7",
+        config: {
+          type: "remote",
+          enabled: true,
+          url: "https://mcp.context7.com/mcp",
+          timeout: 12000,
+        },
+      },
+    ],
+    mcp_tool_refs: [
+      {
+        tool_id: "gmail.gmail_search",
+        server_id: "gmail",
+        tool_name: "gmail_search",
+      },
+    ],
+  };
+
+  const runtime = {
+    listTools: async (serverId: string) => {
+      if (serverId === "gmail") {
+        return [
+          {
+            name: "gmail_search",
+            description: "Search Gmail",
+            inputSchema: { type: "object", properties: {} },
+          },
+          {
+            name: "gmail_delete_thread",
+            description: "Should not be exposed",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ];
+      }
+      return [
+        {
+          name: "lookup",
+          description: "Look something up",
+          inputSchema: { type: "object", properties: {} },
+        },
+        {
+          name: "search",
+          description: "Search docs",
+          inputSchema: { type: "object", properties: {} },
+        },
+      ];
+    },
+    callTool: async () => ({ structuredContent: { ok: true } }),
+  };
+
+  const toolset = await createPiMcpCustomTools(request, runtime as never, buildPiMcpServerBindings(request));
+
+  assert.deepEqual(
+    toolset.customTools.map((tool) => tool.name).sort(),
+    [
+      buildPiMcpToolName("context7", "lookup"),
+      buildPiMcpToolName("context7", "search"),
+      buildPiMcpToolName("gmail", "gmail_search"),
+    ]
+  );
+  assert.deepEqual(
+    Array.from(toolset.mcpToolMetadata.values()).map((metadata) => metadata.toolId).sort(),
+    ["context7.lookup", "context7.search", "gmail.gmail_search"]
+  );
 });
 
 test("createPiMcpCustomTools retries discovery until allowlisted MCP tools appear", async () => {

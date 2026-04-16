@@ -122,6 +122,7 @@ export interface ComposeBaseAgentPromptRequest {
   extraTools: string[];
   workspaceSkillIds: string[];
   resolvedMcpToolRefs: unknown[];
+  resolvedMcpServerIds?: string[] | null;
   sessionKind?: string | null;
   sessionMode?: string | null;
   harnessId?: string | null;
@@ -633,6 +634,13 @@ export function buildBaseAgentPromptSections(
   }
   if (request.resolvedMcpToolRefs.length > 0) {
     executionLines.push("When a connected MCP tool is relevant, call it directly instead of only describing what it would do.");
+  } else if (
+    (request.resolvedMcpServerIds?.length ?? 0) > 0 ||
+    (request.capabilityManifest?.context.mcp_server_ids?.length ?? 0) > 0
+  ) {
+    executionLines.push(
+      "When connected MCP servers are available without pre-enumerated tool refs in this prompt, do not assume MCP is unavailable; use the MCP tools surfaced by the runtime when they are relevant."
+    );
   }
   pushPromptLayer(promptSections, {
     id: "execution_policy",

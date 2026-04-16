@@ -379,6 +379,10 @@ function normalizeErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Request failed.";
 }
 
+function optionalHistoryLoadErrorMessage(label: string, error: unknown) {
+  return `${label} unavailable: ${normalizeErrorMessage(error)}`;
+}
+
 function openExternalUrl(url: string | null | undefined) {
   const normalizedUrl = (url ?? "").trim();
   if (!normalizedUrl) {
@@ -2909,6 +2913,7 @@ export function ChatPane({
       return {
         history,
         historyMessages,
+        warnings: [] as string[],
         outputEvents: [] as SessionOutputEventPayload[],
         outputs: [] as WorkspaceOutputRecordPayload[],
         memoryProposals: [] as MemoryUpdateProposalRecordPayload[],
@@ -2921,10 +2926,11 @@ export function ChatPane({
       };
     }
 
+    const auxiliaryHistoryWarnings: string[] = [];
     const artifactResponses = await Promise.all(
       assistantInputIds.map(async (inputId) => {
-        const [outputEvents, outputList, memoryProposalList] =
-          await Promise.all([
+        const [outputEventsResult, outputListResult, memoryProposalListResult] =
+          await Promise.allSettled([
             window.electronAPI.workspace.getSessionOutputEvents({
               sessionId: params.sessionId,
               inputId,
@@ -2942,10 +2948,40 @@ export function ChatPane({
               limit: 200,
             }),
           ]);
+        if (outputEventsResult.status !== "fulfilled") {
+          auxiliaryHistoryWarnings.push(
+            optionalHistoryLoadErrorMessage(
+              "Execution history",
+              outputEventsResult.reason,
+            ),
+          );
+        }
+        if (outputListResult.status !== "fulfilled") {
+          auxiliaryHistoryWarnings.push(
+            optionalHistoryLoadErrorMessage("Artifacts", outputListResult.reason),
+          );
+        }
+        if (memoryProposalListResult.status !== "fulfilled") {
+          auxiliaryHistoryWarnings.push(
+            optionalHistoryLoadErrorMessage(
+              "Memory proposals",
+              memoryProposalListResult.reason,
+            ),
+          );
+        }
         return {
-          outputEvents: outputEvents.items,
-          outputs: outputList.items,
-          memoryProposals: memoryProposalList.proposals,
+          outputEvents:
+            outputEventsResult.status === "fulfilled"
+              ? outputEventsResult.value.items
+              : [],
+          outputs:
+            outputListResult.status === "fulfilled"
+              ? outputListResult.value.items
+              : [],
+          memoryProposals:
+            memoryProposalListResult.status === "fulfilled"
+              ? memoryProposalListResult.value.proposals
+              : [],
         };
       }),
     );
@@ -2969,6 +3005,7 @@ export function ChatPane({
     return {
       history,
       historyMessages,
+      warnings: auxiliaryHistoryWarnings,
       outputEvents,
       outputs,
       memoryProposals,
@@ -3023,6 +3060,7 @@ export function ChatPane({
     setTotalHistoryMessageCount(page.history.total);
     setIsLoadingOlderHistory(false);
     pendingHistoryPrependRestoreRef.current = null;
+    setChatErrorMessage(page.warnings.join(" "));
     resetLiveTurn();
     requestHistoryViewportRestore();
 

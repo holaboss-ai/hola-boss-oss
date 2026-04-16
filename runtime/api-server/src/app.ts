@@ -138,6 +138,7 @@ const DEFAULT_POLL_INTERVAL_MS = 50;
 const DEFAULT_BODY_LIMIT_BYTES = 10 * 1024 * 1024;
 const DEFAULT_APP_SETUP_TIMEOUT_MS = 900_000;
 const TERMINAL_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
+const DEFAULT_EXCLUDED_SESSION_OUTPUT_EVENT_TYPES = ["pi_native_event"];
 export interface BuildRuntimeApiServerOptions {
   logger?: boolean;
   store?: RuntimeStateStore;
@@ -6057,9 +6058,15 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const query = isRecord(request.query) ? request.query : {};
     const inputId = optionalString(query.input_id);
     const includeHistory = optionalBoolean(query.include_history, true);
+    const includeNative = optionalBoolean(query.include_native, false);
+    const excludedEventTypes = includeNative ? [] : DEFAULT_EXCLUDED_SESSION_OUTPUT_EVENT_TYPES;
     let afterEventId = Math.max(0, optionalInteger(query.after_event_id, 0));
     if (!includeHistory && afterEventId <= 0) {
-      afterEventId = store.latestOutputEventId({ sessionId: params.sessionId, inputId });
+      afterEventId = store.latestOutputEventId({
+        sessionId: params.sessionId,
+        inputId,
+        excludedEventTypes
+      });
     }
 
     const items = store
@@ -6067,7 +6074,8 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         sessionId: params.sessionId,
         inputId,
         includeHistory: true,
-        afterEventId
+        afterEventId,
+        excludedEventTypes
       })
       .map((item: OutputEventRecord) => outputEventPayload(item));
     return {
@@ -6085,6 +6093,8 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const query = isRecord(request.query) ? request.query : {};
     const inputId = optionalString(query.input_id);
     const includeHistory = optionalBoolean(query.include_history, true);
+    const includeNative = optionalBoolean(query.include_native, false);
+    const excludedEventTypes = includeNative ? [] : DEFAULT_EXCLUDED_SESSION_OUTPUT_EVENT_TYPES;
     const stopOnTerminal = optionalBoolean(query.stop_on_terminal, true);
 
     reply.header("Cache-Control", "no-cache");
@@ -6094,7 +6104,13 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
     const stream = Readable.from(
       (async function* () {
-        let lastEventId = includeHistory ? 0 : store.latestOutputEventId({ sessionId: params.sessionId, inputId });
+        let lastEventId = includeHistory
+          ? 0
+          : store.latestOutputEventId({
+              sessionId: params.sessionId,
+              inputId,
+              excludedEventTypes
+            });
         yield sseComment("connected");
 
         while (true) {
@@ -6102,7 +6118,8 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
             sessionId: params.sessionId,
             inputId,
             includeHistory: true,
-            afterEventId: lastEventId
+            afterEventId: lastEventId,
+            excludedEventTypes
           });
 
           if (events.length > 0) {

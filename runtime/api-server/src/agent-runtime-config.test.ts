@@ -365,6 +365,63 @@ test("projectAgentRuntimeConfig includes current user context as a context messa
   }
 });
 
+test("projectAgentRuntimeConfig surfaces connected MCP servers when no explicit MCP tool refs are pre-enumerated", () => {
+  process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
+  process.env.HOLABOSS_USER_ID = "user-1";
+  try {
+    const result = projectAgentRuntimeConfig({
+      session_id: "session-1",
+      workspace_id: "workspace-1",
+      input_id: "input-1",
+      session_kind: "workspace_session",
+      harness_id: "pi",
+      browser_tools_available: false,
+      browser_tool_ids: [],
+      runtime_tool_ids: [],
+      workspace_command_ids: [],
+      runtime_exec_model_proxy_api_key: "hbrt.v1.token",
+      runtime_exec_sandbox_id: "sandbox-1",
+      runtime_exec_run_id: "run-1",
+      selected_model: null,
+      default_provider_id: "openai",
+      session_mode: "code",
+      workspace_config_checksum: "checksum-1",
+      workspace_skill_ids: [],
+      default_tools: ["read"],
+      extra_tools: [],
+      resolved_mcp_tool_refs: [],
+      resolved_mcp_server_ids: ["context7"],
+      resolved_output_schemas: {},
+      agent: {
+        id: "workspace.general",
+        model: "gpt-5.2",
+        prompt: "You are concise."
+      }
+    });
+
+    assert.match(result.system_prompt, /Connected MCP servers available now: context7/);
+    assert.match(
+      result.system_prompt,
+      /When connected MCP servers are available without pre-enumerated tool refs in this prompt, do not assume MCP is unavailable/i
+    );
+    assert.deepEqual(result.workspace_tool_ids, []);
+    assert.deepEqual(result.capability_manifest?.context, {
+      harness_id: "pi",
+      session_kind: "workspace_session",
+      browser_tools_available: false,
+      browser_tool_ids: [],
+      runtime_tool_ids: [],
+      workspace_command_ids: [],
+      mcp_server_ids: ["context7"],
+      workspace_commands_available: false,
+      workspace_skills_available: false,
+      mcp_tools_available: true,
+    });
+  } finally {
+    delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
+  }
+});
+
 test("projectAgentRuntimeConfig includes operator surface context as a context message", () => {
   process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
   process.env.HOLABOSS_USER_ID = "user-1";

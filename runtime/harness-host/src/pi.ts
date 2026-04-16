@@ -3173,15 +3173,11 @@ export async function createPiMcpCustomTools(
   bindings: PiMcpServerBinding[] = buildPiMcpServerBindings(request)
 ): Promise<Omit<PiMcpToolset, "runtime">> {
   const allowlist = mcpToolAllowlist(request);
-  const hasGlobalAllowlist = request.mcp_tool_refs.length > 0;
   const customTools: ToolDefinition[] = [];
   const mcpToolMetadata = new Map<string, PiMcpToolMetadata>();
 
   for (const binding of bindings) {
     const allowedTools = allowlist.get(binding.serverId);
-    if (!allowedTools && hasGlobalAllowlist) {
-      continue;
-    }
     const discoveryDeadline = Date.now() + Math.max(
       PI_MCP_DISCOVERY_RETRY_INTERVAL_MS,
       Math.min(binding.timeoutMs, PI_MCP_DISCOVERY_MAX_WAIT_MS)
@@ -4004,11 +4000,22 @@ function maybeMapAssistantTerminalFailure(
 }
 
 function mapNativePiEvent(event: AgentSessionEvent, sessionFile: string): PiMappedEvent {
+  const nativeEventPayload =
+    event.type === "message_update"
+      ? jsonValue({
+          type: event.type,
+          assistantMessageEvent: Object.fromEntries(
+            Object.entries(isRecord(event.assistantMessageEvent) ? event.assistantMessageEvent : {}).filter(
+              ([key]) => key !== "partial"
+            )
+          ),
+        })
+      : jsonValue(event);
   return {
     event_type: "pi_native_event",
     payload: {
       native_type: event.type,
-      native_event: jsonValue(event),
+      native_event: nativeEventPayload,
       event: event.type,
       source: "pi",
       harness_session_id: sessionFile,
