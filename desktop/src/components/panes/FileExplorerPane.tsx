@@ -595,6 +595,88 @@ function isAbsolutePath(targetPath: string) {
   return /^(?:[a-zA-Z]:[\\/]|\/)/.test(targetPath.trim());
 }
 
+function remapPathAfterRename(
+  sourcePath: string,
+  nextPath: string,
+  candidatePath: string | null | undefined,
+) {
+  const trimmedCandidatePath = (candidatePath ?? "").trim();
+  const trimmedNextPath = nextPath.trim();
+  const normalizedSourcePath = normalizeComparablePath(sourcePath);
+  const normalizedCandidatePath = normalizeComparablePath(trimmedCandidatePath);
+  if (
+    !trimmedCandidatePath ||
+    !trimmedNextPath ||
+    !normalizedSourcePath ||
+    !normalizedCandidatePath ||
+    !isPathWithin(normalizedSourcePath, normalizedCandidatePath)
+  ) {
+    return trimmedCandidatePath;
+  }
+  if (normalizedCandidatePath === normalizedSourcePath) {
+    return trimmedNextPath;
+  }
+  const suffix = normalizedCandidatePath
+    .slice(normalizedSourcePath.length)
+    .replace(/^\/+/, "");
+  if (!suffix) {
+    return trimmedNextPath;
+  }
+  const separator = trimmedNextPath.includes("\\") ? "\\" : "/";
+  return `${trimmedNextPath.replace(/[\\/]+$/, "")}${separator}${suffix.split("/").join(separator)}`;
+}
+
+function remapExplorerPathRecord<T>(
+  record: Record<string, T>,
+  sourcePath: string,
+  nextPath: string,
+) {
+  let changed = false;
+  const nextRecord: Record<string, T> = {};
+  for (const [key, value] of Object.entries(record)) {
+    const remappedKey = remapPathAfterRename(sourcePath, nextPath, key) || key;
+    if (remappedKey !== key) {
+      changed = true;
+    }
+    nextRecord[remappedKey] = value;
+  }
+  return changed ? nextRecord : record;
+}
+
+function remapDirectoryEntriesByPath(
+  directoryEntriesByPath: Record<string, LocalFileEntry[]>,
+  sourcePath: string,
+  nextPath: string,
+) {
+  let changed = false;
+  const nextEntriesByPath: Record<string, LocalFileEntry[]> = {};
+  for (const [directoryPath, entries] of Object.entries(directoryEntriesByPath)) {
+    const remappedDirectoryPath =
+      remapPathAfterRename(sourcePath, nextPath, directoryPath) ||
+      directoryPath;
+    const remappedEntries = entries.map((entry) => {
+      const remappedAbsolutePath = remapPathAfterRename(
+        sourcePath,
+        nextPath,
+        entry.absolutePath,
+      );
+      if (remappedAbsolutePath === entry.absolutePath) {
+        return entry;
+      }
+      changed = true;
+      return {
+        ...entry,
+        absolutePath: remappedAbsolutePath,
+      };
+    });
+    if (remappedDirectoryPath !== directoryPath) {
+      changed = true;
+    }
+    nextEntriesByPath[remappedDirectoryPath] = remappedEntries;
+  }
+  return changed ? nextEntriesByPath : directoryEntriesByPath;
+}
+
 function resolveWorkspaceTargetPath(workspaceRoot: string, targetPath: string) {
   const trimmedRoot = workspaceRoot.trim();
   const trimmedTarget = targetPath.trim();
@@ -655,13 +737,14 @@ function getProtectedWorkspacePathLabel(
   if (!relativePath) {
     return null;
   }
-  if (relativePath === "workspace.yaml") {
+  const comparableRelativePath = relativePath.toLowerCase();
+  if (comparableRelativePath === "workspace.yaml") {
     return "workspace.yaml";
   }
-  if (relativePath === "agents.md") {
+  if (comparableRelativePath === "agents.md") {
     return "AGENTS.md";
   }
-  if (relativePath === "skills") {
+  if (comparableRelativePath === "skills") {
     return "skills";
   }
   return null;
@@ -932,6 +1015,9 @@ export function FileExplorerPane({
     rootPath: string;
   } | null>(null);
   const lastProcessedFocusRequestKeyRef = useRef<number | null>(null);
+  const workspaceSessionKeyRef = useRef(0);
+  const directoryLoadRequestKeyRef = useRef(0);
+  const previewRequestKeyRef = useRef(0);
   const currentPathRef = useRef("");
   const isDirtyRef = useRef(false);
   const isSavingRef = useRef(false);
@@ -983,8 +1069,24 @@ export function FileExplorerPane({
 
   currentPathRef.current = currentPath;
 
+  const resetPreviewState = useCallback(() => {
+    previewRequestKeyRef.current += 1;
+    isDirtyRef.current = false;
+    isSavingRef.current = false;
+    setPreview(null);
+    setPreviewDraft("");
+    setTablePreviewDraft([]);
+    setTextPreviewMode("edit");
+    setActiveTableSheetIndex(0);
+    setPreviewError("");
+    setPreviewLoading(false);
+    setSaving(false);
+  }, []);
+
   const loadDirectory = useCallback(
     async (targetPath?: string | null, pushHistory = true) => {
+      const workspaceSessionKey = workspaceSessionKeyRef.current;
+      const requestKey = ++directoryLoadRequestKeyRef.current;
       setLoading(true);
       setError("");
 
@@ -993,6 +1095,12 @@ export function FileExplorerPane({
           targetPath ?? null,
           selectedWorkspaceId ?? null,
         );
+        if (
+          workspaceSessionKey !== workspaceSessionKeyRef.current ||
+          requestKey !== directoryLoadRequestKeyRef.current
+        ) {
+          return;
+        }
         const previousCurrentPath = currentPathRef.current;
         const shouldResetTree =
           pushHistory ||
@@ -1020,11 +1128,22 @@ export function FileExplorerPane({
             : prev,
         );
       } catch (cause) {
+        if (
+          workspaceSessionKey !== workspaceSessionKeyRef.current ||
+          requestKey !== directoryLoadRequestKeyRef.current
+        ) {
+          return;
+        }
         const message =
           cause instanceof Error ? cause.message : "Failed to open directory.";
         setError(message);
       } finally {
-        setLoading(false);
+        if (
+          workspaceSessionKey === workspaceSessionKeyRef.current &&
+          requestKey === directoryLoadRequestKeyRef.current
+        ) {
+          setLoading(false);
+        }
       }
     },
     [selectedWorkspaceId],
@@ -1035,12 +1154,35 @@ export function FileExplorerPane({
   }, [loadDirectory]);
 
   useEffect(() => {
+    workspaceSessionKeyRef.current += 1;
+    directoryLoadRequestKeyRef.current += 1;
+    previewRequestKeyRef.current += 1;
+    lastSyncedWorkspaceRootRef.current = null;
+    currentPathRef.current = "";
+    setCurrentPath("");
+    setEntries([]);
+    setDirectoryEntriesByPath({});
+    setExpandedDirectoryPaths({});
+    setDirectoryLoadingByPath({});
+    setDirectoryErrorByPath({});
+    setSelectedPath("");
+    setWorkspaceRootPath(null);
+    setLoading(false);
+    setError("");
+    setContextMenu(null);
+    setRenamingPath(null);
+    setRenameDraft("");
+    setRenameSaving(false);
+    setDraggedEntryPath(null);
+    setDirectoryDropTargetPath(null);
+    setPaneExternalDropTarget(false);
+    resetPreviewState();
+  }, [resetPreviewState, selectedWorkspaceId]);
+
+  useEffect(() => {
     if (!selectedWorkspaceId) {
-      lastSyncedWorkspaceRootRef.current = null;
-      setWorkspaceRootPath(null);
       return;
     }
-    setWorkspaceRootPath(null);
 
     let cancelled = false;
 
@@ -1317,6 +1459,10 @@ export function FileExplorerPane({
     () => filteredEntries.flatMap((section) => section.rows),
     [filteredEntries],
   );
+  const hasVisibleEntryRows = useMemo(
+    () => visibleRows.some((row) => row.type === "entry"),
+    [visibleRows],
+  );
 
   const selectedEntry = useMemo(
     () => findLoadedEntry(entries, selectedPath, directoryEntriesByPath),
@@ -1347,6 +1493,14 @@ export function FileExplorerPane({
   useEffect(() => {
     isSavingRef.current = saving;
   }, [saving]);
+
+  useEffect(() => {
+    if (loading || error || hasVisibleEntryRows) {
+      return;
+    }
+
+    resetPreviewState();
+  }, [error, hasVisibleEntryRows, loading, resetPreviewState]);
 
   const openPreviewLink = useCallback((url: string) => {
     if (onOpenLinkInBrowser) {
@@ -1693,6 +1847,8 @@ export function FileExplorerPane({
     targetPath: string,
     options?: { skipConfirm?: boolean; syncDirectory?: boolean },
   ) => {
+    const workspaceSessionKey = workspaceSessionKeyRef.current;
+    const requestKey = ++previewRequestKeyRef.current;
     const skipConfirm = options?.skipConfirm ?? false;
     if (!skipConfirm && !confirmDiscardIfDirty()) {
       return;
@@ -1712,6 +1868,12 @@ export function FileExplorerPane({
         targetPath,
         selectedWorkspaceId ?? null,
       );
+      if (
+        workspaceSessionKey !== workspaceSessionKeyRef.current ||
+        requestKey !== previewRequestKeyRef.current
+      ) {
+        return;
+      }
       setPreview(payload);
       setPreviewDraft(payload.content ?? "");
       setTablePreviewDraft(cloneTablePreviewSheets(payload.tableSheets));
@@ -1719,6 +1881,12 @@ export function FileExplorerPane({
         isMarkdownPreviewPayload(payload) || isHtmlPreviewPayload(payload);
       setTextPreviewMode(prefersRenderedTextPreview ? "preview" : "edit");
     } catch (cause) {
+      if (
+        workspaceSessionKey !== workspaceSessionKeyRef.current ||
+        requestKey !== previewRequestKeyRef.current
+      ) {
+        return;
+      }
       const message =
         cause instanceof Error ? cause.message : "Failed to open file.";
       setPreview(null);
@@ -1726,7 +1894,12 @@ export function FileExplorerPane({
       setTablePreviewDraft([]);
       setPreviewError(message);
     } finally {
-      setPreviewLoading(false);
+      if (
+        workspaceSessionKey === workspaceSessionKeyRef.current &&
+        requestKey === previewRequestKeyRef.current
+      ) {
+        setPreviewLoading(false);
+      }
     }
   };
 
@@ -1750,14 +1923,7 @@ export function FileExplorerPane({
       }
 
       setSelectedPath(targetPath);
-      setPreview(null);
-      setPreviewDraft("");
-      setTablePreviewDraft([]);
-      setTextPreviewMode("edit");
-      setActiveTableSheetIndex(0);
-      setPreviewError("");
-      setPreviewLoading(false);
-      setSaving(false);
+      resetPreviewState();
       onFileOpen(targetPath);
     },
     [
@@ -1765,6 +1931,7 @@ export function FileExplorerPane({
       onFileOpen,
       openFilePreview,
       previewInPane,
+      resetPreviewState,
       revealPathInTree,
     ],
   );
@@ -1774,13 +1941,7 @@ export function FileExplorerPane({
       return;
     }
 
-    setPreview(null);
-    setPreviewDraft("");
-    setTablePreviewDraft([]);
-    setTextPreviewMode("edit");
-    setActiveTableSheetIndex(0);
-    setPreviewError("");
-    setSaving(false);
+    resetPreviewState();
   };
 
   const savePreview = async () => {
@@ -1788,6 +1949,8 @@ export function FileExplorerPane({
       return;
     }
 
+    const workspaceSessionKey = workspaceSessionKeyRef.current;
+    const requestKey = ++previewRequestKeyRef.current;
     setSaving(true);
     setPreviewError("");
 
@@ -1804,16 +1967,33 @@ export function FileExplorerPane({
               previewDraft,
               selectedWorkspaceId ?? null,
             );
+      if (
+        workspaceSessionKey !== workspaceSessionKeyRef.current ||
+        requestKey !== previewRequestKeyRef.current
+      ) {
+        return;
+      }
       setPreview(nextPreview);
       setPreviewDraft(nextPreview.content ?? "");
       setTablePreviewDraft(cloneTablePreviewSheets(nextPreview.tableSheets));
       await loadDirectory(currentPath, false);
     } catch (cause) {
+      if (
+        workspaceSessionKey !== workspaceSessionKeyRef.current ||
+        requestKey !== previewRequestKeyRef.current
+      ) {
+        return;
+      }
       const message =
         cause instanceof Error ? cause.message : "Failed to save file.";
       setPreviewError(message);
     } finally {
-      setSaving(false);
+      if (
+        workspaceSessionKey === workspaceSessionKeyRef.current &&
+        requestKey === previewRequestKeyRef.current
+      ) {
+        setSaving(false);
+      }
     }
   };
 
@@ -1828,7 +2008,9 @@ export function FileExplorerPane({
         ]
       : null;
   const showInlinePreview =
-    previewInPane && Boolean(preview || previewLoading || previewError);
+    previewInPane &&
+    hasVisibleEntryRows &&
+    Boolean(preview || previewLoading || previewError);
   const selectedFileEntry =
     !previewInPane && selectedEntry && !selectedEntry.isDirectory
       ? selectedEntry
@@ -1948,18 +2130,6 @@ export function FileExplorerPane({
     workspaceRootPath,
   ]);
 
-  const openEntryFromContextMenu = useCallback(
-    async (entry: LocalFileEntry) => {
-      closeContextMenu();
-      if (entry.isDirectory) {
-        await toggleDirectoryExpansion(entry);
-        return;
-      }
-      await openFileTarget(entry.absolutePath);
-    },
-    [closeContextMenu, openFileTarget, toggleDirectoryExpansion],
-  );
-
   const referenceEntryInChat = useCallback(
     (entry: LocalFileEntry) => {
       const referenceText = buildChatReferenceText(
@@ -1988,20 +2158,62 @@ export function FileExplorerPane({
       return;
     }
 
+    const sourcePath = renamingEntry.absolutePath;
+    const shouldRetargetExternalFile =
+      !previewInPane &&
+      Boolean(onFileOpen) &&
+      normalizeComparablePath(selectedPath) ===
+        normalizeComparablePath(sourcePath);
+
     setError("");
     renameInFlightRef.current = true;
     setRenameSaving(true);
     try {
       const payload = await window.electronAPI.fs.renamePath(
-        renamingEntry.absolutePath,
+        sourcePath,
         nextName,
         selectedWorkspaceId ?? null,
       );
+      const nextAbsolutePath = payload.absolutePath;
       const parentPath =
-        getParentFolderPath(renamingEntry.absolutePath) ??
+        getParentFolderPath(sourcePath) ??
         currentPathRef.current;
+      setDirectoryEntriesByPath((current) =>
+        remapDirectoryEntriesByPath(current, sourcePath, nextAbsolutePath),
+      );
+      setExpandedDirectoryPaths((current) =>
+        remapExplorerPathRecord(current, sourcePath, nextAbsolutePath),
+      );
+      setDirectoryLoadingByPath((current) =>
+        remapExplorerPathRecord(current, sourcePath, nextAbsolutePath),
+      );
+      setDirectoryErrorByPath((current) =>
+        remapExplorerPathRecord(current, sourcePath, nextAbsolutePath),
+      );
       await refreshDirectoryEntries(parentPath);
-      setSelectedPath(payload.absolutePath);
+      await revealPathInTree(nextAbsolutePath);
+      setSelectedPath(nextAbsolutePath);
+      setPreview((current) => {
+        if (!current) {
+          return current;
+        }
+        const remappedAbsolutePath = remapPathAfterRename(
+          sourcePath,
+          nextAbsolutePath,
+          current.absolutePath,
+        );
+        if (!remappedAbsolutePath || remappedAbsolutePath === current.absolutePath) {
+          return current;
+        }
+        return {
+          ...current,
+          absolutePath: remappedAbsolutePath,
+          name: getFolderName(remappedAbsolutePath),
+        };
+      });
+      if (shouldRetargetExternalFile) {
+        onFileOpen?.(nextAbsolutePath);
+      }
       stopRenamingEntry();
     } catch (cause) {
       const message =
@@ -2016,9 +2228,13 @@ export function FileExplorerPane({
       setRenameSaving(false);
     }
   }, [
+    onFileOpen,
+    previewInPane,
     renameDraft,
     renamingEntry,
+    revealPathInTree,
     refreshDirectoryEntries,
+    selectedPath,
     selectedWorkspaceId,
     stopRenamingEntry,
   ]);
@@ -2261,16 +2477,14 @@ export function FileExplorerPane({
     ],
   );
 
-  const canDropDraggedEntryIntoDirectory = useCallback(
-    (entry: LocalFileEntry) => {
-      if (!entry.isDirectory) {
-        return false;
-      }
-
+  const canMoveDraggedEntryToDirectoryPath = useCallback(
+    (targetDirectoryPath: string | null | undefined) => {
       const normalizedDraggedEntryPath = normalizeComparablePath(
         draggedEntryPath ?? "",
       );
-      const normalizedTargetPath = normalizeComparablePath(entry.absolutePath);
+      const normalizedTargetPath = normalizeComparablePath(
+        targetDirectoryPath ?? "",
+      );
       if (!normalizedDraggedEntryPath || !normalizedTargetPath) {
         return false;
       }
@@ -2293,23 +2507,36 @@ export function FileExplorerPane({
     [draggedEntryPath, workspaceRootPath],
   );
 
+  const canDropDraggedEntryIntoDirectory = useCallback(
+    (entry: LocalFileEntry) => {
+      if (!entry.isDirectory) {
+        return false;
+      }
+      return canMoveDraggedEntryToDirectoryPath(entry.absolutePath);
+    },
+    [canMoveDraggedEntryToDirectoryPath],
+  );
+
   const onPaneDragOver = useCallback(
     (event: DragEvent<HTMLDivElement>) => {
-      if (
-        !hasExternalExplorerDropData(event.dataTransfer) ||
-        !currentPathRef.current
-      ) {
+      const canMoveDraggedEntry = canMoveDraggedEntryToDirectoryPath(
+        currentPathRef.current,
+      );
+      const canImportExternalEntries =
+        hasExternalExplorerDropData(event.dataTransfer) &&
+        Boolean(currentPathRef.current);
+      if (!canMoveDraggedEntry && !canImportExternalEntries) {
         return;
       }
       event.preventDefault();
       event.stopPropagation();
-      event.dataTransfer.dropEffect = "copy";
+      event.dataTransfer.dropEffect = canMoveDraggedEntry ? "move" : "copy";
       setDirectoryDropTargetPath(null);
       if (!paneExternalDropTarget) {
         setPaneExternalDropTarget(true);
       }
     },
-    [paneExternalDropTarget],
+    [canMoveDraggedEntryToDirectoryPath, paneExternalDropTarget],
   );
 
   const onPaneDragLeave = useCallback(
@@ -2332,20 +2559,32 @@ export function FileExplorerPane({
 
   const onPaneDrop = useCallback(
     (event: DragEvent<HTMLDivElement>) => {
-      if (
-        !hasExternalExplorerDropData(event.dataTransfer) ||
-        !currentPathRef.current
-      ) {
+      const canMoveDraggedEntry = canMoveDraggedEntryToDirectoryPath(
+        currentPathRef.current,
+      );
+      const canImportExternalEntries =
+        hasExternalExplorerDropData(event.dataTransfer) &&
+        Boolean(currentPathRef.current);
+      if (!canMoveDraggedEntry && !canImportExternalEntries) {
         return;
       }
       event.preventDefault();
       event.stopPropagation();
+      if (canMoveDraggedEntry && draggedEntryPath) {
+        void moveEntryToDirectory(draggedEntryPath, currentPathRef.current);
+        return;
+      }
       void importExternalEntriesToDirectory(
         event.dataTransfer,
         currentPathRef.current,
       );
     },
-    [importExternalEntriesToDirectory],
+    [
+      canMoveDraggedEntryToDirectoryPath,
+      draggedEntryPath,
+      importExternalEntriesToDirectory,
+      moveEntryToDirectory,
+    ],
   );
 
   const deleteEntryFromContextMenu = useCallback(
@@ -2787,27 +3026,26 @@ export function FileExplorerPane({
                   <span className="size-4 shrink-0" />
                 );
                 const rowContent = (
-                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <span
-                      className="flex min-w-0 items-center gap-2"
-                      style={{ paddingLeft: `${depth * 16}px` }}
-                    >
-                      {disclosureControl}
-                      <Icon size={14} className={`shrink-0 ${className}`} />
-                      {nameField}
-                    </span>
-                    <span
-                      className="flex min-w-0 items-center gap-2 pl-6 text-[11px] text-muted-foreground"
-                      style={{ paddingLeft: `${depth * 16 + 24}px` }}
-                    >
-                      <span className="truncate">
-                        {formatModified(entry.modifiedAt)}
+                  <span
+                    className="flex min-w-0 flex-1 items-center gap-2"
+                    style={{ paddingLeft: `${depth * 16}px` }}
+                  >
+                    {disclosureControl}
+                    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <Icon size={14} className={`shrink-0 ${className}`} />
+                        {nameField}
                       </span>
-                      {!entry.isDirectory ? (
-                        <span className="shrink-0">
-                          {formatFileSize(entry.size)}
+                      <span className="flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground">
+                        <span className="truncate">
+                          {formatModified(entry.modifiedAt)}
                         </span>
-                      ) : null}
+                        {!entry.isDirectory ? (
+                          <span className="shrink-0">
+                            {formatFileSize(entry.size)}
+                          </span>
+                        ) : null}
+                      </span>
                     </span>
                   </span>
                 );
@@ -2897,7 +3135,7 @@ export function FileExplorerPane({
                     {isRenaming ? (
                       <div className="w-full">{rowContent}</div>
                     ) : (
-                      <div className="flex w-full min-w-0 items-start gap-1">
+                      <div className="flex w-full min-w-0 items-center gap-1">
                         <button
                           type="button"
                           draggable={!entry.isDirectory && !entryIsProtected}
@@ -2952,7 +3190,7 @@ export function FileExplorerPane({
                         >
                           {rowContent}
                         </button>
-                        <div className="mt-0.5 flex shrink-0 items-center gap-0.5">
+                        <div className="flex shrink-0 items-center gap-0.5">
                           {onReferenceInChat ? (
                             <Button
                               type="button"
@@ -2972,24 +3210,22 @@ export function FileExplorerPane({
                               <AtSign size={12} />
                             </Button>
                           ) : null}
-                          {entry.isDirectory ? (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon-xs"
-                              aria-label={`More actions for ${entry.name}`}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                openEntryContextMenu(entry, {
-                                  anchorRect:
-                                    event.currentTarget.getBoundingClientRect(),
-                                });
-                              }}
-                              className={`shrink-0 text-muted-foreground transition-opacity ${rowHoverActionsClassName}`}
-                            >
-                              <MoreHorizontal size={12} />
-                            </Button>
-                          ) : null}
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label={`More actions for ${entry.name}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openEntryContextMenu(entry, {
+                                anchorRect:
+                                  event.currentTarget.getBoundingClientRect(),
+                              });
+                            }}
+                            className={`shrink-0 text-muted-foreground transition-opacity ${rowHoverActionsClassName}`}
+                          >
+                            <MoreHorizontal size={12} />
+                          </Button>
                         </div>
                       </div>
                     )}
@@ -3102,21 +3338,6 @@ export function FileExplorerPane({
               style={contextMenuPosition}
               className="fixed z-[80] rounded-xl border border-border/70 bg-popover/92 p-1.5 text-popover-foreground shadow-xl ring-1 ring-foreground/10 backdrop-blur-xl"
             >
-              <Button
-                type="button"
-                variant="ghost"
-                size="default"
-                onClick={() => {
-                  void openEntryFromContextMenu(contextMenu.entry);
-                }}
-                className="w-full justify-start"
-              >
-                {contextMenu.entry.isDirectory
-                  ? expandedDirectoryPaths[contextMenu.entry.absolutePath]
-                    ? "Collapse folder"
-                    : "Expand folder"
-                  : "Open file"}
-              </Button>
               <Button
                 type="button"
                 variant="ghost"

@@ -182,6 +182,36 @@ test("buildAgentCapabilityManifest includes native web search as a custom tool",
   assert.equal(buildEnabledToolMapFromManifest(manifest).web_search, true);
 });
 
+test("buildAgentCapabilityManifest marks connected MCP servers as available without pre-enumerated tool refs", () => {
+  const manifest = buildAgentCapabilityManifest({
+    harnessId: "pi",
+    sessionKind: "workspace_session",
+    defaultTools: ["read"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    resolvedMcpServerIds: ["context7"],
+  });
+
+  assert.deepEqual(manifest.context, {
+    harness_id: "pi",
+    session_kind: "workspace_session",
+    browser_tools_available: false,
+    browser_tool_ids: [],
+    runtime_tool_ids: [],
+    workspace_command_ids: [],
+    mcp_server_ids: ["context7"],
+    workspace_commands_available: false,
+    workspace_skills_available: false,
+    mcp_tools_available: true,
+  });
+  assert.deepEqual(manifest.mcp_tools, []);
+
+  const section = renderCapabilityPolicyPromptSection(manifest);
+  assert.match(section, /Connected MCP servers available now: context7/);
+  assert.match(section, /Specific MCP tool names may be surfaced dynamically by the runtime/i);
+});
+
 test("buildAgentCapabilityManifest carries browser tool descriptions that emphasize live verification", () => {
   const manifest = buildAgentCapabilityManifest({
     harnessId: "pi",

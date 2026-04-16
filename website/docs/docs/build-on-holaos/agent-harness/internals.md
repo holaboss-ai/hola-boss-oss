@@ -15,7 +15,7 @@ For the shipped `pi` path, a single run currently moves through these seams:
 3. `runtime/api-server/src/harness-registry.ts`: selects the runtime harness plugin, timeout behavior, browser tools, runtime tools, and MCP preparation policy.
 4. `runtime/harnesses/src/pi.ts`: builds the reduced host request that crosses from runtime code into the harness host, including the raw `thinking_value` requested for this run.
 5. `runtime/harness-host/src/index.ts`: dispatches the registered host plugin by command.
-6. `runtime/harness-host/src/pi.ts`: creates the Pi session, loads skills, injects runtime and browser tools, materializes allowlisted MCP tools, enforces workspace boundaries, maps `thinking_value` onto Pi-native reasoning settings, and maps native events back out.
+6. `runtime/harness-host/src/pi.ts`: creates the Pi session, loads skills, injects runtime and browser tools, materializes the resolved MCP tool surface, enforces workspace boundaries, maps `thinking_value` onto Pi-native reasoning settings, and maps native events back out.
 7. `runtime/harness-host/src/contracts.ts`: defines the normalized runner event types that the host emits back to the runtime.
 
 If you are unsure where a behavior belongs, trace this path before you patch anything.
@@ -42,16 +42,18 @@ Representative reduced host request from `runtime/harnesses/src/pi.ts`:
 }
 ```
 
+`mcp_tool_refs` may be empty. In that case the host still receives the configured `mcp_servers` and exposes all discovered tools from those servers for the run. The runtime-config path also carries connected MCP server ids so the prompt/capability manifest can say `connected MCP servers` instead of incorrectly implying MCP is unavailable.
+
 ## Main code seams
 
 - `runtime/harnesses/src/types.ts`: canonical harness contracts, including adapter capabilities, runner prep plans, prompt-layer payloads, prepared MCP payloads, and host request build parameters.
 - `runtime/harnesses/src/pi.ts`: the current `pi` runtime adapter. This is where the shipped path declares capabilities, chooses its runner prep plan, and builds the reduced host request.
 - `runtime/api-server/src/harness-registry.ts`: runtime-side harness registration. This is where browser tools, runtime tools, skill staging, command staging, readiness, and harness-specific timeouts are coordinated.
 - `runtime/api-server/src/ts-runner.ts`: per-run bootstrap. This is where the runtime applies the default tool set, adds extra tools such as `web_search` and `write_report`, prepares browser/runtime/MCP state, loads operator-surface context, and builds the agent runtime config request.
-- `runtime/api-server/src/agent-runtime-config.ts`: prompt and capability projection. This is where prompt layers, recalled memory, recent runtime context, operator-surface context, response-delivery policy, capability manifests, and tool visibility are composed before the harness runs.
+- `runtime/api-server/src/agent-runtime-config.ts`: prompt and capability projection. This is where prompt layers, recalled memory, recent runtime context, operator-surface context, response-delivery policy, capability manifests, and tool visibility are composed before the harness runs. For MCP, this layer distinguishes pre-enumerated tool refs from connected server ids that still require host-side discovery.
 - `runtime/harness-host/src/contracts.ts`: host-side request and event contracts. This is the source of truth for the decoded host request and the normalized runner event types the host must emit back.
 - `runtime/harness-host/src/index.ts`: harness-host CLI entrypoint that dispatches a registered host plugin by command.
-- `runtime/harness-host/src/pi.ts`: the current host implementation. This is where the host loads workspace skills, applies skill widening, enforces workspace-boundary policy, injects browser/runtime/web search tools, materializes allowlisted MCP tools, and normalizes provider-native `thinking_value` choices onto Pi reasoning levels or budgets.
+- `runtime/harness-host/src/pi.ts`: the current host implementation. This is where the host loads workspace skills, applies skill widening, enforces workspace-boundary policy, injects browser/runtime/web search tools, materializes per-server allowlisted MCP subsets or full discovered tool catalogs when a configured server has no explicit refs, and normalizes provider-native `thinking_value` choices onto Pi reasoning levels or budgets.
 - `runtime/harness-host/src/pi-browser-tools.ts`: desktop browser bridge used by the current host.
 - `runtime/harness-host/src/pi-runtime-tools.ts`: runtime-managed tool bridge for onboarding, cronjobs, image generation, and `write_report`. This is also where the host attaches workspace/session/input/model headers to runtime-tool calls.
 - `runtime/harness-host/src/pi-web-search.ts`: hosted native web search bridge for the current `web_search` tool.
@@ -138,7 +140,8 @@ If a quoted skill id is missing, the host appends an explicit warning section ra
 
 - The workspace contract stays runtime-owned. A harness should consume it, not redefine it.
 - Memory and continuity stay runtime-owned. A harness can use recalled context, but it should not replace the persistence model.
-- MCP tools stay allowlisted per run. Do not expose whole servers when the runtime only resolved a subset of tools.
+- MCP tools stay runtime-projected per run. When the runtime resolved a subset for a server, do not expose more than that subset for that server; when a configured server has no explicit refs, exposing all discovered tools from that server is intentional.
+- Prompt-visible capability text must stay derived from the same runtime-owned MCP truth. It is guidance, not the enforcement boundary.
 - Skills stay explicit. If a harness supports skill-driven widening, keep the widening rules inspectable and tied to skill metadata.
 - Runtime-tool mutations should stay turn-aware. If the host creates outputs such as report artifacts, keep workspace/session/input association explicit instead of inferring it later from file capture.
 - The harness should receive a reduced execution package, not uncontrolled access to the whole product state.

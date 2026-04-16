@@ -10,13 +10,32 @@ const sourcePath = path.join(__dirname, "FileExplorerPane.tsx");
 test("file explorer syncs the workspace root only when the selected workspace changes", async () => {
   const source = await readFile(sourcePath, "utf8");
 
+  assert.match(source, /const workspaceSessionKeyRef = useRef\(0\);/);
+  assert.match(source, /const directoryLoadRequestKeyRef = useRef\(0\);/);
+  assert.match(source, /const previewRequestKeyRef = useRef\(0\);/);
   assert.match(
     source,
     /const lastSyncedWorkspaceRootRef = useRef<\{[\s\S]*workspaceId: string;[\s\S]*rootPath: string;[\s\S]*\} \| null>\(null\);/,
   );
   assert.match(
     source,
+    /const resetPreviewState = useCallback\(\(\) => \{\s*previewRequestKeyRef\.current \+= 1;[\s\S]*setPreview\(null\);[\s\S]*setPreviewError\(""\);[\s\S]*setPreviewLoading\(false\);[\s\S]*setSaving\(false\);\s*\}, \[\]\);/,
+  );
+  assert.match(
+    source,
+    /useEffect\(\(\) => \{\s*workspaceSessionKeyRef\.current \+= 1;\s*directoryLoadRequestKeyRef\.current \+= 1;\s*previewRequestKeyRef\.current \+= 1;[\s\S]*setCurrentPath\(""\);[\s\S]*setSelectedPath\(""\);[\s\S]*resetPreviewState\(\);\s*\}, \[resetPreviewState, selectedWorkspaceId\]\);/,
+  );
+  assert.match(
+    source,
     /window\.electronAPI\.fs\.listDirectory\(\s*targetPath \?\? null,\s*selectedWorkspaceId \?\? null,\s*\)/,
+  );
+  assert.match(
+    source,
+    /const workspaceSessionKey = workspaceSessionKeyRef\.current;\s*const requestKey = \+\+directoryLoadRequestKeyRef\.current;/,
+  );
+  assert.match(
+    source,
+    /if \(\s*workspaceSessionKey !== workspaceSessionKeyRef\.current \|\|\s*requestKey !== directoryLoadRequestKeyRef\.current\s*\) \{\s*return;\s*\}/,
   );
   assert.match(
     source,
@@ -127,7 +146,12 @@ test("file explorer adds explicit @ references and keeps drag gestures scoped to
   assert.match(source, /const EXPLORER_INTERNAL_MOVE_DRAG_TYPE =\s*"application\/x-holaboss-file-explorer-move";/);
   assert.match(source, /const rowClassName = `group mb-0\.5 w-full rounded-md px-2 py-1\.5 text-left transition-colors/);
   assert.match(source, /\$\{isRenaming \? "cursor-default" : "cursor-pointer"\}/);
+  assert.match(source, /className="flex min-w-0 flex-1 items-center gap-2"/);
+  assert.match(source, /style=\{\{ paddingLeft: `\$\{depth \* 16\}px` \}\}/);
+  assert.match(source, /className="flex w-full min-w-0 items-center gap-1"/);
   assert.match(source, /className="w-full min-w-0 cursor-pointer text-left"/);
+  assert.match(source, /className="flex min-w-0 flex-1 flex-col gap-0\.5"/);
+  assert.match(source, /className="flex shrink-0 items-center gap-0\.5"/);
   assert.match(source, /draggable=\{!entry\.isDirectory && !entryIsProtected\}/);
   assert.match(source, /event\.dataTransfer\.effectAllowed = "move";/);
   assert.match(
@@ -141,6 +165,9 @@ test("file explorer adds explicit @ references and keeps drag gestures scoped to
   assert.doesNotMatch(source, /event\.dataTransfer\.setData\(\s*"text\/plain"/);
   assert.doesNotMatch(source, /cursor-grab/);
   assert.doesNotMatch(source, /cursor-grabbing/);
+  assert.doesNotMatch(source, /className="flex min-w-0 items-center gap-2"\s*style=\{\{ paddingLeft: `\$\{depth \* 16\}px` \}\}/);
+  assert.doesNotMatch(source, /className="flex min-w-0 items-center gap-2 pl-6 text-\[11px\] text-muted-foreground"/);
+  assert.doesNotMatch(source, /className="mt-0\.5 flex shrink-0 items-center gap-0\.5"/);
 });
 
 test("file explorer groups protected workspace system entries into a dedicated root section", async () => {
@@ -211,6 +238,14 @@ test("file explorer accepts one-shot focus requests for artifact files", async (
 test("file explorer adds a markdown preview mode while keeping text editing inline", async () => {
   const source = await readFile(sourcePath, "utf8");
 
+  assert.match(
+    source,
+    /const hasVisibleEntryRows = useMemo\(\s*\(\) => visibleRows\.some\(\(row\) => row\.type === "entry"\),\s*\[visibleRows\],\s*\);/,
+  );
+  assert.match(
+    source,
+    /if \(loading \|\| error \|\| hasVisibleEntryRows\) \{\s*return;\s*\}\s*resetPreviewState\(\);/,
+  );
   assert.match(source, /import \{ SimpleMarkdown \} from "@\/components\/marketplace\/SimpleMarkdown";/);
   assert.match(source, /const MARKDOWN_PREVIEW_EXTENSIONS = new Set\(\[\s*"\.md",\s*"\.mdx",\s*"\.markdown"\s*\]\);/);
   assert.match(source, /const HTML_PREVIEW_EXTENSIONS = new Set\(\[\s*"\.html",\s*"\.htm"\s*\]\);/);
@@ -226,7 +261,7 @@ test("file explorer adds a markdown preview mode while keeping text editing inli
   );
   assert.match(
     source,
-    /const showInlinePreview =\s*previewInPane && Boolean\(preview \|\| previewLoading \|\| previewError\);/,
+    /const showInlinePreview =\s*previewInPane &&\s*hasVisibleEntryRows &&\s*Boolean\(preview \|\| previewLoading \|\| previewError\);/,
   );
   assert.match(source, /const explorerPane = embedded \? \(\s*content\s*\) : \(/);
   assert.match(source, /title=\{showInlinePreview \? "File" : ""\}/);
@@ -242,6 +277,14 @@ test("file explorer adds a markdown preview mode while keeping text editing inli
   assert.match(
     source,
     /window\.electronAPI\.fs\.readFilePreview\(\s*targetPath,\s*selectedWorkspaceId \?\? null,\s*\)/,
+  );
+  assert.match(
+    source,
+    /const workspaceSessionKey = workspaceSessionKeyRef\.current;\s*const requestKey = \+\+previewRequestKeyRef\.current;/,
+  );
+  assert.match(
+    source,
+    /if \(\s*workspaceSessionKey !== workspaceSessionKeyRef\.current \|\|\s*requestKey !== previewRequestKeyRef\.current\s*\) \{\s*return;\s*\}/,
   );
   assert.match(
     source,
@@ -296,7 +339,7 @@ test("file explorer warns users to save before leaving an unsaved file", async (
     /You have unsaved changes\. Press Cancel to go back and save them, or OK to discard them\./,
   );
   assert.match(source, /if \(!skipConfirm && !confirmDiscardIfDirty\(\)\) \{\s*return;\s*\}/);
-  assert.match(source, /if \(!confirmDiscardIfDirty\(\)\) \{\s*return;\s*\}\s*setPreview\(null\);/);
+  assert.match(source, /if \(!confirmDiscardIfDirty\(\)\) \{\s*return;\s*\}\s*resetPreviewState\(\);/);
 });
 
 test("file explorer assigns richer icons for common file types", async () => {
@@ -322,6 +365,9 @@ test("file explorer exposes right-click rename and delete actions for entries", 
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(source, /type FileExplorerContextMenuState = \{/);
+  assert.match(source, /function remapPathAfterRename\(/);
+  assert.match(source, /function remapExplorerPathRecord<T>\(/);
+  assert.match(source, /function remapDirectoryEntriesByPath\(/);
   assert.match(
     source,
     /const \[contextMenu, setContextMenu\]\s*=\s*useState<FileExplorerContextMenuState \| null>\(null\);/,
@@ -338,6 +384,7 @@ test("file explorer exposes right-click rename and delete actions for entries", 
     source,
     /openEntryContextMenu\(entry,\s*\{\s*anchorRect:\s*event\.currentTarget\.getBoundingClientRect\(\),\s*\}\);/,
   );
+  assert.doesNotMatch(source, /\{entry\.isDirectory \? \(\s*<Button[\s\S]*aria-label=\{`More actions for \$\{entry\.name\}`\}/);
   assert.match(source, /group-hover:pointer-events-auto group-hover:opacity-100/);
   assert.match(
     source,
@@ -347,6 +394,19 @@ test("file explorer exposes right-click rename and delete actions for entries", 
   assert.match(source, /contextMenu\.paneBounds\.bottom - menuHeight - 8/);
   assert.match(source, /setRenamingPath\(entry\.absolutePath\);/);
   assert.match(source, /setRenameDraft\(entry\.name\);/);
+  assert.doesNotMatch(source, /const openEntryFromContextMenu = useCallback\(/);
+  assert.doesNotMatch(
+    source,
+    /createPortal\([\s\S]*Expand folder[\s\S]*New file/,
+  );
+  assert.doesNotMatch(
+    source,
+    /createPortal\([\s\S]*Collapse folder[\s\S]*New file/,
+  );
+  assert.doesNotMatch(
+    source,
+    /createPortal\([\s\S]*Open file[\s\S]*New file/,
+  );
   assert.match(source, /ref=\{renameInputRef\}/);
   assert.match(source, /onBlur=\{\(\) => \{\s*void submitRenameEntry\(\);\s*\}\}/);
   assert.match(source, /if \(event\.key === "Enter"\) \{\s*event\.preventDefault\(\);\s*void submitRenameEntry\(\);/);
@@ -355,12 +415,36 @@ test("file explorer exposes right-click rename and delete actions for entries", 
   assert.match(source, /Delete folder "\$\{entry\.name\}" and all of its contents\? This cannot be undone\./);
   assert.match(
     source,
-    /window\.electronAPI\.fs\.renamePath\(\s*renamingEntry\.absolutePath,\s*nextName,\s*selectedWorkspaceId \?\? null,\s*\)/,
+    /window\.electronAPI\.fs\.renamePath\(\s*sourcePath,\s*nextName,\s*selectedWorkspaceId \?\? null,\s*\)/,
   );
   assert.match(source, /const refreshDirectoryEntries = useCallback\(/);
   assert.match(
     source,
-    /const parentPath =\s*getParentFolderPath\(renamingEntry\.absolutePath\)\s*\?\?\s*currentPathRef\.current;/,
+    /const parentPath =\s*getParentFolderPath\(sourcePath\)\s*\?\?\s*currentPathRef\.current;/,
+  );
+  assert.match(
+    source,
+    /setDirectoryEntriesByPath\(\(current\) =>\s*remapDirectoryEntriesByPath\(current, sourcePath, nextAbsolutePath\),\s*\);/,
+  );
+  assert.match(
+    source,
+    /setExpandedDirectoryPaths\(\(current\) =>\s*remapExplorerPathRecord\(current, sourcePath, nextAbsolutePath\),\s*\);/,
+  );
+  assert.match(
+    source,
+    /await revealPathInTree\(nextAbsolutePath\);/,
+  );
+  assert.match(
+    source,
+    /setPreview\(\(current\) => \{[\s\S]*remapPathAfterRename\(\s*sourcePath,\s*nextAbsolutePath,\s*current\.absolutePath,\s*\)[\s\S]*absolutePath: remappedAbsolutePath,[\s\S]*name: getFolderName\(remappedAbsolutePath\),[\s\S]*\}\);/,
+  );
+  assert.match(
+    source,
+    /const shouldRetargetExternalFile =[\s\S]*!previewInPane &&[\s\S]*Boolean\(onFileOpen\) &&[\s\S]*normalizeComparablePath\(selectedPath\) ===[\s\S]*normalizeComparablePath\(sourcePath\);/,
+  );
+  assert.match(
+    source,
+    /if \(shouldRetargetExternalFile\) \{\s*onFileOpen\?\.\(nextAbsolutePath\);\s*\}/,
   );
   assert.match(
     source,
@@ -396,18 +480,20 @@ test("file explorer blocks renaming deleting and moving protected system entries
   assert.match(source, /function getProtectedWorkspacePathLabel\(/);
   assert.match(source, /function protectedWorkspacePathMessage\(/);
   assert.match(source, /function isProtectedWorkspacePath\(/);
+  assert.match(source, /const comparableRelativePath = relativePath\.toLowerCase\(\);/);
   assert.match(
     source,
-    /if \(relativePath === "workspace\.yaml"\) \{\s*return "workspace\.yaml";\s*\}/,
+    /if \(comparableRelativePath === "workspace\.yaml"\) \{\s*return "workspace\.yaml";\s*\}/,
   );
   assert.match(
     source,
-    /if \(relativePath === "agents\.md"\) \{\s*return "AGENTS\.md";\s*\}/,
+    /if \(comparableRelativePath === "agents\.md"\) \{\s*return "AGENTS\.md";\s*\}/,
   );
   assert.match(
     source,
-    /if \(relativePath === "skills"\) \{\s*return "skills";\s*\}/,
+    /if \(comparableRelativePath === "skills"\) \{\s*return "skills";\s*\}/,
   );
+  assert.doesNotMatch(source, /if \(relativePath === "agents\.md"\)/);
   assert.doesNotMatch(source, /relativePath\.startsWith\("skills\/"\)/);
   assert.match(
     source,
@@ -444,6 +530,7 @@ test("file explorer can move dragged files into folder rows", async () => {
     source,
     /const \[draggedEntryPath, setDraggedEntryPath\] = useState<string \| null>\(null\);/,
   );
+  assert.match(source, /const canMoveDraggedEntryToDirectoryPath = useCallback\(/);
   assert.match(
     source,
     /const \[directoryDropTargetPath, setDirectoryDropTargetPath\] = useState<[\s\S]*string \| null[\s\S]*>\(null\);/,
@@ -472,6 +559,31 @@ test("file explorer can move dragged files into folder rows", async () => {
   assert.match(
     source,
     /await Promise\.all\(\s*refreshTargets\.map\(\(targetPath\) => refreshDirectoryEntries\(targetPath\)\),\s*\);/,
+  );
+});
+
+test("file explorer can move dragged files to the current directory from pane empty space", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const canMoveDraggedEntry = canMoveDraggedEntryToDirectoryPath\(\s*currentPathRef\.current,\s*\);/,
+  );
+  assert.match(
+    source,
+    /const canImportExternalEntries =\s*hasExternalExplorerDropData\(event\.dataTransfer\) &&\s*Boolean\(currentPathRef\.current\);/,
+  );
+  assert.match(
+    source,
+    /if \(!canMoveDraggedEntry && !canImportExternalEntries\) \{\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /event\.dataTransfer\.dropEffect = canMoveDraggedEntry \? "move" : "copy";/,
+  );
+  assert.match(
+    source,
+    /if \(canMoveDraggedEntry && draggedEntryPath\) \{\s*void moveEntryToDirectory\(draggedEntryPath,\s*currentPathRef\.current\);\s*return;\s*\}/,
   );
 });
 

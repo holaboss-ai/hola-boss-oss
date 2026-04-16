@@ -59,6 +59,7 @@ export interface AgentRuntimeConfigCliRequest {
   extra_tools: string[];
   tool_server_id_map?: Record<string, string> | null;
   resolved_mcp_tool_refs: Array<{ tool_id: string; server_id: string; tool_name: string }>;
+  resolved_mcp_server_ids?: string[] | null;
   resolved_output_schemas: Record<string, Record<string, unknown>>;
   agent: AgentRuntimeConfigGeneralMemberPayload;
 }
@@ -1207,6 +1208,7 @@ export function projectAgentRuntimeConfig(
     extraTools: request.extra_tools,
     workspaceSkillIds: request.workspace_skill_ids ?? [],
     resolvedMcpToolRefs: request.resolved_mcp_tool_refs,
+    resolvedMcpServerIds: request.resolved_mcp_server_ids ?? null,
     toolServerIdMap: request.tool_server_id_map ?? null,
   });
   const promptComposition = composeBaseAgentPrompt(request.agent.prompt, {
@@ -1214,6 +1216,7 @@ export function projectAgentRuntimeConfig(
     extraTools: request.extra_tools,
     workspaceSkillIds: request.workspace_skill_ids ?? [],
     resolvedMcpToolRefs: request.resolved_mcp_tool_refs,
+    resolvedMcpServerIds: request.resolved_mcp_server_ids ?? null,
     sessionKind: request.session_kind ?? null,
     sessionMode: request.session_mode,
     harnessId: request.harness_id ?? null,

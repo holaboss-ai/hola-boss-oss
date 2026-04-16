@@ -114,7 +114,13 @@ function resolveEnvPlaceholders(mapping: Record<string, string>): Record<string,
   const resolved: Record<string, string> = {};
   for (const [key, value] of Object.entries(mapping)) {
     const token = value.trim();
+    const looksLikeEnvPlaceholder = token.startsWith("{env:") && token.endsWith("}");
     const match = token.match(/^\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/);
+    if (looksLikeEnvPlaceholder && !match) {
+      throw new Error(
+        `invalid MCP env placeholder '${token}' for '${key}'; use '{env:ENV_VAR_NAME}' or provide a literal value`,
+      );
+    }
     if (!match) {
       resolved[key] = value;
       continue;

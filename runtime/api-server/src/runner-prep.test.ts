@@ -9,6 +9,7 @@ import {
   encodeWorkspaceMcpCatalog,
   effectiveMcpServerPayloads,
   mergePreparedMcpServerPayloads,
+  mcpServerPayloads,
   mcpServerMappingMetadata,
   mcpServerIdMap,
   readWorkspaceRuntimePlanReferences,
@@ -159,6 +160,58 @@ test("effectiveMcpServerPayloads replaces logical workspace server with sidecar 
         timeout: 7000,
       },
       _holaboss_force_refresh: true,
+    },
+  ]);
+});
+
+test("mcpServerPayloads rejects placeholder-shaped literal secrets in MCP headers", () => {
+  const compiledPlan = {
+    resolved_mcp_servers: [
+      {
+        server_id: "context7",
+        type: "remote",
+        command: [],
+        url: "https://mcp.context7.com/mcp",
+        headers: [["CONTEXT7_API_KEY", "{env:ctx7sk-live-abc123}"]],
+        environment: [],
+        timeout_ms: 15000,
+      },
+    ],
+    workspace_mcp_catalog: [],
+  } as never;
+
+  assert.throws(
+    () => mcpServerPayloads(compiledPlan),
+    /invalid MCP env placeholder '\{env:ctx7sk-live-abc123\}' for 'CONTEXT7_API_KEY'; use '\{env:ENV_VAR_NAME\}' or provide a literal value/,
+  );
+});
+
+test("mcpServerPayloads preserves literal MCP header secrets that are not env placeholders", () => {
+  const compiledPlan = {
+    resolved_mcp_servers: [
+      {
+        server_id: "context7",
+        type: "remote",
+        command: [],
+        url: "https://mcp.context7.com/mcp",
+        headers: [["CONTEXT7_API_KEY", "ctx7sk-live-abc123"]],
+        environment: [],
+        timeout_ms: 15000,
+      },
+    ],
+    workspace_mcp_catalog: [],
+  } as never;
+
+  assert.deepEqual(mcpServerPayloads(compiledPlan), [
+    {
+      name: "context7",
+      config: {
+        type: "remote",
+        enabled: true,
+        url: "https://mcp.context7.com/mcp",
+        headers: { CONTEXT7_API_KEY: "ctx7sk-live-abc123" },
+        timeout: 15000,
+      },
     },
   ]);
 });

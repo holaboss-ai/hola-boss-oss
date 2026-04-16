@@ -159,6 +159,37 @@ For app development, two fields matter immediately:
 - `applications[].app_id`
 - `applications[].config_path`
 
+For workspace-level MCP, the main authored surface is `mcp_registry`:
+
+- `mcp_registry.servers.<server-id>` declares local or remote MCP servers
+- `mcp_registry.allowlist.tool_ids` optionally provides explicit `server.tool` refs for servers that should be constrained to a known subset
+- when `mcp_registry.allowlist.tool_ids` is omitted or empty, the runtime exposes all discovered tools from the enabled configured MCP servers for that run
+- when some servers have explicit tool ids and others do not, the runtime keeps the explicit subset for the referenced servers and still allows discovery for the other enabled configured servers
+- remote MCP headers and environment values may use `{env:ENV_VAR_NAME}` placeholders, but the contents must be an environment variable name, not a literal secret
+
+For remote MCP servers, `workspace.yaml` usually declares the server and policy boundary, not the full raw tool catalog. The concrete remote tool list may still be discovered at run time.
+
+For example, this is valid:
+
+```yaml
+headers:
+  CONTEXT7_API_KEY: "{env:CONTEXT7_API_KEY}"
+```
+
+and this is also valid:
+
+```yaml
+headers:
+  CONTEXT7_API_KEY: "ctx7sk-..."
+```
+
+This is invalid:
+
+```yaml
+headers:
+  CONTEXT7_API_KEY: "{env:ctx7sk-...}"
+```
+
 Those entries are how the runtime finds each app manifest under `apps/`.
 
 ### `.git/`
