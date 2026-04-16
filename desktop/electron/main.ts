@@ -14761,6 +14761,10 @@ function browserTabSpaceState(
   return workspace.spaces[space] ?? null;
 }
 
+function oppositeBrowserSpaceId(space: BrowserSpaceId): BrowserSpaceId {
+  return space === "agent" ? "user" : "agent";
+}
+
 function browserWorkspaceTabCounts(
   workspace: BrowserWorkspaceState | null | undefined,
 ): BrowserTabCountsPayload {
@@ -17569,6 +17573,43 @@ function createBrowserTab(
   return tabId;
 }
 
+function initialBrowserTabSeed(
+  workspaceId: string,
+  space: BrowserSpaceId,
+): {
+  url: string;
+  title?: string;
+  faviconUrl?: string;
+  skipInitialHistoryRecord: boolean;
+} {
+  const workspace = browserWorkspaceFromMap(workspaceId);
+  const sourceSpace = browserTabSpaceState(
+    workspace,
+    oppositeBrowserSpaceId(space),
+  );
+  const sourceTab =
+    (sourceSpace?.activeTabId
+      ? sourceSpace.tabs.get(sourceSpace.activeTabId)
+      : null) ??
+    (sourceSpace ? Array.from(sourceSpace.tabs.values())[0] ?? null : null);
+  if (!sourceTab) {
+    return {
+      url: HOME_URL,
+      title: NEW_TAB_TITLE,
+      skipInitialHistoryRecord: false,
+    };
+  }
+
+  const sourceContents = sourceTab.view.webContents;
+  return {
+    url: sourceContents.getURL() || sourceTab.state.url || HOME_URL,
+    title: sourceContents.getTitle() || sourceTab.state.title || NEW_TAB_TITLE,
+    faviconUrl: sourceTab.state.faviconUrl,
+    // Mirrored first-tab seeding should not create duplicate history entries.
+    skipInitialHistoryRecord: true,
+  };
+}
+
 function ensureBrowserTabSpaceInitialized(
   workspaceId: string,
   space: BrowserSpaceId,
@@ -17579,8 +17620,9 @@ function ensureBrowserTabSpaceInitialized(
     return false;
   }
 
+  const seed = initialBrowserTabSeed(workspaceId, space);
   const initialTabId = createBrowserTab(workspaceId, {
-    url: HOME_URL,
+    ...seed,
     browserSpace: space,
   });
   tabSpace.activeTabId = initialTabId ?? "";
