@@ -15196,6 +15196,67 @@ function getFilePreviewKind(targetPath: string) {
   return { extension, kind: "unsupported" as const };
 }
 
+function describeProtectedWorkspaceExplorerPath(
+  workspaceRoot: string | null,
+  absolutePath: string,
+): "workspace.yaml" | "AGENTS.md" | "skills" | null {
+  if (!workspaceRoot) {
+    return null;
+  }
+
+  const relativePath = path.relative(workspaceRoot, absolutePath);
+  if (
+    !relativePath ||
+    relativePath.startsWith("..") ||
+    path.isAbsolute(relativePath)
+  ) {
+    return null;
+  }
+
+  const normalizedRelativePath = relativePath
+    .trim()
+    .replace(/[\\/]+/g, "/")
+    .replace(/^\/+|\/+$/g, "")
+    .toLowerCase();
+  if (!normalizedRelativePath) {
+    return null;
+  }
+  if (normalizedRelativePath === "workspace.yaml") {
+    return "workspace.yaml";
+  }
+  if (normalizedRelativePath === "agents.md") {
+    return "AGENTS.md";
+  }
+  if (normalizedRelativePath === "skills") {
+    return "skills";
+  }
+  return null;
+}
+
+function protectedWorkspaceExplorerPathMessage(
+  protectedPathLabel: "workspace.yaml" | "AGENTS.md" | "skills",
+) {
+  if (protectedPathLabel === "skills") {
+    return "The skills folder cannot be renamed, moved, or deleted from the file explorer.";
+  }
+  return `${protectedPathLabel} cannot be renamed, moved, or deleted from the file explorer.`;
+}
+
+function assertWorkspaceExplorerPathModifiable(
+  workspaceRoot: string | null,
+  absolutePath: string,
+) {
+  const protectedPathLabel = describeProtectedWorkspaceExplorerPath(
+    workspaceRoot,
+    absolutePath,
+  );
+  if (protectedPathLabel) {
+    throw new Error(
+      protectedWorkspaceExplorerPathMessage(protectedPathLabel),
+    );
+  }
+}
+
 async function readFilePreview(
   targetPath: string,
   workspaceId?: string | null,
@@ -15825,6 +15886,7 @@ async function renameExplorerPath(
   ) {
     throw new Error("Workspace root cannot be renamed.");
   }
+  assertWorkspaceExplorerPathModifiable(workspaceRoot, absolutePath);
 
   const nextAbsolutePath = path.join(path.dirname(absolutePath), trimmedName);
   if (path.normalize(nextAbsolutePath) === path.normalize(absolutePath)) {
@@ -15863,6 +15925,8 @@ async function moveExplorerPath(
   ) {
     throw new Error("Workspace root cannot be moved.");
   }
+  assertWorkspaceExplorerPathModifiable(workspaceRoot, sourceAbsolutePath);
+  assertWorkspaceExplorerPathModifiable(workspaceRoot, destinationAbsolutePath);
 
   const sourceStat = await fs.stat(sourceAbsolutePath);
   const destinationStat = await fs.stat(destinationAbsolutePath);
@@ -15914,6 +15978,7 @@ async function deleteExplorerPath(
   ) {
     throw new Error("Workspace root cannot be deleted.");
   }
+  assertWorkspaceExplorerPathModifiable(workspaceRoot, absolutePath);
 
   const stat = await fs.stat(absolutePath);
   if (stat.isDirectory()) {
@@ -15959,8 +16024,8 @@ async function listDirectory(
     }
     if (
       hideWorkspaceManagedRootEntries &&
-      ((dirEntry.isDirectory() && dirEntry.name === "apps") ||
-        (!dirEntry.isDirectory() && dirEntry.name === "workspace.yaml"))
+      dirEntry.isDirectory() &&
+      dirEntry.name === "apps"
     ) {
       continue;
     }
