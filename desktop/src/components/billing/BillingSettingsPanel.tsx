@@ -1,4 +1,5 @@
-import { AlertCircle } from "lucide-react";
+import { useMemo, useState } from "react";
+import { AlertCircle, ChevronRight } from "lucide-react";
 import { BillingSummaryCard } from "@/components/billing/BillingSummaryCard";
 import { Button } from "@/components/ui/button";
 import { useDesktopBilling } from "@/lib/billing/useDesktopBilling";
@@ -11,8 +12,6 @@ function formatBillingDate(value: string) {
   });
 }
 
-// Full timestamp for usage rows: "Apr 15, 2026 · 14:17:06".
-// Uses 24h clock + seconds so rapid successive calls are distinguishable.
 function formatBillingDateTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -32,7 +31,20 @@ function formatBillingDateTime(value: string) {
   return `${datePart} · ${timePart}`;
 }
 
-// Friendly labels for known high-level categories from `quota_transactions.category`.
+// Short time only (no date) for child rows inside a group.
+function formatBillingTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
 const CATEGORY_LABELS: Record<string, string> = {
   llm: "Model",
   integration: "Integration",
@@ -40,9 +52,6 @@ const CATEGORY_LABELS: Record<string, string> = {
   workspace: "Workspace",
 };
 
-// Friendly labels for legacy `serviceType` rows (pre-category migration).
-// Keep in sync with `AgentServiceEnum` in
-// `backend/src/core/domain/agent_service_enum.py`.
 const SERVICE_TYPE_LABELS: Record<string, string> = {
   workspace: "Workspace chat",
   "model-proxy": "Model proxy",
@@ -76,7 +85,7 @@ function humanizeServiceType(raw: string): string {
 
 function readMetadataString(
   metadata: Record<string, unknown> | null,
-  key: string
+  key: string,
 ): string | null {
   if (!metadata) {
     return null;
@@ -85,22 +94,9 @@ function readMetadataString(
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-// Primary label for a usage row. Rich shape (category + metadata) wins over
-// legacy shape (serviceType). Priority:
-//   1. LLM calls  → provider/modelId from metadata (e.g. "openai · gpt-5.4")
-//   2. Integration calls → integrationId + operation
-//   3. Category label (Model / Integration / Background work)
-//   4. Legacy serviceType label
-//   5. "Credits added" for positive-amount allocations
-//   6. Reason / transaction type as a last resort
-function resolveUsageTitle(item: {
-  type: string;
-  reason: string | null;
-  serviceType: string | null;
-  category: string | null;
-  metadata: Record<string, unknown> | null;
-  amount: number;
-}): string {
+type UsageItem = DesktopBillingUsageItemPayload;
+
+function resolveUsageTitle(item: UsageItem): string {
   const category = item.category ?? null;
   const provider = readMetadataString(item.metadata, "provider");
   const modelId = readMetadataString(item.metadata, "modelId");
@@ -131,33 +127,160 @@ function resolveUsageTitle(item: {
   return humanizeServiceType(item.type);
 }
 
-// Optional sub-line under the title. Surfaces the most useful detail we have
-// that isn't already in the title — typically the operation name, workspace,
-// or a non-generic reason.
-function resolveUsageSubtitle(item: {
-  reason: string | null;
-  serviceType: string | null;
-  category: string | null;
-  metadata: Record<string, unknown> | null;
-}): string | null {
-  const operation = readMetadataString(item.metadata, "operation");
-  const workspaceId = readMetadataString(item.metadata, "workspaceId");
-  const modelId = readMetadataString(item.metadata, "modelId");
+// ============================================================================
+// Session grouping
+// ============================================================================
 
-  if (operation && operation !== modelId) {
-    return operation;
+interface UsageGroup {
+  key: string;
+  items: UsageItem[];
+  totalAmount: number;
+  firstCreatedAt: string;
+  lastCreatedAt: string;
+}
+
+function groupBySession(items: UsageItem[]): UsageGroup[] {
+  const groups: UsageGroup[] = [];
+  let currentSessionId: string | null = null;
+  let currentGroup: UsageGroup | null = null;
+
+  for (const item of items) {
+    const sessionId = readMetadataString(item.metadata, "sessionId");
+
+    if (sessionId && sessionId === currentSessionId && currentGroup) {
+      currentGroup.items.push(item);
+      currentGroup.totalAmount += item.amount;
+      // items arrive createdAt DESC so "last" is actually the earliest
+      currentGroup.lastCreatedAt = item.createdAt;
+    } else {
+      currentGroup = {
+        key: sessionId ?? item.id,
+        items: [item],
+        totalAmount: item.amount,
+        firstCreatedAt: item.createdAt,
+        lastCreatedAt: item.createdAt,
+      };
+      groups.push(currentGroup);
+      currentSessionId = sessionId;
+    }
   }
-  if (item.category === "llm" && workspaceId) {
-    return `Workspace ${workspaceId.slice(0, 8)}`;
+  return groups;
+}
+
+// Group header title: e.g. "Chat · 3 calls" or model name for single items.
+function resolveGroupTitle(group: UsageGroup): string {
+  const first = group.items[0];
+  if (group.items.length === 1) {
+    return resolveUsageTitle(first);
   }
-  const reason = (item.reason ?? "").trim();
-  if (!reason || reason === "Service consumption") {
-    return null;
+  const category = first.category ?? null;
+  const modelId = readMetadataString(first.metadata, "modelId");
+  const provider = readMetadataString(first.metadata, "provider");
+
+  let label: string;
+  if (category === "llm" && modelId) {
+    label = provider ? `${provider} · ${modelId}` : modelId;
+  } else if (category) {
+    label = humanizeCategory(category);
+  } else {
+    label = "Chat";
   }
-  if (item.serviceType && humanizeServiceType(item.serviceType) === reason) {
-    return null;
+  return `${label} · ${group.items.length} calls`;
+}
+
+// ============================================================================
+// Components
+// ============================================================================
+
+const GRID_COLS = "grid-cols-[minmax(0,1fr)_200px_120px]";
+
+function UsageRow({
+  item,
+  indent = false,
+  compactTime = false,
+}: {
+  item: UsageItem;
+  indent?: boolean;
+  compactTime?: boolean;
+}) {
+  const title = resolveUsageTitle(item);
+  return (
+    <div
+      className={`grid ${GRID_COLS} items-center gap-3 border-b border-border/30 py-2 text-sm last:border-b-0 ${indent ? "pl-5" : ""}`}
+    >
+      <div className="min-w-0 leading-tight">
+        <div className="truncate text-foreground text-xs">{title}</div>
+      </div>
+      <div className="text-muted-foreground text-xs tabular-nums">
+        {compactTime
+          ? formatBillingTime(item.createdAt)
+          : formatBillingDateTime(item.createdAt)}
+      </div>
+      <div
+        className={`text-right text-xs tabular-nums ${item.amount > 0 ? "text-foreground" : "text-muted-foreground"}`}
+      >
+        {item.amount > 0 ? "+" : ""}
+        {item.amount.toLocaleString()}
+      </div>
+    </div>
+  );
+}
+
+function UsageGroupRow({
+  group,
+  expanded,
+  onToggle,
+}: {
+  group: UsageGroup;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const collapsible = group.items.length > 1;
+
+  if (!collapsible) {
+    return <UsageRow item={group.items[0]} />;
   }
-  return reason;
+
+  const title = resolveGroupTitle(group);
+
+  return (
+    <div className="border-b border-border/30 last:border-b-0">
+      {/* Group header */}
+      <div
+        className={`grid ${GRID_COLS} cursor-pointer items-center gap-3 py-2.5 text-sm transition-colors hover:bg-accent/30`}
+        onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+        role="button"
+        tabIndex={0}
+      >
+        <div className="flex min-w-0 items-center gap-1.5 leading-tight">
+          <ChevronRight
+            size={14}
+            className={`shrink-0 text-muted-foreground transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}
+          />
+          <span className="truncate font-medium text-foreground">{title}</span>
+        </div>
+        <div className="text-muted-foreground text-xs tabular-nums">
+          {formatBillingDateTime(group.firstCreatedAt)}
+        </div>
+        <div className="text-right tabular-nums text-muted-foreground">
+          {group.totalAmount > 0 ? "+" : ""}
+          {group.totalAmount.toLocaleString()}
+        </div>
+      </div>
+
+      {/* Expanded children */}
+      {expanded &&
+        group.items.map((item) => (
+          <UsageRow key={item.id} item={item} indent compactTime />
+        ))}
+    </div>
+  );
 }
 
 function openBillingLink(url: string | null | undefined) {
@@ -174,6 +297,25 @@ export function BillingSettingsPanel() {
 
   const showExpirationBanner = Boolean(overview?.expiresAt);
   const usageItems = usage?.items ?? [];
+  const groups = useMemo(
+    () => groupBySession(usageItems.slice(0, 30)),
+    [usageItems],
+  );
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
+    () => new Set(),
+  );
+
+  const toggleGroup = (key: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
 
   return (
     <div className="grid max-w-[760px] gap-4">
@@ -209,48 +351,28 @@ export function BillingSettingsPanel() {
           Usage record
         </div>
 
-        <div className="grid grid-cols-[minmax(0,1fr)_200px_120px] gap-3 border-b border-border/40 pb-2 text-xs text-muted-foreground">
+        <div
+          className={`grid ${GRID_COLS} gap-3 border-b border-border/40 pb-2 text-xs text-muted-foreground`}
+        >
           <div>Channel</div>
           <div>Time</div>
           <div className="text-right">Credits change</div>
         </div>
 
         <div className="grid gap-0">
-          {usageItems.length === 0 ? (
+          {groups.length === 0 ? (
             <div className="py-3 text-sm text-muted-foreground">
               {isLoading ? "Loading usage..." : "No usage yet."}
             </div>
           ) : (
-            usageItems.slice(0, 8).map((item) => {
-              const title = resolveUsageTitle(item);
-              const subtitle = resolveUsageSubtitle(item);
-              return (
-                <div
-                  key={item.id}
-                  className="grid grid-cols-[minmax(0,1fr)_200px_120px] items-center gap-3 border-b border-border/30 py-2.5 text-sm last:border-b-0"
-                >
-                  <div className="min-w-0 leading-tight">
-                    <div className="truncate font-medium text-foreground">
-                      {title}
-                    </div>
-                    {subtitle ? (
-                      <div className="mt-0.5 truncate text-muted-foreground text-xs">
-                        {subtitle}
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="text-muted-foreground text-xs tabular-nums">
-                    {formatBillingDateTime(item.createdAt)}
-                  </div>
-                  <div
-                    className={`text-right tabular-nums ${item.amount > 0 ? "text-foreground" : "text-muted-foreground"}`}
-                  >
-                    {item.amount > 0 ? "+" : ""}
-                    {item.amount.toLocaleString()}
-                  </div>
-                </div>
-              );
-            })
+            groups.map((group) => (
+              <UsageGroupRow
+                key={group.key}
+                group={group}
+                expanded={expandedGroups.has(group.key)}
+                onToggle={() => toggleGroup(group.key)}
+              />
+            ))
           )}
         </div>
       </section>
