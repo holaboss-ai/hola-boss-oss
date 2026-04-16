@@ -13,7 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { buildRuntimeRoot } from "./build_runtime_root.mjs";
+import { buildRuntimeRoot, runCommand } from "./build_runtime_root.mjs";
 import { prunePackagedTree } from "./prune_packaged_tree.mjs";
 import { stagePythonRuntime } from "./stage_python_runtime.mjs";
 

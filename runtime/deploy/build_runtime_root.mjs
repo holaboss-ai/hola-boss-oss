@@ -68,7 +68,7 @@ function copyIfPresent(sourcePath, destinationPath) {
   cpSync(sourcePath, destinationPath, { recursive: true });
 }
 
-function runCommand(command, args, options = {}) {
+export function runCommand(command, args, options = {}) {
   execFileSync(command, args, {
     stdio: "inherit",
     env: process.env,
