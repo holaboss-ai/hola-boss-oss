@@ -1,7 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import type { RuntimeStateStore, SessionInputRecord, TurnResultRecord, WorkspaceRecord } from "@holaboss/runtime-state-store";
+import type {
+  RuntimeStateStore,
+  SessionInputRecord,
+  TurnResultRecord,
+  WorkspaceRecord,
+} from "@holaboss/runtime-state-store";
 
 import {
   buildRunCompletedEvent,
@@ -10,19 +15,27 @@ import {
   type RunnerEvent,
 } from "./runner-worker.js";
 import { resolveProductRuntimeConfig } from "./runtime-config.js";
-import { normalizeHarnessId, resolveRuntimeHarnessAdapter } from "./harness-registry.js";
+import {
+  normalizeHarnessId,
+  resolveRuntimeHarnessAdapter,
+} from "./harness-registry.js";
 import type { MemoryServiceLike } from "./memory.js";
 import { createBackgroundTaskMemoryModelClient } from "./background-task-model.js";
 import type { TurnMemoryWritebackModelContext } from "./turn-memory-writeback.js";
 import { runEvolveTasks } from "./evolve-tasks.js";
 import { promoteAcceptedSkillCandidate } from "./evolve-skill-review.js";
-import { collectWorkspaceFileManifest, detectWorkspaceFileOutputs, type WorkspaceFileManifest } from "./turn-output-capture.js";
+import {
+  collectWorkspaceFileManifest,
+  detectWorkspaceFileOutputs,
+  type WorkspaceFileManifest,
+} from "./turn-output-capture.js";
 import { compactTurnSummary } from "./turn-result-summary.js";
 
 const ONBOARD_PROMPT_HEADER = "[Holaboss Workspace Onboarding v1]";
 const RUNTIME_EXEC_CONTEXT_KEY = "_sandbox_runtime_exec_v1";
 const RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY = "model_proxy_api_key";
 const RUNTIME_EXEC_SANDBOX_ID_KEY = "sandbox_id";
+const RUNTIME_EXEC_RUN_ID_KEY = "run_id";
 const DEFAULT_CLAIM_LEASE_SECONDS = 300;
 const TERMINAL_OUTPUT_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
 
@@ -39,15 +52,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function parseSessionInputAttachment(value: unknown): SessionInputAttachment | null {
+function parseSessionInputAttachment(
+  value: unknown,
+): SessionInputAttachment | null {
   if (!isRecord(value)) {
     return null;
   }
   const id = typeof value.id === "string" ? value.id.trim() : "";
   const name = typeof value.name === "string" ? value.name.trim() : "";
-  const mimeType = typeof value.mime_type === "string" ? value.mime_type.trim() : "";
-  const workspacePath = typeof value.workspace_path === "string" ? value.workspace_path.trim() : "";
-  const sizeBytes = typeof value.size_bytes === "number" && Number.isFinite(value.size_bytes) ? value.size_bytes : 0;
+  const mimeType =
+    typeof value.mime_type === "string" ? value.mime_type.trim() : "";
+  const workspacePath =
+    typeof value.workspace_path === "string" ? value.workspace_path.trim() : "";
+  const sizeBytes =
+    typeof value.size_bytes === "number" && Number.isFinite(value.size_bytes)
+      ? value.size_bytes
+      : 0;
   const kind =
     value.kind === "image"
       ? "image"
@@ -69,7 +89,7 @@ function parseSessionInputAttachment(value: unknown): SessionInputAttachment | n
     name,
     mime_type: mimeType,
     size_bytes: sizeBytes,
-    workspace_path: workspacePath
+    workspace_path: workspacePath,
   };
 }
 
@@ -77,10 +97,14 @@ function sessionInputAttachments(value: unknown): SessionInputAttachment[] {
   if (!Array.isArray(value)) {
     return [];
   }
-  return value.map((item) => parseSessionInputAttachment(item)).filter((item): item is SessionInputAttachment => Boolean(item));
+  return value
+    .map((item) => parseSessionInputAttachment(item))
+    .filter((item): item is SessionInputAttachment => Boolean(item));
 }
 
-function defaultInstructionForAttachments(attachments: SessionInputAttachment[]): string {
+function defaultInstructionForAttachments(
+  attachments: SessionInputAttachment[],
+): string {
   if (attachments.length === 0) {
     return "";
   }
@@ -104,6 +128,107 @@ function selectedHarness(): string {
   return normalizeHarnessId(process.env.SANDBOX_AGENT_HARNESS);
 }
 
+function nonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function claimedInputRunId(params: {
+  workspaceId: string;
+  sessionId: string;
+  inputId: string;
+}): string {
+  return `${params.workspaceId}:${params.sessionId}:${params.inputId}`;
+}
+
+async function registerWorkspaceAgentRunStarted(params: {
+  workspaceId: string;
+  sessionId: string;
+  inputId: string;
+  runId: string;
+  selectedModel: string | null;
+  runtimeBinding: {
+    authToken: string;
+    userId: string;
+    sandboxId: string;
+    modelProxyBaseUrl: string;
+  };
+  fetchImpl?: typeof fetch;
+}): Promise<void> {
+  const authToken = params.runtimeBinding.authToken.trim();
+  const userId = params.runtimeBinding.userId.trim();
+  const modelProxyBaseUrl = params.runtimeBinding.modelProxyBaseUrl.trim();
+  if (!authToken || !userId || !modelProxyBaseUrl) {
+    return;
+  }
+
+  let endpoint: string;
+  try {
+    const baseUrl = new URL(
+      modelProxyBaseUrl.endsWith("/")
+        ? modelProxyBaseUrl
+        : `${modelProxyBaseUrl}/`,
+    );
+    const normalizedBasePath = baseUrl.pathname.replace(/\/+$/, "");
+    const controlPlaneBasePath = normalizedBasePath.endsWith(
+      "/api/v1/model-proxy",
+    )
+      ? normalizedBasePath.slice(0, -"/api/v1/model-proxy".length)
+      : normalizedBasePath;
+    baseUrl.pathname = `${controlPlaneBasePath}/api/v1/sandbox/workspaces/${encodeURIComponent(params.workspaceId)}/agent-runs/start`;
+    baseUrl.search = "";
+    baseUrl.hash = "";
+    endpoint = baseUrl.toString();
+  } catch (error) {
+    console.warn("Failed to build backend run-start endpoint URL", error);
+    return;
+  }
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-API-Key": authToken,
+    "X-Holaboss-User-Id": userId,
+  };
+  const sandboxId = params.runtimeBinding.sandboxId.trim();
+  if (sandboxId) {
+    headers["X-Holaboss-Sandbox-Id"] = sandboxId;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2000);
+  const fetchImpl = params.fetchImpl ?? fetch;
+  try {
+    const response = await fetchImpl(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        session_id: params.sessionId,
+        input_id: params.inputId,
+        run_id: params.runId,
+        model: params.selectedModel ?? undefined,
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      console.warn(
+        `Backend run-start registration failed with status ${response.status} for run ${params.runId}`,
+      );
+    }
+  } catch (error) {
+    console.warn(
+      `Backend run-start registration failed for run ${params.runId}`,
+      error,
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export { registerWorkspaceAgentRunStarted };
+
 function writebackModelContext(params: {
   workspaceId: string;
   sessionId: string;
@@ -124,16 +249,23 @@ function writebackModelContext(params: {
     workspaceId: params.workspaceId,
     sessionId: params.sessionId,
     inputId: params.inputId,
-    selectedModel: typeof params.model === "string" ? params.model : params.runtimeBinding.defaultModel,
+    selectedModel:
+      typeof params.model === "string"
+        ? params.model
+        : params.runtimeBinding.defaultModel,
     defaultProviderId: params.runtimeBinding.defaultProvider,
     runtimeExecModelProxyApiKey:
-      typeof params.runtimeExecContext[RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY] === "string"
+      typeof params.runtimeExecContext[RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY] ===
+      "string"
         ? params.runtimeExecContext[RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY]
         : params.runtimeBinding.authToken,
     runtimeExecSandboxId:
       typeof params.runtimeExecContext[RUNTIME_EXEC_SANDBOX_ID_KEY] === "string"
         ? params.runtimeExecContext[RUNTIME_EXEC_SANDBOX_ID_KEY]
         : params.runtimeBinding.sandboxId,
+    runtimeExecRunId: nonEmptyString(
+      params.runtimeExecContext[RUNTIME_EXEC_RUN_ID_KEY],
+    ),
   });
   if (!modelClient) {
     return null;
@@ -152,7 +284,7 @@ function ensureLocalBinding(params: {
 }): string {
   const existing = params.store.getBinding({
     workspaceId: params.workspaceId,
-    sessionId: params.sessionId
+    sessionId: params.sessionId,
   });
   if (existing && existing.harnessSessionId.trim()) {
     return existing.harnessSessionId;
@@ -161,7 +293,7 @@ function ensureLocalBinding(params: {
     workspaceId: params.workspaceId,
     sessionId: params.sessionId,
     harness: params.harness,
-    harnessSessionId: params.sessionId
+    harnessSessionId: params.sessionId,
   });
   return binding.harnessSessionId;
 }
@@ -174,17 +306,29 @@ function buildOnboardingInstruction(params: {
   attachments: SessionInputAttachment[];
   workspace: WorkspaceRecord;
 }): string {
-  const trimmed = params.text.trim() || defaultInstructionForAttachments(params.attachments);
+  const trimmed =
+    params.text.trim() || defaultInstructionForAttachments(params.attachments);
   if (!trimmed) {
     throw new Error("text or attachments are required");
   }
-  const onboardingStatus = (params.workspace.onboardingStatus ?? "").trim().toLowerCase();
-  const onboardingSessionId = (params.workspace.onboardingSessionId ?? "").trim();
-  if (!["pending", "awaiting_confirmation"].includes(onboardingStatus) || onboardingSessionId !== params.sessionId) {
+  const onboardingStatus = (params.workspace.onboardingStatus ?? "")
+    .trim()
+    .toLowerCase();
+  const onboardingSessionId = (
+    params.workspace.onboardingSessionId ?? ""
+  ).trim();
+  if (
+    !["pending", "awaiting_confirmation"].includes(onboardingStatus) ||
+    onboardingSessionId !== params.sessionId
+  ) {
     return trimmed;
   }
 
-  const onboardPath = path.join(params.workspaceRoot, params.workspaceId, "ONBOARD.md");
+  const onboardPath = path.join(
+    params.workspaceRoot,
+    params.workspaceId,
+    "ONBOARD.md",
+  );
   if (!fs.existsSync(onboardPath)) {
     return trimmed;
   }
@@ -212,12 +356,16 @@ function buildOnboardingInstruction(params: {
     rawOnboardPrompt,
     "[/ONBOARD.md]",
     "",
-    trimmed
-  ].join("\n").trim();
+    trimmed,
+  ]
+    .join("\n")
+    .trim();
 }
 
 function createdAtForEvent(event: RunnerEvent): string | undefined {
-  return typeof event.timestamp === "string" && event.timestamp.trim() ? event.timestamp : undefined;
+  return typeof event.timestamp === "string" && event.timestamp.trim()
+    ? event.timestamp
+    : undefined;
 }
 
 function inferSessionKind(params: {
@@ -225,14 +373,25 @@ function inferSessionKind(params: {
   sessionId: string;
   persistedKind?: string | null;
 }): string {
-  const persistedKind = typeof params.persistedKind === "string" ? params.persistedKind.trim() : "";
+  const persistedKind =
+    typeof params.persistedKind === "string" ? params.persistedKind.trim() : "";
   if (persistedKind) {
     return persistedKind;
   }
   const sessionId = params.sessionId.trim();
-  const onboardingSessionId = (params.workspace.onboardingSessionId ?? "").trim();
-  const onboardingStatus = (params.workspace.onboardingStatus ?? "").trim().toLowerCase();
-  if (sessionId && sessionId === onboardingSessionId && ["pending", "awaiting_confirmation", "in_progress"].includes(onboardingStatus)) {
+  const onboardingSessionId = (
+    params.workspace.onboardingSessionId ?? ""
+  ).trim();
+  const onboardingStatus = (params.workspace.onboardingStatus ?? "")
+    .trim()
+    .toLowerCase();
+  if (
+    sessionId &&
+    sessionId === onboardingSessionId &&
+    ["pending", "awaiting_confirmation", "in_progress"].includes(
+      onboardingStatus,
+    )
+  ) {
     return "onboarding";
   }
   return "workspace_session";
@@ -277,7 +436,9 @@ function orderedAssistantMessageTimestamp(
   return new Date().toISOString();
 }
 
-function tokenUsageFromPayload(payload: Record<string, unknown>): Record<string, unknown> | null {
+function tokenUsageFromPayload(
+  payload: Record<string, unknown>,
+): Record<string, unknown> | null {
   const direct = jsonRecord(payload.token_usage);
   if (direct) {
     return direct;
@@ -285,7 +446,10 @@ function tokenUsageFromPayload(payload: Record<string, unknown>): Record<string,
   return jsonRecord(payload.usage);
 }
 
-function claimLeaseUntilIso(leaseSeconds: number, nowIso = new Date().toISOString()): string {
+function claimLeaseUntilIso(
+  leaseSeconds: number,
+  nowIso = new Date().toISOString(),
+): string {
   if (leaseSeconds <= 0) {
     return nowIso;
   }
@@ -313,7 +477,10 @@ function stopReasonForTerminalEvent(params: {
   terminalStatus: "IDLE" | "WAITING_USER" | "PAUSED" | "ERROR";
 }): string | null {
   if (params.eventType === "run_completed") {
-    const status = typeof params.payload.status === "string" ? params.payload.status.trim().toLowerCase() : "";
+    const status =
+      typeof params.payload.status === "string"
+        ? params.payload.status.trim().toLowerCase()
+        : "";
     if (status) {
       return status;
     }
@@ -329,7 +496,10 @@ function stopReasonForTerminalEvent(params: {
     if (typeof params.payload.type === "string" && params.payload.type.trim()) {
       return params.payload.type.trim();
     }
-    if (typeof params.payload.message === "string" && params.payload.message.trim()) {
+    if (
+      typeof params.payload.message === "string" &&
+      params.payload.message.trim()
+    ) {
       return params.payload.message.trim();
     }
     return "run_failed";
@@ -337,7 +507,9 @@ function stopReasonForTerminalEvent(params: {
   return null;
 }
 
-function permissionDenialFromEventPayload(payload: Record<string, unknown>): Record<string, unknown> | null {
+function permissionDenialFromEventPayload(
+  payload: Record<string, unknown>,
+): Record<string, unknown> | null {
   if (payload.error !== true) {
     return null;
   }
@@ -347,13 +519,16 @@ function permissionDenialFromEventPayload(payload: Record<string, unknown>): Rec
     typeof payload.result === "string" ? payload.result : null,
     typeof payload.error_message === "string" ? payload.error_message : null,
   ].filter((value): value is string => Boolean(value && value.trim()));
-  const denialText = candidates.find((value) => /permission|denied|not allowed/i.test(value));
+  const denialText = candidates.find((value) =>
+    /permission|denied|not allowed/i.test(value),
+  );
   if (!denialText) {
     return null;
   }
 
   return {
-    tool_name: typeof payload.tool_name === "string" ? payload.tool_name : "unknown",
+    tool_name:
+      typeof payload.tool_name === "string" ? payload.tool_name : "unknown",
     tool_id: typeof payload.tool_id === "string" ? payload.tool_id : null,
     reason: denialText,
   };
@@ -371,15 +546,24 @@ function titleCaseWords(value: string): string {
   return value.replace(/\b([a-z])/g, (match) => match.toUpperCase());
 }
 
-function cronjobNotificationPriority(value: unknown): "low" | "normal" | "high" | "critical" {
+function cronjobNotificationPriority(
+  value: unknown,
+): "low" | "normal" | "high" | "critical" {
   const normalized = optionalString(value)?.toLowerCase();
-  if (normalized === "low" || normalized === "high" || normalized === "critical") {
+  if (
+    normalized === "low" ||
+    normalized === "high" ||
+    normalized === "critical"
+  ) {
     return normalized;
   }
   return "normal";
 }
 
-function cronjobNotificationBaseTitle(job: { name: string; metadata: Record<string, unknown> }): string {
+function cronjobNotificationBaseTitle(job: {
+  name: string;
+  metadata: Record<string, unknown>;
+}): string {
   const explicitTitle = optionalString(job.metadata.notification_title);
   if (explicitTitle) {
     return explicitTitle;
@@ -391,7 +575,10 @@ function cronjobNotificationBaseTitle(job: { name: string; metadata: Record<stri
   return "Cronjob Run";
 }
 
-function cronjobCompletionNotificationTitle(turnResult: TurnResultRecord, baseTitle: string): string {
+function cronjobCompletionNotificationTitle(
+  turnResult: TurnResultRecord,
+  baseTitle: string,
+): string {
   if (turnResult.status === "failed") {
     return `${baseTitle} Failed`;
   }
@@ -416,7 +603,9 @@ function cronjobCompletionNotificationLevel(
   return "success";
 }
 
-function cronjobCompletionNotificationMessage(turnResult: TurnResultRecord): string {
+function cronjobCompletionNotificationMessage(
+  turnResult: TurnResultRecord,
+): string {
   const summary = compactTurnSummary(turnResult);
   if (summary) {
     return summary;
@@ -438,7 +627,9 @@ function maybeCreateCronjobCompletionNotification(params: {
   record: SessionInputRecord;
   turnResult: TurnResultRecord;
 }): void {
-  const context = isRecord(params.record.payload.context) ? params.record.payload.context : null;
+  const context = isRecord(params.record.payload.context)
+    ? params.record.payload.context
+    : null;
   const source = optionalString(context?.source)?.toLowerCase();
   const cronjobId = optionalString(context?.cronjob_id);
   if (source !== "cronjob" || !cronjobId) {
@@ -494,12 +685,22 @@ async function maybePromoteAcceptedEvolveSkillCandidate(params: {
   if (!params.memoryService || params.turnResult.status !== "completed") {
     return;
   }
-  const context = isRecord(params.record.payload.context) ? params.record.payload.context : null;
+  const context = isRecord(params.record.payload.context)
+    ? params.record.payload.context
+    : null;
   const source = optionalString(context?.source)?.toLowerCase();
-  const proposalSource = optionalString(context?.proposal_source)?.toLowerCase();
-  const evolveCandidate = isRecord(context?.evolve_candidate) ? context?.evolve_candidate : null;
+  const proposalSource = optionalString(
+    context?.proposal_source,
+  )?.toLowerCase();
+  const evolveCandidate = isRecord(context?.evolve_candidate)
+    ? context?.evolve_candidate
+    : null;
   const candidateId = optionalString(evolveCandidate?.candidate_id);
-  if (source !== "task_proposal" || proposalSource !== "evolve" || !candidateId) {
+  if (
+    source !== "task_proposal" ||
+    proposalSource !== "evolve" ||
+    !candidateId
+  ) {
     return;
   }
   await promoteAcceptedSkillCandidate({
@@ -530,18 +731,25 @@ type SkillWideningAudit = {
   deniedToolNames: Set<string>;
 };
 
-function summarizeSkillInvocations(skillInvocationsById: Map<string, SkillInvocationSummaryEntry>): Record<string, unknown> {
+function summarizeSkillInvocations(
+  skillInvocationsById: Map<string, SkillInvocationSummaryEntry>,
+): Record<string, unknown> {
   const calls = [...skillInvocationsById.values()];
   return {
     total_calls: calls.length,
-    completed_calls: calls.filter((call) => call.completed && !call.error).length,
+    completed_calls: calls.filter((call) => call.completed && !call.error)
+      .length,
     failed_calls: calls.filter((call) => call.error).length,
-    skill_names: [...new Set(calls.map((call) => call.skillName).filter(Boolean))].sort((left, right) =>
-      left.localeCompare(right)
-    ),
-    skill_ids: [...new Set(calls.map((call) => call.skillId).filter((value): value is string => Boolean(value)))].sort(
-      (left, right) => left.localeCompare(right)
-    ),
+    skill_names: [
+      ...new Set(calls.map((call) => call.skillName).filter(Boolean)),
+    ].sort((left, right) => left.localeCompare(right)),
+    skill_ids: [
+      ...new Set(
+        calls
+          .map((call) => call.skillId)
+          .filter((value): value is string => Boolean(value)),
+      ),
+    ].sort((left, right) => left.localeCompare(right)),
   };
 }
 
@@ -561,7 +769,9 @@ function createSkillWideningAudit(): SkillWideningAudit {
   };
 }
 
-function skillWideningSummary(audit: SkillWideningAudit): Record<string, unknown> | null {
+function skillWideningSummary(
+  audit: SkillWideningAudit,
+): Record<string, unknown> | null {
   if (
     audit.scope === null &&
     audit.workspaceBoundaryOverride === null &&
@@ -579,15 +789,29 @@ function skillWideningSummary(audit: SkillWideningAudit): Record<string, unknown
   return {
     scope: audit.scope,
     workspace_boundary_override: audit.workspaceBoundaryOverride,
-    managed_tools: [...audit.managedTools].sort((left, right) => left.localeCompare(right)),
-    granted_tools: [...audit.grantedTools].sort((left, right) => left.localeCompare(right)),
-    active_granted_tools: [...audit.activeGrantedTools].sort((left, right) => left.localeCompare(right)),
-    managed_commands: [...audit.managedCommands].sort((left, right) => left.localeCompare(right)),
-    granted_commands: [...audit.grantedCommands].sort((left, right) => left.localeCompare(right)),
-    active_granted_commands: [...audit.activeGrantedCommands].sort((left, right) => left.localeCompare(right)),
+    managed_tools: [...audit.managedTools].sort((left, right) =>
+      left.localeCompare(right),
+    ),
+    granted_tools: [...audit.grantedTools].sort((left, right) =>
+      left.localeCompare(right),
+    ),
+    active_granted_tools: [...audit.activeGrantedTools].sort((left, right) =>
+      left.localeCompare(right),
+    ),
+    managed_commands: [...audit.managedCommands].sort((left, right) =>
+      left.localeCompare(right),
+    ),
+    granted_commands: [...audit.grantedCommands].sort((left, right) =>
+      left.localeCompare(right),
+    ),
+    active_granted_commands: [...audit.activeGrantedCommands].sort(
+      (left, right) => left.localeCompare(right),
+    ),
     activation_count: audit.activationCount,
     denied_calls: audit.deniedCalls,
-    denied_tool_names: [...audit.deniedToolNames].sort((left, right) => left.localeCompare(right)),
+    denied_tool_names: [...audit.deniedToolNames].sort((left, right) =>
+      left.localeCompare(right),
+    ),
   };
 }
 
@@ -600,25 +824,40 @@ function isSkillPolicyDeniedPayload(payload: Record<string, unknown>): boolean {
     optionalString(payload.result),
     optionalString(payload.error_message),
   ].filter((value): value is string => Boolean(value));
-  return candidates.some((value) => /permission denied by skill policy/i.test(value));
+  return candidates.some((value) =>
+    /permission denied by skill policy/i.test(value),
+  );
 }
 
 function summarizeToolCalls(
-  toolCallsById: Map<string, { toolName: string; toolId: string | null; completed: boolean; error: boolean }>,
+  toolCallsById: Map<
+    string,
+    {
+      toolName: string;
+      toolId: string | null;
+      completed: boolean;
+      error: boolean;
+    }
+  >,
   skillInvocationsById: Map<string, SkillInvocationSummaryEntry> = new Map(),
-  wideningAudit: SkillWideningAudit | null = null
+  wideningAudit: SkillWideningAudit | null = null,
 ): Record<string, unknown> {
   const calls = [...toolCallsById.values()];
   const summary: Record<string, unknown> = {
     total_calls: calls.length,
-    completed_calls: calls.filter((call) => call.completed && !call.error).length,
+    completed_calls: calls.filter((call) => call.completed && !call.error)
+      .length,
     failed_calls: calls.filter((call) => call.error).length,
-    tool_names: [...new Set(calls.map((call) => call.toolName).filter(Boolean))].sort((left, right) =>
-      left.localeCompare(right)
-    ),
-    tool_ids: [...new Set(calls.map((call) => call.toolId).filter((value): value is string => Boolean(value)))].sort(
-      (left, right) => left.localeCompare(right)
-    ),
+    tool_names: [
+      ...new Set(calls.map((call) => call.toolName).filter(Boolean)),
+    ].sort((left, right) => left.localeCompare(right)),
+    tool_ids: [
+      ...new Set(
+        calls
+          .map((call) => call.toolId)
+          .filter((value): value is string => Boolean(value)),
+      ),
+    ].sort((left, right) => left.localeCompare(right)),
   };
   if (skillInvocationsById.size > 0) {
     summary.skill_invocations = summarizeSkillInvocations(skillInvocationsById);
@@ -656,10 +895,10 @@ function persistTurnResult(params: {
       params.terminalStatus === "ERROR"
         ? "failed"
         : params.terminalStatus === "WAITING_USER"
-        ? "waiting_user"
-        : params.terminalStatus === "PAUSED"
-        ? "paused"
-        : "completed",
+          ? "waiting_user"
+          : params.terminalStatus === "PAUSED"
+            ? "paused"
+            : "completed",
     stopReason: params.stopReason,
     assistantText: params.assistantText,
     toolUsageSummary: params.toolUsageSummary,
@@ -696,13 +935,18 @@ function appendNextOutputEvent(params: {
 
 function terminalStatusForCompletedPayload(
   payload: Record<string, unknown>,
-  supportsWaitingUser: boolean
+  supportsWaitingUser: boolean,
 ): "IDLE" | "WAITING_USER" | "PAUSED" {
-  const status = typeof payload.status === "string" ? payload.status.trim().toLowerCase() : "";
+  const status =
+    typeof payload.status === "string"
+      ? payload.status.trim().toLowerCase()
+      : "";
   if (status === "paused") {
     return "PAUSED";
   }
-  return supportsWaitingUser && status === "waiting_user" ? "WAITING_USER" : "IDLE";
+  return supportsWaitingUser && status === "waiting_user"
+    ? "WAITING_USER"
+    : "IDLE";
 }
 
 function maybePersistHarnessSessionId(params: {
@@ -721,7 +965,7 @@ function maybePersistHarnessSessionId(params: {
       workspaceId: params.workspaceId,
       sessionId: params.sessionId,
       harness: params.harness,
-      harnessSessionId: params.sessionId
+      harnessSessionId: params.sessionId,
     });
     return;
   }
@@ -733,7 +977,7 @@ function maybePersistHarnessSessionId(params: {
     workspaceId: params.workspaceId,
     sessionId: params.sessionId,
     harness: params.harness,
-    harnessSessionId: harnessSessionId.trim()
+    harnessSessionId: harnessSessionId.trim(),
   });
 }
 
@@ -748,10 +992,12 @@ export async function processClaimedInput(params: {
   onEvolveTaskError?: (taskName: string, error: unknown) => void;
   executeRunnerRequestFn?: typeof executeRunnerRequest;
   resolveProductRuntimeConfigFn?: typeof resolveProductRuntimeConfig;
+  registerRunStartedFn?: typeof registerWorkspaceAgentRunStarted;
   abortSignal?: AbortSignal;
 }): Promise<void> {
   const { store, record } = params;
-  const claimedBy = params.claimedBy ?? record.claimedBy ?? "sandbox-agent-ts-worker";
+  const claimedBy =
+    params.claimedBy ?? record.claimedBy ?? "sandbox-agent-ts-worker";
   const leaseSeconds = params.leaseSeconds ?? DEFAULT_CLAIM_LEASE_SECONDS;
   const turnStartedAt = new Date().toISOString();
   const workspace = store.getWorkspace(record.workspaceId);
@@ -765,7 +1011,7 @@ export async function processClaimedInput(params: {
       currentWorkerId: null,
       leaseUntil: null,
       heartbeatAt: null,
-      lastError: { message: "workspace not found" }
+      lastError: { message: "workspace not found" },
     });
     persistTurnResult({
       store,
@@ -786,644 +1032,758 @@ export async function processClaimedInput(params: {
     return;
   }
 
-  const harness = normalizeHarnessId(workspace.harness ?? selectedHarness());
-  const workspaceDir = store.workspaceDir(record.workspaceId);
-  const session = store.getSession({
-    workspaceId: record.workspaceId,
-    sessionId: record.sessionId
-  });
-  const sessionKind = inferSessionKind({
-    workspace,
-    sessionId: record.sessionId,
-    persistedKind: session?.kind
-  });
-  const harnessSupportsWaitingUser = resolveRuntimeHarnessAdapter(harness)?.capabilities.supportsWaitingUser ?? false;
-  const harnessSessionId = ensureLocalBinding({
-    store,
-    workspaceId: record.workspaceId,
-    sessionId: record.sessionId,
-    harness
-  });
-  const attachments = sessionInputAttachments(record.payload.attachments);
-
-  const instruction = buildOnboardingInstruction({
-    workspaceRoot: store.workspaceRoot,
-    workspaceId: record.workspaceId,
-    sessionId: record.sessionId,
-    text: String(record.payload.text ?? ""),
-    attachments,
-    workspace
-  });
-  store.insertSessionMessage({
-    workspaceId: record.workspaceId,
-    sessionId: record.sessionId,
-    role: "user",
-    text: String(record.payload.text ?? ""),
-    messageId: `user-${record.inputId}`,
-    createdAt: turnStartedAt,
-  });
-
-  store.updateRuntimeState({
-    workspaceId: record.workspaceId,
-    sessionId: record.sessionId,
-    status: "BUSY",
-    currentInputId: record.inputId,
-    currentWorkerId: claimedBy,
-    leaseUntil: record.claimedUntil ?? claimLeaseUntilIso(leaseSeconds),
-    heartbeatAt: undefined,
-    lastError: null
-  });
-
-  const runtimeContext = isRecord(record.payload.context) ? { ...record.payload.context } : {};
-  const priorExecContext = isRecord(runtimeContext[RUNTIME_EXEC_CONTEXT_KEY])
-    ? { ...runtimeContext[RUNTIME_EXEC_CONTEXT_KEY] }
-    : {};
-  const resolveRuntimeConfig = params.resolveProductRuntimeConfigFn ?? resolveProductRuntimeConfig;
-  const runtimeBinding = resolveRuntimeConfig({
-    requireAuth: false,
-    requireUser: false,
-    requireBaseUrl: false
-  });
-  if (
-    typeof priorExecContext[RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY] !== "string" &&
-    runtimeBinding.authToken
-  ) {
-    priorExecContext[RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY] = runtimeBinding.authToken;
-  }
-  if (typeof priorExecContext[RUNTIME_EXEC_SANDBOX_ID_KEY] !== "string" && runtimeBinding.sandboxId) {
-    priorExecContext[RUNTIME_EXEC_SANDBOX_ID_KEY] = runtimeBinding.sandboxId;
-  }
-  priorExecContext.harness = harness;
-  priorExecContext.harness_session_id = harnessSessionId;
-  runtimeContext[RUNTIME_EXEC_CONTEXT_KEY] = priorExecContext;
-
-  const payload: Record<string, unknown> = {
-    workspace_id: record.workspaceId,
-    session_id: record.sessionId,
-    session_kind: sessionKind,
-    input_id: record.inputId,
-    instruction,
-    attachments,
-    context: runtimeContext,
-    model: record.payload.model ?? null,
-    thinking_value: record.payload.thinking_value ?? null,
-    debug: false
-  };
-  const memoryWritebackModelContext = writebackModelContext({
+  const selectedModel = nonEmptyString(record.payload.model);
+  const runId = claimedInputRunId({
     workspaceId: record.workspaceId,
     sessionId: record.sessionId,
     inputId: record.inputId,
-    instruction,
-    model: record.payload.model ?? null,
-    runtimeBinding,
-    runtimeExecContext: priorExecContext,
   });
 
-  const assistantParts: string[] = [];
-  let terminalStatus: "IDLE" | "WAITING_USER" | "PAUSED" | "ERROR" = "IDLE";
-  let lastError: Record<string, unknown> | null = null;
-  let lastSequence = 0;
-  let completedAt: string | null = null;
-  let stopReason: string | null = null;
-  let tokenUsage: Record<string, unknown> | null = null;
-  let activeLeaseUntil = record.claimedUntil ?? claimLeaseUntilIso(leaseSeconds);
-  let lastClaimRenewalAtMs = 0;
-  let promptSectionIds: string[] = [];
-  let capabilityManifestFingerprint: string | null = null;
-  let requestSnapshotFingerprint: string | null = null;
-  let promptCacheProfile: Record<string, unknown> | null = null;
-  const toolCallsById = new Map<string, { toolName: string; toolId: string | null; completed: boolean; error: boolean }>();
-  const skillInvocationsById = new Map<string, SkillInvocationSummaryEntry>();
-  const wideningAudit = createSkillWideningAudit();
-  const permissionDenials: Array<Record<string, unknown>> = [];
-  let deferredTerminalEvent: {
-    eventType: "run_completed" | "run_failed";
-    payload: Record<string, unknown>;
-    createdAt: string;
-  } | null = null;
-  let workspaceFileManifestBefore: WorkspaceFileManifest | null = null;
-
-  try {
-    workspaceFileManifestBefore = collectWorkspaceFileManifest(workspaceDir);
-  } catch {
-    workspaceFileManifestBefore = null;
-  }
-
-  const EVENT_CLAIM_RENEWAL_MIN_INTERVAL_MS = 250;
-  const renewClaimLease = (source: "heartbeat" | "event") => {
-    const nowMs = Date.now();
-    if (
-      source === "event" &&
-      nowMs - lastClaimRenewalAtMs < EVENT_CLAIM_RENEWAL_MIN_INTERVAL_MS
-    ) {
-      return;
-    }
-
-    const renewedClaim = store.renewInputClaim({
-      inputId: record.inputId,
-      claimedBy,
-      leaseSeconds,
+  const executeClaimedInput = async (): Promise<void> => {
+    const harness = normalizeHarnessId(workspace.harness ?? selectedHarness());
+    const workspaceDir = store.workspaceDir(record.workspaceId);
+    const session = store.getSession({
+      workspaceId: record.workspaceId,
+      sessionId: record.sessionId,
     });
-    if (renewedClaim?.claimedUntil) {
-      activeLeaseUntil = renewedClaim.claimedUntil;
-    }
-    lastClaimRenewalAtMs = nowMs;
+    const sessionKind = inferSessionKind({
+      workspace,
+      sessionId: record.sessionId,
+      persistedKind: session?.kind,
+    });
+    const harnessSupportsWaitingUser =
+      resolveRuntimeHarnessAdapter(harness)?.capabilities.supportsWaitingUser ??
+      false;
+    const harnessSessionId = ensureLocalBinding({
+      store,
+      workspaceId: record.workspaceId,
+      sessionId: record.sessionId,
+      harness,
+    });
+    const attachments = sessionInputAttachments(record.payload.attachments);
+
+    const instruction = buildOnboardingInstruction({
+      workspaceRoot: store.workspaceRoot,
+      workspaceId: record.workspaceId,
+      sessionId: record.sessionId,
+      text: String(record.payload.text ?? ""),
+      attachments,
+      workspace,
+    });
+    store.insertSessionMessage({
+      workspaceId: record.workspaceId,
+      sessionId: record.sessionId,
+      role: "user",
+      text: String(record.payload.text ?? ""),
+      messageId: `user-${record.inputId}`,
+      createdAt: turnStartedAt,
+    });
+
     store.updateRuntimeState({
       workspaceId: record.workspaceId,
       sessionId: record.sessionId,
       status: "BUSY",
       currentInputId: record.inputId,
       currentWorkerId: claimedBy,
-      leaseUntil: activeLeaseUntil,
-      lastError: null
-    });
-  };
-
-  try {
-    const executeRunner = params.executeRunnerRequestFn ?? executeRunnerRequest;
-    const execution = await executeRunner(payload, {
-      signal: params.abortSignal,
-      onHeartbeat: () => {
-        renewClaimLease("heartbeat");
-      },
-      onEvent: async (event) => {
-        renewClaimLease("event");
-        const sequence = typeof event.sequence === "number" ? event.sequence : 0;
-        lastSequence = Math.max(lastSequence, sequence);
-        const eventPayload = payloadForEvent(event);
-        const eventTimestamp = eventTimestampOrNow(event);
-        const eventType = typeof event.event_type === "string" ? event.event_type : "unknown";
-        if (eventType === "run_completed" || eventType === "run_failed") {
-          deferredTerminalEvent = {
-            eventType,
-            payload: eventPayload,
-            createdAt: eventTimestamp,
-          };
-        } else {
-          store.appendOutputEvent({
-            workspaceId: record.workspaceId,
-            sessionId: record.sessionId,
-            inputId: record.inputId,
-            sequence,
-            eventType,
-            payload: eventPayload,
-            createdAt: eventTimestamp
-          });
-        }
-        maybePersistHarnessSessionId({
-          store,
-          workspaceId: record.workspaceId,
-          sessionId: record.sessionId,
-          harness,
-          eventType,
-          payload: eventPayload
-        });
-        if (event.event_type === "output_delta" && typeof eventPayload.delta === "string") {
-          assistantParts.push(eventPayload.delta);
-        }
-        if (event.event_type === "run_started") {
-          promptSectionIds = stringList(eventPayload.prompt_section_ids);
-          capabilityManifestFingerprint =
-            typeof eventPayload.capability_manifest_fingerprint === "string" &&
-            eventPayload.capability_manifest_fingerprint.trim()
-              ? eventPayload.capability_manifest_fingerprint.trim()
-              : capabilityManifestFingerprint;
-          requestSnapshotFingerprint =
-            typeof eventPayload.request_snapshot_fingerprint === "string" &&
-            eventPayload.request_snapshot_fingerprint.trim()
-              ? eventPayload.request_snapshot_fingerprint.trim()
-              : requestSnapshotFingerprint;
-          promptCacheProfile = jsonRecord(eventPayload.prompt_cache_profile) ?? promptCacheProfile;
-        }
-        if (event.event_type === "tool_call") {
-          const callId =
-            typeof eventPayload.call_id === "string" && eventPayload.call_id.trim()
-              ? eventPayload.call_id.trim()
-              : `sequence:${sequence}`;
-          const existingCall = toolCallsById.get(callId);
-          const toolName =
-            typeof eventPayload.tool_name === "string" && eventPayload.tool_name.trim()
-              ? eventPayload.tool_name.trim()
-              : existingCall?.toolName ?? "unknown";
-          const toolId =
-            typeof eventPayload.tool_id === "string" && eventPayload.tool_id.trim()
-              ? eventPayload.tool_id.trim()
-              : existingCall?.toolId ?? null;
-          const completed = eventPayload.phase === "completed" || existingCall?.completed === true;
-          const errored = eventPayload.error === true || existingCall?.error === true;
-          toolCallsById.set(callId, {
-            toolName,
-            toolId,
-            completed,
-            error: errored,
-          });
-          const denial = permissionDenialFromEventPayload(eventPayload);
-          if (denial) {
-            permissionDenials.push(denial);
-          }
-        }
-        if (event.event_type === "skill_invocation" || event.event_type === "tool_call") {
-          const callId =
-            typeof eventPayload.call_id === "string" && eventPayload.call_id.trim()
-              ? eventPayload.call_id.trim()
-              : `sequence:${sequence}`;
-          const toolName = optionalString(eventPayload.tool_name);
-          const isSkillInvocation =
-            event.event_type === "skill_invocation" ||
-            (toolName !== null && toolName.toLowerCase() === "skill");
-          if (isSkillInvocation) {
-            const existingInvocation = skillInvocationsById.get(callId);
-            const toolArgs = jsonRecord(eventPayload.tool_args);
-            const skillName =
-              optionalString(eventPayload.skill_name) ??
-              optionalString(eventPayload.requested_name) ??
-              optionalString(toolArgs?.name) ??
-              existingInvocation?.skillName ??
-              "unknown";
-            const skillId = optionalString(eventPayload.skill_id) ?? existingInvocation?.skillId ?? null;
-            const completed = eventPayload.phase === "completed" || existingInvocation?.completed === true;
-            const error = eventPayload.error === true || existingInvocation?.error === true;
-            skillInvocationsById.set(callId, {
-              skillName,
-              skillId,
-              completed,
-              error,
-            });
-          }
-        }
-        if (event.event_type === "skill_invocation") {
-          const scope = optionalString(eventPayload.widening_scope);
-          if (scope) {
-            wideningAudit.scope = scope;
-          }
-          if (typeof eventPayload.workspace_boundary_override === "boolean") {
-            wideningAudit.workspaceBoundaryOverride = eventPayload.workspace_boundary_override;
-          }
-          for (const toolName of stringList(eventPayload.managed_tools)) {
-            wideningAudit.managedTools.add(toolName);
-          }
-          const grantedTools = stringList(eventPayload.granted_tools);
-          for (const toolName of grantedTools) {
-            wideningAudit.grantedTools.add(toolName);
-          }
-          for (const toolName of stringList(eventPayload.active_granted_tools)) {
-            wideningAudit.activeGrantedTools.add(toolName);
-          }
-          for (const commandId of stringList(eventPayload.managed_commands)) {
-            wideningAudit.managedCommands.add(commandId);
-          }
-          const grantedCommands = stringList(eventPayload.granted_commands);
-          for (const commandId of grantedCommands) {
-            wideningAudit.grantedCommands.add(commandId);
-          }
-          for (const commandId of stringList(eventPayload.active_granted_commands)) {
-            wideningAudit.activeGrantedCommands.add(commandId);
-          }
-          if (eventPayload.phase === "completed" && (grantedTools.length > 0 || grantedCommands.length > 0)) {
-            wideningAudit.activationCount += 1;
-          }
-        }
-        if (event.event_type === "tool_call" && isSkillPolicyDeniedPayload(eventPayload)) {
-          wideningAudit.deniedCalls += 1;
-          const toolName = optionalString(eventPayload.tool_name);
-          if (toolName) {
-            wideningAudit.deniedToolNames.add(toolName);
-          }
-        }
-        if (event.event_type === "run_completed") {
-          terminalStatus = terminalStatusForCompletedPayload(eventPayload, harnessSupportsWaitingUser);
-          completedAt = eventTimestamp;
-          stopReason = stopReasonForTerminalEvent({
-            eventType: "run_completed",
-            payload: eventPayload,
-            terminalStatus,
-          });
-          tokenUsage = tokenUsageFromPayload(eventPayload) ?? tokenUsage;
-        }
-        if (event.event_type === "run_failed") {
-          terminalStatus = "ERROR";
-          lastError = eventPayload;
-          completedAt = eventTimestamp;
-          stopReason = stopReasonForTerminalEvent({
-            eventType: "run_failed",
-            payload: eventPayload,
-            terminalStatus,
-          });
-          tokenUsage = tokenUsageFromPayload(eventPayload) ?? tokenUsage;
-        }
-      }
+      leaseUntil: record.claimedUntil ?? claimLeaseUntilIso(leaseSeconds),
+      heartbeatAt: undefined,
+      lastError: null,
     });
 
-    const persistedTerminalEvent = latestPersistedTerminalOutputEvent({
-      store,
+    const runtimeContext = isRecord(record.payload.context)
+      ? { ...record.payload.context }
+      : {};
+    const priorExecContext = isRecord(runtimeContext[RUNTIME_EXEC_CONTEXT_KEY])
+      ? { ...runtimeContext[RUNTIME_EXEC_CONTEXT_KEY] }
+      : {};
+    const resolveRuntimeConfig =
+      params.resolveProductRuntimeConfigFn ?? resolveProductRuntimeConfig;
+    const runtimeBinding = resolveRuntimeConfig({
+      requireAuth: false,
+      requireUser: false,
+      requireBaseUrl: false,
+    });
+    if (
+      typeof priorExecContext[RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY] !==
+        "string" &&
+      runtimeBinding.authToken
+    ) {
+      priorExecContext[RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY] =
+        runtimeBinding.authToken;
+    }
+    if (
+      typeof priorExecContext[RUNTIME_EXEC_SANDBOX_ID_KEY] !== "string" &&
+      runtimeBinding.sandboxId
+    ) {
+      priorExecContext[RUNTIME_EXEC_SANDBOX_ID_KEY] = runtimeBinding.sandboxId;
+    }
+    if (!nonEmptyString(priorExecContext[RUNTIME_EXEC_RUN_ID_KEY])) {
+      priorExecContext[RUNTIME_EXEC_RUN_ID_KEY] = runId;
+    }
+    priorExecContext.harness = harness;
+    priorExecContext.harness_session_id = harnessSessionId;
+    runtimeContext[RUNTIME_EXEC_CONTEXT_KEY] = priorExecContext;
+    const registerRunStarted =
+      params.registerRunStartedFn ?? registerWorkspaceAgentRunStarted;
+    await registerRunStarted({
+      workspaceId: record.workspaceId,
       sessionId: record.sessionId,
       inputId: record.inputId,
+      runId,
+      selectedModel,
+      runtimeBinding,
     });
 
-    if (persistedTerminalEvent) {
-      const persistedPayload = persistedTerminalEvent.payload;
-      deferredTerminalEvent = null;
-      if (persistedTerminalEvent.eventType === "run_completed") {
-        terminalStatus = terminalStatusForCompletedPayload(
-          persistedPayload,
-          harnessSupportsWaitingUser,
-        );
-        lastError = null;
-        completedAt = persistedTerminalEvent.createdAt;
-        stopReason = stopReasonForTerminalEvent({
-          eventType: "run_completed",
-          payload: persistedPayload,
-          terminalStatus,
-        });
-        tokenUsage = tokenUsageFromPayload(persistedPayload) ?? tokenUsage;
-      } else {
-        terminalStatus = "ERROR";
-        lastError = persistedPayload;
-        completedAt = persistedTerminalEvent.createdAt;
-        stopReason = stopReasonForTerminalEvent({
-          eventType: "run_failed",
-          payload: persistedPayload,
-          terminalStatus,
-        });
-        tokenUsage = tokenUsageFromPayload(persistedPayload) ?? tokenUsage;
+    const payload: Record<string, unknown> = {
+      workspace_id: record.workspaceId,
+      session_id: record.sessionId,
+      session_kind: sessionKind,
+      input_id: record.inputId,
+      instruction,
+      attachments,
+      context: runtimeContext,
+      model: record.payload.model ?? null,
+      thinking_value: record.payload.thinking_value ?? null,
+      debug: false,
+    };
+    const memoryWritebackModelContext = writebackModelContext({
+      workspaceId: record.workspaceId,
+      sessionId: record.sessionId,
+      inputId: record.inputId,
+      instruction,
+      model: record.payload.model ?? null,
+      runtimeBinding,
+      runtimeExecContext: priorExecContext,
+    });
+
+    const assistantParts: string[] = [];
+    let terminalStatus: "IDLE" | "WAITING_USER" | "PAUSED" | "ERROR" = "IDLE";
+    let lastError: Record<string, unknown> | null = null;
+    let lastSequence = 0;
+    let completedAt: string | null = null;
+    let stopReason: string | null = null;
+    let tokenUsage: Record<string, unknown> | null = null;
+    let activeLeaseUntil =
+      record.claimedUntil ?? claimLeaseUntilIso(leaseSeconds);
+    let lastClaimRenewalAtMs = 0;
+    let promptSectionIds: string[] = [];
+    let capabilityManifestFingerprint: string | null = null;
+    let requestSnapshotFingerprint: string | null = null;
+    let promptCacheProfile: Record<string, unknown> | null = null;
+    const toolCallsById = new Map<
+      string,
+      {
+        toolName: string;
+        toolId: string | null;
+        completed: boolean;
+        error: boolean;
       }
-    } else if (execution.aborted && !execution.sawTerminal) {
-      if (execution.abortReason === "user_requested_pause") {
-        const pausedAt = new Date().toISOString();
-        const completed = buildRunCompletedEvent({
-          sessionId: record.sessionId,
-          inputId: record.inputId,
-          sequence: lastSequence + 1,
-          payload: {
-            status: "paused",
-            stop_reason: "paused",
-            message: "Run paused by user request",
-          },
-        });
-        const completedPayload = payloadForEvent(completed);
-        lastSequence = Math.max(lastSequence, typeof completed.sequence === "number" ? completed.sequence : lastSequence + 1);
-        deferredTerminalEvent = {
-          eventType: "run_completed",
-          payload: completedPayload,
-          createdAt: pausedAt,
-        };
-        terminalStatus = "PAUSED";
-        lastError = null;
-        completedAt = pausedAt;
-        stopReason = stopReasonForTerminalEvent({
-          eventType: "run_completed",
-          payload: completedPayload,
-          terminalStatus,
-        });
-      } else {
-        const failedAt = new Date().toISOString();
+    >();
+    const skillInvocationsById = new Map<string, SkillInvocationSummaryEntry>();
+    const wideningAudit = createSkillWideningAudit();
+    const permissionDenials: Array<Record<string, unknown>> = [];
+    let deferredTerminalEvent: {
+      eventType: "run_completed" | "run_failed";
+      payload: Record<string, unknown>;
+      createdAt: string;
+    } | null = null;
+    let workspaceFileManifestBefore: WorkspaceFileManifest | null = null;
+
+    try {
+      workspaceFileManifestBefore = collectWorkspaceFileManifest(workspaceDir);
+    } catch {
+      workspaceFileManifestBefore = null;
+    }
+
+    const EVENT_CLAIM_RENEWAL_MIN_INTERVAL_MS = 250;
+    const renewClaimLease = (source: "heartbeat" | "event") => {
+      const nowMs = Date.now();
+      if (
+        source === "event" &&
+        nowMs - lastClaimRenewalAtMs < EVENT_CLAIM_RENEWAL_MIN_INTERVAL_MS
+      ) {
+        return;
+      }
+
+      const renewedClaim = store.renewInputClaim({
+        inputId: record.inputId,
+        claimedBy,
+        leaseSeconds,
+      });
+      if (renewedClaim?.claimedUntil) {
+        activeLeaseUntil = renewedClaim.claimedUntil;
+      }
+      lastClaimRenewalAtMs = nowMs;
+      store.updateRuntimeState({
+        workspaceId: record.workspaceId,
+        sessionId: record.sessionId,
+        status: "BUSY",
+        currentInputId: record.inputId,
+        currentWorkerId: claimedBy,
+        leaseUntil: activeLeaseUntil,
+        lastError: null,
+      });
+    };
+
+    try {
+      const executeRunner =
+        params.executeRunnerRequestFn ?? executeRunnerRequest;
+      const execution = await executeRunner(payload, {
+        signal: params.abortSignal,
+        onHeartbeat: () => {
+          renewClaimLease("heartbeat");
+        },
+        onEvent: async (event) => {
+          renewClaimLease("event");
+          const sequence =
+            typeof event.sequence === "number" ? event.sequence : 0;
+          lastSequence = Math.max(lastSequence, sequence);
+          const eventPayload = payloadForEvent(event);
+          const eventTimestamp = eventTimestampOrNow(event);
+          const eventType =
+            typeof event.event_type === "string" ? event.event_type : "unknown";
+          if (eventType === "run_completed" || eventType === "run_failed") {
+            deferredTerminalEvent = {
+              eventType,
+              payload: eventPayload,
+              createdAt: eventTimestamp,
+            };
+          } else {
+            store.appendOutputEvent({
+              workspaceId: record.workspaceId,
+              sessionId: record.sessionId,
+              inputId: record.inputId,
+              sequence,
+              eventType,
+              payload: eventPayload,
+              createdAt: eventTimestamp,
+            });
+          }
+          maybePersistHarnessSessionId({
+            store,
+            workspaceId: record.workspaceId,
+            sessionId: record.sessionId,
+            harness,
+            eventType,
+            payload: eventPayload,
+          });
+          if (
+            event.event_type === "output_delta" &&
+            typeof eventPayload.delta === "string"
+          ) {
+            assistantParts.push(eventPayload.delta);
+          }
+          if (event.event_type === "run_started") {
+            promptSectionIds = stringList(eventPayload.prompt_section_ids);
+            capabilityManifestFingerprint =
+              typeof eventPayload.capability_manifest_fingerprint ===
+                "string" && eventPayload.capability_manifest_fingerprint.trim()
+                ? eventPayload.capability_manifest_fingerprint.trim()
+                : capabilityManifestFingerprint;
+            requestSnapshotFingerprint =
+              typeof eventPayload.request_snapshot_fingerprint === "string" &&
+              eventPayload.request_snapshot_fingerprint.trim()
+                ? eventPayload.request_snapshot_fingerprint.trim()
+                : requestSnapshotFingerprint;
+            promptCacheProfile =
+              jsonRecord(eventPayload.prompt_cache_profile) ??
+              promptCacheProfile;
+          }
+          if (event.event_type === "tool_call") {
+            const callId =
+              typeof eventPayload.call_id === "string" &&
+              eventPayload.call_id.trim()
+                ? eventPayload.call_id.trim()
+                : `sequence:${sequence}`;
+            const existingCall = toolCallsById.get(callId);
+            const toolName =
+              typeof eventPayload.tool_name === "string" &&
+              eventPayload.tool_name.trim()
+                ? eventPayload.tool_name.trim()
+                : (existingCall?.toolName ?? "unknown");
+            const toolId =
+              typeof eventPayload.tool_id === "string" &&
+              eventPayload.tool_id.trim()
+                ? eventPayload.tool_id.trim()
+                : (existingCall?.toolId ?? null);
+            const completed =
+              eventPayload.phase === "completed" ||
+              existingCall?.completed === true;
+            const errored =
+              eventPayload.error === true || existingCall?.error === true;
+            toolCallsById.set(callId, {
+              toolName,
+              toolId,
+              completed,
+              error: errored,
+            });
+            const denial = permissionDenialFromEventPayload(eventPayload);
+            if (denial) {
+              permissionDenials.push(denial);
+            }
+          }
+          if (
+            event.event_type === "skill_invocation" ||
+            event.event_type === "tool_call"
+          ) {
+            const callId =
+              typeof eventPayload.call_id === "string" &&
+              eventPayload.call_id.trim()
+                ? eventPayload.call_id.trim()
+                : `sequence:${sequence}`;
+            const toolName = optionalString(eventPayload.tool_name);
+            const isSkillInvocation =
+              event.event_type === "skill_invocation" ||
+              (toolName !== null && toolName.toLowerCase() === "skill");
+            if (isSkillInvocation) {
+              const existingInvocation = skillInvocationsById.get(callId);
+              const toolArgs = jsonRecord(eventPayload.tool_args);
+              const skillName =
+                optionalString(eventPayload.skill_name) ??
+                optionalString(eventPayload.requested_name) ??
+                optionalString(toolArgs?.name) ??
+                existingInvocation?.skillName ??
+                "unknown";
+              const skillId =
+                optionalString(eventPayload.skill_id) ??
+                existingInvocation?.skillId ??
+                null;
+              const completed =
+                eventPayload.phase === "completed" ||
+                existingInvocation?.completed === true;
+              const error =
+                eventPayload.error === true ||
+                existingInvocation?.error === true;
+              skillInvocationsById.set(callId, {
+                skillName,
+                skillId,
+                completed,
+                error,
+              });
+            }
+          }
+          if (event.event_type === "skill_invocation") {
+            const scope = optionalString(eventPayload.widening_scope);
+            if (scope) {
+              wideningAudit.scope = scope;
+            }
+            if (typeof eventPayload.workspace_boundary_override === "boolean") {
+              wideningAudit.workspaceBoundaryOverride =
+                eventPayload.workspace_boundary_override;
+            }
+            for (const toolName of stringList(eventPayload.managed_tools)) {
+              wideningAudit.managedTools.add(toolName);
+            }
+            const grantedTools = stringList(eventPayload.granted_tools);
+            for (const toolName of grantedTools) {
+              wideningAudit.grantedTools.add(toolName);
+            }
+            for (const toolName of stringList(
+              eventPayload.active_granted_tools,
+            )) {
+              wideningAudit.activeGrantedTools.add(toolName);
+            }
+            for (const commandId of stringList(eventPayload.managed_commands)) {
+              wideningAudit.managedCommands.add(commandId);
+            }
+            const grantedCommands = stringList(eventPayload.granted_commands);
+            for (const commandId of grantedCommands) {
+              wideningAudit.grantedCommands.add(commandId);
+            }
+            for (const commandId of stringList(
+              eventPayload.active_granted_commands,
+            )) {
+              wideningAudit.activeGrantedCommands.add(commandId);
+            }
+            if (
+              eventPayload.phase === "completed" &&
+              (grantedTools.length > 0 || grantedCommands.length > 0)
+            ) {
+              wideningAudit.activationCount += 1;
+            }
+          }
+          if (
+            event.event_type === "tool_call" &&
+            isSkillPolicyDeniedPayload(eventPayload)
+          ) {
+            wideningAudit.deniedCalls += 1;
+            const toolName = optionalString(eventPayload.tool_name);
+            if (toolName) {
+              wideningAudit.deniedToolNames.add(toolName);
+            }
+          }
+          if (event.event_type === "run_completed") {
+            terminalStatus = terminalStatusForCompletedPayload(
+              eventPayload,
+              harnessSupportsWaitingUser,
+            );
+            completedAt = eventTimestamp;
+            stopReason = stopReasonForTerminalEvent({
+              eventType: "run_completed",
+              payload: eventPayload,
+              terminalStatus,
+            });
+            tokenUsage = tokenUsageFromPayload(eventPayload) ?? tokenUsage;
+          }
+          if (event.event_type === "run_failed") {
+            terminalStatus = "ERROR";
+            lastError = eventPayload;
+            completedAt = eventTimestamp;
+            stopReason = stopReasonForTerminalEvent({
+              eventType: "run_failed",
+              payload: eventPayload,
+              terminalStatus,
+            });
+            tokenUsage = tokenUsageFromPayload(eventPayload) ?? tokenUsage;
+          }
+        },
+      });
+
+      const persistedTerminalEvent = latestPersistedTerminalOutputEvent({
+        store,
+        sessionId: record.sessionId,
+        inputId: record.inputId,
+      });
+
+      if (persistedTerminalEvent) {
+        const persistedPayload = persistedTerminalEvent.payload;
+        deferredTerminalEvent = null;
+        if (persistedTerminalEvent.eventType === "run_completed") {
+          terminalStatus = terminalStatusForCompletedPayload(
+            persistedPayload,
+            harnessSupportsWaitingUser,
+          );
+          lastError = null;
+          completedAt = persistedTerminalEvent.createdAt;
+          stopReason = stopReasonForTerminalEvent({
+            eventType: "run_completed",
+            payload: persistedPayload,
+            terminalStatus,
+          });
+          tokenUsage = tokenUsageFromPayload(persistedPayload) ?? tokenUsage;
+        } else {
+          terminalStatus = "ERROR";
+          lastError = persistedPayload;
+          completedAt = persistedTerminalEvent.createdAt;
+          stopReason = stopReasonForTerminalEvent({
+            eventType: "run_failed",
+            payload: persistedPayload,
+            terminalStatus,
+          });
+          tokenUsage = tokenUsageFromPayload(persistedPayload) ?? tokenUsage;
+        }
+      } else if (execution.aborted && !execution.sawTerminal) {
+        if (execution.abortReason === "user_requested_pause") {
+          const pausedAt = new Date().toISOString();
+          const completed = buildRunCompletedEvent({
+            sessionId: record.sessionId,
+            inputId: record.inputId,
+            sequence: lastSequence + 1,
+            payload: {
+              status: "paused",
+              stop_reason: "paused",
+              message: "Run paused by user request",
+            },
+          });
+          const completedPayload = payloadForEvent(completed);
+          lastSequence = Math.max(
+            lastSequence,
+            typeof completed.sequence === "number"
+              ? completed.sequence
+              : lastSequence + 1,
+          );
+          deferredTerminalEvent = {
+            eventType: "run_completed",
+            payload: completedPayload,
+            createdAt: pausedAt,
+          };
+          terminalStatus = "PAUSED";
+          lastError = null;
+          completedAt = pausedAt;
+          stopReason = stopReasonForTerminalEvent({
+            eventType: "run_completed",
+            payload: completedPayload,
+            terminalStatus,
+          });
+        } else {
+          const failedAt = new Date().toISOString();
+          const failure = buildRunFailedEvent({
+            sessionId: record.sessionId,
+            inputId: record.inputId,
+            sequence: lastSequence + 1,
+            message:
+              execution.abortReason === "claim_expired"
+                ? "claimed input lease expired before the runner emitted a terminal event"
+                : execution.stderr.trim() ||
+                  (execution.abortReason
+                    ? `runner aborted before terminal event: ${execution.abortReason}`
+                    : "runner aborted before terminal event"),
+            errorType: "RuntimeError",
+          });
+          const failurePayload = payloadForEvent(failure);
+          lastSequence = Math.max(
+            lastSequence,
+            typeof failure.sequence === "number"
+              ? failure.sequence
+              : lastSequence + 1,
+          );
+          deferredTerminalEvent = {
+            eventType: "run_failed",
+            payload: failurePayload,
+            createdAt: failedAt,
+          };
+          terminalStatus = "ERROR";
+          lastError = failurePayload;
+          completedAt = failedAt;
+          stopReason = stopReasonForTerminalEvent({
+            eventType: "run_failed",
+            payload: failurePayload,
+            terminalStatus,
+          });
+        }
+      } else if (!execution.sawTerminal) {
+        const details =
+          execution.skippedLines.length > 0
+            ? execution.skippedLines.slice(0, 3).join("; ")
+            : "";
+        const suffix = details ? ` (skipped output: ${details})` : "";
         const failure = buildRunFailedEvent({
           sessionId: record.sessionId,
           inputId: record.inputId,
           sequence: lastSequence + 1,
           message:
-            execution.abortReason === "claim_expired"
-              ? "claimed input lease expired before the runner emitted a terminal event"
-              : execution.stderr.trim() ||
-                (execution.abortReason
-                  ? `runner aborted before terminal event: ${execution.abortReason}`
-                  : "runner aborted before terminal event"),
-          errorType: "RuntimeError"
+            execution.returnCode !== 0
+              ? execution.stderr.trim() ||
+                `runner command failed with exit_code=${execution.returnCode}`
+              : `runner ended before terminal event${suffix}`,
+          errorType:
+            execution.returnCode !== 0 ? "RunnerCommandError" : "RuntimeError",
         });
         const failurePayload = payloadForEvent(failure);
-        lastSequence = Math.max(lastSequence, typeof failure.sequence === "number" ? failure.sequence : lastSequence + 1);
+        lastSequence = Math.max(
+          lastSequence,
+          typeof failure.sequence === "number"
+            ? failure.sequence
+            : lastSequence + 1,
+        );
         deferredTerminalEvent = {
           eventType: "run_failed",
           payload: failurePayload,
-          createdAt: failedAt,
+          createdAt: new Date().toISOString(),
         };
         terminalStatus = "ERROR";
         lastError = failurePayload;
-        completedAt = failedAt;
+        completedAt = new Date().toISOString();
         stopReason = stopReasonForTerminalEvent({
           eventType: "run_failed",
           payload: failurePayload,
           terminalStatus,
         });
       }
-    } else if (!execution.sawTerminal) {
-      const details = execution.skippedLines.length > 0 ? execution.skippedLines.slice(0, 3).join("; ") : "";
-      const suffix = details ? ` (skipped output: ${details})` : "";
-      const failure = buildRunFailedEvent({
+
+      store.updateInput(record.inputId, {
+        status:
+          terminalStatus === "ERROR"
+            ? "FAILED"
+            : terminalStatus === "PAUSED"
+              ? "PAUSED"
+              : "DONE",
+        claimedUntil: null,
+      });
+      store.updateRuntimeState({
+        workspaceId: record.workspaceId,
         sessionId: record.sessionId,
-        inputId: record.inputId,
-        sequence: lastSequence + 1,
-        message:
-          execution.returnCode !== 0
-            ? execution.stderr.trim() || `runner command failed with exit_code=${execution.returnCode}`
-            : `runner ended before terminal event${suffix}`,
-        errorType: execution.returnCode !== 0 ? "RunnerCommandError" : "RuntimeError"
+        status: terminalStatus,
+        currentInputId: null,
+        currentWorkerId: null,
+        leaseUntil: null,
+        heartbeatAt: null,
+        lastError,
       });
-      const failurePayload = payloadForEvent(failure);
-      lastSequence = Math.max(lastSequence, typeof failure.sequence === "number" ? failure.sequence : lastSequence + 1);
-      deferredTerminalEvent = {
-        eventType: "run_failed",
-        payload: failurePayload,
-        createdAt: new Date().toISOString(),
-      };
-      terminalStatus = "ERROR";
-      lastError = failurePayload;
-      completedAt = new Date().toISOString();
-      stopReason = stopReasonForTerminalEvent({
-        eventType: "run_failed",
-        payload: failurePayload,
-        terminalStatus,
-      });
-    }
 
-    store.updateInput(record.inputId, {
-      status: terminalStatus === "ERROR" ? "FAILED" : terminalStatus === "PAUSED" ? "PAUSED" : "DONE",
-      claimedUntil: null
-    });
-    store.updateRuntimeState({
-      workspaceId: record.workspaceId,
-      sessionId: record.sessionId,
-      status: terminalStatus,
-      currentInputId: null,
-      currentWorkerId: null,
-      leaseUntil: null,
-      heartbeatAt: null,
-      lastError
-    });
-
-    if (workspaceFileManifestBefore) {
-      try {
-        const fileOutputs = detectWorkspaceFileOutputs({
-          workspaceDir,
-          before: workspaceFileManifestBefore
-        });
-        const existingOutputPaths = new Set(
-          store
-            .listOutputs({
+      if (workspaceFileManifestBefore) {
+        try {
+          const fileOutputs = detectWorkspaceFileOutputs({
+            workspaceDir,
+            before: workspaceFileManifestBefore,
+          });
+          const existingOutputPaths = new Set(
+            store
+              .listOutputs({
+                workspaceId: record.workspaceId,
+                sessionId: record.sessionId,
+                inputId: record.inputId,
+                limit: 1000,
+                offset: 0,
+              })
+              .map((output) => output.filePath)
+              .filter(
+                (filePath): filePath is string =>
+                  typeof filePath === "string" && filePath.length > 0,
+              ),
+          );
+          for (const output of fileOutputs) {
+            if (existingOutputPaths.has(output.filePath)) {
+              continue;
+            }
+            store.createOutput({
               workspaceId: record.workspaceId,
+              outputType: output.outputType,
+              title: output.title,
+              status: "completed",
+              filePath: output.filePath,
               sessionId: record.sessionId,
               inputId: record.inputId,
-              limit: 1000,
-              offset: 0,
-            })
-            .map((output) => output.filePath)
-            .filter((filePath): filePath is string => typeof filePath === "string" && filePath.length > 0),
-        );
-        for (const output of fileOutputs) {
-          if (existingOutputPaths.has(output.filePath)) {
-            continue;
+              metadata: output.metadata,
+            });
+            existingOutputPaths.add(output.filePath);
           }
-          store.createOutput({
-            workspaceId: record.workspaceId,
-            outputType: output.outputType,
-            title: output.title,
-            status: "completed",
-            filePath: output.filePath,
-            sessionId: record.sessionId,
-            inputId: record.inputId,
-            metadata: output.metadata
-          });
-          existingOutputPaths.add(output.filePath);
+        } catch {
+          // Output capture is best-effort and should not fail the turn.
         }
-      } catch {
-        // Output capture is best-effort and should not fail the turn.
       }
-    }
 
-    const assistantText = assistantParts.join("").trim();
-    const hasPersistedOutputs =
-      store.listOutputs({
-        workspaceId: record.workspaceId,
-        sessionId: record.sessionId,
-        inputId: record.inputId,
-        limit: 1,
-        offset: 0
-      }).length > 0;
-    const hasPersistedMemoryProposals =
-      store.listMemoryUpdateProposals({
-        workspaceId: record.workspaceId,
-        sessionId: record.sessionId,
-        inputId: record.inputId,
-        limit: 1,
-        offset: 0,
-      }).length > 0;
-    if (assistantText || hasPersistedOutputs || hasPersistedMemoryProposals) {
-      store.insertSessionMessage({
-        workspaceId: record.workspaceId,
-        sessionId: record.sessionId,
-        role: "assistant",
-        text: assistantText,
-        messageId: `assistant-${record.inputId}`,
-        createdAt: orderedAssistantMessageTimestamp(
-          turnStartedAt,
-          completedAt,
+      const assistantText = assistantParts.join("").trim();
+      const hasPersistedOutputs =
+        store.listOutputs({
+          workspaceId: record.workspaceId,
+          sessionId: record.sessionId,
+          inputId: record.inputId,
+          limit: 1,
+          offset: 0,
+        }).length > 0;
+      const hasPersistedMemoryProposals =
+        store.listMemoryUpdateProposals({
+          workspaceId: record.workspaceId,
+          sessionId: record.sessionId,
+          inputId: record.inputId,
+          limit: 1,
+          offset: 0,
+        }).length > 0;
+      if (assistantText || hasPersistedOutputs || hasPersistedMemoryProposals) {
+        store.insertSessionMessage({
+          workspaceId: record.workspaceId,
+          sessionId: record.sessionId,
+          role: "assistant",
+          text: assistantText,
+          messageId: `assistant-${record.inputId}`,
+          createdAt: orderedAssistantMessageTimestamp(
+            turnStartedAt,
+            completedAt,
+          ),
+        });
+      }
+      const turnResult = persistTurnResult({
+        store,
+        record,
+        startedAt: turnStartedAt,
+        completedAt: completedAt ?? new Date().toISOString(),
+        terminalStatus,
+        stopReason,
+        assistantText,
+        toolUsageSummary: summarizeToolCalls(
+          toolCallsById,
+          skillInvocationsById,
+          wideningAudit,
         ),
+        permissionDenials,
+        promptSectionIds,
+        capabilityManifestFingerprint,
+        requestSnapshotFingerprint,
+        promptCacheProfile,
+        tokenUsage,
       });
-    }
-    const turnResult = persistTurnResult({
-      store,
-      record,
-      startedAt: turnStartedAt,
-      completedAt: completedAt ?? new Date().toISOString(),
-      terminalStatus,
-      stopReason,
-      assistantText,
-      toolUsageSummary: summarizeToolCalls(toolCallsById, skillInvocationsById, wideningAudit),
-      permissionDenials,
-      promptSectionIds,
-      capabilityManifestFingerprint,
-      requestSnapshotFingerprint,
-      promptCacheProfile,
-      tokenUsage,
-    });
-    try {
-      await maybePromoteAcceptedEvolveSkillCandidate({
+      try {
+        await maybePromoteAcceptedEvolveSkillCandidate({
+          store,
+          record,
+          turnResult,
+          memoryService: params.memoryService,
+        });
+      } catch {
+        // Skill promotion is best-effort and should not fail the completed turn.
+      }
+      if (deferredTerminalEvent) {
+        lastSequence = appendNextOutputEvent({
+          store,
+          record,
+          lastSequence,
+          eventType: deferredTerminalEvent.eventType,
+          payload: deferredTerminalEvent.payload,
+          createdAt: deferredTerminalEvent.createdAt,
+        });
+        deferredTerminalEvent = null;
+      }
+      await (params.runEvolveTasksFn ?? runEvolveTasks)({
         store,
         record,
         turnResult,
         memoryService: params.memoryService,
+        modelContext: memoryWritebackModelContext,
+        wakeDurableMemoryWorker: params.wakeDurableMemoryWorker ?? null,
+        onTaskError: params.onEvolveTaskError,
       });
-    } catch {
-      // Skill promotion is best-effort and should not fail the completed turn.
-    }
-    if (deferredTerminalEvent) {
-      lastSequence = appendNextOutputEvent({
+      maybeCreateCronjobCompletionNotification({
         store,
         record,
-        lastSequence,
-        eventType: deferredTerminalEvent.eventType,
-        payload: deferredTerminalEvent.payload,
-        createdAt: deferredTerminalEvent.createdAt,
+        turnResult,
       });
-      deferredTerminalEvent = null;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      store.updateInput(record.inputId, {
+        status: "FAILED",
+        claimedUntil: null,
+      });
+      store.appendOutputEvent({
+        workspaceId: record.workspaceId,
+        sessionId: record.sessionId,
+        inputId: record.inputId,
+        sequence: Math.max(0, lastSequence) + 1,
+        eventType: "run_failed",
+        payload: { message },
+      });
+      store.updateRuntimeState({
+        workspaceId: record.workspaceId,
+        sessionId: record.sessionId,
+        status: "ERROR",
+        currentInputId: null,
+        currentWorkerId: null,
+        leaseUntil: null,
+        heartbeatAt: null,
+        lastError: { message },
+      });
+      const turnResult = persistTurnResult({
+        store,
+        record,
+        startedAt: turnStartedAt,
+        completedAt: new Date().toISOString(),
+        terminalStatus: "ERROR",
+        stopReason: "executor_error",
+        assistantText: "",
+        toolUsageSummary: summarizeToolCalls(new Map()),
+        permissionDenials: [],
+        promptSectionIds: [],
+        capabilityManifestFingerprint: null,
+        requestSnapshotFingerprint: null,
+        promptCacheProfile: null,
+        tokenUsage: null,
+      });
+      await (params.runEvolveTasksFn ?? runEvolveTasks)({
+        store,
+        record,
+        turnResult,
+        memoryService: params.memoryService,
+        modelContext: memoryWritebackModelContext,
+        wakeDurableMemoryWorker: params.wakeDurableMemoryWorker ?? null,
+        onTaskError: params.onEvolveTaskError,
+      });
+      maybeCreateCronjobCompletionNotification({
+        store,
+        record,
+        turnResult,
+      });
     }
-    await (params.runEvolveTasksFn ?? runEvolveTasks)({
-      store,
-      record,
-      turnResult,
-      memoryService: params.memoryService,
-      modelContext: memoryWritebackModelContext,
-      wakeDurableMemoryWorker: params.wakeDurableMemoryWorker ?? null,
-      onTaskError: params.onEvolveTaskError,
-    });
-    maybeCreateCronjobCompletionNotification({
-      store,
-      record,
-      turnResult,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    store.updateInput(record.inputId, {
-      status: "FAILED",
-      claimedUntil: null
-    });
-    store.appendOutputEvent({
-      workspaceId: record.workspaceId,
-      sessionId: record.sessionId,
-      inputId: record.inputId,
-      sequence: Math.max(0, lastSequence) + 1,
-      eventType: "run_failed",
-      payload: { message }
-    });
-    store.updateRuntimeState({
-      workspaceId: record.workspaceId,
-      sessionId: record.sessionId,
-      status: "ERROR",
-      currentInputId: null,
-      currentWorkerId: null,
-      leaseUntil: null,
-      heartbeatAt: null,
-      lastError: { message }
-    });
-    const turnResult = persistTurnResult({
-      store,
-      record,
-      startedAt: turnStartedAt,
-      completedAt: new Date().toISOString(),
-      terminalStatus: "ERROR",
-      stopReason: "executor_error",
-      assistantText: "",
-      toolUsageSummary: summarizeToolCalls(new Map()),
-      permissionDenials: [],
-      promptSectionIds: [],
-      capabilityManifestFingerprint: null,
-      requestSnapshotFingerprint: null,
-      promptCacheProfile: null,
-      tokenUsage: null,
-    });
-    await (params.runEvolveTasksFn ?? runEvolveTasks)({
-      store,
-      record,
-      turnResult,
-      memoryService: params.memoryService,
-      modelContext: memoryWritebackModelContext,
-      wakeDurableMemoryWorker: params.wakeDurableMemoryWorker ?? null,
-      onTaskError: params.onEvolveTaskError,
-    });
-    maybeCreateCronjobCompletionNotification({
-      store,
-      record,
-      turnResult,
-    });
-  }
+  };
+
+  return await executeClaimedInput();
 }

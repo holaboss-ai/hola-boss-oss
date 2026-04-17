@@ -53,15 +53,22 @@ function makeTempDir(prefix: string): string {
   return dir;
 }
 
-function writeRuntimeConfigDocument(root: string, document: Record<string, unknown>): string {
+function writeRuntimeConfigDocument(
+  root: string,
+  document: Record<string, unknown>,
+): string {
   const configPath = path.join(root, "state", "runtime-config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, `${JSON.stringify(document, null, 2)}\n`, "utf8");
+  fs.writeFileSync(
+    configPath,
+    `${JSON.stringify(document, null, 2)}\n`,
+    "utf8",
+  );
   return configPath;
 }
 
 function renderedRuntimeConfigPrompt(
-  promptLayers: Array<{ apply_at: string; content: string }>
+  promptLayers: Array<{ apply_at: string; content: string }>,
 ): string {
   return promptLayers
     .filter((layer) => layer.apply_at === "runtime_config")
@@ -72,7 +79,7 @@ function renderedRuntimeConfigPrompt(
 }
 
 function renderedPromptSections(
-  promptSections: Array<{ channel: string; content: string }>
+  promptSections: Array<{ channel: string; content: string }>,
 ): string {
   return promptSections
     .filter((section) => section.channel === "system_prompt")
@@ -83,7 +90,7 @@ function renderedPromptSections(
 }
 
 function promptChannelContents(
-  promptSections: Array<{ channel: string; content: string }>
+  promptSections: Array<{ channel: string; content: string }>,
 ): Record<string, string[]> {
   return promptSections.reduce<Record<string, string[]>>((result, section) => {
     result[section.channel] ??= [];
@@ -93,7 +100,8 @@ function promptChannelContents(
 }
 
 test("projectAgentRuntimeConfig returns ordered prompt layers and renders system prompt from runtime_config layers", () => {
-  process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
+  process.env.HOLABOSS_MODEL_PROXY_BASE_URL =
+    "https://runtime.example/api/v1/model-proxy";
   process.env.HOLABOSS_USER_ID = "user-1";
   try {
     const result = projectAgentRuntimeConfig({
@@ -117,31 +125,61 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
       default_tools: ["read", "edit"],
       extra_tools: ["browser_get_state", "custom_tool"],
       resolved_mcp_tool_refs: [
-        { tool_id: "workspace.lookup", server_id: "workspace", tool_name: "lookup" }
+        {
+          tool_id: "workspace.lookup",
+          server_id: "workspace",
+          tool_name: "lookup",
+        },
       ],
       resolved_output_schemas: {},
       agent: {
         id: "workspace.general",
         model: "gpt-5.2",
-        prompt: "You are concise."
-      }
+        prompt: "You are concise.",
+      },
     });
 
     assert.ok(result.prompt_layers);
     assert.ok(result.prompt_sections);
     assert.deepEqual(
       result.prompt_layers?.map((layer) => layer.id),
-      ["runtime_core", "execution_policy", "response_delivery_policy", "session_policy", "capability_policy", "workspace_policy"]
+      [
+        "runtime_core",
+        "execution_policy",
+        "response_delivery_policy",
+        "session_policy",
+        "capability_policy",
+        "workspace_policy",
+      ],
     );
     assert.deepEqual(
       result.prompt_sections?.map((section) => section.id),
-      ["runtime_core", "execution_policy", "response_delivery_policy", "session_policy", "capability_policy", "workspace_policy"]
+      [
+        "runtime_core",
+        "execution_policy",
+        "response_delivery_policy",
+        "session_policy",
+        "capability_policy",
+        "workspace_policy",
+      ],
     );
-    assert.equal(result.prompt_layers?.some((layer) => layer.id === "harness_quirks"), false);
-    assert.equal(result.system_prompt, renderedRuntimeConfigPrompt(result.prompt_layers ?? []));
-    assert.equal(result.system_prompt, renderedPromptSections(result.prompt_sections ?? []));
+    assert.equal(
+      result.prompt_layers?.some((layer) => layer.id === "harness_quirks"),
+      false,
+    );
+    assert.equal(
+      result.system_prompt,
+      renderedRuntimeConfigPrompt(result.prompt_layers ?? []),
+    );
+    assert.equal(
+      result.system_prompt,
+      renderedPromptSections(result.prompt_sections ?? []),
+    );
     assert.deepEqual(result.context_messages, []);
-    assert.deepEqual(result.prompt_channel_contents, promptChannelContents(result.prompt_sections ?? []));
+    assert.deepEqual(
+      result.prompt_channel_contents,
+      promptChannelContents(result.prompt_sections ?? []),
+    );
     assert.ok(result.prompt_cache_profile);
     assert.deepEqual(result.prompt_cache_profile?.cacheable_section_ids, [
       "runtime_core",
@@ -153,7 +191,10 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
       "session_policy",
       "capability_policy",
     ]);
-    assert.deepEqual(result.prompt_cache_profile?.compatibility_context_ids, []);
+    assert.deepEqual(
+      result.prompt_cache_profile?.compatibility_context_ids,
+      [],
+    );
     assert.deepEqual(result.prompt_cache_profile?.resume_context_ids, []);
     assert.deepEqual(result.prompt_cache_profile?.attachment_ids, []);
     assert.deepEqual(result.prompt_cache_profile?.delta_section_ids, []);
@@ -171,7 +212,10 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
     assert.match(result.system_prompt, /Response delivery policy:/);
     assert.match(result.system_prompt, /task proposal session/i);
     assert.doesNotMatch(result.system_prompt, /OpenCode MCP tool naming:/);
-    assert.doesNotMatch(result.system_prompt, /MCP callable tool names for this run:/);
+    assert.doesNotMatch(
+      result.system_prompt,
+      /MCP callable tool names for this run:/,
+    );
     assert.match(result.system_prompt, /Connected MCP tools available now:/);
     assert.deepEqual(result.workspace_skill_ids, ["skill-creator"]);
     assert.equal(result.tools.browser_get_state, undefined);
@@ -196,10 +240,21 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
       supports_live_deltas: false,
     });
     assert.deepEqual(
-      result.capability_manifest?.reserved_surfaces.map((surface) => surface.kind),
-      ["mcp_resource", "mcp_prompt", "mcp_command", "plugin_capability", "local_capability"]
+      result.capability_manifest?.reserved_surfaces.map(
+        (surface) => surface.kind,
+      ),
+      [
+        "mcp_resource",
+        "mcp_prompt",
+        "mcp_command",
+        "plugin_capability",
+        "local_capability",
+      ],
     );
-    assert.match(result.capability_manifest?.fingerprint ?? "", /^[a-f0-9]{64}$/);
+    assert.match(
+      result.capability_manifest?.fingerprint ?? "",
+      /^[a-f0-9]{64}$/,
+    );
   } finally {
     delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
   }
@@ -265,7 +320,8 @@ test("projectAgentRuntimeConfig ignores workspace agent.model and falls back to 
 });
 
 test("projectAgentRuntimeConfig includes resume context sections when provided", () => {
-  process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
+  process.env.HOLABOSS_MODEL_PROXY_BASE_URL =
+    "https://runtime.example/api/v1/model-proxy";
   process.env.HOLABOSS_USER_ID = "user-1";
   try {
     const result = projectAgentRuntimeConfig({
@@ -301,7 +357,8 @@ test("projectAgentRuntimeConfig includes resume context sections when provided",
           "Continue after confirmation once deploy policy is updated.",
         ],
         compaction_boundary_id: "compaction:input-0",
-        compaction_boundary_summary: "Run paused waiting for confirmation before deploy.",
+        compaction_boundary_summary:
+          "Run paused waiting for confirmation before deploy.",
         restoration_order: [
           "boundary_summary",
           "recent_runtime_context",
@@ -310,9 +367,7 @@ test("projectAgentRuntimeConfig includes resume context sections when provided",
           "restored_memory_paths",
         ],
         preserved_turn_input_ids: ["input-0"],
-        restored_memory_paths: [
-          "workspace/workspace-1/runtime/latest-turn.md",
-        ],
+        restored_memory_paths: ["workspace/workspace-1/runtime/latest-turn.md"],
       },
       selected_model: null,
       default_provider_id: "openai",
@@ -326,15 +381,33 @@ test("projectAgentRuntimeConfig includes resume context sections when provided",
       agent: {
         id: "workspace.general",
         model: "gpt-5.2",
-        prompt: "You are concise."
-      }
+        prompt: "You are concise.",
+      },
     });
 
-    assert.ok(result.prompt_sections?.some((section) => section.id === "resume_context"));
-    assert.equal(result.prompt_layers?.some((layer) => layer.id === "resume_context"), false);
-    assert.equal(result.prompt_sections?.find((section) => section.id === "resume_context")?.channel, "resume_context");
-    assert.equal(result.prompt_sections?.find((section) => section.id === "recent_runtime_context")?.channel, "context_message");
-    assert.deepEqual(result.prompt_cache_profile?.resume_context_ids, ["resume_context"]);
+    assert.ok(
+      result.prompt_sections?.some(
+        (section) => section.id === "resume_context",
+      ),
+    );
+    assert.equal(
+      result.prompt_layers?.some((layer) => layer.id === "resume_context"),
+      false,
+    );
+    assert.equal(
+      result.prompt_sections?.find((section) => section.id === "resume_context")
+        ?.channel,
+      "resume_context",
+    );
+    assert.equal(
+      result.prompt_sections?.find(
+        (section) => section.id === "recent_runtime_context",
+      )?.channel,
+      "context_message",
+    );
+    assert.deepEqual(result.prompt_cache_profile?.resume_context_ids, [
+      "resume_context",
+    ]);
     assert.deepEqual(result.prompt_cache_profile?.compatibility_context_ids, [
       "recent_runtime_context",
       "resume_context",
@@ -367,7 +440,10 @@ test("projectAgentRuntimeConfig includes resume context sections when provided",
         "- Continue after confirmation once deploy policy is updated.",
       ].join("\n"),
     ]);
-    assert.deepEqual(result.prompt_channel_contents, promptChannelContents(result.prompt_sections ?? []));
+    assert.deepEqual(
+      result.prompt_channel_contents,
+      promptChannelContents(result.prompt_sections ?? []),
+    );
     assert.doesNotMatch(result.system_prompt, /Session resume context:/);
   } finally {
     delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
@@ -375,7 +451,8 @@ test("projectAgentRuntimeConfig includes resume context sections when provided",
 });
 
 test("projectAgentRuntimeConfig includes current user context as a context message", () => {
-  process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
+  process.env.HOLABOSS_MODEL_PROXY_BASE_URL =
+    "https://runtime.example/api/v1/model-proxy";
   process.env.HOLABOSS_USER_ID = "user-1";
   try {
     const result = projectAgentRuntimeConfig({
@@ -408,25 +485,53 @@ test("projectAgentRuntimeConfig includes current user context as a context messa
       agent: {
         id: "workspace.general",
         model: "gpt-5.2",
-        prompt: "You are concise."
-      }
+        prompt: "You are concise.",
+      },
     });
 
-    assert.ok(result.prompt_sections?.some((section) => section.id === "current_user_context"));
-    assert.equal(result.prompt_layers?.some((layer) => layer.id === "current_user_context"), false);
-    assert.equal(result.prompt_sections?.find((section) => section.id === "current_user_context")?.channel, "context_message");
-    assert.deepEqual(result.prompt_cache_profile?.context_message_ids, ["current_user_context"]);
-    assert.deepEqual(result.prompt_cache_profile?.compatibility_context_ids, ["current_user_context"]);
-    assert.deepEqual(result.prompt_channel_contents, promptChannelContents(result.prompt_sections ?? []));
-    assert.match(result.context_messages?.join("\n\n") ?? "", /Current user context:/);
-    assert.match(result.context_messages?.join("\n\n") ?? "", /The current operator name is `Jeffrey`\./);
+    assert.ok(
+      result.prompt_sections?.some(
+        (section) => section.id === "current_user_context",
+      ),
+    );
+    assert.equal(
+      result.prompt_layers?.some(
+        (layer) => layer.id === "current_user_context",
+      ),
+      false,
+    );
+    assert.equal(
+      result.prompt_sections?.find(
+        (section) => section.id === "current_user_context",
+      )?.channel,
+      "context_message",
+    );
+    assert.deepEqual(result.prompt_cache_profile?.context_message_ids, [
+      "current_user_context",
+    ]);
+    assert.deepEqual(result.prompt_cache_profile?.compatibility_context_ids, [
+      "current_user_context",
+    ]);
+    assert.deepEqual(
+      result.prompt_channel_contents,
+      promptChannelContents(result.prompt_sections ?? []),
+    );
+    assert.match(
+      result.context_messages?.join("\n\n") ?? "",
+      /Current user context:/,
+    );
+    assert.match(
+      result.context_messages?.join("\n\n") ?? "",
+      /The current operator name is `Jeffrey`\./,
+    );
   } finally {
     delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
   }
 });
 
 test("projectAgentRuntimeConfig surfaces connected MCP servers when no explicit MCP tool refs are pre-enumerated", () => {
-  process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
+  process.env.HOLABOSS_MODEL_PROXY_BASE_URL =
+    "https://runtime.example/api/v1/model-proxy";
   process.env.HOLABOSS_USER_ID = "user-1";
   try {
     const result = projectAgentRuntimeConfig({
@@ -455,14 +560,17 @@ test("projectAgentRuntimeConfig surfaces connected MCP servers when no explicit 
       agent: {
         id: "workspace.general",
         model: "gpt-5.2",
-        prompt: "You are concise."
-      }
+        prompt: "You are concise.",
+      },
     });
 
-    assert.match(result.system_prompt, /Connected MCP servers available now: context7/);
     assert.match(
       result.system_prompt,
-      /When connected MCP servers are available without pre-enumerated tool refs in this prompt, do not assume MCP is unavailable/i
+      /Connected MCP servers available now: context7/,
+    );
+    assert.match(
+      result.system_prompt,
+      /When connected MCP servers are available without pre-enumerated tool refs in this prompt, do not assume MCP is unavailable/i,
     );
     assert.deepEqual(result.workspace_tool_ids, []);
     assert.deepEqual(result.capability_manifest?.context, {
@@ -483,7 +591,8 @@ test("projectAgentRuntimeConfig surfaces connected MCP servers when no explicit 
 });
 
 test("projectAgentRuntimeConfig includes operator surface context as a context message", () => {
-  process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
+  process.env.HOLABOSS_MODEL_PROXY_BASE_URL =
+    "https://runtime.example/api/v1/model-proxy";
   process.env.HOLABOSS_USER_ID = "user-1";
   try {
     const result = projectAgentRuntimeConfig({
@@ -508,7 +617,8 @@ test("projectAgentRuntimeConfig includes operator surface context as a context m
             owner: "user",
             active: true,
             mutability: "inspect_only",
-            summary: "User browser surface with 1 open tab. Active tab: \"Inbox\" at https://mail.google.com. It shares the workspace browser session and auth state with the other browser surface.",
+            summary:
+              'User browser surface with 1 open tab. Active tab: "Inbox" at https://mail.google.com. It shares the workspace browser session and auth state with the other browser surface.',
           },
           {
             surface_id: "browser:agent",
@@ -516,7 +626,8 @@ test("projectAgentRuntimeConfig includes operator surface context as a context m
             owner: "agent",
             active: false,
             mutability: "agent_owned",
-            summary: "Agent browser surface with 2 open tabs. Active tab: \"Docs\" at https://docs.example.com. It shares the workspace browser session and auth state with the other browser surface.",
+            summary:
+              'Agent browser surface with 2 open tabs. Active tab: "Docs" at https://docs.example.com. It shares the workspace browser session and auth state with the other browser surface.',
           },
         ],
       },
@@ -532,24 +643,51 @@ test("projectAgentRuntimeConfig includes operator surface context as a context m
       agent: {
         id: "workspace.general",
         model: "gpt-5.4",
-        prompt: "You are concise."
-      }
+        prompt: "You are concise.",
+      },
     });
 
-    assert.ok(result.prompt_sections?.some((section) => section.id === "operator_surface_context"));
-    assert.equal(result.prompt_layers?.some((layer) => layer.id === "operator_surface_context"), false);
-    assert.equal(result.prompt_sections?.find((section) => section.id === "operator_surface_context")?.channel, "context_message");
-    assert.deepEqual(result.prompt_channel_contents, promptChannelContents(result.prompt_sections ?? []));
-    assert.match(result.context_messages?.join("\n\n") ?? "", /Operator surface context:/);
-    assert.match(result.context_messages?.join("\n\n") ?? "", /Current active surface id: `browser:user`\./);
-    assert.match(result.context_messages?.join("\n\n") ?? "", /mutability=`inspect_only`/);
+    assert.ok(
+      result.prompt_sections?.some(
+        (section) => section.id === "operator_surface_context",
+      ),
+    );
+    assert.equal(
+      result.prompt_layers?.some(
+        (layer) => layer.id === "operator_surface_context",
+      ),
+      false,
+    );
+    assert.equal(
+      result.prompt_sections?.find(
+        (section) => section.id === "operator_surface_context",
+      )?.channel,
+      "context_message",
+    );
+    assert.deepEqual(
+      result.prompt_channel_contents,
+      promptChannelContents(result.prompt_sections ?? []),
+    );
+    assert.match(
+      result.context_messages?.join("\n\n") ?? "",
+      /Operator surface context:/,
+    );
+    assert.match(
+      result.context_messages?.join("\n\n") ?? "",
+      /Current active surface id: `browser:user`\./,
+    );
+    assert.match(
+      result.context_messages?.join("\n\n") ?? "",
+      /mutability=`inspect_only`/,
+    );
   } finally {
     delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
   }
 });
 
 test("projectAgentRuntimeConfig includes pending user memory context as a context message", () => {
-  process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
+  process.env.HOLABOSS_MODEL_PROXY_BASE_URL =
+    "https://runtime.example/api/v1/model-proxy";
   process.env.HOLABOSS_USER_ID = "user-1";
   try {
     const result = projectAgentRuntimeConfig({
@@ -572,7 +710,8 @@ test("projectAgentRuntimeConfig includes pending user memory context as a contex
             proposal_kind: "preference",
             target_key: "file-delivery",
             title: "File delivery preference",
-            summary: "Do not compress or zip multiple files; deliver them individually.",
+            summary:
+              "Do not compress or zip multiple files; deliver them individually.",
             evidence: "Please do not zip the files. Send them individually.",
           },
         ],
@@ -589,24 +728,47 @@ test("projectAgentRuntimeConfig includes pending user memory context as a contex
       agent: {
         id: "workspace.general",
         model: "gpt-5.2",
-        prompt: "You are concise."
-      }
+        prompt: "You are concise.",
+      },
     });
 
-    assert.ok(result.prompt_sections?.some((section) => section.id === "pending_user_memory"));
-    assert.equal(result.prompt_layers?.some((layer) => layer.id === "pending_user_memory"), false);
-    assert.equal(result.prompt_sections?.find((section) => section.id === "pending_user_memory")?.channel, "context_message");
-    assert.deepEqual(result.prompt_cache_profile?.context_message_ids, ["pending_user_memory"]);
-    assert.deepEqual(result.prompt_cache_profile?.compatibility_context_ids, ["pending_user_memory"]);
-    assert.match(result.context_messages?.join("\n\n") ?? "", /Current-turn inferred user memory:/);
-    assert.match(result.context_messages?.join("\n\n") ?? "", /deliver them individually/);
+    assert.ok(
+      result.prompt_sections?.some(
+        (section) => section.id === "pending_user_memory",
+      ),
+    );
+    assert.equal(
+      result.prompt_layers?.some((layer) => layer.id === "pending_user_memory"),
+      false,
+    );
+    assert.equal(
+      result.prompt_sections?.find(
+        (section) => section.id === "pending_user_memory",
+      )?.channel,
+      "context_message",
+    );
+    assert.deepEqual(result.prompt_cache_profile?.context_message_ids, [
+      "pending_user_memory",
+    ]);
+    assert.deepEqual(result.prompt_cache_profile?.compatibility_context_ids, [
+      "pending_user_memory",
+    ]);
+    assert.match(
+      result.context_messages?.join("\n\n") ?? "",
+      /Current-turn inferred user memory:/,
+    );
+    assert.match(
+      result.context_messages?.join("\n\n") ?? "",
+      /deliver them individually/,
+    );
   } finally {
     delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
   }
 });
 
 test("projectAgentRuntimeConfig omits workspace and recent-runtime layers when not provided", () => {
-  process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
+  process.env.HOLABOSS_MODEL_PROXY_BASE_URL =
+    "https://runtime.example/api/v1/model-proxy";
   process.env.HOLABOSS_USER_ID = "user-1";
   try {
     const result = projectAgentRuntimeConfig({
@@ -634,19 +796,48 @@ test("projectAgentRuntimeConfig omits workspace and recent-runtime layers when n
       agent: {
         id: "workspace.general",
         model: "gpt-5.2",
-        prompt: "   "
-      }
+        prompt: "   ",
+      },
     });
 
     assert.ok(result.prompt_layers);
     assert.ok(result.prompt_sections);
-    assert.equal(result.prompt_layers?.some((layer) => layer.id === "workspace_policy"), false);
-    assert.equal(result.prompt_layers?.some((layer) => layer.id === "recent_runtime_context"), false);
-    assert.equal(result.prompt_layers?.some((layer) => layer.id === "resume_context"), false);
-    assert.equal(result.prompt_layers?.some((layer) => layer.id === "harness_quirks"), false);
-    assert.equal(result.prompt_sections?.some((section) => section.id === "workspace_policy"), false);
-    assert.equal(result.prompt_sections?.some((section) => section.id === "recent_runtime_context"), false);
-    assert.equal(result.prompt_sections?.some((section) => section.id === "resume_context"), false);
+    assert.equal(
+      result.prompt_layers?.some((layer) => layer.id === "workspace_policy"),
+      false,
+    );
+    assert.equal(
+      result.prompt_layers?.some(
+        (layer) => layer.id === "recent_runtime_context",
+      ),
+      false,
+    );
+    assert.equal(
+      result.prompt_layers?.some((layer) => layer.id === "resume_context"),
+      false,
+    );
+    assert.equal(
+      result.prompt_layers?.some((layer) => layer.id === "harness_quirks"),
+      false,
+    );
+    assert.equal(
+      result.prompt_sections?.some(
+        (section) => section.id === "workspace_policy",
+      ),
+      false,
+    );
+    assert.equal(
+      result.prompt_sections?.some(
+        (section) => section.id === "recent_runtime_context",
+      ),
+      false,
+    );
+    assert.equal(
+      result.prompt_sections?.some(
+        (section) => section.id === "resume_context",
+      ),
+      false,
+    );
     assert.deepEqual(result.context_messages, []);
     assert.match(result.system_prompt, /This is a workspace session/i);
   } finally {
@@ -655,7 +846,8 @@ test("projectAgentRuntimeConfig omits workspace and recent-runtime layers when n
 });
 
 test("projectAgentRuntimeConfig includes recalled durable memory in context messages", () => {
-  process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
+  process.env.HOLABOSS_MODEL_PROXY_BASE_URL =
+    "https://runtime.example/api/v1/model-proxy";
   process.env.HOLABOSS_USER_ID = "user-1";
   try {
     const result = projectAgentRuntimeConfig({
@@ -682,7 +874,8 @@ test("projectAgentRuntimeConfig includes recalled durable memory in context mess
             verification_policy: "none",
             staleness_policy: "stable",
             freshness_state: "stable",
-            freshness_note: "This memory is treated as stable unless explicitly changed.",
+            freshness_note:
+              "This memory is treated as stable unless explicitly changed.",
           },
         ],
       },
@@ -698,18 +891,39 @@ test("projectAgentRuntimeConfig includes recalled durable memory in context mess
       agent: {
         id: "workspace.general",
         model: "gpt-5.2",
-        prompt: "You are concise."
-      }
+        prompt: "You are concise.",
+      },
     });
 
-    assert.ok(result.prompt_sections?.some((section) => section.id === "memory_recall"));
-    assert.equal(result.prompt_layers?.some((layer) => layer.id === "memory_recall"), false);
-    assert.deepEqual(result.prompt_cache_profile?.context_message_ids, ["memory_recall"]);
-    assert.deepEqual(result.prompt_cache_profile?.compatibility_context_ids, ["memory_recall"]);
-    assert.deepEqual(result.prompt_channel_contents, promptChannelContents(result.prompt_sections ?? []));
-    assert.match(result.context_messages?.join("\n\n") ?? "", /Recalled durable memory:/);
-    assert.match(result.context_messages?.join("\n\n") ?? "", /User response style/);
-    assert.match(result.context_messages?.join("\n\n") ?? "", /Freshness: `stable` \(`stable`\)/);
+    assert.ok(
+      result.prompt_sections?.some((section) => section.id === "memory_recall"),
+    );
+    assert.equal(
+      result.prompt_layers?.some((layer) => layer.id === "memory_recall"),
+      false,
+    );
+    assert.deepEqual(result.prompt_cache_profile?.context_message_ids, [
+      "memory_recall",
+    ]);
+    assert.deepEqual(result.prompt_cache_profile?.compatibility_context_ids, [
+      "memory_recall",
+    ]);
+    assert.deepEqual(
+      result.prompt_channel_contents,
+      promptChannelContents(result.prompt_sections ?? []),
+    );
+    assert.match(
+      result.context_messages?.join("\n\n") ?? "",
+      /Recalled durable memory:/,
+    );
+    assert.match(
+      result.context_messages?.join("\n\n") ?? "",
+      /User response style/,
+    );
+    assert.match(
+      result.context_messages?.join("\n\n") ?? "",
+      /Freshness: `stable` \(`stable`\)/,
+    );
   } finally {
     delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
   }
@@ -721,34 +935,34 @@ test("projectAgentRuntimeConfig bypasses runtime proxy credentials for configure
   process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
     runtime: {
       sandbox_id: "sandbox-from-runtime",
-      default_provider: "openai_direct"
+      default_provider: "openai_direct",
     },
     providers: {
       holaboss_model_proxy: {
         kind: "holaboss_proxy",
         base_url: "https://proxy.example/api/v1/model-proxy",
-        api_key: "hb-token"
+        api_key: "hb-token",
       },
       openai_direct: {
         kind: "openai_compatible",
         base_url: "https://api.openai.com/v1",
-        api_key: "sk-direct-openai"
-      }
+        api_key: "sk-direct-openai",
+      },
     },
     integrations: {
       holaboss: {
         enabled: true,
         auth_token: "hb-token",
         sandbox_id: "sandbox-from-binding",
-        user_id: "user-1"
-      }
+        user_id: "user-1",
+      },
     },
     models: {
       "openai_direct/gpt-5.4": {
         provider_id: "openai_direct",
-        model_id: "gpt-5.4"
-      }
-    }
+        model_id: "gpt-5.4",
+      },
+    },
   });
 
   const result = projectAgentRuntimeConfig({
@@ -776,8 +990,8 @@ test("projectAgentRuntimeConfig bypasses runtime proxy credentials for configure
     agent: {
       id: "workspace.general",
       model: "gpt-5.2",
-      prompt: "You are concise."
-    }
+      prompt: "You are concise.",
+    },
   });
 
   assert.equal(result.provider_id, "openai_direct");
@@ -792,34 +1006,34 @@ test("projectAgentRuntimeConfig keeps direct Anthropic providers on the native e
   process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
     runtime: {
       sandbox_id: "sandbox-from-runtime",
-      default_provider: "anthropic_direct"
+      default_provider: "anthropic_direct",
     },
     providers: {
       holaboss_model_proxy: {
         kind: "holaboss_proxy",
         base_url: "https://proxy.example/api/v1/model-proxy",
-        api_key: "hb-token"
+        api_key: "hb-token",
       },
       anthropic_direct: {
         kind: "anthropic_native",
         base_url: "https://api.anthropic.com/v1",
-        api_key: "sk-ant-direct"
-      }
+        api_key: "sk-ant-direct",
+      },
     },
     integrations: {
       holaboss: {
         enabled: true,
         auth_token: "hb-token",
         sandbox_id: "sandbox-from-binding",
-        user_id: "user-1"
-      }
+        user_id: "user-1",
+      },
     },
     models: {
       "anthropic_direct/claude-sonnet-4-6": {
         provider_id: "anthropic_direct",
-        model_id: "claude-sonnet-4-6"
-      }
-    }
+        model_id: "claude-sonnet-4-6",
+      },
+    },
   });
 
   const result = projectAgentRuntimeConfig({
@@ -847,8 +1061,8 @@ test("projectAgentRuntimeConfig keeps direct Anthropic providers on the native e
     agent: {
       id: "workspace.general",
       model: "gpt-5.2",
-      prompt: "You are concise."
-    }
+      prompt: "You are concise.",
+    },
   });
 
   assert.equal(result.provider_id, "anthropic_direct");
@@ -864,21 +1078,21 @@ test("projectAgentRuntimeConfig normalizes legacy Anthropic direct model aliases
   process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
     runtime: {
       sandbox_id: "sandbox-from-runtime",
-      default_provider: "anthropic_direct"
+      default_provider: "anthropic_direct",
     },
     providers: {
       anthropic_direct: {
         kind: "anthropic_native",
         base_url: "https://api.anthropic.com/v1",
-        api_key: "sk-ant-direct"
-      }
+        api_key: "sk-ant-direct",
+      },
     },
     models: {
       "anthropic_direct/claude-sonnet-4-5": {
         provider_id: "anthropic_direct",
-        model_id: "claude-sonnet-4-5"
-      }
-    }
+        model_id: "claude-sonnet-4-5",
+      },
+    },
   });
 
   const result = projectAgentRuntimeConfig({
@@ -906,8 +1120,8 @@ test("projectAgentRuntimeConfig normalizes legacy Anthropic direct model aliases
     agent: {
       id: "workspace.general",
       model: "gpt-5.2",
-      prompt: "You are concise."
-    }
+      prompt: "You are concise.",
+    },
   });
 
   assert.equal(result.provider_id, "anthropic_direct");
@@ -921,34 +1135,34 @@ test("projectAgentRuntimeConfig routes direct Gemini providers through the Googl
   process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
     runtime: {
       sandbox_id: "sandbox-from-runtime",
-      default_provider: "gemini_direct"
+      default_provider: "gemini_direct",
     },
     providers: {
       holaboss_model_proxy: {
         kind: "holaboss_proxy",
         base_url: "https://proxy.example/api/v1/model-proxy",
-        api_key: "hb-token"
+        api_key: "hb-token",
       },
       gemini_direct: {
         kind: "openai_compatible",
         base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
-        api_key: "gm-direct-key"
-      }
+        api_key: "gm-direct-key",
+      },
     },
     integrations: {
       holaboss: {
         enabled: true,
         auth_token: "hb-token",
         sandbox_id: "sandbox-from-binding",
-        user_id: "user-1"
-      }
+        user_id: "user-1",
+      },
     },
     models: {
       "gemini_direct/gemini-2.5-flash": {
         provider_id: "gemini_direct",
-        model_id: "gemini-2.5-flash"
-      }
-    }
+        model_id: "gemini-2.5-flash",
+      },
+    },
   });
 
   const result = projectAgentRuntimeConfig({
@@ -976,14 +1190,17 @@ test("projectAgentRuntimeConfig routes direct Gemini providers through the Googl
     agent: {
       id: "workspace.general",
       model: "gpt-5.2",
-      prompt: "You are concise."
-    }
+      prompt: "You are concise.",
+    },
   });
 
   assert.equal(result.provider_id, "gemini_direct");
   assert.equal(result.model_client.model_proxy_provider, "google_compatible");
   assert.equal(result.model_client.api_key, "gm-direct-key");
-  assert.equal(result.model_client.base_url, "https://generativelanguage.googleapis.com/v1beta/openai");
+  assert.equal(
+    result.model_client.base_url,
+    "https://generativelanguage.googleapis.com/v1beta/openai",
+  );
   assert.equal(result.model_client.default_headers, null);
 });
 
@@ -993,21 +1210,21 @@ test("projectAgentRuntimeConfig normalizes legacy Gemini direct model aliases fr
   process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
     runtime: {
       sandbox_id: "sandbox-from-runtime",
-      default_provider: "gemini_direct"
+      default_provider: "gemini_direct",
     },
     providers: {
       gemini_direct: {
         kind: "openai_compatible",
         base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
-        api_key: "gm-direct-key"
-      }
+        api_key: "gm-direct-key",
+      },
     },
     models: {
       "gemini_direct/gemini-3.1-pro-preview": {
         provider_id: "gemini_direct",
-        model_id: "gemini-3.1-pro-preview"
-      }
-    }
+        model_id: "gemini-3.1-pro-preview",
+      },
+    },
   });
 
   const result = projectAgentRuntimeConfig({
@@ -1035,13 +1252,16 @@ test("projectAgentRuntimeConfig normalizes legacy Gemini direct model aliases fr
     agent: {
       id: "workspace.general",
       model: "gpt-5.2",
-      prompt: "You are concise."
-    }
+      prompt: "You are concise.",
+    },
   });
 
   assert.equal(result.provider_id, "gemini_direct");
   assert.equal(result.model_id, "gemini-2.5-pro");
-  assert.equal(result.model_client.base_url, "https://generativelanguage.googleapis.com/v1beta/openai");
+  assert.equal(
+    result.model_client.base_url,
+    "https://generativelanguage.googleapis.com/v1beta/openai",
+  );
 });
 
 test("projectAgentRuntimeConfig normalizes Gemini host roots to the OpenAI-compatible endpoint", () => {
@@ -1050,21 +1270,21 @@ test("projectAgentRuntimeConfig normalizes Gemini host roots to the OpenAI-compa
   process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
     runtime: {
       sandbox_id: "sandbox-from-runtime",
-      default_provider: "gemini_direct"
+      default_provider: "gemini_direct",
     },
     providers: {
       gemini_direct: {
         kind: "openai_compatible",
         base_url: "https://generativelanguage.googleapis.com",
-        api_key: "gm-direct-key"
-      }
+        api_key: "gm-direct-key",
+      },
     },
     models: {
       "gemini_direct/gemini-2.5-pro": {
         provider_id: "gemini_direct",
-        model_id: "gemini-2.5-pro"
-      }
-    }
+        model_id: "gemini-2.5-pro",
+      },
+    },
   });
 
   const result = projectAgentRuntimeConfig({
@@ -1092,11 +1312,14 @@ test("projectAgentRuntimeConfig normalizes Gemini host roots to the OpenAI-compa
     agent: {
       id: "workspace.general",
       model: "gpt-5.2",
-      prompt: "You are concise."
-    }
+      prompt: "You are concise.",
+    },
   });
 
-  assert.equal(result.model_client.base_url, "https://generativelanguage.googleapis.com/v1beta/openai");
+  assert.equal(
+    result.model_client.base_url,
+    "https://generativelanguage.googleapis.com/v1beta/openai",
+  );
   assert.equal(result.model_client.model_proxy_provider, "google_compatible");
 });
 
@@ -1105,15 +1328,15 @@ test("resolveRuntimeModelClient routes managed Holaboss Gemini models to the ded
   process.env.HB_SANDBOX_ROOT = root;
   process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
     runtime: {
-      default_provider: "holaboss_model_proxy"
+      default_provider: "holaboss_model_proxy",
     },
     providers: {
       holaboss_model_proxy: {
         kind: "holaboss_proxy",
         base_url: "https://proxy.example/api/v1/model-proxy",
-        api_key: "hb-token"
-      }
-    }
+        api_key: "hb-token",
+      },
+    },
   });
 
   const resolved = resolveRuntimeModelClient({
@@ -1121,7 +1344,7 @@ test("resolveRuntimeModelClient routes managed Holaboss Gemini models to the ded
     defaultProviderId: "holaboss_model_proxy",
     sessionId: "session-1",
     workspaceId: "workspace-1",
-    inputId: "input-1"
+    inputId: "input-1",
   });
 
   assert.equal(resolved.providerId, "google");
@@ -1130,7 +1353,10 @@ test("resolveRuntimeModelClient routes managed Holaboss Gemini models to the ded
   assert.equal(resolved.modelProxyProvider, "google_compatible");
   assert.equal(resolved.modelClient.model_proxy_provider, "google_compatible");
   assert.equal(resolved.modelClient.api_key, "hb-token");
-  assert.equal(resolved.modelClient.base_url, "https://proxy.example/api/v1/model-proxy/google/v1");
+  assert.equal(
+    resolved.modelClient.base_url,
+    "https://proxy.example/api/v1/model-proxy/google/v1",
+  );
 });
 
 test("resolveRuntimeModelClient routes managed Holaboss Claude models to the dedicated Anthropic proxy path", () => {
@@ -1138,15 +1364,15 @@ test("resolveRuntimeModelClient routes managed Holaboss Claude models to the ded
   process.env.HB_SANDBOX_ROOT = root;
   process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
     runtime: {
-      default_provider: "holaboss_model_proxy"
+      default_provider: "holaboss_model_proxy",
     },
     providers: {
       holaboss_model_proxy: {
         kind: "holaboss_proxy",
         base_url: "https://proxy.example/api/v1/model-proxy",
-        api_key: "hb-token"
-      }
-    }
+        api_key: "hb-token",
+      },
+    },
   });
 
   const resolved = resolveRuntimeModelClient({
@@ -1154,7 +1380,7 @@ test("resolveRuntimeModelClient routes managed Holaboss Claude models to the ded
     defaultProviderId: "holaboss_model_proxy",
     sessionId: "session-1",
     workspaceId: "workspace-1",
-    inputId: "input-1"
+    inputId: "input-1",
   });
 
   assert.equal(resolved.providerId, "anthropic");
@@ -1163,7 +1389,10 @@ test("resolveRuntimeModelClient routes managed Holaboss Claude models to the ded
   assert.equal(resolved.modelProxyProvider, "anthropic_native");
   assert.equal(resolved.modelClient.model_proxy_provider, "anthropic_native");
   assert.equal(resolved.modelClient.api_key, "hb-token");
-  assert.equal(resolved.modelClient.base_url, "https://proxy.example/api/v1/model-proxy/anthropic/v1");
+  assert.equal(
+    resolved.modelClient.base_url,
+    "https://proxy.example/api/v1/model-proxy/anthropic/v1",
+  );
 });
 
 test("resolveRuntimeModelClient accepts namespaced Holaboss OpenRouter model ids and routes them through the OpenAI-compatible proxy path", () => {
@@ -1171,21 +1400,21 @@ test("resolveRuntimeModelClient accepts namespaced Holaboss OpenRouter model ids
   process.env.HB_SANDBOX_ROOT = root;
   process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
     runtime: {
-      default_provider: "holaboss_model_proxy"
+      default_provider: "holaboss_model_proxy",
     },
     providers: {
       holaboss_model_proxy: {
         kind: "holaboss_proxy",
         base_url: "https://proxy.example/api/v1/model-proxy",
-        api_key: "hb-token"
-      }
+        api_key: "hb-token",
+      },
     },
     models: {
       "holaboss_model_proxy/xiaomi/mimo-v2-pro": {
         provider_id: "holaboss_model_proxy",
-        model_id: "xiaomi/mimo-v2-pro"
-      }
-    }
+        model_id: "xiaomi/mimo-v2-pro",
+      },
+    },
   });
 
   const resolved = resolveRuntimeModelClient({
@@ -1193,7 +1422,7 @@ test("resolveRuntimeModelClient accepts namespaced Holaboss OpenRouter model ids
     defaultProviderId: "holaboss_model_proxy",
     sessionId: "session-1",
     workspaceId: "workspace-1",
-    inputId: "input-1"
+    inputId: "input-1",
   });
 
   assert.equal(resolved.providerId, "openai");
@@ -1202,7 +1431,10 @@ test("resolveRuntimeModelClient accepts namespaced Holaboss OpenRouter model ids
   assert.equal(resolved.modelProxyProvider, "openai_compatible");
   assert.equal(resolved.modelClient.model_proxy_provider, "openai_compatible");
   assert.equal(resolved.modelClient.api_key, "hb-token");
-  assert.equal(resolved.modelClient.base_url, "https://proxy.example/api/v1/model-proxy/openai/v1");
+  assert.equal(
+    resolved.modelClient.base_url,
+    "https://proxy.example/api/v1/model-proxy/openai/v1",
+  );
 });
 
 test("projectAgentRuntimeConfig preserves namespaced Holaboss OpenRouter model ids from persisted runtime config", () => {
@@ -1211,26 +1443,26 @@ test("projectAgentRuntimeConfig preserves namespaced Holaboss OpenRouter model i
   process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
     runtime: {
       sandbox_id: "sandbox-from-runtime",
-      default_provider: "holaboss_model_proxy"
+      default_provider: "holaboss_model_proxy",
     },
     providers: {
       holaboss_model_proxy: {
         kind: "holaboss_proxy",
         base_url: "https://proxy.example/api/v1/model-proxy",
-        api_key: "hb-token"
-      }
+        api_key: "hb-token",
+      },
     },
     integrations: {
       holaboss: {
-        user_id: "user-1"
-      }
+        user_id: "user-1",
+      },
     },
     models: {
       "holaboss_model_proxy/xiaomi/mimo-v2-pro": {
         provider_id: "holaboss_model_proxy",
-        model_id: "xiaomi/mimo-v2-pro"
-      }
-    }
+        model_id: "xiaomi/mimo-v2-pro",
+      },
+    },
   });
 
   const result = projectAgentRuntimeConfig({
@@ -1258,15 +1490,18 @@ test("projectAgentRuntimeConfig preserves namespaced Holaboss OpenRouter model i
     agent: {
       id: "workspace.general",
       model: "gpt-5.2",
-      prompt: "You are concise."
-    }
+      prompt: "You are concise.",
+    },
   });
 
   assert.equal(result.provider_id, "openai");
   assert.equal(result.model_id, "xiaomi/mimo-v2-pro");
   assert.equal(result.model_client.model_proxy_provider, "openai_compatible");
   assert.equal(result.model_client.api_key, "hb-runtime-token");
-  assert.equal(result.model_client.base_url, "https://proxy.example/api/v1/model-proxy/openai/v1");
+  assert.equal(
+    result.model_client.base_url,
+    "https://proxy.example/api/v1/model-proxy/openai/v1",
+  );
   assert.deepEqual(result.model_client.default_headers, {
     "X-API-Key": "hb-runtime-token",
     "X-Holaboss-User-Id": "user-1",
@@ -1274,7 +1509,7 @@ test("projectAgentRuntimeConfig preserves namespaced Holaboss OpenRouter model i
     "X-Holaboss-Session-Id": "session-1",
     "X-Holaboss-Workspace-Id": "workspace-1",
     "X-Holaboss-Input-Id": "input-1",
-    "X-Holaboss-Run-Id": "run-1"
+    "X-Holaboss-Run-Id": "run-1",
   });
 });
 
@@ -1284,21 +1519,21 @@ test("projectAgentRuntimeConfig requires a Holaboss user id for managed proxy ru
   process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
     runtime: {
       sandbox_id: "sandbox-from-runtime",
-      default_provider: "holaboss_model_proxy"
+      default_provider: "holaboss_model_proxy",
     },
     providers: {
       holaboss_model_proxy: {
         kind: "holaboss_proxy",
         base_url: "https://proxy.example/api/v1/model-proxy",
-        api_key: "hb-token"
-      }
+        api_key: "hb-token",
+      },
     },
     models: {
       "holaboss_model_proxy/xiaomi/mimo-v2-pro": {
         provider_id: "holaboss_model_proxy",
-        model_id: "xiaomi/mimo-v2-pro"
-      }
-    }
+        model_id: "xiaomi/mimo-v2-pro",
+      },
+    },
   });
 
   assert.throws(
@@ -1328,19 +1563,25 @@ test("projectAgentRuntimeConfig requires a Holaboss user id for managed proxy ru
         agent: {
           id: "workspace.general",
           model: "gpt-5.2",
-          prompt: "You are concise."
-        }
+          prompt: "You are concise.",
+        },
       }),
-    /HOLABOSS_USER_ID|runtime-config\.json:user_id is required/
+    /HOLABOSS_USER_ID|runtime-config\.json:user_id is required/,
   );
 });
 
 test("resolveRuntimeModelReference infers bare Gemini models as Google-compatible without configured providers", () => {
   const root = makeTempDir("hb-agent-runtime-config-");
   process.env.HB_SANDBOX_ROOT = root;
-  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {});
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(
+    root,
+    {},
+  );
 
-  const resolved = resolveRuntimeModelReference("gemini-2.5-pro", "holaboss_model_proxy");
+  const resolved = resolveRuntimeModelReference(
+    "gemini-2.5-pro",
+    "holaboss_model_proxy",
+  );
 
   assert.equal(resolved.providerId, "google");
   assert.equal(resolved.configuredProviderId, null);
@@ -1354,21 +1595,21 @@ test("projectAgentRuntimeConfig keeps direct Ollama providers on the local OpenA
   process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
     runtime: {
       sandbox_id: "sandbox-from-runtime",
-      default_provider: "ollama_direct"
+      default_provider: "ollama_direct",
     },
     providers: {
       ollama_direct: {
         kind: "openai_compatible",
         base_url: "http://localhost:11434/v1",
-        api_key: "ollama"
-      }
+        api_key: "ollama",
+      },
     },
     models: {
       "ollama_direct/qwen2.5:0.5b": {
         provider_id: "ollama_direct",
-        model_id: "qwen2.5:0.5b"
-      }
-    }
+        model_id: "qwen2.5:0.5b",
+      },
+    },
   });
 
   const result = projectAgentRuntimeConfig({
@@ -1396,8 +1637,8 @@ test("projectAgentRuntimeConfig keeps direct Ollama providers on the local OpenA
     agent: {
       id: "workspace.general",
       model: "gpt-5.2",
-      prompt: "You are concise."
-    }
+      prompt: "You are concise.",
+    },
   });
 
   assert.equal(result.provider_id, "ollama_direct");
@@ -1414,13 +1655,13 @@ test("projectAgentRuntimeConfig keeps direct OpenRouter providers on the provide
   process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
     runtime: {
       sandbox_id: "sandbox-from-runtime",
-      default_provider: "openrouter"
+      default_provider: "openrouter",
     },
     providers: {
       holaboss_model_proxy: {
         kind: "holaboss_proxy",
         base_url: "https://proxy.example/api/v1/model-proxy",
-        api_key: "hb-token"
+        api_key: "hb-token",
       },
       openrouter: {
         kind: "openrouter",
@@ -1429,24 +1670,24 @@ test("projectAgentRuntimeConfig keeps direct OpenRouter providers on the provide
         headers: {
           "HTTP-Referer": "https://override.example",
           "X-Title": "Legacy Title",
-          "X-Test": "1"
-        }
-      }
+          "X-Test": "1",
+        },
+      },
     },
     integrations: {
       holaboss: {
         enabled: true,
         auth_token: "hb-token",
         sandbox_id: "sandbox-from-binding",
-        user_id: "user-1"
-      }
+        user_id: "user-1",
+      },
     },
     models: {
       "openrouter/openai/gpt-5.4": {
         provider_id: "openrouter",
-        model_id: "openai/gpt-5.4"
-      }
-    }
+        model_id: "openai/gpt-5.4",
+      },
+    },
   });
 
   const result = projectAgentRuntimeConfig({
@@ -1474,8 +1715,8 @@ test("projectAgentRuntimeConfig keeps direct OpenRouter providers on the provide
     agent: {
       id: "workspace.general",
       model: "gpt-5.2",
-      prompt: "You are concise."
-    }
+      prompt: "You are concise.",
+    },
   });
 
   assert.equal(result.provider_id, "openrouter");
@@ -1485,6 +1726,6 @@ test("projectAgentRuntimeConfig keeps direct OpenRouter providers on the provide
     "X-Test": "1",
     "HTTP-Referer": "https://holaboss.ai",
     "X-OpenRouter-Title": "holaOS",
-    "X-OpenRouter-Categories": "personal-agent,general-chat"
+    "X-OpenRouter-Categories": "personal-agent,general-chat",
   });
 });

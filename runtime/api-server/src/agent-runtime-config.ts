@@ -60,7 +60,11 @@ export interface AgentRuntimeConfigCliRequest {
   default_tools: string[];
   extra_tools: string[];
   tool_server_id_map?: Record<string, string> | null;
-  resolved_mcp_tool_refs: Array<{ tool_id: string; server_id: string; tool_name: string }>;
+  resolved_mcp_tool_refs: Array<{
+    tool_id: string;
+    server_id: string;
+    tool_name: string;
+  }>;
   resolved_mcp_server_ids?: string[] | null;
   resolved_output_schemas: Record<string, Record<string, unknown>>;
   agent: AgentRuntimeConfigGeneralMemberPayload;
@@ -146,7 +150,8 @@ const PROVIDER_KIND_ANTHROPIC_NATIVE = "anthropic_native";
 const PROVIDER_KIND_OPENROUTER = "openrouter";
 const HOLABOSS_PROXY_PROVIDER_ID = "holaboss_model_proxy";
 const DEFAULT_RUNTIME_STRUCTURED_RETRY_COUNT = 2;
-const DIRECT_OPENAI_FALLBACK_FLAG = "SANDBOX_MODEL_PROXY_ENABLE_DIRECT_OPENAI_FALLBACK";
+const DIRECT_OPENAI_FALLBACK_FLAG =
+  "SANDBOX_MODEL_PROXY_ENABLE_DIRECT_OPENAI_FALLBACK";
 const DIRECT_OPENAI_API_KEY_ENV = "OPENAI_API_KEY";
 const DIRECT_OPENAI_BASE_URL_ENV = "OPENAI_BASE_URL";
 const DIRECT_ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY";
@@ -162,20 +167,26 @@ const OPENROUTER_ATTRIBUTION_HEADER_NAMES = new Set([
   "http-referer",
   "x-title",
   "x-openrouter-title",
-  "x-openrouter-categories"
+  "x-openrouter-categories",
 ]);
-const KNOWN_DIRECT_PROVIDER_HOSTS = new Set(["api.openai.com", "api.anthropic.com"]);
+const KNOWN_DIRECT_PROVIDER_HOSTS = new Set([
+  "api.openai.com",
+  "api.anthropic.com",
+]);
 const GEMINI_OPENAI_COMPAT_HOST = "generativelanguage.googleapis.com";
 const GEMINI_OPENAI_COMPAT_PATH = "/v1beta/openai";
-const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string, string>> = {
+const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<
+  string,
+  Record<string, string>
+> = {
   anthropic_direct: {
-    "claude-sonnet-4-5": "claude-sonnet-4-6"
+    "claude-sonnet-4-5": "claude-sonnet-4-6",
   },
   gemini_direct: {
     "gemini-3.1-pro-preview": "gemini-2.5-pro",
     "gemini-2.5-flash-lite": "gemini-2.5-flash",
-    "gemini-3.1-flash-lite-preview": "gemini-2.5-flash"
-  }
+    "gemini-3.1-flash-lite-preview": "gemini-2.5-flash",
+  },
 };
 
 interface ConfiguredRuntimeProvider {
@@ -208,7 +219,9 @@ interface ResolvedRuntimeModelTarget {
   configuredProvider?: ConfiguredRuntimeProvider | null;
 }
 
-function firstNonEmptyString(...values: Array<string | null | undefined>): string {
+function firstNonEmptyString(
+  ...values: Array<string | null | undefined>
+): string {
   for (const value of values) {
     const normalized = (value ?? "").trim();
     if (normalized) {
@@ -218,7 +231,9 @@ function firstNonEmptyString(...values: Array<string | null | undefined>): strin
   return "";
 }
 
-function uniqueNonEmptyStringsInOrder(values: Array<string | null | undefined>): string[] {
+function uniqueNonEmptyStringsInOrder(
+  values: Array<string | null | undefined>,
+): string[] {
   const result: string[] = [];
   const seen = new Set<string>();
   for (const value of values) {
@@ -256,22 +271,30 @@ function asStringRecord(value: unknown): Record<string, string> {
   return Object.fromEntries(entries);
 }
 
-function withOpenRouterAttributionHeaders(kind: string, headers: Record<string, string>): Record<string, string> {
+function withOpenRouterAttributionHeaders(
+  kind: string,
+  headers: Record<string, string>,
+): Record<string, string> {
   if (kind.trim().toLowerCase() !== PROVIDER_KIND_OPENROUTER) {
     return headers;
   }
   const sanitizedEntries = Object.entries(headers).filter(
-    ([key]) => !OPENROUTER_ATTRIBUTION_HEADER_NAMES.has(key.trim().toLowerCase())
+    ([key]) =>
+      !OPENROUTER_ATTRIBUTION_HEADER_NAMES.has(key.trim().toLowerCase()),
   );
   return {
     ...Object.fromEntries(sanitizedEntries),
     "HTTP-Referer": OPENROUTER_ATTRIBUTION_REFERER,
     "X-OpenRouter-Title": OPENROUTER_ATTRIBUTION_TITLE,
-    "X-OpenRouter-Categories": OPENROUTER_ATTRIBUTION_CATEGORIES
+    "X-OpenRouter-Categories": OPENROUTER_ATTRIBUTION_CATEGORIES,
   };
 }
 
-function normalizeProviderKind(rawKind: string, providerId: string, baseUrl: string): string {
+function normalizeProviderKind(
+  rawKind: string,
+  providerId: string,
+  baseUrl: string,
+): string {
   const normalizedProviderId = providerId.trim().toLowerCase();
   const normalizedKind = rawKind.trim().toLowerCase();
   const lowerBaseUrl = baseUrl.toLowerCase();
@@ -287,7 +310,10 @@ function normalizeProviderKind(rawKind: string, providerId: string, baseUrl: str
   if (!normalizedKind && lowerBaseUrl.includes("model-proxy")) {
     return PROVIDER_KIND_HOLABOSS_PROXY;
   }
-  if (normalizedKind === PROVIDER_KIND_OPENROUTER || normalizedProviderId.includes("openrouter")) {
+  if (
+    normalizedKind === PROVIDER_KIND_OPENROUTER ||
+    normalizedProviderId.includes("openrouter")
+  ) {
     return PROVIDER_KIND_OPENROUTER;
   }
   if (
@@ -314,8 +340,14 @@ function inferModelProxyProviderFromToken(token: string): string {
   if (!trimmed) {
     return MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE;
   }
-  const scopedToken = trimmed.includes("/") ? trimmed.split("/").slice(1).join("/") : trimmed;
-  if (trimmed.startsWith("google/") || trimmed.startsWith("gemini-") || scopedToken.startsWith("gemini-")) {
+  const scopedToken = trimmed.includes("/")
+    ? trimmed.split("/").slice(1).join("/")
+    : trimmed;
+  if (
+    trimmed.startsWith("google/") ||
+    trimmed.startsWith("gemini-") ||
+    scopedToken.startsWith("gemini-")
+  ) {
     return MODEL_PROXY_PROVIDER_GOOGLE_COMPATIBLE;
   }
   if (
@@ -329,7 +361,10 @@ function inferModelProxyProviderFromToken(token: string): string {
   return MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE;
 }
 
-function modelProxyProviderForProviderKind(kind: string, modelToken: string): string {
+function modelProxyProviderForProviderKind(
+  kind: string,
+  modelToken: string,
+): string {
   const normalizedKind = kind.trim().toLowerCase();
   if (normalizedKind === PROVIDER_KIND_ANTHROPIC_NATIVE) {
     return MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE;
@@ -340,7 +375,9 @@ function modelProxyProviderForProviderKind(kind: string, modelToken: string): st
   return MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE;
 }
 
-function configuredProviderUsesGoogleCompatibleApi(provider: ConfiguredRuntimeProvider): boolean {
+function configuredProviderUsesGoogleCompatibleApi(
+  provider: ConfiguredRuntimeProvider,
+): boolean {
   const normalizedProviderId = provider.id.trim().toLowerCase();
   if (normalizedProviderId === "gemini_direct") {
     return true;
@@ -357,7 +394,10 @@ function configuredProviderUsesGoogleCompatibleApi(provider: ConfiguredRuntimePr
   }
 }
 
-function modelProxyProviderForConfiguredProvider(provider: ConfiguredRuntimeProvider, modelToken: string): string {
+function modelProxyProviderForConfiguredProvider(
+  provider: ConfiguredRuntimeProvider,
+  modelToken: string,
+): string {
   if (configuredProviderUsesGoogleCompatibleApi(provider)) {
     return MODEL_PROXY_PROVIDER_GOOGLE_COMPATIBLE;
   }
@@ -372,7 +412,10 @@ function providerRequiresUnscopedModelId(kind: string): boolean {
   );
 }
 
-function assertCanonicalConfiguredModelId(provider: ConfiguredRuntimeProvider, modelId: string): void {
+function assertCanonicalConfiguredModelId(
+  provider: ConfiguredRuntimeProvider,
+  modelId: string,
+): void {
   const normalizedModelId = modelId.trim();
   if (!normalizedModelId || !providerRequiresUnscopedModelId(provider.kind)) {
     return;
@@ -381,7 +424,7 @@ function assertCanonicalConfiguredModelId(provider: ConfiguredRuntimeProvider, m
     return;
   }
   throw new Error(
-    `Invalid runtime-config model for provider '${provider.id}': model '${normalizedModelId}' must be a bare model id without provider prefixes`
+    `Invalid runtime-config model for provider '${provider.id}': model '${normalizedModelId}' must be a bare model id without provider prefixes`,
   );
 }
 
@@ -400,7 +443,7 @@ function runtimeConfigDocument(): Record<string, unknown> {
     requireAuth: false,
     requireUser: false,
     requireBaseUrl: false,
-    includeDefaultBaseUrl: false
+    includeDefaultBaseUrl: false,
   }).configPath;
   if (!configPath) {
     return {};
@@ -417,18 +460,32 @@ function runtimeConfigDocument(): Record<string, unknown> {
   }
 }
 
-function normalizeConfiguredProviderModelId(providerId: string, modelId: string): string {
+function normalizeConfiguredProviderModelId(
+  providerId: string,
+  modelId: string,
+): string {
   const normalizedProviderId = providerId.trim().toLowerCase();
   const normalizedModelId = modelId.trim();
   if (!normalizedProviderId || !normalizedModelId) {
     return normalizedModelId;
   }
-  return LEGACY_DIRECT_PROVIDER_MODEL_ALIASES[normalizedProviderId]?.[normalizedModelId] ?? normalizedModelId;
+  return (
+    LEGACY_DIRECT_PROVIDER_MODEL_ALIASES[normalizedProviderId]?.[
+      normalizedModelId
+    ] ?? normalizedModelId
+  );
 }
 
-function normalizeConfiguredProviderModelToken(providerId: string, token: string, modelId: string): string {
+function normalizeConfiguredProviderModelToken(
+  providerId: string,
+  token: string,
+  modelId: string,
+): string {
   const normalizedToken = token.trim();
-  const normalizedModelId = normalizeConfiguredProviderModelId(providerId, modelId);
+  const normalizedModelId = normalizeConfiguredProviderModelId(
+    providerId,
+    modelId,
+  );
   const providerPrefix = `${providerId.trim()}/`;
   if (!providerPrefix.trim() || !normalizedToken.startsWith(providerPrefix)) {
     return normalizedToken || `${providerId.trim()}/${normalizedModelId}`;
@@ -436,12 +493,14 @@ function normalizeConfiguredProviderModelToken(providerId: string, token: string
   return `${providerId.trim()}/${normalizedModelId}`;
 }
 
-function configuredRuntimeModelCatalog(defaultProviderHint: string): RuntimeModelCatalog {
+function configuredRuntimeModelCatalog(
+  defaultProviderHint: string,
+): RuntimeModelCatalog {
   const config = resolveProductRuntimeConfig({
     requireAuth: false,
     requireUser: false,
     requireBaseUrl: false,
-    includeDefaultBaseUrl: false
+    includeDefaultBaseUrl: false,
   });
   const document = runtimeConfigDocument();
   const providersPayload = asRecord(document.providers);
@@ -460,7 +519,7 @@ function configuredRuntimeModelCatalog(defaultProviderHint: string): RuntimeMode
       options.baseURL as string | undefined,
       options.base_url as string | undefined,
       providerPayload.url as string | undefined,
-      options.url as string | undefined
+      options.url as string | undefined,
     );
     const apiKey = firstNonEmptyString(
       providerPayload.api_key as string | undefined,
@@ -468,24 +527,24 @@ function configuredRuntimeModelCatalog(defaultProviderHint: string): RuntimeMode
       options.apiKey as string | undefined,
       options.api_key as string | undefined,
       options.authToken as string | undefined,
-      options.auth_token as string | undefined
+      options.auth_token as string | undefined,
     );
     const routes = {
       ...asStringRecord(providerPayload.routes),
-      ...asStringRecord(options.routes)
+      ...asStringRecord(options.routes),
     };
     const kind = normalizeProviderKind(
       firstNonEmptyString(
         providerPayload.kind as string | undefined,
         providerPayload.type as string | undefined,
-        options.kind as string | undefined
+        options.kind as string | undefined,
       ),
       providerId,
-      baseUrl
+      baseUrl,
     );
     const headers = withOpenRouterAttributionHeaders(kind, {
       ...asStringRecord(providerPayload.headers),
-      ...asStringRecord(options.headers)
+      ...asStringRecord(options.headers),
     });
     providers.set(providerId, {
       id: providerId,
@@ -493,20 +552,20 @@ function configuredRuntimeModelCatalog(defaultProviderHint: string): RuntimeMode
       baseUrl,
       apiKey,
       headers,
-      routes
+      routes,
     });
   }
 
   const legacyAuthToken = firstNonEmptyString(
     config.authToken,
-    holabossIntegration.auth_token as string | undefined
+    holabossIntegration.auth_token as string | undefined,
   );
   const legacyBaseUrl = config.modelProxyBaseUrl.trim();
   const legacyProviderId = firstNonEmptyString(
     config.defaultProvider,
     (runtimePayload.default_provider as string | undefined) ?? "",
     defaultProviderHint,
-    HOLABOSS_PROXY_PROVIDER_ID
+    HOLABOSS_PROXY_PROVIDER_ID,
   );
   if (legacyBaseUrl || legacyAuthToken) {
     const current = providers.get(legacyProviderId);
@@ -517,13 +576,13 @@ function configuredRuntimeModelCatalog(defaultProviderHint: string): RuntimeMode
         baseUrl: legacyBaseUrl,
         apiKey: legacyAuthToken,
         headers: {},
-        routes: {}
+        routes: {},
       });
     } else {
       providers.set(legacyProviderId, {
         ...current,
         baseUrl: current.baseUrl || legacyBaseUrl,
-        apiKey: current.apiKey || legacyAuthToken
+        apiKey: current.apiKey || legacyAuthToken,
       });
     }
   }
@@ -533,11 +592,11 @@ function configuredRuntimeModelCatalog(defaultProviderHint: string): RuntimeMode
     const modelPayload = asRecord(rawModel);
     let providerId = firstNonEmptyString(
       modelPayload.provider_id as string | undefined,
-      modelPayload.provider as string | undefined
+      modelPayload.provider as string | undefined,
     );
     let modelId = firstNonEmptyString(
       modelPayload.model_id as string | undefined,
-      modelPayload.model as string | undefined
+      modelPayload.model as string | undefined,
     );
     if (!providerId && token.includes("/")) {
       const [prefix, ...rest] = token.split("/");
@@ -553,20 +612,33 @@ function configuredRuntimeModelCatalog(defaultProviderHint: string): RuntimeMode
     if (!provider) {
       continue;
     }
-    const normalizedModelId = normalizeConfiguredProviderModelId(provider.id, modelId);
+    const normalizedModelId = normalizeConfiguredProviderModelId(
+      provider.id,
+      modelId,
+    );
     assertCanonicalConfiguredModelId(provider, normalizedModelId);
     configuredModels.push({
-      token: normalizeConfiguredProviderModelToken(provider.id, token, normalizedModelId),
+      token: normalizeConfiguredProviderModelToken(
+        provider.id,
+        token,
+        normalizedModelId,
+      ),
       providerId,
       modelId: normalizedModelId,
-      modelProxyProvider: modelProxyProviderForConfiguredProvider(provider, normalizedModelId)
+      modelProxyProvider: modelProxyProviderForConfiguredProvider(
+        provider,
+        normalizedModelId,
+      ),
     });
   }
 
   return {
     providers,
     models: configuredModels,
-    defaultProvider: firstNonEmptyString(config.defaultProvider, defaultProviderHint)
+    defaultProvider: firstNonEmptyString(
+      config.defaultProvider,
+      defaultProviderHint,
+    ),
   };
 }
 
@@ -582,7 +654,7 @@ function legacyRuntimeProviderId(modelProxyProvider: string): string {
 
 function runtimeProviderIdForConfiguredProvider(
   provider: ConfiguredRuntimeProvider,
-  modelProxyProvider: string
+  modelProxyProvider: string,
 ): string {
   if (provider.kind === PROVIDER_KIND_HOLABOSS_PROXY) {
     return legacyRuntimeProviderId(modelProxyProvider);
@@ -590,7 +662,10 @@ function runtimeProviderIdForConfiguredProvider(
   return provider.id;
 }
 
-function firstConfiguredProviderByKind(catalog: RuntimeModelCatalog, kind: string): ConfiguredRuntimeProvider | null {
+function firstConfiguredProviderByKind(
+  catalog: RuntimeModelCatalog,
+  kind: string,
+): ConfiguredRuntimeProvider | null {
   for (const provider of catalog.providers.values()) {
     if (provider.kind === kind) {
       return provider;
@@ -599,11 +674,14 @@ function firstConfiguredProviderByKind(catalog: RuntimeModelCatalog, kind: strin
   return null;
 }
 
-function defaultConfiguredProvider(catalog: RuntimeModelCatalog, defaultProviderHint: string): ConfiguredRuntimeProvider | null {
+function defaultConfiguredProvider(
+  catalog: RuntimeModelCatalog,
+  defaultProviderHint: string,
+): ConfiguredRuntimeProvider | null {
   const candidateIds = [
     catalog.defaultProvider,
     defaultProviderHint,
-    HOLABOSS_PROXY_PROVIDER_ID
+    HOLABOSS_PROXY_PROVIDER_ID,
   ]
     .map((token) => token.trim())
     .filter(Boolean);
@@ -622,17 +700,25 @@ function defaultConfiguredProvider(catalog: RuntimeModelCatalog, defaultProvider
   return null;
 }
 
-function resolveRuntimeModelTarget(modelToken: string, defaultProviderHint: string): ResolvedRuntimeModelTarget {
+function resolveRuntimeModelTarget(
+  modelToken: string,
+  defaultProviderHint: string,
+): ResolvedRuntimeModelTarget {
   const token = modelToken.trim();
   if (!token) {
     throw new Error("model must be a non-empty string");
   }
 
   const catalog = configuredRuntimeModelCatalog(defaultProviderHint);
-  const defaultProvider = defaultConfiguredProvider(catalog, defaultProviderHint);
+  const defaultProvider = defaultConfiguredProvider(
+    catalog,
+    defaultProviderHint,
+  );
   const normalizedToken = (() => {
     if (!token.includes("/")) {
-      return defaultProvider ? normalizeConfiguredProviderModelId(defaultProvider.id, token) : token;
+      return defaultProvider
+        ? normalizeConfiguredProviderModelId(defaultProvider.id, token)
+        : token;
     }
     const [providerToken, ...rest] = token.split("/");
     const configuredProvider = catalog.providers.get(providerToken.trim());
@@ -642,21 +728,32 @@ function resolveRuntimeModelTarget(modelToken: string, defaultProviderHint: stri
     return `${providerToken.trim()}/${normalizeConfiguredProviderModelId(configuredProvider.id, rest.join("/"))}`;
   })();
   const configuredModel =
-    catalog.models.find((entry) => entry.token === token || entry.token === normalizedToken) ??
-    (catalog.models.filter((entry) => entry.modelId === token || entry.modelId === normalizedToken).length === 1
-      ? catalog.models.find((entry) => entry.modelId === token || entry.modelId === normalizedToken)
+    catalog.models.find(
+      (entry) => entry.token === token || entry.token === normalizedToken,
+    ) ??
+    (catalog.models.filter(
+      (entry) => entry.modelId === token || entry.modelId === normalizedToken,
+    ).length === 1
+      ? catalog.models.find(
+          (entry) =>
+            entry.modelId === token || entry.modelId === normalizedToken,
+        )
       : null);
   if (configuredModel) {
-    const configuredProvider = catalog.providers.get(configuredModel.providerId) ?? null;
+    const configuredProvider =
+      catalog.providers.get(configuredModel.providerId) ?? null;
     const resolvedProviderId = configuredProvider
-      ? runtimeProviderIdForConfiguredProvider(configuredProvider, configuredModel.modelProxyProvider)
+      ? runtimeProviderIdForConfiguredProvider(
+          configuredProvider,
+          configuredModel.modelProxyProvider,
+        )
       : configuredModel.providerId;
     return {
       providerId: resolvedProviderId,
       modelId: configuredModel.modelId,
       modelToken: configuredModel.token,
       modelProxyProvider: configuredModel.modelProxyProvider,
-      configuredProvider
+      configuredProvider,
     };
   }
 
@@ -665,7 +762,10 @@ function resolveRuntimeModelTarget(modelToken: string, defaultProviderHint: stri
     const normalizedProviderToken = providerToken.trim();
     const configuredProvider = catalog.providers.get(normalizedProviderToken);
     const modelId = configuredProvider
-      ? normalizeConfiguredProviderModelId(configuredProvider.id, rest.join("/").trim())
+      ? normalizeConfiguredProviderModelId(
+          configuredProvider.id,
+          rest.join("/").trim(),
+        )
       : rest.join("/").trim();
     if (!modelId) {
       throw new Error("model id segment after provider must be non-empty");
@@ -673,13 +773,19 @@ function resolveRuntimeModelTarget(modelToken: string, defaultProviderHint: stri
 
     if (configuredProvider) {
       assertCanonicalConfiguredModelId(configuredProvider, modelId);
-      const modelProxyProvider = modelProxyProviderForConfiguredProvider(configuredProvider, modelId);
+      const modelProxyProvider = modelProxyProviderForConfiguredProvider(
+        configuredProvider,
+        modelId,
+      );
       return {
-        providerId: runtimeProviderIdForConfiguredProvider(configuredProvider, modelProxyProvider),
+        providerId: runtimeProviderIdForConfiguredProvider(
+          configuredProvider,
+          modelProxyProvider,
+        ),
         modelId,
         modelToken: token,
         modelProxyProvider,
-        configuredProvider
+        configuredProvider,
       };
     }
 
@@ -689,14 +795,20 @@ function resolveRuntimeModelTarget(modelToken: string, defaultProviderHint: stri
       normalizedProviderToken.includes("holaboss")
     ) {
       const modelProxyProvider = inferModelProxyProviderFromToken(modelId);
-      const holabossProvider = firstConfiguredProviderByKind(catalog, PROVIDER_KIND_HOLABOSS_PROXY);
+      const holabossProvider = firstConfiguredProviderByKind(
+        catalog,
+        PROVIDER_KIND_HOLABOSS_PROXY,
+      );
       if (holabossProvider) {
         return {
-          providerId: runtimeProviderIdForConfiguredProvider(holabossProvider, modelProxyProvider),
+          providerId: runtimeProviderIdForConfiguredProvider(
+            holabossProvider,
+            modelProxyProvider,
+          ),
           modelId,
           modelToken: token,
           modelProxyProvider,
-          configuredProvider: holabossProvider
+          configuredProvider: holabossProvider,
         };
       }
       return {
@@ -704,11 +816,13 @@ function resolveRuntimeModelTarget(modelToken: string, defaultProviderHint: stri
         modelId,
         modelToken: token,
         modelProxyProvider,
-        configuredProvider: null
+        configuredProvider: null,
       };
     }
 
-    const normalizedModelProxyProvider = normalizeModelProxyProvider(normalizedProviderToken);
+    const normalizedModelProxyProvider = normalizeModelProxyProvider(
+      normalizedProviderToken,
+    );
     if (
       normalizedModelProxyProvider === MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE ||
       normalizedModelProxyProvider === MODEL_PROXY_PROVIDER_GOOGLE_COMPATIBLE ||
@@ -719,23 +833,38 @@ function resolveRuntimeModelTarget(modelToken: string, defaultProviderHint: stri
         modelId,
         modelToken: token,
         modelProxyProvider: normalizedModelProxyProvider,
-        configuredProvider: null
+        configuredProvider: null,
       };
     }
   }
 
-  const normalizedBareToken = (defaultProvider ? normalizeConfiguredProviderModelId(defaultProvider.id, token) : token).toLowerCase();
+  const normalizedBareToken = (
+    defaultProvider
+      ? normalizeConfiguredProviderModelId(defaultProvider.id, token)
+      : token
+  ).toLowerCase();
   if (normalizedBareToken.startsWith("claude")) {
-    const anthropicProvider = firstConfiguredProviderByKind(catalog, PROVIDER_KIND_ANTHROPIC_NATIVE) ?? defaultProvider;
+    const anthropicProvider =
+      firstConfiguredProviderByKind(catalog, PROVIDER_KIND_ANTHROPIC_NATIVE) ??
+      defaultProvider;
     if (anthropicProvider) {
-      const normalizedModelId = normalizeConfiguredProviderModelId(anthropicProvider.id, token);
-      const modelProxyProvider = modelProxyProviderForConfiguredProvider(anthropicProvider, normalizedModelId);
+      const normalizedModelId = normalizeConfiguredProviderModelId(
+        anthropicProvider.id,
+        token,
+      );
+      const modelProxyProvider = modelProxyProviderForConfiguredProvider(
+        anthropicProvider,
+        normalizedModelId,
+      );
       return {
-        providerId: runtimeProviderIdForConfiguredProvider(anthropicProvider, modelProxyProvider),
+        providerId: runtimeProviderIdForConfiguredProvider(
+          anthropicProvider,
+          modelProxyProvider,
+        ),
         modelId: normalizedModelId,
         modelToken: normalizedModelId,
         modelProxyProvider,
-        configuredProvider: anthropicProvider
+        configuredProvider: anthropicProvider,
       };
     }
     return {
@@ -743,23 +872,33 @@ function resolveRuntimeModelTarget(modelToken: string, defaultProviderHint: stri
       modelId: token,
       modelToken: token,
       modelProxyProvider: MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE,
-      configuredProvider: null
+      configuredProvider: null,
     };
   }
 
   if (defaultProvider) {
-    const normalizedModelId = normalizeConfiguredProviderModelId(defaultProvider.id, token);
-    const modelProxyProvider = modelProxyProviderForConfiguredProvider(defaultProvider, normalizedModelId);
+    const normalizedModelId = normalizeConfiguredProviderModelId(
+      defaultProvider.id,
+      token,
+    );
+    const modelProxyProvider = modelProxyProviderForConfiguredProvider(
+      defaultProvider,
+      normalizedModelId,
+    );
     return {
-      providerId: runtimeProviderIdForConfiguredProvider(defaultProvider, modelProxyProvider),
+      providerId: runtimeProviderIdForConfiguredProvider(
+        defaultProvider,
+        modelProxyProvider,
+      ),
       modelId: normalizedModelId,
       modelToken: normalizedModelId,
       modelProxyProvider,
-      configuredProvider: defaultProvider
+      configuredProvider: defaultProvider,
     };
   }
 
-  const normalizedDefaultProvider = normalizeModelProxyProvider(defaultProviderHint);
+  const normalizedDefaultProvider =
+    normalizeModelProxyProvider(defaultProviderHint);
   const defaultModelProxyProvider =
     normalizedDefaultProvider === MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE ||
     normalizedDefaultProvider === MODEL_PROXY_PROVIDER_GOOGLE_COMPATIBLE ||
@@ -771,12 +910,14 @@ function resolveRuntimeModelTarget(modelToken: string, defaultProviderHint: stri
     modelId: token,
     modelToken: token,
     modelProxyProvider: defaultModelProxyProvider,
-    configuredProvider: null
+    configuredProvider: null,
   };
 }
 
 function directOpenaiFallbackEnabled(): boolean {
-  const raw = (process.env[DIRECT_OPENAI_FALLBACK_FLAG] ?? "").trim().toLowerCase();
+  const raw = (process.env[DIRECT_OPENAI_FALLBACK_FLAG] ?? "")
+    .trim()
+    .toLowerCase();
   return ["1", "true", "yes", "on"].includes(raw);
 }
 
@@ -811,20 +952,29 @@ function shouldTreatAsDirectProviderBaseUrl(baseRoot: string): boolean {
     }
     if (
       normalizedHost === GEMINI_OPENAI_COMPAT_HOST &&
-      (normalizedPath === "" || normalizedPath === "/" || normalizedPath === "/v1beta" || normalizedPath === GEMINI_OPENAI_COMPAT_PATH)
+      (normalizedPath === "" ||
+        normalizedPath === "/" ||
+        normalizedPath === "/v1beta" ||
+        normalizedPath === GEMINI_OPENAI_COMPAT_PATH)
     ) {
       return true;
     }
     if (normalizedPath === "/v1") {
       return true;
     }
-    if ((normalizedPath === "" || normalizedPath === "/") && KNOWN_DIRECT_PROVIDER_HOSTS.has(parsed.hostname.toLowerCase())) {
+    if (
+      (normalizedPath === "" || normalizedPath === "/") &&
+      KNOWN_DIRECT_PROVIDER_HOSTS.has(parsed.hostname.toLowerCase())
+    ) {
       return true;
     }
     return false;
   } catch {
     const loweredRoot = normalizedRoot.toLowerCase();
-    return loweredRoot.endsWith("/v1") || loweredRoot.endsWith(GEMINI_OPENAI_COMPAT_PATH);
+    return (
+      loweredRoot.endsWith("/v1") ||
+      loweredRoot.endsWith(GEMINI_OPENAI_COMPAT_PATH)
+    );
   }
 }
 
@@ -833,7 +983,10 @@ function appendProviderRoute(baseRoot: string, provider: string): string {
   return `${normalizedRoot}/${providerPathSegment(provider)}/v1`;
 }
 
-function normalizeDirectProviderBaseUrl(baseRoot: string, provider: string = MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE): string {
+function normalizeDirectProviderBaseUrl(
+  baseRoot: string,
+  provider: string = MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE,
+): string {
   const normalizedRoot = baseRoot.replace(/\/+$/, "");
   const normalizedProvider = normalizeModelProxyProvider(provider);
   try {
@@ -849,7 +1002,9 @@ function normalizeDirectProviderBaseUrl(baseRoot: string, provider: string = MOD
     }
     if (
       normalizedHost === GEMINI_OPENAI_COMPAT_HOST &&
-      (normalizedPath === "" || normalizedPath === "/" || normalizedPath === "/v1beta")
+      (normalizedPath === "" ||
+        normalizedPath === "/" ||
+        normalizedPath === "/v1beta")
     ) {
       return `${parsed.origin}${GEMINI_OPENAI_COMPAT_PATH}`;
     }
@@ -877,7 +1032,11 @@ function isProviderScopedV1Path(baseRoot: string, provider: string): boolean {
   }
 }
 
-function baseUrlForProvider(baseRoot: string, provider: string, options?: { forceProxyRoute?: boolean }): string {
+function baseUrlForProvider(
+  baseRoot: string,
+  provider: string,
+  options?: { forceProxyRoute?: boolean },
+): string {
   const normalizedProvider = normalizeModelProxyProvider(provider);
   if (!baseRoot) {
     return "";
@@ -899,77 +1058,121 @@ function modelProxyBaseUrlForProvider(
   options?: {
     allowMissingBaseRoot?: boolean;
     forceProxyRoute?: boolean;
-  }
+  },
 ): string {
   const normalizedProvider = normalizeModelProxyProvider(provider);
   const baseRoot = resolveProductRuntimeConfig({
     requireAuth: false,
     requireUser: false,
     requireBaseUrl: !(options?.allowMissingBaseRoot ?? false),
-    includeDefaultBaseUrl: false
+    includeDefaultBaseUrl: false,
   }).modelProxyBaseUrl.replace(/\/+$/, "");
   return baseUrlForProvider(baseRoot, normalizedProvider, {
-    forceProxyRoute: options?.forceProxyRoute
+    forceProxyRoute: options?.forceProxyRoute,
   });
 }
 
-function configuredModelClient(provider: string): { apiKey: string; baseRoot: string } {
+function configuredModelClient(provider: string): {
+  apiKey: string;
+  baseRoot: string;
+} {
   const normalizedProvider = normalizeModelProxyProvider(provider);
   const runtimeConfig = resolveProductRuntimeConfig({
     requireAuth: false,
     requireUser: false,
     requireBaseUrl: false,
-    includeDefaultBaseUrl: false
+    includeDefaultBaseUrl: false,
   });
   const providerApiKeyEnv =
-    normalizedProvider === MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE ? DIRECT_ANTHROPIC_API_KEY_ENV : DIRECT_OPENAI_API_KEY_ENV;
+    normalizedProvider === MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE
+      ? DIRECT_ANTHROPIC_API_KEY_ENV
+      : DIRECT_OPENAI_API_KEY_ENV;
   const providerBaseUrlEnv =
-    normalizedProvider === MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE ? DIRECT_ANTHROPIC_BASE_URL_ENV : DIRECT_OPENAI_BASE_URL_ENV;
+    normalizedProvider === MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE
+      ? DIRECT_ANTHROPIC_BASE_URL_ENV
+      : DIRECT_OPENAI_BASE_URL_ENV;
   return {
-    apiKey: firstNonEmptyString(runtimeConfig.authToken, process.env[providerApiKeyEnv]),
-    baseRoot: firstNonEmptyString(runtimeConfig.modelProxyBaseUrl, process.env[providerBaseUrlEnv]).replace(/\/+$/, "")
+    apiKey: firstNonEmptyString(
+      runtimeConfig.authToken,
+      process.env[providerApiKeyEnv],
+    ),
+    baseRoot: firstNonEmptyString(
+      runtimeConfig.modelProxyBaseUrl,
+      process.env[providerBaseUrlEnv],
+    ).replace(/\/+$/, ""),
   };
 }
 
 function configuredProviderFallbackCredentials(
   provider: ConfiguredRuntimeProvider,
-  modelProxyProvider: string
+  modelProxyProvider: string,
 ): { apiKey: string; baseRoot: string } {
-  const normalizedModelProxyProvider = normalizeModelProxyProvider(modelProxyProvider);
+  const normalizedModelProxyProvider =
+    normalizeModelProxyProvider(modelProxyProvider);
   if (provider.kind === PROVIDER_KIND_OPENROUTER) {
     return {
-      apiKey: firstNonEmptyString(provider.apiKey, process.env[DIRECT_OPENROUTER_API_KEY_ENV]),
-      baseRoot: firstNonEmptyString(provider.baseUrl, process.env[DIRECT_OPENROUTER_BASE_URL_ENV], DEFAULT_DIRECT_OPENROUTER_BASE_URL)
-        .replace(/\/+$/, "")
+      apiKey: firstNonEmptyString(
+        provider.apiKey,
+        process.env[DIRECT_OPENROUTER_API_KEY_ENV],
+      ),
+      baseRoot: firstNonEmptyString(
+        provider.baseUrl,
+        process.env[DIRECT_OPENROUTER_BASE_URL_ENV],
+        DEFAULT_DIRECT_OPENROUTER_BASE_URL,
+      ).replace(/\/+$/, ""),
     };
   }
-  if (provider.kind === PROVIDER_KIND_ANTHROPIC_NATIVE || normalizedModelProxyProvider === MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE) {
+  if (
+    provider.kind === PROVIDER_KIND_ANTHROPIC_NATIVE ||
+    normalizedModelProxyProvider === MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE
+  ) {
     return {
-      apiKey: firstNonEmptyString(provider.apiKey, process.env[DIRECT_ANTHROPIC_API_KEY_ENV]),
-      baseRoot: firstNonEmptyString(provider.baseUrl, process.env[DIRECT_ANTHROPIC_BASE_URL_ENV]).replace(/\/+$/, "")
+      apiKey: firstNonEmptyString(
+        provider.apiKey,
+        process.env[DIRECT_ANTHROPIC_API_KEY_ENV],
+      ),
+      baseRoot: firstNonEmptyString(
+        provider.baseUrl,
+        process.env[DIRECT_ANTHROPIC_BASE_URL_ENV],
+      ).replace(/\/+$/, ""),
     };
   }
   return {
-    apiKey: firstNonEmptyString(provider.apiKey, process.env[DIRECT_OPENAI_API_KEY_ENV]),
-    baseRoot: firstNonEmptyString(provider.baseUrl, process.env[DIRECT_OPENAI_BASE_URL_ENV]).replace(/\/+$/, "")
+    apiKey: firstNonEmptyString(
+      provider.apiKey,
+      process.env[DIRECT_OPENAI_API_KEY_ENV],
+    ),
+    baseRoot: firstNonEmptyString(
+      provider.baseUrl,
+      process.env[DIRECT_OPENAI_BASE_URL_ENV],
+    ).replace(/\/+$/, ""),
   };
 }
 
-function configuredProviderProxyRoute(provider: ConfiguredRuntimeProvider, modelProxyProvider: string): string {
+function configuredProviderProxyRoute(
+  provider: ConfiguredRuntimeProvider,
+  modelProxyProvider: string,
+): string {
   const normalizedProvider = normalizeModelProxyProvider(modelProxyProvider);
   const directRoute = firstNonEmptyString(
     provider.routes[normalizedProvider],
-    provider.routes[modelProxyProviderRouteSegment(normalizedProvider)]
+    provider.routes[modelProxyProviderRouteSegment(normalizedProvider)],
   );
   if (!directRoute) {
     return appendProviderRoute(provider.baseUrl, normalizedProvider);
   }
   const normalizedBase = provider.baseUrl.replace(/\/+$/, "");
-  const normalizedRoute = directRoute.startsWith("/") ? directRoute : `/${directRoute}`;
+  const normalizedRoute = directRoute.startsWith("/")
+    ? directRoute
+    : `/${directRoute}`;
   return `${normalizedBase}${normalizedRoute}`;
 }
 
-function configuredDirectProviderBaseUrl(provider: ConfiguredRuntimeProvider, modelProxyProvider: string, baseRoot: string): string {
+function configuredDirectProviderBaseUrl(
+  provider: ConfiguredRuntimeProvider,
+  modelProxyProvider: string,
+  baseRoot: string,
+): string {
   const normalizedProvider = normalizeModelProxyProvider(modelProxyProvider);
   if (provider.kind === PROVIDER_KIND_OPENROUTER) {
     return normalizeDirectProviderBaseUrl(baseRoot, normalizedProvider);
@@ -979,7 +1182,7 @@ function configuredDirectProviderBaseUrl(provider: ConfiguredRuntimeProvider, mo
 
 function configuredProviderMissingFieldsMessage(
   provider: ConfiguredRuntimeProvider,
-  credentials: { apiKey: string; baseRoot: string }
+  credentials: { apiKey: string; baseRoot: string },
 ): string {
   const missing: string[] = [];
   if (!credentials.apiKey) {
@@ -1001,13 +1204,18 @@ type ModelClientResolutionContext = Pick<
   | "input_id"
 >;
 
-function resolveModelClientConfig(request: ModelClientResolutionContext, target: ResolvedRuntimeModelTarget): {
+function resolveModelClientConfig(
+  request: ModelClientResolutionContext,
+  target: ResolvedRuntimeModelTarget,
+): {
   model_proxy_provider: string;
   api_key: string;
   base_url?: string | null;
   default_headers?: Record<string, string> | null;
 } {
-  const normalizedProvider = normalizeModelProxyProvider(target.modelProxyProvider);
+  const normalizedProvider = normalizeModelProxyProvider(
+    target.modelProxyProvider,
+  );
   if (
     normalizedProvider !== MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE &&
     normalizedProvider !== MODEL_PROXY_PROVIDER_GOOGLE_COMPATIBLE &&
@@ -1015,22 +1223,37 @@ function resolveModelClientConfig(request: ModelClientResolutionContext, target:
   ) {
     throw new Error(
       `resolved model proxy provider=${target.modelProxyProvider} is unsupported; expected one of: ` +
-        `${MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE}, ${MODEL_PROXY_PROVIDER_GOOGLE_COMPATIBLE}, ${MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE}`
+        `${MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE}, ${MODEL_PROXY_PROVIDER_GOOGLE_COMPATIBLE}, ${MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE}`,
     );
   }
 
   const configuredProvider = target.configuredProvider;
-  if (configuredProvider && configuredProvider.kind !== PROVIDER_KIND_HOLABOSS_PROXY) {
-    const credentials = configuredProviderFallbackCredentials(configuredProvider, normalizedProvider);
+  if (
+    configuredProvider &&
+    configuredProvider.kind !== PROVIDER_KIND_HOLABOSS_PROXY
+  ) {
+    const credentials = configuredProviderFallbackCredentials(
+      configuredProvider,
+      normalizedProvider,
+    );
     if (!credentials.apiKey || !credentials.baseRoot) {
-      throw new Error(configuredProviderMissingFieldsMessage(configuredProvider, credentials));
+      throw new Error(
+        configuredProviderMissingFieldsMessage(configuredProvider, credentials),
+      );
     }
-    const configuredHeaders = Object.keys(configuredProvider.headers).length > 0 ? { ...configuredProvider.headers } : null;
+    const configuredHeaders =
+      Object.keys(configuredProvider.headers).length > 0
+        ? { ...configuredProvider.headers }
+        : null;
     return {
       model_proxy_provider: normalizedProvider,
       api_key: credentials.apiKey,
-      base_url: configuredDirectProviderBaseUrl(configuredProvider, normalizedProvider, credentials.baseRoot),
-      default_headers: configuredHeaders
+      base_url: configuredDirectProviderBaseUrl(
+        configuredProvider,
+        normalizedProvider,
+        credentials.baseRoot,
+      ),
+      default_headers: configuredHeaders,
     };
   }
 
@@ -1042,7 +1265,7 @@ function resolveModelClientConfig(request: ModelClientResolutionContext, target:
       requireAuth: false,
       requireUser: true,
       requireBaseUrl: false,
-      includeDefaultBaseUrl: false
+      includeDefaultBaseUrl: false,
     }).userId;
     const headers: Record<string, string> = {
       "X-API-Key": proxyApiKey,
@@ -1050,7 +1273,7 @@ function resolveModelClientConfig(request: ModelClientResolutionContext, target:
       "X-Holaboss-Sandbox-Id": sandboxId,
       "X-Holaboss-Session-Id": request.session_id,
       "X-Holaboss-Workspace-Id": request.workspace_id,
-      "X-Holaboss-Input-Id": request.input_id
+      "X-Holaboss-Input-Id": request.input_id,
     };
     if (runId) {
       headers["X-Holaboss-Run-Id"] = runId;
@@ -1058,32 +1281,40 @@ function resolveModelClientConfig(request: ModelClientResolutionContext, target:
     return {
       model_proxy_provider: normalizedProvider,
       api_key: proxyApiKey,
-      base_url: modelProxyBaseUrlForProvider(normalizedProvider, { forceProxyRoute: true }),
-      default_headers: headers
+      base_url: modelProxyBaseUrlForProvider(normalizedProvider, {
+        forceProxyRoute: true,
+      }),
+      default_headers: headers,
     };
   }
 
   if (configuredProvider) {
-    const credentials = configuredProviderFallbackCredentials(configuredProvider, normalizedProvider);
+    const credentials = configuredProviderFallbackCredentials(
+      configuredProvider,
+      normalizedProvider,
+    );
     if (credentials.apiKey && credentials.baseRoot) {
       const baseUrl =
         configuredProvider.kind === PROVIDER_KIND_HOLABOSS_PROXY
           ? configuredProviderProxyRoute(
               {
                 ...configuredProvider,
-                baseUrl: credentials.baseRoot
+                baseUrl: credentials.baseRoot,
               },
-              normalizedProvider
+              normalizedProvider,
             )
           : configuredProvider.kind === PROVIDER_KIND_OPENROUTER
             ? normalizeDirectProviderBaseUrl(credentials.baseRoot)
             : baseUrlForProvider(credentials.baseRoot, normalizedProvider);
-      const configuredHeaders = Object.keys(configuredProvider.headers).length > 0 ? { ...configuredProvider.headers } : null;
+      const configuredHeaders =
+        Object.keys(configuredProvider.headers).length > 0
+          ? { ...configuredProvider.headers }
+          : null;
       return {
         model_proxy_provider: normalizedProvider,
         api_key: credentials.apiKey,
         base_url: baseUrl,
-        default_headers: configuredHeaders
+        default_headers: configuredHeaders,
       };
     }
   }
@@ -1093,20 +1324,26 @@ function resolveModelClientConfig(request: ModelClientResolutionContext, target:
     return {
       model_proxy_provider: normalizedProvider,
       api_key: configured.apiKey,
-      base_url: baseUrlForProvider(configured.baseRoot, normalizedProvider)
+      base_url: baseUrlForProvider(configured.baseRoot, normalizedProvider),
     };
   }
 
-  if (normalizedProvider === MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE && directOpenaiFallbackEnabled()) {
+  if (
+    normalizedProvider === MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE &&
+    directOpenaiFallbackEnabled()
+  ) {
     const directApiKey = (process.env[DIRECT_OPENAI_API_KEY_ENV] ?? "").trim();
     if (directApiKey) {
       return {
         model_proxy_provider: MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE,
         api_key: directApiKey,
         base_url: baseUrlForProvider(
-          firstNonEmptyString(process.env[DIRECT_OPENAI_BASE_URL_ENV], DEFAULT_DIRECT_OPENAI_BASE_URL),
-          MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE
-        )
+          firstNonEmptyString(
+            process.env[DIRECT_OPENAI_BASE_URL_ENV],
+            DEFAULT_DIRECT_OPENAI_BASE_URL,
+          ),
+          MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE,
+        ),
       };
     }
   }
@@ -1122,14 +1359,22 @@ function resolveModelClientConfig(request: ModelClientResolutionContext, target:
   message +=
     "; or configure a provider in runtime-config.json providers{} " +
     "with base_url + api_key.";
-  if (normalizedProvider === MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE && directOpenaiFallbackEnabled()) {
+  if (
+    normalizedProvider === MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE &&
+    directOpenaiFallbackEnabled()
+  ) {
     message += "; OPENAI_API_KEY is also missing for direct fallback.";
   }
   throw new Error(message);
 }
 
-export function resolveRuntimeModelClient(request: RuntimeModelClientRequest): RuntimeModelClientResolution {
-  const target = resolveRuntimeModelTarget(request.selectedModel, request.defaultProviderId);
+export function resolveRuntimeModelClient(
+  request: RuntimeModelClientRequest,
+): RuntimeModelClientResolution {
+  const target = resolveRuntimeModelTarget(
+    request.selectedModel,
+    request.defaultProviderId,
+  );
   return {
     providerId: target.providerId,
     configuredProviderId: target.configuredProvider?.id ?? null,
@@ -1145,14 +1390,14 @@ export function resolveRuntimeModelClient(request: RuntimeModelClientRequest): R
         workspace_id: request.workspaceId,
         input_id: request.inputId,
       },
-      target
+      target,
     ),
   };
 }
 
 export function resolveRuntimeModelReference(
   selectedModel: string,
-  defaultProviderId: string
+  defaultProviderId: string,
 ): RuntimeModelReferenceResolution {
   const target = resolveRuntimeModelTarget(selectedModel, defaultProviderId);
   return {
@@ -1166,20 +1411,32 @@ export function resolveRuntimeModelReference(
 
 function normalizeModelProxyProvider(provider: string): string {
   const normalized = provider.trim().toLowerCase();
-  if (normalized === "openai" || normalized === MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE) {
+  if (
+    normalized === "openai" ||
+    normalized === MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE
+  ) {
     return MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE;
   }
-  if (normalized === "google" || normalized === MODEL_PROXY_PROVIDER_GOOGLE_COMPATIBLE) {
+  if (
+    normalized === "google" ||
+    normalized === MODEL_PROXY_PROVIDER_GOOGLE_COMPATIBLE
+  ) {
     return MODEL_PROXY_PROVIDER_GOOGLE_COMPATIBLE;
   }
-  if (normalized === "anthropic" || normalized === MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE) {
+  if (
+    normalized === "anthropic" ||
+    normalized === MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE
+  ) {
     return MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE;
   }
   return normalized;
 }
 
 function runtimeStructuredRetryCount(): number {
-  const raw = (process.env.HOLABOSS_STRUCTURED_OUTPUT_RETRY_COUNT ?? String(DEFAULT_RUNTIME_STRUCTURED_RETRY_COUNT)).trim();
+  const raw = (
+    process.env.HOLABOSS_STRUCTURED_OUTPUT_RETRY_COUNT ??
+    String(DEFAULT_RUNTIME_STRUCTURED_RETRY_COUNT)
+  ).trim();
   const value = Number.parseInt(raw, 10);
   if (!Number.isFinite(value)) {
     return DEFAULT_RUNTIME_STRUCTURED_RETRY_COUNT;
@@ -1187,9 +1444,10 @@ function runtimeStructuredRetryCount(): number {
   return Math.max(0, Math.min(value, 10));
 }
 
-function selectedRuntimeOutputSchema(
-  request: AgentRuntimeConfigCliRequest
-): { outputSchemaMemberId: string | null; outputFormat: Record<string, unknown> | null } {
+function selectedRuntimeOutputSchema(request: AgentRuntimeConfigCliRequest): {
+  outputSchemaMemberId: string | null;
+  outputFormat: Record<string, unknown> | null;
+} {
   const memberId = request.agent.id.trim();
   if (!memberId) {
     return { outputSchemaMemberId: null, outputFormat: null };
@@ -1201,21 +1459,24 @@ function selectedRuntimeOutputSchema(
       ? {
           type: "json_schema",
           schema,
-          retryCount: runtimeStructuredRetryCount()
+          retryCount: runtimeStructuredRetryCount(),
         }
-      : null
+      : null,
   };
 }
 
 export function projectAgentRuntimeConfig(
-  request: AgentRuntimeConfigCliRequest
+  request: AgentRuntimeConfigCliRequest,
 ): AgentRuntimeConfigCliResponse {
-  const selectedModel = request.selected_model?.trim() || defaultExecutionModel();
+  const selectedModel =
+    request.selected_model?.trim() || defaultExecutionModel();
   const capabilityManifest = buildAgentCapabilityManifest({
     harnessId: request.harness_id ?? null,
     sessionKind: request.session_kind ?? null,
     browserToolsAvailable:
-      typeof request.browser_tools_available === "boolean" ? request.browser_tools_available : null,
+      typeof request.browser_tools_available === "boolean"
+        ? request.browser_tools_available
+        : null,
     browserToolIds: request.browser_tool_ids ?? null,
     runtimeToolIds: request.runtime_tool_ids ?? null,
     workspaceCommandIds: request.workspace_command_ids ?? null,
@@ -1245,13 +1506,17 @@ export function projectAgentRuntimeConfig(
     capabilityManifest,
   });
 
-  const target = resolveRuntimeModelTarget(selectedModel, request.default_provider_id);
+  const target = resolveRuntimeModelTarget(
+    selectedModel,
+    request.default_provider_id,
+  );
   const workspaceToolIds = uniqueNonEmptyStringsInOrder(
-    request.resolved_mcp_tool_refs.map((toolRef) => toolRef.tool_id)
+    request.resolved_mcp_tool_refs.map((toolRef) => toolRef.tool_id),
   );
   const tools = buildEnabledToolMapFromManifest(capabilityManifest);
 
-  const { outputSchemaMemberId, outputFormat } = selectedRuntimeOutputSchema(request);
+  const { outputSchemaMemberId, outputFormat } =
+    selectedRuntimeOutputSchema(request);
   return {
     provider_id: target.providerId,
     model_id: target.modelId,
