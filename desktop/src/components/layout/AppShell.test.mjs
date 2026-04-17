@@ -104,7 +104,7 @@ test("app shell opens the centered add apps dialog from the applications explore
   );
   assert.match(
     source,
-    /const shouldSuspendBrowserNativeView =\s*[\s\S]*workspaceAppsDialogOpen[\s\S]*createWorkspacePanelOpen[\s\S]*publishOpen;/,
+    /const shouldSuspendBrowserNativeView =\s*[\s\S]*taskProposalDetailsDialogOpen[\s\S]*workspaceAppsDialogOpen[\s\S]*createWorkspacePanelOpen[\s\S]*publishOpen;/,
   );
   assert.doesNotMatch(
     source,
@@ -351,7 +351,7 @@ test("app shell no longer reserves a separate safe pane region for update toasts
   assert.doesNotMatch(source, /anchoredToastStackStyle/);
   assert.match(
     source,
-    /const shouldSuspendBrowserNativeView =\s*workspaceSwitcherOpen \|\|[\s\S]*settingsDialogOpen \|\|[\s\S]*createWorkspacePanelOpen \|\|[\s\S]*publishOpen;/,
+    /const shouldSuspendBrowserNativeView =\s*workspaceSwitcherOpen \|\|[\s\S]*settingsDialogOpen \|\|[\s\S]*taskProposalDetailsDialogOpen \|\|[\s\S]*createWorkspacePanelOpen \|\|[\s\S]*publishOpen;/,
   );
   assert.doesNotMatch(
     source,
@@ -620,15 +620,19 @@ test("app shell polls proactive status for the selected workspace", async () => 
   assert.match(source, /runtimeConfig\?\.authTokenPresent/);
   assert.match(source, /runtimeConfig\?\.modelProxyBaseUrl/);
   assert.match(source, /runtimeStatus\?\.status/);
+  assert.match(source, /const \[taskProposalDetailsDialogOpen, setTaskProposalDetailsDialogOpen\] =\s*useState\(false\);/);
   assert.match(source, /<OperationsInboxPane[\s\S]*proactiveStatus=\{proactiveStatus\}/);
   assert.match(source, /<OperationsInboxPane[\s\S]*isLoadingProactiveStatus=\{isLoadingProactiveStatus\}/);
+  assert.match(source, /<OperationsInboxPane[\s\S]*onProposalDetailsOpenChange=\{setTaskProposalDetailsDialogOpen\}/);
 });
 
 test("app shell reloads proactive preference after workspace hydration completes", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
+  assert.match(source, /const \[proactiveTaskProposalsEnabled, setProactiveTaskProposalsEnabled\] =\s*useState\(false\);/);
   assert.match(source, /if \(!hasHydratedWorkspaceList\) \{\s*return;\s*\}/);
   assert.match(source, /workspace\.getProactiveTaskProposalPreference\(\)/);
+  assert.match(source, /setProactiveTaskProposalsEnabled\(preference\.enabled === true\);/);
   assert.match(source, /\}, \[hasHydratedWorkspaceList, selectedWorkspaceId\]\);/);
 });
 

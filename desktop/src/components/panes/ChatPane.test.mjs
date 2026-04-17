@@ -474,6 +474,38 @@ test("chat pane gates image attachments using model input modalities metadata", 
   );
 });
 
+test("chat composer can paste clipboard file and image attachments into the pending attachment flow", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /function normalizeClipboardAttachmentFile\(file: File, index: number\): File/,
+  );
+  assert.match(
+    source,
+    /const baseName = file\.type\.startsWith\("image\/"\)\s*\?\s*`pasted-image-\$\{index \+ 1\}`\s*:\s*`pasted-file-\$\{index \+ 1\}`;/,
+  );
+  assert.match(
+    source,
+    /function clipboardFilesFromDataTransfer\(dataTransfer: DataTransfer \| null\): File\[\]/,
+  );
+  assert.match(
+    source,
+    /dataTransfer\.files\.length > 0\s*\?\s*Array\.from\(dataTransfer\.files\)/,
+  );
+  assert.match(
+    source,
+    /const handleTextareaPaste = \(event: ClipboardEvent<HTMLTextAreaElement>\) => \{/,
+  );
+  assert.match(
+    source,
+    /const pastedFiles = clipboardFilesFromDataTransfer\(event\.clipboardData\);/,
+  );
+  assert.match(source, /event\.preventDefault\(\);/);
+  assert.match(source, /onAddDroppedFiles\(pastedFiles\);/);
+  assert.match(source, /onPaste=\{handleTextareaPaste\}/);
+});
+
 test("chat pane filters managed catalog entries that are not chat-capable", async () => {
   const source = await readFile(sourcePath, "utf8");
 

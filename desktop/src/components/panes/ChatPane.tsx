@@ -1,5 +1,6 @@
 import {
   type ChangeEvent,
+  type ClipboardEvent,
   type CompositionEvent,
   type DragEvent,
   FormEvent,
@@ -1023,6 +1024,60 @@ function attachmentUploadPayload(
     };
     reader.readAsDataURL(file);
   });
+}
+
+function attachmentFileExtension(mimeType?: string | null): string {
+  const normalizedMimeType = (mimeType ?? "").trim().toLowerCase();
+  if (!normalizedMimeType.includes("/")) {
+    return "bin";
+  }
+  const subtype = normalizedMimeType.split("/")[1]?.split("+")[0]?.trim() || "";
+  if (!subtype) {
+    return "bin";
+  }
+  if (subtype === "jpeg") {
+    return "jpg";
+  }
+  if (subtype === "svg") {
+    return "svg";
+  }
+  return subtype;
+}
+
+function normalizeClipboardAttachmentFile(file: File, index: number): File {
+  if (file.name.trim()) {
+    return file;
+  }
+
+  const extension = attachmentFileExtension(file.type);
+  const baseName = file.type.startsWith("image/")
+    ? `pasted-image-${index + 1}`
+    : `pasted-file-${index + 1}`;
+  return new File([file], `${baseName}.${extension}`, {
+    type: file.type,
+    lastModified: file.lastModified || Date.now(),
+  });
+}
+
+function clipboardFilesFromDataTransfer(dataTransfer: DataTransfer | null): File[] {
+  if (!dataTransfer) {
+    return [];
+  }
+
+  const clipboardFiles =
+    dataTransfer.files.length > 0
+      ? Array.from(dataTransfer.files)
+      : Array.from(dataTransfer.items ?? []).flatMap((item) => {
+          if (item.kind !== "file") {
+            return [];
+          }
+          const file = item.getAsFile();
+          return file ? [file] : [];
+        });
+
+  return clipboardFiles.map((file, index) =>
+    normalizeClipboardAttachmentFile(file, index),
+  );
 }
 
 function pendingAttachmentId(seed: string) {
@@ -8655,6 +8710,16 @@ function Composer({
     onKeyDown(event);
   };
 
+  const handleTextareaPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const pastedFiles = clipboardFilesFromDataTransfer(event.clipboardData);
+    if (pastedFiles.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    onAddDroppedFiles(pastedFiles);
+  };
+
   const openSkillPickerFromComposerMenu = () => {
     setComposerActionsView("skills");
     setSkillPickerQuery("");
@@ -8843,6 +8908,7 @@ function Composer({
             value={input}
             onChange={handleTextareaChange}
             onKeyDown={handleTextareaKeyDown}
+            onPaste={handleTextareaPaste}
             onSelect={(event) => syncCaretFromTextarea(event.currentTarget)}
             onClick={(event) => syncCaretFromTextarea(event.currentTarget)}
             onCompositionStart={onCompositionStart}

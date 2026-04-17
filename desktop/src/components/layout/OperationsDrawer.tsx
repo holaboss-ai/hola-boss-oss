@@ -1,7 +1,9 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import {
   Check,
   Clock,
+  CircleHelp,
   FolderOpen,
   Inbox as InboxIcon,
   Loader2,
@@ -46,6 +48,7 @@ export interface OperationsInboxPaneProps {
   onProactiveHeartbeatCronChange: (cron: string) => void;
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
+  onProposalDetailsOpenChange?: (open: boolean) => void;
   hasWorkspace: boolean;
   selectedWorkspaceId: string | null;
   selectedWorkspaceName: string | null;
@@ -78,6 +81,7 @@ interface OperationsDrawerProps {
   onProactiveHeartbeatCronChange: (cron: string) => void;
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
+  onProposalDetailsOpenChange?: (open: boolean) => void;
   onOpenRunningSession: (sessionId: string) => void;
   onCreateSession: () => void;
   activeRunningSessionId: string | null;
@@ -128,6 +132,7 @@ export function OperationsDrawer({
   onProactiveHeartbeatCronChange,
   onAcceptProposal,
   onDismissProposal,
+  onProposalDetailsOpenChange,
   onOpenRunningSession,
   onCreateSession,
   activeRunningSessionId,
@@ -300,6 +305,7 @@ export function OperationsDrawer({
             onProactiveHeartbeatCronChange={onProactiveHeartbeatCronChange}
             onAcceptProposal={onAcceptProposal}
             onDismissProposal={onDismissProposal}
+            onProposalDetailsOpenChange={onProposalDetailsOpenChange}
           />
         ) : null}
 
@@ -340,6 +346,7 @@ export function OperationsInboxPane({
   onProactiveHeartbeatCronChange,
   onAcceptProposal,
   onDismissProposal,
+  onProposalDetailsOpenChange,
   hasWorkspace,
   selectedWorkspaceId,
   selectedWorkspaceName,
@@ -382,6 +389,7 @@ export function OperationsInboxPane({
       onProactiveHeartbeatCronChange={onProactiveHeartbeatCronChange}
       onAcceptProposal={onAcceptProposal}
       onDismissProposal={onDismissProposal}
+      onProposalDetailsOpenChange={onProposalDetailsOpenChange}
     />
   );
 }
@@ -647,6 +655,7 @@ function InboxPanel({
   onProactiveHeartbeatCronChange,
   onAcceptProposal,
   onDismissProposal,
+  onProposalDetailsOpenChange,
 }: {
   isSignedIn: boolean;
   onRequestSignIn: () => void;
@@ -677,165 +686,383 @@ function InboxPanel({
   onProactiveHeartbeatCronChange: (cron: string) => void;
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
+  onProposalDetailsOpenChange?: (open: boolean) => void;
 }) {
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      {proactiveTaskProposalsError ? (
-        <div className="shrink-0 border-b border-destructive/20 px-3 py-2 text-xs text-destructive">
-          {proactiveTaskProposalsError}
-        </div>
-      ) : null}
-      {proactiveHeartbeatError ? (
-        <div className="shrink-0 border-b border-destructive/20 px-3 py-2 text-xs text-destructive">
-          {proactiveHeartbeatError}
-        </div>
-      ) : null}
+  const showProactiveControls = false;
+  const [expandedProposalId, setExpandedProposalId] = useState<string | null>(
+    null,
+  );
+  const expandedProposal = expandedProposalId
+    ? proposals.find((proposal) => proposal.proposal_id === expandedProposalId) ??
+      null
+    : null;
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-        {proposalStatusMessage ? (
-          <div className="mb-3 rounded-[18px] border border-border/45 bg-muted/35 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
-            {proposalStatusMessage}
+  useEffect(() => {
+    if (expandedProposalId && !expandedProposal) {
+      setExpandedProposalId(null);
+    }
+  }, [expandedProposal, expandedProposalId]);
+
+  useEffect(() => {
+    onProposalDetailsOpenChange?.(Boolean(expandedProposal));
+  }, [expandedProposal, onProposalDetailsOpenChange]);
+
+  useEffect(
+    () => () => {
+      onProposalDetailsOpenChange?.(false);
+    },
+    [onProposalDetailsOpenChange],
+  );
+
+  return (
+    <>
+      <div className="flex h-full min-h-0 flex-col">
+        {proactiveTaskProposalsError ? (
+          <div className="shrink-0 border-b border-destructive/20 px-3 py-2 text-xs text-destructive">
+            {proactiveTaskProposalsError}
           </div>
         ) : null}
-        {isSignedIn ? (
-          <div className="mb-3">
-            <ProactiveLifecyclePanel
-              hasWorkspace={hasWorkspace}
-              workspaceName={selectedWorkspaceName}
-              workspaceId={selectedWorkspaceId}
-              proactiveStatus={proactiveStatus}
-              isLoading={isLoadingProactiveStatus}
-              proactiveWorkspaceEnabled={proactiveWorkspaceEnabled}
-              isLoadingProactiveWorkspaceEnabled={
-                isLoadingProactiveWorkspaceEnabled
-              }
-              isUpdatingProactiveWorkspaceEnabled={
-                isUpdatingProactiveWorkspaceEnabled
-              }
-              proactiveHeartbeatCron={proactiveHeartbeatCron}
-              isLoadingProactiveHeartbeatConfig={
-                isLoadingProactiveHeartbeatConfig
-              }
-              isUpdatingProactiveHeartbeatConfig={
-                isUpdatingProactiveHeartbeatConfig
-              }
-              isTriggeringProposal={isTriggeringProposal}
-              onTriggerProposal={onTriggerProposal}
-              onProactiveWorkspaceEnabledChange={
-                onProactiveWorkspaceEnabledChange
-              }
-              onProactiveHeartbeatCronChange={onProactiveHeartbeatCronChange}
-              compact
+        {proactiveHeartbeatError ? (
+          <div className="shrink-0 border-b border-destructive/20 px-3 py-2 text-xs text-destructive">
+            {proactiveHeartbeatError}
+          </div>
+        ) : null}
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+          {proposalStatusMessage ? (
+            <div className="mb-3 rounded-[18px] border border-border/45 bg-muted/35 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+              {proposalStatusMessage}
+            </div>
+          ) : null}
+          {showProactiveControls ? (
+            isSignedIn ? (
+              <div className="mb-3">
+                <ProactiveLifecyclePanel
+                  hasWorkspace={hasWorkspace}
+                  workspaceName={selectedWorkspaceName}
+                  workspaceId={selectedWorkspaceId}
+                  proactiveStatus={proactiveStatus}
+                  isLoading={isLoadingProactiveStatus}
+                  proactiveWorkspaceEnabled={proactiveWorkspaceEnabled}
+                  isLoadingProactiveWorkspaceEnabled={
+                    isLoadingProactiveWorkspaceEnabled
+                  }
+                  isUpdatingProactiveWorkspaceEnabled={
+                    isUpdatingProactiveWorkspaceEnabled
+                  }
+                  proactiveHeartbeatCron={proactiveHeartbeatCron}
+                  isLoadingProactiveHeartbeatConfig={
+                    isLoadingProactiveHeartbeatConfig
+                  }
+                  isUpdatingProactiveHeartbeatConfig={
+                    isUpdatingProactiveHeartbeatConfig
+                  }
+                  isTriggeringProposal={isTriggeringProposal}
+                  onTriggerProposal={onTriggerProposal}
+                  onProactiveWorkspaceEnabledChange={
+                    onProactiveWorkspaceEnabledChange
+                  }
+                  onProactiveHeartbeatCronChange={
+                    onProactiveHeartbeatCronChange
+                  }
+                  compact
+                />
+              </div>
+            ) : (
+              <SignedOutInboxNotice
+                onRequestSignIn={onRequestSignIn}
+                isAuthPending={isAuthPending}
+              />
+            )
+          ) : null}
+          {!hasWorkspace ? (
+            <EmptyNotice
+              icon={<FolderOpen size={24} strokeWidth={1.5} />}
+              message="Select a workspace to review proposals."
             />
-          </div>
-        ) : (
-          <SignedOutInboxNotice
-            onRequestSignIn={onRequestSignIn}
-            isAuthPending={isAuthPending}
-          />
-        )}
-        {!hasWorkspace ? (
-          <EmptyNotice
-            icon={<FolderOpen size={24} strokeWidth={1.5} />}
-            message="Select a workspace to review proposals."
-          />
-        ) : proposals.length === 0 ? (
-          <EmptyNotice
-            icon={
-              isLoadingProposals ? (
-                <Loader2 size={24} strokeWidth={1.5} className="animate-spin" />
-              ) : (
-                <InboxIcon size={24} strokeWidth={1.5} />
-              )
-            }
-            message={
-              isLoadingProposals ? "Loading proposals..." : "No proposals yet."
-            }
-          />
-        ) : (
-          <div className="grid gap-2">
-            {proposals.map((proposal) => {
-              const isActing =
-                proposalAction?.proposalId === proposal.proposal_id;
-              return (
-                <Card
-                  key={proposal.proposal_id}
-                  size="sm"
-                  className="gap-2 py-3 ring-border/40"
-                >
-                  <div className="flex items-start justify-between gap-2 px-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-                        {proposalSourceLabel(proposal.proposal_source)}
+          ) : proposals.length === 0 ? (
+            <EmptyNotice
+              icon={
+                isLoadingProposals ? (
+                  <Loader2
+                    size={24}
+                    strokeWidth={1.5}
+                    className="animate-spin"
+                  />
+                ) : (
+                  <InboxIcon size={24} strokeWidth={1.5} />
+                )
+              }
+              message={
+                isLoadingProposals
+                  ? "Loading proposals..."
+                  : "No proposals yet."
+              }
+            />
+          ) : (
+            <div className="grid gap-2">
+              {proposals.map((proposal) => {
+                const isActing =
+                  proposalAction?.proposalId === proposal.proposal_id;
+                return (
+                  <Card
+                    key={proposal.proposal_id}
+                    size="sm"
+                    className="gap-2 py-3 ring-border/40"
+                  >
+                    <div className="flex items-start justify-between gap-2 px-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                          {proposalSourceLabel(proposal.proposal_source)}
+                        </div>
+                        <div className="text-sm font-medium text-foreground">
+                          {proposal.task_name}
+                        </div>
                       </div>
-                      <div className="text-sm font-medium text-foreground">
-                        {proposal.task_name}
+                      <div className="flex shrink-0 items-center gap-0.5">
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                type="button"
+                                size="icon-xs"
+                                variant="ghost"
+                                aria-label={`View proposal details for ${proposal.task_name}`}
+                                onClick={() =>
+                                  setExpandedProposalId(proposal.proposal_id)
+                                }
+                                className="text-muted-foreground hover:text-foreground"
+                              />
+                            }
+                          >
+                            <CircleHelp size={12} />
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom">
+                            View details
+                          </TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                type="button"
+                                size="icon-xs"
+                                variant="ghost"
+                                aria-label="Accept proposal"
+                                onClick={() => onAcceptProposal(proposal)}
+                                disabled={isActing}
+                                className="text-muted-foreground hover:text-primary"
+                              />
+                            }
+                          >
+                            {isActing && proposalAction?.action === "accept" ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <Check size={12} />
+                            )}
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom">Accept</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                type="button"
+                                size="icon-xs"
+                                variant="ghost"
+                                aria-label="Dismiss proposal"
+                                onClick={() => onDismissProposal(proposal)}
+                                disabled={isActing}
+                                className="text-muted-foreground hover:text-foreground"
+                              />
+                            }
+                          >
+                            {isActing && proposalAction?.action === "dismiss" ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <X size={12} />
+                            )}
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom">Dismiss</TooltipContent>
+                        </Tooltip>
                       </div>
                     </div>
-                    <div className="flex shrink-0 items-center gap-0.5">
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              type="button"
-                              size="icon-xs"
-                              variant="ghost"
-                              aria-label="Accept proposal"
-                              onClick={() => onAcceptProposal(proposal)}
-                              disabled={isActing}
-                              className="text-muted-foreground hover:text-primary"
-                            />
-                          }
-                        >
-                          {isActing && proposalAction?.action === "accept" ? (
-                            <Loader2 size={12} className="animate-spin" />
-                          ) : (
-                            <Check size={12} />
-                          )}
-                        </TooltipTrigger>
-                        <TooltipContent side="bottom">Accept</TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              type="button"
-                              size="icon-xs"
-                              variant="ghost"
-                              aria-label="Dismiss proposal"
-                              onClick={() => onDismissProposal(proposal)}
-                              disabled={isActing}
-                              className="text-muted-foreground hover:text-foreground"
-                            />
-                          }
-                        >
-                          {isActing && proposalAction?.action === "dismiss" ? (
-                            <Loader2 size={12} className="animate-spin" />
-                          ) : (
-                            <X size={12} />
-                          )}
-                        </TooltipTrigger>
-                        <TooltipContent side="bottom">Dismiss</TooltipContent>
-                      </Tooltip>
+                    <div className="line-clamp-2 px-3 text-xs leading-relaxed text-muted-foreground">
+                      {proposal.task_prompt}
                     </div>
-                  </div>
-                  <div className="line-clamp-2 px-3 text-xs leading-relaxed text-muted-foreground">
-                    {proposal.task_prompt}
-                  </div>
-                  <div className="line-clamp-2 px-3 text-xs leading-relaxed text-muted-foreground/90">
-                    Why: {proposal.task_generation_rationale}
-                  </div>
-                  <div className="px-3 text-xs text-muted-foreground">
-                    {relativeTime(proposal.created_at)}
-                  </div>
-                </Card>
-              );
-            })}
+                    <div className="line-clamp-2 px-3 text-xs leading-relaxed text-muted-foreground/90">
+                      Why: {proposal.task_generation_rationale}
+                    </div>
+                    <div className="px-3 text-xs text-muted-foreground">
+                      {relativeTime(proposal.created_at)}
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+      <ProposalDetailsDialog
+        proposal={expandedProposal}
+        proposalAction={proposalAction}
+        onClose={() => setExpandedProposalId(null)}
+        onAcceptProposal={onAcceptProposal}
+        onDismissProposal={onDismissProposal}
+      />
+    </>
+  );
+}
+
+function ProposalDetailsDialog({
+  proposal,
+  proposalAction,
+  onClose,
+  onAcceptProposal,
+  onDismissProposal,
+}: {
+  proposal: TaskProposalRecordPayload | null;
+  proposalAction: {
+    proposalId: string;
+    action: "accept" | "dismiss";
+  } | null;
+  onClose: () => void;
+  onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
+  onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
+}) {
+  useEffect(() => {
+    if (!proposal) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose, proposal]);
+
+  useEffect(() => {
+    if (!proposal) {
+      return;
+    }
+
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [proposal]);
+
+  if (!proposal) {
+    return null;
+  }
+
+  const isActing = proposalAction?.proposalId === proposal.proposal_id;
+  const prompt = proposal.task_prompt.trim() || "No proposal description yet.";
+  const rationale =
+    proposal.task_generation_rationale.trim() ||
+    "No generation rationale was recorded.";
+
+  const modalContent = (
+    <div className="pointer-events-none fixed inset-0 z-50 grid place-items-center px-4 py-6">
+      <button
+        type="button"
+        aria-label="Close proposal details"
+        onClick={onClose}
+        className="pointer-events-auto absolute inset-0 bg-[rgba(7,10,14,0.52)] backdrop-blur-sm"
+      />
+
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Proposal details"
+        className="pointer-events-auto relative z-10 flex max-h-[min(760px,calc(100vh-36px))] w-[min(720px,calc(100vw-32px))] min-w-0 flex-col overflow-hidden rounded-[28px] border border-border/55 bg-background shadow-2xl"
+      >
+        <header className="flex items-start justify-between gap-4 border-b border-border/35 px-6 py-5">
+          <div className="min-w-0">
+            <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+              {proposalSourceLabel(proposal.proposal_source)}
+            </div>
+            <div className="mt-1 text-[20px] font-semibold tracking-[-0.02em] text-foreground">
+              {proposal.task_name}
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              Proposed {formatProposalTimestamp(proposal.created_at)}
+            </div>
           </div>
-        )}
+
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={onClose}
+            aria-label="Close proposal details"
+            className="shrink-0 rounded-full"
+          >
+            <X size={16} />
+          </Button>
+        </header>
+
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5 [scrollbar-gutter:stable]">
+          <section>
+            <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+              Description
+            </div>
+            <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground">
+              {prompt}
+            </div>
+          </section>
+
+          <section>
+            <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+              Why This Was Proposed
+            </div>
+            <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
+              {rationale}
+            </div>
+          </section>
+        </div>
+
+        <footer className="flex items-center justify-end gap-2 border-t border-border/35 px-6 py-4">
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Close
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onDismissProposal(proposal)}
+            disabled={isActing}
+          >
+            {isActing && proposalAction?.action === "dismiss" ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <X size={14} />
+            )}
+            Dismiss
+          </Button>
+          <Button
+            type="button"
+            onClick={() => onAcceptProposal(proposal)}
+            disabled={isActing}
+          >
+            {isActing && proposalAction?.action === "accept" ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <Check size={14} />
+            )}
+            Accept
+          </Button>
+        </footer>
       </div>
     </div>
   );
+
+  return createPortal(modalContent, document.body);
 }
 
 function SignedOutInboxNotice({
@@ -1015,4 +1242,12 @@ function relativeTime(value: string): string {
   }
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
+}
+
+function formatProposalTimestamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return `${date.toLocaleString()} (${relativeTime(value)})`;
 }

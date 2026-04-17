@@ -1140,8 +1140,10 @@ function AppShellContent() {
     useState(false);
   const [taskProposalStatusMessage, setTaskProposalStatusMessage] =
     useState("");
+  const [taskProposalDetailsDialogOpen, setTaskProposalDetailsDialogOpen] =
+    useState(false);
   const [proactiveTaskProposalsEnabled, setProactiveTaskProposalsEnabled] =
-    useState(true);
+    useState(false);
   const [
     isLoadingProactiveTaskProposalsEnabled,
     setIsLoadingProactiveTaskProposalsEnabled,
@@ -2219,7 +2221,7 @@ function AppShellContent() {
         const preference =
           await window.electronAPI.workspace.getProactiveTaskProposalPreference();
         if (!cancelled) {
-          setProactiveTaskProposalsEnabled(preference.enabled !== false);
+          setProactiveTaskProposalsEnabled(preference.enabled === true);
           setProactiveTaskProposalsError("");
         }
       } catch (error) {
@@ -2296,7 +2298,7 @@ function AppShellContent() {
               enabled: true,
             },
           );
-        const nextTaskProposalPreferenceEnabled = preference.enabled !== false;
+        const nextTaskProposalPreferenceEnabled = preference.enabled === true;
         setProactiveTaskProposalsEnabled(nextTaskProposalPreferenceEnabled);
 
         errorTarget = "heartbeat";
@@ -3331,6 +3333,7 @@ function AppShellContent() {
   const shouldSuspendBrowserNativeView =
     workspaceSwitcherOpen ||
     settingsDialogOpen ||
+    taskProposalDetailsDialogOpen ||
     workspaceAppsDialogOpen ||
     createWorkspacePanelOpen ||
     publishOpen;
@@ -3426,6 +3429,7 @@ function AppShellContent() {
               }
               onAcceptProposal={acceptTaskProposal}
               onDismissProposal={dismissTaskProposal}
+              onProposalDetailsOpenChange={setTaskProposalDetailsDialogOpen}
               hasWorkspace={hasSelectedWorkspace}
               selectedWorkspaceId={selectedWorkspaceId}
               selectedWorkspaceName={selectedWorkspace?.name ?? null}
