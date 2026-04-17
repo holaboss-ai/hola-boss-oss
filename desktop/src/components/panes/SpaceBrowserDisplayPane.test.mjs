@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sourcePath = path.join(__dirname, "SpaceBrowserDisplayPane.tsx");
+const glowPreviewHookPath = path.join(__dirname, "useBrowserGlowPreview.ts");
+const stylesPath = path.join(__dirname, "..", "..", "index.css");
 
 test("space browser display selects the full address when the navigation field is clicked", async () => {
   const source = await readFile(sourcePath, "utf8");
@@ -56,7 +58,7 @@ test("space browser display uses stored history entries for address suggestions"
 
   assert.match(
     source,
-    /useWorkspaceBrowser\(browserSpace, \{ includeHistory: true \}\)/,
+    /useWorkspaceBrowser\(browserSpace, \{\s*includeHistory: true,\s*includeSessions: true,\s*\}\)/,
   );
   assert.match(source, /const \[addressFocused, setAddressFocused\] = useState\(false\);/);
   assert.match(
@@ -79,4 +81,58 @@ test("space browser display uses stored history entries for address suggestions"
     source,
     /onBlur=\{\(\) =>\s*window\.setTimeout\(\(\) => setAddressFocused\(false\), 120\)\s*\}/,
   );
+});
+
+test("space browser display keeps takeover status without chrome session controls", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.doesNotMatch(source, /Choose agent session browser/);
+  assert.doesNotMatch(source, /No session browsers/);
+  assert.doesNotMatch(source, /selectAgentSessionBrowser/);
+  assert.doesNotMatch(source, /Shared agent browser/);
+  assert.match(source, /const glowPreviewEnabled = useBrowserGlowPreview\(\);/);
+  assert.match(
+    source,
+    /const showAgentActivityHighlight =\s*sessionBrowserStatus\?\.tone === "active" \|\| glowPreviewEnabled;/,
+  );
+  assert.doesNotMatch(source, /<span className="truncate">\{sessionBrowserStatus\.detail\}<\/span>/);
+  assert.match(source, /browser-active-glow border-border\/45/);
+  assert.match(source, /browser-active-glow-frame pointer-events-none absolute inset-0 rounded-\[inherit\]/);
+  assert.doesNotMatch(source, /border-primary\/70/);
+  assert.doesNotMatch(source, /browserBoundsRef/);
+  assert.match(source, /const rect = viewport\.getBoundingClientRect\(\);/);
+  assert.doesNotMatch(source, /absolute left-3 top-3 inline-flex items-center gap-1\.5 rounded-full/);
+});
+
+test("browser glow styles animate the active browser border", async () => {
+  const source = await readFile(stylesPath, "utf8");
+
+  assert.match(source, /@keyframes holaboss-browser-active-glow/);
+  assert.match(source, /@keyframes holaboss-browser-active-frame/);
+  assert.match(source, /0 0 44px color-mix\(in oklch, var\(--primary\) 56%, transparent\)/);
+  assert.match(source, /inset 0 0 72px color-mix\(in oklch, var\(--primary\) 24%, transparent\)/);
+  assert.match(source, /inset 0 0 38px color-mix\(in oklch, var\(--primary\) 30%, transparent\)/);
+  assert.match(source, /\.browser-active-glow \{[\s\S]*animation: holaboss-browser-active-glow 2\.8s ease-in-out infinite;/);
+  assert.match(source, /\.browser-active-glow-frame \{[\s\S]*animation: holaboss-browser-active-frame 2\.8s ease-in-out infinite;/);
+  assert.match(source, /@media \(prefers-reduced-motion: reduce\)/);
+});
+
+test("browser glow preview hook exposes a console toggle", async () => {
+  const source = await readFile(glowPreviewHookPath, "utf8");
+
+  assert.match(source, /const BROWSER_GLOW_PREVIEW_EVENT = "holaboss:browser-glow-preview-change";/);
+  assert.match(source, /__holabossDevBrowserGlowPreview\?: \{/);
+  assert.match(source, /window\.__holabossDevBrowserGlowPreview = \{/);
+  assert.match(source, /on: \(\) => setBrowserGlowPreviewEnabled\(true\)/);
+  assert.match(source, /off: \(\) => setBrowserGlowPreviewEnabled\(false\)/);
+  assert.match(source, /toggle: \(\) =>\s*setBrowserGlowPreviewEnabled\(/);
+  assert.match(source, /window\.dispatchEvent\(\s*new CustomEvent\(BROWSER_GLOW_PREVIEW_EVENT/);
+});
+
+test("space browser display only clears native browser bounds on suspend or unmount, not every layout sync", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /if \(suspendNativeView\) \{\s*void window\.electronAPI\.browser\.setBounds\(\{\s*x: 0,\s*y: 0,\s*width: 0,\s*height: 0,\s*\}\);\s*return;\s*\}/s);
+  assert.match(source, /useLayoutEffect\(\(\) => \{[\s\S]*window\.setTimeout\(queueSync, 400\);[\s\S]*return \(\) => \{\s*observer\.disconnect\(\);[\s\S]*window\.cancelAnimationFrame\(rafId\);\s*\};\s*\}, \[layoutSyncKey, suspendNativeView\]\);/s);
+  assert.match(source, /useEffect\(\(\) => \{\s*return \(\) => \{\s*void window\.electronAPI\.browser\.setBounds\(\{\s*x: 0,\s*y: 0,\s*width: 0,\s*height: 0,\s*\}\);\s*\};\s*\}, \[\]\);/s);
 });

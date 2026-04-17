@@ -217,6 +217,60 @@ test("chat trace summary keeps a live run in progress when no active step label 
   );
 });
 
+test("chat pane persists terminal run failures in-thread when no assistant text was emitted", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /type ChatAssistantSegment =/);
+  assert.match(source, /tone\?: "default" \| "error";/);
+  assert.match(
+    source,
+    /const liveAssistantSegmentsRef = useRef<ChatAssistantSegment\[]>\(\[]\);/,
+  );
+  assert.match(
+    source,
+    /function commitLiveAssistantMessage\(options\?: \{\s*fallbackText\?: string;\s*tone\?: ChatMessage\["tone"\];\s*\}\)/,
+  );
+  assert.match(
+    source,
+    /if \(options\?\.fallbackText && !hasOutputSegment\) \{\s*nextSegments = appendAssistantOutputSegment\(\s*nextSegments,\s*options\.fallbackText,\s*options\.tone \?\? "default",\s*\);\s*\}/,
+  );
+  assert.match(
+    source,
+    /const shouldPersistFailureText =\s*!liveAssistantTextRef\.current &&\s*!assistantSegmentsIncludeOutput\(liveAssistantSegmentsRef\.current\);\s*const committedFailureMessage = commitLiveAssistantMessage\(\{\s*fallbackText: shouldPersistFailureText \? detail : undefined,\s*tone: shouldPersistFailureText \? "error" : "default",\s*\}\);/,
+  );
+  assert.match(
+    source,
+    /segment\.tone === "error" \?\s*\(\s*<div[\s\S]*theme-chat-system-bubble mt-2 rounded-\[14px\] border px-3 py-2\.5 text-\[12px\] text-foreground/,
+  );
+});
+
+test("chat history reconstructs failed turns even when no assistant history message exists", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /function inputIdFromHistoryMessage\(message: SessionHistoryMessagePayload\)/);
+  assert.match(source, /function turnInputIdsFromHistoryMessages\(/);
+  assert.match(
+    source,
+    /const assistantInputIds = turnInputIdsFromHistoryMessages\(\s*historyMessages,\s*\);/,
+  );
+  assert.match(
+    source,
+    /const assistantHistoryInputIds = new Set\(/,
+  );
+  assert.match(
+    source,
+    /if \(restoredAssistantState\.segments\) \{\s*nextMessage\.segments = restoredAssistantState\.segments;\s*nextMessage\.text = "";\s*nextMessage\.executionItems = undefined;\s*\} else if \(restoredAssistantState\.executionItems\) \{\s*nextMessage\.executionItems = restoredAssistantState\.executionItems;\s*\}/,
+  );
+  assert.match(
+    source,
+    /nextMessage\.role === "user" &&[\s\S]*!assistantHistoryInputIds\.has\(userInputId\)/,
+  );
+  assert.match(
+    source,
+    /const syntheticAssistantMessage: ChatMessage = \{\s*id: `assistant-\$\{userInputId\}`,[\s\S]*segments: restoredAssistantState\.segments,[\s\S]*executionItems:\s*restoredAssistantState\.segments\s*\?\s*undefined\s*:\s*restoredAssistantState\.executionItems,/,
+  );
+});
+
 test("chat trace collapsed summary surfaces the current active step", async () => {
   const source = await readFile(sourcePath, "utf8");
 
@@ -282,29 +336,35 @@ test("chat pane keeps a persistent working line visible once the live run has st
 
   assert.match(
     source,
-    /const showWorkingStatusLine =\s*live &&\s*\(executionItems\.length > 0 \|\| Boolean\(text\)\);/,
+    /const showWorkingStatusLine =\s*live &&\s*renderedSegments\.length > 0;/,
   );
   assert.match(
     source,
-    /showStatusPlaceholder =[\s\S]*live &&[\s\S]*Boolean\(normalizedStatus\) &&[\s\S]*!text &&[\s\S]*executionItems\.length === 0;/,
+    /showStatusPlaceholder =[\s\S]*live &&[\s\S]*Boolean\(normalizedStatus\) &&[\s\S]*renderedSegments\.length === 0;/,
   );
   assert.match(
     source,
-    /{showWorkingStatusLine \? \(\s*<LiveStatusLine[\s\S]*label="Working"[\s\S]*className=\{executionItems\.length > 0 \? "mt-1" : ""\}/,
+    /{showWorkingStatusLine \? \(\s*<LiveStatusLine[\s\S]*label="Working"[\s\S]*renderedSegments\.some\(\(segment\) => segment\.kind === "execution"\)/,
   );
 });
 
 test("chat pane renders an execution timeline that interleaves thinking segments with trace entries", async () => {
   const source = await readFile(sourcePath, "utf8");
 
+  assert.match(source, /type ChatAssistantSegment =/);
   assert.match(source, /executionItems\?: ChatExecutionTimelineItem\[];/);
+  assert.match(source, /segments\?: ChatAssistantSegment\[];/);
+  assert.match(source, /function appendAssistantOutputSegment\(/);
+  assert.match(source, /function appendAssistantExecutionSegment\(/);
+  assert.match(source, /function liveAssistantSegmentsForRender\(/);
   assert.match(source, /function appendExecutionTimelineThinkingDelta\(/);
   assert.match(source, /function upsertExecutionTimelineTraceItem\(/);
   assert.match(source, /function traceStepsFromExecutionItems\(items: ChatExecutionTimelineItem\[]\)/);
-  assert.match(source, /assistantHistoryStateFromOutputEvents[\s\S]*executionItems = appendExecutionTimelineThinkingDelta\(/);
-  assert.match(source, /assistantHistoryStateFromOutputEvents[\s\S]*executionItems = upsertExecutionTimelineTraceItem\(/);
-  assert.match(source, /appendLiveThinkingDelta\(delta: string, order: number\)/);
-  assert.match(source, /appendExecutionTimelineThinkingDelta\(prev, delta, order\)/);
+  assert.match(source, /assistantHistoryStateFromOutputEvents[\s\S]*flushOutputSegment\(\);[\s\S]*executionItems = appendExecutionTimelineThinkingDelta\(/);
+  assert.match(source, /assistantHistoryStateFromOutputEvents[\s\S]*flushOutputSegment\(\);[\s\S]*executionItems = upsertExecutionTimelineTraceItem\(/);
+  assert.match(source, /assistantHistoryStateFromOutputEvents[\s\S]*if \(event\.event_type === "output_delta"\) \{\s*flushExecutionSegment\(\);/);
+  assert.match(source, /appendLiveThinkingDelta\(delta: string, order: number\) \{\s*flushLiveAssistantOutputSegment\(\);/);
+  assert.match(source, /appendLiveAssistantDelta\(delta: string\) \{\s*flushLiveExecutionSegment\(\);/);
   assert.match(
     source,
     /function ExecutionTimelineThinkingEntry[\s\S]*className="py-1"[\s\S]*className="-ml-2\.5 w-\[calc\(100%\+0\.625rem\)\] rounded-\[16px\] border border-border\/25 bg-muted\/30 px-3\.5 py-3"/,
@@ -313,9 +373,10 @@ test("chat pane renders an execution timeline that interleaves thinking segments
     source,
     /function ExecutionTimelineThinkingEntry[\s\S]*className="chat-markdown chat-thinking-markdown max-w-full text-foreground\/82"/,
   );
-  assert.match(source, /<AssistantTurn[\s\S]*executionItems=\{message\.executionItems \?\? \[\]\}/);
-  assert.match(source, /<AssistantTurn[\s\S]*executionItems=\{liveExecutionItems\}/);
-  assert.match(source, /<TraceStepGroup[\s\S]*items=\{executionItems\}/);
+  assert.match(source, /<AssistantTurn[\s\S]*segments=\{message\.segments \?\? \[\]\}/);
+  assert.match(source, /<AssistantTurn[\s\S]*segments=\{renderedLiveAssistantSegments\}/);
+  assert.match(source, /\{renderedSegments\.map\(\(segment, index\) =>/);
+  assert.match(source, /segment\.kind === "execution" \?\s*\(\s*<TraceStepGroup/);
   assert.match(source, /<ExecutionTimelineThinkingEntry/);
   assert.match(source, /<TraceTimelineStepEntry/);
   assert.doesNotMatch(source, /<ThinkingPanel/);
@@ -562,10 +623,8 @@ test("chat pane syncs the shared file display from live file-oriented tool calls
     source,
     /syncableWorkspacePathFromRecord\(payload\.result,\s*\[\s*"file_path",\s*"path",\s*\]\)/,
   );
-  assert.match(
-    source,
-    /toolName === "read" \|\| toolName === "edit"/,
-  );
+  assert.doesNotMatch(source, /toolName === "read" \|\| toolName === "edit"/);
+  assert.match(source, /if \(toolName === "edit"\) \{/);
   assert.match(
     source,
     /if \(eventType === "tool_call"\) \{\s*const fileDisplayTarget =\s*fileDisplaySyncTargetFromToolPayload\(eventPayload\);[\s\S]*onSyncFileDisplayFromAgentOperation\?\.\(fileDisplayTarget\);/,
@@ -827,8 +886,29 @@ test("live trace auto-expands during the run and collapses when output starts", 
   );
   assert.match(
     source,
-    /<TraceStepGroup[\s\S]*items=\{executionItems\}[\s\S]*live=\{live\}[\s\S]*liveOutputStarted=\{live && Boolean\(text\)\}/,
+    /<TraceStepGroup[\s\S]*items=\{segment\.items\}[\s\S]*live=\{live\}[\s\S]*liveOutputStarted=\{[\s\S]*renderedSegments[\s\S]*slice\(index \+ 1\)[\s\S]*some\(\(nextSegment\) => nextSegment\.kind === "output"\)/,
   );
+});
+
+test("chat pane preserves interleaved assistant output and execution segments from ordered events", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /let segments: ChatAssistantSegment\[] = \[];/);
+  assert.match(source, /const flushExecutionSegment = \(\) => \{/);
+  assert.match(source, /const flushOutputSegment = \(\) => \{/);
+  assert.match(
+    source,
+    /if \(event\.event_type === "thinking_delta"\) \{\s*flushOutputSegment\(\);/,
+  );
+  assert.match(
+    source,
+    /if \(event\.event_type === "output_delta"\) \{\s*flushExecutionSegment\(\);/,
+  );
+  assert.match(
+    source,
+    /flushOutputSegment\(\);\s*flushExecutionSegment\(\);\s*return \{\s*segments: segments\.length > 0 \? segments : undefined,/,
+  );
+  assert.match(source, /const renderedLiveAssistantSegments = liveAssistantSegmentsForRender\(/);
 });
 
 test("chat pane can jump to a requested sub-session run", async () => {
@@ -1010,5 +1090,57 @@ test("chat pane custom scrollbar thumb can be dragged", async () => {
   assert.match(
     source,
     /onLostPointerCapture=\{\(\) => \{\s*clearChatScrollbarDragState\(\);\s*\}\}/,
+  );
+});
+
+test("chat pane offers an explicit jump-to-browser CTA instead of auto-switching the visible agent browser session", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /interface ChatPaneBrowserJumpRequest \{/);
+  assert.match(source, /browserJumpRequest\?: ChatPaneBrowserJumpRequest \| null;/);
+  assert.match(
+    source,
+    /onBrowserJumpRequestConsumed\?:\s*\(\s*sessionId: string,\s*requestKey: number,\s*\) => void;/,
+  );
+  assert.match(source, /onJumpToSessionBrowser\?: \(sessionId: string, requestKey: number\) => void;/);
+  assert.match(
+    source,
+    /const \[visibleBrowserState,\s*setVisibleBrowserState\] =\s*useState<\s*BrowserTabListPayload\s*>\(\(\) => initialBrowserState\("user"\)\);/,
+  );
+  assert.match(source, /const applyVisibleBrowserState = \(state: BrowserTabListPayload\) => \{/);
+  assert.match(source, /window\.electronAPI\.browser\.getState\(\)\.then\(applyVisibleBrowserState\);/);
+  assert.match(source, /window\.electronAPI\.browser\.onStateChange\(applyVisibleBrowserState\);/);
+  assert.match(
+    source,
+    /const visibleAgentBrowserSessionId =\s*visibleBrowserState\.space === "agent"\s*\?\s*visibleBrowserState\.controlSessionId \|\| visibleBrowserState\.sessionId \|\| ""\s*:\s*"";/,
+  );
+  assert.match(
+    source,
+    /const showSessionBrowserJumpCta = Boolean\(\s*browserJumpRequest &&\s*activeSessionId &&\s*browserJumpRequest\.sessionId === activeSessionId &&\s*\(visibleBrowserState\.space !== "agent" \|\|\s*visibleAgentBrowserSessionId !== activeSessionId\),\s*\);/,
+  );
+  assert.match(
+    source,
+    /onBrowserJumpRequestConsumed\?\.\(\s*activeSessionId,\s*browserJumpRequest\.requestKey,\s*\);/,
+  );
+  assert.match(
+    source,
+    /onJumpToSessionBrowser\?\.\(\s*browserJumpRequest\.sessionId,\s*browserJumpRequest\.requestKey,\s*\);/,
+  );
+  assert.match(source, /statusAccessory = null,/);
+  assert.match(source, /statusAccessory\?: ReactNode;/);
+  assert.match(
+    source,
+    /const renderStatusLine = \(nextLabel: string, className = ""\) => \{/,
+  );
+  assert.match(
+    source,
+    /if \(!statusAccessory\) \{\s*return <LiveStatusLine label=\{nextLabel\} className=\{className\} \/>\s*;\s*\}/,
+  );
+  assert.doesNotMatch(source, /showLiveAssistantTurn \|\|\s*showSessionBrowserJumpCta/);
+  assert.doesNotMatch(source, /This session started using its browser\./);
+  assert.match(source, /Jump to browser/);
+  assert.match(
+    source,
+    /<AssistantTurn[\s\S]*statusAccessory=\{\s*showSessionBrowserJumpCta\s*\?\s*\(/,
   );
 });

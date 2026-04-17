@@ -3682,6 +3682,7 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     ? await resolvePiDesktopBrowserToolDefinitions({
         runtimeApiBaseUrl: request.runtime_api_base_url,
         workspaceId: request.workspace_id,
+        sessionId: request.session_id,
       })
     : [];
   const resourceLoader = new DefaultResourceLoader({

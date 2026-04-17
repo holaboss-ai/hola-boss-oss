@@ -25,11 +25,11 @@ test("desktop browser ignores aborted loadURL rejections during active navigatio
   );
   assert.match(
     source,
-    /async function navigateActiveBrowserTab\([\s\S]*?await activeTab\.view\.webContents\.loadURL\(targetUrl\);[\s\S]*?if \(isAbortedBrowserLoadError\(error\)\) \{\s*return browserWorkspaceSnapshot\(workspaceId, space\);\s*\}/,
+    /async function navigateActiveBrowserTab\([\s\S]*?await activeTab\.view\.webContents\.loadURL\(targetUrl\);[\s\S]*?if \(isAbortedBrowserLoadError\(error\)\) \{\s*return browserWorkspaceSnapshot\(workspaceId, space, sessionId,[\s\S]*?\);\s*\}/,
   );
   assert.match(
     source,
-    /"browser:openHistoryUrl"[\s\S]*?await activeTab\.view\.webContents\.loadURL\(targetUrl\);[\s\S]*?if \(isAbortedBrowserLoadError\(error\)\) \{\s*return browserWorkspaceSnapshot\(workspace\.workspaceId, activeBrowserSpaceId\);\s*\}/,
+    /"browser:openHistoryUrl"[\s\S]*?await activeTab\.view\.webContents\.loadURL\(targetUrl\);[\s\S]*?if \(isAbortedBrowserLoadError\(error\)\) \{\s*return browserWorkspaceSnapshot\([\s\S]*workspace\.workspaceId,[\s\S]*activeBrowserSpaceId,[\s\S]*activeBrowserSessionId[\s\S]*\);\s*\}/,
   );
 });
 

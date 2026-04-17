@@ -239,17 +239,23 @@ test("browser capability routes proxy to the browser tool service", async () => 
     workspaceRoot: path.join(root, "workspace")
   });
   const browserToolService = {
-    async getStatus(context?: { workspaceId?: string | null }) {
+    async getStatus(context?: { workspaceId?: string | null; sessionId?: string | null }) {
       return {
         available: true,
         workspace_id: context?.workspaceId ?? null,
+        session_id: context?.sessionId ?? null,
         tools: [{ id: "browser_get_state" }]
       };
     },
-    async execute(toolId: string, args: Record<string, unknown>, context?: { workspaceId?: string | null }) {
+    async execute(
+      toolId: string,
+      args: Record<string, unknown>,
+      context?: { workspaceId?: string | null; sessionId?: string | null }
+    ) {
       return {
         tool_id: toolId,
         workspace_id: context?.workspaceId ?? null,
+        session_id: context?.sessionId ?? null,
         args
       };
     }
@@ -260,13 +266,15 @@ test("browser capability routes proxy to the browser tool service", async () => 
     method: "GET",
     url: "/api/v1/capabilities/browser",
     headers: {
-      "x-holaboss-workspace-id": "workspace-1"
+      "x-holaboss-workspace-id": "workspace-1",
+      "x-holaboss-session-id": "session-1"
     }
   });
   assert.equal(statusResponse.statusCode, 200);
   assert.deepEqual(statusResponse.json(), {
     available: true,
     workspace_id: "workspace-1",
+    session_id: "session-1",
     tools: [{ id: "browser_get_state" }]
   });
 
@@ -274,7 +282,8 @@ test("browser capability routes proxy to the browser tool service", async () => 
     method: "POST",
     url: "/api/v1/capabilities/browser/tools/browser_click",
     headers: {
-      "x-holaboss-workspace-id": "workspace-1"
+      "x-holaboss-workspace-id": "workspace-1",
+      "x-holaboss-session-id": "session-1"
     },
     payload: {
       index: 3
@@ -284,6 +293,7 @@ test("browser capability routes proxy to the browser tool service", async () => 
   assert.deepEqual(executeResponse.json(), {
     tool_id: "browser_click",
     workspace_id: "workspace-1",
+    session_id: "session-1",
     args: {
       index: 3
     }

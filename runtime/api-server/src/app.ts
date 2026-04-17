@@ -2766,8 +2766,12 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
   app.get("/api/v1/capabilities/browser", async (request, reply) => {
     const workspaceId = headerString(request.headers as Record<string, unknown>, "x-holaboss-workspace-id");
+    const sessionId = capabilitySessionId({
+      headers: request.headers as Record<string, unknown>,
+      query: isRecord(request.query) ? request.query : null,
+    });
     try {
-      return await browserToolService.getStatus({ workspaceId });
+      return await browserToolService.getStatus({ workspaceId, sessionId });
     } catch (error) {
       if (error instanceof DesktopBrowserToolServiceError) {
         return sendError(reply, error.statusCode, error.message);
@@ -2782,8 +2786,16 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
     const params = request.params as { toolId: string };
     const workspaceId = headerString(request.headers as Record<string, unknown>, "x-holaboss-workspace-id");
+    const sessionId = capabilitySessionId({
+      headers: request.headers as Record<string, unknown>,
+      body: request.body,
+    });
     try {
-      return await browserToolService.execute(requiredString(params.toolId, "toolId"), request.body, { workspaceId });
+      return await browserToolService.execute(
+        requiredString(params.toolId, "toolId"),
+        request.body,
+        { workspaceId, sessionId },
+      );
     } catch (error) {
       if (error instanceof DesktopBrowserToolServiceError) {
         return sendError(reply, error.statusCode, error.message);

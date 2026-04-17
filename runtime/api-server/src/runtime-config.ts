@@ -11,6 +11,9 @@ const HOLABOSS_SANDBOX_AUTH_TOKEN_ENV = "HOLABOSS_SANDBOX_AUTH_TOKEN";
 const HOLABOSS_USER_ID_ENV = "HOLABOSS_USER_ID";
 const HOLABOSS_DEFAULT_MODEL_ENV = "HOLABOSS_DEFAULT_MODEL";
 const HOLABOSS_RUNTIME_CONFIG_PATH_ENV = "HOLABOSS_RUNTIME_CONFIG_PATH";
+const HOLABOSS_DESKTOP_BROWSER_ENABLED_ENV = "HOLABOSS_DESKTOP_BROWSER_ENABLED";
+const HOLABOSS_DESKTOP_BROWSER_URL_ENV = "HOLABOSS_DESKTOP_BROWSER_URL";
+const HOLABOSS_DESKTOP_BROWSER_AUTH_TOKEN_ENV = "HOLABOSS_DESKTOP_BROWSER_AUTH_TOKEN";
 const HB_SANDBOX_ROOT_ENV = "HB_SANDBOX_ROOT";
 const SANDBOX_AGENT_HARNESS_ENV = "SANDBOX_AGENT_HARNESS";
 
@@ -173,11 +176,22 @@ function loadRuntimeConfigPayload(): {
   const holabossEnabled =
     explicitHolabossEnabled ??
     Boolean(authToken || userId || modelProxyBaseUrl || defaultProvider === HOLABOSS_PROXY_PROVIDER);
+  const envDesktopBrowserEnabled = normalizeBool(
+    firstEnvValue(HOLABOSS_DESKTOP_BROWSER_ENABLED_ENV)
+  );
+  const envDesktopBrowserUrl = firstEnvValue(HOLABOSS_DESKTOP_BROWSER_URL_ENV);
+  const envDesktopBrowserAuthToken = firstEnvValue(HOLABOSS_DESKTOP_BROWSER_AUTH_TOKEN_ENV);
   const explicitDesktopBrowserEnabled = normalizeBool(desktopBrowserCapability.enabled);
-  const desktopBrowserEnabled = explicitDesktopBrowserEnabled ?? false;
+  const desktopBrowserEnabled =
+    envDesktopBrowserEnabled ??
+    explicitDesktopBrowserEnabled ??
+    Boolean(envDesktopBrowserUrl && envDesktopBrowserAuthToken);
   const desktopBrowserUrl =
-    normalizeString(desktopBrowserCapability.url) || normalizeString(desktopBrowserCapability.mcp_url);
-  const desktopBrowserAuthToken = normalizeString(desktopBrowserCapability.auth_token);
+    envDesktopBrowserUrl ||
+    normalizeString(desktopBrowserCapability.url) ||
+    normalizeString(desktopBrowserCapability.mcp_url);
+  const desktopBrowserAuthToken =
+    envDesktopBrowserAuthToken || normalizeString(desktopBrowserCapability.auth_token);
   const runtimeMode =
     normalizeString(runtimePayload.mode) || (holabossEnabled ? "product" : DEFAULT_RUNTIME_MODE);
 

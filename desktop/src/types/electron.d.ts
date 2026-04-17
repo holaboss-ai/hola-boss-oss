@@ -22,6 +22,7 @@ declare global {
     index: number;
     columns: string[];
     rows: string[][];
+    links?: (string | null)[][];
     totalRows: number;
     totalColumns: number;
     truncated: boolean;
@@ -145,6 +146,10 @@ declare global {
     activeTabId: string;
     tabs: BrowserStatePayload[];
     tabCounts: BrowserTabCountsPayload;
+    sessionId: string | null;
+    lifecycleState: "active" | "suspended" | null;
+    controlMode: "none" | "user_locked" | "session_owned";
+    controlSessionId: string | null;
   }
 
   interface BrowserBookmarkPayload {
@@ -293,6 +298,7 @@ declare global {
     workspaceId?: string | null;
     url?: string | null;
     space?: BrowserSpaceId | null;
+    sessionId?: string | null;
   }
 
   interface TemplateAgentInfoPayload {
@@ -1500,7 +1506,11 @@ declare global {
       onError: (callback: (context: AuthErrorPayload) => unknown) => () => void;
     };
     browser: {
-      setActiveWorkspace: (workspaceId?: string | null, space?: BrowserSpaceId | null) => Promise<BrowserTabListPayload>;
+      setActiveWorkspace: (
+        workspaceId?: string | null,
+        space?: BrowserSpaceId | null,
+        sessionId?: string | null,
+      ) => Promise<BrowserTabListPayload>;
       getState: () => Promise<BrowserTabListPayload>;
       setBounds: (bounds: BrowserBoundsPayload) => Promise<BrowserTabListPayload>;
       navigate: (targetUrl: string) => Promise<BrowserTabListPayload>;
