@@ -4632,6 +4632,112 @@ test("queue route preserves an existing explicit session title", async () => {
   store.close();
 });
 
+test("queued input edit route updates queued input text without writing session history", async () => {
+  const root = makeTempDir("hb-runtime-api-edit-queued-input-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace"),
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: {
+      text: "draft this first",
+      attachments: [],
+      image_urls: [],
+      model: null,
+      thinking_value: null,
+      context: {},
+    },
+  });
+
+  const response = await app.inject({
+    method: "PATCH",
+    url: `/api/v1/agent-sessions/session-main/inputs/${queued.inputId}`,
+    payload: {
+      workspace_id: workspace.id,
+      text: "draft this second",
+    },
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.json().input_id, queued.inputId);
+  assert.equal(response.json().session_id, "session-main");
+  assert.equal(response.json().status, "QUEUED");
+  assert.equal(response.json().text, "draft this second");
+
+  const updated = store.getInput(queued.inputId);
+  assert.ok(updated);
+  assert.equal(updated?.payload.text, "draft this second");
+  const history = store.listSessionMessages({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+  });
+  assert.equal(history.length, 0);
+
+  await app.close();
+  store.close();
+});
+
+test("queued input edit route rejects edits after the input is claimed", async () => {
+  const root = makeTempDir("hb-runtime-api-edit-claimed-input-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace"),
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: {
+      text: "draft this first",
+      attachments: [],
+      image_urls: [],
+      model: null,
+      thinking_value: null,
+      context: {},
+    },
+  });
+  store.updateInput(queued.inputId, {
+    status: "CLAIMED",
+    claimedBy: "worker-1",
+    claimedUntil: "2026-04-17T12:00:00.000Z",
+  });
+
+  const response = await app.inject({
+    method: "PATCH",
+    url: `/api/v1/agent-sessions/session-main/inputs/${queued.inputId}`,
+    payload: {
+      workspace_id: workspace.id,
+      text: "edited too late",
+    },
+  });
+
+  assert.equal(response.statusCode, 409);
+  assert.equal(
+    response.json().detail,
+    "queued input can no longer be edited",
+  );
+
+  await app.close();
+  store.close();
+});
+
 test("pause route delegates to the configured queue worker", async () => {
   const root = makeTempDir("hb-runtime-api-pause-route-");
   const store = new RuntimeStateStore({

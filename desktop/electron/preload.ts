@@ -726,6 +726,14 @@ interface PauseSessionRunResponsePayload {
   status: string;
 }
 
+interface UpdateQueuedSessionInputResponsePayload {
+  input_id: string;
+  session_id: string;
+  status: string;
+  text: string;
+  updated_at: string;
+}
+
 interface HolabossClientConfigPayload {
   projectsUrl: string;
   marketplaceUrl: string;
@@ -808,6 +816,13 @@ interface HolabossQueueSessionInputPayload {
 interface HolabossPauseSessionRunPayload {
   workspace_id: string;
   session_id: string;
+}
+
+interface HolabossUpdateQueuedSessionInputPayload {
+  workspace_id: string;
+  session_id: string;
+  input_id: string;
+  text: string;
 }
 
 interface HolabossStreamSessionOutputsPayload {
@@ -1305,6 +1320,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:queueSessionInput", payload) as Promise<EnqueueSessionInputResponsePayload>,
     pauseSessionRun: (payload: HolabossPauseSessionRunPayload) =>
       ipcRenderer.invoke("workspace:pauseSessionRun", payload) as Promise<PauseSessionRunResponsePayload>,
+    updateQueuedSessionInput: (payload: HolabossUpdateQueuedSessionInputPayload) =>
+      ipcRenderer.invoke("workspace:updateQueuedSessionInput", payload) as Promise<UpdateQueuedSessionInputResponsePayload>,
     openSessionOutputStream: (payload: HolabossStreamSessionOutputsPayload) =>
       ipcRenderer.invoke("workspace:openSessionOutputStream", payload) as Promise<HolabossSessionStreamHandlePayload>,
     closeSessionOutputStream: (streamId: string, reason?: string) =>

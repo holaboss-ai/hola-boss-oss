@@ -1054,10 +1054,15 @@ test("chat pane keeps the current stream attached while queueing a follow-up inp
   );
   assert.match(source, /eventType: "stream_open_queued_handoff"/);
   assert.match(source, /function queuedSessionInputPreviewText\(item: QueuedSessionInput\)/);
+  assert.match(source, /async function updateQueuedSessionInputText\(/);
+  assert.match(
+    source,
+    /window\.electronAPI\.workspace\.updateQueuedSessionInput\(\{\s*workspace_id: item\.workspaceId,\s*session_id: item\.sessionId,\s*input_id: item\.inputId,\s*text: serializedText,\s*\}\)/,
+  );
   assert.match(source, /function QueuedSessionInputRail\(/);
   assert.match(
     source,
-    /<QueuedSessionInputRail items=\{displayedQueuedSessionInputs\}>[\s\S]*<Composer/,
+    /<QueuedSessionInputRail[\s\S]*items=\{displayedQueuedSessionInputs\}[\s\S]*onEditItem=\{updateQueuedSessionInputText\}[\s\S]*<Composer/,
   );
   assert.match(source, /children: ReactNode;/);
   assert.match(source, /const panelInsetPx = \d+;/);
@@ -1068,6 +1073,9 @@ test("chat pane keeps the current stream attached while queueing a follow-up inp
   assert.match(source, /className="overflow-y-auto pr-1\.5"/);
   assert.match(source, /\{items\.map\(\(item\) => \{/);
   assert.match(source, /<CornerDownLeft[\s\S]*size=\{15\}/);
+  assert.match(source, /aria-label="Edit queued message"/);
+  assert.match(source, /aria-label="Save queued message edit"/);
+  assert.match(source, /aria-label="Cancel queued message edit"/);
   assert.match(source, /className="relative z-10 rounded-\[24px\] bg-background"/);
   assert.match(source, /style=\{\{\s*marginTop: `\$\{-overlapPx\}px`\s*\}\}/);
   assert.doesNotMatch(source, /Queued messages/);

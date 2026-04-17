@@ -5438,6 +5438,60 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     };
   });
 
+  app.patch("/api/v1/agent-sessions/:sessionId/inputs/:inputId", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { sessionId: string; inputId: string };
+    const workspaceId = optionalString(request.body.workspace_id);
+    if (!workspaceId) {
+      return sendError(reply, 400, "workspace_id is required");
+    }
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+
+    const input = store.getInput(params.inputId);
+    if (
+      !input ||
+      input.workspaceId !== workspaceId ||
+      input.sessionId !== params.sessionId
+    ) {
+      return sendError(reply, 404, "queued input not found");
+    }
+    if (input.status !== "QUEUED") {
+      return sendError(reply, 409, "queued input can no longer be edited");
+    }
+
+    const existingPayload = isRecord(input.payload) ? input.payload : {};
+    const trimmedText = (optionalString(request.body.text) ?? "").trim();
+    const existingAttachments = Array.isArray(existingPayload.attachments)
+      ? existingPayload.attachments
+      : [];
+    if (!trimmedText && existingAttachments.length === 0) {
+      return sendError(reply, 422, "text or attachments are required");
+    }
+
+    const updated = store.updateInput(params.inputId, {
+      payload: {
+        ...existingPayload,
+        text: trimmedText,
+      },
+    });
+    if (!updated) {
+      return sendError(reply, 500, "failed to update queued input");
+    }
+
+    return {
+      input_id: updated.inputId,
+      session_id: updated.sessionId,
+      status: updated.status,
+      text: optionalString(updated.payload.text) ?? "",
+      updated_at: updated.updatedAt,
+    };
+  });
+
   app.get("/api/v1/agent-sessions", async (request, reply) => {
     const query = isRecord(request.query) ? request.query : {};
     const workspaceId = optionalString(query.workspace_id);

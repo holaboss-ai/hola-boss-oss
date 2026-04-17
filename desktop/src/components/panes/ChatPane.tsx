@@ -5912,6 +5912,78 @@ export function ChatPane({
     }
   }
 
+  async function updateQueuedSessionInputText(
+    item: QueuedSessionInput,
+    nextText: string,
+  ) {
+    const parsedQuotedSkills = parseSerializedQuotedSkillPrompt(item.text);
+    const skillOnlyPreviewText = parsedQuotedSkills.skillIds.join(" ");
+    const normalizedNextText = nextText.trim();
+    const serializedText =
+      !parsedQuotedSkills.body &&
+      parsedQuotedSkills.skillIds.length > 0 &&
+      normalizedNextText === skillOnlyPreviewText
+        ? item.text.trim()
+        : serializeQuotedSkillPrompt(nextText, parsedQuotedSkills.skillIds);
+    if (!serializedText.trim() && item.attachments.length === 0) {
+      throw new Error("Queued message can't be empty.");
+    }
+
+    if (queuedSessionInputPreview.length > 0) {
+      const previewIndex =
+        Number.parseInt(
+          item.inputId.replace("preview-queued-", "").trim(),
+          10,
+        ) - 1;
+      const currentEntries = window.__holabossQueuedMessagesPreviewState ?? [];
+      if (previewIndex < 0 || previewIndex >= currentEntries.length) {
+        throw new Error("Queued preview item not found.");
+      }
+      const updatedEntries = currentEntries.map((entry, index) => {
+        if (index !== previewIndex) {
+          return entry;
+        }
+        if (typeof entry === "string") {
+          return {
+            text: serializedText,
+            status: item.status,
+            attachments: item.attachments,
+          };
+        }
+        return {
+          ...entry,
+          text: serializedText,
+        };
+      });
+      setQueuedSessionInputPreviewState(updatedEntries);
+      return;
+    }
+
+    if (item.status !== "queued") {
+      throw new Error("Only queued messages can be edited.");
+    }
+
+    const updated = await window.electronAPI.workspace.updateQueuedSessionInput({
+      workspace_id: item.workspaceId,
+      session_id: item.sessionId,
+      input_id: item.inputId,
+      text: serializedText,
+    });
+
+    setQueuedSessionInputs((current) =>
+      current.map((currentItem) =>
+        currentItem.inputId === item.inputId &&
+        currentItem.sessionId === item.sessionId &&
+        currentItem.workspaceId === item.workspaceId
+          ? {
+              ...currentItem,
+              text: updated.text,
+            }
+          : currentItem,
+      ),
+    );
+  }
+
   function appendPendingLocalFiles(files: File[]) {
     if (files.length === 0) {
       return;
@@ -7000,7 +7072,10 @@ export function ChatPane({
                   </div>
                   <form onSubmit={onSubmit} className="w-full">
                     <div className="space-y-3">
-                      <QueuedSessionInputRail items={displayedQueuedSessionInputs}>
+                      <QueuedSessionInputRail
+                        items={displayedQueuedSessionInputs}
+                        onEditItem={updateQueuedSessionInputText}
+                      >
                         <Composer
                           input={input}
                           quotedSkills={quotedSkills}
@@ -7123,7 +7198,10 @@ export function ChatPane({
           >
             <form onSubmit={onSubmit} className="w-full">
               <div className="space-y-3">
-                  <QueuedSessionInputRail items={displayedQueuedSessionInputs}>
+                  <QueuedSessionInputRail
+                    items={displayedQueuedSessionInputs}
+                    onEditItem={updateQueuedSessionInputText}
+                  >
                     <Composer
                       input={input}
                       quotedSkills={quotedSkills}
@@ -7564,19 +7642,62 @@ function queuedSessionInputPreviewText(item: QueuedSessionInput) {
 
 function QueuedSessionInputRail({
   items,
+  onEditItem,
   children,
 }: {
   items: QueuedSessionInput[];
+  onEditItem?: (item: QueuedSessionInput, nextText: string) => Promise<void>;
   children: ReactNode;
 }) {
-  if (items.length === 0) {
-    return <>{children}</>;
-  }
+  const [editingInputId, setEditingInputId] = useState("");
+  const [editingDraft, setEditingDraft] = useState("");
+  const [editingError, setEditingError] = useState("");
+  const [savingInputId, setSavingInputId] = useState("");
   const panelInsetPx = 18;
   const panelHeightPx = 112;
   const overlapPx = 28;
   const queueViewportHeightPx = 50;
   const reservedTopPx = 94;
+
+  useEffect(() => {
+    if (!editingInputId) {
+      return;
+    }
+    const activeItem = items.find((item) => item.inputId === editingInputId);
+    if (!activeItem || activeItem.status !== "queued") {
+      setEditingInputId("");
+      setEditingDraft("");
+      setEditingError("");
+      setSavingInputId("");
+    }
+  }, [editingInputId, items]);
+
+  const cancelEditing = () => {
+    setEditingInputId("");
+    setEditingDraft("");
+    setEditingError("");
+    setSavingInputId("");
+  };
+
+  const saveEditingItem = async (item: QueuedSessionInput) => {
+    if (!onEditItem || savingInputId || item.status !== "queued") {
+      return;
+    }
+    setEditingError("");
+    setSavingInputId(item.inputId);
+    try {
+      await onEditItem(item, editingDraft);
+      cancelEditing();
+    } catch (error) {
+      setEditingError(normalizeErrorMessage(error));
+    } finally {
+      setSavingInputId("");
+    }
+  };
+
+  if (items.length === 0) {
+    return <>{children}</>;
+  }
 
   return (
     <div className="relative" style={{ paddingTop: `${reservedTopPx}px` }}>
@@ -7597,18 +7718,100 @@ function QueuedSessionInputRail({
               <div className="space-y-1.5">
                 {items.map((item) => {
                   const previewText = queuedSessionInputPreviewText(item);
+                  const isEditing = editingInputId === item.inputId;
+                  const isSaving = savingInputId === item.inputId;
                   return (
                     <div
                       key={item.inputId}
-                      className="flex items-center gap-3 rounded-[14px] px-1 text-[14px] leading-7 text-foreground/84"
+                      className="rounded-[14px] px-1 text-[14px] leading-7 text-foreground/84"
                     >
-                      <CornerDownLeft
-                        size={15}
-                        className="shrink-0 text-muted-foreground/62"
-                      />
-                      <div className="min-w-0 truncate">
-                        {previewText || "Queued message"}
-                      </div>
+                      {isEditing ? (
+                        <div className="space-y-1.5">
+                          <div className="flex items-center gap-2">
+                            <CornerDownLeft
+                              size={15}
+                              className="shrink-0 text-muted-foreground/62"
+                            />
+                            <Input
+                              value={editingDraft}
+                              onChange={(event) =>
+                                setEditingDraft(event.target.value)
+                              }
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  void saveEditingItem(item);
+                                } else if (event.key === "Escape") {
+                                  event.preventDefault();
+                                  cancelEditing();
+                                }
+                              }}
+                              disabled={isSaving}
+                              autoFocus
+                              className="h-8 min-w-0 flex-1 rounded-[10px] border-border/40 bg-background px-2.5 text-[13px]"
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              disabled={isSaving}
+                              onClick={() => {
+                                void saveEditingItem(item);
+                              }}
+                              className="size-7 rounded-full text-muted-foreground hover:bg-foreground/6 hover:text-foreground"
+                              aria-label="Save queued message edit"
+                            >
+                              {isSaving ? (
+                                <Loader2 size={13} className="animate-spin" />
+                              ) : (
+                                <Check size={13} />
+                              )}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              disabled={isSaving}
+                              onClick={cancelEditing}
+                              className="size-7 rounded-full text-muted-foreground hover:bg-foreground/6 hover:text-foreground"
+                              aria-label="Cancel queued message edit"
+                            >
+                              <X size={13} />
+                            </Button>
+                          </div>
+                          {editingError ? (
+                            <div className="pl-6 text-[11px] leading-5 text-destructive">
+                              {editingError}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-3">
+                          <CornerDownLeft
+                            size={15}
+                            className="shrink-0 text-muted-foreground/62"
+                          />
+                          <div className="min-w-0 flex-1 truncate">
+                            {previewText || "Queued message"}
+                          </div>
+                          {onEditItem && item.status === "queued" ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              onClick={() => {
+                                setEditingInputId(item.inputId);
+                                setEditingDraft(previewText);
+                                setEditingError("");
+                              }}
+                              className="size-7 rounded-full text-muted-foreground hover:bg-foreground/6 hover:text-foreground"
+                              aria-label="Edit queued message"
+                            >
+                              <PencilLine size={13} />
+                            </Button>
+                          ) : null}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
