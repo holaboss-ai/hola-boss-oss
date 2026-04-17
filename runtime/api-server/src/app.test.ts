@@ -5210,7 +5210,7 @@ test("queue route rejects inputs while workspace apps are still building", async
   store.close();
 });
 
-test("queue route accepts staged file and folder attachments and history hydrates attachment metadata", async () => {
+test("queue route accepts staged file and folder attachments and history hydrates attachment metadata after claim", async () => {
   const root = makeTempDir("hb-runtime-api-queue-attachments-");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
@@ -5294,12 +5294,29 @@ test("queue route accepts staged file and folder attachments and history hydrate
   });
 
   assert.equal(historyResponse.statusCode, 200);
-  assert.deepEqual(historyResponse.json().messages, [
+  assert.deepEqual(historyResponse.json().messages, []);
+
+  store.insertSessionMessage({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    role: "user",
+    text: "",
+    messageId: `user-${response.json().input_id}`,
+    createdAt: "2026-01-01T00:00:00.000Z"
+  });
+
+  const claimedHistoryResponse = await app.inject({
+    method: "GET",
+    url: `/api/v1/agent-sessions/session-main/history?workspace_id=${workspace.id}`
+  });
+
+  assert.equal(claimedHistoryResponse.statusCode, 200);
+  assert.deepEqual(claimedHistoryResponse.json().messages, [
     {
       id: `user-${response.json().input_id}`,
       role: "user",
       text: "",
-      created_at: historyResponse.json().messages[0]?.created_at,
+      created_at: "2026-01-01T00:00:00.000Z",
       metadata: {
         attachments: [
           {
