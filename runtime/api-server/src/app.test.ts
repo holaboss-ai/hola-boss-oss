@@ -597,6 +597,11 @@ test("runtime tools capability routes expose local onboarding and cronjob action
       .json()
       .tools.some((tool: { id: string }) => tool.id === "write_report")
   );
+  assert.ok(
+    capabilityStatus
+      .json()
+      .tools.some((tool: { id: string }) => tool.id === "terminal_session_start")
+  );
 
   const onboardingStatus = await app.inject({
     method: "GET",
@@ -654,6 +659,250 @@ test("runtime tools capability routes expose local onboarding and cronjob action
   });
   assert.equal(listedJobs.statusCode, 200);
   assert.equal(listedJobs.json().count, 1);
+
+  await app.close();
+  store.close();
+});
+
+test("runtime terminal session tools proxy terminal session manager operations", async () => {
+  const root = makeTempDir("hb-runtime-api-runtime-terminal-tools-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace"),
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  fs.mkdirSync(path.join(root, "workspace", "workspace-1"), { recursive: true });
+
+  let currentSession: any = {
+    terminalId: "term-1",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    title: "Background task",
+    backend: "node_pty",
+    owner: "agent",
+    status: "running",
+    cwd: path.join(root, "workspace", "workspace-1"),
+    shell: "/bin/bash",
+    command: "npm run dev",
+    exitCode: null,
+    lastEventSeq: 1,
+    createdBy: "runtime_tool",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    startedAt: "2026-01-01T00:00:00.000Z",
+    lastActivityAt: "2026-01-01T00:00:00.000Z",
+    endedAt: null,
+    metadata: { origin_type: "runtime_tool" },
+  };
+  const events: any[] = [
+    {
+      id: 1,
+      terminalId: "term-1",
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      sequence: 1,
+      eventType: "started",
+      payload: { command: "npm run dev" },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    },
+  ];
+  let subscriber: ((event: any) => void) | null = null;
+  const terminalSessionManager: any = {
+    async start() {},
+    async close() {},
+    async createSession(params: Record<string, unknown>) {
+      currentSession = {
+        ...currentSession,
+        title: String(params.title ?? currentSession.title),
+        command: String(params.command ?? currentSession.command),
+        cwd: typeof params.cwd === "string" && params.cwd ? params.cwd : currentSession.cwd,
+      };
+      return currentSession;
+    },
+    getSession(params: { terminalId: string; workspaceId?: string }) {
+      if (params.terminalId !== currentSession.terminalId) {
+        return null;
+      }
+      if (params.workspaceId && params.workspaceId !== currentSession.workspaceId) {
+        return null;
+      }
+      return currentSession;
+    },
+    listSessions() {
+      return [currentSession];
+    },
+    listEvents(params: { terminalId: string; afterSequence?: number; limit?: number }) {
+      return events
+        .filter((event) => event.terminalId === params.terminalId && event.sequence > (params.afterSequence ?? 0))
+        .slice(0, params.limit ?? events.length);
+    },
+    async sendInput() {
+      currentSession = {
+        ...currentSession,
+        lastActivityAt: "2026-01-01T00:00:02.000Z",
+      };
+      return currentSession;
+    },
+    async resize() {
+      return currentSession;
+    },
+    async signal() {
+      currentSession = {
+        ...currentSession,
+        status: "failed",
+        exitCode: 130,
+      };
+      return currentSession;
+    },
+    async closeSession() {
+      currentSession = {
+        ...currentSession,
+        status: "closed",
+        endedAt: "2026-01-01T00:00:03.000Z",
+      };
+      return currentSession;
+    },
+    subscribe(_terminalId: string, listener: (event: any) => void) {
+      subscriber = listener;
+      return () => {
+        subscriber = null;
+      };
+    },
+  };
+
+  const app = buildTestRuntimeApiServer({ store, terminalSessionManager });
+
+  const listResponse = await app.inject({
+    method: "GET",
+    url: "/api/v1/capabilities/runtime-tools/terminal-sessions",
+    headers: {
+      "x-holaboss-workspace-id": "workspace-1",
+      "x-holaboss-session-id": "session-main",
+    },
+  });
+  assert.equal(listResponse.statusCode, 200);
+  assert.equal(listResponse.json().count, 1);
+  assert.equal(listResponse.json().sessions[0].terminal_id, "term-1");
+
+  const startResponse = await app.inject({
+    method: "POST",
+    url: "/api/v1/capabilities/runtime-tools/terminal-sessions",
+    headers: {
+      "x-holaboss-workspace-id": "workspace-1",
+      "x-holaboss-session-id": "session-main",
+      "x-holaboss-input-id": "input-1",
+      "x-holaboss-selected-model": "openai/gpt-5.4",
+    },
+    payload: {
+      title: "Build",
+      cwd: "workspace-1",
+      command: "npm run build",
+    },
+  });
+  assert.equal(startResponse.statusCode, 200);
+  assert.equal(startResponse.json().title, "Build");
+  assert.equal(startResponse.json().command, "npm run build");
+
+  const getResponse = await app.inject({
+    method: "GET",
+    url: "/api/v1/capabilities/runtime-tools/terminal-sessions/term-1",
+    headers: {
+      "x-holaboss-workspace-id": "workspace-1",
+    },
+  });
+  assert.equal(getResponse.statusCode, 200);
+  assert.equal(getResponse.json().terminal_id, "term-1");
+
+  const readResponse = await app.inject({
+    method: "POST",
+    url: "/api/v1/capabilities/runtime-tools/terminal-sessions/term-1/read",
+    headers: {
+      "x-holaboss-workspace-id": "workspace-1",
+    },
+    payload: {
+      after_sequence: 0,
+    },
+  });
+  assert.equal(readResponse.statusCode, 200);
+  assert.equal(readResponse.json().count, 1);
+  assert.equal(readResponse.json().events[0].event_type, "started");
+
+  const waitPromise = app.inject({
+    method: "POST",
+    url: "/api/v1/capabilities/runtime-tools/terminal-sessions/term-1/wait",
+    headers: {
+      "x-holaboss-workspace-id": "workspace-1",
+    },
+    payload: {
+      after_sequence: 1,
+      timeout_ms: 250,
+    },
+  });
+  setTimeout(() => {
+    const event = {
+      id: 2,
+      terminalId: "term-1",
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      sequence: 2,
+      eventType: "output",
+      payload: { data: "ready\n" },
+      createdAt: "2026-01-01T00:00:01.000Z",
+    };
+    events.push(event);
+    currentSession = {
+      ...currentSession,
+      lastEventSeq: 2,
+      lastActivityAt: "2026-01-01T00:00:01.000Z",
+    };
+    subscriber?.(event);
+  }, 10);
+  const waitResponse = await waitPromise;
+  assert.equal(waitResponse.statusCode, 200);
+  assert.equal(waitResponse.json().timed_out, false);
+  assert.equal(waitResponse.json().events[0].event_type, "output");
+
+  const inputResponse = await app.inject({
+    method: "POST",
+    url: "/api/v1/capabilities/runtime-tools/terminal-sessions/term-1/input",
+    headers: {
+      "x-holaboss-workspace-id": "workspace-1",
+    },
+    payload: {
+      data: "npm test\r",
+    },
+  });
+  assert.equal(inputResponse.statusCode, 200);
+  assert.equal(inputResponse.json().terminal_id, "term-1");
+
+  const signalResponse = await app.inject({
+    method: "POST",
+    url: "/api/v1/capabilities/runtime-tools/terminal-sessions/term-1/signal",
+    headers: {
+      "x-holaboss-workspace-id": "workspace-1",
+    },
+    payload: {
+      signal: "SIGINT",
+    },
+  });
+  assert.equal(signalResponse.statusCode, 200);
+  assert.equal(signalResponse.json().status, "failed");
+
+  const closeResponse = await app.inject({
+    method: "POST",
+    url: "/api/v1/capabilities/runtime-tools/terminal-sessions/term-1/close",
+    headers: {
+      "x-holaboss-workspace-id": "workspace-1",
+    },
+    payload: {},
+  });
+  assert.equal(closeResponse.statusCode, 200);
+  assert.equal(closeResponse.json().status, "closed");
 
   await app.close();
   store.close();

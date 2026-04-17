@@ -1988,7 +1988,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     : null;
   const brokerService = new IntegrationBrokerService(store, composioService);
   const oauthService = new OAuthService(store);
-  const runtimeAgentToolsService = new RuntimeAgentToolsService(store, { workspaceRoot: store.workspaceRoot });
+  const runtimeAgentToolsService = new RuntimeAgentToolsService(store, {
+    workspaceRoot: store.workspaceRoot,
+    terminalSessionManager,
+  });
   const runnerExecutor = options.runnerExecutor ?? new NativeRunnerExecutor();
   const durableMemoryWorker = resolveDurableMemoryWorker(options, app, store, memoryService);
   const queueWorker = resolveQueueWorker(options, app, store, memoryService, durableMemoryWorker);
@@ -3558,6 +3561,199 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 400, error instanceof Error ? error.message : "runtime report write failed");
+    }
+  });
+
+  app.get("/api/v1/capabilities/runtime-tools/terminal-sessions", async (request, reply) => {
+    try {
+      return runtimeAgentToolsService.listTerminalSessions({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          query: isRecord(request.query) ? request.query : null,
+        }),
+        sessionId: capabilitySessionId({
+          headers: request.headers as Record<string, unknown>,
+          query: isRecord(request.query) ? request.query : null,
+        }),
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime terminal session list failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/terminal-sessions", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return await runtimeAgentToolsService.startTerminalSession({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        sessionId: capabilitySessionId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        inputId: capabilityInputId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        selectedModel: capabilitySelectedModel({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        title: nullableString(request.body.title) ?? undefined,
+        cwd: nullableString(request.body.cwd) ?? undefined,
+        command: requiredString(request.body.command, "command"),
+        cols: hasOwn(request.body, "cols") ? optionalInteger(request.body.cols, DEFAULT_TERMINAL_COLS) : undefined,
+        rows: hasOwn(request.body, "rows") ? optionalInteger(request.body.rows, DEFAULT_TERMINAL_ROWS) : undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime terminal session start failed");
+    }
+  });
+
+  app.get("/api/v1/capabilities/runtime-tools/terminal-sessions/:terminalId", async (request, reply) => {
+    const params = request.params as { terminalId: string };
+    try {
+      return runtimeAgentToolsService.getTerminalSession({
+        terminalId: requiredString(params.terminalId, "terminalId"),
+        workspaceId: capabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          query: isRecord(request.query) ? request.query : null,
+        }),
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime terminal session fetch failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/terminal-sessions/:terminalId/read", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { terminalId: string };
+    try {
+      return runtimeAgentToolsService.readTerminalSession({
+        terminalId: requiredString(params.terminalId, "terminalId"),
+        workspaceId: capabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        afterSequence: hasOwn(request.body, "after_sequence")
+          ? optionalInteger(request.body.after_sequence, 0)
+          : undefined,
+        limit: hasOwn(request.body, "limit")
+          ? optionalInteger(request.body.limit, 200)
+          : undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime terminal session read failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/terminal-sessions/:terminalId/wait", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { terminalId: string };
+    try {
+      return await runtimeAgentToolsService.waitTerminalSession({
+        terminalId: requiredString(params.terminalId, "terminalId"),
+        workspaceId: capabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        afterSequence: hasOwn(request.body, "after_sequence")
+          ? optionalInteger(request.body.after_sequence, 0)
+          : undefined,
+        limit: hasOwn(request.body, "limit")
+          ? optionalInteger(request.body.limit, 200)
+          : undefined,
+        timeoutMs: hasOwn(request.body, "timeout_ms")
+          ? optionalInteger(request.body.timeout_ms, 15000)
+          : undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime terminal session wait failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/terminal-sessions/:terminalId/input", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { terminalId: string };
+    try {
+      return await runtimeAgentToolsService.sendTerminalSessionInput({
+        terminalId: requiredString(params.terminalId, "terminalId"),
+        workspaceId: capabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        data: requiredString(request.body.data, "data"),
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime terminal session input failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/terminal-sessions/:terminalId/signal", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { terminalId: string };
+    try {
+      return await runtimeAgentToolsService.signalTerminalSession({
+        terminalId: requiredString(params.terminalId, "terminalId"),
+        workspaceId: capabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        signal: nullableString(request.body.signal) ?? undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime terminal session signal failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/terminal-sessions/:terminalId/close", async (request, reply) => {
+    const params = request.params as { terminalId: string };
+    try {
+      return await runtimeAgentToolsService.closeTerminalSession({
+        terminalId: requiredString(params.terminalId, "terminalId"),
+        workspaceId: capabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: isRecord(request.body) ? request.body : null,
+        }),
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime terminal session close failed");
     }
   });
 

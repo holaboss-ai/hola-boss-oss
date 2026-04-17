@@ -14,6 +14,7 @@ import {
 const tempDirs: string[] = [];
 const envNames = [
   "HB_SANDBOX_ROOT",
+  "HOLABOSS_DEFAULT_MODEL",
   "HOLABOSS_MODEL_PROXY_BASE_URL",
   "HOLABOSS_RUNTIME_CONFIG_PATH",
   "HOLABOSS_SANDBOX_AUTH_TOKEN",
@@ -202,6 +203,65 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
   } finally {
     delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
   }
+});
+
+test("projectAgentRuntimeConfig ignores workspace agent.model and falls back to the runtime default model", () => {
+  const root = makeTempDir("hb-agent-runtime-config-default-model-");
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
+    runtime: {
+      default_model: "openai_direct/gpt-5.4",
+      default_provider: "openai_direct",
+    },
+    providers: {
+      openai_direct: {
+        kind: "openai_compatible",
+        enabled: true,
+        api_key: "sk-direct-openai",
+        base_url: "https://api.openai.com/v1",
+      },
+    },
+    models: {
+      "openai_direct/gpt-5.4": {
+        provider_id: "openai_direct",
+        model_id: "gpt-5.4",
+      },
+    },
+  });
+
+  const result = projectAgentRuntimeConfig({
+    session_id: "session-1",
+    workspace_id: "workspace-1",
+    input_id: "input-1",
+    session_kind: "workspace_session",
+    harness_id: "pi",
+    browser_tools_available: false,
+    browser_tool_ids: [],
+    runtime_tool_ids: [],
+    workspace_command_ids: [],
+    runtime_exec_model_proxy_api_key: "hb-runtime-token",
+    runtime_exec_sandbox_id: "sandbox-1",
+    runtime_exec_run_id: "run-1",
+    selected_model: null,
+    default_provider_id: "holaboss_model_proxy",
+    session_mode: "code",
+    workspace_config_checksum: "checksum-1",
+    workspace_skill_ids: [],
+    default_tools: ["read"],
+    extra_tools: [],
+    resolved_mcp_tool_refs: [],
+    resolved_output_schemas: {},
+    agent: {
+      id: "workspace.general",
+      model: "gpt-5.2",
+      prompt: "You are concise.",
+    },
+  });
+
+  assert.equal(result.provider_id, "openai_direct");
+  assert.equal(result.model_id, "gpt-5.4");
+  assert.equal(result.model_client.api_key, "sk-direct-openai");
+  assert.equal(result.model_client.base_url, "https://api.openai.com/v1");
 });
 
 test("projectAgentRuntimeConfig includes resume context sections when provided", () => {

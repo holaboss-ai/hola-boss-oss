@@ -2,11 +2,20 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { utcNowIso, type CronjobRecord, type RuntimeStateStore, type WorkspaceRecord } from "@holaboss/runtime-state-store";
+import {
+  utcNowIso,
+  type CronjobRecord,
+  type RuntimeStateStore,
+  type TerminalSessionEventRecord,
+  type TerminalSessionRecord,
+  type TerminalSessionStatus,
+  type WorkspaceRecord,
+} from "@holaboss/runtime-state-store";
 
 import { RUNTIME_AGENT_TOOL_DEFINITIONS as RUNTIME_AGENT_TOOL_BASE_DEFINITIONS } from "../../harnesses/src/runtime-agent-tools.js";
 import { cronjobNextRunAt } from "./cron-worker.js";
 import { generateWorkspaceImage } from "./image-generation.js";
+import type { TerminalSessionManagerLike } from "./terminal-session-manager.js";
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 type JsonObject = { [key: string]: JsonValue };
@@ -81,64 +90,171 @@ export interface RuntimeAgentToolsWriteReportParams {
   content: string;
 }
 
+export interface RuntimeAgentToolsListTerminalSessionsParams {
+  workspaceId: string;
+  sessionId?: string | null;
+  statuses?: TerminalSessionStatus[] | null;
+}
+
+export interface RuntimeAgentToolsStartTerminalSessionParams {
+  workspaceId: string;
+  sessionId?: string | null;
+  inputId?: string | null;
+  selectedModel?: string | null;
+  title?: string | null;
+  cwd?: string | null;
+  command: string;
+  cols?: number | null;
+  rows?: number | null;
+}
+
+export interface RuntimeAgentToolsGetTerminalSessionParams {
+  terminalId: string;
+  workspaceId?: string | null;
+}
+
+export interface RuntimeAgentToolsReadTerminalSessionParams {
+  terminalId: string;
+  workspaceId?: string | null;
+  afterSequence?: number | null;
+  limit?: number | null;
+}
+
+export interface RuntimeAgentToolsWaitTerminalSessionParams extends RuntimeAgentToolsReadTerminalSessionParams {
+  timeoutMs?: number | null;
+}
+
+export interface RuntimeAgentToolsSendTerminalSessionInputParams {
+  terminalId: string;
+  workspaceId?: string | null;
+  data: string;
+}
+
+export interface RuntimeAgentToolsSignalTerminalSessionParams {
+  terminalId: string;
+  workspaceId?: string | null;
+  signal?: string | null;
+}
+
+export interface RuntimeAgentToolsCloseTerminalSessionParams {
+  terminalId: string;
+  workspaceId?: string | null;
+}
+
 export const ALLOWED_DELIVERY_MODES = new Set(["none", "announce"]);
 export const ALLOWED_DELIVERY_CHANNELS = new Set(["system_notification", "session_run"]);
 
+function runtimeToolBaseDefinition(id: string) {
+  const definition = RUNTIME_AGENT_TOOL_BASE_DEFINITIONS.find((tool) => tool.id === id);
+  if (!definition) {
+    throw new Error(`Unknown runtime agent tool base definition '${id}'`);
+  }
+  return definition;
+}
+
 export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
   {
-    id: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[0].id,
+    id: runtimeToolBaseDefinition("holaboss_onboarding_status").id,
     method: "GET",
     path: "/api/v1/capabilities/runtime-tools/onboarding/status",
-    description: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[0].description
+    description: runtimeToolBaseDefinition("holaboss_onboarding_status").description
   },
   {
-    id: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[1].id,
+    id: runtimeToolBaseDefinition("holaboss_onboarding_complete").id,
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/onboarding/complete",
-    description: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[1].description
+    description: runtimeToolBaseDefinition("holaboss_onboarding_complete").description
   },
   {
-    id: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[2].id,
+    id: runtimeToolBaseDefinition("holaboss_cronjobs_list").id,
     method: "GET",
     path: "/api/v1/capabilities/runtime-tools/cronjobs",
-    description: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[2].description
+    description: runtimeToolBaseDefinition("holaboss_cronjobs_list").description
   },
   {
-    id: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[3].id,
+    id: runtimeToolBaseDefinition("holaboss_cronjobs_create").id,
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/cronjobs",
-    description: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[3].description
+    description: runtimeToolBaseDefinition("holaboss_cronjobs_create").description
   },
   {
-    id: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[4].id,
+    id: runtimeToolBaseDefinition("holaboss_cronjobs_get").id,
     method: "GET",
     path: "/api/v1/capabilities/runtime-tools/cronjobs/:jobId",
-    description: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[4].description
+    description: runtimeToolBaseDefinition("holaboss_cronjobs_get").description
   },
   {
-    id: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[5].id,
+    id: runtimeToolBaseDefinition("holaboss_cronjobs_update").id,
     method: "PATCH",
     path: "/api/v1/capabilities/runtime-tools/cronjobs/:jobId",
-    description: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[5].description
+    description: runtimeToolBaseDefinition("holaboss_cronjobs_update").description
   },
   {
-    id: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[6].id,
+    id: runtimeToolBaseDefinition("holaboss_cronjobs_delete").id,
     method: "DELETE",
     path: "/api/v1/capabilities/runtime-tools/cronjobs/:jobId",
-    description: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[6].description
+    description: runtimeToolBaseDefinition("holaboss_cronjobs_delete").description
   },
   {
-    id: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[7].id,
+    id: runtimeToolBaseDefinition("image_generate").id,
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/images/generate",
-    description: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[7].description
+    description: runtimeToolBaseDefinition("image_generate").description
   },
   {
-    id: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[8].id,
+    id: runtimeToolBaseDefinition("write_report").id,
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/reports",
-    description: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[8].description
-  }
+    description: runtimeToolBaseDefinition("write_report").description
+  },
+  {
+    id: runtimeToolBaseDefinition("terminal_sessions_list").id,
+    method: "GET",
+    path: "/api/v1/capabilities/runtime-tools/terminal-sessions",
+    description: runtimeToolBaseDefinition("terminal_sessions_list").description
+  },
+  {
+    id: runtimeToolBaseDefinition("terminal_session_start").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/terminal-sessions",
+    description: runtimeToolBaseDefinition("terminal_session_start").description
+  },
+  {
+    id: runtimeToolBaseDefinition("terminal_session_get").id,
+    method: "GET",
+    path: "/api/v1/capabilities/runtime-tools/terminal-sessions/:terminalId",
+    description: runtimeToolBaseDefinition("terminal_session_get").description
+  },
+  {
+    id: runtimeToolBaseDefinition("terminal_session_read").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/terminal-sessions/:terminalId/read",
+    description: runtimeToolBaseDefinition("terminal_session_read").description
+  },
+  {
+    id: runtimeToolBaseDefinition("terminal_session_wait").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/terminal-sessions/:terminalId/wait",
+    description: runtimeToolBaseDefinition("terminal_session_wait").description
+  },
+  {
+    id: runtimeToolBaseDefinition("terminal_session_send_input").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/terminal-sessions/:terminalId/input",
+    description: runtimeToolBaseDefinition("terminal_session_send_input").description
+  },
+  {
+    id: runtimeToolBaseDefinition("terminal_session_signal").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/terminal-sessions/:terminalId/signal",
+    description: runtimeToolBaseDefinition("terminal_session_signal").description
+  },
+  {
+    id: runtimeToolBaseDefinition("terminal_session_close").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/terminal-sessions/:terminalId/close",
+    description: runtimeToolBaseDefinition("terminal_session_close").description
+  },
 ];
 
 export class RuntimeAgentToolsServiceError extends Error {
@@ -155,6 +271,18 @@ export class RuntimeAgentToolsServiceError extends Error {
 
 function normalizedString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizedInteger(
+  value: unknown,
+  defaultValue: number,
+  minimum: number,
+  maximum: number,
+): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return defaultValue;
+  }
+  return Math.max(minimum, Math.min(maximum, Math.trunc(value)));
 }
 
 function sanitizeReportFilenameStem(value: string): string {
@@ -324,6 +452,56 @@ export function cronjobPayload(record: CronjobRecord): JsonObject {
   };
 }
 
+function terminalSessionPayload(record: TerminalSessionRecord): JsonObject {
+  return {
+    terminal_id: record.terminalId,
+    workspace_id: record.workspaceId,
+    session_id: record.sessionId,
+    input_id: record.inputId,
+    title: record.title,
+    backend: record.backend,
+    owner: record.owner,
+    status: record.status,
+    cwd: record.cwd,
+    shell: record.shell,
+    command: record.command,
+    exit_code: record.exitCode,
+    last_event_seq: record.lastEventSeq,
+    created_by: record.createdBy,
+    created_at: record.createdAt,
+    started_at: record.startedAt,
+    last_activity_at: record.lastActivityAt,
+    ended_at: record.endedAt,
+    metadata: record.metadata as JsonValue,
+  };
+}
+
+function terminalSessionEventPayload(record: TerminalSessionEventRecord): JsonObject {
+  return {
+    id: record.id,
+    terminal_id: record.terminalId,
+    workspace_id: record.workspaceId,
+    session_id: record.sessionId,
+    sequence: record.sequence,
+    event_type: record.eventType,
+    payload: record.payload as JsonValue,
+    created_at: record.createdAt,
+  };
+}
+
+function terminalSessionReadPayload(params: {
+  terminal: TerminalSessionRecord;
+  events: TerminalSessionEventRecord[];
+  timedOut?: boolean;
+}): JsonObject {
+  return {
+    terminal: terminalSessionPayload(params.terminal),
+    events: params.events.map((event) => terminalSessionEventPayload(event)),
+    count: params.events.length,
+    timed_out: params.timedOut === true,
+  };
+}
+
 export function runtimeAgentToolCapabilityPayload(context?: {
   workspaceId?: string | null;
 }): RuntimeAgentToolCapabilityPayload {
@@ -338,7 +516,10 @@ export function runtimeAgentToolCapabilityPayload(context?: {
 export class RuntimeAgentToolsService {
   constructor(
     private readonly store: RuntimeStateStore,
-    private readonly options: { workspaceRoot: string },
+    private readonly options: {
+      workspaceRoot: string;
+      terminalSessionManager?: TerminalSessionManagerLike | null;
+    },
   ) {}
 
   capabilityStatus(context?: { workspaceId?: string | null }): RuntimeAgentToolCapabilityPayload {
@@ -582,6 +763,132 @@ export class RuntimeAgentToolsService {
     };
   }
 
+  listTerminalSessions(params: RuntimeAgentToolsListTerminalSessionsParams): JsonObject {
+    this.requireWorkspace(params.workspaceId);
+    const sessions = this.requireTerminalSessionManager()
+      .listSessions({
+        workspaceId: params.workspaceId,
+        sessionId: normalizedString(params.sessionId) || undefined,
+        statuses: Array.isArray(params.statuses) && params.statuses.length > 0 ? params.statuses : undefined,
+      })
+      .map((record) => terminalSessionPayload(record));
+    return { sessions, count: sessions.length };
+  }
+
+  async startTerminalSession(params: RuntimeAgentToolsStartTerminalSessionParams): Promise<JsonObject> {
+    this.requireWorkspace(params.workspaceId);
+    const session = await this.requireTerminalSessionManager().createSession({
+      workspaceId: params.workspaceId,
+      sessionId: normalizedString(params.sessionId) || null,
+      inputId: normalizedString(params.inputId) || null,
+      title: normalizedString(params.title) || null,
+      owner: "agent",
+      cwd: normalizedString(params.cwd) || null,
+      command: params.command,
+      cols: typeof params.cols === "number" ? params.cols : undefined,
+      rows: typeof params.rows === "number" ? params.rows : undefined,
+      createdBy: "runtime_tool",
+      metadata: {
+        origin_type: "runtime_tool",
+        tool_id: "terminal_session_start",
+        ...(normalizedString(params.selectedModel)
+          ? { model: normalizedString(params.selectedModel) }
+          : {}),
+      },
+    });
+    return terminalSessionPayload(session);
+  }
+
+  getTerminalSession(params: RuntimeAgentToolsGetTerminalSessionParams): JsonObject {
+    return terminalSessionPayload(this.requireTerminalSession(params));
+  }
+
+  readTerminalSession(params: RuntimeAgentToolsReadTerminalSessionParams): JsonObject {
+    const manager = this.requireTerminalSessionManager();
+    const terminal = this.requireTerminalSession(params);
+    const afterSequence = normalizedInteger(params.afterSequence, 0, 0, Number.MAX_SAFE_INTEGER);
+    const limit = normalizedInteger(params.limit, 200, 1, 1000);
+    const events = manager.listEvents({
+      terminalId: terminal.terminalId,
+      afterSequence,
+      limit,
+    });
+    return terminalSessionReadPayload({ terminal, events });
+  }
+
+  async waitTerminalSession(params: RuntimeAgentToolsWaitTerminalSessionParams): Promise<JsonObject> {
+    const manager = this.requireTerminalSessionManager();
+    const initialTerminal = this.requireTerminalSession(params);
+    const afterSequence = normalizedInteger(params.afterSequence, 0, 0, Number.MAX_SAFE_INTEGER);
+    const limit = normalizedInteger(params.limit, 200, 1, 1000);
+    const timeoutMs = normalizedInteger(params.timeoutMs, 15_000, 1, 60_000);
+    const immediateEvents = manager.listEvents({
+      terminalId: initialTerminal.terminalId,
+      afterSequence,
+      limit,
+    });
+    if (immediateEvents.length > 0 || !["starting", "running"].includes(initialTerminal.status)) {
+      const terminal = this.requireTerminalSession(params);
+      return terminalSessionReadPayload({ terminal, events: immediateEvents, timedOut: false });
+    }
+
+    return await new Promise<JsonObject>((resolve) => {
+      let settled = false;
+      let timeoutHandle: NodeJS.Timeout | null = null;
+      const finish = (timedOut: boolean) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle);
+        }
+        unsubscribe();
+        const terminal = this.requireTerminalSession(params);
+        const events = manager.listEvents({
+          terminalId: terminal.terminalId,
+          afterSequence,
+          limit,
+        });
+        resolve(terminalSessionReadPayload({ terminal, events, timedOut }));
+      };
+      const unsubscribe = manager.subscribe(initialTerminal.terminalId, (event) => {
+        if (event.sequence > afterSequence) {
+          finish(false);
+        }
+      });
+      timeoutHandle = setTimeout(() => {
+        finish(true);
+      }, timeoutMs);
+    });
+  }
+
+  async sendTerminalSessionInput(params: RuntimeAgentToolsSendTerminalSessionInputParams): Promise<JsonObject> {
+    this.requireTerminalSession(params);
+    const session = await this.requireTerminalSessionManager().sendInput({
+      terminalId: normalizedString(params.terminalId),
+      data: params.data,
+    });
+    return terminalSessionPayload(session);
+  }
+
+  async signalTerminalSession(params: RuntimeAgentToolsSignalTerminalSessionParams): Promise<JsonObject> {
+    this.requireTerminalSession(params);
+    const session = await this.requireTerminalSessionManager().signal({
+      terminalId: normalizedString(params.terminalId),
+      signal: normalizedString(params.signal) || null,
+    });
+    return terminalSessionPayload(session);
+  }
+
+  async closeTerminalSession(params: RuntimeAgentToolsCloseTerminalSessionParams): Promise<JsonObject> {
+    this.requireTerminalSession(params);
+    const session = await this.requireTerminalSessionManager().closeSession({
+      terminalId: normalizedString(params.terminalId),
+    });
+    return terminalSessionPayload(session);
+  }
+
   private requireWorkspace(workspaceId: string): WorkspaceRecord {
     const workspace = this.store.getWorkspace(workspaceId);
     if (!workspace) {
@@ -607,5 +914,35 @@ export class RuntimeAgentToolsService {
         "requested cronjob does not belong to this workspace"
       );
     }
+  }
+
+  private requireTerminalSessionManager(): TerminalSessionManagerLike {
+    const manager = this.options.terminalSessionManager;
+    if (!manager) {
+      throw new RuntimeAgentToolsServiceError(
+        409,
+        "terminal_sessions_unavailable",
+        "terminal sessions are not available in this runtime",
+      );
+    }
+    return manager;
+  }
+
+  private requireTerminalSession(params: {
+    terminalId: string;
+    workspaceId?: string | null;
+  }): TerminalSessionRecord {
+    const terminalId = normalizedString(params.terminalId);
+    if (!terminalId) {
+      throw new RuntimeAgentToolsServiceError(400, "terminal_session_id_required", "terminal_id is required");
+    }
+    const terminal = this.requireTerminalSessionManager().getSession({
+      terminalId,
+      workspaceId: normalizedString(params.workspaceId) || undefined,
+    });
+    if (!terminal) {
+      throw new RuntimeAgentToolsServiceError(404, "terminal_session_not_found", "terminal session not found");
+    }
+    return terminal;
   }
 }

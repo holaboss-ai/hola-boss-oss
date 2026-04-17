@@ -26,7 +26,7 @@
     "cron-parser": "^5.5.0",
     "fastify": "^5.8.5",
     "js-yaml": "^4.1.1",
-    "node-pty": "^1.0.0",
+    "node-pty": "^1.2.0-beta.12",
     "tar": "^7.5.13",
     "yauzl": "^3.2.1",
     "zod": "^4.3.6"

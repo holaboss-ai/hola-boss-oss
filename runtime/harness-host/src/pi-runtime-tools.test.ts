@@ -542,3 +542,141 @@ test("Pi runtime tools fall back to node http when no fetch implementation is pr
     await once(server, "close");
   }
 });
+
+test("Pi runtime terminal session tools proxy terminal session routes and include terminal guidance", async () => {
+  const requests: Array<{
+    method: string;
+    url: string;
+    workspaceId: string;
+    sessionId: string;
+    selectedModel: string;
+    body: string;
+  }> = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/api/v1/capabilities/runtime-tools")) {
+      return new Response(JSON.stringify({ available: true }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+
+    const body = init?.body ? String(init.body) : "";
+    requests.push({
+      method: String(init?.method ?? "GET"),
+      url,
+      workspaceId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-workspace-id"] ?? ""),
+      sessionId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-session-id"] ?? ""),
+      selectedModel: String(
+        (init?.headers as Record<string, string> | undefined)?.["x-holaboss-selected-model"] ?? ""
+      ),
+      body,
+    });
+
+    return new Response(JSON.stringify({ terminal_id: "term-1", timed_out: false, count: 1 }), {
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    });
+  };
+
+  const tools = await resolvePiRuntimeToolDefinitions({
+    runtimeApiBaseUrl: "http://127.0.0.1:5060",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    selectedModel: "openai/gpt-5.4",
+    fetchImpl,
+  });
+
+  const startTool = tools.find((tool) => tool.name === "terminal_session_start");
+  const waitTool = tools.find((tool) => tool.name === "terminal_session_wait");
+  const sendInputTool = tools.find((tool) => tool.name === "terminal_session_send_input");
+  assert.ok(startTool);
+  assert.ok(waitTool);
+  assert.ok(sendInputTool);
+
+  await startTool.execute(
+    "call-1",
+    {
+      command: "npm run dev",
+      title: "Dev server",
+      cwd: "apps/web",
+      cols: 140,
+      rows: 40,
+    },
+    undefined,
+    undefined,
+    {} as never,
+  );
+  await waitTool.execute(
+    "call-2",
+    {
+      terminal_id: "term-1",
+      after_sequence: 2,
+      timeout_ms: 5000,
+    },
+    undefined,
+    undefined,
+    {} as never,
+  );
+  await sendInputTool.execute(
+    "call-3",
+    {
+      terminal_id: "term-1",
+      data: "rs\n",
+    },
+    undefined,
+    undefined,
+    {} as never,
+  );
+
+  assert.deepEqual(requests, [
+    {
+      method: "POST",
+      url: "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/terminal-sessions",
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      selectedModel: "openai/gpt-5.4",
+      body: JSON.stringify({
+        command: "npm run dev",
+        title: "Dev server",
+        cwd: "apps/web",
+        cols: 140,
+        rows: 40,
+      }),
+    },
+    {
+      method: "POST",
+      url: "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/terminal-sessions/term-1/wait",
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      selectedModel: "openai/gpt-5.4",
+      body: JSON.stringify({
+        after_sequence: 2,
+        timeout_ms: 5000,
+      }),
+    },
+    {
+      method: "POST",
+      url: "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/terminal-sessions/term-1/input",
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      selectedModel: "openai/gpt-5.4",
+      body: JSON.stringify({
+        data: "rs\n",
+      }),
+    },
+  ]);
+
+  assert.match(
+    (startTool.promptGuidelines ?? []).join("\n"),
+    /Prefer `bash` for short one-shot commands that should complete within the current tool call\./,
+  );
+  assert.match(
+    (startTool.promptGuidelines ?? []).join("\n"),
+    /Prefer background terminal sessions for long-running commands, dev servers, watch processes, interactive prompts, or work you may need to revisit later in the run\./,
+  );
+  assert.match(
+    (startTool.promptGuidelines ?? []).join("\n"),
+    /After starting a terminal session, use `terminal_session_read` or `terminal_session_wait` to inspect output before claiming success\./,
+  );
+});

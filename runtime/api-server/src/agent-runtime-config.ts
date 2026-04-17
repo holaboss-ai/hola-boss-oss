@@ -23,6 +23,8 @@ import type {
 } from "./agent-prompt-sections.js";
 import { resolveProductRuntimeConfig } from "./runtime-config.js";
 
+const DEFAULT_EXECUTION_MODEL = "openai/gpt-5.4";
+
 export type AgentRuntimeConfigGeneralMemberPayload = {
   id: string;
   model: string;
@@ -87,6 +89,19 @@ export interface AgentRuntimeConfigCliResponse {
   output_format?: Record<string, unknown> | null;
   workspace_config_checksum: string;
   capability_manifest?: AgentCapabilityManifest;
+}
+
+function defaultExecutionModel(): string {
+  try {
+    return resolveProductRuntimeConfig({
+      requireAuth: false,
+      requireUser: false,
+      requireBaseUrl: false,
+    }).defaultModel;
+  } catch {
+    const fallback = process.env.HOLABOSS_DEFAULT_MODEL?.trim();
+    return fallback || DEFAULT_EXECUTION_MODEL;
+  }
 }
 
 export interface RuntimeModelClientRequest {
@@ -1195,7 +1210,7 @@ function selectedRuntimeOutputSchema(
 export function projectAgentRuntimeConfig(
   request: AgentRuntimeConfigCliRequest
 ): AgentRuntimeConfigCliResponse {
-  const selectedModel = request.selected_model?.trim() || request.agent.model;
+  const selectedModel = request.selected_model?.trim() || defaultExecutionModel();
   const capabilityManifest = buildAgentCapabilityManifest({
     harnessId: request.harness_id ?? null,
     sessionKind: request.session_kind ?? null,

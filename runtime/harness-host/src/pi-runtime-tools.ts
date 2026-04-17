@@ -16,8 +16,10 @@ const RUNTIME_TOOLS_ONBOARDING_COMPLETE_PATH = "/api/v1/capabilities/runtime-too
 const RUNTIME_TOOLS_CRONJOBS_PATH = "/api/v1/capabilities/runtime-tools/cronjobs";
 const RUNTIME_TOOLS_IMAGE_GENERATE_PATH = "/api/v1/capabilities/runtime-tools/images/generate";
 const RUNTIME_TOOLS_REPORTS_PATH = "/api/v1/capabilities/runtime-tools/reports";
+const RUNTIME_TOOLS_TERMINAL_SESSIONS_PATH = "/api/v1/capabilities/runtime-tools/terminal-sessions";
 const DEFAULT_RUNTIME_TOOL_TIMEOUT_MS = 30000;
 const IMAGE_GENERATE_RUNTIME_TOOL_TIMEOUT_MS = 180000;
+const TERMINAL_WAIT_RUNTIME_TOOL_TIMEOUT_MS = 65000;
 const CRONJOB_DELIVERY_CHANNELS = ["system_notification", "session_run"] as const;
 const CRONJOB_DELIVERY_MODES = ["announce", "none"] as const;
 
@@ -91,6 +93,9 @@ function toolRequestSignal(signal: AbortSignal | undefined, timeoutMs = DEFAULT_
 function runtimeToolTimeoutMs(toolId: RuntimeAgentToolId): number {
   if (toolId === "image_generate") {
     return IMAGE_GENERATE_RUNTIME_TOOL_TIMEOUT_MS;
+  }
+  if (toolId === "terminal_session_wait") {
+    return TERMINAL_WAIT_RUNTIME_TOOL_TIMEOUT_MS;
   }
   return DEFAULT_RUNTIME_TOOL_TIMEOUT_MS;
 }
@@ -290,6 +295,77 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId) {
         },
         { additionalProperties: false },
       );
+    case "terminal_sessions_list":
+      return Type.Object({}, { additionalProperties: false });
+    case "terminal_session_start":
+      return Type.Object(
+        {
+          command: Type.String({
+            description:
+              "Shell command text to run in a background PTY session. This command is already executed through the workspace shell.",
+          }),
+          title: Type.Optional(Type.String({ description: "Optional display title for the terminal session." })),
+          cwd: Type.Optional(
+            Type.String({
+              description: "Optional workspace-relative working directory. Defaults to the workspace root.",
+            }),
+          ),
+          cols: Type.Optional(Type.Number({ description: "Optional terminal width in columns." })),
+          rows: Type.Optional(Type.Number({ description: "Optional terminal height in rows." })),
+        },
+        { additionalProperties: false },
+      );
+    case "terminal_session_get":
+    case "terminal_session_close":
+      return Type.Object(
+        {
+          terminal_id: Type.String({ description: "Terminal session id." }),
+        },
+        { additionalProperties: false },
+      );
+    case "terminal_session_read":
+    case "terminal_session_wait":
+      return Type.Object(
+        {
+          terminal_id: Type.String({ description: "Terminal session id." }),
+          after_sequence: Type.Optional(
+            Type.Number({ description: "Only return events with sequence greater than this number." }),
+          ),
+          limit: Type.Optional(Type.Number({ description: "Maximum number of events to return." })),
+          ...(toolId === "terminal_session_wait"
+            ? {
+                timeout_ms: Type.Optional(
+                  Type.Number({
+                    description:
+                      "Maximum time to wait for new output or a status change before returning with timed_out=true.",
+                  }),
+                ),
+              }
+            : {}),
+        },
+        { additionalProperties: false },
+      );
+    case "terminal_session_send_input":
+      return Type.Object(
+        {
+          terminal_id: Type.String({ description: "Terminal session id." }),
+          data: Type.String({
+            description:
+              "Input to write to the terminal session. Include a trailing newline or carriage return when the command expects Enter.",
+          }),
+        },
+        { additionalProperties: false },
+      );
+    case "terminal_session_signal":
+      return Type.Object(
+        {
+          terminal_id: Type.String({ description: "Terminal session id." }),
+          signal: Type.Optional(
+            Type.String({ description: "Optional signal name such as SIGINT, SIGTERM, or SIGHUP." }),
+          ),
+        },
+        { additionalProperties: false },
+      );
   }
 }
 
@@ -397,6 +473,56 @@ function createWriteReportBody(toolParams: unknown): Record<string, unknown> {
   };
 }
 
+function terminalSessionPath(terminalId: unknown): string {
+  const value = optionalString(terminalId);
+  if (!value) {
+    throw new Error("terminal_id is required");
+  }
+  return `${RUNTIME_TOOLS_TERMINAL_SESSIONS_PATH}/${encodeURIComponent(value)}`;
+}
+
+function createTerminalSessionBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    command: String(params.command ?? ""),
+    ...(optionalString(params.title) ? { title: optionalString(params.title) } : {}),
+    ...(optionalString(params.cwd) ? { cwd: optionalString(params.cwd) } : {}),
+    ...(typeof params.cols === "number" ? { cols: params.cols } : {}),
+    ...(typeof params.rows === "number" ? { rows: params.rows } : {}),
+  };
+}
+
+function readTerminalSessionBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    ...(typeof params.after_sequence === "number" ? { after_sequence: params.after_sequence } : {}),
+    ...(typeof params.limit === "number" ? { limit: params.limit } : {}),
+  };
+}
+
+function waitTerminalSessionBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    ...(typeof params.after_sequence === "number" ? { after_sequence: params.after_sequence } : {}),
+    ...(typeof params.limit === "number" ? { limit: params.limit } : {}),
+    ...(typeof params.timeout_ms === "number" ? { timeout_ms: params.timeout_ms } : {}),
+  };
+}
+
+function sendTerminalSessionInputBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    data: String(params.data ?? ""),
+  };
+}
+
+function signalTerminalSessionBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    ...(optionalString(params.signal) ? { signal: optionalString(params.signal) } : {}),
+  };
+}
+
 function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
   if (toolId === "write_report") {
     return [
@@ -407,6 +533,19 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "A step like 'summarize findings for the user' still means: save the full findings with `write_report`, then keep the chat reply brief.",
       "After calling `write_report`, keep the chat reply short: mention the report title or path and give only the key takeaways.",
       "Write the full markdown report in `content` instead of pasting the full report inline in chat.",
+    ];
+  }
+  if (
+    toolId === "terminal_session_start" ||
+    toolId === "terminal_session_read" ||
+    toolId === "terminal_session_wait"
+  ) {
+    return [
+      "Prefer `bash` for short one-shot commands that should complete within the current tool call.",
+      "Prefer background terminal sessions for long-running commands, dev servers, watch processes, interactive prompts, or work you may need to revisit later in the run.",
+      "After starting a terminal session, use `terminal_session_read` or `terminal_session_wait` to inspect output before claiming success.",
+      "Use workspace-relative `cwd` values when you need a subdirectory; otherwise let the session start at the workspace root.",
+      "When a background terminal is no longer needed, stop it with `terminal_session_signal` or `terminal_session_close` instead of leaving it running indefinitely.",
     ];
   }
   return [];
@@ -472,6 +611,42 @@ async function executeRuntimeTool(params: {
       method = "POST";
       requestPath = RUNTIME_TOOLS_REPORTS_PATH;
       body = createWriteReportBody(params.toolParams);
+      break;
+    case "terminal_sessions_list":
+      requestPath = RUNTIME_TOOLS_TERMINAL_SESSIONS_PATH;
+      break;
+    case "terminal_session_start":
+      method = "POST";
+      requestPath = RUNTIME_TOOLS_TERMINAL_SESSIONS_PATH;
+      body = createTerminalSessionBody(params.toolParams);
+      break;
+    case "terminal_session_get":
+      requestPath = terminalSessionPath(isRecord(params.toolParams) ? params.toolParams.terminal_id : undefined);
+      break;
+    case "terminal_session_read":
+      method = "POST";
+      requestPath = `${terminalSessionPath(isRecord(params.toolParams) ? params.toolParams.terminal_id : undefined)}/read`;
+      body = readTerminalSessionBody(params.toolParams);
+      break;
+    case "terminal_session_wait":
+      method = "POST";
+      requestPath = `${terminalSessionPath(isRecord(params.toolParams) ? params.toolParams.terminal_id : undefined)}/wait`;
+      body = waitTerminalSessionBody(params.toolParams);
+      break;
+    case "terminal_session_send_input":
+      method = "POST";
+      requestPath = `${terminalSessionPath(isRecord(params.toolParams) ? params.toolParams.terminal_id : undefined)}/input`;
+      body = sendTerminalSessionInputBody(params.toolParams);
+      break;
+    case "terminal_session_signal":
+      method = "POST";
+      requestPath = `${terminalSessionPath(isRecord(params.toolParams) ? params.toolParams.terminal_id : undefined)}/signal`;
+      body = signalTerminalSessionBody(params.toolParams);
+      break;
+    case "terminal_session_close":
+      method = "POST";
+      requestPath = `${terminalSessionPath(isRecord(params.toolParams) ? params.toolParams.terminal_id : undefined)}/close`;
+      body = {};
       break;
   }
 
