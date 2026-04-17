@@ -3,7 +3,11 @@ const ACTIVE_BROWSER_SESSION_STATUSES = new Set(["BUSY", "QUEUED", "PAUSING"]);
 function normalizedRuntimeStatus(
   runtimeState: SessionRuntimeRecordPayload | null | undefined,
 ): string {
-  return runtimeState?.status?.trim().toUpperCase() ?? "";
+  return (
+    runtimeState?.effective_state?.trim().toUpperCase() ||
+    runtimeState?.status?.trim().toUpperCase() ||
+    ""
+  );
 }
 
 export function browserSessionTitle(

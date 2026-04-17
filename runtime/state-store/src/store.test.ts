@@ -996,6 +996,43 @@ test("session messages preserve ascending order and include metadata placeholder
   store.close();
 });
 
+test("session messages preserve sub-second ordering within the same second", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  store.insertSessionMessage({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    role: "user",
+    text: "first",
+    messageId: "m-user",
+    createdAt: "2026-01-01T00:00:00.100Z"
+  });
+  store.insertSessionMessage({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    role: "assistant",
+    text: "second",
+    messageId: "m-assistant",
+    createdAt: "2026-01-01T00:00:00.200Z"
+  });
+
+  assert.deepEqual(
+    store
+      .listSessionMessages({
+        workspaceId: "workspace-1",
+        sessionId: "session-main",
+      })
+      .map((message) => message.id),
+    ["m-user", "m-assistant"],
+  );
+
+  store.close();
+});
+
 test("output events support latest id, incremental listing, and tail mode", () => {
   const root = makeTempDir("hb-state-store-");
   const store = new RuntimeStateStore({

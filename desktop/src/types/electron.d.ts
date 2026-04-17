@@ -705,6 +705,9 @@ declare global {
     workspace_id: string;
     session_id: string;
     status: string;
+    effective_state?: string | null;
+    runtime_status?: string | null;
+    has_queued_inputs?: boolean;
     current_input_id: string | null;
     current_worker_id: string | null;
     lease_until: string | null;
@@ -814,6 +817,10 @@ declare global {
     input_id: string;
     session_id: string;
     status: string;
+    effective_state?: string | null;
+    runtime_status?: string | null;
+    current_input_id?: string | null;
+    has_queued_inputs?: boolean;
   }
 
   interface PauseSessionRunResponsePayload {

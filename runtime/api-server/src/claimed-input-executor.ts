@@ -259,6 +259,24 @@ function eventTimestampOrNow(event: RunnerEvent): string {
   return createdAtForEvent(event) ?? new Date().toISOString();
 }
 
+function orderedAssistantMessageTimestamp(
+  turnStartedAt: string,
+  completedAt: string | null,
+): string {
+  const startedAtMs = Date.parse(turnStartedAt);
+  const completedAtMs = Date.parse(completedAt ?? "");
+  if (Number.isFinite(startedAtMs) && Number.isFinite(completedAtMs)) {
+    return new Date(Math.max(startedAtMs + 1, completedAtMs)).toISOString();
+  }
+  if (Number.isFinite(startedAtMs)) {
+    return new Date(startedAtMs + 1).toISOString();
+  }
+  if (Number.isFinite(completedAtMs)) {
+    return new Date(completedAtMs).toISOString();
+  }
+  return new Date().toISOString();
+}
+
 function tokenUsageFromPayload(payload: Record<string, unknown>): Record<string, unknown> | null {
   const direct = jsonRecord(payload.token_usage);
   if (direct) {
@@ -796,6 +814,14 @@ export async function processClaimedInput(params: {
     attachments,
     workspace
   });
+  store.insertSessionMessage({
+    workspaceId: record.workspaceId,
+    sessionId: record.sessionId,
+    role: "user",
+    text: String(record.payload.text ?? ""),
+    messageId: `user-${record.inputId}`,
+    createdAt: turnStartedAt,
+  });
 
   store.updateRuntimeState({
     workspaceId: record.workspaceId,
@@ -1287,7 +1313,11 @@ export async function processClaimedInput(params: {
         sessionId: record.sessionId,
         role: "assistant",
         text: assistantText,
-        messageId: `assistant-${record.inputId}`
+        messageId: `assistant-${record.inputId}`,
+        createdAt: orderedAssistantMessageTimestamp(
+          turnStartedAt,
+          completedAt,
+        ),
       });
     }
     const turnResult = persistTurnResult({

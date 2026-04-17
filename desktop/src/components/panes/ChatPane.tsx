@@ -23,6 +23,7 @@ import {
   Check,
   ChevronDown,
   Clock3,
+  CornerDownLeft,
   Copy,
   FileText,
   Folder,
@@ -90,6 +91,56 @@ interface ChatMessage {
   executionItems?: ChatExecutionTimelineItem[];
   outputs?: WorkspaceOutputRecordPayload[];
   memoryProposals?: MemoryUpdateProposalRecordPayload[];
+}
+
+type QueuedSessionInputStatus = "queued" | "sending";
+
+interface QueuedSessionInput {
+  inputId: string;
+  sessionId: string;
+  workspaceId: string;
+  text: string;
+  createdAt: string;
+  attachments: ChatAttachment[];
+  status: QueuedSessionInputStatus;
+}
+
+interface QueuedSessionInputPreviewDescriptor {
+  text: string;
+  createdAt?: string;
+  attachments?: ChatAttachment[];
+  status: QueuedSessionInputStatus;
+}
+
+interface TodoPlanPreviewState {
+  plan: ChatTodoPlan;
+  expanded: boolean;
+}
+
+declare global {
+  interface Window {
+    __holabossQueuedMessagesPreviewState?: QueuedSessionInputPreviewDescriptor[];
+    __holabossDevQueuedMessagesPreview?: {
+      single: (text?: string) => void;
+      multiple: () => void;
+      clear: () => void;
+      set: (
+        entries:
+          | string
+          | Array<string | Partial<QueuedSessionInputPreviewDescriptor>>,
+      ) => void;
+      get: () => QueuedSessionInputPreviewDescriptor[];
+    };
+    __holabossTodoPreviewState?: TodoPlanPreviewState | null;
+    __holabossDevTodoPreview?: {
+      sample: () => void;
+      expanded: () => void;
+      collapsed: () => void;
+      clear: () => void;
+      set: (plan: ChatTodoPlan, options?: { expanded?: boolean }) => void;
+      get: () => TodoPlanPreviewState | null;
+    };
+  }
 }
 
 interface ChatSerializedQuotedSkillBlock {
@@ -305,6 +356,9 @@ const CHAT_MODEL_STORAGE_KEY = "holaboss-chat-model-v1";
 const CHAT_THINKING_STORAGE_KEY = "holaboss-chat-thinking-v1";
 const CHAT_MODEL_USE_RUNTIME_DEFAULT = "__runtime_default__";
 const CHAT_SERIALIZED_SKILL_COMMAND_PATTERN = /^\/([A-Za-z0-9_-]+)$/;
+const QUEUED_MESSAGES_PREVIEW_EVENT =
+  "holaboss:queued-messages-preview-change";
+const TODO_PREVIEW_EVENT = "holaboss:todo-preview-change";
 const LEGACY_UNAVAILABLE_CHAT_MODELS = new Set(["openai/gpt-5.2-mini"]);
 const DEPRECATED_CHAT_MODELS = new Set([
   "openai/gpt-5.1",
@@ -1088,6 +1142,17 @@ function runtimeStateStatus(value: string | null | undefined): string {
   return (value || "").trim().toUpperCase();
 }
 
+function runtimeStateEffectiveStatus(
+  runtimeState:
+    | Pick<SessionRuntimeRecordPayload, "status" | "effective_state">
+    | null
+    | undefined,
+): string {
+  return runtimeStateStatus(
+    runtimeState?.effective_state ?? runtimeState?.status,
+  );
+}
+
 function normalizeSessionTurnStatus(value: string | null | undefined): string {
   return (value || "").trim().toLowerCase();
 }
@@ -1108,11 +1173,14 @@ function defaultWorkspaceSessionTitle(
 
 function chatSessionStatusLabel(
   runtimeState:
-    | Pick<SessionRuntimeRecordPayload, "status" | "last_turn_status">
+    | Pick<
+        SessionRuntimeRecordPayload,
+        "status" | "effective_state" | "last_turn_status"
+      >
     | null
     | undefined,
 ): string {
-  const status = runtimeStateStatus(runtimeState?.status);
+  const status = runtimeStateEffectiveStatus(runtimeState);
   if (status === "BUSY") {
     return "Running";
   }
@@ -1700,6 +1768,316 @@ function turnInputIdsFromHistoryMessages(
     inputIds.push(inputId);
   }
   return inputIds;
+}
+
+function reconcileQueuedSessionInputs(
+  queuedInputs: QueuedSessionInput[],
+  params: {
+    workspaceId: string;
+    sessionId: string;
+    persistedInputIds: Set<string>;
+    activeInputId?: string | null;
+    activeStatus?: string | null;
+  },
+): QueuedSessionInput[] {
+  const activeInputId = (params.activeInputId || "").trim();
+  const activeStatus = runtimeStateStatus(params.activeStatus);
+  return queuedInputs
+    .filter((item) => {
+      if (
+        item.workspaceId !== params.workspaceId ||
+        item.sessionId !== params.sessionId
+      ) {
+        return true;
+      }
+      return !params.persistedInputIds.has(item.inputId);
+    })
+    .map((item) => {
+      if (
+        item.workspaceId !== params.workspaceId ||
+        item.sessionId !== params.sessionId
+      ) {
+        return item;
+      }
+      if (!activeInputId || item.inputId !== activeInputId) {
+        return item;
+      }
+      const status: QueuedSessionInputStatus =
+        activeStatus === "BUSY" ? "sending" : "queued";
+      return {
+        ...item,
+        status,
+      };
+    });
+}
+
+function defaultQueuedSessionInputPreviewEntries(
+  mode: "single" | "multiple",
+): QueuedSessionInputPreviewDescriptor[] {
+  const now = Date.now();
+  if (mode === "single") {
+    return [
+      {
+        text: "Draft a concise follow-up after the current run finishes.",
+        createdAt: new Date(now).toISOString(),
+        status: "queued",
+        attachments: [],
+      },
+    ];
+  }
+  return [
+    {
+      text: serializeQuotedSkillPrompt(
+        "Pull the latest renewal risk notes before replying.",
+        ["customer_lookup"],
+      ),
+      createdAt: new Date(now - 2 * 60_000).toISOString(),
+      status: "sending",
+      attachments: [],
+    },
+    {
+      text: "Draft a tighter follow-up once the risk notes land.",
+      createdAt: new Date(now - 60_000).toISOString(),
+      status: "queued",
+      attachments: [],
+    },
+    {
+      text: "Prepare a brief handoff summary for the account manager.",
+      createdAt: new Date(now).toISOString(),
+      status: "queued",
+      attachments: [],
+    },
+  ];
+}
+
+function normalizeQueuedSessionInputPreviewEntries(
+  entries: unknown,
+): QueuedSessionInputPreviewDescriptor[] {
+  const rawEntries =
+    typeof entries === "string" ? [entries] : Array.isArray(entries) ? entries : [];
+  const normalized: QueuedSessionInputPreviewDescriptor[] = [];
+  rawEntries.forEach((entry, index) => {
+    if (typeof entry === "string") {
+      const text = entry.trim();
+      if (!text) {
+        return;
+      }
+      normalized.push({
+        text,
+        createdAt: new Date(Date.now() - index * 60_000).toISOString(),
+        status: "queued",
+        attachments: [],
+      });
+      return;
+    }
+    if (!entry || typeof entry !== "object") {
+      return;
+    }
+    const payload = entry as Partial<QueuedSessionInputPreviewDescriptor>;
+    const text = typeof payload.text === "string" ? payload.text.trim() : "";
+    if (!text) {
+      return;
+    }
+    const attachments = Array.isArray(payload.attachments)
+      ? payload.attachments
+          .map((attachment) => normalizeChatAttachment(attachment))
+          .filter(
+            (attachment): attachment is ChatAttachment => Boolean(attachment),
+          )
+      : [];
+    normalized.push({
+      text,
+      createdAt:
+        typeof payload.createdAt === "string" && payload.createdAt.trim()
+          ? payload.createdAt
+          : new Date(Date.now() - index * 60_000).toISOString(),
+      status: payload.status === "sending" ? "sending" : "queued",
+      attachments,
+    });
+  });
+  return normalized;
+}
+
+function setQueuedSessionInputPreviewState(entries: unknown) {
+  window.__holabossQueuedMessagesPreviewState =
+    normalizeQueuedSessionInputPreviewEntries(entries);
+  window.dispatchEvent(new CustomEvent(QUEUED_MESSAGES_PREVIEW_EVENT));
+}
+
+function defaultTodoPlanPreview(): ChatTodoPlan {
+  return {
+    sessionId: "preview-session",
+    updatedAt: new Date().toISOString(),
+    phases: [
+      {
+        id: "phase-research",
+        name: "Research",
+        tasks: [
+          {
+            id: "task-research-1",
+            content: "Review the previous response for open threads",
+            status: "completed",
+          },
+          {
+            id: "task-research-2",
+            content: "Pull the latest account context before replying",
+            status: "in_progress",
+            details: "Waiting on the current run to finish before the follow-up can start.",
+          },
+        ],
+      },
+      {
+        id: "phase-reply",
+        name: "Reply",
+        tasks: [
+          {
+            id: "task-reply-1",
+            content: "Draft the queued follow-up",
+            status: "pending",
+          },
+          {
+            id: "task-reply-2",
+            content: "Tighten the closing CTA",
+            status: "pending",
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function setTodoPlanPreviewState(next: TodoPlanPreviewState | null) {
+  window.__holabossTodoPreviewState = next;
+  window.dispatchEvent(new CustomEvent(TODO_PREVIEW_EVENT));
+}
+
+function useQueuedSessionInputPreview(params: {
+  workspaceId?: string | null;
+  sessionId?: string | null;
+}) {
+  const workspaceId = (params.workspaceId || "").trim();
+  const sessionId = (params.sessionId || "").trim();
+  const [previewItems, setPreviewItems] = useState<QueuedSessionInput[]>([]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) {
+      return;
+    }
+
+    const applyCurrentState = () => {
+      const items = window.__holabossQueuedMessagesPreviewState ?? [];
+      setPreviewItems(
+        items.map((item, index) => ({
+          inputId: `preview-queued-${index + 1}`,
+          sessionId,
+          workspaceId,
+          text: item.text,
+          createdAt: item.createdAt || new Date().toISOString(),
+          attachments: item.attachments ?? [],
+          status: item.status,
+        })),
+      );
+    };
+
+    const handlePreviewChange = () => {
+      applyCurrentState();
+    };
+
+    applyCurrentState();
+    window.addEventListener(
+      QUEUED_MESSAGES_PREVIEW_EVENT,
+      handlePreviewChange as EventListener,
+    );
+    window.__holabossDevQueuedMessagesPreview = {
+      single: (
+        text = "Draft a concise follow-up after the current run finishes.",
+      ) =>
+        setQueuedSessionInputPreviewState([
+          {
+            text,
+            status: "queued",
+            attachments: [],
+          },
+        ]),
+      multiple: () =>
+        setQueuedSessionInputPreviewState(
+          defaultQueuedSessionInputPreviewEntries("multiple"),
+        ),
+      clear: () => setQueuedSessionInputPreviewState([]),
+      set: (entries) => setQueuedSessionInputPreviewState(entries),
+      get: () => window.__holabossQueuedMessagesPreviewState ?? [],
+    };
+
+    return () => {
+      window.removeEventListener(
+        QUEUED_MESSAGES_PREVIEW_EVENT,
+        handlePreviewChange as EventListener,
+      );
+      delete window.__holabossDevQueuedMessagesPreview;
+    };
+  }, [sessionId, workspaceId]);
+
+  return previewItems;
+}
+
+function useTodoPlanPreview() {
+  const [preview, setPreview] = useState<TodoPlanPreviewState | null>(
+    () => window.__holabossTodoPreviewState ?? null,
+  );
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) {
+      return;
+    }
+
+    const applyCurrentState = () => {
+      setPreview(window.__holabossTodoPreviewState ?? null);
+    };
+
+    const handlePreviewChange = () => {
+      applyCurrentState();
+    };
+
+    applyCurrentState();
+    window.addEventListener(
+      TODO_PREVIEW_EVENT,
+      handlePreviewChange as EventListener,
+    );
+    window.__holabossDevTodoPreview = {
+      sample: () =>
+        setTodoPlanPreviewState({
+          plan: defaultTodoPlanPreview(),
+          expanded: false,
+        }),
+      expanded: () =>
+        setTodoPlanPreviewState({
+          plan: defaultTodoPlanPreview(),
+          expanded: true,
+        }),
+      collapsed: () =>
+        setTodoPlanPreviewState({
+          plan: defaultTodoPlanPreview(),
+          expanded: false,
+        }),
+      clear: () => setTodoPlanPreviewState(null),
+      set: (plan, options) =>
+        setTodoPlanPreviewState({
+          plan,
+          expanded: options?.expanded === true,
+        }),
+      get: () => window.__holabossTodoPreviewState ?? null,
+    };
+
+    return () => {
+      window.removeEventListener(
+        TODO_PREVIEW_EVENT,
+        handlePreviewChange as EventListener,
+      );
+      delete window.__holabossDevTodoPreview;
+    };
+  }, []);
+
+  return preview;
 }
 
 function mergeUniqueByKey<T>(
@@ -2696,6 +3074,7 @@ export function ChatPane({
   const [loadedHistoryMessageCount, setLoadedHistoryMessageCount] = useState(0);
   const [totalHistoryMessageCount, setTotalHistoryMessageCount] = useState(0);
   const [isResponding, setIsResponding] = useState(false);
+  const [isSubmittingMessage, setIsSubmittingMessage] = useState(false);
   const [isPausePending, setIsPausePending] = useState(false);
   const [chatErrorMessage, setChatErrorMessage] = useState("");
   const [attachmentGateMessage, setAttachmentGateMessage] = useState("");
@@ -2728,6 +3107,9 @@ export function ChatPane({
     proposalId: string;
     action: "accept" | "dismiss";
   } | null>(null);
+  const [queuedSessionInputs, setQueuedSessionInputs] = useState<
+    QueuedSessionInput[]
+  >([]);
   const [currentTodoPlan, setCurrentTodoPlan] = useState<ChatTodoPlan | null>(
     null,
   );
@@ -3369,12 +3751,23 @@ export function ChatPane({
     const currentRuntimeState = runtimeStates.find(
       (item) => item.session_id === nextSessionId,
     );
-    const currentRuntimeStatus = runtimeStateStatus(
-      currentRuntimeState?.status,
-    );
+    const currentRuntimeStatus =
+      runtimeStateEffectiveStatus(currentRuntimeState);
     const currentRuntimeInputId = (
       currentRuntimeState?.current_input_id || ""
     ).trim();
+    const persistedInputIds = new Set(
+      turnInputIdsFromHistoryMessages(page.history.messages),
+    );
+    setQueuedSessionInputs((current) =>
+      reconcileQueuedSessionInputs(current, {
+        workspaceId,
+        sessionId: nextSessionId,
+        persistedInputIds,
+        activeInputId: currentRuntimeInputId,
+        activeStatus: currentRuntimeStatus,
+      }),
+    );
     const hasAssistantMessage = page.renderedMessages.some(
       (message) => message.role === "assistant",
     );
@@ -4577,6 +4970,10 @@ export function ChatPane({
   }, [selectedWorkspaceId]);
 
   useEffect(() => {
+    setQueuedSessionInputs([]);
+  }, [selectedWorkspaceId]);
+
+  useEffect(() => {
     const unsubscribe = window.electronAPI.workspace.onSessionStreamEvent(
       (payload) => {
         const currentStreamId = activeStreamIdRef.current;
@@ -4790,6 +5187,25 @@ export function ChatPane({
             action: "adopt_stream_for_event",
             detail: `pending_input=${pendingInputId}`,
           });
+        }
+
+        if (
+          eventSessionId &&
+          eventInputId &&
+          (eventType === "run_claimed" || eventType === "run_started")
+        ) {
+          setQueuedSessionInputs((current) =>
+            current.map((item) =>
+              item.workspaceId === (selectedWorkspaceId || "").trim() &&
+              item.sessionId === eventSessionId &&
+              item.inputId === eventInputId
+                ? {
+                    ...item,
+                    status: "sending",
+                  }
+                : item,
+            ),
+          );
         }
 
         if (
@@ -5043,7 +5459,7 @@ export function ChatPane({
         if (!currentState) {
           return;
         }
-        const status = runtimeStateStatus(currentState.status);
+        const status = runtimeStateEffectiveStatus(currentState);
         if (status === "BUSY" || status === "QUEUED") {
           return;
         }
@@ -5108,7 +5524,7 @@ export function ChatPane({
       (!trimmed &&
         pendingAttachments.length === 0 &&
         quotedSkillIds.length === 0) ||
-      isResponding
+      isSubmittingMessage
     ) {
       return;
     }
@@ -5171,6 +5587,12 @@ export function ChatPane({
       setChatErrorMessage("No active session found for this workspace.");
       return;
     }
+    const queueOntoActiveRun =
+      isResponding &&
+      !pendingSessionTarget &&
+      targetSessionId === activeSessionIdRef.current;
+
+    setIsSubmittingMessage(true);
 
     appendStreamTelemetry({
       streamId: activeStreamIdRef.current || "-",
@@ -5182,24 +5604,6 @@ export function ChatPane({
       action: "queue_begin",
       detail: `workspace=${selectedWorkspace.id}`,
     });
-    const currentStreamId = activeStreamIdRef.current;
-    if (currentStreamId) {
-      await closeStreamWithReason(
-        currentStreamId,
-        "send_new_message_close_previous_stream",
-      );
-      activeStreamIdRef.current = null;
-      appendStreamTelemetry({
-        streamId: currentStreamId,
-        transportType: "client",
-        eventName: "sendMessage",
-        eventType: "close_prev_stream",
-        inputId: "",
-        sessionId: targetSessionId || "",
-        action: "closed_previous_stream",
-        detail: "before new send",
-      });
-    }
 
     try {
       const missingQuotedSkillIds = quotedSkillIds.filter(
@@ -5272,44 +5676,68 @@ export function ChatPane({
         trimmed,
         quotedSkillIds,
       );
+      const queuedMessageCreatedAt = new Date().toISOString();
       const userMessage: ChatMessage = {
         id: `user-${Date.now()}`,
         role: "user",
         text: serializedPrompt,
-        createdAt: new Date().toISOString(),
+        createdAt: queuedMessageCreatedAt,
         attachments: stagedAttachments,
       };
 
       shouldAutoScrollRef.current = true;
-      setMessages((prev) => [...prev, userMessage]);
-      resetLiveTurn();
+      if (!queueOntoActiveRun) {
+        setMessages((prev) => [...prev, userMessage]);
+      }
       setInput("");
       setQuotedSkillIds([]);
       setPendingAttachments([]);
-      setIsResponding(true);
-      setLiveAgentStatus("Thinking");
       setChatErrorMessage("");
-      activeAssistantMessageIdRef.current = null;
-      pendingInputIdRef.current = STREAM_ATTACH_PENDING;
+      if (!queueOntoActiveRun) {
+        const currentStreamId = activeStreamIdRef.current;
+        if (currentStreamId) {
+          await closeStreamWithReason(
+            currentStreamId,
+            "send_new_message_close_previous_stream",
+          );
+          activeStreamIdRef.current = null;
+          appendStreamTelemetry({
+            streamId: currentStreamId,
+            transportType: "client",
+            eventName: "sendMessage",
+            eventType: "close_prev_stream",
+            inputId: "",
+            sessionId: targetSessionId || "",
+            action: "closed_previous_stream",
+            detail: "before new send",
+          });
+        }
 
-      const preOpenedStream =
-        await window.electronAPI.workspace.openSessionOutputStream({
+        resetLiveTurn();
+        setIsResponding(true);
+        setLiveAgentStatus("Thinking");
+        activeAssistantMessageIdRef.current = null;
+        pendingInputIdRef.current = STREAM_ATTACH_PENDING;
+
+        const preOpenedStream =
+          await window.electronAPI.workspace.openSessionOutputStream({
+            sessionId: targetSessionId,
+            workspaceId: selectedWorkspace.id,
+            includeHistory: false,
+            stopOnTerminal: true,
+          });
+        activeStreamIdRef.current = preOpenedStream.streamId;
+        appendStreamTelemetry({
+          streamId: preOpenedStream.streamId,
+          transportType: "client",
+          eventName: "openSessionOutputStream",
+          eventType: "stream_open_prequeue",
+          inputId: "",
           sessionId: targetSessionId,
-          workspaceId: selectedWorkspace.id,
-          includeHistory: false,
-          stopOnTerminal: true,
+          action: "stream_requested_prequeue",
+          detail: "session tail stream opened before queue",
         });
-      activeStreamIdRef.current = preOpenedStream.streamId;
-      appendStreamTelemetry({
-        streamId: preOpenedStream.streamId,
-        transportType: "client",
-        eventName: "openSessionOutputStream",
-        eventType: "stream_open_prequeue",
-        inputId: "",
-        sessionId: targetSessionId,
-        action: "stream_requested_prequeue",
-        detail: "session tail stream opened before queue",
-      });
+      }
 
       const queued = await window.electronAPI.workspace.queueSessionInput({
         text: serializedPrompt,
@@ -5322,7 +5750,6 @@ export function ChatPane({
         thinking_value: effectiveThinkingValue,
       });
       setActiveSession(queued.session_id);
-      pendingInputIdRef.current = queued.input_id;
       appendStreamTelemetry({
         streamId: "-",
         transportType: "client",
@@ -5331,9 +5758,72 @@ export function ChatPane({
         inputId: queued.input_id,
         sessionId: queued.session_id,
         action: "queued_input",
-        detail: "queue response received",
+        detail: queueOntoActiveRun
+          ? "queue response received while current run remained attached"
+          : "queue response received",
       });
-      if (queued.session_id !== targetSessionId) {
+      if (!queueOntoActiveRun) {
+        pendingInputIdRef.current = queued.input_id;
+      } else {
+        setQueuedSessionInputs((current) => [
+          ...current,
+          {
+            inputId: queued.input_id,
+            sessionId: queued.session_id,
+            workspaceId: selectedWorkspace.id,
+            text: serializedPrompt,
+            createdAt: queuedMessageCreatedAt,
+            attachments: stagedAttachments,
+            status: "queued",
+          },
+        ]);
+        const shouldAttachQueuedRun =
+          activeSessionIdRef.current === queued.session_id &&
+          !activeStreamIdRef.current &&
+          !pendingInputIdRef.current;
+        if (shouldAttachQueuedRun) {
+          pendingInputIdRef.current = queued.input_id;
+          setIsResponding(true);
+          setLiveAgentStatus("Queued");
+          const resumed = await window.electronAPI.workspace
+            .openSessionOutputStream({
+              sessionId: queued.session_id,
+              workspaceId: selectedWorkspace.id,
+              inputId: queued.input_id,
+              includeHistory: true,
+              stopOnTerminal: true,
+            })
+            .catch((error) => {
+              pendingInputIdRef.current = null;
+              setIsResponding(false);
+              throw error;
+            });
+          activeStreamIdRef.current = resumed.streamId;
+          setQueuedSessionInputs((current) =>
+            current.map((item) =>
+              item.inputId === queued.input_id &&
+              item.sessionId === queued.session_id &&
+              item.workspaceId === selectedWorkspace.id
+                ? {
+                    ...item,
+                    status: "sending",
+                  }
+                : item,
+            ),
+          );
+          appendStreamTelemetry({
+            streamId: resumed.streamId,
+            transportType: "client",
+            eventName: "openSessionOutputStream",
+            eventType: "stream_open_queued_handoff",
+            inputId: queued.input_id,
+            sessionId: queued.session_id,
+            action: "stream_requested_queued_handoff",
+            detail: "current run finished before queue response arrived",
+          });
+        }
+      }
+      if (!queueOntoActiveRun && queued.session_id !== targetSessionId) {
         const staleStreamId = activeStreamIdRef.current;
         if (staleStreamId) {
           await closeStreamWithReason(staleStreamId, "queue_session_retarget");
@@ -5369,17 +5859,21 @@ export function ChatPane({
         });
       }
     } catch (error) {
-      const activeStreamId = activeStreamIdRef.current;
-      if (activeStreamId) {
-        await closeStreamWithReason(activeStreamId, "send_message_error").catch(
-          () => undefined,
-        );
+      if (!queueOntoActiveRun) {
+        const activeStreamId = activeStreamIdRef.current;
+        if (activeStreamId) {
+          await closeStreamWithReason(activeStreamId, "send_message_error").catch(
+            () => undefined,
+          );
+        }
       }
       setChatErrorMessage(normalizeErrorMessage(error));
-      setIsResponding(false);
-      activeAssistantMessageIdRef.current = null;
-      activeStreamIdRef.current = null;
-      pendingInputIdRef.current = null;
+      if (!queueOntoActiveRun) {
+        setIsResponding(false);
+        activeAssistantMessageIdRef.current = null;
+        activeStreamIdRef.current = null;
+        pendingInputIdRef.current = null;
+      }
       appendStreamTelemetry({
         streamId: "-",
         transportType: "client",
@@ -5390,6 +5884,8 @@ export function ChatPane({
         action: "send_failed",
         detail: normalizeErrorMessage(error),
       });
+    } finally {
+      setIsSubmittingMessage(false);
     }
   }
 
@@ -5631,6 +6127,28 @@ export function ChatPane({
     liveAssistantSegments.length > 0 ||
     Boolean(liveAssistantText) ||
     liveExecutionItems.length > 0;
+  const queuedSessionInputPreview = useQueuedSessionInputPreview({
+    workspaceId: selectedWorkspaceId,
+    sessionId: activeSessionId,
+  });
+  const todoPlanPreview = useTodoPlanPreview();
+  const activeQueuedSessionInputs = useMemo(
+    () =>
+      queuedSessionInputs.filter(
+        (item) =>
+          item.workspaceId === (selectedWorkspaceId || "").trim() &&
+          item.sessionId === (activeSessionId || "").trim(),
+      ),
+    [activeSessionId, queuedSessionInputs, selectedWorkspaceId],
+  );
+  const displayedQueuedSessionInputs =
+    queuedSessionInputPreview.length > 0
+      ? queuedSessionInputPreview
+      : activeQueuedSessionInputs;
+  const displayedTodoPlan = todoPlanPreview?.plan ?? currentTodoPlan;
+  const displayedTodoPanelExpanded =
+    todoPlanPreview?.expanded ?? todoPanelExpanded;
+  const todoPanelSlotHeightPx = 58;
   const hasMessages = messages.length > 0 || showLiveAssistantTurn;
   const streamTelemetryTail = useMemo(
     () => streamTelemetry.slice(-80).reverse(),
@@ -5955,7 +6473,7 @@ export function ChatPane({
       : "");
   const composerDisabledReason =
     composerBaseDisabledReason ||
-    (isResponding ? "Current run is still in progress." : "");
+    (isSubmittingMessage ? "Submitting message..." : "");
   const composerDisabled = Boolean(composerDisabledReason);
   const pendingImageInputUnsupportedMessage =
     pendingAttachments.some((attachment) => pendingAttachmentIsImage(attachment)) &&
@@ -6128,6 +6646,17 @@ export function ChatPane({
     onRequestCreateSession?.(draftRequest);
   };
 
+  const toggleTodoPanel = () => {
+    if (todoPlanPreview) {
+      setTodoPlanPreviewState({
+        ...todoPlanPreview,
+        expanded: !todoPlanPreview.expanded,
+      });
+      return;
+    }
+    setTodoPanelExpanded((value) => !value);
+  };
+
   return (
     <PaneCard
       className={
@@ -6281,6 +6810,21 @@ export function ChatPane({
                 </div>
               </div>
             ) : null}
+          </div>
+        ) : null}
+
+        {displayedTodoPlan ? (
+          <div
+            className="relative z-20 shrink-0 px-6 pt-3"
+            style={{ height: `${todoPanelSlotHeightPx}px` }}
+          >
+            <div className="absolute inset-x-6 top-3">
+              <CurrentTodoPanel
+                todoPlan={displayedTodoPlan}
+                expanded={displayedTodoPanelExpanded}
+                onToggle={toggleTodoPanel}
+              />
+            </div>
           </div>
         ) : null}
 
@@ -6456,75 +7000,69 @@ export function ChatPane({
                   </div>
                   <form onSubmit={onSubmit} className="w-full">
                     <div className="space-y-3">
-                      {currentTodoPlan ? (
-                        <CurrentTodoPanel
-                          todoPlan={currentTodoPlan}
-                          expanded={todoPanelExpanded}
-                          onToggle={() =>
-                            setTodoPanelExpanded((value) => !value)
+                      <QueuedSessionInputRail items={displayedQueuedSessionInputs}>
+                        <Composer
+                          input={input}
+                          quotedSkills={quotedSkills}
+                          slashCommands={slashCommandOptions}
+                          attachments={pendingAttachmentItems}
+                          isResponding={isResponding}
+                          pausePending={isPausePending}
+                          pauseDisabled={
+                            pendingInputIdRef.current === STREAM_ATTACH_PENDING ||
+                            isSubmittingMessage
                           }
+                          disabled={composerDisabled}
+                          disabledReason={composerDisabledReason}
+                          selectedModel={effectiveChatModelPreference}
+                          resolvedModelLabel={
+                            resolvedChatModel || modelSelectionUnavailableReason
+                          }
+                          runtimeDefaultModelLabel={runtimeDefaultModel}
+                          modelOptions={availableChatModelOptions}
+                          modelOptionGroups={availableChatModelOptionGroups}
+                          runtimeDefaultModelAvailable={
+                            runtimeDefaultModelAvailable
+                          }
+                          selectedThinkingValue={effectiveThinkingValue}
+                          thinkingValues={selectedThinkingValues}
+                          showThinkingValueSelector={showThinkingValueSelector}
+                          modelSelectionUnavailableReason={
+                            modelSelectionUnavailableReason
+                          }
+                          submitDisabled={Boolean(
+                            pendingImageInputUnsupportedMessage,
+                          )}
+                          placeholder={textareaPlaceholder}
+                          showModelSelector={!isOnboardingVariant}
+                          onModelChange={setChatModelPreference}
+                          onThinkingValueChange={setSelectedThinkingValue}
+                          onOpenModelProviders={() =>
+                            void window.electronAPI.ui.openSettingsPane(
+                              "providers",
+                            )
+                          }
+                          textareaRef={textareaRef}
+                          fileInputRef={fileInputRef}
+                          onChange={setInput}
+                          onKeyDown={onComposerKeyDown}
+                          onCompositionStart={onComposerCompositionStart}
+                          onCompositionEnd={onComposerCompositionEnd}
+                          onAttachmentInputChange={onAttachmentInputChange}
+                          onPause={pauseCurrentRun}
+                          onAddDroppedFiles={appendPendingLocalFiles}
+                          onAddExplorerAttachments={
+                            appendPendingExplorerAttachments
+                          }
+                          onSelectSlashCommand={(command) => {
+                            if (command.kind === "skill") {
+                              addQuotedSkill(command.skillId);
+                            }
+                          }}
+                          onRemoveQuotedSkill={removeQuotedSkill}
+                          onRemoveAttachment={removePendingAttachment}
                         />
-                      ) : null}
-                      <Composer
-                        input={input}
-                        quotedSkills={quotedSkills}
-                        slashCommands={slashCommandOptions}
-                        attachments={pendingAttachmentItems}
-                        isResponding={isResponding}
-                        pausePending={isPausePending}
-                        pauseDisabled={
-                          pendingInputIdRef.current === STREAM_ATTACH_PENDING
-                        }
-                        disabled={composerDisabled}
-                        disabledReason={composerDisabledReason}
-                        selectedModel={effectiveChatModelPreference}
-                        resolvedModelLabel={
-                          resolvedChatModel || modelSelectionUnavailableReason
-                        }
-                        runtimeDefaultModelLabel={runtimeDefaultModel}
-                        modelOptions={availableChatModelOptions}
-                        modelOptionGroups={availableChatModelOptionGroups}
-                        runtimeDefaultModelAvailable={
-                          runtimeDefaultModelAvailable
-                        }
-                        selectedThinkingValue={effectiveThinkingValue}
-                        thinkingValues={selectedThinkingValues}
-                        showThinkingValueSelector={showThinkingValueSelector}
-                        modelSelectionUnavailableReason={
-                          modelSelectionUnavailableReason
-                        }
-                        submitDisabled={Boolean(
-                          pendingImageInputUnsupportedMessage,
-                        )}
-                        placeholder={textareaPlaceholder}
-                        showModelSelector={!isOnboardingVariant}
-                        onModelChange={setChatModelPreference}
-                        onThinkingValueChange={setSelectedThinkingValue}
-                        onOpenModelProviders={() =>
-                          void window.electronAPI.ui.openSettingsPane(
-                            "providers",
-                          )
-                        }
-                        textareaRef={textareaRef}
-                        fileInputRef={fileInputRef}
-                        onChange={setInput}
-                        onKeyDown={onComposerKeyDown}
-                        onCompositionStart={onComposerCompositionStart}
-                        onCompositionEnd={onComposerCompositionEnd}
-                        onAttachmentInputChange={onAttachmentInputChange}
-                        onPause={pauseCurrentRun}
-                        onAddDroppedFiles={appendPendingLocalFiles}
-                        onAddExplorerAttachments={
-                          appendPendingExplorerAttachments
-                        }
-                        onSelectSlashCommand={(command) => {
-                          if (command.kind === "skill") {
-                            addQuotedSkill(command.skillId);
-                          }
-                        }}
-                        onRemoveQuotedSkill={removeQuotedSkill}
-                        onRemoveAttachment={removePendingAttachment}
-                      />
+                      </QueuedSessionInputRail>
                     </div>
                   </form>
                 </div>
@@ -6582,70 +7120,66 @@ export function ChatPane({
               className={`shrink-0 px-6 pb-5 pt-3 ${
                 showHistoryRestoreScreen ? "invisible" : ""
               }`}
-            >
-              <form onSubmit={onSubmit} className="w-full">
-                <div className="space-y-3">
-                  {currentTodoPlan ? (
-                    <CurrentTodoPanel
-                      todoPlan={currentTodoPlan}
-                      expanded={todoPanelExpanded}
-                      onToggle={() => setTodoPanelExpanded((value) => !value)}
-                    />
-                  ) : null}
-                  <Composer
-                    input={input}
-                    quotedSkills={quotedSkills}
-                    slashCommands={slashCommandOptions}
-                    attachments={pendingAttachmentItems}
-                    isResponding={isResponding}
-                    pausePending={isPausePending}
-                    pauseDisabled={
-                      pendingInputIdRef.current === STREAM_ATTACH_PENDING
-                    }
-                    disabled={composerDisabled}
-                    disabledReason={composerDisabledReason}
-                    selectedModel={effectiveChatModelPreference}
-                    resolvedModelLabel={
-                      resolvedChatModel || modelSelectionUnavailableReason
-                    }
-                    runtimeDefaultModelLabel={runtimeDefaultModel}
-                    modelOptions={availableChatModelOptions}
-                    modelOptionGroups={availableChatModelOptionGroups}
-                    runtimeDefaultModelAvailable={runtimeDefaultModelAvailable}
-                    selectedThinkingValue={effectiveThinkingValue}
-                    thinkingValues={selectedThinkingValues}
-                    showThinkingValueSelector={showThinkingValueSelector}
-                    modelSelectionUnavailableReason={
-                      modelSelectionUnavailableReason
-                    }
-                    submitDisabled={Boolean(
-                      pendingImageInputUnsupportedMessage,
-                    )}
-                    placeholder={textareaPlaceholder}
-                    showModelSelector={!isOnboardingVariant}
-                    onModelChange={setChatModelPreference}
-                    onThinkingValueChange={setSelectedThinkingValue}
-                    onOpenModelProviders={() =>
-                      void window.electronAPI.ui.openSettingsPane("providers")
-                    }
-                    textareaRef={textareaRef}
-                    fileInputRef={fileInputRef}
-                    onChange={setInput}
-                    onKeyDown={onComposerKeyDown}
-                    onCompositionStart={onComposerCompositionStart}
-                    onCompositionEnd={onComposerCompositionEnd}
-                    onAttachmentInputChange={onAttachmentInputChange}
-                    onPause={pauseCurrentRun}
-                    onAddDroppedFiles={appendPendingLocalFiles}
-                    onAddExplorerAttachments={appendPendingExplorerAttachments}
-                    onSelectSlashCommand={(command) => {
-                      if (command.kind === "skill") {
-                        addQuotedSkill(command.skillId);
+          >
+            <form onSubmit={onSubmit} className="w-full">
+              <div className="space-y-3">
+                  <QueuedSessionInputRail items={displayedQueuedSessionInputs}>
+                    <Composer
+                      input={input}
+                      quotedSkills={quotedSkills}
+                      slashCommands={slashCommandOptions}
+                      attachments={pendingAttachmentItems}
+                      isResponding={isResponding}
+                      pausePending={isPausePending}
+                      pauseDisabled={
+                        pendingInputIdRef.current === STREAM_ATTACH_PENDING ||
+                        isSubmittingMessage
                       }
-                    }}
-                    onRemoveQuotedSkill={removeQuotedSkill}
-                    onRemoveAttachment={removePendingAttachment}
-                  />
+                      disabled={composerDisabled}
+                      disabledReason={composerDisabledReason}
+                      selectedModel={effectiveChatModelPreference}
+                      resolvedModelLabel={
+                        resolvedChatModel || modelSelectionUnavailableReason
+                      }
+                      runtimeDefaultModelLabel={runtimeDefaultModel}
+                      modelOptions={availableChatModelOptions}
+                      modelOptionGroups={availableChatModelOptionGroups}
+                      runtimeDefaultModelAvailable={runtimeDefaultModelAvailable}
+                      selectedThinkingValue={effectiveThinkingValue}
+                      thinkingValues={selectedThinkingValues}
+                      showThinkingValueSelector={showThinkingValueSelector}
+                      modelSelectionUnavailableReason={
+                        modelSelectionUnavailableReason
+                      }
+                      submitDisabled={Boolean(
+                        pendingImageInputUnsupportedMessage,
+                      )}
+                      placeholder={textareaPlaceholder}
+                      showModelSelector={!isOnboardingVariant}
+                      onModelChange={setChatModelPreference}
+                      onThinkingValueChange={setSelectedThinkingValue}
+                      onOpenModelProviders={() =>
+                        void window.electronAPI.ui.openSettingsPane("providers")
+                      }
+                      textareaRef={textareaRef}
+                      fileInputRef={fileInputRef}
+                      onChange={setInput}
+                      onKeyDown={onComposerKeyDown}
+                      onCompositionStart={onComposerCompositionStart}
+                      onCompositionEnd={onComposerCompositionEnd}
+                      onAttachmentInputChange={onAttachmentInputChange}
+                      onPause={pauseCurrentRun}
+                      onAddDroppedFiles={appendPendingLocalFiles}
+                      onAddExplorerAttachments={appendPendingExplorerAttachments}
+                      onSelectSlashCommand={(command) => {
+                        if (command.kind === "skill") {
+                          addQuotedSkill(command.skillId);
+                        }
+                      }}
+                      onRemoveQuotedSkill={removeQuotedSkill}
+                      onRemoveAttachment={removePendingAttachment}
+                    />
+                  </QueuedSessionInputRail>
                 </div>
               </form>
             </div>
@@ -7020,6 +7554,79 @@ function UserTurn({
   );
 }
 
+function queuedSessionInputPreviewText(item: QueuedSessionInput) {
+  const parsedQuotedSkills = parseSerializedQuotedSkillPrompt(item.text);
+  const previewText =
+    parsedQuotedSkills.body ||
+    parsedQuotedSkills.skillIds.map((skillId) => `/${skillId}`).join(" ");
+  return previewText.replace(/\s+/g, " ").trim();
+}
+
+function QueuedSessionInputRail({
+  items,
+  children,
+}: {
+  items: QueuedSessionInput[];
+  children: ReactNode;
+}) {
+  if (items.length === 0) {
+    return <>{children}</>;
+  }
+  const panelInsetPx = 18;
+  const panelHeightPx = 112;
+  const overlapPx = 28;
+  const queueViewportHeightPx = 50;
+  const reservedTopPx = 94;
+
+  return (
+    <div className="relative" style={{ paddingTop: `${reservedTopPx}px` }}>
+      <div className="pointer-events-none absolute inset-x-0 top-0">
+        <div
+          className="pointer-events-auto absolute inset-x-0 overflow-hidden rounded-[28px] border border-border/32 bg-background shadow-[0_16px_34px_rgba(15,23,42,0.06)]"
+          style={{
+            left: `${panelInsetPx}px`,
+            right: `${panelInsetPx}px`,
+            height: `${panelHeightPx}px`,
+          }}
+        >
+          <div className="px-5 pt-4">
+            <div
+              className="overflow-y-auto pr-1.5"
+              style={{ maxHeight: `${queueViewportHeightPx}px` }}
+            >
+              <div className="space-y-1.5">
+                {items.map((item) => {
+                  const previewText = queuedSessionInputPreviewText(item);
+                  return (
+                    <div
+                      key={item.inputId}
+                      className="flex items-center gap-3 rounded-[14px] px-1 text-[14px] leading-7 text-foreground/84"
+                    >
+                      <CornerDownLeft
+                        size={15}
+                        className="shrink-0 text-muted-foreground/62"
+                      />
+                      <div className="min-w-0 truncate">
+                        {previewText || "Queued message"}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div
+        className="relative z-10 rounded-[24px] bg-background"
+        style={{ marginTop: `${-overlapPx}px` }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function AssistantTurn({
   label,
   mode,
@@ -7340,12 +7947,12 @@ function CurrentTodoPanel({
     totalTaskCount > 0 ? `${currentTaskPosition}/${totalTaskCount}` : "0/0";
 
   return (
-    <div className="overflow-hidden rounded-[18px] border border-border/35 bg-muted/50">
+    <div className="overflow-hidden rounded-[18px] border border-border/45 bg-background shadow-[0_16px_34px_rgba(15,23,42,0.08)]">
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={expanded}
-        className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition hover:bg-background/30"
+        className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition hover:bg-muted/55"
       >
         <div
           className={`inline-flex size-5 shrink-0 items-center justify-center rounded-full ${
@@ -7373,7 +7980,7 @@ function CurrentTodoPanel({
       </button>
 
       {expanded ? (
-        <div className="border-t border-border/20 px-3 py-3">
+        <div className="max-h-[320px] overflow-y-auto border-t border-border/20 px-3 py-3">
           <div className="space-y-3">
             {visiblePhases.map((phase) => {
               const phaseCompletedCount = phase.tasks.filter(
@@ -7383,7 +7990,7 @@ function CurrentTodoPanel({
               return (
                 <div
                   key={phase.id}
-                  className="rounded-[16px] border border-border/25 bg-muted/50 px-3 py-3"
+                  className="rounded-[16px] border border-border/30 bg-muted/75 px-3 py-3"
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-[12px] font-medium text-foreground">
@@ -8419,7 +9026,7 @@ function Composer({
     !runtimeDefaultModelAvailable &&
     modelOptions.length === 0 &&
     modelOptionGroups.length === 0;
-  const inputDisabled = disabled || isResponding;
+  const inputDisabled = disabled;
   const activeSlashRange = useMemo(
     () => findActiveSlashCommandRange(input, caretIndex),
     [caretIndex, input],
@@ -8745,7 +9352,7 @@ function Composer({
   };
 
   const allowAttachmentDrop = (dataTransfer: DataTransfer | null) => {
-    if (!dataTransfer || disabled || isResponding) {
+    if (!dataTransfer || disabled) {
       return false;
     }
 
@@ -8989,7 +9596,7 @@ function Composer({
                   runtimeDefaultModelAvailable={runtimeDefaultModelAvailable}
                   modelOptions={modelOptions}
                   modelOptionGroups={modelOptionGroups}
-                  disabled={isResponding}
+                  disabled={disabled}
                   compact={compactComposerControls}
                   onModelChange={onModelChange}
                 />
@@ -9017,7 +9624,7 @@ function Composer({
               <ThinkingValueSelect
                 selectedThinkingValue={selectedThinkingValue}
                 thinkingValues={thinkingValues}
-                disabled={isResponding}
+                disabled={disabled}
                 compact={compactComposerControls}
                 compactWidth={
                   compactComposerControls ? compactThinkingControlWidth : undefined
@@ -9176,7 +9783,7 @@ function Composer({
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={pausePending || pauseDisabled}
+                disabled={pausePending || pauseDisabled || disabled}
                 onClick={onPause}
                 className="rounded-full px-3"
               >
@@ -9187,22 +9794,22 @@ function Composer({
                 )}
                 Pause
               </Button>
-            ) : (
-              <Button
-                size="icon"
-                disabled={
-                  (!input.trim() &&
-                    attachments.length === 0 &&
-                    quotedSkills.length === 0) ||
-                  disabled ||
-                  submitDisabled
-                }
-                render={<button type="submit" />}
-                className="rounded-full"
-              >
-                <ArrowUp size={16} />
-              </Button>
-            )}
+            ) : null}
+            <Button
+              size="icon"
+              aria-label={isResponding ? "Queue message" : "Send message"}
+              disabled={
+                (!input.trim() &&
+                  attachments.length === 0 &&
+                  quotedSkills.length === 0) ||
+                disabled ||
+                submitDisabled
+              }
+              render={<button type="submit" />}
+              className="rounded-full"
+            >
+              <ArrowUp size={16} />
+            </Button>
           </div>
         </div>
       </div>

@@ -636,9 +636,13 @@ function runtimeStatePayload(record: SessionRuntimeStateRecord): Record<string, 
 function runtimeStateListItemPayload(params: {
   record: SessionRuntimeStateRecord;
   lastTurnResult?: TurnResultRecord | null;
+  hasQueuedInputs?: boolean;
 }): Record<string, unknown> {
+  const hasQueuedInputs = params.hasQueuedInputs ?? false;
   return {
     ...runtimeStatePayload(params.record),
+    ...effectiveSessionState(params.record, hasQueuedInputs),
+    has_queued_inputs: hasQueuedInputs,
     last_turn_status: params.lastTurnResult?.status ?? null,
     last_turn_completed_at: params.lastTurnResult?.completedAt ?? null,
     last_turn_stop_reason: params.lastTurnResult?.stopReason ?? null,
@@ -1133,6 +1137,17 @@ function effectiveSessionState(
     heartbeat_at: runtimeState?.heartbeatAt ?? null,
     lease_until: runtimeState?.leaseUntil ?? null
   };
+}
+
+function runtimeStateHasClaimedActiveInput(
+  store: RuntimeStateStore,
+  runtimeState: SessionRuntimeStateRecord | null,
+): boolean {
+  const currentInputId = runtimeState?.currentInputId?.trim() ?? "";
+  if (!currentInputId) {
+    return false;
+  }
+  return store.getInput(currentInputId)?.status === "CLAIMED";
 }
 
 function runnerOutputEventPayload(record: OutputEventRecord): Record<string, unknown> {
@@ -5319,11 +5334,16 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         harnessSessionId: resolvedSessionId
       });
     }
-    store.ensureRuntimeState({
-      workspaceId,
-      sessionId: resolvedSessionId,
-      status: "QUEUED"
-    });
+    const runtimeStateBeforeQueue =
+      store.getRuntimeState({
+        workspaceId,
+        sessionId: resolvedSessionId,
+      }) ??
+      store.ensureRuntimeState({
+        workspaceId,
+        sessionId: resolvedSessionId,
+        status: "IDLE"
+      });
     const record = store.enqueueInput({
       workspaceId,
       sessionId: resolvedSessionId,
@@ -5338,13 +5358,6 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         context: {}
       }
     });
-    store.insertSessionMessage({
-      workspaceId,
-      sessionId: resolvedSessionId,
-      role: "user",
-      text: trimmedText,
-      messageId: `user-${record.inputId}`
-    });
     createInputMemoryUpdateProposals({
       store,
       workspaceId,
@@ -5353,21 +5366,43 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       sourceMessageId: `user-${record.inputId}`,
       text: trimmedText,
     });
-    store.updateRuntimeState({
+    if (runtimeStateHasClaimedActiveInput(store, runtimeStateBeforeQueue)) {
+      store.updateRuntimeState({
+        workspaceId,
+        sessionId: resolvedSessionId,
+        status: runtimeStateBeforeQueue?.status ?? "BUSY",
+        currentInputId: runtimeStateBeforeQueue?.currentInputId ?? null,
+        currentWorkerId: runtimeStateBeforeQueue?.currentWorkerId ?? null,
+        leaseUntil: runtimeStateBeforeQueue?.leaseUntil ?? null,
+        heartbeatAt: runtimeStateBeforeQueue?.heartbeatAt ?? null,
+        lastError: runtimeStateBeforeQueue?.lastError ?? null
+      });
+    } else {
+      store.updateRuntimeState({
+        workspaceId,
+        sessionId: resolvedSessionId,
+        status: "QUEUED",
+        currentInputId: record.inputId,
+        currentWorkerId: null,
+        leaseUntil: null,
+        heartbeatAt: null,
+        lastError: null
+      });
+    }
+    const runtimeStateAfterQueue = store.getRuntimeState({
       workspaceId,
       sessionId: resolvedSessionId,
-      status: "QUEUED",
-      currentInputId: record.inputId,
-      currentWorkerId: null,
-      leaseUntil: null,
-      heartbeatAt: null,
-      lastError: null
     });
+    const queueAwareState = effectiveSessionState(runtimeStateAfterQueue, true);
     queueWorker?.wake();
     return {
       input_id: record.inputId,
       session_id: record.sessionId,
-      status: record.status
+      status: record.status,
+      effective_state: queueAwareState.effective_state,
+      runtime_status: queueAwareState.runtime_status,
+      current_input_id: queueAwareState.current_input_id,
+      has_queued_inputs: true,
     };
   });
 
@@ -5450,8 +5485,12 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const params = request.params as { workspaceId: string };
     const items = store
       .listRuntimeStates(params.workspaceId)
-      .map((item: SessionRuntimeStateRecord) =>
-        runtimeStateListItemPayload({
+      .map((item: SessionRuntimeStateRecord) => {
+        const hasQueuedInputs = store.hasAvailableInputsForSession({
+          workspaceId: params.workspaceId,
+          sessionId: item.sessionId,
+        });
+        return runtimeStateListItemPayload({
           record: item,
           lastTurnResult:
             store.listTurnResults({
@@ -5460,8 +5499,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
               limit: 1,
               offset: 0,
             })[0] ?? null,
-        }),
-      );
+          hasQueuedInputs,
+        });
+      });
     return { items, count: items.length };
   });
 
@@ -5800,10 +5840,15 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
           limit: 1,
           offset: 0,
         })[0] ?? null;
+      const hasQueuedInputs = store.hasAvailableInputsForSession({
+        workspaceId: params.workspaceId,
+        sessionId: row.sessionId,
+      });
       return {
         ...runtimeStateListItemPayload({
           record: row,
           lastTurnResult,
+          hasQueuedInputs,
         }),
         artifacts: artifactsBySession.get(row.sessionId) ?? [],
       };
@@ -6345,13 +6390,6 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
             : null,
         }
       }
-    });
-    store.insertSessionMessage({
-      workspaceId: proposal.workspaceId,
-      sessionId,
-      role: "user",
-      text: taskPrompt,
-      messageId: `user-${record.inputId}`
     });
     store.updateRuntimeState({
       workspaceId: proposal.workspaceId,

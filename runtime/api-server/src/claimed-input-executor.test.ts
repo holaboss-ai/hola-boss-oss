@@ -241,9 +241,12 @@ test("claimed input persists runner events, assistant text, and idle state on su
     "output_delta",
     "run_completed",
   ]);
-  assert.equal(messages.length, 1);
-  assert.equal(messages[0].role, "assistant");
-  assert.equal(messages[0].text, "Hello from TS");
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].id, `user-${queued.inputId}`);
+  assert.equal(messages[0].role, "user");
+  assert.equal(messages[0].text, "hello");
+  assert.equal(messages[1].role, "assistant");
+  assert.equal(messages[1].text, "Hello from TS");
   assert.ok(turnResult);
   assert.equal(turnResult.status, "completed");
   assert.equal(turnResult.stopReason, "ok");
@@ -650,10 +653,13 @@ test("claimed input captures file outputs and persists an assistant turn for out
   assert.equal(outputs[0].metadata.origin_type, "file");
   assert.equal(outputs[0].metadata.change_type, "created");
   assert.equal(outputs[0].metadata.category, "document");
-  assert.equal(messages.length, 1);
-  assert.equal(messages[0].id, `assistant-${queued.inputId}`);
-  assert.equal(messages[0].role, "assistant");
-  assert.equal(messages[0].text, "");
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].id, `user-${queued.inputId}`);
+  assert.equal(messages[0].role, "user");
+  assert.equal(messages[0].text, "create a report file");
+  assert.equal(messages[1].id, `assistant-${queued.inputId}`);
+  assert.equal(messages[1].role, "assistant");
+  assert.equal(messages[1].text, "");
 
   store.close();
 });
@@ -863,8 +869,11 @@ test("claimed input honors a persisted failure terminal after claim recovery abo
     events.map((event) => event.eventType),
     ["run_started", "output_delta", "run_failed"]
   );
-  assert.equal(messages.length, 1);
-  assert.equal(messages[0]?.text, "Partial answer");
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0]?.id, `user-${queued.inputId}`);
+  assert.equal(messages[0]?.text, "hello");
+  assert.equal(messages[1]?.id, `assistant-${queued.inputId}`);
+  assert.equal(messages[1]?.text, "Partial answer");
   assert.ok(turnResult);
   assert.equal(turnResult.status, "failed");
   assert.equal(turnResult.stopReason, "RuntimeError");
