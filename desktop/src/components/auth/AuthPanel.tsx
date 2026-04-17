@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import {
   ChevronDown,
   Loader2,
@@ -49,6 +49,14 @@ const AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME =
   "auth-settings-control theme-control-surface relative isolate h-9 w-full overflow-hidden rounded-[10px] border border-border/45 bg-muted px-2.5 text-sm text-foreground shadow-none transition-colors hover:border-border/65 focus-visible:border-border/65 focus-visible:ring-0 focus-visible:ring-transparent aria-invalid:border-border/45 aria-invalid:ring-0";
 const PROVIDER_ROW_ACTIONS_CLASS_NAME = "flex min-w-[224px] shrink-0 items-center justify-end gap-2";
 const PROVIDER_ROW_ACTION_ITEM_CLASS_NAME = "min-w-[104px] justify-center";
+const ADVANCED_SETTINGS_WARNING_PANEL_STYLE = {
+  borderColor: "color-mix(in oklch, var(--warning) 40%, var(--border))",
+  backgroundColor: "color-mix(in oklch, var(--warning) 12%, var(--card))",
+  color: "color-mix(in oklch, var(--warning) 36%, var(--foreground))",
+} satisfies CSSProperties;
+const ADVANCED_SETTINGS_WARNING_TITLE_STYLE = {
+  color: "color-mix(in oklch, var(--warning) 52%, var(--foreground))",
+} satisfies CSSProperties;
 const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string, string>> = {
   anthropic_direct: {
     "claude-sonnet-4-5": "claude-sonnet-4-6"
@@ -2473,11 +2481,18 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const runtimeProviderSettings = (
     <div className="mt-3 grid gap-4">
       {advancedSettingsWarnings.length > 0 ? (
-        <div className="rounded-[18px] border border-amber-400/35 bg-amber-500/8 px-4 py-3 text-sm text-amber-200">
-          <div className="font-medium text-amber-100">Provider model resolution needs attention</div>
+        <div
+          className="rounded-[18px] border px-4 py-3 text-sm"
+          style={ADVANCED_SETTINGS_WARNING_PANEL_STYLE}
+        >
+          <div className="font-medium" style={ADVANCED_SETTINGS_WARNING_TITLE_STYLE}>
+            Provider model resolution needs attention
+          </div>
           <div className="mt-2 grid gap-2">
             {advancedSettingsWarnings.map((warning) => (
-              <div key={warning}>{warning}</div>
+              <div key={warning} className="leading-6">
+                {warning}
+              </div>
             ))}
           </div>
         </div>
