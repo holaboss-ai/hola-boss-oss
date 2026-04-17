@@ -9,6 +9,7 @@ import type {
 import { createBackgroundTaskMemoryModelClient } from "./background-task-model.js";
 import {
   persistSkillCandidate,
+  promotedWorkspaceSkillPath,
   reviewTurnForSkillCandidate,
   skillCandidateProposalId,
 } from "./evolve-skill-review.js";
@@ -171,8 +172,8 @@ export async function processEvolveJob(params: {
       candidate.kind === "skill_patch" ? `Review skill patch: ${candidate.title}` : `Review new reusable skill: ${candidate.title}`,
     taskPrompt:
       candidate.kind === "skill_patch"
-        ? `Review and promote the candidate patch for the existing workspace skill "${candidate.slug}". Inspect the draft artifact at ${candidate.skillPath}, refine it if needed, and update the live workspace skill only if the patch is broadly reusable and correct.`
-        : `Review and promote the candidate skill "${candidate.title}" for this workspace. Inspect the draft artifact at ${candidate.skillPath}, refine it if needed, and promote it only if it is broadly reusable.`,
+        ? `Review and promote the candidate patch for the existing workspace skill "${candidate.slug}". The stored draft lives at ${candidate.skillPath} in memory context only; do not create or keep promoted skills under evolve/ in the workspace. If you promote it, write the live workspace skill to ${promotedWorkspaceSkillPath(candidate.slug)}.`
+        : `Review and promote the candidate skill "${candidate.title}" for this workspace. The stored draft lives at ${candidate.skillPath} in memory context only; do not create or keep promoted skills under evolve/ in the workspace. If you promote it, write the live workspace skill to ${promotedWorkspaceSkillPath(candidate.slug)}.`,
     taskGenerationRationale:
       candidate.evaluationNotes ??
       (candidate.kind === "skill_patch"
