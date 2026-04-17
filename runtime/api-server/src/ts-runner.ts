@@ -10,7 +10,7 @@ import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
 import {
   RuntimeAppLifecycleExecutor,
-  type AppLifecycleExecutorLike
+  type AppLifecycleExecutorLike,
 } from "./app-lifecycle-worker.js";
 import { bootstrapResolvedApplications } from "./resolved-app-bootstrap.js";
 import {
@@ -21,13 +21,13 @@ import {
   mcpServerMappingMetadata,
   workspaceMcpCatalogFingerprint,
   type PreparedMcpServerPayload,
-  type RunningWorkspaceMcpSidecar
+  type RunningWorkspaceMcpSidecar,
 } from "./runner-prep.js";
 import { compileWorkspaceRuntimePlanFromWorkspace } from "./runner-prep.js";
 import {
   projectAgentRuntimeConfig,
   type AgentRuntimeConfigCliRequest,
-  type AgentRuntimeConfigCliResponse
+  type AgentRuntimeConfigCliResponse,
 } from "./agent-runtime-config.js";
 import type {
   AgentCurrentUserContext,
@@ -39,7 +39,7 @@ import type {
   AgentPendingUserMemoryContext,
   AgentRecalledMemoryContext,
   AgentRecentRuntimeContext,
-  AgentSessionResumeContext
+  AgentSessionResumeContext,
 } from "./agent-runtime-prompt.js";
 import {
   decodeTsRunnerRequestPayload,
@@ -47,20 +47,20 @@ import {
   type JsonObject,
   type TsRunnerEvent,
   type TsRunnerRequest,
-  validateTsRunnerRequest
+  validateTsRunnerRequest,
 } from "./ts-runner-contracts.js";
 import {
   buildTsRunnerEvent,
   buildTsRunnerFailureEvent,
   closePushEventClient,
   createPushEventClient,
-  emitTsRunnerEventWithPush
+  emitTsRunnerEventWithPush,
 } from "./ts-runner-events.js";
 import {
   clearWorkspaceHarnessSessionId,
   persistWorkspaceHarnessSessionId,
   readWorkspaceHarnessSessionId,
-  workspaceDirForId
+  workspaceDirForId,
 } from "./ts-runner-session-state.js";
 import { resolveWorkspaceSkills } from "./workspace-skills.js";
 import { resolveProductRuntimeConfig } from "./runtime-config.js";
@@ -68,10 +68,13 @@ import {
   normalizeHarnessId,
   requireRuntimeHarnessAdapter,
   requireRuntimeHarnessPlugin,
-  type RuntimeHarnessPlugin
+  type RuntimeHarnessPlugin,
 } from "./harness-registry.js";
 import { buildRunnerEnv } from "./runner-worker.js";
-import { startWorkspaceMcpSidecar, type WorkspaceMcpSidecarCliRequest } from "./workspace-mcp-sidecar.js";
+import {
+  startWorkspaceMcpSidecar,
+  type WorkspaceMcpSidecarCliRequest,
+} from "./workspace-mcp-sidecar.js";
 import type { CompiledWorkspaceRuntimePlan } from "./workspace-runtime-plan.js";
 import {
   recentRuntimeContextFromCompactionBoundary,
@@ -87,7 +90,10 @@ import { NATIVE_WEB_SEARCH_TOOL_IDS } from "../../harnesses/src/native-web-searc
 
 type LoggerLike = Pick<typeof console, "warn">;
 
-const TERMINAL_EVENT_TYPES = new Set<TsRunnerEvent["event_type"]>(["run_completed", "run_failed"]);
+const TERMINAL_EVENT_TYPES = new Set<TsRunnerEvent["event_type"]>([
+  "run_completed",
+  "run_failed",
+]);
 const HARNESS_HOST_NOT_IMPLEMENTED_EXIT_CODE = 86;
 const RUNTIME_EXEC_CONTEXT_KEY = "_sandbox_runtime_exec_v1";
 const DEFAULT_SESSION_MODE = "code";
@@ -104,7 +110,7 @@ const DEFAULT_TOOLS = [
   "question",
   "todowrite",
   "todoread",
-  "skill"
+  "skill",
 ];
 
 type BootstrapStageTimingMap = Record<string, number>;
@@ -136,8 +142,13 @@ export interface TsRunnerExecutionDeps {
     workspaceDir: string;
     resolvedApplications: unknown[];
   }) => Promise<PreparedMcpServerPayload[]>;
-  compilePlan: (params: { workspaceId: string; workspaceDir: string }) => CompiledWorkspaceRuntimePlan;
-  projectAgentRuntimeConfig: (request: AgentRuntimeConfigCliRequest) => AgentRuntimeConfigCliResponse;
+  compilePlan: (params: {
+    workspaceId: string;
+    workspaceDir: string;
+  }) => CompiledWorkspaceRuntimePlan;
+  projectAgentRuntimeConfig: (
+    request: AgentRuntimeConfigCliRequest,
+  ) => AgentRuntimeConfigCliResponse;
   resolveHarnessPlugin: (harness: string) => RuntimeHarnessPlugin;
   runHarnessHost: (params: {
     harness: string;
@@ -146,7 +157,9 @@ export interface TsRunnerExecutionDeps {
     emitEvent: (event: TsRunnerEvent) => Promise<void>;
     logger?: LoggerLike;
   }) => Promise<TsRunnerHarnessRelayResult>;
-  startWorkspaceMcpSidecar: (request: WorkspaceMcpSidecarCliRequest) => Promise<RunningWorkspaceMcpSidecar | null>;
+  startWorkspaceMcpSidecar: (
+    request: WorkspaceMcpSidecarCliRequest,
+  ) => Promise<RunningWorkspaceMcpSidecar | null>;
   loadRecalledMemoryContext: (params: {
     workspaceRoot: string;
     workspaceId: string;
@@ -229,7 +242,9 @@ function sanitizeSnapshotValue(value: unknown, parentKey?: string): unknown {
   return Object.fromEntries(sanitizedEntries);
 }
 
-function turnRequestSnapshotFingerprint(payload: Record<string, unknown>): string {
+function turnRequestSnapshotFingerprint(
+  payload: Record<string, unknown>,
+): string {
   return fingerprintJsonValue(sanitizeSnapshotValue(payload));
 }
 
@@ -242,7 +257,10 @@ function persistTurnRequestSnapshot(params: {
   payload: Record<string, unknown>;
   logger?: LoggerLike;
 }): string | null {
-  const sanitizedPayload = sanitizeSnapshotValue(params.payload) as Record<string, unknown>;
+  const sanitizedPayload = sanitizeSnapshotValue(params.payload) as Record<
+    string,
+    unknown
+  >;
   const fingerprint = fingerprintJsonValue(sanitizedPayload);
   const sandboxRoot = path.dirname(params.workspaceRoot);
   const dbPath = path.join(sandboxRoot, "state", "runtime.db");
@@ -250,7 +268,7 @@ function persistTurnRequestSnapshot(params: {
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   } catch (error) {
     params.logger?.warn?.(
-      `Failed to create turn request snapshot state directory workspace_id=${params.workspaceId} session_id=${params.sessionId} input_id=${params.inputId}: ${errorMessage(error)}`
+      `Failed to create turn request snapshot state directory workspace_id=${params.workspaceId} session_id=${params.sessionId} input_id=${params.inputId}: ${errorMessage(error)}`,
     );
     return null;
   }
@@ -271,7 +289,7 @@ function persistTurnRequestSnapshot(params: {
     return fingerprint;
   } catch (error) {
     params.logger?.warn?.(
-      `Failed to persist turn request snapshot workspace_id=${params.workspaceId} session_id=${params.sessionId} input_id=${params.inputId}: ${errorMessage(error)}`
+      `Failed to persist turn request snapshot workspace_id=${params.workspaceId} session_id=${params.sessionId} input_id=${params.inputId}: ${errorMessage(error)}`,
     );
     return null;
   } finally {
@@ -306,14 +324,17 @@ function turnRequestSnapshotPayload(params: {
       tools: params.runtimeConfig.tools,
       workspace_tool_ids: params.runtimeConfig.workspace_tool_ids,
       workspace_skill_ids: params.runtimeConfig.workspace_skill_ids,
-      output_schema_member_id: params.runtimeConfig.output_schema_member_id ?? null,
+      output_schema_member_id:
+        params.runtimeConfig.output_schema_member_id ?? null,
       output_format: params.runtimeConfig.output_format ?? null,
       workspace_config_checksum: params.runtimeConfig.workspace_config_checksum,
       capability_manifest: params.runtimeConfig.capability_manifest ?? null,
       model_client: {
-        model_proxy_provider: params.runtimeConfig.model_client.model_proxy_provider,
+        model_proxy_provider:
+          params.runtimeConfig.model_client.model_proxy_provider,
         base_url: params.runtimeConfig.model_client.base_url ?? null,
-        default_headers: params.runtimeConfig.model_client.default_headers ?? null,
+        default_headers:
+          params.runtimeConfig.model_client.default_headers ?? null,
       },
     },
     harness_request: params.harnessRequestPayload,
@@ -324,7 +345,11 @@ function elapsedMs(startedAtMs: number): number {
   return Math.max(0, Date.now() - startedAtMs);
 }
 
-function measureBootstrapStage<T>(timings: BootstrapStageTimingMap, stage: string, operation: () => T): T {
+function measureBootstrapStage<T>(
+  timings: BootstrapStageTimingMap,
+  stage: string,
+  operation: () => T,
+): T {
   const startedAtMs = Date.now();
   try {
     return operation();
@@ -336,7 +361,7 @@ function measureBootstrapStage<T>(timings: BootstrapStageTimingMap, stage: strin
 async function measureBootstrapStageAsync<T>(
   timings: BootstrapStageTimingMap,
   stage: string,
-  operation: () => Promise<T>
+  operation: () => Promise<T>,
 ): Promise<T> {
   const startedAtMs = Date.now();
   try {
@@ -346,7 +371,10 @@ async function measureBootstrapStageAsync<T>(
   }
 }
 
-function runtimeExecContextString(request: TsRunnerRequest, key: string): string | null {
+function runtimeExecContextString(
+  request: TsRunnerRequest,
+  key: string,
+): string | null {
   const value = request.context[RUNTIME_EXEC_CONTEXT_KEY];
   if (!isRecord(value)) {
     return null;
@@ -354,7 +382,9 @@ function runtimeExecContextString(request: TsRunnerRequest, key: string): string
   return firstNonEmptyString(value[key]);
 }
 
-function evolveCandidateContext(request: TsRunnerRequest): AgentEvolveCandidateContext | null {
+function evolveCandidateContext(
+  request: TsRunnerRequest,
+): AgentEvolveCandidateContext | null {
   if (!isRecord(request.context.evolve_candidate)) {
     return null;
   }
@@ -388,7 +418,9 @@ function selectedHarness(request: TsRunnerRequest): string {
   const runtimeHarness = isRecord(request.context[RUNTIME_EXEC_CONTEXT_KEY])
     ? request.context[RUNTIME_EXEC_CONTEXT_KEY].harness
     : undefined;
-  return normalizeHarnessId(runtimeHarness ?? process.env.SANDBOX_AGENT_HARNESS);
+  return normalizeHarnessId(
+    runtimeHarness ?? process.env.SANDBOX_AGENT_HARNESS,
+  );
 }
 
 function runtimeRootDir(): string {
@@ -417,13 +449,17 @@ function loadRecentRuntimeContext(params: {
     dbPath,
   });
   try {
-    const latestBoundary = store.listCompactionBoundaries({
-      workspaceId: params.workspaceId,
-      sessionId: params.sessionId,
-      limit: 5,
-      offset: 0,
-    }).find((boundary) => boundary.inputId !== params.inputId) ?? null;
-    const boundaryContext = recentRuntimeContextFromCompactionBoundary(latestBoundary);
+    const latestBoundary =
+      store
+        .listCompactionBoundaries({
+          workspaceId: params.workspaceId,
+          sessionId: params.sessionId,
+          limit: 5,
+          offset: 0,
+        })
+        .find((boundary) => boundary.inputId !== params.inputId) ?? null;
+    const boundaryContext =
+      recentRuntimeContextFromCompactionBoundary(latestBoundary);
     if (boundaryContext) {
       return boundaryContext;
     }
@@ -437,7 +473,7 @@ function loadRecentRuntimeContext(params: {
     return priorTurn ? recentRuntimeContextFromTurnResult(priorTurn) : null;
   } catch (error) {
     params.logger?.warn?.(
-      `Failed to load recent runtime context workspace_id=${params.workspaceId} session_id=${params.sessionId}: ${errorMessage(error)}`
+      `Failed to load recent runtime context workspace_id=${params.workspaceId} session_id=${params.sessionId}: ${errorMessage(error)}`,
     );
     return null;
   } finally {
@@ -457,7 +493,11 @@ function resolveMemoryRootDir(workspaceRoot: string): string {
 }
 
 function sessionMemoryPath(workspaceId: string, sessionId: string): string {
-  const sanitizedSessionId = sessionId.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "session";
+  const sanitizedSessionId =
+    sessionId
+      .trim()
+      .replace(/[^A-Za-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "session";
   return `workspace/${workspaceId}/runtime/session-memory/${sanitizedSessionId}.md`;
 }
 
@@ -477,7 +517,10 @@ function loadSessionMemoryExcerpt(params: {
   const relPath = sessionMemoryPath(params.workspaceId, params.sessionId);
   const memoryRoot = resolveMemoryRootDir(params.workspaceRoot);
   const targetPath = path.join(memoryRoot, relPath);
-  if (!fs.existsSync(targetPath) || !fs.statSync(targetPath, { throwIfNoEntry: false })?.isFile()) {
+  if (
+    !fs.existsSync(targetPath) ||
+    !fs.statSync(targetPath, { throwIfNoEntry: false })?.isFile()
+  ) {
     return null;
   }
   try {
@@ -524,13 +567,17 @@ function loadSessionResumeContext(params: {
     dbPath,
   });
   try {
-    const latestBoundary = store.listCompactionBoundaries({
-      workspaceId: params.workspaceId,
-      sessionId: params.sessionId,
-      limit: 5,
-      offset: 0,
-    }).find((boundary) => boundary.inputId !== params.inputId) ?? null;
-    const boundaryContext = sessionResumeContextFromCompactionBoundary(latestBoundary);
+    const latestBoundary =
+      store
+        .listCompactionBoundaries({
+          workspaceId: params.workspaceId,
+          sessionId: params.sessionId,
+          limit: 5,
+          offset: 0,
+        })
+        .find((boundary) => boundary.inputId !== params.inputId) ?? null;
+    const boundaryContext =
+      sessionResumeContextFromCompactionBoundary(latestBoundary);
     if (boundaryContext) {
       if (!sessionMemory) {
         return boundaryContext;
@@ -568,7 +615,7 @@ function loadSessionResumeContext(params: {
     };
   } catch (error) {
     params.logger?.warn?.(
-      `Failed to load session resume context workspace_id=${params.workspaceId} session_id=${params.sessionId}: ${errorMessage(error)}`
+      `Failed to load session resume context workspace_id=${params.workspaceId} session_id=${params.sessionId}: ${errorMessage(error)}`,
     );
     if (!sessionMemory) {
       return null;
@@ -626,16 +673,21 @@ async function loadRecalledMemoryContext(params: {
       }
       const existingTime = Date.parse(existing.updatedAt);
       const nextTime = Date.parse(entry.updatedAt);
-      if (Number.isFinite(nextTime) && (!Number.isFinite(existingTime) || nextTime > existingTime)) {
+      if (
+        Number.isFinite(nextTime) &&
+        (!Number.isFinite(existingTime) || nextTime > existingTime)
+      ) {
         byMemoryId.set(entry.memoryId, entry);
       }
     }
     const entries = [...byMemoryId.values()].sort((left, right) => {
-      const updatedDiff = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+      const updatedDiff =
+        Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
       if (updatedDiff !== 0 && Number.isFinite(updatedDiff)) {
         return updatedDiff;
       }
-      const createdDiff = Date.parse(right.createdAt) - Date.parse(left.createdAt);
+      const createdDiff =
+        Date.parse(right.createdAt) - Date.parse(left.createdAt);
       if (createdDiff !== 0 && Number.isFinite(createdDiff)) {
         return createdDiff;
       }
@@ -664,7 +716,7 @@ async function loadRecalledMemoryContext(params: {
     });
   } catch (error) {
     params.logger?.warn?.(
-      `Failed to load recalled memory context workspace_id=${params.workspaceId}: ${errorMessage(error)}`
+      `Failed to load recalled memory context workspace_id=${params.workspaceId}: ${errorMessage(error)}`,
     );
     return null;
   } finally {
@@ -688,7 +740,9 @@ function startRecalledMemoryContextPrefetch(params: {
   handle.promise = params
     .load()
     .catch((error) => {
-      params.logger?.warn?.(`Failed in recalled memory prefetch: ${errorMessage(error)}`);
+      params.logger?.warn?.(
+        `Failed in recalled memory prefetch: ${errorMessage(error)}`,
+      );
       return null;
     })
     .finally(() => {
@@ -699,7 +753,7 @@ function startRecalledMemoryContextPrefetch(params: {
 
 async function consumeRecalledMemoryContextPrefetch(
   prefetch: RecalledMemoryPrefetchHandle,
-  maxWaitMs = 25
+  maxWaitMs = 25,
 ): Promise<AgentRecalledMemoryContext | null> {
   if (prefetch.settledAt !== null) {
     return await prefetch.promise;
@@ -713,7 +767,10 @@ async function consumeRecalledMemoryContextPrefetch(
     const result = await Promise.race([
       prefetch.promise.then((value) => ({ ready: true as const, value })),
       new Promise<{ ready: false }>((resolve) => {
-        timeoutHandle = setTimeout(() => resolve({ ready: false }), boundedWaitMs);
+        timeoutHandle = setTimeout(
+          () => resolve({ ready: false }),
+          boundedWaitMs,
+        );
       }),
     ]);
     return result.ready ? result.value : null;
@@ -754,7 +811,9 @@ function loadCurrentUserContext(params: {
       name_source: profile.nameSource,
     };
   } catch (error) {
-    params.logger?.warn?.(`Failed to load current user context: ${errorMessage(error)}`);
+    params.logger?.warn?.(
+      `Failed to load current user context: ${errorMessage(error)}`,
+    );
     return defaultContext;
   } finally {
     store.close();
@@ -790,7 +849,7 @@ function loadPendingUserMemoryContext(params: {
     return pendingUserMemoryContextFromProposals(proposals);
   } catch (error) {
     params.logger?.warn?.(
-      `Failed to load pending user memory context workspace_id=${params.workspaceId} session_id=${params.sessionId} input_id=${params.inputId}: ${errorMessage(error)}`
+      `Failed to load pending user memory context workspace_id=${params.workspaceId} session_id=${params.sessionId} input_id=${params.inputId}: ${errorMessage(error)}`,
     );
     return null;
   } finally {
@@ -812,7 +871,11 @@ function currentRuntimeApiUrl(): string | null {
     return configured.replace(/\/+$/, "");
   }
 
-  const portValue = (process.env.SANDBOX_RUNTIME_API_PORT ?? process.env.SANDBOX_AGENT_BIND_PORT ?? "").trim();
+  const portValue = (
+    process.env.SANDBOX_RUNTIME_API_PORT ??
+    process.env.SANDBOX_AGENT_BIND_PORT ??
+    ""
+  ).trim();
   if (!portValue) {
     return null;
   }
@@ -822,13 +885,20 @@ function currentRuntimeApiUrl(): string | null {
   }
 
   const host = normalizeRuntimeApiHost(
-    process.env.SANDBOX_RUNTIME_API_HOST ?? process.env.SANDBOX_AGENT_BIND_HOST ?? "127.0.0.1"
+    process.env.SANDBOX_RUNTIME_API_HOST ??
+      process.env.SANDBOX_AGENT_BIND_HOST ??
+      "127.0.0.1",
   );
   return `http://${host}:${port}`;
 }
 
 function runtimeNodeBin(): string {
-  return firstNonEmptyString(process.env.HOLABOSS_RUNTIME_NODE_BIN, process.execPath) ?? process.execPath;
+  return (
+    firstNonEmptyString(
+      process.env.HOLABOSS_RUNTIME_NODE_BIN,
+      process.execPath,
+    ) ?? process.execPath
+  );
 }
 
 function workspaceMcpSandboxId(): string {
@@ -838,7 +908,10 @@ function workspaceMcpSandboxId(): string {
     process.env.HOSTNAME ??
     os.hostname() ??
     "sandbox";
-  const token = String(raw).trim().replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
+  const token = String(raw)
+    .trim()
+    .replace(/[^A-Za-z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
   return token || "sandbox";
 }
 
@@ -855,16 +928,23 @@ function defaultProviderId(): string {
     const configured = resolveProductRuntimeConfig({
       requireAuth: false,
       requireUser: false,
-      requireBaseUrl: false
+      requireBaseUrl: false,
     }).defaultProvider;
     return normalizeProviderId(configured);
   } catch {
-    return normalizeProviderId(process.env.HOLABOSS_DEFAULT_PROVIDER_ID ?? DEFAULT_PROVIDER_ID);
+    return normalizeProviderId(
+      process.env.HOLABOSS_DEFAULT_PROVIDER_ID ?? DEFAULT_PROVIDER_ID,
+    );
   }
 }
 
 function defaultSessionMode(): string {
-  return firstNonEmptyString(process.env.HOLABOSS_SESSION_MODE, DEFAULT_SESSION_MODE) ?? DEFAULT_SESSION_MODE;
+  return (
+    firstNonEmptyString(
+      process.env.HOLABOSS_SESSION_MODE,
+      DEFAULT_SESSION_MODE,
+    ) ?? DEFAULT_SESSION_MODE
+  );
 }
 
 function selectorModelClientFromRequest(params: {
@@ -873,16 +953,26 @@ function selectorModelClientFromRequest(params: {
   sessionId: string;
   inputId: string;
 }) {
-  const runtimeExecContext = isRecord(params.request.context[RUNTIME_EXEC_CONTEXT_KEY])
-    ? (params.request.context[RUNTIME_EXEC_CONTEXT_KEY] as Record<string, unknown>)
+  const runtimeExecContext = isRecord(
+    params.request.context[RUNTIME_EXEC_CONTEXT_KEY],
+  )
+    ? (params.request.context[RUNTIME_EXEC_CONTEXT_KEY] as Record<
+        string,
+        unknown
+      >)
     : {};
   return createBackgroundTaskMemoryModelClient({
     workspaceId: params.workspaceId,
     sessionId: params.sessionId,
     inputId: params.inputId,
-    selectedModel: firstNonEmptyString(typeof params.request.model === "string" ? params.request.model : "", null),
+    selectedModel: firstNonEmptyString(
+      typeof params.request.model === "string" ? params.request.model : "",
+      null,
+    ),
     defaultProviderId: defaultProviderId(),
-    runtimeExecModelProxyApiKey: firstNonEmptyString(runtimeExecContext.model_proxy_api_key),
+    runtimeExecModelProxyApiKey: firstNonEmptyString(
+      runtimeExecContext.model_proxy_api_key,
+    ),
     runtimeExecSandboxId: firstNonEmptyString(runtimeExecContext.sandbox_id),
     runtimeExecRunId: firstNonEmptyString(runtimeExecContext.run_id),
   });
@@ -900,7 +990,12 @@ function defaultExtraTools(harnessId?: string | null): string[] {
 }
 
 function explicitHolabossUserId(request: TsRunnerRequest): string | undefined {
-  return firstNonEmptyString(request.holaboss_user_id, request.context.holaboss_user_id) ?? undefined;
+  return (
+    firstNonEmptyString(
+      request.holaboss_user_id,
+      request.context.holaboss_user_id,
+    ) ?? undefined
+  );
 }
 
 function bootstrapStartedPayload(params: {
@@ -922,21 +1017,29 @@ function bootstrapStartedPayload(params: {
     model_id: params.runtimeConfig.model_id,
     workspace_tool_ids: [...params.runtimeConfig.workspace_tool_ids],
     workspace_skill_ids: [...params.runtimeConfig.workspace_skill_ids],
-    workspace_command_ids: [...(params.runtimeConfig.capability_manifest?.workspace_commands ?? [])],
+    workspace_command_ids: [
+      ...(params.runtimeConfig.capability_manifest?.workspace_commands ?? []),
+    ],
     context_message_count: params.runtimeConfig.context_messages?.length ?? 0,
-    prompt_section_ids: [...(params.runtimeConfig.prompt_sections?.map((section) => section.id) ?? [])],
+    prompt_section_ids: [
+      ...(params.runtimeConfig.prompt_sections?.map((section) => section.id) ??
+        []),
+    ],
     prompt_cache_profile: params.runtimeConfig.prompt_cache_profile ?? null,
-    capability_manifest_fingerprint: params.runtimeConfig.capability_manifest?.fingerprint ?? null,
+    capability_manifest_fingerprint:
+      params.runtimeConfig.capability_manifest?.fingerprint ?? null,
     request_snapshot_fingerprint: params.requestSnapshotFingerprint,
     mcp_server_ids: params.mcpServers.map((server) => server.name),
     mcp_server_mappings: mcpServerMappingMetadata(params.mcpServerIdMap),
     workspace_mcp_sidecar_reused: Boolean(params.sidecar?.reused),
-    structured_output_enabled: params.harnessSupportsStructuredOutput && Boolean(params.runtimeConfig.output_format),
+    structured_output_enabled:
+      params.harnessSupportsStructuredOutput &&
+      Boolean(params.runtimeConfig.output_format),
     workspace_config_checksum: params.runtimeConfig.workspace_config_checksum,
     bootstrap_started_at: params.bootstrapStartedAt,
     bootstrap_ready_at: params.bootstrapReadyAt,
     bootstrap_total_ms: params.bootstrapTotalMs,
-    bootstrap_stage_timings_ms: { ...params.bootstrapStageTimingsMs }
+    bootstrap_stage_timings_ms: { ...params.bootstrapStageTimingsMs },
   };
 }
 
@@ -949,37 +1052,50 @@ function currentBrowserConfig(): {
     const config = resolveProductRuntimeConfig({
       requireAuth: false,
       requireUser: false,
-      requireBaseUrl: false
+      requireBaseUrl: false,
     });
     return {
       desktopBrowserEnabled: config.desktopBrowserEnabled,
       desktopBrowserUrl: config.desktopBrowserUrl,
-      desktopBrowserAuthToken: config.desktopBrowserAuthToken
+      desktopBrowserAuthToken: config.desktopBrowserAuthToken,
     };
   } catch {
     return {
       desktopBrowserEnabled: false,
       desktopBrowserUrl: "",
-      desktopBrowserAuthToken: ""
+      desktopBrowserAuthToken: "",
     };
   }
 }
 
 function operatorSurfaceType(value: unknown): AgentOperatorSurfaceType | null {
-  return value === "browser" || value === "editor" || value === "terminal" || value === "app_surface"
+  return value === "browser" ||
+    value === "editor" ||
+    value === "terminal" ||
+    value === "app_surface"
     ? value
     : null;
 }
 
-function operatorSurfaceOwner(value: unknown): AgentOperatorSurfaceOwner | null {
+function operatorSurfaceOwner(
+  value: unknown,
+): AgentOperatorSurfaceOwner | null {
   return value === "user" || value === "agent" ? value : null;
 }
 
-function operatorSurfaceMutability(value: unknown): AgentOperatorSurfaceMutability | null {
-  return value === "inspect_only" || value === "takeover_allowed" || value === "agent_owned" ? value : null;
+function operatorSurfaceMutability(
+  value: unknown,
+): AgentOperatorSurfaceMutability | null {
+  return value === "inspect_only" ||
+    value === "takeover_allowed" ||
+    value === "agent_owned"
+    ? value
+    : null;
 }
 
-function normalizeOperatorSurfaceContext(value: unknown): AgentOperatorSurfaceContext | null {
+function normalizeOperatorSurfaceContext(
+  value: unknown,
+): AgentOperatorSurfaceContext | null {
   if (!isRecord(value)) {
     return null;
   }
@@ -1025,9 +1141,15 @@ async function loadOperatorSurfaceContext(params: {
   };
   logger?: LoggerLike;
 }): Promise<AgentOperatorSurfaceContext | null> {
-  const browserUrl = params.browserConfig.desktopBrowserUrl.trim().replace(/\/+$/, "");
+  const browserUrl = params.browserConfig.desktopBrowserUrl
+    .trim()
+    .replace(/\/+$/, "");
   const authToken = params.browserConfig.desktopBrowserAuthToken.trim();
-  if (!params.browserConfig.desktopBrowserEnabled || !browserUrl || !authToken) {
+  if (
+    !params.browserConfig.desktopBrowserEnabled ||
+    !browserUrl ||
+    !authToken
+  ) {
     return null;
   }
 
@@ -1048,7 +1170,7 @@ async function loadOperatorSurfaceContext(params: {
     }
     if (!response.ok) {
       params.logger?.warn?.(
-        `Failed to load operator surface context workspace_id=${params.workspaceId} session_id=${params.sessionId} input_id=${params.inputId} status=${response.status}`
+        `Failed to load operator surface context workspace_id=${params.workspaceId} session_id=${params.sessionId} input_id=${params.inputId} status=${response.status}`,
       );
       return null;
     }
@@ -1056,7 +1178,7 @@ async function loadOperatorSurfaceContext(params: {
   } catch (error) {
     if (!(error instanceof Error && error.name === "AbortError")) {
       params.logger?.warn?.(
-        `Failed to load operator surface context workspace_id=${params.workspaceId} session_id=${params.sessionId} input_id=${params.inputId}: ${errorMessage(error)}`
+        `Failed to load operator surface context workspace_id=${params.workspaceId} session_id=${params.sessionId} input_id=${params.inputId}: ${errorMessage(error)}`,
       );
     }
     return null;
@@ -1086,7 +1208,9 @@ function buildAgentRuntimeConfigRequest(params: {
   pendingUserMemoryContext?: AgentPendingUserMemoryContext | null;
   evolveCandidateContext?: AgentEvolveCandidateContext | null;
 }): AgentRuntimeConfigCliRequest {
-  const extraTools = Array.from(new Set([...defaultExtraTools(params.harnessId), ...params.extraToolIds]));
+  const extraTools = Array.from(
+    new Set([...defaultExtraTools(params.harnessId), ...params.extraToolIds]),
+  );
   const common = {
     session_id: params.request.session_id,
     workspace_id: params.request.workspace_id,
@@ -1096,9 +1220,13 @@ function buildAgentRuntimeConfigRequest(params: {
     browser_tools_available: params.browserToolsAvailable,
     browser_tool_ids: [...params.browserToolIds],
     runtime_tool_ids: [...params.runtimeToolIds],
-    runtime_exec_model_proxy_api_key: runtimeExecContextString(params.request, "model_proxy_api_key") ?? undefined,
-    runtime_exec_sandbox_id: runtimeExecContextString(params.request, "sandbox_id") ?? undefined,
-    runtime_exec_run_id: runtimeExecContextString(params.request, "run_id") ?? undefined,
+    runtime_exec_model_proxy_api_key:
+      runtimeExecContextString(params.request, "model_proxy_api_key") ??
+      undefined,
+    runtime_exec_sandbox_id:
+      runtimeExecContextString(params.request, "sandbox_id") ?? undefined,
+    runtime_exec_run_id:
+      runtimeExecContextString(params.request, "run_id") ?? undefined,
     recent_runtime_context: params.recentRuntimeContext ?? undefined,
     session_resume_context: params.sessionResumeContext ?? undefined,
     recalled_memory_context: params.recalledMemoryContext ?? undefined,
@@ -1118,10 +1246,10 @@ function buildAgentRuntimeConfigRequest(params: {
     resolved_mcp_tool_refs: params.resolvedMcpToolRefs.map((toolRef) => ({
       tool_id: toolRef.tool_id,
       server_id: toolRef.server_id,
-      tool_name: toolRef.tool_name
+      tool_name: toolRef.tool_name,
     })),
     resolved_mcp_server_ids: [...params.resolvedMcpServerIds],
-    resolved_output_schemas: {}
+    resolved_output_schemas: {},
   };
   return {
     ...common,
@@ -1129,8 +1257,8 @@ function buildAgentRuntimeConfigRequest(params: {
       id: params.compiledPlan.general_config.agent.id,
       model: params.compiledPlan.general_config.agent.model,
       prompt: params.compiledPlan.general_config.agent.prompt,
-      role: params.compiledPlan.general_config.agent.role
-    }
+      role: params.compiledPlan.general_config.agent.role,
+    },
   };
 }
 
@@ -1143,7 +1271,7 @@ function terminalHarnessSessionId(event: TsRunnerEvent): string | null {
 
 function parseHarnessHostRunnerEvent(
   line: string,
-  options: { logger?: LoggerLike } = {}
+  options: { logger?: LoggerLike } = {},
 ): TsRunnerEvent | null {
   const stripped = line.trim();
   if (!stripped) {
@@ -1155,13 +1283,15 @@ function parseHarnessHostRunnerEvent(
     parsed = JSON.parse(stripped);
   } catch (error) {
     (options.logger ?? console).warn(
-      `Ignoring invalid harness-host event line error=${error instanceof Error ? error.message : String(error)} line=${stripped.slice(0, 500)}`
+      `Ignoring invalid harness-host event line error=${error instanceof Error ? error.message : String(error)} line=${stripped.slice(0, 500)}`,
     );
     return null;
   }
 
   if (!isRecord(parsed) || !isRecord(parsed.payload)) {
-    (options.logger ?? console).warn(`Ignoring invalid harness-host event line line=${stripped.slice(0, 500)}`);
+    (options.logger ?? console).warn(
+      `Ignoring invalid harness-host event line line=${stripped.slice(0, 500)}`,
+    );
     return null;
   }
   if (
@@ -1170,7 +1300,9 @@ function parseHarnessHostRunnerEvent(
     !Number.isInteger(parsed.sequence) ||
     typeof parsed.event_type !== "string"
   ) {
-    (options.logger ?? console).warn(`Ignoring invalid harness-host event line line=${stripped.slice(0, 500)}`);
+    (options.logger ?? console).warn(
+      `Ignoring invalid harness-host event line line=${stripped.slice(0, 500)}`,
+    );
     return null;
   }
 
@@ -1179,8 +1311,11 @@ function parseHarnessHostRunnerEvent(
     input_id: parsed.input_id,
     sequence: Number(parsed.sequence),
     event_type: parsed.event_type as TsRunnerEvent["event_type"],
-    timestamp: typeof parsed.timestamp === "string" ? parsed.timestamp : new Date().toISOString(),
-    payload: jsonObject(parsed.payload)
+    timestamp:
+      typeof parsed.timestamp === "string"
+        ? parsed.timestamp
+        : new Date().toISOString(),
+    payload: jsonObject(parsed.payload),
   };
 }
 
@@ -1190,12 +1325,12 @@ function harnessHostEntryPath(): { entryPath: string; argsPrefix: string[] } {
   if (path.extname(currentFile) === ".ts") {
     return {
       entryPath: path.join(runtimeRoot, "harness-host", "src", "index.ts"),
-      argsPrefix: ["--import", "tsx"]
+      argsPrefix: ["--import", "tsx"],
     };
   }
   return {
     entryPath: path.join(runtimeRoot, "harness-host", "dist", "index.mjs"),
-    argsPrefix: []
+    argsPrefix: [],
   };
 }
 
@@ -1207,9 +1342,10 @@ async function defaultBootstrapApplications(params: {
   if (params.resolvedApplications.length === 0) {
     return [];
   }
-  const appLifecycleExecutor: AppLifecycleExecutorLike = new RuntimeAppLifecycleExecutor();
+  const appLifecycleExecutor: AppLifecycleExecutorLike =
+    new RuntimeAppLifecycleExecutor();
   const store = new RuntimeStateStore({
-    workspaceRoot: path.dirname(path.resolve(params.workspaceDir))
+    workspaceRoot: path.dirname(path.resolve(params.workspaceDir)),
   });
   try {
     const result = await bootstrapResolvedApplications({
@@ -1218,25 +1354,33 @@ async function defaultBootstrapApplications(params: {
       resolvedApplications: params.resolvedApplications,
       store,
       workspaceId: params.request.workspace_id,
-      appLifecycleExecutor
+      appLifecycleExecutor,
     });
 
-    return result.applications.map((application: { app_id: string; mcp_url: string; timeout_ms: number }) => ({
-      name: application.app_id,
-      config: {
-        type: "remote" as const,
-        enabled: true,
-        url: application.mcp_url,
-        headers: resolvedApplicationMcpHeaders(params.request),
-        timeout: application.timeout_ms
-      }
-    }));
+    return result.applications.map(
+      (application: {
+        app_id: string;
+        mcp_url: string;
+        timeout_ms: number;
+      }) => ({
+        name: application.app_id,
+        config: {
+          type: "remote" as const,
+          enabled: true,
+          url: application.mcp_url,
+          headers: resolvedApplicationMcpHeaders(params.request),
+          timeout: application.timeout_ms,
+        },
+      }),
+    );
   } finally {
     store.close();
   }
 }
 
-export function resolvedApplicationMcpHeaders(request: TsRunnerRequest): Record<string, string> {
+export function resolvedApplicationMcpHeaders(
+  request: TsRunnerRequest,
+): Record<string, string> {
   return {
     "X-Workspace-Id": request.workspace_id,
     "X-Holaboss-Workspace-Id": request.workspace_id,
@@ -1260,22 +1404,33 @@ async function defaultRunHarnessHost(params: {
       sawEvent: false,
       terminalEmitted: false,
       lastSequence: 0,
-      missingEntryPath: entryPath
+      missingEntryPath: entryPath,
     };
   }
-  const requestBase64 = Buffer.from(JSON.stringify(params.requestPayload), "utf8").toString("base64");
+  const requestBase64 = Buffer.from(
+    JSON.stringify(params.requestPayload),
+    "utf8",
+  ).toString("base64");
 
   let child;
-  const harnessCommand = requireRuntimeHarnessAdapter(params.harness).hostCommand;
+  const harnessCommand = requireRuntimeHarnessAdapter(
+    params.harness,
+  ).hostCommand;
   try {
     child = spawn(
       runtimeNodeBin(),
-      [...argsPrefix, entryPath, harnessCommand, "--request-base64", requestBase64],
+      [
+        ...argsPrefix,
+        entryPath,
+        harnessCommand,
+        "--request-base64",
+        requestBase64,
+      ],
       {
         cwd: runtimeRootDir(),
         env: buildRunnerEnv(),
-        stdio: ["ignore", "pipe", "pipe"]
-      }
+        stdio: ["ignore", "pipe", "pipe"],
+      },
     );
   } catch (error) {
     return {
@@ -1284,7 +1439,7 @@ async function defaultRunHarnessHost(params: {
       sawEvent: false,
       terminalEmitted: false,
       lastSequence: 0,
-      spawnError: errorMessage(error)
+      spawnError: errorMessage(error),
     };
   }
 
@@ -1300,9 +1455,14 @@ async function defaultRunHarnessHost(params: {
   const stdout = child.stdout;
   if (stdout) {
     stdout.setEncoding("utf8");
-    const lines = createInterface({ input: stdout, crlfDelay: Number.POSITIVE_INFINITY });
+    const lines = createInterface({
+      input: stdout,
+      crlfDelay: Number.POSITIVE_INFINITY,
+    });
     for await (const line of lines) {
-      const event = parseHarnessHostRunnerEvent(line, { logger: params.logger });
+      const event = parseHarnessHostRunnerEvent(line, {
+        logger: params.logger,
+      });
       if (!event) {
         continue;
       }
@@ -1325,7 +1485,7 @@ async function defaultRunHarnessHost(params: {
     stderr: stderr.trim(),
     sawEvent,
     terminalEmitted,
-    lastSequence
+    lastSequence,
   };
 }
 
@@ -1335,7 +1495,7 @@ function defaultExecutionDeps(): TsRunnerExecutionDeps {
     compilePlan: ({ workspaceId, workspaceDir }) =>
       compileWorkspaceRuntimePlanFromWorkspace({
         workspaceId,
-        workspaceDir
+        workspaceDir,
       }),
     projectAgentRuntimeConfig: (request) => projectAgentRuntimeConfig(request),
     resolveHarnessPlugin: (harness) => requireRuntimeHarnessPlugin(harness),
@@ -1349,27 +1509,34 @@ function defaultExecutionDeps(): TsRunnerExecutionDeps {
         url: result.url,
         pid: result.pid,
         reused: result.reused,
-        timeout_ms: request.timeout_ms
+        timeout_ms: request.timeout_ms,
       };
-    }
+    },
   };
 }
 
-function synthesizeHarnessHostFailureMessage(result: TsRunnerHarnessRelayResult): string {
+function synthesizeHarnessHostFailureMessage(
+  result: TsRunnerHarnessRelayResult,
+): string {
   if (result.missingEntryPath) {
     return `TypeScript harness host entry not found at ${result.missingEntryPath}`;
   }
   if (result.spawnError) {
     return `Failed to start TypeScript harness host: ${result.spawnError}`;
   }
-  if (!result.sawEvent && result.exitCode === HARNESS_HOST_NOT_IMPLEMENTED_EXIT_CODE) {
+  if (
+    !result.sawEvent &&
+    result.exitCode === HARNESS_HOST_NOT_IMPLEMENTED_EXIT_CODE
+  ) {
     return result.stderr
       ? `TypeScript harness host reported unimplemented adapter: ${result.stderr}`
       : "TypeScript harness host reported unimplemented adapter";
   }
 
   let message =
-    result.exitCode !== 0 ? `TypeScript harness host failed with exit code ${result.exitCode}` : "TypeScript harness host ended before terminal event";
+    result.exitCode !== 0
+      ? `TypeScript harness host failed with exit code ${result.exitCode}`
+      : "TypeScript harness host ended before terminal event";
   if (result.stderr) {
     message = `${message}: ${result.stderr}`;
   }
@@ -1382,7 +1549,7 @@ export function decodeTsRunnerRequest(encoded: string): TsRunnerRequest {
 
 export function resolveTsRunnerBootstrapState(
   request: TsRunnerRequest,
-  options: { logger?: LoggerLike } = {}
+  options: { logger?: LoggerLike } = {},
 ): TsRunnerBootstrapState {
   const logger = options.logger ?? console;
   const runtimeExecContext = request.context[RUNTIME_EXEC_CONTEXT_KEY];
@@ -1390,15 +1557,19 @@ export function resolveTsRunnerBootstrapState(
     throw new Error("_sandbox_runtime_exec_v1 must be an object when provided");
   }
 
-  const resolvedExecContext = isRecord(runtimeExecContext) ? runtimeExecContext : null;
-  const requestedHarnessSessionId = firstNonEmptyString(resolvedExecContext?.harness_session_id);
+  const resolvedExecContext = isRecord(runtimeExecContext)
+    ? runtimeExecContext
+    : null;
+  const requestedHarnessSessionId = firstNonEmptyString(
+    resolvedExecContext?.harness_session_id,
+  );
   const harness = selectedHarness(request);
   requireRuntimeHarnessAdapter(harness);
   const workspaceDir = workspaceDirForId(request.workspace_id);
   const persistedHarnessSessionId = readWorkspaceHarnessSessionId({
     workspaceDir,
     harness,
-    logger
+    logger,
   });
 
   return {
@@ -1407,7 +1578,7 @@ export function resolveTsRunnerBootstrapState(
     workspaceDir,
     runtimeExecContext: resolvedExecContext,
     requestedHarnessSessionId,
-    persistedHarnessSessionId
+    persistedHarnessSessionId,
   };
 }
 
@@ -1424,7 +1595,7 @@ export async function relayTsRunnerEvent(params: {
     clearWorkspaceHarnessSessionId({
       workspaceDir: params.workspaceDir,
       harness: params.harness,
-      logger: params.logger
+      logger: params.logger,
     });
     return;
   }
@@ -1435,7 +1606,7 @@ export async function relayTsRunnerEvent(params: {
     workspaceDir: params.workspaceDir,
     harness: params.harness,
     sessionId,
-    logger: params.logger
+    logger: params.logger,
   });
 }
 
@@ -1445,7 +1616,7 @@ export async function executeTsRunnerRequest(
     deps?: Partial<TsRunnerExecutionDeps>;
     emitEvent: (event: TsRunnerEvent) => Promise<void>;
     logger?: LoggerLike;
-  }
+  },
 ): Promise<void> {
   const logger = options.logger ?? console;
   const deps = { ...defaultExecutionDeps(), ...options.deps };
@@ -1468,53 +1639,70 @@ export async function executeTsRunnerRequest(
       sequence: ++syntheticSequence,
       eventType: "run_claimed",
       payload: {
-        instruction_preview: request.instruction.slice(0, 120)
-      }
-    })
+        instruction_preview: request.instruction.slice(0, 120),
+      },
+    }),
   });
 
   try {
     const runnerPrepPlan = harnessAdapter.buildRunnerPrepPlan({
       request,
-      bootstrap
+      bootstrap,
     });
     const browserConfig = currentBrowserConfig();
-    const stagedBrowserTools = measureBootstrapStage(bootstrapStageTimingsMs, "stage_browser_tools", () =>
-      harnessPlugin.stageBrowserTools({
-        workspaceDir: bootstrap.workspaceDir,
-        sessionKind: request.session_kind,
-        browserConfig
-      })
+    const stagedBrowserTools = measureBootstrapStage(
+      bootstrapStageTimingsMs,
+      "stage_browser_tools",
+      () =>
+        harnessPlugin.stageBrowserTools({
+          workspaceDir: bootstrap.workspaceDir,
+          sessionKind: request.session_kind,
+          browserConfig,
+        }),
     );
-    const stagedRuntimeTools = measureBootstrapStage(bootstrapStageTimingsMs, "stage_runtime_tools", () =>
-      harnessPlugin.stageRuntimeTools({
-        workspaceDir: bootstrap.workspaceDir
-      })
+    const stagedRuntimeTools = measureBootstrapStage(
+      bootstrapStageTimingsMs,
+      "stage_runtime_tools",
+      () =>
+        harnessPlugin.stageRuntimeTools({
+          workspaceDir: bootstrap.workspaceDir,
+        }),
     );
-    const workspaceSkills = measureBootstrapStage(bootstrapStageTimingsMs, "resolve_workspace_skills", () =>
-      resolveWorkspaceSkills(bootstrap.workspaceDir)
+    const workspaceSkills = measureBootstrapStage(
+      bootstrapStageTimingsMs,
+      "resolve_workspace_skills",
+      () => resolveWorkspaceSkills(bootstrap.workspaceDir),
     );
     const stagedSkills = runnerPrepPlan.stageWorkspaceSkills
-      ? measureBootstrapStage(bootstrapStageTimingsMs, "stage_workspace_skills", () =>
-          harnessPlugin.stageSkills({
-            workspaceDir: bootstrap.workspaceDir,
-            runtimeRoot: runtimeRootDir()
-          })
+      ? measureBootstrapStage(
+          bootstrapStageTimingsMs,
+          "stage_workspace_skills",
+          () =>
+            harnessPlugin.stageSkills({
+              workspaceDir: bootstrap.workspaceDir,
+              runtimeRoot: runtimeRootDir(),
+            }),
         )
       : { changed: false, skillIds: [] };
     const stagedCommands = runnerPrepPlan.stageWorkspaceCommands
-      ? measureBootstrapStage(bootstrapStageTimingsMs, "stage_workspace_commands", () =>
-          harnessPlugin.stageCommands({
-            workspaceDir: bootstrap.workspaceDir
-          })
+      ? measureBootstrapStage(
+          bootstrapStageTimingsMs,
+          "stage_workspace_commands",
+          () =>
+            harnessPlugin.stageCommands({
+              workspaceDir: bootstrap.workspaceDir,
+            }),
         )
       : { changed: false, commandIds: [] };
 
-    const compiledPlan = measureBootstrapStage(bootstrapStageTimingsMs, "compile_runtime_plan", () =>
-      deps.compilePlan({
-        workspaceId: request.workspace_id,
-        workspaceDir: bootstrap.workspaceDir
-      })
+    const compiledPlan = measureBootstrapStage(
+      bootstrapStageTimingsMs,
+      "compile_runtime_plan",
+      () =>
+        deps.compilePlan({
+          workspaceId: request.workspace_id,
+          workspaceDir: bootstrap.workspaceDir,
+        }),
     );
     const recalledMemoryPrefetch = startRecalledMemoryContextPrefetch({
       load: () =>
@@ -1533,14 +1721,19 @@ export async function executeTsRunnerRequest(
       ? mcpServerIdMap({
           workspaceId: request.workspace_id,
           sandboxId: workspaceMcpSandboxId(),
-          compiledPlan
+          compiledPlan,
         })
       : {};
-    const resolvedMcpToolRefs = runnerPrepPlan.prepareMcpTooling ? compiledPlan.resolved_mcp_tool_refs : [];
+    const resolvedMcpToolRefs = runnerPrepPlan.prepareMcpTooling
+      ? compiledPlan.resolved_mcp_tool_refs
+      : [];
     const physicalWorkspaceServerId = serverIdMap.workspace ?? "workspace";
 
     let sidecar: RunningWorkspaceMcpSidecar | null = null;
-    if (runnerPrepPlan.startWorkspaceMcpSidecar && compiledPlan.workspace_mcp_catalog.length > 0) {
+    if (
+      runnerPrepPlan.startWorkspaceMcpSidecar &&
+      compiledPlan.workspace_mcp_catalog.length > 0
+    ) {
       let timeoutMs = 10000;
       for (const server of compiledPlan.resolved_mcp_servers) {
         if (server.server_id === "workspace") {
@@ -1548,15 +1741,18 @@ export async function executeTsRunnerRequest(
           break;
         }
       }
-      sidecar = await measureBootstrapStageAsync(bootstrapStageTimingsMs, "start_workspace_mcp_sidecar", async () =>
-        await deps.startWorkspaceMcpSidecar({
-          workspace_dir: bootstrap.workspaceDir,
-          physical_server_id: physicalWorkspaceServerId,
-          expected_fingerprint: workspaceMcpCatalogFingerprint(compiledPlan),
-          timeout_ms: timeoutMs,
-          readiness_timeout_s: WORKSPACE_MCP_READY_TIMEOUT_S,
-          catalog_json_base64: encodeWorkspaceMcpCatalog(compiledPlan)
-        })
+      sidecar = await measureBootstrapStageAsync(
+        bootstrapStageTimingsMs,
+        "start_workspace_mcp_sidecar",
+        async () =>
+          await deps.startWorkspaceMcpSidecar({
+            workspace_dir: bootstrap.workspaceDir,
+            physical_server_id: physicalWorkspaceServerId,
+            expected_fingerprint: workspaceMcpCatalogFingerprint(compiledPlan),
+            timeout_ms: timeoutMs,
+            readiness_timeout_s: WORKSPACE_MCP_READY_TIMEOUT_S,
+            catalog_json_base64: encodeWorkspaceMcpCatalog(compiledPlan),
+          }),
       );
     }
 
@@ -1564,40 +1760,52 @@ export async function executeTsRunnerRequest(
       ? effectiveMcpServerPayloads({
           compiledPlan,
           sidecar,
-          serverIdMap
+          serverIdMap,
         })
       : [];
 
-    if (runnerPrepPlan.bootstrapResolvedApplications && compiledPlan.resolved_applications.length > 0) {
+    if (
+      runnerPrepPlan.bootstrapResolvedApplications &&
+      compiledPlan.resolved_applications.length > 0
+    ) {
       effectiveMcpServers = mergePreparedMcpServerPayloads(
         effectiveMcpServers,
-        await measureBootstrapStageAsync(bootstrapStageTimingsMs, "bootstrap_resolved_applications", async () =>
-          await deps.bootstrapApplications({
-            request,
-            workspaceDir: bootstrap.workspaceDir,
-            resolvedApplications: compiledPlan.resolved_applications
-          })
-        )
+        await measureBootstrapStageAsync(
+          bootstrapStageTimingsMs,
+          "bootstrap_resolved_applications",
+          async () =>
+            await deps.bootstrapApplications({
+              request,
+              workspaceDir: bootstrap.workspaceDir,
+              resolvedApplications: compiledPlan.resolved_applications,
+            }),
+        ),
       );
     }
 
-    const recentRuntimeContext = measureBootstrapStage(bootstrapStageTimingsMs, "load_recent_runtime_context", () =>
-      loadRecentRuntimeContext({
-        workspaceRoot: bootstrap.workspaceRoot,
-        workspaceId: request.workspace_id,
-        sessionId: request.session_id,
-        inputId: request.input_id,
-        logger,
-      })
+    const recentRuntimeContext = measureBootstrapStage(
+      bootstrapStageTimingsMs,
+      "load_recent_runtime_context",
+      () =>
+        loadRecentRuntimeContext({
+          workspaceRoot: bootstrap.workspaceRoot,
+          workspaceId: request.workspace_id,
+          sessionId: request.session_id,
+          inputId: request.input_id,
+          logger,
+        }),
     );
-    const sessionResumeContext = measureBootstrapStage(bootstrapStageTimingsMs, "load_session_resume_context", () =>
-      loadSessionResumeContext({
-        workspaceRoot: bootstrap.workspaceRoot,
-        workspaceId: request.workspace_id,
-        sessionId: request.session_id,
-        inputId: request.input_id,
-        logger,
-      })
+    const sessionResumeContext = measureBootstrapStage(
+      bootstrapStageTimingsMs,
+      "load_session_resume_context",
+      () =>
+        loadSessionResumeContext({
+          workspaceRoot: bootstrap.workspaceRoot,
+          workspaceId: request.workspace_id,
+          sessionId: request.session_id,
+          inputId: request.input_id,
+          logger,
+        }),
     );
     if (sessionResumeContext?.compaction_boundary_id) {
       await relayTsRunnerEvent({
@@ -1611,10 +1819,12 @@ export async function executeTsRunnerRequest(
           sequence: ++syntheticSequence,
           eventType: "compaction_restored",
           payload: {
-            source: sessionResumeContext.compaction_source ?? "executor_post_turn",
+            source:
+              sessionResumeContext.compaction_source ?? "executor_post_turn",
             boundary_id: sessionResumeContext.compaction_boundary_id,
             restoration_order: sessionResumeContext.restoration_order ?? [],
-            restored_memory_paths: sessionResumeContext.restored_memory_paths ?? [],
+            restored_memory_paths:
+              sessionResumeContext.restored_memory_paths ?? [],
           },
         }),
       });
@@ -1622,13 +1832,17 @@ export async function executeTsRunnerRequest(
     const recalledMemoryContext = await measureBootstrapStageAsync(
       bootstrapStageTimingsMs,
       "load_recalled_memory_context",
-      async () => await consumeRecalledMemoryContextPrefetch(recalledMemoryPrefetch)
+      async () =>
+        await consumeRecalledMemoryContextPrefetch(recalledMemoryPrefetch),
     );
-    const currentUserContext = measureBootstrapStage(bootstrapStageTimingsMs, "load_current_user_context", () =>
-      loadCurrentUserContext({
-        workspaceRoot: bootstrap.workspaceRoot,
-        logger,
-      })
+    const currentUserContext = measureBootstrapStage(
+      bootstrapStageTimingsMs,
+      "load_current_user_context",
+      () =>
+        loadCurrentUserContext({
+          workspaceRoot: bootstrap.workspaceRoot,
+          logger,
+        }),
     );
     const operatorSurfaceContext = await measureBootstrapStageAsync(
       bootstrapStageTimingsMs,
@@ -1640,7 +1854,7 @@ export async function executeTsRunnerRequest(
           inputId: request.input_id,
           browserConfig,
           logger,
-        })
+        }),
     );
     const pendingUserMemoryContext = measureBootstrapStage(
       bootstrapStageTimingsMs,
@@ -1652,50 +1866,66 @@ export async function executeTsRunnerRequest(
           sessionId: request.session_id,
           inputId: request.input_id,
           logger,
-        })
+        }),
     );
 
-    const runtimeConfig = measureBootstrapStage(bootstrapStageTimingsMs, "project_runtime_config", () =>
-      deps.projectAgentRuntimeConfig(
-        buildAgentRuntimeConfigRequest({
+    const runtimeConfig = measureBootstrapStage(
+      bootstrapStageTimingsMs,
+      "project_runtime_config",
+      () =>
+        deps.projectAgentRuntimeConfig(
+          buildAgentRuntimeConfigRequest({
+            request,
+            harnessId: bootstrap.harness,
+            browserToolsAvailable: stagedBrowserTools.toolIds.length > 0,
+            browserToolIds: [...stagedBrowserTools.toolIds],
+            runtimeToolIds: [...stagedRuntimeTools.toolIds],
+            compiledPlan,
+            extraToolIds: [
+              ...stagedBrowserTools.toolIds,
+              ...stagedRuntimeTools.toolIds,
+            ],
+            workspaceSkillIds: workspaceSkills.map((skill) => skill.skill_id),
+            workspaceCommandIds: stagedCommands.commandIds,
+            toolServerIdMap: serverIdMap,
+            resolvedMcpToolRefs,
+            resolvedMcpServerIds: effectiveMcpServers.map(
+              (server) => server.name,
+            ),
+            recentRuntimeContext,
+            sessionResumeContext,
+            recalledMemoryContext,
+            currentUserContext,
+            operatorSurfaceContext,
+            pendingUserMemoryContext,
+            evolveCandidateContext: evolveCandidateContext(request),
+          }),
+        ),
+    );
+
+    await measureBootstrapStageAsync(
+      bootstrapStageTimingsMs,
+      "prepare_harness_run",
+      async () =>
+        await harnessPlugin.prepareRun({
           request,
-          harnessId: bootstrap.harness,
-          browserToolsAvailable: stagedBrowserTools.toolIds.length > 0,
-          browserToolIds: [...stagedBrowserTools.toolIds],
-          runtimeToolIds: [...stagedRuntimeTools.toolIds],
-          compiledPlan,
-          extraToolIds: [...stagedBrowserTools.toolIds, ...stagedRuntimeTools.toolIds],
-          workspaceSkillIds: workspaceSkills.map((skill) => skill.skill_id),
-          workspaceCommandIds: stagedCommands.commandIds,
-          toolServerIdMap: serverIdMap,
-          resolvedMcpToolRefs,
-          resolvedMcpServerIds: effectiveMcpServers.map((server) => server.name),
-          recentRuntimeContext,
-          sessionResumeContext,
-          recalledMemoryContext,
-          currentUserContext,
-          operatorSurfaceContext,
-          pendingUserMemoryContext,
-          evolveCandidateContext: evolveCandidateContext(request),
-        })
-      )
-    );
-
-    await measureBootstrapStageAsync(bootstrapStageTimingsMs, "prepare_harness_run", async () =>
-      await harnessPlugin.prepareRun({
-        request,
-        bootstrap,
-        runtimeConfig,
-        stagedSkillsChanged: stagedSkills.changed || stagedBrowserTools.changed || stagedRuntimeTools.changed
-      })
+          bootstrap,
+          runtimeConfig,
+          stagedSkillsChanged:
+            stagedSkills.changed ||
+            stagedBrowserTools.changed ||
+            stagedRuntimeTools.changed,
+        }),
     );
 
     const backendBaseUrl = harnessPlugin.backendBaseUrl({
       workspaceId: request.workspace_id,
-      workspaceDir: bootstrap.workspaceDir
+      workspaceDir: bootstrap.workspaceDir,
     });
     if (harnessAdapter.capabilities.requiresBackend && !backendBaseUrl.trim()) {
-      throw new Error(`backend base URL was not resolved for harness '${bootstrap.harness}'`);
+      throw new Error(
+        `backend base URL was not resolved for harness '${bootstrap.harness}'`,
+      );
     }
 
     const buildHarnessHostRequestStartedAtMs = Date.now();
@@ -1703,50 +1933,55 @@ export async function executeTsRunnerRequest(
       request,
       runtimeConfig,
       requestSnapshotFingerprint: null,
-      harnessSupportsStructuredOutput: harnessAdapter.capabilities.supportsStructuredOutput,
+      harnessSupportsStructuredOutput:
+        harnessAdapter.capabilities.supportsStructuredOutput,
       mcpServerIdMap: serverIdMap,
       mcpServers: effectiveMcpServers,
       sidecar,
       bootstrapStartedAt,
       bootstrapReadyAt: bootstrapStartedAt,
       bootstrapTotalMs: 0,
-      bootstrapStageTimingsMs
+      bootstrapStageTimingsMs,
     });
-    const provisionalHarnessRequestPayload = harnessAdapter.buildHarnessHostRequest({
-      request,
-      bootstrap,
-      runtimeConfig,
-      runtimeApiBaseUrl: currentRuntimeApiUrl(),
-      workspaceSkills,
-      mcpServers: effectiveMcpServers,
-      mcpToolRefs: resolvedMcpToolRefs.map((toolRef) => ({
-        tool_id: toolRef.tool_id,
-        server_id: serverIdMap[toolRef.server_id] ?? toolRef.server_id,
-        tool_name: toolRef.tool_name
-      })),
-      runStartedPayload: provisionalRunStartedPayload,
-      backendBaseUrl,
-      timeoutSeconds: harnessPlugin.timeoutSeconds({ request })
-    });
+    const provisionalHarnessRequestPayload =
+      harnessAdapter.buildHarnessHostRequest({
+        request,
+        bootstrap,
+        runtimeConfig,
+        runtimeApiBaseUrl: currentRuntimeApiUrl(),
+        workspaceSkills,
+        mcpServers: effectiveMcpServers,
+        mcpToolRefs: resolvedMcpToolRefs.map((toolRef) => ({
+          tool_id: toolRef.tool_id,
+          server_id: serverIdMap[toolRef.server_id] ?? toolRef.server_id,
+          tool_name: toolRef.tool_name,
+        })),
+        runStartedPayload: provisionalRunStartedPayload,
+        backendBaseUrl,
+        timeoutSeconds: harnessPlugin.timeoutSeconds({ request }),
+      });
     const provisionalSnapshotPayload = turnRequestSnapshotPayload({
       request,
       bootstrap,
       runtimeConfig,
       harnessRequestPayload: provisionalHarnessRequestPayload,
     });
-    const requestSnapshotFingerprint = turnRequestSnapshotFingerprint(provisionalSnapshotPayload);
+    const requestSnapshotFingerprint = turnRequestSnapshotFingerprint(
+      provisionalSnapshotPayload,
+    );
     const runStartedPayload = bootstrapStartedPayload({
       request,
       runtimeConfig,
       requestSnapshotFingerprint,
-      harnessSupportsStructuredOutput: harnessAdapter.capabilities.supportsStructuredOutput,
+      harnessSupportsStructuredOutput:
+        harnessAdapter.capabilities.supportsStructuredOutput,
       mcpServerIdMap: serverIdMap,
       mcpServers: effectiveMcpServers,
       sidecar,
       bootstrapStartedAt,
       bootstrapReadyAt: bootstrapStartedAt,
       bootstrapTotalMs: 0,
-      bootstrapStageTimingsMs
+      bootstrapStageTimingsMs,
     });
     const harnessRequestPayload = harnessAdapter.buildHarnessHostRequest({
       request,
@@ -1758,48 +1993,58 @@ export async function executeTsRunnerRequest(
       mcpToolRefs: resolvedMcpToolRefs.map((toolRef) => ({
         tool_id: toolRef.tool_id,
         server_id: serverIdMap[toolRef.server_id] ?? toolRef.server_id,
-        tool_name: toolRef.tool_name
+        tool_name: toolRef.tool_name,
       })),
       runStartedPayload,
       backendBaseUrl,
-      timeoutSeconds: harnessPlugin.timeoutSeconds({ request })
+      timeoutSeconds: harnessPlugin.timeoutSeconds({ request }),
     });
-    measureBootstrapStage(bootstrapStageTimingsMs, "persist_turn_request_snapshot", () =>
-      persistTurnRequestSnapshot({
-        workspaceRoot: bootstrap.workspaceRoot,
-        workspaceId: request.workspace_id,
-        sessionId: request.session_id,
-        inputId: request.input_id,
-        snapshotKind: "harness_host_request",
-        payload: turnRequestSnapshotPayload({
-          request,
-          bootstrap,
-          runtimeConfig,
-          harnessRequestPayload,
+    measureBootstrapStage(
+      bootstrapStageTimingsMs,
+      "persist_turn_request_snapshot",
+      () =>
+        persistTurnRequestSnapshot({
+          workspaceRoot: bootstrap.workspaceRoot,
+          workspaceId: request.workspace_id,
+          sessionId: request.session_id,
+          inputId: request.input_id,
+          snapshotKind: "harness_host_request",
+          payload: turnRequestSnapshotPayload({
+            request,
+            bootstrap,
+            runtimeConfig,
+            harnessRequestPayload,
+          }),
+          logger,
         }),
-        logger,
-      })
     );
-    bootstrapStageTimingsMs.build_harness_host_request = elapsedMs(buildHarnessHostRequestStartedAtMs);
+    bootstrapStageTimingsMs.build_harness_host_request = elapsedMs(
+      buildHarnessHostRequestStartedAtMs,
+    );
     runStartedPayload.bootstrap_ready_at = new Date().toISOString();
     runStartedPayload.bootstrap_total_ms = elapsedMs(bootstrapStartedAtMs);
-    runStartedPayload.bootstrap_stage_timings_ms = { ...bootstrapStageTimingsMs };
-    const harnessResult = await measureBootstrapStageAsync(bootstrapStageTimingsMs, "launch_harness_host", async () =>
-      await deps.runHarnessHost({
-        harness: bootstrap.harness,
-        requestPayload: harnessRequestPayload,
-        workspaceDir: bootstrap.workspaceDir,
-        logger,
-        emitEvent: async (event) => {
-          await relayTsRunnerEvent({
-            emitEvent: options.emitEvent,
-            event,
-            harness: bootstrap.harness,
-            workspaceDir: bootstrap.workspaceDir,
-            logger
-          });
-        }
-      })
+    runStartedPayload.bootstrap_stage_timings_ms = {
+      ...bootstrapStageTimingsMs,
+    };
+    const harnessResult = await measureBootstrapStageAsync(
+      bootstrapStageTimingsMs,
+      "launch_harness_host",
+      async () =>
+        await deps.runHarnessHost({
+          harness: bootstrap.harness,
+          requestPayload: harnessRequestPayload,
+          workspaceDir: bootstrap.workspaceDir,
+          logger,
+          emitEvent: async (event) => {
+            await relayTsRunnerEvent({
+              emitEvent: options.emitEvent,
+              event,
+              harness: bootstrap.harness,
+              workspaceDir: bootstrap.workspaceDir,
+              logger,
+            });
+          },
+        }),
     );
 
     if (harnessResult.terminalEmitted) {
@@ -1816,8 +2061,8 @@ export async function executeTsRunnerRequest(
         inputId: request.input_id,
         sequence: harnessResult.sawEvent ? harnessResult.lastSequence + 1 : 1,
         errorType: "RuntimeError",
-        message: synthesizeHarnessHostFailureMessage(harnessResult)
-      })
+        message: synthesizeHarnessHostFailureMessage(harnessResult),
+      }),
     });
   } catch (error) {
     await relayTsRunnerEvent({
@@ -1830,8 +2075,8 @@ export async function executeTsRunnerRequest(
         inputId: request.input_id,
         sequence: 2,
         errorType: errorTypeFor(error),
-        message: `${bootstrap.harness} execution failed: ${errorMessage(error)}`
-      })
+        message: `${bootstrap.harness} execution failed: ${errorMessage(error)}`,
+      }),
     });
   }
 }
@@ -1843,11 +2088,12 @@ export async function runTsRunnerCli(
     io?: { stdout: NodeJS.WritableStream; stderr: NodeJS.WritableStream };
     fetchImpl?: typeof fetch;
     logger?: LoggerLike;
-  } = {}
+  } = {},
 ): Promise<number> {
   const io = options.io ?? { stdout: process.stdout, stderr: process.stderr };
   const logger = options.logger ?? console;
-  const requestBase64 = argv[0] === "--request-base64" ? argv[1] ?? "" : argv[0] ?? "";
+  const requestBase64 =
+    argv[0] === "--request-base64" ? (argv[1] ?? "") : (argv[0] ?? "");
 
   if (!requestBase64) {
     io.stderr.write("request_base64 is required\n");
@@ -1868,10 +2114,10 @@ export async function runTsRunnerCli(
         inputId: ids.inputId,
         sequence: 1,
         errorType: errorTypeFor(error),
-        message: `invalid runner request payload: ${errorMessage(error)}`
+        message: `invalid runner request payload: ${errorMessage(error)}`,
       }),
       pushClient: null,
-      fetchImpl: options.fetchImpl
+      fetchImpl: options.fetchImpl,
     });
     return 1;
   }
@@ -1886,9 +2132,9 @@ export async function runTsRunnerCli(
           io,
           event,
           pushClient,
-          fetchImpl: options.fetchImpl
+          fetchImpl: options.fetchImpl,
         });
-      }
+      },
     });
     return 0;
   } finally {

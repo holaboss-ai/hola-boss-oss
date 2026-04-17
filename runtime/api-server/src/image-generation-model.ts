@@ -25,7 +25,10 @@ const PROVIDER_ID_ALIASES: Record<string, string> = {
   google: "gemini_direct",
   gemini_direct: "gemini_direct",
 };
-const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string, string>> = {
+const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<
+  string,
+  Record<string, string>
+> = {
   gemini_direct: {
     "imagen-3.0-generate-002": "gemini-3.1-flash-image-preview",
     "imagen-4.0-generate-001": "gemini-3.1-flash-image-preview",
@@ -55,7 +58,11 @@ function normalizeGeminiNativeBaseUrl(baseUrl: string): string {
       return normalized;
     }
     const pathname = parsed.pathname.replace(/\/+$/, "").toLowerCase();
-    if (pathname === "" || pathname === "/" || pathname === GEMINI_NATIVE_PATH) {
+    if (
+      pathname === "" ||
+      pathname === "/" ||
+      pathname === GEMINI_NATIVE_PATH
+    ) {
       return `${parsed.origin}${GEMINI_NATIVE_PATH}`;
     }
     if (pathname === `${GEMINI_NATIVE_PATH}/openai`) {
@@ -85,7 +92,9 @@ export interface CreateImageGenerationModelClientParams {
   runtimeExecRunId?: string | null;
 }
 
-function firstNonEmptyString(...values: Array<string | null | undefined>): string {
+function firstNonEmptyString(
+  ...values: Array<string | null | undefined>
+): string {
   for (const value of values) {
     const normalized = (value ?? "").trim();
     if (normalized) {
@@ -102,22 +111,33 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function normalizeImageGenerationProviderId(value: string | null | undefined): string {
+function normalizeImageGenerationProviderId(
+  value: string | null | undefined,
+): string {
   const normalized = (value ?? "").trim().toLowerCase();
   if (!normalized) {
     return "";
   }
   const providerId = PROVIDER_ID_ALIASES[normalized] ?? normalized;
-  return IMAGE_GENERATION_ALLOWED_PROVIDER_IDS.has(providerId) ? providerId : "";
+  return IMAGE_GENERATION_ALLOWED_PROVIDER_IDS.has(providerId)
+    ? providerId
+    : "";
 }
 
-function normalizeImageGenerationModelId(providerId: string, value: string | null | undefined): string {
+function normalizeImageGenerationModelId(
+  providerId: string,
+  value: string | null | undefined,
+): string {
   const normalizedProviderId = normalizeImageGenerationProviderId(providerId);
   const normalizedValue = (value ?? "").trim();
   if (!normalizedProviderId || !normalizedValue) {
     return normalizedValue;
   }
-  return LEGACY_DIRECT_PROVIDER_MODEL_ALIASES[normalizedProviderId]?.[normalizedValue] ?? normalizedValue;
+  return (
+    LEGACY_DIRECT_PROVIDER_MODEL_ALIASES[normalizedProviderId]?.[
+      normalizedValue
+    ] ?? normalizedValue
+  );
 }
 
 function runtimeConfigDocument(): Record<string, unknown> {
@@ -138,15 +158,22 @@ function runtimeConfigDocument(): Record<string, unknown> {
   }
 }
 
-function providerPayloadForId(document: Record<string, unknown>, providerId: string): Record<string, unknown> {
+function providerPayloadForId(
+  document: Record<string, unknown>,
+  providerId: string,
+): Record<string, unknown> {
   const providersPayload = asRecord(document.providers);
   if (providerId === HOLABOSS_PROVIDER_ID) {
-    return asRecord(providersPayload[HOLABOSS_PROVIDER_ID] ?? providersPayload.holaboss);
+    return asRecord(
+      providersPayload[HOLABOSS_PROVIDER_ID] ?? providersPayload.holaboss,
+    );
   }
   return asRecord(providersPayload[providerId]);
 }
 
-function runtimePayload(document: Record<string, unknown>): Record<string, unknown> {
+function runtimePayload(
+  document: Record<string, unknown>,
+): Record<string, unknown> {
   return asRecord(document.runtime);
 }
 
@@ -178,7 +205,10 @@ function configuredImageGenerationSettings(document: Record<string, unknown>): {
   };
 }
 
-function configuredImageModelForProvider(document: Record<string, unknown>, providerId: string): string {
+function configuredImageModelForProvider(
+  document: Record<string, unknown>,
+  providerId: string,
+): string {
   const providerPayload = providerPayloadForId(document, providerId);
   const optionsPayload = asRecord(providerPayload.options);
   return firstNonEmptyString(
@@ -201,14 +231,19 @@ function imageGenerationProviderIsAvailable(
   if (normalizedProviderId === HOLABOSS_PROVIDER_ID) {
     return Boolean(
       runtimeConfig.authToken.trim() ||
-        runtimeConfig.modelProxyBaseUrl.trim() ||
-        Object.keys(providerPayloadForId(document, normalizedProviderId)).length > 0,
+      runtimeConfig.modelProxyBaseUrl.trim() ||
+      Object.keys(providerPayloadForId(document, normalizedProviderId)).length >
+        0,
     );
   }
-  return Object.keys(providerPayloadForId(document, normalizedProviderId)).length > 0;
+  return (
+    Object.keys(providerPayloadForId(document, normalizedProviderId)).length > 0
+  );
 }
 
-export function defaultImageGenerationModelForProvider(providerId: string): string | null {
+export function defaultImageGenerationModelForProvider(
+  providerId: string,
+): string | null {
   const normalizedProviderId = normalizeImageGenerationProviderId(providerId);
   const value = IMAGE_GENERATION_MODEL_DEFAULTS[normalizedProviderId];
   return typeof value === "string"
@@ -230,7 +265,13 @@ export function resolveImageGenerationModelSelection(params: {
   const document = runtimeConfigDocument();
   const configuredSettings = configuredImageGenerationSettings(document);
   if (configuredSettings.providerId) {
-    if (!imageGenerationProviderIsAvailable(document, configuredSettings.providerId, runtimeConfig)) {
+    if (
+      !imageGenerationProviderIsAvailable(
+        document,
+        configuredSettings.providerId,
+        runtimeConfig,
+      )
+    ) {
       return {
         providerId: configuredSettings.providerId,
         modelId: null,
@@ -245,11 +286,19 @@ export function resolveImageGenerationModelSelection(params: {
   }
 
   const defaultProviderId = normalizeImageGenerationProviderId(
-    firstNonEmptyString(params.defaultProviderId, runtimeConfig.defaultProvider),
+    firstNonEmptyString(
+      params.defaultProviderId,
+      runtimeConfig.defaultProvider,
+    ),
   );
-  let providerId = normalizeImageGenerationProviderId(params.explicitProviderId);
+  let providerId = normalizeImageGenerationProviderId(
+    params.explicitProviderId,
+  );
   if (!providerId) {
-    const selectedModel = firstNonEmptyString(params.selectedModel, runtimeConfig.defaultModel);
+    const selectedModel = firstNonEmptyString(
+      params.selectedModel,
+      runtimeConfig.defaultModel,
+    );
     if (selectedModel) {
       try {
         const resolved = resolveRuntimeModelReference(
@@ -268,7 +317,9 @@ export function resolveImageGenerationModelSelection(params: {
     providerId = HOLABOSS_PROVIDER_ID;
   }
 
-  if (!imageGenerationProviderIsAvailable(document, providerId, runtimeConfig)) {
+  if (
+    !imageGenerationProviderIsAvailable(document, providerId, runtimeConfig)
+  ) {
     return {
       providerId,
       modelId: null,
@@ -328,7 +379,11 @@ export function createImageGenerationModelClient(
       selectedModel: `${selection.providerId}/${selection.modelId}`,
       defaultProviderId:
         normalizeImageGenerationProviderId(
-          firstNonEmptyString(params.defaultProviderId, runtimeConfig.defaultProvider, selection.providerId),
+          firstNonEmptyString(
+            params.defaultProviderId,
+            runtimeConfig.defaultProvider,
+            selection.providerId,
+          ),
         ) || selection.providerId,
       sessionId: params.sessionId,
       workspaceId: params.workspaceId,
@@ -337,14 +392,21 @@ export function createImageGenerationModelClient(
         params.runtimeExecModelProxyApiKey,
         runtimeConfig.authToken,
       ),
-      runtimeExecSandboxId: firstNonEmptyString(params.runtimeExecSandboxId, runtimeConfig.sandboxId),
+      runtimeExecSandboxId: firstNonEmptyString(
+        params.runtimeExecSandboxId,
+        runtimeConfig.sandboxId,
+      ),
       runtimeExecRunId: params.runtimeExecRunId ?? null,
     });
   } catch {
     return null;
   }
 
-  if (!OPENAI_COMPATIBLE_MODEL_PROXY_PROVIDERS.has(resolved.modelClient.model_proxy_provider)) {
+  if (
+    !OPENAI_COMPATIBLE_MODEL_PROXY_PROVIDERS.has(
+      resolved.modelClient.model_proxy_provider,
+    )
+  ) {
     return null;
   }
 
