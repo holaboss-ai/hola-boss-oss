@@ -1015,16 +1015,133 @@ test("chat composer exposes a pause action for in-flight runs and calls the runt
   );
   assert.match(
     source,
-    /<Composer[\s\S]*pausePending=\{isPausePending\}[\s\S]*pauseDisabled=\{\s*pendingInputIdRef\.current === STREAM_ATTACH_PENDING\s*\}[\s\S]*onPause=\{pauseCurrentRun\}/,
+    /<Composer[\s\S]*pausePending=\{isPausePending\}[\s\S]*pauseDisabled=\{\s*pendingInputIdRef\.current === STREAM_ATTACH_PENDING \|\|\s*isSubmittingMessage\s*\}[\s\S]*onPause=\{pauseCurrentRun\}/,
   );
   assert.match(
     source,
-    /isResponding \? \(\s*<Button[\s\S]*onClick=\{onPause\}[\s\S]*>\s*\{pausePending \? \(\s*<Loader2[\s\S]*\) : \(\s*<Square[\s\S]*\)\}\s*Pause\s*<\/Button>\s*\) : \(\s*<Button[\s\S]*<ArrowUp/,
+    /\{isResponding \? \(\s*<Button[\s\S]*onClick=\{onPause\}[\s\S]*>\s*\{pausePending \? \(\s*<Loader2[\s\S]*\) : \(\s*<Square[\s\S]*\)\}\s*Pause\s*<\/Button>\s*\) : null\}[\s\S]*<Button[\s\S]*aria-label=\{isResponding \? "Queue message" : "Send message"\}[\s\S]*<ArrowUp/,
   );
-  assert.match(source, /disabled=\{pausePending \|\| pauseDisabled\}/);
+  assert.match(source, /disabled=\{pausePending \|\| pauseDisabled \|\| disabled\}/);
 });
 
-test("chat pane renders a collapsed current todo panel above the composer", async () => {
+test("chat pane keeps the current stream attached while queueing a follow-up input", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /const \[isSubmittingMessage, setIsSubmittingMessage\] = useState\(false\);/);
+  assert.match(
+    source,
+    /const \[queuedSessionInputs, setQueuedSessionInputs\] = useState<\s*QueuedSessionInput\[\]\s*>\(\[]\);/,
+  );
+  assert.match(
+    source,
+    /quotedSkillIds\.length === 0\) \|\|\s*isSubmittingMessage/,
+  );
+  assert.match(
+    source,
+    /const queueOntoActiveRun =\s*isResponding[\s\S]*targetSessionId === activeSessionIdRef\.current;/,
+  );
+  assert.match(
+    source,
+    /if \(!queueOntoActiveRun\) \{\s*setMessages\(\(prev\) => \[\.\.\.prev, userMessage\]\);\s*\}/,
+  );
+  assert.match(
+    source,
+    /if \(!queueOntoActiveRun\) \{[\s\S]*openSessionOutputStream\(\{[\s\S]*eventType: "stream_open_prequeue"/,
+  );
+  assert.match(
+    source,
+    /setQueuedSessionInputs\(\(current\) => \[[\s\S]*inputId: queued\.input_id,[\s\S]*status: "queued",[\s\S]*\}\s*,\s*\]\);/,
+  );
+  assert.match(source, /eventType: "stream_open_queued_handoff"/);
+  assert.match(source, /function queuedSessionInputPreviewText\(item: QueuedSessionInput\)/);
+  assert.match(source, /async function updateQueuedSessionInputText\(/);
+  assert.match(
+    source,
+    /window\.electronAPI\.workspace\.updateQueuedSessionInput\(\{\s*workspace_id: item\.workspaceId,\s*session_id: item\.sessionId,\s*input_id: item\.inputId,\s*text: serializedText,\s*\}\)/,
+  );
+  assert.match(source, /function QueuedSessionInputRail\(/);
+  assert.match(
+    source,
+    /<QueuedSessionInputRail[\s\S]*items=\{displayedQueuedSessionInputs\}[\s\S]*onEditItem=\{updateQueuedSessionInputText\}[\s\S]*<Composer/,
+  );
+  assert.match(source, /children: ReactNode;/);
+  assert.match(source, /const panelInsetPx = \d+;/);
+  assert.match(source, /const panelHeightPx = \d+;/);
+  assert.match(source, /const queueViewportHeightPx = \d+;/);
+  assert.match(source, /className="pointer-events-none absolute inset-x-0 top-0"/);
+  assert.match(source, /className="pointer-events-auto absolute inset-x-0 overflow-hidden rounded-\[28px\]/);
+  assert.match(source, /className="overflow-y-auto pr-1\.5"/);
+  assert.match(source, /\{items\.map\(\(item\) => \{/);
+  assert.match(source, /<CornerDownLeft[\s\S]*size=\{15\}/);
+  assert.match(source, /aria-label="Edit queued message"/);
+  assert.match(source, /aria-label="Save queued message edit"/);
+  assert.match(source, /aria-label="Cancel queued message edit"/);
+  assert.match(source, /className="relative z-10 rounded-\[24px\] bg-background"/);
+  assert.match(source, /style=\{\{\s*marginTop: `\$\{-overlapPx\}px`\s*\}\}/);
+  assert.doesNotMatch(source, /Queued messages/);
+  assert.doesNotMatch(source, /Up next/);
+  assert.doesNotMatch(source, /Sending next/);
+  assert.match(source, /const inputDisabled = disabled;/);
+  assert.match(source, /if \(!dataTransfer \|\| disabled\) \{/);
+});
+
+test("chat pane exposes a queued message preview hook for dev console inspection", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const QUEUED_MESSAGES_PREVIEW_EVENT =\s*"holaboss:queued-messages-preview-change";/,
+  );
+  assert.match(source, /__holabossQueuedMessagesPreviewState\?: QueuedSessionInputPreviewDescriptor\[\];/);
+  assert.match(source, /__holabossDevQueuedMessagesPreview\?: \{/);
+  assert.match(source, /window\.dispatchEvent\(new CustomEvent\(QUEUED_MESSAGES_PREVIEW_EVENT\)\);/);
+  assert.match(source, /function useQueuedSessionInputPreview\(params:/);
+  assert.match(source, /window\.__holabossDevQueuedMessagesPreview = \{/);
+  assert.match(
+    source,
+    /single:\s*\([\s\S]*Draft a concise follow-up after the current run finishes\.[\s\S]*=>/,
+  );
+  assert.match(source, /multiple: \(\) =>/);
+  assert.match(source, /clear: \(\) => setQueuedSessionInputPreviewState\(\[]\)/);
+  assert.match(source, /set: \(entries\) => setQueuedSessionInputPreviewState\(entries\)/);
+  assert.match(source, /const queuedSessionInputPreview = useQueuedSessionInputPreview\(/);
+  assert.match(
+    source,
+    /const displayedQueuedSessionInputs =\s*queuedSessionInputPreview\.length > 0[\s\S]*\?\s*queuedSessionInputPreview[\s\S]*:\s*activeQueuedSessionInputs;/,
+  );
+});
+
+test("chat pane exposes a todo preview hook for combined todo and queue design inspection", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /const TODO_PREVIEW_EVENT = "holaboss:todo-preview-change";/);
+  assert.match(source, /__holabossTodoPreviewState\?: TodoPlanPreviewState \| null;/);
+  assert.match(source, /__holabossDevTodoPreview\?: \{/);
+  assert.match(source, /function defaultTodoPlanPreview\(\): ChatTodoPlan/);
+  assert.match(source, /window\.__holabossDevTodoPreview = \{/);
+  assert.match(source, /sample: \(\) =>/);
+  assert.match(source, /expanded: \(\) =>/);
+  assert.match(source, /collapsed: \(\) =>/);
+  assert.match(source, /clear: \(\) => setTodoPlanPreviewState\(null\)/);
+  assert.match(source, /set: \(plan, options\) =>/);
+  assert.match(source, /const todoPlanPreview = useTodoPlanPreview\(\);/);
+  assert.match(
+    source,
+    /const displayedTodoPlan = todoPlanPreview\?\.plan \?\? currentTodoPlan;/,
+  );
+  assert.match(
+    source,
+    /const displayedTodoPanelExpanded =\s*todoPlanPreview\?\.expanded \?\? todoPanelExpanded;/,
+  );
+  assert.match(source, /const toggleTodoPanel = \(\) => \{/);
+  assert.match(source, /if \(todoPlanPreview\) \{/);
+  assert.match(source, /setTodoPlanPreviewState\(\{\s*\.\.\.todoPlanPreview,/);
+  assert.match(source, /todoPlan=\{displayedTodoPlan\}/);
+  assert.match(source, /expanded=\{displayedTodoPanelExpanded\}/);
+  assert.match(source, /onToggle=\{toggleTodoPanel\}/);
+});
+
+test("chat pane renders a collapsed current todo panel near the top of the pane", async () => {
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(source, /function CurrentTodoPanel\(/);
@@ -1053,9 +1170,10 @@ test("chat pane renders a collapsed current todo panel above the composer", asyn
   assert.match(source, /\{visiblePhases\.map\(\(phase\) => \{/);
   assert.match(
     source,
-    /<div className="space-y-3">[\s\S]*\{currentTodoPlan \? \(\s*<CurrentTodoPanel[\s\S]*todoPlan=\{currentTodoPlan\}[\s\S]*expanded=\{todoPanelExpanded\}[\s\S]*onToggle=\{\(\) =>[\s\S]*setTodoPanelExpanded\(\(value\) => !value\)[\s\S]*\}\s*\/>\s*\) : null\}[\s\S]*<Composer/,
+    /const todoPanelSlotHeightPx = 58;[\s\S]*\{displayedTodoPlan \? \(\s*<div[\s\S]*className="relative z-20 shrink-0 px-6 pt-3"[\s\S]*style=\{\{\s*height: `\$\{todoPanelSlotHeightPx\}px`\s*\}\}[\s\S]*<div className="absolute inset-x-6 top-3">[\s\S]*<CurrentTodoPanel[\s\S]*todoPlan=\{displayedTodoPlan\}[\s\S]*expanded=\{displayedTodoPanelExpanded\}[\s\S]*onToggle=\{toggleTodoPanel\}[\s\S]*<\/div>[\s\S]*<\/div>\s*\) : null\}[\s\S]*<div className="relative flex min-h-0 flex-1 flex-col">/,
   );
   assert.match(source, /aria-expanded=\{expanded\}/);
+  assert.match(source, /className="max-h-\[320px\] overflow-y-auto border-t border-border\/20 px-3 py-3"/);
   assert.match(
     source,
     /className=\{`shrink-0 text-muted-foreground transition \$\{expanded \? "rotate-0" : "-rotate-90"\}`\}/,

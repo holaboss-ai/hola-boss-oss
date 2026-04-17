@@ -2162,6 +2162,8 @@ test("runtime states and history endpoints read TS state store", async () => {
   assert.equal(states.json().count, 1);
   assert.equal(states.json().items[0].session_id, "session-main");
   assert.equal(states.json().items[0].status, "IDLE");
+  assert.equal(states.json().items[0].effective_state, "IDLE");
+  assert.equal(states.json().items[0].has_queued_inputs, false);
   assert.equal(states.json().items[0].last_turn_status, "completed");
   assert.equal(states.json().items[0].last_turn_completed_at, "2026-01-01T00:00:05.000Z");
   assert.equal(states.json().items[0].last_turn_stop_reason, "ok");
@@ -4439,7 +4441,7 @@ test("app list and build-status infer pending when installed app has setup but n
   store.close();
 });
 
-test("queue route persists input, user message, and runtime state", async () => {
+test("queue route persists input and runtime state without writing session history until claim", async () => {
   const root = makeTempDir("hb-runtime-api-");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
@@ -4465,6 +4467,9 @@ test("queue route persists input, user message, and runtime state", async () => 
 
   assert.equal(response.statusCode, 200);
   assert.equal(response.json().status, "QUEUED");
+  assert.equal(response.json().effective_state, "QUEUED");
+  assert.equal(response.json().runtime_status, "QUEUED");
+  assert.equal(response.json().has_queued_inputs, true);
   const sessionId = response.json().session_id;
   assert.ok(typeof sessionId === "string" && sessionId.trim().length > 0);
 
@@ -4489,9 +4494,99 @@ test("queue route persists input, user message, and runtime state", async () => 
   assert.equal(binding.harnessSessionId, sessionId);
 
   const history = store.listSessionMessages({ workspaceId: workspace.id, sessionId });
-  assert.equal(history.length, 1);
-  assert.equal(history[0].role, "user");
-  assert.equal(history[0].text, "hello world");
+  assert.equal(history.length, 0);
+
+  await app.close();
+  store.close();
+});
+
+test("queue route preserves the active claimed input while adding later queued work", async () => {
+  const root = makeTempDir("hb-runtime-api-queue-preserve-active-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    kind: "workspace_session",
+  });
+  store.upsertBinding({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    harness: "pi",
+    harnessSessionId: "session-main",
+  });
+  const active = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "currently running" },
+  });
+  store.updateInput(active.inputId, {
+    status: "CLAIMED",
+    claimedBy: "worker-1",
+    claimedUntil: "2026-04-17T12:00:00.000Z",
+  });
+  store.updateRuntimeState({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    status: "BUSY",
+    currentInputId: active.inputId,
+    currentWorkerId: "worker-1",
+    leaseUntil: "2026-04-17T12:00:00.000Z",
+    heartbeatAt: "2026-04-17T11:55:00.000Z",
+    lastError: null,
+  });
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/v1/agent-sessions/queue",
+    payload: {
+      workspace_id: workspace.id,
+      session_id: "session-main",
+      text: "queue this next",
+    }
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.json().status, "QUEUED");
+  assert.equal(response.json().effective_state, "BUSY");
+  assert.equal(response.json().runtime_status, "BUSY");
+  assert.equal(response.json().current_input_id, active.inputId);
+  assert.equal(response.json().has_queued_inputs, true);
+
+  const runtimeState = store.getRuntimeState({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+  });
+  assert.equal(runtimeState?.status, "BUSY");
+  assert.equal(runtimeState?.currentInputId, active.inputId);
+  assert.equal(runtimeState?.currentWorkerId, "worker-1");
+  const history = store.listSessionMessages({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+  });
+  assert.equal(history.length, 0);
+
+  const states = await app.inject({
+    method: "GET",
+    url: `/api/v1/agent-sessions/by-workspace/${workspace.id}/runtime-states`
+  });
+
+  assert.equal(states.statusCode, 200);
+  assert.equal(states.json().items[0].status, "BUSY");
+  assert.equal(states.json().items[0].effective_state, "BUSY");
+  assert.equal(states.json().items[0].runtime_status, "BUSY");
+  assert.equal(states.json().items[0].has_queued_inputs, true);
+  assert.equal(states.json().items[0].current_input_id, active.inputId);
 
   await app.close();
   store.close();
@@ -4532,6 +4627,112 @@ test("queue route preserves an existing explicit session title", async () => {
   const session = store.getSession({ workspaceId: workspace.id, sessionId: "session-main" });
   assert.ok(session);
   assert.equal(session.title, "Pinned title");
+
+  await app.close();
+  store.close();
+});
+
+test("queued input edit route updates queued input text without writing session history", async () => {
+  const root = makeTempDir("hb-runtime-api-edit-queued-input-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace"),
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: {
+      text: "draft this first",
+      attachments: [],
+      image_urls: [],
+      model: null,
+      thinking_value: null,
+      context: {},
+    },
+  });
+
+  const response = await app.inject({
+    method: "PATCH",
+    url: `/api/v1/agent-sessions/session-main/inputs/${queued.inputId}`,
+    payload: {
+      workspace_id: workspace.id,
+      text: "draft this second",
+    },
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.json().input_id, queued.inputId);
+  assert.equal(response.json().session_id, "session-main");
+  assert.equal(response.json().status, "QUEUED");
+  assert.equal(response.json().text, "draft this second");
+
+  const updated = store.getInput(queued.inputId);
+  assert.ok(updated);
+  assert.equal(updated?.payload.text, "draft this second");
+  const history = store.listSessionMessages({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+  });
+  assert.equal(history.length, 0);
+
+  await app.close();
+  store.close();
+});
+
+test("queued input edit route rejects edits after the input is claimed", async () => {
+  const root = makeTempDir("hb-runtime-api-edit-claimed-input-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace"),
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: {
+      text: "draft this first",
+      attachments: [],
+      image_urls: [],
+      model: null,
+      thinking_value: null,
+      context: {},
+    },
+  });
+  store.updateInput(queued.inputId, {
+    status: "CLAIMED",
+    claimedBy: "worker-1",
+    claimedUntil: "2026-04-17T12:00:00.000Z",
+  });
+
+  const response = await app.inject({
+    method: "PATCH",
+    url: `/api/v1/agent-sessions/session-main/inputs/${queued.inputId}`,
+    payload: {
+      workspace_id: workspace.id,
+      text: "edited too late",
+    },
+  });
+
+  assert.equal(response.statusCode, 409);
+  assert.equal(
+    response.json().detail,
+    "queued input can no longer be edited",
+  );
 
   await app.close();
   store.close();
@@ -4784,9 +4985,7 @@ test("accept task proposal creates a child session with queued work", async () =
     workspaceId: workspace.id,
     sessionId: body.session.session_id
   });
-  assert.equal(childHistory.length, 1);
-  assert.equal(childHistory[0].role, "user");
-  assert.equal(childHistory[0].text, "Write the follow-up and send a reminder");
+  assert.equal(childHistory.length, 0);
 
   const secondAccept = await app.inject({
     method: "POST",
@@ -5011,7 +5210,7 @@ test("queue route rejects inputs while workspace apps are still building", async
   store.close();
 });
 
-test("queue route accepts staged file and folder attachments and history hydrates attachment metadata", async () => {
+test("queue route accepts staged file and folder attachments and history hydrates attachment metadata after claim", async () => {
   const root = makeTempDir("hb-runtime-api-queue-attachments-");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
@@ -5095,12 +5294,29 @@ test("queue route accepts staged file and folder attachments and history hydrate
   });
 
   assert.equal(historyResponse.statusCode, 200);
-  assert.deepEqual(historyResponse.json().messages, [
+  assert.deepEqual(historyResponse.json().messages, []);
+
+  store.insertSessionMessage({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    role: "user",
+    text: "",
+    messageId: `user-${response.json().input_id}`,
+    createdAt: "2026-01-01T00:00:00.000Z"
+  });
+
+  const claimedHistoryResponse = await app.inject({
+    method: "GET",
+    url: `/api/v1/agent-sessions/session-main/history?workspace_id=${workspace.id}`
+  });
+
+  assert.equal(claimedHistoryResponse.statusCode, 200);
+  assert.deepEqual(claimedHistoryResponse.json().messages, [
     {
       id: `user-${response.json().input_id}`,
       role: "user",
       text: "",
-      created_at: historyResponse.json().messages[0]?.created_at,
+      created_at: "2026-01-01T00:00:00.000Z",
       metadata: {
         attachments: [
           {

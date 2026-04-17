@@ -435,23 +435,32 @@ function normalizeTurnResultStatus(status: string | null | undefined): string {
   return typeof status === "string" ? status.trim().toLowerCase() : "";
 }
 
+function runningSessionRuntimeStatus(entry: {
+  status: string;
+  effective_state?: string | null;
+}): string {
+  return (entry.effective_state || entry.status || "").trim().toUpperCase();
+}
+
 function runningSessionState(entry: {
   status: string;
+  effective_state?: string | null;
   last_turn_status: string | null;
 }): string {
-  if (entry.status === "BUSY") {
+  const runtimeStatus = runningSessionRuntimeStatus(entry);
+  if (runtimeStatus === "BUSY") {
     return "RUNNING";
   }
-  if (entry.status === "QUEUED") {
+  if (runtimeStatus === "QUEUED") {
     return "QUEUED";
   }
-  if (entry.status === "WAITING_USER") {
+  if (runtimeStatus === "WAITING_USER") {
     return "WAITING";
   }
-  if (entry.status === "PAUSED") {
+  if (runtimeStatus === "PAUSED") {
     return "PAUSED";
   }
-  if (entry.status === "ERROR") {
+  if (runtimeStatus === "ERROR") {
     return "ERROR";
   }
 
@@ -473,15 +482,17 @@ function runningSessionState(entry: {
 
 function runningSessionStateTimestamp(entry: {
   status: string;
+  effective_state?: string | null;
   updated_at: string;
   last_turn_completed_at: string | null;
 }): string {
+  const runtimeStatus = runningSessionRuntimeStatus(entry);
   if (
-    entry.status === "BUSY" ||
-    entry.status === "QUEUED" ||
-    entry.status === "WAITING_USER" ||
-    entry.status === "PAUSED" ||
-    entry.status === "ERROR"
+    runtimeStatus === "BUSY" ||
+    runtimeStatus === "QUEUED" ||
+    runtimeStatus === "WAITING_USER" ||
+    runtimeStatus === "PAUSED" ||
+    runtimeStatus === "ERROR"
   ) {
     return entry.updated_at;
   }

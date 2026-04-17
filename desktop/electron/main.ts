@@ -2585,6 +2585,9 @@ interface SessionRuntimeRecordPayload {
   workspace_id: string;
   session_id: string;
   status: string;
+  effective_state?: string | null;
+  runtime_status?: string | null;
+  has_queued_inputs?: boolean;
   current_input_id: string | null;
   current_worker_id: string | null;
   lease_until: string | null;
@@ -2694,12 +2697,24 @@ interface EnqueueSessionInputResponsePayload {
   input_id: string;
   session_id: string;
   status: string;
+  effective_state?: string | null;
+  runtime_status?: string | null;
+  current_input_id?: string | null;
+  has_queued_inputs?: boolean;
 }
 
 interface PauseSessionRunResponsePayload {
   input_id: string;
   session_id: string;
   status: string;
+}
+
+interface UpdateQueuedSessionInputResponsePayload {
+  input_id: string;
+  session_id: string;
+  status: string;
+  text: string;
+  updated_at: string;
 }
 
 interface HolabossClientConfigPayload {
@@ -2889,6 +2904,13 @@ interface HolabossQueueSessionInputPayload {
 interface HolabossPauseSessionRunPayload {
   workspace_id: string;
   session_id: string;
+}
+
+interface HolabossUpdateQueuedSessionInputPayload {
+  workspace_id: string;
+  session_id: string;
+  input_id: string;
+  text: string;
 }
 
 interface HolabossStreamSessionOutputsPayload {
@@ -12164,6 +12186,9 @@ function normalizeRuntimeStateRecord(
     workspace_id: workspaceId,
     session_id: sessionId,
     status: record.status?.trim() || "IDLE",
+    effective_state: record.effective_state?.trim() || null,
+    runtime_status: record.runtime_status?.trim() || null,
+    has_queued_inputs: record.has_queued_inputs === true,
     current_input_id: record.current_input_id ?? null,
     current_worker_id: record.current_worker_id ?? null,
     lease_until: record.lease_until ?? null,
@@ -12234,6 +12259,14 @@ function getCachedRuntimeStateRecord(
     .get(normalizedWorkspaceId)
     ?.get(normalizedSessionId);
   return record ? cloneRuntimeStateRecord(record) : null;
+}
+
+function runtimeRecordEffectiveStatus(
+  record: SessionRuntimeRecordPayload | null | undefined,
+): string {
+  return record?.effective_state?.trim().toUpperCase()
+    || record?.status?.trim().toUpperCase()
+    || "";
 }
 
 function updateQueuedInputStatus(inputId: string, status: string) {
@@ -13533,11 +13566,17 @@ async function queueSessionInput(
     },
     retryTransientErrors: true,
   });
+  const runtimeStatus = response.runtime_status?.trim() || response.status || "QUEUED";
+  const effectiveState =
+    response.effective_state?.trim() || runtimeStatus || "QUEUED";
   upsertCachedRuntimeStateRecord({
     workspace_id: payload.workspace_id,
     session_id: response.session_id,
-    status: response.status || "QUEUED",
-    current_input_id: response.input_id,
+    status: runtimeStatus,
+    effective_state: effectiveState,
+    runtime_status: runtimeStatus,
+    has_queued_inputs: response.has_queued_inputs === true,
+    current_input_id: response.current_input_id ?? response.input_id,
     current_worker_id: null,
     lease_until: null,
     heartbeat_at: null,
@@ -13565,6 +13604,9 @@ async function pauseSessionRun(
     workspace_id: payload.workspace_id,
     session_id: response.session_id || payload.session_id,
     status: response.status || "PAUSED",
+    effective_state: response.status || "PAUSED",
+    runtime_status: response.status || "PAUSED",
+    has_queued_inputs: false,
     current_input_id: response.input_id || null,
     current_worker_id: null,
     lease_until: null,
@@ -13577,6 +13619,19 @@ async function pauseSessionRun(
     updated_at: utcNowIso(),
   });
   return response;
+}
+
+async function updateQueuedSessionInput(
+  payload: HolabossUpdateQueuedSessionInputPayload,
+): Promise<UpdateQueuedSessionInputResponsePayload> {
+  return requestRuntimeJson<UpdateQueuedSessionInputResponsePayload>({
+    method: "PATCH",
+    path: `/api/v1/agent-sessions/${encodeURIComponent(payload.session_id)}/inputs/${encodeURIComponent(payload.input_id)}`,
+    payload: {
+      workspace_id: payload.workspace_id,
+      text: payload.text,
+    },
+  });
 }
 
 async function* iterSseEvents(stream: NodeJS.ReadableStream) {
@@ -15557,7 +15612,7 @@ function agentBrowserSessionNeedsInterrupt(
     workspaceId,
     normalizedSessionId,
   );
-  const status = runtimeRecord?.status?.trim().toUpperCase() ?? "";
+  const status = runtimeRecordEffectiveStatus(runtimeRecord);
   return status === "BUSY" || status === "QUEUED" || status === "PAUSING";
 }
 
@@ -15789,7 +15844,7 @@ async function reconcileAgentSessionBrowserSpace(
     runtimeRecord = null;
   }
 
-  const status = runtimeRecord?.status?.trim().toUpperCase() ?? "";
+  const status = runtimeRecordEffectiveStatus(runtimeRecord);
   const lastTurnStatus =
     runtimeRecord?.last_turn_status?.trim().toLowerCase() ?? "";
   const touchedAtMs = Date.parse(tabSpace.lastTouchedAt);
@@ -21392,6 +21447,12 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, payload: HolabossPauseSessionRunPayload) =>
       pauseSessionRun(payload),
+  );
+  handleTrustedIpc(
+    "workspace:updateQueuedSessionInput",
+    ["main"],
+    async (_event, payload: HolabossUpdateQueuedSessionInputPayload) =>
+      updateQueuedSessionInput(payload),
   );
   handleTrustedIpc(
     "workspace:openSessionOutputStream",

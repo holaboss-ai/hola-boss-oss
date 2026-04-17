@@ -2067,7 +2067,7 @@ export class RuntimeStateStore {
       values.push(params.role);
     }
     const direction = params.order === "desc" ? "DESC" : "ASC";
-    query += ` ORDER BY datetime(created_at) ${direction}, id ${direction}`;
+    query += ` ORDER BY julianday(created_at) ${direction}, id ${direction}`;
     if (params.limit !== undefined || params.offset !== undefined) {
       query += " LIMIT ? OFFSET ?";
       values.push(params.limit ?? -1, params.offset ?? 0);
