@@ -1040,6 +1040,72 @@ test("output events support latest id, incremental listing, and tail mode", () =
   store.close();
 });
 
+test("terminal sessions support create update event append and list", () => {
+  const root = makeTempDir("hb-state-store-terminal-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const created = store.createTerminalSession({
+    terminalId: "term-1",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    title: "Dev Server",
+    backend: "node_pty",
+    owner: "agent",
+    status: "starting",
+    cwd: "/tmp/workspace-1",
+    shell: "/bin/bash",
+    command: "npm run dev",
+    metadata: { source: "test" },
+  });
+
+  const outputEvent = store.appendTerminalSessionEvent({
+    terminalId: "term-1",
+    eventType: "output",
+    payload: { data: "ready\n" },
+    status: "running",
+  });
+  const exitEvent = store.appendTerminalSessionEvent({
+    terminalId: "term-1",
+    eventType: "exit",
+    payload: { exit_code: 0 },
+    status: "exited",
+    exitCode: 0,
+    endedAt: "2026-01-01T00:00:10.000Z",
+  });
+  const updated = store.updateTerminalSession({
+    terminalId: "term-1",
+    title: "Dev Server Ready",
+    metadata: { source: "test", ready: true },
+  });
+  const listed = store.listTerminalSessions({
+    workspaceId: "workspace-1",
+    statuses: ["exited"],
+  });
+  const events = store.listTerminalSessionEvents({
+    terminalId: "term-1",
+  });
+
+  assert.equal(created.terminalId, "term-1");
+  assert.equal(created.status, "starting");
+  assert.equal(outputEvent.sequence, 1);
+  assert.equal(exitEvent.sequence, 2);
+  assert.equal(updated.status, "exited");
+  assert.equal(updated.exitCode, 0);
+  assert.equal(updated.lastEventSeq, 2);
+  assert.equal(updated.title, "Dev Server Ready");
+  assert.deepEqual(updated.metadata, { source: "test", ready: true });
+  assert.deepEqual(listed.map((record) => record.terminalId), ["term-1"]);
+  assert.deepEqual(events.map((event) => event.eventType), ["output", "exit"]);
+  assert.deepEqual(events[0]?.payload, { data: "ready\n" });
+  assert.deepEqual(store.listTerminalSessionEvents({ terminalId: "term-1", afterSequence: 1 }).map((event) => event.sequence), [2]);
+
+  store.close();
+});
+
 test("turn results support upsert, lookup, count, and listing", () => {
   const root = makeTempDir("hb-state-store-");
   const store = new RuntimeStateStore({

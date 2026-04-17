@@ -1280,6 +1280,11 @@ export function renderCapabilityPolicyPromptSection(manifest: AgentCapabilityMan
     lines.push("When creating or updating cronjobs, put the executable task in `instruction` and keep `description` as a short display summary only.");
     lines.push("Do not repeat schedule wording such as 'every 5 minutes' inside the cronjob `instruction` unless the task itself genuinely requires saying that phrase.");
   }
+  if (manifest.runtime_tools.some((capability) => capability.id === "terminal_session_start")) {
+    lines.push("Background terminal routing: prefer `terminal_session_start` for long-running, interactive, or revisitable shell work such as dev servers, watch mode, and background jobs.");
+    lines.push("Prefer one-shot `bash` for short commands that should complete within the current tool call.");
+    lines.push("After starting a background terminal, inspect it with `terminal_session_read` or `terminal_session_wait` before claiming success.");
+  }
   if (manifest.workspace_commands.length > 0) {
     lines.push(`Workspace commands available now: ${summarizeList(manifest.workspace_commands)}`);
   }
