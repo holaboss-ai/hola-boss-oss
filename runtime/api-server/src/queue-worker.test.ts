@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, test } from "node:test";
 
 import { RuntimeStateStore } from "@holaboss/runtime-state-store";
@@ -31,6 +32,23 @@ function deferred<T>() {
     reject = rejectPromise;
   });
   return { promise, resolve, reject };
+}
+
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs = 2_000,
+  pollIntervalMs = 25,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (predicate()) {
+      return;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error("timed out while waiting for condition");
+    }
+    await sleep(pollIntervalMs);
+  }
 }
 
 test("runtime queue worker claims queued inputs and executes them in claim order", async () => {
@@ -488,6 +506,112 @@ test("runtime queue worker aborts an active run when recovering an expired claim
   assert.ok(runtimeState);
   assert.equal(runtimeState.status, "ERROR");
   assert.equal(events.at(-1)?.eventType, "run_failed");
+
+  store.close();
+});
+
+test("runtime queue worker renews an expired claimed input while it waits on a session checkpoint", async () => {
+  const root = makeTempDir("hb-runtime-queue-worker-checkpoint-lease-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const checkpointJob = store.enqueuePostRunJob({
+    jobType: "session_checkpoint",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "prior-input",
+    payload: {
+      context_usage: {
+        tokens: 50_000,
+        context_window: 65_536,
+        percent: 76.3,
+      },
+    },
+  });
+  store.updatePostRunJob(checkpointJob.jobId, {
+    status: "CLAIMED",
+    claimedBy: "memory-worker",
+    claimedUntil: new Date(Date.now() + 60_000).toISOString(),
+  });
+  const queued = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    payload: { text: "wait behind checkpoint" }
+  });
+
+  const worker = new RuntimeQueueWorker({
+    store,
+    leaseSeconds: 1,
+    pollIntervalMs: 50,
+    executeClaimedInput: async (record) => {
+      await waitFor(
+        () =>
+          store.listPostRunJobs({
+            workspaceId: record.workspaceId,
+            sessionId: record.sessionId,
+            jobType: "session_checkpoint",
+            statuses: ["QUEUED", "CLAIMED"],
+            limit: 1,
+            offset: 0,
+          }).length === 0,
+        5_000,
+      );
+      store.updateInput(record.inputId, {
+        status: "DONE",
+        claimedBy: null,
+        claimedUntil: null,
+      });
+      store.updateRuntimeState({
+        workspaceId: record.workspaceId,
+        sessionId: record.sessionId,
+        status: "IDLE",
+        currentInputId: null,
+        currentWorkerId: null,
+        leaseUntil: null,
+        heartbeatAt: null,
+        lastError: null,
+      });
+    },
+  });
+
+  await worker.start();
+  worker.wake();
+
+  await waitFor(() => store.getInput(queued.inputId)?.status === "CLAIMED");
+  await sleep(1_250);
+
+  const claimedWhileWaiting = store.getInput(queued.inputId);
+  assert.ok(claimedWhileWaiting);
+  assert.equal(claimedWhileWaiting.status, "CLAIMED");
+  assert.ok(claimedWhileWaiting.claimedUntil);
+  assert.ok(Date.parse(claimedWhileWaiting.claimedUntil) > Date.now());
+
+  store.updatePostRunJob(checkpointJob.jobId, {
+    status: "DONE",
+    claimedBy: null,
+    claimedUntil: null,
+    lastError: null,
+  });
+  worker.wake();
+
+  await waitFor(() => store.getInput(queued.inputId)?.status === "DONE", 5_000);
+  await worker.close();
+
+  const updated = store.getInput(queued.inputId);
+  const events = store.listOutputEvents({
+    sessionId: "session-main",
+    inputId: queued.inputId,
+  });
+  assert.ok(updated);
+  assert.equal(updated.status, "DONE");
+  assert.equal(events.some((event) => event.eventType === "run_failed"), false);
 
   store.close();
 });

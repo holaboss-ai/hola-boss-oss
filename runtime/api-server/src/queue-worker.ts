@@ -11,6 +11,7 @@ const DEFAULT_LEASE_SECONDS = 300;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_MAX_CONCURRENCY = 2;
 const TERMINAL_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
+const SESSION_CHECKPOINT_JOB_TYPE = "session_checkpoint";
 
 export interface QueueWorkerLike {
   start(): Promise<void>;
@@ -239,7 +240,50 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
   #recoverExpiredClaims(): number {
     const expired = this.#store.listExpiredClaimedInputs();
     for (const record of expired) {
-      this.#activeRuns.get(record.inputId)?.controller.abort("claim_expired");
+      const activeRun = this.#activeRuns.get(record.inputId);
+      const waitingForSessionCheckpoint =
+        Boolean(activeRun) &&
+        this.#store.listPostRunJobs({
+          workspaceId: record.workspaceId,
+          sessionId: record.sessionId,
+          jobType: SESSION_CHECKPOINT_JOB_TYPE,
+          statuses: ["QUEUED", "CLAIMED"],
+          limit: 1,
+          offset: 0,
+        }).length > 0;
+      if (waitingForSessionCheckpoint) {
+        const renewedClaim = this.#store.renewInputClaim({
+          inputId: record.inputId,
+          claimedBy: record.claimedBy ?? this.#claimedBy,
+          leaseSeconds: this.#leaseSeconds,
+        });
+        if (renewedClaim) {
+          const runtimeState = this.#store.getRuntimeState({
+            workspaceId: record.workspaceId,
+            sessionId: record.sessionId,
+          });
+          if (runtimeState?.currentInputId === record.inputId) {
+            this.#store.updateRuntimeState({
+              workspaceId: record.workspaceId,
+              sessionId: record.sessionId,
+              status: runtimeState.status,
+              leaseUntil: renewedClaim.claimedUntil,
+              lastError: null,
+            });
+          }
+          this.#logger?.info?.(
+            "Extended claimed runtime input lease while waiting for session checkpoint",
+            {
+              inputId: record.inputId,
+              workspaceId: record.workspaceId,
+              sessionId: record.sessionId,
+            },
+          );
+          continue;
+        }
+      }
+
+      activeRun?.controller.abort("claim_expired");
       const events = this.#store.listOutputEvents({
         sessionId: record.sessionId,
         inputId: record.inputId
