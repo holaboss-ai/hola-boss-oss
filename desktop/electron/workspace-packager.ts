@@ -7,6 +7,7 @@ import type { IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import path from "node:path";
 import { Writable } from "node:stream";
+import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 
 // ---------------------------------------------------------------------------
 // Ignore patterns — mirrors backend's ignore_rules.py
@@ -49,6 +50,8 @@ const GLOBAL_IGNORE_GLOB_PATTERNS: RegExp[] = [
   /\.sqlite$/,
   // data/*.db
   /^data\/[^/]+\.db$/,
+  // automations.yaml is always written fresh by the packager
+  /^automations\.yaml$/,
 ];
 
 const SENSITIVE_PATTERNS: RegExp[] = [
@@ -63,10 +66,68 @@ const SENSITIVE_PATTERNS: RegExp[] = [
 // Public types
 // ---------------------------------------------------------------------------
 
+export interface AutomationsExport {
+  yaml: string;
+  count: number;
+}
+
+const USER_AUTHORED_CRONJOB_FIELDS = [
+  "name",
+  "cron",
+  "description",
+  "instruction",
+  "enabled",
+  "delivery",
+  "metadata",
+] as const;
+
+export async function fetchAndSerializeAutomations(
+  runtimeBaseUrl: string,
+  workspaceId: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<AutomationsExport> {
+  const url = `${runtimeBaseUrl.replace(/\/+$/, "")}/api/v1/cronjobs?workspace_id=${encodeURIComponent(workspaceId)}`;
+  let res: Response;
+  try {
+    res = await fetchImpl(url);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`fetch cronjobs failed: ${msg}`);
+  }
+  if (!res.ok) {
+    throw new Error(`fetch cronjobs failed: HTTP ${res.status}`);
+  }
+  const body = await res.json();
+  const jobs = Array.isArray(body?.jobs) ? body.jobs : [];
+  const stripped = jobs.map((j: Record<string, unknown>) => {
+    const out: Record<string, unknown> = {};
+    for (const k of USER_AUTHORED_CRONJOB_FIELDS) {
+      if (j[k] !== undefined) out[k] = j[k];
+    }
+    return out;
+  });
+  const doc = { version: 1, automations: stripped };
+  const yaml = yamlStringify(doc);
+  // Round-trip assertion
+  const reparsed = yamlParse(yaml);
+  if (
+    reparsed?.version !== 1 ||
+    !Array.isArray(reparsed.automations) ||
+    reparsed.automations.length !== stripped.length
+  ) {
+    throw new Error("automations.yaml round-trip failed");
+  }
+  return { yaml, count: stripped.length };
+}
+
 export interface PackageWorkspaceParams {
   workspaceDir: string;
   apps: string[];
   manifest: Record<string, unknown>;
+  runtimeBaseUrl: string;
+  workspaceId: string;
+  /** Test hook */
+  automationsFetcher?: typeof fetchAndSerializeAutomations;
 }
 
 export interface PackageResult {
@@ -318,7 +379,14 @@ async function collectFiles(
 export async function packageWorkspace(
   params: PackageWorkspaceParams
 ): Promise<PackageResult> {
-  const { workspaceDir, apps, manifest } = params;
+  const {
+    workspaceDir,
+    apps,
+    manifest,
+    runtimeBaseUrl,
+    workspaceId,
+    automationsFetcher = fetchAndSerializeAutomations,
+  } = params;
 
   // Read .hbignore if present
   const hbIgnorePath = path.join(workspaceDir, ".hbignore");
@@ -330,6 +398,9 @@ export async function packageWorkspace(
 
   // Collect files
   const relPaths = await collectFiles(workspaceDir, workspaceDir, apps, hbPatterns);
+
+  // Fetch automations — failures bubble up to the IPC handler
+  const automations = await automationsFetcher(runtimeBaseUrl, workspaceId);
 
   // Build archive in memory
   const chunks: Buffer[] = [];
@@ -349,9 +420,13 @@ export async function packageWorkspace(
     archive.on("error", reject);
   });
 
-  // Write manifest.json as first entry
-  const manifestJson = JSON.stringify(manifest, null, 2);
+  // Write manifest.json as first entry (with automations_count injected)
+  const manifestWithCount = { ...manifest, automations_count: automations.count };
+  const manifestJson = JSON.stringify(manifestWithCount, null, 2);
   archive.append(manifestJson, { name: "manifest.json" });
+
+  // Write automations.yaml
+  archive.append(automations.yaml, { name: "automations.yaml" });
 
   // Append workspace files
   for (const relPath of relPaths) {

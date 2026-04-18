@@ -22107,6 +22107,7 @@ app.whenReady().then(async () => {
         workspaceId: string;
         name: string;
         description: string;
+        authorName?: string;
         category: string;
         tags: string[];
         apps: string[];
@@ -22116,18 +22117,22 @@ app.whenReady().then(async () => {
     ) => {
       const holabossUserId = await controlPlaneWorkspaceUserId();
       const client = getMarketplaceAppSdkClient();
+      // author_name is accepted by the backend but not yet reflected in the
+      // kubb v3 generated SDK type (default-value fields are dropped).
+      const body = {
+        workspace_id: payload.workspaceId,
+        name: payload.name,
+        description: payload.description,
+        category: payload.category,
+        tags: payload.tags,
+        apps: payload.apps,
+        onboarding_md: payload.onboardingMd,
+        readme_md: payload.readmeMd,
+        holaboss_user_id: holabossUserId,
+        author_name: payload.authorName ?? "",
+      };
       return await sdkCreateMarketplaceSubmission(
-        {
-          workspace_id: payload.workspaceId,
-          name: payload.name,
-          description: payload.description,
-          category: payload.category,
-          tags: payload.tags,
-          apps: payload.apps,
-          onboarding_md: payload.onboardingMd,
-          readme_md: payload.readmeMd,
-          holaboss_user_id: holabossUserId,
-        },
+        body as Parameters<typeof sdkCreateMarketplaceSubmission>[0],
         { client },
       );
     },
@@ -22148,10 +22153,13 @@ app.whenReady().then(async () => {
         const { packageWorkspace, uploadToPresignedUrl } =
           await import("./workspace-packager.js");
         const workspaceDir = workspaceDirectoryPath(params.workspaceId);
+        const runtimeUrl = runtimeBaseUrl();
         const result = await packageWorkspace({
           workspaceDir,
           apps: params.apps,
           manifest: params.manifest,
+          runtimeBaseUrl: runtimeUrl,
+          workspaceId: params.workspaceId,
         });
         await uploadToPresignedUrl(params.uploadUrl, result.archiveBuffer);
         return { archiveSizeBytes: result.archiveSizeBytes };

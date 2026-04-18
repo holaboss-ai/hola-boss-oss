@@ -144,28 +144,15 @@ function claimedInputRunId(params: {
   return `${params.workspaceId}:${params.sessionId}:${params.inputId}`;
 }
 
-async function registerWorkspaceAgentRunStarted(params: {
+function backendAgentRunsEndpoint(params: {
   workspaceId: string;
-  sessionId: string;
-  inputId: string;
-  runId: string;
-  selectedModel: string | null;
-  runtimeBinding: {
-    authToken: string;
-    userId: string;
-    sandboxId: string;
-    modelProxyBaseUrl: string;
-  };
-  fetchImpl?: typeof fetch;
-}): Promise<void> {
-  const authToken = params.runtimeBinding.authToken.trim();
-  const userId = params.runtimeBinding.userId.trim();
-  const modelProxyBaseUrl = params.runtimeBinding.modelProxyBaseUrl.trim();
-  if (!authToken || !userId || !modelProxyBaseUrl) {
-    return;
+  modelProxyBaseUrl: string;
+  pathSuffix: "start" | "events";
+}): string | null {
+  const modelProxyBaseUrl = params.modelProxyBaseUrl.trim();
+  if (!modelProxyBaseUrl) {
+    return null;
   }
-
-  let endpoint: string;
   try {
     const baseUrl = new URL(
       modelProxyBaseUrl.endsWith("/")
@@ -178,12 +165,45 @@ async function registerWorkspaceAgentRunStarted(params: {
     )
       ? normalizedBasePath.slice(0, -"/api/v1/model-proxy".length)
       : normalizedBasePath;
-    baseUrl.pathname = `${controlPlaneBasePath}/api/v1/sandbox/workspaces/${encodeURIComponent(params.workspaceId)}/agent-runs/start`;
+    baseUrl.pathname = `${controlPlaneBasePath}/api/v1/sandbox/workspaces/${encodeURIComponent(params.workspaceId)}/agent-runs/${params.pathSuffix}`;
     baseUrl.search = "";
     baseUrl.hash = "";
-    endpoint = baseUrl.toString();
+    return baseUrl.toString();
   } catch (error) {
-    console.warn("Failed to build backend run-start endpoint URL", error);
+    console.warn(
+      `Failed to build backend agent-runs ${params.pathSuffix} endpoint URL`,
+      error,
+    );
+    return null;
+  }
+}
+
+async function postWorkspaceAgentRunRequest(params: {
+  workspaceId: string;
+  runtimeBinding: {
+    authToken: string;
+    userId: string;
+    sandboxId: string;
+    modelProxyBaseUrl: string;
+  };
+  pathSuffix: "start" | "events";
+  body: Record<string, unknown>;
+  fetchImpl?: typeof fetch;
+  failureLabel: string;
+  runId: string;
+}): Promise<void> {
+  const authToken = params.runtimeBinding.authToken.trim();
+  const userId = params.runtimeBinding.userId.trim();
+  if (!authToken || !userId) {
+    return;
+  }
+
+  const endpoint = backendAgentRunsEndpoint({
+    workspaceId: params.workspaceId,
+    modelProxyBaseUrl: params.runtimeBinding.modelProxyBaseUrl,
+    pathSuffix: params.pathSuffix,
+  });
+  if (!endpoint) {
     return;
   }
 
@@ -204,22 +224,17 @@ async function registerWorkspaceAgentRunStarted(params: {
     const response = await fetchImpl(endpoint, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        session_id: params.sessionId,
-        input_id: params.inputId,
-        run_id: params.runId,
-        model: params.selectedModel ?? undefined,
-      }),
+      body: JSON.stringify(params.body),
       signal: controller.signal,
     });
     if (!response.ok) {
       console.warn(
-        `Backend run-start registration failed with status ${response.status} for run ${params.runId}`,
+        `${params.failureLabel} failed with status ${response.status} for run ${params.runId}`,
       );
     }
   } catch (error) {
     console.warn(
-      `Backend run-start registration failed for run ${params.runId}`,
+      `${params.failureLabel} failed for run ${params.runId}`,
       error,
     );
   } finally {
@@ -227,7 +242,73 @@ async function registerWorkspaceAgentRunStarted(params: {
   }
 }
 
-export { registerWorkspaceAgentRunStarted };
+async function registerWorkspaceAgentRunStarted(params: {
+  workspaceId: string;
+  sessionId: string;
+  inputId: string;
+  runId: string;
+  selectedModel: string | null;
+  runtimeBinding: {
+    authToken: string;
+    userId: string;
+    sandboxId: string;
+    modelProxyBaseUrl: string;
+  };
+  fetchImpl?: typeof fetch;
+}): Promise<void> {
+  await postWorkspaceAgentRunRequest({
+    workspaceId: params.workspaceId,
+    runtimeBinding: params.runtimeBinding,
+    pathSuffix: "start",
+    body: {
+      session_id: params.sessionId,
+      input_id: params.inputId,
+      run_id: params.runId,
+      model: params.selectedModel ?? undefined,
+    },
+    fetchImpl: params.fetchImpl,
+    failureLabel: "Backend run-start registration",
+    runId: params.runId,
+  });
+}
+
+async function registerWorkspaceAgentRunEvent(params: {
+  workspaceId: string;
+  sessionId: string;
+  inputId: string;
+  runId: string;
+  sequence: number;
+  eventType: "tool_call" | "run_completed" | "run_failed";
+  payload: Record<string, unknown>;
+  timestamp: string;
+  runtimeBinding: {
+    authToken: string;
+    userId: string;
+    sandboxId: string;
+    modelProxyBaseUrl: string;
+  };
+  fetchImpl?: typeof fetch;
+}): Promise<void> {
+  await postWorkspaceAgentRunRequest({
+    workspaceId: params.workspaceId,
+    runtimeBinding: params.runtimeBinding,
+    pathSuffix: "events",
+    body: {
+      session_id: params.sessionId,
+      input_id: params.inputId,
+      run_id: params.runId,
+      sequence: params.sequence,
+      event_type: params.eventType,
+      payload: params.payload,
+      timestamp: params.timestamp,
+    },
+    fetchImpl: params.fetchImpl,
+    failureLabel: "Backend run-event registration",
+    runId: params.runId,
+  });
+}
+
+export { registerWorkspaceAgentRunEvent, registerWorkspaceAgentRunStarted };
 
 function writebackModelContext(params: {
   workspaceId: string;
@@ -993,6 +1074,7 @@ export async function processClaimedInput(params: {
   executeRunnerRequestFn?: typeof executeRunnerRequest;
   resolveProductRuntimeConfigFn?: typeof resolveProductRuntimeConfig;
   registerRunStartedFn?: typeof registerWorkspaceAgentRunStarted;
+  relayRunEventFn?: typeof registerWorkspaceAgentRunEvent;
   abortSignal?: AbortSignal;
 }): Promise<void> {
   const { store, record } = params;
@@ -1125,6 +1207,8 @@ export async function processClaimedInput(params: {
     runtimeContext[RUNTIME_EXEC_CONTEXT_KEY] = priorExecContext;
     const registerRunStarted =
       params.registerRunStartedFn ?? registerWorkspaceAgentRunStarted;
+    const relayRunEvent =
+      params.relayRunEventFn ?? registerWorkspaceAgentRunEvent;
     await registerRunStarted({
       workspaceId: record.workspaceId,
       sessionId: record.sessionId,
@@ -1436,6 +1520,19 @@ export async function processClaimedInput(params: {
             });
             tokenUsage = tokenUsageFromPayload(eventPayload) ?? tokenUsage;
           }
+          if (event.event_type === "tool_call") {
+            await relayRunEvent({
+              workspaceId: record.workspaceId,
+              sessionId: record.sessionId,
+              inputId: record.inputId,
+              runId,
+              sequence: Math.max(sequence, 1),
+              eventType: "tool_call",
+              payload: eventPayload,
+              timestamp: eventTimestamp,
+              runtimeBinding,
+            });
+          }
         },
       });
 
@@ -1644,6 +1741,21 @@ export async function processClaimedInput(params: {
       }
 
       const assistantText = assistantParts.join("").trim();
+      const terminalEventToRelay = persistedTerminalEvent
+        ? {
+            eventType: persistedTerminalEvent.eventType,
+            sequence: persistedTerminalEvent.sequence,
+            payload: persistedTerminalEvent.payload,
+            createdAt: persistedTerminalEvent.createdAt,
+          }
+        : deferredTerminalEvent
+          ? {
+              eventType: deferredTerminalEvent.eventType,
+              sequence: lastSequence + 1,
+              payload: deferredTerminalEvent.payload,
+              createdAt: deferredTerminalEvent.createdAt,
+            }
+          : null;
       const hasPersistedOutputs =
         store.listOutputs({
           workspaceId: record.workspaceId,
@@ -1702,6 +1814,32 @@ export async function processClaimedInput(params: {
         });
       } catch {
         // Skill promotion is best-effort and should not fail the completed turn.
+      }
+      if (
+        terminalEventToRelay &&
+        (terminalEventToRelay.eventType === "run_completed" ||
+          terminalEventToRelay.eventType === "run_failed")
+      ) {
+        const relayPayload: Record<string, unknown> = {
+          ...terminalEventToRelay.payload,
+        };
+        if (assistantText) {
+          relayPayload.final_output_text = assistantText;
+        }
+        if (!nonEmptyString(relayPayload.source)) {
+          relayPayload.source = "runner";
+        }
+        await relayRunEvent({
+          workspaceId: record.workspaceId,
+          sessionId: record.sessionId,
+          inputId: record.inputId,
+          runId,
+          sequence: Math.max(terminalEventToRelay.sequence, 1),
+          eventType: terminalEventToRelay.eventType,
+          payload: relayPayload,
+          timestamp: terminalEventToRelay.createdAt,
+          runtimeBinding,
+        });
       }
       if (deferredTerminalEvent) {
         lastSequence = appendNextOutputEvent({

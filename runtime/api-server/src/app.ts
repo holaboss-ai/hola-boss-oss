@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -9,6 +9,7 @@ import path from "node:path";
 
 import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply } from "fastify";
 import websocket from "@fastify/websocket";
+import yaml from "js-yaml";
 import * as tar from "tar";
 import yauzl from "yauzl";
 import * as Sentry from "@sentry/node";
@@ -6253,6 +6254,135 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 404, "Cronjob not found");
     }
     return { success: true };
+  });
+
+  app.post("/api/v1/workspaces/:workspaceId/automations/import", async (request, reply) => {
+    const params = request.params as { workspaceId: string };
+    const { workspaceId } = params;
+
+    if (!store.getWorkspace(workspaceId)) {
+      return sendError(reply, 404, "workspace not found");
+    }
+
+    const automationsPath = path.join(store.workspaceDir(workspaceId), "automations.yaml");
+    if (!fs.existsSync(automationsPath)) {
+      return { imported: 0, skipped: 0, jobs: [], skipped_details: [] };
+    }
+
+    let rawDoc: unknown;
+    try {
+      rawDoc = yaml.load(fs.readFileSync(automationsPath, "utf8"));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return sendError(reply, 400, `automations.yaml parse error: ${message}`);
+    }
+
+    if (!isRecord(rawDoc)) {
+      return sendError(reply, 400, "automations.yaml must be a mapping at the root");
+    }
+    if (rawDoc.version !== 1) {
+      return sendError(reply, 400, `automations.yaml version must be 1, got: ${String(rawDoc.version)}`);
+    }
+    if (!Array.isArray(rawDoc.automations)) {
+      return sendError(reply, 400, "automations.yaml must have an 'automations' array");
+    }
+
+    const body = isRecord(request.body) ? request.body : {};
+    const initiatedBy = optionalString(body.initiated_by) ?? "workspace_import";
+
+    // Read installed app names from workspace.yaml (tolerates absence)
+    const installedApps = new Set<string>(
+      listWorkspaceApplications(store.workspaceDir(workspaceId))
+        .map((entry) => (typeof entry.app_id === "string" ? entry.app_id : ""))
+        .filter((id) => id.length >= 3)
+    );
+
+    const jobs: Record<string, unknown>[] = [];
+    const skippedDetails: Record<string, unknown>[] = [];
+
+    for (const rawEntry of rawDoc.automations) {
+      if (!isRecord(rawEntry)) {
+        skippedDetails.push({ reason: "invalid_entry", detail: "entry is not an object" });
+        continue;
+      }
+
+      const entryCron = optionalString(rawEntry.cron);
+      const entryDescription = optionalString(rawEntry.description);
+      const entryDelivery = optionalDict(rawEntry.delivery);
+
+      if (!entryCron) {
+        skippedDetails.push({ reason: "missing_field", detail: "cron is required" });
+        continue;
+      }
+      if (!entryDescription) {
+        skippedDetails.push({ reason: "missing_field", detail: "description is required" });
+        continue;
+      }
+      if (!entryDelivery || !optionalString(entryDelivery.mode) || !optionalString(entryDelivery.channel)) {
+        skippedDetails.push({ reason: "missing_field", detail: "delivery must be an object with mode and channel" });
+        continue;
+      }
+
+      const entryName = optionalString(rawEntry.name) ?? "";
+      const entryInstruction = optionalString(rawEntry.instruction) ?? entryDescription;
+
+      const importKey = createHash("sha1")
+        .update(`${entryName}|${entryCron}|${entryInstruction}`)
+        .digest("hex");
+
+      const existingJobs = store.listCronjobs({ workspaceId });
+      const existing = existingJobs.find((j) => j.metadata.import_key === importKey);
+
+      if (existing) {
+        skippedDetails.push({ import_key: importKey, reason: "already_imported", id: existing.id });
+        continue;
+      }
+
+      // TODO: parse app references from instruction
+      const importWarnings: string[] = [];
+
+      const importedMeta: Record<string, unknown> = {
+        ...(optionalDict(rawEntry.metadata) ?? {}),
+        imported: true,
+        author_recommended_enabled: rawEntry.enabled !== false,
+        import_key: importKey,
+        import_warnings: importWarnings,
+      };
+
+      let job: CronjobRecord;
+      try {
+        job = store.createCronjob({
+          workspaceId,
+          initiatedBy,
+          name: entryName,
+          cron: entryCron,
+          description: entryDescription,
+          instruction: entryInstruction,
+          enabled: false,
+          delivery: entryDelivery,
+          metadata: importedMeta,
+          nextRunAt: cronjobNextRunAt(entryCron, new Date()),
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        skippedDetails.push({ import_key: importKey, reason: "create_failed", detail: message });
+        continue;
+      }
+
+      jobs.push(cronjobPayload(job));
+    }
+
+    app.log.info(
+      { event: "app.automations.import.success", outcome: "success", workspaceId, count: jobs.length, skipped: skippedDetails.length },
+      "automations import complete"
+    );
+
+    return {
+      imported: jobs.length,
+      skipped: skippedDetails.length,
+      jobs,
+      skipped_details: skippedDetails,
+    };
   });
 
   app.get("/api/v1/task-proposals", async (request, reply) => {

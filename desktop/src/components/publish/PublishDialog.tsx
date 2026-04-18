@@ -59,6 +59,7 @@ export function PublishDialog({
   // Step 1
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [authorName, setAuthorName] = useState("");
   const [category, setCategory] = useState("marketing");
   const [tags, setTags] = useState("");
 
@@ -85,6 +86,13 @@ export function PublishDialog({
   const userId = session?.user.id ?? "";
   const userName = session?.user.name ?? "";
 
+  // Pre-fill author name from session on first open
+  useEffect(() => {
+    if (open && userName && !authorName) {
+      setAuthorName(userName);
+    }
+  }, [open, userName]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Pre-select all installed apps on first load
   useEffect(() => {
     if (!appsInitialized && installedApps.length > 0) {
@@ -99,6 +107,7 @@ export function PublishDialog({
       setStep(1);
       setName("");
       setDescription("");
+      setAuthorName("");
       setCategory("marketing");
       setTags("");
       setSelectedApps(new Set());
@@ -206,6 +215,7 @@ export function PublishDialog({
         workspaceId,
         name,
         description,
+        authorName: authorName.trim() || userName,
         category,
         tags: tagArray,
         apps: appsArray,
@@ -227,7 +237,7 @@ export function PublishDialog({
           apps: appsArray,
           onboarding_md: onboardingMd || null,
           readme_md: readmeMd || null,
-          author: { id: userId, name: userName },
+          author: { id: userId, name: authorName.trim() || userName },
         },
         uploadUrl: submission.upload_url,
       });
@@ -395,6 +405,21 @@ export function PublishDialog({
                         placeholder="My Template Name"
                         value={name}
                       />
+                    </div>
+
+                    <div>
+                      <Label htmlFor="pub-author">Author Name</Label>
+                      <Input
+                        className="mt-1.5"
+                        id="pub-author"
+                        maxLength={100}
+                        onChange={(e) => setAuthorName(e.target.value)}
+                        placeholder="Your display name"
+                        value={authorName}
+                      />
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Shown on the marketplace. Pre-filled from your account.
+                      </p>
                     </div>
 
                     <div>
@@ -597,7 +622,7 @@ export function PublishDialog({
 
                   <div className="space-y-2.5">
                     <ReviewCard
-                      detail={`${category} · ${tagArray.length > 0 ? tagArray.join(", ") : "no tags"}`}
+                      detail={`${authorName.trim() || "No author name"} · ${category} · ${tagArray.length > 0 ? tagArray.join(", ") : "no tags"}`}
                       label="Template info"
                       onEdit={() => setStep(1)}
                       title={name || "Untitled"}

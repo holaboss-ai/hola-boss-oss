@@ -8,6 +8,7 @@ import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
 import {
   processClaimedInput,
+  registerWorkspaceAgentRunEvent,
   registerWorkspaceAgentRunStarted,
 } from "./claimed-input-executor.js";
 import type { MemoryServiceLike } from "./memory.js";
@@ -1337,6 +1338,142 @@ test("claimed input hydrates runtime exec context from runtime config", async ()
   store.close();
 });
 
+test("claimed input relays tool and terminal run events for backend-owned sentry traces", async () => {
+  const store = makeStore("hb-claimed-input-sentry-run-events-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "go to bing" },
+  });
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+  const relayedEvents: Array<{
+    sequence: number;
+    eventType: string;
+    payload: Record<string, unknown>;
+    timestamp: string;
+  }> = [];
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+    registerRunStartedFn: async () => {},
+    relayRunEventFn: async (params) => {
+      relayedEvents.push({
+        sequence: params.sequence,
+        eventType: params.eventType,
+        payload: params.payload,
+        timestamp: params.timestamp,
+      });
+    },
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: { instruction_preview: "go to bing" },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "tool_call",
+        payload: {
+          phase: "started",
+          tool_name: "browser_navigate",
+          call_id: "call-1",
+          tool_args: { url: "https://bing.com" },
+          source: "member-research",
+          agent_id: "member-research",
+        },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 3,
+        event_type: "tool_call",
+        payload: {
+          phase: "completed",
+          tool_name: "browser_navigate",
+          call_id: "call-1",
+          result: { navigated_to: "https://bing.com" },
+          source: "member-research",
+          agent_id: "member-research",
+        },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 4,
+        event_type: "output_delta",
+        payload: { delta: "Opened Bing." },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 5,
+        event_type: "run_completed",
+        payload: {
+          status: "ok",
+          usage: { input_tokens: 12, output_tokens: 34, total_tokens: 46 },
+        },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  assert.deepEqual(
+    relayedEvents.map((event) => [event.sequence, event.eventType]),
+    [
+      [2, "tool_call"],
+      [3, "tool_call"],
+      [6, "run_completed"],
+    ],
+  );
+  assert.deepEqual(relayedEvents[0]?.payload, {
+    phase: "started",
+    tool_name: "browser_navigate",
+    call_id: "call-1",
+    tool_args: { url: "https://bing.com" },
+    source: "member-research",
+    agent_id: "member-research",
+  });
+  assert.deepEqual(relayedEvents[1]?.payload, {
+    phase: "completed",
+    tool_name: "browser_navigate",
+    call_id: "call-1",
+    result: { navigated_to: "https://bing.com" },
+    source: "member-research",
+    agent_id: "member-research",
+  });
+  assert.deepEqual(relayedEvents[2]?.payload, {
+    status: "ok",
+    usage: { input_tokens: 12, output_tokens: 34, total_tokens: 46 },
+    final_output_text: "Opened Bing.",
+    source: "runner",
+  });
+
+  store.close();
+});
+
 test("run-start registration strips the model-proxy path before calling the backend route", async () => {
   const requests: Array<{ url: string; init: RequestInit | undefined }> = [];
 
@@ -1390,6 +1527,79 @@ test("run-start registration strips the model-proxy path before calling the back
       input_id: "input-1",
       run_id: "workspace-1:session-main:input-1",
       model: "elephant-alpha",
+    }),
+  );
+});
+
+test("run-event registration strips the model-proxy path before calling the backend route", async () => {
+  const requests: Array<{ url: string; init: RequestInit | undefined }> = [];
+
+  await registerWorkspaceAgentRunEvent({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    runId: "workspace-1:session-main:input-1",
+    sequence: 3,
+    eventType: "tool_call",
+    payload: {
+      phase: "completed",
+      tool_name: "search_docs",
+      call_id: "call-1",
+      result: { title: "Bing" },
+    },
+    timestamp: "2026-04-18T00:00:00.000Z",
+    runtimeBinding: {
+      authToken: "token-1",
+      userId: "user-1",
+      sandboxId: "sandbox-1",
+      modelProxyBaseUrl: "http://127.0.0.1:3060/api/v1/model-proxy",
+    },
+    fetchImpl: async (input, init) => {
+      requests.push({
+        url: input instanceof Request ? input.url : String(input),
+        init,
+      });
+      return new Response(null, { status: 200 });
+    },
+  });
+
+  assert.equal(requests.length, 1);
+  assert.equal(
+    requests[0]?.url,
+    "http://127.0.0.1:3060/api/v1/sandbox/workspaces/workspace-1/agent-runs/events",
+  );
+  assert.equal(requests[0]?.init?.method, "POST");
+  assert.equal(
+    (requests[0]?.init?.headers as Record<string, string>)["X-API-Key"],
+    "token-1",
+  );
+  assert.equal(
+    (requests[0]?.init?.headers as Record<string, string>)[
+      "X-Holaboss-User-Id"
+    ],
+    "user-1",
+  );
+  assert.equal(
+    (requests[0]?.init?.headers as Record<string, string>)[
+      "X-Holaboss-Sandbox-Id"
+    ],
+    "sandbox-1",
+  );
+  assert.equal(
+    requests[0]?.init?.body,
+    JSON.stringify({
+      session_id: "session-main",
+      input_id: "input-1",
+      run_id: "workspace-1:session-main:input-1",
+      sequence: 3,
+      event_type: "tool_call",
+      payload: {
+        phase: "completed",
+        tool_name: "search_docs",
+        call_id: "call-1",
+        result: { title: "Bing" },
+      },
+      timestamp: "2026-04-18T00:00:00.000Z",
     }),
   );
 });
