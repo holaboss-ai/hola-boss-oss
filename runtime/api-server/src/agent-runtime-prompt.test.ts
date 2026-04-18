@@ -92,105 +92,78 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   assert.match(prompt.systemPrompt, /Response delivery policy:/);
   assert.match(
     prompt.systemPrompt,
-    /If local git is available, treat it as an internal recovery mechanism for the agent rather than a user-facing workflow\./
+    /Treat local git as an internal recovery tool\./
   );
   assert.match(
     prompt.systemPrompt,
-    /When meaningful changes are implemented and verified, create concise local checkpoint commits for agent recovery\./
+    /Inspect before mutating workspace, app, browser, runtime state, or external systems when possible\./
   );
   assert.match(
     prompt.systemPrompt,
-    /Do not proactively surface git status, dirty or untracked file reports, repository cleanup recommendations, or checkpoint\/commit chatter to the user\./
+    /After edits, commands, browser actions, or state-changing tool calls, verify the result with the most direct inspection path available\./
   );
   assert.match(
     prompt.systemPrompt,
-    /Only discuss explicit git operations when the user directly asks for version-control help or when the task cannot be completed otherwise\./
+    /Use available tools, skills, and MCP integrations when they are more reliable than reasoning alone\./
   );
   assert.match(
     prompt.systemPrompt,
-    /Do not use destructive git history operations such as reset --hard, rebase, or force pushes unless the user explicitly asks for them\./
+    /Treat explicit user requirements and verification targets as completion criteria, not optional detail\./
   );
   assert.match(
     prompt.systemPrompt,
-    /Treat the active workspace root as a hard boundary: do not read, write, edit, execute against, or reference paths outside the workspace by default\./
+    /Treat the active workspace root as the default boundary\./
   );
   assert.match(
     prompt.systemPrompt,
-    /Block path traversal and cross-workspace access by default, including parent-directory paths, absolute external paths, and symlink escapes\./
+    /Do not cross it unless the user explicitly asks, and then keep the scope minimal\./
   );
   assert.match(
     prompt.systemPrompt,
-    /Keep the answer inline for simple lookups, definitions, narrow factual questions, brief clarifications, and other requests that can be answered well in a short paragraph or a few bullets\./
+    /Keep short lookups and straightforward explanations inline\./
   );
   assert.match(
     prompt.systemPrompt,
-    /Do not create a report just because you used browser or web search tools\. Tool usage alone is not a reason to artifact the answer\./
+    /Do not create a report just because tools were used\./
   );
   assert.match(
     prompt.systemPrompt,
-    /If `write_report` is available and the full answer would be long, heavily structured, evidence-heavy, or likely to be referenced later, use `write_report` instead of placing the full content in chat\./
+    /Use `write_report` for long, structured, evidence-heavy, or referenceable outputs/
   );
   assert.match(
     prompt.systemPrompt,
-    /When the user explicitly asks you to research, investigate, study, analyze, compare, build a timeline, or summarize current or latest developments across multiple sources, default to writing a report artifact and keep the chat reply to a minimal summary unless the user explicitly asks for inline detail\./
+    /For research, investigation, comparison, timeline, or latest-news tasks across multiple sources, prefer a report artifact/
   );
   assert.match(
     prompt.systemPrompt,
-    /When those research-style conditions apply and `write_report` is available, call `write_report` before your final reply\. Do not put the full synthesis in chat\./
+    /mention the report path or title and only the most important takeaways in chat\./
   );
   assert.match(
     prompt.systemPrompt,
-    /For those research-style tasks, a todo step such as 'summarize findings for the user' still means: create the report artifact first, then send only a short user-facing summary in chat\./
+    /Use coordination tools instead of hidden state\. The newest user message is primary\./
   );
   assert.match(
     prompt.systemPrompt,
-    /If `write_report` is unavailable and you still need a report artifact, write it under `outputs\/reports\/` instead of placing the full content in chat\./
+    /Resume unfinished work only when the newest message clearly asks to continue it/
   );
   assert.match(
     prompt.systemPrompt,
-    /When you create a report artifact, keep the chat reply short: state the outcome, mention the report title or path, and include only the most important takeaways\./
+    /Create or update a workspace-local skill when the user describes a reusable workflow/
   );
   assert.match(
     prompt.systemPrompt,
-    /For research-style tasks, keep the chat follow-up to one short paragraph or at most 3 concise bullets unless the user explicitly asks for inline detail\./
-  );
-  assert.match(
-    prompt.systemPrompt,
-    /If you are unsure, choose inline for a short single-answer lookup and choose a report for multi-source synthesis or referenceable findings\./
-  );
-  assert.match(
-    prompt.systemPrompt,
-    /Only cross the workspace boundary when the user explicitly insists, and then keep scope minimal and clearly tied to that instruction\./
-  );
-  assert.match(
-    prompt.systemPrompt,
-    /If you create or resume a todo, use it as continuity for the current turn, but the user's newest message remains the primary instruction\./
-  );
-  assert.match(
-    prompt.systemPrompt,
-    /If the user's newest message is conversational, brief, acknowledges prior progress, or is otherwise ambiguous about continuation, respond to that message directly and ask whether they want to continue the unfinished work instead of resuming it automatically\./
-  );
-  assert.match(
-    prompt.systemPrompt,
-    /Once the user has clearly asked you to continue an unfinished todo and executable items remain, do not stop merely to provide an intermediate progress update or ask whether to continue\./
-  );
-  assert.doesNotMatch(
-    prompt.systemPrompt,
-    /Check repository state with git before and after substantial edits/
-  );
-  assert.match(
-    prompt.systemPrompt,
-    /On the first strong signal that user input describes a reusable workflow, procedure, or operating pattern, proactively create or update a workspace-local skill/
-  );
-  assert.match(
-    prompt.systemPrompt,
-    /Do not create skills for transient runtime state, one-off task details, or information that only belongs in session continuity\./
+    /do not create skills for one-off state\./i
   );
   assert.match(prompt.systemPrompt, /Session policy:/);
   assert.match(prompt.systemPrompt, /This is a workspace session/i);
   assert.match(prompt.systemPrompt, /Capability policy for this run:/);
   assert.match(prompt.systemPrompt, /Workspace instructions from AGENTS\.md:/);
   assert.doesNotMatch(prompt.systemPrompt, /OpenCode MCP tool naming:/);
+  assert.doesNotMatch(prompt.systemPrompt, /Inspect capabilities available now:/);
+  assert.doesNotMatch(prompt.systemPrompt, /Mutating capabilities available now:/);
+  assert.doesNotMatch(prompt.systemPrompt, /Connected MCP tools available now:/);
+  assert.doesNotMatch(prompt.systemPrompt, /Skills available now:/);
+  assert.ok(prompt.systemPrompt.length < 4500);
   assert.deepEqual(prompt.contextMessages, []);
   assert.deepEqual(prompt.promptCacheProfile.cacheable_section_ids, [
     "runtime_core",
@@ -364,6 +337,7 @@ test("composeBaseAgentPrompt includes operator surface context when provided", (
   assert.match(prompt.contextMessages.join("\n\n"), /default referent for deictic questions such as `what am I looking at right now`/i);
   assert.match(prompt.contextMessages.join("\n\n"), /continue from what they already opened, navigated, selected, or prepared/i);
   assert.match(prompt.contextMessages.join("\n\n"), /do not answer from browser state just because browser tools are available/i);
+  assert.match(prompt.contextMessages.join("\n\n"), /Do not mutate a user-owned surface unless runtime context or capabilities explicitly allow takeover or direct control\./);
   assert.match(prompt.contextMessages.join("\n\n"), /Current active surface id: `browser:user`\./);
   assert.match(prompt.contextMessages.join("\n\n"), /\[user\/browser\] `browser:user` \(active, mutability=`inspect_only`\):/);
   assert.match(prompt.contextMessages.join("\n\n"), /\[agent\/browser\] `browser:agent` \(mutability=`agent_owned`\):/);
@@ -654,38 +628,22 @@ test("composeBaseAgentPrompt requires proactive fallback when partial retrieval 
 
   assert.match(
     prompt.systemPrompt,
-    /Treat user-specified requirements such as exact fields, counts, rankings, filters, timestamps, and verification targets as completion criteria, not optional detail\./
+    /Treat explicit user requirements and verification targets as completion criteria, not optional detail\./
   );
   assert.match(
     prompt.systemPrompt,
-    /Before answering, compare the evidence you gathered against the user's requested fields, constraints, thresholds, rankings, timestamps, and verification targets\./
+    /If evidence is incomplete, keep retrieving or say exactly what remains unverified\./
   );
   assert.match(
     prompt.systemPrompt,
-    /Do not present partial evidence as task completion\./
+    /Use available tools, skills, and MCP integrations when they are more reliable than reasoning alone\./
   );
   assert.match(
     prompt.systemPrompt,
-    /If the first retrieval path only gives partial evidence, do not stop there: proactively switch to a more direct capability path until the required facts are verified or you can clearly explain what remains unavailable\./
+    /When browser tools are available, use them for UI-specific verification and prefer DOM-grounded actions and extraction; use screenshots only when visual confirmation matters\./
   );
   assert.match(
     prompt.systemPrompt,
-    /If a more direct capability is unavailable or blocked, explicitly name which required facts or constraints remain unverified\./
-  );
-  assert.match(
-    prompt.systemPrompt,
-    /When browser capabilities are available, use them as the direct verification path for site-specific or UI-dependent requirements that search or summary tools cannot fully prove\./
-  );
-  assert.match(
-    prompt.systemPrompt,
-    /Within browser workflows, prefer DOM and structured page state for actions and routine extraction\./
-  );
-  assert.match(
-    prompt.systemPrompt,
-    /Use browser_get_state with include_screenshot=true, or browser_screenshot, only when visual appearance, layout, prominence, overlays, canvas\/chart\/PDF content, or user-visible confirmation matters, or when DOM signals remain ambiguous or unreliable\./
-  );
-  assert.match(
-    prompt.systemPrompt,
-    /Even in screenshot-assisted browser work, keep using DOM-grounded browser actions for clicking, typing, scrolling, and stable extraction whenever possible\./
+    /When browser tools are available, use them for UI-specific verification and prefer DOM-grounded actions and extraction; use screenshots only when visual confirmation matters\./
   );
 });

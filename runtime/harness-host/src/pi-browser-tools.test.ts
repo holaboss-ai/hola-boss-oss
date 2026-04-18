@@ -71,6 +71,11 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
   assert.ok(getStateTool);
   assert.match(getStateTool.description ?? "", /DOM-first browser inspection tool for actions and structured extraction/i);
   assert.match(getStateTool.description ?? "", /include_screenshot=true/i);
+  assert.match(getStateTool.description ?? "", /include_page_text=true/i);
+  assert.match(
+    String((getStateTool.parameters as { properties?: { include_page_text?: { description?: string } } }).properties?.include_page_text?.description ?? ""),
+    /Leave false for cheaper action-focused state checks/i
+  );
   assert.match(
     String((getStateTool.parameters as { properties?: { include_screenshot?: { description?: string } } }).properties?.include_screenshot?.description ?? ""),
     /visual appearance, layout, overlays, charts, PDFs, or user-visible confirmation/i
@@ -141,6 +146,7 @@ test("Pi desktop browser tools fall back to node http when no fetch implementati
     const getStateTool = tools.find((tool) => tool.name === "browser_get_state");
     assert.ok(getStateTool);
     assert.match(getStateTool.description ?? "", /DOM-first browser inspection tool for actions and structured extraction/i);
+    assert.match(getStateTool.description ?? "", /include_page_text=true/i);
     const result = await getStateTool.execute("call-1", { include_screenshot: false }, undefined, undefined, {} as never);
 
     assert.deepEqual(requests, [

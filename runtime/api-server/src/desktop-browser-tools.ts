@@ -54,6 +54,9 @@ const INTERACTIVE_ELEMENTS_SELECTOR = [
   "[tabindex]"
 ].join(",");
 
+const BROWSER_GET_STATE_TEXT_MAX_CHARS = 2500;
+const BROWSER_GET_STATE_ELEMENT_TEXT_MAX_CHARS = 120;
+
 
 export class DesktopBrowserToolServiceError extends Error {
   readonly statusCode: number;
@@ -150,9 +153,11 @@ function serializedValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function interactiveElementsExpression(): string {
+function interactiveElementsExpression(includePageText: boolean): string {
   return `(() => {
     const selector = ${serializedValue(INTERACTIVE_ELEMENTS_SELECTOR)};
+    const includePageText = ${includePageText ? "true" : "false"};
+    const textLimit = ${BROWSER_GET_STATE_ELEMENT_TEXT_MAX_CHARS};
     const isVisible = (element) => {
       if (!(element instanceof HTMLElement)) return false;
       const rect = element.getBoundingClientRect();
@@ -164,7 +169,7 @@ function interactiveElementsExpression(): string {
       const tagName = element.tagName.toLowerCase();
       const role = element.getAttribute("role") || "";
       const type = "type" in element ? String(element.type || "") : "";
-      const text = (element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 300);
+      const text = (element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim().slice(0, textLimit);
       const label = [
         element.getAttribute("aria-label") || "",
         "placeholder" in element ? String(element.placeholder || "") : "",
@@ -177,7 +182,7 @@ function interactiveElementsExpression(): string {
         role,
         type,
         text,
-        label,
+        label: label.slice(0, textLimit),
         disabled: "disabled" in element ? Boolean(element.disabled) : false,
         href: "href" in element ? String(element.href || "") : "",
         bounding_box: {
@@ -194,7 +199,9 @@ function interactiveElementsExpression(): string {
     return {
       url: location.href,
       title: document.title,
-      text: (document.body?.innerText || "").replace(/\\s+/g, " ").trim().slice(0, 12000),
+      ...(includePageText
+        ? { text: (document.body?.innerText || "").replace(/\\s+/g, " ").trim().slice(0, ${BROWSER_GET_STATE_TEXT_MAX_CHARS}) }
+        : {}),
       viewport: { width: window.innerWidth, height: window.innerHeight },
       scroll: { x: Math.round(window.scrollX), y: Math.round(window.scrollY) },
       elements: nodes.map((element, idx) => describe(element, idx + 1))
@@ -416,7 +423,11 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
           sessionId: context.sessionId,
           space: context.space,
         });
-        const state = await this.#evaluate(config, interactiveElementsExpression(), context);
+        const state = await this.#evaluate(
+          config,
+          interactiveElementsExpression(optionalBoolean(args.include_page_text, false)),
+          context
+        );
         const payload: Record<string, unknown> = {
           ok: true,
           page,
@@ -459,26 +470,12 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
           }),
           context
         );
-        const page = await this.#browserFetch(config, {
-          method: "GET",
-          path: "/page",
-          workspaceId: context.workspaceId,
-          sessionId: context.sessionId,
-          space: context.space,
-        });
-        return { ok: true, action: result, page };
+        return { ok: true, action: result };
       }
       case "browser_press": {
         const key = requiredString(args.key, "key");
         const result = await this.#evaluate(config, pressExpression(key), context);
-        const page = await this.#browserFetch(config, {
-          method: "GET",
-          path: "/page",
-          workspaceId: context.workspaceId,
-          sessionId: context.sessionId,
-          space: context.space,
-        });
-        return { ok: true, action: result, page };
+        return { ok: true, action: result };
       }
       case "browser_scroll": {
         const explicitDelta = optionalInteger(args.delta_y);
@@ -486,14 +483,7 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
         const direction = args.direction === "up" ? "up" : "down";
         const deltaY = explicitDelta ?? (direction === "up" ? -Math.abs(amount) : Math.abs(amount));
         const result = await this.#evaluate(config, scrollExpression(deltaY), context);
-        const page = await this.#browserFetch(config, {
-          method: "GET",
-          path: "/page",
-          workspaceId: context.workspaceId,
-          sessionId: context.sessionId,
-          space: context.space,
-        });
-        return { ok: true, action: result, page };
+        return { ok: true, action: result };
       }
       case "browser_back": {
         const result = await this.#evaluate(config, historyExpression("back"), context);

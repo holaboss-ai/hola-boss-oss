@@ -86,7 +86,6 @@ test("desktop browser tool service forwards workspace and session context to the
           result: {
             url: "https://example.com",
             title: "Example",
-            text: "Example Domain",
             viewport: { width: 1280, height: 720 },
             scroll: { x: 0, y: 0 },
             elements: [{ index: 1, tag_name: "a", label: "More information", text: "More information" }]
@@ -141,7 +140,6 @@ test("desktop browser tool service forwards workspace and session context to the
       state: {
         url: "https://example.com",
         title: "Example",
-        text: "Example Domain",
         viewport: { width: 1280, height: 720 },
         scroll: { x: 0, y: 0 },
         elements: [{ index: 1, tag_name: "a", label: "More information", text: "More information" }]
@@ -162,6 +160,117 @@ test("desktop browser tool service forwards workspace and session context to the
         ["/api/v1/browser/screenshot", "browser-token", "workspace-1", "session-1"]
       ]
     );
+  } finally {
+    await browserServer.close();
+  }
+});
+
+test("desktop browser tool service includes page text only when explicitly requested", async () => {
+  const browserServer = await startBrowserServer(async (request, response) => {
+    response.setHeader("content-type", "application/json; charset=utf-8");
+    if (request.url === "/api/v1/browser/page") {
+      response.end(JSON.stringify({ tabId: "tab-1", url: "https://example.com", title: "Example" }));
+      return;
+    }
+    if (request.url === "/api/v1/browser/evaluate") {
+      response.end(
+        JSON.stringify({
+          tabId: "tab-1",
+          result: {
+            url: "https://example.com",
+            title: "Example",
+            text: "Example Domain",
+            viewport: { width: 1280, height: 720 },
+            scroll: { x: 0, y: 0 },
+            elements: [{ index: 1, tag_name: "a", label: "More information", text: "More information" }]
+          }
+        })
+      );
+      return;
+    }
+    response.statusCode = 404;
+    response.end(JSON.stringify({ error: "not found" }));
+  });
+
+  try {
+    const service = new DesktopBrowserToolService({
+      resolveConfig: () => ({
+        authToken: "",
+        userId: "",
+        sandboxId: "",
+        modelProxyBaseUrl: "",
+        defaultModel: "openai/gpt-5.4",
+        runtimeMode: "oss",
+        defaultProvider: "",
+        holabossEnabled: false,
+        desktopBrowserEnabled: true,
+        desktopBrowserUrl: browserServer.url,
+        desktopBrowserAuthToken: "browser-token",
+        configPath: "/tmp/runtime-config.json",
+        loadedFromFile: true
+      })
+    });
+
+    const result = await service.execute(
+      "browser_get_state",
+      { include_page_text: true },
+      { workspaceId: "workspace-1", sessionId: "session-1" }
+    );
+
+    assert.equal((result.state as { text?: string }).text, "Example Domain");
+  } finally {
+    await browserServer.close();
+  }
+});
+
+test("desktop browser tool service avoids refetching page summaries for browser_type", async () => {
+  const requests: string[] = [];
+  const browserServer = await startBrowserServer(async (request, response) => {
+    requests.push(request.url ?? "");
+    response.setHeader("content-type", "application/json; charset=utf-8");
+    if (request.url === "/api/v1/browser/evaluate") {
+      response.end(
+        JSON.stringify({
+          tabId: "tab-1",
+          result: { ok: true, index: 1, value: "search terms" }
+        })
+      );
+      return;
+    }
+    response.statusCode = 404;
+    response.end(JSON.stringify({ error: "not found" }));
+  });
+
+  try {
+    const service = new DesktopBrowserToolService({
+      resolveConfig: () => ({
+        authToken: "",
+        userId: "",
+        sandboxId: "",
+        modelProxyBaseUrl: "",
+        defaultModel: "openai/gpt-5.4",
+        runtimeMode: "oss",
+        defaultProvider: "",
+        holabossEnabled: false,
+        desktopBrowserEnabled: true,
+        desktopBrowserUrl: browserServer.url,
+        desktopBrowserAuthToken: "browser-token",
+        configPath: "/tmp/runtime-config.json",
+        loadedFromFile: true
+      })
+    });
+
+    const result = await service.execute(
+      "browser_type",
+      { index: 1, text: "search terms" },
+      { workspaceId: "workspace-1", sessionId: "session-1" }
+    );
+
+    assert.deepEqual(result, {
+      ok: true,
+      action: { ok: true, index: 1, value: "search terms" }
+    });
+    assert.deepEqual(requests, ["/api/v1/browser/evaluate"]);
   } finally {
     await browserServer.close();
   }

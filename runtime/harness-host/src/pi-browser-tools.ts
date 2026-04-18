@@ -168,6 +168,12 @@ function browserToolParameters(toolId: DesktopBrowserToolId) {
     case "browser_get_state":
       return Type.Object(
         {
+          include_page_text: Type.Optional(
+            Type.Boolean({
+              description:
+                "Include current page text when content extraction is needed. Leave false for cheaper action-focused state checks.",
+            })
+          ),
           include_screenshot: Type.Optional(
             Type.Boolean({
               description:

@@ -216,7 +216,8 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
       result.system_prompt,
       /MCP callable tool names for this run:/,
     );
-    assert.match(result.system_prompt, /Connected MCP tools available now:/);
+    assert.match(result.system_prompt, /Connected MCP access: available\./);
+    assert.doesNotMatch(result.system_prompt, /Skills available now:/);
     assert.deepEqual(result.workspace_skill_ids, ["skill-creator"]);
     assert.equal(result.tools.browser_get_state, undefined);
     assert.equal(result.tools.skill, true);
@@ -566,11 +567,11 @@ test("projectAgentRuntimeConfig surfaces connected MCP servers when no explicit 
 
     assert.match(
       result.system_prompt,
-      /Connected MCP servers available now: context7/,
+      /Connected MCP access: available\./,
     );
     assert.match(
       result.system_prompt,
-      /When connected MCP servers are available without pre-enumerated tool refs in this prompt, do not assume MCP is unavailable/i,
+      /If connected MCP access exists without tool names listed here, do not assume MCP is unavailable; use surfaced MCP tools when relevant\./i,
     );
     assert.deepEqual(result.workspace_tool_ids, []);
     assert.deepEqual(result.capability_manifest?.context, {

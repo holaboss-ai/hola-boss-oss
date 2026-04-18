@@ -208,8 +208,8 @@ test("buildAgentCapabilityManifest marks connected MCP servers as available with
   assert.deepEqual(manifest.mcp_tools, []);
 
   const section = renderCapabilityPolicyPromptSection(manifest);
-  assert.match(section, /Connected MCP servers available now: context7/);
-  assert.match(section, /Specific MCP tool names may be surfaced dynamically by the runtime/i);
+  assert.match(section, /Connected MCP access: available\./);
+  assert.match(section, /Use surfaced MCP tools when relevant; tool names may be resolved dynamically by the runtime\./i);
 });
 
 test("buildAgentCapabilityManifest carries browser tool descriptions that emphasize live verification", () => {
@@ -422,15 +422,18 @@ test("renderCapabilityPolicyPromptSection summarizes grouped capabilities", () =
 
   const section = renderCapabilityPolicyPromptSection(manifest);
   assert.match(section, /Capability policy for this run:/);
-  assert.match(section, /Harness for this run: pi\./);
-  assert.match(section, /Session kind for this run: workspace_session\./);
-  assert.match(section, /Inspect capabilities available now:/);
-  assert.match(section, /Mutating capabilities available now:/);
-  assert.match(section, /Coordination capabilities available now:/);
-  assert.match(section, /Runtime capabilities available now:/);
-  assert.match(section, /Workspace commands available now: hello/);
-  assert.match(section, /Skills available now: skill-creator/);
-  assert.match(section, /Browser tools are not available in this run\./);
-  assert.match(section, /Connected MCP tools available now:/);
+  assert.match(section, /Harness: pi\./);
+  assert.match(section, /Session kind: workspace_session\./);
+  assert.match(section, /Inspect tools: available \(2 enabled\)\./);
+  assert.match(section, /Mutating tools: available \(2 enabled\)\./);
+  assert.match(section, /Coordination tools: available \(3 enabled\)\./);
+  assert.match(section, /Runtime tools: available \(1 enabled\)\./);
+  assert.match(section, /Workspace commands: available \(1 enabled\)\./);
+  assert.match(section, /Workspace skills: available \(1 enabled\)\./);
+  assert.match(section, /Browser tools: none\./);
+  assert.match(section, /Connected MCP access: available\./);
+  assert.match(section, /Use surfaced MCP tools when relevant/);
   assert.doesNotMatch(section, /MCP callable tool names for this run:/);
+  assert.doesNotMatch(section, /Skills available now:/);
+  assert.doesNotMatch(section, /Connected MCP tools available now:/);
 });
