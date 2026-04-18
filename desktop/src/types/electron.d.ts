@@ -22,6 +22,7 @@ declare global {
     index: number;
     columns: string[];
     rows: string[][];
+    links?: (string | null)[][];
     totalRows: number;
     totalColumns: number;
     truncated: boolean;
@@ -145,6 +146,10 @@ declare global {
     activeTabId: string;
     tabs: BrowserStatePayload[];
     tabCounts: BrowserTabCountsPayload;
+    sessionId: string | null;
+    lifecycleState: "active" | "suspended" | null;
+    controlMode: "none" | "user_locked" | "session_owned";
+    controlSessionId: string | null;
   }
 
   interface BrowserBookmarkPayload {
@@ -293,6 +298,7 @@ declare global {
     workspaceId?: string | null;
     url?: string | null;
     space?: BrowserSpaceId | null;
+    sessionId?: string | null;
   }
 
   interface TemplateAgentInfoPayload {
@@ -699,6 +705,9 @@ declare global {
     workspace_id: string;
     session_id: string;
     status: string;
+    effective_state?: string | null;
+    runtime_status?: string | null;
+    has_queued_inputs?: boolean;
     current_input_id: string | null;
     current_worker_id: string | null;
     lease_until: string | null;
@@ -808,12 +817,24 @@ declare global {
     input_id: string;
     session_id: string;
     status: string;
+    effective_state?: string | null;
+    runtime_status?: string | null;
+    current_input_id?: string | null;
+    has_queued_inputs?: boolean;
   }
 
   interface PauseSessionRunResponsePayload {
     input_id: string;
     session_id: string;
     status: string;
+  }
+
+  interface UpdateQueuedSessionInputResponsePayload {
+    input_id: string;
+    session_id: string;
+    status: string;
+    text: string;
+    updated_at: string;
   }
 
   interface HolabossClientConfigPayload {
@@ -1074,6 +1095,13 @@ declare global {
     session_id: string;
   }
 
+  interface HolabossUpdateQueuedSessionInputPayload {
+    workspace_id: string;
+    session_id: string;
+    input_id: string;
+    text: string;
+  }
+
   interface HolabossSessionStreamHandlePayload {
     streamId: string;
   }
@@ -1228,6 +1256,7 @@ declare global {
     workspaceId: string;
     name: string;
     description: string;
+    authorName?: string;
     category: string;
     tags: string[];
     apps: string[];
@@ -1444,6 +1473,9 @@ declare global {
       ) => Promise<StageSessionAttachmentsResponsePayload>;
       queueSessionInput: (payload: HolabossQueueSessionInputPayload) => Promise<EnqueueSessionInputResponsePayload>;
       pauseSessionRun: (payload: HolabossPauseSessionRunPayload) => Promise<PauseSessionRunResponsePayload>;
+      updateQueuedSessionInput: (
+        payload: HolabossUpdateQueuedSessionInputPayload
+      ) => Promise<UpdateQueuedSessionInputResponsePayload>;
       openSessionOutputStream: (payload: HolabossStreamSessionOutputsPayload) => Promise<HolabossSessionStreamHandlePayload>;
       closeSessionOutputStream: (streamId: string, reason?: string) => Promise<void>;
       getSessionStreamDebug: () => Promise<HolabossSessionStreamDebugEntry[]>;
@@ -1500,7 +1532,11 @@ declare global {
       onError: (callback: (context: AuthErrorPayload) => unknown) => () => void;
     };
     browser: {
-      setActiveWorkspace: (workspaceId?: string | null, space?: BrowserSpaceId | null) => Promise<BrowserTabListPayload>;
+      setActiveWorkspace: (
+        workspaceId?: string | null,
+        space?: BrowserSpaceId | null,
+        sessionId?: string | null,
+      ) => Promise<BrowserTabListPayload>;
       getState: () => Promise<BrowserTabListPayload>;
       setBounds: (bounds: BrowserBoundsPayload) => Promise<BrowserTabListPayload>;
       navigate: (targetUrl: string) => Promise<BrowserTabListPayload>;

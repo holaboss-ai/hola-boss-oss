@@ -19,7 +19,10 @@ const PROVIDER_ID_ALIASES: Record<string, string> = {
   ollama: "ollama_direct",
   minimax: "minimax_direct",
 };
-const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string, string>> = {
+const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<
+  string,
+  Record<string, string>
+> = {
   anthropic_direct: {
     "claude-sonnet-4-5": "claude-sonnet-4-6",
   },
@@ -57,7 +60,9 @@ export interface CreateBackgroundTaskMemoryModelClientParams {
   runtimeExecRunId?: string | null;
 }
 
-function firstNonEmptyString(...values: Array<string | null | undefined>): string {
+function firstNonEmptyString(
+  ...values: Array<string | null | undefined>
+): string {
   for (const value of values) {
     const normalized = (value ?? "").trim();
     if (normalized) {
@@ -74,7 +79,9 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function normalizeBackgroundProviderId(value: string | null | undefined): string {
+function normalizeBackgroundProviderId(
+  value: string | null | undefined,
+): string {
   const normalized = (value ?? "").trim().toLowerCase();
   if (!normalized) {
     return "";
@@ -82,13 +89,20 @@ function normalizeBackgroundProviderId(value: string | null | undefined): string
   return PROVIDER_ID_ALIASES[normalized] ?? normalized;
 }
 
-function normalizeBackgroundModelId(providerId: string, value: string | null | undefined): string {
+function normalizeBackgroundModelId(
+  providerId: string,
+  value: string | null | undefined,
+): string {
   const normalizedProviderId = normalizeBackgroundProviderId(providerId);
   const normalizedValue = (value ?? "").trim();
   if (!normalizedProviderId || !normalizedValue) {
     return normalizedValue;
   }
-  return LEGACY_DIRECT_PROVIDER_MODEL_ALIASES[normalizedProviderId]?.[normalizedValue] ?? normalizedValue;
+  return (
+    LEGACY_DIRECT_PROVIDER_MODEL_ALIASES[normalizedProviderId]?.[
+      normalizedValue
+    ] ?? normalizedValue
+  );
 }
 
 function runtimeConfigDocument(): Record<string, unknown> {
@@ -109,15 +123,22 @@ function runtimeConfigDocument(): Record<string, unknown> {
   }
 }
 
-function providerPayloadForId(document: Record<string, unknown>, providerId: string): Record<string, unknown> {
+function providerPayloadForId(
+  document: Record<string, unknown>,
+  providerId: string,
+): Record<string, unknown> {
   const providersPayload = asRecord(document.providers);
   if (providerId === HOLABOSS_PROVIDER_ID) {
-    return asRecord(providersPayload[HOLABOSS_PROVIDER_ID] ?? providersPayload.holaboss);
+    return asRecord(
+      providersPayload[HOLABOSS_PROVIDER_ID] ?? providersPayload.holaboss,
+    );
   }
   return asRecord(providersPayload[providerId]);
 }
 
-function runtimePayload(document: Record<string, unknown>): Record<string, unknown> {
+function runtimePayload(
+  document: Record<string, unknown>,
+): Record<string, unknown> {
   return asRecord(document.runtime);
 }
 
@@ -149,7 +170,10 @@ function configuredBackgroundTaskSettings(document: Record<string, unknown>): {
   };
 }
 
-function configuredBackgroundModelForProvider(document: Record<string, unknown>, providerId: string): string {
+function configuredBackgroundModelForProvider(
+  document: Record<string, unknown>,
+  providerId: string,
+): string {
   const providerPayload = providerPayloadForId(document, providerId);
   const optionsPayload = asRecord(providerPayload.options);
   return firstNonEmptyString(
@@ -172,14 +196,19 @@ function backgroundProviderIsAvailable(
   if (normalizedProviderId === HOLABOSS_PROVIDER_ID) {
     return Boolean(
       runtimeConfig.authToken.trim() ||
-        runtimeConfig.modelProxyBaseUrl.trim() ||
-        Object.keys(providerPayloadForId(document, normalizedProviderId)).length > 0,
+      runtimeConfig.modelProxyBaseUrl.trim() ||
+      Object.keys(providerPayloadForId(document, normalizedProviderId)).length >
+        0,
     );
   }
-  return Object.keys(providerPayloadForId(document, normalizedProviderId)).length > 0;
+  return (
+    Object.keys(providerPayloadForId(document, normalizedProviderId)).length > 0
+  );
 }
 
-export function defaultBackgroundTaskModelForProvider(providerId: string): string | null {
+export function defaultBackgroundTaskModelForProvider(
+  providerId: string,
+): string | null {
   const normalizedProviderId = normalizeBackgroundProviderId(providerId);
   const value = BACKGROUND_TASK_MODEL_DEFAULTS[normalizedProviderId];
   return typeof value === "string"
@@ -202,7 +231,11 @@ export function resolveBackgroundTaskModelSelection(params: {
   const configuredSettings = configuredBackgroundTaskSettings(document);
   if (configuredSettings.providerId) {
     if (
-      !backgroundProviderIsAvailable(document, configuredSettings.providerId, runtimeConfig)
+      !backgroundProviderIsAvailable(
+        document,
+        configuredSettings.providerId,
+        runtimeConfig,
+      )
     ) {
       return {
         providerId: configuredSettings.providerId,
@@ -218,17 +251,27 @@ export function resolveBackgroundTaskModelSelection(params: {
   }
 
   const defaultProviderId = normalizeBackgroundProviderId(
-    firstNonEmptyString(params.defaultProviderId, runtimeConfig.defaultProvider),
+    firstNonEmptyString(
+      params.defaultProviderId,
+      runtimeConfig.defaultProvider,
+    ),
   );
   let providerId = normalizeBackgroundProviderId(params.explicitProviderId);
   if (!providerId) {
-    const selectedModel = firstNonEmptyString(params.selectedModel, runtimeConfig.defaultModel);
+    const selectedModel = firstNonEmptyString(
+      params.selectedModel,
+      runtimeConfig.defaultModel,
+    );
     if (selectedModel) {
       try {
-        const resolved = resolveRuntimeModelReference(selectedModel, defaultProviderId || runtimeConfig.defaultProvider);
+        const resolved = resolveRuntimeModelReference(
+          selectedModel,
+          defaultProviderId || runtimeConfig.defaultProvider,
+        );
         const resolvedProviderId =
           resolved.configuredProviderId ??
-          (defaultProviderId === HOLABOSS_PROVIDER_ID && selectedModel.includes("/")
+          (defaultProviderId === HOLABOSS_PROVIDER_ID &&
+          selectedModel.includes("/")
             ? HOLABOSS_PROVIDER_ID
             : resolved.providerId);
         providerId = normalizeBackgroundProviderId(resolvedProviderId);
@@ -295,7 +338,11 @@ export function createBackgroundTaskMemoryModelClient(
       selectedModel: `${selection.providerId}/${selection.modelId}`,
       defaultProviderId:
         normalizeBackgroundProviderId(
-          firstNonEmptyString(params.defaultProviderId, runtimeConfig.defaultProvider, selection.providerId),
+          firstNonEmptyString(
+            params.defaultProviderId,
+            runtimeConfig.defaultProvider,
+            selection.providerId,
+          ),
         ) || selection.providerId,
       sessionId: params.sessionId,
       workspaceId: params.workspaceId,
@@ -304,7 +351,10 @@ export function createBackgroundTaskMemoryModelClient(
         params.runtimeExecModelProxyApiKey,
         runtimeConfig.authToken,
       ),
-      runtimeExecSandboxId: firstNonEmptyString(params.runtimeExecSandboxId, runtimeConfig.sandboxId),
+      runtimeExecSandboxId: firstNonEmptyString(
+        params.runtimeExecSandboxId,
+        runtimeConfig.sandboxId,
+      ),
       runtimeExecRunId: params.runtimeExecRunId ?? null,
     });
   } catch {

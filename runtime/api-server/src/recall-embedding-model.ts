@@ -1,8 +1,6 @@
 import fs from "node:fs";
 
-import {
-  resolveRuntimeModelClient,
-} from "./agent-runtime-config.js";
+import { resolveRuntimeModelClient } from "./agent-runtime-config.js";
 import { resolveBackgroundTaskModelSelection } from "./background-task-model.js";
 import type { MemoryModelClientConfig } from "./memory-model-client.js";
 import { resolveProductRuntimeConfig } from "./runtime-config.js";
@@ -39,7 +37,9 @@ const OPENAI_COMPATIBLE_MODEL_PROXY_PROVIDERS = new Set([
   "google_compatible",
 ]);
 
-function firstNonEmptyString(...values: Array<string | null | undefined>): string {
+function firstNonEmptyString(
+  ...values: Array<string | null | undefined>
+): string {
   for (const value of values) {
     const normalized = (value ?? "").trim();
     if (normalized) {
@@ -82,7 +82,9 @@ function runtimeConfigDocument(): Record<string, unknown> {
   }
 }
 
-function runtimePayload(document: Record<string, unknown>): Record<string, unknown> {
+function runtimePayload(
+  document: Record<string, unknown>,
+): Record<string, unknown> {
   return asRecord(document.runtime);
 }
 
@@ -93,7 +95,9 @@ function configuredProviderIds(document: Record<string, unknown>): string[] {
     .filter(Boolean);
 }
 
-function firstEmbeddingCapableProvider(candidateIds: Array<string | null | undefined>): string {
+function firstEmbeddingCapableProvider(
+  candidateIds: Array<string | null | undefined>,
+): string {
   for (const candidateId of candidateIds) {
     const normalized = normalizeProviderId(candidateId);
     if (!normalized) {
@@ -111,7 +115,9 @@ function configuredRecallEmbeddingSettings(document: Record<string, unknown>): {
   modelId: string;
 } {
   const runtimeSettings = runtimePayload(document);
-  const payload = asRecord(runtimeSettings.recall_embeddings ?? runtimeSettings.recallEmbeddings);
+  const payload = asRecord(
+    runtimeSettings.recall_embeddings ?? runtimeSettings.recallEmbeddings,
+  );
   const providerId = normalizeProviderId(
     firstNonEmptyString(
       payload.provider as string | undefined,
@@ -129,7 +135,9 @@ function configuredRecallEmbeddingSettings(document: Record<string, unknown>): {
   };
 }
 
-export function defaultRecallEmbeddingModelForProvider(providerId: string): string | null {
+export function defaultRecallEmbeddingModelForProvider(
+  providerId: string,
+): string | null {
   const normalizedProviderId = normalizeProviderId(providerId);
   const value = RECALL_EMBEDDING_MODEL_DEFAULTS[normalizedProviderId];
   return typeof value === "string" ? value : null;
@@ -167,7 +175,9 @@ export function createRecallEmbeddingModelClient(params: {
       params.defaultProviderId,
       ...configuredProviderIds(document),
     ]);
-  const modelId = firstNonEmptyString(configured.modelId) || defaultRecallEmbeddingModelForProvider(providerId);
+  const modelId =
+    firstNonEmptyString(configured.modelId) ||
+    defaultRecallEmbeddingModelForProvider(providerId);
   if (!providerId || !modelId) {
     return null;
   }
@@ -175,7 +185,10 @@ export function createRecallEmbeddingModelClient(params: {
   try {
     resolved = resolveRuntimeModelClient({
       selectedModel: `${providerId}/${modelId}`,
-      defaultProviderId: normalizeProviderId(firstNonEmptyString(params.defaultProviderId, providerId)) || providerId,
+      defaultProviderId:
+        normalizeProviderId(
+          firstNonEmptyString(params.defaultProviderId, providerId),
+        ) || providerId,
       sessionId: params.sessionId,
       workspaceId: params.workspaceId,
       inputId: params.inputId,
@@ -183,7 +196,10 @@ export function createRecallEmbeddingModelClient(params: {
         params.runtimeExecModelProxyApiKey,
         runtimeConfig.authToken,
       ),
-      runtimeExecSandboxId: firstNonEmptyString(params.runtimeExecSandboxId, runtimeConfig.sandboxId),
+      runtimeExecSandboxId: firstNonEmptyString(
+        params.runtimeExecSandboxId,
+        runtimeConfig.sandboxId,
+      ),
       runtimeExecRunId: params.runtimeExecRunId ?? null,
     });
   } catch {
@@ -194,7 +210,9 @@ export function createRecallEmbeddingModelClient(params: {
   if (
     !baseUrl ||
     !apiKey ||
-    !OPENAI_COMPATIBLE_MODEL_PROXY_PROVIDERS.has(resolved.modelClient.model_proxy_provider)
+    !OPENAI_COMPATIBLE_MODEL_PROXY_PROVIDERS.has(
+      resolved.modelClient.model_proxy_provider,
+    )
   ) {
     return null;
   }

@@ -217,6 +217,60 @@ test("chat trace summary keeps a live run in progress when no active step label 
   );
 });
 
+test("chat pane persists terminal run failures in-thread when no assistant text was emitted", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /type ChatAssistantSegment =/);
+  assert.match(source, /tone\?: "default" \| "error";/);
+  assert.match(
+    source,
+    /const liveAssistantSegmentsRef = useRef<ChatAssistantSegment\[]>\(\[]\);/,
+  );
+  assert.match(
+    source,
+    /function commitLiveAssistantMessage\(options\?: \{\s*fallbackText\?: string;\s*tone\?: ChatMessage\["tone"\];\s*\}\)/,
+  );
+  assert.match(
+    source,
+    /if \(options\?\.fallbackText && !hasOutputSegment\) \{\s*nextSegments = appendAssistantOutputSegment\(\s*nextSegments,\s*options\.fallbackText,\s*options\.tone \?\? "default",\s*\);\s*\}/,
+  );
+  assert.match(
+    source,
+    /const shouldPersistFailureText =\s*!liveAssistantTextRef\.current &&\s*!assistantSegmentsIncludeOutput\(liveAssistantSegmentsRef\.current\);\s*const committedFailureMessage = commitLiveAssistantMessage\(\{\s*fallbackText: shouldPersistFailureText \? detail : undefined,\s*tone: shouldPersistFailureText \? "error" : "default",\s*\}\);/,
+  );
+  assert.match(
+    source,
+    /segment\.tone === "error" \?\s*\(\s*<div[\s\S]*theme-chat-system-bubble mt-2 rounded-\[14px\] border px-3 py-2\.5 text-\[12px\] text-foreground/,
+  );
+});
+
+test("chat history reconstructs failed turns even when no assistant history message exists", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /function inputIdFromHistoryMessage\(message: SessionHistoryMessagePayload\)/);
+  assert.match(source, /function turnInputIdsFromHistoryMessages\(/);
+  assert.match(
+    source,
+    /const assistantInputIds = turnInputIdsFromHistoryMessages\(\s*historyMessages,\s*\);/,
+  );
+  assert.match(
+    source,
+    /const assistantHistoryInputIds = new Set\(/,
+  );
+  assert.match(
+    source,
+    /if \(restoredAssistantState\.segments\) \{\s*nextMessage\.segments = restoredAssistantState\.segments;\s*nextMessage\.text = "";\s*nextMessage\.executionItems = undefined;\s*\} else if \(restoredAssistantState\.executionItems\) \{\s*nextMessage\.executionItems = restoredAssistantState\.executionItems;\s*\}/,
+  );
+  assert.match(
+    source,
+    /nextMessage\.role === "user" &&[\s\S]*!assistantHistoryInputIds\.has\(userInputId\)/,
+  );
+  assert.match(
+    source,
+    /const syntheticAssistantMessage: ChatMessage = \{\s*id: `assistant-\$\{userInputId\}`,[\s\S]*segments: restoredAssistantState\.segments,[\s\S]*executionItems:\s*restoredAssistantState\.segments\s*\?\s*undefined\s*:\s*restoredAssistantState\.executionItems,/,
+  );
+});
+
 test("chat trace collapsed summary surfaces the current active step", async () => {
   const source = await readFile(sourcePath, "utf8");
 
@@ -282,29 +336,35 @@ test("chat pane keeps a persistent working line visible once the live run has st
 
   assert.match(
     source,
-    /const showWorkingStatusLine =\s*live &&\s*\(executionItems\.length > 0 \|\| Boolean\(text\)\);/,
+    /const showWorkingStatusLine =\s*live &&\s*renderedSegments\.length > 0;/,
   );
   assert.match(
     source,
-    /showStatusPlaceholder =[\s\S]*live &&[\s\S]*Boolean\(normalizedStatus\) &&[\s\S]*!text &&[\s\S]*executionItems\.length === 0;/,
+    /showStatusPlaceholder =[\s\S]*live &&[\s\S]*Boolean\(normalizedStatus\) &&[\s\S]*renderedSegments\.length === 0;/,
   );
   assert.match(
     source,
-    /{showWorkingStatusLine \? \(\s*<LiveStatusLine[\s\S]*label="Working"[\s\S]*className=\{executionItems\.length > 0 \? "mt-1" : ""\}/,
+    /{showWorkingStatusLine \? \(\s*<LiveStatusLine[\s\S]*label="Working"[\s\S]*renderedSegments\.some\(\(segment\) => segment\.kind === "execution"\)/,
   );
 });
 
 test("chat pane renders an execution timeline that interleaves thinking segments with trace entries", async () => {
   const source = await readFile(sourcePath, "utf8");
 
+  assert.match(source, /type ChatAssistantSegment =/);
   assert.match(source, /executionItems\?: ChatExecutionTimelineItem\[];/);
+  assert.match(source, /segments\?: ChatAssistantSegment\[];/);
+  assert.match(source, /function appendAssistantOutputSegment\(/);
+  assert.match(source, /function appendAssistantExecutionSegment\(/);
+  assert.match(source, /function liveAssistantSegmentsForRender\(/);
   assert.match(source, /function appendExecutionTimelineThinkingDelta\(/);
   assert.match(source, /function upsertExecutionTimelineTraceItem\(/);
   assert.match(source, /function traceStepsFromExecutionItems\(items: ChatExecutionTimelineItem\[]\)/);
-  assert.match(source, /assistantHistoryStateFromOutputEvents[\s\S]*executionItems = appendExecutionTimelineThinkingDelta\(/);
-  assert.match(source, /assistantHistoryStateFromOutputEvents[\s\S]*executionItems = upsertExecutionTimelineTraceItem\(/);
-  assert.match(source, /appendLiveThinkingDelta\(delta: string, order: number\)/);
-  assert.match(source, /appendExecutionTimelineThinkingDelta\(prev, delta, order\)/);
+  assert.match(source, /assistantHistoryStateFromOutputEvents[\s\S]*flushOutputSegment\(\);[\s\S]*executionItems = appendExecutionTimelineThinkingDelta\(/);
+  assert.match(source, /assistantHistoryStateFromOutputEvents[\s\S]*flushOutputSegment\(\);[\s\S]*executionItems = upsertExecutionTimelineTraceItem\(/);
+  assert.match(source, /assistantHistoryStateFromOutputEvents[\s\S]*if \(event\.event_type === "output_delta"\) \{\s*flushExecutionSegment\(\);/);
+  assert.match(source, /appendLiveThinkingDelta\(delta: string, order: number\) \{\s*flushLiveAssistantOutputSegment\(\);/);
+  assert.match(source, /appendLiveAssistantDelta\(delta: string\) \{\s*flushLiveExecutionSegment\(\);/);
   assert.match(
     source,
     /function ExecutionTimelineThinkingEntry[\s\S]*className="py-1"[\s\S]*className="-ml-2\.5 w-\[calc\(100%\+0\.625rem\)\] rounded-\[16px\] border border-border\/25 bg-muted\/30 px-3\.5 py-3"/,
@@ -313,9 +373,10 @@ test("chat pane renders an execution timeline that interleaves thinking segments
     source,
     /function ExecutionTimelineThinkingEntry[\s\S]*className="chat-markdown chat-thinking-markdown max-w-full text-foreground\/82"/,
   );
-  assert.match(source, /<AssistantTurn[\s\S]*executionItems=\{message\.executionItems \?\? \[\]\}/);
-  assert.match(source, /<AssistantTurn[\s\S]*executionItems=\{liveExecutionItems\}/);
-  assert.match(source, /<TraceStepGroup[\s\S]*items=\{executionItems\}/);
+  assert.match(source, /<AssistantTurn[\s\S]*segments=\{message\.segments \?\? \[\]\}/);
+  assert.match(source, /<AssistantTurn[\s\S]*segments=\{renderedLiveAssistantSegments\}/);
+  assert.match(source, /\{renderedSegments\.map\(\(segment, index\) =>/);
+  assert.match(source, /segment\.kind === "execution" \?\s*\(\s*<TraceStepGroup/);
   assert.match(source, /<ExecutionTimelineThinkingEntry/);
   assert.match(source, /<TraceTimelineStepEntry/);
   assert.doesNotMatch(source, /<ThinkingPanel/);
@@ -411,6 +472,38 @@ test("chat pane gates image attachments using model input modalities metadata", 
     source,
     /submitDisabled=\{Boolean\(\s*pendingImageInputUnsupportedMessage,\s*\)\}/,
   );
+});
+
+test("chat composer can paste clipboard file and image attachments into the pending attachment flow", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /function normalizeClipboardAttachmentFile\(file: File, index: number\): File/,
+  );
+  assert.match(
+    source,
+    /const baseName = file\.type\.startsWith\("image\/"\)\s*\?\s*`pasted-image-\$\{index \+ 1\}`\s*:\s*`pasted-file-\$\{index \+ 1\}`;/,
+  );
+  assert.match(
+    source,
+    /function clipboardFilesFromDataTransfer\(dataTransfer: DataTransfer \| null\): File\[\]/,
+  );
+  assert.match(
+    source,
+    /dataTransfer\.files\.length > 0\s*\?\s*Array\.from\(dataTransfer\.files\)/,
+  );
+  assert.match(
+    source,
+    /const handleTextareaPaste = \(event: ClipboardEvent<HTMLTextAreaElement>\) => \{/,
+  );
+  assert.match(
+    source,
+    /const pastedFiles = clipboardFilesFromDataTransfer\(event\.clipboardData\);/,
+  );
+  assert.match(source, /event\.preventDefault\(\);/);
+  assert.match(source, /onAddDroppedFiles\(pastedFiles\);/);
+  assert.match(source, /onPaste=\{handleTextareaPaste\}/);
 });
 
 test("chat pane filters managed catalog entries that are not chat-capable", async () => {
@@ -562,10 +655,8 @@ test("chat pane syncs the shared file display from live file-oriented tool calls
     source,
     /syncableWorkspacePathFromRecord\(payload\.result,\s*\[\s*"file_path",\s*"path",\s*\]\)/,
   );
-  assert.match(
-    source,
-    /toolName === "read" \|\| toolName === "edit"/,
-  );
+  assert.doesNotMatch(source, /toolName === "read" \|\| toolName === "edit"/);
+  assert.match(source, /if \(toolName === "edit"\) \{/);
   assert.match(
     source,
     /if \(eventType === "tool_call"\) \{\s*const fileDisplayTarget =\s*fileDisplaySyncTargetFromToolPayload\(eventPayload\);[\s\S]*onSyncFileDisplayFromAgentOperation\?\.\(fileDisplayTarget\);/,
@@ -827,8 +918,29 @@ test("live trace auto-expands during the run and collapses when output starts", 
   );
   assert.match(
     source,
-    /<TraceStepGroup[\s\S]*items=\{executionItems\}[\s\S]*live=\{live\}[\s\S]*liveOutputStarted=\{live && Boolean\(text\)\}/,
+    /<TraceStepGroup[\s\S]*items=\{segment\.items\}[\s\S]*live=\{live\}[\s\S]*liveOutputStarted=\{[\s\S]*renderedSegments[\s\S]*slice\(index \+ 1\)[\s\S]*some\(\(nextSegment\) => nextSegment\.kind === "output"\)/,
   );
+});
+
+test("chat pane preserves interleaved assistant output and execution segments from ordered events", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /let segments: ChatAssistantSegment\[] = \[];/);
+  assert.match(source, /const flushExecutionSegment = \(\) => \{/);
+  assert.match(source, /const flushOutputSegment = \(\) => \{/);
+  assert.match(
+    source,
+    /if \(event\.event_type === "thinking_delta"\) \{\s*flushOutputSegment\(\);/,
+  );
+  assert.match(
+    source,
+    /if \(event\.event_type === "output_delta"\) \{\s*flushExecutionSegment\(\);/,
+  );
+  assert.match(
+    source,
+    /flushOutputSegment\(\);\s*flushExecutionSegment\(\);\s*return \{\s*segments: segments\.length > 0 \? segments : undefined,/,
+  );
+  assert.match(source, /const renderedLiveAssistantSegments = liveAssistantSegmentsForRender\(/);
 });
 
 test("chat pane can jump to a requested sub-session run", async () => {
@@ -903,16 +1015,133 @@ test("chat composer exposes a pause action for in-flight runs and calls the runt
   );
   assert.match(
     source,
-    /<Composer[\s\S]*pausePending=\{isPausePending\}[\s\S]*pauseDisabled=\{\s*pendingInputIdRef\.current === STREAM_ATTACH_PENDING\s*\}[\s\S]*onPause=\{pauseCurrentRun\}/,
+    /<Composer[\s\S]*pausePending=\{isPausePending\}[\s\S]*pauseDisabled=\{\s*pendingInputIdRef\.current === STREAM_ATTACH_PENDING \|\|\s*isSubmittingMessage\s*\}[\s\S]*onPause=\{pauseCurrentRun\}/,
   );
   assert.match(
     source,
-    /isResponding \? \(\s*<Button[\s\S]*onClick=\{onPause\}[\s\S]*>\s*\{pausePending \? \(\s*<Loader2[\s\S]*\) : \(\s*<Square[\s\S]*\)\}\s*Pause\s*<\/Button>\s*\) : \(\s*<Button[\s\S]*<ArrowUp/,
+    /\{isResponding \? \(\s*<Button[\s\S]*onClick=\{onPause\}[\s\S]*>\s*\{pausePending \? \(\s*<Loader2[\s\S]*\) : \(\s*<Square[\s\S]*\)\}\s*Pause\s*<\/Button>\s*\) : null\}[\s\S]*<Button[\s\S]*aria-label=\{isResponding \? "Queue message" : "Send message"\}[\s\S]*<ArrowUp/,
   );
-  assert.match(source, /disabled=\{pausePending \|\| pauseDisabled\}/);
+  assert.match(source, /disabled=\{pausePending \|\| pauseDisabled \|\| disabled\}/);
 });
 
-test("chat pane renders a collapsed current todo panel above the composer", async () => {
+test("chat pane keeps the current stream attached while queueing a follow-up input", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /const \[isSubmittingMessage, setIsSubmittingMessage\] = useState\(false\);/);
+  assert.match(
+    source,
+    /const \[queuedSessionInputs, setQueuedSessionInputs\] = useState<\s*QueuedSessionInput\[\]\s*>\(\[]\);/,
+  );
+  assert.match(
+    source,
+    /quotedSkillIds\.length === 0\) \|\|\s*isSubmittingMessage/,
+  );
+  assert.match(
+    source,
+    /const queueOntoActiveRun =\s*isResponding[\s\S]*targetSessionId === activeSessionIdRef\.current;/,
+  );
+  assert.match(
+    source,
+    /if \(!queueOntoActiveRun\) \{\s*setMessages\(\(prev\) => \[\.\.\.prev, userMessage\]\);\s*\}/,
+  );
+  assert.match(
+    source,
+    /if \(!queueOntoActiveRun\) \{[\s\S]*openSessionOutputStream\(\{[\s\S]*eventType: "stream_open_prequeue"/,
+  );
+  assert.match(
+    source,
+    /setQueuedSessionInputs\(\(current\) => \[[\s\S]*inputId: queued\.input_id,[\s\S]*status: "queued",[\s\S]*\}\s*,\s*\]\);/,
+  );
+  assert.match(source, /eventType: "stream_open_queued_handoff"/);
+  assert.match(source, /function queuedSessionInputPreviewText\(item: QueuedSessionInput\)/);
+  assert.match(source, /async function updateQueuedSessionInputText\(/);
+  assert.match(
+    source,
+    /window\.electronAPI\.workspace\.updateQueuedSessionInput\(\{\s*workspace_id: item\.workspaceId,\s*session_id: item\.sessionId,\s*input_id: item\.inputId,\s*text: serializedText,\s*\}\)/,
+  );
+  assert.match(source, /function QueuedSessionInputRail\(/);
+  assert.match(
+    source,
+    /<QueuedSessionInputRail[\s\S]*items=\{displayedQueuedSessionInputs\}[\s\S]*onEditItem=\{updateQueuedSessionInputText\}[\s\S]*<Composer/,
+  );
+  assert.match(source, /children: ReactNode;/);
+  assert.match(source, /const panelInsetPx = \d+;/);
+  assert.match(source, /const panelHeightPx = \d+;/);
+  assert.match(source, /const queueViewportHeightPx = \d+;/);
+  assert.match(source, /className="pointer-events-none absolute inset-x-0 top-0"/);
+  assert.match(source, /className="pointer-events-auto absolute inset-x-0 overflow-hidden rounded-\[28px\]/);
+  assert.match(source, /className="overflow-y-auto pr-1\.5"/);
+  assert.match(source, /\{items\.map\(\(item\) => \{/);
+  assert.match(source, /<CornerDownLeft[\s\S]*size=\{15\}/);
+  assert.match(source, /aria-label="Edit queued message"/);
+  assert.match(source, /aria-label="Save queued message edit"/);
+  assert.match(source, /aria-label="Cancel queued message edit"/);
+  assert.match(source, /className="relative z-10 rounded-\[24px\] bg-background"/);
+  assert.match(source, /style=\{\{\s*marginTop: `\$\{-overlapPx\}px`\s*\}\}/);
+  assert.doesNotMatch(source, /Queued messages/);
+  assert.doesNotMatch(source, /Up next/);
+  assert.doesNotMatch(source, /Sending next/);
+  assert.match(source, /const inputDisabled = disabled;/);
+  assert.match(source, /if \(!dataTransfer \|\| disabled\) \{/);
+});
+
+test("chat pane exposes a queued message preview hook for dev console inspection", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const QUEUED_MESSAGES_PREVIEW_EVENT =\s*"holaboss:queued-messages-preview-change";/,
+  );
+  assert.match(source, /__holabossQueuedMessagesPreviewState\?: QueuedSessionInputPreviewDescriptor\[\];/);
+  assert.match(source, /__holabossDevQueuedMessagesPreview\?: \{/);
+  assert.match(source, /window\.dispatchEvent\(new CustomEvent\(QUEUED_MESSAGES_PREVIEW_EVENT\)\);/);
+  assert.match(source, /function useQueuedSessionInputPreview\(params:/);
+  assert.match(source, /window\.__holabossDevQueuedMessagesPreview = \{/);
+  assert.match(
+    source,
+    /single:\s*\([\s\S]*Draft a concise follow-up after the current run finishes\.[\s\S]*=>/,
+  );
+  assert.match(source, /multiple: \(\) =>/);
+  assert.match(source, /clear: \(\) => setQueuedSessionInputPreviewState\(\[]\)/);
+  assert.match(source, /set: \(entries\) => setQueuedSessionInputPreviewState\(entries\)/);
+  assert.match(source, /const queuedSessionInputPreview = useQueuedSessionInputPreview\(/);
+  assert.match(
+    source,
+    /const displayedQueuedSessionInputs =\s*queuedSessionInputPreview\.length > 0[\s\S]*\?\s*queuedSessionInputPreview[\s\S]*:\s*activeQueuedSessionInputs;/,
+  );
+});
+
+test("chat pane exposes a todo preview hook for combined todo and queue design inspection", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /const TODO_PREVIEW_EVENT = "holaboss:todo-preview-change";/);
+  assert.match(source, /__holabossTodoPreviewState\?: TodoPlanPreviewState \| null;/);
+  assert.match(source, /__holabossDevTodoPreview\?: \{/);
+  assert.match(source, /function defaultTodoPlanPreview\(\): ChatTodoPlan/);
+  assert.match(source, /window\.__holabossDevTodoPreview = \{/);
+  assert.match(source, /sample: \(\) =>/);
+  assert.match(source, /expanded: \(\) =>/);
+  assert.match(source, /collapsed: \(\) =>/);
+  assert.match(source, /clear: \(\) => setTodoPlanPreviewState\(null\)/);
+  assert.match(source, /set: \(plan, options\) =>/);
+  assert.match(source, /const todoPlanPreview = useTodoPlanPreview\(\);/);
+  assert.match(
+    source,
+    /const displayedTodoPlan = todoPlanPreview\?\.plan \?\? currentTodoPlan;/,
+  );
+  assert.match(
+    source,
+    /const displayedTodoPanelExpanded =\s*todoPlanPreview\?\.expanded \?\? todoPanelExpanded;/,
+  );
+  assert.match(source, /const toggleTodoPanel = \(\) => \{/);
+  assert.match(source, /if \(todoPlanPreview\) \{/);
+  assert.match(source, /setTodoPlanPreviewState\(\{\s*\.\.\.todoPlanPreview,/);
+  assert.match(source, /todoPlan=\{displayedTodoPlan\}/);
+  assert.match(source, /expanded=\{displayedTodoPanelExpanded\}/);
+  assert.match(source, /onToggle=\{toggleTodoPanel\}/);
+});
+
+test("chat pane renders a collapsed current todo panel near the top of the pane", async () => {
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(source, /function CurrentTodoPanel\(/);
@@ -941,9 +1170,10 @@ test("chat pane renders a collapsed current todo panel above the composer", asyn
   assert.match(source, /\{visiblePhases\.map\(\(phase\) => \{/);
   assert.match(
     source,
-    /<div className="space-y-3">[\s\S]*\{currentTodoPlan \? \(\s*<CurrentTodoPanel[\s\S]*todoPlan=\{currentTodoPlan\}[\s\S]*expanded=\{todoPanelExpanded\}[\s\S]*onToggle=\{\(\) =>[\s\S]*setTodoPanelExpanded\(\(value\) => !value\)[\s\S]*\}\s*\/>\s*\) : null\}[\s\S]*<Composer/,
+    /const todoPanelSlotHeightPx = 58;[\s\S]*\{displayedTodoPlan \? \(\s*<div[\s\S]*className="relative z-20 shrink-0 px-6 pt-3"[\s\S]*style=\{\{\s*height: `\$\{todoPanelSlotHeightPx\}px`\s*\}\}[\s\S]*<div className="absolute inset-x-6 top-3">[\s\S]*<CurrentTodoPanel[\s\S]*todoPlan=\{displayedTodoPlan\}[\s\S]*expanded=\{displayedTodoPanelExpanded\}[\s\S]*onToggle=\{toggleTodoPanel\}[\s\S]*<\/div>[\s\S]*<\/div>\s*\) : null\}[\s\S]*<div className="relative flex min-h-0 flex-1 flex-col">/,
   );
   assert.match(source, /aria-expanded=\{expanded\}/);
+  assert.match(source, /className="max-h-\[320px\] overflow-y-auto border-t border-border\/20 px-3 py-3"/);
   assert.match(
     source,
     /className=\{`shrink-0 text-muted-foreground transition \$\{expanded \? "rotate-0" : "-rotate-90"\}`\}/,
@@ -1010,5 +1240,57 @@ test("chat pane custom scrollbar thumb can be dragged", async () => {
   assert.match(
     source,
     /onLostPointerCapture=\{\(\) => \{\s*clearChatScrollbarDragState\(\);\s*\}\}/,
+  );
+});
+
+test("chat pane offers an explicit jump-to-browser CTA instead of auto-switching the visible agent browser session", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /interface ChatPaneBrowserJumpRequest \{/);
+  assert.match(source, /browserJumpRequest\?: ChatPaneBrowserJumpRequest \| null;/);
+  assert.match(
+    source,
+    /onBrowserJumpRequestConsumed\?:\s*\(\s*sessionId: string,\s*requestKey: number,\s*\) => void;/,
+  );
+  assert.match(source, /onJumpToSessionBrowser\?: \(sessionId: string, requestKey: number\) => void;/);
+  assert.match(
+    source,
+    /const \[visibleBrowserState,\s*setVisibleBrowserState\] =\s*useState<\s*BrowserTabListPayload\s*>\(\(\) => initialBrowserState\("user"\)\);/,
+  );
+  assert.match(source, /const applyVisibleBrowserState = \(state: BrowserTabListPayload\) => \{/);
+  assert.match(source, /window\.electronAPI\.browser\.getState\(\)\.then\(applyVisibleBrowserState\);/);
+  assert.match(source, /window\.electronAPI\.browser\.onStateChange\(applyVisibleBrowserState\);/);
+  assert.match(
+    source,
+    /const visibleAgentBrowserSessionId =\s*visibleBrowserState\.space === "agent"\s*\?\s*visibleBrowserState\.controlSessionId \|\| visibleBrowserState\.sessionId \|\| ""\s*:\s*"";/,
+  );
+  assert.match(
+    source,
+    /const showSessionBrowserJumpCta = Boolean\(\s*browserJumpRequest &&\s*activeSessionId &&\s*browserJumpRequest\.sessionId === activeSessionId &&\s*\(visibleBrowserState\.space !== "agent" \|\|\s*visibleAgentBrowserSessionId !== activeSessionId\),\s*\);/,
+  );
+  assert.match(
+    source,
+    /onBrowserJumpRequestConsumed\?\.\(\s*activeSessionId,\s*browserJumpRequest\.requestKey,\s*\);/,
+  );
+  assert.match(
+    source,
+    /onJumpToSessionBrowser\?\.\(\s*browserJumpRequest\.sessionId,\s*browserJumpRequest\.requestKey,\s*\);/,
+  );
+  assert.match(source, /statusAccessory = null,/);
+  assert.match(source, /statusAccessory\?: ReactNode;/);
+  assert.match(
+    source,
+    /const renderStatusLine = \(nextLabel: string, className = ""\) => \{/,
+  );
+  assert.match(
+    source,
+    /if \(!statusAccessory\) \{\s*return <LiveStatusLine label=\{nextLabel\} className=\{className\} \/>\s*;\s*\}/,
+  );
+  assert.doesNotMatch(source, /showLiveAssistantTurn \|\|\s*showSessionBrowserJumpCta/);
+  assert.doesNotMatch(source, /This session started using its browser\./);
+  assert.match(source, /Jump to browser/);
+  assert.match(
+    source,
+    /<AssistantTurn[\s\S]*statusAccessory=\{\s*showSessionBrowserJumpCta\s*\?\s*\(/,
   );
 });

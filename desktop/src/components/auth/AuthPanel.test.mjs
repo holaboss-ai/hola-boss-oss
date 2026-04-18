@@ -40,6 +40,14 @@ test("runtime auth panel keeps model provider settings compact", async () => {
   assert.match(source, /Provider model resolution needs attention/);
   assert.match(source, /No embedding model can be resolved from the currently connected providers\./);
   assert.match(source, /No image generation model can be resolved from the currently connected providers\./);
+  assert.match(source, /const ADVANCED_SETTINGS_WARNING_PANEL_STYLE = \{/);
+  assert.match(source, /borderColor: "color-mix\(in oklch, var\(--warning\) 40%, var\(--border\)\)"/);
+  assert.match(source, /backgroundColor: "color-mix\(in oklch, var\(--warning\) 12%, var\(--card\)\)"/);
+  assert.match(source, /color: "color-mix\(in oklch, var\(--warning\) 36%, var\(--foreground\)\)"/);
+  assert.match(source, /const ADVANCED_SETTINGS_WARNING_TITLE_STYLE = \{/);
+  assert.match(source, /color: "color-mix\(in oklch, var\(--warning\) 52%, var\(--foreground\)\)"/);
+  assert.match(source, /style=\{ADVANCED_SETTINGS_WARNING_PANEL_STYLE\}/);
+  assert.match(source, /className="font-medium" style=\{ADVANCED_SETTINGS_WARNING_TITLE_STYLE\}/);
   assert.match(source, /Used for memory recall and evolve tasks\./);
   assert.match(source, /Recall embeddings/);
   assert.match(source, /Advanced settings/);

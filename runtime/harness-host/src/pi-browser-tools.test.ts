@@ -28,7 +28,7 @@ test("resolvePiDesktopBrowserToolDefinitions returns an empty tool list when bro
 });
 
 test("Pi desktop browser tools execute through the runtime capability API", async () => {
-  const requests: Array<{ method: string; url: string; workspaceId: string; body: string }> = [];
+  const requests: Array<{ method: string; url: string; workspaceId: string; sessionId: string; body: string }> = [];
   const fetchImpl: typeof fetch = async (input, init) => {
     const url = String(input);
     if (url.endsWith("/api/v1/capabilities/browser")) {
@@ -43,6 +43,7 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
       method: String(init?.method ?? "GET"),
       url,
       workspaceId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-workspace-id"] ?? ""),
+      sessionId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-session-id"] ?? ""),
       body,
     });
     if (url.endsWith("/api/v1/capabilities/browser/tools/browser_get_state")) {
@@ -57,6 +58,7 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
   const tools = await resolvePiDesktopBrowserToolDefinitions({
     runtimeApiBaseUrl: "http://127.0.0.1:5060",
     workspaceId: "workspace-1",
+    sessionId: "session-1",
     fetchImpl,
   });
 
@@ -80,6 +82,7 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
         method: "POST",
         url: "http://127.0.0.1:5060/api/v1/capabilities/browser/tools/browser_get_state",
         workspaceId: "workspace-1",
+        sessionId: "session-1",
         body: JSON.stringify({ include_screenshot: true }),
       },
     ]);
@@ -89,7 +92,7 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
 });
 
 test("Pi desktop browser tools fall back to node http when no fetch implementation is provided", async () => {
-  const requests: Array<{ method: string; url: string; workspaceId: string; body: string }> = [];
+  const requests: Array<{ method: string; url: string; workspaceId: string; sessionId: string; body: string }> = [];
   const server = http.createServer((request, response) => {
     const url = request.url ?? "";
     if (request.method === "GET" && url === "/api/v1/capabilities/browser") {
@@ -109,6 +112,7 @@ test("Pi desktop browser tools fall back to node http when no fetch implementati
           method: request.method ?? "GET",
           url,
           workspaceId: String(request.headers["x-holaboss-workspace-id"] ?? ""),
+          sessionId: String(request.headers["x-holaboss-session-id"] ?? ""),
           body,
         });
         response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
@@ -131,6 +135,7 @@ test("Pi desktop browser tools fall back to node http when no fetch implementati
     const tools = await resolvePiDesktopBrowserToolDefinitions({
       runtimeApiBaseUrl,
       workspaceId: "workspace-1",
+      sessionId: "session-1",
     });
 
     const getStateTool = tools.find((tool) => tool.name === "browser_get_state");
@@ -143,6 +148,7 @@ test("Pi desktop browser tools fall back to node http when no fetch implementati
         method: "POST",
         url: "/api/v1/capabilities/browser/tools/browser_get_state",
         workspaceId: "workspace-1",
+        sessionId: "session-1",
         body: JSON.stringify({ include_screenshot: false }),
       },
     ]);

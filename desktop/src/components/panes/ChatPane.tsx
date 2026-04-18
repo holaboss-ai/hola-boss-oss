@@ -1,10 +1,12 @@
 import {
   type ChangeEvent,
+  type ClipboardEvent,
   type CompositionEvent,
   type DragEvent,
   FormEvent,
   KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
   type RefObject,
   useEffect,
   useLayoutEffect,
@@ -21,6 +23,7 @@ import {
   Check,
   ChevronDown,
   Clock3,
+  CornerDownLeft,
   Copy,
   FileText,
   Folder,
@@ -66,20 +69,99 @@ import * as modelCatalog from "../../../shared/model-catalog.js";
 type ChatAttachment = SessionInputAttachmentPayload;
 type ChatPaneVariant = "default" | "onboarding";
 
+type ChatAssistantSegment =
+  | {
+      kind: "execution";
+      items: ChatExecutionTimelineItem[];
+    }
+  | {
+      kind: "output";
+      text: string;
+      tone?: "default" | "error";
+    };
+
 interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
+  tone?: "default" | "error";
   createdAt?: string;
   attachments?: ChatAttachment[];
+  segments?: ChatAssistantSegment[];
   executionItems?: ChatExecutionTimelineItem[];
   outputs?: WorkspaceOutputRecordPayload[];
   memoryProposals?: MemoryUpdateProposalRecordPayload[];
 }
 
+type QueuedSessionInputStatus = "queued" | "sending";
+
+interface QueuedSessionInput {
+  inputId: string;
+  sessionId: string;
+  workspaceId: string;
+  text: string;
+  createdAt: string;
+  attachments: ChatAttachment[];
+  status: QueuedSessionInputStatus;
+}
+
+interface QueuedSessionInputPreviewDescriptor {
+  text: string;
+  createdAt?: string;
+  attachments?: ChatAttachment[];
+  status: QueuedSessionInputStatus;
+}
+
+interface TodoPlanPreviewState {
+  plan: ChatTodoPlan;
+  expanded: boolean;
+}
+
+declare global {
+  interface Window {
+    __holabossQueuedMessagesPreviewState?: QueuedSessionInputPreviewDescriptor[];
+    __holabossDevQueuedMessagesPreview?: {
+      single: (text?: string) => void;
+      multiple: () => void;
+      clear: () => void;
+      set: (
+        entries:
+          | string
+          | Array<string | Partial<QueuedSessionInputPreviewDescriptor>>,
+      ) => void;
+      get: () => QueuedSessionInputPreviewDescriptor[];
+    };
+    __holabossTodoPreviewState?: TodoPlanPreviewState | null;
+    __holabossDevTodoPreview?: {
+      sample: () => void;
+      expanded: () => void;
+      collapsed: () => void;
+      clear: () => void;
+      set: (plan: ChatTodoPlan, options?: { expanded?: boolean }) => void;
+      get: () => TodoPlanPreviewState | null;
+    };
+  }
+}
+
 interface ChatSerializedQuotedSkillBlock {
   skillIds: string[];
   body: string;
+}
+
+function initialBrowserState(space: BrowserSpaceId): BrowserTabListPayload {
+  return {
+    space,
+    activeTabId: "",
+    tabs: [],
+    tabCounts: {
+      user: 0,
+      agent: 0,
+    },
+    sessionId: null,
+    lifecycleState: null,
+    controlMode: "none",
+    controlSessionId: null,
+  };
 }
 
 type ChatTraceStepStatus = "running" | "completed" | "error" | "waiting";
@@ -274,6 +356,9 @@ const CHAT_MODEL_STORAGE_KEY = "holaboss-chat-model-v1";
 const CHAT_THINKING_STORAGE_KEY = "holaboss-chat-thinking-v1";
 const CHAT_MODEL_USE_RUNTIME_DEFAULT = "__runtime_default__";
 const CHAT_SERIALIZED_SKILL_COMMAND_PATTERN = /^\/([A-Za-z0-9_-]+)$/;
+const QUEUED_MESSAGES_PREVIEW_EVENT =
+  "holaboss:queued-messages-preview-change";
+const TODO_PREVIEW_EVENT = "holaboss:todo-preview-change";
 const LEGACY_UNAVAILABLE_CHAT_MODELS = new Set(["openai/gpt-5.2-mini"]);
 const DEPRECATED_CHAT_MODELS = new Set([
   "openai/gpt-5.1",
@@ -748,9 +833,80 @@ function hasRenderableMessageContent(
 function hasRenderableAssistantTurn(message: ChatMessage) {
   return (
     hasRenderableMessageContent(message.text, message.attachments ?? []) ||
+    (message.segments?.some((segment) =>
+      segment.kind === "output"
+        ? Boolean(segment.text.trim())
+        : segment.items.length > 0,
+    ) ??
+      false) ||
     (message.executionItems?.length ?? 0) > 0 ||
     (message.outputs?.length ?? 0) > 0 ||
     (message.memoryProposals?.length ?? 0) > 0
+  );
+}
+
+function appendAssistantOutputSegment(
+  segments: ChatAssistantSegment[],
+  text: string,
+  tone: ChatMessage["tone"] = "default",
+): ChatAssistantSegment[] {
+  if (!text) {
+    return segments;
+  }
+  const next = [...segments];
+  const previous = next[next.length - 1];
+  if (
+    previous?.kind === "output" &&
+    (previous.tone ?? "default") === tone
+  ) {
+    next[next.length - 1] = {
+      ...previous,
+      text: `${previous.text}${text}`,
+    };
+    return next;
+  }
+  next.push({
+    kind: "output",
+    text,
+    tone,
+  });
+  return next;
+}
+
+function appendAssistantExecutionSegment(
+  segments: ChatAssistantSegment[],
+  items: ChatExecutionTimelineItem[],
+): ChatAssistantSegment[] {
+  if (items.length === 0) {
+    return segments;
+  }
+  return [
+    ...segments,
+    {
+      kind: "execution",
+      items,
+    },
+  ];
+}
+
+function liveAssistantSegmentsForRender(
+  segments: ChatAssistantSegment[],
+  executionItems: ChatExecutionTimelineItem[],
+  text: string,
+) {
+  let next = segments;
+  if (executionItems.length > 0) {
+    next = appendAssistantExecutionSegment(next, executionItems);
+  }
+  if (text) {
+    next = appendAssistantOutputSegment(next, text, "default");
+  }
+  return next;
+}
+
+function assistantSegmentsIncludeOutput(segments: ChatAssistantSegment[]) {
+  return segments.some(
+    (segment) => segment.kind === "output" && Boolean(segment.text.trim()),
   );
 }
 
@@ -924,12 +1080,77 @@ function attachmentUploadPayload(
   });
 }
 
+function attachmentFileExtension(mimeType?: string | null): string {
+  const normalizedMimeType = (mimeType ?? "").trim().toLowerCase();
+  if (!normalizedMimeType.includes("/")) {
+    return "bin";
+  }
+  const subtype = normalizedMimeType.split("/")[1]?.split("+")[0]?.trim() || "";
+  if (!subtype) {
+    return "bin";
+  }
+  if (subtype === "jpeg") {
+    return "jpg";
+  }
+  if (subtype === "svg") {
+    return "svg";
+  }
+  return subtype;
+}
+
+function normalizeClipboardAttachmentFile(file: File, index: number): File {
+  if (file.name.trim()) {
+    return file;
+  }
+
+  const extension = attachmentFileExtension(file.type);
+  const baseName = file.type.startsWith("image/")
+    ? `pasted-image-${index + 1}`
+    : `pasted-file-${index + 1}`;
+  return new File([file], `${baseName}.${extension}`, {
+    type: file.type,
+    lastModified: file.lastModified || Date.now(),
+  });
+}
+
+function clipboardFilesFromDataTransfer(dataTransfer: DataTransfer | null): File[] {
+  if (!dataTransfer) {
+    return [];
+  }
+
+  const clipboardFiles =
+    dataTransfer.files.length > 0
+      ? Array.from(dataTransfer.files)
+      : Array.from(dataTransfer.items ?? []).flatMap((item) => {
+          if (item.kind !== "file") {
+            return [];
+          }
+          const file = item.getAsFile();
+          return file ? [file] : [];
+        });
+
+  return clipboardFiles.map((file, index) =>
+    normalizeClipboardAttachmentFile(file, index),
+  );
+}
+
 function pendingAttachmentId(seed: string) {
   return `${seed}-${crypto.randomUUID()}`;
 }
 
 function runtimeStateStatus(value: string | null | undefined): string {
   return (value || "").trim().toUpperCase();
+}
+
+function runtimeStateEffectiveStatus(
+  runtimeState:
+    | Pick<SessionRuntimeRecordPayload, "status" | "effective_state">
+    | null
+    | undefined,
+): string {
+  return runtimeStateStatus(
+    runtimeState?.effective_state ?? runtimeState?.status,
+  );
 }
 
 function normalizeSessionTurnStatus(value: string | null | undefined): string {
@@ -952,11 +1173,14 @@ function defaultWorkspaceSessionTitle(
 
 function chatSessionStatusLabel(
   runtimeState:
-    | Pick<SessionRuntimeRecordPayload, "status" | "last_turn_status">
+    | Pick<
+        SessionRuntimeRecordPayload,
+        "status" | "effective_state" | "last_turn_status"
+      >
     | null
     | undefined,
 ): string {
-  const status = runtimeStateStatus(runtimeState?.status);
+  const status = runtimeStateEffectiveStatus(runtimeState);
   if (status === "BUSY") {
     return "Running";
   }
@@ -1516,6 +1740,13 @@ function inputIdFromMessageId(messageId: string, role: "user" | "assistant") {
   return messageId.startsWith(prefix) ? messageId.slice(prefix.length) : "";
 }
 
+function inputIdFromHistoryMessage(message: SessionHistoryMessagePayload) {
+  if (message.role === "user" || message.role === "assistant") {
+    return inputIdFromMessageId(message.id, message.role);
+  }
+  return "";
+}
+
 function historyMessagesInDisplayOrder(
   messages: SessionHistoryMessagePayload[],
   order: "asc" | "desc",
@@ -1523,16 +1754,13 @@ function historyMessagesInDisplayOrder(
   return order === "desc" ? [...messages].reverse() : messages;
 }
 
-function assistantInputIdsFromHistoryMessages(
+function turnInputIdsFromHistoryMessages(
   messages: SessionHistoryMessagePayload[],
 ) {
   const seen = new Set<string>();
   const inputIds: string[] = [];
   for (const message of messages) {
-    if (message.role !== "assistant") {
-      continue;
-    }
-    const inputId = inputIdFromMessageId(message.id, "assistant");
+    const inputId = inputIdFromHistoryMessage(message);
     if (!inputId || seen.has(inputId)) {
       continue;
     }
@@ -1540,6 +1768,316 @@ function assistantInputIdsFromHistoryMessages(
     inputIds.push(inputId);
   }
   return inputIds;
+}
+
+function reconcileQueuedSessionInputs(
+  queuedInputs: QueuedSessionInput[],
+  params: {
+    workspaceId: string;
+    sessionId: string;
+    persistedInputIds: Set<string>;
+    activeInputId?: string | null;
+    activeStatus?: string | null;
+  },
+): QueuedSessionInput[] {
+  const activeInputId = (params.activeInputId || "").trim();
+  const activeStatus = runtimeStateStatus(params.activeStatus);
+  return queuedInputs
+    .filter((item) => {
+      if (
+        item.workspaceId !== params.workspaceId ||
+        item.sessionId !== params.sessionId
+      ) {
+        return true;
+      }
+      return !params.persistedInputIds.has(item.inputId);
+    })
+    .map((item) => {
+      if (
+        item.workspaceId !== params.workspaceId ||
+        item.sessionId !== params.sessionId
+      ) {
+        return item;
+      }
+      if (!activeInputId || item.inputId !== activeInputId) {
+        return item;
+      }
+      const status: QueuedSessionInputStatus =
+        activeStatus === "BUSY" ? "sending" : "queued";
+      return {
+        ...item,
+        status,
+      };
+    });
+}
+
+function defaultQueuedSessionInputPreviewEntries(
+  mode: "single" | "multiple",
+): QueuedSessionInputPreviewDescriptor[] {
+  const now = Date.now();
+  if (mode === "single") {
+    return [
+      {
+        text: "Draft a concise follow-up after the current run finishes.",
+        createdAt: new Date(now).toISOString(),
+        status: "queued",
+        attachments: [],
+      },
+    ];
+  }
+  return [
+    {
+      text: serializeQuotedSkillPrompt(
+        "Pull the latest renewal risk notes before replying.",
+        ["customer_lookup"],
+      ),
+      createdAt: new Date(now - 2 * 60_000).toISOString(),
+      status: "sending",
+      attachments: [],
+    },
+    {
+      text: "Draft a tighter follow-up once the risk notes land.",
+      createdAt: new Date(now - 60_000).toISOString(),
+      status: "queued",
+      attachments: [],
+    },
+    {
+      text: "Prepare a brief handoff summary for the account manager.",
+      createdAt: new Date(now).toISOString(),
+      status: "queued",
+      attachments: [],
+    },
+  ];
+}
+
+function normalizeQueuedSessionInputPreviewEntries(
+  entries: unknown,
+): QueuedSessionInputPreviewDescriptor[] {
+  const rawEntries =
+    typeof entries === "string" ? [entries] : Array.isArray(entries) ? entries : [];
+  const normalized: QueuedSessionInputPreviewDescriptor[] = [];
+  rawEntries.forEach((entry, index) => {
+    if (typeof entry === "string") {
+      const text = entry.trim();
+      if (!text) {
+        return;
+      }
+      normalized.push({
+        text,
+        createdAt: new Date(Date.now() - index * 60_000).toISOString(),
+        status: "queued",
+        attachments: [],
+      });
+      return;
+    }
+    if (!entry || typeof entry !== "object") {
+      return;
+    }
+    const payload = entry as Partial<QueuedSessionInputPreviewDescriptor>;
+    const text = typeof payload.text === "string" ? payload.text.trim() : "";
+    if (!text) {
+      return;
+    }
+    const attachments = Array.isArray(payload.attachments)
+      ? payload.attachments
+          .map((attachment) => normalizeChatAttachment(attachment))
+          .filter(
+            (attachment): attachment is ChatAttachment => Boolean(attachment),
+          )
+      : [];
+    normalized.push({
+      text,
+      createdAt:
+        typeof payload.createdAt === "string" && payload.createdAt.trim()
+          ? payload.createdAt
+          : new Date(Date.now() - index * 60_000).toISOString(),
+      status: payload.status === "sending" ? "sending" : "queued",
+      attachments,
+    });
+  });
+  return normalized;
+}
+
+function setQueuedSessionInputPreviewState(entries: unknown) {
+  window.__holabossQueuedMessagesPreviewState =
+    normalizeQueuedSessionInputPreviewEntries(entries);
+  window.dispatchEvent(new CustomEvent(QUEUED_MESSAGES_PREVIEW_EVENT));
+}
+
+function defaultTodoPlanPreview(): ChatTodoPlan {
+  return {
+    sessionId: "preview-session",
+    updatedAt: new Date().toISOString(),
+    phases: [
+      {
+        id: "phase-research",
+        name: "Research",
+        tasks: [
+          {
+            id: "task-research-1",
+            content: "Review the previous response for open threads",
+            status: "completed",
+          },
+          {
+            id: "task-research-2",
+            content: "Pull the latest account context before replying",
+            status: "in_progress",
+            details: "Waiting on the current run to finish before the follow-up can start.",
+          },
+        ],
+      },
+      {
+        id: "phase-reply",
+        name: "Reply",
+        tasks: [
+          {
+            id: "task-reply-1",
+            content: "Draft the queued follow-up",
+            status: "pending",
+          },
+          {
+            id: "task-reply-2",
+            content: "Tighten the closing CTA",
+            status: "pending",
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function setTodoPlanPreviewState(next: TodoPlanPreviewState | null) {
+  window.__holabossTodoPreviewState = next;
+  window.dispatchEvent(new CustomEvent(TODO_PREVIEW_EVENT));
+}
+
+function useQueuedSessionInputPreview(params: {
+  workspaceId?: string | null;
+  sessionId?: string | null;
+}) {
+  const workspaceId = (params.workspaceId || "").trim();
+  const sessionId = (params.sessionId || "").trim();
+  const [previewItems, setPreviewItems] = useState<QueuedSessionInput[]>([]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) {
+      return;
+    }
+
+    const applyCurrentState = () => {
+      const items = window.__holabossQueuedMessagesPreviewState ?? [];
+      setPreviewItems(
+        items.map((item, index) => ({
+          inputId: `preview-queued-${index + 1}`,
+          sessionId,
+          workspaceId,
+          text: item.text,
+          createdAt: item.createdAt || new Date().toISOString(),
+          attachments: item.attachments ?? [],
+          status: item.status,
+        })),
+      );
+    };
+
+    const handlePreviewChange = () => {
+      applyCurrentState();
+    };
+
+    applyCurrentState();
+    window.addEventListener(
+      QUEUED_MESSAGES_PREVIEW_EVENT,
+      handlePreviewChange as EventListener,
+    );
+    window.__holabossDevQueuedMessagesPreview = {
+      single: (
+        text = "Draft a concise follow-up after the current run finishes.",
+      ) =>
+        setQueuedSessionInputPreviewState([
+          {
+            text,
+            status: "queued",
+            attachments: [],
+          },
+        ]),
+      multiple: () =>
+        setQueuedSessionInputPreviewState(
+          defaultQueuedSessionInputPreviewEntries("multiple"),
+        ),
+      clear: () => setQueuedSessionInputPreviewState([]),
+      set: (entries) => setQueuedSessionInputPreviewState(entries),
+      get: () => window.__holabossQueuedMessagesPreviewState ?? [],
+    };
+
+    return () => {
+      window.removeEventListener(
+        QUEUED_MESSAGES_PREVIEW_EVENT,
+        handlePreviewChange as EventListener,
+      );
+      delete window.__holabossDevQueuedMessagesPreview;
+    };
+  }, [sessionId, workspaceId]);
+
+  return previewItems;
+}
+
+function useTodoPlanPreview() {
+  const [preview, setPreview] = useState<TodoPlanPreviewState | null>(
+    () => window.__holabossTodoPreviewState ?? null,
+  );
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) {
+      return;
+    }
+
+    const applyCurrentState = () => {
+      setPreview(window.__holabossTodoPreviewState ?? null);
+    };
+
+    const handlePreviewChange = () => {
+      applyCurrentState();
+    };
+
+    applyCurrentState();
+    window.addEventListener(
+      TODO_PREVIEW_EVENT,
+      handlePreviewChange as EventListener,
+    );
+    window.__holabossDevTodoPreview = {
+      sample: () =>
+        setTodoPlanPreviewState({
+          plan: defaultTodoPlanPreview(),
+          expanded: false,
+        }),
+      expanded: () =>
+        setTodoPlanPreviewState({
+          plan: defaultTodoPlanPreview(),
+          expanded: true,
+        }),
+      collapsed: () =>
+        setTodoPlanPreviewState({
+          plan: defaultTodoPlanPreview(),
+          expanded: false,
+        }),
+      clear: () => setTodoPlanPreviewState(null),
+      set: (plan, options) =>
+        setTodoPlanPreviewState({
+          plan,
+          expanded: options?.expanded === true,
+        }),
+      get: () => window.__holabossTodoPreviewState ?? null,
+    };
+
+    return () => {
+      window.removeEventListener(
+        TODO_PREVIEW_EVENT,
+        handlePreviewChange as EventListener,
+      );
+      delete window.__holabossDevTodoPreview;
+    };
+  }, []);
+
+  return preview;
 }
 
 function mergeUniqueByKey<T>(
@@ -1683,7 +2221,7 @@ function fileDisplaySyncTargetFromToolPayload(
     ]);
   }
 
-  if (toolName === "read" || toolName === "edit") {
+  if (toolName === "edit") {
     if (phase !== "started" && phase !== "completed") {
       return null;
     }
@@ -2229,8 +2767,36 @@ function assistantHistoryStateFromOutputEvents(
   const orderedEvents = [...outputEvents].sort(
     (left, right) => left.sequence - right.sequence || left.id - right.id,
   );
+  let segments: ChatAssistantSegment[] = [];
   let executionItems: ChatExecutionTimelineItem[] = [];
+  let outputText = "";
+  let outputTone: ChatMessage["tone"] = "default";
   let encounteredTerminalEvent = false;
+  let failureText = "";
+  let terminalCreatedAt = "";
+
+  const flushExecutionSegment = () => {
+    if (executionItems.length === 0) {
+      return;
+    }
+    segments = appendAssistantExecutionSegment(segments, executionItems);
+    executionItems = [];
+  };
+
+  const flushOutputSegment = () => {
+    if (!outputText) {
+      return;
+    }
+    segments = appendAssistantOutputSegment(segments, outputText, outputTone);
+    outputText = "";
+    outputTone = "default";
+  };
+
+  const hasAssistantOutput =
+    outputText.trim().length > 0 ||
+    segments.some(
+      (segment) => segment.kind === "output" && segment.text.trim().length > 0,
+    );
 
   for (const event of orderedEvents) {
     if (encounteredTerminalEvent) {
@@ -2239,6 +2805,7 @@ function assistantHistoryStateFromOutputEvents(
     const eventPayload = isRecord(event.payload) ? event.payload : {};
 
     if (event.event_type === "thinking_delta") {
+      flushOutputSegment();
       const delta =
         typeof eventPayload.delta === "string" ? eventPayload.delta : "";
       executionItems = appendExecutionTimelineThinkingDelta(
@@ -2254,6 +2821,7 @@ function assistantHistoryStateFromOutputEvents(
       event.sequence,
     );
     if (phaseStep) {
+      flushOutputSegment();
       executionItems = upsertExecutionTimelineTraceItem(
         executionItems,
         phaseStep,
@@ -2266,10 +2834,18 @@ function assistantHistoryStateFromOutputEvents(
       event.sequence,
     );
     if (toolStep) {
+      flushOutputSegment();
       executionItems = upsertExecutionTimelineTraceItem(
         executionItems,
         toolStep,
       );
+    }
+
+    if (event.event_type === "output_delta") {
+      flushExecutionSegment();
+      const delta =
+        typeof eventPayload.delta === "string" ? eventPayload.delta : "";
+      outputText = `${outputText}${delta}`;
     }
 
     if (event.event_type === "run_completed") {
@@ -2288,6 +2864,13 @@ function assistantHistoryStateFromOutputEvents(
         executionItems,
         "error",
       );
+      failureText = runFailedDetail(eventPayload);
+      terminalCreatedAt = event.created_at;
+      if (!hasAssistantOutput) {
+        flushExecutionSegment();
+        outputText = failureText;
+        outputTone = "error";
+      }
     }
 
     if (isTerminalSessionOutputEventType(event.event_type)) {
@@ -2295,8 +2878,14 @@ function assistantHistoryStateFromOutputEvents(
     }
   }
 
+  flushOutputSegment();
+  flushExecutionSegment();
+
   return {
+    segments: segments.length > 0 ? segments : undefined,
     executionItems: executionItems.length > 0 ? executionItems : undefined,
+    failureText: failureText || undefined,
+    terminalCreatedAt: terminalCreatedAt || undefined,
   };
 }
 
@@ -2386,6 +2975,11 @@ interface ChatPaneExplorerAttachmentRequest {
   requestKey: number;
 }
 
+interface ChatPaneBrowserJumpRequest {
+  sessionId: string;
+  requestKey: number;
+}
+
 interface ChatPaneProps {
   onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
   onSyncFileDisplayFromAgentOperation?: (path: string) => void;
@@ -2401,6 +2995,12 @@ interface ChatPaneProps {
   explorerAttachmentRequest?: ChatPaneExplorerAttachmentRequest | null;
   onExplorerAttachmentRequestConsumed?: (requestKey: number) => void;
   onActiveSessionIdChange?: (sessionId: string | null) => void;
+  browserJumpRequest?: ChatPaneBrowserJumpRequest | null;
+  onBrowserJumpRequestConsumed?: (
+    sessionId: string,
+    requestKey: number,
+  ) => void;
+  onJumpToSessionBrowser?: (sessionId: string, requestKey: number) => void;
   onOpenInbox?: () => void;
   inboxUnreadCount?: number;
   onRequestCreateSession?: (request: ChatPaneSessionOpenRequest) => void;
@@ -2421,6 +3021,9 @@ export function ChatPane({
   explorerAttachmentRequest = null,
   onExplorerAttachmentRequestConsumed,
   onActiveSessionIdChange,
+  browserJumpRequest = null,
+  onBrowserJumpRequestConsumed,
+  onJumpToSessionBrowser,
   onOpenInbox,
   inboxUnreadCount = 0,
   onRequestCreateSession,
@@ -2447,6 +3050,9 @@ export function ChatPane({
   const [sessionOutputs, setSessionOutputs] = useState<
     WorkspaceOutputRecordPayload[]
   >([]);
+  const [liveAssistantSegments, setLiveAssistantSegments] = useState<
+    ChatAssistantSegment[]
+  >([]);
   const [liveAssistantText, setLiveAssistantText] = useState("");
   const [liveAgentStatus, setLiveAgentStatus] = useState("");
   const [liveExecutionItems, setLiveExecutionItems] = useState<
@@ -2468,6 +3074,7 @@ export function ChatPane({
   const [loadedHistoryMessageCount, setLoadedHistoryMessageCount] = useState(0);
   const [totalHistoryMessageCount, setTotalHistoryMessageCount] = useState(0);
   const [isResponding, setIsResponding] = useState(false);
+  const [isSubmittingMessage, setIsSubmittingMessage] = useState(false);
   const [isPausePending, setIsPausePending] = useState(false);
   const [chatErrorMessage, setChatErrorMessage] = useState("");
   const [attachmentGateMessage, setAttachmentGateMessage] = useState("");
@@ -2500,6 +3107,9 @@ export function ChatPane({
     proposalId: string;
     action: "accept" | "dismiss";
   } | null>(null);
+  const [queuedSessionInputs, setQueuedSessionInputs] = useState<
+    QueuedSessionInput[]
+  >([]);
   const [currentTodoPlan, setCurrentTodoPlan] = useState<ChatTodoPlan | null>(
     null,
   );
@@ -2518,6 +3128,8 @@ export function ChatPane({
   const [availableSessionsError, setAvailableSessionsError] = useState("");
   const [localSessionOpenRequest, setLocalSessionOpenRequest] =
     useState<ChatPaneSessionOpenRequest | null>(null);
+  const [visibleBrowserState, setVisibleBrowserState] =
+    useState<BrowserTabListPayload>(() => initialBrowserState("user"));
   const messagesRef = useRef<HTMLDivElement>(null);
   const messagesContentRef = useRef<HTMLDivElement>(null);
   const chatScrollbarThumbRef = useRef<HTMLDivElement>(null);
@@ -2557,6 +3169,7 @@ export function ChatPane({
   const localSessionOpenRequestRef =
     useRef<ChatPaneSessionOpenRequest | null>(null);
   const draftParentSessionIdRef = useRef<string | null>(null);
+  const liveAssistantSegmentsRef = useRef<ChatAssistantSegment[]>([]);
   const liveAssistantTextRef = useRef("");
   const liveExecutionItemsRef = useRef<ChatExecutionTimelineItem[]>([]);
   const historyViewportGenerationRef = useRef(0);
@@ -2715,10 +3328,12 @@ export function ChatPane({
   }
 
   function resetLiveTurn() {
+    liveAssistantSegmentsRef.current = [];
     liveAssistantTextRef.current = "";
     liveExecutionItemsRef.current = [];
     activeAssistantMessageIdRef.current = null;
     lastSyncedAgentOperationFileKeyRef.current = "";
+    setLiveAssistantSegments([]);
     setLiveAssistantText("");
     setLiveAgentStatus("");
     setLiveExecutionItems([]);
@@ -2829,8 +3444,15 @@ export function ChatPane({
       }
     }
 
+    const assistantHistoryInputIds = new Set(
+      historyMessages
+        .filter((message) => message.role === "assistant")
+        .map((message) => inputIdFromMessageId(message.id, "assistant"))
+        .filter(Boolean),
+    );
+
     return historyMessages
-      .map((message) => {
+      .flatMap((message) => {
         const attachments = attachmentsFromMetadata(message.metadata);
         const nextMessage: ChatMessage = {
           id:
@@ -2841,6 +3463,7 @@ export function ChatPane({
           createdAt: message.created_at || undefined,
           attachments,
         };
+        const renderedMessages: ChatMessage[] = [nextMessage];
 
         if (nextMessage.role === "assistant") {
           const inputId = inputIdFromMessageId(nextMessage.id, "assistant");
@@ -2855,8 +3478,20 @@ export function ChatPane({
             const turnMemoryProposals = sortMemoryUpdateProposals(
               memoryProposalsByInputId.get(inputId) ?? [],
             );
-            if (restoredAssistantState.executionItems) {
+            if (restoredAssistantState.segments) {
+              nextMessage.segments = restoredAssistantState.segments;
+              nextMessage.text = "";
+              nextMessage.executionItems = undefined;
+            } else if (restoredAssistantState.executionItems) {
               nextMessage.executionItems = restoredAssistantState.executionItems;
+            }
+            if (
+              !nextMessage.text &&
+              !nextMessage.segments &&
+              restoredAssistantState.failureText
+            ) {
+              nextMessage.text = restoredAssistantState.failureText;
+              nextMessage.tone = "error";
             }
             if (turnMemoryProposals.length > 0) {
               nextMessage.memoryProposals = turnMemoryProposals;
@@ -2867,7 +3502,50 @@ export function ChatPane({
           }
         }
 
-        return nextMessage;
+        const userInputId =
+          nextMessage.role === "user"
+            ? inputIdFromMessageId(nextMessage.id, "user")
+            : "";
+        if (
+          nextMessage.role === "user" &&
+          userInputId &&
+          !assistantHistoryInputIds.has(userInputId)
+        ) {
+          const restoredAssistantState = assistantHistoryStateFromOutputEvents(
+            outputEventsByInputId.get(userInputId) ?? [],
+          );
+          const turnOutputs = sortOutputs(outputsByInputId.get(userInputId) ?? []);
+          const turnMemoryProposals = sortMemoryUpdateProposals(
+            memoryProposalsByInputId.get(userInputId) ?? [],
+          );
+          const syntheticAssistantMessage: ChatMessage = {
+            id: `assistant-${userInputId}`,
+            role: "assistant",
+            text:
+              restoredAssistantState.segments || !restoredAssistantState.failureText
+                ? ""
+                : restoredAssistantState.failureText,
+            tone:
+              restoredAssistantState.segments || !restoredAssistantState.failureText
+                ? "default"
+                : "error",
+            createdAt:
+              restoredAssistantState.terminalCreatedAt || nextMessage.createdAt,
+            segments: restoredAssistantState.segments,
+            executionItems:
+              restoredAssistantState.segments
+                ? undefined
+                : restoredAssistantState.executionItems,
+            outputs: turnOutputs.length > 0 ? turnOutputs : undefined,
+            memoryProposals:
+              turnMemoryProposals.length > 0 ? turnMemoryProposals : undefined,
+          };
+          if (hasRenderableAssistantTurn(syntheticAssistantMessage)) {
+            renderedMessages.push(syntheticAssistantMessage);
+          }
+        }
+
+        return renderedMessages;
       })
       .filter(
         (message) =>
@@ -2909,7 +3587,7 @@ export function ChatPane({
       history.messages,
       params.order,
     );
-    const assistantInputIds = assistantInputIdsFromHistoryMessages(
+    const assistantInputIds = turnInputIdsFromHistoryMessages(
       historyMessages,
     );
     if (assistantInputIds.length === 0) {
@@ -3073,12 +3751,23 @@ export function ChatPane({
     const currentRuntimeState = runtimeStates.find(
       (item) => item.session_id === nextSessionId,
     );
-    const currentRuntimeStatus = runtimeStateStatus(
-      currentRuntimeState?.status,
-    );
+    const currentRuntimeStatus =
+      runtimeStateEffectiveStatus(currentRuntimeState);
     const currentRuntimeInputId = (
       currentRuntimeState?.current_input_id || ""
     ).trim();
+    const persistedInputIds = new Set(
+      turnInputIdsFromHistoryMessages(page.history.messages),
+    );
+    setQueuedSessionInputs((current) =>
+      reconcileQueuedSessionInputs(current, {
+        workspaceId,
+        sessionId: nextSessionId,
+        persistedInputIds,
+        activeInputId: currentRuntimeInputId,
+        activeStatus: currentRuntimeStatus,
+      }),
+    );
     const hasAssistantMessage = page.renderedMessages.some(
       (message) => message.role === "assistant",
     );
@@ -3221,7 +3910,48 @@ export function ChatPane({
     }
   }
 
+  function setLiveAssistantSegmentsState(nextSegments: ChatAssistantSegment[]) {
+    liveAssistantSegmentsRef.current = nextSegments;
+    setLiveAssistantSegments(nextSegments);
+  }
+
+  function flushLiveAssistantOutputSegment(
+    tone: ChatMessage["tone"] = "default",
+  ) {
+    if (!liveAssistantTextRef.current) {
+      return;
+    }
+    flushSync(() => {
+      setLiveAssistantSegmentsState(
+        appendAssistantOutputSegment(
+          liveAssistantSegmentsRef.current,
+          liveAssistantTextRef.current,
+          tone,
+        ),
+      );
+      liveAssistantTextRef.current = "";
+      setLiveAssistantText("");
+    });
+  }
+
+  function flushLiveExecutionSegment() {
+    if (liveExecutionItemsRef.current.length === 0) {
+      return;
+    }
+    flushSync(() => {
+      setLiveAssistantSegmentsState(
+        appendAssistantExecutionSegment(
+          liveAssistantSegmentsRef.current,
+          liveExecutionItemsRef.current,
+        ),
+      );
+      liveExecutionItemsRef.current = [];
+      setLiveExecutionItems([]);
+    });
+  }
+
   function appendLiveAssistantDelta(delta: string) {
+    flushLiveExecutionSegment();
     flushSync(() => {
       setLiveAssistantText((prev) => {
         const next = `${prev}${delta}`;
@@ -3232,6 +3962,7 @@ export function ChatPane({
   }
 
   function appendLiveThinkingDelta(delta: string, order: number) {
+    flushLiveAssistantOutputSegment();
     flushSync(() => {
       setLiveExecutionItems((prev) => {
         const next = appendExecutionTimelineThinkingDelta(prev, delta, order);
@@ -3241,14 +3972,44 @@ export function ChatPane({
     });
   }
 
-  function commitLiveAssistantMessage() {
+  function commitLiveAssistantMessage(options?: {
+    fallbackText?: string;
+    tone?: ChatMessage["tone"];
+  }) {
     const messageId =
       activeAssistantMessageIdRef.current ?? `assistant-${Date.now()}`;
-    const assistantText = liveAssistantTextRef.current;
-    const executionItems = liveExecutionItemsRef.current;
-    if (!assistantText && executionItems.length === 0) {
+    let nextSegments = liveAssistantSegmentsRef.current;
+
+    if (liveExecutionItemsRef.current.length > 0) {
+      nextSegments = appendAssistantExecutionSegment(
+        nextSegments,
+        liveExecutionItemsRef.current,
+      );
+    }
+
+    if (liveAssistantTextRef.current) {
+      nextSegments = appendAssistantOutputSegment(
+        nextSegments,
+        liveAssistantTextRef.current,
+        "default",
+      );
+    }
+
+    const hasOutputSegment = nextSegments.some(
+      (segment) =>
+        segment.kind === "output" && Boolean(segment.text.trim()),
+    );
+    if (options?.fallbackText && !hasOutputSegment) {
+      nextSegments = appendAssistantOutputSegment(
+        nextSegments,
+        options.fallbackText,
+        options.tone ?? "default",
+      );
+    }
+
+    if (nextSegments.length === 0) {
       resetLiveTurn();
-      return;
+      return false;
     }
 
     setMessages((prev) => [
@@ -3256,11 +4017,13 @@ export function ChatPane({
       {
         id: messageId,
         role: "assistant",
-        text: assistantText,
-        executionItems: executionItems.length > 0 ? executionItems : undefined,
+        text: "",
+        tone: "default",
+        segments: nextSegments,
       },
     ]);
     resetLiveTurn();
+    return true;
   }
 
   function scheduleConversationRefresh(
@@ -3523,6 +4286,7 @@ export function ChatPane({
   }
 
   function upsertLiveTraceStep(step: ChatTraceStep) {
+    flushLiveAssistantOutputSegment();
     const next = upsertExecutionTimelineTraceItem(
       liveExecutionItemsRef.current,
       step,
@@ -3557,6 +4321,7 @@ export function ChatPane({
   }, [
     isHistoryViewportPending,
     isResponding,
+    liveAssistantSegments,
     liveAssistantText,
     liveExecutionItems,
     messages,
@@ -4205,6 +4970,10 @@ export function ChatPane({
   }, [selectedWorkspaceId]);
 
   useEffect(() => {
+    setQueuedSessionInputs([]);
+  }, [selectedWorkspaceId]);
+
+  useEffect(() => {
     const unsubscribe = window.electronAPI.workspace.onSessionStreamEvent(
       (payload) => {
         const currentStreamId = activeStreamIdRef.current;
@@ -4421,6 +5190,25 @@ export function ChatPane({
         }
 
         if (
+          eventSessionId &&
+          eventInputId &&
+          (eventType === "run_claimed" || eventType === "run_started")
+        ) {
+          setQueuedSessionInputs((current) =>
+            current.map((item) =>
+              item.workspaceId === (selectedWorkspaceId || "").trim() &&
+              item.sessionId === eventSessionId &&
+              item.inputId === eventInputId
+                ? {
+                    ...item,
+                    status: "sending",
+                  }
+                : item,
+            ),
+          );
+        }
+
+        if (
           eventType === "run_claimed" ||
           eventType === "compaction_restored" ||
           eventType === "run_started"
@@ -4556,14 +5344,17 @@ export function ChatPane({
             return;
           }
           const detail = runFailedDetail(eventPayload);
-          setChatErrorMessage(detail);
           finalizeLiveTraceSteps("error");
-          if (
-            liveAssistantTextRef.current ||
-            liveExecutionItemsRef.current.length > 0
-          ) {
-            commitLiveAssistantMessage();
-          }
+          const shouldPersistFailureText =
+            !liveAssistantTextRef.current &&
+            !assistantSegmentsIncludeOutput(liveAssistantSegmentsRef.current);
+          const committedFailureMessage = commitLiveAssistantMessage({
+            fallbackText: shouldPersistFailureText ? detail : undefined,
+            tone: shouldPersistFailureText ? "error" : "default",
+          });
+          setChatErrorMessage(
+            committedFailureMessage && shouldPersistFailureText ? "" : detail,
+          );
           setIsResponding(false);
           activeStreamIdRef.current = null;
           pendingInputIdRef.current = null;
@@ -4668,7 +5459,7 @@ export function ChatPane({
         if (!currentState) {
           return;
         }
-        const status = runtimeStateStatus(currentState.status);
+        const status = runtimeStateEffectiveStatus(currentState);
         if (status === "BUSY" || status === "QUEUED") {
           return;
         }
@@ -4682,11 +5473,22 @@ export function ChatPane({
           activeStreamIdRef.current = null;
         }
         setIsResponding(false);
-        resetLiveTurn();
 
         if (status === "ERROR") {
           const detail = runtimeStateErrorDetail(currentState.last_error);
-          setChatErrorMessage(detail);
+          finalizeLiveTraceSteps("error");
+          const shouldPersistFailureText =
+            !liveAssistantTextRef.current &&
+            !assistantSegmentsIncludeOutput(liveAssistantSegmentsRef.current);
+          const committedFailureMessage = commitLiveAssistantMessage({
+            fallbackText: shouldPersistFailureText ? detail : undefined,
+            tone: shouldPersistFailureText ? "error" : "default",
+          });
+          setChatErrorMessage(
+            committedFailureMessage && shouldPersistFailureText ? "" : detail,
+          );
+        } else {
+          resetLiveTurn();
         }
         pendingInputIdRef.current = null;
       } catch {
@@ -4722,7 +5524,7 @@ export function ChatPane({
       (!trimmed &&
         pendingAttachments.length === 0 &&
         quotedSkillIds.length === 0) ||
-      isResponding
+      isSubmittingMessage
     ) {
       return;
     }
@@ -4785,6 +5587,12 @@ export function ChatPane({
       setChatErrorMessage("No active session found for this workspace.");
       return;
     }
+    const queueOntoActiveRun =
+      isResponding &&
+      !pendingSessionTarget &&
+      targetSessionId === activeSessionIdRef.current;
+
+    setIsSubmittingMessage(true);
 
     appendStreamTelemetry({
       streamId: activeStreamIdRef.current || "-",
@@ -4796,24 +5604,6 @@ export function ChatPane({
       action: "queue_begin",
       detail: `workspace=${selectedWorkspace.id}`,
     });
-    const currentStreamId = activeStreamIdRef.current;
-    if (currentStreamId) {
-      await closeStreamWithReason(
-        currentStreamId,
-        "send_new_message_close_previous_stream",
-      );
-      activeStreamIdRef.current = null;
-      appendStreamTelemetry({
-        streamId: currentStreamId,
-        transportType: "client",
-        eventName: "sendMessage",
-        eventType: "close_prev_stream",
-        inputId: "",
-        sessionId: targetSessionId || "",
-        action: "closed_previous_stream",
-        detail: "before new send",
-      });
-    }
 
     try {
       const missingQuotedSkillIds = quotedSkillIds.filter(
@@ -4886,44 +5676,68 @@ export function ChatPane({
         trimmed,
         quotedSkillIds,
       );
+      const queuedMessageCreatedAt = new Date().toISOString();
       const userMessage: ChatMessage = {
         id: `user-${Date.now()}`,
         role: "user",
         text: serializedPrompt,
-        createdAt: new Date().toISOString(),
+        createdAt: queuedMessageCreatedAt,
         attachments: stagedAttachments,
       };
 
       shouldAutoScrollRef.current = true;
-      setMessages((prev) => [...prev, userMessage]);
-      resetLiveTurn();
+      if (!queueOntoActiveRun) {
+        setMessages((prev) => [...prev, userMessage]);
+      }
       setInput("");
       setQuotedSkillIds([]);
       setPendingAttachments([]);
-      setIsResponding(true);
-      setLiveAgentStatus("Thinking");
       setChatErrorMessage("");
-      activeAssistantMessageIdRef.current = null;
-      pendingInputIdRef.current = STREAM_ATTACH_PENDING;
+      if (!queueOntoActiveRun) {
+        const currentStreamId = activeStreamIdRef.current;
+        if (currentStreamId) {
+          await closeStreamWithReason(
+            currentStreamId,
+            "send_new_message_close_previous_stream",
+          );
+          activeStreamIdRef.current = null;
+          appendStreamTelemetry({
+            streamId: currentStreamId,
+            transportType: "client",
+            eventName: "sendMessage",
+            eventType: "close_prev_stream",
+            inputId: "",
+            sessionId: targetSessionId || "",
+            action: "closed_previous_stream",
+            detail: "before new send",
+          });
+        }
 
-      const preOpenedStream =
-        await window.electronAPI.workspace.openSessionOutputStream({
+        resetLiveTurn();
+        setIsResponding(true);
+        setLiveAgentStatus("Thinking");
+        activeAssistantMessageIdRef.current = null;
+        pendingInputIdRef.current = STREAM_ATTACH_PENDING;
+
+        const preOpenedStream =
+          await window.electronAPI.workspace.openSessionOutputStream({
+            sessionId: targetSessionId,
+            workspaceId: selectedWorkspace.id,
+            includeHistory: false,
+            stopOnTerminal: true,
+          });
+        activeStreamIdRef.current = preOpenedStream.streamId;
+        appendStreamTelemetry({
+          streamId: preOpenedStream.streamId,
+          transportType: "client",
+          eventName: "openSessionOutputStream",
+          eventType: "stream_open_prequeue",
+          inputId: "",
           sessionId: targetSessionId,
-          workspaceId: selectedWorkspace.id,
-          includeHistory: false,
-          stopOnTerminal: true,
+          action: "stream_requested_prequeue",
+          detail: "session tail stream opened before queue",
         });
-      activeStreamIdRef.current = preOpenedStream.streamId;
-      appendStreamTelemetry({
-        streamId: preOpenedStream.streamId,
-        transportType: "client",
-        eventName: "openSessionOutputStream",
-        eventType: "stream_open_prequeue",
-        inputId: "",
-        sessionId: targetSessionId,
-        action: "stream_requested_prequeue",
-        detail: "session tail stream opened before queue",
-      });
+      }
 
       const queued = await window.electronAPI.workspace.queueSessionInput({
         text: serializedPrompt,
@@ -4936,7 +5750,6 @@ export function ChatPane({
         thinking_value: effectiveThinkingValue,
       });
       setActiveSession(queued.session_id);
-      pendingInputIdRef.current = queued.input_id;
       appendStreamTelemetry({
         streamId: "-",
         transportType: "client",
@@ -4945,9 +5758,72 @@ export function ChatPane({
         inputId: queued.input_id,
         sessionId: queued.session_id,
         action: "queued_input",
-        detail: "queue response received",
+        detail: queueOntoActiveRun
+          ? "queue response received while current run remained attached"
+          : "queue response received",
       });
-      if (queued.session_id !== targetSessionId) {
+      if (!queueOntoActiveRun) {
+        pendingInputIdRef.current = queued.input_id;
+      } else {
+        setQueuedSessionInputs((current) => [
+          ...current,
+          {
+            inputId: queued.input_id,
+            sessionId: queued.session_id,
+            workspaceId: selectedWorkspace.id,
+            text: serializedPrompt,
+            createdAt: queuedMessageCreatedAt,
+            attachments: stagedAttachments,
+            status: "queued",
+          },
+        ]);
+        const shouldAttachQueuedRun =
+          activeSessionIdRef.current === queued.session_id &&
+          !activeStreamIdRef.current &&
+          !pendingInputIdRef.current;
+        if (shouldAttachQueuedRun) {
+          pendingInputIdRef.current = queued.input_id;
+          setIsResponding(true);
+          setLiveAgentStatus("Queued");
+          const resumed = await window.electronAPI.workspace
+            .openSessionOutputStream({
+              sessionId: queued.session_id,
+              workspaceId: selectedWorkspace.id,
+              inputId: queued.input_id,
+              includeHistory: true,
+              stopOnTerminal: true,
+            })
+            .catch((error) => {
+              pendingInputIdRef.current = null;
+              setIsResponding(false);
+              throw error;
+            });
+          activeStreamIdRef.current = resumed.streamId;
+          setQueuedSessionInputs((current) =>
+            current.map((item) =>
+              item.inputId === queued.input_id &&
+              item.sessionId === queued.session_id &&
+              item.workspaceId === selectedWorkspace.id
+                ? {
+                    ...item,
+                    status: "sending",
+                  }
+                : item,
+            ),
+          );
+          appendStreamTelemetry({
+            streamId: resumed.streamId,
+            transportType: "client",
+            eventName: "openSessionOutputStream",
+            eventType: "stream_open_queued_handoff",
+            inputId: queued.input_id,
+            sessionId: queued.session_id,
+            action: "stream_requested_queued_handoff",
+            detail: "current run finished before queue response arrived",
+          });
+        }
+      }
+      if (!queueOntoActiveRun && queued.session_id !== targetSessionId) {
         const staleStreamId = activeStreamIdRef.current;
         if (staleStreamId) {
           await closeStreamWithReason(staleStreamId, "queue_session_retarget");
@@ -4983,17 +5859,21 @@ export function ChatPane({
         });
       }
     } catch (error) {
-      const activeStreamId = activeStreamIdRef.current;
-      if (activeStreamId) {
-        await closeStreamWithReason(activeStreamId, "send_message_error").catch(
-          () => undefined,
-        );
+      if (!queueOntoActiveRun) {
+        const activeStreamId = activeStreamIdRef.current;
+        if (activeStreamId) {
+          await closeStreamWithReason(activeStreamId, "send_message_error").catch(
+            () => undefined,
+          );
+        }
       }
       setChatErrorMessage(normalizeErrorMessage(error));
-      setIsResponding(false);
-      activeAssistantMessageIdRef.current = null;
-      activeStreamIdRef.current = null;
-      pendingInputIdRef.current = null;
+      if (!queueOntoActiveRun) {
+        setIsResponding(false);
+        activeAssistantMessageIdRef.current = null;
+        activeStreamIdRef.current = null;
+        pendingInputIdRef.current = null;
+      }
       appendStreamTelemetry({
         streamId: "-",
         transportType: "client",
@@ -5004,6 +5884,8 @@ export function ChatPane({
         action: "send_failed",
         detail: normalizeErrorMessage(error),
       });
+    } finally {
+      setIsSubmittingMessage(false);
     }
   }
 
@@ -5028,6 +5910,78 @@ export function ChatPane({
       setLiveAgentStatus(previousStatus || "Working");
       setChatErrorMessage(normalizeErrorMessage(error));
     }
+  }
+
+  async function updateQueuedSessionInputText(
+    item: QueuedSessionInput,
+    nextText: string,
+  ) {
+    const parsedQuotedSkills = parseSerializedQuotedSkillPrompt(item.text);
+    const skillOnlyPreviewText = parsedQuotedSkills.skillIds.join(" ");
+    const normalizedNextText = nextText.trim();
+    const serializedText =
+      !parsedQuotedSkills.body &&
+      parsedQuotedSkills.skillIds.length > 0 &&
+      normalizedNextText === skillOnlyPreviewText
+        ? item.text.trim()
+        : serializeQuotedSkillPrompt(nextText, parsedQuotedSkills.skillIds);
+    if (!serializedText.trim() && item.attachments.length === 0) {
+      throw new Error("Queued message can't be empty.");
+    }
+
+    if (queuedSessionInputPreview.length > 0) {
+      const previewIndex =
+        Number.parseInt(
+          item.inputId.replace("preview-queued-", "").trim(),
+          10,
+        ) - 1;
+      const currentEntries = window.__holabossQueuedMessagesPreviewState ?? [];
+      if (previewIndex < 0 || previewIndex >= currentEntries.length) {
+        throw new Error("Queued preview item not found.");
+      }
+      const updatedEntries = currentEntries.map((entry, index) => {
+        if (index !== previewIndex) {
+          return entry;
+        }
+        if (typeof entry === "string") {
+          return {
+            text: serializedText,
+            status: item.status,
+            attachments: item.attachments,
+          };
+        }
+        return {
+          ...entry,
+          text: serializedText,
+        };
+      });
+      setQueuedSessionInputPreviewState(updatedEntries);
+      return;
+    }
+
+    if (item.status !== "queued") {
+      throw new Error("Only queued messages can be edited.");
+    }
+
+    const updated = await window.electronAPI.workspace.updateQueuedSessionInput({
+      workspace_id: item.workspaceId,
+      session_id: item.sessionId,
+      input_id: item.inputId,
+      text: serializedText,
+    });
+
+    setQueuedSessionInputs((current) =>
+      current.map((currentItem) =>
+        currentItem.inputId === item.inputId &&
+        currentItem.sessionId === item.sessionId &&
+        currentItem.workspaceId === item.workspaceId
+          ? {
+              ...currentItem,
+              text: updated.text,
+            }
+          : currentItem,
+      ),
+    );
   }
 
   function appendPendingLocalFiles(files: File[]) {
@@ -5128,6 +6082,25 @@ export function ChatPane({
     onExplorerAttachmentRequestConsumed,
   ]);
 
+  useEffect(() => {
+    let mounted = true;
+
+    const applyVisibleBrowserState = (state: BrowserTabListPayload) => {
+      if (mounted) {
+        setVisibleBrowserState(state);
+      }
+    };
+
+    void window.electronAPI.browser.getState().then(applyVisibleBrowserState);
+    const unsubscribe =
+      window.electronAPI.browser.onStateChange(applyVisibleBrowserState);
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, []);
+
   function onAttachmentInputChange(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     appendPendingLocalFiles(files);
@@ -5155,6 +6128,16 @@ export function ChatPane({
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     void sendMessage(input);
+  };
+
+  const jumpToSessionBrowser = () => {
+    if (!browserJumpRequest || browserJumpRequest.sessionId !== activeSessionId) {
+      return;
+    }
+    onJumpToSessionBrowser?.(
+      browserJumpRequest.sessionId,
+      browserJumpRequest.requestKey,
+    );
   };
 
   const onComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -5195,10 +6178,49 @@ export function ChatPane({
         selectedWorkspace?.harness,
         runtimeConfig?.defaultModel,
       );
+  const visibleAgentBrowserSessionId =
+    visibleBrowserState.space === "agent"
+      ? visibleBrowserState.controlSessionId || visibleBrowserState.sessionId || ""
+      : "";
+  const showSessionBrowserJumpCta = Boolean(
+    browserJumpRequest &&
+      activeSessionId &&
+      browserJumpRequest.sessionId === activeSessionId &&
+      (visibleBrowserState.space !== "agent" ||
+        visibleAgentBrowserSessionId !== activeSessionId),
+  );
+  const renderedLiveAssistantSegments = liveAssistantSegmentsForRender(
+    liveAssistantSegments,
+    liveExecutionItems,
+    liveAssistantText,
+  );
   const showLiveAssistantTurn =
     isResponding ||
+    liveAssistantSegments.length > 0 ||
     Boolean(liveAssistantText) ||
     liveExecutionItems.length > 0;
+  const queuedSessionInputPreview = useQueuedSessionInputPreview({
+    workspaceId: selectedWorkspaceId,
+    sessionId: activeSessionId,
+  });
+  const todoPlanPreview = useTodoPlanPreview();
+  const activeQueuedSessionInputs = useMemo(
+    () =>
+      queuedSessionInputs.filter(
+        (item) =>
+          item.workspaceId === (selectedWorkspaceId || "").trim() &&
+          item.sessionId === (activeSessionId || "").trim(),
+      ),
+    [activeSessionId, queuedSessionInputs, selectedWorkspaceId],
+  );
+  const displayedQueuedSessionInputs =
+    queuedSessionInputPreview.length > 0
+      ? queuedSessionInputPreview
+      : activeQueuedSessionInputs;
+  const displayedTodoPlan = todoPlanPreview?.plan ?? currentTodoPlan;
+  const displayedTodoPanelExpanded =
+    todoPlanPreview?.expanded ?? todoPanelExpanded;
+  const todoPanelSlotHeightPx = 58;
   const hasMessages = messages.length > 0 || showLiveAssistantTurn;
   const streamTelemetryTail = useMemo(
     () => streamTelemetry.slice(-80).reverse(),
@@ -5225,6 +6247,31 @@ export function ChatPane({
       })),
     [pendingAttachments],
   );
+
+  useEffect(() => {
+    if (
+      !browserJumpRequest ||
+      !activeSessionId ||
+      browserJumpRequest.sessionId !== activeSessionId
+    ) {
+      return;
+    }
+    if (
+      visibleBrowserState.space === "agent" &&
+      visibleAgentBrowserSessionId === activeSessionId
+    ) {
+      onBrowserJumpRequestConsumed?.(
+        activeSessionId,
+        browserJumpRequest.requestKey,
+      );
+    }
+  }, [
+    activeSessionId,
+    browserJumpRequest,
+    onBrowserJumpRequestConsumed,
+    visibleAgentBrowserSessionId,
+    visibleBrowserState.space,
+  ]);
   const availableWorkspaceSkillMap = useMemo(
     () =>
       new Map(
@@ -5498,7 +6545,7 @@ export function ChatPane({
       : "");
   const composerDisabledReason =
     composerBaseDisabledReason ||
-    (isResponding ? "Current run is still in progress." : "");
+    (isSubmittingMessage ? "Submitting message..." : "");
   const composerDisabled = Boolean(composerDisabledReason);
   const pendingImageInputUnsupportedMessage =
     pendingAttachments.some((attachment) => pendingAttachmentIsImage(attachment)) &&
@@ -5671,6 +6718,17 @@ export function ChatPane({
     onRequestCreateSession?.(draftRequest);
   };
 
+  const toggleTodoPanel = () => {
+    if (todoPlanPreview) {
+      setTodoPlanPreviewState({
+        ...todoPlanPreview,
+        expanded: !todoPlanPreview.expanded,
+      });
+      return;
+    }
+    setTodoPanelExpanded((value) => !value);
+  };
+
   return (
     <PaneCard
       className={
@@ -5827,6 +6885,21 @@ export function ChatPane({
           </div>
         ) : null}
 
+        {displayedTodoPlan ? (
+          <div
+            className="relative z-20 shrink-0 px-6 pt-3"
+            style={{ height: `${todoPanelSlotHeightPx}px` }}
+          >
+            <div className="absolute inset-x-6 top-3">
+              <CurrentTodoPanel
+                todoPlan={displayedTodoPlan}
+                expanded={displayedTodoPanelExpanded}
+                onToggle={toggleTodoPanel}
+              />
+            </div>
+          </div>
+        ) : null}
+
         <div className="relative flex min-h-0 flex-1 flex-col">
           <div className="min-h-0 flex-1 overflow-hidden">
             <div
@@ -5884,6 +6957,8 @@ export function ChatPane({
                         label={assistantLabel}
                         mode={assistantMode}
                         text={message.text}
+                        tone={message.tone ?? "default"}
+                        segments={message.segments ?? []}
                         executionItems={message.executionItems ?? []}
                         memoryProposals={message.memoryProposals ?? []}
                         outputs={message.outputs ?? []}
@@ -5930,6 +7005,8 @@ export function ChatPane({
                       label={assistantLabel}
                       mode={assistantMode}
                       text={liveAssistantText}
+                      tone="default"
+                      segments={renderedLiveAssistantSegments}
                       executionItems={liveExecutionItems}
                       memoryProposals={[]}
                       outputs={[]}
@@ -5950,6 +7027,20 @@ export function ChatPane({
                       onToggleTraceStep={toggleTraceStep}
                       onLinkClick={onOpenLinkInBrowser}
                       live
+                      statusAccessory={
+                        showSessionBrowserJumpCta ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={jumpToSessionBrowser}
+                            className="rounded-full"
+                          >
+                            <span>Jump to browser</span>
+                            <ArrowRight size={13} />
+                          </Button>
+                        ) : null
+                      }
                       status={
                         liveAgentStatus || (isResponding ? "Working" : "")
                       }
@@ -5981,75 +7072,72 @@ export function ChatPane({
                   </div>
                   <form onSubmit={onSubmit} className="w-full">
                     <div className="space-y-3">
-                      {currentTodoPlan ? (
-                        <CurrentTodoPanel
-                          todoPlan={currentTodoPlan}
-                          expanded={todoPanelExpanded}
-                          onToggle={() =>
-                            setTodoPanelExpanded((value) => !value)
+                      <QueuedSessionInputRail
+                        items={displayedQueuedSessionInputs}
+                        onEditItem={updateQueuedSessionInputText}
+                      >
+                        <Composer
+                          input={input}
+                          quotedSkills={quotedSkills}
+                          slashCommands={slashCommandOptions}
+                          attachments={pendingAttachmentItems}
+                          isResponding={isResponding}
+                          pausePending={isPausePending}
+                          pauseDisabled={
+                            pendingInputIdRef.current === STREAM_ATTACH_PENDING ||
+                            isSubmittingMessage
                           }
+                          disabled={composerDisabled}
+                          disabledReason={composerDisabledReason}
+                          selectedModel={effectiveChatModelPreference}
+                          resolvedModelLabel={
+                            resolvedChatModel || modelSelectionUnavailableReason
+                          }
+                          runtimeDefaultModelLabel={runtimeDefaultModel}
+                          modelOptions={availableChatModelOptions}
+                          modelOptionGroups={availableChatModelOptionGroups}
+                          runtimeDefaultModelAvailable={
+                            runtimeDefaultModelAvailable
+                          }
+                          selectedThinkingValue={effectiveThinkingValue}
+                          thinkingValues={selectedThinkingValues}
+                          showThinkingValueSelector={showThinkingValueSelector}
+                          modelSelectionUnavailableReason={
+                            modelSelectionUnavailableReason
+                          }
+                          submitDisabled={Boolean(
+                            pendingImageInputUnsupportedMessage,
+                          )}
+                          placeholder={textareaPlaceholder}
+                          showModelSelector={!isOnboardingVariant}
+                          onModelChange={setChatModelPreference}
+                          onThinkingValueChange={setSelectedThinkingValue}
+                          onOpenModelProviders={() =>
+                            void window.electronAPI.ui.openSettingsPane(
+                              "providers",
+                            )
+                          }
+                          textareaRef={textareaRef}
+                          fileInputRef={fileInputRef}
+                          onChange={setInput}
+                          onKeyDown={onComposerKeyDown}
+                          onCompositionStart={onComposerCompositionStart}
+                          onCompositionEnd={onComposerCompositionEnd}
+                          onAttachmentInputChange={onAttachmentInputChange}
+                          onPause={pauseCurrentRun}
+                          onAddDroppedFiles={appendPendingLocalFiles}
+                          onAddExplorerAttachments={
+                            appendPendingExplorerAttachments
+                          }
+                          onSelectSlashCommand={(command) => {
+                            if (command.kind === "skill") {
+                              addQuotedSkill(command.skillId);
+                            }
+                          }}
+                          onRemoveQuotedSkill={removeQuotedSkill}
+                          onRemoveAttachment={removePendingAttachment}
                         />
-                      ) : null}
-                      <Composer
-                        input={input}
-                        quotedSkills={quotedSkills}
-                        slashCommands={slashCommandOptions}
-                        attachments={pendingAttachmentItems}
-                        isResponding={isResponding}
-                        pausePending={isPausePending}
-                        pauseDisabled={
-                          pendingInputIdRef.current === STREAM_ATTACH_PENDING
-                        }
-                        disabled={composerDisabled}
-                        disabledReason={composerDisabledReason}
-                        selectedModel={effectiveChatModelPreference}
-                        resolvedModelLabel={
-                          resolvedChatModel || modelSelectionUnavailableReason
-                        }
-                        runtimeDefaultModelLabel={runtimeDefaultModel}
-                        modelOptions={availableChatModelOptions}
-                        modelOptionGroups={availableChatModelOptionGroups}
-                        runtimeDefaultModelAvailable={
-                          runtimeDefaultModelAvailable
-                        }
-                        selectedThinkingValue={effectiveThinkingValue}
-                        thinkingValues={selectedThinkingValues}
-                        showThinkingValueSelector={showThinkingValueSelector}
-                        modelSelectionUnavailableReason={
-                          modelSelectionUnavailableReason
-                        }
-                        submitDisabled={Boolean(
-                          pendingImageInputUnsupportedMessage,
-                        )}
-                        placeholder={textareaPlaceholder}
-                        showModelSelector={!isOnboardingVariant}
-                        onModelChange={setChatModelPreference}
-                        onThinkingValueChange={setSelectedThinkingValue}
-                        onOpenModelProviders={() =>
-                          void window.electronAPI.ui.openSettingsPane(
-                            "providers",
-                          )
-                        }
-                        textareaRef={textareaRef}
-                        fileInputRef={fileInputRef}
-                        onChange={setInput}
-                        onKeyDown={onComposerKeyDown}
-                        onCompositionStart={onComposerCompositionStart}
-                        onCompositionEnd={onComposerCompositionEnd}
-                        onAttachmentInputChange={onAttachmentInputChange}
-                        onPause={pauseCurrentRun}
-                        onAddDroppedFiles={appendPendingLocalFiles}
-                        onAddExplorerAttachments={
-                          appendPendingExplorerAttachments
-                        }
-                        onSelectSlashCommand={(command) => {
-                          if (command.kind === "skill") {
-                            addQuotedSkill(command.skillId);
-                          }
-                        }}
-                        onRemoveQuotedSkill={removeQuotedSkill}
-                        onRemoveAttachment={removePendingAttachment}
-                      />
+                      </QueuedSessionInputRail>
                     </div>
                   </form>
                 </div>
@@ -6107,70 +7195,69 @@ export function ChatPane({
               className={`shrink-0 px-6 pb-5 pt-3 ${
                 showHistoryRestoreScreen ? "invisible" : ""
               }`}
-            >
-              <form onSubmit={onSubmit} className="w-full">
-                <div className="space-y-3">
-                  {currentTodoPlan ? (
-                    <CurrentTodoPanel
-                      todoPlan={currentTodoPlan}
-                      expanded={todoPanelExpanded}
-                      onToggle={() => setTodoPanelExpanded((value) => !value)}
-                    />
-                  ) : null}
-                  <Composer
-                    input={input}
-                    quotedSkills={quotedSkills}
-                    slashCommands={slashCommandOptions}
-                    attachments={pendingAttachmentItems}
-                    isResponding={isResponding}
-                    pausePending={isPausePending}
-                    pauseDisabled={
-                      pendingInputIdRef.current === STREAM_ATTACH_PENDING
-                    }
-                    disabled={composerDisabled}
-                    disabledReason={composerDisabledReason}
-                    selectedModel={effectiveChatModelPreference}
-                    resolvedModelLabel={
-                      resolvedChatModel || modelSelectionUnavailableReason
-                    }
-                    runtimeDefaultModelLabel={runtimeDefaultModel}
-                    modelOptions={availableChatModelOptions}
-                    modelOptionGroups={availableChatModelOptionGroups}
-                    runtimeDefaultModelAvailable={runtimeDefaultModelAvailable}
-                    selectedThinkingValue={effectiveThinkingValue}
-                    thinkingValues={selectedThinkingValues}
-                    showThinkingValueSelector={showThinkingValueSelector}
-                    modelSelectionUnavailableReason={
-                      modelSelectionUnavailableReason
-                    }
-                    submitDisabled={Boolean(
-                      pendingImageInputUnsupportedMessage,
-                    )}
-                    placeholder={textareaPlaceholder}
-                    showModelSelector={!isOnboardingVariant}
-                    onModelChange={setChatModelPreference}
-                    onThinkingValueChange={setSelectedThinkingValue}
-                    onOpenModelProviders={() =>
-                      void window.electronAPI.ui.openSettingsPane("providers")
-                    }
-                    textareaRef={textareaRef}
-                    fileInputRef={fileInputRef}
-                    onChange={setInput}
-                    onKeyDown={onComposerKeyDown}
-                    onCompositionStart={onComposerCompositionStart}
-                    onCompositionEnd={onComposerCompositionEnd}
-                    onAttachmentInputChange={onAttachmentInputChange}
-                    onPause={pauseCurrentRun}
-                    onAddDroppedFiles={appendPendingLocalFiles}
-                    onAddExplorerAttachments={appendPendingExplorerAttachments}
-                    onSelectSlashCommand={(command) => {
-                      if (command.kind === "skill") {
-                        addQuotedSkill(command.skillId);
+          >
+            <form onSubmit={onSubmit} className="w-full">
+              <div className="space-y-3">
+                  <QueuedSessionInputRail
+                    items={displayedQueuedSessionInputs}
+                    onEditItem={updateQueuedSessionInputText}
+                  >
+                    <Composer
+                      input={input}
+                      quotedSkills={quotedSkills}
+                      slashCommands={slashCommandOptions}
+                      attachments={pendingAttachmentItems}
+                      isResponding={isResponding}
+                      pausePending={isPausePending}
+                      pauseDisabled={
+                        pendingInputIdRef.current === STREAM_ATTACH_PENDING ||
+                        isSubmittingMessage
                       }
-                    }}
-                    onRemoveQuotedSkill={removeQuotedSkill}
-                    onRemoveAttachment={removePendingAttachment}
-                  />
+                      disabled={composerDisabled}
+                      disabledReason={composerDisabledReason}
+                      selectedModel={effectiveChatModelPreference}
+                      resolvedModelLabel={
+                        resolvedChatModel || modelSelectionUnavailableReason
+                      }
+                      runtimeDefaultModelLabel={runtimeDefaultModel}
+                      modelOptions={availableChatModelOptions}
+                      modelOptionGroups={availableChatModelOptionGroups}
+                      runtimeDefaultModelAvailable={runtimeDefaultModelAvailable}
+                      selectedThinkingValue={effectiveThinkingValue}
+                      thinkingValues={selectedThinkingValues}
+                      showThinkingValueSelector={showThinkingValueSelector}
+                      modelSelectionUnavailableReason={
+                        modelSelectionUnavailableReason
+                      }
+                      submitDisabled={Boolean(
+                        pendingImageInputUnsupportedMessage,
+                      )}
+                      placeholder={textareaPlaceholder}
+                      showModelSelector={!isOnboardingVariant}
+                      onModelChange={setChatModelPreference}
+                      onThinkingValueChange={setSelectedThinkingValue}
+                      onOpenModelProviders={() =>
+                        void window.electronAPI.ui.openSettingsPane("providers")
+                      }
+                      textareaRef={textareaRef}
+                      fileInputRef={fileInputRef}
+                      onChange={setInput}
+                      onKeyDown={onComposerKeyDown}
+                      onCompositionStart={onComposerCompositionStart}
+                      onCompositionEnd={onComposerCompositionEnd}
+                      onAttachmentInputChange={onAttachmentInputChange}
+                      onPause={pauseCurrentRun}
+                      onAddDroppedFiles={appendPendingLocalFiles}
+                      onAddExplorerAttachments={appendPendingExplorerAttachments}
+                      onSelectSlashCommand={(command) => {
+                        if (command.kind === "skill") {
+                          addQuotedSkill(command.skillId);
+                        }
+                      }}
+                      onRemoveQuotedSkill={removeQuotedSkill}
+                      onRemoveAttachment={removePendingAttachment}
+                    />
+                  </QueuedSessionInputRail>
                 </div>
               </form>
             </div>
@@ -6545,10 +7632,210 @@ function UserTurn({
   );
 }
 
+function queuedSessionInputPreviewText(item: QueuedSessionInput) {
+  const parsedQuotedSkills = parseSerializedQuotedSkillPrompt(item.text);
+  const previewText =
+    parsedQuotedSkills.body ||
+    parsedQuotedSkills.skillIds.map((skillId) => `/${skillId}`).join(" ");
+  return previewText.replace(/\s+/g, " ").trim();
+}
+
+function QueuedSessionInputRail({
+  items,
+  onEditItem,
+  children,
+}: {
+  items: QueuedSessionInput[];
+  onEditItem?: (item: QueuedSessionInput, nextText: string) => Promise<void>;
+  children: ReactNode;
+}) {
+  const [editingInputId, setEditingInputId] = useState("");
+  const [editingDraft, setEditingDraft] = useState("");
+  const [editingError, setEditingError] = useState("");
+  const [savingInputId, setSavingInputId] = useState("");
+  const panelInsetPx = 18;
+  const panelHeightPx = 112;
+  const overlapPx = 28;
+  const queueViewportHeightPx = 50;
+  const reservedTopPx = 94;
+
+  useEffect(() => {
+    if (!editingInputId) {
+      return;
+    }
+    const activeItem = items.find((item) => item.inputId === editingInputId);
+    if (!activeItem || activeItem.status !== "queued") {
+      setEditingInputId("");
+      setEditingDraft("");
+      setEditingError("");
+      setSavingInputId("");
+    }
+  }, [editingInputId, items]);
+
+  const cancelEditing = () => {
+    setEditingInputId("");
+    setEditingDraft("");
+    setEditingError("");
+    setSavingInputId("");
+  };
+
+  const saveEditingItem = async (item: QueuedSessionInput) => {
+    if (!onEditItem || savingInputId || item.status !== "queued") {
+      return;
+    }
+    setEditingError("");
+    setSavingInputId(item.inputId);
+    try {
+      await onEditItem(item, editingDraft);
+      cancelEditing();
+    } catch (error) {
+      setEditingError(normalizeErrorMessage(error));
+    } finally {
+      setSavingInputId("");
+    }
+  };
+
+  if (items.length === 0) {
+    return <>{children}</>;
+  }
+
+  return (
+    <div className="relative" style={{ paddingTop: `${reservedTopPx}px` }}>
+      <div className="pointer-events-none absolute inset-x-0 top-0">
+        <div
+          className="pointer-events-auto absolute inset-x-0 overflow-hidden rounded-[28px] border border-border/32 bg-background shadow-[0_16px_34px_rgba(15,23,42,0.06)]"
+          style={{
+            left: `${panelInsetPx}px`,
+            right: `${panelInsetPx}px`,
+            height: `${panelHeightPx}px`,
+          }}
+        >
+          <div className="px-5 pt-4">
+            <div
+              className="overflow-y-auto pr-1.5"
+              style={{ maxHeight: `${queueViewportHeightPx}px` }}
+            >
+              <div className="space-y-1.5">
+                {items.map((item) => {
+                  const previewText = queuedSessionInputPreviewText(item);
+                  const isEditing = editingInputId === item.inputId;
+                  const isSaving = savingInputId === item.inputId;
+                  return (
+                    <div
+                      key={item.inputId}
+                      className="rounded-[14px] px-1 text-[14px] leading-7 text-foreground/84"
+                    >
+                      {isEditing ? (
+                        <div className="space-y-1.5">
+                          <div className="flex items-center gap-2">
+                            <CornerDownLeft
+                              size={15}
+                              className="shrink-0 text-muted-foreground/62"
+                            />
+                            <Input
+                              value={editingDraft}
+                              onChange={(event) =>
+                                setEditingDraft(event.target.value)
+                              }
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  void saveEditingItem(item);
+                                } else if (event.key === "Escape") {
+                                  event.preventDefault();
+                                  cancelEditing();
+                                }
+                              }}
+                              disabled={isSaving}
+                              autoFocus
+                              className="h-8 min-w-0 flex-1 rounded-[10px] border-border/40 bg-background px-2.5 text-[13px]"
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              disabled={isSaving}
+                              onClick={() => {
+                                void saveEditingItem(item);
+                              }}
+                              className="size-7 rounded-full text-muted-foreground hover:bg-foreground/6 hover:text-foreground"
+                              aria-label="Save queued message edit"
+                            >
+                              {isSaving ? (
+                                <Loader2 size={13} className="animate-spin" />
+                              ) : (
+                                <Check size={13} />
+                              )}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              disabled={isSaving}
+                              onClick={cancelEditing}
+                              className="size-7 rounded-full text-muted-foreground hover:bg-foreground/6 hover:text-foreground"
+                              aria-label="Cancel queued message edit"
+                            >
+                              <X size={13} />
+                            </Button>
+                          </div>
+                          {editingError ? (
+                            <div className="pl-6 text-[11px] leading-5 text-destructive">
+                              {editingError}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-3">
+                          <CornerDownLeft
+                            size={15}
+                            className="shrink-0 text-muted-foreground/62"
+                          />
+                          <div className="min-w-0 flex-1 truncate">
+                            {previewText || "Queued message"}
+                          </div>
+                          {onEditItem && item.status === "queued" ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              onClick={() => {
+                                setEditingInputId(item.inputId);
+                                setEditingDraft(previewText);
+                                setEditingError("");
+                              }}
+                              className="size-7 rounded-full text-muted-foreground hover:bg-foreground/6 hover:text-foreground"
+                              aria-label="Edit queued message"
+                            >
+                              <PencilLine size={13} />
+                            </Button>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div
+        className="relative z-10 rounded-[24px] bg-background"
+        style={{ marginTop: `${-overlapPx}px` }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function AssistantTurn({
   label,
   mode,
   text,
+  tone = "default",
+  segments,
   executionItems,
   memoryProposals,
   outputs,
@@ -6567,10 +7854,13 @@ function AssistantTurn({
   onLinkClick,
   status = "",
   live = false,
+  statusAccessory = null,
 }: {
   label: string;
   mode: string;
   text: string;
+  tone?: ChatMessage["tone"];
+  segments: ChatAssistantSegment[];
   executionItems: ChatExecutionTimelineItem[];
   memoryProposals: MemoryUpdateProposalRecordPayload[];
   outputs: WorkspaceOutputRecordPayload[];
@@ -6594,49 +7884,111 @@ function AssistantTurn({
   onLinkClick?: (url: string) => void;
   status?: string;
   live?: boolean;
+  statusAccessory?: ReactNode;
 }) {
   const normalizedStatus = status.replace(/\.+$/, "").trim();
+  const renderedSegments =
+    segments.length > 0
+      ? segments
+      : executionItems.length > 0 || Boolean(text)
+        ? [
+            ...(executionItems.length > 0
+              ? ([
+                  {
+                    kind: "execution",
+                    items: executionItems,
+                  },
+                ] as ChatAssistantSegment[])
+              : []),
+            ...(text
+              ? ([
+                  {
+                    kind: "output",
+                    text,
+                    tone,
+                  },
+                ] as ChatAssistantSegment[])
+              : []),
+          ]
+        : [];
   const showStatusPlaceholder =
     live &&
     Boolean(normalizedStatus) &&
-    !text &&
-    executionItems.length === 0;
+    renderedSegments.length === 0;
   const showWorkingStatusLine =
     live &&
-    (executionItems.length > 0 || Boolean(text));
+    renderedSegments.length > 0;
+  const renderStatusLine = (nextLabel: string, className = "") => {
+    if (!statusAccessory) {
+      return <LiveStatusLine label={nextLabel} className={className} />;
+    }
+    return (
+      <div
+        className={`flex min-w-0 items-center justify-between gap-3 ${className}`.trim()}
+      >
+        <LiveStatusLine label={nextLabel} className="min-w-0" />
+        <div className="shrink-0">{statusAccessory}</div>
+      </div>
+    );
+  };
 
   return (
     <div className="flex min-w-0 justify-start">
       <article className="min-w-0 flex-1">
-        {showStatusPlaceholder ? (
-          <LiveStatusLine label={normalizedStatus} />
-        ) : null}
+        {showStatusPlaceholder ? renderStatusLine(normalizedStatus) : null}
 
-        {executionItems.length > 0 ? (
-          <TraceStepGroup
-            items={executionItems}
-            collapsedByStepId={collapsedTraceByStepId}
-            onToggleStep={onToggleTraceStep}
-            live={live}
-            liveOutputStarted={live && Boolean(text)}
-            onLinkClick={onLinkClick}
-          />
-        ) : null}
+        {renderedSegments.map((segment, index) =>
+          segment.kind === "execution" ? (
+            <TraceStepGroup
+              key={`execution-${index}`}
+              items={segment.items}
+              collapsedByStepId={collapsedTraceByStepId}
+              onToggleStep={onToggleTraceStep}
+              live={live}
+              liveOutputStarted={
+                live &&
+                renderedSegments
+                  .slice(index + 1)
+                  .some((nextSegment) => nextSegment.kind === "output")
+              }
+              onLinkClick={onLinkClick}
+            />
+          ) : segment.tone === "error" ? (
+            <div
+              key={`output-${index}`}
+              className="theme-chat-system-bubble mt-2 rounded-[14px] border px-3 py-2.5 text-[12px] text-foreground"
+            >
+              <div className="flex items-start gap-2">
+                <AlertTriangle
+                  size={14}
+                  className="mt-0.5 shrink-0 text-destructive"
+                />
+                <SimpleMarkdown
+                  className="chat-markdown max-w-full text-foreground"
+                  onLinkClick={onLinkClick}
+                >
+                  {segment.text}
+                </SimpleMarkdown>
+              </div>
+            </div>
+          ) : (
+            <SimpleMarkdown
+              key={`output-${index}`}
+              className="chat-markdown chat-assistant-markdown mt-2 max-w-full text-foreground"
+              onLinkClick={onLinkClick}
+            >
+              {segment.text}
+            </SimpleMarkdown>
+          ),
+        )}
 
         {showWorkingStatusLine ? (
-          <LiveStatusLine
-            label="Working"
-            className={executionItems.length > 0 ? "mt-1" : ""}
-          />
-        ) : null}
-
-        {text ? (
-          <SimpleMarkdown
-            className="chat-markdown chat-assistant-markdown mt-2 max-w-full text-foreground"
-            onLinkClick={onLinkClick}
-          >
-            {text}
-          </SimpleMarkdown>
+          renderStatusLine(
+            "Working",
+            renderedSegments.some((segment) => segment.kind === "execution")
+              ? "mt-1"
+              : "",
+          )
         ) : null}
 
         {memoryProposals.length > 0 ? (
@@ -6798,12 +8150,12 @@ function CurrentTodoPanel({
     totalTaskCount > 0 ? `${currentTaskPosition}/${totalTaskCount}` : "0/0";
 
   return (
-    <div className="overflow-hidden rounded-[18px] border border-border/35 bg-muted/50">
+    <div className="overflow-hidden rounded-[18px] border border-border/45 bg-background shadow-[0_16px_34px_rgba(15,23,42,0.08)]">
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={expanded}
-        className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition hover:bg-background/30"
+        className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition hover:bg-muted/55"
       >
         <div
           className={`inline-flex size-5 shrink-0 items-center justify-center rounded-full ${
@@ -6831,7 +8183,7 @@ function CurrentTodoPanel({
       </button>
 
       {expanded ? (
-        <div className="border-t border-border/20 px-3 py-3">
+        <div className="max-h-[320px] overflow-y-auto border-t border-border/20 px-3 py-3">
           <div className="space-y-3">
             {visiblePhases.map((phase) => {
               const phaseCompletedCount = phase.tasks.filter(
@@ -6841,7 +8193,7 @@ function CurrentTodoPanel({
               return (
                 <div
                   key={phase.id}
-                  className="rounded-[16px] border border-border/25 bg-muted/50 px-3 py-3"
+                  className="rounded-[16px] border border-border/30 bg-muted/75 px-3 py-3"
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-[12px] font-medium text-foreground">
@@ -7877,7 +9229,7 @@ function Composer({
     !runtimeDefaultModelAvailable &&
     modelOptions.length === 0 &&
     modelOptionGroups.length === 0;
-  const inputDisabled = disabled || isResponding;
+  const inputDisabled = disabled;
   const activeSlashRange = useMemo(
     () => findActiveSlashCommandRange(input, caretIndex),
     [caretIndex, input],
@@ -8168,6 +9520,16 @@ function Composer({
     onKeyDown(event);
   };
 
+  const handleTextareaPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const pastedFiles = clipboardFilesFromDataTransfer(event.clipboardData);
+    if (pastedFiles.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    onAddDroppedFiles(pastedFiles);
+  };
+
   const openSkillPickerFromComposerMenu = () => {
     setComposerActionsView("skills");
     setSkillPickerQuery("");
@@ -8193,7 +9555,7 @@ function Composer({
   };
 
   const allowAttachmentDrop = (dataTransfer: DataTransfer | null) => {
-    if (!dataTransfer || disabled || isResponding) {
+    if (!dataTransfer || disabled) {
       return false;
     }
 
@@ -8356,6 +9718,7 @@ function Composer({
             value={input}
             onChange={handleTextareaChange}
             onKeyDown={handleTextareaKeyDown}
+            onPaste={handleTextareaPaste}
             onSelect={(event) => syncCaretFromTextarea(event.currentTarget)}
             onClick={(event) => syncCaretFromTextarea(event.currentTarget)}
             onCompositionStart={onCompositionStart}
@@ -8436,7 +9799,7 @@ function Composer({
                   runtimeDefaultModelAvailable={runtimeDefaultModelAvailable}
                   modelOptions={modelOptions}
                   modelOptionGroups={modelOptionGroups}
-                  disabled={isResponding}
+                  disabled={disabled}
                   compact={compactComposerControls}
                   onModelChange={onModelChange}
                 />
@@ -8464,7 +9827,7 @@ function Composer({
               <ThinkingValueSelect
                 selectedThinkingValue={selectedThinkingValue}
                 thinkingValues={thinkingValues}
-                disabled={isResponding}
+                disabled={disabled}
                 compact={compactComposerControls}
                 compactWidth={
                   compactComposerControls ? compactThinkingControlWidth : undefined
@@ -8623,7 +9986,7 @@ function Composer({
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={pausePending || pauseDisabled}
+                disabled={pausePending || pauseDisabled || disabled}
                 onClick={onPause}
                 className="rounded-full px-3"
               >
@@ -8634,22 +9997,22 @@ function Composer({
                 )}
                 Pause
               </Button>
-            ) : (
-              <Button
-                size="icon"
-                disabled={
-                  (!input.trim() &&
-                    attachments.length === 0 &&
-                    quotedSkills.length === 0) ||
-                  disabled ||
-                  submitDisabled
-                }
-                render={<button type="submit" />}
-                className="rounded-full"
-              >
-                <ArrowUp size={16} />
-              </Button>
-            )}
+            ) : null}
+            <Button
+              size="icon"
+              aria-label={isResponding ? "Queue message" : "Send message"}
+              disabled={
+                (!input.trim() &&
+                  attachments.length === 0 &&
+                  quotedSkills.length === 0) ||
+                disabled ||
+                submitDisabled
+              }
+              render={<button type="submit" />}
+              className="rounded-full"
+            >
+              <ArrowUp size={16} />
+            </Button>
           </div>
         </div>
       </div>

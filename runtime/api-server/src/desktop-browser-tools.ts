@@ -15,6 +15,8 @@ export {
 
 export interface DesktopBrowserToolExecutionContext {
   workspaceId?: string | null;
+  sessionId?: string | null;
+  space?: "agent" | "user" | null;
 }
 
 export interface DesktopBrowserToolServiceLike {
@@ -36,6 +38,8 @@ type BrowserFetchOptions = {
   path: string;
   body?: Record<string, unknown>;
   workspaceId?: string | null;
+  sessionId?: string | null;
+  space?: "agent" | "user" | null;
 };
 
 const INTERACTIVE_ELEMENTS_SELECTOR = [
@@ -111,6 +115,15 @@ function browserToolHeaders(
   const workspaceId = typeof context.workspaceId === "string" ? context.workspaceId.trim() : "";
   if (workspaceId) {
     headers["x-holaboss-workspace-id"] = workspaceId;
+  }
+  const sessionId = typeof context.sessionId === "string" ? context.sessionId.trim() : "";
+  if (sessionId) {
+    headers["x-holaboss-session-id"] = sessionId;
+  }
+  const browserSpace =
+    context.space === "user" || context.space === "agent" ? context.space : "";
+  if (browserSpace) {
+    headers["x-holaboss-browser-space"] = browserSpace;
   }
   return headers;
 }
@@ -333,7 +346,13 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
     let reachable = false;
     if (configured) {
       try {
-        await this.#browserFetch(config, { method: "GET", path: "/health", workspaceId: context.workspaceId });
+        await this.#browserFetch(config, {
+          method: "GET",
+          path: "/health",
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        });
         reachable = true;
       } catch {
         reachable = false;
@@ -368,7 +387,9 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
           method: "POST",
           path: "/navigate",
           body: { url },
-          workspaceId: context.workspaceId
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
         });
         return { ok: true, navigation: result };
       }
@@ -381,12 +402,20 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
             url,
             background: optionalBoolean(args.background, false)
           },
-          workspaceId: context.workspaceId
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
         });
         return { ok: true, tabs: result };
       }
       case "browser_get_state": {
-        const page = await this.#browserFetch(config, { method: "GET", path: "/page", workspaceId: context.workspaceId });
+        const page = await this.#browserFetch(config, {
+          method: "GET",
+          path: "/page",
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        });
         const state = await this.#evaluate(config, interactiveElementsExpression(), context);
         const payload: Record<string, unknown> = {
           ok: true,
@@ -398,7 +427,9 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
             method: "POST",
             path: "/screenshot",
             body: { format: "png" },
-            workspaceId: context.workspaceId
+            workspaceId: context.workspaceId,
+            sessionId: context.sessionId,
+            space: context.space,
           });
         }
         return payload;
@@ -406,7 +437,13 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
       case "browser_click": {
         const index = requiredPositiveInteger(args.index, "index");
         const result = await this.#evaluate(config, clickExpression(index), context);
-        const page = await this.#browserFetch(config, { method: "GET", path: "/page", workspaceId: context.workspaceId });
+        const page = await this.#browserFetch(config, {
+          method: "GET",
+          path: "/page",
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        });
         return { ok: true, action: result, page };
       }
       case "browser_type": {
@@ -422,13 +459,25 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
           }),
           context
         );
-        const page = await this.#browserFetch(config, { method: "GET", path: "/page", workspaceId: context.workspaceId });
+        const page = await this.#browserFetch(config, {
+          method: "GET",
+          path: "/page",
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        });
         return { ok: true, action: result, page };
       }
       case "browser_press": {
         const key = requiredString(args.key, "key");
         const result = await this.#evaluate(config, pressExpression(key), context);
-        const page = await this.#browserFetch(config, { method: "GET", path: "/page", workspaceId: context.workspaceId });
+        const page = await this.#browserFetch(config, {
+          method: "GET",
+          path: "/page",
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        });
         return { ok: true, action: result, page };
       }
       case "browser_scroll": {
@@ -437,22 +486,45 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
         const direction = args.direction === "up" ? "up" : "down";
         const deltaY = explicitDelta ?? (direction === "up" ? -Math.abs(amount) : Math.abs(amount));
         const result = await this.#evaluate(config, scrollExpression(deltaY), context);
-        const page = await this.#browserFetch(config, { method: "GET", path: "/page", workspaceId: context.workspaceId });
+        const page = await this.#browserFetch(config, {
+          method: "GET",
+          path: "/page",
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        });
         return { ok: true, action: result, page };
       }
       case "browser_back": {
         const result = await this.#evaluate(config, historyExpression("back"), context);
-        const page = await this.#browserFetch(config, { method: "GET", path: "/page", workspaceId: context.workspaceId });
+        const page = await this.#browserFetch(config, {
+          method: "GET",
+          path: "/page",
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        });
         return { ok: true, action: result, page };
       }
       case "browser_forward": {
         const result = await this.#evaluate(config, historyExpression("forward"), context);
-        const page = await this.#browserFetch(config, { method: "GET", path: "/page", workspaceId: context.workspaceId });
+        const page = await this.#browserFetch(config, {
+          method: "GET",
+          path: "/page",
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        });
         return { ok: true, action: result, page };
       }
       case "browser_reload": {
         const result = await this.#evaluate(config, reloadExpression(), context);
-        const page = await this.#browserFetch(config, { method: "GET", path: "/page", workspaceId: context.workspaceId });
+        const page = await this.#browserFetch(config, {
+          method: "GET",
+          path: "/page",
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+        });
         return { ok: true, action: result, page };
       }
       case "browser_screenshot": {
@@ -467,14 +539,22 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
               format,
               ...(quality !== null ? { quality } : {})
             },
-            workspaceId: context.workspaceId
+            workspaceId: context.workspaceId,
+            sessionId: context.sessionId,
+            space: context.space,
           })
         };
       }
       case "browser_list_tabs": {
         return {
           ok: true,
-          tabs: await this.#browserFetch(config, { method: "GET", path: "/tabs", workspaceId: context.workspaceId })
+          tabs: await this.#browserFetch(config, {
+            method: "GET",
+            path: "/tabs",
+            workspaceId: context.workspaceId,
+            sessionId: context.sessionId,
+            space: context.space,
+          })
         };
       }
     }
@@ -489,7 +569,9 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
       method: "POST",
       path: "/evaluate",
       body: evaluateExpressionPayload(expression),
-      workspaceId: context.workspaceId
+      workspaceId: context.workspaceId,
+      sessionId: context.sessionId,
+      space: context.space,
     });
     const payload = asRecord(response);
     return asRecord(payload?.result) ?? {};
@@ -499,7 +581,10 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
     const requestUrl = `${browserBaseUrl(config)}${options.path}`;
     const response = await this.#fetch(requestUrl, {
       method: options.method,
-      headers: browserToolHeaders(config, { workspaceId: options.workspaceId }),
+      headers: browserToolHeaders(config, {
+        workspaceId: options.workspaceId,
+        sessionId: options.sessionId,
+      }),
       body: options.body ? JSON.stringify(options.body) : undefined
     });
     let payload: unknown = null;

@@ -19,6 +19,7 @@ const ORIGINAL_ENV = {
   SANDBOX_AGENT_TASK_PROPOSAL_RUN_TIMEOUT_S: process.env.SANDBOX_AGENT_TASK_PROPOSAL_RUN_TIMEOUT_S,
   SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S: process.env.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S,
   SANDBOX_AGENT_TASK_PROPOSAL_RUN_IDLE_TIMEOUT_S: process.env.SANDBOX_AGENT_TASK_PROPOSAL_RUN_IDLE_TIMEOUT_S,
+  SANDBOX_AGENT_RUNNER_HEARTBEAT_MS: process.env.SANDBOX_AGENT_RUNNER_HEARTBEAT_MS,
   SANDBOX_RUNTIME_API_URL: process.env.SANDBOX_RUNTIME_API_URL,
   SANDBOX_RUNTIME_API_HOST: process.env.SANDBOX_RUNTIME_API_HOST,
   SANDBOX_RUNTIME_API_PORT: process.env.SANDBOX_RUNTIME_API_PORT,
@@ -56,6 +57,11 @@ afterEach(() => {
     delete process.env.SANDBOX_AGENT_TASK_PROPOSAL_RUN_IDLE_TIMEOUT_S;
   } else {
     process.env.SANDBOX_AGENT_TASK_PROPOSAL_RUN_IDLE_TIMEOUT_S = ORIGINAL_ENV.SANDBOX_AGENT_TASK_PROPOSAL_RUN_IDLE_TIMEOUT_S;
+  }
+  if (ORIGINAL_ENV.SANDBOX_AGENT_RUNNER_HEARTBEAT_MS === undefined) {
+    delete process.env.SANDBOX_AGENT_RUNNER_HEARTBEAT_MS;
+  } else {
+    process.env.SANDBOX_AGENT_RUNNER_HEARTBEAT_MS = ORIGINAL_ENV.SANDBOX_AGENT_RUNNER_HEARTBEAT_MS;
   }
   if (ORIGINAL_ENV.SANDBOX_RUNTIME_API_URL === undefined) {
     delete process.env.SANDBOX_RUNTIME_API_URL;
@@ -323,6 +329,28 @@ test("native runner executor gives task proposal runs a longer idle timeout budg
 
   const executor = new NativeRunnerExecutor();
   const response = await executor.run(payload({ session_kind: "task_proposal" }));
+  const events = response.events as Array<Record<string, unknown>>;
+
+  assert.deepEqual(
+    events.map((event) => event.event_type),
+    ["run_started", "run_completed"]
+  );
+});
+
+test("native runner executor keeps silent runs alive with invisible runner heartbeats", async () => {
+  process.env.SANDBOX_AGENT_RUN_TIMEOUT_S = "10";
+  process.env.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S = "1";
+  process.env.SANDBOX_AGENT_RUNNER_HEARTBEAT_MS = "50";
+
+  setNodeRunnerTemplate([
+    "setTimeout(() => {",
+    "  process.stdout.write(JSON.stringify({ session_id: 'session-1', input_id: 'input-1', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello' } }) + '\\n');",
+    "  process.stdout.write(JSON.stringify({ session_id: 'session-1', input_id: 'input-1', sequence: 2, event_type: 'run_completed', payload: { status: 'success' } }) + '\\n');",
+    "}, 1500);"
+  ]);
+
+  const executor = new NativeRunnerExecutor();
+  const response = await executor.run(payload());
   const events = response.events as Array<Record<string, unknown>>;
 
   assert.deepEqual(

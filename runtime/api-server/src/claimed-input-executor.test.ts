@@ -6,14 +6,19 @@ import { afterEach, test } from "node:test";
 
 import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
-import { processClaimedInput } from "./claimed-input-executor.js";
+import {
+  processClaimedInput,
+  registerWorkspaceAgentRunStarted,
+} from "./claimed-input-executor.js";
 import type { MemoryServiceLike } from "./memory.js";
 
 const tempDirs: string[] = [];
 const ORIGINAL_ENV = {
-  SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE: process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE,
+  SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE:
+    process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE,
   SANDBOX_AGENT_RUN_TIMEOUT_S: process.env.SANDBOX_AGENT_RUN_TIMEOUT_S,
-  SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S: process.env.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S,
+  SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S:
+    process.env.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S,
   HB_SANDBOX_ROOT: process.env.HB_SANDBOX_ROOT,
   HOLABOSS_RUNTIME_CONFIG_PATH: process.env.HOLABOSS_RUNTIME_CONFIG_PATH,
 };
@@ -25,17 +30,20 @@ afterEach(() => {
   if (ORIGINAL_ENV.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE === undefined) {
     delete process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE;
   } else {
-    process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE = ORIGINAL_ENV.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE;
+    process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE =
+      ORIGINAL_ENV.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE;
   }
   if (ORIGINAL_ENV.SANDBOX_AGENT_RUN_TIMEOUT_S === undefined) {
     delete process.env.SANDBOX_AGENT_RUN_TIMEOUT_S;
   } else {
-    process.env.SANDBOX_AGENT_RUN_TIMEOUT_S = ORIGINAL_ENV.SANDBOX_AGENT_RUN_TIMEOUT_S;
+    process.env.SANDBOX_AGENT_RUN_TIMEOUT_S =
+      ORIGINAL_ENV.SANDBOX_AGENT_RUN_TIMEOUT_S;
   }
   if (ORIGINAL_ENV.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S === undefined) {
     delete process.env.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S;
   } else {
-    process.env.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S = ORIGINAL_ENV.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S;
+    process.env.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S =
+      ORIGINAL_ENV.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S;
   }
   if (ORIGINAL_ENV.HB_SANDBOX_ROOT === undefined) {
     delete process.env.HB_SANDBOX_ROOT;
@@ -45,7 +53,8 @@ afterEach(() => {
   if (ORIGINAL_ENV.HOLABOSS_RUNTIME_CONFIG_PATH === undefined) {
     delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
   } else {
-    process.env.HOLABOSS_RUNTIME_CONFIG_PATH = ORIGINAL_ENV.HOLABOSS_RUNTIME_CONFIG_PATH;
+    process.env.HOLABOSS_RUNTIME_CONFIG_PATH =
+      ORIGINAL_ENV.HOLABOSS_RUNTIME_CONFIG_PATH;
   }
 });
 
@@ -59,14 +68,13 @@ function makeStore(prefix: string): RuntimeStateStore {
   const root = makeTempDir(prefix);
   return new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
-    workspaceRoot: path.join(root, "workspaces")
+    workspaceRoot: path.join(root, "workspaces"),
   });
 }
 
 function setNodeRunnerCommand(lines: string[]): void {
   const scriptBase64 = Buffer.from(lines.join("\n"), "utf8").toString("base64");
-  process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE =
-    `printf '%s' '${scriptBase64}' | base64 --decode | {runtime_node} - {request_base64}`;
+  process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE = `printf '%s' '${scriptBase64}' | base64 --decode | {runtime_node} - {request_base64}`;
 }
 
 test("claimed input marks missing workspace failed and runtime error", async () => {
@@ -80,31 +88,31 @@ test("claimed input marks missing workspace failed and runtime error", async () 
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    payload: { text: "hello" }
+    payload: { text: "hello" },
   });
   store.deleteWorkspace(workspace.id);
 
   const claimed = store.claimInputs({
     limit: 1,
     claimedBy: "sandbox-agent-ts-worker",
-    leaseSeconds: 300
+    leaseSeconds: 300,
   });
 
   assert.equal(claimed.length, 1);
 
   await processClaimedInput({
     store,
-    record: claimed[0]
+    record: claimed[0],
   });
 
   const updated = store.getInput(queued.inputId);
   const runtimeState = store.getRuntimeState({
     workspaceId: workspace.id,
-    sessionId: "session-main"
+    sessionId: "session-main",
   });
   const events = store.listOutputEvents({
     sessionId: "session-main",
-    inputId: queued.inputId
+    inputId: queued.inputId,
   });
   const turnResult = store.getTurnResult({ inputId: queued.inputId });
 
@@ -123,7 +131,7 @@ test("claimed input marks missing workspace failed and runtime error", async () 
     completed_calls: 0,
     failed_calls: 0,
     tool_names: [],
-    tool_ids: []
+    tool_ids: [],
   });
 
   store.close();
@@ -134,14 +142,24 @@ test("claimed input persists runner events, assistant text, and idle state on su
   let scheduledEvolveTasks = 0;
   let eventTypesAtSchedule: string[] = [];
   const memoryService: MemoryServiceLike = {
-    async search() { return { results: [] }; },
-    async get() { return { path: "", text: "" }; },
+    async search() {
+      return { results: [] };
+    },
+    async get() {
+      return { path: "", text: "" };
+    },
     async upsert(payload: Record<string, unknown>) {
       return { path: payload.path, text: payload.content };
     },
-    async status() { return {}; },
-    async sync() { return {}; },
-    async capture() { return { files: {} }; },
+    async status() {
+      return {};
+    },
+    async sync() {
+      return {};
+    },
+    async capture() {
+      return { files: {} };
+    },
   };
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
@@ -152,7 +170,7 @@ test("claimed input persists runner events, assistant text, and idle state on su
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    payload: { text: "hello" }
+    payload: { text: "hello" },
   });
   setNodeRunnerCommand([
     "const request = process.argv.at(-1) ?? '';",
@@ -166,13 +184,13 @@ test("claimed input persists runner events, assistant text, and idle state on su
     `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 7, event_type: 'skill_invocation', payload: { phase: 'completed', call_id: 'call-skill', requested_name: 'customer_lookup', skill_name: 'customer_lookup', skill_id: 'customer_lookup', widening_scope: 'run', workspace_boundary_override: false, managed_tools: ['bash', 'deploy'], granted_tools: ['deploy'], active_granted_tools: ['deploy'], managed_commands: ['deploy-docs'], granted_commands: ['deploy-docs'], active_granted_commands: ['deploy-docs'], error: false } }) + '\\n');`,
     `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 8, event_type: 'tool_call', payload: { phase: 'completed', tool_name: 'deploy', tool_id: 'workspace.deploy', call_id: 'call-2', error: true, message: 'permission denied by policy' } }) + '\\n');`,
     `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 9, event_type: 'output_delta', payload: { delta: 'Hello from TS' } }) + '\\n');`,
-    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 10, event_type: 'run_completed', payload: { status: 'ok', usage: { input_tokens: 12, output_tokens: 34 } } }) + '\\n');`
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 10, event_type: 'run_completed', payload: { status: 'ok', usage: { input_tokens: 12, output_tokens: 34 } } }) + '\\n');`,
   ]);
 
   const claimed = store.claimInputs({
     limit: 1,
     claimedBy: "sandbox-agent-ts-worker",
-    leaseSeconds: 300
+    leaseSeconds: 300,
   });
 
   await processClaimedInput({
@@ -194,15 +212,15 @@ test("claimed input persists runner events, assistant text, and idle state on su
   const updated = store.getInput(queued.inputId);
   const runtimeState = store.getRuntimeState({
     workspaceId: workspace.id,
-    sessionId: "session-main"
+    sessionId: "session-main",
   });
   const events = store.listOutputEvents({
     sessionId: "session-main",
-    inputId: queued.inputId
+    inputId: queued.inputId,
   });
   const messages = store.listSessionMessages({
     workspaceId: workspace.id,
-    sessionId: "session-main"
+    sessionId: "session-main",
   });
   const turnResult = store.getTurnResult({ inputId: queued.inputId });
 
@@ -226,7 +244,7 @@ test("claimed input persists runner events, assistant text, and idle state on su
       "tool_call",
       "output_delta",
       "run_completed",
-    ]
+    ],
   );
   assert.equal(scheduledEvolveTasks, 1);
   assert.deepEqual(eventTypesAtSchedule, [
@@ -241,9 +259,12 @@ test("claimed input persists runner events, assistant text, and idle state on su
     "output_delta",
     "run_completed",
   ]);
-  assert.equal(messages.length, 1);
-  assert.equal(messages[0].role, "assistant");
-  assert.equal(messages[0].text, "Hello from TS");
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].id, `user-${queued.inputId}`);
+  assert.equal(messages[0].role, "user");
+  assert.equal(messages[0].text, "hello");
+  assert.equal(messages[1].role, "assistant");
+  assert.equal(messages[1].text, "Hello from TS");
   assert.ok(turnResult);
   assert.equal(turnResult.status, "completed");
   assert.equal(turnResult.stopReason, "ok");
@@ -252,7 +273,7 @@ test("claimed input persists runner events, assistant text, and idle state on su
   assert.deepEqual(turnResult.promptSectionIds, [
     "runtime_core",
     "execution_policy",
-    "capability_policy"
+    "capability_policy",
   ]);
   assert.equal(turnResult.capabilityManifestFingerprint, "a".repeat(64));
   assert.equal(turnResult.requestSnapshotFingerprint, "b".repeat(64));
@@ -292,13 +313,19 @@ test("claimed input persists runner events, assistant text, and idle state on su
     {
       tool_name: "deploy",
       tool_id: "workspace.deploy",
-      reason: "permission denied by policy"
-    }
+      reason: "permission denied by policy",
+    },
   ]);
-  assert.deepEqual(turnResult.tokenUsage, { input_tokens: 12, output_tokens: 34 });
+  assert.deepEqual(turnResult.tokenUsage, {
+    input_tokens: 12,
+    output_tokens: 34,
+  });
   const snapshot = store.getTurnRequestSnapshot({ inputId: queued.inputId });
   assert.equal(snapshot, null);
-  assert.equal(store.getCompactionBoundary({ boundaryId: `compaction:${queued.inputId}` }), null);
+  assert.equal(
+    store.getCompactionBoundary({ boundaryId: `compaction:${queued.inputId}` }),
+    null,
+  );
 
   store.close();
 });
@@ -362,7 +389,9 @@ test("claimed input creates a completion notification for successful cronjob ses
     claimedBy: "sandbox-agent-ts-worker",
   });
 
-  const notifications = store.listRuntimeNotifications({ workspaceId: workspace.id });
+  const notifications = store.listRuntimeNotifications({
+    workspaceId: workspace.id,
+  });
 
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0]?.title, "Daily Run Completed");
@@ -435,7 +464,9 @@ test("claimed input creates a completion notification for failed cronjob session
     claimedBy: "sandbox-agent-ts-worker",
   });
 
-  const notifications = store.listRuntimeNotifications({ workspaceId: workspace.id });
+  const notifications = store.listRuntimeNotifications({
+    workspaceId: workspace.id,
+  });
 
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0]?.title, "Daily Run Failed");
@@ -462,31 +493,31 @@ test("claimed input persists waiting_user terminal status for harnesses that sup
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    payload: { text: "hello" }
+    payload: { text: "hello" },
   });
   setNodeRunnerCommand([
     "const request = process.argv.at(-1) ?? '';",
     "void request;",
     `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello' } }) + '\\n');`,
-    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'run_completed', payload: { status: 'waiting_user' } }) + '\\n');`
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'run_completed', payload: { status: 'waiting_user' } }) + '\\n');`,
   ]);
 
   const claimed = store.claimInputs({
     limit: 1,
     claimedBy: "sandbox-agent-ts-worker",
-    leaseSeconds: 300
+    leaseSeconds: 300,
   });
 
   await processClaimedInput({
     store,
     record: claimed[0],
-    claimedBy: "sandbox-agent-ts-worker"
+    claimedBy: "sandbox-agent-ts-worker",
   });
 
   const updated = store.getInput(queued.inputId);
   const runtimeState = store.getRuntimeState({
     workspaceId: workspace.id,
-    sessionId: "session-main"
+    sessionId: "session-main",
   });
   const turnResult = store.getTurnResult({ inputId: queued.inputId });
 
@@ -512,19 +543,19 @@ test("claimed input persists a paused turn when the run is aborted mid-execution
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    payload: { text: "pause this run" }
+    payload: { text: "pause this run" },
   });
   setNodeRunnerCommand([
     "const request = process.argv.at(-1) ?? '';",
     "void request;",
     `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'pause this run' } }) + '\\n');`,
-    "setInterval(() => {}, 1000);"
+    "setInterval(() => {}, 1000);",
   ]);
 
   const claimed = store.claimInputs({
     limit: 1,
     claimedBy: "sandbox-agent-ts-worker",
-    leaseSeconds: 300
+    leaseSeconds: 300,
   });
   const controller = new AbortController();
   let evolveCalls = 0;
@@ -555,11 +586,11 @@ test("claimed input persists a paused turn when the run is aborted mid-execution
   const updated = store.getInput(queued.inputId);
   const runtimeState = store.getRuntimeState({
     workspaceId: workspace.id,
-    sessionId: "session-main"
+    sessionId: "session-main",
   });
   const events = store.listOutputEvents({
     sessionId: "session-main",
-    inputId: queued.inputId
+    inputId: queued.inputId,
   });
   const turnResult = store.getTurnResult({ inputId: queued.inputId });
 
@@ -572,7 +603,7 @@ test("claimed input persists a paused turn when the run is aborted mid-execution
   assert.equal(runtimeState.lastError, null);
   assert.deepEqual(
     events.map((event) => event.eventType),
-    ["run_started", "run_completed"]
+    ["run_started", "run_completed"],
   );
   assert.deepEqual(events[1]?.payload, {
     status: "paused",
@@ -597,7 +628,7 @@ test("claimed input captures file outputs and persists an assistant turn for out
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    payload: { text: "create a report file" }
+    payload: { text: "create a report file" },
   });
 
   await processClaimedInput({
@@ -612,23 +643,23 @@ test("claimed input captures file outputs and persists an assistant turn for out
         input_id: payload.input_id,
         sequence: 1,
         event_type: "run_started",
-        payload: {}
+        payload: {},
       });
       await options.onEvent?.({
         session_id: payload.session_id,
         input_id: payload.input_id,
         sequence: 2,
         event_type: "run_completed",
-        payload: { status: "ok" }
+        payload: { status: "ok" },
       });
       return {
         events: [],
         skippedLines: [],
         stderr: "",
         returnCode: 0,
-        sawTerminal: true
+        sawTerminal: true,
       };
-    }
+    },
   });
 
   const outputs = store.listOutputs({
@@ -636,11 +667,11 @@ test("claimed input captures file outputs and persists an assistant turn for out
     sessionId: "session-main",
     inputId: queued.inputId,
     limit: 20,
-    offset: 0
+    offset: 0,
   });
   const messages = store.listSessionMessages({
     workspaceId: workspace.id,
-    sessionId: "session-main"
+    sessionId: "session-main",
   });
 
   assert.equal(outputs.length, 1);
@@ -650,10 +681,13 @@ test("claimed input captures file outputs and persists an assistant turn for out
   assert.equal(outputs[0].metadata.origin_type, "file");
   assert.equal(outputs[0].metadata.change_type, "created");
   assert.equal(outputs[0].metadata.category, "document");
-  assert.equal(messages.length, 1);
-  assert.equal(messages[0].id, `assistant-${queued.inputId}`);
-  assert.equal(messages[0].role, "assistant");
-  assert.equal(messages[0].text, "");
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].id, `user-${queued.inputId}`);
+  assert.equal(messages[0].role, "user");
+  assert.equal(messages[0].text, "create a report file");
+  assert.equal(messages[1].id, `assistant-${queued.inputId}`);
+  assert.equal(messages[1].role, "assistant");
+  assert.equal(messages[1].text, "");
 
   store.close();
 });
@@ -669,12 +703,12 @@ test("claimed input renews its claim lease while the runner is still healthy", a
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    payload: { text: "hello" }
+    payload: { text: "hello" },
   });
   const claimed = store.claimInputs({
     limit: 1,
     claimedBy: "sandbox-agent-ts-worker",
-    leaseSeconds: 1
+    leaseSeconds: 1,
   });
   const claimedUntilBefore = claimed[0]?.claimedUntil ?? null;
   let claimedUntilDuringRun: string | null = null;
@@ -686,29 +720,30 @@ test("claimed input renews its claim lease while the runner is still healthy", a
     leaseSeconds: 300,
     executeRunnerRequestFn: async (payload, options = {}) => {
       await options.onHeartbeat?.();
-      claimedUntilDuringRun = store.getInput(String(payload.input_id))?.claimedUntil ?? null;
+      claimedUntilDuringRun =
+        store.getInput(String(payload.input_id))?.claimedUntil ?? null;
       await options.onEvent?.({
         session_id: payload.session_id,
         input_id: payload.input_id,
         sequence: 1,
         event_type: "run_started",
-        payload: {}
+        payload: {},
       });
       await options.onEvent?.({
         session_id: payload.session_id,
         input_id: payload.input_id,
         sequence: 2,
         event_type: "run_completed",
-        payload: { status: "ok" }
+        payload: { status: "ok" },
       });
       return {
         events: [],
         skippedLines: [],
         stderr: "",
         returnCode: 0,
-        sawTerminal: true
+        sawTerminal: true,
       };
-    }
+    },
   });
 
   assert.ok(claimedUntilBefore);
@@ -730,12 +765,12 @@ test("claimed input treats streamed runner events as lease activity", async () =
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    payload: { text: "hello" }
+    payload: { text: "hello" },
   });
   const claimed = store.claimInputs({
     limit: 1,
     claimedBy: "sandbox-agent-ts-worker",
-    leaseSeconds: 1
+    leaseSeconds: 1,
   });
   const claimedUntilBefore = claimed[0]?.claimedUntil ?? null;
   let claimedUntilDuringRun: string | null = null;
@@ -751,24 +786,25 @@ test("claimed input treats streamed runner events as lease activity", async () =
         input_id: payload.input_id,
         sequence: 1,
         event_type: "run_started",
-        payload: {}
+        payload: {},
       });
-      claimedUntilDuringRun = store.getInput(String(payload.input_id))?.claimedUntil ?? null;
+      claimedUntilDuringRun =
+        store.getInput(String(payload.input_id))?.claimedUntil ?? null;
       await options.onEvent?.({
         session_id: payload.session_id,
         input_id: payload.input_id,
         sequence: 2,
         event_type: "run_completed",
-        payload: { status: "ok" }
+        payload: { status: "ok" },
       });
       return {
         events: [],
         skippedLines: [],
         stderr: "",
         returnCode: 0,
-        sawTerminal: true
+        sawTerminal: true,
       };
-    }
+    },
   });
 
   assert.ok(claimedUntilBefore);
@@ -790,12 +826,12 @@ test("claimed input honors a persisted failure terminal after claim recovery abo
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    payload: { text: "hello" }
+    payload: { text: "hello" },
   });
   const claimed = store.claimInputs({
     limit: 1,
     claimedBy: "sandbox-agent-ts-worker",
-    leaseSeconds: 300
+    leaseSeconds: 300,
   });
 
   await processClaimedInput({
@@ -808,14 +844,14 @@ test("claimed input honors a persisted failure terminal after claim recovery abo
         input_id: payload.input_id,
         sequence: 1,
         event_type: "run_started",
-        payload: {}
+        payload: {},
       });
       await options.onEvent?.({
         session_id: payload.session_id,
         input_id: payload.input_id,
         sequence: 2,
         event_type: "output_delta",
-        payload: { delta: "Partial answer" }
+        payload: { delta: "Partial answer" },
       });
       store.appendOutputEvent({
         workspaceId: workspace.id,
@@ -825,8 +861,9 @@ test("claimed input honors a persisted failure terminal after claim recovery abo
         eventType: "run_failed",
         payload: {
           type: "RuntimeError",
-          message: "claimed input lease expired before the runner emitted a terminal event",
-        }
+          message:
+            "claimed input lease expired before the runner emitted a terminal event",
+        },
       });
       return {
         events: [],
@@ -837,21 +874,21 @@ test("claimed input honors a persisted failure terminal after claim recovery abo
         aborted: true,
         abortReason: "claim_expired",
       };
-    }
+    },
   });
 
   const updated = store.getInput(queued.inputId);
   const runtimeState = store.getRuntimeState({
     workspaceId: workspace.id,
-    sessionId: "session-main"
+    sessionId: "session-main",
   });
   const events = store.listOutputEvents({
     sessionId: "session-main",
-    inputId: queued.inputId
+    inputId: queued.inputId,
   });
   const messages = store.listSessionMessages({
     workspaceId: workspace.id,
-    sessionId: "session-main"
+    sessionId: "session-main",
   });
   const turnResult = store.getTurnResult({ inputId: queued.inputId });
 
@@ -861,10 +898,13 @@ test("claimed input honors a persisted failure terminal after claim recovery abo
   assert.equal(runtimeState.status, "ERROR");
   assert.deepEqual(
     events.map((event) => event.eventType),
-    ["run_started", "output_delta", "run_failed"]
+    ["run_started", "output_delta", "run_failed"],
   );
-  assert.equal(messages.length, 1);
-  assert.equal(messages[0]?.text, "Partial answer");
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0]?.id, `user-${queued.inputId}`);
+  assert.equal(messages[0]?.text, "hello");
+  assert.equal(messages[1]?.id, `assistant-${queued.inputId}`);
+  assert.equal(messages[1]?.text, "Partial answer");
   assert.ok(turnResult);
   assert.equal(turnResult.status, "failed");
   assert.equal(turnResult.stopReason, "RuntimeError");
@@ -883,7 +923,7 @@ test("claimed input does not duplicate a file output already persisted earlier i
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    payload: { text: "write a report artifact" }
+    payload: { text: "write a report artifact" },
   });
 
   await processClaimedInput({
@@ -891,7 +931,9 @@ test("claimed input does not duplicate a file output already persisted earlier i
     record: queued,
     executeRunnerRequestFn: async (payload, options = {}) => {
       const workspaceDir = store.workspaceDir(workspace.id);
-      fs.mkdirSync(path.join(workspaceDir, "outputs", "reports"), { recursive: true });
+      fs.mkdirSync(path.join(workspaceDir, "outputs", "reports"), {
+        recursive: true,
+      });
       fs.writeFileSync(
         path.join(workspaceDir, "outputs", "reports", "report.md"),
         "# Report\n",
@@ -916,23 +958,23 @@ test("claimed input does not duplicate a file output already persisted earlier i
         input_id: payload.input_id,
         sequence: 1,
         event_type: "run_started",
-        payload: {}
+        payload: {},
       });
       await options.onEvent?.({
         session_id: payload.session_id,
         input_id: payload.input_id,
         sequence: 2,
         event_type: "run_completed",
-        payload: { status: "ok" }
+        payload: { status: "ok" },
       });
       return {
         events: [],
         skippedLines: [],
         stderr: "",
         returnCode: 0,
-        sawTerminal: true
+        sawTerminal: true,
       };
-    }
+    },
   });
 
   const outputs = store.listOutputs({
@@ -940,7 +982,7 @@ test("claimed input does not duplicate a file output already persisted earlier i
     sessionId: "session-main",
     inputId: queued.inputId,
     limit: 20,
-    offset: 0
+    offset: 0,
   });
 
   assert.equal(outputs.length, 1);
@@ -961,7 +1003,7 @@ test("claimed input records skill-policy denial audit in tool usage summary", as
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    payload: { text: "hello" }
+    payload: { text: "hello" },
   });
 
   await processClaimedInput({
@@ -973,7 +1015,7 @@ test("claimed input records skill-policy denial audit in tool usage summary", as
         input_id: payload.input_id,
         sequence: 1,
         event_type: "run_started",
-        payload: {}
+        payload: {},
       });
       await options.onEvent?.({
         session_id: payload.session_id,
@@ -985,24 +1027,25 @@ test("claimed input records skill-policy denial audit in tool usage summary", as
           tool_name: "bash",
           call_id: "call-denied",
           error: true,
-          message: "permission denied by skill policy: tool \"bash\" is gated and must be widened"
-        }
+          message:
+            'permission denied by skill policy: tool "bash" is gated and must be widened',
+        },
       });
       await options.onEvent?.({
         session_id: payload.session_id,
         input_id: payload.input_id,
         sequence: 3,
         event_type: "run_completed",
-        payload: { status: "ok" }
+        payload: { status: "ok" },
       });
       return {
         events: [],
         skippedLines: [],
         stderr: "",
         returnCode: 0,
-        sawTerminal: true
+        sawTerminal: true,
       };
-    }
+    },
   });
 
   const turnResult = store.getTurnResult({ inputId: queued.inputId });
@@ -1025,7 +1068,7 @@ test("claimed input records skill-policy denial audit in tool usage summary", as
       activation_count: 0,
       denied_calls: 1,
       denied_tool_names: ["bash"],
-    }
+    },
   });
 
   store.close();
@@ -1042,34 +1085,34 @@ test("claimed input synthesizes run_failed when runner exits without terminal ev
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    payload: { text: "hello" }
+    payload: { text: "hello" },
   });
   setNodeRunnerCommand([
     "const request = process.argv.at(-1) ?? '';",
     "void request;",
-    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello' } }) + '\\n');`
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello' } }) + '\\n');`,
   ]);
 
   const claimed = store.claimInputs({
     limit: 1,
     claimedBy: "sandbox-agent-ts-worker",
-    leaseSeconds: 300
+    leaseSeconds: 300,
   });
 
   await processClaimedInput({
     store,
     record: claimed[0],
-    claimedBy: "sandbox-agent-ts-worker"
+    claimedBy: "sandbox-agent-ts-worker",
   });
 
   const updated = store.getInput(queued.inputId);
   const runtimeState = store.getRuntimeState({
     workspaceId: workspace.id,
-    sessionId: "session-main"
+    sessionId: "session-main",
   });
   const events = store.listOutputEvents({
     sessionId: "session-main",
-    inputId: queued.inputId
+    inputId: queued.inputId,
   });
   const turnResult = store.getTurnResult({ inputId: queued.inputId });
 
@@ -1080,7 +1123,10 @@ test("claimed input synthesizes run_failed when runner exits without terminal ev
   assert.equal(events.length, 2);
   assert.equal(events[0].eventType, "run_started");
   assert.equal(events[1].eventType, "run_failed");
-  assert.match(String(events[1].payload.message), /runner ended before terminal event/);
+  assert.match(
+    String(events[1].payload.message),
+    /runner ended before terminal event/,
+  );
   assert.ok(turnResult);
   assert.equal(turnResult.status, "failed");
   assert.equal(turnResult.stopReason, "RuntimeError");
@@ -1101,36 +1147,36 @@ test("claimed input succeeds when runner emits terminal event but keeps the proc
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    payload: { text: "hello" }
+    payload: { text: "hello" },
   });
   setNodeRunnerCommand([
     "const request = process.argv.at(-1) ?? '';",
     "void request;",
     `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello' } }) + '\\n');`,
     `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'run_completed', payload: { status: 'ok' } }) + '\\n');`,
-    "setInterval(() => {}, 1000);"
+    "setInterval(() => {}, 1000);",
   ]);
 
   const claimed = store.claimInputs({
     limit: 1,
     claimedBy: "sandbox-agent-ts-worker",
-    leaseSeconds: 300
+    leaseSeconds: 300,
   });
 
   await processClaimedInput({
     store,
     record: claimed[0],
-    claimedBy: "sandbox-agent-ts-worker"
+    claimedBy: "sandbox-agent-ts-worker",
   });
 
   const updated = store.getInput(queued.inputId);
   const runtimeState = store.getRuntimeState({
     workspaceId: workspace.id,
-    sessionId: "session-main"
+    sessionId: "session-main",
   });
   const events = store.listOutputEvents({
     sessionId: "session-main",
-    inputId: queued.inputId
+    inputId: queued.inputId,
   });
   const turnResult = store.getTurnResult({ inputId: queued.inputId });
 
@@ -1140,7 +1186,7 @@ test("claimed input succeeds when runner emits terminal event but keeps the proc
   assert.equal(runtimeState.status, "IDLE");
   assert.deepEqual(
     events.map((event) => event.eventType),
-    ["run_started", "run_completed"]
+    ["run_started", "run_completed"],
   );
   assert.ok(turnResult);
   assert.equal(turnResult.status, "completed");
@@ -1162,35 +1208,35 @@ test("claimed input fails when runner becomes idle after run_started", async () 
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    payload: { text: "hello" }
+    payload: { text: "hello" },
   });
   setNodeRunnerCommand([
     "const request = process.argv.at(-1) ?? '';",
     "void request;",
     `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello' } }) + '\\n');`,
-    "setInterval(() => {}, 1000);"
+    "setInterval(() => {}, 1000);",
   ]);
 
   const claimed = store.claimInputs({
     limit: 1,
     claimedBy: "sandbox-agent-ts-worker",
-    leaseSeconds: 300
+    leaseSeconds: 300,
   });
 
   await processClaimedInput({
     store,
     record: claimed[0],
-    claimedBy: "sandbox-agent-ts-worker"
+    claimedBy: "sandbox-agent-ts-worker",
   });
 
   const updated = store.getInput(queued.inputId);
   const runtimeState = store.getRuntimeState({
     workspaceId: workspace.id,
-    sessionId: "session-main"
+    sessionId: "session-main",
   });
   const events = store.listOutputEvents({
     sessionId: "session-main",
-    inputId: queued.inputId
+    inputId: queued.inputId,
   });
   const turnResult = store.getTurnResult({ inputId: queued.inputId });
 
@@ -1217,7 +1263,7 @@ test("claimed input hydrates runtime exec context from runtime config", async ()
   fs.writeFileSync(
     path.join(sandboxRoot, "state", "runtime-config.json"),
     `${JSON.stringify({ auth_token: "token-1", sandbox_id: "sandbox-1" }, null, 2)}\n`,
-    "utf8"
+    "utf8",
   );
 
   const workspace = store.createWorkspace({
@@ -1229,47 +1275,134 @@ test("claimed input hydrates runtime exec context from runtime config", async ()
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    payload: { text: "hello", context: {} }
+    payload: { text: "hello", context: {} },
   });
   setNodeRunnerCommand([
     "const encoded = process.argv.at(-1) ?? '';",
     "const payload = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));",
     "const ctx = payload.context._sandbox_runtime_exec_v1;",
     "process.stdout.write(JSON.stringify({ session_id: payload.session_id, input_id: payload.input_id, sequence: 1, event_type: 'run_started', payload: { runtime_exec_context: ctx } }) + '\\n');",
-    "process.stdout.write(JSON.stringify({ session_id: payload.session_id, input_id: payload.input_id, sequence: 2, event_type: 'run_completed', payload: { status: 'ok' } }) + '\\n');"
+    "process.stdout.write(JSON.stringify({ session_id: payload.session_id, input_id: payload.input_id, sequence: 2, event_type: 'run_completed', payload: { status: 'ok' } }) + '\\n');",
   ]);
 
   const claimed = store.claimInputs({
     limit: 1,
     claimedBy: "sandbox-agent-ts-worker",
-    leaseSeconds: 300
+    leaseSeconds: 300,
   });
+  const registeredRuns: Array<Record<string, string | null>> = [];
 
   await processClaimedInput({
     store,
     record: claimed[0],
-    claimedBy: "sandbox-agent-ts-worker"
+    claimedBy: "sandbox-agent-ts-worker",
+    registerRunStartedFn: async (params) => {
+      registeredRuns.push({
+        workspaceId: params.workspaceId,
+        sessionId: params.sessionId,
+        inputId: params.inputId,
+        runId: params.runId,
+        selectedModel: params.selectedModel,
+      });
+    },
   });
 
   const events = store.listOutputEvents({
     sessionId: "session-main",
-    inputId: queued.inputId
+    inputId: queued.inputId,
   });
   assert.equal(events.length, 2);
-  const runtimeExecContext = events[0].payload.runtime_exec_context as Record<string, unknown>;
+  const runtimeExecContext = events[0].payload.runtime_exec_context as Record<
+    string,
+    unknown
+  >;
   assert.equal(runtimeExecContext.model_proxy_api_key, "token-1");
   assert.equal(runtimeExecContext.sandbox_id, "sandbox-1");
+  assert.equal(
+    runtimeExecContext.run_id,
+    `workspace-1:session-main:${queued.inputId}`,
+  );
   assert.equal(runtimeExecContext.harness, "pi");
   assert.equal(runtimeExecContext.harness_session_id, "session-main");
+  assert.deepEqual(registeredRuns, [
+    {
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      inputId: queued.inputId,
+      runId: `workspace-1:session-main:${queued.inputId}`,
+      selectedModel: null,
+    },
+  ]);
 
   store.close();
+});
+
+test("run-start registration strips the model-proxy path before calling the backend route", async () => {
+  const requests: Array<{ url: string; init: RequestInit | undefined }> = [];
+
+  await registerWorkspaceAgentRunStarted({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    runId: "workspace-1:session-main:input-1",
+    selectedModel: "elephant-alpha",
+    runtimeBinding: {
+      authToken: "token-1",
+      userId: "user-1",
+      sandboxId: "sandbox-1",
+      modelProxyBaseUrl: "http://127.0.0.1:3060/api/v1/model-proxy",
+    },
+    fetchImpl: async (input, init) => {
+      requests.push({
+        url: input instanceof Request ? input.url : String(input),
+        init,
+      });
+      return new Response(null, { status: 200 });
+    },
+  });
+
+  assert.equal(requests.length, 1);
+  assert.equal(
+    requests[0]?.url,
+    "http://127.0.0.1:3060/api/v1/sandbox/workspaces/workspace-1/agent-runs/start",
+  );
+  assert.equal(requests[0]?.init?.method, "POST");
+  assert.equal(
+    (requests[0]?.init?.headers as Record<string, string>)["X-API-Key"],
+    "token-1",
+  );
+  assert.equal(
+    (requests[0]?.init?.headers as Record<string, string>)[
+      "X-Holaboss-User-Id"
+    ],
+    "user-1",
+  );
+  assert.equal(
+    (requests[0]?.init?.headers as Record<string, string>)[
+      "X-Holaboss-Sandbox-Id"
+    ],
+    "sandbox-1",
+  );
+  assert.equal(
+    requests[0]?.init?.body,
+    JSON.stringify({
+      session_id: "session-main",
+      input_id: "input-1",
+      run_id: "workspace-1:session-main:input-1",
+      model: "elephant-alpha",
+    }),
+  );
 });
 
 test("claimed input resolves evolve model context from the provider background tasks model", async () => {
   const store = makeStore("hb-claimed-input-background-model-");
   const sandboxRoot = makeTempDir("hb-claimed-input-background-root-");
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
-  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = path.join(sandboxRoot, "state", "runtime-config.json");
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = path.join(
+    sandboxRoot,
+    "state",
+    "runtime-config.json",
+  );
   fs.mkdirSync(path.join(sandboxRoot, "state"), { recursive: true });
   fs.writeFileSync(
     process.env.HOLABOSS_RUNTIME_CONFIG_PATH,
@@ -1290,20 +1423,30 @@ test("claimed input resolves evolve model context from the provider background t
         },
       },
       null,
-      2
+      2,
     )}\n`,
-    "utf8"
+    "utf8",
   );
 
   const memoryService: MemoryServiceLike = {
-    async search() { return { results: [] }; },
-    async get() { return { path: "", text: "" }; },
+    async search() {
+      return { results: [] };
+    },
+    async get() {
+      return { path: "", text: "" };
+    },
     async upsert(payload: Record<string, unknown>) {
       return { path: payload.path, text: payload.content };
     },
-    async status() { return {}; },
-    async sync() { return {}; },
-    async capture() { return { files: {} }; },
+    async status() {
+      return {};
+    },
+    async sync() {
+      return {};
+    },
+    async capture() {
+      return { files: {} };
+    },
   };
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
@@ -1314,13 +1457,13 @@ test("claimed input resolves evolve model context from the provider background t
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    payload: { text: "hello", model: "anthropic_direct/claude-opus-4-6" }
+    payload: { text: "hello", model: "anthropic_direct/claude-opus-4-6" },
   });
 
   const claimed = store.claimInputs({
     limit: 1,
     claimedBy: "sandbox-agent-ts-worker",
-    leaseSeconds: 300
+    leaseSeconds: 300,
   });
 
   let capturedModelContext: Record<string, unknown> | null = null;
@@ -1335,25 +1478,28 @@ test("claimed input resolves evolve model context from the provider background t
         input_id: payload.input_id,
         sequence: 1,
         event_type: "run_started",
-        payload: {}
+        payload: {},
       });
       await options.onEvent?.({
         session_id: payload.session_id,
         input_id: payload.input_id,
         sequence: 2,
         event_type: "run_completed",
-        payload: { status: "ok" }
+        payload: { status: "ok" },
       });
       return {
         events: [],
         skippedLines: [],
         stderr: "",
         returnCode: 0,
-        sawTerminal: true
+        sawTerminal: true,
       };
     },
     runEvolveTasksFn: async (options) => {
-      capturedModelContext = options.modelContext as unknown as Record<string, unknown>;
+      capturedModelContext = options.modelContext as unknown as Record<
+        string,
+        unknown
+      >;
     },
   });
 
@@ -1378,17 +1524,17 @@ test("claimed onboarding input instructs native onboarding tools directly", asyn
     harness: "pi",
     status: "active",
     onboardingStatus: "pending",
-    onboardingSessionId: "session-onboarding"
+    onboardingSessionId: "session-onboarding",
   });
   fs.writeFileSync(
     path.join(store.workspaceDir(workspace.id), "ONBOARD.md"),
     "# Workspace Onboarding\n\nAsk concise setup questions.\n",
-    "utf8"
+    "utf8",
   );
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
     sessionId: "session-onboarding",
-    payload: { text: "yes" }
+    payload: { text: "yes" },
   });
 
   let capturedInstruction = "";
@@ -1402,23 +1548,23 @@ test("claimed onboarding input instructs native onboarding tools directly", asyn
         input_id: payload.input_id,
         sequence: 1,
         event_type: "run_started",
-        payload: { instruction_preview: capturedInstruction.slice(0, 120) }
+        payload: { instruction_preview: capturedInstruction.slice(0, 120) },
       });
       await options.onEvent?.({
         session_id: payload.session_id,
         input_id: payload.input_id,
         sequence: 2,
         event_type: "run_completed",
-        payload: { status: "ok" }
+        payload: { status: "ok" },
       });
       return {
         events: [],
         skippedLines: [],
         stderr: "",
         returnCode: 0,
-        sawTerminal: true
+        sawTerminal: true,
       };
-    }
+    },
   });
 
   assert.match(capturedInstruction, /holaboss_onboarding_status/);
@@ -1436,17 +1582,17 @@ test("claimed onboarding input includes ONBOARD.md verbatim", async () => {
     harness: "pi",
     status: "active",
     onboardingStatus: "pending",
-    onboardingSessionId: "session-onboarding"
+    onboardingSessionId: "session-onboarding",
   });
   fs.writeFileSync(
     path.join(store.workspaceDir(workspace.id), "ONBOARD.md"),
     "opening_sentence: What is the primary goal for this workspace?\n\n# Workspace Onboarding\n\nAsk concise setup questions.\n",
-    "utf8"
+    "utf8",
   );
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
     sessionId: "session-onboarding",
-    payload: { text: "yes" }
+    payload: { text: "yes" },
   });
 
   let capturedInstruction = "";
@@ -1460,27 +1606,33 @@ test("claimed onboarding input includes ONBOARD.md verbatim", async () => {
         input_id: payload.input_id,
         sequence: 1,
         event_type: "run_started",
-        payload: { instruction_preview: capturedInstruction.slice(0, 120) }
+        payload: { instruction_preview: capturedInstruction.slice(0, 120) },
       });
       await options.onEvent?.({
         session_id: payload.session_id,
         input_id: payload.input_id,
         sequence: 2,
         event_type: "run_completed",
-        payload: { status: "ok" }
+        payload: { status: "ok" },
       });
       return {
         events: [],
         skippedLines: [],
         stderr: "",
         returnCode: 0,
-        sawTerminal: true
+        sawTerminal: true,
       };
-    }
+    },
   });
 
-  assert.match(capturedInstruction, /opening_sentence: What is the primary goal for this workspace\?/);
-  assert.doesNotMatch(capturedInstruction, /opening_sentence may already be visible/);
+  assert.match(
+    capturedInstruction,
+    /opening_sentence: What is the primary goal for this workspace\?/,
+  );
+  assert.doesNotMatch(
+    capturedInstruction,
+    /opening_sentence may already be visible/,
+  );
 
   store.close();
 });
@@ -1497,35 +1649,35 @@ test("claimed input persists replacement harness session id from terminal runner
     workspaceId: workspace.id,
     sessionId: "session-main",
     harness: "pi",
-    harnessSessionId: "existing-session"
+    harnessSessionId: "existing-session",
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    payload: { text: "hello" }
+    payload: { text: "hello" },
   });
   setNodeRunnerCommand([
     "const request = process.argv.at(-1) ?? '';",
     "void request;",
     `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { status: 'started' } }) + '\\n');`,
-    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'run_completed', payload: { status: 'ok', harness_session_id: 'replacement-session' } }) + '\\n');`
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'run_completed', payload: { status: 'ok', harness_session_id: 'replacement-session' } }) + '\\n');`,
   ]);
 
   const claimed = store.claimInputs({
     limit: 1,
     claimedBy: "sandbox-agent-ts-worker",
-    leaseSeconds: 300
+    leaseSeconds: 300,
   });
 
   await processClaimedInput({
     store,
     record: claimed[0],
-    claimedBy: "sandbox-agent-ts-worker"
+    claimedBy: "sandbox-agent-ts-worker",
   });
 
   const binding = store.getBinding({
     workspaceId: workspace.id,
-    sessionId: "session-main"
+    sessionId: "session-main",
   });
 
   assert.ok(binding);
@@ -1546,12 +1698,12 @@ test("claimed input passes persisted child session kind into the runner payload"
     workspaceId: workspace.id,
     sessionId: "proposal-session-1",
     kind: "task_proposal",
-    parentSessionId: "session-main"
+    parentSessionId: "session-main",
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
     sessionId: "proposal-session-1",
-    payload: { text: "hello" }
+    payload: { text: "hello" },
   });
 
   let capturedSessionKind = "";
@@ -1565,23 +1717,23 @@ test("claimed input passes persisted child session kind into the runner payload"
         input_id: String(payload.input_id),
         sequence: 1,
         event_type: "run_started",
-        payload: {}
+        payload: {},
       });
       await options.onEvent?.({
         session_id: String(payload.session_id),
         input_id: String(payload.input_id),
         sequence: 2,
         event_type: "run_completed",
-        payload: { status: "ok" }
+        payload: { status: "ok" },
       });
       return {
         events: [],
         skippedLines: [],
         stderr: "",
         returnCode: 0,
-        sawTerminal: true
+        sawTerminal: true,
       };
-    }
+    },
   });
 
   assert.equal(capturedSessionKind, "task_proposal");
@@ -1600,35 +1752,35 @@ test("claimed input resets harness session binding to the local session after ru
     workspaceId: workspace.id,
     sessionId: "session-main",
     harness: "pi",
-    harnessSessionId: "stale-pi-session"
+    harnessSessionId: "stale-pi-session",
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    payload: { text: "hello" }
+    payload: { text: "hello" },
   });
   setNodeRunnerCommand([
     "const request = process.argv.at(-1) ?? '';",
     "void request;",
     `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { status: 'started' } }) + '\\n');`,
-    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'run_failed', payload: { type: 'OpenCodeSessionError', message: 'boom', harness_session_id: 'failed-session' } }) + '\\n');`
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'run_failed', payload: { type: 'OpenCodeSessionError', message: 'boom', harness_session_id: 'failed-session' } }) + '\\n');`,
   ]);
 
   const claimed = store.claimInputs({
     limit: 1,
     claimedBy: "sandbox-agent-ts-worker",
-    leaseSeconds: 300
+    leaseSeconds: 300,
   });
 
   await processClaimedInput({
     store,
     record: claimed[0],
-    claimedBy: "sandbox-agent-ts-worker"
+    claimedBy: "sandbox-agent-ts-worker",
   });
 
   const binding = store.getBinding({
     workspaceId: workspace.id,
-    sessionId: "session-main"
+    sessionId: "session-main",
   });
 
   assert.ok(binding);

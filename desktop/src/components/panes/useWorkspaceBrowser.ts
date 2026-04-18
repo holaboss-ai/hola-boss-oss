@@ -21,12 +21,29 @@ function initialBrowserState(space: BrowserSpaceId): BrowserTabListPayload {
       user: 0,
       agent: 0,
     },
+    sessionId: null,
+    lifecycleState: null,
+    controlMode: "none",
+    controlSessionId: null,
   };
 }
 
 interface UseWorkspaceBrowserOptions {
   includeDownloads?: boolean;
   includeHistory?: boolean;
+  includeSessions?: boolean;
+}
+
+const BROWSER_SESSION_POLL_INTERVAL_MS = 2000;
+
+function runtimeStateIndex(
+  items: SessionRuntimeRecordPayload[],
+): Record<string, SessionRuntimeRecordPayload> {
+  return Object.fromEntries(
+    items
+      .filter((item) => Boolean(item.session_id.trim()))
+      .map((item) => [item.session_id, item]),
+  );
 }
 
 export function useWorkspaceBrowser(
@@ -42,6 +59,12 @@ export function useWorkspaceBrowser(
   const [historyEntries, setHistoryEntries] = useState<
     BrowserHistoryEntryPayload[]
   >([]);
+  const [agentSessions, setAgentSessions] = useState<AgentSessionRecordPayload[]>(
+    [],
+  );
+  const [runtimeStatesBySessionId, setRuntimeStatesBySessionId] = useState<
+    Record<string, SessionRuntimeRecordPayload>
+  >({});
 
   useEffect(() => {
     let mounted = true;
@@ -133,6 +156,53 @@ export function useWorkspaceBrowser(
     };
   }, [options?.includeDownloads, options?.includeHistory, selectedWorkspaceId]);
 
+  useEffect(() => {
+    if (!options?.includeSessions) {
+      setAgentSessions([]);
+      setRuntimeStatesBySessionId({});
+      return;
+    }
+    if (!selectedWorkspaceId) {
+      setAgentSessions([]);
+      setRuntimeStatesBySessionId({});
+      return;
+    }
+
+    let cancelled = false;
+    let requestInFlight = false;
+
+    const loadSessionState = async () => {
+      if (requestInFlight) {
+        return;
+      }
+      requestInFlight = true;
+      try {
+        const [sessionsResponse, runtimeStatesResponse] = await Promise.all([
+          window.electronAPI.workspace.listAgentSessions(selectedWorkspaceId),
+          window.electronAPI.workspace.listRuntimeStates(selectedWorkspaceId),
+        ]);
+        if (cancelled) {
+          return;
+        }
+        setAgentSessions(sessionsResponse.items);
+        setRuntimeStatesBySessionId(runtimeStateIndex(runtimeStatesResponse.items));
+      } finally {
+        requestInFlight = false;
+      }
+    };
+
+    void loadSessionState();
+    const intervalId = window.setInterval(
+      () => void loadSessionState(),
+      BROWSER_SESSION_POLL_INTERVAL_MS,
+    );
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [options?.includeSessions, selectedWorkspaceId]);
+
   const activeTab = useMemo(
     () =>
       browserState.tabs.find((tab) => tab.id === browserState.activeTabId) ??
@@ -146,6 +216,26 @@ export function useWorkspaceBrowser(
     [activeTab.url, bookmarks],
   );
 
+  const currentSessionId = useMemo(
+    () => browserState.controlSessionId || browserState.sessionId || null,
+    [browserState.controlSessionId, browserState.sessionId],
+  );
+
+  const currentSession = useMemo(
+    () =>
+      currentSessionId
+        ? agentSessions.find((session) => session.session_id === currentSessionId) ??
+          null
+        : null,
+    [agentSessions, currentSessionId],
+  );
+
+  const currentRuntimeState = useMemo(
+    () =>
+      currentSessionId ? runtimeStatesBySessionId[currentSessionId] ?? null : null,
+    [currentSessionId, runtimeStatesBySessionId],
+  );
+
   return {
     selectedWorkspaceId,
     browserState,
@@ -155,5 +245,10 @@ export function useWorkspaceBrowser(
     historyEntries,
     activeBookmark,
     isBookmarked: Boolean(activeBookmark),
+    agentSessions,
+    runtimeStatesBySessionId,
+    currentSessionId,
+    currentSession,
+    currentRuntimeState,
   };
 }

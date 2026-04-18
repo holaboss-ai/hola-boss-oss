@@ -4,10 +4,12 @@ import test from "node:test";
 
 const OPERATIONS_DRAWER_PATH = new URL("./OperationsDrawer.tsx", import.meta.url);
 
-test("operations drawer inbox surfaces lifecycle status and trigger feedback", async () => {
+test("operations drawer inbox hides proactive controls while keeping proposal feedback", async () => {
   const source = await readFile(OPERATIONS_DRAWER_PATH, "utf8");
 
+  assert.match(source, /const showProactiveControls = false;/);
   assert.match(source, /ProactiveLifecyclePanel/);
+  assert.match(source, /\{showProactiveControls \? \(/);
   assert.match(source, /proposalStatusMessage \?/);
   assert.match(source, /label="Sessions"/);
   assert.match(source, />\s*New Session\s*</);
@@ -24,14 +26,27 @@ test("operations drawer shows proposal source lane and rationale copy", async ()
   assert.match(source, /Why: \{proposal\.task_generation_rationale\}/);
 });
 
-test("operations drawer keeps local proposals visible while signed out", async () => {
+test("operations drawer can open a centered proposal details dialog from an info control", async () => {
+  const source = await readFile(OPERATIONS_DRAWER_PATH, "utf8");
+
+  assert.match(source, /function ProposalDetailsDialog\(/);
+  assert.match(source, /aria-label=\{`View proposal details for \$\{proposal\.task_name\}`\}/);
+  assert.match(source, /setExpandedProposalId\(proposal\.proposal_id\)/);
+  assert.match(source, /aria-label="Proposal details"/);
+  assert.match(source, /Why This Was Proposed/);
+  assert.match(source, /return createPortal\(modalContent, document\.body\);/);
+  assert.match(source, /onAcceptProposal=\{onAcceptProposal\}/);
+  assert.match(source, /onDismissProposal=\{onDismissProposal\}/);
+});
+
+test("operations drawer hides the proactive sign-in notice while signed out", async () => {
   const source = await readFile(OPERATIONS_DRAWER_PATH, "utf8");
 
   assert.match(source, /Backend proposals require sign-in/);
   assert.match(source, /Sign in for synced proactive controls\./);
   assert.match(source, /size="xs"/);
-  assert.doesNotMatch(source, /!\s*isSignedIn \?\s*\(\s*<SignedOutInboxNotice/);
-  assert.doesNotMatch(source, /isSignedIn && proposalStatusMessage/);
+  assert.match(source, /\{showProactiveControls \? \(/);
+  assert.doesNotMatch(source, /\{isSignedIn \? \(\s*<div className="mb-3">/);
 });
 
 test("operations drawer session rows expose pointer cursor affordance", async () => {

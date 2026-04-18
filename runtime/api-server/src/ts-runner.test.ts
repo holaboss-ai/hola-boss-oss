@@ -7,19 +7,25 @@ import { afterEach, test } from "node:test";
 import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
 import { buildAgentCapabilityManifest } from "./agent-capability-registry.js";
-import { decodeTsRunnerRequest, validateTsRunnerRequest } from "./ts-runner-contracts.js";
+import {
+  decodeTsRunnerRequest,
+  validateTsRunnerRequest,
+} from "./ts-runner-contracts.js";
 import type { TsRunnerEvent, TsRunnerRequest } from "./ts-runner-contracts.js";
 import {
   relayTsRunnerEvent,
   resolvedApplicationMcpHeaders,
   resolveTsRunnerBootstrapState,
   runTsRunnerCli,
-  type TsRunnerExecutionDeps
+  type TsRunnerExecutionDeps,
 } from "./ts-runner.js";
-import { requireRuntimeHarnessAdapter, type RuntimeHarnessPlugin } from "./harness-registry.js";
+import {
+  requireRuntimeHarnessAdapter,
+  type RuntimeHarnessPlugin,
+} from "./harness-registry.js";
 import {
   persistWorkspaceHarnessSessionId,
-  readWorkspaceHarnessSessionId
+  readWorkspaceHarnessSessionId,
 } from "./ts-runner-session-state.js";
 
 const ORIGINAL_SANDBOX_ROOT = process.env.HB_SANDBOX_ROOT;
@@ -94,7 +100,11 @@ function setTempSandboxRoot(prefix: string): string {
   return sandboxRoot;
 }
 
-function writeMemoryFile(workspaceRoot: string, relPath: string, content: string): void {
+function writeMemoryFile(
+  workspaceRoot: string,
+  relPath: string,
+  content: string,
+): void {
   const absPath = path.join(workspaceRoot, "memory", ...relPath.split("/"));
   fs.mkdirSync(path.dirname(absPath), { recursive: true });
   fs.writeFileSync(absPath, content, "utf8");
@@ -102,7 +112,7 @@ function writeMemoryFile(workspaceRoot: string, relPath: string, content: string
 
 function installMockRecallModelResponses(
   responses: Array<Record<string, unknown>>,
-  requests?: Array<Record<string, unknown>>
+  requests?: Array<Record<string, unknown>>,
 ): void {
   process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "http://127.0.0.1:4999";
   process.env.HOLABOSS_SANDBOX_AUTH_TOKEN = "test-token";
@@ -126,7 +136,7 @@ function installMockRecallModelResponses(
       {
         status: 200,
         headers: { "content-type": "application/json" },
-      }
+      },
     );
   }) as typeof fetch;
 }
@@ -140,7 +150,7 @@ function baseRequest(): TsRunnerRequest {
     instruction: "hello world",
     context: {},
     model: null,
-    debug: false
+    debug: false,
   };
 }
 
@@ -154,8 +164,8 @@ function baseCompiledPlan() {
         id: "main",
         model: "openai/gpt-5.4",
         prompt: "You are concise.",
-        role: null
-      }
+        role: null,
+      },
     },
     schema_aliases: {},
     resolved_prompts: { main: "You are concise." },
@@ -164,15 +174,19 @@ function baseCompiledPlan() {
     workspace_mcp_catalog: [],
     config_checksum: "checksum-1",
     resolved_applications: [],
-    mcp_tool_allowlist: []
+    mcp_tool_allowlist: [],
   } as const;
 }
 
-function testDeps(params: {
-  harnessEvents?: TsRunnerEvent[];
-  harnessResult?: Partial<Awaited<ReturnType<NonNullable<TsRunnerExecutionDeps["runHarnessHost"]>>>>;
-  pluginOverrides?: Partial<RuntimeHarnessPlugin>;
-} = {}): Partial<TsRunnerExecutionDeps> {
+function testDeps(
+  params: {
+    harnessEvents?: TsRunnerEvent[];
+    harnessResult?: Partial<
+      Awaited<ReturnType<NonNullable<TsRunnerExecutionDeps["runHarnessHost"]>>>
+    >;
+    pluginOverrides?: Partial<RuntimeHarnessPlugin>;
+  } = {},
+): Partial<TsRunnerExecutionDeps> {
   const harnessEvents = params.harnessEvents ?? [];
   const buildPlugin = (harness: string): RuntimeHarnessPlugin => ({
     id: harness,
@@ -184,13 +198,13 @@ function testDeps(params: {
     prepareRun: async () => {},
     describeRuntimeStatus: async () => ({
       backendConfigPresent: false,
-      harnessStatus: { ready: true, state: "ready" }
+      harnessStatus: { ready: true, state: "ready" },
     }),
     handleRuntimeConfigUpdated: async () => {},
     ensureReady: async () => {},
     backendBaseUrl: () => "http://127.0.0.1:4096",
     timeoutSeconds: () => 1800,
-    ...params.pluginOverrides
+    ...params.pluginOverrides,
   });
   return {
     compilePlan: () => baseCompiledPlan() as never,
@@ -206,14 +220,14 @@ function testDeps(params: {
         model_proxy_provider: "openai_compatible",
         api_key: "token",
         base_url: "http://127.0.0.1:4000/openai/v1",
-        default_headers: { "X-Test": "1" }
+        default_headers: { "X-Test": "1" },
       },
       tools: { read: true },
       workspace_tool_ids: [],
       workspace_skill_ids: [],
       output_schema_member_id: null,
       output_format: null,
-      workspace_config_checksum: "checksum-1"
+      workspace_config_checksum: "checksum-1",
     }),
     resolveHarnessPlugin: (harness) => buildPlugin(harness),
     runHarnessHost: async ({ emitEvent }) => {
@@ -224,11 +238,16 @@ function testDeps(params: {
         exitCode: 0,
         stderr: "",
         sawEvent: harnessEvents.length > 0,
-        terminalEmitted: harnessEvents.some((event) => ["run_completed", "run_failed"].includes(event.event_type)),
-        lastSequence: harnessEvents.reduce((max, event) => Math.max(max, event.sequence), 0),
-        ...params.harnessResult
+        terminalEmitted: harnessEvents.some((event) =>
+          ["run_completed", "run_failed"].includes(event.event_type),
+        ),
+        lastSequence: harnessEvents.reduce(
+          (max, event) => Math.max(max, event.sequence),
+          0,
+        ),
+        ...params.harnessResult,
       };
-    }
+    },
   };
 }
 
@@ -242,8 +261,8 @@ test("decodeTsRunnerRequest decodes a valid runner request", () => {
       instruction: "hello",
       context: { k: "v" },
       model: "openai/gpt-5.4",
-      debug: true
-    })
+      debug: true,
+    }),
   );
 
   assert.deepEqual(request, {
@@ -257,7 +276,7 @@ test("decodeTsRunnerRequest decodes a valid runner request", () => {
     context: { k: "v" },
     model: "openai/gpt-5.4",
     thinking_value: null,
-    debug: true
+    debug: true,
   });
 });
 
@@ -270,7 +289,7 @@ test("decodeTsRunnerRequest preserves the selected thinking value", () => {
       instruction: "hello",
       context: {},
       thinking_value: "medium",
-    })
+    }),
   );
 
   assert.equal(request.thinking_value, "medium");
@@ -283,14 +302,16 @@ test("validateTsRunnerRequest rejects missing required fields", () => {
         workspace_id: "workspace-1",
         session_id: "session-1",
         instruction: "hello",
-        context: {}
+        context: {},
       }),
-    /input_id is required/
+    /input_id is required/,
   );
 });
 
 test("resolveTsRunnerBootstrapState loads requested and persisted harness session ids", () => {
-  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-bootstrap-"));
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-bootstrap-"),
+  );
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   const workspaceDir = path.join(sandboxRoot, "workspace", "workspace-1");
   fs.mkdirSync(path.join(workspaceDir, ".holaboss"), { recursive: true });
@@ -299,9 +320,9 @@ test("resolveTsRunnerBootstrapState loads requested and persisted harness sessio
     JSON.stringify({
       version: 1,
       harness: "pi",
-      main_session_id: "persisted-session-1"
+      main_session_id: "persisted-session-1",
     }),
-    "utf8"
+    "utf8",
   );
 
   const bootstrap = resolveTsRunnerBootstrapState({
@@ -312,11 +333,11 @@ test("resolveTsRunnerBootstrapState loads requested and persisted harness sessio
     context: {
       _sandbox_runtime_exec_v1: {
         harness: "pi",
-        harness_session_id: "requested-session-1"
-      }
+        harness_session_id: "requested-session-1",
+      },
     },
     model: null,
-    debug: false
+    debug: false,
   });
 
   assert.equal(bootstrap.workspaceDir, workspaceDir);
@@ -326,8 +347,13 @@ test("resolveTsRunnerBootstrapState loads requested and persisted harness sessio
 });
 
 test("relayTsRunnerEvent persists harness_session_id from terminal events", async () => {
-  const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-relay-"));
-  const emitted: Array<{ event_type: string; payload: Record<string, unknown> }> = [];
+  const workspaceDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-relay-"),
+  );
+  const emitted: Array<{
+    event_type: string;
+    payload: Record<string, unknown>;
+  }> = [];
 
   await relayTsRunnerEvent({
     harness: "pi",
@@ -340,37 +366,44 @@ test("relayTsRunnerEvent persists harness_session_id from terminal events", asyn
       timestamp: new Date().toISOString(),
       payload: {
         status: "success",
-        harness_session_id: "persisted-session-2"
-      }
+        harness_session_id: "persisted-session-2",
+      },
     },
     emitEvent: async (event) => {
       emitted.push({
         event_type: event.event_type,
-        payload: event.payload
+        payload: event.payload,
       });
-    }
+    },
   });
 
   assert.equal(emitted.length, 1);
   assert.deepEqual(
-    JSON.parse(fs.readFileSync(path.join(workspaceDir, ".holaboss", "harness-session-state.json"), "utf8")),
+    JSON.parse(
+      fs.readFileSync(
+        path.join(workspaceDir, ".holaboss", "harness-session-state.json"),
+        "utf8",
+      ),
+    ),
     {
       version: 2,
       harness_sessions: {
         pi: {
-          session_id: "persisted-session-2"
-        }
-      }
-    }
+          session_id: "persisted-session-2",
+        },
+      },
+    },
   );
 });
 
 test("relayTsRunnerEvent clears persisted harness session ids after run_failed", async () => {
-  const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-relay-clear-"));
+  const workspaceDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-relay-clear-"),
+  );
   persistWorkspaceHarnessSessionId({
     workspaceDir,
     harness: "pi",
-    sessionId: "persisted-session-2"
+    sessionId: "persisted-session-2",
   });
 
   await relayTsRunnerEvent({
@@ -385,17 +418,22 @@ test("relayTsRunnerEvent clears persisted harness session ids after run_failed",
       payload: {
         type: "OpenCodeSessionError",
         message: "boom",
-        harness_session_id: "failed-session-1"
-      }
+        harness_session_id: "failed-session-1",
+      },
     },
-    emitEvent: async () => {}
+    emitEvent: async () => {},
   });
 
-  assert.equal(readWorkspaceHarnessSessionId({ workspaceDir, harness: "pi" }), null);
+  assert.equal(
+    readWorkspaceHarnessSessionId({ workspaceDir, harness: "pi" }),
+    null,
+  );
 });
 
 test("runTsRunnerCli relays harness-host events after run_claimed", async () => {
-  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-success-"));
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-success-"),
+  );
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   let stdout = "";
   let stderr = "";
@@ -407,9 +445,9 @@ test("runTsRunnerCli relays harness-host events after run_claimed", async () => 
         context: {
           _sandbox_runtime_exec_v1: {
             harness: "pi",
-          }
-        }
-      })
+          },
+        },
+      }),
     ],
     {
       deps: testDeps({
@@ -420,7 +458,7 @@ test("runTsRunnerCli relays harness-host events after run_claimed", async () => 
             sequence: 1,
             event_type: "run_started",
             timestamp: new Date().toISOString(),
-            payload: { phase: "running" }
+            payload: { phase: "running" },
           },
           {
             session_id: "session-1",
@@ -430,22 +468,35 @@ test("runTsRunnerCli relays harness-host events after run_claimed", async () => 
             timestamp: new Date().toISOString(),
             payload: {
               status: "success",
-              harness_session_id: "persisted-session-3"
-            }
-          }
-        ]
+              harness_session_id: "persisted-session-3",
+            },
+          },
+        ],
       }),
       io: {
-        stdout: { write(chunk: string) { stdout += chunk; return true; } } as unknown as NodeJS.WritableStream,
-        stderr: { write(chunk: string) { stderr += chunk; return true; } } as unknown as NodeJS.WritableStream
-      }
-    }
+        stdout: {
+          write(chunk: string) {
+            stdout += chunk;
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write(chunk: string) {
+            stderr += chunk;
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
   );
 
   assert.equal(exitCode, 0);
   assert.equal(stderr, "");
 
-  const lines = stdout.trim().split("\n").map((line) => JSON.parse(line));
+  const lines = stdout
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
   assert.equal(lines.length, 3);
   assert.equal(lines[0].event_type, "run_claimed");
   assert.equal(lines[0].payload.instruction_preview, "hello world");
@@ -455,21 +506,32 @@ test("runTsRunnerCli relays harness-host events after run_claimed", async () => 
   assert.equal(lines[2].payload.status, "success");
   assert.deepEqual(
     JSON.parse(
-      fs.readFileSync(path.join(sandboxRoot, "workspace", "workspace-1", ".holaboss", "harness-session-state.json"), "utf8")
+      fs.readFileSync(
+        path.join(
+          sandboxRoot,
+          "workspace",
+          "workspace-1",
+          ".holaboss",
+          "harness-session-state.json",
+        ),
+        "utf8",
+      ),
     ),
     {
       version: 2,
       harness_sessions: {
         pi: {
-          session_id: "persisted-session-3"
-        }
-      }
-    }
+          session_id: "persisted-session-3",
+        },
+      },
+    },
   );
 });
 
 test("runTsRunnerCli persists pi harness session ids when runtime context selects pi", async () => {
-  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-pi-"));
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-pi-"),
+  );
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   let stdout = "";
   let capturedHarness = "";
@@ -481,10 +543,10 @@ test("runTsRunnerCli persists pi harness session ids when runtime context select
         ...baseRequest(),
         context: {
           _sandbox_runtime_exec_v1: {
-            harness: "pi"
-          }
-        }
-      })
+            harness: "pi",
+          },
+        },
+      }),
     ],
     {
       deps: {
@@ -496,7 +558,7 @@ test("runTsRunnerCli persists pi harness session ids when runtime context select
               sequence: 1,
               event_type: "run_started",
               timestamp: new Date().toISOString(),
-              payload: { phase: "running" }
+              payload: { phase: "running" },
             },
             {
               session_id: "session-1",
@@ -506,10 +568,10 @@ test("runTsRunnerCli persists pi harness session ids when runtime context select
               timestamp: new Date().toISOString(),
               payload: {
                 status: "success",
-                harness_session_id: "/tmp/pi-session.jsonl"
-              }
-            }
-          ]
+                harness_session_id: "/tmp/pi-session.jsonl",
+              },
+            },
+          ],
         }),
         runHarnessHost: async ({ harness, emitEvent }) => {
           capturedHarness = harness;
@@ -519,7 +581,7 @@ test("runTsRunnerCli persists pi harness session ids when runtime context select
             sequence: 1,
             event_type: "run_started",
             timestamp: new Date().toISOString(),
-            payload: { phase: "running" }
+            payload: { phase: "running" },
           });
           await emitEvent({
             session_id: "session-1",
@@ -529,23 +591,32 @@ test("runTsRunnerCli persists pi harness session ids when runtime context select
             timestamp: new Date().toISOString(),
             payload: {
               status: "success",
-              harness_session_id: "/tmp/pi-session.jsonl"
-            }
+              harness_session_id: "/tmp/pi-session.jsonl",
+            },
           });
           return {
             exitCode: 0,
             stderr: "",
             sawEvent: true,
             terminalEmitted: true,
-            lastSequence: 2
+            lastSequence: 2,
           };
-        }
+        },
       },
       io: {
-        stdout: { write(chunk: string) { stdout += chunk; return true; } } as unknown as NodeJS.WritableStream,
-        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-      }
-    }
+        stdout: {
+          write(chunk: string) {
+            stdout += chunk;
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
   );
 
   assert.equal(exitCode, 0);
@@ -553,21 +624,32 @@ test("runTsRunnerCli persists pi harness session ids when runtime context select
   assert.equal(stdout.trim().split("\n").length, 3);
   assert.deepEqual(
     JSON.parse(
-      fs.readFileSync(path.join(sandboxRoot, "workspace", "workspace-1", ".holaboss", "harness-session-state.json"), "utf8")
+      fs.readFileSync(
+        path.join(
+          sandboxRoot,
+          "workspace",
+          "workspace-1",
+          ".holaboss",
+          "harness-session-state.json",
+        ),
+        "utf8",
+      ),
     ),
     {
       version: 2,
       harness_sessions: {
         pi: {
-          session_id: "/tmp/pi-session.jsonl"
-        }
-      }
-    }
+          session_id: "/tmp/pi-session.jsonl",
+        },
+      },
+    },
   );
 });
 
 test("runTsRunnerCli passes MCP servers and tool refs into the pi harness request", async () => {
-  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-pi-mcp-"));
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-pi-mcp-"),
+  );
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   let capturedRequestPayload: Record<string, unknown> | null = null;
 
@@ -578,10 +660,10 @@ test("runTsRunnerCli passes MCP servers and tool refs into the pi harness reques
         ...baseRequest(),
         context: {
           _sandbox_runtime_exec_v1: {
-            harness: "pi"
-          }
-        }
-      })
+            harness: "pi",
+          },
+        },
+      }),
     ],
     {
       deps: {
@@ -598,16 +680,16 @@ test("runTsRunnerCli passes MCP servers and tool refs into the pi harness reques
                 environment: [],
                 timeout_ms: 25000,
                 enabled: true,
-                command: []
-              }
+                command: [],
+              },
             ],
             resolved_mcp_tool_refs: [
               {
                 tool_id: "docs.lookup",
                 server_id: "docs",
-                tool_name: "lookup"
-              }
-            ]
+                tool_name: "lookup",
+              },
+            ],
           }) as never,
         runHarnessHost: async ({ requestPayload }) => {
           capturedRequestPayload = requestPayload;
@@ -616,42 +698,63 @@ test("runTsRunnerCli passes MCP servers and tool refs into the pi harness reques
             stderr: "",
             sawEvent: false,
             terminalEmitted: false,
-            lastSequence: 0
+            lastSequence: 0,
           };
-        }
+        },
       },
       io: {
-        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
-        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-      }
-    }
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
   );
 
   assert.equal(exitCode, 0);
   assert.ok(capturedRequestPayload);
-  assert.deepEqual((capturedRequestPayload as { mcp_servers: Array<Record<string, unknown>> }).mcp_servers, [
-    {
-      name: "docs",
-      config: {
-        type: "remote",
-        enabled: true,
-        url: "http://127.0.0.1:9200/mcp",
-        headers: {},
-        timeout: 25000
+  assert.deepEqual(
+    (capturedRequestPayload as { mcp_servers: Array<Record<string, unknown>> })
+      .mcp_servers,
+    [
+      {
+        name: "docs",
+        config: {
+          type: "remote",
+          enabled: true,
+          url: "http://127.0.0.1:9200/mcp",
+          headers: {},
+          timeout: 25000,
+        },
+      },
+    ],
+  );
+  assert.deepEqual(
+    (
+      capturedRequestPayload as {
+        mcp_tool_refs: Array<Record<string, unknown>>;
       }
-    }
-  ]);
-  assert.deepEqual((capturedRequestPayload as { mcp_tool_refs: Array<Record<string, unknown>> }).mcp_tool_refs, [
-    {
-      tool_id: "docs.lookup",
-      server_id: "docs",
-      tool_name: "lookup"
-    }
-  ]);
+    ).mcp_tool_refs,
+    [
+      {
+        tool_id: "docs.lookup",
+        server_id: "docs",
+        tool_name: "lookup",
+      },
+    ],
+  );
 });
 
 test("runTsRunnerCli only advertises structured output when the selected harness supports it", async () => {
-  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-pi-structured-"));
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-pi-structured-"),
+  );
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   process.env.SANDBOX_RUNTIME_API_HOST = "127.0.0.1";
   process.env.SANDBOX_RUNTIME_API_PORT = "5060";
@@ -672,10 +775,10 @@ test("runTsRunnerCli only advertises structured output when the selected harness
         ...baseRequest(),
         context: {
           _sandbox_runtime_exec_v1: {
-            harness: "pi"
-          }
-        }
-      })
+            harness: "pi",
+          },
+        },
+      }),
     ],
     {
       deps: {
@@ -693,7 +796,7 @@ test("runTsRunnerCli only advertises structured output when the selected harness
               precedence: "base_runtime",
               priority: 100,
               volatility: "stable",
-              content: "You are concise."
+              content: "You are concise.",
             },
             {
               id: "execution_policy",
@@ -702,7 +805,7 @@ test("runTsRunnerCli only advertises structured output when the selected harness
               precedence: "base_runtime",
               priority: 200,
               volatility: "stable",
-              content: "Inspect before mutating."
+              content: "Inspect before mutating.",
             },
             {
               id: "session_policy",
@@ -711,7 +814,7 @@ test("runTsRunnerCli only advertises structured output when the selected harness
               precedence: "session_policy",
               priority: 300,
               volatility: "run",
-              content: "This is the main session."
+              content: "This is the main session.",
             },
             {
               id: "capability_policy",
@@ -720,14 +823,14 @@ test("runTsRunnerCli only advertises structured output when the selected harness
               precedence: "capability_policy",
               priority: 400,
               volatility: "run",
-              content: "Use available tools."
-            }
+              content: "Use available tools.",
+            },
           ],
           model_client: {
             model_proxy_provider: "openai_compatible",
             api_key: "token",
             base_url: "http://127.0.0.1:4000/openai/v1",
-            default_headers: { "X-Test": "1" }
+            default_headers: { "X-Test": "1" },
           },
           tools: { read: true },
           workspace_tool_ids: [],
@@ -735,7 +838,7 @@ test("runTsRunnerCli only advertises structured output when the selected harness
           capability_manifest: capabilityManifest,
           output_schema_member_id: "main",
           output_format: { type: "json_schema", schema: { type: "object" } },
-          workspace_config_checksum: "checksum-1"
+          workspace_config_checksum: "checksum-1",
         }),
         runHarnessHost: async ({ requestPayload }) => {
           capturedRequestPayload = requestPayload;
@@ -744,88 +847,115 @@ test("runTsRunnerCli only advertises structured output when the selected harness
             stderr: "",
             sawEvent: false,
             terminalEmitted: false,
-            lastSequence: 0
+            lastSequence: 0,
           };
-        }
+        },
       },
       io: {
-        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
-        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-      }
-    }
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
   );
 
   assert.equal(exitCode, 0);
   assert.ok(capturedRequestPayload);
   assert.equal(
-    (capturedRequestPayload as { runtime_api_base_url?: string | null }).runtime_api_base_url,
-    "http://127.0.0.1:5060"
+    (capturedRequestPayload as { runtime_api_base_url?: string | null })
+      .runtime_api_base_url,
+    "http://127.0.0.1:5060",
   );
-  const runStartedPayload = (capturedRequestPayload as { run_started_payload: Record<string, unknown> }).run_started_payload;
-  assert.deepEqual({
-    instruction_preview: runStartedPayload.instruction_preview,
-    provider_id: runStartedPayload.provider_id,
-    model_id: runStartedPayload.model_id,
-    workspace_tool_ids: runStartedPayload.workspace_tool_ids,
-    workspace_skill_ids: runStartedPayload.workspace_skill_ids,
-    prompt_section_ids: runStartedPayload.prompt_section_ids,
-    request_snapshot_fingerprint: runStartedPayload.request_snapshot_fingerprint,
-    capability_manifest_fingerprint: runStartedPayload.capability_manifest_fingerprint,
-    mcp_server_ids: runStartedPayload.mcp_server_ids,
-    mcp_server_mappings: runStartedPayload.mcp_server_mappings,
-    workspace_mcp_sidecar_reused: runStartedPayload.workspace_mcp_sidecar_reused,
-    structured_output_enabled: runStartedPayload.structured_output_enabled,
-    workspace_config_checksum: runStartedPayload.workspace_config_checksum
-  }, {
-    instruction_preview: "hello world",
-    provider_id: "openai",
-    model_id: "gpt-5.4",
-    workspace_tool_ids: [],
-    workspace_skill_ids: [],
-    prompt_section_ids: [
-      "runtime_core",
-      "execution_policy",
-      "session_policy",
-      "capability_policy",
-    ],
-    request_snapshot_fingerprint: runStartedPayload.request_snapshot_fingerprint,
-    capability_manifest_fingerprint: runStartedPayload.capability_manifest_fingerprint,
-    mcp_server_ids: [],
-    mcp_server_mappings: [],
-    workspace_mcp_sidecar_reused: false,
-    structured_output_enabled: false,
-    workspace_config_checksum: "checksum-1"
-  });
+  const runStartedPayload = (
+    capturedRequestPayload as { run_started_payload: Record<string, unknown> }
+  ).run_started_payload;
+  assert.deepEqual(
+    {
+      instruction_preview: runStartedPayload.instruction_preview,
+      provider_id: runStartedPayload.provider_id,
+      model_id: runStartedPayload.model_id,
+      workspace_tool_ids: runStartedPayload.workspace_tool_ids,
+      workspace_skill_ids: runStartedPayload.workspace_skill_ids,
+      prompt_section_ids: runStartedPayload.prompt_section_ids,
+      request_snapshot_fingerprint:
+        runStartedPayload.request_snapshot_fingerprint,
+      capability_manifest_fingerprint:
+        runStartedPayload.capability_manifest_fingerprint,
+      mcp_server_ids: runStartedPayload.mcp_server_ids,
+      mcp_server_mappings: runStartedPayload.mcp_server_mappings,
+      workspace_mcp_sidecar_reused:
+        runStartedPayload.workspace_mcp_sidecar_reused,
+      structured_output_enabled: runStartedPayload.structured_output_enabled,
+      workspace_config_checksum: runStartedPayload.workspace_config_checksum,
+    },
+    {
+      instruction_preview: "hello world",
+      provider_id: "openai",
+      model_id: "gpt-5.4",
+      workspace_tool_ids: [],
+      workspace_skill_ids: [],
+      prompt_section_ids: [
+        "runtime_core",
+        "execution_policy",
+        "session_policy",
+        "capability_policy",
+      ],
+      request_snapshot_fingerprint:
+        runStartedPayload.request_snapshot_fingerprint,
+      capability_manifest_fingerprint:
+        runStartedPayload.capability_manifest_fingerprint,
+      mcp_server_ids: [],
+      mcp_server_mappings: [],
+      workspace_mcp_sidecar_reused: false,
+      structured_output_enabled: false,
+      workspace_config_checksum: "checksum-1",
+    },
+  );
   assert.equal(typeof runStartedPayload.bootstrap_started_at, "string");
   assert.equal(typeof runStartedPayload.bootstrap_ready_at, "string");
   assert.equal(typeof runStartedPayload.bootstrap_total_ms, "number");
   assert.ok((runStartedPayload.bootstrap_total_ms as number) >= 0);
-  assert.match(String(runStartedPayload.request_snapshot_fingerprint ?? ""), /^[a-f0-9]{64}$/);
-  assert.match(String(runStartedPayload.capability_manifest_fingerprint ?? ""), /^[a-f0-9]{64}$/);
-  const bootstrapStageTimingKeys = Object.keys((runStartedPayload.bootstrap_stage_timings_ms as Record<string, unknown>) ?? {}).sort();
-  assert.deepEqual(
-    bootstrapStageTimingKeys,
-    [
-      "build_harness_host_request",
-      "compile_runtime_plan",
-      "load_current_user_context",
-      "load_operator_surface_context",
-      "load_pending_user_memory_context",
-      "load_recalled_memory_context",
-      "load_recent_runtime_context",
-      "load_session_resume_context",
-      "persist_turn_request_snapshot",
-      "prepare_harness_run",
-      "project_runtime_config",
-      "resolve_workspace_skills",
-      "stage_browser_tools",
-      "stage_runtime_tools"
-    ]
+  assert.match(
+    String(runStartedPayload.request_snapshot_fingerprint ?? ""),
+    /^[a-f0-9]{64}$/,
   );
+  assert.match(
+    String(runStartedPayload.capability_manifest_fingerprint ?? ""),
+    /^[a-f0-9]{64}$/,
+  );
+  const bootstrapStageTimingKeys = Object.keys(
+    (runStartedPayload.bootstrap_stage_timings_ms as Record<string, unknown>) ??
+      {},
+  ).sort();
+  assert.deepEqual(bootstrapStageTimingKeys, [
+    "build_harness_host_request",
+    "compile_runtime_plan",
+    "load_current_user_context",
+    "load_operator_surface_context",
+    "load_pending_user_memory_context",
+    "load_recalled_memory_context",
+    "load_recent_runtime_context",
+    "load_session_resume_context",
+    "persist_turn_request_snapshot",
+    "prepare_harness_run",
+    "project_runtime_config",
+    "resolve_workspace_skills",
+    "stage_browser_tools",
+    "stage_runtime_tools",
+  ]);
 });
 
 test("runTsRunnerCli loads current user context from the runtime profile", async () => {
-  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-current-user-"));
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-current-user-"),
+  );
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   const workspaceRoot = path.join(sandboxRoot, "workspace");
   const store = new RuntimeStateStore({
@@ -846,12 +976,21 @@ test("runTsRunnerCli loads current user context from the runtime profile", async
 
   let capturedProjectRequest: Record<string, unknown> | null = null;
   const exitCode = await runTsRunnerCli(
-    ["--request-base64", encodeRequest({ ...baseRequest(), instruction: "Draft the email and sign with my name." })],
+    [
+      "--request-base64",
+      encodeRequest({
+        ...baseRequest(),
+        instruction: "Draft the email and sign with my name.",
+      }),
+    ],
     {
       deps: {
         ...testDeps(),
         projectAgentRuntimeConfig: (request) => {
-          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          capturedProjectRequest = request as unknown as Record<
+            string,
+            unknown
+          >;
           return {
             provider_id: "openai",
             model_id: "gpt-5.4",
@@ -861,33 +1000,45 @@ test("runTsRunnerCli loads current user context from the runtime profile", async
               model_proxy_provider: "openai_compatible",
               api_key: "token",
               base_url: "http://127.0.0.1:4000/openai/v1",
-              default_headers: { "X-Test": "1" }
+              default_headers: { "X-Test": "1" },
             },
             tools: { read: true },
             workspace_tool_ids: [],
             workspace_skill_ids: [],
             output_schema_member_id: null,
             output_format: null,
-            workspace_config_checksum: "checksum-1"
+            workspace_config_checksum: "checksum-1",
           };
-        }
+        },
       },
       io: {
-        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
-        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-      }
-    }
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
   );
 
   assert.equal(exitCode, 0);
   assert.ok(capturedProjectRequest);
   assert.deepEqual(
-    (capturedProjectRequest as { current_user_context: Record<string, unknown> }).current_user_context,
+    (
+      capturedProjectRequest as {
+        current_user_context: Record<string, unknown>;
+      }
+    ).current_user_context,
     {
       profile_id: "default",
       name: "Jeffrey",
       name_source: "manual",
-    }
+    },
   );
 });
 
@@ -901,12 +1052,21 @@ test("runTsRunnerCli includes staged runtime tool ids in the projected extra too
       deps: {
         ...testDeps({
           pluginOverrides: {
-            stageBrowserTools: () => ({ changed: false, toolIds: ["browser_get_state"] }),
-            stageRuntimeTools: () => ({ changed: false, toolIds: ["holaboss_onboarding_complete"] })
-          }
+            stageBrowserTools: () => ({
+              changed: false,
+              toolIds: ["browser_get_state"],
+            }),
+            stageRuntimeTools: () => ({
+              changed: false,
+              toolIds: ["holaboss_onboarding_complete"],
+            }),
+          },
         }),
         projectAgentRuntimeConfig: (request) => {
-          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          capturedProjectRequest = request as unknown as Record<
+            string,
+            unknown
+          >;
           return {
             provider_id: "openai",
             model_id: "gpt-5.4",
@@ -916,43 +1076,57 @@ test("runTsRunnerCli includes staged runtime tool ids in the projected extra too
               model_proxy_provider: "openai_compatible",
               api_key: "token",
               base_url: "http://127.0.0.1:4000/openai/v1",
-              default_headers: { "X-Test": "1" }
+              default_headers: { "X-Test": "1" },
             },
             tools: { read: true },
             workspace_tool_ids: [],
             workspace_skill_ids: [],
             output_schema_member_id: null,
             output_format: null,
-            workspace_config_checksum: "checksum-1"
+            workspace_config_checksum: "checksum-1",
           };
-        }
+        },
       },
       io: {
-        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
-        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-      }
-    }
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
   );
 
   assert.equal(exitCode, 0);
   assert.ok(capturedProjectRequest);
-  assert.equal((capturedProjectRequest as { browser_tools_available: boolean }).browser_tools_available, true);
+  assert.equal(
+    (capturedProjectRequest as { browser_tools_available: boolean })
+      .browser_tools_available,
+    true,
+  );
   assert.deepEqual(
     (capturedProjectRequest as { browser_tool_ids: string[] }).browser_tool_ids,
-    ["browser_get_state"]
+    ["browser_get_state"],
   );
   assert.deepEqual(
     (capturedProjectRequest as { runtime_tool_ids: string[] }).runtime_tool_ids,
-    ["holaboss_onboarding_complete"]
+    ["holaboss_onboarding_complete"],
   );
   assert.deepEqual(
     (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
-    ["web_search", "browser_get_state", "holaboss_onboarding_complete"]
+    ["web_search", "browser_get_state", "holaboss_onboarding_complete"],
   );
 });
 
 test("runTsRunnerCli derives recent runtime context from the latest prior turn result", async () => {
-  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-recent-context-"));
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-recent-context-"),
+  );
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   const workspaceRoot = path.join(sandboxRoot, "workspace");
   const store = new RuntimeStateStore({
@@ -990,7 +1164,8 @@ test("runTsRunnerCli derives recent runtime context from the latest prior turn r
     ],
     promptSectionIds: ["runtime_core", "execution_policy"],
     capabilityManifestFingerprint: "c".repeat(64),
-    compactedSummary: "Run failed while trying to deploy because policy denied the action.",
+    compactedSummary:
+      "Run failed while trying to deploy because policy denied the action.",
     tokenUsage: { input_tokens: 3, output_tokens: 5 },
   });
   store.insertSessionMessage({
@@ -1009,7 +1184,10 @@ test("runTsRunnerCli derives recent runtime context from the latest prior turn r
       deps: {
         ...testDeps(),
         projectAgentRuntimeConfig: (request) => {
-          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          capturedProjectRequest = request as unknown as Record<
+            string,
+            unknown
+          >;
           return {
             provider_id: "openai",
             model_id: "gpt-5.4",
@@ -1019,56 +1197,76 @@ test("runTsRunnerCli derives recent runtime context from the latest prior turn r
               model_proxy_provider: "openai_compatible",
               api_key: "token",
               base_url: "http://127.0.0.1:4000/openai/v1",
-              default_headers: { "X-Test": "1" }
+              default_headers: { "X-Test": "1" },
             },
             tools: { read: true },
             workspace_tool_ids: [],
             workspace_skill_ids: [],
             output_schema_member_id: null,
             output_format: null,
-            workspace_config_checksum: "checksum-1"
+            workspace_config_checksum: "checksum-1",
           };
-        }
+        },
       },
       io: {
-        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
-        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-      }
-    }
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
   );
 
   assert.equal(exitCode, 0);
   assert.ok(capturedProjectRequest);
   assert.deepEqual(
-    (capturedProjectRequest as { recent_runtime_context: Record<string, unknown> }).recent_runtime_context,
+    (
+      capturedProjectRequest as {
+        recent_runtime_context: Record<string, unknown>;
+      }
+    ).recent_runtime_context,
     {
-      summary: "Run failed while trying to deploy because policy denied the action.",
+      summary:
+        "Run failed while trying to deploy because policy denied the action.",
       last_stop_reason: "permission_denied",
       last_error: "permission_denied",
       waiting_for_user: null,
-    }
+    },
   );
   assert.deepEqual(
-    (capturedProjectRequest as { session_resume_context: Record<string, unknown> }).session_resume_context,
+    (
+      capturedProjectRequest as {
+        session_resume_context: Record<string, unknown>;
+      }
+    ).session_resume_context,
     {
       recent_turns: [
         {
           input_id: "input-0",
           status: "failed",
           stop_reason: "permission_denied",
-          summary: "Run failed while trying to deploy because policy denied the action.",
+          summary:
+            "Run failed while trying to deploy because policy denied the action.",
           completed_at: "2026-01-01T00:00:05.000Z",
         },
       ],
       recent_user_messages: [
         "Please continue after deploy permissions are fixed.",
       ],
-    }
+    },
   );
 });
 
 test("runTsRunnerCli restores resume context from the latest prior compaction boundary", async () => {
-  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-compaction-boundary-"));
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-compaction-boundary-"),
+  );
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   const workspaceRoot = path.join(sandboxRoot, "workspace");
   const store = new RuntimeStateStore({
@@ -1116,9 +1314,7 @@ test("runTsRunnerCli restores resume context from the latest prior compaction bo
           "Continue after confirmation once the deploy is approved.",
         ],
       },
-      restored_memory_paths: [
-        "workspace/workspace-1/runtime/latest-turn.md",
-      ],
+      restored_memory_paths: ["workspace/workspace-1/runtime/latest-turn.md"],
     },
     preservedTurnInputIds: ["input-0"],
   });
@@ -1131,7 +1327,10 @@ test("runTsRunnerCli restores resume context from the latest prior compaction bo
       deps: {
         ...testDeps(),
         projectAgentRuntimeConfig: (request) => {
-          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          capturedProjectRequest = request as unknown as Record<
+            string,
+            unknown
+          >;
           return {
             provider_id: "openai",
             model_id: "gpt-5.4",
@@ -1141,37 +1340,53 @@ test("runTsRunnerCli restores resume context from the latest prior compaction bo
               model_proxy_provider: "openai_compatible",
               api_key: "token",
               base_url: "http://127.0.0.1:4000/openai/v1",
-              default_headers: { "X-Test": "1" }
+              default_headers: { "X-Test": "1" },
             },
             tools: { read: true },
             workspace_tool_ids: [],
             workspace_skill_ids: [],
             output_schema_member_id: null,
             output_format: null,
-            workspace_config_checksum: "checksum-1"
+            workspace_config_checksum: "checksum-1",
           };
-        }
+        },
       },
       io: {
-        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
-        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-      }
-    }
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
   );
 
   assert.equal(exitCode, 0);
   assert.ok(capturedProjectRequest);
   assert.deepEqual(
-    (capturedProjectRequest as { recent_runtime_context: Record<string, unknown> }).recent_runtime_context,
+    (
+      capturedProjectRequest as {
+        recent_runtime_context: Record<string, unknown>;
+      }
+    ).recent_runtime_context,
     {
       summary: "Resume from compacted deploy attempt.",
       last_stop_reason: "waiting_user",
       last_error: null,
       waiting_for_user: true,
-    }
+    },
   );
   assert.deepEqual(
-    (capturedProjectRequest as { session_resume_context: Record<string, unknown> }).session_resume_context,
+    (
+      capturedProjectRequest as {
+        session_resume_context: Record<string, unknown>;
+      }
+    ).session_resume_context,
     {
       recent_turns: [
         {
@@ -1196,15 +1411,15 @@ test("runTsRunnerCli restores resume context from the latest prior compaction bo
         "restored_memory_paths",
       ],
       preserved_turn_input_ids: ["input-0"],
-      restored_memory_paths: [
-        "workspace/workspace-1/runtime/latest-turn.md",
-      ],
-    }
+      restored_memory_paths: ["workspace/workspace-1/runtime/latest-turn.md"],
+    },
   );
 });
 
 test("runTsRunnerCli emits compaction_restored before harness run events when resume boundary exists", async () => {
-  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-compaction-restored-event-"));
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-compaction-restored-event-"),
+  );
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   const workspaceRoot = path.join(sandboxRoot, "workspace");
   const store = new RuntimeStateStore({
@@ -1240,9 +1455,7 @@ test("runTsRunnerCli emits compaction_restored before harness run events when re
           "Continue after confirmation once the deploy is approved.",
         ],
       },
-      restored_memory_paths: [
-        "workspace/workspace-1/runtime/latest-turn.md",
-      ],
+      restored_memory_paths: ["workspace/workspace-1/runtime/latest-turn.md"],
     },
     preservedTurnInputIds: ["input-0"],
   });
@@ -1275,13 +1488,21 @@ test("runTsRunnerCli emits compaction_restored before harness run events when re
       io: {
         stdout: {
           write(chunk: string | Uint8Array) {
-            output.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+            output.push(
+              typeof chunk === "string"
+                ? chunk
+                : Buffer.from(chunk).toString("utf8"),
+            );
             return true;
           },
         } as unknown as NodeJS.WritableStream,
-        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
       },
-    }
+    },
   );
 
   assert.equal(exitCode, 0);
@@ -1300,7 +1521,9 @@ test("runTsRunnerCli emits compaction_restored before harness run events when re
 });
 
 test("runTsRunnerCli derives recalled durable memory from indexed memory entries", async () => {
-  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-recalled-memory-"));
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-recalled-memory-"),
+  );
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   const workspaceRoot = path.join(sandboxRoot, "workspace");
   const configPath = path.join(sandboxRoot, "state", "runtime-config.json");
@@ -1378,7 +1601,7 @@ test("runTsRunnerCli derives recalled durable memory from indexed memory entries
       "- [Preferences](preference/MEMORY.md) - 1 durable preference memories.",
       "- [Identity](identity/MEMORY.md) - 0 durable identity memories.",
       "",
-    ].join("\n")
+    ].join("\n"),
   );
   writeMemoryFile(
     workspaceRoot,
@@ -1388,7 +1611,7 @@ test("runTsRunnerCli derives recalled durable memory from indexed memory entries
       "",
       "- [Deploy permission blocker](knowledge/blockers/deploy.md) [blocker] [verify: check_before_use] - Deploy calls may be denied by workspace policy.",
       "",
-    ].join("\n")
+    ].join("\n"),
   );
   writeMemoryFile(
     workspaceRoot,
@@ -1398,18 +1621,22 @@ test("runTsRunnerCli derives recalled durable memory from indexed memory entries
       "",
       "- [User response style](response-style.md) [preference] [verify: none] - User prefers concise responses.",
       "",
-    ].join("\n")
+    ].join("\n"),
   );
-  writeMemoryFile(workspaceRoot, "identity/MEMORY.md", "# Identity Memory Index\n\nNo durable identity memories indexed yet.\n");
+  writeMemoryFile(
+    workspaceRoot,
+    "identity/MEMORY.md",
+    "# Identity Memory Index\n\nNo durable identity memories indexed yet.\n",
+  );
   writeMemoryFile(
     workspaceRoot,
     "workspace/workspace-1/knowledge/blockers/deploy.md",
-    "# Deploy permission blocker\n\nDeploy calls may be denied by workspace policy.\n"
+    "# Deploy permission blocker\n\nDeploy calls may be denied by workspace policy.\n",
   );
   writeMemoryFile(
     workspaceRoot,
     "preference/response-style.md",
-    "# User response style\n\nUser prefers concise responses.\n"
+    "# User response style\n\nUser prefers concise responses.\n",
   );
   installMockRecallModelResponses([
     {
@@ -1417,15 +1644,18 @@ test("runTsRunnerCli derives recalled durable memory from indexed memory entries
       rewritten_query: "deploy blockers and response preferences",
       scopes: ["workspace", "preference"],
       memory_types: ["blocker", "preference"],
-      reason: "Need durable recall for deployment blockers and user delivery preferences.",
+      reason:
+        "Need durable recall for deployment blockers and user delivery preferences.",
       primary_paths: [
         "preference/response-style.md",
         "workspace/workspace-1/knowledge/blockers/deploy.md",
       ],
       reserve_paths: [],
       reason_by_path: {
-        "preference/response-style.md": "Relevant user preference for how to answer.",
-        "workspace/workspace-1/knowledge/blockers/deploy.md": "Direct blocker for deploy request.",
+        "preference/response-style.md":
+          "Relevant user preference for how to answer.",
+        "workspace/workspace-1/knowledge/blockers/deploy.md":
+          "Direct blocker for deploy request.",
       },
     },
     {
@@ -1436,20 +1666,31 @@ test("runTsRunnerCli derives recalled durable memory from indexed memory entries
       ],
       expansion_paths: [],
       reason_by_path: {
-        "preference/response-style.md": "Use the user's response style when answering.",
-        "workspace/workspace-1/knowledge/blockers/deploy.md": "Contains the blocker the agent must account for.",
+        "preference/response-style.md":
+          "Use the user's response style when answering.",
+        "workspace/workspace-1/knowledge/blockers/deploy.md":
+          "Contains the blocker the agent must account for.",
       },
     },
   ]);
 
   let capturedProjectRequest: Record<string, unknown> | null = null;
   const exitCode = await runTsRunnerCli(
-    ["--request-base64", encodeRequest({ ...baseRequest(), instruction: "Please deploy after fixing permissions." })],
+    [
+      "--request-base64",
+      encodeRequest({
+        ...baseRequest(),
+        instruction: "Please deploy after fixing permissions.",
+      }),
+    ],
     {
       deps: {
         ...testDeps(),
         projectAgentRuntimeConfig: (request) => {
-          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          capturedProjectRequest = request as unknown as Record<
+            string,
+            unknown
+          >;
           return {
             provider_id: "openai",
             model_id: "gpt-5.4",
@@ -1459,29 +1700,42 @@ test("runTsRunnerCli derives recalled durable memory from indexed memory entries
               model_proxy_provider: "openai_compatible",
               api_key: "token",
               base_url: "http://127.0.0.1:4000/openai/v1",
-              default_headers: { "X-Test": "1" }
+              default_headers: { "X-Test": "1" },
             },
             tools: { read: true },
             workspace_tool_ids: [],
             workspace_skill_ids: [],
             output_schema_member_id: null,
             output_format: null,
-            workspace_config_checksum: "checksum-1"
+            workspace_config_checksum: "checksum-1",
           };
-        }
+        },
       },
       io: {
-        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
-        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-      }
-    }
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
   );
 
   assert.equal(exitCode, 0);
   assert.ok(capturedProjectRequest);
-  const recalledMemoryContext = (capturedProjectRequest as {
-    recalled_memory_context: { entries: Array<Record<string, unknown>>; selection_trace: Array<Record<string, unknown>> }
-  }).recalled_memory_context;
+  const recalledMemoryContext = (
+    capturedProjectRequest as {
+      recalled_memory_context: {
+        entries: Array<Record<string, unknown>>;
+        selection_trace: Array<Record<string, unknown>>;
+      };
+    }
+  ).recalled_memory_context;
   assert.equal(recalledMemoryContext.entries.length, 2);
   assert.deepEqual(
     recalledMemoryContext.entries.map((entry) => ({
@@ -1494,7 +1748,7 @@ test("runTsRunnerCli derives recalled durable memory from indexed memory entries
       staleness_policy: entry.staleness_policy,
       freshness_state: entry.freshness_state,
       source_type: entry.source_type,
-      })),
+    })),
     [
       {
         scope: "user",
@@ -1518,16 +1772,27 @@ test("runTsRunnerCli derives recalled durable memory from indexed memory entries
         freshness_state: "fresh",
         source_type: null,
       },
-    ]
+    ],
   );
-  assert.match(String(recalledMemoryContext.entries[0]?.updated_at ?? ""), /\d{4}-\d{2}-\d{2}T/);
-  assert.match(String(recalledMemoryContext.entries[1]?.updated_at ?? ""), /\d{4}-\d{2}-\d{2}T/);
+  assert.match(
+    String(recalledMemoryContext.entries[0]?.updated_at ?? ""),
+    /\d{4}-\d{2}-\d{2}T/,
+  );
+  assert.match(
+    String(recalledMemoryContext.entries[1]?.updated_at ?? ""),
+    /\d{4}-\d{2}-\d{2}T/,
+  );
   assert.equal(recalledMemoryContext.selection_trace.length, 2);
-  assert.equal(recalledMemoryContext.selection_trace[0]?.memory_id, "user-preference:response-style");
+  assert.equal(
+    recalledMemoryContext.selection_trace[0]?.memory_id,
+    "user-preference:response-style",
+  );
 });
 
 test("runTsRunnerCli uses the provider background tasks model for recall selection calls", async () => {
-  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-recall-background-model-"));
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-recall-background-model-"),
+  );
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   const workspaceRoot = path.join(sandboxRoot, "workspace");
   const configPath = path.join(sandboxRoot, "state", "runtime-config.json");
@@ -1551,9 +1816,9 @@ test("runTsRunnerCli uses the provider background tasks model for recall selecti
         },
       },
       null,
-      2
+      2,
     )}\n`,
-    "utf8"
+    "utf8",
   );
   process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
   const store = new RuntimeStateStore({
@@ -1588,12 +1853,12 @@ test("runTsRunnerCli uses the provider background tasks model for recall selecti
   writeMemoryFile(
     workspaceRoot,
     "workspace/workspace-1/MEMORY.md",
-    "# Workspace Durable Memory Index\n\n- [Deploy procedure](knowledge/procedures/deploy.md) [procedure] [verify: check_before_use] - Steps for deployment.\n"
+    "# Workspace Durable Memory Index\n\n- [Deploy procedure](knowledge/procedures/deploy.md) [procedure] [verify: check_before_use] - Steps for deployment.\n",
   );
   writeMemoryFile(
     workspaceRoot,
     "workspace/workspace-1/knowledge/procedures/deploy.md",
-    "# Deploy procedure\n\nSteps for deployment.\n"
+    "# Deploy procedure\n\nSteps for deployment.\n",
   );
   const recallRequests: Array<Record<string, unknown>> = [];
   installMockRecallModelResponses(
@@ -1611,18 +1876,33 @@ test("runTsRunnerCli uses the provider background tasks model for recall selecti
         final_paths: ["workspace/workspace-1/knowledge/procedures/deploy.md"],
       },
     ],
-    recallRequests
+    recallRequests,
   );
 
   const exitCode = await runTsRunnerCli(
-    ["--request-base64", encodeRequest({ ...baseRequest(), model: "openai_direct/gpt-5.4", instruction: "how do I deploy?" })],
+    [
+      "--request-base64",
+      encodeRequest({
+        ...baseRequest(),
+        model: "openai_direct/gpt-5.4",
+        instruction: "how do I deploy?",
+      }),
+    ],
     {
       deps: testDeps(),
       io: {
-        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
-        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-      }
-    }
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
   );
 
   assert.equal(exitCode, 0);
@@ -1631,7 +1911,9 @@ test("runTsRunnerCli uses the provider background tasks model for recall selecti
 });
 
 test("runTsRunnerCli loads pending user memory proposals into prompt context for the same input", async () => {
-  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-pending-user-memory-"));
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-pending-user-memory-"),
+  );
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   const workspaceRoot = path.join(sandboxRoot, "workspace");
   const store = new RuntimeStateStore({
@@ -1658,7 +1940,8 @@ test("runTsRunnerCli loads pending user memory proposals into prompt context for
     proposalKind: "preference",
     targetKey: "file-delivery",
     title: "File delivery preference",
-    summary: "Do not compress or zip multiple files; deliver them individually.",
+    summary:
+      "Do not compress or zip multiple files; deliver them individually.",
     payload: {
       preference_type: "file_delivery",
       mode: "individual_files",
@@ -1678,7 +1961,10 @@ test("runTsRunnerCli loads pending user memory proposals into prompt context for
       deps: {
         ...testDeps(),
         projectAgentRuntimeConfig: (request) => {
-          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          capturedProjectRequest = request as unknown as Record<
+            string,
+            unknown
+          >;
           return {
             provider_id: "openai",
             model_id: "gpt-5.4",
@@ -1688,35 +1974,48 @@ test("runTsRunnerCli loads pending user memory proposals into prompt context for
               model_proxy_provider: "openai_compatible",
               api_key: "token",
               base_url: "http://127.0.0.1:4000/openai/v1",
-              default_headers: { "X-Test": "1" }
+              default_headers: { "X-Test": "1" },
             },
             tools: { read: true },
             workspace_tool_ids: [],
             workspace_skill_ids: [],
             output_schema_member_id: null,
             output_format: null,
-            workspace_config_checksum: "checksum-1"
+            workspace_config_checksum: "checksum-1",
           };
-        }
+        },
       },
       io: {
-        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
-        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-      }
-    }
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
   );
 
   assert.equal(exitCode, 0);
   assert.ok(capturedProjectRequest);
-  const pendingUserMemoryContext = (capturedProjectRequest as {
-    pending_user_memory_context: { entries: Array<Record<string, unknown>> }
-  }).pending_user_memory_context;
+  const pendingUserMemoryContext = (
+    capturedProjectRequest as {
+      pending_user_memory_context: { entries: Array<Record<string, unknown>> };
+    }
+  ).pending_user_memory_context;
 
   assert.equal(pendingUserMemoryContext.entries.length, 1);
-  assert.equal(pendingUserMemoryContext.entries[0]?.target_key, "file-delivery");
+  assert.equal(
+    pendingUserMemoryContext.entries[0]?.target_key,
+    "file-delivery",
+  );
   assert.equal(
     pendingUserMemoryContext.entries[0]?.summary,
-    "Do not compress or zip multiple files; deliver them individually."
+    "Do not compress or zip multiple files; deliver them individually.",
   );
 });
 
@@ -1751,7 +2050,10 @@ test("runTsRunnerCli loads operator surface context into prompt context for the 
           ],
         }),
         projectAgentRuntimeConfig: (request) => {
-          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          capturedProjectRequest = request as unknown as Record<
+            string,
+            unknown
+          >;
           return {
             provider_id: "openai",
             model_id: "gpt-5.4",
@@ -1761,28 +2063,40 @@ test("runTsRunnerCli loads operator surface context into prompt context for the 
               model_proxy_provider: "openai_compatible",
               api_key: "token",
               base_url: "http://127.0.0.1:4000/openai/v1",
-              default_headers: { "X-Test": "1" }
+              default_headers: { "X-Test": "1" },
             },
             tools: { read: true },
             workspace_tool_ids: [],
             workspace_skill_ids: [],
             output_schema_member_id: null,
             output_format: null,
-            workspace_config_checksum: "checksum-1"
+            workspace_config_checksum: "checksum-1",
           };
-        }
+        },
       },
       io: {
-        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
-        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-      }
-    }
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
   );
 
   assert.equal(exitCode, 0);
   assert.ok(capturedProjectRequest);
   assert.deepEqual(
-    (capturedProjectRequest as { operator_surface_context: Record<string, unknown> }).operator_surface_context,
+    (
+      capturedProjectRequest as {
+        operator_surface_context: Record<string, unknown>;
+      }
+    ).operator_surface_context,
     {
       active_surface_id: "browser:user",
       surfaces: [
@@ -1803,12 +2117,14 @@ test("runTsRunnerCli loads operator surface context into prompt context for the 
           summary: "Agent browser surface with 2 open tabs.",
         },
       ],
-    }
+    },
   );
 });
 
 test("runTsRunnerCli loads operator surface context from the desktop browser capability base URL", async () => {
-  const sandboxRoot = setTempSandboxRoot("hb-ts-runner-operator-surface-fetch-");
+  const sandboxRoot = setTempSandboxRoot(
+    "hb-ts-runner-operator-surface-fetch-",
+  );
   const configPath = path.join(sandboxRoot, "state", "runtime-config.json");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(
@@ -1831,18 +2147,38 @@ test("runTsRunnerCli loads operator surface context from the desktop browser cap
   process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
 
   let capturedProjectRequest: Record<string, unknown> | null = null;
-  const requests: Array<{ url: string; token: string | null; workspaceId: string | null }> = [];
-  const { loadOperatorSurfaceContext: _ignoredLoadOperatorSurfaceContext, ...baseDeps } = testDeps();
+  const requests: Array<{
+    url: string;
+    token: string | null;
+    workspaceId: string | null;
+  }> = [];
+  const {
+    loadOperatorSurfaceContext: _ignoredLoadOperatorSurfaceContext,
+    ...baseDeps
+  } = testDeps();
   globalThis.fetch = (async (input, init) => {
     requests.push({
-      url: typeof input === "string" ? input : input instanceof URL ? input.toString() : String(input),
+      url:
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : String(input),
       token:
-        init?.headers && typeof init.headers === "object" && !Array.isArray(init.headers)
-          ? (init.headers as Record<string, string>)["x-holaboss-desktop-token"] ?? null
+        init?.headers &&
+        typeof init.headers === "object" &&
+        !Array.isArray(init.headers)
+          ? ((init.headers as Record<string, string>)[
+              "x-holaboss-desktop-token"
+            ] ?? null)
           : null,
       workspaceId:
-        init?.headers && typeof init.headers === "object" && !Array.isArray(init.headers)
-          ? (init.headers as Record<string, string>)["x-holaboss-workspace-id"] ?? null
+        init?.headers &&
+        typeof init.headers === "object" &&
+        !Array.isArray(init.headers)
+          ? ((init.headers as Record<string, string>)[
+              "x-holaboss-workspace-id"
+            ] ?? null)
           : null,
     });
     return new Response(
@@ -1872,7 +2208,10 @@ test("runTsRunnerCli loads operator surface context from the desktop browser cap
       deps: {
         ...baseDeps,
         projectAgentRuntimeConfig: (request) => {
-          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          capturedProjectRequest = request as unknown as Record<
+            string,
+            unknown
+          >;
           return {
             provider_id: "openai",
             model_id: "gpt-5.4",
@@ -1894,8 +2233,16 @@ test("runTsRunnerCli loads operator surface context from the desktop browser cap
         },
       },
       io: {
-        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
-        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream,
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
       },
     },
   );
@@ -1910,7 +2257,11 @@ test("runTsRunnerCli loads operator surface context from the desktop browser cap
   ]);
   assert.ok(capturedProjectRequest);
   assert.deepEqual(
-    (capturedProjectRequest as { operator_surface_context: Record<string, unknown> }).operator_surface_context,
+    (
+      capturedProjectRequest as {
+        operator_surface_context: Record<string, unknown>;
+      }
+    ).operator_surface_context,
     {
       active_surface_id: "browser:user",
       surfaces: [
@@ -1928,7 +2279,9 @@ test("runTsRunnerCli loads operator surface context from the desktop browser cap
 });
 
 test("runTsRunnerCli recalls workspace memory from scoped entries even with many newer cross-workspace entries", async () => {
-  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-recalled-memory-scope-"));
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-recalled-memory-scope-"),
+  );
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   const workspaceRoot = path.join(sandboxRoot, "workspace");
   const configPath = path.join(sandboxRoot, "state", "runtime-config.json");
@@ -2020,7 +2373,7 @@ test("runTsRunnerCli recalls workspace memory from scoped entries even with many
       "- [Preferences](preference/MEMORY.md) - 0 durable preference memories.",
       "- [Identity](identity/MEMORY.md) - 0 durable identity memories.",
       "",
-    ].join("\n")
+    ].join("\n"),
   );
   writeMemoryFile(
     workspaceRoot,
@@ -2030,14 +2383,22 @@ test("runTsRunnerCli recalls workspace memory from scoped entries even with many
       "",
       "- [Deploy permission blocker](knowledge/blockers/deploy.md) [blocker] [verify: check_before_use] - Deploy calls may be denied by workspace policy.",
       "",
-    ].join("\n")
+    ].join("\n"),
   );
-  writeMemoryFile(workspaceRoot, "preference/MEMORY.md", "# Preference Memory Index\n\nNo durable preference memories indexed yet.\n");
-  writeMemoryFile(workspaceRoot, "identity/MEMORY.md", "# Identity Memory Index\n\nNo durable identity memories indexed yet.\n");
+  writeMemoryFile(
+    workspaceRoot,
+    "preference/MEMORY.md",
+    "# Preference Memory Index\n\nNo durable preference memories indexed yet.\n",
+  );
+  writeMemoryFile(
+    workspaceRoot,
+    "identity/MEMORY.md",
+    "# Identity Memory Index\n\nNo durable identity memories indexed yet.\n",
+  );
   writeMemoryFile(
     workspaceRoot,
     "workspace/workspace-1/knowledge/blockers/deploy.md",
-    "# Deploy permission blocker\n\nDeploy calls may be denied by workspace policy.\n"
+    "# Deploy permission blocker\n\nDeploy calls may be denied by workspace policy.\n",
   );
   installMockRecallModelResponses([
     {
@@ -2049,7 +2410,8 @@ test("runTsRunnerCli recalls workspace memory from scoped entries even with many
       primary_paths: ["workspace/workspace-1/knowledge/blockers/deploy.md"],
       reserve_paths: [],
       reason_by_path: {
-        "workspace/workspace-1/knowledge/blockers/deploy.md": "Matches the requested deploy issue.",
+        "workspace/workspace-1/knowledge/blockers/deploy.md":
+          "Matches the requested deploy issue.",
       },
     },
     {
@@ -2057,19 +2419,29 @@ test("runTsRunnerCli recalls workspace memory from scoped entries even with many
       final_paths: ["workspace/workspace-1/knowledge/blockers/deploy.md"],
       expansion_paths: [],
       reason_by_path: {
-        "workspace/workspace-1/knowledge/blockers/deploy.md": "Contains the workspace-specific blocker.",
+        "workspace/workspace-1/knowledge/blockers/deploy.md":
+          "Contains the workspace-specific blocker.",
       },
     },
   ]);
 
   let capturedProjectRequest: Record<string, unknown> | null = null;
   const exitCode = await runTsRunnerCli(
-    ["--request-base64", encodeRequest({ ...baseRequest(), instruction: "Please fix deploy permission issues." })],
+    [
+      "--request-base64",
+      encodeRequest({
+        ...baseRequest(),
+        instruction: "Please fix deploy permission issues.",
+      }),
+    ],
     {
       deps: {
         ...testDeps(),
         projectAgentRuntimeConfig: (request) => {
-          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          capturedProjectRequest = request as unknown as Record<
+            string,
+            unknown
+          >;
           return {
             provider_id: "openai",
             model_id: "gpt-5.4",
@@ -2079,42 +2451,57 @@ test("runTsRunnerCli recalls workspace memory from scoped entries even with many
               model_proxy_provider: "openai_compatible",
               api_key: "token",
               base_url: "http://127.0.0.1:4000/openai/v1",
-              default_headers: { "X-Test": "1" }
+              default_headers: { "X-Test": "1" },
             },
             tools: { read: true },
             workspace_tool_ids: [],
             workspace_skill_ids: [],
             output_schema_member_id: null,
             output_format: null,
-            workspace_config_checksum: "checksum-1"
+            workspace_config_checksum: "checksum-1",
           };
-        }
+        },
       },
       io: {
-        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
-        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-      }
-    }
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
   );
 
   assert.equal(exitCode, 0);
   assert.ok(capturedProjectRequest);
-  const recalledMemoryContext = (capturedProjectRequest as {
-    recalled_memory_context: { entries: Array<Record<string, unknown>> }
-  }).recalled_memory_context;
+  const recalledMemoryContext = (
+    capturedProjectRequest as {
+      recalled_memory_context: { entries: Array<Record<string, unknown>> };
+    }
+  ).recalled_memory_context;
   assert.ok(Array.isArray(recalledMemoryContext.entries));
   assert.equal(
     recalledMemoryContext.entries.some(
-      (entry) => entry.path === "workspace/workspace-1/knowledge/blockers/deploy.md"
+      (entry) =>
+        entry.path === "workspace/workspace-1/knowledge/blockers/deploy.md",
     ),
-    true
+    true,
   );
   assert.equal(
     recalledMemoryContext.entries.every((entry) => {
       const pathValue = String(entry.path ?? "");
-      return pathValue.startsWith("workspace/workspace-1/") || pathValue.startsWith("preference/") || pathValue.startsWith("identity/");
+      return (
+        pathValue.startsWith("workspace/workspace-1/") ||
+        pathValue.startsWith("preference/") ||
+        pathValue.startsWith("identity/")
+      );
     }),
-    true
+    true,
   );
 });
 
@@ -2122,7 +2509,9 @@ test(
   "runTsRunnerCli does not block bootstrap when recalled memory prefetch is unresolved",
   { timeout: 3000 },
   async () => {
-    const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-recalled-memory-prefetch-"));
+    const sandboxRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "hb-ts-runner-recalled-memory-prefetch-"),
+    );
     process.env.HB_SANDBOX_ROOT = sandboxRoot;
     let capturedProjectRequest: Record<string, unknown> | null = null;
     let timeoutId: NodeJS.Timeout | null = null;
@@ -2133,9 +2522,13 @@ test(
         {
           deps: {
             ...testDeps(),
-            loadRecalledMemoryContext: async () => await new Promise<null>(() => {}),
+            loadRecalledMemoryContext: async () =>
+              await new Promise<null>(() => {}),
             projectAgentRuntimeConfig: (request) => {
-              capturedProjectRequest = request as unknown as Record<string, unknown>;
+              capturedProjectRequest = request as unknown as Record<
+                string,
+                unknown
+              >;
               return {
                 provider_id: "openai",
                 model_id: "gpt-5.4",
@@ -2145,40 +2538,57 @@ test(
                   model_proxy_provider: "openai_compatible",
                   api_key: "token",
                   base_url: "http://127.0.0.1:4000/openai/v1",
-                  default_headers: { "X-Test": "1" }
+                  default_headers: { "X-Test": "1" },
                 },
                 tools: { read: true },
                 workspace_tool_ids: [],
                 workspace_skill_ids: [],
                 output_schema_member_id: null,
                 output_format: null,
-                workspace_config_checksum: "checksum-1"
+                workspace_config_checksum: "checksum-1",
               };
-            }
+            },
           },
           io: {
-            stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
-            stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-          }
-        }
+            stdout: {
+              write() {
+                return true;
+              },
+            } as unknown as NodeJS.WritableStream,
+            stderr: {
+              write() {
+                return true;
+              },
+            } as unknown as NodeJS.WritableStream,
+          },
+        },
       );
       const timedOut = new Promise<number>((_resolve, reject) => {
-        timeoutId = setTimeout(() => reject(new Error("runTsRunnerCli timed out while waiting on recall prefetch")), 1500);
+        timeoutId = setTimeout(
+          () =>
+            reject(
+              new Error(
+                "runTsRunnerCli timed out while waiting on recall prefetch",
+              ),
+            ),
+          1500,
+        );
       });
       const exitCode = await Promise.race([runPromise, timedOut]);
 
       assert.equal(exitCode, 0);
       assert.ok(capturedProjectRequest);
       assert.equal(
-        (capturedProjectRequest as { recalled_memory_context?: unknown }).recalled_memory_context,
-        undefined
+        (capturedProjectRequest as { recalled_memory_context?: unknown })
+          .recalled_memory_context,
+        undefined,
       );
     } finally {
       if (timeoutId) {
         clearTimeout(timeoutId);
       }
     }
-  }
+  },
 );
 
 test("runTsRunnerCli only stages browser tools for workspace sessions", async () => {
@@ -2191,8 +2601,8 @@ test("runTsRunnerCli only stages browser tools for workspace sessions", async ()
       "--request-base64",
       encodeRequest({
         ...baseRequest(),
-        session_kind: "task_proposal"
-      })
+        session_kind: "task_proposal",
+      }),
     ],
     {
       deps: {
@@ -2200,13 +2610,25 @@ test("runTsRunnerCli only stages browser tools for workspace sessions", async ()
           pluginOverrides: {
             stageBrowserTools: ({ sessionKind }) => {
               seenSessionKinds.push(sessionKind);
-              return { changed: false, toolIds: sessionKind === "workspace_session" ? ["browser_get_state"] : [] };
+              return {
+                changed: false,
+                toolIds:
+                  sessionKind === "workspace_session"
+                    ? ["browser_get_state"]
+                    : [],
+              };
             },
-            stageRuntimeTools: () => ({ changed: false, toolIds: ["holaboss_onboarding_complete"] })
-          }
+            stageRuntimeTools: () => ({
+              changed: false,
+              toolIds: ["holaboss_onboarding_complete"],
+            }),
+          },
         }),
         projectAgentRuntimeConfig: (request) => {
-          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          capturedProjectRequest = request as unknown as Record<
+            string,
+            unknown
+          >;
           return {
             provider_id: "openai",
             model_id: "gpt-5.4",
@@ -2216,43 +2638,65 @@ test("runTsRunnerCli only stages browser tools for workspace sessions", async ()
               model_proxy_provider: "openai_compatible",
               api_key: "token",
               base_url: "http://127.0.0.1:4000/openai/v1",
-              default_headers: { "X-Test": "1" }
+              default_headers: { "X-Test": "1" },
             },
             tools: { read: true },
             workspace_tool_ids: [],
             workspace_skill_ids: [],
             output_schema_member_id: null,
             output_format: null,
-            workspace_config_checksum: "checksum-1"
+            workspace_config_checksum: "checksum-1",
           };
-        }
+        },
       },
       io: {
-        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
-        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-      }
-    }
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
   );
 
   assert.equal(exitCode, 0);
   assert.deepEqual(seenSessionKinds, ["task_proposal"]);
   assert.ok(capturedProjectRequest);
-  assert.equal((capturedProjectRequest as { browser_tools_available: boolean }).browser_tools_available, false);
-  assert.equal((capturedProjectRequest as { session_kind: string | null }).session_kind, "task_proposal");
-  assert.deepEqual((capturedProjectRequest as { browser_tool_ids: string[] }).browser_tool_ids, []);
+  assert.equal(
+    (capturedProjectRequest as { browser_tools_available: boolean })
+      .browser_tools_available,
+    false,
+  );
+  assert.equal(
+    (capturedProjectRequest as { session_kind: string | null }).session_kind,
+    "task_proposal",
+  );
+  assert.deepEqual(
+    (capturedProjectRequest as { browser_tool_ids: string[] }).browser_tool_ids,
+    [],
+  );
   assert.deepEqual(
     (capturedProjectRequest as { runtime_tool_ids: string[] }).runtime_tool_ids,
-    ["holaboss_onboarding_complete"]
+    ["holaboss_onboarding_complete"],
   );
   assert.deepEqual(
     (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
-    ["web_search", "holaboss_onboarding_complete"]
+    ["web_search", "holaboss_onboarding_complete"],
   );
 });
 
 test("runTsRunnerCli includes embedded default skill ids and source directories for the pi harness", async () => {
-  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-pi-embedded-skills-"));
-  const embeddedSkillsRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-embedded-skill-root-"));
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-pi-embedded-skills-"),
+  );
+  const embeddedSkillsRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-embedded-skill-root-"),
+  );
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   process.env.HOLABOSS_EMBEDDED_SKILLS_DIR = embeddedSkillsRoot;
   const workspaceDir = path.join(sandboxRoot, "workspace", "workspace-1");
@@ -2262,7 +2706,7 @@ test("runTsRunnerCli includes embedded default skill ids and source directories 
   fs.writeFileSync(
     path.join(embeddedSkillDir, "SKILL.md"),
     "---\nname: holaboss-runtime\ndescription: Runtime skill\n---\n# Holaboss Runtime\n",
-    "utf8"
+    "utf8",
   );
 
   let capturedProjectRequest: Record<string, unknown> | null = null;
@@ -2275,16 +2719,19 @@ test("runTsRunnerCli includes embedded default skill ids and source directories 
         ...baseRequest(),
         context: {
           _sandbox_runtime_exec_v1: {
-            harness: "pi"
-          }
-        }
-      })
+            harness: "pi",
+          },
+        },
+      }),
     ],
     {
       deps: {
         ...testDeps(),
         projectAgentRuntimeConfig: (request) => {
-          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          capturedProjectRequest = request as unknown as Record<
+            string,
+            unknown
+          >;
           return {
             provider_id: "openai",
             model_id: "gpt-5.4",
@@ -2294,14 +2741,14 @@ test("runTsRunnerCli includes embedded default skill ids and source directories 
               model_proxy_provider: "openai_compatible",
               api_key: "token",
               base_url: "http://127.0.0.1:4000/openai/v1",
-              default_headers: { "X-Test": "1" }
+              default_headers: { "X-Test": "1" },
             },
             tools: { read: true, skill: true },
             workspace_tool_ids: [],
             workspace_skill_ids: ["holaboss-runtime"],
             output_schema_member_id: null,
             output_format: null,
-            workspace_config_checksum: "checksum-1"
+            workspace_config_checksum: "checksum-1",
           };
         },
         runHarnessHost: async ({ requestPayload }) => {
@@ -2311,49 +2758,67 @@ test("runTsRunnerCli includes embedded default skill ids and source directories 
             stderr: "",
             sawEvent: false,
             terminalEmitted: false,
-            lastSequence: 0
+            lastSequence: 0,
           };
-        }
+        },
       },
       io: {
-        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
-        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-      }
-    }
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
   );
 
   assert.equal(exitCode, 0);
   assert.ok(capturedProjectRequest);
   assert.deepEqual(
-    (capturedProjectRequest as { workspace_skill_ids: string[] }).workspace_skill_ids,
-    ["holaboss-runtime"]
+    (capturedProjectRequest as { workspace_skill_ids: string[] })
+      .workspace_skill_ids,
+    ["holaboss-runtime"],
   );
   assert.ok(capturedHarnessRequest);
   assert.deepEqual(
-    (capturedHarnessRequest as { workspace_skill_dirs: string[] }).workspace_skill_dirs,
-    [fs.realpathSync(embeddedSkillDir)]
+    (capturedHarnessRequest as { workspace_skill_dirs: string[] })
+      .workspace_skill_dirs,
+    [fs.realpathSync(embeddedSkillDir)],
   );
 });
 
 test("runTsRunnerCli keeps embedded skills authoritative when a workspace skill reuses the same id", async () => {
-  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-pi-embedded-skill-shadow-"));
-  const embeddedSkillsRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-embedded-skill-shadow-root-"));
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-pi-embedded-skill-shadow-"),
+  );
+  const embeddedSkillsRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-embedded-skill-shadow-root-"),
+  );
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   process.env.HOLABOSS_EMBEDDED_SKILLS_DIR = embeddedSkillsRoot;
   const workspaceDir = path.join(sandboxRoot, "workspace", "workspace-1");
-  const workspaceSkillDir = path.join(workspaceDir, "skills", "holaboss-runtime");
+  const workspaceSkillDir = path.join(
+    workspaceDir,
+    "skills",
+    "holaboss-runtime",
+  );
   fs.mkdirSync(workspaceSkillDir, { recursive: true });
   fs.writeFileSync(
     path.join(workspaceSkillDir, "SKILL.md"),
     "---\nname: holaboss-runtime\ndescription: Workspace override\n---\n# Workspace Override\n",
-    "utf8"
+    "utf8",
   );
   const embeddedSkillDir = path.join(embeddedSkillsRoot, "holaboss-runtime");
   fs.mkdirSync(embeddedSkillDir, { recursive: true });
   fs.writeFileSync(
     path.join(embeddedSkillDir, "SKILL.md"),
     "---\nname: holaboss-runtime\ndescription: Embedded runtime skill\n---\n# Holaboss Runtime\n",
-    "utf8"
+    "utf8",
   );
 
   let capturedProjectRequest: Record<string, unknown> | null = null;
@@ -2366,16 +2831,19 @@ test("runTsRunnerCli keeps embedded skills authoritative when a workspace skill 
         ...baseRequest(),
         context: {
           _sandbox_runtime_exec_v1: {
-            harness: "pi"
-          }
-        }
-      })
+            harness: "pi",
+          },
+        },
+      }),
     ],
     {
       deps: {
         ...testDeps(),
         projectAgentRuntimeConfig: (request) => {
-          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          capturedProjectRequest = request as unknown as Record<
+            string,
+            unknown
+          >;
           return {
             provider_id: "openai",
             model_id: "gpt-5.4",
@@ -2385,14 +2853,14 @@ test("runTsRunnerCli keeps embedded skills authoritative when a workspace skill 
               model_proxy_provider: "openai_compatible",
               api_key: "token",
               base_url: "http://127.0.0.1:4000/openai/v1",
-              default_headers: { "X-Test": "1" }
+              default_headers: { "X-Test": "1" },
             },
             tools: { read: true, skill: true },
             workspace_tool_ids: [],
             workspace_skill_ids: ["holaboss-runtime"],
             output_schema_member_id: null,
             output_format: null,
-            workspace_config_checksum: "checksum-1"
+            workspace_config_checksum: "checksum-1",
           };
         },
         runHarnessHost: async ({ requestPayload }) => {
@@ -2402,37 +2870,53 @@ test("runTsRunnerCli keeps embedded skills authoritative when a workspace skill 
             stderr: "",
             sawEvent: false,
             terminalEmitted: false,
-            lastSequence: 0
+            lastSequence: 0,
           };
-        }
+        },
       },
       io: {
-        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
-        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-      }
-    }
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
   );
 
   assert.equal(exitCode, 0);
   assert.ok(capturedProjectRequest);
   assert.deepEqual(
-    (capturedProjectRequest as { workspace_skill_ids: string[] }).workspace_skill_ids,
-    ["holaboss-runtime"]
+    (capturedProjectRequest as { workspace_skill_ids: string[] })
+      .workspace_skill_ids,
+    ["holaboss-runtime"],
   );
   assert.ok(capturedHarnessRequest);
   assert.deepEqual(
-    (capturedHarnessRequest as { workspace_skill_dirs: string[] }).workspace_skill_dirs,
-    [fs.realpathSync(embeddedSkillDir)]
+    (capturedHarnessRequest as { workspace_skill_dirs: string[] })
+      .workspace_skill_dirs,
+    [fs.realpathSync(embeddedSkillDir)],
   );
 });
 
 test("runTsRunnerCli resolves workspace skill ids and source directories for the pi harness", async () => {
-  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-pi-skills-source-"));
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-pi-skills-source-"),
+  );
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   const workspaceDir = path.join(sandboxRoot, "workspace", "workspace-1");
   const skillDir = path.join(workspaceDir, "skills", "alpha");
   fs.mkdirSync(skillDir, { recursive: true });
-  fs.writeFileSync(path.join(skillDir, "SKILL.md"), "---\nname: alpha\ndescription: Alpha skill\n---\n# Alpha\n", "utf8");
+  fs.writeFileSync(
+    path.join(skillDir, "SKILL.md"),
+    "---\nname: alpha\ndescription: Alpha skill\n---\n# Alpha\n",
+    "utf8",
+  );
 
   let capturedProjectRequest: Record<string, unknown> | null = null;
   let capturedHarnessRequest: Record<string, unknown> | null = null;
@@ -2444,16 +2928,19 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
         ...baseRequest(),
         context: {
           _sandbox_runtime_exec_v1: {
-            harness: "pi"
-          }
-        }
-      })
+            harness: "pi",
+          },
+        },
+      }),
     ],
     {
       deps: {
         ...testDeps(),
         projectAgentRuntimeConfig: (request) => {
-          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          capturedProjectRequest = request as unknown as Record<
+            string,
+            unknown
+          >;
           return {
             provider_id: "openai",
             model_id: "gpt-5.4",
@@ -2463,14 +2950,14 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
               model_proxy_provider: "openai_compatible",
               api_key: "token",
               base_url: "http://127.0.0.1:4000/openai/v1",
-              default_headers: { "X-Test": "1" }
+              default_headers: { "X-Test": "1" },
             },
             tools: { read: true },
             workspace_tool_ids: [],
             workspace_skill_ids: ["alpha"],
             output_schema_member_id: null,
             output_format: null,
-            workspace_config_checksum: "checksum-1"
+            workspace_config_checksum: "checksum-1",
           };
         },
         runHarnessHost: async ({ requestPayload }) => {
@@ -2480,33 +2967,49 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
             stderr: "",
             sawEvent: false,
             terminalEmitted: false,
-            lastSequence: 0
+            lastSequence: 0,
           };
-        }
+        },
       },
       io: {
-        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
-        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-      }
-    }
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
   );
 
   assert.equal(exitCode, 0);
   assert.ok(capturedProjectRequest);
-  assert.equal((capturedProjectRequest as { harness_id: string | null }).harness_id, "pi");
+  assert.equal(
+    (capturedProjectRequest as { harness_id: string | null }).harness_id,
+    "pi",
+  );
   assert.deepEqual(
-    (capturedProjectRequest as { workspace_skill_ids: string[] }).workspace_skill_ids,
-    ["skill-creator", "skill-installer", "alpha"]
+    (capturedProjectRequest as { workspace_skill_ids: string[] })
+      .workspace_skill_ids,
+    ["skill-creator", "skill-installer", "alpha"],
   );
   assert.ok(capturedHarnessRequest);
   assert.deepEqual(
-    (capturedHarnessRequest as { workspace_skill_dirs: string[] }).workspace_skill_dirs.map((dir) => path.basename(dir)),
-    ["skill-creator", "skill-installer", "alpha"]
+    (
+      capturedHarnessRequest as { workspace_skill_dirs: string[] }
+    ).workspace_skill_dirs.map((dir) => path.basename(dir)),
+    ["skill-creator", "skill-installer", "alpha"],
   );
 });
 
 test("runTsRunnerCli skips workspace command staging for harnesses that do not support it", async () => {
-  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-pi-commands-"));
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-pi-commands-"),
+  );
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   let stageCommandsCalls = 0;
 
@@ -2517,10 +3020,10 @@ test("runTsRunnerCli skips workspace command staging for harnesses that do not s
         ...baseRequest(),
         context: {
           _sandbox_runtime_exec_v1: {
-            harness: "pi"
-          }
-        }
-      })
+            harness: "pi",
+          },
+        },
+      }),
     ],
     {
       deps: {
@@ -2529,228 +3032,290 @@ test("runTsRunnerCli skips workspace command staging for harnesses that do not s
             stageCommands: () => {
               stageCommandsCalls += 1;
               return { changed: false, commandIds: [] };
-            }
-          }
+            },
+          },
         }),
         runHarnessHost: async () => ({
           exitCode: 0,
           stderr: "",
           sawEvent: false,
           terminalEmitted: false,
-          lastSequence: 0
-        })
+          lastSequence: 0,
+        }),
       },
       io: {
-        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
-        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-      }
-    }
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
   );
 
   assert.equal(exitCode, 0);
   assert.equal(stageCommandsCalls, 0);
 });
 
-test("runTsRunnerCli skips skill staging when the harness prep plan disables it", { concurrency: false }, async () => {
-  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-pi-skills-"));
-  process.env.HB_SANDBOX_ROOT = sandboxRoot;
-  const piHarnessAdapter = requireRuntimeHarnessAdapter("pi");
-  const originalBuildRunnerPrepPlan = piHarnessAdapter.buildRunnerPrepPlan;
-  let stageSkillsCalls = 0;
-
-  piHarnessAdapter.buildRunnerPrepPlan = () => ({
-    stageWorkspaceSkills: false,
-    stageWorkspaceCommands: false,
-    prepareMcpTooling: true,
-    startWorkspaceMcpSidecar: true,
-    bootstrapResolvedApplications: true
-  });
-  try {
-    const exitCode = await runTsRunnerCli(
-      [
-        "--request-base64",
-        encodeRequest({
-          ...baseRequest(),
-          context: {
-            _sandbox_runtime_exec_v1: {
-              harness: "pi"
-            }
-          }
-        })
-      ],
-      {
-        deps: {
-          ...testDeps({
-            pluginOverrides: {
-              stageSkills: () => {
-                stageSkillsCalls += 1;
-                return { changed: false, skillIds: [] };
-              }
-            }
-          }),
-          runHarnessHost: async () => ({
-            exitCode: 0,
-            stderr: "",
-            sawEvent: false,
-            terminalEmitted: false,
-            lastSequence: 0
-          })
-        },
-        io: {
-          stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
-          stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-        }
-      }
+test(
+  "runTsRunnerCli skips skill staging when the harness prep plan disables it",
+  { concurrency: false },
+  async () => {
+    const sandboxRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "hb-ts-runner-pi-skills-"),
     );
+    process.env.HB_SANDBOX_ROOT = sandboxRoot;
+    const piHarnessAdapter = requireRuntimeHarnessAdapter("pi");
+    const originalBuildRunnerPrepPlan = piHarnessAdapter.buildRunnerPrepPlan;
+    let stageSkillsCalls = 0;
 
-    assert.equal(exitCode, 0);
-    assert.equal(stageSkillsCalls, 0);
-  } finally {
-    piHarnessAdapter.buildRunnerPrepPlan = originalBuildRunnerPrepPlan;
-  }
-});
-
-test("runTsRunnerCli skips MCP prep when the harness prep plan disables it", { concurrency: false }, async () => {
-  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-pi-no-mcp-"));
-  process.env.HB_SANDBOX_ROOT = sandboxRoot;
-  const piHarnessAdapter = requireRuntimeHarnessAdapter("pi");
-  const originalBuildRunnerPrepPlan = piHarnessAdapter.buildRunnerPrepPlan;
-  let startWorkspaceMcpSidecarCalls = 0;
-  let bootstrapApplicationsCalls = 0;
-  let capturedProjectRequest: Record<string, unknown> | null = null;
-  let capturedHarnessRequest: Record<string, unknown> | null = null;
-
-  piHarnessAdapter.buildRunnerPrepPlan = () => ({
-    stageWorkspaceSkills: true,
-    stageWorkspaceCommands: false,
-    prepareMcpTooling: false,
-    startWorkspaceMcpSidecar: false,
-    bootstrapResolvedApplications: false
-  });
-  try {
-    const exitCode = await runTsRunnerCli(
-      [
-        "--request-base64",
-        encodeRequest({
-          ...baseRequest(),
-          context: {
-            _sandbox_runtime_exec_v1: {
-              harness: "pi"
-            }
-          }
-        })
-      ],
-      {
-        deps: {
-          ...testDeps(),
-          compilePlan: () =>
-            ({
-              ...baseCompiledPlan(),
-              resolved_mcp_servers: [
-                {
-                  server_id: "workspace",
-                  type: "local",
-                  url: null,
-                  headers: [],
-                  environment: [],
-                  timeout_ms: 20000,
-                  enabled: true,
-                  command: ["node", "workspace-mcp.js"]
-                }
-              ],
-              resolved_mcp_tool_refs: [
-                {
-                  tool_id: "workspace.lookup",
-                  server_id: "workspace",
-                  tool_name: "lookup"
-                }
-              ],
-              workspace_mcp_catalog: [
-                {
-                  tool_id: "workspace.lookup",
-                  tool_name: "lookup",
-                  module_path: "tools/lookup.ts",
-                  symbol_name: "lookupTool"
-                }
-              ],
-              resolved_applications: [
-                {
-                  app_id: "app-a",
-                  mcp: { transport: "http-sse", port: 3099, path: "/mcp" },
-                  health_check: { path: "/health", timeout_s: 60, interval_s: 5 },
-                  env_contract: [],
-                  start_command: "npm run start",
-                  base_dir: "apps/app-a",
-                  lifecycle: { setup: "", start: "", stop: "" }
-                }
-              ]
-            }) as never,
-          projectAgentRuntimeConfig: (request) => {
-            capturedProjectRequest = request as unknown as Record<string, unknown>;
-            return {
-              provider_id: "openai",
-              model_id: "gpt-5.4",
-              mode: "code",
-              system_prompt: "You are concise.",
-              model_client: {
-                model_proxy_provider: "openai_compatible",
-                api_key: "token",
-                base_url: "http://127.0.0.1:4000/openai/v1",
-                default_headers: { "X-Test": "1" }
+    piHarnessAdapter.buildRunnerPrepPlan = () => ({
+      stageWorkspaceSkills: false,
+      stageWorkspaceCommands: false,
+      prepareMcpTooling: true,
+      startWorkspaceMcpSidecar: true,
+      bootstrapResolvedApplications: true,
+    });
+    try {
+      const exitCode = await runTsRunnerCli(
+        [
+          "--request-base64",
+          encodeRequest({
+            ...baseRequest(),
+            context: {
+              _sandbox_runtime_exec_v1: {
+                harness: "pi",
               },
-              tools: { read: true },
-              workspace_tool_ids: [],
-              workspace_skill_ids: [],
-              output_schema_member_id: null,
-              output_format: null,
-              workspace_config_checksum: "checksum-1"
-            };
-          },
-          startWorkspaceMcpSidecar: async () => {
-            startWorkspaceMcpSidecarCalls += 1;
-            return null;
-          },
-          bootstrapApplications: async () => {
-            bootstrapApplicationsCalls += 1;
-            return [];
-          },
-          runHarnessHost: async ({ requestPayload }) => {
-            capturedHarnessRequest = requestPayload;
-            return {
+            },
+          }),
+        ],
+        {
+          deps: {
+            ...testDeps({
+              pluginOverrides: {
+                stageSkills: () => {
+                  stageSkillsCalls += 1;
+                  return { changed: false, skillIds: [] };
+                },
+              },
+            }),
+            runHarnessHost: async () => ({
               exitCode: 0,
               stderr: "",
               sawEvent: false,
               terminalEmitted: false,
-              lastSequence: 0
-            };
-          }
+              lastSequence: 0,
+            }),
+          },
+          io: {
+            stdout: {
+              write() {
+                return true;
+              },
+            } as unknown as NodeJS.WritableStream,
+            stderr: {
+              write() {
+                return true;
+              },
+            } as unknown as NodeJS.WritableStream,
+          },
         },
-        io: {
-          stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
-          stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-        }
-      }
-    );
+      );
 
-    assert.equal(exitCode, 0);
-    assert.equal(startWorkspaceMcpSidecarCalls, 0);
-    assert.equal(bootstrapApplicationsCalls, 0);
-    assert.ok(capturedProjectRequest);
-    assert.deepEqual((capturedProjectRequest as { tool_server_id_map: Record<string, string> }).tool_server_id_map, {});
-    assert.deepEqual(
-      (capturedProjectRequest as { resolved_mcp_tool_refs: Array<Record<string, string>> }).resolved_mcp_tool_refs,
-      []
+      assert.equal(exitCode, 0);
+      assert.equal(stageSkillsCalls, 0);
+    } finally {
+      piHarnessAdapter.buildRunnerPrepPlan = originalBuildRunnerPrepPlan;
+    }
+  },
+);
+
+test(
+  "runTsRunnerCli skips MCP prep when the harness prep plan disables it",
+  { concurrency: false },
+  async () => {
+    const sandboxRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "hb-ts-runner-pi-no-mcp-"),
     );
-    assert.ok(capturedHarnessRequest);
-    assert.deepEqual((capturedHarnessRequest as { mcp_servers: unknown[] }).mcp_servers, []);
-    assert.deepEqual((capturedHarnessRequest as { mcp_tool_refs: unknown[] }).mcp_tool_refs, []);
-  } finally {
-    piHarnessAdapter.buildRunnerPrepPlan = originalBuildRunnerPrepPlan;
-  }
-});
+    process.env.HB_SANDBOX_ROOT = sandboxRoot;
+    const piHarnessAdapter = requireRuntimeHarnessAdapter("pi");
+    const originalBuildRunnerPrepPlan = piHarnessAdapter.buildRunnerPrepPlan;
+    let startWorkspaceMcpSidecarCalls = 0;
+    let bootstrapApplicationsCalls = 0;
+    let capturedProjectRequest: Record<string, unknown> | null = null;
+    let capturedHarnessRequest: Record<string, unknown> | null = null;
+
+    piHarnessAdapter.buildRunnerPrepPlan = () => ({
+      stageWorkspaceSkills: true,
+      stageWorkspaceCommands: false,
+      prepareMcpTooling: false,
+      startWorkspaceMcpSidecar: false,
+      bootstrapResolvedApplications: false,
+    });
+    try {
+      const exitCode = await runTsRunnerCli(
+        [
+          "--request-base64",
+          encodeRequest({
+            ...baseRequest(),
+            context: {
+              _sandbox_runtime_exec_v1: {
+                harness: "pi",
+              },
+            },
+          }),
+        ],
+        {
+          deps: {
+            ...testDeps(),
+            compilePlan: () =>
+              ({
+                ...baseCompiledPlan(),
+                resolved_mcp_servers: [
+                  {
+                    server_id: "workspace",
+                    type: "local",
+                    url: null,
+                    headers: [],
+                    environment: [],
+                    timeout_ms: 20000,
+                    enabled: true,
+                    command: ["node", "workspace-mcp.js"],
+                  },
+                ],
+                resolved_mcp_tool_refs: [
+                  {
+                    tool_id: "workspace.lookup",
+                    server_id: "workspace",
+                    tool_name: "lookup",
+                  },
+                ],
+                workspace_mcp_catalog: [
+                  {
+                    tool_id: "workspace.lookup",
+                    tool_name: "lookup",
+                    module_path: "tools/lookup.ts",
+                    symbol_name: "lookupTool",
+                  },
+                ],
+                resolved_applications: [
+                  {
+                    app_id: "app-a",
+                    mcp: { transport: "http-sse", port: 3099, path: "/mcp" },
+                    health_check: {
+                      path: "/health",
+                      timeout_s: 60,
+                      interval_s: 5,
+                    },
+                    env_contract: [],
+                    start_command: "npm run start",
+                    base_dir: "apps/app-a",
+                    lifecycle: { setup: "", start: "", stop: "" },
+                  },
+                ],
+              }) as never,
+            projectAgentRuntimeConfig: (request) => {
+              capturedProjectRequest = request as unknown as Record<
+                string,
+                unknown
+              >;
+              return {
+                provider_id: "openai",
+                model_id: "gpt-5.4",
+                mode: "code",
+                system_prompt: "You are concise.",
+                model_client: {
+                  model_proxy_provider: "openai_compatible",
+                  api_key: "token",
+                  base_url: "http://127.0.0.1:4000/openai/v1",
+                  default_headers: { "X-Test": "1" },
+                },
+                tools: { read: true },
+                workspace_tool_ids: [],
+                workspace_skill_ids: [],
+                output_schema_member_id: null,
+                output_format: null,
+                workspace_config_checksum: "checksum-1",
+              };
+            },
+            startWorkspaceMcpSidecar: async () => {
+              startWorkspaceMcpSidecarCalls += 1;
+              return null;
+            },
+            bootstrapApplications: async () => {
+              bootstrapApplicationsCalls += 1;
+              return [];
+            },
+            runHarnessHost: async ({ requestPayload }) => {
+              capturedHarnessRequest = requestPayload;
+              return {
+                exitCode: 0,
+                stderr: "",
+                sawEvent: false,
+                terminalEmitted: false,
+                lastSequence: 0,
+              };
+            },
+          },
+          io: {
+            stdout: {
+              write() {
+                return true;
+              },
+            } as unknown as NodeJS.WritableStream,
+            stderr: {
+              write() {
+                return true;
+              },
+            } as unknown as NodeJS.WritableStream,
+          },
+        },
+      );
+
+      assert.equal(exitCode, 0);
+      assert.equal(startWorkspaceMcpSidecarCalls, 0);
+      assert.equal(bootstrapApplicationsCalls, 0);
+      assert.ok(capturedProjectRequest);
+      assert.deepEqual(
+        (
+          capturedProjectRequest as {
+            tool_server_id_map: Record<string, string>;
+          }
+        ).tool_server_id_map,
+        {},
+      );
+      assert.deepEqual(
+        (
+          capturedProjectRequest as {
+            resolved_mcp_tool_refs: Array<Record<string, string>>;
+          }
+        ).resolved_mcp_tool_refs,
+        [],
+      );
+      assert.ok(capturedHarnessRequest);
+      assert.deepEqual(
+        (capturedHarnessRequest as { mcp_servers: unknown[] }).mcp_servers,
+        [],
+      );
+      assert.deepEqual(
+        (capturedHarnessRequest as { mcp_tool_refs: unknown[] }).mcp_tool_refs,
+        [],
+      );
+    } finally {
+      piHarnessAdapter.buildRunnerPrepPlan = originalBuildRunnerPrepPlan;
+    }
+  },
+);
 
 test("runTsRunnerCli pushes emitted events with retry semantics", async () => {
-  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-push-"));
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-push-"),
+  );
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   let stdout = "";
   const attempts: Array<{ eventType: string; sequence: number }> = [];
@@ -2767,10 +3332,10 @@ test("runTsRunnerCli pushes emitted events with retry semantics", async () => {
             callback_url: "https://runtime.example/push",
             callback_token: "token-1",
             ack_timeout_ms: 500,
-            max_retries: 1
-          }
-        }
-      })
+            max_retries: 1,
+          },
+        },
+      }),
     ],
     {
       deps: testDeps({
@@ -2781,7 +3346,7 @@ test("runTsRunnerCli pushes emitted events with retry semantics", async () => {
             sequence: 1,
             event_type: "run_started",
             timestamp: new Date().toISOString(),
-            payload: { phase: "running" }
+            payload: { phase: "running" },
           },
           {
             session_id: "session-1",
@@ -2789,146 +3354,185 @@ test("runTsRunnerCli pushes emitted events with retry semantics", async () => {
             sequence: 2,
             event_type: "run_completed",
             timestamp: new Date().toISOString(),
-            payload: { status: "success" }
-          }
-        ]
+            payload: { status: "success" },
+          },
+        ],
       }),
       io: {
-        stdout: { write(chunk: string) { stdout += chunk; return true; } } as unknown as NodeJS.WritableStream,
-        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
+        stdout: {
+          write(chunk: string) {
+            stdout += chunk;
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
       },
       fetchImpl: (async (_url, init) => {
-        const body = JSON.parse(String(init?.body ?? "{}")) as { event_type: string; sequence: number };
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          event_type: string;
+          sequence: number;
+        };
         attempts.push({ eventType: body.event_type, sequence: body.sequence });
         const status = statuses.shift() ?? 204;
         return new Response(status === 204 ? null : "", { status });
-      }) as typeof fetch
-    }
+      }) as typeof fetch,
+    },
   );
 
   assert.equal(exitCode, 0);
   assert.deepEqual(
     attempts.map((attempt) => `${attempt.eventType}:${attempt.sequence}`),
-    ["run_claimed:1", "run_claimed:1", "run_started:1", "run_completed:2"]
+    ["run_claimed:1", "run_claimed:1", "run_started:1", "run_completed:2"],
   );
   assert.equal(stdout.trim().split("\n").length, 3);
 });
 
-test("runTsRunnerCli passes prepared MCP server ids into runtime config when no explicit MCP tool refs are resolved", { concurrency: false }, async () => {
-  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-pi-mcp-server-ids-"));
-  process.env.HB_SANDBOX_ROOT = sandboxRoot;
-  const piHarnessAdapter = requireRuntimeHarnessAdapter("pi");
-  const originalBuildRunnerPrepPlan = piHarnessAdapter.buildRunnerPrepPlan;
-  let capturedProjectRequest: Record<string, unknown> | null = null;
-  let capturedHarnessRequest: Record<string, unknown> | null = null;
+test(
+  "runTsRunnerCli passes prepared MCP server ids into runtime config when no explicit MCP tool refs are resolved",
+  { concurrency: false },
+  async () => {
+    const sandboxRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "hb-ts-runner-pi-mcp-server-ids-"),
+    );
+    process.env.HB_SANDBOX_ROOT = sandboxRoot;
+    const piHarnessAdapter = requireRuntimeHarnessAdapter("pi");
+    const originalBuildRunnerPrepPlan = piHarnessAdapter.buildRunnerPrepPlan;
+    let capturedProjectRequest: Record<string, unknown> | null = null;
+    let capturedHarnessRequest: Record<string, unknown> | null = null;
 
-  piHarnessAdapter.buildRunnerPrepPlan = () => ({
-    stageWorkspaceSkills: true,
-    stageWorkspaceCommands: false,
-    prepareMcpTooling: true,
-    startWorkspaceMcpSidecar: false,
-    bootstrapResolvedApplications: false
-  });
-  try {
-    const exitCode = await runTsRunnerCli(
-      [
-        "--request-base64",
-        encodeRequest({
-          ...baseRequest(),
-          context: {
-            _sandbox_runtime_exec_v1: {
-              harness: "pi"
-            }
-          }
-        })
-      ],
-      {
-        deps: {
-          ...testDeps(),
-          compilePlan: () =>
-            ({
-              ...baseCompiledPlan(),
-              resolved_mcp_servers: [
-                {
-                  server_id: "context7",
-                  type: "remote",
-                  url: "https://mcp.context7.com/mcp",
-                  headers: [],
-                  environment: [],
-                  timeout_ms: 15000,
-                  enabled: true,
-                  command: null
-                }
-              ],
-            }) as never,
-          projectAgentRuntimeConfig: (request) => {
-            capturedProjectRequest = request as unknown as Record<string, unknown>;
-            return {
-              provider_id: "openai",
-              model_id: "gpt-5.4",
-              mode: "code",
-              system_prompt: "You are concise.",
-              model_client: {
-                model_proxy_provider: "openai_compatible",
-                api_key: "token",
-                base_url: "http://127.0.0.1:4000/openai/v1",
-                default_headers: { "X-Test": "1" }
+    piHarnessAdapter.buildRunnerPrepPlan = () => ({
+      stageWorkspaceSkills: true,
+      stageWorkspaceCommands: false,
+      prepareMcpTooling: true,
+      startWorkspaceMcpSidecar: false,
+      bootstrapResolvedApplications: false,
+    });
+    try {
+      const exitCode = await runTsRunnerCli(
+        [
+          "--request-base64",
+          encodeRequest({
+            ...baseRequest(),
+            context: {
+              _sandbox_runtime_exec_v1: {
+                harness: "pi",
               },
-              tools: { read: true },
-              workspace_tool_ids: [],
-              workspace_skill_ids: [],
-              output_schema_member_id: null,
-              output_format: null,
-              workspace_config_checksum: "checksum-1"
-            };
+            },
+          }),
+        ],
+        {
+          deps: {
+            ...testDeps(),
+            compilePlan: () =>
+              ({
+                ...baseCompiledPlan(),
+                resolved_mcp_servers: [
+                  {
+                    server_id: "context7",
+                    type: "remote",
+                    url: "https://mcp.context7.com/mcp",
+                    headers: [],
+                    environment: [],
+                    timeout_ms: 15000,
+                    enabled: true,
+                    command: null,
+                  },
+                ],
+              }) as never,
+            projectAgentRuntimeConfig: (request) => {
+              capturedProjectRequest = request as unknown as Record<
+                string,
+                unknown
+              >;
+              return {
+                provider_id: "openai",
+                model_id: "gpt-5.4",
+                mode: "code",
+                system_prompt: "You are concise.",
+                model_client: {
+                  model_proxy_provider: "openai_compatible",
+                  api_key: "token",
+                  base_url: "http://127.0.0.1:4000/openai/v1",
+                  default_headers: { "X-Test": "1" },
+                },
+                tools: { read: true },
+                workspace_tool_ids: [],
+                workspace_skill_ids: [],
+                output_schema_member_id: null,
+                output_format: null,
+                workspace_config_checksum: "checksum-1",
+              };
+            },
+            runHarnessHost: async ({ requestPayload }) => {
+              capturedHarnessRequest = requestPayload;
+              return {
+                exitCode: 0,
+                stderr: "",
+                sawEvent: false,
+                terminalEmitted: false,
+                lastSequence: 0,
+              };
+            },
           },
-          runHarnessHost: async ({ requestPayload }) => {
-            capturedHarnessRequest = requestPayload;
-            return {
-              exitCode: 0,
-              stderr: "",
-              sawEvent: false,
-              terminalEmitted: false,
-              lastSequence: 0
-            };
-          }
+          io: {
+            stdout: {
+              write() {
+                return true;
+              },
+            } as unknown as NodeJS.WritableStream,
+            stderr: {
+              write() {
+                return true;
+              },
+            } as unknown as NodeJS.WritableStream,
+          },
         },
-        io: {
-          stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
-          stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-        }
-      }
-    );
+      );
 
-    assert.equal(exitCode, 0);
-    assert.ok(capturedProjectRequest);
-    assert.deepEqual(
-      (capturedProjectRequest as { resolved_mcp_server_ids: string[] }).resolved_mcp_server_ids,
-      ["context7"]
-    );
-    assert.deepEqual(
-      (capturedProjectRequest as { resolved_mcp_tool_refs: Array<Record<string, string>> }).resolved_mcp_tool_refs,
-      []
-    );
-    assert.ok(capturedHarnessRequest);
-    assert.deepEqual((capturedHarnessRequest as { mcp_servers: Array<{ name: string }> }).mcp_servers.map((server) => server.name), [
-      "context7"
-    ]);
-    assert.deepEqual((capturedHarnessRequest as { mcp_tool_refs: unknown[] }).mcp_tool_refs, []);
-  } finally {
-    piHarnessAdapter.buildRunnerPrepPlan = originalBuildRunnerPrepPlan;
-  }
-});
+      assert.equal(exitCode, 0);
+      assert.ok(capturedProjectRequest);
+      assert.deepEqual(
+        (capturedProjectRequest as { resolved_mcp_server_ids: string[] })
+          .resolved_mcp_server_ids,
+        ["context7"],
+      );
+      assert.deepEqual(
+        (
+          capturedProjectRequest as {
+            resolved_mcp_tool_refs: Array<Record<string, string>>;
+          }
+        ).resolved_mcp_tool_refs,
+        [],
+      );
+      assert.ok(capturedHarnessRequest);
+      assert.deepEqual(
+        (
+          capturedHarnessRequest as { mcp_servers: Array<{ name: string }> }
+        ).mcp_servers.map((server) => server.name),
+        ["context7"],
+      );
+      assert.deepEqual(
+        (capturedHarnessRequest as { mcp_tool_refs: unknown[] }).mcp_tool_refs,
+        [],
+      );
+    } finally {
+      piHarnessAdapter.buildRunnerPrepPlan = originalBuildRunnerPrepPlan;
+    }
+  },
+);
 
 test("runTsRunnerCli synthesizes run_failed when harness-host ends without a terminal event", async () => {
-  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-no-terminal-"));
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-no-terminal-"),
+  );
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   let stdout = "";
   const exitCode = await runTsRunnerCli(
-    [
-      "--request-base64",
-      encodeRequest(baseRequest())
-    ],
+    ["--request-base64", encodeRequest(baseRequest())],
     {
       deps: testDeps({
         harnessEvents: [
@@ -2938,61 +3542,73 @@ test("runTsRunnerCli synthesizes run_failed when harness-host ends without a ter
             sequence: 1,
             event_type: "run_started",
             timestamp: new Date().toISOString(),
-            payload: { phase: "running" }
-          }
+            payload: { phase: "running" },
+          },
         ],
         harnessResult: {
           sawEvent: true,
           terminalEmitted: false,
           lastSequence: 1,
           exitCode: 0,
-          stderr: ""
-        }
+          stderr: "",
+        },
       }),
       io: {
-        stdout: { write(chunk: string) { stdout += chunk; return true; } } as unknown as NodeJS.WritableStream,
-        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-      }
-    }
+        stdout: {
+          write(chunk: string) {
+            stdout += chunk;
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
   );
 
   assert.equal(exitCode, 0);
-  const lines = stdout.trim().split("\n").map((line) => JSON.parse(line));
+  const lines = stdout
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
   assert.equal(lines.length, 3);
   assert.equal(lines[2].event_type, "run_failed");
   assert.deepEqual(lines[2].payload, {
     type: "RuntimeError",
-    message: "TypeScript harness host ended before terminal event"
+    message: "TypeScript harness host ended before terminal event",
   });
 });
 
 test("runTsRunnerCli appends bootstrapped app MCP servers into the harness-host request", async () => {
-  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-apps-"));
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-apps-"),
+  );
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   let capturedRequestPayload: Record<string, unknown> | null = null;
 
   const exitCode = await runTsRunnerCli(
-    [
-      "--request-base64",
-      encodeRequest(baseRequest())
-    ],
+    ["--request-base64", encodeRequest(baseRequest())],
     {
       deps: {
         ...testDeps(),
-        compilePlan: () => ({
-          ...baseCompiledPlan(),
-          resolved_applications: [
-            {
-              app_id: "app-a",
-              mcp: { transport: "http-sse", port: 3099, path: "/mcp" },
-              health_check: { path: "/health", timeout_s: 60, interval_s: 5 },
-              env_contract: ["HOLABOSS_USER_ID"],
-              start_command: "npm run start",
-              base_dir: "apps/app-a",
-              lifecycle: { setup: "", start: "", stop: "" }
-            }
-          ]
-        }) as never,
+        compilePlan: () =>
+          ({
+            ...baseCompiledPlan(),
+            resolved_applications: [
+              {
+                app_id: "app-a",
+                mcp: { transport: "http-sse", port: 3099, path: "/mcp" },
+                health_check: { path: "/health", timeout_s: 60, interval_s: 5 },
+                env_contract: ["HOLABOSS_USER_ID"],
+                start_command: "npm run start",
+                base_dir: "apps/app-a",
+                lifecycle: { setup: "", start: "", stop: "" },
+              },
+            ],
+          }) as never,
         bootstrapApplications: async () => [
           {
             name: "app-a",
@@ -3001,9 +3617,9 @@ test("runTsRunnerCli appends bootstrapped app MCP servers into the harness-host 
               enabled: true,
               url: "http://localhost:13100/mcp",
               headers: { "X-Workspace-Id": "workspace-1" },
-              timeout: 60000
-            }
-          }
+              timeout: 60000,
+            },
+          },
         ],
         runHarnessHost: async ({ requestPayload }) => {
           capturedRequestPayload = requestPayload;
@@ -3012,21 +3628,34 @@ test("runTsRunnerCli appends bootstrapped app MCP servers into the harness-host 
             stderr: "",
             sawEvent: false,
             terminalEmitted: false,
-            lastSequence: 0
+            lastSequence: 0,
           };
-        }
+        },
       },
       io: {
-        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
-        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-      }
-    }
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
   );
 
   assert.equal(exitCode, 0);
   assert.ok(capturedRequestPayload);
-  const mcpServers = (capturedRequestPayload as { mcp_servers: Array<Record<string, unknown>> }).mcp_servers;
-  assert.deepEqual(mcpServers.map((server) => server.name), ["app-a"]);
+  const mcpServers = (
+    capturedRequestPayload as { mcp_servers: Array<Record<string, unknown>> }
+  ).mcp_servers;
+  assert.deepEqual(
+    mcpServers.map((server) => server.name),
+    ["app-a"],
+  );
 });
 
 test("resolvedApplicationMcpHeaders includes Holaboss turn context for app MCP calls", () => {
@@ -3048,15 +3677,24 @@ test("runTsRunnerCli emits validation failures as run_failed JSONL", async () =>
         workspace_id: "workspace-1",
         session_id: "session-1",
         instruction: "hello",
-        context: {}
-      })
+        context: {},
+      }),
     ],
     {
       io: {
-        stdout: { write(chunk: string) { stdout += chunk; return true; } } as unknown as NodeJS.WritableStream,
-        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
-      }
-    }
+        stdout: {
+          write(chunk: string) {
+            stdout += chunk;
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
   );
 
   assert.equal(exitCode, 1);
@@ -3066,5 +3704,8 @@ test("runTsRunnerCli emits validation failures as run_failed JSONL", async () =>
   assert.equal(event.input_id, "unknown");
   assert.equal(event.event_type, "run_failed");
   assert.equal(event.payload.type, "TsRunnerRequestError");
-  assert.match(String(event.payload.message), /invalid runner request payload: input_id is required/);
+  assert.match(
+    String(event.payload.message),
+    /invalid runner request payload: input_id is required/,
+  );
 });

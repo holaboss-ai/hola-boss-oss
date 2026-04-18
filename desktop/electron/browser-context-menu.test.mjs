@@ -16,7 +16,7 @@ test("browser tabs register a native context menu for BrowserView content", asyn
   assert.match(source, /const popupY = browserBounds\.y \+ context\.y;/);
   assert.match(
     source,
-    /view\.webContents\.on\("context-menu", \(_event, params\) => \{\s*showBrowserViewContextMenu\(\{\s*workspaceId,\s*view,\s*context: params,/,
+    /view\.webContents\.on\("context-menu", \(_event, params\) => \{\s*showBrowserViewContextMenu\(\{\s*workspaceId,\s*space: browserSpace,\s*sessionId: normalizedSessionId,\s*view,\s*context: params,/,
   );
   assert.match(source, /label: "Open Link in New Tab"/);
   assert.match(source, /label: "Open Link Externally"/);

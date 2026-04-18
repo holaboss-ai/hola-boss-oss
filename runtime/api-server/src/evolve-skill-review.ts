@@ -214,6 +214,148 @@ function liveWorkspaceSkillExists(workspaceDir: string, slug: string): boolean {
   return resolveWorkspaceSkills(workspaceDir).some((skill) => skill.origin === "workspace" && skill.skill_id === slug);
 }
 
+function listWorkspaceSkillMarkdownFiles(root: string): string[] {
+  if (!fs.existsSync(root)) {
+    return [];
+  }
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(root);
+  } catch {
+    return [];
+  }
+  if (!stat.isDirectory()) {
+    return [];
+  }
+  const stack = [root];
+  const results: string[] = [];
+  while (stack.length > 0) {
+    const current = stack.pop() as string;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+        continue;
+      }
+      if (entry.isFile() && entry.name === "SKILL.md") {
+        results.push(fullPath);
+      }
+    }
+  }
+  return results.sort();
+}
+
+function skillFrontmatterName(markdown: string): string | null {
+  const frontmatterMatch = markdown.match(/^---\s*\r?\n([\s\S]*?)\r?\n---/);
+  if (!frontmatterMatch) {
+    return null;
+  }
+  const nameMatch = frontmatterMatch[1].match(/(?:^|\r?\n)name:\s*([^\r\n]+)/i);
+  if (!nameMatch?.[1]) {
+    return null;
+  }
+  const normalized = normalizeSkillSlug(nameMatch[1]);
+  return normalized || null;
+}
+
+function relativePosixPath(baseDir: string, targetPath: string): string {
+  return path.relative(baseDir, targetPath).split(path.sep).join("/");
+}
+
+function removeFileAndEmptyParents(filePath: string, stopDir: string): void {
+  try {
+    fs.rmSync(filePath, { force: true });
+  } catch {
+    return;
+  }
+  let current = path.dirname(filePath);
+  const normalizedStopDir = path.resolve(stopDir);
+  while (current.startsWith(`${normalizedStopDir}${path.sep}`) && current !== normalizedStopDir) {
+    try {
+      if (fs.readdirSync(current).length > 0) {
+        break;
+      }
+      fs.rmdirSync(current);
+    } catch {
+      break;
+    }
+    current = path.dirname(current);
+  }
+}
+
+function misplacedWorkspaceSkillArtifact(params: {
+  workspaceDir: string;
+  candidate: EvolveSkillCandidateRecord;
+}): { filePath: string; markdown: string } | null {
+  const evolveRoot = path.join(params.workspaceDir, "evolve");
+  if (!fs.existsSync(evolveRoot)) {
+    return null;
+  }
+  const slug = normalizeSkillSlug(params.candidate.slug);
+  const candidateId = params.candidate.candidateId.toLowerCase();
+  const preferredPaths = [
+    path.join(evolveRoot, "skills", params.candidate.candidateId, "SKILL.md"),
+    path.join(evolveRoot, "skills", slug, "SKILL.md"),
+    path.join(evolveRoot, params.candidate.candidateId, "SKILL.md"),
+    path.join(evolveRoot, slug, "SKILL.md"),
+  ];
+  const seen = new Set<string>();
+  let bestMatch: { score: number; filePath: string; markdown: string } | null = null;
+  for (const filePath of [...preferredPaths, ...listWorkspaceSkillMarkdownFiles(evolveRoot)]) {
+    const resolvedPath = path.resolve(filePath);
+    if (seen.has(resolvedPath)) {
+      continue;
+    }
+    seen.add(resolvedPath);
+    let markdown = "";
+    try {
+      markdown = fs.readFileSync(resolvedPath, "utf8");
+    } catch {
+      continue;
+    }
+    if (!markdown.trim()) {
+      continue;
+    }
+    const relativePath = relativePosixPath(params.workspaceDir, resolvedPath).toLowerCase();
+    const frontmatterName = skillFrontmatterName(markdown);
+    let score = 0;
+    if (resolvedPath === preferredPaths[0]) {
+      score += 100;
+    } else if (resolvedPath === preferredPaths[1]) {
+      score += 95;
+    } else if (resolvedPath === preferredPaths[2]) {
+      score += 90;
+    } else if (resolvedPath === preferredPaths[3]) {
+      score += 85;
+    }
+    if (relativePath.includes(candidateId)) {
+      score += 35;
+    }
+    if (relativePath.includes(slug)) {
+      score += 30;
+    }
+    if (frontmatterName === slug) {
+      score += 50;
+    }
+    if (markdown.includes(`# ${params.candidate.title}`)) {
+      score += 10;
+    }
+    if (score <= 0) {
+      continue;
+    }
+    if (!bestMatch || score > bestMatch.score) {
+      bestMatch = { score, filePath: resolvedPath, markdown };
+    }
+  }
+  return bestMatch ? { filePath: bestMatch.filePath, markdown: bestMatch.markdown } : null;
+}
+
 function existingResolvedSkillIds(store: RuntimeStateStore, workspaceId: string): string[] {
   return resolveWorkspaceSkills(store.workspaceDir(workspaceId)).map((skill) => skill.skill_id);
 }
@@ -512,7 +654,11 @@ export async function promoteAcceptedSkillCandidate(params: {
   }
 
   const workspaceDir = params.store.workspaceDir(candidate.workspaceId);
+  const misplacedDraft = misplacedWorkspaceSkillArtifact({ workspaceDir, candidate });
   if (liveWorkspaceSkillExists(workspaceDir, candidate.slug)) {
+    if (misplacedDraft) {
+      removeFileAndEmptyParents(misplacedDraft.filePath, workspaceDir);
+    }
     params.store.updateEvolveSkillCandidate({
       candidateId: candidate.candidateId,
       fields: {
@@ -523,11 +669,22 @@ export async function promoteAcceptedSkillCandidate(params: {
     return { status: "promoted_existing_live_skill", targetSkillPath };
   }
 
-  const draft = await params.memoryService.get({
-    workspace_id: candidate.workspaceId,
-    path: candidate.skillPath,
-  });
-  const draftMarkdown = typeof draft.text === "string" ? draft.text : "";
+  let draftMarkdown = "";
+  if (misplacedDraft) {
+    draftMarkdown = misplacedDraft.markdown;
+    await upsertWorkspaceMemoryFileIfChanged({
+      memoryService: params.memoryService,
+      workspaceId: candidate.workspaceId,
+      path: candidate.skillPath,
+      content: draftMarkdown,
+    });
+  } else {
+    const draft = await params.memoryService.get({
+      workspace_id: candidate.workspaceId,
+      path: candidate.skillPath,
+    });
+    draftMarkdown = typeof draft.text === "string" ? draft.text : "";
+  }
   if (!draftMarkdown.trim()) {
     return { status: "missing_draft", targetSkillPath };
   }
@@ -540,6 +697,9 @@ export async function promoteAcceptedSkillCandidate(params: {
   }
   if (!liveWorkspaceSkillExists(workspaceDir, candidate.slug)) {
     return { status: "invalid_live_skill", targetSkillPath };
+  }
+  if (misplacedDraft) {
+    removeFileAndEmptyParents(misplacedDraft.filePath, workspaceDir);
   }
 
   params.store.updateEvolveSkillCandidate({

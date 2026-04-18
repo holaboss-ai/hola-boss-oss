@@ -441,8 +441,9 @@ test("composeBaseAgentPrompt includes accepted evolve candidate context when pro
   assert.match(prompt.contextMessages.join("\n\n"), /Accepted evolve candidate:/);
   assert.match(prompt.contextMessages.join("\n\n"), /background evolve phase/i);
   assert.match(prompt.contextMessages.join("\n\n"), /Candidate id: `evolve-skill-input-10`\./);
-  assert.match(prompt.contextMessages.join("\n\n"), /Draft skill artifact: `workspace\/workspace-1\/evolve\/skills\/evolve-skill-input-10\/SKILL\.md`\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Stored draft artifact in memory service: `workspace\/workspace-1\/evolve\/skills\/evolve-skill-input-10\/SKILL\.md`\./);
   assert.match(prompt.contextMessages.join("\n\n"), /Target live workspace skill path: `skills\/release-verification\/SKILL\.md`\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Do not create or keep promoted workspace skills under `evolve\/`/);
   assert.match(prompt.contextMessages.join("\n\n"), /name: release-verification/);
 });
 
@@ -599,6 +600,33 @@ test("composeBaseAgentPrompt includes cronjob delivery routing guidance when cro
   assert.match(prompt.systemPrompt, /Use `system_notification` only for lightweight reminders or notifications/i);
   assert.match(prompt.systemPrompt, /put the executable task in `instruction`/i);
   assert.match(prompt.systemPrompt, /Do not repeat schedule wording/i);
+});
+
+test("composeBaseAgentPrompt includes background terminal guidance when terminal session tools are available", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read", "bash"],
+    extraTools: ["terminal_session_start", "terminal_session_wait", "terminal_session_read"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    harnessId: "pi",
+  });
+
+  const prompt = composeBaseAgentPrompt("", {
+    defaultTools: ["read", "bash"],
+    extraTools: ["terminal_session_start", "terminal_session_wait", "terminal_session_read"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    harnessId: "pi",
+    capabilityManifest,
+  });
+
+  assert.match(prompt.systemPrompt, /Background terminal routing:/);
+  assert.match(prompt.systemPrompt, /prefer `terminal_session_start` for long-running, interactive, or revisitable shell work/i);
+  assert.match(prompt.systemPrompt, /Prefer one-shot `bash` for short commands/i);
+  assert.match(prompt.systemPrompt, /inspect it with `terminal_session_read` or `terminal_session_wait` before claiming success/i);
 });
 
 test("composeBaseAgentPrompt requires proactive fallback when partial retrieval cannot satisfy required facts", () => {

@@ -142,6 +142,43 @@ export interface OutputEventRecord {
   createdAt: string;
 }
 
+export type TerminalSessionBackend = "node_pty";
+export type TerminalSessionOwner = "agent" | "user";
+export type TerminalSessionStatus = "starting" | "running" | "exited" | "failed" | "interrupted" | "closed";
+
+export interface TerminalSessionRecord {
+  terminalId: string;
+  workspaceId: string;
+  sessionId: string | null;
+  inputId: string | null;
+  title: string;
+  backend: TerminalSessionBackend;
+  owner: TerminalSessionOwner;
+  status: TerminalSessionStatus;
+  cwd: string;
+  shell: string | null;
+  command: string;
+  exitCode: number | null;
+  lastEventSeq: number;
+  createdBy: string | null;
+  createdAt: string;
+  startedAt: string;
+  lastActivityAt: string;
+  endedAt: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface TerminalSessionEventRecord {
+  id: number;
+  terminalId: string;
+  workspaceId: string;
+  sessionId: string | null;
+  sequence: number;
+  eventType: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
 export interface TurnResultRecord {
   workspaceId: string;
   sessionId: string;
@@ -2030,7 +2067,7 @@ export class RuntimeStateStore {
       values.push(params.role);
     }
     const direction = params.order === "desc" ? "DESC" : "ASC";
-    query += ` ORDER BY datetime(created_at) ${direction}, id ${direction}`;
+    query += ` ORDER BY julianday(created_at) ${direction}, id ${direction}`;
     if (params.limit !== undefined || params.offset !== undefined) {
       query += " LIMIT ? OFFSET ?";
       values.push(params.limit ?? -1, params.offset ?? 0);
@@ -2132,6 +2169,261 @@ export class RuntimeStateStore {
       payload: this.parseJsonDict(row.payload),
       createdAt: String(row.created_at)
     }));
+  }
+
+  createTerminalSession(params: {
+    terminalId?: string;
+    workspaceId: string;
+    sessionId?: string | null;
+    inputId?: string | null;
+    title?: string | null;
+    backend: TerminalSessionBackend;
+    owner: TerminalSessionOwner;
+    status: TerminalSessionStatus;
+    cwd: string;
+    shell?: string | null;
+    command: string;
+    exitCode?: number | null;
+    createdBy?: string | null;
+    createdAt?: string;
+    startedAt?: string;
+    lastActivityAt?: string;
+    endedAt?: string | null;
+    metadata?: Record<string, unknown> | null;
+  }): TerminalSessionRecord {
+    if (params.sessionId) {
+      this.ensureSession(
+        {
+          workspaceId: params.workspaceId,
+          sessionId: params.sessionId,
+        },
+        { touchExisting: false }
+      );
+    }
+
+    const terminalId = params.terminalId ?? randomUUID();
+    const createdAt = params.createdAt ?? utcNowIso();
+    const startedAt = params.startedAt ?? createdAt;
+    const lastActivityAt = params.lastActivityAt ?? startedAt;
+
+    this.db()
+      .prepare(`
+        INSERT INTO terminal_sessions (
+            terminal_id, workspace_id, session_id, input_id, title, backend, owner, status,
+            cwd, shell, command, exit_code, last_event_seq, created_by, created_at,
+            started_at, last_activity_at, ended_at, metadata
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        terminalId,
+        params.workspaceId,
+        params.sessionId ?? null,
+        params.inputId ?? null,
+        params.title ?? "",
+        params.backend,
+        params.owner,
+        params.status,
+        params.cwd,
+        params.shell ?? null,
+        params.command,
+        params.exitCode ?? null,
+        0,
+        params.createdBy ?? null,
+        createdAt,
+        startedAt,
+        lastActivityAt,
+        params.endedAt ?? null,
+        JSON.stringify(params.metadata ?? {})
+      );
+
+    const row = this.db()
+      .prepare<[string], Record<string, unknown>>("SELECT * FROM terminal_sessions WHERE terminal_id = ? LIMIT 1")
+      .get(terminalId);
+    if (!row) {
+      throw new Error(`terminal session ${terminalId} was not created`);
+    }
+    return this.rowToTerminalSession(row);
+  }
+
+  getTerminalSession(params: { terminalId: string; workspaceId?: string }): TerminalSessionRecord | null {
+    let query = `
+      SELECT *
+      FROM terminal_sessions
+      WHERE terminal_id = ?
+    `;
+    const values: string[] = [params.terminalId];
+    if (params.workspaceId) {
+      query += " AND workspace_id = ?";
+      values.push(params.workspaceId);
+    }
+    query += " LIMIT 1";
+    const row = this.db().prepare(query).get(...values) as Record<string, unknown> | undefined;
+    return row ? this.rowToTerminalSession(row) : null;
+  }
+
+  listTerminalSessions(params: {
+    workspaceId?: string;
+    sessionId?: string;
+    statuses?: TerminalSessionStatus[];
+  } = {}): TerminalSessionRecord[] {
+    let query = `
+      SELECT *
+      FROM terminal_sessions
+      WHERE 1 = 1
+    `;
+    const values: string[] = [];
+    if (params.workspaceId) {
+      query += " AND workspace_id = ?";
+      values.push(params.workspaceId);
+    }
+    if (params.sessionId) {
+      query += " AND session_id = ?";
+      values.push(params.sessionId);
+    }
+    const statuses = (params.statuses ?? []).filter((value) => Boolean(value));
+    if (statuses.length > 0) {
+      query += ` AND status IN (${statuses.map(() => "?").join(", ")})`;
+      values.push(...statuses);
+    }
+    query += " ORDER BY datetime(last_activity_at) DESC, datetime(created_at) DESC, terminal_id DESC";
+    const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToTerminalSession(row));
+  }
+
+  updateTerminalSession(params: {
+    terminalId: string;
+    title?: string | null;
+    status?: TerminalSessionStatus;
+    exitCode?: number | null;
+    lastActivityAt?: string;
+    endedAt?: string | null;
+    metadata?: Record<string, unknown> | null;
+  }): TerminalSessionRecord {
+    const existing = this.getTerminalSession({ terminalId: params.terminalId });
+    if (!existing) {
+      throw new Error(`terminal session ${params.terminalId} not found`);
+    }
+    const nextTitle = params.title !== undefined ? params.title ?? "" : existing.title;
+    const nextStatus = params.status ?? existing.status;
+    const nextExitCode = params.exitCode !== undefined ? params.exitCode : existing.exitCode;
+    const nextLastActivityAt = params.lastActivityAt ?? utcNowIso();
+    const nextEndedAt = params.endedAt !== undefined ? params.endedAt : existing.endedAt;
+    const nextMetadata = params.metadata !== undefined ? params.metadata ?? {} : existing.metadata;
+
+    this.db()
+      .prepare(`
+        UPDATE terminal_sessions
+        SET title = ?,
+            status = ?,
+            exit_code = ?,
+            last_activity_at = ?,
+            ended_at = ?,
+            metadata = ?
+        WHERE terminal_id = ?
+      `)
+      .run(
+        nextTitle,
+        nextStatus,
+        nextExitCode,
+        nextLastActivityAt,
+        nextEndedAt,
+        JSON.stringify(nextMetadata),
+        params.terminalId
+      );
+
+    const row = this.db()
+      .prepare<[string], Record<string, unknown>>("SELECT * FROM terminal_sessions WHERE terminal_id = ? LIMIT 1")
+      .get(params.terminalId);
+    if (!row) {
+      throw new Error(`terminal session ${params.terminalId} disappeared during update`);
+    }
+    return this.rowToTerminalSession(row);
+  }
+
+  appendTerminalSessionEvent(params: {
+    terminalId: string;
+    eventType: string;
+    payload: Record<string, unknown>;
+    createdAt?: string;
+    status?: TerminalSessionStatus;
+    exitCode?: number | null;
+    endedAt?: string | null;
+  }): TerminalSessionEventRecord {
+    const createdAt = params.createdAt ?? utcNowIso();
+    const transaction = this.db().transaction(() => {
+      const row = this.db()
+        .prepare<[string], Record<string, unknown>>("SELECT * FROM terminal_sessions WHERE terminal_id = ? LIMIT 1")
+        .get(params.terminalId);
+      if (!row) {
+        throw new Error(`terminal session ${params.terminalId} not found`);
+      }
+      const session = this.rowToTerminalSession(row);
+      const nextSequence = session.lastEventSeq + 1;
+      this.db()
+        .prepare(`
+          INSERT INTO terminal_session_events (
+              terminal_id, workspace_id, session_id, sequence, event_type, payload, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          session.terminalId,
+          session.workspaceId,
+          session.sessionId,
+          nextSequence,
+          params.eventType,
+          JSON.stringify(params.payload),
+          createdAt
+        );
+      this.db()
+        .prepare(`
+          UPDATE terminal_sessions
+          SET last_event_seq = ?,
+              status = ?,
+              exit_code = ?,
+              last_activity_at = ?,
+              ended_at = ?
+          WHERE terminal_id = ?
+        `)
+        .run(
+          nextSequence,
+          params.status ?? session.status,
+          params.exitCode !== undefined ? params.exitCode : session.exitCode,
+          createdAt,
+          params.endedAt !== undefined ? params.endedAt : session.endedAt,
+          session.terminalId
+        );
+      const eventRow = this.db()
+        .prepare<[string, number], Record<string, unknown>>(
+          "SELECT * FROM terminal_session_events WHERE terminal_id = ? AND sequence = ? LIMIT 1"
+        )
+        .get(session.terminalId, nextSequence);
+      if (!eventRow) {
+        throw new Error(`terminal session event ${session.terminalId}:${nextSequence} was not created`);
+      }
+      return this.rowToTerminalSessionEvent(eventRow);
+    });
+    return transaction();
+  }
+
+  listTerminalSessionEvents(params: {
+    terminalId: string;
+    afterSequence?: number;
+    limit?: number;
+  }): TerminalSessionEventRecord[] {
+    let query = `
+      SELECT *
+      FROM terminal_session_events
+      WHERE terminal_id = ?
+        AND sequence > ?
+      ORDER BY sequence ASC
+    `;
+    const values: Array<string | number> = [params.terminalId, params.afterSequence ?? 0];
+    if (typeof params.limit === "number" && Number.isFinite(params.limit) && params.limit > 0) {
+      query += " LIMIT ?";
+      values.push(Math.trunc(params.limit));
+    }
+    const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToTerminalSessionEvent(row));
   }
 
   upsertTurnResult(params: {
@@ -4461,6 +4753,51 @@ export class RuntimeStateStore {
       CREATE INDEX IF NOT EXISTS idx_session_output_events_workspace_session_created
           ON session_output_events (workspace_id, session_id, created_at ASC);
 
+      CREATE TABLE IF NOT EXISTS terminal_sessions (
+          terminal_id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          session_id TEXT,
+          input_id TEXT,
+          title TEXT NOT NULL DEFAULT '',
+          backend TEXT NOT NULL,
+          owner TEXT NOT NULL,
+          status TEXT NOT NULL,
+          cwd TEXT NOT NULL,
+          shell TEXT,
+          command TEXT NOT NULL,
+          exit_code INTEGER,
+          last_event_seq INTEGER NOT NULL DEFAULT 0,
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          started_at TEXT NOT NULL,
+          last_activity_at TEXT NOT NULL,
+          ended_at TEXT,
+          metadata TEXT NOT NULL DEFAULT '{}'
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_terminal_sessions_workspace_status
+          ON terminal_sessions (workspace_id, status, last_activity_at DESC, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_terminal_sessions_session_created
+          ON terminal_sessions (session_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS terminal_session_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          terminal_id TEXT NOT NULL,
+          workspace_id TEXT NOT NULL,
+          session_id TEXT,
+          sequence INTEGER NOT NULL,
+          event_type TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_terminal_session_events_terminal_sequence
+          ON terminal_session_events (terminal_id, sequence ASC);
+
+      CREATE INDEX IF NOT EXISTS idx_terminal_session_events_workspace_created
+          ON terminal_session_events (workspace_id, created_at ASC);
+
       CREATE TABLE IF NOT EXISTS turn_results (
           input_id TEXT PRIMARY KEY,
           workspace_id TEXT NOT NULL,
@@ -5732,6 +6069,54 @@ export class RuntimeStateStore {
       lastError: this.parseJsonObjectOrMessage(row.last_error),
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at)
+    };
+  }
+
+  private rowToTerminalSession(row: Record<string, unknown>): TerminalSessionRecord {
+    const normalizedBackend = String(row.backend).trim().toLowerCase();
+    const normalizedOwner = String(row.owner).trim().toLowerCase();
+    const normalizedStatus = String(row.status).trim().toLowerCase();
+    return {
+      terminalId: String(row.terminal_id),
+      workspaceId: String(row.workspace_id),
+      sessionId: row.session_id == null ? null : String(row.session_id),
+      inputId: row.input_id == null ? null : String(row.input_id),
+      title: row.title == null ? "" : String(row.title),
+      backend: normalizedBackend === "node_pty" ? "node_pty" : "node_pty",
+      owner: normalizedOwner === "user" ? "user" : "agent",
+      status:
+        normalizedStatus === "starting" ||
+        normalizedStatus === "running" ||
+        normalizedStatus === "exited" ||
+        normalizedStatus === "failed" ||
+        normalizedStatus === "interrupted" ||
+        normalizedStatus === "closed"
+          ? normalizedStatus
+          : "starting",
+      cwd: String(row.cwd),
+      shell: row.shell == null ? null : String(row.shell),
+      command: String(row.command),
+      exitCode: row.exit_code == null ? null : Number(row.exit_code),
+      lastEventSeq: Number(row.last_event_seq ?? 0),
+      createdBy: row.created_by == null ? null : String(row.created_by),
+      createdAt: String(row.created_at),
+      startedAt: String(row.started_at),
+      lastActivityAt: String(row.last_activity_at),
+      endedAt: row.ended_at == null ? null : String(row.ended_at),
+      metadata: this.parseJsonDict(row.metadata),
+    };
+  }
+
+  private rowToTerminalSessionEvent(row: Record<string, unknown>): TerminalSessionEventRecord {
+    return {
+      id: Number(row.id),
+      terminalId: String(row.terminal_id),
+      workspaceId: String(row.workspace_id),
+      sessionId: row.session_id == null ? null : String(row.session_id),
+      sequence: Number(row.sequence),
+      eventType: String(row.event_type),
+      payload: this.parseJsonDict(row.payload),
+      createdAt: String(row.created_at),
     };
   }
 

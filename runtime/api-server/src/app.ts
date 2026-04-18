@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -8,6 +8,8 @@ import os from "node:os";
 import path from "node:path";
 
 import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply } from "fastify";
+import websocket from "@fastify/websocket";
+import yaml from "js-yaml";
 import * as tar from "tar";
 import yauzl from "yauzl";
 import * as Sentry from "@sentry/node";
@@ -26,6 +28,7 @@ import {
   type SessionRuntimeStateRecord,
   type TaskProposalRecord,
   type OutputEventRecord,
+  type TerminalSessionStatus,
   type TurnRequestSnapshotRecord,
   type TurnResultRecord,
   type RuntimeUserProfileRecord,
@@ -92,6 +95,11 @@ import {
   RuntimeAgentToolsServiceError,
 } from "./runtime-agent-tools.js";
 import {
+  TerminalSessionManager,
+  TerminalSessionManagerError,
+  type TerminalSessionManagerLike,
+} from "./terminal-session-manager.js";
+import {
   appendWorkspaceApplication,
   listWorkspaceComposeShutdownTargets,
   listWorkspaceApplicationPorts,
@@ -137,6 +145,8 @@ import { captureWorkspaceContext } from "./proactive-context.js";
 const DEFAULT_POLL_INTERVAL_MS = 50;
 const DEFAULT_BODY_LIMIT_BYTES = 10 * 1024 * 1024;
 const DEFAULT_APP_SETUP_TIMEOUT_MS = 900_000;
+const DEFAULT_TERMINAL_COLS = 120;
+const DEFAULT_TERMINAL_ROWS = 36;
 const TERMINAL_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
 const DEFAULT_EXCLUDED_SESSION_OUTPUT_EVENT_TYPES = ["pi_native_event"];
 export interface BuildRuntimeApiServerOptions {
@@ -153,6 +163,7 @@ export interface BuildRuntimeApiServerOptions {
   memoryService?: MemoryServiceLike;
   runtimeConfigService?: RuntimeConfigServiceLike;
   browserToolService?: DesktopBrowserToolServiceLike;
+  terminalSessionManager?: TerminalSessionManagerLike | null;
   runnerExecutor?: RunnerExecutorLike;
   enableAppHealthMonitor?: boolean;
   startAppsOnReady?: boolean;
@@ -399,6 +410,24 @@ function requiredCapabilityWorkspaceId(params: {
   return workspaceId;
 }
 
+function requireTerminalSession(params: {
+  manager: TerminalSessionManagerLike | null | undefined;
+  terminalId: string;
+  workspaceId?: string;
+}) {
+  if (!params.manager) {
+    throw new Error("terminal session capability is not available");
+  }
+  const session = params.manager.getSession({
+    terminalId: params.terminalId,
+    workspaceId: params.workspaceId,
+  });
+  if (!session) {
+    throw new TerminalSessionManagerError(404, "terminal_session_not_found", "terminal session not found");
+  }
+  return session;
+}
+
 function capabilitySessionId(params: {
   headers: Record<string, unknown>;
   query?: Record<string, unknown> | null;
@@ -608,9 +637,13 @@ function runtimeStatePayload(record: SessionRuntimeStateRecord): Record<string, 
 function runtimeStateListItemPayload(params: {
   record: SessionRuntimeStateRecord;
   lastTurnResult?: TurnResultRecord | null;
+  hasQueuedInputs?: boolean;
 }): Record<string, unknown> {
+  const hasQueuedInputs = params.hasQueuedInputs ?? false;
   return {
     ...runtimeStatePayload(params.record),
+    ...effectiveSessionState(params.record, hasQueuedInputs),
+    has_queued_inputs: hasQueuedInputs,
     last_turn_status: params.lastTurnResult?.status ?? null,
     last_turn_completed_at: params.lastTurnResult?.completedAt ?? null,
     last_turn_stop_reason: params.lastTurnResult?.stopReason ?? null,
@@ -1105,6 +1138,17 @@ function effectiveSessionState(
     heartbeat_at: runtimeState?.heartbeatAt ?? null,
     lease_until: runtimeState?.leaseUntil ?? null
   };
+}
+
+function runtimeStateHasClaimedActiveInput(
+  store: RuntimeStateStore,
+  runtimeState: SessionRuntimeStateRecord | null,
+): boolean {
+  const currentInputId = runtimeState?.currentInputId?.trim() ?? "";
+  if (!currentInputId) {
+    return false;
+  }
+  return store.getInput(currentInputId)?.status === "CLAIMED";
 }
 
 function runnerOutputEventPayload(record: OutputEventRecord): Record<string, unknown> {
@@ -1935,6 +1979,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     logger: options.logger ?? false,
     bodyLimit: DEFAULT_BODY_LIMIT_BYTES,
   });
+  void app.register(websocket);
   const backgroundTasks = new Set<Promise<void>>();
   const appSetupTasks = new Map<string, Promise<void>>();
   const appEnsureRunningTasks = new Map<string, Promise<void>>();
@@ -1947,6 +1992,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const memoryService = options.memoryService ?? new FilesystemMemoryService({ workspaceRoot: store.workspaceRoot });
   const runtimeConfigService = options.runtimeConfigService ?? new FileRuntimeConfigService();
   const browserToolService = options.browserToolService ?? new DesktopBrowserToolService();
+  const terminalSessionManager =
+    options.terminalSessionManager === undefined
+      ? new TerminalSessionManager({ store, logger: app.log })
+      : options.terminalSessionManager;
   const integrationService = new RuntimeIntegrationService(store);
   const honoBaseUrl = process.env.HOLABOSS_AUTH_BASE_URL ?? "";
   const authCookie = process.env.HOLABOSS_AUTH_COOKIE ?? "";
@@ -1955,7 +2004,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     : null;
   const brokerService = new IntegrationBrokerService(store, composioService);
   const oauthService = new OAuthService(store);
-  const runtimeAgentToolsService = new RuntimeAgentToolsService(store, { workspaceRoot: store.workspaceRoot });
+  const runtimeAgentToolsService = new RuntimeAgentToolsService(store, {
+    workspaceRoot: store.workspaceRoot,
+    terminalSessionManager,
+  });
   const runnerExecutor = options.runnerExecutor ?? new NativeRunnerExecutor();
   const durableMemoryWorker = resolveDurableMemoryWorker(options, app, store, memoryService);
   const queueWorker = resolveQueueWorker(options, app, store, memoryService, durableMemoryWorker);
@@ -2600,6 +2652,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       clearInterval(healthMonitorTimer);
       healthMonitorTimer = null;
     }
+    await terminalSessionManager?.close();
     await recallEmbeddingBackfillWorker?.close();
     await bridgeWorker?.close();
     await cronWorker?.close();
@@ -2611,6 +2664,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   });
 
   app.addHook("onReady", async () => {
+    await terminalSessionManager?.start();
     await durableMemoryWorker?.start();
     await queueWorker?.start();
     await cronWorker?.start();
@@ -2728,8 +2782,12 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
   app.get("/api/v1/capabilities/browser", async (request, reply) => {
     const workspaceId = headerString(request.headers as Record<string, unknown>, "x-holaboss-workspace-id");
+    const sessionId = capabilitySessionId({
+      headers: request.headers as Record<string, unknown>,
+      query: isRecord(request.query) ? request.query : null,
+    });
     try {
-      return await browserToolService.getStatus({ workspaceId });
+      return await browserToolService.getStatus({ workspaceId, sessionId });
     } catch (error) {
       if (error instanceof DesktopBrowserToolServiceError) {
         return sendError(reply, error.statusCode, error.message);
@@ -2744,14 +2802,248 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
     const params = request.params as { toolId: string };
     const workspaceId = headerString(request.headers as Record<string, unknown>, "x-holaboss-workspace-id");
+    const sessionId = capabilitySessionId({
+      headers: request.headers as Record<string, unknown>,
+      body: request.body,
+    });
     try {
-      return await browserToolService.execute(requiredString(params.toolId, "toolId"), request.body, { workspaceId });
+      return await browserToolService.execute(
+        requiredString(params.toolId, "toolId"),
+        request.body,
+        { workspaceId, sessionId },
+      );
     } catch (error) {
       if (error instanceof DesktopBrowserToolServiceError) {
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 500, error instanceof Error ? error.message : "browser tool execution failed");
     }
+  });
+
+  app.get("/api/v1/terminal-sessions", async (request, reply) => {
+    const query = isRecord(request.query) ? request.query : {};
+    try {
+      return terminalSessionManager?.listSessions({
+        workspaceId: optionalString(query.workspace_id),
+        sessionId: optionalString(query.session_id),
+        statuses: optionalString(query.status)
+          ?.split(",")
+          .map((value) => value.trim())
+          .filter(Boolean) as TerminalSessionStatus[] | undefined,
+      }) ?? [];
+    } catch (error) {
+      if (error instanceof TerminalSessionManagerError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "terminal session listing failed");
+    }
+  });
+
+  app.post("/api/v1/terminal-sessions", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return await terminalSessionManager?.createSession({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        sessionId: capabilitySessionId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }) || null,
+        inputId: capabilityInputId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }) || null,
+        title: nullableString(request.body.title),
+        owner: optionalString(request.body.owner) === "user" ? "user" : "agent",
+        cwd: nullableString(request.body.cwd),
+        command: requiredString(request.body.command, "command"),
+        cols: optionalInteger(request.body.cols, DEFAULT_TERMINAL_COLS),
+        rows: optionalInteger(request.body.rows, DEFAULT_TERMINAL_ROWS),
+        createdBy: nullableString(request.body.created_by),
+        metadata: optionalDict(request.body.metadata) ?? {},
+      });
+    } catch (error) {
+      if (error instanceof TerminalSessionManagerError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "terminal session creation failed");
+    }
+  });
+
+  app.get("/api/v1/terminal-sessions/:terminalId", async (request, reply) => {
+    const params = request.params as { terminalId: string };
+    const query = isRecord(request.query) ? request.query : {};
+    try {
+      const session = terminalSessionManager?.getSession({
+        terminalId: requiredString(params.terminalId, "terminalId"),
+        workspaceId:
+          headerString(request.headers as Record<string, unknown>, "x-holaboss-workspace-id") ||
+          optionalString(query.workspace_id),
+      });
+      if (!session) {
+        return sendError(reply, 404, "terminal session not found");
+      }
+      return session;
+    } catch (error) {
+      if (error instanceof TerminalSessionManagerError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "terminal session lookup failed");
+    }
+  });
+
+  app.get("/api/v1/terminal-sessions/:terminalId/events", async (request, reply) => {
+    const params = request.params as { terminalId: string };
+    const query = isRecord(request.query) ? request.query : {};
+    try {
+      return {
+        terminal:
+          terminalSessionManager?.getSession({
+            terminalId: requiredString(params.terminalId, "terminalId"),
+            workspaceId:
+              headerString(request.headers as Record<string, unknown>, "x-holaboss-workspace-id") ||
+              optionalString(query.workspace_id),
+          }) ?? null,
+        events:
+          terminalSessionManager?.listEvents({
+            terminalId: requiredString(params.terminalId, "terminalId"),
+            afterSequence: optionalInteger(query.after_sequence, 0),
+            limit: optionalInteger(query.limit, 0) || undefined,
+          }) ?? [],
+      };
+    } catch (error) {
+      if (error instanceof TerminalSessionManagerError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "terminal session event listing failed");
+    }
+  });
+
+  app.post("/api/v1/terminal-sessions/:terminalId/input", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { terminalId: string };
+    try {
+      return await terminalSessionManager?.sendInput({
+        terminalId: requiredString(params.terminalId, "terminalId"),
+        data: requiredString(request.body.data, "data"),
+      });
+    } catch (error) {
+      if (error instanceof TerminalSessionManagerError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "terminal session input failed");
+    }
+  });
+
+  app.post("/api/v1/terminal-sessions/:terminalId/resize", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { terminalId: string };
+    try {
+      return await terminalSessionManager?.resize({
+        terminalId: requiredString(params.terminalId, "terminalId"),
+        cols: optionalInteger(request.body.cols, DEFAULT_TERMINAL_COLS),
+        rows: optionalInteger(request.body.rows, DEFAULT_TERMINAL_ROWS),
+      });
+    } catch (error) {
+      if (error instanceof TerminalSessionManagerError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "terminal session resize failed");
+    }
+  });
+
+  app.post("/api/v1/terminal-sessions/:terminalId/signal", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { terminalId: string };
+    try {
+      return await terminalSessionManager?.signal({
+        terminalId: requiredString(params.terminalId, "terminalId"),
+        signal: nullableString(request.body.signal),
+      });
+    } catch (error) {
+      if (error instanceof TerminalSessionManagerError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "terminal session signal failed");
+    }
+  });
+
+  app.post("/api/v1/terminal-sessions/:terminalId/close", async (request, reply) => {
+    const params = request.params as { terminalId: string };
+    try {
+      return await terminalSessionManager?.closeSession({
+        terminalId: requiredString(params.terminalId, "terminalId"),
+      });
+    } catch (error) {
+      if (error instanceof TerminalSessionManagerError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "terminal session close failed");
+    }
+  });
+
+  app.register(async function terminalSessionWebsocketRoutes(fastify) {
+    fastify.route({
+      method: "GET",
+      url: "/api/v1/terminal-sessions/:terminalId/stream",
+      handler: async (_request, reply) => {
+        reply.code(426).send({
+          error: "Upgrade Required",
+          message: "terminal session stream requires a websocket upgrade",
+        });
+      },
+      wsHandler: (socket, request) => {
+        const params = request.params as { terminalId: string };
+        const query = isRecord(request.query) ? request.query : {};
+        const workspaceId =
+          headerString(request.headers as Record<string, unknown>, "x-holaboss-workspace-id") ||
+          optionalString(query.workspace_id);
+        try {
+          const terminal = requireTerminalSession({
+            manager: terminalSessionManager,
+            terminalId: requiredString(params.terminalId, "terminalId"),
+            workspaceId,
+          });
+          const afterSequence = optionalInteger(query.after_sequence, 0);
+          const snapshotSequence = terminal.lastEventSeq;
+          socket.send(JSON.stringify({ type: "connected", terminal }));
+          const replayEvents = (terminalSessionManager?.listEvents({
+            terminalId: terminal.terminalId,
+            afterSequence,
+          }) ?? []).filter((event) => event.sequence <= snapshotSequence);
+          for (const event of replayEvents) {
+            socket.send(JSON.stringify({ type: "event", event }));
+          }
+          const unsubscribe =
+            terminalSessionManager?.subscribe(terminal.terminalId, (event) => {
+              if (event.sequence <= snapshotSequence) {
+                return;
+              }
+              socket.send(JSON.stringify({ type: "event", event }));
+            }) ?? (() => {});
+          socket.on("close", () => {
+            unsubscribe();
+          });
+          socket.on("error", () => {
+            unsubscribe();
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "terminal session stream failed";
+          socket.send(JSON.stringify({ type: "error", error: message }));
+          socket.close();
+        }
+      },
+    });
   });
 
   app.get("/api/v1/integrations/catalog", async () => {
@@ -3297,6 +3589,199 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 400, error instanceof Error ? error.message : "runtime report write failed");
+    }
+  });
+
+  app.get("/api/v1/capabilities/runtime-tools/terminal-sessions", async (request, reply) => {
+    try {
+      return runtimeAgentToolsService.listTerminalSessions({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          query: isRecord(request.query) ? request.query : null,
+        }),
+        sessionId: capabilitySessionId({
+          headers: request.headers as Record<string, unknown>,
+          query: isRecord(request.query) ? request.query : null,
+        }),
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime terminal session list failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/terminal-sessions", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return await runtimeAgentToolsService.startTerminalSession({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        sessionId: capabilitySessionId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        inputId: capabilityInputId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        selectedModel: capabilitySelectedModel({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        title: nullableString(request.body.title) ?? undefined,
+        cwd: nullableString(request.body.cwd) ?? undefined,
+        command: requiredString(request.body.command, "command"),
+        cols: hasOwn(request.body, "cols") ? optionalInteger(request.body.cols, DEFAULT_TERMINAL_COLS) : undefined,
+        rows: hasOwn(request.body, "rows") ? optionalInteger(request.body.rows, DEFAULT_TERMINAL_ROWS) : undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime terminal session start failed");
+    }
+  });
+
+  app.get("/api/v1/capabilities/runtime-tools/terminal-sessions/:terminalId", async (request, reply) => {
+    const params = request.params as { terminalId: string };
+    try {
+      return runtimeAgentToolsService.getTerminalSession({
+        terminalId: requiredString(params.terminalId, "terminalId"),
+        workspaceId: capabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          query: isRecord(request.query) ? request.query : null,
+        }),
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime terminal session fetch failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/terminal-sessions/:terminalId/read", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { terminalId: string };
+    try {
+      return runtimeAgentToolsService.readTerminalSession({
+        terminalId: requiredString(params.terminalId, "terminalId"),
+        workspaceId: capabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        afterSequence: hasOwn(request.body, "after_sequence")
+          ? optionalInteger(request.body.after_sequence, 0)
+          : undefined,
+        limit: hasOwn(request.body, "limit")
+          ? optionalInteger(request.body.limit, 200)
+          : undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime terminal session read failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/terminal-sessions/:terminalId/wait", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { terminalId: string };
+    try {
+      return await runtimeAgentToolsService.waitTerminalSession({
+        terminalId: requiredString(params.terminalId, "terminalId"),
+        workspaceId: capabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        afterSequence: hasOwn(request.body, "after_sequence")
+          ? optionalInteger(request.body.after_sequence, 0)
+          : undefined,
+        limit: hasOwn(request.body, "limit")
+          ? optionalInteger(request.body.limit, 200)
+          : undefined,
+        timeoutMs: hasOwn(request.body, "timeout_ms")
+          ? optionalInteger(request.body.timeout_ms, 15000)
+          : undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime terminal session wait failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/terminal-sessions/:terminalId/input", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { terminalId: string };
+    try {
+      return await runtimeAgentToolsService.sendTerminalSessionInput({
+        terminalId: requiredString(params.terminalId, "terminalId"),
+        workspaceId: capabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        data: requiredString(request.body.data, "data"),
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime terminal session input failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/terminal-sessions/:terminalId/signal", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { terminalId: string };
+    try {
+      return await runtimeAgentToolsService.signalTerminalSession({
+        terminalId: requiredString(params.terminalId, "terminalId"),
+        workspaceId: capabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        signal: nullableString(request.body.signal) ?? undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime terminal session signal failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/terminal-sessions/:terminalId/close", async (request, reply) => {
+    const params = request.params as { terminalId: string };
+    try {
+      return await runtimeAgentToolsService.closeTerminalSession({
+        terminalId: requiredString(params.terminalId, "terminalId"),
+        workspaceId: capabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: isRecord(request.body) ? request.body : null,
+        }),
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime terminal session close failed");
     }
   });
 
@@ -4850,11 +5335,16 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         harnessSessionId: resolvedSessionId
       });
     }
-    store.ensureRuntimeState({
-      workspaceId,
-      sessionId: resolvedSessionId,
-      status: "QUEUED"
-    });
+    const runtimeStateBeforeQueue =
+      store.getRuntimeState({
+        workspaceId,
+        sessionId: resolvedSessionId,
+      }) ??
+      store.ensureRuntimeState({
+        workspaceId,
+        sessionId: resolvedSessionId,
+        status: "IDLE"
+      });
     const record = store.enqueueInput({
       workspaceId,
       sessionId: resolvedSessionId,
@@ -4869,13 +5359,6 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         context: {}
       }
     });
-    store.insertSessionMessage({
-      workspaceId,
-      sessionId: resolvedSessionId,
-      role: "user",
-      text: trimmedText,
-      messageId: `user-${record.inputId}`
-    });
     createInputMemoryUpdateProposals({
       store,
       workspaceId,
@@ -4884,21 +5367,43 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       sourceMessageId: `user-${record.inputId}`,
       text: trimmedText,
     });
-    store.updateRuntimeState({
+    if (runtimeStateHasClaimedActiveInput(store, runtimeStateBeforeQueue)) {
+      store.updateRuntimeState({
+        workspaceId,
+        sessionId: resolvedSessionId,
+        status: runtimeStateBeforeQueue?.status ?? "BUSY",
+        currentInputId: runtimeStateBeforeQueue?.currentInputId ?? null,
+        currentWorkerId: runtimeStateBeforeQueue?.currentWorkerId ?? null,
+        leaseUntil: runtimeStateBeforeQueue?.leaseUntil ?? null,
+        heartbeatAt: runtimeStateBeforeQueue?.heartbeatAt ?? null,
+        lastError: runtimeStateBeforeQueue?.lastError ?? null
+      });
+    } else {
+      store.updateRuntimeState({
+        workspaceId,
+        sessionId: resolvedSessionId,
+        status: "QUEUED",
+        currentInputId: record.inputId,
+        currentWorkerId: null,
+        leaseUntil: null,
+        heartbeatAt: null,
+        lastError: null
+      });
+    }
+    const runtimeStateAfterQueue = store.getRuntimeState({
       workspaceId,
       sessionId: resolvedSessionId,
-      status: "QUEUED",
-      currentInputId: record.inputId,
-      currentWorkerId: null,
-      leaseUntil: null,
-      heartbeatAt: null,
-      lastError: null
     });
+    const queueAwareState = effectiveSessionState(runtimeStateAfterQueue, true);
     queueWorker?.wake();
     return {
       input_id: record.inputId,
       session_id: record.sessionId,
-      status: record.status
+      status: record.status,
+      effective_state: queueAwareState.effective_state,
+      runtime_status: queueAwareState.runtime_status,
+      current_input_id: queueAwareState.current_input_id,
+      has_queued_inputs: true,
     };
   });
 
@@ -4931,6 +5436,60 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       input_id: paused.inputId,
       session_id: paused.sessionId,
       status: paused.status,
+    };
+  });
+
+  app.patch("/api/v1/agent-sessions/:sessionId/inputs/:inputId", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { sessionId: string; inputId: string };
+    const workspaceId = optionalString(request.body.workspace_id);
+    if (!workspaceId) {
+      return sendError(reply, 400, "workspace_id is required");
+    }
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+
+    const input = store.getInput(params.inputId);
+    if (
+      !input ||
+      input.workspaceId !== workspaceId ||
+      input.sessionId !== params.sessionId
+    ) {
+      return sendError(reply, 404, "queued input not found");
+    }
+    if (input.status !== "QUEUED") {
+      return sendError(reply, 409, "queued input can no longer be edited");
+    }
+
+    const existingPayload = isRecord(input.payload) ? input.payload : {};
+    const trimmedText = (optionalString(request.body.text) ?? "").trim();
+    const existingAttachments = Array.isArray(existingPayload.attachments)
+      ? existingPayload.attachments
+      : [];
+    if (!trimmedText && existingAttachments.length === 0) {
+      return sendError(reply, 422, "text or attachments are required");
+    }
+
+    const updated = store.updateInput(params.inputId, {
+      payload: {
+        ...existingPayload,
+        text: trimmedText,
+      },
+    });
+    if (!updated) {
+      return sendError(reply, 500, "failed to update queued input");
+    }
+
+    return {
+      input_id: updated.inputId,
+      session_id: updated.sessionId,
+      status: updated.status,
+      text: optionalString(updated.payload.text) ?? "",
+      updated_at: updated.updatedAt,
     };
   });
 
@@ -4981,8 +5540,12 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const params = request.params as { workspaceId: string };
     const items = store
       .listRuntimeStates(params.workspaceId)
-      .map((item: SessionRuntimeStateRecord) =>
-        runtimeStateListItemPayload({
+      .map((item: SessionRuntimeStateRecord) => {
+        const hasQueuedInputs = store.hasAvailableInputsForSession({
+          workspaceId: params.workspaceId,
+          sessionId: item.sessionId,
+        });
+        return runtimeStateListItemPayload({
           record: item,
           lastTurnResult:
             store.listTurnResults({
@@ -4991,8 +5554,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
               limit: 1,
               offset: 0,
             })[0] ?? null,
-        }),
-      );
+          hasQueuedInputs,
+        });
+      });
     return { items, count: items.length };
   });
 
@@ -5331,10 +5895,15 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
           limit: 1,
           offset: 0,
         })[0] ?? null;
+      const hasQueuedInputs = store.hasAvailableInputsForSession({
+        workspaceId: params.workspaceId,
+        sessionId: row.sessionId,
+      });
       return {
         ...runtimeStateListItemPayload({
           record: row,
           lastTurnResult,
+          hasQueuedInputs,
         }),
         artifacts: artifactsBySession.get(row.sessionId) ?? [],
       };
@@ -5687,6 +6256,135 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     return { success: true };
   });
 
+  app.post("/api/v1/workspaces/:workspaceId/automations/import", async (request, reply) => {
+    const params = request.params as { workspaceId: string };
+    const { workspaceId } = params;
+
+    if (!store.getWorkspace(workspaceId)) {
+      return sendError(reply, 404, "workspace not found");
+    }
+
+    const automationsPath = path.join(store.workspaceDir(workspaceId), "automations.yaml");
+    if (!fs.existsSync(automationsPath)) {
+      return { imported: 0, skipped: 0, jobs: [], skipped_details: [] };
+    }
+
+    let rawDoc: unknown;
+    try {
+      rawDoc = yaml.load(fs.readFileSync(automationsPath, "utf8"));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return sendError(reply, 400, `automations.yaml parse error: ${message}`);
+    }
+
+    if (!isRecord(rawDoc)) {
+      return sendError(reply, 400, "automations.yaml must be a mapping at the root");
+    }
+    if (rawDoc.version !== 1) {
+      return sendError(reply, 400, `automations.yaml version must be 1, got: ${String(rawDoc.version)}`);
+    }
+    if (!Array.isArray(rawDoc.automations)) {
+      return sendError(reply, 400, "automations.yaml must have an 'automations' array");
+    }
+
+    const body = isRecord(request.body) ? request.body : {};
+    const initiatedBy = optionalString(body.initiated_by) ?? "workspace_import";
+
+    // Read installed app names from workspace.yaml (tolerates absence)
+    const installedApps = new Set<string>(
+      listWorkspaceApplications(store.workspaceDir(workspaceId))
+        .map((entry) => (typeof entry.app_id === "string" ? entry.app_id : ""))
+        .filter((id) => id.length >= 3)
+    );
+
+    const jobs: Record<string, unknown>[] = [];
+    const skippedDetails: Record<string, unknown>[] = [];
+
+    for (const rawEntry of rawDoc.automations) {
+      if (!isRecord(rawEntry)) {
+        skippedDetails.push({ reason: "invalid_entry", detail: "entry is not an object" });
+        continue;
+      }
+
+      const entryCron = optionalString(rawEntry.cron);
+      const entryDescription = optionalString(rawEntry.description);
+      const entryDelivery = optionalDict(rawEntry.delivery);
+
+      if (!entryCron) {
+        skippedDetails.push({ reason: "missing_field", detail: "cron is required" });
+        continue;
+      }
+      if (!entryDescription) {
+        skippedDetails.push({ reason: "missing_field", detail: "description is required" });
+        continue;
+      }
+      if (!entryDelivery || !optionalString(entryDelivery.mode) || !optionalString(entryDelivery.channel)) {
+        skippedDetails.push({ reason: "missing_field", detail: "delivery must be an object with mode and channel" });
+        continue;
+      }
+
+      const entryName = optionalString(rawEntry.name) ?? "";
+      const entryInstruction = optionalString(rawEntry.instruction) ?? entryDescription;
+
+      const importKey = createHash("sha1")
+        .update(`${entryName}|${entryCron}|${entryInstruction}`)
+        .digest("hex");
+
+      const existingJobs = store.listCronjobs({ workspaceId });
+      const existing = existingJobs.find((j) => j.metadata.import_key === importKey);
+
+      if (existing) {
+        skippedDetails.push({ import_key: importKey, reason: "already_imported", id: existing.id });
+        continue;
+      }
+
+      // TODO: parse app references from instruction
+      const importWarnings: string[] = [];
+
+      const importedMeta: Record<string, unknown> = {
+        ...(optionalDict(rawEntry.metadata) ?? {}),
+        imported: true,
+        author_recommended_enabled: rawEntry.enabled !== false,
+        import_key: importKey,
+        import_warnings: importWarnings,
+      };
+
+      let job: CronjobRecord;
+      try {
+        job = store.createCronjob({
+          workspaceId,
+          initiatedBy,
+          name: entryName,
+          cron: entryCron,
+          description: entryDescription,
+          instruction: entryInstruction,
+          enabled: false,
+          delivery: entryDelivery,
+          metadata: importedMeta,
+          nextRunAt: cronjobNextRunAt(entryCron, new Date()),
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        skippedDetails.push({ import_key: importKey, reason: "create_failed", detail: message });
+        continue;
+      }
+
+      jobs.push(cronjobPayload(job));
+    }
+
+    app.log.info(
+      { event: "app.automations.import.success", outcome: "success", workspaceId, count: jobs.length, skipped: skippedDetails.length },
+      "automations import complete"
+    );
+
+    return {
+      imported: jobs.length,
+      skipped: skippedDetails.length,
+      jobs,
+      skipped_details: skippedDetails,
+    };
+  });
+
   app.get("/api/v1/task-proposals", async (request, reply) => {
     const query = isRecord(request.query) ? request.query : {};
     const workspaceId = optionalString(query.workspace_id);
@@ -5876,13 +6574,6 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
             : null,
         }
       }
-    });
-    store.insertSessionMessage({
-      workspaceId: proposal.workspaceId,
-      sessionId,
-      role: "user",
-      text: taskPrompt,
-      messageId: `user-${record.inputId}`
     });
     store.updateRuntimeState({
       workspaceId: proposal.workspaceId,

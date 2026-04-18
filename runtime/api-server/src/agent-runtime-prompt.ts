@@ -381,12 +381,16 @@ function evolveCandidateContextPromptSection(context: AgentEvolveCandidateContex
     `Title: ${title}.`,
     summary ? `Summary: ${summary}` : "",
     slug ? `Skill id: \`${slug}\`.` : "",
-    `Draft skill artifact: \`${skillPath}\`.`,
+    `Stored draft artifact in memory service: \`${skillPath}\`.`,
     targetSkillPath ? `Target live workspace skill path: \`${targetSkillPath}\`.` : "",
     skillMarkdown ? ["Draft skill content:", "```markdown", skillMarkdown.trimEnd(), "```"].join("\n") : "",
+    "Treat the stored draft path as memory-backed review context, not as a live workspace destination.",
+    targetSkillPath
+      ? `Do not create or keep promoted workspace skills under \`evolve/\`; if you promote this candidate, write or update only \`${targetSkillPath}\`.`
+      : "",
     "Review the draft skill, refine it if needed, and keep the session tightly scoped to evaluating or promoting this candidate.",
     targetSkillPath
-      ? `Prefer writing the promoted live skill to \`${targetSkillPath}\`. If you do not create the live skill during this session, runtime may promote the stored draft after a successful review run.`
+      ? `If you do not create the live skill during this session, runtime may promote the stored draft after a successful review run.`
       : "",
   ];
   return linesSection(lines);

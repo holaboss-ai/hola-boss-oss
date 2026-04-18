@@ -631,6 +631,7 @@ export function InternalSurfacePane({
                   : null
             }
             onChange={setTablePreviewDraft}
+            onOpenLinkInBrowser={openPreviewLink}
           />
         );
       }
