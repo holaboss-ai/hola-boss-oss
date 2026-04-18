@@ -609,13 +609,25 @@ test("chat pane exposes an in-pane session dropdown for switching agent sessions
 
   assert.match(source, /onOpenInbox\?: \(\) => void;/);
   assert.match(source, /inboxUnreadCount\?: number;/);
+  assert.match(source, /composerDraftText\?: string;/);
+  assert.match(
+    source,
+    /onComposerDraftTextChange\?: \(text: string\) => void;/,
+  );
   assert.match(
     source,
     /onRequestCreateSession\?: \(request: ChatPaneSessionOpenRequest\) => void;/,
   );
   assert.match(source, /onSessionOpenRequestConsumed\?: \(requestKey: number\) => void;/);
-  assert.match(source, /const \[availableSessions, setAvailableSessions\] = useState<ChatSessionOption\[]>\(\s*\[\],\s*\);/);
+  assert.match(
+    source,
+    /const \[availableSessions, setAvailableSessions\] = useState<[\s\S]*ChatSessionOption\[][\s\S]*>\(\[\]\);/,
+  );
   assert.match(source, /const \[localSessionOpenRequest, setLocalSessionOpenRequest\] =\s*useState<ChatPaneSessionOpenRequest \| null>\(null\);/);
+  assert.match(
+    source,
+    /const \[input, setInput\] = useState\(\(\) => composerDraftText\);/,
+  );
   assert.match(
     source,
     /const localSessionOpenRequestRef =\s*useRef<ChatPaneSessionOpenRequest \| null>\(null\);/,
@@ -624,6 +636,14 @@ test("chat pane exposes an in-pane session dropdown for switching agent sessions
   assert.match(
     source,
     /localSessionOpenRequestRef\.current = localSessionOpenRequest;/,
+  );
+  assert.match(
+    source,
+    /useEffect\(\(\) => \{\s*setInput\(\(current\) =>\s*current === composerDraftText \? current : composerDraftText,\s*\);\s*\}, \[composerDraftText\]\);/,
+  );
+  assert.match(
+    source,
+    /useEffect\(\(\) => \{\s*onComposerDraftTextChange\?\.\(input\);\s*\}, \[input, onComposerDraftTextChange\]\);/,
   );
   assert.match(source, /function setLocalSessionOpenRequestState\(/);
   assert.match(source, /function sessionStatusIndicator\(statusLabel: string\)/);
@@ -730,6 +750,28 @@ test("chat pane routes immediate sends through the newer pending session request
   assert.match(
     source,
     /if \(isSessionOpenRequestConsumed\(requestKey\)\) \{\s*consumeSessionOpenRequest\(requestKey\);\s*return;\s*\}/,
+  );
+});
+
+test("chat pane mirrors composer draft text from shell state", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /composerDraftText\?: string;/);
+  assert.match(
+    source,
+    /onComposerDraftTextChange\?: \(text: string\) => void;/,
+  );
+  assert.match(
+    source,
+    /const \[input, setInput\] = useState\(\(\) => composerDraftText\);/,
+  );
+  assert.match(
+    source,
+    /useEffect\(\(\) => \{\s*setInput\(\(current\) =>\s*current === composerDraftText \? current : composerDraftText,\s*\);\s*\}, \[composerDraftText\]\);/,
+  );
+  assert.match(
+    source,
+    /useEffect\(\(\) => \{\s*onComposerDraftTextChange\?\.\(input\);\s*\}, \[input, onComposerDraftTextChange\]\);/,
   );
 });
 

@@ -3097,6 +3097,8 @@ interface ChatPaneProps {
   onOpenInbox?: () => void;
   inboxUnreadCount?: number;
   onRequestCreateSession?: (request: ChatPaneSessionOpenRequest) => void;
+  composerDraftText?: string;
+  onComposerDraftTextChange?: (text: string) => void;
 }
 
 export function ChatPane({
@@ -3120,6 +3122,8 @@ export function ChatPane({
   onOpenInbox,
   inboxUnreadCount = 0,
   onRequestCreateSession,
+  composerDraftText = "",
+  onComposerDraftTextChange,
 }: ChatPaneProps) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const authSessionState = useDesktopAuthSession();
@@ -3154,7 +3158,7 @@ export function ChatPane({
   const [collapsedTraceByStepId, setCollapsedTraceByStepId] = useState<
     Record<string, boolean>
   >({});
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(() => composerDraftText);
   const [quotedSkillIds, setQuotedSkillIds] = useState<string[]>([]);
   const [pendingAttachments, setPendingAttachments] = useState<
     PendingAttachment[]
@@ -4559,6 +4563,16 @@ export function ChatPane({
       );
     };
   }, [selectedWorkspaceId]);
+
+  useEffect(() => {
+    setInput((current) =>
+      current === composerDraftText ? current : composerDraftText,
+    );
+  }, [composerDraftText]);
+
+  useEffect(() => {
+    onComposerDraftTextChange?.(input);
+  }, [input, onComposerDraftTextChange]);
 
   useEffect(() => {
     const requestKey = composerPrefillRequest?.requestKey ?? 0;

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, test } from "node:test";
+import { afterEach, test as nodeTest } from "node:test";
 
 import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
@@ -23,6 +23,13 @@ const ORIGINAL_ENV = {
   HB_SANDBOX_ROOT: process.env.HB_SANDBOX_ROOT,
   HOLABOSS_RUNTIME_CONFIG_PATH: process.env.HOLABOSS_RUNTIME_CONFIG_PATH,
 };
+
+function test(
+  name: string,
+  fn: () => void | Promise<void>,
+): ReturnType<typeof nodeTest> {
+  return nodeTest(name, { concurrency: false }, fn);
+}
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {

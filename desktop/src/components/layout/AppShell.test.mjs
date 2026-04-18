@@ -758,7 +758,19 @@ test("app shell passes new session requests into the chat pane selector", async 
   assert.match(source, /type ChatSessionOpenRequest = \{\s*sessionId: string;\s*requestKey: number;\s*mode\?: "session" \| "draft";\s*parentSessionId\?: string \| null;\s*\};/);
   assert.match(
     source,
+    /const \[chatComposerDraftTextByWorkspace, setChatComposerDraftTextByWorkspace\] =\s*useState<Record<string, string>>\(\{\}\);/,
+  );
+  assert.match(
+    source,
     /const handleCreateSession = useCallback\(\s*\(request\?: \{\s*sessionId: string;\s*mode\?: "session" \| "draft";\s*parentSessionId\?: string \| null;\s*requestKey: number;\s*\}\) => \{/,
+  );
+  assert.match(
+    source,
+    /const handleChatComposerDraftTextChange = useCallback\(\s*\(text: string\) => \{[\s\S]*const workspaceId = selectedWorkspaceId\?\.trim\(\) \|\| "";/,
+  );
+  assert.match(
+    source,
+    /setChatComposerDraftTextByWorkspace\(\(current\) => \{[\s\S]*const existing = current\[workspaceId\] \?\? "";[\s\S]*if \(!text\) \{[\s\S]*delete next\[workspaceId\];[\s\S]*\}[\s\S]*\[workspaceId\]: text,/,
   );
   assert.match(source, /const handleChatSessionOpenRequestConsumed = useCallback\(\s*\(requestKey: number\) => \{/);
   assert.match(source, /setChatSessionOpenRequest\(\(current\) =>\s*current\?\.requestKey === requestKey \? null : current,\s*\);/);
@@ -774,7 +786,7 @@ test("app shell passes new session requests into the chat pane selector", async 
   assert.match(source, /<OperationsInboxPane[\s\S]*proposals=\{taskProposals\}/);
   assert.match(
     source,
-    /onRequestCreateSession=\{\(request\) => void handleCreateSession\(request\)\}/,
+    /onRequestCreateSession=\{\(request\) => void handleCreateSession\(request\)\}[\s\S]*composerDraftText=\{[\s\S]*chatComposerDraftTextByWorkspace\[selectedWorkspaceId\] \?\? ""[\s\S]*\}[\s\S]*onComposerDraftTextChange=\{handleChatComposerDraftTextChange\}/,
   );
   assert.match(source, /onSessionOpenRequestConsumed=\{handleChatSessionOpenRequestConsumed\}/);
 });
@@ -786,4 +798,25 @@ test("app shell keeps session-open request keys monotonic after requests are con
   assert.match(source, /const nextChatSessionOpenRequestKey = useCallback\(\(\) => \{\s*chatSessionOpenRequestKeyRef\.current \+= 1;\s*return chatSessionOpenRequestKeyRef\.current;\s*\}, \[\]\);/);
   assert.match(source, /setChatSessionOpenRequest\(\{\s*sessionId: normalizedSessionId,\s*mode: "session",\s*requestKey: nextChatSessionOpenRequestKey\(\),\s*\}\);/);
   assert.doesNotMatch(source, /setChatSessionOpenRequest\(\(previous\) => \(\{\s*sessionId: normalizedSessionId,\s*mode: "session",\s*requestKey: \(previous\?\.requestKey \?\? 0\) \+ 1,\s*\}\)\);/);
+});
+
+test("app shell passes workspace-scoped chat composer drafts into the chat pane", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(
+    source,
+    /const \[chatComposerDraftTextByWorkspace, setChatComposerDraftTextByWorkspace\] =\s*useState<Record<string, string>>\(\{\}\);/,
+  );
+  assert.match(
+    source,
+    /const handleChatComposerDraftTextChange = useCallback\(\s*\(text: string\) => \{[\s\S]*const workspaceId = selectedWorkspaceId\?\.trim\(\) \|\| "";/,
+  );
+  assert.match(
+    source,
+    /setChatComposerDraftTextByWorkspace\(\(current\) => \{[\s\S]*const existing = current\[workspaceId\] \?\? "";[\s\S]*if \(!text\) \{[\s\S]*delete next\[workspaceId\];[\s\S]*\}[\s\S]*\[workspaceId\]: text,/,
+  );
+  assert.match(
+    source,
+    /<ChatPane[\s\S]*composerDraftText=\{[\s\S]*chatComposerDraftTextByWorkspace\[selectedWorkspaceId\] \?\? ""[\s\S]*\}[\s\S]*onComposerDraftTextChange=\{handleChatComposerDraftTextChange\}/,
+  );
 });

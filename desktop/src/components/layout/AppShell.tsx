@@ -1096,6 +1096,8 @@ function AppShellContent() {
     useState<ChatSessionOpenRequest | null>(null);
   const [chatBrowserJumpRequestKeysBySessionId, setChatBrowserJumpRequestKeysBySessionId] =
     useState<Record<string, number>>({});
+  const [chatComposerDraftTextByWorkspace, setChatComposerDraftTextByWorkspace] =
+    useState<Record<string, string>>({});
   const [chatComposerPrefillRequest, setChatComposerPrefillRequest] =
     useState<ChatComposerPrefillRequest | null>(null);
   const [chatExplorerAttachmentRequest, setChatExplorerAttachmentRequest] =
@@ -2904,6 +2906,34 @@ function AppShellContent() {
     setChatFocusRequestKey((current) => current + 1);
   }, []);
 
+  const handleChatComposerDraftTextChange = useCallback(
+    (text: string) => {
+      const workspaceId = selectedWorkspaceId?.trim() || "";
+      if (!workspaceId) {
+        return;
+      }
+      setChatComposerDraftTextByWorkspace((current) => {
+        const existing = current[workspaceId] ?? "";
+        if (existing === text) {
+          return current;
+        }
+        if (!text) {
+          if (!(workspaceId in current)) {
+            return current;
+          }
+          const next = { ...current };
+          delete next[workspaceId];
+          return next;
+        }
+        return {
+          ...current,
+          [workspaceId]: text,
+        };
+      });
+    },
+    [selectedWorkspaceId],
+  );
+
   const handleReferenceWorkspacePathInChat = useCallback(
     (entry: LocalFileEntry) => {
       const normalizedAbsolutePath = entry.absolutePath.trim();
@@ -3473,6 +3503,12 @@ function AppShellContent() {
           onOpenInbox={handleOpenInboxPane}
           inboxUnreadCount={unreadTaskProposalCount}
           onRequestCreateSession={(request) => void handleCreateSession(request)}
+          composerDraftText={
+            selectedWorkspaceId
+              ? (chatComposerDraftTextByWorkspace[selectedWorkspaceId] ?? "")
+              : ""
+          }
+          onComposerDraftTextChange={handleChatComposerDraftTextChange}
         />
       );
     }
@@ -3508,10 +3544,12 @@ function AppShellContent() {
     agentView,
     chatFocusRequestKey,
     activeChatBrowserJumpRequest,
+    chatComposerDraftTextByWorkspace,
     chatSessionJumpRequest,
     chatSessionOpenRequest,
     chatComposerPrefillRequest,
     consumeChatBrowserJumpRequest,
+    handleChatComposerDraftTextChange,
     handleChatComposerPrefillConsumed,
     handleJumpToSessionBrowser,
     handleMissingInternalResource,
