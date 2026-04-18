@@ -3307,6 +3307,9 @@ function piApiForRequest(request: HarnessHostPiRequest): Api {
   if (shouldUseNativeGoogleProvider(request)) {
     return "google-generative-ai";
   }
+  if (shouldUseOpenAiCodexResponsesProvider(request)) {
+    return "openai-codex-responses";
+  }
   if (shouldUseOpenAiResponsesProvider(request)) {
     return "openai-responses";
   }
@@ -3317,6 +3320,12 @@ function shouldUseNativeGoogleProvider(request: HarnessHostPiRequest): boolean {
   const normalizedProvider = request.model_client.model_proxy_provider.trim().toLowerCase();
   const providerId = request.provider_id.trim().toLowerCase();
   return normalizedProvider === "google_compatible" && providerId === "gemini_direct";
+}
+
+function shouldUseOpenAiCodexResponsesProvider(request: HarnessHostPiRequest): boolean {
+  const normalizedProvider = request.model_client.model_proxy_provider.trim().toLowerCase();
+  const providerId = request.provider_id.trim().toLowerCase();
+  return normalizedProvider === "openai_compatible" && providerId === "openai_codex";
 }
 
 function normalizedPiModelId(request: Pick<HarnessHostPiRequest, "model_id">): string {
@@ -3345,7 +3354,6 @@ function shouldUseOpenAiResponsesProvider(request: HarnessHostPiRequest): boolea
   }
   if (
     providerId !== "openai_direct" &&
-    providerId !== "openai_codex" &&
     providerId !== "openai" &&
     providerId !== "holaboss_model_proxy" &&
     providerId !== "holaboss"

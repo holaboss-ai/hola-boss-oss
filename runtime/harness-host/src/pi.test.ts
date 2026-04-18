@@ -1437,7 +1437,7 @@ test("buildPiProviderConfig uses OpenAI Responses API for direct GPT-5 models", 
   assert.equal(providerConfig.models[0]?.compat, undefined);
 });
 
-test("buildPiProviderConfig uses OpenAI Responses API for Codex OAuth GPT-5 models", () => {
+test("buildPiProviderConfig uses OpenAI Codex Responses API for Codex OAuth GPT-5 models", () => {
   const providerConfig = buildPiProviderConfig({
     ...baseRequest(),
     provider_id: "openai_codex",
@@ -1449,9 +1449,9 @@ test("buildPiProviderConfig uses OpenAI Responses API for Codex OAuth GPT-5 mode
     },
   });
 
-  assert.equal(providerConfig.api, "openai-responses");
+  assert.equal(providerConfig.api, "openai-codex-responses");
   assert.equal(providerConfig.baseUrl, "https://chatgpt.com/backend-api/codex");
-  assert.equal(providerConfig.models[0]?.api, "openai-responses");
+  assert.equal(providerConfig.models[0]?.api, "openai-codex-responses");
 });
 
 test("buildPiProviderConfig uses OpenAI Responses API for managed Holaboss GPT-5 models", () => {
