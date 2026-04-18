@@ -95,6 +95,22 @@ type GetLatestCompactionEntryFn = (
   branch: PiSessionBranchEntry[],
 ) => PiCompactionBranchEntry | null | undefined;
 
+export interface SessionCheckpointSessionOps {
+  currentLeafCheckpointState(sessionFile: string): {
+    leafId: string | null;
+    latestCompactionId: string | null;
+  };
+  canMergeCheckpointIntoLiveSession(params: {
+    sessionFile: string;
+    baseLeafId: string | null;
+    baseLatestCompactionId: string | null;
+  }): boolean;
+  appendSnapshotCompactionToLiveSession(params: {
+    liveSessionFile: string;
+    snapshotSessionFile: string;
+  }): boolean;
+}
+
 const require = createRequire(import.meta.url);
 const PI_SESSION_MANAGER_MODULE_PATH =
   "../../harness-host/node_modules/@mariozechner/pi-coding-agent/dist/core/session-manager.js";
@@ -312,6 +328,7 @@ export function enqueueSessionCheckpointJob(params: {
   harnessSessionId: string | null;
   contextUsage: PiContextUsage | null;
   wakeWorker?: (() => void) | null;
+  sessionOps?: SessionCheckpointSessionOps;
 }): PostRunJobRecord | null {
   const harnessSessionId = nonEmptyString(params.harnessSessionId);
   if (!harnessSessionId || !shouldQueueSessionCheckpoint(params.contextUsage)) {
@@ -320,7 +337,9 @@ export function enqueueSessionCheckpointJob(params: {
   if (!fs.existsSync(harnessSessionId)) {
     return null;
   }
-  const checkpointState = currentLeafCheckpointState(harnessSessionId);
+  const checkpointState = (
+    params.sessionOps ?? defaultSessionCheckpointSessionOps
+  ).currentLeafCheckpointState(harnessSessionId);
   const idempotencyKey = `${SESSION_CHECKPOINT_JOB_TYPE}:${params.sessionId}:${harnessSessionId}:${checkpointState.leafId ?? "root"}`;
   const existing = params.store.getPostRunJobByIdempotencyKey(idempotencyKey);
   if (existing) {
@@ -506,6 +525,12 @@ function appendSnapshotCompactionToLiveSession(params: {
   return true;
 }
 
+const defaultSessionCheckpointSessionOps: SessionCheckpointSessionOps = {
+  currentLeafCheckpointState,
+  canMergeCheckpointIntoLiveSession,
+  appendSnapshotCompactionToLiveSession,
+};
+
 function checkpointSelectedModel(params: {
   snapshotPayload: Record<string, unknown>;
   harnessRequest: Record<string, unknown>;
@@ -573,11 +598,13 @@ export async function processSessionCheckpointJob(params: {
     requestPayload: Record<string, unknown>,
   ) => Promise<PiCompactionCommandResult>;
   resolveRuntimeModelClientFn?: ResolveRuntimeModelClientFn;
+  sessionOps?: SessionCheckpointSessionOps;
 }): Promise<void> {
   if (params.record.jobType !== SESSION_CHECKPOINT_JOB_TYPE) {
     throw new Error(`unsupported session checkpoint job type: ${params.record.jobType}`);
   }
   const payload = decodeSessionCheckpointJobPayload(params.record.payload);
+  const sessionOps = params.sessionOps ?? defaultSessionCheckpointSessionOps;
   if (!shouldQueueSessionCheckpoint(payload.context_usage)) {
     recordSessionCheckpointResult({
       store: params.store,
@@ -623,7 +650,7 @@ export async function processSessionCheckpointJob(params: {
     });
     return;
   }
-  if (!canMergeCheckpointIntoLiveSession({
+  if (!sessionOps.canMergeCheckpointIntoLiveSession({
     sessionFile: payload.base_harness_session_id,
     baseLeafId: payload.base_leaf_id,
     baseLatestCompactionId: payload.base_latest_compaction_id,
@@ -702,7 +729,7 @@ export async function processSessionCheckpointJob(params: {
       });
       return;
     }
-    if (!canMergeCheckpointIntoLiveSession({
+    if (!sessionOps.canMergeCheckpointIntoLiveSession({
       sessionFile: liveSessionPath,
       baseLeafId: payload.base_leaf_id,
       baseLatestCompactionId: payload.base_latest_compaction_id,
@@ -716,7 +743,7 @@ export async function processSessionCheckpointJob(params: {
       });
       return;
     }
-    const merged = appendSnapshotCompactionToLiveSession({
+    const merged = sessionOps.appendSnapshotCompactionToLiveSession({
       liveSessionFile: liveSessionPath,
       snapshotSessionFile: result.session_file || compactedSessionPath,
     });

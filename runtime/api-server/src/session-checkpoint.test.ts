@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -8,41 +7,169 @@ import test from "node:test";
 import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
 import {
+  type SessionCheckpointSessionOps,
   enqueueSessionCheckpointJob,
   processSessionCheckpointJob,
 } from "./session-checkpoint.js";
 
-interface PiSessionBranchEntry {
+interface FakeSessionEntry {
   id: string;
-  type?: string;
+  type: "message" | "compaction";
+  summary?: string;
+  firstKeptEntryId?: string;
+  tokensBefore?: number;
+  details?: unknown;
+  fromHook?: boolean;
 }
 
-interface PiSessionManagerInstance {
-  getBranch(): PiSessionBranchEntry[];
-  getEntries(): PiSessionBranchEntry[];
-  getLeafId(): string | null;
-  getSessionFile(): string | undefined;
-  appendMessage(message: unknown): string | undefined;
-  appendCompaction(
-    summary: string,
-    firstKeptEntryId: string,
-    tokensBefore: number,
-    details?: unknown,
-    fromHook?: boolean,
-  ): string | undefined;
+interface FakeSessionState {
+  entries: FakeSessionEntry[];
+  leafId: string | null;
 }
 
-interface PiSessionManagerStatic {
-  create(workspaceDir: string, sessionDir: string): PiSessionManagerInstance;
-  open(sessionFile: string): PiSessionManagerInstance;
+let fakeSessionEntryCounter = 0;
+
+function nextFakeEntryId(): string {
+  fakeSessionEntryCounter += 1;
+  return `entry-${fakeSessionEntryCounter}`;
 }
 
-const require = createRequire(import.meta.url);
-const { SessionManager } = require(
-  "../../harness-host/node_modules/@mariozechner/pi-coding-agent/dist/core/session-manager.js",
-) as {
-  SessionManager: PiSessionManagerStatic;
-};
+function createFakeSessionFile(root: string, states: Map<string, FakeSessionState>): string {
+  const sessionDir = fs.mkdtempSync(path.join(root, "pi-sessions-"));
+  const sessionFile = path.join(sessionDir, "session.jsonl");
+  fs.writeFileSync(sessionFile, '{"type":"header"}\n', "utf8");
+  states.set(sessionFile, {
+    entries: [],
+    leafId: null,
+  });
+  return sessionFile;
+}
+
+function requireFakeSessionState(
+  states: Map<string, FakeSessionState>,
+  sessionFile: string,
+): FakeSessionState {
+  const state = states.get(sessionFile);
+  assert.ok(state, `missing fake session state for ${sessionFile}`);
+  return state;
+}
+
+function appendFakeMessage(
+  states: Map<string, FakeSessionState>,
+  sessionFile: string,
+): string {
+  const state = requireFakeSessionState(states, sessionFile);
+  const id = nextFakeEntryId();
+  state.entries.push({
+    id,
+    type: "message",
+  });
+  state.leafId = id;
+  return id;
+}
+
+function appendFakeCompaction(params: {
+  states: Map<string, FakeSessionState>;
+  sessionFile: string;
+  summary: string;
+  firstKeptEntryId: string;
+  tokensBefore: number;
+  details?: unknown;
+  fromHook?: boolean;
+}): string {
+  const state = requireFakeSessionState(params.states, params.sessionFile);
+  const id = nextFakeEntryId();
+  state.entries.push({
+    id,
+    type: "compaction",
+    summary: params.summary,
+    firstKeptEntryId: params.firstKeptEntryId,
+    tokensBefore: params.tokensBefore,
+    details: params.details,
+    fromHook: params.fromHook,
+  });
+  state.leafId = id;
+  return id;
+}
+
+function cloneFakeSession(
+  states: Map<string, FakeSessionState>,
+  sourceFile: string,
+  targetFile: string,
+): void {
+  const source = requireFakeSessionState(states, sourceFile);
+  states.set(targetFile, {
+    entries: source.entries.map((entry) => ({ ...entry })),
+    leafId: source.leafId,
+  });
+}
+
+function latestFakeCompactionEntry(
+  entries: FakeSessionEntry[],
+): FakeSessionEntry | null {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    if (entries[index]?.type === "compaction") {
+      return entries[index];
+    }
+  }
+  return null;
+}
+
+function createFakeSessionOps(
+  states: Map<string, FakeSessionState>,
+): SessionCheckpointSessionOps {
+  return {
+    currentLeafCheckpointState(sessionFile) {
+      const state = requireFakeSessionState(states, sessionFile);
+      return {
+        leafId: state.leafId,
+        latestCompactionId: latestFakeCompactionEntry(state.entries)?.id ?? null,
+      };
+    },
+    canMergeCheckpointIntoLiveSession({
+      sessionFile,
+      baseLeafId,
+      baseLatestCompactionId,
+    }) {
+      const state = requireFakeSessionState(states, sessionFile);
+      if (baseLeafId && !state.entries.some((entry) => entry.id === baseLeafId)) {
+        return false;
+      }
+      return (
+        (latestFakeCompactionEntry(state.entries)?.id ?? null) ===
+        (baseLatestCompactionId ?? null)
+      );
+    },
+    appendSnapshotCompactionToLiveSession({
+      liveSessionFile,
+      snapshotSessionFile,
+    }) {
+      const liveState = requireFakeSessionState(states, liveSessionFile);
+      const snapshotState = requireFakeSessionState(states, snapshotSessionFile);
+      const snapshotCompaction = latestFakeCompactionEntry(snapshotState.entries);
+      if (!snapshotCompaction?.firstKeptEntryId) {
+        return false;
+      }
+      if (
+        !liveState.entries.some(
+          (entry) => entry.id === snapshotCompaction.firstKeptEntryId,
+        )
+      ) {
+        return false;
+      }
+      appendFakeCompaction({
+        states,
+        sessionFile: liveSessionFile,
+        summary: snapshotCompaction.summary ?? "",
+        firstKeptEntryId: snapshotCompaction.firstKeptEntryId,
+        tokensBefore: snapshotCompaction.tokensBefore ?? 0,
+        details: snapshotCompaction.details,
+        fromHook: snapshotCompaction.fromHook,
+      });
+      return true;
+    },
+  };
+}
 
 function makeStore(prefix: string): {
   store: RuntimeStateStore;
@@ -65,6 +192,8 @@ function makeStore(prefix: string): {
 
 test("session checkpoint merges snapshot compaction into a live session that only appended new entries", async () => {
   const { store, root } = makeStore("hb-session-checkpoint-merge-");
+  const sessions = new Map<string, FakeSessionState>();
+  const sessionOps = createFakeSessionOps(sessions);
   try {
     const workspace = store.createWorkspace({
       workspaceId: "workspace-1",
@@ -75,32 +204,9 @@ test("session checkpoint merges snapshot compaction into a live session that onl
     const workspaceDir = store.workspaceDir(workspace.id);
     fs.mkdirSync(workspaceDir, { recursive: true });
 
-    const sessionDir = fs.mkdtempSync(path.join(root, "pi-sessions-"));
-    const sessionManager = SessionManager.create(workspaceDir, sessionDir);
-    sessionManager.appendMessage({
-      role: "user",
-      content: "hello",
-      timestamp: Date.now(),
-    });
-    sessionManager.appendMessage({
-      role: "assistant",
-      content: [{ type: "text", text: "hi" }],
-      model: "gpt-5.4",
-      provider: "openai",
-      stopReason: "done",
-      usage: {
-        input: 1,
-        output: 1,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 2,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      timestamp: Date.now() + 1,
-    } as never);
-    const baseLeafId = sessionManager.getLeafId();
-    const liveSessionFile = sessionManager.getSessionFile();
-    assert.ok(liveSessionFile);
+    const liveSessionFile = createFakeSessionFile(root, sessions);
+    appendFakeMessage(sessions, liveSessionFile);
+    const baseLeafId = appendFakeMessage(sessions, liveSessionFile);
 
     store.upsertBinding({
       workspaceId: workspace.id,
@@ -155,41 +261,32 @@ test("session checkpoint merges snapshot compaction into a live session that onl
         contextWindow: 65_536,
         percent: 76.3,
       },
+      sessionOps,
     });
     assert.ok(queued);
 
-    const advancedLiveSession = SessionManager.open(liveSessionFile);
-    advancedLiveSession.appendMessage({
-      role: "assistant",
-      content: [{ type: "text", text: "new work" }],
-      model: "gpt-5.4",
-      provider: "openai",
-      stopReason: "done",
-      usage: {
-        input: 1,
-        output: 1,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 2,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      timestamp: Date.now() + 1,
-    } as never);
+    appendFakeMessage(sessions, liveSessionFile);
 
     await processSessionCheckpointJob({
       store,
       record: queued!,
+      sessionOps,
       runPiSessionCompactionFn: async (requestPayload) => {
         const snapshotPath = String(requestPayload.harness_session_id);
-        const snapshotSession = SessionManager.open(snapshotPath);
-        const firstKeptEntryId = snapshotSession.getEntries()[0]?.id ?? baseLeafId ?? "";
-        snapshotSession.appendCompaction(
-          "Compacted older context.",
+        cloneFakeSession(sessions, liveSessionFile, snapshotPath);
+        const firstKeptEntryId =
+          requireFakeSessionState(sessions, snapshotPath).entries[0]?.id ??
+          baseLeafId ??
+          "";
+        appendFakeCompaction({
+          states: sessions,
+          sessionFile: snapshotPath,
+          summary: "Compacted older context.",
           firstKeptEntryId,
-          12345,
-          { modifiedFiles: ["src/example.ts"] },
-          false,
-        );
+          tokensBefore: 12345,
+          details: { modifiedFiles: ["src/example.ts"] },
+          fromHook: false,
+        });
         return {
           compacted: true,
           session_file: snapshotPath,
@@ -203,14 +300,12 @@ test("session checkpoint merges snapshot compaction into a live session that onl
     });
     assert.equal(binding?.harnessSessionId, liveSessionFile);
 
-    const mergedLiveSession = SessionManager.open(liveSessionFile);
-    const branch = mergedLiveSession.getBranch();
+    const branch = requireFakeSessionState(sessions, liveSessionFile).entries;
     const latestEntry = branch.at(-1);
     assert.ok(latestEntry);
     assert.equal(latestEntry?.type, "compaction");
-    const latestCompactionEntry = latestEntry as unknown as { summary: string };
-    assert.equal(latestCompactionEntry.summary, "Compacted older context.");
-    assert.ok(branch.some((entry: PiSessionBranchEntry) => entry.id === baseLeafId));
+    assert.equal(latestEntry.summary, "Compacted older context.");
+    assert.ok(branch.some((entry: FakeSessionEntry) => entry.id === baseLeafId));
 
     const boundaries = store.listCompactionBoundaries({
       workspaceId: workspace.id,
@@ -235,6 +330,8 @@ test("session checkpoint merges snapshot compaction into a live session that onl
 
 test("session checkpoint re-resolves model client auth instead of using redacted snapshot credentials", async () => {
   const { store, root } = makeStore("hb-session-checkpoint-auth-");
+  const sessions = new Map<string, FakeSessionState>();
+  const sessionOps = createFakeSessionOps(sessions);
   try {
     const workspace = store.createWorkspace({
       workspaceId: "workspace-auth",
@@ -245,31 +342,9 @@ test("session checkpoint re-resolves model client auth instead of using redacted
     const workspaceDir = store.workspaceDir(workspace.id);
     fs.mkdirSync(workspaceDir, { recursive: true });
 
-    const sessionDir = fs.mkdtempSync(path.join(root, "pi-sessions-"));
-    const sessionManager = SessionManager.create(workspaceDir, sessionDir);
-    sessionManager.appendMessage({
-      role: "user",
-      content: "compact this",
-      timestamp: Date.now(),
-    });
-    sessionManager.appendMessage({
-      role: "assistant",
-      content: [{ type: "text", text: "done" }],
-      model: "gpt-5.4",
-      provider: "openai_codex",
-      stopReason: "done",
-      usage: {
-        input: 1,
-        output: 1,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 2,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      timestamp: Date.now() + 1,
-    } as never);
-    const liveSessionFile = sessionManager.getSessionFile();
-    assert.ok(liveSessionFile);
+    const liveSessionFile = createFakeSessionFile(root, sessions);
+    appendFakeMessage(sessions, liveSessionFile);
+    appendFakeMessage(sessions, liveSessionFile);
 
     store.upsertBinding({
       workspaceId: workspace.id,
@@ -335,6 +410,7 @@ test("session checkpoint re-resolves model client auth instead of using redacted
         contextWindow: 65_536,
         percent: 76.3,
       },
+      sessionOps,
     });
     assert.ok(queued);
 
@@ -342,6 +418,7 @@ test("session checkpoint re-resolves model client auth instead of using redacted
     await processSessionCheckpointJob({
       store,
       record: queued!,
+      sessionOps,
       resolveRuntimeModelClientFn: () => ({
         providerId: "openai_codex",
         configuredProviderId: "openai_codex",
@@ -358,15 +435,18 @@ test("session checkpoint re-resolves model client auth instead of using redacted
       runPiSessionCompactionFn: async (requestPayload) => {
         observedRequest = requestPayload;
         const snapshotPath = String(requestPayload.harness_session_id);
-        const snapshotSession = SessionManager.open(snapshotPath);
-        const firstKeptEntryId = snapshotSession.getEntries()[0]?.id ?? "";
-        snapshotSession.appendCompaction(
-          "Compacted with fresh auth.",
+        cloneFakeSession(sessions, liveSessionFile, snapshotPath);
+        const firstKeptEntryId =
+          requireFakeSessionState(sessions, snapshotPath).entries[0]?.id ?? "";
+        appendFakeCompaction({
+          states: sessions,
+          sessionFile: snapshotPath,
+          summary: "Compacted with fresh auth.",
           firstKeptEntryId,
-          12345,
-          {},
-          false,
-        );
+          tokensBefore: 12345,
+          details: {},
+          fromHook: false,
+        });
         return {
           compacted: true,
           session_file: snapshotPath,
@@ -397,6 +477,8 @@ test("session checkpoint re-resolves model client auth instead of using redacted
 
 test("session checkpoint records not_compacted when PI reports a compaction no-op", async () => {
   const { store, root } = makeStore("hb-session-checkpoint-not-compacted-");
+  const sessions = new Map<string, FakeSessionState>();
+  const sessionOps = createFakeSessionOps(sessions);
   try {
     const workspace = store.createWorkspace({
       workspaceId: "workspace-not-compacted",
@@ -407,31 +489,9 @@ test("session checkpoint records not_compacted when PI reports a compaction no-o
     const workspaceDir = store.workspaceDir(workspace.id);
     fs.mkdirSync(workspaceDir, { recursive: true });
 
-    const sessionDir = fs.mkdtempSync(path.join(root, "pi-sessions-"));
-    const sessionManager = SessionManager.create(workspaceDir, sessionDir);
-    sessionManager.appendMessage({
-      role: "user",
-      content: "compact if needed",
-      timestamp: Date.now(),
-    });
-    sessionManager.appendMessage({
-      role: "assistant",
-      content: [{ type: "text", text: "done" }],
-      model: "gpt-5.4",
-      provider: "openai",
-      stopReason: "done",
-      usage: {
-        input: 1,
-        output: 1,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 2,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      timestamp: Date.now() + 1,
-    } as never);
-    const liveSessionFile = sessionManager.getSessionFile();
-    assert.ok(liveSessionFile);
+    const liveSessionFile = createFakeSessionFile(root, sessions);
+    appendFakeMessage(sessions, liveSessionFile);
+    appendFakeMessage(sessions, liveSessionFile);
 
     store.upsertBinding({
       workspaceId: workspace.id,
@@ -486,12 +546,14 @@ test("session checkpoint records not_compacted when PI reports a compaction no-o
         contextWindow: 65_536,
         percent: 76.3,
       },
+      sessionOps,
     });
     assert.ok(queued);
 
     await processSessionCheckpointJob({
       store,
       record: queued!,
+      sessionOps,
       runPiSessionCompactionFn: async (requestPayload) => ({
         compacted: false,
         session_file: String(requestPayload.harness_session_id),
@@ -524,6 +586,8 @@ test("session checkpoint records not_compacted when PI reports a compaction no-o
 
 test("session checkpoint treats provider 422 summarization failures as a soft no-op", async () => {
   const { store, root } = makeStore("hb-session-checkpoint-soft-422-");
+  const sessions = new Map<string, FakeSessionState>();
+  const sessionOps = createFakeSessionOps(sessions);
   try {
     const workspace = store.createWorkspace({
       workspaceId: "workspace-soft-422",
@@ -534,31 +598,9 @@ test("session checkpoint treats provider 422 summarization failures as a soft no
     const workspaceDir = store.workspaceDir(workspace.id);
     fs.mkdirSync(workspaceDir, { recursive: true });
 
-    const sessionDir = fs.mkdtempSync(path.join(root, "pi-sessions-"));
-    const sessionManager = SessionManager.create(workspaceDir, sessionDir);
-    sessionManager.appendMessage({
-      role: "user",
-      content: "compact this later",
-      timestamp: Date.now(),
-    });
-    sessionManager.appendMessage({
-      role: "assistant",
-      content: [{ type: "text", text: "working on it" }],
-      model: "gpt-5.4",
-      provider: "openai",
-      stopReason: "done",
-      usage: {
-        input: 1,
-        output: 1,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 2,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      timestamp: Date.now() + 1,
-    } as never);
-    const liveSessionFile = sessionManager.getSessionFile();
-    assert.ok(liveSessionFile);
+    const liveSessionFile = createFakeSessionFile(root, sessions);
+    appendFakeMessage(sessions, liveSessionFile);
+    appendFakeMessage(sessions, liveSessionFile);
 
     store.upsertBinding({
       workspaceId: workspace.id,
@@ -613,19 +655,20 @@ test("session checkpoint treats provider 422 summarization failures as a soft no
         contextWindow: 65_536,
         percent: 76.3,
       },
+      sessionOps,
     });
     assert.ok(queued);
 
     await processSessionCheckpointJob({
       store,
       record: queued!,
+      sessionOps,
       runPiSessionCompactionFn: async () => {
         throw new Error("Summarization failed: 422 status code (no body)");
       },
     });
 
-    const liveSession = SessionManager.open(liveSessionFile);
-    const branch = liveSession.getBranch();
+    const branch = requireFakeSessionState(sessions, liveSessionFile).entries;
     assert.equal(branch.at(-1)?.type, "message");
 
     const boundaries = store.listCompactionBoundaries({

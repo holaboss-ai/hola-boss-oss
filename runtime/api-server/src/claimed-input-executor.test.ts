@@ -1952,9 +1952,14 @@ test("claimed input queues a background session checkpoint when PI context cross
     },
   });
 
-  const queuedCheckpointJob = store.getPostRunJobByIdempotencyKey(
-    `session_checkpoint:session-main:${harnessSessionFile}:root`,
-  );
+  const queuedCheckpointJob = store.listPostRunJobs({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: queued.inputId,
+    jobType: "session_checkpoint",
+    limit: 1,
+    offset: 0,
+  })[0];
   assert.ok(queuedCheckpointJob);
   assert.equal(queuedCheckpointJob.jobType, "session_checkpoint");
 
