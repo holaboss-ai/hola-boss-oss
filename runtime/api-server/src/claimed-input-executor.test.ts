@@ -12,6 +12,7 @@ import {
   registerWorkspaceAgentRunStarted,
 } from "./claimed-input-executor.js";
 import type { MemoryServiceLike } from "./memory.js";
+import type { PiContextUsage } from "./session-checkpoint.js";
 
 const tempDirs: string[] = [];
 const ORIGINAL_ENV = {
@@ -1922,10 +1923,27 @@ test("claimed input queues a background session checkpoint when PI context cross
     sessionId: "session-main",
     payload: { text: "hello" },
   });
+  let queuedCheckpointParams: {
+    harnessSessionId: string | null;
+    contextUsage: PiContextUsage | null;
+    inputId: string;
+    sessionId: string;
+    workspaceId: string;
+  } | null = null;
 
   await processClaimedInput({
     store,
     record: queued,
+    enqueueSessionCheckpointJobFn: (params) => {
+      queuedCheckpointParams = {
+        harnessSessionId: params.harnessSessionId,
+        contextUsage: params.contextUsage,
+        inputId: params.inputId,
+        sessionId: params.sessionId,
+        workspaceId: params.workspaceId,
+      };
+      return null;
+    },
     executeRunnerRequestFn: async (payload, options = {}) => {
       await options.onEvent?.({
         session_id: payload.session_id,
@@ -1965,24 +1983,25 @@ test("claimed input queues a background session checkpoint when PI context cross
     },
   });
 
-  const queuedCheckpointJob = store.listPostRunJobs({
-    workspaceId: workspace.id,
-    sessionId: "session-main",
-    inputId: queued.inputId,
-    jobType: "session_checkpoint",
-    limit: 1,
-    offset: 0,
-  })[0];
-  assert.ok(queuedCheckpointJob);
-  assert.equal(queuedCheckpointJob.jobType, "session_checkpoint");
-  assert.equal(
-    (
-      queuedCheckpointJob.payload as {
-        base_harness_session_id?: string;
-      }
-    ).base_harness_session_id,
-    harnessSessionFile,
-  );
+  if (!queuedCheckpointParams) {
+    assert.fail("expected checkpoint enqueue to be called");
+  }
+  const checkpointParams: {
+    harnessSessionId: string | null;
+    contextUsage: PiContextUsage | null;
+    inputId: string;
+    sessionId: string;
+    workspaceId: string;
+  } = queuedCheckpointParams;
+  assert.equal(checkpointParams.workspaceId, workspace.id);
+  assert.equal(checkpointParams.sessionId, "session-main");
+  assert.equal(checkpointParams.inputId, queued.inputId);
+  assert.equal(checkpointParams.harnessSessionId, harnessSessionFile);
+  assert.deepEqual(checkpointParams.contextUsage, {
+    tokens: 50_000,
+    contextWindow: 65_536,
+    percent: 76.3,
+  });
 
   store.close();
 });
