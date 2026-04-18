@@ -534,6 +534,153 @@ test("processClaimedInput promotes accepted evolve skill candidates into live wo
   store.close();
 });
 
+test("processClaimedInput promotes misplaced evolve workspace skill files into the live skills folder", async () => {
+  const { store, memoryService } = makeRuntimeState("hb-evolve-skill-misplaced-promotion-");
+  seedWorkspace(store);
+  const workspaceDir = store.workspaceDir("workspace-1");
+  store.ensureSession({
+    workspaceId: "workspace-1",
+    sessionId: "session-review",
+    kind: "task_proposal",
+    title: "Review evolve skill",
+  });
+  const draftMarkdown = [
+    "---",
+    "name: release-verification",
+    "description: Reusable release verification workflow.",
+    "---",
+    "# Release verification skill",
+    "",
+    "## Workflow",
+    "1. Run the baseline verification checks.",
+  ].join("\n");
+  const misplacedMarkdown = [
+    "---",
+    "name: release-verification",
+    "description: Reusable release verification workflow.",
+    "---",
+    "# Release verification skill",
+    "",
+    "## Workflow",
+    "1. Run the baseline verification checks.",
+    "2. Confirm the generated release notes.",
+  ].join("\n");
+  await memoryService.upsert({
+    workspace_id: "workspace-1",
+    path: "workspace/workspace-1/evolve/skills/evolve-skill-input-10/SKILL.md",
+    content: draftMarkdown,
+  });
+  store.createEvolveSkillCandidate({
+    candidateId: "evolve-skill-input-10",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-10",
+    kind: "skill_create",
+    status: "accepted",
+    taskProposalId: "evolve-proposal-1",
+    title: "Release verification skill",
+    summary: "Reusable release verification workflow.",
+    slug: "release-verification",
+    skillPath: "workspace/workspace-1/evolve/skills/evolve-skill-input-10/SKILL.md",
+    contentFingerprint: "fp-skill",
+    sourceTurnInputIds: ["input-10"],
+    acceptedAt: "2026-04-10T00:00:00.000Z",
+  });
+  const misplacedSkillPath = path.join(
+    workspaceDir,
+    "evolve",
+    "skills",
+    "release-verification",
+    "SKILL.md",
+  );
+  fs.mkdirSync(path.dirname(misplacedSkillPath), { recursive: true });
+  fs.writeFileSync(misplacedSkillPath, misplacedMarkdown, "utf8");
+
+  const queued = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-review",
+    payload: {
+      text: "Review and promote the evolve candidate.",
+      context: {
+        source: "task_proposal",
+        proposal_source: "evolve",
+        evolve_candidate: {
+          candidate_id: "evolve-skill-input-10",
+          kind: "skill_create",
+          title: "Release verification skill",
+          summary: "Reusable release verification workflow.",
+          slug: "release-verification",
+          skill_path: "workspace/workspace-1/evolve/skills/evolve-skill-input-10/SKILL.md",
+          target_skill_path: "skills/release-verification/SKILL.md",
+          skill_markdown: draftMarkdown,
+          task_proposal_id: "evolve-proposal-1",
+        },
+      },
+    },
+  });
+  store.insertSessionMessage({
+    workspaceId: "workspace-1",
+    sessionId: "session-review",
+    role: "user",
+    text: "Review and promote the evolve candidate.",
+    messageId: `user-${queued.inputId}`,
+  });
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    memoryService,
+    runEvolveTasksFn: async () => {},
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "output_delta",
+        payload: { delta: "Reviewed the skill draft and promoted it." },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 3,
+        event_type: "run_completed",
+        payload: { status: "ok" },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  const liveSkillPath = path.join(workspaceDir, "skills", "release-verification", "SKILL.md");
+  assert.equal(fs.readFileSync(liveSkillPath, "utf8"), misplacedMarkdown);
+  assert.equal(fs.existsSync(misplacedSkillPath), false);
+  assert.equal(fs.existsSync(path.join(workspaceDir, "evolve")), false);
+  const updatedDraft = await memoryService.get({
+    workspace_id: "workspace-1",
+    path: "workspace/workspace-1/evolve/skills/evolve-skill-input-10/SKILL.md",
+  });
+  assert.equal(updatedDraft.text, misplacedMarkdown);
+  assert.equal(store.getEvolveSkillCandidate("evolve-skill-input-10")?.status, "promoted");
+  store.close();
+});
+
 test("sample completed turn writes continuity immediately and durable memory through the evolve worker", async () => {
   const { store, memoryService } = makeRuntimeState("hb-evolve-e2e-");
   seedWorkspace(store);

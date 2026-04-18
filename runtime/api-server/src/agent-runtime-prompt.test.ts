@@ -441,8 +441,9 @@ test("composeBaseAgentPrompt includes accepted evolve candidate context when pro
   assert.match(prompt.contextMessages.join("\n\n"), /Accepted evolve candidate:/);
   assert.match(prompt.contextMessages.join("\n\n"), /background evolve phase/i);
   assert.match(prompt.contextMessages.join("\n\n"), /Candidate id: `evolve-skill-input-10`\./);
-  assert.match(prompt.contextMessages.join("\n\n"), /Draft skill artifact: `workspace\/workspace-1\/evolve\/skills\/evolve-skill-input-10\/SKILL\.md`\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Stored draft artifact in memory service: `workspace\/workspace-1\/evolve\/skills\/evolve-skill-input-10\/SKILL\.md`\./);
   assert.match(prompt.contextMessages.join("\n\n"), /Target live workspace skill path: `skills\/release-verification\/SKILL\.md`\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Do not create or keep promoted workspace skills under `evolve\/`/);
   assert.match(prompt.contextMessages.join("\n\n"), /name: release-verification/);
 });
 
