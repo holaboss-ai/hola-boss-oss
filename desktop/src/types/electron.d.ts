@@ -1256,6 +1256,7 @@ declare global {
     workspaceId: string;
     name: string;
     description: string;
+    authorName?: string;
     category: string;
     tags: string[];
     apps: string[];
