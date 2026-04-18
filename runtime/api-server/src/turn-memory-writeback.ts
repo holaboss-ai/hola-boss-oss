@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 
 import type {
+  CompactionBoundaryType,
   MemoryEntryScope,
   MemoryEntrySourceType,
   MemoryEntryType,
@@ -1555,6 +1556,7 @@ function upsertCompactionBoundaryArtifact(params: {
   recentTurns: TurnResultRecord[];
   sessionMessages: SessionMessageRecord[];
   restoredMemoryPaths: string[];
+  boundaryType?: CompactionBoundaryType;
 }): TurnResultRecord {
   const previousBoundary = params.store
     .listCompactionBoundaries({
@@ -1576,7 +1578,7 @@ function upsertCompactionBoundaryArtifact(params: {
     workspaceId: params.turnResult.workspaceId,
     sessionId: params.turnResult.sessionId,
     inputId: params.turnResult.inputId,
-    boundaryType: "executor_post_turn",
+    boundaryType: params.boundaryType ?? "executor_post_turn",
     previousBoundaryId: previousBoundary?.boundaryId ?? null,
     summary: boundaryArtifacts.summary,
     recentRuntimeContext: boundaryArtifacts.recentRuntimeContext as Record<string, unknown> | null,
@@ -1607,6 +1609,20 @@ function upsertCompactionBoundaryArtifact(params: {
     tokenUsage: params.turnResult.tokenUsage,
     createdAt: params.turnResult.createdAt,
   });
+}
+
+function runtimeRestoredMemoryPaths(params: {
+  turnResult: TurnResultRecord;
+  compactedSummary: string | null;
+  recentTurns: TurnResultRecord[];
+  recentUserMessages: SessionMessageRecord[];
+}): string[] {
+  return buildRuntimeMemoryCandidates({
+    turnResult: params.turnResult,
+    summary: params.compactedSummary,
+    recentTurns: params.recentTurns,
+    sessionMessages: params.recentUserMessages,
+  }).map((candidate) => candidate.path);
 }
 
 async function upsertRuntimeMemoryCandidate(params: {
@@ -1792,6 +1808,7 @@ export async function writeTurnContinuity(params: {
   store: RuntimeStateStore;
   memoryService: MemoryServiceLike;
   turnResult: TurnResultRecord;
+  persistBoundary?: boolean;
 }): Promise<TurnResultRecord> {
   const context = loadTurnWritebackContext(params.store, params.turnResult);
   const runtimeCandidates = buildRuntimeMemoryCandidates({
@@ -1811,6 +1828,19 @@ export async function writeTurnContinuity(params: {
       }));
     }
   } catch {
+    if (params.persistBoundary !== false) {
+      return upsertCompactionBoundaryArtifact({
+        store: params.store,
+        turnResult: context.turnResult,
+        recentTurns: context.recentTurns,
+        sessionMessages: context.recentUserMessages,
+        restoredMemoryPaths,
+      });
+    }
+    return params.store.getTurnResult({ inputId: context.turnResult.inputId }) ?? context.turnResult;
+  }
+
+  if (params.persistBoundary !== false) {
     return upsertCompactionBoundaryArtifact({
       store: params.store,
       turnResult: context.turnResult,
@@ -1819,13 +1849,27 @@ export async function writeTurnContinuity(params: {
       restoredMemoryPaths,
     });
   }
+  return params.store.getTurnResult({ inputId: context.turnResult.inputId }) ?? context.turnResult;
+}
 
+export function writeTurnCompactionBoundary(params: {
+  store: RuntimeStateStore;
+  turnResult: TurnResultRecord;
+  boundaryType?: CompactionBoundaryType;
+}): TurnResultRecord {
+  const context = loadTurnWritebackContext(params.store, params.turnResult);
   return upsertCompactionBoundaryArtifact({
     store: params.store,
     turnResult: context.turnResult,
     recentTurns: context.recentTurns,
     sessionMessages: context.recentUserMessages,
-    restoredMemoryPaths,
+    restoredMemoryPaths: runtimeRestoredMemoryPaths({
+      turnResult: context.turnResult,
+      compactedSummary: context.compactedSummary,
+      recentTurns: context.recentTurns,
+      recentUserMessages: context.recentUserMessages,
+    }),
+    boundaryType: params.boundaryType ?? "executor_post_turn",
   });
 }
 

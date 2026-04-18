@@ -45,6 +45,13 @@ export type PiMappedEvent = {
   payload: JsonObject;
 };
 
+export interface PiCompactionCommandResult {
+  compacted: boolean;
+  session_file: string;
+  result?: JsonObject | null;
+  reason?: string | null;
+}
+
 export type PiEventMapperState = {
   toolArgsByCallId: Map<string, JsonValue>;
   mcpToolMetadata: ReadonlyMap<string, PiMcpToolMetadata>;
@@ -64,6 +71,10 @@ export interface PiSessionHandle {
 export interface PiDeps {
   createSession: (request: HarnessHostPiRequest) => Promise<PiSessionHandle>;
 }
+
+type PiInternalCompactionSession = AgentSession & {
+  _checkCompaction?: (assistantMessage: unknown, skipAbortedCheck?: boolean) => Promise<void>;
+};
 
 type PiThinkingLevel =
   | "minimal"
@@ -4062,7 +4073,10 @@ function mapNativePiEvent(event: AgentSessionEvent, sessionFile: string): PiMapp
 function mapPiEvent(
   event: AgentSessionEvent,
   sessionFile: string,
-  state: PiEventMapperState
+  state: PiEventMapperState,
+  options: {
+    contextUsage?: JsonValue | null;
+  } = {}
 ): PiMappedEvent[] {
   const nativeEvent = mapNativePiEvent(event, sessionFile);
   switch (event.type) {
@@ -4214,6 +4228,10 @@ function mapPiEvent(
             event: "agent_end",
             source: "pi",
             harness_session_id: sessionFile,
+            context_usage:
+              isRecord(options.contextUsage) || options.contextUsage === null
+                ? options.contextUsage
+                : null,
           },
         },
       ];
@@ -4245,6 +4263,27 @@ function defaultPiDeps(): PiDeps {
   };
 }
 
+function suppressPiPostRunAutoCompaction(session: PiInternalCompactionSession): void {
+  const originalCheckCompaction = session._checkCompaction;
+  if (typeof originalCheckCompaction !== "function") {
+    return;
+  }
+
+  session._checkCompaction = async function (
+    this: PiInternalCompactionSession,
+    assistantMessage: unknown,
+    skipAbortedCheck = true,
+  ): Promise<void> {
+    // PI uses `_checkCompaction(msg)` after `agent_end` and `_checkCompaction(msg, false)`
+    // before the next prompt submission. We suppress only the post-run maintenance path and
+    // keep the pre-prompt safety check intact so the next run can still recover if needed.
+    if (skipAbortedCheck !== false) {
+      return;
+    }
+    await originalCheckCompaction.call(this, assistantMessage, skipAbortedCheck);
+  };
+}
+
 export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaultPiDeps()): Promise<number> {
   let sequence = 0;
   const nextSequence = () => {
@@ -4253,19 +4292,30 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
   };
 
   const handle = await deps.createSession(request);
+  suppressPiPostRunAutoCompaction(handle.session as PiInternalCompactionSession);
   const requestedThinking = requestedPiThinkingLevel(request) ?? "off";
   (
     handle.session as AgentSession & {
       setThinkingLevel?: (level: PiThinkingLevel) => void;
     }
   ).setThinkingLevel?.(requestedThinking);
+  const currentContextUsage = (): JsonValue | null =>
+    jsonValue(
+      (
+        handle.session as AgentSession & {
+          getContextUsage?: () => unknown;
+        }
+      ).getContextUsage?.() ?? null,
+    );
   const state = createPiEventMapperState(handle.mcpToolMetadata, handle.skillMetadataByAlias);
   const shouldEmitWaitingUser = () =>
     state.waitingForUser || hasBlockedPersistedPiTodoState(stateDir, request.session_id);
   let terminalEmitted = false;
   const stateDir = resolvePiStateDir(request.workspace_dir);
   const unsubscribe = handle.session.subscribe((event) => {
-    for (const mapped of mapPiEvent(event, handle.sessionFile, state)) {
+    for (const mapped of mapPiEvent(event, handle.sessionFile, state, {
+      contextUsage: event.type === "agent_end" ? currentContextUsage() : null,
+    })) {
       if (
         mapped.event_type === "run_completed" &&
         typeof mapped.payload.status === "string" &&
@@ -4323,6 +4373,7 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
         source: "pi",
         event: "send_user_message_resolved",
         harness_session_id: handle.sessionFile,
+        context_usage: currentContextUsage(),
       });
     }
     return 0;
@@ -4344,6 +4395,46 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
       clearTimeout(timeoutHandle);
     }
     unsubscribe();
+    await handle.dispose();
+  }
+}
+
+function compactionNoOpReason(error: unknown): string | null {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("Nothing to compact")) {
+    return "nothing_to_compact";
+  }
+  if (message.includes("Already compacted")) {
+    return "already_compacted";
+  }
+  return null;
+}
+
+export async function compactPiSession(
+  request: HarnessHostPiRequest,
+  deps: PiDeps = defaultPiDeps(),
+): Promise<PiCompactionCommandResult> {
+  const handle = await deps.createSession(request);
+  try {
+    const result = await handle.session.compact();
+    return {
+      compacted: true,
+      session_file: handle.sessionFile,
+      result: jsonObject(JSON.parse(JSON.stringify(result)) as Record<string, unknown>),
+      reason: null,
+    };
+  } catch (error) {
+    const reason = compactionNoOpReason(error);
+    if (reason) {
+      return {
+        compacted: false,
+        session_file: handle.sessionFile,
+        result: null,
+        reason,
+      };
+    }
+    throw error;
+  } finally {
     await handle.dispose();
   }
 }

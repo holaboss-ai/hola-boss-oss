@@ -1896,6 +1896,146 @@ test("claimed input persists replacement harness session id from terminal runner
   store.close();
 });
 
+test("claimed input queues a background session checkpoint when PI context crosses the compaction threshold", async () => {
+  const store = makeStore("hb-claimed-input-session-checkpoint-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const harnessSessionFile = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-session-")),
+    "session.jsonl",
+  );
+  fs.writeFileSync(harnessSessionFile, '{"type":"header"}\n', "utf8");
+  tempDirs.push(path.dirname(harnessSessionFile));
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "hello" },
+  });
+
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "run_completed",
+        payload: {
+          status: "success",
+          harness_session_id: harnessSessionFile,
+          context_usage: {
+            tokens: 50_000,
+            context_window: 65_536,
+            percent: 76.3,
+          },
+        },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  const queuedCheckpointJob = store.getPostRunJobByIdempotencyKey(
+    `session_checkpoint:session-main:${harnessSessionFile}:root`,
+  );
+  assert.ok(queuedCheckpointJob);
+  assert.equal(queuedCheckpointJob.jobType, "session_checkpoint");
+
+  store.close();
+});
+
+test("claimed input waits for an in-flight session checkpoint before starting the runner", async () => {
+  const store = makeStore("hb-claimed-input-session-checkpoint-gate-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const checkpointJob = store.enqueuePostRunJob({
+    jobType: "session_checkpoint",
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: "prior-input",
+    payload: {
+      context_usage: {
+        tokens: 50_000,
+        context_window: 65_536,
+        percent: 76.3,
+      },
+    },
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "hello" },
+  });
+
+  let checkpointReleased = false;
+  setTimeout(() => {
+    checkpointReleased = true;
+    store.updatePostRunJob(checkpointJob.jobId, {
+      status: "DONE",
+      claimedBy: null,
+      claimedUntil: null,
+      lastError: null,
+    });
+  }, 50);
+
+  let runnerStarted = false;
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      runnerStarted = true;
+      assert.equal(checkpointReleased, true);
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "run_completed",
+        payload: { status: "success" },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  assert.equal(runnerStarted, true);
+  assert.equal(store.getPostRunJob(checkpointJob.jobId)?.status, "DONE");
+
+  store.close();
+});
+
 test("claimed input passes persisted child session kind into the runner payload", async () => {
   const store = makeStore("hb-claimed-input-session-kind-");
   const workspace = store.createWorkspace({

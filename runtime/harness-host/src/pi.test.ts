@@ -14,6 +14,7 @@ import {
   buildPiPromptPayload,
   buildPiMcpServerBindings,
   buildPiMcpToolName,
+  compactPiSession,
   createPiTodoToolDefinitions,
   createPiEventMapperState,
   createPiMcpCustomTools,
@@ -742,6 +743,7 @@ test("mapPiSessionEvent maps text, thinking, tool, and completion events", () =>
           event: "agent_end",
           source: "pi",
           harness_session_id: sessionFile,
+          context_usage: null,
         },
       },
     ]
@@ -2045,6 +2047,81 @@ test("runPi emits terminal failure from assistant error messages and suppresses 
   }
 });
 
+test("runPi suppresses post-run PI auto-compaction while preserving pre-prompt safety checks", async () => {
+  const request = baseRequest();
+  const events: Array<{ event_type: string; payload: Record<string, unknown> }> = [];
+  const originalWrite = process.stdout.write.bind(process.stdout);
+  const fakeSession = {
+    subscribe(listener: (event: unknown) => void) {
+      this.listener = listener;
+      return () => {};
+    },
+    async _checkCompaction(_assistantMessage: unknown, skipAbortedCheck = true) {
+      this.listener?.({
+        type: "compaction_start",
+        reason: skipAbortedCheck === false ? "threshold" : "overflow",
+      });
+      this.listener?.({
+        type: "compaction_end",
+        reason: skipAbortedCheck === false ? "threshold" : "overflow",
+        result: {
+          summary: skipAbortedCheck === false ? "Pre-prompt safety compaction." : "Post-run compaction.",
+          firstKeptEntryId: skipAbortedCheck === false ? "entry-pre" : "entry-post",
+        },
+        aborted: false,
+        willRetry: false,
+      });
+    },
+    async sendUserMessage() {
+      await this._checkCompaction?.({ role: "assistant" }, false);
+      this.listener?.({
+        type: "agent_end",
+        messages: [],
+      });
+      await this._checkCompaction?.({ role: "assistant" });
+    },
+    async abort() {},
+    dispose() {},
+    listener: undefined as ((event: unknown) => void) | undefined,
+  };
+
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    const lines = String(chunk)
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { event_type: string; payload: Record<string, unknown> });
+    events.push(...lines);
+    return true;
+  }) as typeof process.stdout.write;
+
+  try {
+    const exitCode = await runPi(request, {
+      createSession: async () => ({
+        session: fakeSession as never,
+        sessionFile: "/tmp/pi-session.jsonl",
+        mcpToolMetadata: new Map(),
+        skillMetadataByAlias: new Map(),
+        dispose: async () => {},
+      }),
+    });
+
+    assert.equal(exitCode, 0);
+    const derivedEvents = withoutPiNativeEvents(events);
+    assert.deepEqual(
+      derivedEvents.map((event) => event.event_type),
+      ["run_started", "auto_compaction_start", "auto_compaction_end", "run_completed"]
+    );
+    assert.equal(derivedEvents[1]?.payload.reason, "threshold");
+    assert.deepEqual(
+      onlyPiNativeEvents(events).map((event) => event.payload.native_type),
+      ["compaction_start", "compaction_end", "agent_end"]
+    );
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+});
+
 test("runPi emits waiting_user and blocks the active todo when the question tool completes", async () => {
   const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-run-waiting-user-"));
   const stateDir = path.join(workspaceDir, ".holaboss", "pi-agent");
@@ -2244,6 +2321,42 @@ test("runPi emits waiting_user when a persisted todo is still blocked at run com
     process.stdout.write = originalWrite;
     fs.rmSync(workspaceDir, { recursive: true, force: true });
   }
+});
+
+test("compactPiSession returns a structured result for successful snapshot compaction", async () => {
+  let disposed = false;
+  const result = await compactPiSession(baseRequest(), {
+    createSession: async () => ({
+      session: {
+        compact: async () => ({
+          summary: "Condensed older context.",
+          firstKeptEntryId: "entry-42",
+          tokensBefore: 12345,
+          details: {
+            modifiedFiles: ["src/pi.ts"],
+          },
+        }),
+      } as never,
+      sessionFile: "/tmp/pi-session.jsonl",
+      mcpToolMetadata: new Map(),
+      skillMetadataByAlias: new Map(),
+      dispose: async () => {
+        disposed = true;
+      },
+    }),
+  });
+
+  assert.equal(result.compacted, true);
+  assert.equal(result.session_file, "/tmp/pi-session.jsonl");
+  assert.deepEqual(result.result, {
+    summary: "Condensed older context.",
+    firstKeptEntryId: "entry-42",
+    tokensBefore: 12345,
+    details: {
+      modifiedFiles: ["src/pi.ts"],
+    },
+  });
+  assert.equal(disposed, true);
 });
 
 test("buildPiPromptPayload inlines native images, extracts common document formats, and falls back for binary files", async () => {

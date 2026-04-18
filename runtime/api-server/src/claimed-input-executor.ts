@@ -21,6 +21,12 @@ import {
 } from "./harness-registry.js";
 import type { MemoryServiceLike } from "./memory.js";
 import { createBackgroundTaskMemoryModelClient } from "./background-task-model.js";
+import {
+  enqueueSessionCheckpointJob,
+  normalizePiContextUsage,
+  waitForSessionCheckpointCompletion,
+  type PiContextUsage,
+} from "./session-checkpoint.js";
 import type { TurnMemoryWritebackModelContext } from "./turn-memory-writeback.js";
 import { runEvolveTasks } from "./evolve-tasks.js";
 import { promoteAcceptedSkillCandidate } from "./evolve-skill-review.js";
@@ -525,6 +531,12 @@ function tokenUsageFromPayload(
     return direct;
   }
   return jsonRecord(payload.usage);
+}
+
+function contextUsageFromPayload(
+  payload: Record<string, unknown>,
+): PiContextUsage | null {
+  return normalizePiContextUsage(payload.context_usage);
 }
 
 function claimLeaseUntilIso(
@@ -1075,6 +1087,7 @@ export async function processClaimedInput(params: {
   resolveProductRuntimeConfigFn?: typeof resolveProductRuntimeConfig;
   registerRunStartedFn?: typeof registerWorkspaceAgentRunStarted;
   relayRunEventFn?: typeof registerWorkspaceAgentRunEvent;
+  waitForSessionCheckpointCompletionFn?: typeof waitForSessionCheckpointCompletion;
   abortSignal?: AbortSignal;
 }): Promise<void> {
   const { store, record } = params;
@@ -1142,6 +1155,42 @@ export async function processClaimedInput(params: {
       sessionId: record.sessionId,
       harness,
     });
+    let activeLeaseUntil =
+      record.claimedUntil ?? claimLeaseUntilIso(leaseSeconds);
+    let lastClaimRenewalAtMs = 0;
+    const EVENT_CLAIM_RENEWAL_MIN_INTERVAL_MS = 250;
+    const renewClaimLeaseOnly = (source: "checkpoint" | "heartbeat" | "event") => {
+      const nowMs = Date.now();
+      if (
+        source === "event" &&
+        nowMs - lastClaimRenewalAtMs < EVENT_CLAIM_RENEWAL_MIN_INTERVAL_MS
+      ) {
+        return;
+      }
+
+      const renewedClaim = store.renewInputClaim({
+        inputId: record.inputId,
+        claimedBy,
+        leaseSeconds,
+      });
+      if (renewedClaim?.claimedUntil) {
+        activeLeaseUntil = renewedClaim.claimedUntil;
+      }
+      lastClaimRenewalAtMs = nowMs;
+    };
+    await (
+      params.waitForSessionCheckpointCompletionFn ??
+      waitForSessionCheckpointCompletion
+    )({
+      store,
+      workspaceId: record.workspaceId,
+      sessionId: record.sessionId,
+      wakeWorker: params.wakeDurableMemoryWorker ?? null,
+      renewLease: () => {
+        renewClaimLeaseOnly("checkpoint");
+      },
+      abortSignal: params.abortSignal,
+    });
     const attachments = sessionInputAttachments(record.payload.attachments);
 
     const instruction = buildOnboardingInstruction({
@@ -1167,7 +1216,7 @@ export async function processClaimedInput(params: {
       status: "BUSY",
       currentInputId: record.inputId,
       currentWorkerId: claimedBy,
-      leaseUntil: record.claimedUntil ?? claimLeaseUntilIso(leaseSeconds),
+      leaseUntil: activeLeaseUntil,
       heartbeatAt: undefined,
       lastError: null,
     });
@@ -1247,9 +1296,7 @@ export async function processClaimedInput(params: {
     let completedAt: string | null = null;
     let stopReason: string | null = null;
     let tokenUsage: Record<string, unknown> | null = null;
-    let activeLeaseUntil =
-      record.claimedUntil ?? claimLeaseUntilIso(leaseSeconds);
-    let lastClaimRenewalAtMs = 0;
+    let contextUsage: PiContextUsage | null = null;
     let promptSectionIds: string[] = [];
     let capabilityManifestFingerprint: string | null = null;
     let requestSnapshotFingerprint: string | null = null;
@@ -1279,7 +1326,6 @@ export async function processClaimedInput(params: {
       workspaceFileManifestBefore = null;
     }
 
-    const EVENT_CLAIM_RENEWAL_MIN_INTERVAL_MS = 250;
     const renewClaimLease = (source: "heartbeat" | "event") => {
       const nowMs = Date.now();
       if (
@@ -1508,6 +1554,7 @@ export async function processClaimedInput(params: {
               terminalStatus,
             });
             tokenUsage = tokenUsageFromPayload(eventPayload) ?? tokenUsage;
+            contextUsage = contextUsageFromPayload(eventPayload) ?? contextUsage;
           }
           if (event.event_type === "run_failed") {
             terminalStatus = "ERROR";
@@ -1519,6 +1566,7 @@ export async function processClaimedInput(params: {
               terminalStatus,
             });
             tokenUsage = tokenUsageFromPayload(eventPayload) ?? tokenUsage;
+            contextUsage = contextUsageFromPayload(eventPayload) ?? contextUsage;
           }
           if (event.event_type === "tool_call") {
             await relayRunEvent({
@@ -1558,6 +1606,7 @@ export async function processClaimedInput(params: {
             terminalStatus,
           });
           tokenUsage = tokenUsageFromPayload(persistedPayload) ?? tokenUsage;
+          contextUsage = contextUsageFromPayload(persistedPayload) ?? contextUsage;
         } else {
           terminalStatus = "ERROR";
           lastError = persistedPayload;
@@ -1568,6 +1617,7 @@ export async function processClaimedInput(params: {
             terminalStatus,
           });
           tokenUsage = tokenUsageFromPayload(persistedPayload) ?? tokenUsage;
+          contextUsage = contextUsageFromPayload(persistedPayload) ?? contextUsage;
         }
       } else if (execution.aborted && !execution.sawTerminal) {
         if (execution.abortReason === "user_requested_pause") {
@@ -1860,6 +1910,24 @@ export async function processClaimedInput(params: {
         modelContext: memoryWritebackModelContext,
         wakeDurableMemoryWorker: params.wakeDurableMemoryWorker ?? null,
         onTaskError: params.onEvolveTaskError,
+      });
+      const checkpointHarness =
+        store.getWorkspace(record.workspaceId)?.harness ??
+        normalizeHarnessId(priorExecContext.harness) ??
+        "pi";
+      enqueueSessionCheckpointJob({
+        store,
+        workspaceId: record.workspaceId,
+        sessionId: record.sessionId,
+        inputId: record.inputId,
+        harness: checkpointHarness,
+        harnessSessionId:
+          store.getBinding({
+            workspaceId: record.workspaceId,
+            sessionId: record.sessionId,
+          })?.harnessSessionId ?? null,
+        contextUsage,
+        wakeWorker: params.wakeDurableMemoryWorker ?? null,
       });
       maybeCreateCronjobCompletionNotification({
         store,

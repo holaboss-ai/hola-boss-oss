@@ -1766,6 +1766,46 @@ export class RuntimeStateStore {
     return this.rowToPostRunJob(row);
   }
 
+  listPostRunJobs(params: {
+    workspaceId?: string;
+    sessionId?: string;
+    inputId?: string;
+    jobType?: string;
+    statuses?: string[];
+    limit?: number;
+    offset?: number;
+  }): PostRunJobRecord[] {
+    let query = "SELECT * FROM post_run_jobs WHERE 1 = 1";
+    const values: Array<string | number> = [];
+    if (params.workspaceId) {
+      query += " AND workspace_id = ?";
+      values.push(params.workspaceId);
+    }
+    if (params.sessionId) {
+      query += " AND session_id = ?";
+      values.push(params.sessionId);
+    }
+    if (params.inputId) {
+      query += " AND input_id = ?";
+      values.push(params.inputId);
+    }
+    if (params.jobType) {
+      query += " AND job_type = ?";
+      values.push(params.jobType);
+    }
+    if (params.statuses && params.statuses.length > 0) {
+      const placeholders = params.statuses.map(() => "?").join(", ");
+      query += ` AND status IN (${placeholders})`;
+      values.push(...params.statuses);
+    }
+    query += " ORDER BY priority DESC, datetime(created_at) ASC LIMIT ? OFFSET ?";
+    values.push(params.limit ?? 100, params.offset ?? 0);
+    const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows
+      .map((row) => this.rowToPostRunJob(row))
+      .filter((row): row is PostRunJobRecord => row !== null);
+  }
+
   updatePostRunJob(jobId: string, fields: PostRunJobUpdateFields): PostRunJobRecord | null {
     const entries = Object.entries(fields);
     if (entries.length === 0) {

@@ -38,6 +38,7 @@ export const turnMemoryEvolveTask: EvolveTask = {
       store: context.store,
       memoryService: context.memoryService,
       turnResult: context.turnResult,
+      persistBoundary: false,
     });
     (context.enqueueEvolveJobFn ?? enqueueEvolveJob)({
       store: context.store,

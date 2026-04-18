@@ -356,15 +356,30 @@ test("chat pane renders an execution timeline that interleaves thinking segments
   assert.match(source, /segments\?: ChatAssistantSegment\[];/);
   assert.match(source, /function appendAssistantOutputSegment\(/);
   assert.match(source, /function appendAssistantExecutionSegment\(/);
+  assert.match(source, /function upsertAssistantExecutionTraceStep\(/);
+  assert.match(source, /function finalizeAssistantExecutionSegments\(/);
   assert.match(source, /function liveAssistantSegmentsForRender\(/);
   assert.match(source, /function appendExecutionTimelineThinkingDelta\(/);
+  assert.match(source, /function mergeTraceStep\(/);
   assert.match(source, /function upsertExecutionTimelineTraceItem\(/);
+  assert.match(
+    source,
+    /function mergeTraceStep\([\s\S]*const incomingIsNewer =[\s\S]*incoming\.order > existing\.order[\s\S]*traceStepStatusRank\(incoming\.status\) >= traceStepStatusRank\(existing\.status\)/,
+  );
+  assert.match(
+    source,
+    /function upsertExecutionTimelineTraceItem\([\s\S]*step: mergeTraceStep\(item\.step, step\)/,
+  );
   assert.match(source, /function traceStepsFromExecutionItems\(items: ChatExecutionTimelineItem\[]\)/);
   assert.match(source, /assistantHistoryStateFromOutputEvents[\s\S]*flushOutputSegment\(\);[\s\S]*executionItems = appendExecutionTimelineThinkingDelta\(/);
-  assert.match(source, /assistantHistoryStateFromOutputEvents[\s\S]*flushOutputSegment\(\);[\s\S]*executionItems = upsertExecutionTimelineTraceItem\(/);
+  assert.match(source, /assistantHistoryStateFromOutputEvents[\s\S]*const nextSegments = upsertAssistantExecutionTraceStep\(\s*segments,\s*phaseStep,\s*\);[\s\S]*if \(nextSegments\) \{\s*segments = nextSegments;\s*\} else \{\s*executionItems = upsertExecutionTimelineTraceItem\(/);
+  assert.match(source, /assistantHistoryStateFromOutputEvents[\s\S]*const nextSegments = upsertAssistantExecutionTraceStep\(\s*segments,\s*toolStep,\s*\);[\s\S]*if \(nextSegments\) \{\s*segments = nextSegments;\s*\} else \{\s*executionItems = upsertExecutionTimelineTraceItem\(/);
   assert.match(source, /assistantHistoryStateFromOutputEvents[\s\S]*if \(event\.event_type === "output_delta"\) \{\s*flushExecutionSegment\(\);/);
+  assert.match(source, /assistantHistoryStateFromOutputEvents[\s\S]*segments = finalizeAssistantExecutionSegments\(/);
   assert.match(source, /appendLiveThinkingDelta\(delta: string, order: number\) \{\s*flushLiveAssistantOutputSegment\(\);/);
   assert.match(source, /appendLiveAssistantDelta\(delta: string\) \{\s*flushLiveExecutionSegment\(\);/);
+  assert.match(source, /function upsertLiveTraceStep\(step: ChatTraceStep\) \{\s*flushLiveAssistantOutputSegment\(\);[\s\S]*const nextSegments = upsertAssistantExecutionTraceStep\(\s*liveAssistantSegmentsRef\.current,\s*step,\s*\);[\s\S]*if \(nextSegments\) \{\s*setLiveAssistantSegmentsState\(nextSegments\);\s*return;\s*\}/);
+  assert.match(source, /function finalizeLiveTraceSteps\([\s\S]*setLiveAssistantSegmentsState\(\s*finalizeAssistantExecutionSegments\(\s*liveAssistantSegmentsRef\.current,\s*status,\s*\),\s*\);/);
   assert.match(
     source,
     /function ExecutionTimelineThinkingEntry[\s\S]*className="py-1"[\s\S]*className="-ml-2\.5 w-\[calc\(100%\+0\.625rem\)\] rounded-\[16px\] border border-border\/25 bg-muted\/30 px-3\.5 py-3"/,
@@ -915,6 +930,10 @@ test("live trace auto-expands during the run and collapses when output starts", 
   assert.match(
     source,
     /const showLiveSummarySpinner =[\s\S]*\(groupIsLive \|\| runningCount > 0\) && !groupExpanded;/,
+  );
+  assert.match(
+    source,
+    /const activeStep =[\s\S]*step\.status === "running" \|\| step\.status === "waiting"[\s\S]*const groupIsLive = live && activeStep !== null && !groupHasTerminalError;/,
   );
   assert.match(
     source,

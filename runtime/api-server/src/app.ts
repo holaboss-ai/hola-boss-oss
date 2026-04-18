@@ -45,6 +45,11 @@ import {
   type DurableMemoryWorkerLike,
   RuntimeEvolveWorker,
 } from "./evolve-worker.js";
+import { processEvolveJob } from "./evolve.js";
+import {
+  processSessionCheckpointJob,
+  SESSION_CHECKPOINT_JOB_TYPE,
+} from "./session-checkpoint.js";
 import {
   type CronWorkerLike,
   executeLocalCronjobDelivery,
@@ -196,7 +201,25 @@ function resolveDurableMemoryWorker(
   if (options.durableMemoryWorker !== undefined) {
     return options.durableMemoryWorker;
   }
-  return new RuntimeEvolveWorker({ store, logger: app.log, memoryService });
+  return new RuntimeEvolveWorker({
+    store,
+    logger: app.log,
+    memoryService,
+    executeClaimedJob: async (record) => {
+      if (record.jobType === SESSION_CHECKPOINT_JOB_TYPE) {
+        await processSessionCheckpointJob({
+          store,
+          record,
+        });
+        return;
+      }
+      await processEvolveJob({
+        store,
+        record,
+        memoryService,
+      });
+    },
+  });
 }
 
 function resolveCronWorker(

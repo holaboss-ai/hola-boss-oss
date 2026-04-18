@@ -1,6 +1,8 @@
 import { fileURLToPath } from "node:url";
 
+import { decodeHarnessHostPiRequestBase64 } from "./contracts.js";
 import { requireHarnessHostPluginByCommand } from "./harness-registry.js";
+import { compactPiSession } from "./pi.js";
 
 type HarnessHostCliDeps = {
   resolvePluginByCommand?: typeof requireHarnessHostPluginByCommand;
@@ -33,10 +35,22 @@ export async function flushWritableStream(stream: Pick<NodeJS.WritableStream, "w
   });
 }
 
-export async function runHarnessHostCli(argv: string[], deps: Pick<HarnessHostCliDeps, "resolvePluginByCommand"> = {}) {
+export async function runHarnessHostCli(
+  argv: string[],
+  deps: Pick<HarnessHostCliDeps, "resolvePluginByCommand" | "stdout"> = {},
+) {
   const [command, ...args] = argv;
   if (!command) {
     throw new Error("missing command");
+  }
+
+  if (command === "compact-pi-session") {
+    const encoded = readRequestBase64(args);
+    const request = decodeHarnessHostPiRequestBase64(encoded);
+    const result = await compactPiSession(request);
+    const stdout = deps.stdout ?? process.stdout;
+    stdout.write(`${JSON.stringify(result)}\n`);
+    return 0;
   }
 
   const resolvePluginByCommand = deps.resolvePluginByCommand ?? requireHarnessHostPluginByCommand;

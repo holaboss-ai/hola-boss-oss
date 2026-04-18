@@ -889,6 +889,48 @@ function appendAssistantExecutionSegment(
   ];
 }
 
+function upsertAssistantExecutionTraceStep(
+  segments: ChatAssistantSegment[],
+  step: ChatTraceStep,
+): ChatAssistantSegment[] | null {
+  const existingSegmentIndex = [...segments]
+    .reverse()
+    .findIndex(
+      (segment) =>
+        segment.kind === "execution" &&
+        segment.items.some(
+          (item) => item.kind === "trace_step" && item.step.id === step.id,
+        ),
+    );
+  if (existingSegmentIndex < 0) {
+    return null;
+  }
+
+  const targetIndex = segments.length - existingSegmentIndex - 1;
+  return segments.map((segment, index) =>
+    index === targetIndex && segment.kind === "execution"
+      ? {
+          ...segment,
+          items: upsertExecutionTimelineTraceItem(segment.items, step),
+        }
+      : segment,
+  );
+}
+
+function finalizeAssistantExecutionSegments(
+  segments: ChatAssistantSegment[],
+  status: Extract<ChatTraceStepStatus, "completed" | "error" | "waiting">,
+): ChatAssistantSegment[] {
+  return segments.map((segment) =>
+    segment.kind === "execution"
+      ? {
+          ...segment,
+          items: finalizeExecutionTimelineTraceItems(segment.items, status),
+        }
+      : segment,
+  );
+}
+
 function liveAssistantSegmentsForRender(
   segments: ChatAssistantSegment[],
   executionItems: ChatExecutionTimelineItem[],
@@ -2667,6 +2709,38 @@ function finalizeTraceSteps(
   );
 }
 
+function traceStepStatusRank(status: ChatTraceStepStatus) {
+  switch (status) {
+    case "error":
+      return 3;
+    case "completed":
+      return 2;
+    case "waiting":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function mergeTraceStep(
+  existing: ChatTraceStep,
+  incoming: ChatTraceStep,
+): ChatTraceStep {
+  const incomingIsNewer =
+    incoming.order > existing.order ||
+    (incoming.order === existing.order &&
+      traceStepStatusRank(incoming.status) >= traceStepStatusRank(existing.status));
+  const preferred = incomingIsNewer ? incoming : existing;
+  const fallback = incomingIsNewer ? existing : incoming;
+
+  return {
+    ...fallback,
+    ...preferred,
+    order: Math.min(existing.order, incoming.order),
+    details: preferred.details.length > 0 ? preferred.details : fallback.details,
+  };
+}
+
 function appendExecutionTimelineThinkingDelta(
   previous: ChatExecutionTimelineItem[],
   delta: string,
@@ -2721,11 +2795,7 @@ function upsertExecutionTimelineTraceItem(
     index === existingIndex && item.kind === "trace_step"
       ? ({
           ...item,
-          step: {
-            ...item.step,
-            ...step,
-            order: Math.min(item.step.order, step.order),
-          },
+          step: mergeTraceStep(item.step, step),
         } satisfies ChatExecutionTimelineItem)
       : item,
   );
@@ -2822,10 +2892,18 @@ function assistantHistoryStateFromOutputEvents(
     );
     if (phaseStep) {
       flushOutputSegment();
-      executionItems = upsertExecutionTimelineTraceItem(
-        executionItems,
+      const nextSegments = upsertAssistantExecutionTraceStep(
+        segments,
         phaseStep,
       );
+      if (nextSegments) {
+        segments = nextSegments;
+      } else {
+        executionItems = upsertExecutionTimelineTraceItem(
+          executionItems,
+          phaseStep,
+        );
+      }
     }
 
     const toolStep = toolTraceStepFromEvent(
@@ -2835,10 +2913,18 @@ function assistantHistoryStateFromOutputEvents(
     );
     if (toolStep) {
       flushOutputSegment();
-      executionItems = upsertExecutionTimelineTraceItem(
-        executionItems,
+      const nextSegments = upsertAssistantExecutionTraceStep(
+        segments,
         toolStep,
       );
+      if (nextSegments) {
+        segments = nextSegments;
+      } else {
+        executionItems = upsertExecutionTimelineTraceItem(
+          executionItems,
+          toolStep,
+        );
+      }
     }
 
     if (event.event_type === "output_delta") {
@@ -2853,6 +2939,12 @@ function assistantHistoryStateFromOutputEvents(
         typeof eventPayload.status === "string"
           ? eventPayload.status.trim().toLowerCase()
           : "";
+      segments = finalizeAssistantExecutionSegments(
+        segments,
+        completedStatus === "paused" || completedStatus === "waiting_user"
+          ? "waiting"
+          : "completed",
+      );
       executionItems = finalizeExecutionTimelineTraceItems(
         executionItems,
         completedStatus === "paused" || completedStatus === "waiting_user"
@@ -2860,6 +2952,7 @@ function assistantHistoryStateFromOutputEvents(
           : "completed",
       );
     } else if (event.event_type === "run_failed") {
+      segments = finalizeAssistantExecutionSegments(segments, "error");
       executionItems = finalizeExecutionTimelineTraceItems(
         executionItems,
         "error",
@@ -4287,6 +4380,14 @@ export function ChatPane({
 
   function upsertLiveTraceStep(step: ChatTraceStep) {
     flushLiveAssistantOutputSegment();
+    const nextSegments = upsertAssistantExecutionTraceStep(
+      liveAssistantSegmentsRef.current,
+      step,
+    );
+    if (nextSegments) {
+      setLiveAssistantSegmentsState(nextSegments);
+      return;
+    }
     const next = upsertExecutionTimelineTraceItem(
       liveExecutionItemsRef.current,
       step,
@@ -4297,6 +4398,12 @@ export function ChatPane({
   function finalizeLiveTraceSteps(
     status: Extract<ChatTraceStepStatus, "completed" | "error" | "waiting">,
   ) {
+    setLiveAssistantSegmentsState(
+      finalizeAssistantExecutionSegments(
+        liveAssistantSegmentsRef.current,
+        status,
+      ),
+    );
     const next = finalizeExecutionTimelineTraceItems(
       liveExecutionItemsRef.current,
       status,
@@ -8692,7 +8799,6 @@ function TraceStepGroup({
     (step) => step.kind === "phase" && step.status === "error",
   ).length;
   const groupHasTerminalError = terminalErrorCount > 0;
-  const groupIsLive = live && !groupHasTerminalError;
   const stepCount = steps.length;
   const stepLabel = `${stepCount} step${stepCount === 1 ? "" : "s"}`;
   const activeStep =
@@ -8700,6 +8806,7 @@ function TraceStepGroup({
       .reverse()
       .find((step) => step.status === "running" || step.status === "waiting") ??
     null;
+  const groupIsLive = live && activeStep !== null && !groupHasTerminalError;
   const latestStep = steps.length > 0 ? steps[steps.length - 1] : null;
   const latestThinkingItem =
     [...items]
