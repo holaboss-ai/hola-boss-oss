@@ -98,6 +98,27 @@ export const PROVIDER_MODEL_CATALOG: ProviderModelCatalog = {
       },
     ],
   },
+  openai_codex: {
+    source: "local",
+    models: [
+      {
+        model_id: "gpt-5.4",
+        label: "GPT-5.4",
+        reasoning: true,
+        thinking_values: [...OPENAI_GPT54_THINKING_VALUES],
+        default_thinking_value: "medium",
+        input_modalities: ["text", "image"],
+      },
+      {
+        model_id: "gpt-5.3-codex",
+        label: "GPT-5.3 Codex",
+        reasoning: true,
+        thinking_values: [...OPENAI_GPT53_CODEX_THINKING_VALUES],
+        default_thinking_value: "medium",
+        input_modalities: ["text", "image"],
+      },
+    ],
+  },
   anthropic_direct: {
     source: "local",
     models: [

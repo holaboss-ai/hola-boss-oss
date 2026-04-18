@@ -175,6 +175,7 @@ const KNOWN_DIRECT_PROVIDER_HOSTS = new Set([
 ]);
 const GEMINI_OPENAI_COMPAT_HOST = "generativelanguage.googleapis.com";
 const GEMINI_OPENAI_COMPAT_PATH = "/v1beta/openai";
+const OPENAI_CODEX_COMPAT_PATH = "/backend-api/codex";
 const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<
   string,
   Record<string, string>
@@ -957,6 +958,9 @@ function shouldTreatAsDirectProviderBaseUrl(baseRoot: string): boolean {
         normalizedPath === "/v1beta" ||
         normalizedPath === GEMINI_OPENAI_COMPAT_PATH)
     ) {
+      return true;
+    }
+    if (normalizedPath.endsWith(OPENAI_CODEX_COMPAT_PATH)) {
       return true;
     }
     if (normalizedPath === "/v1") {

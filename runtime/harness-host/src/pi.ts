@@ -3345,6 +3345,7 @@ function shouldUseOpenAiResponsesProvider(request: HarnessHostPiRequest): boolea
   }
   if (
     providerId !== "openai_direct" &&
+    providerId !== "openai_codex" &&
     providerId !== "openai" &&
     providerId !== "holaboss_model_proxy" &&
     providerId !== "holaboss"
