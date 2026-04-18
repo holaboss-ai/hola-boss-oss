@@ -12,6 +12,7 @@ const PROVIDER_ID_ALIASES: Record<string, string> = {
   holaboss: HOLABOSS_PROVIDER_ID,
   [HOLABOSS_PROVIDER_ID]: HOLABOSS_PROVIDER_ID,
   openai: "openai_direct",
+  openai_codex: "openai_codex",
   anthropic: "anthropic_direct",
   openrouter: "openrouter_direct",
   gemini: "gemini_direct",
@@ -35,6 +36,7 @@ const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<
 const BACKGROUND_TASK_MODEL_DEFAULTS: Record<string, string | null> = {
   [HOLABOSS_PROVIDER_ID]: "gpt-5.4",
   openai_direct: "gpt-5.4",
+  openai_codex: "gpt-5.4",
   anthropic_direct: "claude-sonnet-4-6",
   openrouter_direct: "openai/gpt-5.4",
   gemini_direct: "gemini-2.5-flash",

@@ -319,6 +319,8 @@ test("direct Anthropic, OpenRouter, and Gemini defaults advertise current provid
     source.match(/const KNOWN_PROVIDER_TEMPLATES:[\s\S]*?function isKnownProviderId/)?.[0] ?? "";
   const openaiTemplate =
     providerTemplatesBlock.match(/openai_direct:\s*\{[\s\S]*?apiKeyPlaceholder: "sk-your-openai-key"[\s\S]*?\n\s*}/)?.[0] ?? "";
+  const codexTemplate =
+    providerTemplatesBlock.match(/openai_codex:\s*\{[\s\S]*?apiKeyPlaceholder: ""[\s\S]*?\n\s*}/)?.[0] ?? "";
   const anthropicTemplate =
     providerTemplatesBlock.match(/anthropic_direct:\s*\{[\s\S]*?apiKeyPlaceholder: "sk-ant-your-anthropic-key"[\s\S]*?\n\s*}/)?.[0] ?? "";
   const openrouterTemplate =
@@ -334,6 +336,16 @@ test("direct Anthropic, OpenRouter, and Gemini defaults advertise current provid
   assert.match(openaiTemplate, /defaultImageModel: "gpt-image-1\.5"/);
   assert.match(openaiTemplate, /imageModelSuggestions: \["gpt-image-1\.5", "gpt-image-1", "gpt-image-1-mini", "chatgpt-image-latest"\]/);
   assert.doesNotMatch(openaiTemplate, /gpt-5\.4-mini/);
+
+  assert.match(codexTemplate, /label: "OpenAI Codex"/);
+  assert.match(codexTemplate, /defaultBaseUrl: "https:\/\/chatgpt\.com\/backend-api\/codex"/);
+  assert.match(codexTemplate, /defaultModels: \["gpt-5\.4", "gpt-5\.3-codex"\]/);
+  assert.match(codexTemplate, /defaultBackgroundModel: "gpt-5\.4"/);
+  assert.match(codexTemplate, /defaultImageModel: null/);
+  assert.match(source, /handleConnectCodexProvider\(providerId: KnownProviderId\)/);
+  assert.match(source, /window\.electronAPI\.runtime\.connectCodexOAuth\(\)/);
+  assert.match(source, /apiKey: providerId === "openai_codex" \? "" : apiKey/);
+  assert.match(source, /providerId === "openai_codex"/);
 
   assert.match(
     anthropicTemplate,

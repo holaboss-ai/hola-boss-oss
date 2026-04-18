@@ -1358,6 +1358,7 @@ declare global {
       setProfile: (payload: RuntimeUserProfileUpdatePayload) => Promise<RuntimeUserProfilePayload>;
       setConfigDocument: (rawDocument: string) => Promise<RuntimeConfigPayload>;
       exchangeBinding: (sandboxId: string) => Promise<RuntimeConfigPayload>;
+      connectCodexOAuth: () => Promise<RuntimeConfigPayload>;
       onConfigChange: (listener: (config: RuntimeConfigPayload) => void) => () => void;
       onStateChange: (listener: (status: RuntimeStatusPayload) => void) => () => void;
     };

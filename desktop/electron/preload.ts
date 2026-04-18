@@ -1124,6 +1124,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("runtime:setConfigDocument", rawDocument) as Promise<RuntimeConfigPayload>,
     exchangeBinding: (sandboxId: string) =>
       ipcRenderer.invoke("runtime:exchangeBinding", sandboxId) as Promise<RuntimeConfigPayload>,
+    connectCodexOAuth: () =>
+      ipcRenderer.invoke("runtime:connectCodexOAuth") as Promise<RuntimeConfigPayload>,
     onConfigChange: (listener: (config: RuntimeConfigPayload) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, config: RuntimeConfigPayload) => listener(config);
       ipcRenderer.on("runtime:config", wrapped);

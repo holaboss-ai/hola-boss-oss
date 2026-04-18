@@ -43,7 +43,7 @@ interface AuthPanelProps {
 const AUTH_BROWSER_SIGN_IN_MESSAGE =
   "Sign-in opened in the browser. Complete the flow on the Holaboss sign-in page.";
 
-const KNOWN_PROVIDER_ORDER = ["holaboss", "openai_direct", "anthropic_direct", "openrouter_direct", "gemini_direct", "ollama_direct", "minimax_direct"] as const;
+const KNOWN_PROVIDER_ORDER = ["holaboss", "openai_direct", "openai_codex", "anthropic_direct", "openrouter_direct", "gemini_direct", "ollama_direct", "minimax_direct"] as const;
 type KnownProviderId = (typeof KNOWN_PROVIDER_ORDER)[number];
 const AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME =
   "auth-settings-control theme-control-surface relative isolate h-9 w-full overflow-hidden rounded-[10px] border border-border/45 bg-muted px-2.5 text-sm text-foreground shadow-none transition-colors hover:border-border/65 focus-visible:border-border/65 focus-visible:ring-0 focus-visible:ring-transparent aria-invalid:border-border/45 aria-invalid:ring-0";
@@ -176,6 +176,18 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
     imageModelSuggestions: ["gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini", "chatgpt-image-latest"],
     apiKeyPlaceholder: "sk-your-openai-key"
   },
+  openai_codex: {
+    id: "openai_codex",
+    label: "OpenAI Codex",
+    description: "ChatGPT/Codex OAuth for GPT-5 models without a separate API key.",
+    kind: "openai_compatible",
+    defaultBaseUrl: "https://chatgpt.com/backend-api/codex",
+    defaultModels: ["gpt-5.4", "gpt-5.3-codex"],
+    defaultBackgroundModel: "gpt-5.4",
+    defaultImageModel: null,
+    imageModelSuggestions: [],
+    apiKeyPlaceholder: ""
+  },
   anthropic_direct: {
     id: "anthropic_direct",
     label: "Anthropic",
@@ -273,6 +285,12 @@ function createDefaultProviderDrafts(): ProviderDraftMap {
       baseUrl: KNOWN_PROVIDER_TEMPLATES.openai_direct.defaultBaseUrl,
       apiKey: "",
       modelsText: KNOWN_PROVIDER_TEMPLATES.openai_direct.defaultModels.join(", "),
+    },
+    openai_codex: {
+      enabled: false,
+      baseUrl: KNOWN_PROVIDER_TEMPLATES.openai_codex.defaultBaseUrl,
+      apiKey: "",
+      modelsText: KNOWN_PROVIDER_TEMPLATES.openai_codex.defaultModels.join(", "),
     },
     anthropic_direct: {
       enabled: false,
@@ -475,11 +493,11 @@ function enabledProviderIdsForDrafts(providerDrafts: ProviderDraftMap, isSignedI
 }
 
 function directProviderRequiresManualFields(providerId: KnownProviderId): boolean {
-  return providerId !== "holaboss";
+  return providerId !== "holaboss" && providerId !== "openai_codex";
 }
 
 function providerBrandIconMarkup(providerId: KnownProviderId): string | null {
-  if (providerId === "openai_direct") {
+  if (providerId === "openai_direct" || providerId === "openai_codex") {
     return openaiLogoMarkup;
   }
   if (providerId === "anthropic_direct") {
@@ -1052,7 +1070,7 @@ function deriveProviderDraftsFromDocument(
         Object.keys(providerPayload).length > 0 ||
         (providerId === "holaboss" && Boolean((runtimeConfig?.modelProxyBaseUrl || "").trim())),
       baseUrl,
-      apiKey,
+      apiKey: providerId === "openai_codex" ? "" : apiKey,
       modelsText: (normalizedModelIds.length > 0 ? normalizedModelIds : template.defaultModels).join(", "),
     };
   }
@@ -1169,6 +1187,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const [isStartingSignIn, setIsStartingSignIn] = useState(false);
   const [isSavingRuntimeConfigDocument, setIsSavingRuntimeConfigDocument] = useState(false);
   const [isExchangingRuntimeBinding, setIsExchangingRuntimeBinding] = useState(false);
+  const [connectingProviderId, setConnectingProviderId] = useState<KnownProviderId | null>(null);
   const [disconnectingProviderId, setDisconnectingProviderId] = useState<KnownProviderId | null>(null);
   const [isProviderDraftDirty, setIsProviderDraftDirty] = useState(false);
   const [providerSaveStatus, setProviderSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -1704,19 +1723,19 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   }
 
   function providerDraftValidationError(providerId: KnownProviderId): string {
+    const draft = providerDrafts[providerId];
+    const label = KNOWN_PROVIDER_TEMPLATES[providerId].label;
+    if (providerId !== "holaboss" && parseModelsText(draft.modelsText).length === 0) {
+      return `${label} requires at least one model before it can be connected.`;
+    }
     if (!directProviderRequiresManualFields(providerId)) {
       return "";
     }
-    const draft = providerDrafts[providerId];
-    const label = KNOWN_PROVIDER_TEMPLATES[providerId].label;
     if (!draft.baseUrl.trim()) {
       return `${label} requires a base URL before it can be connected.`;
     }
     if (!draft.apiKey.trim()) {
       return `${label} requires an API key before it can be connected.`;
-    }
-    if (parseModelsText(draft.modelsText).length === 0) {
-      return `${label} requires at least one model before it can be connected.`;
     }
     return "";
   }
@@ -2130,6 +2149,47 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     );
   }
 
+  async function handleConnectCodexProvider(providerId: KnownProviderId) {
+    if (!window.electronAPI || providerId !== "openai_codex") {
+      return;
+    }
+    if (isProviderDraftDirty) {
+      setAuthError("Save or discard your other runtime provider edits before connecting OpenAI Codex.");
+      setAuthMessage("");
+      return;
+    }
+
+    setConnectingProviderId(providerId);
+    setProviderSaveStatus("saving");
+    setAuthError("");
+    setAuthMessage("OpenAI Codex sign-in is starting in your browser. The device code will be copied to your clipboard.");
+    try {
+      const nextConfig = await window.electronAPI.runtime.connectCodexOAuth();
+      const nextDocumentText = await window.electronAPI.runtime.getConfigDocument();
+      const persisted = persistedProviderSettingsSnapshot(
+        nextDocumentText,
+        nextConfig,
+      );
+      setRuntimeConfig(nextConfig);
+      setRuntimeConfigDocument(nextDocumentText);
+      setSandboxId(nextConfig.sandboxId ?? sandboxId);
+      setProviderDrafts(persisted.drafts);
+      setBackgroundTasksDraft(persisted.backgroundTasks);
+      setRecallEmbeddingsDraft(persisted.recallEmbeddings);
+      setImageGenerationDraft(persisted.imageGeneration);
+      setExpandedProviderId(providerId);
+      setIsProviderDraftDirty(false);
+      setProviderSaveStatus("saved");
+      setAuthMessage("OpenAI Codex connected. Future access token refreshes are managed locally on this desktop.");
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Failed to connect OpenAI Codex.");
+      setAuthMessage("");
+      setProviderSaveStatus("error");
+    } finally {
+      setConnectingProviderId(null);
+    }
+  }
+
   async function handleExchangeRuntimeBinding() {
     if (!window.electronAPI) {
       return;
@@ -2156,6 +2216,111 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     } finally {
       setIsExchangingRuntimeBinding(false);
     }
+  }
+
+  function renderProviderModelSelection(
+    providerId: KnownProviderId,
+    draft: ProviderDraft,
+  ): ReactNode {
+    const selectedModelIds = parseModelsText(draft.modelsText);
+    const catalogModelOptions = providerCatalogChatModelOptions(providerId);
+    const unknownSelectedModelIds = selectedModelIds.filter(
+      (modelId) =>
+        !catalogModelOptions.some((option) => option.modelId === modelId),
+    );
+
+    return (
+      <label className="grid gap-1">
+        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Models</span>
+        <div className="grid gap-2">
+          {catalogModelOptions.length > 0 ? (
+            <div className="grid gap-2">
+              <div className="grid gap-1.5">
+                {catalogModelOptions.map((option) => {
+                  const selected = selectedModelIds.includes(option.modelId);
+                  return (
+                    <div
+                      key={option.modelId}
+                      className={`rounded-[10px] border px-2.5 py-1.5 text-left transition ${
+                        selected
+                          ? "border-primary/25 bg-primary/[0.06] text-foreground"
+                          : "border-border/35 bg-card/70 text-muted-foreground"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-[13px] font-medium leading-4">
+                            {option.label}
+                          </div>
+                          {option.label !== option.modelId ? (
+                            <div className="truncate pt-0.5 text-[10px] leading-4 text-muted-foreground">
+                              {option.modelId}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1.5 pl-1">
+                          <span className="text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground/80">
+                            {selected ? "On" : "Off"}
+                          </span>
+                          <Switch
+                            checked={selected}
+                            aria-label={`Toggle ${option.label}`}
+                            onCheckedChange={() =>
+                              toggleProviderDraftModel(providerId, option.modelId)
+                            }
+                            className="mt-0.5"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+              Add models in <code>desktop/shared/model-catalog.ts</code> to configure this provider.
+            </div>
+          )}
+
+          {selectedModelIds.length === 0 ? (
+            <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+              Select at least one configured model before saving.
+            </div>
+          ) : null}
+
+          {unknownSelectedModelIds.length > 0 ? (
+            <div className="grid gap-2">
+              <div className="text-xs leading-5 text-muted-foreground">
+                Some saved models are not in the local catalog. Add them in{" "}
+                <code>desktop/shared/model-catalog.ts</code> to make them selectable again.
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {unknownSelectedModelIds.map((modelId) => (
+                  <Badge
+                    key={modelId}
+                    variant="outline"
+                    className="flex items-center gap-1 border-border/45 bg-muted/35 pr-1 text-foreground"
+                  >
+                    <span className="max-w-[220px] truncate">
+                      {providerModelDisplayLabel(providerId, modelId)}
+                    </span>
+                    <button
+                      type="button"
+                      className="inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted/60 hover:text-foreground"
+                      onClick={() => removeProviderDraftModel(providerId, modelId)}
+                      aria-label={`Remove ${modelId}`}
+                    >
+                      <X size={12} />
+                    </button>
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </label>
+    );
   }
 
   function renderProviderDrawerContent(providerId: KnownProviderId): ReactNode {
@@ -2207,6 +2372,40 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         </div>
       );
     }
+    if (providerId === "openai_codex") {
+      return (
+        <div className="grid gap-2">
+          <div className="rounded-[12px] border border-border/35 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+            Sign in with your ChatGPT account in the browser. holaOS keeps the active Codex access token refreshed locally for this desktop.
+          </div>
+          <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2">
+            <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Base URL</div>
+            <div className="pt-1 font-mono text-[13px] text-foreground">
+              {template.defaultBaseUrl}
+            </div>
+          </div>
+          {renderProviderModelSelection(providerId, draft)}
+          <div className="flex flex-wrap gap-2 pt-1">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void handleSaveRuntimeSettings(providerId)}
+              disabled={isSavingRuntimeConfigDocument}
+            >
+              {isSavingRuntimeConfigDocument ? "Saving..." : "Save"}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleCancelProviderEditing(providerId)}
+              disabled={isSavingRuntimeConfigDocument}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="grid gap-2">
         <label className="grid gap-1">
@@ -2228,107 +2427,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             spellCheck={false}
           />
         </label>
-        <label className="grid gap-1">
-          <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Models</span>
-          {(() => {
-            const selectedModelIds = parseModelsText(draft.modelsText);
-            const catalogModelOptions = providerCatalogChatModelOptions(providerId);
-            const unknownSelectedModelIds = selectedModelIds.filter(
-              (modelId) =>
-                !catalogModelOptions.some((option) => option.modelId === modelId),
-            );
-
-            return (
-              <div className="grid gap-2">
-                {catalogModelOptions.length > 0 ? (
-                  <div className="grid gap-2">
-                    <div className="grid gap-1.5">
-                      {catalogModelOptions.map((option) => {
-                        const selected = selectedModelIds.includes(option.modelId);
-                        return (
-                          <div
-                            key={option.modelId}
-                            className={`rounded-[10px] border px-2.5 py-1.5 text-left transition ${
-                              selected
-                                ? "border-primary/25 bg-primary/[0.06] text-foreground"
-                                : "border-border/35 bg-card/70 text-muted-foreground"
-                            }`}
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="min-w-0 flex-1">
-                                <div className="truncate text-[13px] font-medium leading-4">
-                                  {option.label}
-                                </div>
-                                {option.label !== option.modelId ? (
-                                  <div className="truncate pt-0.5 text-[10px] leading-4 text-muted-foreground">
-                                    {option.modelId}
-                                  </div>
-                                ) : null}
-                              </div>
-                              <div className="flex shrink-0 items-center gap-1.5 pl-1">
-                                <span className="text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground/80">
-                                  {selected ? "On" : "Off"}
-                                </span>
-                                <Switch
-                                  checked={selected}
-                                  aria-label={`Toggle ${option.label}`}
-                                  onCheckedChange={() =>
-                                    toggleProviderDraftModel(providerId, option.modelId)
-                                  }
-                                  className="mt-0.5"
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-                    Add models in <code>desktop/shared/model-catalog.ts</code> to configure this provider.
-                  </div>
-                )}
-
-                {selectedModelIds.length === 0 ? (
-                  <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-                    Select at least one configured model before saving.
-                  </div>
-                ) : null}
-
-                {unknownSelectedModelIds.length > 0 ? (
-                  <div className="grid gap-2">
-                    <div className="text-xs leading-5 text-muted-foreground">
-                      Some saved models are not in the local catalog. Add them in{" "}
-                      <code>desktop/shared/model-catalog.ts</code> to make them selectable again.
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {unknownSelectedModelIds.map((modelId) => (
-                        <Badge
-                          key={modelId}
-                          variant="outline"
-                          className="flex items-center gap-1 border-border/45 bg-muted/35 pr-1 text-foreground"
-                        >
-                          <span className="max-w-[220px] truncate">
-                            {providerModelDisplayLabel(providerId, modelId)}
-                          </span>
-                          <button
-                            type="button"
-                            className="inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted/60 hover:text-foreground"
-                            onClick={() => removeProviderDraftModel(providerId, modelId)}
-                            aria-label={`Remove ${modelId}`}
-                          >
-                            <X size={12} />
-                          </button>
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            );
-          })()}
-        </label>
+        {renderProviderModelSelection(providerId, draft)}
         <div className="flex flex-wrap gap-2 pt-1">
           <Button
             variant="outline"
@@ -2354,11 +2453,15 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   function renderProviderRow(providerId: KnownProviderId, isLast: boolean) {
     const template = KNOWN_PROVIDER_TEMPLATES[providerId];
     const isHolabossProvider = providerId === "holaboss";
+    const isCodexProvider = providerId === "openai_codex";
     const isConnected = providerConnected(providerId);
     const draftEnabled = providerDraftEnabled(providerId);
+    const isConnecting = connectingProviderId === providerId;
     const isDisconnecting = disconnectingProviderId === providerId;
     const hasPendingConnection = !isConnected && draftEnabled;
-    const isExpandable = isHolabossProvider ? isConnected : draftEnabled || isConnected;
+    const isExpandable = isHolabossProvider || isCodexProvider
+      ? isConnected
+      : draftEnabled || isConnected;
     const isExpanded = isExpandable && expandedProviderId === providerId;
 
     return (
@@ -2403,6 +2506,39 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   disabled={isStartingSignIn}
                 >
                   {isStartingSignIn ? "Opening..." : "Sign in"}
+                </Button>
+              )
+            ) : isCodexProvider ? (
+              isConnected ? (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
+                    onClick={() => setExpandedProviderId((current) => (current === providerId ? null : providerId))}
+                    disabled={isSavingRuntimeConfigDocument}
+                  >
+                    {isExpanded ? "Hide" : "Edit"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
+                    onClick={() => void handleDisconnectRuntimeProvider(providerId)}
+                    disabled={isSavingRuntimeConfigDocument || isConnecting}
+                  >
+                    {isDisconnecting ? "Disconnecting..." : "Disconnect"}
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
+                  onClick={() => void handleConnectCodexProvider(providerId)}
+                  disabled={isSavingRuntimeConfigDocument || isConnecting}
+                >
+                  {isConnecting ? "Connecting..." : "Connect"}
                 </Button>
               )
             ) : isConnected ? (

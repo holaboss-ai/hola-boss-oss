@@ -167,6 +167,25 @@ const RUNTIME_HOLABOSS_PROVIDER_ALIASES = [
   "holaboss",
   RUNTIME_HOLABOSS_PROVIDER_ID,
 ] as const;
+const OPENAI_CODEX_PROVIDER_ID = "openai_codex";
+const OPENAI_CODEX_PROVIDER_LABEL = "OpenAI Codex";
+const OPENAI_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
+const OPENAI_CODEX_DEFAULT_MODELS = ["gpt-5.4", "gpt-5.3-codex"] as const;
+const OPENAI_CODEX_OAUTH_ISSUER = "https://auth.openai.com";
+const OPENAI_CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+const OPENAI_CODEX_OAUTH_DEVICE_CODE_URL =
+  `${OPENAI_CODEX_OAUTH_ISSUER}/api/accounts/deviceauth/usercode`;
+const OPENAI_CODEX_OAUTH_DEVICE_TOKEN_URL =
+  `${OPENAI_CODEX_OAUTH_ISSUER}/api/accounts/deviceauth/token`;
+const OPENAI_CODEX_OAUTH_TOKEN_URL =
+  `${OPENAI_CODEX_OAUTH_ISSUER}/oauth/token`;
+const OPENAI_CODEX_OAUTH_DEVICE_PAGE_URL =
+  `${OPENAI_CODEX_OAUTH_ISSUER}/codex/device`;
+const OPENAI_CODEX_OAUTH_REDIRECT_URI =
+  `${OPENAI_CODEX_OAUTH_ISSUER}/deviceauth/callback`;
+const OPENAI_CODEX_REFRESH_SKEW_MS = 5 * 60 * 1000;
+const OPENAI_CODEX_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const OPENAI_CODEX_DEVICE_TIMEOUT_MS = 15 * 60 * 1000;
 const RUNTIME_DEPRECATED_MODEL_IDS = new Set([
   "gpt-5.1",
   "gpt-5.1-codex",
@@ -807,6 +826,8 @@ let appUpdateCheckTimer: NodeJS.Timeout | null = null;
 let appUpdateCheckPromise: Promise<AppUpdateStatusPayload> | null = null;
 let appUpdateEventsConfigured = false;
 let appUpdatePreferences: AppUpdatePreferencesPayload = {};
+let codexOauthRefreshTimer: NodeJS.Timeout | null = null;
+let codexOauthRefreshPromise: Promise<boolean> | null = null;
 let runtimeModelCatalogState: RuntimeModelCatalogPayload = {
   catalogVersion: null,
   defaultBackgroundModel: null,
@@ -5592,6 +5613,192 @@ async function writeRuntimeConfigTextAtomically(
   }
 }
 
+function openAiCodexAccessTokenExpiresAt(expiresIn: unknown): string {
+  const rawSeconds =
+    typeof expiresIn === "number"
+      ? expiresIn
+      : typeof expiresIn === "string"
+        ? Number.parseInt(expiresIn, 10)
+        : NaN;
+  const seconds =
+    Number.isFinite(rawSeconds) && rawSeconds > 0 ? rawSeconds : 3600;
+  return new Date(Date.now() + seconds * 1000).toISOString();
+}
+
+function openAiCodexExpiryTimestampMs(value: unknown): number {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (!normalized) {
+    return 0;
+  }
+  const timestamp = Date.parse(normalized);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function openAiCodexNeedsRefresh(
+  expiresAt: unknown,
+  skewMs = OPENAI_CODEX_REFRESH_SKEW_MS,
+): boolean {
+  const expiryTimestampMs = openAiCodexExpiryTimestampMs(expiresAt);
+  if (!expiryTimestampMs) {
+    return true;
+  }
+  return expiryTimestampMs - Date.now() <= skewMs;
+}
+
+function openAiCodexProviderStateFromDocument(document: Record<string, unknown>) {
+  const providersPayload = runtimeConfigObject(document.providers);
+  const providerPayload = runtimeConfigObject(
+    providersPayload[OPENAI_CODEX_PROVIDER_ID],
+  );
+  const optionsPayload = runtimeConfigObject(providerPayload.options);
+  return {
+    providersPayload,
+    providerPayload,
+    optionsPayload,
+    authMode: runtimeFirstNonEmptyString(
+      providerPayload.auth_mode as string | undefined,
+      optionsPayload.auth_mode as string | undefined,
+    ),
+    baseUrl: runtimeFirstNonEmptyString(
+      providerPayload.base_url as string | undefined,
+      providerPayload.baseURL as string | undefined,
+      optionsPayload.base_url as string | undefined,
+      optionsPayload.baseURL as string | undefined,
+      OPENAI_CODEX_BASE_URL,
+    ),
+    accessToken: runtimeFirstNonEmptyString(
+      providerPayload.api_key as string | undefined,
+      providerPayload.auth_token as string | undefined,
+    ),
+    refreshToken: runtimeFirstNonEmptyString(
+      optionsPayload.refresh_token as string | undefined,
+      optionsPayload.refreshToken as string | undefined,
+    ),
+    accessTokenExpiresAt: runtimeFirstNonEmptyString(
+      optionsPayload.access_token_expires_at as string | undefined,
+      optionsPayload.accessTokenExpiresAt as string | undefined,
+    ),
+  };
+}
+
+function runtimeDocumentHasProviderModels(
+  document: Record<string, unknown>,
+  providerId: string,
+): boolean {
+  const modelsPayload = runtimeConfigObject(document.models);
+  for (const [token, rawModel] of Object.entries(modelsPayload)) {
+    const modelPayload = runtimeConfigObject(rawModel);
+    const configuredProviderId = runtimeFirstNonEmptyString(
+      modelPayload.provider as string | undefined,
+      modelPayload.provider_id as string | undefined,
+      token.includes("/") ? token.split("/")[0]?.trim() : "",
+    );
+    if (configuredProviderId === providerId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function withOpenAiCodexProviderState(
+  document: Record<string, unknown>,
+  update: {
+    accessToken: string;
+    refreshToken: string;
+    accessTokenExpiresAt: string;
+    lastRefreshAt?: string;
+  },
+): Record<string, unknown> {
+  const providersPayload = runtimeConfigObject(document.providers);
+  const existingProviderPayload = runtimeConfigObject(
+    providersPayload[OPENAI_CODEX_PROVIDER_ID],
+  );
+  const existingOptionsPayload = runtimeConfigObject(existingProviderPayload.options);
+  const nextProviderPayload: Record<string, unknown> = {
+    ...existingProviderPayload,
+    kind: RUNTIME_PROVIDER_KIND_OPENAI_COMPATIBLE,
+    base_url: OPENAI_CODEX_BASE_URL,
+    api_key: update.accessToken.trim(),
+    options: {
+      ...existingOptionsPayload,
+      auth_mode: "codex_oauth",
+      refresh_token: update.refreshToken.trim(),
+      access_token_expires_at: update.accessTokenExpiresAt.trim(),
+      last_refresh_at:
+        update.lastRefreshAt?.trim() || existingOptionsPayload.last_refresh_at || utcNowIso(),
+    },
+  };
+  const nextProviders = {
+    ...providersPayload,
+    [OPENAI_CODEX_PROVIDER_ID]: nextProviderPayload,
+  };
+  const currentModels = runtimeConfigObject(document.models);
+  const nextModels: Record<string, unknown> = { ...currentModels };
+  if (!runtimeDocumentHasProviderModels(document, OPENAI_CODEX_PROVIDER_ID)) {
+    for (const modelId of OPENAI_CODEX_DEFAULT_MODELS) {
+      nextModels[`${OPENAI_CODEX_PROVIDER_ID}/${modelId}`] = {
+        provider: OPENAI_CODEX_PROVIDER_ID,
+        model: modelId,
+      };
+    }
+  }
+  return {
+    ...document,
+    providers: nextProviders,
+    models: nextModels,
+  };
+}
+
+async function updateRuntimeConfigDocumentWithoutRestart(
+  mutate: (currentDocument: Record<string, unknown>) => Record<string, unknown>,
+): Promise<RuntimeConfigPayload> {
+  let didWrite = false;
+  await withRuntimeConfigMutationLock(async () => {
+    const currentDocument = await readRuntimeConfigDocument();
+    const nextDocument = mutate(currentDocument);
+    const currentText =
+      Object.keys(currentDocument).length > 0
+        ? `${JSON.stringify(currentDocument, null, 2)}\n`
+        : "";
+    const nextText = `${JSON.stringify(nextDocument, null, 2)}\n`;
+    if (currentText === nextText) {
+      return;
+    }
+    await writeRuntimeConfigTextAtomically(nextText);
+    didWrite = true;
+  });
+
+  const config = await getRuntimeConfigWithoutCatalogRefresh();
+  if (didWrite) {
+    await emitRuntimeConfig(config);
+  }
+  return config;
+}
+
+async function openAiCodexTokenResponseJson(
+  response: Response,
+  fallbackMessage: string,
+): Promise<Record<string, unknown>> {
+  try {
+    const payload = (await response.json()) as unknown;
+    return runtimeConfigObject(payload);
+  } catch {
+    throw new Error(fallbackMessage);
+  }
+}
+
+function openAiCodexErrorMessage(
+  payload: Record<string, unknown>,
+  fallbackMessage: string,
+): string {
+  return runtimeFirstNonEmptyString(
+    payload.error_description as string | undefined,
+    payload.message as string | undefined,
+    payload.error as string | undefined,
+    fallbackMessage,
+  );
+}
+
 async function updateDesktopBrowserCapabilityConfig(update: {
   enabled: boolean;
   url?: string;
@@ -6743,6 +6950,9 @@ function normalizeRuntimeProviderModelToken(
 
 function runtimeProviderLabel(providerId: string): string {
   const normalized = providerId.trim().toLowerCase();
+  if (normalized === OPENAI_CODEX_PROVIDER_ID) {
+    return OPENAI_CODEX_PROVIDER_LABEL;
+  }
   if (normalized === "openai" || normalized.includes("openai")) {
     return "OpenAI";
   }
@@ -7832,6 +8042,294 @@ async function setRuntimeConfigDocument(
   const config = await getRuntimeConfig();
   await emitRuntimeConfig(config);
   return config;
+}
+
+async function requestOpenAiCodexDeviceCode(): Promise<{
+  userCode: string;
+  deviceAuthId: string;
+  intervalSeconds: number;
+}> {
+  const response = await fetch(OPENAI_CODEX_OAUTH_DEVICE_CODE_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      client_id: OPENAI_CODEX_OAUTH_CLIENT_ID,
+    }),
+  });
+  const payload = await openAiCodexTokenResponseJson(
+    response,
+    "OpenAI Codex device-code login returned an invalid response.",
+  );
+  if (!response.ok) {
+    throw new Error(
+      openAiCodexErrorMessage(
+        payload,
+        `OpenAI Codex device-code login failed with status ${response.status}.`,
+      ),
+    );
+  }
+  const userCode = runtimeFirstNonEmptyString(
+    payload.user_code as string | undefined,
+  );
+  const deviceAuthId = runtimeFirstNonEmptyString(
+    payload.device_auth_id as string | undefined,
+  );
+  const rawInterval =
+    typeof payload.interval === "number"
+      ? payload.interval
+      : Number.parseInt(String(payload.interval ?? ""), 10);
+  const intervalSeconds =
+    Number.isFinite(rawInterval) && rawInterval > 0 ? rawInterval : 5;
+  if (!userCode || !deviceAuthId) {
+    throw new Error(
+      "OpenAI Codex device-code login response was missing required fields.",
+    );
+  }
+  return {
+    userCode,
+    deviceAuthId,
+    intervalSeconds: Math.max(3, intervalSeconds),
+  };
+}
+
+async function waitForOpenAiCodexAuthorizationCode(params: {
+  deviceAuthId: string;
+  userCode: string;
+  intervalSeconds: number;
+}): Promise<{
+  authorizationCode: string;
+  codeVerifier: string;
+}> {
+  const deadline = Date.now() + OPENAI_CODEX_DEVICE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) =>
+      setTimeout(resolve, params.intervalSeconds * 1000),
+    );
+    const response = await fetch(OPENAI_CODEX_OAUTH_DEVICE_TOKEN_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        device_auth_id: params.deviceAuthId,
+        user_code: params.userCode,
+      }),
+    });
+    if (response.status === 403 || response.status === 404) {
+      continue;
+    }
+    const payload = await openAiCodexTokenResponseJson(
+      response,
+      "OpenAI Codex device authorization returned an invalid response.",
+    );
+    if (!response.ok) {
+      throw new Error(
+        openAiCodexErrorMessage(
+          payload,
+          `OpenAI Codex device authorization failed with status ${response.status}.`,
+        ),
+      );
+    }
+    const authorizationCode = runtimeFirstNonEmptyString(
+      payload.authorization_code as string | undefined,
+    );
+    const codeVerifier = runtimeFirstNonEmptyString(
+      payload.code_verifier as string | undefined,
+    );
+    if (!authorizationCode || !codeVerifier) {
+      throw new Error(
+        "OpenAI Codex device authorization response was missing required fields.",
+      );
+    }
+    return {
+      authorizationCode,
+      codeVerifier,
+    };
+  }
+  throw new Error("OpenAI Codex sign-in timed out after 15 minutes.");
+}
+
+async function exchangeOpenAiCodexAuthorizationCode(params: {
+  authorizationCode: string;
+  codeVerifier: string;
+}): Promise<{
+  accessToken: string;
+  refreshToken: string;
+  accessTokenExpiresAt: string;
+}> {
+  const body = new URLSearchParams({
+    grant_type: "authorization_code",
+    code: params.authorizationCode,
+    redirect_uri: OPENAI_CODEX_OAUTH_REDIRECT_URI,
+    client_id: OPENAI_CODEX_OAUTH_CLIENT_ID,
+    code_verifier: params.codeVerifier,
+  });
+  const response = await fetch(OPENAI_CODEX_OAUTH_TOKEN_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body,
+  });
+  const payload = await openAiCodexTokenResponseJson(
+    response,
+    "OpenAI Codex token exchange returned an invalid response.",
+  );
+  if (!response.ok) {
+    throw new Error(
+      openAiCodexErrorMessage(
+        payload,
+        `OpenAI Codex token exchange failed with status ${response.status}.`,
+      ),
+    );
+  }
+  const accessToken = runtimeFirstNonEmptyString(
+    payload.access_token as string | undefined,
+  );
+  const refreshToken = runtimeFirstNonEmptyString(
+    payload.refresh_token as string | undefined,
+  );
+  if (!accessToken || !refreshToken) {
+    throw new Error(
+      "OpenAI Codex token exchange did not return both access and refresh tokens.",
+    );
+  }
+  return {
+    accessToken,
+    refreshToken,
+    accessTokenExpiresAt: openAiCodexAccessTokenExpiresAt(payload.expires_in),
+  };
+}
+
+async function refreshOpenAiCodexAccessToken(refreshToken: string): Promise<{
+  accessToken: string;
+  refreshToken: string;
+  accessTokenExpiresAt: string;
+}> {
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    client_id: OPENAI_CODEX_OAUTH_CLIENT_ID,
+  });
+  const response = await fetch(OPENAI_CODEX_OAUTH_TOKEN_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body,
+  });
+  const payload = await openAiCodexTokenResponseJson(
+    response,
+    "OpenAI Codex token refresh returned an invalid response.",
+  );
+  if (!response.ok) {
+    throw new Error(
+      openAiCodexErrorMessage(
+        payload,
+        `OpenAI Codex token refresh failed with status ${response.status}.`,
+      ),
+    );
+  }
+  const accessToken = runtimeFirstNonEmptyString(
+    payload.access_token as string | undefined,
+  );
+  const nextRefreshToken = runtimeFirstNonEmptyString(
+    payload.refresh_token as string | undefined,
+    refreshToken,
+  );
+  if (!accessToken || !nextRefreshToken) {
+    throw new Error(
+      "OpenAI Codex token refresh did not return valid credentials.",
+    );
+  }
+  return {
+    accessToken,
+    refreshToken: nextRefreshToken,
+    accessTokenExpiresAt: openAiCodexAccessTokenExpiresAt(payload.expires_in),
+  };
+}
+
+async function connectOpenAiCodexProvider(): Promise<RuntimeConfigPayload> {
+  const challenge = await requestOpenAiCodexDeviceCode();
+  clipboard.writeText(challenge.userCode);
+  const dialogOptions = {
+    type: "info",
+    buttons: ["Continue"],
+    defaultId: 0,
+    title: OPENAI_CODEX_PROVIDER_LABEL,
+    message: "Complete OpenAI Codex sign-in in your browser.",
+    detail:
+      "The device code was copied to your clipboard.\n\n" +
+      `If paste does not work, enter this code manually:\n${challenge.userCode}`,
+    noLink: true,
+  } satisfies Electron.MessageBoxOptions;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    await dialog.showMessageBox(mainWindow, dialogOptions);
+  } else {
+    await dialog.showMessageBox(dialogOptions);
+  }
+  await shell.openExternal(OPENAI_CODEX_OAUTH_DEVICE_PAGE_URL);
+  const authorization = await waitForOpenAiCodexAuthorizationCode(challenge);
+  const exchanged = await exchangeOpenAiCodexAuthorizationCode(authorization);
+  const config = await updateRuntimeConfigDocumentWithoutRestart(
+    (currentDocument) =>
+      withOpenAiCodexProviderState(currentDocument, {
+        ...exchanged,
+        lastRefreshAt: utcNowIso(),
+      }),
+  );
+  ensureOpenAiCodexRefreshLoop();
+  return config;
+}
+
+async function refreshOpenAiCodexProviderCredentials(options?: {
+  force?: boolean;
+}): Promise<boolean> {
+  if (codexOauthRefreshPromise) {
+    return codexOauthRefreshPromise;
+  }
+  const refreshWork = (async () => {
+    const currentDocument = await readRuntimeConfigDocument();
+    const state = openAiCodexProviderStateFromDocument(currentDocument);
+    if (state.authMode !== "codex_oauth") {
+      return false;
+    }
+    if (!state.refreshToken.trim()) {
+      return false;
+    }
+    if (
+      !options?.force &&
+      !openAiCodexNeedsRefresh(state.accessTokenExpiresAt)
+    ) {
+      return false;
+    }
+    const refreshed = await refreshOpenAiCodexAccessToken(state.refreshToken);
+    await updateRuntimeConfigDocumentWithoutRestart((document) =>
+      withOpenAiCodexProviderState(document, {
+        ...refreshed,
+        lastRefreshAt: utcNowIso(),
+      }),
+    );
+    return true;
+  })();
+  codexOauthRefreshPromise = refreshWork.finally(() => {
+    codexOauthRefreshPromise = null;
+  });
+  return codexOauthRefreshPromise;
+}
+
+function ensureOpenAiCodexRefreshLoop(): void {
+  if (codexOauthRefreshTimer) {
+    return;
+  }
+  codexOauthRefreshTimer = setInterval(() => {
+    void refreshOpenAiCodexProviderCredentials().catch((error) => {
+      console.warn("OpenAI Codex token refresh failed:", error);
+    });
+  }, OPENAI_CODEX_REFRESH_INTERVAL_MS);
+  codexOauthRefreshTimer.unref();
 }
 
 function runtimeUserProfileNameSourceFromApi(
@@ -20719,6 +21217,8 @@ app.whenReady().then(async () => {
 
   await loadBrowserPersistence();
   await bootstrapRuntimeDatabase();
+  ensureOpenAiCodexRefreshLoop();
+  void refreshOpenAiCodexProviderCredentials().catch(() => undefined);
 
   handleTrustedIpc(
     "fs:listDirectory",
@@ -20989,6 +21489,11 @@ app.whenReady().then(async () => {
     ["main", "auth-popup"],
     async (_event, rawDocument: string) =>
       setRuntimeConfigDocument(rawDocument),
+  );
+  handleTrustedIpc(
+    "runtime:connectCodexOAuth",
+    ["main", "auth-popup"],
+    async () => connectOpenAiCodexProvider(),
   );
   handleTrustedIpc(
     "ui:getTheme",
