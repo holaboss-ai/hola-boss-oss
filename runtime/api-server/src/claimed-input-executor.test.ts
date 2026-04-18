@@ -1949,6 +1949,12 @@ test("claimed input queues a background session checkpoint when PI context cross
           },
         },
       });
+      store.upsertBinding({
+        workspaceId: workspace.id,
+        sessionId: "session-main",
+        harness: "pi",
+        harnessSessionId: "session-main",
+      });
       return {
         events: [],
         skippedLines: [],
@@ -1969,6 +1975,14 @@ test("claimed input queues a background session checkpoint when PI context cross
   })[0];
   assert.ok(queuedCheckpointJob);
   assert.equal(queuedCheckpointJob.jobType, "session_checkpoint");
+  assert.equal(
+    (
+      queuedCheckpointJob.payload as {
+        base_harness_session_id?: string;
+      }
+    ).base_harness_session_id,
+    harnessSessionFile,
+  );
 
   store.close();
 });

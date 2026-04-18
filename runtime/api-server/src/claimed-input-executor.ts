@@ -1087,6 +1087,7 @@ export async function processClaimedInput(params: {
   resolveProductRuntimeConfigFn?: typeof resolveProductRuntimeConfig;
   registerRunStartedFn?: typeof registerWorkspaceAgentRunStarted;
   relayRunEventFn?: typeof registerWorkspaceAgentRunEvent;
+  enqueueSessionCheckpointJobFn?: typeof enqueueSessionCheckpointJob;
   waitForSessionCheckpointCompletionFn?: typeof waitForSessionCheckpointCompletion;
   abortSignal?: AbortSignal;
 }): Promise<void> {
@@ -1155,6 +1156,7 @@ export async function processClaimedInput(params: {
       sessionId: record.sessionId,
       harness,
     });
+    let checkpointHarnessSessionId = harnessSessionId;
     let activeLeaseUntil =
       record.claimedUntil ?? claimLeaseUntilIso(leaseSeconds);
     let lastClaimRenewalAtMs = 0;
@@ -1258,6 +1260,8 @@ export async function processClaimedInput(params: {
       params.registerRunStartedFn ?? registerWorkspaceAgentRunStarted;
     const relayRunEvent =
       params.relayRunEventFn ?? registerWorkspaceAgentRunEvent;
+    const enqueueCheckpointJob =
+      params.enqueueSessionCheckpointJobFn ?? enqueueSessionCheckpointJob;
     await registerRunStarted({
       workspaceId: record.workspaceId,
       sessionId: record.sessionId,
@@ -1372,6 +1376,12 @@ export async function processClaimedInput(params: {
           const eventTimestamp = eventTimestampOrNow(event);
           const eventType =
             typeof event.event_type === "string" ? event.event_type : "unknown";
+          const terminalHarnessSessionId = nonEmptyString(
+            eventPayload.harness_session_id,
+          );
+          if (terminalHarnessSessionId) {
+            checkpointHarnessSessionId = terminalHarnessSessionId;
+          }
           if (eventType === "run_completed" || eventType === "run_failed") {
             deferredTerminalEvent = {
               eventType,
@@ -1592,6 +1602,12 @@ export async function processClaimedInput(params: {
 
       if (persistedTerminalEvent) {
         const persistedPayload = persistedTerminalEvent.payload;
+        const terminalHarnessSessionId = nonEmptyString(
+          persistedPayload.harness_session_id,
+        );
+        if (terminalHarnessSessionId) {
+          checkpointHarnessSessionId = terminalHarnessSessionId;
+        }
         deferredTerminalEvent = null;
         if (persistedTerminalEvent.eventType === "run_completed") {
           terminalStatus = terminalStatusForCompletedPayload(
@@ -1915,17 +1931,19 @@ export async function processClaimedInput(params: {
         store.getWorkspace(record.workspaceId)?.harness ??
         normalizeHarnessId(priorExecContext.harness) ??
         "pi";
-      enqueueSessionCheckpointJob({
+      enqueueCheckpointJob({
         store,
         workspaceId: record.workspaceId,
         sessionId: record.sessionId,
         inputId: record.inputId,
         harness: checkpointHarness,
         harnessSessionId:
-          store.getBinding({
+          checkpointHarnessSessionId ||
+          (store.getBinding({
             workspaceId: record.workspaceId,
             sessionId: record.sessionId,
-          })?.harnessSessionId ?? null,
+          })?.harnessSessionId ??
+            null),
         contextUsage,
         wakeWorker: params.wakeDurableMemoryWorker ?? null,
       });
