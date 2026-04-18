@@ -1,14 +1,11 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { PostRunJobRecord, RuntimeStateStore } from "@holaboss/runtime-state-store";
-import {
-  SessionManager,
-  getLatestCompactionEntry,
-} from "../../harness-host/node_modules/@mariozechner/pi-coding-agent/dist/core/session-manager.js";
 
 import { resolveRuntimeModelClient } from "./agent-runtime-config.js";
 import { buildRunnerEnv } from "./runner-worker.js";
@@ -63,6 +60,55 @@ interface SessionCheckpointResultRecord {
 
 type ResolveRuntimeModelClientFn = typeof resolveRuntimeModelClient;
 
+interface PiSessionBranchEntry {
+  id: string;
+  type?: string;
+}
+
+interface PiCompactionBranchEntry extends PiSessionBranchEntry {
+  summary: string;
+  firstKeptEntryId: string;
+  tokensBefore: number;
+  details?: unknown;
+  fromHook?: boolean;
+}
+
+interface PiSessionManagerInstance {
+  getBranch(): PiSessionBranchEntry[];
+  getLeafId(): string | null;
+  getEntries(): PiSessionBranchEntry[];
+  getSessionFile(): string | undefined;
+  appendCompaction(
+    summary: string,
+    firstKeptEntryId: string,
+    tokensBefore: number,
+    details?: unknown,
+    fromHook?: boolean,
+  ): string | undefined;
+}
+
+interface PiSessionManagerStatic {
+  open(sessionFile: string): PiSessionManagerInstance;
+}
+
+type GetLatestCompactionEntryFn = (
+  branch: PiSessionBranchEntry[],
+) => PiCompactionBranchEntry | null | undefined;
+
+const require = createRequire(import.meta.url);
+const PI_SESSION_MANAGER_MODULE_PATH =
+  "../../harness-host/node_modules/@mariozechner/pi-coding-agent/dist/core/session-manager.js";
+
+function loadPiSessionManagerModule(): {
+  SessionManager: PiSessionManagerStatic;
+  getLatestCompactionEntry: GetLatestCompactionEntryFn;
+} {
+  return require(PI_SESSION_MANAGER_MODULE_PATH) as {
+    SessionManager: PiSessionManagerStatic;
+    getLatestCompactionEntry: GetLatestCompactionEntryFn;
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -109,8 +155,8 @@ function sessionFileFingerprint(sessionFile: string): string {
   return createHash("sha256").update(fs.readFileSync(sessionFile)).digest("hex");
 }
 
-function openSessionManager(sessionFile: string): SessionManager {
-  return SessionManager.open(sessionFile);
+function openSessionManager(sessionFile: string): PiSessionManagerInstance {
+  return loadPiSessionManagerModule().SessionManager.open(sessionFile);
 }
 
 function currentLeafCheckpointState(sessionFile: string): {
@@ -121,7 +167,8 @@ function currentLeafCheckpointState(sessionFile: string): {
   const branch = sessionManager.getBranch();
   return {
     leafId: sessionManager.getLeafId(),
-    latestCompactionId: getLatestCompactionEntry(branch)?.id ?? null,
+    latestCompactionId:
+      loadPiSessionManagerModule().getLatestCompactionEntry(branch)?.id ?? null,
   };
 }
 
@@ -416,10 +463,14 @@ function canMergeCheckpointIntoLiveSession(params: {
 }): boolean {
   const sessionManager = openSessionManager(params.sessionFile);
   const branch = sessionManager.getBranch();
-  if (params.baseLeafId && !branch.some((entry) => entry.id === params.baseLeafId)) {
+  if (
+    params.baseLeafId &&
+    !branch.some((entry: PiSessionBranchEntry) => entry.id === params.baseLeafId)
+  ) {
     return false;
   }
-  const latestCompactionId = getLatestCompactionEntry(branch)?.id ?? null;
+  const latestCompactionId =
+    loadPiSessionManagerModule().getLatestCompactionEntry(branch)?.id ?? null;
   return latestCompactionId === (params.baseLatestCompactionId ?? null);
 }
 
@@ -429,11 +480,20 @@ function appendSnapshotCompactionToLiveSession(params: {
 }): boolean {
   const liveSession = openSessionManager(params.liveSessionFile);
   const snapshotSession = openSessionManager(params.snapshotSessionFile);
-  const snapshotCompaction = getLatestCompactionEntry(snapshotSession.getBranch());
+  const snapshotCompaction = loadPiSessionManagerModule().getLatestCompactionEntry(
+    snapshotSession.getBranch(),
+  );
   if (!snapshotCompaction) {
     return false;
   }
-  if (!liveSession.getBranch().some((entry) => entry.id === snapshotCompaction.firstKeptEntryId)) {
+  if (
+    !liveSession
+      .getBranch()
+      .some(
+        (entry: PiSessionBranchEntry) =>
+          entry.id === snapshotCompaction.firstKeptEntryId,
+      )
+  ) {
     return false;
   }
   liveSession.appendCompaction(

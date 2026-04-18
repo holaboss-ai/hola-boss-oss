@@ -1,16 +1,48 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { RuntimeStateStore } from "@holaboss/runtime-state-store";
-import { SessionManager } from "../../harness-host/node_modules/@mariozechner/pi-coding-agent/dist/core/session-manager.js";
 
 import {
   enqueueSessionCheckpointJob,
   processSessionCheckpointJob,
 } from "./session-checkpoint.js";
+
+interface PiSessionBranchEntry {
+  id: string;
+  type?: string;
+}
+
+interface PiSessionManagerInstance {
+  getBranch(): PiSessionBranchEntry[];
+  getEntries(): PiSessionBranchEntry[];
+  getLeafId(): string | null;
+  getSessionFile(): string | undefined;
+  appendMessage(message: unknown): string | undefined;
+  appendCompaction(
+    summary: string,
+    firstKeptEntryId: string,
+    tokensBefore: number,
+    details?: unknown,
+    fromHook?: boolean,
+  ): string | undefined;
+}
+
+interface PiSessionManagerStatic {
+  create(workspaceDir: string, sessionDir: string): PiSessionManagerInstance;
+  open(sessionFile: string): PiSessionManagerInstance;
+}
+
+const require = createRequire(import.meta.url);
+const { SessionManager } = require(
+  "../../harness-host/node_modules/@mariozechner/pi-coding-agent/dist/core/session-manager.js",
+) as {
+  SessionManager: PiSessionManagerStatic;
+};
 
 function makeStore(prefix: string): {
   store: RuntimeStateStore;
@@ -176,8 +208,9 @@ test("session checkpoint merges snapshot compaction into a live session that onl
     const latestEntry = branch.at(-1);
     assert.ok(latestEntry);
     assert.equal(latestEntry?.type, "compaction");
-    assert.equal((latestEntry as { summary: string }).summary, "Compacted older context.");
-    assert.ok(branch.some((entry) => entry.id === baseLeafId));
+    const latestCompactionEntry = latestEntry as unknown as { summary: string };
+    assert.equal(latestCompactionEntry.summary, "Compacted older context.");
+    assert.ok(branch.some((entry: PiSessionBranchEntry) => entry.id === baseLeafId));
 
     const boundaries = store.listCompactionBoundaries({
       workspaceId: workspace.id,
@@ -342,10 +375,12 @@ test("session checkpoint re-resolves model client auth instead of using redacted
     });
 
     assert.ok(observedRequest);
-    assert.equal(
-      (observedRequest?.model_client as { api_key?: string } | undefined)?.api_key,
-      "real-codex-access-token",
-    );
+    const observedRequestRecord = observedRequest as Record<string, unknown>;
+    const observedModelClient =
+      "model_client" in observedRequestRecord
+        ? (observedRequestRecord.model_client as { api_key?: string } | undefined)
+        : undefined;
+    assert.equal(observedModelClient?.api_key, "real-codex-access-token");
 
     const updatedJob = store.getPostRunJob(queued!.jobId);
     assert.equal(
