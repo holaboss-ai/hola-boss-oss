@@ -777,6 +777,10 @@ const sessionRuntimeStateCache = new Map<
   string,
   Map<string, SessionRuntimeRecordPayload>
 >();
+const agentSessionCache = new Map<
+  string,
+  Map<string, AgentSessionRecordPayload>
+>();
 const userBrowserInterruptPrompts = new Set<string>();
 const reportedOperatorSurfaceContexts = new Map<
   string,
@@ -12824,6 +12828,22 @@ function cloneRuntimeStateRecord(
   };
 }
 
+function cachedRuntimeStateRecords(
+  workspaceId: string,
+): SessionRuntimeRecordPayload[] {
+  const normalizedWorkspaceId = workspaceId.trim();
+  if (!normalizedWorkspaceId) {
+    return [];
+  }
+  const workspaceRecords = sessionRuntimeStateCache.get(normalizedWorkspaceId);
+  if (!workspaceRecords) {
+    return [];
+  }
+  return Array.from(workspaceRecords.values()).map((record) =>
+    cloneRuntimeStateRecord(record),
+  );
+}
+
 function normalizeRuntimeStateRecord(
   record: SessionRuntimeRecordPayload,
 ): SessionRuntimeRecordPayload | null {
@@ -12879,6 +12899,92 @@ function cacheRuntimeStateRecords(
   }
   sessionRuntimeStateCache.set(normalizedWorkspaceId, workspaceRecords);
   return normalizedItems;
+}
+
+function cloneAgentSessionRecord(
+  record: AgentSessionRecordPayload,
+): AgentSessionRecordPayload {
+  return { ...record };
+}
+
+function normalizeAgentSessionRecord(
+  record: AgentSessionRecordPayload,
+): AgentSessionRecordPayload | null {
+  const workspaceId = record.workspace_id.trim();
+  const sessionId = browserSessionId(record.session_id);
+  if (!workspaceId || !sessionId) {
+    return null;
+  }
+  const now = utcNowIso();
+  return {
+    workspace_id: workspaceId,
+    session_id: sessionId,
+    kind: record.kind?.trim() || "session",
+    title: typeof record.title === "string" ? record.title : null,
+    parent_session_id: record.parent_session_id?.trim() || null,
+    source_proposal_id: record.source_proposal_id?.trim() || null,
+    created_by: record.created_by?.trim() || null,
+    created_at: record.created_at || now,
+    updated_at: record.updated_at || record.created_at || now,
+    archived_at: record.archived_at?.trim() || null,
+  };
+}
+
+function cacheAgentSessionRecords(
+  workspaceId: string,
+  items: AgentSessionRecordPayload[],
+): AgentSessionRecordPayload[] {
+  const normalizedWorkspaceId = workspaceId.trim();
+  if (!normalizedWorkspaceId) {
+    return [];
+  }
+  const workspaceRecords = new Map<string, AgentSessionRecordPayload>();
+  const normalizedItems: AgentSessionRecordPayload[] = [];
+  for (const item of items) {
+    const normalized = normalizeAgentSessionRecord({
+      ...item,
+      workspace_id: normalizedWorkspaceId,
+    });
+    if (!normalized) {
+      continue;
+    }
+    workspaceRecords.set(normalized.session_id, normalized);
+    normalizedItems.push(cloneAgentSessionRecord(normalized));
+  }
+  agentSessionCache.set(normalizedWorkspaceId, workspaceRecords);
+  return normalizedItems;
+}
+
+function upsertCachedAgentSessionRecord(
+  record: AgentSessionRecordPayload,
+): AgentSessionRecordPayload | null {
+  const normalized = normalizeAgentSessionRecord(record);
+  if (!normalized) {
+    return null;
+  }
+  let workspaceRecords = agentSessionCache.get(normalized.workspace_id);
+  if (!workspaceRecords) {
+    workspaceRecords = new Map<string, AgentSessionRecordPayload>();
+    agentSessionCache.set(normalized.workspace_id, workspaceRecords);
+  }
+  workspaceRecords.set(normalized.session_id, normalized);
+  return cloneAgentSessionRecord(normalized);
+}
+
+function cachedAgentSessionRecords(
+  workspaceId: string,
+): AgentSessionRecordPayload[] {
+  const normalizedWorkspaceId = workspaceId.trim();
+  if (!normalizedWorkspaceId) {
+    return [];
+  }
+  const workspaceRecords = agentSessionCache.get(normalizedWorkspaceId);
+  if (!workspaceRecords) {
+    return [];
+  }
+  return Array.from(workspaceRecords.values()).map((record) =>
+    cloneAgentSessionRecord(record),
+  );
 }
 
 function upsertCachedRuntimeStateRecord(
@@ -14054,20 +14160,30 @@ async function deleteWorkspace(
 async function listRuntimeStates(
   workspaceId: string,
 ): Promise<SessionRuntimeStateListResponsePayload> {
-  const response = await requestRuntimeJson<SessionRuntimeStateListResponsePayload>({
-    method: "GET",
-    path: `/api/v1/agent-sessions/by-workspace/${workspaceId}/runtime-states`,
-    params: {
-      limit: 100,
-      offset: 0,
-    },
-  });
-  const items = cacheRuntimeStateRecords(workspaceId, response.items ?? []);
-  return {
-    ...response,
-    items,
-    count: items.length,
-  };
+  try {
+    const response = await requestRuntimeJson<SessionRuntimeStateListResponsePayload>({
+      method: "GET",
+      path: `/api/v1/agent-sessions/by-workspace/${workspaceId}/runtime-states`,
+      params: {
+        limit: 100,
+        offset: 0,
+      },
+    });
+    const items = cacheRuntimeStateRecords(workspaceId, response.items ?? []);
+    return {
+      ...response,
+      items,
+      count: items.length,
+    };
+  } catch (error) {
+    if (isTransientRuntimeError(error)) {
+      const items = cachedRuntimeStateRecords(workspaceId);
+      if (items.length > 0) {
+        return { items, count: items.length };
+      }
+    }
+    throw error;
+  }
 }
 
 async function listAgentSessions(
@@ -14076,22 +14192,38 @@ async function listAgentSessions(
   if (!workspaceId.trim()) {
     return { items: [], count: 0 };
   }
-  return requestRuntimeJson<AgentSessionListResponsePayload>({
-    method: "GET",
-    path: "/api/v1/agent-sessions",
-    params: {
-      workspace_id: workspaceId,
-      include_archived: false,
-      limit: 100,
-      offset: 0,
-    },
-  });
+  try {
+    const response = await requestRuntimeJson<AgentSessionListResponsePayload>({
+      method: "GET",
+      path: "/api/v1/agent-sessions",
+      params: {
+        workspace_id: workspaceId,
+        include_archived: false,
+        limit: 100,
+        offset: 0,
+      },
+    });
+    const items = cacheAgentSessionRecords(workspaceId, response.items ?? []);
+    return {
+      ...response,
+      items,
+      count: items.length,
+    };
+  } catch (error) {
+    if (isTransientRuntimeError(error)) {
+      const items = cachedAgentSessionRecords(workspaceId);
+      if (items.length > 0) {
+        return { items, count: items.length };
+      }
+    }
+    throw error;
+  }
 }
 
 async function createAgentSession(
   payload: CreateAgentSessionPayload,
 ): Promise<CreateAgentSessionResponsePayload> {
-  return requestRuntimeJson<CreateAgentSessionResponsePayload>({
+  const response = await requestRuntimeJson<CreateAgentSessionResponsePayload>({
     method: "POST",
     path: "/api/v1/agent-sessions",
     payload: {
@@ -14103,6 +14235,10 @@ async function createAgentSession(
       created_by: payload.created_by ?? undefined,
     },
   });
+  if (response.session) {
+    upsertCachedAgentSessionRecord(response.session);
+  }
+  return response;
 }
 
 function isMissingSessionBindingError(error: unknown): boolean {
@@ -18865,6 +19001,7 @@ function destroyBrowserWorkspace(workspaceId: string) {
   workspace.userBrowserLock = null;
   workspace.agentSessionSpaces.clear();
   sessionRuntimeStateCache.delete(workspaceId);
+  agentSessionCache.delete(workspaceId);
   browserWorkspaces.delete(workspaceId);
 }
 

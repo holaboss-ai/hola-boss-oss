@@ -186,20 +186,34 @@ export function useWorkspaceBrowser(
         }
         setAgentSessions(sessionsResponse.items);
         setRuntimeStatesBySessionId(runtimeStateIndex(runtimeStatesResponse.items));
+      } catch {
+        // Keep the last successful browser session snapshot during transient
+        // runtime hiccups instead of surfacing an unhandled rejection.
       } finally {
         requestInFlight = false;
       }
     };
 
+    const refreshVisibleSessionState = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      void loadSessionState();
+    };
+
     void loadSessionState();
     const intervalId = window.setInterval(
-      () => void loadSessionState(),
+      refreshVisibleSessionState,
       BROWSER_SESSION_POLL_INTERVAL_MS,
     );
+    window.addEventListener("focus", refreshVisibleSessionState);
+    document.addEventListener("visibilitychange", refreshVisibleSessionState);
 
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshVisibleSessionState);
+      document.removeEventListener("visibilitychange", refreshVisibleSessionState);
     };
   }, [options?.includeSessions, selectedWorkspaceId]);
 

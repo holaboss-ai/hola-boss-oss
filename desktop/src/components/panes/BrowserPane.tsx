@@ -220,20 +220,34 @@ export function BrowserPane({
           return;
         }
         setRuntimeStatesBySessionId(runtimeStateIndex(runtimeStatesResponse.items));
+      } catch {
+        // Preserve the most recent runtime state snapshot during transient
+        // runtime restarts instead of triggering an unhandled rejection.
       } finally {
         requestInFlight = false;
       }
     };
 
+    const refreshVisibleSessionState = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      void loadSessionState();
+    };
+
     void loadSessionState();
     const intervalId = window.setInterval(
-      () => void loadSessionState(),
+      refreshVisibleSessionState,
       BROWSER_SESSION_POLL_INTERVAL_MS,
     );
+    window.addEventListener("focus", refreshVisibleSessionState);
+    document.addEventListener("visibilitychange", refreshVisibleSessionState);
 
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshVisibleSessionState);
+      document.removeEventListener("visibilitychange", refreshVisibleSessionState);
     };
   }, [selectedWorkspaceId]);
 

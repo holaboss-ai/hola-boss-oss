@@ -9344,7 +9344,6 @@ function Composer({
   const [composerFooterLayout, setComposerFooterLayout] = useState({
     width: 0,
     actionsWidth: 0,
-    wraps: false,
   });
   const noAvailableModels =
     !runtimeDefaultModelAvailable &&
@@ -9419,19 +9418,11 @@ function Composer({
     const actionsWidth = Math.round(
       composerActionsRef.current?.getBoundingClientRect().width ?? 0,
     );
-    const visibleRowOffsets = Array.from(footer.children)
-      .filter(
-        (child): child is HTMLElement =>
-          child instanceof HTMLElement && child.offsetParent !== null,
-      )
-      .map((child) => child.offsetTop);
-    const wraps = new Set(visibleRowOffsets).size > 1;
     setComposerFooterLayout((current) =>
       current.width === width &&
-      current.actionsWidth === actionsWidth &&
-      current.wraps === wraps
+      current.actionsWidth === actionsWidth
         ? current
-        : { width, actionsWidth, wraps },
+        : { width, actionsWidth },
     );
   };
   useLayoutEffect(() => {
@@ -9533,10 +9524,9 @@ function Composer({
   );
   const compactComposerControls =
     showModelSelector &&
-    (composerFooterLayout.wraps ||
-      (composerFooterLayout.width > 0 &&
-        composerFooterLayout.actionsWidth > 0 &&
-        composerFooterLayout.width < fullFooterControlWidth));
+    composerFooterLayout.width > 0 &&
+    composerFooterLayout.actionsWidth > 0 &&
+    composerFooterLayout.width < fullFooterControlWidth;
   const compactModelControlWidth = compactComposerControls
     ? Math.min(
         COMPOSER_COMPACT_MODEL_CONTROL_MAX_WIDTH_PX,

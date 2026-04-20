@@ -86,6 +86,7 @@ export type ResolvedApplication = {
     path: string;
   };
   health_check: {
+    target?: "api" | "mcp";
     path: string;
     timeout_s: number;
     interval_s: number;
@@ -852,6 +853,12 @@ function parseAppRuntimeYaml(rawYaml: string, declaredAppId: string, configPath:
     });
   }
   const configDir = configPath.includes("/") ? configPath.slice(0, configPath.lastIndexOf("/")) : ".";
+  const preferredHealthcheckTarget =
+    healthchecks && isRecord(healthchecks.mcp)
+      ? "mcp"
+      : healthchecks && isRecord(healthchecks.api)
+        ? "api"
+        : "mcp";
 
   return {
     app_id: declaredAppId,
@@ -861,6 +868,7 @@ function parseAppRuntimeYaml(rawYaml: string, declaredAppId: string, configPath:
       path: typeof mcp.path === "string" ? mcp.path : "/mcp"
     },
     health_check: {
+      target: preferredHealthcheckTarget,
       path: preferredHealthcheck && typeof preferredHealthcheck.path === "string" ? preferredHealthcheck.path : "/health",
       timeout_s:
         preferredHealthcheck &&
