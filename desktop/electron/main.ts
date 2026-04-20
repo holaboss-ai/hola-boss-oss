@@ -274,7 +274,9 @@ const DEV_SHELL_CSP = [
   "font-src 'self' data:",
   "connect-src 'self' http://localhost:* ws://localhost:* https: wss:",
   "worker-src 'self' blob:",
-  "frame-src 'self' https:",
+  // App surfaces are rendered in renderer iframes and resolve to local
+  // runtime ports such as http://localhost:38090 during development.
+  "frame-src 'self' http://localhost:* http://127.0.0.1:* https:",
   "media-src 'self' data: blob: https:",
   "object-src 'none'",
   "base-uri 'self'",
