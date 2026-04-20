@@ -692,9 +692,19 @@ function healthProbeUrls(params: {
   httpPort: number;
   mcpPort: number;
 }): Array<{ kind: "http" | "mcp"; url: string }> {
+  if (params.resolvedApp.healthCheck.target === "api") {
+    return [
+      {
+        kind: "http",
+        url: `http://localhost:${params.httpPort}${params.resolvedApp.healthCheck.path}`
+      }
+    ];
+  }
   return [
-    { kind: "http", url: `http://localhost:${params.httpPort}/` },
-    { kind: "mcp", url: `http://localhost:${params.mcpPort}${params.resolvedApp.healthCheck.path}` }
+    {
+      kind: "mcp",
+      url: `http://localhost:${params.mcpPort}${params.resolvedApp.healthCheck.path}`
+    }
   ];
 }
 

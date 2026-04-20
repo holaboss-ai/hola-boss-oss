@@ -327,6 +327,42 @@ integrations:
   ]);
 });
 
+test("parseResolvedAppRuntime preserves the selected healthcheck target", () => {
+  const mcpResolved = parseResolvedAppRuntime(
+    `
+app_id: gmail
+mcp:
+  port: 3099
+healthchecks:
+  mcp:
+    path: /mcp/health
+    timeout_s: 30
+    interval_s: 1
+`,
+    "gmail",
+    "apps/gmail/app.runtime.yaml"
+  );
+  assert.equal(mcpResolved.healthCheck.target, "mcp");
+  assert.equal(mcpResolved.healthCheck.path, "/mcp/health");
+
+  const apiResolved = parseResolvedAppRuntime(
+    `
+app_id: gmail
+mcp:
+  port: 3099
+healthchecks:
+  api:
+    path: /healthz
+    timeout_s: 45
+    interval_s: 2
+`,
+    "gmail",
+    "apps/gmail/app.runtime.yaml"
+  );
+  assert.equal(apiResolved.healthCheck.target, "api");
+  assert.equal(apiResolved.healthCheck.path, "/healthz");
+});
+
 test("parseResolvedAppRuntime rejects unknown credential_source values", () => {
   assert.throws(
     () =>

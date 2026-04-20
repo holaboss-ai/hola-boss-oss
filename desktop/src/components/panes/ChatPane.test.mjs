@@ -121,8 +121,9 @@ test("chat composer footer wraps controls based on available pane width instead 
   );
   assert.match(
     source,
-    /const compactComposerControls =\s*showModelSelector &&[\s\S]*composerFooterLayout\.wraps[\s\S]*composerFooterLayout\.width < fullFooterControlWidth/,
+    /const compactComposerControls =\s*showModelSelector &&[\s\S]*composerFooterLayout\.width > 0[\s\S]*composerFooterLayout\.actionsWidth > 0[\s\S]*composerFooterLayout\.width < fullFooterControlWidth/,
   );
+  assert.doesNotMatch(source, /composerFooterLayout\.wraps/);
   assert.match(
     source,
     /const compactModelControlWidth = compactComposerControls[\s\S]*COMPOSER_COMPACT_MODEL_CONTROL_MAX_WIDTH_PX[\s\S]*compactFooterControlWidth -[\s\S]*COMPOSER_COMPACT_THINKING_CONTROL_MIN_WIDTH_PX/,
