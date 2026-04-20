@@ -4663,7 +4663,13 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const workspaceId = optionalString(query.workspace_id);
     let workspaceDir: string | null = null;
     if (workspaceId) {
-      workspaceDir = path.join(store.workspaceRoot, workspaceId);
+      // Must go through the store to respect user-chosen custom workspace
+      // paths — not all workspaces live under workspaceRoot/<id>.
+      try {
+        workspaceDir = store.workspaceDir(workspaceId);
+      } catch {
+        workspaceDir = null;
+      }
     } else if (fs.existsSync(store.workspaceRoot)) {
       for (const entry of fs.readdirSync(store.workspaceRoot, { withFileTypes: true })) {
         if (!entry.isDirectory()) {
