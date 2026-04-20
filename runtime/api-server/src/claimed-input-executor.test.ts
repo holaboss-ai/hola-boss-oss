@@ -12,6 +12,7 @@ import {
   registerWorkspaceAgentRunStarted,
 } from "./claimed-input-executor.js";
 import type { MemoryServiceLike } from "./memory.js";
+import type { RuntimeSentryCaptureOptions } from "./runtime-sentry.js";
 import type { PiContextUsage } from "./session-checkpoint.js";
 
 const tempDirs: string[] = [];
@@ -23,6 +24,7 @@ const ORIGINAL_ENV = {
     process.env.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S,
   HB_SANDBOX_ROOT: process.env.HB_SANDBOX_ROOT,
   HOLABOSS_RUNTIME_CONFIG_PATH: process.env.HOLABOSS_RUNTIME_CONFIG_PATH,
+  HOLABOSS_HARNESS_RUN_TIMEOUT_S: process.env.HOLABOSS_HARNESS_RUN_TIMEOUT_S,
 };
 
 function test(
@@ -64,6 +66,12 @@ afterEach(() => {
   } else {
     process.env.HOLABOSS_RUNTIME_CONFIG_PATH =
       ORIGINAL_ENV.HOLABOSS_RUNTIME_CONFIG_PATH;
+  }
+  if (ORIGINAL_ENV.HOLABOSS_HARNESS_RUN_TIMEOUT_S === undefined) {
+    delete process.env.HOLABOSS_HARNESS_RUN_TIMEOUT_S;
+  } else {
+    process.env.HOLABOSS_HARNESS_RUN_TIMEOUT_S =
+      ORIGINAL_ENV.HOLABOSS_HARNESS_RUN_TIMEOUT_S;
   }
 });
 
@@ -763,6 +771,60 @@ test("claimed input renews its claim lease while the runner is still healthy", a
   store.close();
 });
 
+test("claimed input passes the harness timeout through to the outer runner watchdog", async () => {
+  process.env.HOLABOSS_HARNESS_RUN_TIMEOUT_S = "45";
+
+  const store = makeStore("hb-claimed-input-harness-timeout-payload-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "hello" },
+  });
+  let seenHarnessTimeout: number | null = null;
+
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      seenHarnessTimeout =
+        typeof payload.harness_timeout_seconds === "number"
+          ? payload.harness_timeout_seconds
+          : null;
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "run_completed",
+        payload: { status: "ok" },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  assert.equal(seenHarnessTimeout, 45);
+
+  store.close();
+});
+
 test("claimed input treats streamed runner events as lease activity", async () => {
   const store = makeStore("hb-claimed-input-event-lease-renewal-");
   const workspace = store.createWorkspace({
@@ -1260,6 +1322,62 @@ test("claimed input fails when runner becomes idle after run_started", async () 
   assert.ok(turnResult);
   assert.equal(turnResult.status, "failed");
   assert.equal(turnResult.stopReason, "RunnerCommandError");
+
+  store.close();
+});
+
+test("claimed input reports synthesized runner timeouts to Sentry", async () => {
+  const store = makeStore("hb-claimed-input-sentry-timeout-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "hello" },
+  });
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+  const sentryCaptures: RuntimeSentryCaptureOptions[] = [];
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+    captureRuntimeExceptionFn: (capture) => {
+      sentryCaptures.push(capture);
+    },
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "runner command timed out",
+        returnCode: 124,
+        sawTerminal: false,
+      };
+    },
+  });
+
+  assert.equal(sentryCaptures.length, 1);
+  assert.equal(sentryCaptures[0]?.tags?.failure_kind, "runner_timeout");
+  assert.equal(sentryCaptures[0]?.tags?.surface, "claimed_input_executor");
+  assert.equal(
+    sentryCaptures[0]?.contexts?.claimed_input?.input_id,
+    queued.inputId,
+  );
 
   store.close();
 });
