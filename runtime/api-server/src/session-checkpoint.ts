@@ -153,6 +153,15 @@ function requiredRecord(value: unknown, fieldName: string): Record<string, unkno
   return value;
 }
 
+function stringRecord(value: unknown): Record<string, string> {
+  if (!isRecord(value)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+}
+
 function jsonValue(value: unknown): unknown {
   if (
     value === null ||
@@ -688,12 +697,31 @@ function withResolvedCheckpointModelClient(params: {
       inputId: params.inputId,
     },
   );
+  const snapshotModelClient = isRecord(params.harnessRequest.model_client)
+    ? params.harnessRequest.model_client
+    : {};
+  const snapshotHeaders = stringRecord(snapshotModelClient.default_headers);
+  const resolvedHeaders = stringRecord(resolved.modelClient.default_headers);
+  const mergedHeaders = {
+    ...snapshotHeaders,
+    ...resolvedHeaders,
+  };
+  if (
+    nonEmptyString(resolved.modelClient.api_key) &&
+    ("X-API-Key" in snapshotHeaders ||
+      "X-API-Key" in resolvedHeaders ||
+      nonEmptyString(resolved.modelClient.base_url)?.includes("/model-proxy/"))
+  ) {
+    mergedHeaders["X-API-Key"] = resolved.modelClient.api_key;
+  }
   return {
     ...params.harnessRequest,
     provider_id: resolved.providerId || providerId,
     model_id: resolved.modelId || modelId,
     model_client: {
       ...resolved.modelClient,
+      default_headers:
+        Object.keys(mergedHeaders).length > 0 ? mergedHeaders : null,
     },
   };
 }

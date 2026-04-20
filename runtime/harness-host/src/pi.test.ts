@@ -1419,6 +1419,8 @@ test("buildPiProviderConfig preserves direct OpenRouter endpoints and headers", 
   assert.equal(providerConfig.authHeader, true);
   assert.equal(providerConfig.models[0]?.id, "openai/gpt-5.4");
   assert.equal(providerConfig.models[0]?.api, "openai-completions");
+  assert.equal(providerConfig.models[0]?.contextWindow, 1_050_000);
+  assert.equal(providerConfig.models[0]?.maxTokens, 128_000);
   assert.equal(providerConfig.models[0]?.compat, undefined);
 });
 
@@ -1436,6 +1438,8 @@ test("buildPiProviderConfig uses OpenAI Responses API for direct GPT-5 models", 
 
   assert.equal(providerConfig.api, "openai-responses");
   assert.equal(providerConfig.models[0]?.api, "openai-responses");
+  assert.equal(providerConfig.models[0]?.contextWindow, 1_050_000);
+  assert.equal(providerConfig.models[0]?.maxTokens, 128_000);
   assert.equal(providerConfig.models[0]?.compat, undefined);
 });
 
@@ -1476,6 +1480,8 @@ test("buildPiProviderConfig uses OpenAI Responses API for managed Holaboss GPT-5
   assert.deepEqual(providerConfig.headers, {
     "X-Holaboss-User-Id": "user-1",
   });
+  assert.equal(providerConfig.models[0]?.contextWindow, 1_050_000);
+  assert.equal(providerConfig.models[0]?.maxTokens, 128_000);
 });
 
 test("buildPiProviderConfig uses Anthropic Messages API for managed Holaboss Claude models", () => {
@@ -1499,6 +1505,8 @@ test("buildPiProviderConfig uses Anthropic Messages API for managed Holaboss Cla
   assert.deepEqual(providerConfig.headers, {
     "X-Holaboss-User-Id": "user-1",
   });
+  assert.equal(providerConfig.models[0]?.contextWindow, 1_000_000);
+  assert.equal(providerConfig.models[0]?.maxTokens, 64_000);
 });
 
 test("requestedPiThinkingLevel maps provider-native values into Pi thinking levels", () => {
@@ -1575,6 +1583,8 @@ test("buildPiProviderConfig uses pi-ai native Google provider for direct Gemini 
   assert.equal(providerConfig.api, "google-generative-ai");
   assert.equal(providerConfig.authHeader, false);
   assert.equal(providerConfig.models[0]?.api, "google-generative-ai");
+  assert.equal(providerConfig.models[0]?.contextWindow, 1_048_576);
+  assert.equal(providerConfig.models[0]?.maxTokens, 65_536);
   assert.equal(providerConfig.models[0]?.compat, undefined);
 });
 
@@ -1597,6 +1607,22 @@ test("buildPiProviderConfig disables store for Google-compatible proxy routes", 
   assert.deepEqual(providerConfig.models[0]?.compat, {
     supportsStore: false,
   });
+});
+
+test("buildPiProviderConfig falls back to legacy limits for unknown custom models", () => {
+  const providerConfig = buildPiProviderConfig({
+    ...baseRequest(),
+    provider_id: "custom_openai_compat",
+    model_id: "custom-reasoner",
+    model_client: {
+      model_proxy_provider: "openai_compatible",
+      api_key: "custom-key",
+      base_url: "https://api.example.com/v1",
+    },
+  });
+
+  assert.equal(providerConfig.models[0]?.contextWindow, 65_536);
+  assert.equal(providerConfig.models[0]?.maxTokens, 8_192);
 });
 
 test("createPiMcpCustomTools filters discovery to allowlisted tools and forwards calls via mcporter", async () => {
@@ -2360,6 +2386,189 @@ test("compactPiSession returns a structured result for successful snapshot compa
   assert.equal(result.diagnostics, null);
   assert.equal(result.error, null);
   assert.equal(disposed, true);
+});
+
+test("compactPiSession prefers native post-run maintenance compaction when available", async () => {
+  let disposed = false;
+  let manualCompactCalls = 0;
+  let continueCalls = 0;
+  let listener: ((event: unknown) => void) | undefined;
+  const branch: Array<Record<string, unknown>> = [
+    {
+      id: "assistant-1",
+      type: "message",
+      timestamp: "2026-04-20T10:00:00.000Z",
+      message: {
+        role: "assistant",
+      },
+    },
+  ];
+  const session = {
+    messages: [
+      {
+        role: "assistant",
+      },
+    ],
+    agent: {
+      continue: async () => {
+        continueCalls += 1;
+      },
+      hasQueuedMessages: () => true,
+    },
+    sessionManager: {
+      getBranch: () => branch,
+      getLeafId: () => "assistant-1",
+    },
+    subscribe(nextListener: (event: unknown) => void) {
+      listener = nextListener;
+      return () => {
+        listener = undefined;
+      };
+    },
+    async _checkCompaction() {
+      listener?.({
+        type: "compaction_start",
+        reason: "threshold",
+      });
+      branch.push({
+        id: "compaction-1",
+        type: "compaction",
+        timestamp: "2026-04-20T10:00:01.000Z",
+        summary: "Condensed older context.",
+        firstKeptEntryId: "entry-42",
+        tokensBefore: 12345,
+        details: {
+          modifiedFiles: ["src/pi.ts"],
+        },
+      });
+      listener?.({
+        type: "compaction_end",
+        reason: "threshold",
+        result: {
+          summary: "Condensed older context.",
+          firstKeptEntryId: "entry-42",
+          tokensBefore: 12345,
+          details: {
+            modifiedFiles: ["src/pi.ts"],
+          },
+        },
+        aborted: false,
+        willRetry: false,
+      });
+      setTimeout(() => {
+        void session.agent.continue();
+      }, 0);
+    },
+    async compact() {
+      manualCompactCalls += 1;
+      throw new Error("manual fallback should not run");
+    },
+  };
+  const result = await compactPiSession(baseRequest(), {
+    createSession: async () => ({
+      session: session as never,
+      sessionFile: "/tmp/pi-session.jsonl",
+      mcpToolMetadata: new Map(),
+      skillMetadataByAlias: new Map(),
+      dispose: async () => {
+        disposed = true;
+      },
+    }),
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.equal(result.compacted, true);
+  assert.equal(result.session_file, "/tmp/pi-session.jsonl");
+  assert.deepEqual(result.result, {
+    summary: "Condensed older context.",
+    firstKeptEntryId: "entry-42",
+    tokensBefore: 12345,
+    details: {
+      modifiedFiles: ["src/pi.ts"],
+    },
+  });
+  assert.equal(result.reason, null);
+  assert.equal(result.error, null);
+  assert.equal(manualCompactCalls, 0);
+  assert.equal(continueCalls, 0);
+  assert.equal(disposed, true);
+});
+
+test("compactPiSession surfaces native post-run maintenance failures without manual fallback", async () => {
+  let manualCompactCalls = 0;
+  let listener: ((event: unknown) => void) | undefined;
+  const result = await compactPiSession(baseRequest(), {
+    createSession: async () => ({
+      session: {
+        messages: [
+          {
+            role: "assistant",
+          },
+        ],
+        agent: {
+          continue: async () => {},
+          hasQueuedMessages: () => false,
+        },
+        sessionManager: {
+          getBranch: () => [
+            {
+              id: "assistant-1",
+              type: "message",
+              timestamp: "2026-04-20T10:00:00.000Z",
+              message: {
+                role: "assistant",
+              },
+            },
+          ],
+          getLeafId: () => "assistant-1",
+        },
+        subscribe(nextListener: (event: unknown) => void) {
+          listener = nextListener;
+          return () => {
+            listener = undefined;
+          };
+        },
+        async _checkCompaction() {
+          listener?.({
+            type: "compaction_start",
+            reason: "threshold",
+          });
+          listener?.({
+            type: "compaction_end",
+            reason: "threshold",
+            result: undefined,
+            aborted: false,
+            willRetry: false,
+            errorMessage:
+              "Auto-compaction failed: Turn prefix summarization failed: 422 status code (no body)",
+          });
+        },
+        async compact() {
+          manualCompactCalls += 1;
+          throw new Error("manual fallback should not run");
+        },
+      } as never,
+      sessionFile: "/tmp/pi-session.jsonl",
+      mcpToolMetadata: new Map(),
+      skillMetadataByAlias: new Map(),
+      dispose: async () => {},
+    }),
+  });
+
+  assert.equal(result.compacted, false);
+  assert.equal(result.reason, null);
+  assert.equal(result.result, null);
+  assert.equal(result.error?.name, "PiSnapshotCompactionError");
+  assert.equal(
+    result.error?.message,
+    "Auto-compaction failed: Turn prefix summarization failed: 422 status code (no body)",
+  );
+  assert.equal(
+    result.error?.provider_message,
+    "Auto-compaction failed: Turn prefix summarization failed: 422 status code (no body)",
+  );
+  assert.equal(manualCompactCalls, 0);
 });
 
 test("compactPiSession returns structured error diagnostics for snapshot compaction failures", async () => {
