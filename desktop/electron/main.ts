@@ -802,6 +802,10 @@ const filePreviewWatchSubscriptions = new Map<
 let runtimeProcess: ChildProcessWithoutNullStreams | null = null;
 const intentionallyStoppedRuntimeProcesses =
   new WeakSet<ChildProcessWithoutNullStreams>();
+const DEFERRED_RUNTIME_RESTART_POLL_MS = 5_000;
+let deferredRuntimeRestartTimer: NodeJS.Timeout | null = null;
+let deferredRuntimeRestartReason: string | null = null;
+let deferredRuntimeRestartInFlight = false;
 let appQuitCleanupPromise: Promise<void> | null = null;
 let appQuitCleanupFinished = false;
 let pendingAuthUser: AuthUserPayload | null = null;
@@ -7909,15 +7913,157 @@ function runtimeConfigRestartRequired(
   return false;
 }
 
+function normalizeDeferredRuntimeRestartReason(reason: string): string {
+  const normalized = reason.trim();
+  return normalized || "unspecified";
+}
+
+function listRuntimeRestartBlockingSessions(): Array<{
+  workspaceId: string;
+  sessionId: string;
+  status: string;
+  currentInputId: string | null;
+}> {
+  const database = openRuntimeDatabase();
+  try {
+    const rows = database
+      .prepare(
+        `
+        SELECT
+          workspace_id,
+          session_id,
+          status,
+          current_input_id
+        FROM session_runtime_state
+        WHERE status IN ('BUSY', 'QUEUED')
+           OR current_input_id IS NOT NULL
+        ORDER BY updated_at DESC
+      `,
+      )
+      .all() as Array<{
+      workspace_id: string;
+      session_id: string;
+      status: string;
+      current_input_id: string | null;
+    }>;
+    return rows
+      .map((row) => ({
+        workspaceId: row.workspace_id.trim(),
+        sessionId: row.session_id.trim(),
+        status: row.status.trim(),
+        currentInputId:
+          typeof row.current_input_id === "string" &&
+          row.current_input_id.trim()
+            ? row.current_input_id.trim()
+            : null,
+      }))
+      .filter((row) => row.workspaceId && row.sessionId);
+  } finally {
+    database.close();
+  }
+}
+
+function runtimeRestartBlockerDetail(
+  blockers: Array<{
+    workspaceId: string;
+    sessionId: string;
+    status: string;
+    currentInputId: string | null;
+  }>,
+): string {
+  return blockers
+    .map((blocker) =>
+      [
+        blocker.workspaceId,
+        blocker.sessionId,
+        blocker.status,
+        blocker.currentInputId ?? "-",
+      ].join(":"),
+    )
+    .join(",");
+}
+
+function clearDeferredRuntimeRestartWatcher(): void {
+  if (!deferredRuntimeRestartTimer) {
+    return;
+  }
+  clearInterval(deferredRuntimeRestartTimer);
+  deferredRuntimeRestartTimer = null;
+}
+
+async function maybeRunDeferredRuntimeRestart(): Promise<boolean> {
+  const reason = deferredRuntimeRestartReason;
+  if (!reason || deferredRuntimeRestartInFlight) {
+    return false;
+  }
+  const healthy = await isRuntimeHealthy(runtimeBaseUrl());
+  const blockers = healthy ? listRuntimeRestartBlockingSessions() : [];
+  if (blockers.length > 0) {
+    return false;
+  }
+
+  deferredRuntimeRestartInFlight = true;
+  deferredRuntimeRestartReason = null;
+  clearDeferredRuntimeRestartWatcher();
+  appendRuntimeEventLog({
+    category: "runtime",
+    event: "embedded_runtime.restart_resumed",
+    outcome: "start",
+    detail: `reason=${normalizeDeferredRuntimeRestartReason(reason)}`,
+  });
+  try {
+    await stopEmbeddedRuntime();
+    void startEmbeddedRuntime();
+    return true;
+  } finally {
+    deferredRuntimeRestartInFlight = false;
+  }
+}
+
+function ensureDeferredRuntimeRestartWatcher(): void {
+  if (deferredRuntimeRestartTimer) {
+    return;
+  }
+  deferredRuntimeRestartTimer = setInterval(() => {
+    void maybeRunDeferredRuntimeRestart();
+  }, DEFERRED_RUNTIME_RESTART_POLL_MS);
+  deferredRuntimeRestartTimer.unref();
+}
+
+async function restartEmbeddedRuntimeSafely(
+  reason: string,
+): Promise<"restarted" | "deferred"> {
+  const normalizedReason = normalizeDeferredRuntimeRestartReason(reason);
+  const healthy = await isRuntimeHealthy(runtimeBaseUrl());
+  const blockers = healthy ? listRuntimeRestartBlockingSessions() : [];
+  if (blockers.length > 0) {
+    deferredRuntimeRestartReason = normalizedReason;
+    ensureDeferredRuntimeRestartWatcher();
+    appendRuntimeEventLog({
+      category: "runtime",
+      event: "embedded_runtime.restart_deferred",
+      outcome: "deferred",
+      detail: `reason=${normalizedReason} blockers=${runtimeRestartBlockerDetail(blockers)}`,
+    });
+    return "deferred";
+  }
+
+  deferredRuntimeRestartReason = null;
+  clearDeferredRuntimeRestartWatcher();
+  await stopEmbeddedRuntime();
+  void startEmbeddedRuntime();
+  return "restarted";
+}
+
 async function restartEmbeddedRuntimeIfNeeded(
   current: Record<string, string>,
   next: Record<string, string>,
+  reason = "runtime_config_update",
 ): Promise<boolean> {
   if (!runtimeConfigRestartRequired(current, next)) {
     return false;
   }
-  await stopEmbeddedRuntime();
-  void startEmbeddedRuntime();
+  await restartEmbeddedRuntimeSafely(reason);
   return true;
 }
 
@@ -8035,8 +8181,7 @@ async function setRuntimeConfigDocument(
   await syncDesktopBrowserCapabilityConfig();
 
   if (shouldRestartRuntime) {
-    await stopEmbeddedRuntime();
-    void startEmbeddedRuntime();
+    await restartEmbeddedRuntimeSafely("runtime_config_document");
   }
 
   const config = await getRuntimeConfig();
@@ -9179,7 +9324,11 @@ async function clearRuntimeBindingSecrets(reason: string): Promise<void> {
   lastRuntimeBindingRefreshAtMs = 0;
   lastRuntimeBindingRefreshUserId = "";
   clearTransientRuntimeBindingRefreshFailure();
-  await restartEmbeddedRuntimeIfNeeded(currentConfig, nextConfig);
+  await restartEmbeddedRuntimeIfNeeded(
+    currentConfig,
+    nextConfig,
+    "runtime_binding_invalidate",
+  );
   await emitRuntimeConfig();
   appendRuntimeEventLog({
     category: "auth",
@@ -9261,7 +9410,11 @@ async function provisionRuntimeBindingForAuthenticatedUser(
         controlPlaneBaseUrl: DESKTOP_CONTROL_PLANE_BASE_URL,
       });
       await syncRuntimeModelCatalogFromBinding(binding);
-      await restartEmbeddedRuntimeIfNeeded(currentConfig, nextConfig);
+      await restartEmbeddedRuntimeIfNeeded(
+        currentConfig,
+        nextConfig,
+        "runtime_binding_provision",
+      );
       await emitRuntimeConfig();
       await syncRuntimeUserProfileFromAuth(user);
 
@@ -21391,8 +21544,8 @@ app.whenReady().then(async () => {
     refreshRuntimeStatus(),
   );
   handleTrustedIpc("runtime:restart", ["main"], async () => {
-    await stopEmbeddedRuntime();
-    return startEmbeddedRuntime();
+    await restartEmbeddedRuntimeSafely("manual_restart");
+    return refreshRuntimeStatus();
   });
   handleTrustedIpc("auth:getUser", ["main", "auth-popup"], async () =>
     getAuthenticatedUser(),
@@ -21472,7 +21625,11 @@ app.whenReady().then(async () => {
     async (_event, payload: RuntimeConfigUpdatePayload) => {
       const currentConfig = await readRuntimeConfigFile();
       const nextConfig = await writeRuntimeConfigFile(payload);
-      await restartEmbeddedRuntimeIfNeeded(currentConfig, nextConfig);
+      await restartEmbeddedRuntimeIfNeeded(
+        currentConfig,
+        nextConfig,
+        "runtime_config_update",
+      );
       const config = await getRuntimeConfig();
       await emitRuntimeConfig(config);
       return config;
@@ -21630,7 +21787,11 @@ app.whenReady().then(async () => {
         controlPlaneBaseUrl: DESKTOP_CONTROL_PLANE_BASE_URL,
       });
       await syncRuntimeModelCatalogFromBinding(binding);
-      await restartEmbeddedRuntimeIfNeeded(currentConfig, nextConfig);
+      await restartEmbeddedRuntimeIfNeeded(
+        currentConfig,
+        nextConfig,
+        "runtime_binding_exchange_manual",
+      );
       const config = await getRuntimeConfig();
       await emitRuntimeConfig(config);
       return config;
