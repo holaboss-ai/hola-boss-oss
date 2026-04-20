@@ -10,6 +10,7 @@ import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 import {
   AppLifecycleExecutorError,
   findComposeCommand,
+  isAppHealthy,
   RuntimeAppLifecycleExecutor,
   shutdownComposeTargets,
   startComposeAppTarget,
@@ -36,9 +37,51 @@ function makeSpawnStub(handlers: Record<string, { code: number }>) {
     queueMicrotask(() => {
       child.emit("close", handler.code);
     });
-    return child;
+  return child;
   }) as typeof import("node:child_process").spawn;
 }
+
+test("isAppHealthy probes only the configured healthcheck target", async () => {
+  const urls: string[] = [];
+  const resolvedApp = {
+    appId: "gmail",
+    mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+    mcpTools: [],
+    healthCheck: { target: "mcp" as const, path: "/mcp/health", timeoutS: 30, intervalS: 1 },
+    envContract: [],
+    integrations: [],
+    startCommand: "",
+    baseDir: "apps/gmail",
+    lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }
+  };
+
+  const fetchImpl = (async (input: string | URL | Request) => {
+    urls.push(typeof input === "string" ? input : input.toString());
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+
+  const mcpHealthy = await isAppHealthy({
+    resolvedApp,
+    httpPort: 18080,
+    mcpPort: 13100,
+    fetchImpl
+  });
+  assert.equal(mcpHealthy, true);
+  assert.deepEqual(urls, ["http://localhost:13100/mcp/health"]);
+
+  urls.length = 0;
+  const apiHealthy = await isAppHealthy({
+    resolvedApp: {
+      ...resolvedApp,
+      healthCheck: { ...resolvedApp.healthCheck, target: "api", path: "/healthz" }
+    },
+    httpPort: 18080,
+    mcpPort: 13100,
+    fetchImpl
+  });
+  assert.equal(apiHealthy, true);
+  assert.deepEqual(urls, ["http://localhost:18080/healthz"]);
+});
 
 test("findComposeCommand prefers docker compose when available", async () => {
   const spawnStub = makeSpawnStub({
@@ -501,7 +544,7 @@ test("startShellLifecycleAppTarget runs lifecycle.setup before lifecycle.start",
   ]);
 });
 
-test("startShellLifecycleAppTarget requires both app HTTP and MCP health checks", async () => {
+test("startShellLifecycleAppTarget honors an explicit API health check target without probing MCP", async () => {
   const appDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-shell-app-both-health-"));
   let started = false;
   const spawnStub = ((command: string, args?: readonly string[]) => {
@@ -525,36 +568,34 @@ test("startShellLifecycleAppTarget requires both app HTTP and MCP health checks"
     return child;
   }) as typeof import("node:child_process").spawn;
 
-  await assert.rejects(
-    () =>
-      startShellLifecycleAppTarget({
-        appId: "app-a",
-        appDir,
-        resolvedApp: {
-          appId: "app-a",
-          mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
-          mcpTools: [],
-          healthCheck: { path: "/health", timeoutS: 0.1, intervalS: 0.01 },
-          envContract: [],
-          startCommand: "",
-          baseDir: "apps/app-a",
-          lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }
-        },
-        httpPort: 18081,
-        mcpPort: 13101,
-        spawnImpl: spawnStub,
-        fetchImpl: (async (input: string | URL | RequestInfo) => {
-          if (!started) {
-            throw new Error("app not started yet");
-          }
-          if (String(input).includes("/health")) {
-            return new Response("", { status: 200 });
-          }
-          return new Response("", { status: 503 });
-        }) as typeof fetch
-      }),
-    /did not become healthy/
-  );
+  const result = await startShellLifecycleAppTarget({
+    appId: "app-a",
+    appDir,
+    resolvedApp: {
+      appId: "app-a",
+      mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+      mcpTools: [],
+      healthCheck: { target: "api", path: "/health", timeoutS: 0.1, intervalS: 0.01 },
+      envContract: [],
+      startCommand: "",
+      baseDir: "apps/app-a",
+      lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }
+    },
+    httpPort: 18081,
+    mcpPort: 13101,
+    spawnImpl: spawnStub,
+    fetchImpl: (async (input: string | URL | RequestInfo) => {
+      if (!started) {
+        throw new Error("app not started yet");
+      }
+      if (String(input) === "http://localhost:18081/health") {
+        return new Response("", { status: 200 });
+      }
+      return new Response("", { status: 503 });
+    }) as typeof fetch
+  });
+
+  assert.equal(result.status, "started");
 });
 
 test("startShellLifecycleAppTarget coalesces concurrent starts for the same app", async () => {

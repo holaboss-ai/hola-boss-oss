@@ -102,6 +102,8 @@ export function parseResolvedApplicationRuntimePayload(value: unknown): Resolved
     },
     mcpTools: optionalStringList(payload.mcp_tools),
     healthCheck: {
+      target:
+        optionalString(healthCheck.target) === "api" ? "api" : "mcp",
       path: requiredString(healthCheck.path, "resolved_application.health_check.path"),
       timeoutS,
       intervalS

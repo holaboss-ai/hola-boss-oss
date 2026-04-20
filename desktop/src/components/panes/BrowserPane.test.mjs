@@ -118,3 +118,16 @@ test("browser pane only clears native browser bounds on suspend or unmount, not 
   assert.match(source, /useLayoutEffect\(\(\) => \{[\s\S]*window\.setTimeout\(queueSync, 400\);[\s\S]*return \(\) => \{\s*observer\.disconnect\(\);[\s\S]*window\.cancelAnimationFrame\(rafId\);\s*\};\s*\}, \[layoutSyncKey, suspendNativeView\]\);/s);
   assert.match(source, /useEffect\(\(\) => \{\s*return \(\) => \{\s*void window\.electronAPI\.browser\.setBounds\(\{\s*x: 0,\s*y: 0,\s*width: 0,\s*height: 0,\s*\}\);\s*\};\s*\}, \[\]\);/s);
 });
+
+test("browser pane session-state polling keeps the last successful snapshot during transient runtime errors", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /} catch \{\s*\/\/ Preserve the most recent runtime state snapshot during transient\s*\/\/ runtime restarts instead of triggering an unhandled rejection\.\s*\}/s,
+  );
+  assert.match(
+    source,
+    /const refreshVisibleSessionState = \(\) => \{\s*if \(document\.visibilityState !== "visible"\) \{\s*return;\s*\}\s*void loadSessionState\(\);\s*\};/s,
+  );
+});
