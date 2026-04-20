@@ -11,7 +11,7 @@ test("browser downloads save into the workspace Downloads folder", async () => {
   assert.match(source, /function consumeBrowserDownloadOverride\(/);
   assert.match(
     source,
-    /const downloadsDir = path\.join\(\s*workspaceDirectoryPath\(workspaceId\),\s*"Downloads",\s*\);/,
+    /const downloadsDir = path\.join\(\s*resolveWorkspaceDirSync\(workspaceId\),\s*"Downloads",\s*\);/,
   );
   assert.match(source, /mkdirSync\(downloadsDir, \{ recursive: true \}\);/);
   assert.match(

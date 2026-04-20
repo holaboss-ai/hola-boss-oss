@@ -78,6 +78,12 @@ interface WorkspaceDesktopContextValue {
   selectedCreateHarness: WorkspaceHarnessId;
   setSelectedCreateHarness: (value: string) => void;
   selectedTemplateFolder: TemplateFolderSelectionPayload | null;
+  selectedWorkspaceFolder: WorkspaceRuntimeFolderSelectionPayload | null;
+  clearSelectedWorkspaceFolder: () => void;
+  chooseWorkspaceFolder: () => Promise<void>;
+  relocateWorkspace: (workspaceId: string, newPath: string) => Promise<void>;
+  chooseWorkspaceRelocationFolder: (workspaceId: string) => Promise<void>;
+  activateWorkspace: (workspaceId: string) => Promise<void>;
   marketplaceTemplates: TemplateMetadataPayload[];
   selectedMarketplaceTemplate: TemplateMetadataPayload | null;
   selectMarketplaceTemplate: (templateName: string) => void;
@@ -165,6 +171,13 @@ function normalizeErrorMessage(error: unknown) {
     return "The desktop app couldn't complete that request. Try again in a moment.";
   }
 
+  // Path-overlap errors from the runtime (400 "workspacePath overlaps another
+  // workspace...") propagate through runtimeErrorFromBody → IPC → here as the
+  // raw detail string. No special-casing needed — the runtime message is clear
+  // enough ("That folder is already in use by another workspace. Delete that
+  // workspace first, then try again."). If the runtime changes the wording, add
+  // a normalized.includes("overlaps") branch here to rephrase it.
+
   return unwrappedMessage;
 }
 
@@ -220,6 +233,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   const [templateSourceMode, setTemplateSourceModeState] = useState<TemplateSourceMode>("local");
   const [selectedCreateHarness, setSelectedCreateHarnessState] = useState<WorkspaceHarnessId>(DEFAULT_WORKSPACE_HARNESS);
   const [selectedTemplateFolder, setSelectedTemplateFolder] = useState<TemplateFolderSelectionPayload | null>(null);
+  const [selectedWorkspaceFolder, setSelectedWorkspaceFolder] = useState<WorkspaceRuntimeFolderSelectionPayload | null>(null);
   const [marketplaceTemplates, setMarketplaceTemplates] = useState<TemplateMetadataPayload[]>([]);
   const [selectedMarketplaceTemplateName, setSelectedMarketplaceTemplateName] = useState("");
   const [selectedApps, setSelectedApps] = useState<Set<string>>(new Set());
@@ -568,6 +582,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     setWorkspaceErrorMessage("");
     try {
       const trimmedWorkspaceName = newWorkspaceName.trim() || "Desktop Workspace";
+      const customWorkspacePath = selectedWorkspaceFolder?.rootPath?.trim() || "";
       let response: WorkspaceResponsePayload;
       if (templateSourceMode === "marketplace") {
         if (!canUseMarketplaceTemplates) {
@@ -584,14 +599,16 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
           harness: selectedCreateHarness,
           name: trimmedWorkspaceName,
           template_mode: "template",
-          template_name: selectedMarketplaceTemplate.name
+          template_name: selectedMarketplaceTemplate.name,
+          ...(customWorkspacePath ? { workspace_path: customWorkspacePath } : {})
         });
       } else if (templateSourceMode === "empty" || templateSourceMode === "empty_onboarding") {
         response = await window.electronAPI.workspace.createWorkspace({
           holaboss_user_id: resolvedUserId || LOCAL_OSS_TEMPLATE_USER_ID,
           harness: selectedCreateHarness,
           name: trimmedWorkspaceName,
-          template_mode: templateSourceMode === "empty_onboarding" ? "empty_onboarding" : "empty"
+          template_mode: templateSourceMode === "empty_onboarding" ? "empty_onboarding" : "empty",
+          ...(customWorkspacePath ? { workspace_path: customWorkspacePath } : {})
         });
       } else {
         if (!selectedTemplateFolder?.rootPath) {
@@ -602,10 +619,12 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
           harness: selectedCreateHarness,
           name: trimmedWorkspaceName,
           template_mode: "template",
-          template_root_path: selectedTemplateFolder.rootPath
+          template_root_path: selectedTemplateFolder.rootPath,
+          ...(customWorkspacePath ? { workspace_path: customWorkspacePath } : {})
         });
       }
       setNewWorkspaceName("");
+      setSelectedWorkspaceFolder(null);
       await loadWorkspaceData({ preserveSelection: false, allowEmpty: true });
       const createdWorkspaceId = response.workspace.id;
       setSelectedWorkspaceId(createdWorkspaceId);
@@ -867,6 +886,56 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       }
     } catch (error) {
       setWorkspaceErrorMessage(normalizeErrorMessage(error));
+    }
+  }
+
+  async function chooseWorkspaceFolder() {
+    setWorkspaceErrorMessage("");
+    try {
+      const selection = await window.electronAPI.workspace.pickWorkspaceRuntimeFolder();
+      if (!selection.canceled && selection.rootPath) {
+        setSelectedWorkspaceFolder(selection);
+      }
+    } catch (error) {
+      setWorkspaceErrorMessage(normalizeErrorMessage(error));
+    }
+  }
+
+  function clearSelectedWorkspaceFolder() {
+    setSelectedWorkspaceFolder(null);
+  }
+
+  async function relocateWorkspace(workspaceId: string, newPath: string) {
+    setWorkspaceErrorMessage("");
+    try {
+      await window.electronAPI.workspace.relocate(workspaceId, newPath);
+      await loadWorkspaceData({ preserveSelection: true });
+    } catch (error) {
+      setWorkspaceErrorMessage(normalizeErrorMessage(error));
+      throw error;
+    }
+  }
+
+  async function chooseWorkspaceRelocationFolder(workspaceId: string) {
+    setWorkspaceErrorMessage("");
+    try {
+      const selection = await window.electronAPI.workspace.pickWorkspaceRelocationFolder(workspaceId);
+      if (!selection.canceled && selection.rootPath) {
+        await relocateWorkspace(workspaceId, selection.rootPath);
+      }
+    } catch (error) {
+      setWorkspaceErrorMessage(normalizeErrorMessage(error));
+    }
+  }
+
+  async function activateWorkspace(workspaceId: string) {
+    setWorkspaceErrorMessage("");
+    try {
+      await window.electronAPI.workspace.activate(workspaceId);
+      await loadWorkspaceData({ preserveSelection: true });
+    } catch (error) {
+      setWorkspaceErrorMessage(normalizeErrorMessage(error));
+      throw error;
     }
   }
 
@@ -1281,6 +1350,12 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       selectedCreateHarness,
       setSelectedCreateHarness,
       selectedTemplateFolder,
+      selectedWorkspaceFolder,
+      clearSelectedWorkspaceFolder,
+      chooseWorkspaceFolder,
+      relocateWorkspace,
+      chooseWorkspaceRelocationFolder,
+      activateWorkspace,
       marketplaceTemplates,
       selectedMarketplaceTemplate,
       selectMarketplaceTemplate,
@@ -1349,6 +1424,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       templateSourceMode,
       selectedCreateHarness,
       selectedTemplateFolder,
+      selectedWorkspaceFolder,
       marketplaceTemplates,
       selectedMarketplaceTemplate,
       newWorkspaceName,
@@ -1377,6 +1453,10 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       retryMarketplaceTemplates,
       refreshWorkspaceData,
       chooseTemplateFolder,
+      chooseWorkspaceFolder,
+      relocateWorkspace,
+      chooseWorkspaceRelocationFolder,
+      activateWorkspace,
       createWorkspace,
       deleteWorkspace,
       removeInstalledApp,

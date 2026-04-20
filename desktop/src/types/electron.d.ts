@@ -327,6 +327,9 @@ declare global {
     allowed_user_ids: string[];
     icon: string;
     emoji: string | null;
+    // Community-source templates omit these array fields on the wire; the
+    // main-process listMarketplaceTemplates() normalizes them to [] before
+    // reaching the renderer, so UI code can rely on them being present.
     apps: TemplateAppEntryPayload[];
     min_optional_apps: number;
     tags: string[];
@@ -369,6 +372,8 @@ declare global {
     created_at: string | null;
     updated_at: string | null;
     deleted_at_utc: string | null;
+    workspace_path?: string | null;
+    folder_state?: "healthy" | "missing" | null;
   }
 
   interface WorkspaceResponsePayload {
@@ -1061,6 +1066,7 @@ declare global {
     template_ref?: string | null;
     template_commit?: string | null;
     template_apps?: string[];
+    workspace_path?: string | null;
   }
 
   interface TemplateFolderSelectionPayload {
@@ -1068,6 +1074,11 @@ declare global {
     rootPath: string | null;
     templateName: string | null;
     description: string | null;
+  }
+
+  interface WorkspaceRuntimeFolderSelectionPayload {
+    canceled: boolean;
+    rootPath: string | null;
   }
 
   interface HolabossQueueSessionInputPayload {
@@ -1403,6 +1414,10 @@ declare global {
       getClientConfig: () => Promise<HolabossClientConfigPayload>;
       listMarketplaceTemplates: () => Promise<TemplateListResponsePayload>;
       pickTemplateFolder: () => Promise<TemplateFolderSelectionPayload>;
+      pickWorkspaceRuntimeFolder: () => Promise<WorkspaceRuntimeFolderSelectionPayload>;
+      pickWorkspaceRelocationFolder: (workspaceId: string) => Promise<WorkspaceRuntimeFolderSelectionPayload>;
+      relocate: (workspaceId: string, newPath: string) => Promise<WorkspaceResponsePayload>;
+      activate: (workspaceId: string) => Promise<WorkspaceResponsePayload>;
       listImportBrowserProfiles: (
         source: BrowserImportSource
       ) => Promise<BrowserImportProfileOptionPayload[]>;
@@ -1424,7 +1439,7 @@ declare global {
       listSkills: (workspaceId: string) => Promise<WorkspaceSkillListResponsePayload>;
       getWorkspaceRoot: (workspaceId: string) => Promise<string>;
       createWorkspace: (payload: HolabossCreateWorkspacePayload) => Promise<WorkspaceResponsePayload>;
-      deleteWorkspace: (workspaceId: string) => Promise<WorkspaceResponsePayload>;
+      deleteWorkspace: (workspaceId: string, keepFiles?: boolean) => Promise<WorkspaceResponsePayload>;
       listCronjobs: (workspaceId: string, enabledOnly?: boolean) => Promise<CronjobListResponsePayload>;
       runCronjobNow: (jobId: string) => Promise<CronjobRunResponsePayload>;
       createCronjob: (payload: CronjobCreatePayload) => Promise<CronjobRecordPayload>;

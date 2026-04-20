@@ -9,15 +9,17 @@ const mainSourcePath = path.join(__dirname, "main.ts");
 
 test("workspace deletion is handled locally without calling the control plane", async () => {
   const source = await readFile(mainSourcePath, "utf8");
+  // Extract deleteWorkspace function body — ends at the next async function declaration.
   const deleteWorkspaceFunction =
     source.match(
-      /async function deleteWorkspace\(\s*workspaceId: string,\s*\): Promise<WorkspaceResponsePayload> \{[\s\S]*?\n}\n\nasync function listRuntimeStates/,
+      /async function deleteWorkspace\([\s\S]*?\n}\n\nasync function /,
     )?.[0] ?? "";
 
   assert.match(
     deleteWorkspaceFunction,
-    /return requestRuntimeJson<WorkspaceResponsePayload>\(\{\s*method: "DELETE",\s*path: `\/api\/v1\/workspaces\/\$\{encodeURIComponent\(workspaceId\)\}`,\s*\}\);/,
+    /requestRuntimeJson<WorkspaceResponsePayload>\(\{[\s\S]*?method: "DELETE",[\s\S]*?path: `\/api\/v1\/workspaces\/\$\{encodeURIComponent\(safeWorkspaceId\)\}`/,
   );
+  assert.match(deleteWorkspaceFunction, /forgetWorkspaceDir\(safeWorkspaceId\)/);
   assert.doesNotMatch(deleteWorkspaceFunction, /requestControlPlaneJson/);
   assert.doesNotMatch(deleteWorkspaceFunction, /controlPlaneWorkspaceUserId/);
   assert.doesNotMatch(deleteWorkspaceFunction, /projects\/workspaces/);

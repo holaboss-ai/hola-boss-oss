@@ -522,6 +522,14 @@ export interface CreateWorkspaceParams {
   onboardingStatus?: string;
   onboardingSessionId?: string | null;
   errorMessage?: string | null;
+  /**
+   * Optional absolute path to use as the workspace's on-disk directory.
+   * When omitted, the workspace is placed under the runtime's managed
+   * workspaceRoot using the (sanitized) workspace id. When provided, the
+   * path must be absolute and must point at a non-existent location or
+   * an empty directory — the store refuses to clobber existing contents.
+   */
+  workspacePath?: string;
 }
 
 export interface RuntimeStateStoreOptions {
@@ -719,14 +727,46 @@ export class RuntimeStateStore {
     return path.join(this.workspaceDir(workspaceId), WORKSPACE_RUNTIME_DIRNAME, WORKSPACE_IDENTITY_FILENAME);
   }
 
+  /**
+   * Returns the *last-known* on-disk path for this workspace. For custom
+   * user-chosen paths the registry is always authoritative — we do not
+   * silently relocate behind the user's back. For managed paths inside
+   * the runtime's workspaceRoot we still recover from renames (the legacy
+   * behavior) because that root is ours to manage.
+   *
+   * Callers that need a usable directory must check workspaceFolderState()
+   * or use assertWorkspaceFolderHealthy() — workspaceDir() will return the
+   * last-known path even when the folder has been deleted, so "folder is
+   * gone" stays observable instead of being masked by a fallback.
+   */
   workspaceDir(workspaceId: string): string {
     this.ensureWorkspaceMetadataReady();
 
     const registered = this.workspacePathFromRegistry(workspaceId);
-    if (registered && fs.existsSync(registered) && fs.statSync(registered).isDirectory()) {
+    if (registered) {
+      // Auto-recover only for managed paths that got renamed under us.
+      // Custom paths never auto-rewrite — user sees truth via folder_state.
+      if (this.isWithinManagedRoot(registered)) {
+        const exists =
+          (() => {
+            try {
+              return fs.existsSync(registered) && fs.statSync(registered).isDirectory();
+            } catch {
+              return false;
+            }
+          })();
+        if (!exists) {
+          const discovered = this.discoverWorkspacePath(workspaceId);
+          if (discovered) {
+            this.updateWorkspacePath(workspaceId, discovered);
+            return discovered;
+          }
+        }
+      }
       return registered;
     }
 
+    // No registered path at all (legacy / migrated row).
     const discovered = this.discoverWorkspacePath(workspaceId);
     if (discovered) {
       this.updateWorkspacePath(workspaceId, discovered);
@@ -734,6 +774,54 @@ export class RuntimeStateStore {
     }
 
     return this.defaultWorkspaceDir(workspaceId);
+  }
+
+  private isWithinManagedRoot(candidate: string): boolean {
+    const resolvedCandidate = path.resolve(candidate);
+    const resolvedRoot = path.resolve(this.workspaceRoot);
+    return (
+      resolvedCandidate === resolvedRoot ||
+      resolvedCandidate.startsWith(resolvedRoot + path.sep)
+    );
+  }
+
+  /**
+   * Classifies the on-disk folder as "healthy" or "missing". Missing covers
+   * all "can't use this folder right now" conditions (deleted, moved,
+   * unmounted drive, permission revoked, replaced-by-file) — the
+   * remediation in the UI is the same for all of them: relocate or remove
+   * the record. Identity-file mismatch is NOT checked here; that is a
+   * one-time activation check (see activateWorkspaceFolder).
+   */
+  workspaceFolderState(workspaceId: string): "healthy" | "missing" {
+    const dir = this.workspaceDir(workspaceId);
+    try {
+      if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
+        return "healthy";
+      }
+    } catch {
+      // Fall through — any stat error means we can't trust the folder.
+    }
+    return "missing";
+  }
+
+  /**
+   * Throws a structured error if the workspace folder is not healthy. Use
+   * this at the start of side-effecting operations (agent runs, app start,
+   * template materialization, writes) to surface a clean error instead of
+   * letting downstream fs calls fail with raw ENOENT.
+   */
+  assertWorkspaceFolderHealthy(workspaceId: string): string {
+    const dir = this.workspaceDir(workspaceId);
+    if (this.workspaceFolderState(workspaceId) === "healthy") {
+      return dir;
+    }
+    const err = new Error(
+      `workspace folder is missing at ${dir}. Relocate the workspace or delete the record.`,
+    ) as Error & { code?: string; workspacePath?: string };
+    err.code = "workspace_folder_missing";
+    err.workspacePath = dir;
+    throw err;
   }
 
   listWorkspaces(options: { includeDeleted?: boolean } = {}): WorkspaceRecord[] {
@@ -806,11 +894,132 @@ export class RuntimeStateStore {
       deletedAtUtc: null
     };
 
-    const workspacePath = this.defaultWorkspaceDir(workspaceId);
+    const workspacePath = this.resolveCreateWorkspacePath(params.workspacePath, workspaceId);
     fs.mkdirSync(workspacePath, { recursive: true });
     this.writeWorkspaceIdentityFile(workspacePath, workspaceId);
     this.upsertWorkspaceRow(record, workspacePath);
     return record;
+  }
+
+  private resolveCreateWorkspacePath(requested: string | undefined, workspaceId: string): string {
+    const trimmed = requested?.trim();
+    if (!trimmed) {
+      return this.defaultWorkspaceDir(workspaceId);
+    }
+    return this.validateUserChosenWorkspacePath(trimmed, { workspaceId, allowMatchingIdentity: false });
+  }
+
+  /**
+   * Shared validator for a user-provided workspace path (create or relocate).
+   * Rules: absolute, no overlap with any OTHER registered workspace, and
+   * the target is either (a) non-existent, (b) empty, or (c) already holds
+   * an identity file matching `workspaceId` when `allowMatchingIdentity`
+   * is true (relocation of a moved folder).
+   */
+  private validateUserChosenWorkspacePath(
+    requested: string,
+    options: { workspaceId: string; allowMatchingIdentity: boolean }
+  ): string {
+    if (!path.isAbsolute(requested)) {
+      throw new Error(`workspacePath must be absolute: ${requested}`);
+    }
+    const resolved = path.resolve(requested);
+
+    // Reject the runtime's managed workspaceRoot itself (or any ancestor of
+    // it). If a user registered workspaceRoot as their custom path, future
+    // default-managed workspaces would be created nested inside it (at
+    // workspaceRoot/<id>), and deleting the custom workspace would wipe the
+    // whole managed tree along with it.
+    const managedRoot = path.resolve(this.workspaceRoot);
+    const sep = path.sep;
+    if (resolved === managedRoot) {
+      throw new Error(`workspacePath cannot be the runtime's managed workspace root: ${resolved}`);
+    }
+    if (managedRoot.startsWith(resolved + sep)) {
+      throw new Error(`workspacePath cannot contain the runtime's managed workspace root: ${resolved}`);
+    }
+
+    // Reject placing the workspace inside another registered workspace's
+    // root — that would nest two workspaces and confuse discovery.
+    // Soft-deleted rows are excluded: once a workspace is removed, its
+    // former path is fair game for reuse (the metadata was already
+    // stripped during DELETE).
+    const rows = this.db()
+      .prepare<[], { id: string; workspace_path: string }>(
+        "SELECT id, workspace_path FROM workspaces WHERE deleted_at_utc IS NULL"
+      )
+      .all();
+    for (const row of rows) {
+      if (row.id === options.workspaceId) {
+        continue;
+      }
+      const other = path.resolve(row.workspace_path);
+      if (resolved === other) {
+        throw new Error(`workspacePath already registered to another workspace: ${resolved}`);
+      }
+      if (resolved.startsWith(other + sep) || other.startsWith(resolved + sep)) {
+        throw new Error(`workspacePath overlaps another workspace: ${resolved} vs ${other}`);
+      }
+    }
+    if (fs.existsSync(resolved)) {
+      const stat = fs.statSync(resolved);
+      if (!stat.isDirectory()) {
+        throw new Error(`workspacePath is not a directory: ${resolved}`);
+      }
+      // Allow a folder that already contains this workspace's identity file
+      // (relocate case — user moved the folder elsewhere on disk).
+      if (options.allowMatchingIdentity) {
+        const identityPath = path.join(resolved, WORKSPACE_RUNTIME_DIRNAME, WORKSPACE_IDENTITY_FILENAME);
+        if (fs.existsSync(identityPath)) {
+          try {
+            const raw = fs.readFileSync(identityPath, "utf-8").trim();
+            if (raw === options.workspaceId) {
+              return resolved;
+            }
+          } catch {
+            // fall through — unreadable identity means we can't trust it
+          }
+        }
+      }
+      const entries = fs.readdirSync(resolved).filter((name) => name !== ".DS_Store");
+      if (entries.length > 0) {
+        throw new Error(`workspacePath must be empty, but contains ${entries.length} entries: ${resolved}`);
+      }
+    }
+    return resolved;
+  }
+
+  /**
+   * Re-point an existing workspace at a different absolute path.
+   *
+   * The new path must be empty/non-existent OR already contain an identity
+   * file matching this workspaceId (= user moved their folder elsewhere on
+   * disk and wants us to re-bind). Updates the registry row and ensures the
+   * identity file is present at the new location. Does NOT copy files from
+   * the old location — relocation is "re-register at a spot the user
+   * already has set up".
+   */
+  relocateWorkspace(workspaceId: string, newPath: string): WorkspaceRecord {
+    const existing = this.getWorkspace(workspaceId, { includeDeleted: false });
+    if (!existing) {
+      throw new Error(`workspace ${workspaceId} not found`);
+    }
+    const trimmed = newPath.trim();
+    if (!trimmed) {
+      throw new Error("workspacePath is required");
+    }
+    const resolved = this.validateUserChosenWorkspacePath(trimmed, {
+      workspaceId,
+      allowMatchingIdentity: true
+    });
+    fs.mkdirSync(resolved, { recursive: true });
+    this.writeWorkspaceIdentityFile(resolved, workspaceId);
+    this.updateWorkspacePath(workspaceId, resolved);
+    const refreshed = this.getWorkspace(workspaceId, { includeDeleted: false });
+    if (!refreshed) {
+      throw new Error(`workspace ${workspaceId} not found after relocate`);
+    }
+    return refreshed;
   }
 
   updateWorkspace(workspaceId: string, fields: WorkspaceUpdateFields): WorkspaceRecord {
@@ -869,11 +1078,20 @@ export class RuntimeStateStore {
   }
 
   deleteWorkspace(workspaceId: string): WorkspaceRecord {
-    return this.updateWorkspace(workspaceId, {
+    const result = this.updateWorkspace(workspaceId, {
       status: "deleted",
       deletedAtUtc: utcNowIso(),
       errorMessage: null
     });
+    // Release the path claim. The workspaces.workspace_path column has a
+    // UNIQUE constraint, so keeping the original path on a soft-deleted row
+    // would block the user from ever reusing that folder for a new
+    // workspace ("remove from Holaboss but keep my files" must be
+    // reversible). Stamp a tombstone that is unique per workspace id and
+    // identifiable in diagnostics.
+    const tombstone = `__deleted__/${workspaceId}/${Date.now()}`;
+    this.db().prepare("UPDATE workspaces SET workspace_path = ? WHERE id = ?").run(tombstone, workspaceId);
+    return result;
   }
 
   ensureSession(

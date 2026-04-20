@@ -608,7 +608,11 @@ function attachmentsFromInputPayload(value: unknown): SessionInputAttachmentPayl
   return value.map((item) => parseSessionInputAttachment(item)).filter((item): item is SessionInputAttachmentPayload => Boolean(item));
 }
 
-function workspaceRecordPayload(workspace: WorkspaceRecord): Record<string, unknown> {
+function workspaceRecordPayload(
+  workspace: WorkspaceRecord,
+  workspacePath?: string | null,
+  folderState?: "healthy" | "missing" | null
+): Record<string, unknown> {
   return {
     id: workspace.id,
     name: workspace.name,
@@ -623,8 +627,113 @@ function workspaceRecordPayload(workspace: WorkspaceRecord): Record<string, unkn
     onboarding_requested_by: workspace.onboardingRequestedBy,
     created_at: workspace.createdAt,
     updated_at: workspace.updatedAt,
-    deleted_at_utc: workspace.deletedAtUtc
+    deleted_at_utc: workspace.deletedAtUtc,
+    workspace_path: workspacePath ?? null,
+    folder_state: folderState ?? null
   };
+}
+
+/**
+ * Small per-request memoizer so LIST endpoints don't stat every workspace
+ * folder repeatedly when multiple lookups hit the same id. Use:
+ *   const memo = createWorkspaceFolderCache(store);
+ *   memo.path(id); memo.state(id);
+ */
+function createWorkspaceFolderCache(store: RuntimeStateStore): {
+  path: (id: string) => string | null;
+  state: (id: string) => "healthy" | "missing" | null;
+} {
+  const paths = new Map<string, string | null>();
+  const states = new Map<string, "healthy" | "missing" | null>();
+  return {
+    path: (id: string) => {
+      if (paths.has(id)) {
+        return paths.get(id) ?? null;
+      }
+      let value: string | null = null;
+      try {
+        value = store.workspaceDir(id);
+      } catch {
+        value = null;
+      }
+      paths.set(id, value);
+      return value;
+    },
+    state: (id: string) => {
+      if (states.has(id)) {
+        return states.get(id) ?? null;
+      }
+      let value: "healthy" | "missing" | null = null;
+      try {
+        value = store.workspaceFolderState(id);
+      } catch {
+        value = null;
+      }
+      states.set(id, value);
+      return value;
+    }
+  };
+}
+
+function resolveWorkspacePathForPayload(
+  store: RuntimeStateStore,
+  workspaceId: string
+): string | null {
+  try {
+    return store.workspaceDir(workspaceId);
+  } catch {
+    return null;
+  }
+}
+
+function resolveWorkspaceFolderStateForPayload(
+  store: RuntimeStateStore,
+  workspaceId: string
+): "healthy" | "missing" | null {
+  try {
+    return store.workspaceFolderState(workspaceId);
+  } catch {
+    return null;
+  }
+}
+
+function isPathWithinWorkspaceRoot(candidate: string, workspaceRoot: string): boolean {
+  const resolvedCandidate = path.resolve(candidate);
+  const resolvedRoot = path.resolve(workspaceRoot);
+  if (resolvedCandidate === resolvedRoot) {
+    return true;
+  }
+  return resolvedCandidate.startsWith(resolvedRoot + path.sep);
+}
+
+/**
+ * Guards endpoints that are about to read or write the workspace folder.
+ * Returns the workspace dir on success; sends a 409 and returns null if the
+ * folder is missing. Callers: `if (!dir) return;` pattern.
+ *
+ * The structured 409 response lets the desktop surface "folder is missing —
+ * relocate or delete" instead of raw ENOENT text from downstream fs calls.
+ */
+function requireHealthyWorkspaceFolder(
+  store: RuntimeStateStore,
+  workspaceId: string,
+  reply: FastifyReply
+): string | null {
+  try {
+    return store.assertWorkspaceFolderHealthy(workspaceId);
+  } catch (error) {
+    const err = error as Error & { code?: string; workspacePath?: string };
+    if (err?.code === "workspace_folder_missing") {
+      reply.code(409).send({
+        detail: err.message,
+        code: "workspace_folder_missing",
+        workspace_path: err.workspacePath ?? null
+      });
+      return null;
+    }
+    reply.code(500).send({ detail: err instanceof Error ? err.message : "workspace folder check failed" });
+    return null;
+  }
 }
 
 function agentSessionPayload(record: AgentSessionRecord): Record<string, unknown> {
@@ -4033,7 +4142,8 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         status: optionalString(request.body.status) ?? "provisioning",
         onboardingStatus: optionalString(request.body.onboarding_status) ?? "not_required",
         onboardingSessionId: nullableString(request.body.onboarding_session_id) ?? null,
-        errorMessage: nullableString(request.body.error_message) ?? null
+        errorMessage: nullableString(request.body.error_message) ?? null,
+        workspacePath: optionalString(request.body.workspace_path)
       });
 
       let workspace = created;
@@ -4061,7 +4171,13 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         });
       }
 
-      return reply.send({ workspace: workspaceRecordPayload(workspace) });
+      return reply.send({
+        workspace: workspaceRecordPayload(
+          workspace,
+          resolveWorkspacePathForPayload(store, workspace.id),
+          resolveWorkspaceFolderStateForPayload(store, workspace.id)
+        )
+      });
     } catch (error) {
       return sendError(reply, 400, error instanceof Error ? error.message : "failed to create workspace");
     }
@@ -4080,8 +4196,11 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
 
     const paged = items.slice(offset, offset + limit);
+    const folderCache = createWorkspaceFolderCache(store);
     return {
-      items: paged.map((item: WorkspaceRecord) => workspaceRecordPayload(item)),
+      items: paged.map((item: WorkspaceRecord) =>
+        workspaceRecordPayload(item, folderCache.path(item.id), folderCache.state(item.id))
+      ),
       total: items.length,
       limit,
       offset
@@ -4097,7 +4216,13 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!workspace) {
       return sendError(reply, 404, "workspace not found");
     }
-    return { workspace: workspaceRecordPayload(workspace) };
+    return {
+      workspace: workspaceRecordPayload(
+        workspace,
+        resolveWorkspacePathForPayload(store, workspace.id),
+        resolveWorkspaceFolderStateForPayload(store, workspace.id)
+      )
+    };
   });
 
   app.patch("/api/v1/workspaces/:workspaceId", async (request, reply) => {
@@ -4136,8 +4261,48 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         fields.onboardingRequestedBy = nullableString(request.body.onboarding_requested_by);
       }
 
+      // Workspace path relocation. This is intentionally a separate branch
+      // from the normal status/onboarding updates: it needs filesystem-level
+      // validation (empty-or-matching-identity target) and can fail with
+      // 400 rather than 404.
+      if (hasOwn(request.body, "workspace_path")) {
+        const nextPath = optionalString(request.body.workspace_path) ?? "";
+        if (!nextPath) {
+          return sendError(reply, 400, "workspace_path must be a non-empty string");
+        }
+        let relocated: WorkspaceRecord;
+        try {
+          relocated = store.relocateWorkspace(params.workspaceId, nextPath);
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : "workspace relocation failed";
+          // "workspace X not found" → 404, everything else → 400 (validation).
+          if (/not found/.test(msg)) {
+            return sendError(reply, 404, "workspace not found");
+          }
+          return sendError(reply, 400, msg);
+        }
+        // Apply any other patched fields on top of the relocated record.
+        const workspace =
+          Object.keys(fields).length > 0
+            ? store.updateWorkspace(params.workspaceId, fields)
+            : relocated;
+        return {
+          workspace: workspaceRecordPayload(
+            workspace,
+            resolveWorkspacePathForPayload(store, workspace.id),
+            resolveWorkspaceFolderStateForPayload(store, workspace.id)
+          )
+        };
+      }
+
       const workspace = store.updateWorkspace(params.workspaceId, fields);
-      return { workspace: workspaceRecordPayload(workspace) };
+      return {
+        workspace: workspaceRecordPayload(
+          workspace,
+          resolveWorkspacePathForPayload(store, workspace.id),
+          resolveWorkspaceFolderStateForPayload(store, workspace.id)
+        )
+      };
     } catch (error) {
       return sendError(reply, 404, error instanceof Error ? error.message.replace(/^workspace .* not found$/, "workspace not found") : "workspace not found");
     }
@@ -4145,6 +4310,13 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
   app.delete("/api/v1/workspaces/:workspaceId", async (request, reply) => {
     const params = request.params as { workspaceId: string };
+    const query = isRecord(request.query) ? request.query : {};
+    // keep_files overrides the default wipe behavior. Unspecified → default
+    // (managed path wipes; custom path keeps user files). Explicit true/false
+    // forces that semantic regardless of path.
+    const keepFilesRequested = hasOwn(query, "keep_files")
+      ? optionalBoolean(query.keep_files, false)
+      : null;
     const workspace = store.getWorkspace(params.workspaceId, { includeDeleted: true });
     if (!workspace || workspace.deletedAtUtc) {
       // Idempotent: workspace already gone or never existed — treat as success
@@ -4165,7 +4337,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
           onboarding_requested_by: null,
           created_at: workspace?.createdAt ?? null,
           updated_at: workspace?.updatedAt ?? null,
-          deleted_at_utc: workspace?.deletedAtUtc ?? new Date().toISOString()
+          deleted_at_utc: workspace?.deletedAtUtc ?? new Date().toISOString(),
+          workspace_path: null,
+          folder_state: null
         }
       };
     }
@@ -4176,8 +4350,24 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         workspaceDir
       });
       const deletedWorkspace = store.deleteWorkspace(params.workspaceId);
-      fs.rmSync(workspaceDir, { recursive: true, force: true });
-      return { workspace: workspaceRecordPayload(deletedWorkspace) };
+      // Decide whether to wipe the folder. Three cases:
+      //   keep_files=true  → never wipe, only remove .holaboss metadata
+      //   keep_files=false → always wipe the whole folder
+      //   unspecified      → default: managed paths wipe, custom paths keep
+      const isManagedPath = isPathWithinWorkspaceRoot(workspaceDir, store.workspaceRoot);
+      const shouldWipe =
+        keepFilesRequested === true
+          ? false
+          : keepFilesRequested === false
+            ? true
+            : isManagedPath;
+      if (shouldWipe) {
+        fs.rmSync(workspaceDir, { recursive: true, force: true });
+      } else {
+        const metadataDir = path.join(workspaceDir, ".holaboss");
+        fs.rmSync(metadataDir, { recursive: true, force: true });
+      }
+      return { workspace: workspaceRecordPayload(deletedWorkspace, workspaceDir, "missing") };
     } catch (error) {
       return sendError(reply, 500, error instanceof Error ? error.message : "workspace delete failed");
     }
@@ -4210,6 +4400,59 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
+  // Workspaces activated in the current runtime boot. First activation
+  // per workspace per boot reads the .holaboss/workspace_id identity file
+  // to confirm the folder on disk really belongs to this workspace. We
+  // don't re-check on every write — users are free to edit AGENTS.md,
+  // skills, workspace.yaml, apps, etc.
+  const activatedWorkspaceIds = new Set<string>();
+
+  app.post("/api/v1/workspaces/:workspaceId/activate", async (request, reply) => {
+    const params = request.params as { workspaceId: string };
+    const workspaceId = params.workspaceId;
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+
+    const workspaceDir = store.workspaceDir(workspaceId);
+    const buildPayload = (folderState: "healthy" | "missing") => ({
+      workspace: workspaceRecordPayload(workspace, workspaceDir, folderState)
+    });
+
+    if (activatedWorkspaceIds.has(workspaceId)) {
+      // Already activated this boot — skip the identity read.
+      return reply.send(buildPayload(store.workspaceFolderState(workspaceId)));
+    }
+
+    if (store.workspaceFolderState(workspaceId) !== "healthy") {
+      return reply.code(409).send({
+        detail: `workspace folder is missing at ${workspaceDir}. Relocate the workspace or delete the record.`,
+        code: "workspace_folder_missing",
+        workspace_path: workspaceDir
+      });
+    }
+
+    const identityPath = store.workspaceIdentityPath(workspaceId);
+    let identityMatches = false;
+    try {
+      const raw = fs.readFileSync(identityPath, "utf-8").trim();
+      identityMatches = raw === workspaceId;
+    } catch {
+      identityMatches = false;
+    }
+    if (!identityMatches) {
+      return reply.code(409).send({
+        detail: `workspace folder at ${workspaceDir} no longer looks like the original workspace. Relocate the workspace or delete the record.`,
+        code: "workspace_identity_mismatch",
+        workspace_path: workspaceDir
+      });
+    }
+
+    activatedWorkspaceIds.add(workspaceId);
+    return reply.send(buildPayload("healthy"));
+  });
+
   app.post("/api/v1/workspaces/:workspaceId/apply-template", async (request, reply) => {
     if (!isRecord(request.body)) {
       return sendError(reply, 400, "request body must be an object");
@@ -4217,7 +4460,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const params = request.params as { workspaceId: string };
     const files = Array.isArray(request.body.files) ? request.body.files : [];
     const replaceExisting = optionalBoolean(request.body.replace_existing, false);
-    const workspaceDir = store.workspaceDir(params.workspaceId);
+    const workspaceDir = requireHealthyWorkspaceFolder(store, params.workspaceId, reply);
+    if (!workspaceDir) {
+      return;
+    }
 
     fs.mkdirSync(workspaceDir, { recursive: true });
     if (replaceExisting) {
@@ -4264,7 +4510,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const url = requiredString(request.body.url, "url");
     const replaceExisting = optionalBoolean(request.body.replace_existing, false);
     const apiKey = optionalString(request.body.api_key);
-    const workspaceDir = store.workspaceDir(params.workspaceId);
+    const workspaceDir = requireHealthyWorkspaceFolder(store, params.workspaceId, reply);
+    if (!workspaceDir) {
+      return;
+    }
 
     fs.mkdirSync(workspaceDir, { recursive: true });
     if (replaceExisting) {
@@ -4340,7 +4589,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "request body must be an object");
     }
     const params = request.params as { workspaceId: string; "*": string };
-    const workspaceDir = store.workspaceDir(params.workspaceId);
+    const workspaceDir = requireHealthyWorkspaceFolder(store, params.workspaceId, reply);
+    if (!workspaceDir) {
+      return;
+    }
     let fullPath: string;
     try {
       fullPath = resolveWorkspaceFilePath(workspaceDir, params["*"] ?? "");
@@ -4411,7 +4663,13 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const workspaceId = optionalString(query.workspace_id);
     let workspaceDir: string | null = null;
     if (workspaceId) {
-      workspaceDir = path.join(store.workspaceRoot, workspaceId);
+      // Must go through the store to respect user-chosen custom workspace
+      // paths — not all workspaces live under workspaceRoot/<id>.
+      try {
+        workspaceDir = store.workspaceDir(workspaceId);
+      } catch {
+        workspaceDir = null;
+      }
     } else if (fs.existsSync(store.workspaceRoot)) {
       for (const entry of fs.readdirSync(store.workspaceRoot, { withFileTypes: true })) {
         if (!entry.isDirectory()) {
@@ -4778,6 +5036,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const workspace = store.getWorkspace(workspaceId);
     if (!workspace) {
       return sendError(reply, 404, "workspace not found");
+    }
+    if (!requireHealthyWorkspaceFolder(store, workspaceId, reply)) {
+      return;
     }
 
     let appId: string;
@@ -5312,6 +5573,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const workspace = store.getWorkspace(workspaceId);
     if (!workspace) {
       return sendError(reply, 404, "workspace not found");
+    }
+    if (!requireHealthyWorkspaceFolder(store, workspaceId, reply)) {
+      return;
     }
     const blockingApps = blockingWorkspaceApps({ store, workspaceId });
     if (blockingApps.length > 0) {
