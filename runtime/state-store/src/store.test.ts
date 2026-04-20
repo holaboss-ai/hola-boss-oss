@@ -219,6 +219,93 @@ test("assertWorkspaceFolderHealthy throws a structured error when missing", () =
   store.close();
 });
 
+test("relocateWorkspace accepts an empty directory and re-registers", () => {
+  const root = makeTempDir("hb-state-store-");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const newPath = path.join(customRoot, "new-home");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({ workspaceId: "ws-r", name: "R", harness: "pi" });
+
+  const updated = store.relocateWorkspace("ws-r", newPath);
+
+  assert.equal(updated.id, "ws-r");
+  assert.equal(path.resolve(store.workspaceDir("ws-r")), path.resolve(newPath));
+  const identity = fs
+    .readFileSync(path.join(newPath, ".holaboss", "workspace_id"), "utf-8")
+    .trim();
+  assert.equal(identity, "ws-r");
+  store.close();
+});
+
+test("relocateWorkspace accepts a directory that already has a matching identity file", () => {
+  const root = makeTempDir("hb-state-store-");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const movedPath = path.join(customRoot, "moved");
+  // Pre-seed the folder as if the user moved a workspace dir here.
+  fs.mkdirSync(path.join(movedPath, ".holaboss"), { recursive: true });
+  fs.writeFileSync(path.join(movedPath, ".holaboss", "workspace_id"), "ws-moved");
+  fs.writeFileSync(path.join(movedPath, "AGENTS.md"), "preserved");
+
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({ workspaceId: "ws-moved", name: "M", harness: "pi" });
+
+  store.relocateWorkspace("ws-moved", movedPath);
+
+  // Pre-existing content is preserved (we don't wipe).
+  assert.equal(fs.readFileSync(path.join(movedPath, "AGENTS.md"), "utf-8"), "preserved");
+  assert.equal(path.resolve(store.workspaceDir("ws-moved")), path.resolve(movedPath));
+  store.close();
+});
+
+test("relocateWorkspace rejects a non-empty directory without matching identity", () => {
+  const root = makeTempDir("hb-state-store-");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const dirtyPath = path.join(customRoot, "dirty");
+  fs.mkdirSync(dirtyPath, { recursive: true });
+  fs.writeFileSync(path.join(dirtyPath, "someone-elses-file.txt"), "not mine");
+
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({ workspaceId: "ws-x", name: "X", harness: "pi" });
+
+  assert.throws(
+    () => store.relocateWorkspace("ws-x", dirtyPath),
+    /must be empty/
+  );
+  store.close();
+});
+
+test("relocateWorkspace rejects a path that overlaps another workspace", () => {
+  const root = makeTempDir("hb-state-store-");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const usedPath = path.join(customRoot, "used");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "ws-a",
+    name: "A",
+    harness: "pi",
+    workspacePath: usedPath
+  });
+  store.createWorkspace({ workspaceId: "ws-b", name: "B", harness: "pi" });
+
+  assert.throws(
+    () => store.relocateWorkspace("ws-b", usedPath),
+    /already registered/
+  );
+  store.close();
+});
+
 test("runtime schema migrates workspace rows to registry and identity file", () => {
   const root = makeTempDir("hb-state-store-");
   const dbPath = path.join(root, "runtime.db");

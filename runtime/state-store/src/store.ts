@@ -906,16 +906,35 @@ export class RuntimeStateStore {
     if (!trimmed) {
       return this.defaultWorkspaceDir(workspaceId);
     }
-    if (!path.isAbsolute(trimmed)) {
-      throw new Error(`workspacePath must be absolute: ${trimmed}`);
+    return this.validateUserChosenWorkspacePath(trimmed, { workspaceId, allowMatchingIdentity: false });
+  }
+
+  /**
+   * Shared validator for a user-provided workspace path (create or relocate).
+   * Rules: absolute, no overlap with any OTHER registered workspace, and
+   * the target is either (a) non-existent, (b) empty, or (c) already holds
+   * an identity file matching `workspaceId` when `allowMatchingIdentity`
+   * is true (relocation of a moved folder).
+   */
+  private validateUserChosenWorkspacePath(
+    requested: string,
+    options: { workspaceId: string; allowMatchingIdentity: boolean }
+  ): string {
+    if (!path.isAbsolute(requested)) {
+      throw new Error(`workspacePath must be absolute: ${requested}`);
     }
-    const resolved = path.resolve(trimmed);
+    const resolved = path.resolve(requested);
     // Reject placing the workspace inside another registered workspace's
     // root — that would nest two workspaces and confuse discovery.
-    const existing = this.db()
-      .prepare<[], { workspace_path: string }>("SELECT workspace_path FROM workspaces")
+    const rows = this.db()
+      .prepare<[], { id: string; workspace_path: string }>(
+        "SELECT id, workspace_path FROM workspaces"
+      )
       .all();
-    for (const row of existing) {
+    for (const row of rows) {
+      if (row.id === options.workspaceId) {
+        continue;
+      }
       const other = path.resolve(row.workspace_path);
       if (resolved === other) {
         throw new Error(`workspacePath already registered to another workspace: ${resolved}`);
@@ -930,12 +949,60 @@ export class RuntimeStateStore {
       if (!stat.isDirectory()) {
         throw new Error(`workspacePath is not a directory: ${resolved}`);
       }
+      // Allow a folder that already contains this workspace's identity file
+      // (relocate case — user moved the folder elsewhere on disk).
+      if (options.allowMatchingIdentity) {
+        const identityPath = path.join(resolved, WORKSPACE_RUNTIME_DIRNAME, WORKSPACE_IDENTITY_FILENAME);
+        if (fs.existsSync(identityPath)) {
+          try {
+            const raw = fs.readFileSync(identityPath, "utf-8").trim();
+            if (raw === options.workspaceId) {
+              return resolved;
+            }
+          } catch {
+            // fall through — unreadable identity means we can't trust it
+          }
+        }
+      }
       const entries = fs.readdirSync(resolved).filter((name) => name !== ".DS_Store");
       if (entries.length > 0) {
         throw new Error(`workspacePath must be empty, but contains ${entries.length} entries: ${resolved}`);
       }
     }
     return resolved;
+  }
+
+  /**
+   * Re-point an existing workspace at a different absolute path.
+   *
+   * The new path must be empty/non-existent OR already contain an identity
+   * file matching this workspaceId (= user moved their folder elsewhere on
+   * disk and wants us to re-bind). Updates the registry row and ensures the
+   * identity file is present at the new location. Does NOT copy files from
+   * the old location — relocation is "re-register at a spot the user
+   * already has set up".
+   */
+  relocateWorkspace(workspaceId: string, newPath: string): WorkspaceRecord {
+    const existing = this.getWorkspace(workspaceId, { includeDeleted: false });
+    if (!existing) {
+      throw new Error(`workspace ${workspaceId} not found`);
+    }
+    const trimmed = newPath.trim();
+    if (!trimmed) {
+      throw new Error("workspacePath is required");
+    }
+    const resolved = this.validateUserChosenWorkspacePath(trimmed, {
+      workspaceId,
+      allowMatchingIdentity: true
+    });
+    fs.mkdirSync(resolved, { recursive: true });
+    this.writeWorkspaceIdentityFile(resolved, workspaceId);
+    this.updateWorkspacePath(workspaceId, resolved);
+    const refreshed = this.getWorkspace(workspaceId, { includeDeleted: false });
+    if (!refreshed) {
+      throw new Error(`workspace ${workspaceId} not found after relocate`);
+    }
+    return refreshed;
   }
 
   updateWorkspace(workspaceId: string, fields: WorkspaceUpdateFields): WorkspaceRecord {
