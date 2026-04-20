@@ -2356,7 +2356,87 @@ test("compactPiSession returns a structured result for successful snapshot compa
       modifiedFiles: ["src/pi.ts"],
     },
   });
+  assert.equal(result.reason, null);
+  assert.equal(result.diagnostics, null);
+  assert.equal(result.error, null);
   assert.equal(disposed, true);
+});
+
+test("compactPiSession returns structured error diagnostics for snapshot compaction failures", async () => {
+  let listener: ((event: unknown) => void) | undefined;
+  const result = await compactPiSession(baseRequest(), {
+    createSession: async () => ({
+      session: {
+        subscribe(nextListener: (event: unknown) => void) {
+          listener = nextListener;
+          return () => {
+            listener = undefined;
+          };
+        },
+        async compact() {
+          listener?.({
+            type: "compaction_start",
+            reason: "manual",
+          });
+          listener?.({
+            type: "compaction_end",
+            reason: "manual",
+            result: undefined,
+            aborted: false,
+            willRetry: false,
+            errorMessage:
+              "Compaction failed: Turn prefix summarization failed: 422 status code (no body)",
+          });
+          const error = new Error(
+            "Turn prefix summarization failed: 422 status code (no body)",
+          ) as Error & {
+            status?: number;
+            error?: Record<string, unknown>;
+          };
+          error.name = "APIError";
+          error.status = 422;
+          error.error = {
+            type: "invalid_request_error",
+            message: "422 status code (no body)",
+          };
+          throw error;
+        },
+      } as never,
+      sessionFile: "/tmp/pi-session.jsonl",
+      mcpToolMetadata: new Map(),
+      skillMetadataByAlias: new Map(),
+      dispose: async () => {},
+    }),
+  });
+
+  assert.equal(result.compacted, false);
+  assert.equal(result.reason, null);
+  assert.equal(result.result, null);
+  assert.deepEqual(result.diagnostics, {
+    compaction_start: {
+      type: "compaction_start",
+      reason: "manual",
+    },
+    compaction_end: {
+      type: "compaction_end",
+      reason: "manual",
+      aborted: false,
+      will_retry: false,
+      error_message:
+        "Compaction failed: Turn prefix summarization failed: 422 status code (no body)",
+      result: null,
+    },
+  });
+  assert.equal(result.error?.name, "APIError");
+  assert.equal(
+    result.error?.message,
+    "Turn prefix summarization failed: 422 status code (no body)",
+  );
+  assert.equal(result.error?.status_code, 422);
+  assert.equal(
+    result.error?.provider_message,
+    "422 status code (no body)",
+  );
 });
 
 test("buildPiPromptPayload inlines native images, extracts common document formats, and falls back for binary files", async () => {

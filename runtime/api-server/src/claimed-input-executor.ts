@@ -18,7 +18,9 @@ import { resolveProductRuntimeConfig } from "./runtime-config.js";
 import {
   normalizeHarnessId,
   resolveRuntimeHarnessAdapter,
+  resolveRuntimeHarnessPlugin,
 } from "./harness-registry.js";
+import { captureRuntimeException } from "./runtime-sentry.js";
 import type { MemoryServiceLike } from "./memory.js";
 import { createBackgroundTaskMemoryModelClient } from "./background-task-model.js";
 import {
@@ -1089,6 +1091,7 @@ export async function processClaimedInput(params: {
   relayRunEventFn?: typeof registerWorkspaceAgentRunEvent;
   enqueueSessionCheckpointJobFn?: typeof enqueueSessionCheckpointJob;
   waitForSessionCheckpointCompletionFn?: typeof waitForSessionCheckpointCompletion;
+  captureRuntimeExceptionFn?: typeof captureRuntimeException;
   abortSignal?: AbortSignal;
 }): Promise<void> {
   const { store, record } = params;
@@ -1271,6 +1274,51 @@ export async function processClaimedInput(params: {
       runtimeBinding,
     });
 
+    const harnessTimeoutSeconds =
+      resolveRuntimeHarnessPlugin(harness)?.timeoutSeconds({
+        request: {
+          workspace_id: record.workspaceId,
+          session_id: record.sessionId,
+          session_kind: sessionKind,
+          input_id: record.inputId,
+          instruction,
+        },
+      }) ?? null;
+    const captureClaimedInputFailure = (
+      failureKind: string,
+      message: string,
+      extra: Record<string, unknown> = {},
+    ) => {
+      (
+        params.captureRuntimeExceptionFn ?? captureRuntimeException
+      )({
+        error: new Error(message),
+        level: "error",
+        fingerprint: ["runtime", "claimed_input", failureKind, harness],
+        tags: {
+          surface: "claimed_input_executor",
+          failure_kind: failureKind,
+          harness,
+          session_kind: sessionKind,
+        },
+        contexts: {
+          claimed_input: {
+            workspace_id: record.workspaceId,
+            session_id: record.sessionId,
+            input_id: record.inputId,
+            run_id: runId,
+            harness_session_id: checkpointHarnessSessionId,
+            selected_model: selectedModel,
+          },
+        },
+        extras: {
+          last_sequence: lastSequence,
+          harness_timeout_seconds: harnessTimeoutSeconds,
+          ...extra,
+        },
+      });
+    };
+
     const payload: Record<string, unknown> = {
       workspace_id: record.workspaceId,
       session_id: record.sessionId,
@@ -1281,6 +1329,7 @@ export async function processClaimedInput(params: {
       context: runtimeContext,
       model: record.payload.model ?? null,
       thinking_value: record.payload.thinking_value ?? null,
+      harness_timeout_seconds: harnessTimeoutSeconds,
       debug: false,
     };
     const memoryWritebackModelContext = writebackModelContext({
@@ -1695,6 +1744,19 @@ export async function processClaimedInput(params: {
             payload: failurePayload,
             createdAt: failedAt,
           };
+          captureClaimedInputFailure(
+            execution.abortReason === "claim_expired"
+              ? "claim_expired"
+              : "runner_aborted",
+            String(failurePayload.message ?? "runner aborted before terminal event"),
+            {
+              abort_reason: execution.abortReason,
+              return_code: execution.returnCode,
+              stderr: execution.stderr,
+              saw_terminal: execution.sawTerminal,
+              skipped_lines: execution.skippedLines.slice(0, 5),
+            },
+          );
           terminalStatus = "ERROR";
           lastError = failurePayload;
           completedAt = failedAt;
@@ -1734,6 +1796,22 @@ export async function processClaimedInput(params: {
           payload: failurePayload,
           createdAt: new Date().toISOString(),
         };
+        captureClaimedInputFailure(
+          execution.returnCode !== 0
+            ? execution.stderr.trim() === "runner command timed out"
+              ? "runner_timeout"
+              : execution.stderr.includes("became idle")
+                ? "runner_idle_timeout"
+                : "runner_command_error"
+            : "runner_missing_terminal",
+          String(failurePayload.message ?? "runner ended before terminal event"),
+          {
+            return_code: execution.returnCode,
+            stderr: execution.stderr,
+            saw_terminal: execution.sawTerminal,
+            skipped_lines: execution.skippedLines.slice(0, 5),
+          },
+        );
         terminalStatus = "ERROR";
         lastError = failurePayload;
         completedAt = new Date().toISOString();

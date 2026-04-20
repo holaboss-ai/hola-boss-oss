@@ -9,6 +9,7 @@ import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
 import { buildRuntimeApiServer } from "./app.js";
 import { RuntimeQueueWorker } from "./queue-worker.js";
+import type { RuntimeSentryCaptureOptions } from "./runtime-sentry.js";
 
 const tempDirs: string[] = [];
 
@@ -243,9 +244,13 @@ test("runtime queue worker marks claimed input failed when delegated execution r
     priority: 1,
     payload: { text: "hello" }
   });
+  const sentryCaptures: RuntimeSentryCaptureOptions[] = [];
 
   const worker = new RuntimeQueueWorker({
     store,
+    captureRuntimeException: (capture) => {
+      sentryCaptures.push(capture);
+    },
     executeClaimedInput: async () => {
       throw new Error("delegated execution failed");
     }
@@ -266,6 +271,12 @@ test("runtime queue worker marks claimed input failed when delegated execution r
   assert.ok(runtimeState);
   assert.equal(runtimeState.status, "ERROR");
   assert.deepEqual(runtimeState.lastError, { message: "delegated execution failed" });
+  assert.equal(sentryCaptures.length, 1);
+  assert.equal(sentryCaptures[0]?.tags?.failure_kind, "claimed_input_exception");
+  assert.equal(
+    sentryCaptures[0]?.contexts?.claimed_input?.input_id,
+    queued.inputId,
+  );
 
   store.close();
 });

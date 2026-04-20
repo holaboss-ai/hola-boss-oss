@@ -285,6 +285,10 @@ jobs:
           node-version: "24"
 
       - name: Build Linux runtime bundle
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_ENVIRONMENT: production
+          HOLABOSS_RUNTIME_VERSION: ${{ env.RELEASE_TAG }}
         run: bash runtime/deploy/package_linux_runtime.sh out/runtime-linux
 
       - name: Upload runtime Sentry source maps
@@ -345,6 +349,10 @@ jobs:
             desktop/package-lock.json
 
       - name: Build macOS runtime bundle
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_ENVIRONMENT: production
+          HOLABOSS_RUNTIME_VERSION: ${{ env.RELEASE_TAG }}
         run: bash runtime/deploy/package_macos_runtime.sh out/runtime-macos
 
       - name: Upload runtime Sentry source maps
@@ -664,6 +672,8 @@ jobs:
           WIN_CSC_LINK: ${{ env.WINDOWS_CERTIFICATE }}
           WIN_CSC_KEY_PASSWORD: ${{ env.WINDOWS_CERTIFICATE_PASSWORD }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_ENVIRONMENT: production
+          HOLABOSS_RUNTIME_VERSION: ${{ env.RELEASE_TAG }}
         run: |
           if (-not $env:WINDOWS_CERTIFICATE -or -not $env:WINDOWS_CERTIFICATE_PASSWORD) {
             throw "Windows desktop release requires WINDOWS_CERTIFICATE and WINDOWS_CERTIFICATE_PASSWORD so the public installer is code-signed."
