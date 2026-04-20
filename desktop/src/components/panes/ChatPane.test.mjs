@@ -117,13 +117,26 @@ test("chat composer footer wraps controls based on available pane width instead 
   );
   assert.match(
     source,
-    /const resizeObserver = new ResizeObserver\(\(\) => \{\s*syncComposerFooterLayout\(\);\s*\}\);/,
+    /const composerFooterLayoutSyncFrameRef = useRef<number \| null>\(null\);/,
+  );
+  assert.match(
+    source,
+    /const cancelComposerFooterLayoutSync = \(\) => \{[\s\S]*window\.cancelAnimationFrame\(composerFooterLayoutSyncFrameRef\.current\);[\s\S]*composerFooterLayoutSyncFrameRef\.current = null;[\s\S]*\};/,
+  );
+  assert.match(
+    source,
+    /const scheduleComposerFooterLayoutSync = \(\) => \{[\s\S]*window\.requestAnimationFrame\(\s*\(\) => \{[\s\S]*syncComposerFooterLayout\(\);[\s\S]*\},\s*\);[\s\S]*\};/,
+  );
+  assert.match(
+    source,
+    /const resizeObserver = new ResizeObserver\(\(\) => \{\s*scheduleComposerFooterLayoutSync\(\);\s*\}\);/,
   );
   assert.match(
     source,
     /const compactComposerControls =\s*showModelSelector &&[\s\S]*composerFooterLayout\.width > 0[\s\S]*composerFooterLayout\.actionsWidth > 0[\s\S]*composerFooterLayout\.width < fullFooterControlWidth/,
   );
   assert.doesNotMatch(source, /composerFooterLayout\.wraps/);
+  assert.doesNotMatch(source, /Array\.from\(footer\.children\)/);
   assert.match(
     source,
     /const compactModelControlWidth = compactComposerControls[\s\S]*COMPOSER_COMPACT_MODEL_CONTROL_MAX_WIDTH_PX[\s\S]*compactFooterControlWidth -[\s\S]*COMPOSER_COMPACT_THINKING_CONTROL_MIN_WIDTH_PX/,
