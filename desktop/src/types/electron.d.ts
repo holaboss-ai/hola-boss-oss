@@ -327,6 +327,9 @@ declare global {
     allowed_user_ids: string[];
     icon: string;
     emoji: string | null;
+    // Community-source templates omit these array fields on the wire; the
+    // main-process listMarketplaceTemplates() normalizes them to [] before
+    // reaching the renderer, so UI code can rely on them being present.
     apps: TemplateAppEntryPayload[];
     min_optional_apps: number;
     tags: string[];

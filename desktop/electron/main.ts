@@ -266,6 +266,66 @@ const RESOLVED_DEV_SERVER_URL =
   "";
 const isDev = Boolean(RESOLVED_DEV_SERVER_URL);
 
+const DEV_SHELL_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: http: https:",
+  "font-src 'self' data:",
+  "connect-src 'self' http://localhost:* ws://localhost:* https: wss:",
+  "worker-src 'self' blob:",
+  "frame-src 'self' https:",
+  "media-src 'self' data: blob: https:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join("; ");
+
+// CSP for the main shell:
+//   - prod: a strict policy is injected at build time as a <meta http-equiv>
+//     tag in index.html (see vite.config.ts). file:// responses don't fire
+//     onHeadersReceived in Electron, so the meta tag is the only enforcement
+//     path there.
+//   - dev: Vite HMR needs eval/inline + ws://localhost; we inject a relaxed
+//     CSP via onHeadersReceived, scoped to the dev server origin so browser
+//     tab navigations and other partitioned sessions are unaffected.
+function applyMainShellContentSecurityPolicy(targetSession: Session): void {
+  if (!isDev || !RESOLVED_DEV_SERVER_URL) {
+    return;
+  }
+  const devOrigin = (() => {
+    try {
+      return new URL(RESOLVED_DEV_SERVER_URL).origin;
+    } catch {
+      return "";
+    }
+  })();
+  if (!devOrigin) {
+    return;
+  }
+  targetSession.webRequest.onHeadersReceived((details, callback) => {
+    let inDevOrigin = false;
+    try {
+      inDevOrigin = new URL(details.url).origin === devOrigin;
+    } catch {
+      inDevOrigin = false;
+    }
+    if (!inDevOrigin) {
+      callback({ responseHeaders: details.responseHeaders ?? undefined });
+      return;
+    }
+    const nextHeaders: Record<string, string[]> = {};
+    for (const [name, value] of Object.entries(details.responseHeaders ?? {})) {
+      if (name.toLowerCase() === "content-security-policy") {
+        continue;
+      }
+      nextHeaders[name] = Array.isArray(value) ? value : [value];
+    }
+    nextHeaders["Content-Security-Policy"] = [DEV_SHELL_CSP];
+    callback({ responseHeaders: nextHeaders });
+  });
+}
+
 function configureChromiumLoggingPolicy() {
   if (verboseTelemetryEnabled || chromiumStderrLoggingEnabled) {
     return;
@@ -10077,8 +10137,18 @@ async function listMarketplaceTemplates(): Promise<TemplateListResponsePayload> 
   // forwarded when a session exists but the call still works anonymously.
   const client = getMarketplaceAppSdkClient();
   const data = await sdkListMarketplaceTemplates({ client });
+  // Community-source templates can omit the array fields (apps/agents/
+  // views/tags). Normalize at the read boundary so the rest of the UI can
+  // treat them as guaranteed arrays.
+  const templates = (data.templates as TemplateMetadataPayload[]).map((t) => ({
+    ...t,
+    apps: t.apps ?? [],
+    agents: t.agents ?? [],
+    views: t.views ?? [],
+    tags: t.tags ?? [],
+  }));
   return {
-    templates: data.templates as TemplateMetadataPayload[],
+    templates,
     spotlight: (data.spotlight ?? []) as SpotlightItemPayload[],
   };
 }
@@ -21410,6 +21480,8 @@ app.whenReady().then(async () => {
       app.dock.setIcon(dockIcon);
     }
   }
+
+  applyMainShellContentSecurityPolicy(session.defaultSession);
 
   await loadBrowserPersistence();
   await bootstrapRuntimeDatabase();
