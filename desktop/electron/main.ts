@@ -50,6 +50,8 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
+  statSync,
   type FSWatcher,
   watch,
   writeFileSync,
@@ -2251,6 +2253,7 @@ interface WorkspaceRecordPayload {
   created_at: string | null;
   updated_at: string | null;
   deleted_at_utc: string | null;
+  workspace_path?: string | null;
 }
 
 interface WorkspaceResponsePayload {
@@ -2901,6 +2904,9 @@ interface HolabossCreateWorkspacePayload {
   template_commit?: string | null;
   /** App names from template metadata, used for integration resolution without materialization. */
   template_apps?: string[];
+  /** Optional absolute path for the workspace's on-disk folder. When provided, the runtime registers this
+   * as the workspace root instead of the default managed location. */
+  workspace_path?: string | null;
 }
 
 interface TemplateFolderSelectionPayload {
@@ -2908,6 +2914,11 @@ interface TemplateFolderSelectionPayload {
   rootPath: string | null;
   templateName: string | null;
   description: string | null;
+}
+
+interface WorkspaceRuntimeFolderSelectionPayload {
+  canceled: boolean;
+  rootPath: string | null;
 }
 
 interface HolabossQueueSessionInputPayload {
@@ -11866,7 +11877,7 @@ async function copyLocalTemplateAppNodeModulesToWorkspace(
     return;
   }
 
-  const workspaceDir = workspaceDirectoryPath(workspaceId);
+  const workspaceDir = await resolveWorkspaceDir(workspaceId);
   for (const appId of appIds) {
     const sourceNodeModules = path.join(modulesRoot, appId, "node_modules");
     if (!existsSync(sourceNodeModules)) {
@@ -11965,6 +11976,40 @@ async function pickTemplateFolder(): Promise<TemplateFolderSelectionPayload> {
     templateName: metadata.name,
     description: metadata.description,
   };
+}
+
+async function pickWorkspaceRuntimeFolder(): Promise<WorkspaceRuntimeFolderSelectionPayload> {
+  const ownerWindow = mainWindow ?? BrowserWindow.getFocusedWindow() ?? null;
+  const options: OpenDialogOptions = {
+    properties: ["openDirectory", "createDirectory"],
+    title: "Choose Workspace Folder",
+    buttonLabel: "Use This Folder",
+    message: "Pick an empty folder where this workspace's files will live.",
+  };
+  const result = ownerWindow
+    ? await dialog.showOpenDialog(ownerWindow, options)
+    : await dialog.showOpenDialog(options);
+  if (result.canceled || !result.filePaths[0]) {
+    return { canceled: true, rootPath: null };
+  }
+
+  const rootPath = path.resolve(result.filePaths[0]);
+  if (!path.isAbsolute(rootPath)) {
+    throw new Error("Workspace folder path must be absolute.");
+  }
+  if (existsSync(rootPath)) {
+    const stat = statSync(rootPath);
+    if (!stat.isDirectory()) {
+      throw new Error("Selected path is not a directory.");
+    }
+    const entries = readdirSync(rootPath).filter((name) => name !== ".DS_Store");
+    if (entries.length > 0) {
+      throw new Error(
+        `Selected folder must be empty (found ${entries.length} items). Pick an empty folder or a new one.`,
+      );
+    }
+  }
+  return { canceled: false, rootPath };
 }
 
 function runtimeBaseUrl() {
@@ -12207,12 +12252,71 @@ function workspaceDirectoryPath(workspaceId: string) {
   return joined;
 }
 
+// Cache of workspaceId -> absolute directory. Populated from runtime GET
+// responses and from the create-workspace response. Custom-path workspaces
+// live outside runtimeWorkspaceRoot() and can't be derived deterministically
+// from the id, so call sites that need the on-disk path must go through
+// resolveWorkspaceDir() instead of workspaceDirectoryPath().
+const workspaceDirCache = new Map<string, string>();
+
+function rememberWorkspaceDir(workspaceId: string, workspacePath: string | null | undefined): void {
+  const trimmed = (workspacePath ?? "").trim();
+  if (!trimmed) {
+    return;
+  }
+  const safeId = assertSafeWorkspaceId(workspaceId);
+  workspaceDirCache.set(safeId, path.resolve(trimmed));
+}
+
+function forgetWorkspaceDir(workspaceId: string): void {
+  try {
+    workspaceDirCache.delete(assertSafeWorkspaceId(workspaceId));
+  } catch {
+    // Ignore unsafe ids — they have no cache entry.
+  }
+}
+
+async function resolveWorkspaceDir(workspaceId: string): Promise<string> {
+  const safeId = assertSafeWorkspaceId(workspaceId);
+  const cached = workspaceDirCache.get(safeId);
+  if (cached) {
+    return cached;
+  }
+  try {
+    const response = await requestRuntimeJson<WorkspaceResponsePayload>({
+      method: "GET",
+      path: `/api/v1/workspaces/${encodeURIComponent(safeId)}`,
+    });
+    const registered = response.workspace.workspace_path?.trim() || "";
+    if (registered) {
+      const resolved = path.resolve(registered);
+      workspaceDirCache.set(safeId, resolved);
+      return resolved;
+    }
+  } catch {
+    // Fall through to the default (runtime may be unavailable at this moment).
+  }
+  return workspaceDirectoryPath(safeId);
+}
+
+// Synchronous lookup for hot paths (event listeners that can't await —
+// e.g. session.on("will-download")). Returns the cached custom path when
+// known, otherwise falls back to the default deterministic layout.
+function resolveWorkspaceDirSync(workspaceId: string): string {
+  const safeId = assertSafeWorkspaceId(workspaceId);
+  const cached = workspaceDirCache.get(safeId);
+  if (cached) {
+    return cached;
+  }
+  return workspaceDirectoryPath(safeId);
+}
+
 function resolveWorkspaceDownloadTargetPath(
   workspaceId: string,
   filename: string,
 ): string {
   const downloadsDir = path.join(
-    workspaceDirectoryPath(workspaceId),
+    resolveWorkspaceDirSync(workspaceId),
     "Downloads",
   );
   mkdirSync(downloadsDir, { recursive: true });
@@ -12357,7 +12461,7 @@ async function applyMaterializedTemplateToWorkspace(
   workspaceId: string,
   files: MaterializedTemplateFilePayload[],
 ) {
-  const workspaceDir = workspaceDirectoryPath(workspaceId);
+  const workspaceDir = await resolveWorkspaceDir(workspaceId);
   await fs.mkdir(workspaceDir, { recursive: true });
 
   const existingEntries = await fs.readdir(workspaceDir, {
@@ -12408,7 +12512,7 @@ async function stageSessionAttachments(
     return { attachments: [] };
   }
 
-  const workspaceDir = workspaceDirectoryPath(workspaceId);
+  const workspaceDir = await resolveWorkspaceDir(workspaceId);
   await fs.mkdir(workspaceDir, { recursive: true });
 
   const batchId = randomUUID();
@@ -12473,7 +12577,7 @@ async function stageSessionAttachmentPaths(
     return { attachments: [] };
   }
 
-  const workspaceDir = workspaceDirectoryPath(workspaceId);
+  const workspaceDir = await resolveWorkspaceDir(workspaceId);
   await fs.mkdir(workspaceDir, { recursive: true });
 
   const batchId = randomUUID();
@@ -12828,7 +12932,7 @@ async function listWorkspaces(): Promise<WorkspaceListResponsePayload> {
 }
 
 async function listWorkspacesViaRuntime(): Promise<WorkspaceListResponsePayload> {
-  return requestRuntimeJson<WorkspaceListResponsePayload>({
+  const response = await requestRuntimeJson<WorkspaceListResponsePayload>({
     method: "GET",
     path: "/api/v1/workspaces",
     params: {
@@ -12837,6 +12941,10 @@ async function listWorkspacesViaRuntime(): Promise<WorkspaceListResponsePayload>
       offset: 0,
     },
   });
+  for (const item of response.items) {
+    rememberWorkspaceDir(item.id, item.workspace_path);
+  }
+  return response;
 }
 
 const STATIC_APP_CATALOG: Record<
@@ -13407,7 +13515,7 @@ async function readSkillCatalogFromRoot(params: {
 async function listWorkspaceSkills(
   workspaceId: string,
 ): Promise<WorkspaceSkillListResponsePayload> {
-  const workspaceRoot = workspaceDirectoryPath(workspaceId);
+  const workspaceRoot = await resolveWorkspaceDir(workspaceId);
   const skillsPath = path.resolve(workspaceRoot, "skills");
 
   const workspaceSkills = await readSkillCatalogFromRoot({ skillsRoot: skillsPath });
@@ -13589,8 +13697,11 @@ async function createWorkspace(
   } else {
     throw new Error("Choose a local folder or a marketplace template first.");
   }
+  const customWorkspacePath = payload.workspace_path?.trim() || "";
   let created: WorkspaceResponsePayload;
-  stageLog("runtime_post_workspaces.start");
+  stageLog("runtime_post_workspaces.start", {
+    hasCustomWorkspacePath: Boolean(customWorkspacePath),
+  });
   try {
     created = await requestRuntimeJson<WorkspaceResponsePayload>({
       method: "POST",
@@ -13600,6 +13711,7 @@ async function createWorkspace(
         harness,
         status: "provisioning",
         onboarding_status: "not_required",
+        ...(customWorkspacePath ? { workspace_path: customWorkspacePath } : {}),
       },
     });
     stageLog("runtime_post_workspaces.ok", { workspaceId: created.workspace.id });
@@ -13613,9 +13725,10 @@ async function createWorkspace(
     );
   }
   const workspaceId = created.workspace.id;
+  rememberWorkspaceDir(workspaceId, created.workspace.workspace_path);
 
   try {
-    const workspaceDir = workspaceDirectoryPath(workspaceId);
+    const workspaceDir = await resolveWorkspaceDir(workspaceId);
     stageLog("workspace_dir_resolved", { workspaceId, workspaceDir });
     const workspaceAgentsPath = path.join(workspaceDir, "AGENTS.md");
     const workspaceYamlPath = path.join(workspaceDir, "workspace.yaml");
@@ -13892,10 +14005,12 @@ async function deleteWorkspace(
   workspaceId: string,
 ): Promise<WorkspaceResponsePayload> {
   const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
-  return requestRuntimeJson<WorkspaceResponsePayload>({
+  const response = await requestRuntimeJson<WorkspaceResponsePayload>({
     method: "DELETE",
     path: `/api/v1/workspaces/${encodeURIComponent(safeWorkspaceId)}`,
   });
+  forgetWorkspaceDir(safeWorkspaceId);
+  return response;
 }
 
 async function listRuntimeStates(
@@ -17193,7 +17308,7 @@ async function resolveWorkspaceScopedExplorerPath(
   }
 
   const workspaceRoot = path.resolve(
-    await workspaceDirectoryPath(normalizedWorkspaceId),
+    await resolveWorkspaceDir(normalizedWorkspaceId),
   );
   const resolvedTargetPath = trimmedTargetPath
     ? path.resolve(
@@ -18947,7 +19062,7 @@ function queueBrowserDownloadPrompt(
   workspace.pendingDownloadOverrides.push({
     url: targetUrl.trim(),
     defaultPath: path.join(
-      workspaceDirectoryPath(workspaceId),
+      resolveWorkspaceDirSync(workspaceId),
       "Downloads",
       sanitizeAttachmentName(options.defaultFilename),
     ),
@@ -21646,6 +21761,11 @@ app.whenReady().then(async () => {
     pickTemplateFolder(),
   );
   handleTrustedIpc(
+    "workspace:pickWorkspaceRuntimeFolder",
+    ["main"],
+    async () => pickWorkspaceRuntimeFolder(),
+  );
+  handleTrustedIpc(
     "workspace:listImportBrowserProfiles",
     ["main"],
     async (_event, source: BrowserImportSource) =>
@@ -21753,7 +21873,7 @@ app.whenReady().then(async () => {
   handleTrustedIpc(
     "workspace:getWorkspaceRoot",
     ["main"],
-    async (_event, workspaceId: string) => workspaceDirectoryPath(workspaceId),
+    async (_event, workspaceId: string) => resolveWorkspaceDir(workspaceId),
   );
   handleTrustedIpc(
     "workspace:setOperatorSurfaceContext",
@@ -22152,7 +22272,7 @@ app.whenReady().then(async () => {
       try {
         const { packageWorkspace, uploadToPresignedUrl } =
           await import("./workspace-packager.js");
-        const workspaceDir = workspaceDirectoryPath(params.workspaceId);
+        const workspaceDir = await resolveWorkspaceDir(params.workspaceId);
         const runtimeUrl = runtimeBaseUrl();
         const result = await packageWorkspace({
           workspaceDir,

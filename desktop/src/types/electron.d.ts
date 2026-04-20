@@ -1061,6 +1061,7 @@ declare global {
     template_ref?: string | null;
     template_commit?: string | null;
     template_apps?: string[];
+    workspace_path?: string | null;
   }
 
   interface TemplateFolderSelectionPayload {
@@ -1068,6 +1069,11 @@ declare global {
     rootPath: string | null;
     templateName: string | null;
     description: string | null;
+  }
+
+  interface WorkspaceRuntimeFolderSelectionPayload {
+    canceled: boolean;
+    rootPath: string | null;
   }
 
   interface HolabossQueueSessionInputPayload {
@@ -1403,6 +1409,7 @@ declare global {
       getClientConfig: () => Promise<HolabossClientConfigPayload>;
       listMarketplaceTemplates: () => Promise<TemplateListResponsePayload>;
       pickTemplateFolder: () => Promise<TemplateFolderSelectionPayload>;
+      pickWorkspaceRuntimeFolder: () => Promise<WorkspaceRuntimeFolderSelectionPayload>;
       listImportBrowserProfiles: (
         source: BrowserImportSource
       ) => Promise<BrowserImportProfileOptionPayload[]>;

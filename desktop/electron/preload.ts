@@ -792,6 +792,7 @@ interface HolabossCreateWorkspacePayload {
   template_name?: string | null;
   template_ref?: string | null;
   template_commit?: string | null;
+  workspace_path?: string | null;
 }
 
 interface TemplateFolderSelectionPayload {
@@ -799,6 +800,11 @@ interface TemplateFolderSelectionPayload {
   rootPath: string | null;
   templateName: string | null;
   description: string | null;
+}
+
+interface WorkspaceRuntimeFolderSelectionPayload {
+  canceled: boolean;
+  rootPath: string | null;
 }
 
 interface HolabossQueueSessionInputPayload {
@@ -1210,6 +1216,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:listMarketplaceTemplates") as Promise<TemplateListResponsePayload>,
     pickTemplateFolder: () =>
       ipcRenderer.invoke("workspace:pickTemplateFolder") as Promise<TemplateFolderSelectionPayload>,
+    pickWorkspaceRuntimeFolder: () =>
+      ipcRenderer.invoke("workspace:pickWorkspaceRuntimeFolder") as Promise<WorkspaceRuntimeFolderSelectionPayload>,
     listImportBrowserProfiles: (source: BrowserImportSource) =>
       ipcRenderer.invoke("workspace:listImportBrowserProfiles", source) as Promise<BrowserImportProfileOptionPayload[]>,
     importBrowserProfile: (payload: BrowserImportProfilePayload) =>

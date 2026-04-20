@@ -59,6 +59,166 @@ test("workspace registry round trip uses hidden identity file", () => {
   store.close();
 });
 
+test("createWorkspace honors explicit workspacePath and registers it", () => {
+  const root = makeTempDir("hb-state-store-");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceRoot = path.join(root, "workspace");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const customPath = path.join(customRoot, "my-workspace");
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+
+  const created = store.createWorkspace({
+    workspaceId: "ws-custom",
+    name: "Custom",
+    harness: "pi",
+    workspacePath: customPath
+  });
+
+  assert.equal(created.id, "ws-custom");
+  assert.equal(fs.existsSync(customPath), true);
+  const identityPath = path.join(customPath, ".holaboss", "workspace_id");
+  assert.equal(fs.readFileSync(identityPath, "utf-8").trim(), "ws-custom");
+  assert.equal(path.resolve(store.workspaceDir("ws-custom")), path.resolve(customPath));
+  // Default workspaceRoot was not touched.
+  assert.equal(fs.existsSync(path.join(workspaceRoot, "ws-custom")), false);
+  store.close();
+});
+
+test("createWorkspace rejects non-absolute workspacePath", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  assert.throws(
+    () =>
+      store.createWorkspace({
+        workspaceId: "ws-rel",
+        name: "Rel",
+        harness: "pi",
+        workspacePath: "relative/dir"
+      }),
+    /must be absolute/
+  );
+  store.close();
+});
+
+test("createWorkspace rejects workspacePath that is a non-empty directory", () => {
+  const root = makeTempDir("hb-state-store-");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceRoot = path.join(root, "workspace");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const customPath = path.join(customRoot, "not-empty");
+  fs.mkdirSync(customPath, { recursive: true });
+  fs.writeFileSync(path.join(customPath, "leftover.txt"), "hello");
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+
+  assert.throws(
+    () =>
+      store.createWorkspace({
+        workspaceId: "ws-nonempty",
+        name: "NE",
+        harness: "pi",
+        workspacePath: customPath
+      }),
+    /must be empty/
+  );
+  store.close();
+});
+
+test("createWorkspace rejects workspacePath that overlaps an existing workspace", () => {
+  const root = makeTempDir("hb-state-store-");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceRoot = path.join(root, "workspace");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const parent = path.join(customRoot, "parent");
+  const child = path.join(parent, "child");
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+
+  store.createWorkspace({
+    workspaceId: "ws-parent",
+    name: "Parent",
+    harness: "pi",
+    workspacePath: parent
+  });
+
+  assert.throws(
+    () =>
+      store.createWorkspace({
+        workspaceId: "ws-child",
+        name: "Child",
+        harness: "pi",
+        workspacePath: child
+      }),
+    /overlaps/
+  );
+  store.close();
+});
+
+test("workspaceFolderState returns healthy when the folder exists", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({ workspaceId: "ws-h", name: "H", harness: "pi" });
+  assert.equal(store.workspaceFolderState("ws-h"), "healthy");
+  store.close();
+});
+
+test("workspaceFolderState reports missing when a custom folder is deleted", () => {
+  const root = makeTempDir("hb-state-store-");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const customPath = path.join(customRoot, "ws");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "ws-custom",
+    name: "C",
+    harness: "pi",
+    workspacePath: customPath
+  });
+  assert.equal(store.workspaceFolderState("ws-custom"), "healthy");
+
+  fs.rmSync(customPath, { recursive: true, force: true });
+
+  assert.equal(store.workspaceFolderState("ws-custom"), "missing");
+  // Registered path must NOT be rewritten to the managed default.
+  assert.equal(path.resolve(store.workspaceDir("ws-custom")), path.resolve(customPath));
+  store.close();
+});
+
+test("assertWorkspaceFolderHealthy throws a structured error when missing", () => {
+  const root = makeTempDir("hb-state-store-");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const customPath = path.join(customRoot, "ws");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "ws-custom",
+    name: "C",
+    harness: "pi",
+    workspacePath: customPath
+  });
+  fs.rmSync(customPath, { recursive: true, force: true });
+
+  let caught: unknown;
+  try {
+    store.assertWorkspaceFolderHealthy("ws-custom");
+  } catch (e) {
+    caught = e;
+  }
+  const err = caught as Error & { code?: string; workspacePath?: string };
+  assert.ok(err instanceof Error);
+  assert.equal(err.code, "workspace_folder_missing");
+  assert.equal(path.resolve(err.workspacePath ?? ""), path.resolve(customPath));
+  store.close();
+});
+
 test("runtime schema migrates workspace rows to registry and identity file", () => {
   const root = makeTempDir("hb-state-store-");
   const dbPath = path.join(root, "runtime.db");

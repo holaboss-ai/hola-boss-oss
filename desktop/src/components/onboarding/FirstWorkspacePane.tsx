@@ -58,6 +58,10 @@ export function FirstWorkspacePane({
     retryMarketplaceTemplates,
     workspaceErrorMessage,
     chooseTemplateFolder,
+    selectedWorkspaceFolder,
+    chooseWorkspaceFolder,
+    clearSelectedWorkspaceFolder,
+    runtimeStatus,
     createWorkspace,
     selectedApps,
     setSelectedApps,
@@ -353,6 +357,7 @@ export function FirstWorkspacePane({
               templateSourceMode={templateSourceMode}
               selectedMarketplaceTemplate={selectedMarketplaceTemplate}
               selectedTemplateFolder={selectedTemplateFolder}
+              selectedWorkspaceFolder={selectedWorkspaceFolder}
               newWorkspaceName={newWorkspaceName}
               setNewWorkspaceName={setNewWorkspaceName}
               pendingIntegrations={pendingIntegrations}
@@ -364,6 +369,9 @@ export function FirstWorkspacePane({
               hasUnconnectedIntegrations={hasUnconnectedIntegrations}
               onChangeKit={() => setStep("gallery")}
               onChangeFolder={() => void chooseTemplateFolder()}
+              onChooseWorkspaceFolder={() => void chooseWorkspaceFolder()}
+              onClearWorkspaceFolder={clearSelectedWorkspaceFolder}
+              defaultWorkspaceRoot={runtimeStatus?.sandboxRoot ?? null}
               onCancel={() => setStep("gallery")}
               onConnect={(provider) => void handleConnectProvider(provider)}
               onContinue={() => setStep("browser_profile")}

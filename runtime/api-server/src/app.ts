@@ -608,7 +608,11 @@ function attachmentsFromInputPayload(value: unknown): SessionInputAttachmentPayl
   return value.map((item) => parseSessionInputAttachment(item)).filter((item): item is SessionInputAttachmentPayload => Boolean(item));
 }
 
-function workspaceRecordPayload(workspace: WorkspaceRecord): Record<string, unknown> {
+function workspaceRecordPayload(
+  workspace: WorkspaceRecord,
+  workspacePath?: string | null,
+  folderState?: "healthy" | "missing" | null
+): Record<string, unknown> {
   return {
     id: workspace.id,
     name: workspace.name,
@@ -623,8 +627,83 @@ function workspaceRecordPayload(workspace: WorkspaceRecord): Record<string, unkn
     onboarding_requested_by: workspace.onboardingRequestedBy,
     created_at: workspace.createdAt,
     updated_at: workspace.updatedAt,
-    deleted_at_utc: workspace.deletedAtUtc
+    deleted_at_utc: workspace.deletedAtUtc,
+    workspace_path: workspacePath ?? null,
+    folder_state: folderState ?? null
   };
+}
+
+/**
+ * Small per-request memoizer so LIST endpoints don't stat every workspace
+ * folder repeatedly when multiple lookups hit the same id. Use:
+ *   const memo = createWorkspaceFolderCache(store);
+ *   memo.path(id); memo.state(id);
+ */
+function createWorkspaceFolderCache(store: RuntimeStateStore): {
+  path: (id: string) => string | null;
+  state: (id: string) => "healthy" | "missing" | null;
+} {
+  const paths = new Map<string, string | null>();
+  const states = new Map<string, "healthy" | "missing" | null>();
+  return {
+    path: (id: string) => {
+      if (paths.has(id)) {
+        return paths.get(id) ?? null;
+      }
+      let value: string | null = null;
+      try {
+        value = store.workspaceDir(id);
+      } catch {
+        value = null;
+      }
+      paths.set(id, value);
+      return value;
+    },
+    state: (id: string) => {
+      if (states.has(id)) {
+        return states.get(id) ?? null;
+      }
+      let value: "healthy" | "missing" | null = null;
+      try {
+        value = store.workspaceFolderState(id);
+      } catch {
+        value = null;
+      }
+      states.set(id, value);
+      return value;
+    }
+  };
+}
+
+function resolveWorkspacePathForPayload(
+  store: RuntimeStateStore,
+  workspaceId: string
+): string | null {
+  try {
+    return store.workspaceDir(workspaceId);
+  } catch {
+    return null;
+  }
+}
+
+function resolveWorkspaceFolderStateForPayload(
+  store: RuntimeStateStore,
+  workspaceId: string
+): "healthy" | "missing" | null {
+  try {
+    return store.workspaceFolderState(workspaceId);
+  } catch {
+    return null;
+  }
+}
+
+function isPathWithinWorkspaceRoot(candidate: string, workspaceRoot: string): boolean {
+  const resolvedCandidate = path.resolve(candidate);
+  const resolvedRoot = path.resolve(workspaceRoot);
+  if (resolvedCandidate === resolvedRoot) {
+    return true;
+  }
+  return resolvedCandidate.startsWith(resolvedRoot + path.sep);
 }
 
 function agentSessionPayload(record: AgentSessionRecord): Record<string, unknown> {
@@ -4033,7 +4112,8 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         status: optionalString(request.body.status) ?? "provisioning",
         onboardingStatus: optionalString(request.body.onboarding_status) ?? "not_required",
         onboardingSessionId: nullableString(request.body.onboarding_session_id) ?? null,
-        errorMessage: nullableString(request.body.error_message) ?? null
+        errorMessage: nullableString(request.body.error_message) ?? null,
+        workspacePath: optionalString(request.body.workspace_path)
       });
 
       let workspace = created;
@@ -4061,7 +4141,13 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         });
       }
 
-      return reply.send({ workspace: workspaceRecordPayload(workspace) });
+      return reply.send({
+        workspace: workspaceRecordPayload(
+          workspace,
+          resolveWorkspacePathForPayload(store, workspace.id),
+          resolveWorkspaceFolderStateForPayload(store, workspace.id)
+        )
+      });
     } catch (error) {
       return sendError(reply, 400, error instanceof Error ? error.message : "failed to create workspace");
     }
@@ -4080,8 +4166,11 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
 
     const paged = items.slice(offset, offset + limit);
+    const folderCache = createWorkspaceFolderCache(store);
     return {
-      items: paged.map((item: WorkspaceRecord) => workspaceRecordPayload(item)),
+      items: paged.map((item: WorkspaceRecord) =>
+        workspaceRecordPayload(item, folderCache.path(item.id), folderCache.state(item.id))
+      ),
       total: items.length,
       limit,
       offset
@@ -4097,7 +4186,13 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!workspace) {
       return sendError(reply, 404, "workspace not found");
     }
-    return { workspace: workspaceRecordPayload(workspace) };
+    return {
+      workspace: workspaceRecordPayload(
+        workspace,
+        resolveWorkspacePathForPayload(store, workspace.id),
+        resolveWorkspaceFolderStateForPayload(store, workspace.id)
+      )
+    };
   });
 
   app.patch("/api/v1/workspaces/:workspaceId", async (request, reply) => {
@@ -4137,7 +4232,13 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       }
 
       const workspace = store.updateWorkspace(params.workspaceId, fields);
-      return { workspace: workspaceRecordPayload(workspace) };
+      return {
+        workspace: workspaceRecordPayload(
+          workspace,
+          resolveWorkspacePathForPayload(store, workspace.id),
+          resolveWorkspaceFolderStateForPayload(store, workspace.id)
+        )
+      };
     } catch (error) {
       return sendError(reply, 404, error instanceof Error ? error.message.replace(/^workspace .* not found$/, "workspace not found") : "workspace not found");
     }
@@ -4165,7 +4266,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
           onboarding_requested_by: null,
           created_at: workspace?.createdAt ?? null,
           updated_at: workspace?.updatedAt ?? null,
-          deleted_at_utc: workspace?.deletedAtUtc ?? new Date().toISOString()
+          deleted_at_utc: workspace?.deletedAtUtc ?? new Date().toISOString(),
+          workspace_path: null,
+          folder_state: null
         }
       };
     }
@@ -4176,8 +4279,17 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         workspaceDir
       });
       const deletedWorkspace = store.deleteWorkspace(params.workspaceId);
-      fs.rmSync(workspaceDir, { recursive: true, force: true });
-      return { workspace: workspaceRecordPayload(deletedWorkspace) };
+      // For managed workspaces (under the runtime's workspaceRoot) we wipe the
+      // directory. For workspaces that live at a user-chosen path, only remove
+      // the runtime-managed `.holaboss/` metadata and leave the user's own
+      // files untouched — they picked this folder, we don't own it.
+      if (isPathWithinWorkspaceRoot(workspaceDir, store.workspaceRoot)) {
+        fs.rmSync(workspaceDir, { recursive: true, force: true });
+      } else {
+        const metadataDir = path.join(workspaceDir, ".holaboss");
+        fs.rmSync(metadataDir, { recursive: true, force: true });
+      }
+      return { workspace: workspaceRecordPayload(deletedWorkspace, workspaceDir, "missing") };
     } catch (error) {
       return sendError(reply, 500, error instanceof Error ? error.message : "workspace delete failed");
     }
