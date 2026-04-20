@@ -142,6 +142,7 @@ export interface AgentCapabilityManifest {
   browser_tools: AgentCapabilityRecord[];
   mcp_tools: AgentCapabilityRecord[];
   custom_tools: AgentCapabilityRecord[];
+  local_capabilities: AgentCapabilityRecord[];
   skills: AgentCapabilityRecord[];
   inspect: AgentCapabilityRecord[];
   mutate: AgentCapabilityRecord[];
@@ -372,6 +373,24 @@ const BUILTIN_CAPABILITY_DEFINITIONS: Record<string, ToolCapabilityDefinition> =
     policy: "coordinate",
     title: "Skill",
     description: "Consult available embedded or workspace skills when they are relevant.",
+  },
+  open_app: {
+    kind: "local_capability",
+    policy: "mutate",
+    title: "Open App",
+    description: "Open a desktop application on the local system with user approval.",
+  },
+  open_file: {
+    kind: "local_capability",
+    policy: "mutate",
+    title: "Open File",
+    description: "Open a workspace-scoped file using the default local system application.",
+  },
+  run_local_command: {
+    kind: "local_capability",
+    policy: "mutate",
+    title: "Run Local Command",
+    description: "Run a predefined, safe local system command.",
   },
 };
 
@@ -605,6 +624,14 @@ function executionSemanticsForDescriptor(params: {
       requires_user_confirmation: false,
     };
   }
+  if (params.kind === "local_capability") {
+    return {
+      concurrency: "serial_only",
+      requires_runtime_service: false,
+      requires_browser: false,
+      requires_user_confirmation: true,
+    };
+  }
   if (params.kind === "mcp_tool" || params.kind === "custom_tool") {
     return {
       concurrency: "serial_only",
@@ -687,6 +714,15 @@ function authorityBoundaryForDescriptor(params: {
       runtime_state: false,
     };
   }
+  if (params.kind === "local_capability") {
+    return {
+      filesystem: true,
+      shell: true,
+      network: false,
+      browser: false,
+      runtime_state: false,
+    };
+  }
   if (normalizedId === "bash") {
     return {
       filesystem: true,
@@ -739,7 +775,12 @@ function buildToolDescriptor(
     visibility_surface: "tool",
     permission_surface: definition.kind,
     execution_mode: executionMode,
-    trust_level: definition.kind === "custom_tool" ? "external" : "system",
+    trust_level:
+      definition.kind === "local_capability"
+        ? "local"
+        : definition.kind === "custom_tool"
+        ? "external"
+        : "system",
     execution_semantics: executionSemanticsForDescriptor({
       kind: definition.kind,
       id: trimmed,
@@ -1208,6 +1249,7 @@ function projectAgentCapabilityManifest(
     browser_tools: browserTools,
     mcp_tools: projectedCapabilities.filter((capability) => capability.kind === "mcp_tool"),
     custom_tools: projectedCapabilities.filter((capability) => capability.kind === "custom_tool"),
+    local_capabilities: projectedCapabilities.filter((capability) => capability.kind === "local_capability"),
     skills: projectedCapabilities.filter((capability) => capability.kind === "skill"),
     inspect: projectedCapabilities.filter((capability) => capability.policy === "inspect"),
     mutate: projectedCapabilities.filter((capability) => capability.policy === "mutate"),
@@ -1261,6 +1303,7 @@ export function renderCapabilityPolicyPromptSection(manifest: AgentCapabilityMan
 
   lines.push(summarizeAvailability("Browser tools", manifest.browser_tools.length));
   lines.push(summarizeAvailability("Runtime tools", manifest.runtime_tools.length));
+  lines.push(summarizeAvailability("Local capabilities", manifest.local_capabilities.length));
 
   if (manifest.runtime_tools.some((capability) => capability.id === "holaboss_cronjobs_create")) {
     lines.push("Cronjob delivery routing: use `session_run` for recurring agent work such as running instructions, tasks, analysis, browsing, or writing.");
