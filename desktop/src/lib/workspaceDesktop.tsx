@@ -594,12 +594,28 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
         if (!selectedMarketplaceTemplate) {
           throw new Error("Choose a marketplace template first.");
         }
+        // Marketplace templates only materialize a workspace scaffold (yaml
+        // + AGENTS.md); they never bundle app source. The runtime installs
+        // each app from the marketplace app catalog (which resolves to a
+        // GitHub release tarball per OS target) when createWorkspace's
+        // install_template_apps loop sees a non-empty list here. Union the
+        // template's required apps with the user's optional picks so
+        // required apps still install even if an entry point skipped the
+        // select-apps step — required is a template invariant, not a
+        // user choice.
+        const requiredAppIds = selectedMarketplaceTemplate.apps
+          .filter((app) => app.required)
+          .map((app) => app.name);
+        const templateAppsPayload = Array.from(
+          new Set([...requiredAppIds, ...selectedApps]),
+        );
         response = await window.electronAPI.workspace.createWorkspace({
           holaboss_user_id: resolvedUserId,
           harness: selectedCreateHarness,
           name: trimmedWorkspaceName,
           template_mode: "template",
           template_name: selectedMarketplaceTemplate.name,
+          template_apps: templateAppsPayload,
           ...(customWorkspacePath ? { workspace_path: customWorkspacePath } : {})
         });
       } else if (templateSourceMode === "empty" || templateSourceMode === "empty_onboarding") {
