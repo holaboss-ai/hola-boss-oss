@@ -1,18 +1,5 @@
 import { bindHarnessHostPlugin, type HarnessDefinition } from "./types.js";
 
-function instructionWithContextMessages(instruction: string, contextMessages: string[] | undefined): string {
-  const messages = Array.isArray(contextMessages)
-    ? contextMessages.map((message) => message.trim()).filter(Boolean)
-    : [];
-  if (messages.length === 0) {
-    return instruction;
-  }
-  const contextBlock = messages
-    .map((message, index) => [`[Runtime Context ${index + 1}]`, message, `[/Runtime Context ${index + 1}]`].join("\n"))
-    .join("\n\n");
-  return [contextBlock, instruction].filter(Boolean).join("\n\n").trim();
-}
-
 export const piHarnessDefinition: HarnessDefinition = {
   id: "pi",
   hostCommand: "run-pi",
@@ -42,10 +29,8 @@ export const piHarnessDefinition: HarnessDefinition = {
         session_id: params.request.session_id,
         browser_tools_enabled: String(params.request.session_kind ?? "").trim().toLowerCase() === "workspace_session",
         input_id: params.request.input_id,
-        instruction: instructionWithContextMessages(
-          params.request.instruction,
-          params.runtimeConfig.context_messages
-        ),
+        instruction: params.request.instruction,
+        context_messages: params.runtimeConfig.context_messages ?? [],
         attachments: params.request.attachments ?? [],
         thinking_value: params.request.thinking_value ?? null,
         debug: Boolean(params.request.debug),

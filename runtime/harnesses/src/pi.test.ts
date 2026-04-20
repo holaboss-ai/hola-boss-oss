@@ -62,4 +62,6 @@ test("pi harness enables browser tools only for workspace sessions", () => {
 
   assert.equal(workspaceRequest.browser_tools_enabled, true);
   assert.equal(onboardingRequest.browser_tools_enabled, false);
+  assert.deepEqual(workspaceRequest.context_messages, []);
+  assert.deepEqual(onboardingRequest.context_messages, []);
 });

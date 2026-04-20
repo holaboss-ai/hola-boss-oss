@@ -627,6 +627,21 @@ function inlineImageAttachment(request: HarnessHostPiRequest, attachment: PiAtta
   };
 }
 
+function runtimeContextMessagesBlock(request: HarnessHostPiRequest): string {
+  const messages = Array.isArray(request.context_messages)
+    ? request.context_messages.map((message) => message.trim()).filter(Boolean)
+    : [];
+  if (messages.length === 0) {
+    return "";
+  }
+  return [
+    "Runtime context:",
+    ...messages.map((message, index) =>
+      [`[Runtime Context ${index + 1}]`, message, `[/Runtime Context ${index + 1}]`].join("\n")
+    ),
+  ].join("\n\n");
+}
+
 export async function buildPiPromptPayload(request: HarnessHostPiRequest): Promise<PiPromptPayload> {
   const sections: string[] = [];
   const imageLines: string[] = [];
@@ -653,6 +668,11 @@ export async function buildPiPromptPayload(request: HarnessHostPiRequest): Promi
   const instruction = quotedSkills.body.trim();
   if (instruction) {
     sections.push(instruction);
+  }
+
+  const runtimeContextBlock = runtimeContextMessagesBlock(request);
+  if (runtimeContextBlock) {
+    sections.push(runtimeContextBlock);
   }
 
   for (const attachment of attachments) {
@@ -3763,6 +3783,23 @@ function shouldUseOpenAiResponsesProvider(request: HarnessHostPiRequest): boolea
   return isOpenAiGpt5Model(normalizedPiModelId(request));
 }
 
+function configurePiPromptCacheRetention(request: HarnessHostPiRequest): () => void {
+  if (!shouldUseOpenAiResponsesProvider(request)) {
+    return () => {};
+  }
+  const previousValue = process.env.PI_CACHE_RETENTION;
+  // Keep the override scoped to the harness session so PI's internal
+  // compaction/summarization requests inherit long cache retention.
+  process.env.PI_CACHE_RETENTION = "long";
+  return () => {
+    if (previousValue === undefined) {
+      delete process.env.PI_CACHE_RETENTION;
+      return;
+    }
+    process.env.PI_CACHE_RETENTION = previousValue;
+  };
+}
+
 function piGoogleGenerativeAiBaseUrlForRequest(request: HarnessHostPiRequest): string {
   const baseUrl = firstNonEmptyString(request.model_client.base_url);
   const normalized = baseUrl ? baseUrl.replace(/\/+$/, "") : "";
@@ -4327,6 +4364,7 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     ...skillTools.map((tool) => wrapToolWithWorkspaceBoundary(tool, workspaceBoundaryPolicy)),
   ];
 
+  const restorePromptCacheRetention = configurePiPromptCacheRetention(request);
   let session: AgentSession;
   try {
     ({ session } = await createAgentSession({
@@ -4342,14 +4380,22 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
       customTools,
     }));
   } catch (error) {
+    restorePromptCacheRetention();
     await mcpToolset.runtime?.close();
     throw error;
   }
 
   const sessionFile = sessionManager.getSessionFile();
   if (!sessionFile) {
-    session.dispose();
-    await mcpToolset.runtime?.close();
+    try {
+      session.dispose();
+    } finally {
+      try {
+        await mcpToolset.runtime?.close();
+      } finally {
+        restorePromptCacheRetention();
+      }
+    }
     throw new Error("Pi session manager did not provide a persisted session file");
   }
 
@@ -4359,8 +4405,15 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     mcpToolMetadata: mcpToolset.mcpToolMetadata,
     skillMetadataByAlias,
     dispose: async () => {
-      session.dispose();
-      await mcpToolset.runtime?.close();
+      try {
+        session.dispose();
+      } finally {
+        try {
+          await mcpToolset.runtime?.close();
+        } finally {
+          restorePromptCacheRetention();
+        }
+      }
     },
   };
 }

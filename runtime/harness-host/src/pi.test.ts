@@ -7,6 +7,7 @@ import test from "node:test";
 import JSZip from "jszip";
 import ExcelJS from "exceljs";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
+import { streamOpenAIResponses } from "../node_modules/@mariozechner/pi-ai/dist/providers/openai-responses.js";
 
 import type { HarnessHostPiRequest } from "./contracts.js";
 import {
@@ -1484,6 +1485,66 @@ test("buildPiProviderConfig uses OpenAI Responses API for managed Holaboss GPT-5
   assert.equal(providerConfig.models[0]?.maxTokens, 128_000);
 });
 
+test("OpenAI Responses proxy routes request prompt cache retention and stable cache keys", async () => {
+  const previousCacheRetention = process.env.PI_CACHE_RETENTION;
+  process.env.PI_CACHE_RETENTION = "long";
+
+  try {
+    const providerConfig = buildPiProviderConfig({
+      ...baseRequest(),
+      provider_id: "holaboss_model_proxy",
+      model_id: "gpt-5.4",
+      model_client: {
+        model_proxy_provider: "openai_compatible",
+        api_key: "hbmk-test",
+        base_url: "http://127.0.0.1:3060/api/v1/model-proxy/openai/v1",
+      },
+    });
+    const templateModel = providerConfig.models[0];
+    assert.ok(templateModel);
+    const model = {
+      ...templateModel,
+      provider: "holaboss_model_proxy",
+      baseUrl: providerConfig.baseUrl,
+      headers: providerConfig.headers,
+    };
+
+    const payload = await new Promise<Record<string, unknown>>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("Timed out capturing OpenAI Responses payload")), 1000);
+      streamOpenAIResponses(
+        model,
+        {
+          messages: [
+            {
+              role: "user",
+              content: "hello",
+              timestamp: Date.now(),
+            },
+          ],
+        },
+        {
+          apiKey: "hbmk-test",
+          sessionId: "session-1",
+          onPayload: async (params) => {
+            clearTimeout(timeout);
+            resolve(params as Record<string, unknown>);
+            throw new Error("stop after payload capture");
+          },
+        },
+      );
+    });
+
+    assert.equal(payload.prompt_cache_key, "session-1");
+    assert.equal(payload.prompt_cache_retention, "24h");
+  } finally {
+    if (previousCacheRetention === undefined) {
+      delete process.env.PI_CACHE_RETENTION;
+    } else {
+      process.env.PI_CACHE_RETENTION = previousCacheRetention;
+    }
+  }
+});
+
 test("buildPiProviderConfig uses Anthropic Messages API for managed Holaboss Claude models", () => {
   const providerConfig = buildPiProviderConfig({
     ...baseRequest(),
@@ -2793,6 +2854,20 @@ test("buildPiPromptPayload explicitly marks when attachments and image inputs ar
 
   assert.match(prompt.text, /^List the files\s+Attachments: none\.\s+Image inputs: none\.$/);
   assert.deepEqual(prompt.images, []);
+});
+
+test("buildPiPromptPayload keeps runtime context in a separate prompt section", async () => {
+  const prompt = await buildPiPromptPayload({
+    ...baseRequest(),
+    attachments: [],
+    context_messages: ["Previous summary", "User prefers terse answers"],
+  });
+
+  assert.match(
+    prompt.text,
+    /^List the files\s+Runtime context:\s+\[Runtime Context 1\]\s+Previous summary\s+\[\/Runtime Context 1\]\s+\[Runtime Context 2\]\s+User prefers terse answers\s+\[\/Runtime Context 2\]\s+Attachments: none\.\s+Image inputs: none\.$/
+  );
+  assert.ok(prompt.text.startsWith("List the files\n\nRuntime context:\n\n[Runtime Context 1]"));
 });
 
 test("buildPiPromptPayload frames persisted todo state as advisory continuity when resuming", async () => {

@@ -100,6 +100,7 @@ test("decodeHarnessHostPiRequestBase64 validates and normalizes request payloads
       browser_tools_enabled: true,
       input_id: "input-1",
       instruction: "Do the thing",
+      context_messages: ["Recent runtime context"],
       thinking_value: "medium",
       provider_id: "openai",
       model_id: "gpt-5.1",
@@ -129,6 +130,7 @@ test("decodeHarnessHostPiRequestBase64 validates and normalizes request payloads
     browser_tools_enabled: true,
     input_id: "input-1",
     instruction: "Do the thing",
+    context_messages: ["Recent runtime context"],
     attachments: [],
     thinking_value: "medium",
     debug: false,
@@ -161,6 +163,7 @@ test("decodeHarnessHostPiRequestBase64 allows empty or missing system_prompt", (
       session_id: "session-1",
       input_id: "input-1",
       instruction: "Do the thing",
+      context_messages: ["Recent runtime context"],
       provider_id: "openai",
       model_id: "gpt-5.1",
       timeout_seconds: 30,
@@ -183,6 +186,7 @@ test("decodeHarnessHostPiRequestBase64 allows empty or missing system_prompt", (
       session_id: "session-1",
       input_id: "input-1",
       instruction: "Do the thing",
+      context_messages: ["Recent runtime context"],
       provider_id: "openai",
       model_id: "gpt-5.1",
       timeout_seconds: 30,
@@ -200,6 +204,8 @@ test("decodeHarnessHostPiRequestBase64 allows empty or missing system_prompt", (
 
   assert.equal(emptyPrompt.system_prompt, "");
   assert.equal(missingPrompt.system_prompt, "");
+  assert.deepEqual(emptyPrompt.context_messages, ["Recent runtime context"]);
+  assert.deepEqual(missingPrompt.context_messages, ["Recent runtime context"]);
 });
 
 test("decodeAgentRuntimeConfigCliRequestBase64 defaults optional arrays and objects", () => {
