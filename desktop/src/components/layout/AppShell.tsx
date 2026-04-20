@@ -11,6 +11,7 @@ import { FirstWorkspacePane } from "@/components/onboarding";
 import { AppSurfacePane } from "@/components/panes/AppSurfacePane";
 import { BrowserPane } from "@/components/panes/BrowserPane";
 import { ChatPane } from "@/components/panes/ChatPane";
+import { MissingWorkspacePane } from "@/components/panes/MissingWorkspacePane";
 import {
   FileExplorerPane,
   type FileExplorerFocusRequest,
@@ -1065,6 +1066,8 @@ function AppShellContent() {
     workspaceBlockingReason,
     workspaceErrorMessage,
     onboardingModeActive,
+    chooseWorkspaceRelocationFolder,
+    deleteWorkspace,
   } = useWorkspaceDesktop();
   const [theme, setTheme] = useState<AppTheme>(loadTheme);
   const [runtimeStatus, setRuntimeStatus] =
@@ -3470,6 +3473,18 @@ function AppShellContent() {
     }
 
     if (agentView.type === "chat") {
+      if (selectedWorkspace && selectedWorkspace.folder_state === "missing") {
+        return (
+          <MissingWorkspacePane
+            workspaceName={selectedWorkspace.name}
+            workspacePath={selectedWorkspace.workspace_path ?? null}
+            onRelocate={() => chooseWorkspaceRelocationFolder(selectedWorkspace.id)}
+            onDeleteRecord={async () => {
+              await deleteWorkspace(selectedWorkspace.id);
+            }}
+          />
+        );
+      }
       return onboardingModeActive ? (
         <OnboardingPane
           onOpenOutput={handleOpenWorkspaceOutput}
@@ -3575,6 +3590,9 @@ function AppShellContent() {
     proactiveTaskProposalsError,
     proactiveWorkspaceEnabled,
     selectedWorkspace?.name,
+    selectedWorkspace?.folder_state,
+    selectedWorkspace?.workspace_path,
+    selectedWorkspace?.id,
     selectedWorkspaceId,
     taskProposalStatusMessage,
     taskProposals,
@@ -3585,6 +3603,8 @@ function AppShellContent() {
     isUpdatingProactiveWorkspaceEnabled,
     onboardingModeActive,
     triggerRemoteTaskProposal,
+    chooseWorkspaceRelocationFolder,
+    deleteWorkspace,
   ]);
 
   const spaceDisplayLayoutSyncKey = `${spaceExplorerMode}:${spaceBrowserSpace}:${spaceExplorerCollapsed ? "collapsed" : "open"}:${spaceAgentPaneWidth}:${showOperationsDrawer ? 1 : 0}`;
