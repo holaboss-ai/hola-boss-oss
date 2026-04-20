@@ -23,6 +23,7 @@ const ORIGINAL_ENV = {
     process.env.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S,
   HB_SANDBOX_ROOT: process.env.HB_SANDBOX_ROOT,
   HOLABOSS_RUNTIME_CONFIG_PATH: process.env.HOLABOSS_RUNTIME_CONFIG_PATH,
+  HOLABOSS_HARNESS_RUN_TIMEOUT_S: process.env.HOLABOSS_HARNESS_RUN_TIMEOUT_S,
 };
 
 function test(
@@ -64,6 +65,12 @@ afterEach(() => {
   } else {
     process.env.HOLABOSS_RUNTIME_CONFIG_PATH =
       ORIGINAL_ENV.HOLABOSS_RUNTIME_CONFIG_PATH;
+  }
+  if (ORIGINAL_ENV.HOLABOSS_HARNESS_RUN_TIMEOUT_S === undefined) {
+    delete process.env.HOLABOSS_HARNESS_RUN_TIMEOUT_S;
+  } else {
+    process.env.HOLABOSS_HARNESS_RUN_TIMEOUT_S =
+      ORIGINAL_ENV.HOLABOSS_HARNESS_RUN_TIMEOUT_S;
   }
 });
 
@@ -759,6 +766,60 @@ test("claimed input renews its claim lease while the runner is still healthy", a
   assert.ok(claimedUntilDuringRun);
   assert.notEqual(claimedUntilDuringRun, claimedUntilBefore);
   assert.ok(Date.parse(claimedUntilDuringRun) > Date.parse(claimedUntilBefore));
+
+  store.close();
+});
+
+test("claimed input passes the harness timeout through to the outer runner watchdog", async () => {
+  process.env.HOLABOSS_HARNESS_RUN_TIMEOUT_S = "45";
+
+  const store = makeStore("hb-claimed-input-harness-timeout-payload-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "hello" },
+  });
+  let seenHarnessTimeout: number | null = null;
+
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      seenHarnessTimeout =
+        typeof payload.harness_timeout_seconds === "number"
+          ? payload.harness_timeout_seconds
+          : null;
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "run_completed",
+        payload: { status: "ok" },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  assert.equal(seenHarnessTimeout, 45);
 
   store.close();
 });

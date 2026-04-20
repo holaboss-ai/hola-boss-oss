@@ -18,6 +18,7 @@ import { resolveProductRuntimeConfig } from "./runtime-config.js";
 import {
   normalizeHarnessId,
   resolveRuntimeHarnessAdapter,
+  resolveRuntimeHarnessPlugin,
 } from "./harness-registry.js";
 import type { MemoryServiceLike } from "./memory.js";
 import { createBackgroundTaskMemoryModelClient } from "./background-task-model.js";
@@ -1271,6 +1272,17 @@ export async function processClaimedInput(params: {
       runtimeBinding,
     });
 
+    const harnessTimeoutSeconds =
+      resolveRuntimeHarnessPlugin(harness)?.timeoutSeconds({
+        request: {
+          workspace_id: record.workspaceId,
+          session_id: record.sessionId,
+          session_kind: sessionKind,
+          input_id: record.inputId,
+          instruction,
+        },
+      }) ?? null;
+
     const payload: Record<string, unknown> = {
       workspace_id: record.workspaceId,
       session_id: record.sessionId,
@@ -1281,6 +1293,7 @@ export async function processClaimedInput(params: {
       context: runtimeContext,
       model: record.payload.model ?? null,
       thinking_value: record.payload.thinking_value ?? null,
+      harness_timeout_seconds: harnessTimeoutSeconds,
       debug: false,
     };
     const memoryWritebackModelContext = writebackModelContext({

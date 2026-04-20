@@ -16,6 +16,7 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 5000;
 const DEFAULT_RUN_TIMEOUT_SECONDS = 1800;
 const DEFAULT_IDLE_TIMEOUT_SECONDS = 900;
 const DEFAULT_TASK_PROPOSAL_RUN_TIMEOUT_SECONDS = 7200;
+const DEFAULT_POST_START_TIMEOUT_GRACE_SECONDS = 60;
 
 export interface RunnerExecutorLike {
   run(payload: Record<string, unknown>): Promise<Record<string, unknown>>;
@@ -180,6 +181,29 @@ function runnerHeartbeatIntervalMs(): number {
     min: 50,
     max: 60_000,
   });
+}
+
+function postStartTimeoutGraceSeconds(): number {
+  return secondsFromEnv(
+    "SANDBOX_AGENT_RUN_POST_START_GRACE_S",
+    DEFAULT_POST_START_TIMEOUT_GRACE_SECONDS,
+    { min: 0, max: 600 }
+  );
+}
+
+function harnessTimeoutSeconds(payload: Record<string, unknown>): number | null {
+  const raw = payload.harness_timeout_seconds;
+  const parsed =
+    typeof raw === "number"
+      ? raw
+      : typeof raw === "string"
+        ? Number.parseInt(raw, 10)
+        : Number.NaN;
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  const normalized = Math.max(0, Math.min(Math.trunc(parsed), 7200));
+  return normalized > 0 ? normalized : null;
 }
 
 function normalizeRuntimeApiHost(value: string): string {
@@ -432,14 +456,26 @@ export async function executeRunnerRequest(
 
   const timeoutMs = runnerTimeoutSeconds(payload) * 1000;
   const idleTimeoutMs = runnerIdleTimeoutSeconds(payload) * 1000;
+  const postStartHarnessTimeoutSeconds = harnessTimeoutSeconds(payload);
+  const postStartTimeoutGraceMs = postStartTimeoutGraceSeconds() * 1000;
   let timedOut = false;
   let idleTimedOut = false;
   let sawTerminal = false;
   let aborted = false;
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    killChildProcess(child, "SIGKILL");
-  }, timeoutMs);
+  let timeout: NodeJS.Timeout | null = null;
+  let hardDeadlineAtMs = Date.now() + timeoutMs;
+  let postStartDeadlineApplied = false;
+  const scheduleHardTimeoutAt = (deadlineAtMs: number) => {
+    hardDeadlineAtMs = deadlineAtMs;
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+    timeout = setTimeout(() => {
+      timedOut = true;
+      killChildProcess(child, "SIGKILL");
+    }, Math.max(1, hardDeadlineAtMs - Date.now()));
+  };
+  scheduleHardTimeoutAt(hardDeadlineAtMs);
   let idleTimeout: NodeJS.Timeout | null = null;
   const resetIdleTimeout = () => {
     if (idleTimeout) {
@@ -505,6 +541,19 @@ export async function executeRunnerRequest(
           }
           resetIdleTimeout();
           events.push(parsed);
+          if (
+            parsed.event_type === "run_started" &&
+            !postStartDeadlineApplied &&
+            postStartHarnessTimeoutSeconds !== null
+          ) {
+            postStartDeadlineApplied = true;
+            scheduleHardTimeoutAt(
+              Math.max(
+                hardDeadlineAtMs,
+                Date.now() + postStartHarnessTimeoutSeconds * 1000 + postStartTimeoutGraceMs
+              )
+            );
+          }
           if (options.onEvent) {
             await options.onEvent(parsed);
           }
@@ -523,7 +572,9 @@ export async function executeRunnerRequest(
       skippedLines.push(stdoutBuffer.trim());
     }
   } finally {
-    clearTimeout(timeout);
+    if (timeout) {
+      clearTimeout(timeout);
+    }
     if (idleTimeout) {
       clearTimeout(idleTimeout);
     }

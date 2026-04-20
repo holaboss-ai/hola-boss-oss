@@ -19,6 +19,7 @@ const ORIGINAL_ENV = {
   SANDBOX_AGENT_TASK_PROPOSAL_RUN_TIMEOUT_S: process.env.SANDBOX_AGENT_TASK_PROPOSAL_RUN_TIMEOUT_S,
   SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S: process.env.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S,
   SANDBOX_AGENT_TASK_PROPOSAL_RUN_IDLE_TIMEOUT_S: process.env.SANDBOX_AGENT_TASK_PROPOSAL_RUN_IDLE_TIMEOUT_S,
+  SANDBOX_AGENT_RUN_POST_START_GRACE_S: process.env.SANDBOX_AGENT_RUN_POST_START_GRACE_S,
   SANDBOX_AGENT_RUNNER_HEARTBEAT_MS: process.env.SANDBOX_AGENT_RUNNER_HEARTBEAT_MS,
   SANDBOX_RUNTIME_API_URL: process.env.SANDBOX_RUNTIME_API_URL,
   SANDBOX_RUNTIME_API_HOST: process.env.SANDBOX_RUNTIME_API_HOST,
@@ -57,6 +58,11 @@ afterEach(() => {
     delete process.env.SANDBOX_AGENT_TASK_PROPOSAL_RUN_IDLE_TIMEOUT_S;
   } else {
     process.env.SANDBOX_AGENT_TASK_PROPOSAL_RUN_IDLE_TIMEOUT_S = ORIGINAL_ENV.SANDBOX_AGENT_TASK_PROPOSAL_RUN_IDLE_TIMEOUT_S;
+  }
+  if (ORIGINAL_ENV.SANDBOX_AGENT_RUN_POST_START_GRACE_S === undefined) {
+    delete process.env.SANDBOX_AGENT_RUN_POST_START_GRACE_S;
+  } else {
+    process.env.SANDBOX_AGENT_RUN_POST_START_GRACE_S = ORIGINAL_ENV.SANDBOX_AGENT_RUN_POST_START_GRACE_S;
   }
   if (ORIGINAL_ENV.SANDBOX_AGENT_RUNNER_HEARTBEAT_MS === undefined) {
     delete process.env.SANDBOX_AGENT_RUNNER_HEARTBEAT_MS;
@@ -355,6 +361,34 @@ test("native runner executor keeps silent runs alive with invisible runner heart
 
   assert.deepEqual(
     events.map((event) => event.event_type),
+    ["run_started", "run_completed"]
+  );
+});
+
+test("executeRunnerRequest gives a started harness its own timeout budget before the outer watchdog kills it", async () => {
+  process.env.SANDBOX_AGENT_RUN_TIMEOUT_S = "1";
+  process.env.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S = "10";
+  process.env.SANDBOX_AGENT_RUN_POST_START_GRACE_S = "0";
+
+  setNodeRunnerTemplate([
+    "setTimeout(() => {",
+    "  process.stdout.write(JSON.stringify({ session_id: 'session-1', input_id: 'input-1', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello' } }) + '\\n');",
+    "}, 500);",
+    "setTimeout(() => {",
+    "  process.stdout.write(JSON.stringify({ session_id: 'session-1', input_id: 'input-1', sequence: 2, event_type: 'run_completed', payload: { status: 'success' } }) + '\\n');",
+    "}, 1500);"
+  ]);
+
+  const execution = await executeRunnerRequest(
+    payload({ harness_timeout_seconds: 2 }),
+    {}
+  );
+
+  assert.equal(execution.stderr, "");
+  assert.equal(execution.returnCode, 0);
+  assert.equal(execution.sawTerminal, true);
+  assert.deepEqual(
+    execution.events.map((event) => event.event_type),
     ["run_started", "run_completed"]
   );
 });
