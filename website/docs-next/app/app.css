@@ -1,0 +1,273 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+/* Tell Tailwind to scan MDX content so arbitrary-value utilities used
+   inside .mdx files (leading-[1.05], text-[clamp(...)], etc.) are
+   generated into the CSS bundle. */
+@source "../content/docs/**/*.{md,mdx}";
+
+/* ──────────────────────────────────────────────────────────────
+   Holaboss design tokens — ported from
+   frontend/apps/web/src/globals.css & components/landing/theme.css
+   ────────────────────────────────────────────────────────────── */
+
+:root {
+  /* Fumadocs layout width — full viewport */
+  --fd-layout-width: 100%;
+
+  /* Surfaces */
+  --hb-bg: oklch(1 0 0);
+  --hb-bg-50: oklch(0.985 0 0);
+  --hb-bg-100: oklch(0.97 0 0);
+  --hb-bg-200: oklch(0.922 0 0);
+  --hb-bg-300: oklch(0.87 0 0);
+  --hb-bg-400: oklch(0.708 0 0);
+  --hb-bg-700: oklch(0.205 0 0);
+
+  /* Foreground */
+  --hb-fg: oklch(0.145 0 0);
+  --hb-fg-muted: oklch(0.556 0 0);
+  --hb-fg-subtle: oklch(0.708 0 0);
+
+  /* Border */
+  --hb-border: oklch(0.922 0 0);
+  --hb-border-strong: oklch(0.87 0 0);
+
+  /* Accent (orange) */
+  --hb-accent: hsl(19, 99%, 44%);
+  --hb-accent-dark: hsl(19, 99%, 38%);
+  --hb-accent-fg: oklch(1 0 0);
+
+  --hb-grid-accent: oklch(0.92 0.02 38);
+  --hb-dot-color: oklch(0.624 0 0);
+  --hb-nav-bg: oklch(1 0 0 / 92%);
+
+  /* Shadows */
+  --hb-shadow-landing:
+    0 1px 3px oklch(0.145 0 0 / 6%),
+    0 6px 13px oklch(0.145 0 0 / 6%),
+    0 13px 29px oklch(0.145 0 0 / 6%),
+    0 22px 52px oklch(0.145 0 0 / 6%),
+    0 35px 81px oklch(0.145 0 0 / 3%);
+  --hb-shadow-landing-sm:
+    0 1px 3px oklch(0.145 0 0 / 6%),
+    0 6px 13px oklch(0.145 0 0 / 6%),
+    0 13px 29px oklch(0.145 0 0 / 6%);
+
+  /* Fonts */
+  --hb-font-display:
+    "Noto Serif Variable", "Noto Serif", ui-serif, Georgia, serif;
+  --hb-font-mono:
+    "Geist Mono Variable", "Geist Mono", ui-monospace, monospace;
+  --hb-font-sans:
+    "Inter Variable", "Inter", system-ui, -apple-system, sans-serif;
+
+  /* ── Override Fumadocs fd-* tokens so UI chrome uses hb-* palette ── */
+  --color-fd-background: var(--hb-bg);
+  --color-fd-foreground: var(--hb-fg);
+  --color-fd-muted: var(--hb-bg-100);
+  --color-fd-muted-foreground: var(--hb-fg-muted);
+  --color-fd-popover: var(--hb-bg);
+  --color-fd-popover-foreground: var(--hb-fg);
+  --color-fd-card: var(--hb-bg);
+  --color-fd-card-foreground: var(--hb-fg);
+  --color-fd-border: var(--hb-border);
+  --color-fd-accent: var(--hb-bg-100);
+  --color-fd-accent-foreground: var(--hb-fg);
+  --color-fd-primary: var(--hb-accent);
+  --color-fd-primary-foreground: var(--hb-accent-fg);
+  --color-fd-ring: var(--hb-accent);
+  --color-fd-secondary: var(--hb-bg-50);
+  --color-fd-secondary-foreground: var(--hb-fg);
+}
+
+.dark {
+  --hb-bg: oklch(0.145 0 0);
+  --hb-bg-50: oklch(0.205 0 0);
+  --hb-bg-100: oklch(0.269 0 0);
+  --hb-bg-200: oklch(0.269 0 0);
+  --hb-bg-300: oklch(0.371 0 0);
+  --hb-bg-400: oklch(0.556 0 0);
+  --hb-bg-700: oklch(0.87 0 0);
+
+  --hb-fg: oklch(0.985 0 0);
+  --hb-fg-muted: oklch(0.708 0 0);
+  --hb-fg-subtle: oklch(0.556 0 0);
+
+  --hb-border: oklch(1 0 0 / 10%);
+  --hb-border-strong: oklch(1 0 0 / 15%);
+
+  --hb-accent: hsl(19, 99%, 50%);
+  --hb-accent-dark: hsl(19, 99%, 44%);
+  --hb-accent-fg: oklch(1 0 0);
+
+  --hb-grid-accent: oklch(0.22 0.04 38);
+  --hb-dot-color: oklch(0.556 0 0);
+  --hb-nav-bg: oklch(0.145 0 0 / 92%);
+
+  --hb-shadow-landing:
+    0 1px 3px oklch(0 0 0 / 40%),
+    0 6px 13px oklch(0 0 0 / 30%),
+    0 13px 29px oklch(0 0 0 / 20%),
+    0 22px 52px oklch(0 0 0 / 15%),
+    0 35px 81px oklch(0 0 0 / 10%);
+
+  /* Fumadocs fd-* overrides re-bind to dark hb-* values automatically
+     via var() — but a few cards need deeper surfaces in dark mode. */
+  --color-fd-card: var(--hb-bg-50);
+  --color-fd-popover: var(--hb-bg-50);
+  --color-fd-secondary: var(--hb-bg-100);
+}
+
+/* Expose hb-* tokens as Tailwind v4 utilities so MDX / custom
+   components can use `bg-hb-bg-50`, `text-hb-fg-muted`, etc. */
+@theme inline {
+  --color-hb-bg: var(--hb-bg);
+  --color-hb-bg-50: var(--hb-bg-50);
+  --color-hb-bg-100: var(--hb-bg-100);
+  --color-hb-bg-200: var(--hb-bg-200);
+  --color-hb-bg-300: var(--hb-bg-300);
+  --color-hb-bg-400: var(--hb-bg-400);
+  --color-hb-bg-700: var(--hb-bg-700);
+
+  --color-hb-fg: var(--hb-fg);
+  --color-hb-fg-muted: var(--hb-fg-muted);
+  --color-hb-fg-subtle: var(--hb-fg-subtle);
+
+  --color-hb-border: var(--hb-border);
+  --color-hb-border-strong: var(--hb-border-strong);
+
+  --color-hb-accent: var(--hb-accent);
+  --color-hb-accent-dark: var(--hb-accent-dark);
+  --color-hb-accent-fg: var(--hb-accent-fg);
+
+  --shadow-landing: var(--hb-shadow-landing);
+  --shadow-landing-sm: var(--hb-shadow-landing-sm);
+
+  --font-hb-display: var(--hb-font-display);
+  --font-hb-mono: var(--hb-font-mono);
+  --font-hb-sans: var(--hb-font-sans);
+}
+
+/* Base typography — match landing font stack */
+html,
+body {
+  font-family: var(--hb-font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
+html > body[data-scroll-locked] {
+  margin-right: 0px !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   Polish pass — Cursor / Hiro-adjacent refinement
+   ────────────────────────────────────────────────────────────── */
+
+/* Top navbar: hairline and generous height */
+#nd-subnav {
+  border-bottom: 1px solid var(--hb-border);
+  min-height: 54px;
+}
+
+/* Tabs — quieter, smaller, tighter tracking */
+#nd-subnav a[href^="/docs"] {
+  font-size: 12.5px;
+  font-weight: 450;
+  letter-spacing: 0.002em;
+  padding-bottom: 8px;
+  border-bottom-width: 1px;
+  color: var(--hb-fg-subtle);
+}
+#nd-subnav a[href^="/docs"]:hover {
+  color: var(--hb-fg);
+}
+/* Active tab: slimmer underline + brand color inherited via fd-primary remap */
+#nd-subnav a[href^="/docs"].border-fd-primary {
+  border-bottom-width: 1px;
+}
+
+/* Eyebrow utility — small mono caps label */
+.eyebrow {
+  font-family: var(--hb-font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--hb-fg-subtle);
+}
+
+/* Docs prose — heading rhythm */
+#nd-docs-body h1,
+#nd-page h1 {
+  font-family: var(--hb-font-display);
+  font-size: 2.25rem;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  font-weight: 500;
+}
+#nd-page h2 {
+  font-size: 1.5rem;
+  letter-spacing: -0.01em;
+  font-weight: 600;
+  margin-top: 2.5em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--hb-border);
+}
+#nd-page h3 {
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+/* Inline code */
+#nd-page :not(pre) > code {
+  background: var(--hb-bg-100);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.875em;
+  font-family: var(--hb-font-mono);
+  border: none;
+}
+
+
+/* Sidebar items — slimmer, softer active */
+#nd-sidebar a[data-active] {
+  font-size: 13px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+/* Table styling */
+#nd-page thead th {
+  font-weight: 500;
+  font-size: 12.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--hb-fg);
+  border-bottom: 1px solid var(--hb-border-strong);
+}
+#nd-page tbody td {
+  font-size: 14px;
+}
+
+/* Focus ring on actionable elements only */
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--hb-accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Hide "Collapse Sidebar" button in top-right on section pages */
+button[aria-label="Collapse Sidebar"] {
+  display: none;
+}
+

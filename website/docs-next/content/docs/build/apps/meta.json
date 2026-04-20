@@ -1,0 +1,13 @@
+{
+  "title": "Apps",
+  "pages": [
+    "index",
+    "first-app",
+    "app-anatomy",
+    "app-runtime-yaml",
+    "mcp-tools",
+    "publishing-outputs",
+    "bridge-sdk",
+    "troubleshooting"
+  ]
+}

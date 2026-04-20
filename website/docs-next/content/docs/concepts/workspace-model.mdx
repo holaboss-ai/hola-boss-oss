@@ -1,0 +1,125 @@
+---
+title: Workspace Model
+description: The workspace filesystem layout and the split between authored state, runtime-owned state, and durable memory.
+---
+
+Workspaces live under the runtime OS root. In desktop mode that root comes from the local host data directory. In standalone runtime deployments it defaults to `/holaboss`.
+
+The workspace model is split deliberately: human-authored policy, runtime contracts, execution truth, and durable memory do not live in the same place.
+
+This page explains what the workspace surfaces mean. It is not the page for runner bootstrap order, compile-stage validation, or reduced harness-request payloads. For those implementation details, continue into [Run Compilation](/docs/contribute/runtime/run-compilation).
+
+## What each part means
+
+### `workspace.yaml`
+
+`workspace.yaml` is the root runtime plan for the workspace. It describes the active agent, skill ordering, workspace commands, MCP registry, and the apps installed into the workspace.
+
+For app development, two fields matter immediately:
+
+- `applications[].app_id`
+- `applications[].config_path`
+
+For workspace-level MCP, the main authored surface is `mcp_registry`:
+
+- `mcp_registry.servers.<server-id>` declares local or remote MCP servers
+- `mcp_registry.allowlist.tool_ids` optionally provides explicit `server.tool` refs for servers that should be constrained to a known subset
+- when `mcp_registry.allowlist.tool_ids` is omitted or empty, the runtime exposes all discovered tools from the enabled configured MCP servers for that run
+- when some servers have explicit tool ids and others do not, the runtime keeps the explicit subset for the referenced servers and still allows discovery for the other enabled configured servers
+- remote MCP headers and environment values may use `{env:ENV_VAR_NAME}` placeholders, but the contents must be an environment variable name, not a literal secret
+
+For remote MCP servers, `workspace.yaml` usually declares the server and policy boundary, not the full raw tool catalog. The concrete remote tool list may still be discovered at run time.
+
+For example, this is valid:
+
+```yaml
+headers:
+  CONTEXT7_API_KEY: "{env:CONTEXT7_API_KEY}"
+```
+
+and this is also valid:
+
+```yaml
+headers:
+  CONTEXT7_API_KEY: "ctx7sk-..."
+```
+
+This is invalid:
+
+```yaml
+headers:
+  CONTEXT7_API_KEY: "{env:ctx7sk-...}"
+```
+
+Those entries are how the runtime finds each app manifest under `apps/`.
+
+### `.git/`
+
+Desktop-created workspaces are initialized as local git repositories after their scaffold or template is materialized. That repository is intended for agent-owned local version control checkpoints rather than remote sync. Lower-level workspace creation does not make local git initialization a universal runtime invariant by itself.
+
+### `AGENTS.md`
+
+`AGENTS.md` is the human-authored instruction surface. Put standing workspace policy here instead of trying to encode it in runtime state.
+
+### `ONBOARD.md`
+
+`ONBOARD.md` is the onboarding instruction surface for first-run or onboarding-mode workspaces. The file lives with the workspace, while onboarding status and onboarding session state are tracked separately in runtime state.
+
+### `skills/`
+
+Workspace skills live under `skills/`. The runtime loads them from the workspace directory, and each skill directory must contain a `SKILL.md` file.
+
+### `apps/`
+
+Workspace-local apps live under `apps/<app-id>/`. Each app must provide `app.runtime.yaml`, which is the runtime contract for lifecycle and integration behavior.
+
+If you are changing app behavior, continue into [App Anatomy](/docs/build/apps/app-anatomy) rather than treating this page as the full contract reference.
+
+### `.holaboss/`
+
+`<workspace-id>/.holaboss/` stores runtime-managed workspace state such as the identity marker, persisted harness session mapping, staged input attachments, and Pi harness state.
+
+`workspace/.holaboss/` is separate from the per-workspace `.holaboss/` directory. It stores shared workspace-root state for MCP sidecars and their logs.
+
+### `state/runtime.db`
+
+`state/runtime.db` is the durable runtime registry for workspaces, onboarding status/session state, sessions, bindings, queue state, turn results, compaction boundaries, request snapshots, durable memory catalog metadata, integration connections, integration bindings, output folders, app port allocation, runtime notifications, task proposals, evolve skill candidates, and memory update proposals. The `workspace_id` file exists mainly as an on-disk identity marker for workspace discovery and migration.
+
+### `memory/`
+
+`memory/` is OS-global, not part of a single workspace directory. It holds the markdown memory surfaces used by the runtime memory service.
+
+## What the runtime compiles per run
+
+The workspace tree is only the authored input. For each run, the runtime compiles a reduced execution package from:
+
+- `workspace.yaml`
+- `AGENTS.md`
+- workspace commands
+- installed app manifests
+- workspace-local skills
+
+Before the harness starts, the runtime then:
+
+1. projects the visible and callable capability surface for that run, including workspace commands where configured
+2. assembles prompt sections and prompt layers
+3. computes a `prompt_cache_profile`
+4. persists a sanitized request snapshot for replay and debugging
+5. passes a reduced execution package to the harness with the selected model target, composed prompt, capability manifest, and workspace checksum
+
+That split is why the filesystem contract and the runtime continuity contract need to stay separate. The workspace holds authored intent; the runtime compiles per-run execution state from it.
+
+## App manifests
+
+`app.runtime.yaml` is the app-level runtime contract. It tells the runtime how to:
+
+- install or set up the app
+- start and stop it
+- discover its MCP server
+- check its health
+- resolve app-specific ports
+- resolve integration requirements (which external services the app needs access to)
+
+The runtime does not care what framework the app uses internally. It only needs the declared contract. See the [app.runtime.yaml reference](/docs/build/apps/app-runtime-yaml) for the full field guide including integration declarations.
+
+If you are changing workspace creation or reusable scaffolds instead of an installed app, continue into [Template Materialization](/docs/contribute/templates-materialization).
