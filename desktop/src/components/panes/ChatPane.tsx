@@ -9340,6 +9340,7 @@ function Composer({
   const [highlightedSlashIndex, setHighlightedSlashIndex] = useState(0);
   const composerFooterRef = useRef<HTMLDivElement | null>(null);
   const composerActionsRef = useRef<HTMLDivElement | null>(null);
+  const composerFooterLayoutSyncFrameRef = useRef<number | null>(null);
   const slashCommandMenuRef = useRef<HTMLDivElement | null>(null);
   const [composerFooterLayout, setComposerFooterLayout] = useState({
     width: 0,
@@ -9402,6 +9403,13 @@ function Composer({
       ?.selectedLabel ??
     modelOptions.find((option) => option.value === selectedModel)?.label ??
     resolvedModelLabel;
+  const cancelComposerFooterLayoutSync = () => {
+    if (composerFooterLayoutSyncFrameRef.current === null) {
+      return;
+    }
+    window.cancelAnimationFrame(composerFooterLayoutSyncFrameRef.current);
+    composerFooterLayoutSyncFrameRef.current = null;
+  };
   const syncComposerFooterLayout = () => {
     const footer = composerFooterRef.current;
     if (!footer) {
@@ -9425,6 +9433,19 @@ function Composer({
         : { width, actionsWidth },
     );
   };
+  // Coalesce ResizeObserver bursts so compact/full footer transitions do not
+  // synchronously re-enter render while the DOM is still settling.
+  const scheduleComposerFooterLayoutSync = () => {
+    if (composerFooterLayoutSyncFrameRef.current !== null) {
+      return;
+    }
+    composerFooterLayoutSyncFrameRef.current = window.requestAnimationFrame(
+      () => {
+        composerFooterLayoutSyncFrameRef.current = null;
+        syncComposerFooterLayout();
+      },
+    );
+  };
   useLayoutEffect(() => {
     const footer = composerFooterRef.current;
     if (!footer) {
@@ -9437,31 +9458,17 @@ function Composer({
     }
 
     const resizeObserver = new ResizeObserver(() => {
-      syncComposerFooterLayout();
+      scheduleComposerFooterLayoutSync();
     });
     resizeObserver.observe(footer);
     if (composerActionsRef.current) {
       resizeObserver.observe(composerActionsRef.current);
     }
-    Array.from(footer.children).forEach((child) => {
-      if (child instanceof HTMLElement) {
-        resizeObserver.observe(child);
-      }
-    });
     return () => {
       resizeObserver.disconnect();
+      cancelComposerFooterLayoutSync();
     };
-  }, [
-    noAvailableModels,
-    resolvedModelLabel,
-    runtimeDefaultModelAvailable,
-    selectedModel,
-    selectedModelOptionLabel,
-    selectedThinkingValue,
-    showModelSelector,
-    showThinkingValueSelector,
-    thinkingValues,
-  ]);
+  }, []);
   useEffect(() => {
     setHighlightedSlashIndex(0);
   }, [activeSlashRange?.query, filteredSlashCommands.length]);
