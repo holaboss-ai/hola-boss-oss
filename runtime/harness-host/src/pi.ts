@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import JSZip from "jszip";
 import {
@@ -50,6 +51,8 @@ export interface PiCompactionCommandResult {
   session_file: string;
   result?: JsonObject | null;
   reason?: string | null;
+  diagnostics?: JsonObject | null;
+  error?: JsonObject | null;
 }
 
 export type PiEventMapperState = {
@@ -72,9 +75,36 @@ export interface PiDeps {
   createSession: (request: HarnessHostPiRequest) => Promise<PiSessionHandle>;
 }
 
-type PiInternalCompactionSession = AgentSession & {
+type PiInternalCompactionSession = {
   _checkCompaction?: (assistantMessage: unknown, skipAbortedCheck?: boolean) => Promise<void>;
 };
+
+type PiCompactionDiagnosticsSession = AgentSession & {
+  sessionManager?: {
+    getBranch?: () => unknown[];
+    getLeafId?: () => string | null;
+  };
+  settingsManager?: {
+    getCompactionSettings?: () => unknown;
+  };
+  model?: {
+    provider?: unknown;
+    id?: unknown;
+    contextWindow?: unknown;
+  };
+  getContextUsage?: () => unknown;
+  subscribe?: (listener: (event: AgentSessionEvent) => void) => (() => void) | void;
+};
+
+type PiPrepareCompactionResult = {
+  firstKeptEntryId?: unknown;
+  messagesToSummarize?: unknown;
+  turnPrefixMessages?: unknown;
+  isSplitTurn?: unknown;
+  tokensBefore?: unknown;
+  previousSummary?: unknown;
+  settings?: unknown;
+} | null;
 
 type PiThinkingLevel =
   | "minimal"
@@ -115,6 +145,9 @@ const PI_TODO_WRITE_OPS_TEXT =
 const PI_TODO_WRITE_ALIAS_WARNING =
   "Do not invent alias op names such as `replace_all`, `update_task`, or `set_status`.";
 const require = createRequire(import.meta.url);
+let cachedPrepareCompactionFnPromise:
+  | Promise<((entries: unknown[], settings: unknown) => PiPrepareCompactionResult) | null>
+  | null = null;
 
 type PiTodoStatus = (typeof PI_TODO_STATUSES)[number];
 
@@ -746,6 +779,256 @@ function jsonValue(value: unknown): JsonValue {
 
 function jsonObject(value: Record<string, unknown>): JsonObject {
   return JSON.parse(JSON.stringify(value)) as JsonObject;
+}
+
+function finiteNumberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function summarizeCompactionBranchEntry(entry: unknown): JsonObject | null {
+  if (!isRecord(entry)) {
+    return null;
+  }
+  const message = isRecord(entry.message) ? entry.message : null;
+  return {
+    id: optionalTrimmedString(entry.id),
+    parent_id: optionalTrimmedString(entry.parentId),
+    type: optionalTrimmedString(entry.type),
+    timestamp: optionalTrimmedString(entry.timestamp),
+    role: optionalTrimmedString(message?.role),
+    custom_type: optionalTrimmedString(entry.customType),
+    first_kept_entry_id: optionalTrimmedString(entry.firstKeptEntryId),
+  };
+}
+
+function latestCompactionBranchEntry(branch: unknown[]): Record<string, unknown> | null {
+  for (let index = branch.length - 1; index >= 0; index -= 1) {
+    const entry = branch[index];
+    if (isRecord(entry) && entry.type === "compaction") {
+      return entry;
+    }
+  }
+  return null;
+}
+
+async function loadPrepareCompactionFn():
+  Promise<((entries: unknown[], settings: unknown) => PiPrepareCompactionResult) | null> {
+  if (cachedPrepareCompactionFnPromise) {
+    return cachedPrepareCompactionFnPromise;
+  }
+  cachedPrepareCompactionFnPromise = (async () => {
+    try {
+      const packageEntry = require.resolve("@mariozechner/pi-coding-agent");
+      const modulePath = path.join(
+        path.dirname(packageEntry),
+        "core",
+        "compaction",
+        "compaction.js",
+      );
+      const module = (await import(pathToFileURL(modulePath).href)) as {
+        prepareCompaction?: (entries: unknown[], settings: unknown) => PiPrepareCompactionResult;
+      };
+      return typeof module.prepareCompaction === "function"
+        ? module.prepareCompaction
+        : null;
+    } catch {
+      return null;
+    }
+  })();
+  return cachedPrepareCompactionFnPromise;
+}
+
+function summarizeCompactionPreparation(
+  preparation: PiPrepareCompactionResult,
+  branch: unknown[],
+): JsonObject {
+  if (!preparation || !isRecord(preparation)) {
+    return {
+      status: "none",
+    };
+  }
+  const firstKeptEntryId = optionalTrimmedString(preparation.firstKeptEntryId);
+  const firstKeptEntryIndex = firstKeptEntryId
+    ? branch.findIndex(
+        (entry) => isRecord(entry) && optionalTrimmedString(entry.id) === firstKeptEntryId,
+      )
+    : -1;
+  const firstKeptEntry =
+    firstKeptEntryIndex >= 0 ? summarizeCompactionBranchEntry(branch[firstKeptEntryIndex]) : null;
+  const previousEntry =
+    firstKeptEntryIndex > 0
+      ? summarizeCompactionBranchEntry(branch[firstKeptEntryIndex - 1])
+      : null;
+  return {
+    status: "ready",
+    first_kept_entry_id: firstKeptEntryId,
+    first_kept_entry_index: firstKeptEntryIndex >= 0 ? firstKeptEntryIndex : null,
+    first_kept_entry: firstKeptEntry,
+    previous_entry: previousEntry,
+    is_split_turn:
+      typeof preparation.isSplitTurn === "boolean" ? preparation.isSplitTurn : null,
+    tokens_before: finiteNumberOrNull(preparation.tokensBefore),
+    messages_to_summarize_count: Array.isArray(preparation.messagesToSummarize)
+      ? preparation.messagesToSummarize.length
+      : null,
+    turn_prefix_message_count: Array.isArray(preparation.turnPrefixMessages)
+      ? preparation.turnPrefixMessages.length
+      : null,
+    previous_summary_length:
+      typeof preparation.previousSummary === "string"
+        ? preparation.previousSummary.length
+        : null,
+    settings: isRecord(preparation.settings)
+      ? jsonObject(preparation.settings)
+      : null,
+  };
+}
+
+async function collectPiCompactionDiagnostics(
+  session: PiCompactionDiagnosticsSession,
+): Promise<JsonObject | null> {
+  const branch = session.sessionManager?.getBranch?.();
+  if (!Array.isArray(branch)) {
+    return null;
+  }
+  const latestCompaction = latestCompactionBranchEntry(branch);
+  const diagnostics: Record<string, unknown> = {
+    branch_entry_count: branch.length,
+    leaf_id: session.sessionManager?.getLeafId?.() ?? null,
+    branch_tail: branch.slice(-6).map((entry) => summarizeCompactionBranchEntry(entry)),
+    latest_compaction: latestCompaction
+      ? {
+          id: optionalTrimmedString(latestCompaction.id),
+          first_kept_entry_id: optionalTrimmedString(latestCompaction.firstKeptEntryId),
+          timestamp: optionalTrimmedString(latestCompaction.timestamp),
+        }
+      : null,
+    model: session.model
+      ? {
+          provider: optionalTrimmedString(session.model.provider),
+          id: optionalTrimmedString(session.model.id),
+          context_window: finiteNumberOrNull(session.model.contextWindow),
+        }
+      : null,
+    context_usage: jsonValue(session.getContextUsage?.() ?? null),
+  };
+
+  const settings = session.settingsManager?.getCompactionSettings?.();
+  if (isRecord(settings)) {
+    diagnostics.compaction_settings = jsonObject(settings);
+  }
+
+  const prepareCompaction = await loadPrepareCompactionFn();
+  if (!prepareCompaction || !settings) {
+    diagnostics.preparation = {
+      status: prepareCompaction ? "unavailable_settings" : "unavailable_helper",
+    };
+    return jsonObject(diagnostics);
+  }
+
+  try {
+    diagnostics.preparation = summarizeCompactionPreparation(
+      prepareCompaction(branch, settings),
+      branch,
+    );
+  } catch (error) {
+    diagnostics.preparation = {
+      status: "error",
+      message: sdkErrorMessage(error, "Failed to compute compaction preparation"),
+    };
+  }
+  return jsonObject(diagnostics);
+}
+
+function summarizeCompactionEventResult(value: unknown): JsonObject | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const summary = optionalTrimmedString(value.summary);
+  return {
+    first_kept_entry_id: optionalTrimmedString(value.firstKeptEntryId),
+    tokens_before: finiteNumberOrNull(value.tokensBefore),
+    summary_length: summary ? summary.length : null,
+    details: isRecord(value.details) ? jsonObject(value.details) : jsonValue(value.details),
+  };
+}
+
+function summarizeCompactionEvent(event: AgentSessionEvent): JsonObject | null {
+  if (event.type === "compaction_start") {
+    return {
+      type: "compaction_start",
+      reason: optionalTrimmedString(event.reason),
+    };
+  }
+  if (event.type === "compaction_end") {
+    return {
+      type: "compaction_end",
+      reason: optionalTrimmedString(event.reason),
+      aborted: typeof event.aborted === "boolean" ? event.aborted : null,
+      will_retry: typeof event.willRetry === "boolean" ? event.willRetry : null,
+      error_message: optionalTrimmedString(event.errorMessage),
+      result: summarizeCompactionEventResult(event.result),
+    };
+  }
+  return null;
+}
+
+function withCompactionEventDiagnostics(
+  diagnostics: JsonObject | null,
+  compactionStart: JsonObject | null,
+  compactionEnd: JsonObject | null,
+): JsonObject | null {
+  if (!diagnostics && !compactionStart && !compactionEnd) {
+    return null;
+  }
+  const next: Record<string, unknown> = diagnostics ? { ...diagnostics } : {};
+  if (compactionStart) {
+    next.compaction_start = compactionStart;
+  }
+  if (compactionEnd) {
+    next.compaction_end = compactionEnd;
+  }
+  return jsonObject(next);
+}
+
+function summarizePiCompactionError(
+  error: unknown,
+  compactionEnd: JsonObject | null,
+): JsonObject {
+  const record = isRecord(error) ? error : null;
+  return {
+    name:
+      (error instanceof Error && error.name.trim()) ||
+      optionalTrimmedString(record?.name) ||
+      "Error",
+    message: sdkErrorMessage(error, "Pi compaction failed"),
+    provider_message:
+      extractProviderErrorMessage(record?.error ?? record?.body ?? record?.cause ?? error) ??
+      sdkErrorMessage(error, "Pi compaction failed"),
+    status_code:
+      finiteNumberOrNull(record?.status) ?? finiteNumberOrNull(record?.statusCode),
+    code:
+      optionalTrimmedString(record?.code) ??
+      optionalTrimmedString(record?.error && isRecord(record.error) ? record.error.code : null),
+    type:
+      optionalTrimmedString(record?.type) ??
+      optionalTrimmedString(record?.error && isRecord(record.error) ? record.error.type : null),
+    param:
+      optionalTrimmedString(record?.param) ??
+      optionalTrimmedString(record?.error && isRecord(record.error) ? record.error.param : null),
+    request_id:
+      optionalTrimmedString(record?.request_id) ??
+      optionalTrimmedString(record?.requestId),
+    headers: isRecord(record?.headers) ? jsonObject(stringRecord(record.headers)) : null,
+    error: isRecord(record?.error) ? jsonObject(record.error) : jsonValue(record?.error),
+    body: isRecord(record?.body) ? jsonObject(record.body) : jsonValue(record?.body),
+    cause: isRecord(record?.cause) ? jsonObject(record.cause) : jsonValue(record?.cause),
+    stack_preview:
+      error instanceof Error && typeof error.stack === "string"
+        ? error.stack.split("\n").slice(0, 8).join("\n")
+        : null,
+    compaction_end: compactionEnd,
+  };
 }
 
 function stringRecord(value: unknown): Record<string, string> {
@@ -4263,14 +4546,14 @@ function defaultPiDeps(): PiDeps {
   };
 }
 
-function suppressPiPostRunAutoCompaction(session: PiInternalCompactionSession): void {
-  const originalCheckCompaction = session._checkCompaction;
+function suppressPiPostRunAutoCompaction(session: AgentSession): void {
+  const internalSession = session as unknown as PiInternalCompactionSession;
+  const originalCheckCompaction = internalSession._checkCompaction;
   if (typeof originalCheckCompaction !== "function") {
     return;
   }
 
-  session._checkCompaction = async function (
-    this: PiInternalCompactionSession,
+  internalSession._checkCompaction = async function (
     assistantMessage: unknown,
     skipAbortedCheck = true,
   ): Promise<void> {
@@ -4292,7 +4575,7 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
   };
 
   const handle = await deps.createSession(request);
-  suppressPiPostRunAutoCompaction(handle.session as PiInternalCompactionSession);
+  suppressPiPostRunAutoCompaction(handle.session);
   const requestedThinking = requestedPiThinkingLevel(request) ?? "off";
   (
     handle.session as AgentSession & {
@@ -4415,6 +4698,19 @@ export async function compactPiSession(
   deps: PiDeps = defaultPiDeps(),
 ): Promise<PiCompactionCommandResult> {
   const handle = await deps.createSession(request);
+  const session = handle.session as PiCompactionDiagnosticsSession;
+  const diagnostics = await collectPiCompactionDiagnostics(session);
+  let compactionStart: JsonObject | null = null;
+  let compactionEnd: JsonObject | null = null;
+  const unsubscribe = session.subscribe?.((event) => {
+    if (event.type === "compaction_start") {
+      compactionStart = summarizeCompactionEvent(event);
+      return;
+    }
+    if (event.type === "compaction_end") {
+      compactionEnd = summarizeCompactionEvent(event);
+    }
+  });
   try {
     const result = await handle.session.compact();
     return {
@@ -4422,6 +4718,12 @@ export async function compactPiSession(
       session_file: handle.sessionFile,
       result: jsonObject(JSON.parse(JSON.stringify(result)) as Record<string, unknown>),
       reason: null,
+      diagnostics: withCompactionEventDiagnostics(
+        diagnostics,
+        compactionStart,
+        compactionEnd,
+      ),
+      error: null,
     };
   } catch (error) {
     const reason = compactionNoOpReason(error);
@@ -4431,10 +4733,28 @@ export async function compactPiSession(
         session_file: handle.sessionFile,
         result: null,
         reason,
+        diagnostics: withCompactionEventDiagnostics(
+          diagnostics,
+          compactionStart,
+          compactionEnd,
+        ),
+        error: null,
       };
     }
-    throw error;
+    return {
+      compacted: false,
+      session_file: handle.sessionFile,
+      result: null,
+      reason: null,
+      diagnostics: withCompactionEventDiagnostics(
+        diagnostics,
+        compactionStart,
+        compactionEnd,
+      ),
+      error: summarizePiCompactionError(error, compactionEnd),
+    };
   } finally {
+    unsubscribe?.();
     await handle.dispose();
   }
 }

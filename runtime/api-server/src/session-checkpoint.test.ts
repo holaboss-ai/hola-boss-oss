@@ -584,7 +584,7 @@ test("session checkpoint records not_compacted when PI reports a compaction no-o
   }
 });
 
-test("session checkpoint treats provider 422 summarization failures as a soft no-op", async () => {
+test("session checkpoint treats provider 422 summarization failures as a soft no-op and records compaction diagnostics", async () => {
   const { store, root } = makeStore("hb-session-checkpoint-soft-422-");
   const sessions = new Map<string, FakeSessionState>();
   const sessionOps = createFakeSessionOps(sessions);
@@ -664,7 +664,31 @@ test("session checkpoint treats provider 422 summarization failures as a soft no
       record: queued!,
       sessionOps,
       runPiSessionCompactionFn: async () => {
-        throw new Error("Summarization failed: 422 status code (no body)");
+        const error = new Error("Summarization failed: 422 status code (no body)") as Error & {
+          commandResult?: Record<string, unknown>;
+        };
+        error.commandResult = {
+          compacted: false,
+          session_file: liveSessionFile,
+          diagnostics: {
+            preparation: {
+              status: "ready",
+              is_split_turn: true,
+              first_kept_entry_id: "entry-2",
+            },
+            compaction_end: {
+              error_message:
+                "Compaction failed: Turn prefix summarization failed: 422 status code (no body)",
+            },
+          },
+          error: {
+            name: "APIError",
+            message: "Summarization failed: 422 status code (no body)",
+            status_code: 422,
+            provider_message: "422 status code (no body)",
+          },
+        };
+        throw error;
       },
     });
 
@@ -685,6 +709,35 @@ test("session checkpoint treats provider 422 summarization failures as a soft no
         updatedJob?.payload.checkpoint_result as { outcome?: string } | undefined
       )?.outcome,
       "soft_provider_422",
+    );
+    assert.deepEqual(
+      (
+        updatedJob?.payload.checkpoint_result as
+          | { compaction?: Record<string, unknown> | null }
+          | undefined
+      )?.compaction,
+      {
+        session_file: liveSessionFile,
+        reason: null,
+        diagnostics: {
+          preparation: {
+            status: "ready",
+            is_split_turn: true,
+            first_kept_entry_id: "entry-2",
+          },
+          compaction_end: {
+            error_message:
+              "Compaction failed: Turn prefix summarization failed: 422 status code (no body)",
+          },
+        },
+        result: null,
+        error: {
+          name: "APIError",
+          message: "Summarization failed: 422 status code (no body)",
+          status_code: 422,
+          provider_message: "422 status code (no body)",
+        },
+      },
     );
   } finally {
     store.close();

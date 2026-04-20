@@ -50,7 +50,7 @@ export async function runHarnessHostCli(
     const result = await compactPiSession(request);
     const stdout = deps.stdout ?? process.stdout;
     stdout.write(`${JSON.stringify(result)}\n`);
-    return 0;
+    return result.error ? 1 : 0;
   }
 
   const resolvePluginByCommand = deps.resolvePluginByCommand ?? requireHarnessHostPluginByCommand;

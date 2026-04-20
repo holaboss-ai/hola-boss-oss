@@ -33,7 +33,10 @@ interface SessionCheckpointJobPayload {
 interface PiCompactionCommandResult {
   compacted: boolean;
   session_file: string;
+  result?: Record<string, unknown> | null;
   reason?: string | null;
+  diagnostics?: Record<string, unknown> | null;
+  error?: Record<string, unknown> | null;
 }
 
 type SessionCheckpointResultOutcome =
@@ -56,6 +59,15 @@ interface SessionCheckpointResultRecord {
   reason?: string | null;
   merged?: boolean;
   boundary_written?: boolean;
+  compaction?: SessionCheckpointCompactionRecord | null;
+}
+
+interface SessionCheckpointCompactionRecord {
+  session_file: string | null;
+  reason: string | null;
+  diagnostics: Record<string, unknown> | null;
+  result: Record<string, unknown> | null;
+  error: Record<string, unknown> | null;
 }
 
 type ResolveRuntimeModelClientFn = typeof resolveRuntimeModelClient;
@@ -138,6 +150,30 @@ function requiredRecord(value: unknown, fieldName: string): Record<string, unkno
     throw new Error(`${fieldName} must be an object`);
   }
   return value;
+}
+
+function jsonValue(value: unknown): unknown {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => jsonValue(item));
+  }
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, jsonValue(item)]),
+    );
+  }
+  return value === undefined ? null : String(value);
+}
+
+function finiteNumberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function runtimeRootDir(): string {
@@ -224,6 +260,7 @@ function recordSessionCheckpointResult(params: {
   reason?: string | null;
   merged?: boolean;
   boundaryWritten?: boolean;
+  compaction?: SessionCheckpointCompactionRecord | null;
 }): void {
   const nextPayload = {
     ...(isRecord(params.record.payload) ? params.record.payload : {}),
@@ -238,6 +275,7 @@ function recordSessionCheckpointResult(params: {
           params.outcome === "merged_without_boundary"),
       boundary_written:
         params.boundaryWritten ?? (params.outcome === "merged"),
+      compaction: params.compaction ?? null,
     } satisfies SessionCheckpointResultRecord,
   };
   params.store.updatePostRunJob(params.record.jobId, {
@@ -430,26 +468,94 @@ async function runPiSessionCompaction(requestPayload: Record<string, unknown>): 
     child.once("error", reject);
     child.once("close", (code) => resolve(code ?? 0));
   });
-  if (exitCode !== 0) {
-    throw new Error(stderr.trim() || `compact-pi-session exited with code ${exitCode}`);
-  }
-
   const responseLine = stdout
     .trim()
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
     .at(-1);
+  if (!responseLine && exitCode !== 0) {
+    throw new Error(stderr.trim() || `compact-pi-session exited with code ${exitCode}`);
+  }
   if (!responseLine) {
     throw new Error("compact-pi-session did not return a result");
   }
   const parsed = JSON.parse(responseLine) as unknown;
-  const result = requiredRecord(parsed, "compact-pi-session response");
+  const result = decodePiCompactionCommandResult(parsed);
+  if (result.error) {
+    const error = new Error(
+      nonEmptyString(result.error.message) ??
+        (stderr.trim() || `compact-pi-session exited with code ${exitCode || 1}`),
+    );
+    error.name =
+      nonEmptyString(result.error.name) ?? "PiSessionCompactionCommandError";
+    Object.assign(error, {
+      commandResult: result,
+      exitCode,
+      stderr: stderr.trim() || null,
+    });
+    throw error;
+  }
+  if (exitCode !== 0) {
+    const error = new Error(stderr.trim() || `compact-pi-session exited with code ${exitCode}`);
+    Object.assign(error, {
+      commandResult: result,
+      exitCode,
+      stderr: stderr.trim() || null,
+    });
+    throw error;
+  }
+  return result;
+}
+
+function decodePiCompactionCommandResult(value: unknown): PiCompactionCommandResult {
+  const result = requiredRecord(value, "compact-pi-session response");
   return {
     compacted: Boolean(result.compacted),
     session_file: nonEmptyString(result.session_file) ?? "",
+    result: isRecord(result.result) ? result.result : null,
     reason: nonEmptyString(result.reason),
+    diagnostics: isRecord(result.diagnostics) ? result.diagnostics : null,
+    error: isRecord(result.error) ? result.error : null,
   };
+}
+
+function summarizeCheckpointCompactionResult(
+  result: PiCompactionCommandResult | null | undefined,
+): SessionCheckpointCompactionRecord | null {
+  if (!result) {
+    return null;
+  }
+  const compactedResult = isRecord(result.result) ? result.result : null;
+  const summary = nonEmptyString(compactedResult?.summary);
+  return {
+    session_file: nonEmptyString(result.session_file),
+    reason: nonEmptyString(result.reason),
+    diagnostics: isRecord(result.diagnostics)
+      ? (jsonValue(result.diagnostics) as Record<string, unknown>)
+      : null,
+    result: compactedResult
+      ? {
+          first_kept_entry_id: nonEmptyString(compactedResult.firstKeptEntryId),
+          tokens_before: finiteNumberOrNull(compactedResult.tokensBefore),
+          summary_length: summary ? summary.length : null,
+          summary_preview: summary ? summary.slice(0, 240) : null,
+          details: jsonValue(compactedResult.details),
+        }
+      : null,
+    error: isRecord(result.error)
+      ? (jsonValue(result.error) as Record<string, unknown>)
+      : null,
+  };
+}
+
+function compactionResultFromError(
+  error: unknown,
+): PiCompactionCommandResult | null {
+  if (!isRecord(error) || !isRecord(error.commandResult)) {
+    return null;
+  }
+  return decodePiCompactionCommandResult(error.commandResult);
 }
 
 function maybeDeleteFile(filePath: string): void {
@@ -693,6 +799,7 @@ export async function processSessionCheckpointJob(params: {
       persisted_harness_session_id: compactedSessionPath,
       timeout_seconds: 0,
     });
+    const compaction = summarizeCheckpointCompactionResult(result);
     if (!result.compacted) {
       maybeDeleteFile(compactedSessionPath);
       recordSessionCheckpointResult({
@@ -700,6 +807,7 @@ export async function processSessionCheckpointJob(params: {
         record: params.record,
         outcome: "not_compacted",
         reason: result.reason ?? null,
+        compaction,
       });
       return;
     }
@@ -770,6 +878,7 @@ export async function processSessionCheckpointJob(params: {
         outcome: "merged",
         merged: true,
         boundaryWritten: true,
+        compaction,
       });
       return;
     }
@@ -780,15 +889,20 @@ export async function processSessionCheckpointJob(params: {
       merged: true,
       boundaryWritten: false,
       detail: "live session was compacted but no turn result was available to write a boundary",
+      compaction,
     });
   } catch (error) {
     maybeDeleteFile(compactedSessionPath);
+    const compaction = summarizeCheckpointCompactionResult(
+      compactionResultFromError(error),
+    );
     if (isSoftCheckpointCompactionError(error)) {
       recordSessionCheckpointResult({
         store: params.store,
         record: params.record,
         outcome: "soft_provider_422",
         detail: error instanceof Error ? error.message : String(error),
+        compaction,
       });
       return;
     }
@@ -797,6 +911,7 @@ export async function processSessionCheckpointJob(params: {
       record: params.record,
       outcome: "error",
       detail: error instanceof Error ? error.message : String(error),
+      compaction,
     });
     throw error;
   }
