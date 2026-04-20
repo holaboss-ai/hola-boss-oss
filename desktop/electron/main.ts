@@ -4,6 +4,17 @@ import * as Sentry from "@sentry/electron/main";
 Sentry.init({
   dsn: process.env.SENTRY_DSN,
   enabled: !!process.env.SENTRY_DSN,
+  enableLogs: !!process.env.SENTRY_DSN,
+  attachScreenshot: !!process.env.SENTRY_DSN,
+  maxBreadcrumbs: 200,
+  integrations: [
+    Sentry.consoleLoggingIntegration({
+      levels: ["info", "warn", "error"],
+    }),
+  ],
+  beforeSend(event, hint) {
+    return enrichDesktopSentryEvent(event, hint);
+  },
 });
 
 import { electronClient } from "@better-auth/electron/client";
@@ -33,6 +44,7 @@ import {
   type IpcMainInvokeEvent,
   type OpenDialogOptions,
   type Session,
+  type WebContents,
 } from "electron";
 import {
   execFileSync,
@@ -93,6 +105,10 @@ import { ensureWorkspaceGitRepo } from "./workspace-git.js";
 const APP_DISPLAY_NAME = "Holaboss";
 const AUTH_CALLBACK_PROTOCOL = "ai.holaboss.app";
 const DESKTOP_LAUNCH_ID = randomUUID();
+Sentry.setTags({
+  desktop_launch_id: DESKTOP_LAUNCH_ID,
+  process_kind: "electron_main",
+});
 const verboseTelemetryEnabled =
   process.env.HOLABOSS_VERBOSE_TELEMETRY?.trim() === "1";
 const chromiumStderrLoggingEnabled =
@@ -821,6 +837,7 @@ let downloadsPopupWindow: BrowserWindow | null = null;
 let historyPopupWindow: BrowserWindow | null = null;
 let overflowPopupWindow: BrowserWindow | null = null;
 let addressSuggestionsPopupWindow: BrowserWindow | null = null;
+const unresponsiveDesktopWindows = new WeakSet<BrowserWindow>();
 let attachedBrowserTabView: BrowserView | null = null;
 let attachedAppSurfaceView: BrowserView | null = null;
 let currentTheme = "amber-minimal-light";
@@ -927,6 +944,82 @@ let appUpdateStatus: AppUpdateStatusPayload = {
   channel: "latest",
   preferredChannel: null,
 };
+
+function desktopWindowTelemetryRole(window: BrowserWindow | null | undefined): string {
+  if (!window) {
+    return "unknown";
+  }
+  if (window === mainWindow) {
+    return "main";
+  }
+  if (window === authPopupWindow) {
+    return "auth_popup";
+  }
+  if (window === downloadsPopupWindow) {
+    return "downloads_popup";
+  }
+  if (window === historyPopupWindow) {
+    return "history_popup";
+  }
+  if (window === overflowPopupWindow) {
+    return "overflow_popup";
+  }
+  if (window === addressSuggestionsPopupWindow) {
+    return "address_suggestions_popup";
+  }
+  return "browser_window";
+}
+
+function safeWebContentsUrl(contents: WebContents): string | null {
+  try {
+    return contents.getURL() || null;
+  } catch {
+    return null;
+  }
+}
+
+function addDesktopLifecycleBreadcrumb(
+  category: string,
+  message: string,
+  data?: Record<string, unknown>,
+) {
+  Sentry.addBreadcrumb({
+    category: `desktop.${category}`,
+    message,
+    level: "info",
+    data: data
+      ? (redactDesktopSentryValue(data) as Record<string, unknown>)
+      : undefined,
+  });
+}
+
+function captureDesktopLifecycleEvent(params: {
+  message: string;
+  level: Sentry.SeverityLevel;
+  fingerprint: string[];
+  tags?: Record<string, string | null | undefined>;
+  contexts?: Record<string, Record<string, unknown> | null | undefined>;
+}) {
+  Sentry.withScope((scope) => {
+    scope.setLevel(params.level);
+    scope.setFingerprint(params.fingerprint);
+    for (const [key, value] of Object.entries(params.tags ?? {})) {
+      const normalizedValue = value?.trim();
+      if (normalizedValue) {
+        scope.setTag(key, normalizedValue);
+      }
+    }
+    for (const [key, context] of Object.entries(params.contexts ?? {})) {
+      if (context) {
+        scope.setContext(
+          key,
+          redactDesktopSentryValue(context) as Record<string, unknown>,
+        );
+      }
+    }
+    Sentry.captureMessage(params.message);
+  });
+}
 
 // Port 5060 is SIP — blocked by Node.js fetch (undici "bad port").
 const RUNTIME_API_PORT_FALLBACK = 5160;
@@ -4961,6 +5054,279 @@ async function exportDesktopDiagnosticsBundle() {
   return result;
 }
 
+const SQLITE_BUSY_TIMEOUT_MS = 5_000;
+const SENTRY_RUNTIME_LOG_TAIL_BYTES = 64 * 1024;
+const SENTRY_RECENT_EVENT_LIMIT = 40;
+const SENTRY_RECENT_STATE_LIMIT = 20;
+const SENTRY_REDACTED_VALUE = "[REDACTED]";
+const SENTRY_SENSITIVE_KEY_PATTERNS = [
+  /token/i,
+  /secret/i,
+  /password/i,
+  /cookie/i,
+  /^authorization$/i,
+  /api[_-]?key/i,
+  /private[_-]?key/i,
+  /refresh[_-]?token/i,
+  /access[_-]?token/i,
+];
+const SENTRY_SENSITIVE_TEXT_ASSIGNMENT_PATTERN =
+  /((?:token|secret|password|cookie|authorization|api[_-]?key|private[_-]?key|refresh[_-]?token|access[_-]?token)[^:=\n\r]{0,64}[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
+const SENTRY_AUTHORIZATION_BEARER_PATTERN =
+  /(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s,;]+(?:\s+[^\s,;]+)?/gi;
+
+function shouldRedactSentryKey(key: string): boolean {
+  const normalized = key.trim();
+  if (!normalized) {
+    return false;
+  }
+  return SENTRY_SENSITIVE_KEY_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function redactDesktopSentryValue(value: unknown, keyName = ""): unknown {
+  if (shouldRedactSentryKey(keyName)) {
+    if (value === null || value === undefined) {
+      return value;
+    }
+    return SENTRY_REDACTED_VALUE;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactDesktopSentryValue(entry));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        redactDesktopSentryValue(entry, key),
+      ]),
+    );
+  }
+  return value;
+}
+
+function redactDesktopSentryText(text: string): string {
+  return text
+    .replace(
+      SENTRY_AUTHORIZATION_BEARER_PATTERN,
+      `$1${SENTRY_REDACTED_VALUE}`,
+    )
+    .replace(
+      SENTRY_SENSITIVE_TEXT_ASSIGNMENT_PATTERN,
+      `$1${SENTRY_REDACTED_VALUE}`,
+    );
+}
+
+function addSentryHintAttachment(
+  hint: Sentry.EventHint | undefined,
+  attachment: NonNullable<Sentry.EventHint["attachments"]>[number] | null,
+) {
+  if (!hint || !attachment) {
+    return;
+  }
+  hint.attachments = [...(hint.attachments ?? []), attachment];
+}
+
+function runtimeSentryFileMetadata(filePath: string): Record<string, unknown> {
+  if (!filePath) {
+    return { path: null, exists: false };
+  }
+  try {
+    const stats = statSync(filePath);
+    return {
+      path: path.basename(filePath),
+      exists: true,
+      sizeBytes: stats.size,
+      modifiedAt: stats.mtime.toISOString(),
+    };
+  } catch {
+    return {
+      path: path.basename(filePath),
+      exists: false,
+    };
+  }
+}
+
+function readFileTail(filePath: string, maxBytes: number): string | null {
+  if (!filePath || !existsSync(filePath)) {
+    return null;
+  }
+  const buffer = readFileSync(filePath);
+  const start = Math.max(0, buffer.length - maxBytes);
+  return buffer.subarray(start).toString("utf8");
+}
+
+function openRuntimeDiagnosticsDatabase(): Database.Database | null {
+  const dbPath = runtimeDatabasePath();
+  if (!existsSync(dbPath)) {
+    return null;
+  }
+  const database = new Database(dbPath, {
+    readonly: true,
+    fileMustExist: true,
+  });
+  database.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  return database;
+}
+
+function readDesktopRuntimeDiagnosticsSnapshot(): Record<string, unknown> {
+  const snapshot: Record<string, unknown> = {
+    captured_at: utcNowIso(),
+    desktop: {
+      launch_id: DESKTOP_LAUNCH_ID,
+      app_version: app.getVersion(),
+      pid: process.pid,
+      platform: process.platform,
+      arch: process.arch,
+      versions: {
+        chrome: process.versions.chrome,
+        electron: process.versions.electron,
+        node: process.versions.node,
+      },
+    },
+    runtime_status: runtimeStatus,
+    persisted_runtime_process: readPersistedRuntimeProcessState(),
+    files: {
+      runtime_db: runtimeSentryFileMetadata(runtimeDatabasePath()),
+      runtime_log: runtimeSentryFileMetadata(runtimeLogsPath()),
+      runtime_config: runtimeSentryFileMetadata(runtimeConfigPath()),
+    },
+  };
+
+  const database = openRuntimeDiagnosticsDatabase();
+  if (!database) {
+    return redactDesktopSentryValue(snapshot) as Record<string, unknown>;
+  }
+
+  try {
+    const readCount = (sql: string): number => {
+      const row = database.prepare(sql).get() as { count?: number } | undefined;
+      return Number(row?.count ?? 0);
+    };
+
+    snapshot.database = {
+      counts: {
+        active_sessions: readCount(
+          "SELECT COUNT(*) AS count FROM session_runtime_state WHERE status IN ('BUSY', 'QUEUED') OR current_input_id IS NOT NULL",
+        ),
+        active_terminal_sessions: readCount(
+          "SELECT COUNT(*) AS count FROM terminal_sessions WHERE status IN ('starting', 'running')",
+        ),
+        failed_app_builds: readCount(
+          "SELECT COUNT(*) AS count FROM app_builds WHERE status IN ('failed', 'running')",
+        ),
+        queued_inputs: readCount(
+          "SELECT COUNT(*) AS count FROM agent_session_inputs WHERE status IN ('queued', 'claimed')",
+        ),
+      },
+      recent_event_log: database.prepare(`
+        SELECT category, event, outcome, detail, created_at
+        FROM event_log
+        ORDER BY created_at DESC
+        LIMIT ?
+      `).all(SENTRY_RECENT_EVENT_LIMIT),
+      session_runtime_state: database.prepare(`
+        SELECT workspace_id, session_id, status, current_input_id, updated_at
+        FROM session_runtime_state
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `).all(SENTRY_RECENT_STATE_LIMIT),
+      terminal_sessions: database.prepare(`
+        SELECT terminal_id, workspace_id, session_id, input_id, owner, status, title, command, last_activity_at
+        FROM terminal_sessions
+        ORDER BY last_activity_at DESC
+        LIMIT ?
+      `).all(SENTRY_RECENT_STATE_LIMIT),
+      app_builds: database.prepare(`
+        SELECT workspace_id, app_id, status, error, updated_at
+        FROM app_builds
+        WHERE status IN ('running', 'failed')
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `).all(SENTRY_RECENT_STATE_LIMIT),
+    };
+  } catch (error) {
+    snapshot.database = {
+      error: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    database.close();
+  }
+
+  return redactDesktopSentryValue(snapshot) as Record<string, unknown>;
+}
+
+function redactedRuntimeConfigAttachment() {
+  const configPath = runtimeConfigPath();
+  if (!existsSync(configPath)) {
+    return null;
+  }
+  let data = "";
+  try {
+    const parsed = JSON.parse(readFileSync(configPath, "utf8")) as unknown;
+    data = `${JSON.stringify(redactDesktopSentryValue(parsed), null, 2)}\n`;
+  } catch {
+    data = `${JSON.stringify(
+      {
+        error: "runtime-config.json could not be parsed for redaction.",
+      },
+      null,
+      2,
+    )}\n`;
+  }
+  return {
+    filename: "runtime-config.redacted.json",
+    data,
+    contentType: "application/json",
+  };
+}
+
+function runtimeLogTailAttachment() {
+  const tail = readFileTail(runtimeLogsPath(), SENTRY_RUNTIME_LOG_TAIL_BYTES);
+  if (!tail) {
+    return null;
+  }
+  return {
+    filename: "runtime-log-tail.txt",
+    data: redactDesktopSentryText(tail),
+    contentType: "text/plain",
+  };
+}
+
+function enrichDesktopSentryEvent(
+  event: Sentry.ErrorEvent,
+  hint: Sentry.EventHint | undefined,
+): Sentry.ErrorEvent {
+  if (event.request?.headers) {
+    delete event.request.headers.authorization;
+    delete event.request.headers.cookie;
+    delete event.request.headers["x-api-key"];
+  }
+  const diagnostics = readDesktopRuntimeDiagnosticsSnapshot();
+  const diagnosticsAttachment = {
+    filename: "desktop-runtime-diagnostics.json",
+    data: `${JSON.stringify(diagnostics, null, 2)}\n`,
+    contentType: "application/json",
+  };
+  addSentryHintAttachment(hint, diagnosticsAttachment);
+  addSentryHintAttachment(hint, runtimeLogTailAttachment());
+  addSentryHintAttachment(hint, redactedRuntimeConfigAttachment());
+  event.tags = {
+    ...(event.tags ?? {}),
+    desktop_launch_id: DESKTOP_LAUNCH_ID,
+    process_kind: "electron_main",
+  };
+  event.contexts = {
+    ...(event.contexts ?? {}),
+    desktop_process:
+      (diagnostics.desktop as Record<string, unknown> | undefined) ?? {},
+    embedded_runtime_status:
+      (diagnostics.runtime_status as Record<string, unknown> | undefined) ?? {},
+    embedded_runtime_files:
+      (diagnostics.files as Record<string, unknown> | undefined) ?? {},
+  };
+  return event;
+}
+
 function processIsAlive(pid: number) {
   if (!Number.isInteger(pid) || pid <= 0) {
     return false;
@@ -4990,7 +5356,7 @@ function utcNowIso() {
 
 function openRuntimeDatabase() {
   const database = new Database(runtimeDatabasePath());
-  database.pragma("journal_mode = WAL");
+  database.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
   database.pragma("foreign_keys = ON");
   return database;
 }
@@ -5143,6 +5509,7 @@ async function bootstrapRuntimeDatabase() {
 
   const database = openRuntimeDatabase();
   try {
+    database.pragma("journal_mode = WAL");
     migrateLocalWorkspacesTable(database);
     migrateRuntimeInstallationStateTable(database);
     migrateRuntimeProcessStateTable(database);
@@ -5524,6 +5891,20 @@ function appendRuntimeEventLog(event: {
   outcome: string;
   detail?: string | null;
 }) {
+  Sentry.addBreadcrumb({
+    category: `runtime.${event.category}`,
+    message: event.event,
+    level:
+      event.outcome === "error"
+        ? "error"
+        : event.outcome === "success"
+          ? "info"
+          : "debug",
+    data: {
+      outcome: event.outcome,
+      detail: event.detail ?? null,
+    },
+  });
   const database = openRuntimeDatabase();
   try {
     database
@@ -8747,6 +9128,8 @@ async function exchangeDesktopRuntimeBinding(
 function emitAuthAuthenticated(user: AuthUserPayload) {
   pendingAuthUser = user;
   pendingAuthError = null;
+  const userId = authUserId(user);
+  Sentry.setUser(userId ? { id: userId } : null);
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("auth:authenticated", user);
   }
@@ -8761,6 +9144,8 @@ function emitAuthAuthenticated(user: AuthUserPayload) {
 
 function emitAuthUserUpdated(user: AuthUserPayload | null) {
   pendingAuthUser = user;
+  const userId = authUserId(user);
+  Sentry.setUser(userId ? { id: userId } : null);
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("auth:userUpdated", user);
   }
@@ -15871,6 +16256,10 @@ async function startEmbeddedRuntime() {
           SANDBOX_AGENT_HARNESS: harness,
           HOLABOSS_RUNTIME_WORKFLOW_BACKEND: workflowBackend,
           HOLABOSS_RUNTIME_DB_PATH: runtimeDatabasePath(),
+          HOLABOSS_RUNTIME_LOG_PATH: runtimeLogsPath(),
+          HOLABOSS_RUNTIME_CONFIG_PATH: runtimeConfigPath(),
+          HOLABOSS_DESKTOP_LAUNCH_ID: DESKTOP_LAUNCH_ID,
+          HOLABOSS_DESKTOP_APP_VERSION: app.getVersion(),
           HOLABOSS_DESKTOP_BROWSER_ENABLED: currentDesktopBrowserCapabilityConfig()
             .enabled
             ? "true"
@@ -21760,6 +22149,109 @@ if (!singleInstanceLock) {
     void handleAuthCallbackUrl(initialCallbackUrl);
   }
 }
+
+app.on("browser-window-created", (_event, window) => {
+  window.on("unresponsive", () => {
+    if (unresponsiveDesktopWindows.has(window)) {
+      return;
+    }
+    unresponsiveDesktopWindows.add(window);
+    captureDesktopLifecycleEvent({
+      message: "Electron window became unresponsive",
+      level: "warning",
+      fingerprint: [
+        "electron-window-unresponsive",
+        desktopWindowTelemetryRole(window),
+      ],
+      tags: {
+        desktop_window_role: desktopWindowTelemetryRole(window),
+      },
+      contexts: {
+        desktop_window: {
+          role: desktopWindowTelemetryRole(window),
+          title: window.getTitle() || null,
+          visible: window.isVisible(),
+          focused: window.isFocused(),
+          minimized: window.isMinimized(),
+          maximized: window.isMaximized(),
+        },
+      },
+    });
+  });
+
+  window.on("responsive", () => {
+    unresponsiveDesktopWindows.delete(window);
+    addDesktopLifecycleBreadcrumb(
+      "window",
+      "Browser window responsive again",
+      {
+        desktop_window_role: desktopWindowTelemetryRole(window),
+        title: window.getTitle() || null,
+      },
+    );
+  });
+});
+
+app.on("web-contents-created", (_event, contents) => {
+  const contentsType = contents.getType();
+  contents.on("render-process-gone", (_goneEvent, details) => {
+    const ownerWindow = BrowserWindow.fromWebContents(contents);
+    const ownerRole = desktopWindowTelemetryRole(ownerWindow);
+    captureDesktopLifecycleEvent({
+      message: "Electron renderer process gone",
+      level: "error",
+      fingerprint: [
+        "electron-render-process-gone",
+        contentsType,
+        details.reason,
+      ],
+      tags: {
+        desktop_window_role: ownerRole,
+        webcontents_type: contentsType,
+        render_process_reason: details.reason,
+      },
+      contexts: {
+        render_process: {
+          type: contentsType,
+          reason: details.reason,
+          exit_code: details.exitCode,
+          url: safeWebContentsUrl(contents),
+        },
+        desktop_window: ownerWindow
+          ? {
+              role: ownerRole,
+              title: ownerWindow.getTitle() || null,
+            }
+          : null,
+      },
+    });
+  });
+});
+
+app.on("child-process-gone", (_event, details) => {
+  captureDesktopLifecycleEvent({
+    message: "Electron child process gone",
+    level: "error",
+    fingerprint: [
+      "electron-child-process-gone",
+      details.type,
+      details.reason,
+    ],
+    tags: {
+      child_process_type: details.type,
+      child_process_reason: details.reason,
+    },
+    contexts: {
+      child_process: {
+        type: details.type,
+        reason: details.reason,
+        name: details.name ?? null,
+        service_name: details.serviceName ?? null,
+        exit_code: details.exitCode,
+      },
+    },
+  });
+});
 
 app.whenReady().then(async () => {
   if (process.platform === "darwin" && app.dock) {
