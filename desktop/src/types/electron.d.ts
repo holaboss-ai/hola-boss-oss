@@ -369,6 +369,8 @@ declare global {
     created_at: string | null;
     updated_at: string | null;
     deleted_at_utc: string | null;
+    workspace_path?: string | null;
+    folder_state?: "healthy" | "missing" | null;
   }
 
   interface WorkspaceResponsePayload {
@@ -1410,6 +1412,9 @@ declare global {
       listMarketplaceTemplates: () => Promise<TemplateListResponsePayload>;
       pickTemplateFolder: () => Promise<TemplateFolderSelectionPayload>;
       pickWorkspaceRuntimeFolder: () => Promise<WorkspaceRuntimeFolderSelectionPayload>;
+      pickWorkspaceRelocationFolder: (workspaceId: string) => Promise<WorkspaceRuntimeFolderSelectionPayload>;
+      relocate: (workspaceId: string, newPath: string) => Promise<WorkspaceResponsePayload>;
+      activate: (workspaceId: string) => Promise<WorkspaceResponsePayload>;
       listImportBrowserProfiles: (
         source: BrowserImportSource
       ) => Promise<BrowserImportProfileOptionPayload[]>;
@@ -1431,7 +1436,7 @@ declare global {
       listSkills: (workspaceId: string) => Promise<WorkspaceSkillListResponsePayload>;
       getWorkspaceRoot: (workspaceId: string) => Promise<string>;
       createWorkspace: (payload: HolabossCreateWorkspacePayload) => Promise<WorkspaceResponsePayload>;
-      deleteWorkspace: (workspaceId: string) => Promise<WorkspaceResponsePayload>;
+      deleteWorkspace: (workspaceId: string, keepFiles?: boolean) => Promise<WorkspaceResponsePayload>;
       listCronjobs: (workspaceId: string, enabledOnly?: boolean) => Promise<CronjobListResponsePayload>;
       runCronjobNow: (jobId: string) => Promise<CronjobRunResponsePayload>;
       createCronjob: (payload: CronjobCreatePayload) => Promise<CronjobRecordPayload>;

@@ -2254,6 +2254,7 @@ interface WorkspaceRecordPayload {
   updated_at: string | null;
   deleted_at_utc: string | null;
   workspace_path?: string | null;
+  folder_state?: "healthy" | "missing" | null;
 }
 
 interface WorkspaceResponsePayload {
@@ -12942,6 +12943,9 @@ async function listWorkspacesViaRuntime(): Promise<WorkspaceListResponsePayload>
     },
   });
   for (const item of response.items) {
+    // List response is authoritative: reset cache so relocated workspaces
+    // get the fresh path instead of a stale cached one.
+    forgetWorkspaceDir(item.id);
     rememberWorkspaceDir(item.id, item.workspace_path);
   }
   return response;
@@ -14003,14 +14007,91 @@ async function createWorkspace(
 
 async function deleteWorkspace(
   workspaceId: string,
+  keepFiles?: boolean,
 ): Promise<WorkspaceResponsePayload> {
   const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
   const response = await requestRuntimeJson<WorkspaceResponsePayload>({
     method: "DELETE",
     path: `/api/v1/workspaces/${encodeURIComponent(safeWorkspaceId)}`,
+    ...(keepFiles !== undefined ? { params: { keep_files: keepFiles } } : {}),
   });
   forgetWorkspaceDir(safeWorkspaceId);
   return response;
+}
+
+async function relocateWorkspace(
+  workspaceId: string,
+  newPath: string,
+): Promise<WorkspaceResponsePayload> {
+  const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
+  const response = await requestRuntimeJson<WorkspaceResponsePayload>({
+    method: "PATCH",
+    path: `/api/v1/workspaces/${encodeURIComponent(safeWorkspaceId)}`,
+    payload: { workspace_path: newPath },
+  });
+  forgetWorkspaceDir(safeWorkspaceId);
+  rememberWorkspaceDir(safeWorkspaceId, response.workspace.workspace_path);
+  return response;
+}
+
+async function activateWorkspaceRecord(
+  workspaceId: string,
+): Promise<WorkspaceResponsePayload> {
+  const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
+  return requestRuntimeJson<WorkspaceResponsePayload>({
+    method: "POST",
+    path: `/api/v1/workspaces/${encodeURIComponent(safeWorkspaceId)}/activate`,
+    payload: {},
+  });
+}
+
+async function pickWorkspaceRelocationFolder(
+  workspaceId: string,
+): Promise<WorkspaceRuntimeFolderSelectionPayload> {
+  const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
+  const ownerWindow = mainWindow ?? BrowserWindow.getFocusedWindow() ?? null;
+  const options: OpenDialogOptions = {
+    properties: ["openDirectory", "createDirectory"],
+    title: "Relocate Workspace Folder",
+    buttonLabel: "Use This Folder",
+    message: "Pick an empty folder or the existing workspace folder to move this workspace to.",
+  };
+  const result = ownerWindow
+    ? await dialog.showOpenDialog(ownerWindow, options)
+    : await dialog.showOpenDialog(options);
+  if (result.canceled || !result.filePaths[0]) {
+    return { canceled: true, rootPath: null };
+  }
+
+  const rootPath = path.resolve(result.filePaths[0]);
+  if (!path.isAbsolute(rootPath)) {
+    throw new Error("Workspace folder path must be absolute.");
+  }
+  if (existsSync(rootPath)) {
+    const stat = statSync(rootPath);
+    if (!stat.isDirectory()) {
+      throw new Error("Selected path is not a directory.");
+    }
+    // Accept if it contains a matching .holaboss/workspace_id identity file.
+    const identityFilePath = path.join(rootPath, ".holaboss", "workspace_id");
+    if (existsSync(identityFilePath)) {
+      const storedId = readFileSync(identityFilePath, "utf-8").trim();
+      if (storedId === safeWorkspaceId) {
+        return { canceled: false, rootPath };
+      }
+      throw new Error(
+        `Selected folder belongs to a different workspace. Pick an empty folder or the original workspace folder.`,
+      );
+    }
+    // Accept if empty (excluding .DS_Store).
+    const entries = readdirSync(rootPath).filter((name) => name !== ".DS_Store");
+    if (entries.length > 0) {
+      throw new Error(
+        `Selected folder must be empty (found ${entries.length} items). Pick an empty folder or the original workspace folder.`,
+      );
+    }
+  }
+  return { canceled: false, rootPath };
 }
 
 async function listRuntimeStates(
@@ -21766,6 +21847,24 @@ app.whenReady().then(async () => {
     async () => pickWorkspaceRuntimeFolder(),
   );
   handleTrustedIpc(
+    "workspace:pickWorkspaceRelocationFolder",
+    ["main"],
+    async (_event, workspaceId: string) =>
+      pickWorkspaceRelocationFolder(workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:relocate",
+    ["main"],
+    async (_event, workspaceId: string, newPath: string) =>
+      relocateWorkspace(workspaceId, newPath),
+  );
+  handleTrustedIpc(
+    "workspace:activate",
+    ["main"],
+    async (_event, workspaceId: string) =>
+      activateWorkspaceRecord(workspaceId),
+  );
+  handleTrustedIpc(
     "workspace:listImportBrowserProfiles",
     ["main"],
     async (_event, source: BrowserImportSource) =>
@@ -21903,7 +22002,7 @@ app.whenReady().then(async () => {
   handleTrustedIpc(
     "workspace:deleteWorkspace",
     ["main"],
-    async (_event, workspaceId: string) => deleteWorkspace(workspaceId),
+    async (_event, workspaceId: string, keepFiles?: boolean) => deleteWorkspace(workspaceId, keepFiles),
   );
   handleTrustedIpc(
     "workspace:listCronjobs",

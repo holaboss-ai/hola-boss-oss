@@ -1218,6 +1218,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:pickTemplateFolder") as Promise<TemplateFolderSelectionPayload>,
     pickWorkspaceRuntimeFolder: () =>
       ipcRenderer.invoke("workspace:pickWorkspaceRuntimeFolder") as Promise<WorkspaceRuntimeFolderSelectionPayload>,
+    pickWorkspaceRelocationFolder: (workspaceId: string) =>
+      ipcRenderer.invoke("workspace:pickWorkspaceRelocationFolder", workspaceId) as Promise<WorkspaceRuntimeFolderSelectionPayload>,
+    relocate: (workspaceId: string, newPath: string) =>
+      ipcRenderer.invoke("workspace:relocate", workspaceId, newPath) as Promise<WorkspaceResponsePayload>,
+    activate: (workspaceId: string) =>
+      ipcRenderer.invoke("workspace:activate", workspaceId) as Promise<WorkspaceResponsePayload>,
     listImportBrowserProfiles: (source: BrowserImportSource) =>
       ipcRenderer.invoke("workspace:listImportBrowserProfiles", source) as Promise<BrowserImportProfileOptionPayload[]>,
     importBrowserProfile: (payload: BrowserImportProfilePayload) =>
@@ -1246,8 +1252,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getWorkspaceRoot: (workspaceId: string) => ipcRenderer.invoke("workspace:getWorkspaceRoot", workspaceId) as Promise<string>,
     createWorkspace: (payload: HolabossCreateWorkspacePayload) =>
       ipcRenderer.invoke("workspace:createWorkspace", payload) as Promise<WorkspaceResponsePayload>,
-    deleteWorkspace: (workspaceId: string) =>
-      ipcRenderer.invoke("workspace:deleteWorkspace", workspaceId) as Promise<WorkspaceResponsePayload>,
+    deleteWorkspace: (workspaceId: string, keepFiles?: boolean) =>
+      ipcRenderer.invoke("workspace:deleteWorkspace", workspaceId, keepFiles) as Promise<WorkspaceResponsePayload>,
     listCronjobs: (workspaceId: string, enabledOnly?: boolean) =>
       ipcRenderer.invoke("workspace:listCronjobs", workspaceId, enabledOnly) as Promise<CronjobListResponsePayload>,
     runCronjobNow: (jobId: string) =>
