@@ -5,6 +5,7 @@ import { type RuntimeStateStore, type SessionInputRecord, utcNowIso } from "@hol
 import { processClaimedInput } from "./claimed-input-executor.js";
 import type { MemoryServiceLike } from "./memory.js";
 import { buildRunCompletedEvent, buildRunFailedEvent } from "./runner-worker.js";
+import { captureRuntimeException } from "./runtime-sentry.js";
 
 const DEFAULT_CLAIMED_BY = "sandbox-agent-ts-worker";
 const DEFAULT_LEASE_SECONDS = 300;
@@ -36,6 +37,7 @@ export interface RuntimeQueueWorkerOptions {
   memoryService?: MemoryServiceLike | null;
   wakeDurableMemoryWorker?: (() => void) | null;
   executeClaimedInput?: (record: SessionInputRecord, options?: { signal?: AbortSignal }) => Promise<void>;
+  captureRuntimeException?: typeof captureRuntimeException;
   claimedBy?: string;
   leaseSeconds?: number;
   pollIntervalMs?: number;
@@ -55,6 +57,7 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
   readonly #store: RuntimeStateStore;
   readonly #logger: RuntimeQueueWorkerOptions["logger"];
   readonly #executeClaimedInput: (record: SessionInputRecord, options?: { signal?: AbortSignal }) => Promise<void>;
+  readonly #captureRuntimeException: typeof captureRuntimeException;
   readonly #claimedBy: string;
   readonly #leaseSeconds: number;
   readonly #pollIntervalMs: number;
@@ -75,6 +78,8 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
     this.#store = options.store;
     this.#logger = options.logger;
     this.#claimedBy = options.claimedBy ?? DEFAULT_CLAIMED_BY;
+    this.#captureRuntimeException =
+      options.captureRuntimeException ?? captureRuntimeException;
     this.#executeClaimedInput =
       options.executeClaimedInput ??
       ((record, executionOptions) =>
@@ -208,6 +213,25 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
         await this.#executeClaimedInput(record, { signal: controller.signal });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        this.#captureRuntimeException({
+          error,
+          level: "error",
+          fingerprint: ["runtime", "queue_worker", "claimed_input_exception"],
+          tags: {
+            surface: "queue_worker",
+            failure_kind: "claimed_input_exception",
+          },
+          contexts: {
+            claimed_input: {
+              workspace_id: record.workspaceId,
+              session_id: record.sessionId,
+              input_id: record.inputId,
+            },
+          },
+          extras: {
+            claimed_by: this.#claimedBy,
+          },
+        });
         this.#logger?.error?.("TS queue worker failed to process claimed input", {
           inputId: record.inputId,
           workspaceId: record.workspaceId,
@@ -290,6 +314,28 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
       });
       const hasTerminal = events.some((event) => TERMINAL_EVENT_TYPES.has(event.eventType));
       if (!hasTerminal) {
+        this.#captureRuntimeException({
+          error: new Error(
+            "claimed input lease expired before the runner emitted a terminal event",
+          ),
+          level: "error",
+          fingerprint: ["runtime", "queue_worker", "claim_expired"],
+          tags: {
+            surface: "queue_worker",
+            failure_kind: "claim_expired",
+          },
+          contexts: {
+            claimed_input: {
+              workspace_id: record.workspaceId,
+              session_id: record.sessionId,
+              input_id: record.inputId,
+            },
+          },
+          extras: {
+            active_run_present: Boolean(activeRun),
+            output_event_count: events.length,
+          },
+        });
         const failure = buildRunFailedEvent({
           sessionId: record.sessionId,
           inputId: record.inputId,

@@ -9,6 +9,7 @@ import type { PostRunJobRecord, RuntimeStateStore } from "@holaboss/runtime-stat
 
 import { resolveRuntimeModelClient } from "./agent-runtime-config.js";
 import { buildRunnerEnv } from "./runner-worker.js";
+import { captureRuntimeException } from "./runtime-sentry.js";
 import { writeTurnCompactionBoundary } from "./turn-memory-writeback.js";
 
 export const SESSION_CHECKPOINT_JOB_TYPE = "session_checkpoint";
@@ -705,6 +706,7 @@ export async function processSessionCheckpointJob(params: {
   ) => Promise<PiCompactionCommandResult>;
   resolveRuntimeModelClientFn?: ResolveRuntimeModelClientFn;
   sessionOps?: SessionCheckpointSessionOps;
+  captureRuntimeExceptionFn?: typeof captureRuntimeException;
 }): Promise<void> {
   if (params.record.jobType !== SESSION_CHECKPOINT_JOB_TYPE) {
     throw new Error(`unsupported session checkpoint job type: ${params.record.jobType}`);
@@ -896,6 +898,42 @@ export async function processSessionCheckpointJob(params: {
     const compaction = summarizeCheckpointCompactionResult(
       compactionResultFromError(error),
     );
+    (
+      params.captureRuntimeExceptionFn ?? captureRuntimeException
+    )({
+      error,
+      level: isSoftCheckpointCompactionError(error) ? "warning" : "error",
+      fingerprint: [
+        "runtime",
+        "session_checkpoint",
+        isSoftCheckpointCompactionError(error) ? "soft_provider_422" : "error",
+        payload.harness,
+      ],
+      tags: {
+        surface: "session_checkpoint",
+        failure_kind: isSoftCheckpointCompactionError(error)
+          ? "soft_provider_422"
+          : "error",
+        harness: payload.harness,
+      },
+      contexts: {
+        session_checkpoint: {
+          workspace_id: params.record.workspaceId,
+          session_id: params.record.sessionId,
+          input_id: params.record.inputId,
+          job_id: params.record.jobId,
+          harness: payload.harness,
+          base_harness_session_id: payload.base_harness_session_id,
+          base_leaf_id: payload.base_leaf_id,
+          base_latest_compaction_id: payload.base_latest_compaction_id,
+        },
+      },
+      extras: {
+        detail: error instanceof Error ? error.message : String(error),
+        context_usage: payload.context_usage,
+        compaction,
+      },
+    });
     if (isSoftCheckpointCompactionError(error)) {
       recordSessionCheckpointResult({
         store: params.store,

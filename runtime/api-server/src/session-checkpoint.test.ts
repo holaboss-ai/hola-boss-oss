@@ -11,6 +11,7 @@ import {
   enqueueSessionCheckpointJob,
   processSessionCheckpointJob,
 } from "./session-checkpoint.js";
+import type { RuntimeSentryCaptureOptions } from "./runtime-sentry.js";
 
 interface FakeSessionEntry {
   id: string;
@@ -658,11 +659,15 @@ test("session checkpoint treats provider 422 summarization failures as a soft no
       sessionOps,
     });
     assert.ok(queued);
+    const sentryCaptures: RuntimeSentryCaptureOptions[] = [];
 
     await processSessionCheckpointJob({
       store,
       record: queued!,
       sessionOps,
+      captureRuntimeExceptionFn: (capture) => {
+        sentryCaptures.push(capture);
+      },
       runPiSessionCompactionFn: async () => {
         const error = new Error("Summarization failed: 422 status code (no body)") as Error & {
           commandResult?: Record<string, unknown>;
@@ -709,6 +714,13 @@ test("session checkpoint treats provider 422 summarization failures as a soft no
         updatedJob?.payload.checkpoint_result as { outcome?: string } | undefined
       )?.outcome,
       "soft_provider_422",
+    );
+    assert.equal(sentryCaptures.length, 1);
+    assert.equal(sentryCaptures[0]?.tags?.failure_kind, "soft_provider_422");
+    assert.equal(sentryCaptures[0]?.tags?.surface, "session_checkpoint");
+    assert.equal(
+      sentryCaptures[0]?.contexts?.session_checkpoint?.input_id,
+      "input-soft-422",
     );
     assert.deepEqual(
       (

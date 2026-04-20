@@ -1,5 +1,15 @@
 import { defineConfig } from "tsup";
 
+const sentryEnv = {
+  ...(process.env.SENTRY_DSN ? { SENTRY_DSN: process.env.SENTRY_DSN } : {}),
+  ...(process.env.SENTRY_ENVIRONMENT
+    ? { SENTRY_ENVIRONMENT: process.env.SENTRY_ENVIRONMENT }
+    : {}),
+  ...(process.env.HOLABOSS_RUNTIME_VERSION
+    ? { HOLABOSS_RUNTIME_VERSION: process.env.HOLABOSS_RUNTIME_VERSION }
+    : {}),
+};
+
 export default defineConfig({
   entry: [
     "src/index.ts",
@@ -18,6 +28,7 @@ export default defineConfig({
   target: "node20",
   sourcemap: true,
   dts: true,
+  env: sentryEnv,
   outExtension() {
     return {
       js: ".mjs"
