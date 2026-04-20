@@ -924,11 +924,29 @@ export class RuntimeStateStore {
       throw new Error(`workspacePath must be absolute: ${requested}`);
     }
     const resolved = path.resolve(requested);
+
+    // Reject the runtime's managed workspaceRoot itself (or any ancestor of
+    // it). If a user registered workspaceRoot as their custom path, future
+    // default-managed workspaces would be created nested inside it (at
+    // workspaceRoot/<id>), and deleting the custom workspace would wipe the
+    // whole managed tree along with it.
+    const managedRoot = path.resolve(this.workspaceRoot);
+    const sep = path.sep;
+    if (resolved === managedRoot) {
+      throw new Error(`workspacePath cannot be the runtime's managed workspace root: ${resolved}`);
+    }
+    if (managedRoot.startsWith(resolved + sep)) {
+      throw new Error(`workspacePath cannot contain the runtime's managed workspace root: ${resolved}`);
+    }
+
     // Reject placing the workspace inside another registered workspace's
     // root — that would nest two workspaces and confuse discovery.
+    // Soft-deleted rows are excluded: once a workspace is removed, its
+    // former path is fair game for reuse (the metadata was already
+    // stripped during DELETE).
     const rows = this.db()
       .prepare<[], { id: string; workspace_path: string }>(
-        "SELECT id, workspace_path FROM workspaces"
+        "SELECT id, workspace_path FROM workspaces WHERE deleted_at_utc IS NULL"
       )
       .all();
     for (const row of rows) {
@@ -939,7 +957,6 @@ export class RuntimeStateStore {
       if (resolved === other) {
         throw new Error(`workspacePath already registered to another workspace: ${resolved}`);
       }
-      const sep = path.sep;
       if (resolved.startsWith(other + sep) || other.startsWith(resolved + sep)) {
         throw new Error(`workspacePath overlaps another workspace: ${resolved} vs ${other}`);
       }
@@ -1061,11 +1078,20 @@ export class RuntimeStateStore {
   }
 
   deleteWorkspace(workspaceId: string): WorkspaceRecord {
-    return this.updateWorkspace(workspaceId, {
+    const result = this.updateWorkspace(workspaceId, {
       status: "deleted",
       deletedAtUtc: utcNowIso(),
       errorMessage: null
     });
+    // Release the path claim. The workspaces.workspace_path column has a
+    // UNIQUE constraint, so keeping the original path on a soft-deleted row
+    // would block the user from ever reusing that folder for a new
+    // workspace ("remove from Holaboss but keep my files" must be
+    // reversible). Stamp a tombstone that is unique per workspace id and
+    // identifiable in diagnostics.
+    const tombstone = `__deleted__/${workspaceId}/${Date.now()}`;
+    this.db().prepare("UPDATE workspaces SET workspace_path = ? WHERE id = ?").run(tombstone, workspaceId);
+    return result;
   }
 
   ensureSession(

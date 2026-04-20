@@ -219,6 +219,78 @@ test("assertWorkspaceFolderHealthy throws a structured error when missing", () =
   store.close();
 });
 
+test("createWorkspace rejects the managed workspace root as a custom path", () => {
+  const root = makeTempDir("hb-state-store-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  assert.throws(
+    () =>
+      store.createWorkspace({
+        workspaceId: "ws-root",
+        name: "R",
+        harness: "pi",
+        workspacePath: workspaceRoot
+      }),
+    /cannot be the runtime's managed workspace root/
+  );
+  store.close();
+});
+
+test("createWorkspace rejects a parent of the managed workspace root as a custom path", () => {
+  const root = makeTempDir("hb-state-store-");
+  const workspaceRoot = path.join(root, "nested", "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  assert.throws(
+    () =>
+      store.createWorkspace({
+        workspaceId: "ws-parent",
+        name: "P",
+        harness: "pi",
+        workspacePath: path.join(root, "nested")
+      }),
+    /cannot contain the runtime's managed workspace root/
+  );
+  store.close();
+});
+
+test("createWorkspace allows reusing a soft-deleted workspace's former path", () => {
+  const root = makeTempDir("hb-state-store-");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const customPath = path.join(customRoot, "shared-folder");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  store.createWorkspace({
+    workspaceId: "ws-first",
+    name: "First",
+    harness: "pi",
+    workspacePath: customPath
+  });
+  store.deleteWorkspace("ws-first");
+  // Clean up the directory as the DELETE endpoint would (with keep_files=false).
+  fs.rmSync(customPath, { recursive: true, force: true });
+
+  // Same path should now be reusable for a fresh workspace — the prior
+  // record is soft-deleted and its path claim is released.
+  const reclaimed = store.createWorkspace({
+    workspaceId: "ws-second",
+    name: "Second",
+    harness: "pi",
+    workspacePath: customPath
+  });
+  assert.equal(reclaimed.id, "ws-second");
+  assert.equal(path.resolve(store.workspaceDir("ws-second")), path.resolve(customPath));
+  store.close();
+});
+
 test("relocateWorkspace accepts an empty directory and re-registers", () => {
   const root = makeTempDir("hb-state-store-");
   const customRoot = makeTempDir("hb-custom-ws-");

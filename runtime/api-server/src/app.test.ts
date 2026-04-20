@@ -2082,6 +2082,37 @@ test("activate returns 409 workspace_folder_missing when folder is gone", async 
   store.close();
 });
 
+test("PUT files fails 409 when workspace folder is missing (does not recreate folder)", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const customPath = path.join(customRoot, "ws");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: { name: "C", harness: "pi", workspace_path: customPath }
+  });
+  const workspaceId = (created.json().workspace as { id: string }).id;
+  fs.rmSync(customPath, { recursive: true, force: true });
+
+  const resp = await app.inject({
+    method: "PUT",
+    url: `/api/v1/workspaces/${workspaceId}/files/notes.txt`,
+    payload: { content_base64: Buffer.from("hi").toString("base64") }
+  });
+  assert.equal(resp.statusCode, 409);
+  assert.equal(resp.json().code, "workspace_folder_missing");
+  // Endpoint must NOT silently re-create the deleted folder.
+  assert.equal(fs.existsSync(customPath), false);
+
+  await app.close();
+  store.close();
+});
+
 test("apply-template fails 409 when workspace folder is missing", async () => {
   const root = makeTempDir("hb-runtime-api-");
   const customRoot = makeTempDir("hb-runtime-api-custom-ws-");

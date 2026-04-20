@@ -4589,7 +4589,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "request body must be an object");
     }
     const params = request.params as { workspaceId: string; "*": string };
-    const workspaceDir = store.workspaceDir(params.workspaceId);
+    const workspaceDir = requireHealthyWorkspaceFolder(store, params.workspaceId, reply);
+    if (!workspaceDir) {
+      return;
+    }
     let fullPath: string;
     try {
       fullPath = resolveWorkspaceFilePath(workspaceDir, params["*"] ?? "");
