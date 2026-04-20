@@ -35,6 +35,7 @@ export type ResolvedApplicationRuntime = {
   };
   mcpTools: string[];
   healthCheck: {
+    target?: "api" | "mcp";
     path: string;
     timeoutS: number;
     intervalS: number;
@@ -247,6 +248,12 @@ export function parseResolvedAppRuntime(
     (t): t is string => typeof t === "string" && t.trim().length > 0
   );
   const healthchecks = isRecord(loaded.healthchecks) ? loaded.healthchecks : null;
+  const preferredHealthcheckTarget =
+    healthchecks && isRecord(healthchecks.mcp)
+      ? "mcp"
+      : healthchecks && isRecord(healthchecks.api)
+        ? "api"
+        : "mcp";
   const preferredHealthcheck =
     (healthchecks && (isRecord(healthchecks.mcp) ? healthchecks.mcp : null)) ||
     (healthchecks && (isRecord(healthchecks.api) ? healthchecks.api : null)) ||
@@ -266,6 +273,7 @@ export function parseResolvedAppRuntime(
     },
     mcpTools,
     healthCheck: {
+      target: preferredHealthcheckTarget,
       path: preferredHealthcheck && typeof preferredHealthcheck.path === "string" ? preferredHealthcheck.path : "/health",
       timeoutS:
         preferredHealthcheck && preferredHealthcheck.timeout_s !== undefined && !Number.isNaN(Number(preferredHealthcheck.timeout_s))

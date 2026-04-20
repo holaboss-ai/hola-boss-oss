@@ -3249,7 +3249,12 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
         appId: "app-b",
         mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
         mcpTools: [],
-        healthCheck: { path: "/health", timeoutS: 60, intervalS: 5 },
+        healthCheck: {
+          path: "/health",
+          timeoutS: 60,
+          intervalS: 5,
+          target: "mcp"
+        },
         envContract: [],
         integrations: undefined,
         startCommand: "",
@@ -3266,7 +3271,12 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
         appId: "app-b",
         mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
         mcpTools: [],
-        healthCheck: { path: "/health", timeoutS: 60, intervalS: 5 },
+        healthCheck: {
+          path: "/health",
+          timeoutS: 60,
+          intervalS: 5,
+          target: "mcp"
+        },
         envContract: [],
         integrations: undefined,
         startCommand: "",
@@ -3283,7 +3293,12 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
         appId: "app-b",
         mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
         mcpTools: [],
-        healthCheck: { path: "/health", timeoutS: 60, intervalS: 5 },
+        healthCheck: {
+          path: "/health",
+          timeoutS: 60,
+          intervalS: 5,
+          target: "mcp"
+        },
         envContract: [],
         integrations: undefined,
         startCommand: "",
