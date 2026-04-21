@@ -356,6 +356,92 @@ test("Pi runtime image generation tool uses an extended timeout budget", async (
   }
 });
 
+test("Pi runtime download_url tool forwards remote download parameters and guidance", async () => {
+  const requests: Array<{
+    method: string;
+    url: string;
+    workspaceId: string;
+    sessionId: string;
+    selectedModel: string;
+    body: string;
+  }> = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/api/v1/capabilities/runtime-tools")) {
+      return new Response(JSON.stringify({ available: true }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+
+    const body = init?.body ? String(init.body) : "";
+    requests.push({
+      method: String(init?.method ?? "GET"),
+      url,
+      workspaceId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-workspace-id"] ?? ""),
+      sessionId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-session-id"] ?? ""),
+      selectedModel: String(
+        (init?.headers as Record<string, string> | undefined)?.["x-holaboss-selected-model"] ?? ""
+      ),
+      body,
+    });
+
+    return new Response(JSON.stringify({ file_path: "Downloads/cover.png" }), {
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    });
+  };
+
+  const tools = await resolvePiRuntimeToolDefinitions({
+    runtimeApiBaseUrl: "http://127.0.0.1:5060",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    selectedModel: "openai/gpt-5.4",
+    fetchImpl,
+  });
+
+  const downloadTool = tools.find((tool) => tool.name === "download_url");
+  assert.ok(downloadTool);
+
+  await downloadTool.execute(
+    "call-1",
+    {
+      url: "https://example.com/assets/cover.png",
+      output_path: "assets/reference/cover",
+      expected_mime_prefix: "image/",
+      overwrite: true,
+    },
+    undefined,
+    undefined,
+    {} as never,
+  );
+
+  assert.deepEqual(requests, [
+    {
+      method: "POST",
+      url: "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/downloads",
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      selectedModel: "openai/gpt-5.4",
+      body: JSON.stringify({
+        url: "https://example.com/assets/cover.png",
+        output_path: "assets/reference/cover",
+        expected_mime_prefix: "image/",
+        overwrite: true,
+      }),
+    },
+  ]);
+
+  assert.match(
+    (downloadTool.promptGuidelines ?? []).join("\n"),
+    /Use `download_url` when you already have a direct asset URL and need the file saved into the workspace\./,
+  );
+  assert.match(
+    (downloadTool.promptGuidelines ?? []).join("\n"),
+    /Prefer `download_url` over browser-only downloads or ad hoc shell fetches for straightforward remote file saves\./,
+  );
+});
+
 test("Pi runtime write_report tool forwards report content and current run headers", async () => {
   const requests: Array<{
     method: string;

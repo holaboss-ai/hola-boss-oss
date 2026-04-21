@@ -28,7 +28,14 @@ test("resolvePiDesktopBrowserToolDefinitions returns an empty tool list when bro
 });
 
 test("Pi desktop browser tools execute through the runtime capability API", async () => {
-  const requests: Array<{ method: string; url: string; workspaceId: string; sessionId: string; body: string }> = [];
+  const requests: Array<{
+    method: string;
+    url: string;
+    workspaceId: string;
+    sessionId: string;
+    browserSpace: string;
+    body: string;
+  }> = [];
   const fetchImpl: typeof fetch = async (input, init) => {
     const url = String(input);
     if (url.endsWith("/api/v1/capabilities/browser")) {
@@ -44,6 +51,7 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
       url,
       workspaceId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-workspace-id"] ?? ""),
       sessionId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-session-id"] ?? ""),
+      browserSpace: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-browser-space"] ?? ""),
       body,
     });
     if (url.endsWith("/api/v1/capabilities/browser/tools/browser_get_state")) {
@@ -59,6 +67,7 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
     runtimeApiBaseUrl: "http://127.0.0.1:5060",
     workspaceId: "workspace-1",
     sessionId: "session-1",
+    space: "user",
     fetchImpl,
   });
 
@@ -70,6 +79,7 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
   const getStateTool = tools.find((tool) => tool.name === "browser_get_state");
   assert.ok(getStateTool);
   assert.match(getStateTool.description ?? "", /DOM-first browser inspection tool for actions and structured extraction/i);
+  assert.match(getStateTool.description ?? "", /visible media such as images/i);
   assert.match(getStateTool.description ?? "", /include_screenshot=true/i);
   assert.match(getStateTool.description ?? "", /include_page_text=true/i);
   assert.match(
@@ -88,6 +98,7 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
         url: "http://127.0.0.1:5060/api/v1/capabilities/browser/tools/browser_get_state",
         workspaceId: "workspace-1",
         sessionId: "session-1",
+        browserSpace: "user",
         body: JSON.stringify({ include_screenshot: true }),
       },
     ]);
@@ -146,6 +157,7 @@ test("Pi desktop browser tools fall back to node http when no fetch implementati
     const getStateTool = tools.find((tool) => tool.name === "browser_get_state");
     assert.ok(getStateTool);
     assert.match(getStateTool.description ?? "", /DOM-first browser inspection tool for actions and structured extraction/i);
+    assert.match(getStateTool.description ?? "", /visible media such as images/i);
     assert.match(getStateTool.description ?? "", /include_page_text=true/i);
     const result = await getStateTool.execute("call-1", { include_screenshot: false }, undefined, undefined, {} as never);
 
@@ -165,4 +177,71 @@ test("Pi desktop browser tools fall back to node http when no fetch implementati
     server.close();
     await once(server, "close");
   }
+});
+
+test("Pi desktop browser context-click tool forwards media targeting parameters", async () => {
+  const requests: Array<{ method: string; url: string; workspaceId: string; sessionId: string; body: string }> = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/api/v1/capabilities/browser")) {
+      return new Response(JSON.stringify({ available: true }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+
+    const body = init?.body ? String(init.body) : "";
+    requests.push({
+      method: String(init?.method ?? "GET"),
+      url,
+      workspaceId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-workspace-id"] ?? ""),
+      sessionId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-session-id"] ?? ""),
+      body,
+    });
+    if (url.endsWith("/api/v1/capabilities/browser/tools/browser_context_click")) {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+    throw new Error(`unexpected request: ${url}`);
+  };
+
+  const tools = await resolvePiDesktopBrowserToolDefinitions({
+    runtimeApiBaseUrl: "http://127.0.0.1:5060",
+    workspaceId: "workspace-1",
+    sessionId: "session-1",
+    fetchImpl,
+  });
+
+  const contextClickTool = tools.find((tool) => tool.name === "browser_context_click");
+  assert.ok(contextClickTool);
+  assert.deepEqual(
+    (
+      (contextClickTool.parameters as { properties?: { target?: { anyOf?: Array<{ const?: string }> } } })
+        .properties?.target?.anyOf ?? []
+    ).map((entry) => entry.const),
+    ["element", "media"],
+  );
+
+  const result = await contextClickTool.execute(
+    "call-1",
+    { target: "media", index: 2 },
+    undefined,
+    undefined,
+    {} as never
+  );
+
+  assert.deepEqual(requests, [
+    {
+      method: "POST",
+      url: "http://127.0.0.1:5060/api/v1/capabilities/browser/tools/browser_context_click",
+      workspaceId: "workspace-1",
+      sessionId: "session-1",
+      body: JSON.stringify({ target: "media", index: 2 }),
+    },
+  ]);
+  assert.equal(result.content[0]?.type, "text");
+  assert.equal(result.content[0]?.text, JSON.stringify({ ok: true }, null, 2));
+  assert.deepEqual(result.details, { tool_id: "browser_context_click" });
 });

@@ -15,10 +15,12 @@ const RUNTIME_TOOLS_ONBOARDING_STATUS_PATH = "/api/v1/capabilities/runtime-tools
 const RUNTIME_TOOLS_ONBOARDING_COMPLETE_PATH = "/api/v1/capabilities/runtime-tools/onboarding/complete";
 const RUNTIME_TOOLS_CRONJOBS_PATH = "/api/v1/capabilities/runtime-tools/cronjobs";
 const RUNTIME_TOOLS_IMAGE_GENERATE_PATH = "/api/v1/capabilities/runtime-tools/images/generate";
+const RUNTIME_TOOLS_DOWNLOADS_PATH = "/api/v1/capabilities/runtime-tools/downloads";
 const RUNTIME_TOOLS_REPORTS_PATH = "/api/v1/capabilities/runtime-tools/reports";
 const RUNTIME_TOOLS_TERMINAL_SESSIONS_PATH = "/api/v1/capabilities/runtime-tools/terminal-sessions";
 const DEFAULT_RUNTIME_TOOL_TIMEOUT_MS = 30000;
 const IMAGE_GENERATE_RUNTIME_TOOL_TIMEOUT_MS = 180000;
+const DOWNLOAD_URL_RUNTIME_TOOL_TIMEOUT_MS = 120000;
 const TERMINAL_WAIT_RUNTIME_TOOL_TIMEOUT_MS = 65000;
 const CRONJOB_DELIVERY_CHANNELS = ["system_notification", "session_run"] as const;
 const CRONJOB_DELIVERY_MODES = ["announce", "none"] as const;
@@ -93,6 +95,9 @@ function toolRequestSignal(signal: AbortSignal | undefined, timeoutMs = DEFAULT_
 function runtimeToolTimeoutMs(toolId: RuntimeAgentToolId): number {
   if (toolId === "image_generate") {
     return IMAGE_GENERATE_RUNTIME_TOOL_TIMEOUT_MS;
+  }
+  if (toolId === "download_url") {
+    return DOWNLOAD_URL_RUNTIME_TOOL_TIMEOUT_MS;
   }
   if (toolId === "terminal_session_wait") {
     return TERMINAL_WAIT_RUNTIME_TOOL_TIMEOUT_MS;
@@ -272,6 +277,31 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId) {
           ),
           size: Type.Optional(
             Type.String({ description: "Optional provider-specific size hint such as `1024x1024`." }),
+          ),
+        },
+        { additionalProperties: false },
+      );
+    case "download_url":
+      return Type.Object(
+        {
+          url: Type.String({ description: "Direct http or https URL to download." }),
+          output_path: Type.Optional(
+            Type.String({
+              description:
+                "Optional workspace-relative destination path. If omitted, the runtime saves the file under Downloads/ with an inferred filename.",
+            }),
+          ),
+          expected_mime_prefix: Type.Optional(
+            Type.String({
+              description:
+                "Optional MIME prefix such as `image/` or `application/pdf` used to fail fast if the response type is not what you expect.",
+            }),
+          ),
+          overwrite: Type.Optional(
+            Type.Boolean({
+              description:
+                "Overwrite an existing file when output_path is provided. Ignored when output_path is omitted.",
+            }),
           ),
         },
         { additionalProperties: false },
@@ -463,6 +493,18 @@ function createImageGenerationBody(toolParams: unknown): Record<string, unknown>
   };
 }
 
+function createDownloadUrlBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    url: String(params.url ?? ""),
+    ...(optionalString(params.output_path) ? { output_path: optionalString(params.output_path) } : {}),
+    ...(optionalString(params.expected_mime_prefix)
+      ? { expected_mime_prefix: optionalString(params.expected_mime_prefix) }
+      : {}),
+    ...(typeof params.overwrite === "boolean" ? { overwrite: params.overwrite } : {}),
+  };
+}
+
 function createWriteReportBody(toolParams: unknown): Record<string, unknown> {
   const params = isRecord(toolParams) ? toolParams : {};
   return {
@@ -524,6 +566,14 @@ function signalTerminalSessionBody(toolParams: unknown): Record<string, unknown>
 }
 
 function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
+  if (toolId === "download_url") {
+    return [
+      "Use `download_url` when you already have a direct asset URL and need the file saved into the workspace.",
+      "Prefer `download_url` over browser-only downloads or ad hoc shell fetches for straightforward remote file saves.",
+      "Omit `output_path` when the default workspace Downloads folder is fine; provide a workspace-relative path when the file must land in a specific location.",
+      "Set `expected_mime_prefix` when the user asked for a specific file type such as an image or PDF, or when saving the wrong content would be risky.",
+    ];
+  }
   if (toolId === "write_report") {
     return [
       "Use `write_report` for research summaries, investigations, audits, plans, reviews, comparisons, timelines, and other long or evidence-heavy answers that should be saved as artifacts.",
@@ -606,6 +656,11 @@ async function executeRuntimeTool(params: {
       method = "POST";
       requestPath = RUNTIME_TOOLS_IMAGE_GENERATE_PATH;
       body = createImageGenerationBody(params.toolParams);
+      break;
+    case "download_url":
+      method = "POST";
+      requestPath = RUNTIME_TOOLS_DOWNLOADS_PATH;
+      body = createDownloadUrlBody(params.toolParams);
       break;
     case "write_report":
       method = "POST";

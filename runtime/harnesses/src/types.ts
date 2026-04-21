@@ -130,6 +130,7 @@ export interface HarnessHostRequestBuildParams {
   request: HarnessRunnerRequestLike;
   bootstrap: HarnessBootstrapPayload;
   runtimeConfig: HarnessRuntimeConfigPayload;
+  browserSpace?: "agent" | "user" | null;
   runtimeApiBaseUrl?: string | null;
   workspaceSkills: Array<{
     skill_id: string;

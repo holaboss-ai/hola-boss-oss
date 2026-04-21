@@ -3688,6 +3688,31 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
+  app.post("/api/v1/capabilities/runtime-tools/downloads", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return await runtimeAgentToolsService.downloadUrl({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        url: requiredString(request.body.url, "url"),
+        outputPath: nullableString(request.body.output_path) ?? undefined,
+        expectedMimePrefix: nullableString(request.body.expected_mime_prefix) ?? undefined,
+        overwrite: hasOwn(request.body, "overwrite")
+          ? optionalBoolean(request.body.overwrite, false)
+          : undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime download failed");
+    }
+  });
+
   app.post("/api/v1/capabilities/runtime-tools/reports", async (request, reply) => {
     if (!isRecord(request.body)) {
       return sendError(reply, 400, "request body must be an object");

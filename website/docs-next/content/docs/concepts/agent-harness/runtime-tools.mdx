@@ -42,8 +42,9 @@ These tools only appear for workspace sessions when the desktop browser bridge i
 | --- | --- |
 | `browser_navigate` | Navigate the desktop browser to a URL for direct inspection or interaction on a specific live site when search results are not enough. |
 | `browser_open_tab` | Open a URL in a new desktop browser tab so the agent can inspect or compare specific live pages without losing the current page state. |
-| `browser_get_state` | Read the current desktop browser page, visible interactive elements, and optional screenshot. |
+| `browser_get_state` | Read the current desktop browser page, visible interactive elements, visible media such as images, and optional screenshot. |
 | `browser_click` | Click an interactive element from `browser_get_state` by index to continue a live browser workflow. |
+| `browser_context_click` | Open the native browser context menu on an interactive element or visible media item from `browser_get_state`. |
 | `browser_type` | Type text into an interactive element from `browser_get_state` by index to search, filter, fill inputs, or continue a live browser workflow. |
 | `browser_press` | Send a keyboard key to the currently focused element to submit forms, confirm dialogs, or continue keyboard-driven browser interaction. |
 | `browser_scroll` | Scroll the current page vertically to load, inspect, or reach additional live content that is not yet visible. |

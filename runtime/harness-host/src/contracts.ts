@@ -67,6 +67,7 @@ export interface HarnessHostPiRequest {
   workspace_dir: string;
   session_id: string;
   browser_tools_enabled?: boolean;
+  browser_space?: "agent" | "user" | null;
   input_id: string;
   instruction: string;
   context_messages?: string[];
@@ -209,6 +210,21 @@ function requiredBoolean(value: unknown, fieldName: string): boolean {
 
 function optionalBoolean(value: unknown, defaultValue = false): boolean {
   return typeof value === "boolean" ? value : defaultValue;
+}
+
+function optionalBrowserSpace(
+  value: unknown,
+): "agent" | "user" | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (value === "agent" || value === "user") {
+    return value;
+  }
+  throw new Error("browser_space must be `agent` or `user`");
 }
 
 function requiredInteger(value: unknown, fieldName: string): number {
@@ -367,6 +383,7 @@ export function decodeHarnessHostPiRequestBase64(encoded: string): HarnessHostPi
     workspace_dir: requiredString(parsed.workspace_dir, "workspace_dir"),
     session_id: requiredString(parsed.session_id, "session_id"),
     browser_tools_enabled: optionalBoolean(parsed.browser_tools_enabled, false),
+    browser_space: optionalBrowserSpace(parsed.browser_space),
     input_id: requiredString(parsed.input_id, "input_id"),
     instruction: requiredString(parsed.instruction, "instruction"),
     context_messages: stringArray(parsed.context_messages),
