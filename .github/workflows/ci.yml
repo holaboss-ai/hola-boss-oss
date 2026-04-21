@@ -789,20 +789,20 @@ jobs:
       GH_REPO: holaboss-ai/holaOS
     steps:
       - name: Download Linux runtime release artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: holaboss-runtime-linux-${{ inputs.release_tag }}
           path: release-assets/linux-runtime
 
       - name: Download macOS desktop release artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: holaboss-desktop-macos-${{ inputs.release_tag }}
           path: release-assets/macos-desktop
 
       - name: Download Windows desktop release artifacts
         if: ${{ inputs.release_windows }}
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: holaboss-desktop-windows-${{ inputs.release_tag }}
           path: release-assets/windows-desktop
