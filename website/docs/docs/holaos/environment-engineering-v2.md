@@ -4,7 +4,7 @@ This page explains the core technical thesis behind `holaOS`: long-horizon agent
 
 In many agent systems, the word "harness" is used broadly. It often refers to the whole execution and control layer around an agent: tools, permissions, context handling, retries, approvals, streaming, and stop rules. `holaOS` agrees that this layer matters. Its stronger claim is that some of those responsibilities should be pulled into a durable environment contract rather than left implicit inside one swappable execution runtime.
 
-The key distinction is not between easy tasks and hard tasks. A strong harness can support very capable task execution. The more important distinction is between a task and a role. A task is bounded work with a local objective and a stopping point. A long-horizon task is still a task, but it cannot be completed coherently inside one short run: it spans many steps, often many runs, interruptions, intermediate artifacts, and changing state before it reaches completion. A role is different again. A role is an ongoing operating responsibility that persists across many tasks, time, and changing context. A harness can help an agent execute a task well. An environment helps a system carry a long-horizon task forward and inhabit a role over time.
+The key distinction is not between easy tasks and hard tasks. A strong harness can support very capable task execution. The more important distinction is between a task and a role. A task is bounded work with a local objective and a stopping point. A role is an ongoing operating responsibility across many tasks, runs, and changing context. Roles are therefore inherently long-horizon: the system has to remain coherent, retain what it learns, and improve over time. A harness can help an agent execute a task well. An environment helps a system sustain a role across runs. That is why long-horizon agent systems need environment engineering as well as harness engineering.
 
 ## Harnesses and environments are different layers
 
@@ -19,7 +19,7 @@ The goal is not to minimize the harness. The goal is to keep key system invarian
 
 ## Why a first-class environment contract matters
 
-This is not a claim that harnesses only matter for isolated or simple tasks. A strong harness can support complex, multi-step task execution. The issue is different: once a task becomes long-horizon, or once a system is expected to operate in a continuing role, it still needs stable answers to questions that span beyond any one run:
+This is not a claim that harnesses only matter for isolated or simple tasks. A strong harness can support complex, multi-step task execution. The issue is different: once a system is expected to operate in a role, it still needs stable answers to questions that span beyond any one run:
 
 - where standing instructions live
 - what memory is durable versus volatile
@@ -93,30 +93,22 @@ In `holaOS`, that means treating authored workspace content, learned state, and 
 
 That distinction matters because portability should be designed into the environment contract, not retrofitted after the fact.
 
-## Learning loops are enablers, not the goal
+## Improvement needs a durable boundary
 
-Long-horizon work is the goal. That includes both bounded long-horizon tasks and sustained role performance across many runs and changing conditions. Continual learning, memory evolution, reflection, and reinforcement are possible mechanisms for helping the system get better at that goal.
+Long-horizon work is not just about carrying work forward across runs. It is also about getting better at that work over time. In the sense that matters here, long-horizon work often appears as a system holding a role across many runs and changing conditions. Improvement is part of that requirement.
 
-Those mechanisms only become system capability when the environment can hold durable records of:
+Continual learning, memory evolution, reflection, and reinforcement are important mechanisms for that improvement. But they only become system capability when the environment can hold durable records of:
 
 - the hot context it acted under, and the warm or cold state it was drawn from
 - the action surface it was allowed to use
 - the outcomes, evaluations, and operator feedback that judged the run
 - the review boundary that decides what may become durable memory, skill, policy, or capability
 
-If those trajectories and feedback signals are trapped inside one executor, they may help that one loop, but they do not reliably improve the system's ability to handle long-horizon work across time.
-
-In `holaOS`, the point of these learning loops is not to make learning the center of the architecture. The point is to give long-horizon tasks and continuing roles a durable operating boundary where useful evidence can accumulate into better memory, stronger skills, safer policy, and other reviewed capability over time.
-
-## Improvement needs somewhere durable to land
-
-Long-horizon work is not just “a longer chat.” Sometimes it appears as a bounded task that takes many steps and many runs to finish. Sometimes it appears as work performed in a continuing role. In both cases, it has to continue coherently across runs, survive interruptions, and stay inspectable to both the operator and the system. Systems do not get better at that work just because an executor had a good run. Improvement becomes systemic only when reviewed outcomes can become durable state.
-
-In `holaOS` today, the clearest landing zones are durable memory, evolve flows, and candidate skills. The broader direction is larger than that: repeated good work should become inspectable system capability rather than staying trapped inside a transient execution loop. Over time, that could expand into stronger policy, reusable packaged behavior, and other reviewed capability surfaces.
+If those trajectories and feedback signals are trapped inside one executor, they may help that one loop, but they do not reliably improve the system's ability to handle long-horizon work across time. In `holaOS`, the point is to give roles a durable operating boundary where useful evidence can accumulate into better memory, stronger skills, safer policy, and other reviewed capability over time. Today, the clearest landing zones are durable memory, evolve flows, and candidate skills. The broader direction is larger than that: repeated good work should become inspectable system capability rather than staying trapped inside a transient execution loop. Over time, that could expand into stronger policy, reusable packaged behavior, and other reviewed capability surfaces.
 
 ## Why this is a system thesis
 
-This page is not mainly arguing about where current frameworks draw the line. Its point is narrower and more architectural: if long-horizon tasks and continuing roles span many runs and many possible improvement loops, then the system needs a durable contract that organizes the relevant state and evidence across them.
+This page is not mainly arguing about where current frameworks draw the line. Its point is narrower and more architectural: if a role spans many runs and many possible improvement loops, then the system needs a durable contract that organizes the relevant state and evidence across them.
 
 That is the role of environment engineering in `holaOS`. The environment owns the durable state. The harness compiles that state into hot context and action for each step. Portability, inspectability, continuity, capability governance, and optional learning loops all sit inside that operating boundary rather than existing as a loose collection of adjacent features.
 
