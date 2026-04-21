@@ -3273,6 +3273,8 @@ export function ChatPane({
   const localSessionOpenRequestRef =
     useRef<ChatPaneSessionOpenRequest | null>(null);
   const draftParentSessionIdRef = useRef<string | null>(null);
+  const draftHydrationWorkspaceIdRef = useRef((selectedWorkspaceId || "").trim());
+  const skipNextComposerDraftPublishRef = useRef(false);
   const liveAssistantSegmentsRef = useRef<ChatAssistantSegment[]>([]);
   const liveAssistantTextRef = useRef("");
   const liveExecutionItemsRef = useRef<ChatExecutionTimelineItem[]>([]);
@@ -4622,12 +4624,22 @@ export function ChatPane({
   }, [selectedWorkspaceId]);
 
   useEffect(() => {
+    const normalizedWorkspaceId = (selectedWorkspaceId || "").trim();
+    if (draftHydrationWorkspaceIdRef.current === normalizedWorkspaceId) {
+      return;
+    }
+    draftHydrationWorkspaceIdRef.current = normalizedWorkspaceId;
+    skipNextComposerDraftPublishRef.current = true;
     setInput((current) =>
       current === composerDraftText ? current : composerDraftText,
     );
-  }, [composerDraftText]);
+  }, [composerDraftText, selectedWorkspaceId]);
 
   useEffect(() => {
+    if (skipNextComposerDraftPublishRef.current) {
+      skipNextComposerDraftPublishRef.current = false;
+      return;
+    }
     onComposerDraftTextChange?.(input);
   }, [input, onComposerDraftTextChange]);
 
