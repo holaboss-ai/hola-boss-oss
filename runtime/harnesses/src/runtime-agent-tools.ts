@@ -40,6 +40,12 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS = [
     policy: "mutate"
   },
   {
+    id: "download_url",
+    description:
+      "Download a remote file from a URL into the current workspace and return the saved file metadata. Prefer this over ad hoc shell downloads when you already have a direct asset URL.",
+    policy: "mutate"
+  },
+  {
     id: "write_report",
     description:
       "Create a report artifact for the current workspace session, save it under outputs/reports/, and return the created report metadata.",

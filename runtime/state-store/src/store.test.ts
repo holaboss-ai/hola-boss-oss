@@ -997,6 +997,54 @@ test("claimInputs can select at most one queued input per session", () => {
   store.close();
 });
 
+test("claimInputs skips queued work for sessions that already have a live claimed input", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const active = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-one",
+    payload: { text: "session-one-active" },
+    priority: 5
+  });
+  const blocked = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-one",
+    payload: { text: "session-one-blocked" },
+    priority: 4
+  });
+  const available = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-two",
+    payload: { text: "session-two" },
+    priority: 3
+  });
+
+  const firstClaim = store.claimInputs({
+    limit: 1,
+    claimedBy: "worker-1",
+    leaseSeconds: 300
+  });
+  assert.equal(firstClaim.length, 1);
+  assert.equal(firstClaim[0]?.inputId, active.inputId);
+
+  const secondClaim = store.claimInputs({
+    limit: 2,
+    claimedBy: "worker-2",
+    leaseSeconds: 300
+  });
+  assert.deepEqual(
+    secondClaim.map((record) => record.inputId),
+    [available.inputId]
+  );
+  assert.equal(store.getInput(blocked.inputId)?.status, "QUEUED");
+
+  store.close();
+});
+
 test("post-run job queue supports idempotent enqueue, update, and claiming by priority", () => {
   const root = makeTempDir("hb-state-store-");
   const store = new RuntimeStateStore({

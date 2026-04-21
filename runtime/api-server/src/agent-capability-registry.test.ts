@@ -228,6 +228,7 @@ test("buildAgentCapabilityManifest carries browser tool descriptions that emphas
   const capability = manifest.browser_tools.find((entry) => entry.id === "browser_get_state");
   assert.ok(capability);
   assert.match(capability.description, /DOM-first browser inspection tool for actions and structured extraction/i);
+  assert.match(capability.description, /visible media such as images/i);
   assert.match(capability.description, /include_screenshot=true/i);
   assert.match(capability.description, /visual appearance, layout, prominence, overlays, canvas\/chart\/PDF content/i);
 });
@@ -357,6 +358,42 @@ test("evaluateAgentCapabilities includes richer execution and authority metadata
   assert.ok(questionCapability);
   assert.equal(questionCapability.execution_semantics.requires_user_confirmation, true);
   assert.equal(questionCapability.execution_semantics.concurrency, "session_exclusive");
+});
+
+test("runtime download capability advertises network and filesystem authority", () => {
+  const evaluation = evaluateAgentCapabilities({
+    harnessId: "pi",
+    sessionKind: "workspace_session",
+    browserToolsAvailable: false,
+    browserToolIds: [],
+    runtimeToolIds: ["download_url"],
+    defaultTools: ["read"],
+    extraTools: ["download_url"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  const capability = evaluation.capabilities.find((entry) => entry.id === "download_url");
+  assert.ok(capability);
+  assert.deepEqual(capability.authority_boundary, {
+    filesystem: true,
+    shell: false,
+    network: true,
+    browser: false,
+    runtime_state: true,
+  });
+
+  const manifest = buildAgentCapabilityManifest({
+    harnessId: "pi",
+    sessionKind: "workspace_session",
+    runtimeToolIds: ["download_url"],
+    defaultTools: ["read"],
+    extraTools: ["download_url"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+  const section = renderCapabilityPolicyPromptSection(manifest);
+  assert.match(section, /prefer `download_url` when you already have a direct asset URL/i);
 });
 
 test("evaluateAgentCapabilities fingerprints the run snapshot", () => {

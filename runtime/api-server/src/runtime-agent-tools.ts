@@ -79,6 +79,14 @@ export interface RuntimeAgentToolsGenerateImageParams {
   size?: string | null;
 }
 
+export interface RuntimeAgentToolsDownloadUrlParams {
+  workspaceId: string;
+  url: string;
+  outputPath?: string | null;
+  expectedMimePrefix?: string | null;
+  overwrite?: boolean;
+}
+
 export interface RuntimeAgentToolsWriteReportParams {
   workspaceId: string;
   sessionId?: string | null;
@@ -143,6 +151,8 @@ export interface RuntimeAgentToolsCloseTerminalSessionParams {
 
 export const ALLOWED_DELIVERY_MODES = new Set(["none", "announce"]);
 export const ALLOWED_DELIVERY_CHANNELS = new Set(["system_notification", "session_run"]);
+const DEFAULT_DOWNLOAD_TIMEOUT_MS = 120_000;
+const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
 
 function runtimeToolBaseDefinition(id: string) {
   const definition = RUNTIME_AGENT_TOOL_BASE_DEFINITIONS.find((tool) => tool.id === id);
@@ -200,6 +210,12 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/images/generate",
     description: runtimeToolBaseDefinition("image_generate").description
+  },
+  {
+    id: runtimeToolBaseDefinition("download_url").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/downloads",
+    description: runtimeToolBaseDefinition("download_url").description
   },
   {
     id: runtimeToolBaseDefinition("write_report").id,
@@ -295,6 +311,228 @@ function sanitizeReportFilenameStem(value: string): string {
     .replace(/-+/g, "-")
     .replace(/^[-_. ]+|[-_. ]+$/g, "");
   return stem || "report";
+}
+
+function sanitizeDownloadPathSegment(value: string): string {
+  const sanitized = value
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+  return sanitized || "download";
+}
+
+function sanitizeDownloadFilename(value: string): string {
+  return sanitizeDownloadPathSegment(path.basename(value || ""));
+}
+
+function normalizedMimeType(value: string | null | undefined): string {
+  return normalizedString(value).split(";")[0]?.trim().toLowerCase() ?? "";
+}
+
+function extensionForMimeType(value: string): string {
+  switch (normalizedMimeType(value)) {
+    case "image/png":
+      return ".png";
+    case "image/jpeg":
+      return ".jpg";
+    case "image/webp":
+      return ".webp";
+    case "image/gif":
+      return ".gif";
+    case "image/svg+xml":
+      return ".svg";
+    case "image/avif":
+      return ".avif";
+    case "application/pdf":
+      return ".pdf";
+    case "text/plain":
+      return ".txt";
+    case "text/markdown":
+      return ".md";
+    case "application/json":
+      return ".json";
+    case "text/csv":
+      return ".csv";
+    case "application/zip":
+      return ".zip";
+    default:
+      return "";
+  }
+}
+
+function mimeTypeFromFilename(value: string): string {
+  switch (path.extname(value).toLowerCase()) {
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".webp":
+      return "image/webp";
+    case ".gif":
+      return "image/gif";
+    case ".svg":
+      return "image/svg+xml";
+    case ".avif":
+      return "image/avif";
+    case ".pdf":
+      return "application/pdf";
+    case ".txt":
+      return "text/plain";
+    case ".md":
+      return "text/markdown";
+    case ".json":
+      return "application/json";
+    case ".csv":
+      return "text/csv";
+    case ".zip":
+      return "application/zip";
+    default:
+      return "";
+  }
+}
+
+function filenameFromContentDisposition(value: string | null | undefined): string {
+  const header = normalizedString(value);
+  if (!header) {
+    return "";
+  }
+  const utf8Match = header.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1].trim().replace(/^"(.*)"$/, "$1"));
+    } catch {
+      return utf8Match[1].trim().replace(/^"(.*)"$/, "$1");
+    }
+  }
+  const plainMatch = header.match(/filename\s*=\s*([^;]+)/i);
+  if (plainMatch?.[1]) {
+    return plainMatch[1].trim().replace(/^"(.*)"$/, "$1");
+  }
+  return "";
+}
+
+function filenameFromUrl(value: string): string {
+  try {
+    const parsed = new URL(value);
+    return decodeURIComponent(path.basename(parsed.pathname));
+  } catch {
+    return "";
+  }
+}
+
+function normalizeExpectedMimePrefix(value: string | null | undefined): string {
+  return normalizedString(value).toLowerCase();
+}
+
+function timeoutErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+  return "download timed out";
+}
+
+async function pathExists(absolutePath: string): Promise<boolean> {
+  try {
+    await fs.access(absolutePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveDownloadTarget(params: {
+  workspaceRoot: string;
+  workspaceId: string;
+  outputPath?: string | null;
+  overwrite?: boolean;
+  suggestedFilename: string;
+  mimeType: string;
+}): Promise<{ absolutePath: string; relativePath: string }> {
+  const workspaceDir = path.join(params.workspaceRoot, params.workspaceId);
+  const sanitizedFilename = sanitizeDownloadFilename(params.suggestedFilename || "download");
+  const parsedSuggested = path.parse(sanitizedFilename);
+  const fallbackExtension = parsedSuggested.ext || extensionForMimeType(params.mimeType);
+  const fallbackStem = parsedSuggested.name || "download";
+
+  const requestedPath = normalizedString(params.outputPath);
+  if (requestedPath) {
+    if (path.isAbsolute(requestedPath)) {
+      throw new RuntimeAgentToolsServiceError(
+        400,
+        "download_output_path_invalid",
+        "output_path must be workspace-relative",
+      );
+    }
+    const normalizedRelativePath = path.posix.normalize(requestedPath.replace(/\\/g, "/"));
+    if (
+      !normalizedRelativePath ||
+      normalizedRelativePath === "." ||
+      normalizedRelativePath.startsWith("../") ||
+      normalizedRelativePath.includes("/../")
+    ) {
+      throw new RuntimeAgentToolsServiceError(
+        400,
+        "download_output_path_invalid",
+        "output_path must stay within the workspace",
+      );
+    }
+    const parts = normalizedRelativePath.split("/").filter(Boolean);
+    if (parts.length === 0) {
+      throw new RuntimeAgentToolsServiceError(
+        400,
+        "download_output_path_invalid",
+        "output_path must include a filename",
+      );
+    }
+    const filePart = sanitizeDownloadFilename(parts.pop() ?? "");
+    const parsedFile = path.parse(filePart);
+    const finalFileName = `${parsedFile.name || fallbackStem}${parsedFile.ext || fallbackExtension}`;
+    const safeRelativePath = path.posix.join(
+      ...parts.map((part) => sanitizeDownloadPathSegment(part)),
+      finalFileName,
+    );
+    const absolutePath = path.resolve(workspaceDir, safeRelativePath);
+    const normalizedWorkspaceDir = path.resolve(workspaceDir);
+    if (
+      absolutePath !== normalizedWorkspaceDir &&
+      !absolutePath.startsWith(`${normalizedWorkspaceDir}${path.sep}`)
+    ) {
+      throw new RuntimeAgentToolsServiceError(
+        400,
+        "download_output_path_invalid",
+        "output_path must stay within the workspace",
+      );
+    }
+    if (!params.overwrite && (await pathExists(absolutePath))) {
+      throw new RuntimeAgentToolsServiceError(
+        409,
+        "download_target_exists",
+        "output_path already exists",
+      );
+    }
+    return { absolutePath, relativePath: safeRelativePath };
+  }
+
+  const downloadsDir = path.join(workspaceDir, "Downloads");
+  for (let index = 0; index < 1000; index += 1) {
+    const fileName =
+      index === 0
+        ? `${fallbackStem}${fallbackExtension}`
+        : `${fallbackStem}-${index + 1}${fallbackExtension}`;
+    const relativePath = path.posix.join("Downloads", fileName);
+    const absolutePath = path.join(downloadsDir, fileName);
+    if (!(await pathExists(absolutePath))) {
+      return { absolutePath, relativePath };
+    }
+  }
+
+  throw new RuntimeAgentToolsServiceError(
+    500,
+    "download_target_unavailable",
+    "unable to allocate a download path",
+  );
 }
 
 function reportTitleFromContent(content: string): string {
@@ -700,6 +938,112 @@ export class RuntimeAgentToolsService {
         error instanceof Error ? error.message : "image generation failed",
       );
     }
+  }
+
+  async downloadUrl(params: RuntimeAgentToolsDownloadUrlParams): Promise<JsonObject> {
+    this.requireWorkspace(params.workspaceId);
+    const sourceUrl = normalizedString(params.url);
+    if (!sourceUrl) {
+      throw new RuntimeAgentToolsServiceError(400, "download_url_required", "url is required");
+    }
+
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(sourceUrl);
+    } catch {
+      throw new RuntimeAgentToolsServiceError(400, "download_url_invalid", "url must be a valid http or https URL");
+    }
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+      throw new RuntimeAgentToolsServiceError(400, "download_url_invalid", "url must use http or https");
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(parsedUrl, {
+        method: "GET",
+        redirect: "follow",
+        signal: AbortSignal.timeout(DEFAULT_DOWNLOAD_TIMEOUT_MS),
+      });
+    } catch (error) {
+      throw new RuntimeAgentToolsServiceError(
+        502,
+        "download_request_failed",
+        timeoutErrorMessage(error),
+      );
+    }
+
+    if (!response.ok) {
+      throw new RuntimeAgentToolsServiceError(
+        502,
+        "download_request_failed",
+        `download failed with status ${response.status}`,
+      );
+    }
+
+    const contentLength = Number.parseInt(response.headers.get("content-length") ?? "", 10);
+    if (Number.isFinite(contentLength) && contentLength > MAX_DOWNLOAD_BYTES) {
+      throw new RuntimeAgentToolsServiceError(
+        413,
+        "download_too_large",
+        `download exceeds ${MAX_DOWNLOAD_BYTES} bytes`,
+      );
+    }
+
+    const finalUrl = normalizedString(response.url) || sourceUrl;
+    const suggestedFilename =
+      filenameFromContentDisposition(response.headers.get("content-disposition")) ||
+      filenameFromUrl(finalUrl) ||
+      filenameFromUrl(sourceUrl) ||
+      "download";
+    const headerMimeType = normalizedMimeType(response.headers.get("content-type"));
+    const mimeType = headerMimeType || mimeTypeFromFilename(suggestedFilename) || "application/octet-stream";
+    const expectedMimePrefix = normalizeExpectedMimePrefix(params.expectedMimePrefix);
+    if (expectedMimePrefix && !mimeType.startsWith(expectedMimePrefix)) {
+      throw new RuntimeAgentToolsServiceError(
+        409,
+        "download_mime_mismatch",
+        `downloaded content type ${mimeType} does not match expected prefix ${expectedMimePrefix}`,
+      );
+    }
+
+    let bytes: Uint8Array;
+    try {
+      bytes = new Uint8Array(await response.arrayBuffer());
+    } catch (error) {
+      throw new RuntimeAgentToolsServiceError(
+        502,
+        "download_read_failed",
+        error instanceof Error ? error.message : "failed to read download",
+      );
+    }
+
+    if (bytes.byteLength > MAX_DOWNLOAD_BYTES) {
+      throw new RuntimeAgentToolsServiceError(
+        413,
+        "download_too_large",
+        `download exceeds ${MAX_DOWNLOAD_BYTES} bytes`,
+      );
+    }
+
+    const { absolutePath, relativePath } = await resolveDownloadTarget({
+      workspaceRoot: this.options.workspaceRoot,
+      workspaceId: params.workspaceId,
+      outputPath: params.outputPath,
+      overwrite: params.overwrite,
+      suggestedFilename,
+      mimeType,
+    });
+
+    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+    await fs.writeFile(absolutePath, bytes);
+
+    return {
+      file_path: relativePath,
+      source_url: sourceUrl,
+      final_url: finalUrl,
+      mime_type: mimeType,
+      size_bytes: bytes.byteLength,
+    };
   }
 
   async writeReport(params: RuntimeAgentToolsWriteReportParams): Promise<JsonObject> {

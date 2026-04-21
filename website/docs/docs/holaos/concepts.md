@@ -27,7 +27,7 @@ In this model, `holaOS` is the environment layer: the workspace contract, the ru
 </DocDefinition>
 
 <DocDefinition term="Workspace" meta="unit of work">
-  A workspace is the operating context for one workflow. It carries the authored files, installed apps, skills, and configuration that define how the workflow should behave. In the `holaOS` model, it is the primary environment artifact. Memory and continuity are resolved around the workspace by the runtime rather than collapsed into one file.
+  A workspace is the operating context for one workflow. It carries the authored files, installed apps, skills, and configuration that define how the workflow should behave. In the `holaOS` model, it is a core environment artifact. Memory and continuity are resolved around the workspace by the runtime rather than collapsed into one file.
 </DocDefinition>
 
 <DocDefinition term="Operator Surface" meta="active work surface">
@@ -47,11 +47,11 @@ In this model, `holaOS` is the environment layer: the workspace contract, the ru
 </DocDefinition>
 
 <DocDefinition term="App" meta="capability module">
-  An app adds a focused capability to a workspace. Apps can provide UI, automation, MCP tools, background jobs, and their own state. Each app declares what integrations it needs in its `app.runtime.yaml` manifest and becomes runtime-managed when the workspace registers it under `applications[]` in `workspace.yaml`. Think of apps as modular building blocks rather than generic plugins.
+  An app is the runtime-managed unit that packages durable capability inside a workspace. It can combine UI, automation, MCP tools, local state, background work, and outputs as one installable module. In the current runtime, the workspace registers it under `applications[]` so the runtime can manage it as one coherent capability boundary.
 </DocDefinition>
 
 <DocDefinition term="Integration" meta="account connection">
-  An integration connects a workspace to an external service like Gmail, GitHub, or Twitter. Apps declare which integrations they require; the runtime resolves those requirements for the workspace by binding connected accounts to apps. Credentials are managed by the runtime broker — apps never see raw tokens directly.
+  An integration connects a workspace capability to an external service account such as Gmail, GitHub, or Twitter. Apps declare which integrations they require, and the runtime resolves those requirements through workspace bindings and brokered access. The important concept is that external-account access stays runtime-managed rather than becoming ambient workspace state.
 </DocDefinition>
 
 <DocDefinition term="Skill" meta="instruction pack">
@@ -59,7 +59,7 @@ In this model, `holaOS` is the environment layer: the workspace contract, the ru
 </DocDefinition>
 
 <DocDefinition term="Workspace Command" meta="explicit command capability">
-  A workspace command is an explicit runnable command declared in workspace configuration and projected as a callable capability for a run. It is separate from apps, skills, MCP tools, and runtime-managed tools.
+  A workspace command is an explicit runnable command declared in workspace configuration. It is a separate capability surface from apps, skills, MCP tools, and runtime-managed tools. In the shipped harness path today, workspace commands are primarily exposed as workspace-defined command references rather than native callable tool primitives.
 </DocDefinition>
 
 <DocDefinition term="Environment Engineering" meta="systems thesis">
@@ -71,7 +71,7 @@ In this model, `holaOS` is the environment layer: the workspace contract, the ru
 </DocDefinition>
 
 <DocDefinition term="Bridge SDK" meta="app integration layer">
-  The Bridge SDK (`@holaboss/bridge`, installed via npm) connects apps to the Holaboss runtime and workspace. It is what lets an app publish outputs, publish turn-scoped artifacts, call external services through the integration broker, and integrate cleanly with the rest of the platform.
+  The Bridge SDK is the app-facing helper layer for connecting an app back to the Holaboss runtime and workspace. It lets apps publish outputs, publish turn-scoped artifacts, and use runtime-brokered external access without having to reimplement those contracts from scratch. The current package is `@holaboss/bridge`.
 </DocDefinition>
 
 <DocDefinition term="Output" meta="durable result">

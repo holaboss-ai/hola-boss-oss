@@ -1836,15 +1836,23 @@ export class RuntimeStateStore {
       params.leaseSeconds > 0 ? new Date(now.getTime() + params.leaseSeconds * 1000).toISOString() : nowIso;
 
     const rows = this.db()
-      .prepare<[string, string], { input_id: string; session_id: string }>(`
-        SELECT input_id, session_id
-        FROM agent_session_inputs
-        WHERE status = 'QUEUED'
-          AND datetime(available_at) <= datetime(?)
-          AND (claimed_until IS NULL OR datetime(claimed_until) <= datetime(?))
+      .prepare<[string, string, string], { input_id: string; session_id: string }>(`
+        SELECT queued.input_id, queued.session_id
+        FROM agent_session_inputs AS queued
+        WHERE queued.status = 'QUEUED'
+          AND datetime(queued.available_at) <= datetime(?)
+          AND (queued.claimed_until IS NULL OR datetime(queued.claimed_until) <= datetime(?))
+          AND NOT EXISTS (
+            SELECT 1
+            FROM agent_session_inputs AS claimed
+            WHERE claimed.session_id = queued.session_id
+              AND claimed.input_id != queued.input_id
+              AND claimed.status = 'CLAIMED'
+              AND (claimed.claimed_until IS NULL OR datetime(claimed.claimed_until) > datetime(?))
+          )
         ORDER BY priority DESC, datetime(created_at) ASC
       `)
-      .all(nowIso, nowIso);
+      .all(nowIso, nowIso, nowIso);
 
     const selectedInputIds: string[] = [];
     const seenSessionIds = new Set<string>();
@@ -1920,6 +1928,20 @@ export class RuntimeStateStore {
         ORDER BY datetime(claimed_until) ASC, datetime(updated_at) ASC
       `)
       .all(nowIso);
+    return rows
+      .map((row) => this.rowToInput(row))
+      .filter((row): row is SessionInputRecord => row !== null);
+  }
+
+  listClaimedInputs(): SessionInputRecord[] {
+    const rows = this.db()
+      .prepare<[], Record<string, unknown>>(`
+        SELECT *
+        FROM agent_session_inputs
+        WHERE status = 'CLAIMED'
+        ORDER BY datetime(claimed_until) ASC, datetime(updated_at) ASC
+      `)
+      .all();
     return rows
       .map((row) => this.rowToInput(row))
       .filter((row): row is SessionInputRecord => row !== null);
@@ -4743,6 +4765,7 @@ export class RuntimeStateStore {
     fs.mkdirSync(path.dirname(this.dbPath), { recursive: true });
     const db = new Database(this.dbPath);
     db.pragma("journal_mode = WAL");
+    db.pragma("busy_timeout = 5000");
     db.pragma("foreign_keys = ON");
     this.#vectorIndexSupported = this.tryLoadVectorExtension(db);
     this.ensureRuntimeDbSchema(db);

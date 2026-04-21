@@ -13,12 +13,12 @@ The current flow is:
 3. The current run may use pending proposals as ephemeral context without promoting them into durable memory yet.
 4. When the run finishes, the runtime persists `turn_results`.
 5. An immediate continuity writeback runs inline after the turn result is committed.
-6. That writeback updates the compaction boundary, restoration order, and volatile runtime projections under `memory/workspace/<workspace-id>/runtime/`, including `session-memory/`.
+6. That writeback updates volatile runtime projections under `memory/workspace/<workspace-id>/runtime/`, including `session-memory/`.
 7. The runtime then persists a queued evolve job for heavier durable-memory and skill-review work.
 8. The evolve worker reloads the finished turn, recent session state, and current memory catalog state.
 9. Deterministic and optional model-assisted extraction promote durable workspace facts, procedures, and repeated blockers into markdown memory plus catalog rows.
 10. `MEMORY.md` indexes are refreshed only for the durable scopes that changed.
-11. Later runs restore from the latest compaction boundary first, then enrich continuity from `session-memory` and bounded durable recall.
+11. Later runs restore from recent runtime context and `session-memory`, and can also use a compaction boundary when one exists.
 
 User-memory proposals remain staged in `state/runtime.db` until they are accepted. That acceptance path is what creates durable preference memory or updates the canonical runtime profile; queued evolve does not create user preference or profile memory automatically. Repeated runtime blockers can also graduate into durable `knowledge/blockers/` during queued evolve when they stop looking like a one-off run artifact and start looking like stable workspace knowledge.
 
@@ -44,6 +44,7 @@ When embeddings are configured and the state store has vector support, recall ca
 1. immediate continuity writeback
    - runs inline after the foreground `turn_results` row is committed
    - keeps next-run continuity fresh without waiting on heavier extraction work
+   - refreshes runtime projections and `session-memory` immediately; compaction boundaries can still be written later by checkpoint compaction
 2. queued `evolve` jobs
    - persist as post-run jobs in `state/runtime.db`
    - drain through the dedicated evolve worker
@@ -85,7 +86,7 @@ Durable recall is governed separately from storage:
 
 - every durable memory entry carries a scope, type, verification policy, and staleness policy
 - every durable memory entry also carries provenance metadata such as source type, observation time, verification time, and confidence
-- recall should prefer user preferences first, then query-matched workspace procedures, facts, blockers, and references
+- recall should favor memories that are both relevant and safe to trust, including durable preferences, workspace procedures, facts, blockers, and references when they match the request
 - stale references should be penalized more aggressively than stable or workspace-sensitive memories
 - recalled durable memory is injected as context, not merged into the base system prompt
 

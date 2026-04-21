@@ -190,6 +190,22 @@ function browserToolParameters(toolId: DesktopBrowserToolId) {
         },
         { additionalProperties: false }
       );
+    case "browser_context_click":
+      return Type.Object(
+        {
+          index: Type.Integer({
+            description: "Element or media index from browser_get_state.",
+            minimum: 1,
+          }),
+          target: Type.Optional(
+            Type.Union([Type.Literal("element"), Type.Literal("media")], {
+              description:
+                "Target list to use for the index. Use `media` for visible images or other media items.",
+            })
+          ),
+        },
+        { additionalProperties: false }
+      );
     case "browser_type":
       return Type.Object(
         {

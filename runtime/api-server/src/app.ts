@@ -39,7 +39,8 @@ import {
 
 import {
   type QueueWorkerLike,
-  RuntimeQueueWorker
+  RuntimeQueueWorker,
+  runtimeQueueWorkerClaimedBy,
 } from "./queue-worker.js";
 import {
   type DurableMemoryWorkerLike,
@@ -65,6 +66,7 @@ import {
   type RecallEmbeddingBackfillWorkerLike,
   RuntimeRecallEmbeddingBackfillWorker,
 } from "./recall-embedding-backfill-worker.js";
+import { captureRuntimeException } from "./runtime-sentry.js";
 import {
   AppLifecycleExecutorError,
   appBuildHasCompletedSetup,
@@ -189,6 +191,7 @@ function resolveQueueWorker(
     logger: app.log,
     memoryService,
     wakeDurableMemoryWorker: durableMemoryWorker?.wake.bind(durableMemoryWorker) ?? null,
+    claimedBy: runtimeQueueWorkerClaimedBy(),
   });
 }
 
@@ -2126,7 +2129,11 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const browserToolService = options.browserToolService ?? new DesktopBrowserToolService();
   const terminalSessionManager =
     options.terminalSessionManager === undefined
-      ? new TerminalSessionManager({ store, logger: app.log })
+      ? new TerminalSessionManager({
+        store,
+        logger: app.log,
+        captureRuntimeException,
+      })
       : options.terminalSessionManager;
   const integrationService = new RuntimeIntegrationService(store);
   const honoBaseUrl = process.env.HOLABOSS_AUTH_BASE_URL ?? "";
@@ -3678,6 +3685,31 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 400, error instanceof Error ? error.message : "runtime image generation failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/downloads", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return await runtimeAgentToolsService.downloadUrl({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        url: requiredString(request.body.url, "url"),
+        outputPath: nullableString(request.body.output_path) ?? undefined,
+        expectedMimePrefix: nullableString(request.body.expected_mime_prefix) ?? undefined,
+        overwrite: hasOwn(request.body, "overwrite")
+          ? optionalBoolean(request.body.overwrite, false)
+          : undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime download failed");
     }
   });
 

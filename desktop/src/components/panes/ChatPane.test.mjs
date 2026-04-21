@@ -165,6 +165,58 @@ test("chat composer footer wraps controls based on available pane width instead 
   assert.doesNotMatch(source, /sm:w-\[208px\]/);
 });
 
+test("chat pane defers scroll metrics updates out of resize and scroll callbacks", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const chatScrollMetricsSyncFrameRef = useRef<number \| null>\(null\);/,
+  );
+  assert.match(
+    source,
+    /const chatScrollMetricsSyncTargetRef = useRef<HTMLDivElement \| null>\(null\);/,
+  );
+  assert.match(
+    source,
+    /const cancelChatScrollMetricsSync = \(\) => \{[\s\S]*window\.cancelAnimationFrame\(chatScrollMetricsSyncFrameRef\.current\);[\s\S]*chatScrollMetricsSyncTargetRef\.current = null;[\s\S]*\};/,
+  );
+  assert.match(
+    source,
+    /const scheduleChatScrollMetricsSync = \(\s*container\?: HTMLDivElement \| null,\s*\) => \{[\s\S]*window\.requestAnimationFrame\(\(\) => \{[\s\S]*syncChatScrollMetrics\(target\);[\s\S]*\}\);[\s\S]*\};/,
+  );
+  assert.match(
+    source,
+    /useEffect\(\s*\(\) => \(\) => \{[\s\S]*clearChatScrollbarDragState\(\);[\s\S]*cancelChatScrollMetricsSync\(\);[\s\S]*\},\s*\[\],\s*\);/,
+  );
+  assert.match(
+    source,
+    /const resizeObserver = new ResizeObserver\(\(\) => \{\s*scheduleChatScrollMetricsSync\(container\);\s*\}\);/,
+  );
+  assert.match(source, /scheduleChatScrollMetricsSync\(currentTarget\);/);
+  assert.doesNotMatch(
+    source,
+    /const resizeObserver = new ResizeObserver\(\(\) => \{\s*syncChatScrollMetrics\(container\);\s*\}\);/,
+  );
+  assert.doesNotMatch(source, /syncChatScrollMetrics\(currentTarget\);/);
+});
+
+test("chat pane blocks overlapping older-history loads before state commits", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /function setIsLoadingOlderHistoryState\(nextValue: boolean\)/,
+  );
+  assert.match(
+    source,
+    /isLoadingHistory \|\|\s*isLoadingOlderHistoryRef\.current \|\|\s*pendingHistoryPrependRestoreRef\.current \|\|/,
+  );
+  assert.match(
+    source,
+    /setIsLoadingOlderHistoryState\(true\);[\s\S]*finally \{[\s\S]*setIsLoadingOlderHistoryState\(false\);[\s\S]*isLoadingOlderHistoryRef\.current = false;/,
+  );
+});
+
 test("chat composer switches model and thinking selectors into icon-led compact triggers", async () => {
   const source = await readFile(sourcePath, "utf8");
 
@@ -644,6 +696,14 @@ test("chat pane exposes an in-pane session dropdown for switching agent sessions
   );
   assert.match(
     source,
+    /const draftHydrationWorkspaceIdRef = useRef\(\(selectedWorkspaceId \|\| ""\)\.trim\(\)\);/,
+  );
+  assert.match(
+    source,
+    /const skipNextComposerDraftPublishRef = useRef\(false\);/,
+  );
+  assert.match(
+    source,
     /const localSessionOpenRequestRef =\s*useRef<ChatPaneSessionOpenRequest \| null>\(null\);/,
   );
   assert.match(source, /const effectiveSessionOpenRequest =\s*sessionOpenRequest \?\? localSessionOpenRequest;/);
@@ -653,11 +713,11 @@ test("chat pane exposes an in-pane session dropdown for switching agent sessions
   );
   assert.match(
     source,
-    /useEffect\(\(\) => \{\s*setInput\(\(current\) =>\s*current === composerDraftText \? current : composerDraftText,\s*\);\s*\}, \[composerDraftText\]\);/,
+    /useEffect\(\(\) => \{\s*const normalizedWorkspaceId = \(selectedWorkspaceId \|\| ""\)\.trim\(\);\s*if \(draftHydrationWorkspaceIdRef\.current === normalizedWorkspaceId\) \{\s*return;\s*\}\s*draftHydrationWorkspaceIdRef\.current = normalizedWorkspaceId;\s*skipNextComposerDraftPublishRef\.current = true;\s*setInput\(\(current\) =>\s*current === composerDraftText \? current : composerDraftText,\s*\);\s*\}, \[composerDraftText, selectedWorkspaceId\]\);/,
   );
   assert.match(
     source,
-    /useEffect\(\(\) => \{\s*onComposerDraftTextChange\?\.\(input\);\s*\}, \[input, onComposerDraftTextChange\]\);/,
+    /useEffect\(\(\) => \{\s*if \(skipNextComposerDraftPublishRef\.current\) \{\s*skipNextComposerDraftPublishRef\.current = false;\s*return;\s*\}\s*onComposerDraftTextChange\?\.\(input\);\s*\}, \[input, onComposerDraftTextChange\]\);/,
   );
   assert.match(source, /function setLocalSessionOpenRequestState\(/);
   assert.match(source, /function sessionStatusIndicator\(statusLabel: string\)/);
@@ -781,11 +841,19 @@ test("chat pane mirrors composer draft text from shell state", async () => {
   );
   assert.match(
     source,
-    /useEffect\(\(\) => \{\s*setInput\(\(current\) =>\s*current === composerDraftText \? current : composerDraftText,\s*\);\s*\}, \[composerDraftText\]\);/,
+    /const draftHydrationWorkspaceIdRef = useRef\(\(selectedWorkspaceId \|\| ""\)\.trim\(\)\);/,
   );
   assert.match(
     source,
-    /useEffect\(\(\) => \{\s*onComposerDraftTextChange\?\.\(input\);\s*\}, \[input, onComposerDraftTextChange\]\);/,
+    /const skipNextComposerDraftPublishRef = useRef\(false\);/,
+  );
+  assert.match(
+    source,
+    /useEffect\(\(\) => \{\s*const normalizedWorkspaceId = \(selectedWorkspaceId \|\| ""\)\.trim\(\);\s*if \(draftHydrationWorkspaceIdRef\.current === normalizedWorkspaceId\) \{\s*return;\s*\}\s*draftHydrationWorkspaceIdRef\.current = normalizedWorkspaceId;\s*skipNextComposerDraftPublishRef\.current = true;\s*setInput\(\(current\) =>\s*current === composerDraftText \? current : composerDraftText,\s*\);\s*\}, \[composerDraftText, selectedWorkspaceId\]\);/,
+  );
+  assert.match(
+    source,
+    /useEffect\(\(\) => \{\s*if \(skipNextComposerDraftPublishRef\.current\) \{\s*skipNextComposerDraftPublishRef\.current = false;\s*return;\s*\}\s*onComposerDraftTextChange\?\.\(input\);\s*\}, \[input, onComposerDraftTextChange\]\);/,
   );
 });
 

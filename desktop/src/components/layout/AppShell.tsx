@@ -27,6 +27,10 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
 import { type ExplorerAttachmentDragPayload } from "@/lib/attachmentDrag";
 import { DesktopBillingProvider } from "@/lib/billing/useDesktopBilling";
+import {
+  pushRendererSentryActivity,
+  useRendererSentrySection,
+} from "@/lib/rendererSentry";
 import { getWorkspaceAppDefinition } from "@/lib/workspaceApps";
 import {
   useWorkspaceDesktop,
@@ -242,6 +246,66 @@ type ReportedOperatorSurfaceContext = {
   active_surface_id: string | null;
   surfaces: OperatorSurfacePayload[];
 };
+
+function summarizeAppShellView(
+  view: AgentView | SpaceDisplayView,
+): Record<string, unknown> {
+  switch (view.type) {
+    case "app":
+      return {
+        type: view.type,
+        app_id: view.appId,
+        path: view.path ?? null,
+        resource_id: view.resourceId ?? null,
+        view_id: view.view ?? null,
+      };
+    case "internal":
+      return {
+        type: view.type,
+        surface: view.surface,
+        resource_id: view.resourceId ?? null,
+      };
+    default:
+      return {
+        type: view.type,
+      };
+  }
+}
+
+function summarizeRuntimeStatusForSentry(
+  runtimeStatus: RuntimeStatusPayload | null,
+): Record<string, unknown> | null {
+  if (!runtimeStatus) {
+    return null;
+  }
+  return {
+    status: runtimeStatus.status,
+    available: runtimeStatus.available,
+    pid: runtimeStatus.pid,
+    harness: runtimeStatus.harness ?? null,
+    desktop_browser_ready: runtimeStatus.desktopBrowserReady,
+    last_error: runtimeStatus.lastError || null,
+  };
+}
+
+function summarizeAppUpdateStatusForSentry(
+  status: AppUpdateStatusPayload | null,
+): Record<string, unknown> | null {
+  if (!status) {
+    return null;
+  }
+  return {
+    supported: status.supported,
+    checking: status.checking,
+    available: status.available,
+    downloaded: status.downloaded,
+    current_version: status.currentVersion,
+    latest_version: status.latestVersion ?? null,
+    channel: status.channel,
+    preferred_channel: status.preferredChannel ?? null,
+    error: status.error || null,
+  };
+}
 
 function nonEmptySurfaceText(value: string | null | undefined): string {
   return (value ?? "").trim();
@@ -3126,6 +3190,146 @@ function AppShellContent() {
       }),
     [activeShellView, agentView, spaceDisplayView],
   );
+  const appShellSentryState = useMemo(
+    () => ({
+      selected_workspace_id: selectedWorkspaceId || null,
+      active_shell_view: activeShellView,
+      active_chat_session_id: activeChatSessionId || null,
+      agent_view: summarizeAppShellView(agentView),
+      space_display_view: summarizeAppShellView(spaceDisplayView),
+      space_layout: {
+        explorer_mode: spaceExplorerMode,
+        explorer_collapsed: spaceExplorerCollapsed,
+        browser_space: spaceBrowserSpace,
+        visibility: spaceVisibility,
+      },
+      workspace: {
+        count: workspaces.length,
+        has_selected_workspace: Boolean(selectedWorkspace),
+        has_hydrated_workspace_list: hasHydratedWorkspaceList,
+        apps_ready: workspaceAppsReady,
+        blocking_reason: workspaceBlockingReason || null,
+        error_message: workspaceErrorMessage || null,
+        onboarding_mode_active: onboardingModeActive,
+      },
+      runtime_status: summarizeRuntimeStatusForSentry(runtimeStatus),
+      operations: {
+        drawer_open: operationsDrawerOpen,
+        active_tab: activeOperationsTab,
+      },
+      dialogs: {
+        workspace_switcher_open: workspaceSwitcherOpen,
+        settings_open: settingsDialogOpen,
+        publish_open: publishOpen,
+        create_workspace_open: createWorkspacePanelOpen,
+        workspace_apps_open: workspaceAppsDialogOpen,
+        task_proposal_details_open: taskProposalDetailsDialogOpen,
+      },
+      notifications: {
+        total: notifications.length,
+        toast_count: effectiveToastNotifications.length,
+        task_proposal_count: taskProposals.length,
+      },
+      proactive: {
+        workspace_enabled: proactiveWorkspaceEnabled,
+        loading_workspace_enabled: isLoadingProactiveWorkspaceEnabled,
+        updating_workspace_enabled: isUpdatingProactiveWorkspaceEnabled,
+        loading_status: isLoadingProactiveStatus,
+        has_status: Boolean(proactiveStatus),
+        error:
+          proactiveTaskProposalsError || proactiveHeartbeatError || null,
+      },
+      app_update: summarizeAppUpdateStatusForSentry(effectiveAppUpdateStatus),
+      operator_surface: reportedOperatorSurfaceContext
+        ? {
+            active_surface_id:
+              reportedOperatorSurfaceContext.active_surface_id ?? null,
+            surface_count: reportedOperatorSurfaceContext.surfaces.length,
+          }
+        : null,
+    }),
+    [
+      activeChatSessionId,
+      activeOperationsTab,
+      activeShellView,
+      agentView,
+      createWorkspacePanelOpen,
+      effectiveAppUpdateStatus,
+      effectiveToastNotifications.length,
+      hasHydratedWorkspaceList,
+      isLoadingProactiveStatus,
+      isLoadingProactiveWorkspaceEnabled,
+      isUpdatingProactiveWorkspaceEnabled,
+      notifications.length,
+      onboardingModeActive,
+      operationsDrawerOpen,
+      proactiveHeartbeatError,
+      proactiveStatus,
+      proactiveTaskProposalsError,
+      proactiveWorkspaceEnabled,
+      publishOpen,
+      reportedOperatorSurfaceContext,
+      runtimeStatus,
+      selectedWorkspace,
+      selectedWorkspaceId,
+      settingsDialogOpen,
+      spaceBrowserSpace,
+      spaceDisplayView,
+      spaceExplorerCollapsed,
+      spaceExplorerMode,
+      spaceVisibility,
+      taskProposalDetailsDialogOpen,
+      taskProposals.length,
+      workspaceAppsDialogOpen,
+      workspaceAppsReady,
+      workspaceBlockingReason,
+      workspaceErrorMessage,
+      workspaceSwitcherOpen,
+      workspaces.length,
+    ],
+  );
+  useRendererSentrySection("app_shell", appShellSentryState);
+
+  useEffect(() => {
+    pushRendererSentryActivity("workspace", "selected workspace changed", {
+      selected_workspace_id: selectedWorkspaceId || null,
+      has_selected_workspace: Boolean(selectedWorkspace),
+    });
+  }, [selectedWorkspace, selectedWorkspaceId]);
+
+  useEffect(() => {
+    pushRendererSentryActivity("navigation", "app shell view changed", {
+      active_shell_view: activeShellView,
+      agent_view_type: agentView.type,
+      space_display_type: spaceDisplayView.type,
+      space_explorer_mode: spaceExplorerMode,
+      space_browser_space: spaceBrowserSpace,
+    });
+  }, [
+    activeShellView,
+    agentView.type,
+    spaceBrowserSpace,
+    spaceDisplayView.type,
+    spaceExplorerMode,
+  ]);
+
+  useEffect(() => {
+    pushRendererSentryActivity("runtime", "renderer runtime status changed", {
+      status: runtimeStatus?.status ?? "unknown",
+      available: runtimeStatus?.available ?? false,
+      last_error: runtimeStatus?.lastError || null,
+    });
+  }, [runtimeStatus?.available, runtimeStatus?.lastError, runtimeStatus?.status]);
+
+  useEffect(() => {
+    if (!activeChatSessionId) {
+      return;
+    }
+    pushRendererSentryActivity("chat", "active chat session changed", {
+      selected_workspace_id: selectedWorkspaceId || null,
+      session_id: activeChatSessionId,
+    });
+  }, [activeChatSessionId, selectedWorkspaceId]);
 
   useEffect(() => {
     if (!selectedWorkspaceId || spaceDisplayView.type !== "internal") {

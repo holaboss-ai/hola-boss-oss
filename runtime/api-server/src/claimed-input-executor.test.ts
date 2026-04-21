@@ -94,6 +94,18 @@ function setNodeRunnerCommand(lines: string[]): void {
   process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE = `printf '%s' '${scriptBase64}' | base64 --decode | {runtime_node} - {request_base64}`;
 }
 
+function writeRuntimeConfigDocument(document: Record<string, unknown>): string {
+  const root = makeTempDir("hb-runtime-config-");
+  const configPath = path.join(root, "state", "runtime-config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(
+    configPath,
+    `${JSON.stringify(document, null, 2)}\n`,
+    "utf8",
+  );
+  return configPath;
+}
+
 test("claimed input marks missing workspace failed and runtime error", async () => {
   const store = makeStore("hb-claimed-input-missing-workspace-");
   const workspace = store.createWorkspace({
@@ -1326,6 +1338,114 @@ test("claimed input fails when runner becomes idle after run_started", async () 
   store.close();
 });
 
+test("claimed input stops without overwriting state after it loses its claim mid-run", async () => {
+  const store = makeStore("hb-claimed-input-claim-lost-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "hello" },
+  });
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      store.updateInput(queued.inputId, {
+        status: "FAILED",
+        claimedBy: null,
+        claimedUntil: null,
+      });
+      store.updateRuntimeState({
+        workspaceId: workspace.id,
+        sessionId: "session-main",
+        status: "ERROR",
+        currentInputId: null,
+        currentWorkerId: null,
+        leaseUntil: null,
+        heartbeatAt: null,
+        lastError: { message: "recovered elsewhere" },
+      });
+      store.appendOutputEvent({
+        workspaceId: workspace.id,
+        sessionId: "session-main",
+        inputId: queued.inputId,
+        sequence: 2,
+        eventType: "run_failed",
+        payload: {
+          type: "RuntimeError",
+          message: "recovered elsewhere",
+        },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 3,
+        event_type: "output_delta",
+        payload: { delta: "should not persist" },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "runner command aborted by caller",
+        returnCode: 130,
+        sawTerminal: false,
+        aborted: true,
+        abortReason:
+          typeof options.signal?.reason === "string"
+            ? options.signal.reason
+            : null,
+      };
+    },
+  });
+
+  const updated = store.getInput(queued.inputId);
+  const runtimeState = store.getRuntimeState({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+  });
+  const events = store.listOutputEvents({
+    sessionId: "session-main",
+    inputId: queued.inputId,
+  });
+  const messages = store.listSessionMessages({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+  });
+  const turnResult = store.getTurnResult({ inputId: queued.inputId });
+
+  assert.equal(updated?.status, "FAILED");
+  assert.equal(updated?.claimedBy, null);
+  assert.equal(runtimeState?.status, "ERROR");
+  assert.deepEqual(
+    events.map((event) => event.eventType),
+    ["run_started", "run_failed"],
+  );
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]?.id, `user-${queued.inputId}`);
+  assert.equal(turnResult, null);
+
+  store.close();
+});
+
 test("claimed input reports synthesized runner timeouts to Sentry", async () => {
   const store = makeStore("hb-claimed-input-sentry-timeout-");
   const workspace = store.createWorkspace({
@@ -1378,6 +1498,180 @@ test("claimed input reports synthesized runner timeouts to Sentry", async () => 
     sentryCaptures[0]?.contexts?.claimed_input?.input_id,
     queued.inputId,
   );
+
+  store.close();
+});
+
+test("claimed input reports harness run_failed events to Sentry with redacted context", async () => {
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument({
+    runtime: {
+      sandbox_id: "sandbox-1",
+    },
+    integrations: {
+      holaboss: {
+        auth_token: "token-1",
+        user_id: "user-1",
+        sandbox_id: "sandbox-1",
+        model_proxy_base_url: "https://runtime.example/api/v1/model-proxy",
+      },
+    },
+  });
+  const store = makeStore("hb-claimed-input-sentry-terminal-failure-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: {
+      text: "hello",
+      context: {
+        _sandbox_runtime_exec_v1: {
+          model_proxy_api_key: "exec-token-1",
+        },
+      },
+    },
+  });
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+  const sentryCaptures: RuntimeSentryCaptureOptions[] = [];
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+    captureRuntimeExceptionFn: (capture) => {
+      sentryCaptures.push(capture);
+    },
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      await options.onEvent?.({
+        session_id: String(payload.session_id),
+        input_id: String(payload.input_id),
+        sequence: 1,
+        event_type: "run_started",
+        payload: {
+          prompt_section_ids: ["prompt-1"],
+          capability_manifest_fingerprint: "cap-1",
+          request_snapshot_fingerprint: "req-1",
+          prompt_cache_profile: {
+            cache_key: "api_key=cache-secret",
+          },
+        },
+      });
+      await options.onEvent?.({
+        session_id: String(payload.session_id),
+        input_id: String(payload.input_id),
+        sequence: 2,
+        event_type: "tool_call",
+        payload: {
+          phase: "started",
+          tool_name: "search_docs",
+          call_id: "call-1",
+          tool_args: { query: "status" },
+        },
+      });
+      await options.onEvent?.({
+        session_id: String(payload.session_id),
+        input_id: String(payload.input_id),
+        sequence: 3,
+        event_type: "output_delta",
+        payload: {
+          delta: "Authorization: Bearer assistant-secret",
+        },
+      });
+      await options.onEvent?.({
+        session_id: String(payload.session_id),
+        input_id: String(payload.input_id),
+        sequence: 4,
+        event_type: "run_failed",
+        payload: {
+          type: "ProviderError",
+          message: "api_key=super-secret boom",
+          harness_session_id: "failed-session",
+        },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  assert.equal(sentryCaptures.length, 1);
+  assert.equal(sentryCaptures[0]?.tags?.failure_kind, "terminal_providererror");
+  assert.equal(sentryCaptures[0]?.tags?.surface, "claimed_input_executor");
+  assert.equal(
+    sentryCaptures[0]?.contexts?.claimed_input?.input_id,
+    queued.inputId,
+  );
+  assert.equal(sentryCaptures[0]?.contexts?.runtime_binding?.user_id, "user-1");
+  assert.equal(
+    sentryCaptures[0]?.contexts?.runtime_binding?.sandbox_id,
+    "sandbox-1",
+  );
+  assert.equal(
+    sentryCaptures[0]?.contexts?.runtime_binding?.has_exec_model_proxy_api_key,
+    true,
+  );
+  assert.equal(
+    (sentryCaptures[0]?.error as Error).message,
+    "api_key=[REDACTED] boom",
+  );
+  assert.equal(sentryCaptures[0]?.extras?.terminal_stop_reason, "ProviderError");
+  assert.deepEqual(sentryCaptures[0]?.extras?.prompt_section_ids, ["prompt-1"]);
+  assert.deepEqual(sentryCaptures[0]?.extras?.tool_usage_summary, {
+    total_calls: 1,
+    completed_calls: 0,
+    failed_calls: 0,
+    tool_names: ["search_docs"],
+    tool_ids: [],
+  });
+  assert.equal(
+    sentryCaptures[0]?.extras?.assistant_excerpt,
+    "Authorization: [REDACTED]",
+  );
+  assert.equal(
+    (sentryCaptures[0]?.extras?.terminal_payload as Record<string, unknown>)
+      .message,
+    "api_key=[REDACTED] boom",
+  );
+  assert.equal(
+    (
+      sentryCaptures[0]?.extras?.prompt_cache_profile as Record<string, unknown>
+    ).cache_key,
+    "api_key=[REDACTED]",
+  );
+  const recentRunnerEvents = sentryCaptures[0]?.extras?.recent_runner_events as Array<
+    Record<string, unknown>
+  >;
+  assert.equal(recentRunnerEvents.length, 4);
+  assert.equal(recentRunnerEvents[0]?.event_type, "run_started");
+  assert.match(
+    String((recentRunnerEvents[0]?.payload as Record<string, unknown>).preview),
+    /api_key=\[REDACTED\]/,
+  );
+  assert.deepEqual(recentRunnerEvents[1]?.payload, {
+    phase: "started",
+    tool_name: "search_docs",
+    call_id: "call-1",
+  });
+  assert.deepEqual(recentRunnerEvents[2]?.payload, {
+    delta_chars: "Authorization: Bearer assistant-secret".length,
+  });
+  assert.deepEqual(recentRunnerEvents[3]?.payload, {
+    type: "ProviderError",
+    message: "api_key=[REDACTED] boom",
+    harness_session_id: "failed-session",
+  });
 
   store.close();
 });
@@ -1655,6 +1949,53 @@ test("run-start registration strips the model-proxy path before calling the back
       model: "elephant-alpha",
     }),
   );
+});
+
+test("run-start registration reports backend failures to Sentry", async () => {
+  const sentryCaptures: RuntimeSentryCaptureOptions[] = [];
+
+  await registerWorkspaceAgentRunStarted({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    runId: "workspace-1:session-main:input-1",
+    selectedModel: "elephant-alpha",
+    runtimeBinding: {
+      authToken: "token-1",
+      userId: "user-1",
+      sandboxId: "sandbox-1",
+      modelProxyBaseUrl: "http://127.0.0.1:3060/api/v1/model-proxy",
+    },
+    captureRuntimeExceptionFn: (capture) => {
+      sentryCaptures.push(capture);
+    },
+    fetchImpl: async () =>
+      new Response("binding lookup failed: api_key=secret-token", {
+        status: 401,
+      }),
+  });
+
+  assert.equal(sentryCaptures.length, 1);
+  assert.equal(
+    sentryCaptures[0]?.tags?.failure_kind,
+    "backend_run_start_registration",
+  );
+  assert.equal(sentryCaptures[0]?.tags?.http_status, 401);
+  assert.equal(
+    sentryCaptures[0]?.contexts?.agent_run_registration?.path_suffix,
+    "start",
+  );
+  assert.equal(sentryCaptures[0]?.contexts?.runtime_binding?.user_id, "user-1");
+  assert.equal(
+    sentryCaptures[0]?.extras?.response_body,
+    "binding lookup failed: api_key=[REDACTED]",
+  );
+  assert.deepEqual(sentryCaptures[0]?.extras?.request_body, {
+    session_id: "session-main",
+    input_id: "input-1",
+    run_id: "workspace-1:session-main:input-1",
+    model: "elephant-alpha",
+  });
 });
 
 test("run-event registration strips the model-proxy path before calling the backend route", async () => {
