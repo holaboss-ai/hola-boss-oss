@@ -605,6 +605,11 @@ test("runtime tools capability routes expose local onboarding and cronjob action
   assert.ok(
     capabilityStatus
       .json()
+      .tools.some((tool: { id: string }) => tool.id === "download_url")
+  );
+  assert.ok(
+    capabilityStatus
+      .json()
       .tools.some((tool: { id: string }) => tool.id === "write_report")
   );
   assert.ok(
@@ -672,6 +677,65 @@ test("runtime tools capability routes expose local onboarding and cronjob action
 
   await app.close();
   store.close();
+});
+
+test("runtime download_url tool saves a remote asset into the workspace", async () => {
+  const root = makeTempDir("hb-runtime-api-download-tools-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  fs.mkdirSync(path.join(workspaceRoot, "workspace-1"), { recursive: true });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const imageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02, 0x03]);
+  const assetServer = await startStaticHttpServer((request, response) => {
+    assert.equal(request.url, "/cover");
+    response.writeHead(200, {
+      "content-type": "image/png",
+      "content-disposition": 'inline; filename="cover.png"',
+    });
+    response.end(imageBytes);
+  });
+
+  try {
+    const download = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/downloads",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+      },
+      payload: {
+        url: `${assetServer.url}/cover`,
+        output_path: "assets/reference/cover",
+        expected_mime_prefix: "image/",
+      },
+    });
+
+    assert.equal(download.statusCode, 200);
+    assert.deepEqual(download.json(), {
+      file_path: "assets/reference/cover.png",
+      source_url: `${assetServer.url}/cover`,
+      final_url: `${assetServer.url}/cover`,
+      mime_type: "image/png",
+      size_bytes: imageBytes.length,
+    });
+    assert.deepEqual(
+      fs.readFileSync(path.join(workspaceRoot, "workspace-1", "assets/reference/cover.png")),
+      imageBytes,
+    );
+  } finally {
+    await assetServer.close();
+    await app.close();
+    store.close();
+  }
 });
 
 test("runtime terminal session tools proxy terminal session manager operations", async () => {
@@ -1892,6 +1956,511 @@ test("workspace CRUD routes preserve local payload shape", async () => {
   assert.equal(deleted.statusCode, 200);
   assert.equal(deleted.json().workspace.status, "deleted");
   assert.equal(fs.existsSync(workspaceDir), false);
+
+  await app.close();
+  store.close();
+});
+
+test("PATCH workspace_path relocates to a fresh empty directory", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const newPath = path.join(customRoot, "moved");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: { name: "R", harness: "pi" }
+  });
+  const workspaceId = (created.json().workspace as { id: string }).id;
+
+  const resp = await app.inject({
+    method: "PATCH",
+    url: `/api/v1/workspaces/${workspaceId}`,
+    payload: { workspace_path: newPath }
+  });
+  assert.equal(resp.statusCode, 200);
+  assert.equal(
+    path.resolve(resp.json().workspace.workspace_path),
+    path.resolve(newPath)
+  );
+  assert.equal(resp.json().workspace.folder_state, "healthy");
+
+  await app.close();
+  store.close();
+});
+
+test("PATCH workspace_path accepts a folder with matching identity (move case)", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const movedPath = path.join(customRoot, "moved");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: { name: "M", harness: "pi" }
+  });
+  const workspaceId = (created.json().workspace as { id: string }).id;
+
+  // Simulate the user moving the whole workspace folder elsewhere.
+  fs.mkdirSync(path.join(movedPath, ".holaboss"), { recursive: true });
+  fs.writeFileSync(path.join(movedPath, ".holaboss", "workspace_id"), workspaceId);
+  fs.writeFileSync(path.join(movedPath, "AGENTS.md"), "preserved");
+
+  const resp = await app.inject({
+    method: "PATCH",
+    url: `/api/v1/workspaces/${workspaceId}`,
+    payload: { workspace_path: movedPath }
+  });
+  assert.equal(resp.statusCode, 200);
+  assert.equal(fs.readFileSync(path.join(movedPath, "AGENTS.md"), "utf-8"), "preserved");
+
+  await app.close();
+  store.close();
+});
+
+test("PATCH workspace_path rejects a non-empty folder with wrong identity", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const dirtyPath = path.join(customRoot, "dirty");
+  fs.mkdirSync(dirtyPath, { recursive: true });
+  fs.writeFileSync(path.join(dirtyPath, "other.txt"), "not mine");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: { name: "X", harness: "pi" }
+  });
+  const workspaceId = (created.json().workspace as { id: string }).id;
+
+  const resp = await app.inject({
+    method: "PATCH",
+    url: `/api/v1/workspaces/${workspaceId}`,
+    payload: { workspace_path: dirtyPath }
+  });
+  assert.equal(resp.statusCode, 400);
+  assert.match(resp.json().detail, /must be empty/);
+
+  await app.close();
+  store.close();
+});
+
+test("activate verifies identity once per boot, idempotent after", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: { name: "A", harness: "pi" }
+  });
+  const workspaceId = (created.json().workspace as { id: string }).id;
+
+  const first = await app.inject({
+    method: "POST",
+    url: `/api/v1/workspaces/${workspaceId}/activate`
+  });
+  assert.equal(first.statusCode, 200);
+  assert.equal(first.json().workspace.folder_state, "healthy");
+
+  // Remove the identity file AFTER activation — second call must still
+  // succeed (idempotent per boot) because we don't re-check.
+  fs.rmSync(store.workspaceIdentityPath(workspaceId), { force: true });
+  const second = await app.inject({
+    method: "POST",
+    url: `/api/v1/workspaces/${workspaceId}/activate`
+  });
+  assert.equal(second.statusCode, 200);
+
+  await app.close();
+  store.close();
+});
+
+test("activate returns 409 workspace_identity_mismatch when identity file does not match", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: { name: "A", harness: "pi" }
+  });
+  const workspaceId = (created.json().workspace as { id: string }).id;
+  // Overwrite identity with a different id (simulating a folder that
+  // belonged to a different workspace).
+  fs.writeFileSync(store.workspaceIdentityPath(workspaceId), "some-other-id");
+
+  const resp = await app.inject({
+    method: "POST",
+    url: `/api/v1/workspaces/${workspaceId}/activate`
+  });
+  assert.equal(resp.statusCode, 409);
+  assert.equal(resp.json().code, "workspace_identity_mismatch");
+
+  await app.close();
+  store.close();
+});
+
+test("activate returns 409 workspace_folder_missing when folder is gone", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const customPath = path.join(customRoot, "ws");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: { name: "C", harness: "pi", workspace_path: customPath }
+  });
+  const workspaceId = (created.json().workspace as { id: string }).id;
+  fs.rmSync(customPath, { recursive: true, force: true });
+
+  const resp = await app.inject({
+    method: "POST",
+    url: `/api/v1/workspaces/${workspaceId}/activate`
+  });
+  assert.equal(resp.statusCode, 409);
+  assert.equal(resp.json().code, "workspace_folder_missing");
+
+  await app.close();
+  store.close();
+});
+
+test("PUT files fails 409 when workspace folder is missing (does not recreate folder)", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const customPath = path.join(customRoot, "ws");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: { name: "C", harness: "pi", workspace_path: customPath }
+  });
+  const workspaceId = (created.json().workspace as { id: string }).id;
+  fs.rmSync(customPath, { recursive: true, force: true });
+
+  const resp = await app.inject({
+    method: "PUT",
+    url: `/api/v1/workspaces/${workspaceId}/files/notes.txt`,
+    payload: { content_base64: Buffer.from("hi").toString("base64") }
+  });
+  assert.equal(resp.statusCode, 409);
+  assert.equal(resp.json().code, "workspace_folder_missing");
+  // Endpoint must NOT silently re-create the deleted folder.
+  assert.equal(fs.existsSync(customPath), false);
+
+  await app.close();
+  store.close();
+});
+
+test("apply-template fails 409 when workspace folder is missing", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const customRoot = makeTempDir("hb-runtime-api-custom-ws-");
+  const customPath = path.join(customRoot, "ws");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: { name: "C", harness: "pi", workspace_path: customPath }
+  });
+  const workspaceId = (created.json().workspace as { id: string }).id;
+  fs.rmSync(customPath, { recursive: true, force: true });
+
+  const resp = await app.inject({
+    method: "POST",
+    url: `/api/v1/workspaces/${workspaceId}/apply-template`,
+    payload: { files: [] }
+  });
+  assert.equal(resp.statusCode, 409);
+  assert.equal(resp.json().code, "workspace_folder_missing");
+  // Endpoint must NOT re-create the deleted folder.
+  assert.equal(fs.existsSync(customPath), false);
+
+  await app.close();
+  store.close();
+});
+
+test("agent-sessions/queue fails 409 when workspace folder is missing", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const customRoot = makeTempDir("hb-runtime-api-custom-ws-");
+  const customPath = path.join(customRoot, "ws");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: { name: "C", harness: "pi", workspace_path: customPath }
+  });
+  const workspaceId = (created.json().workspace as { id: string }).id;
+  fs.rmSync(customPath, { recursive: true, force: true });
+
+  const resp = await app.inject({
+    method: "POST",
+    url: "/api/v1/agent-sessions/queue",
+    payload: { workspace_id: workspaceId, text: "hello" }
+  });
+  assert.equal(resp.statusCode, 409);
+  assert.equal(resp.json().code, "workspace_folder_missing");
+
+  await app.close();
+  store.close();
+});
+
+test("GET /api/v1/workspaces reports folder_state=missing when the folder is gone", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const customRoot = makeTempDir("hb-runtime-api-custom-ws-");
+  const customPath = path.join(customRoot, "ws");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: { name: "C", harness: "pi", workspace_path: customPath }
+  });
+  const workspaceId = (created.json().workspace as { id: string }).id;
+  assert.equal(created.json().workspace.folder_state, "healthy");
+
+  // User deletes the folder out from under us.
+  fs.rmSync(customPath, { recursive: true, force: true });
+
+  const fetched = await app.inject({
+    method: "GET",
+    url: `/api/v1/workspaces/${workspaceId}`
+  });
+  assert.equal(fetched.json().workspace.folder_state, "missing");
+  // Path is not rewritten — truth stays observable.
+  assert.equal(
+    path.resolve(fetched.json().workspace.workspace_path),
+    path.resolve(customPath)
+  );
+
+  const listed = await app.inject({ method: "GET", url: "/api/v1/workspaces" });
+  const item = listed.json().items.find((w: { id: string }) => w.id === workspaceId);
+  assert.equal(item.folder_state, "missing");
+
+  await app.close();
+  store.close();
+});
+
+test("POST /api/v1/workspaces accepts an explicit workspace_path", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const customRoot = makeTempDir("hb-runtime-api-custom-ws-");
+  const customPath = path.join(customRoot, "my-workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: {
+      name: "Custom",
+      harness: "pi",
+      workspace_path: customPath
+    }
+  });
+  assert.equal(created.statusCode, 200);
+  const payload = created.json().workspace as { id: string; workspace_path: string | null };
+  assert.equal(payload.workspace_path && path.resolve(payload.workspace_path), path.resolve(customPath));
+  assert.equal(fs.existsSync(path.join(customPath, ".holaboss", "workspace_id")), true);
+  assert.equal(
+    path.resolve(store.workspaceDir(payload.id)),
+    path.resolve(customPath)
+  );
+
+  await app.close();
+  store.close();
+});
+
+test("DELETE ?keep_files=true preserves files even for managed workspaces", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const app = buildTestRuntimeApiServer({ store });
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: { name: "K", harness: "pi" }
+  });
+  const workspaceId = (created.json().workspace as { id: string }).id;
+  const workspaceDir = store.workspaceDir(workspaceId);
+  fs.writeFileSync(path.join(workspaceDir, "important.txt"), "keep me");
+
+  const resp = await app.inject({
+    method: "DELETE",
+    url: `/api/v1/workspaces/${workspaceId}?keep_files=true`
+  });
+  assert.equal(resp.statusCode, 200);
+  assert.equal(fs.existsSync(path.join(workspaceDir, "important.txt")), true);
+  assert.equal(fs.existsSync(path.join(workspaceDir, ".holaboss")), false);
+
+  await app.close();
+  store.close();
+});
+
+test("DELETE ?keep_files=false wipes files even for custom-path workspaces", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const customPath = path.join(customRoot, "ws");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: { name: "K", harness: "pi", workspace_path: customPath }
+  });
+  const workspaceId = (created.json().workspace as { id: string }).id;
+  fs.writeFileSync(path.join(customPath, "important.txt"), "user file");
+
+  const resp = await app.inject({
+    method: "DELETE",
+    url: `/api/v1/workspaces/${workspaceId}?keep_files=false`
+  });
+  assert.equal(resp.statusCode, 200);
+  assert.equal(fs.existsSync(customPath), false);
+
+  await app.close();
+  store.close();
+});
+
+test("DELETE workspace at custom path preserves user files, wipes only metadata", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const customRoot = makeTempDir("hb-runtime-api-custom-ws-");
+  const customPath = path.join(customRoot, "user-folder");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: {
+      name: "Custom",
+      harness: "pi",
+      workspace_path: customPath
+    }
+  });
+  assert.equal(created.statusCode, 200);
+  const workspaceId = (created.json().workspace as { id: string }).id;
+
+  // User drops a file into their own folder after creation.
+  fs.writeFileSync(path.join(customPath, "my-notes.txt"), "keep me");
+
+  const deleted = await app.inject({
+    method: "DELETE",
+    url: `/api/v1/workspaces/${workspaceId}`
+  });
+  assert.equal(deleted.statusCode, 200);
+
+  // User's file survives.
+  assert.equal(fs.existsSync(path.join(customPath, "my-notes.txt")), true);
+  // Runtime's metadata is gone.
+  assert.equal(fs.existsSync(path.join(customPath, ".holaboss")), false);
+  // The user's folder itself is preserved.
+  assert.equal(fs.existsSync(customPath), true);
+
+  await app.close();
+  store.close();
+});
+
+test("DELETE workspace at managed path still wipes the whole directory", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: { name: "Managed", harness: "pi" }
+  });
+  assert.equal(created.statusCode, 200);
+  const workspaceId = (created.json().workspace as { id: string }).id;
+  const workspaceDir = store.workspaceDir(workspaceId);
+  fs.writeFileSync(path.join(workspaceDir, "notes.txt"), "ephemeral");
+
+  const deleted = await app.inject({
+    method: "DELETE",
+    url: `/api/v1/workspaces/${workspaceId}`
+  });
+  assert.equal(deleted.statusCode, 200);
+  assert.equal(fs.existsSync(workspaceDir), false);
+
+  await app.close();
+  store.close();
+});
+
+test("POST /api/v1/workspaces rejects a non-empty workspace_path", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const customRoot = makeTempDir("hb-runtime-api-custom-ws-");
+  const customPath = path.join(customRoot, "dirty");
+  fs.mkdirSync(customPath, { recursive: true });
+  fs.writeFileSync(path.join(customPath, "leftover.txt"), "hi");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: {
+      name: "Dirty",
+      harness: "pi",
+      workspace_path: customPath
+    }
+  });
+  assert.equal(created.statusCode, 400);
+  assert.match(String(created.json().detail ?? ""), /must be empty/);
 
   await app.close();
   store.close();

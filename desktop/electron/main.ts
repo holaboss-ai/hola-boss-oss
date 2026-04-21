@@ -4,6 +4,17 @@ import * as Sentry from "@sentry/electron/main";
 Sentry.init({
   dsn: process.env.SENTRY_DSN,
   enabled: !!process.env.SENTRY_DSN,
+  enableLogs: !!process.env.SENTRY_DSN,
+  attachScreenshot: !!process.env.SENTRY_DSN,
+  maxBreadcrumbs: 200,
+  integrations: [
+    Sentry.consoleLoggingIntegration({
+      levels: ["info", "warn", "error"],
+    }),
+  ],
+  beforeSend(event, hint) {
+    return enrichDesktopSentryEvent(event, hint);
+  },
 });
 
 import { electronClient } from "@better-auth/electron/client";
@@ -33,6 +44,7 @@ import {
   type IpcMainInvokeEvent,
   type OpenDialogOptions,
   type Session,
+  type WebContents,
 } from "electron";
 import {
   execFileSync,
@@ -50,6 +62,8 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
+  statSync,
   type FSWatcher,
   watch,
   writeFileSync,
@@ -91,6 +105,10 @@ import { ensureWorkspaceGitRepo } from "./workspace-git.js";
 const APP_DISPLAY_NAME = "Holaboss";
 const AUTH_CALLBACK_PROTOCOL = "ai.holaboss.app";
 const DESKTOP_LAUNCH_ID = randomUUID();
+Sentry.setTags({
+  desktop_launch_id: DESKTOP_LAUNCH_ID,
+  process_kind: "electron_main",
+});
 const verboseTelemetryEnabled =
   process.env.HOLABOSS_VERBOSE_TELEMETRY?.trim() === "1";
 const chromiumStderrLoggingEnabled =
@@ -263,6 +281,68 @@ const RESOLVED_DEV_SERVER_URL =
   recoveredDevLaunchContext?.devServerUrl ||
   "";
 const isDev = Boolean(RESOLVED_DEV_SERVER_URL);
+
+const DEV_SHELL_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: http: https:",
+  "font-src 'self' data:",
+  "connect-src 'self' http://localhost:* ws://localhost:* https: wss:",
+  "worker-src 'self' blob:",
+  // App surfaces are rendered in renderer iframes and resolve to local
+  // runtime ports such as http://localhost:38090 during development.
+  "frame-src 'self' http://localhost:* http://127.0.0.1:* https:",
+  "media-src 'self' data: blob: https:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join("; ");
+
+// CSP for the main shell:
+//   - prod: a strict policy is injected at build time as a <meta http-equiv>
+//     tag in index.html (see vite.config.ts). file:// responses don't fire
+//     onHeadersReceived in Electron, so the meta tag is the only enforcement
+//     path there.
+//   - dev: Vite HMR needs eval/inline + ws://localhost; we inject a relaxed
+//     CSP via onHeadersReceived, scoped to the dev server origin so browser
+//     tab navigations and other partitioned sessions are unaffected.
+function applyMainShellContentSecurityPolicy(targetSession: Session): void {
+  if (!isDev || !RESOLVED_DEV_SERVER_URL) {
+    return;
+  }
+  const devOrigin = (() => {
+    try {
+      return new URL(RESOLVED_DEV_SERVER_URL).origin;
+    } catch {
+      return "";
+    }
+  })();
+  if (!devOrigin) {
+    return;
+  }
+  targetSession.webRequest.onHeadersReceived((details, callback) => {
+    let inDevOrigin = false;
+    try {
+      inDevOrigin = new URL(details.url).origin === devOrigin;
+    } catch {
+      inDevOrigin = false;
+    }
+    if (!inDevOrigin) {
+      callback({ responseHeaders: details.responseHeaders ?? undefined });
+      return;
+    }
+    const nextHeaders: Record<string, string[]> = {};
+    for (const [name, value] of Object.entries(details.responseHeaders ?? {})) {
+      if (name.toLowerCase() === "content-security-policy") {
+        continue;
+      }
+      nextHeaders[name] = Array.isArray(value) ? value : [value];
+    }
+    nextHeaders["Content-Security-Policy"] = [DEV_SHELL_CSP];
+    callback({ responseHeaders: nextHeaders });
+  });
+}
 
 function configureChromiumLoggingPolicy() {
   if (verboseTelemetryEnabled || chromiumStderrLoggingEnabled) {
@@ -757,6 +837,7 @@ let downloadsPopupWindow: BrowserWindow | null = null;
 let historyPopupWindow: BrowserWindow | null = null;
 let overflowPopupWindow: BrowserWindow | null = null;
 let addressSuggestionsPopupWindow: BrowserWindow | null = null;
+const unresponsiveDesktopWindows = new WeakSet<BrowserWindow>();
 let attachedBrowserTabView: BrowserView | null = null;
 let attachedAppSurfaceView: BrowserView | null = null;
 let currentTheme = "amber-minimal-light";
@@ -863,6 +944,82 @@ let appUpdateStatus: AppUpdateStatusPayload = {
   channel: "latest",
   preferredChannel: null,
 };
+
+function desktopWindowTelemetryRole(window: BrowserWindow | null | undefined): string {
+  if (!window) {
+    return "unknown";
+  }
+  if (window === mainWindow) {
+    return "main";
+  }
+  if (window === authPopupWindow) {
+    return "auth_popup";
+  }
+  if (window === downloadsPopupWindow) {
+    return "downloads_popup";
+  }
+  if (window === historyPopupWindow) {
+    return "history_popup";
+  }
+  if (window === overflowPopupWindow) {
+    return "overflow_popup";
+  }
+  if (window === addressSuggestionsPopupWindow) {
+    return "address_suggestions_popup";
+  }
+  return "browser_window";
+}
+
+function safeWebContentsUrl(contents: WebContents): string | null {
+  try {
+    return contents.getURL() || null;
+  } catch {
+    return null;
+  }
+}
+
+function addDesktopLifecycleBreadcrumb(
+  category: string,
+  message: string,
+  data?: Record<string, unknown>,
+) {
+  Sentry.addBreadcrumb({
+    category: `desktop.${category}`,
+    message,
+    level: "info",
+    data: data
+      ? (redactDesktopSentryValue(data) as Record<string, unknown>)
+      : undefined,
+  });
+}
+
+function captureDesktopLifecycleEvent(params: {
+  message: string;
+  level: Sentry.SeverityLevel;
+  fingerprint: string[];
+  tags?: Record<string, string | null | undefined>;
+  contexts?: Record<string, Record<string, unknown> | null | undefined>;
+}) {
+  Sentry.withScope((scope) => {
+    scope.setLevel(params.level);
+    scope.setFingerprint(params.fingerprint);
+    for (const [key, value] of Object.entries(params.tags ?? {})) {
+      const normalizedValue = value?.trim();
+      if (normalizedValue) {
+        scope.setTag(key, normalizedValue);
+      }
+    }
+    for (const [key, context] of Object.entries(params.contexts ?? {})) {
+      if (context) {
+        scope.setContext(
+          key,
+          redactDesktopSentryValue(context) as Record<string, unknown>,
+        );
+      }
+    }
+    Sentry.captureMessage(params.message);
+  });
+}
 
 // Port 5060 is SIP — blocked by Node.js fetch (undici "bad port").
 const RUNTIME_API_PORT_FALLBACK = 5160;
@@ -2259,6 +2416,8 @@ interface WorkspaceRecordPayload {
   created_at: string | null;
   updated_at: string | null;
   deleted_at_utc: string | null;
+  workspace_path?: string | null;
+  folder_state?: "healthy" | "missing" | null;
 }
 
 interface WorkspaceResponsePayload {
@@ -2909,6 +3068,9 @@ interface HolabossCreateWorkspacePayload {
   template_commit?: string | null;
   /** App names from template metadata, used for integration resolution without materialization. */
   template_apps?: string[];
+  /** Optional absolute path for the workspace's on-disk folder. When provided, the runtime registers this
+   * as the workspace root instead of the default managed location. */
+  workspace_path?: string | null;
 }
 
 interface TemplateFolderSelectionPayload {
@@ -2916,6 +3078,11 @@ interface TemplateFolderSelectionPayload {
   rootPath: string | null;
   templateName: string | null;
   description: string | null;
+}
+
+interface WorkspaceRuntimeFolderSelectionPayload {
+  canceled: boolean;
+  rootPath: string | null;
 }
 
 interface HolabossQueueSessionInputPayload {
@@ -4887,6 +5054,279 @@ async function exportDesktopDiagnosticsBundle() {
   return result;
 }
 
+const SQLITE_BUSY_TIMEOUT_MS = 5_000;
+const SENTRY_RUNTIME_LOG_TAIL_BYTES = 64 * 1024;
+const SENTRY_RECENT_EVENT_LIMIT = 40;
+const SENTRY_RECENT_STATE_LIMIT = 20;
+const SENTRY_REDACTED_VALUE = "[REDACTED]";
+const SENTRY_SENSITIVE_KEY_PATTERNS = [
+  /token/i,
+  /secret/i,
+  /password/i,
+  /cookie/i,
+  /^authorization$/i,
+  /api[_-]?key/i,
+  /private[_-]?key/i,
+  /refresh[_-]?token/i,
+  /access[_-]?token/i,
+];
+const SENTRY_SENSITIVE_TEXT_ASSIGNMENT_PATTERN =
+  /((?:token|secret|password|cookie|authorization|api[_-]?key|private[_-]?key|refresh[_-]?token|access[_-]?token)[^:=\n\r]{0,64}[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
+const SENTRY_AUTHORIZATION_BEARER_PATTERN =
+  /(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s,;]+(?:\s+[^\s,;]+)?/gi;
+
+function shouldRedactSentryKey(key: string): boolean {
+  const normalized = key.trim();
+  if (!normalized) {
+    return false;
+  }
+  return SENTRY_SENSITIVE_KEY_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function redactDesktopSentryValue(value: unknown, keyName = ""): unknown {
+  if (shouldRedactSentryKey(keyName)) {
+    if (value === null || value === undefined) {
+      return value;
+    }
+    return SENTRY_REDACTED_VALUE;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactDesktopSentryValue(entry));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        redactDesktopSentryValue(entry, key),
+      ]),
+    );
+  }
+  return value;
+}
+
+function redactDesktopSentryText(text: string): string {
+  return text
+    .replace(
+      SENTRY_AUTHORIZATION_BEARER_PATTERN,
+      `$1${SENTRY_REDACTED_VALUE}`,
+    )
+    .replace(
+      SENTRY_SENSITIVE_TEXT_ASSIGNMENT_PATTERN,
+      `$1${SENTRY_REDACTED_VALUE}`,
+    );
+}
+
+function addSentryHintAttachment(
+  hint: Sentry.EventHint | undefined,
+  attachment: NonNullable<Sentry.EventHint["attachments"]>[number] | null,
+) {
+  if (!hint || !attachment) {
+    return;
+  }
+  hint.attachments = [...(hint.attachments ?? []), attachment];
+}
+
+function runtimeSentryFileMetadata(filePath: string): Record<string, unknown> {
+  if (!filePath) {
+    return { path: null, exists: false };
+  }
+  try {
+    const stats = statSync(filePath);
+    return {
+      path: path.basename(filePath),
+      exists: true,
+      sizeBytes: stats.size,
+      modifiedAt: stats.mtime.toISOString(),
+    };
+  } catch {
+    return {
+      path: path.basename(filePath),
+      exists: false,
+    };
+  }
+}
+
+function readFileTail(filePath: string, maxBytes: number): string | null {
+  if (!filePath || !existsSync(filePath)) {
+    return null;
+  }
+  const buffer = readFileSync(filePath);
+  const start = Math.max(0, buffer.length - maxBytes);
+  return buffer.subarray(start).toString("utf8");
+}
+
+function openRuntimeDiagnosticsDatabase(): Database.Database | null {
+  const dbPath = runtimeDatabasePath();
+  if (!existsSync(dbPath)) {
+    return null;
+  }
+  const database = new Database(dbPath, {
+    readonly: true,
+    fileMustExist: true,
+  });
+  database.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  return database;
+}
+
+function readDesktopRuntimeDiagnosticsSnapshot(): Record<string, unknown> {
+  const snapshot: Record<string, unknown> = {
+    captured_at: utcNowIso(),
+    desktop: {
+      launch_id: DESKTOP_LAUNCH_ID,
+      app_version: app.getVersion(),
+      pid: process.pid,
+      platform: process.platform,
+      arch: process.arch,
+      versions: {
+        chrome: process.versions.chrome,
+        electron: process.versions.electron,
+        node: process.versions.node,
+      },
+    },
+    runtime_status: runtimeStatus,
+    persisted_runtime_process: readPersistedRuntimeProcessState(),
+    files: {
+      runtime_db: runtimeSentryFileMetadata(runtimeDatabasePath()),
+      runtime_log: runtimeSentryFileMetadata(runtimeLogsPath()),
+      runtime_config: runtimeSentryFileMetadata(runtimeConfigPath()),
+    },
+  };
+
+  const database = openRuntimeDiagnosticsDatabase();
+  if (!database) {
+    return redactDesktopSentryValue(snapshot) as Record<string, unknown>;
+  }
+
+  try {
+    const readCount = (sql: string): number => {
+      const row = database.prepare(sql).get() as { count?: number } | undefined;
+      return Number(row?.count ?? 0);
+    };
+
+    snapshot.database = {
+      counts: {
+        active_sessions: readCount(
+          "SELECT COUNT(*) AS count FROM session_runtime_state WHERE status IN ('BUSY', 'QUEUED') OR current_input_id IS NOT NULL",
+        ),
+        active_terminal_sessions: readCount(
+          "SELECT COUNT(*) AS count FROM terminal_sessions WHERE status IN ('starting', 'running')",
+        ),
+        failed_app_builds: readCount(
+          "SELECT COUNT(*) AS count FROM app_builds WHERE status IN ('failed', 'running')",
+        ),
+        queued_inputs: readCount(
+          "SELECT COUNT(*) AS count FROM agent_session_inputs WHERE status IN ('queued', 'claimed')",
+        ),
+      },
+      recent_event_log: database.prepare(`
+        SELECT category, event, outcome, detail, created_at
+        FROM event_log
+        ORDER BY created_at DESC
+        LIMIT ?
+      `).all(SENTRY_RECENT_EVENT_LIMIT),
+      session_runtime_state: database.prepare(`
+        SELECT workspace_id, session_id, status, current_input_id, updated_at
+        FROM session_runtime_state
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `).all(SENTRY_RECENT_STATE_LIMIT),
+      terminal_sessions: database.prepare(`
+        SELECT terminal_id, workspace_id, session_id, input_id, owner, status, title, command, last_activity_at
+        FROM terminal_sessions
+        ORDER BY last_activity_at DESC
+        LIMIT ?
+      `).all(SENTRY_RECENT_STATE_LIMIT),
+      app_builds: database.prepare(`
+        SELECT workspace_id, app_id, status, error, updated_at
+        FROM app_builds
+        WHERE status IN ('running', 'failed')
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `).all(SENTRY_RECENT_STATE_LIMIT),
+    };
+  } catch (error) {
+    snapshot.database = {
+      error: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    database.close();
+  }
+
+  return redactDesktopSentryValue(snapshot) as Record<string, unknown>;
+}
+
+function redactedRuntimeConfigAttachment() {
+  const configPath = runtimeConfigPath();
+  if (!existsSync(configPath)) {
+    return null;
+  }
+  let data = "";
+  try {
+    const parsed = JSON.parse(readFileSync(configPath, "utf8")) as unknown;
+    data = `${JSON.stringify(redactDesktopSentryValue(parsed), null, 2)}\n`;
+  } catch {
+    data = `${JSON.stringify(
+      {
+        error: "runtime-config.json could not be parsed for redaction.",
+      },
+      null,
+      2,
+    )}\n`;
+  }
+  return {
+    filename: "runtime-config.redacted.json",
+    data,
+    contentType: "application/json",
+  };
+}
+
+function runtimeLogTailAttachment() {
+  const tail = readFileTail(runtimeLogsPath(), SENTRY_RUNTIME_LOG_TAIL_BYTES);
+  if (!tail) {
+    return null;
+  }
+  return {
+    filename: "runtime-log-tail.txt",
+    data: redactDesktopSentryText(tail),
+    contentType: "text/plain",
+  };
+}
+
+function enrichDesktopSentryEvent(
+  event: Sentry.ErrorEvent,
+  hint: Sentry.EventHint | undefined,
+): Sentry.ErrorEvent {
+  if (event.request?.headers) {
+    delete event.request.headers.authorization;
+    delete event.request.headers.cookie;
+    delete event.request.headers["x-api-key"];
+  }
+  const diagnostics = readDesktopRuntimeDiagnosticsSnapshot();
+  const diagnosticsAttachment = {
+    filename: "desktop-runtime-diagnostics.json",
+    data: `${JSON.stringify(diagnostics, null, 2)}\n`,
+    contentType: "application/json",
+  };
+  addSentryHintAttachment(hint, diagnosticsAttachment);
+  addSentryHintAttachment(hint, runtimeLogTailAttachment());
+  addSentryHintAttachment(hint, redactedRuntimeConfigAttachment());
+  event.tags = {
+    ...(event.tags ?? {}),
+    desktop_launch_id: DESKTOP_LAUNCH_ID,
+    process_kind: "electron_main",
+  };
+  event.contexts = {
+    ...(event.contexts ?? {}),
+    desktop_process:
+      (diagnostics.desktop as Record<string, unknown> | undefined) ?? {},
+    embedded_runtime_status:
+      (diagnostics.runtime_status as Record<string, unknown> | undefined) ?? {},
+    embedded_runtime_files:
+      (diagnostics.files as Record<string, unknown> | undefined) ?? {},
+  };
+  return event;
+}
+
 function processIsAlive(pid: number) {
   if (!Number.isInteger(pid) || pid <= 0) {
     return false;
@@ -4916,7 +5356,7 @@ function utcNowIso() {
 
 function openRuntimeDatabase() {
   const database = new Database(runtimeDatabasePath());
-  database.pragma("journal_mode = WAL");
+  database.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
   database.pragma("foreign_keys = ON");
   return database;
 }
@@ -5069,6 +5509,7 @@ async function bootstrapRuntimeDatabase() {
 
   const database = openRuntimeDatabase();
   try {
+    database.pragma("journal_mode = WAL");
     migrateLocalWorkspacesTable(database);
     migrateRuntimeInstallationStateTable(database);
     migrateRuntimeProcessStateTable(database);
@@ -5450,6 +5891,20 @@ function appendRuntimeEventLog(event: {
   outcome: string;
   detail?: string | null;
 }) {
+  Sentry.addBreadcrumb({
+    category: `runtime.${event.category}`,
+    message: event.event,
+    level:
+      event.outcome === "error"
+        ? "error"
+        : event.outcome === "success"
+          ? "info"
+          : "debug",
+    data: {
+      outcome: event.outcome,
+      detail: event.detail ?? null,
+    },
+  });
   const database = openRuntimeDatabase();
   try {
     database
@@ -6448,6 +6903,73 @@ async function handleDesktopBrowserServiceRequest(
       writeBrowserServiceJson(response, 200, {
         tabId: activeTab.state.id,
         result: serializeBrowserEvalResult(result),
+      });
+      return;
+    }
+
+    if (method === "POST" && pathname === "/api/v1/browser/context-click") {
+      const payload = await readBrowserServiceJsonBody(request);
+      const x =
+        typeof payload.x === "number" && Number.isFinite(payload.x)
+          ? Math.round(payload.x)
+          : NaN;
+      const y =
+        typeof payload.y === "number" && Number.isFinite(payload.y)
+          ? Math.round(payload.y)
+          : NaN;
+      if (!Number.isFinite(x) || x < 0 || !Number.isFinite(y) || y < 0) {
+        writeBrowserServiceJson(response, 400, {
+          error: "Fields 'x' and 'y' must be non-negative numbers.",
+        });
+        return;
+      }
+
+      const workspace = await ensureTargetBrowserSpace("context-click");
+      if (!workspace) {
+        return;
+      }
+      const activeTab = getActiveBrowserTab(
+        targetWorkspaceId,
+        targetSpace,
+        ensuredSessionId,
+        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
+      );
+      if (!activeTab) {
+        writeBrowserServiceJson(response, 409, {
+          error: "No active browser tab is available.",
+        });
+        return;
+      }
+
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) {
+        mainWindow.focus();
+      }
+      activeTab.view.webContents.focus();
+      await activeTab.view.webContents.sendInputEvent({
+        type: "mouseMove",
+        x,
+        y,
+      });
+      await activeTab.view.webContents.sendInputEvent({
+        type: "mouseDown",
+        x,
+        y,
+        button: "right",
+        clickCount: 1,
+      });
+      await activeTab.view.webContents.sendInputEvent({
+        type: "mouseUp",
+        x,
+        y,
+        button: "right",
+        clickCount: 1,
+      });
+
+      writeBrowserServiceJson(response, 200, {
+        ok: true,
+        tabId: activeTab.state.id,
+        x,
+        y,
       });
       return;
     }
@@ -8673,6 +9195,8 @@ async function exchangeDesktopRuntimeBinding(
 function emitAuthAuthenticated(user: AuthUserPayload) {
   pendingAuthUser = user;
   pendingAuthError = null;
+  const userId = authUserId(user);
+  Sentry.setUser(userId ? { id: userId } : null);
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("auth:authenticated", user);
   }
@@ -8687,6 +9211,8 @@ function emitAuthAuthenticated(user: AuthUserPayload) {
 
 function emitAuthUserUpdated(user: AuthUserPayload | null) {
   pendingAuthUser = user;
+  const userId = authUserId(user);
+  Sentry.setUser(userId ? { id: userId } : null);
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("auth:userUpdated", user);
   }
@@ -10222,8 +10748,18 @@ async function listMarketplaceTemplates(): Promise<TemplateListResponsePayload> 
   // forwarded when a session exists but the call still works anonymously.
   const client = getMarketplaceAppSdkClient();
   const data = await sdkListMarketplaceTemplates({ client });
+  // Community-source templates can omit the array fields (apps/agents/
+  // views/tags). Normalize at the read boundary so the rest of the UI can
+  // treat them as guaranteed arrays.
+  const templates = (data.templates as TemplateMetadataPayload[]).map((t) => ({
+    ...t,
+    apps: t.apps ?? [],
+    agents: t.agents ?? [],
+    views: t.views ?? [],
+    tags: t.tags ?? [],
+  }));
   return {
-    templates: data.templates as TemplateMetadataPayload[],
+    templates,
     spotlight: (data.spotlight ?? []) as SpotlightItemPayload[],
   };
 }
@@ -12023,7 +12559,7 @@ async function copyLocalTemplateAppNodeModulesToWorkspace(
     return;
   }
 
-  const workspaceDir = workspaceDirectoryPath(workspaceId);
+  const workspaceDir = await resolveWorkspaceDir(workspaceId);
   for (const appId of appIds) {
     const sourceNodeModules = path.join(modulesRoot, appId, "node_modules");
     if (!existsSync(sourceNodeModules)) {
@@ -12122,6 +12658,40 @@ async function pickTemplateFolder(): Promise<TemplateFolderSelectionPayload> {
     templateName: metadata.name,
     description: metadata.description,
   };
+}
+
+async function pickWorkspaceRuntimeFolder(): Promise<WorkspaceRuntimeFolderSelectionPayload> {
+  const ownerWindow = mainWindow ?? BrowserWindow.getFocusedWindow() ?? null;
+  const options: OpenDialogOptions = {
+    properties: ["openDirectory", "createDirectory"],
+    title: "Choose Workspace Folder",
+    buttonLabel: "Use This Folder",
+    message: "Pick an empty folder where this workspace's files will live.",
+  };
+  const result = ownerWindow
+    ? await dialog.showOpenDialog(ownerWindow, options)
+    : await dialog.showOpenDialog(options);
+  if (result.canceled || !result.filePaths[0]) {
+    return { canceled: true, rootPath: null };
+  }
+
+  const rootPath = path.resolve(result.filePaths[0]);
+  if (!path.isAbsolute(rootPath)) {
+    throw new Error("Workspace folder path must be absolute.");
+  }
+  if (existsSync(rootPath)) {
+    const stat = statSync(rootPath);
+    if (!stat.isDirectory()) {
+      throw new Error("Selected path is not a directory.");
+    }
+    const entries = readdirSync(rootPath).filter((name) => name !== ".DS_Store");
+    if (entries.length > 0) {
+      throw new Error(
+        `Selected folder must be empty (found ${entries.length} items). Pick an empty folder or a new one.`,
+      );
+    }
+  }
+  return { canceled: false, rootPath };
 }
 
 function runtimeBaseUrl() {
@@ -12364,12 +12934,71 @@ function workspaceDirectoryPath(workspaceId: string) {
   return joined;
 }
 
+// Cache of workspaceId -> absolute directory. Populated from runtime GET
+// responses and from the create-workspace response. Custom-path workspaces
+// live outside runtimeWorkspaceRoot() and can't be derived deterministically
+// from the id, so call sites that need the on-disk path must go through
+// resolveWorkspaceDir() instead of workspaceDirectoryPath().
+const workspaceDirCache = new Map<string, string>();
+
+function rememberWorkspaceDir(workspaceId: string, workspacePath: string | null | undefined): void {
+  const trimmed = (workspacePath ?? "").trim();
+  if (!trimmed) {
+    return;
+  }
+  const safeId = assertSafeWorkspaceId(workspaceId);
+  workspaceDirCache.set(safeId, path.resolve(trimmed));
+}
+
+function forgetWorkspaceDir(workspaceId: string): void {
+  try {
+    workspaceDirCache.delete(assertSafeWorkspaceId(workspaceId));
+  } catch {
+    // Ignore unsafe ids — they have no cache entry.
+  }
+}
+
+async function resolveWorkspaceDir(workspaceId: string): Promise<string> {
+  const safeId = assertSafeWorkspaceId(workspaceId);
+  const cached = workspaceDirCache.get(safeId);
+  if (cached) {
+    return cached;
+  }
+  try {
+    const response = await requestRuntimeJson<WorkspaceResponsePayload>({
+      method: "GET",
+      path: `/api/v1/workspaces/${encodeURIComponent(safeId)}`,
+    });
+    const registered = response.workspace.workspace_path?.trim() || "";
+    if (registered) {
+      const resolved = path.resolve(registered);
+      workspaceDirCache.set(safeId, resolved);
+      return resolved;
+    }
+  } catch {
+    // Fall through to the default (runtime may be unavailable at this moment).
+  }
+  return workspaceDirectoryPath(safeId);
+}
+
+// Synchronous lookup for hot paths (event listeners that can't await —
+// e.g. session.on("will-download")). Returns the cached custom path when
+// known, otherwise falls back to the default deterministic layout.
+function resolveWorkspaceDirSync(workspaceId: string): string {
+  const safeId = assertSafeWorkspaceId(workspaceId);
+  const cached = workspaceDirCache.get(safeId);
+  if (cached) {
+    return cached;
+  }
+  return workspaceDirectoryPath(safeId);
+}
+
 function resolveWorkspaceDownloadTargetPath(
   workspaceId: string,
   filename: string,
 ): string {
   const downloadsDir = path.join(
-    workspaceDirectoryPath(workspaceId),
+    resolveWorkspaceDirSync(workspaceId),
     "Downloads",
   );
   mkdirSync(downloadsDir, { recursive: true });
@@ -12514,7 +13143,7 @@ async function applyMaterializedTemplateToWorkspace(
   workspaceId: string,
   files: MaterializedTemplateFilePayload[],
 ) {
-  const workspaceDir = workspaceDirectoryPath(workspaceId);
+  const workspaceDir = await resolveWorkspaceDir(workspaceId);
   await fs.mkdir(workspaceDir, { recursive: true });
 
   const existingEntries = await fs.readdir(workspaceDir, {
@@ -12565,7 +13194,7 @@ async function stageSessionAttachments(
     return { attachments: [] };
   }
 
-  const workspaceDir = workspaceDirectoryPath(workspaceId);
+  const workspaceDir = await resolveWorkspaceDir(workspaceId);
   await fs.mkdir(workspaceDir, { recursive: true });
 
   const batchId = randomUUID();
@@ -12630,7 +13259,7 @@ async function stageSessionAttachmentPaths(
     return { attachments: [] };
   }
 
-  const workspaceDir = workspaceDirectoryPath(workspaceId);
+  const workspaceDir = await resolveWorkspaceDir(workspaceId);
   await fs.mkdir(workspaceDir, { recursive: true });
 
   const batchId = randomUUID();
@@ -13087,7 +13716,7 @@ async function listWorkspaces(): Promise<WorkspaceListResponsePayload> {
 }
 
 async function listWorkspacesViaRuntime(): Promise<WorkspaceListResponsePayload> {
-  return requestRuntimeJson<WorkspaceListResponsePayload>({
+  const response = await requestRuntimeJson<WorkspaceListResponsePayload>({
     method: "GET",
     path: "/api/v1/workspaces",
     params: {
@@ -13096,6 +13725,13 @@ async function listWorkspacesViaRuntime(): Promise<WorkspaceListResponsePayload>
       offset: 0,
     },
   });
+  for (const item of response.items) {
+    // List response is authoritative: reset cache so relocated workspaces
+    // get the fresh path instead of a stale cached one.
+    forgetWorkspaceDir(item.id);
+    rememberWorkspaceDir(item.id, item.workspace_path);
+  }
+  return response;
 }
 
 const STATIC_APP_CATALOG: Record<
@@ -13666,7 +14302,7 @@ async function readSkillCatalogFromRoot(params: {
 async function listWorkspaceSkills(
   workspaceId: string,
 ): Promise<WorkspaceSkillListResponsePayload> {
-  const workspaceRoot = workspaceDirectoryPath(workspaceId);
+  const workspaceRoot = await resolveWorkspaceDir(workspaceId);
   const skillsPath = path.resolve(workspaceRoot, "skills");
 
   const workspaceSkills = await readSkillCatalogFromRoot({ skillsRoot: skillsPath });
@@ -13848,8 +14484,11 @@ async function createWorkspace(
   } else {
     throw new Error("Choose a local folder or a marketplace template first.");
   }
+  const customWorkspacePath = payload.workspace_path?.trim() || "";
   let created: WorkspaceResponsePayload;
-  stageLog("runtime_post_workspaces.start");
+  stageLog("runtime_post_workspaces.start", {
+    hasCustomWorkspacePath: Boolean(customWorkspacePath),
+  });
   try {
     created = await requestRuntimeJson<WorkspaceResponsePayload>({
       method: "POST",
@@ -13859,6 +14498,7 @@ async function createWorkspace(
         harness,
         status: "provisioning",
         onboarding_status: "not_required",
+        ...(customWorkspacePath ? { workspace_path: customWorkspacePath } : {}),
       },
     });
     stageLog("runtime_post_workspaces.ok", { workspaceId: created.workspace.id });
@@ -13872,9 +14512,10 @@ async function createWorkspace(
     );
   }
   const workspaceId = created.workspace.id;
+  rememberWorkspaceDir(workspaceId, created.workspace.workspace_path);
 
   try {
-    const workspaceDir = workspaceDirectoryPath(workspaceId);
+    const workspaceDir = await resolveWorkspaceDir(workspaceId);
     stageLog("workspace_dir_resolved", { workspaceId, workspaceDir });
     const workspaceAgentsPath = path.join(workspaceDir, "AGENTS.md");
     const workspaceYamlPath = path.join(workspaceDir, "workspace.yaml");
@@ -14149,12 +14790,91 @@ async function createWorkspace(
 
 async function deleteWorkspace(
   workspaceId: string,
+  keepFiles?: boolean,
+): Promise<WorkspaceResponsePayload> {
+  const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
+  const response = await requestRuntimeJson<WorkspaceResponsePayload>({
+    method: "DELETE",
+    path: `/api/v1/workspaces/${encodeURIComponent(safeWorkspaceId)}`,
+    ...(keepFiles !== undefined ? { params: { keep_files: keepFiles } } : {}),
+  });
+  forgetWorkspaceDir(safeWorkspaceId);
+  return response;
+}
+
+async function relocateWorkspace(
+  workspaceId: string,
+  newPath: string,
+): Promise<WorkspaceResponsePayload> {
+  const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
+  const response = await requestRuntimeJson<WorkspaceResponsePayload>({
+    method: "PATCH",
+    path: `/api/v1/workspaces/${encodeURIComponent(safeWorkspaceId)}`,
+    payload: { workspace_path: newPath },
+  });
+  forgetWorkspaceDir(safeWorkspaceId);
+  rememberWorkspaceDir(safeWorkspaceId, response.workspace.workspace_path);
+  return response;
+}
+
+async function activateWorkspaceRecord(
+  workspaceId: string,
 ): Promise<WorkspaceResponsePayload> {
   const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
   return requestRuntimeJson<WorkspaceResponsePayload>({
-    method: "DELETE",
-    path: `/api/v1/workspaces/${encodeURIComponent(safeWorkspaceId)}`,
+    method: "POST",
+    path: `/api/v1/workspaces/${encodeURIComponent(safeWorkspaceId)}/activate`,
+    payload: {},
   });
+}
+
+async function pickWorkspaceRelocationFolder(
+  workspaceId: string,
+): Promise<WorkspaceRuntimeFolderSelectionPayload> {
+  const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
+  const ownerWindow = mainWindow ?? BrowserWindow.getFocusedWindow() ?? null;
+  const options: OpenDialogOptions = {
+    properties: ["openDirectory", "createDirectory"],
+    title: "Relocate Workspace Folder",
+    buttonLabel: "Use This Folder",
+    message: "Pick an empty folder or the existing workspace folder to move this workspace to.",
+  };
+  const result = ownerWindow
+    ? await dialog.showOpenDialog(ownerWindow, options)
+    : await dialog.showOpenDialog(options);
+  if (result.canceled || !result.filePaths[0]) {
+    return { canceled: true, rootPath: null };
+  }
+
+  const rootPath = path.resolve(result.filePaths[0]);
+  if (!path.isAbsolute(rootPath)) {
+    throw new Error("Workspace folder path must be absolute.");
+  }
+  if (existsSync(rootPath)) {
+    const stat = statSync(rootPath);
+    if (!stat.isDirectory()) {
+      throw new Error("Selected path is not a directory.");
+    }
+    // Accept if it contains a matching .holaboss/workspace_id identity file.
+    const identityFilePath = path.join(rootPath, ".holaboss", "workspace_id");
+    if (existsSync(identityFilePath)) {
+      const storedId = readFileSync(identityFilePath, "utf-8").trim();
+      if (storedId === safeWorkspaceId) {
+        return { canceled: false, rootPath };
+      }
+      throw new Error(
+        `Selected folder belongs to a different workspace. Pick an empty folder or the original workspace folder.`,
+      );
+    }
+    // Accept if empty (excluding .DS_Store).
+    const entries = readdirSync(rootPath).filter((name) => name !== ".DS_Store");
+    if (entries.length > 0) {
+      throw new Error(
+        `Selected folder must be empty (found ${entries.length} items). Pick an empty folder or the original workspace folder.`,
+      );
+    }
+  }
+  return { canceled: false, rootPath };
 }
 
 async function listRuntimeStates(
@@ -15603,6 +16323,10 @@ async function startEmbeddedRuntime() {
           SANDBOX_AGENT_HARNESS: harness,
           HOLABOSS_RUNTIME_WORKFLOW_BACKEND: workflowBackend,
           HOLABOSS_RUNTIME_DB_PATH: runtimeDatabasePath(),
+          HOLABOSS_RUNTIME_LOG_PATH: runtimeLogsPath(),
+          HOLABOSS_RUNTIME_CONFIG_PATH: runtimeConfigPath(),
+          HOLABOSS_DESKTOP_LAUNCH_ID: DESKTOP_LAUNCH_ID,
+          HOLABOSS_DESKTOP_APP_VERSION: app.getVersion(),
           HOLABOSS_DESKTOP_BROWSER_ENABLED: currentDesktopBrowserCapabilityConfig()
             .enabled
             ? "true"
@@ -17482,7 +18206,7 @@ async function resolveWorkspaceScopedExplorerPath(
   }
 
   const workspaceRoot = path.resolve(
-    await workspaceDirectoryPath(normalizedWorkspaceId),
+    await resolveWorkspaceDir(normalizedWorkspaceId),
   );
   const resolvedTargetPath = trimmedTargetPath
     ? path.resolve(
@@ -19237,7 +19961,7 @@ function queueBrowserDownloadPrompt(
   workspace.pendingDownloadOverrides.push({
     url: targetUrl.trim(),
     defaultPath: path.join(
-      workspaceDirectoryPath(workspaceId),
+      resolveWorkspaceDirSync(workspaceId),
       "Downloads",
       sanitizeAttachmentName(options.defaultFilename),
     ),
@@ -21493,6 +22217,109 @@ if (!singleInstanceLock) {
   }
 }
 
+app.on("browser-window-created", (_event, window) => {
+  window.on("unresponsive", () => {
+    if (unresponsiveDesktopWindows.has(window)) {
+      return;
+    }
+    unresponsiveDesktopWindows.add(window);
+    captureDesktopLifecycleEvent({
+      message: "Electron window became unresponsive",
+      level: "warning",
+      fingerprint: [
+        "electron-window-unresponsive",
+        desktopWindowTelemetryRole(window),
+      ],
+      tags: {
+        desktop_window_role: desktopWindowTelemetryRole(window),
+      },
+      contexts: {
+        desktop_window: {
+          role: desktopWindowTelemetryRole(window),
+          title: window.getTitle() || null,
+          visible: window.isVisible(),
+          focused: window.isFocused(),
+          minimized: window.isMinimized(),
+          maximized: window.isMaximized(),
+        },
+      },
+    });
+  });
+
+  window.on("responsive", () => {
+    unresponsiveDesktopWindows.delete(window);
+    addDesktopLifecycleBreadcrumb(
+      "window",
+      "Browser window responsive again",
+      {
+        desktop_window_role: desktopWindowTelemetryRole(window),
+        title: window.getTitle() || null,
+      },
+    );
+  });
+});
+
+app.on("web-contents-created", (_event, contents) => {
+  const contentsType = contents.getType();
+  contents.on("render-process-gone", (_goneEvent, details) => {
+    const ownerWindow = BrowserWindow.fromWebContents(contents);
+    const ownerRole = desktopWindowTelemetryRole(ownerWindow);
+    captureDesktopLifecycleEvent({
+      message: "Electron renderer process gone",
+      level: "error",
+      fingerprint: [
+        "electron-render-process-gone",
+        contentsType,
+        details.reason,
+      ],
+      tags: {
+        desktop_window_role: ownerRole,
+        webcontents_type: contentsType,
+        render_process_reason: details.reason,
+      },
+      contexts: {
+        render_process: {
+          type: contentsType,
+          reason: details.reason,
+          exit_code: details.exitCode,
+          url: safeWebContentsUrl(contents),
+        },
+        desktop_window: ownerWindow
+          ? {
+              role: ownerRole,
+              title: ownerWindow.getTitle() || null,
+            }
+          : null,
+      },
+    });
+  });
+});
+
+app.on("child-process-gone", (_event, details) => {
+  captureDesktopLifecycleEvent({
+    message: "Electron child process gone",
+    level: "error",
+    fingerprint: [
+      "electron-child-process-gone",
+      details.type,
+      details.reason,
+    ],
+    tags: {
+      child_process_type: details.type,
+      child_process_reason: details.reason,
+    },
+    contexts: {
+      child_process: {
+        type: details.type,
+        reason: details.reason,
+        name: details.name ?? null,
+        service_name: details.serviceName ?? null,
+        exit_code: details.exitCode,
+      },
+    },
+  });
+});
+
 app.whenReady().then(async () => {
   if (process.platform === "darwin" && app.dock) {
     const dockIcon = nativeImage.createFromPath(
@@ -21504,6 +22331,8 @@ app.whenReady().then(async () => {
       app.dock.setIcon(dockIcon);
     }
   }
+
+  applyMainShellContentSecurityPolicy(session.defaultSession);
 
   await loadBrowserPersistence();
   await bootstrapRuntimeDatabase();
@@ -21944,6 +22773,29 @@ app.whenReady().then(async () => {
     pickTemplateFolder(),
   );
   handleTrustedIpc(
+    "workspace:pickWorkspaceRuntimeFolder",
+    ["main"],
+    async () => pickWorkspaceRuntimeFolder(),
+  );
+  handleTrustedIpc(
+    "workspace:pickWorkspaceRelocationFolder",
+    ["main"],
+    async (_event, workspaceId: string) =>
+      pickWorkspaceRelocationFolder(workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:relocate",
+    ["main"],
+    async (_event, workspaceId: string, newPath: string) =>
+      relocateWorkspace(workspaceId, newPath),
+  );
+  handleTrustedIpc(
+    "workspace:activate",
+    ["main"],
+    async (_event, workspaceId: string) =>
+      activateWorkspaceRecord(workspaceId),
+  );
+  handleTrustedIpc(
     "workspace:listImportBrowserProfiles",
     ["main"],
     async (_event, source: BrowserImportSource) =>
@@ -22051,7 +22903,7 @@ app.whenReady().then(async () => {
   handleTrustedIpc(
     "workspace:getWorkspaceRoot",
     ["main"],
-    async (_event, workspaceId: string) => workspaceDirectoryPath(workspaceId),
+    async (_event, workspaceId: string) => resolveWorkspaceDir(workspaceId),
   );
   handleTrustedIpc(
     "workspace:setOperatorSurfaceContext",
@@ -22081,7 +22933,7 @@ app.whenReady().then(async () => {
   handleTrustedIpc(
     "workspace:deleteWorkspace",
     ["main"],
-    async (_event, workspaceId: string) => deleteWorkspace(workspaceId),
+    async (_event, workspaceId: string, keepFiles?: boolean) => deleteWorkspace(workspaceId, keepFiles),
   );
   handleTrustedIpc(
     "workspace:listCronjobs",
@@ -22450,7 +23302,7 @@ app.whenReady().then(async () => {
       try {
         const { packageWorkspace, uploadToPresignedUrl } =
           await import("./workspace-packager.js");
-        const workspaceDir = workspaceDirectoryPath(params.workspaceId);
+        const workspaceDir = await resolveWorkspaceDir(params.workspaceId);
         const runtimeUrl = runtimeBaseUrl();
         const result = await packageWorkspace({
           workspaceDir,

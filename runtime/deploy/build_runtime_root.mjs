@@ -113,6 +113,7 @@ function stageNodePackage(outputRoot, packageDir, outputName) {
   copyIfPresent(path.join(packageDir, "package-lock.json"), path.join(targetDir, "package-lock.json"));
   copyIfPresent(path.join(packageDir, "tsconfig.json"), path.join(targetDir, "tsconfig.json"));
   copyIfPresent(path.join(packageDir, "tsup.config.ts"), path.join(targetDir, "tsup.config.ts"));
+  copyIfPresent(path.join(packageDir, "scripts"), path.join(targetDir, "scripts"));
   copyIfPresent(path.join(packageDir, "src"), path.join(targetDir, "src"));
 
   runNpmCommand(["ci"], { cwd: targetDir });

@@ -20,7 +20,7 @@ That is why the app layer completes the system story:
 - the harness executes the prepared run
 - apps provide durable domain capability inside that environment
 
-Without the app layer, `holaOS` would have an environment model but no clear unit for packaged business or workflow capability.
+Without the app layer, `holaOS` would have an environment model but no first-class unit for packaged business or workflow capability.
 
 ## What an app can own
 
@@ -69,18 +69,18 @@ In many cases, a workspace could reach a similar immediate outcome without an ap
 
 Those are all valid routes. Direct integrations provide access. MCP provides a structured invocation surface. A CLI can be a powerful local engine and may own local state, background jobs, lifecycle, and health.
 
-The real question is not what can implement the capability. It is what unit the workspace and runtime should recognize as the durable capability boundary.
+The real question is not what can implement the capability. It is what unit the workspace and runtime should recognize when several surfaces need to persist together as one capability.
 
 - `Integration` is the access layer.
 - `MCP` is the invocation layer.
 - `CLI` is a possible implementation engine.
 - `App` is the runtime-managed capability boundary.
 
-Once a capability needs to be installed into a workspace, bound to integrations, projected into the harness, surfaced in UI, published as outputs, and kept portable over time, `holaOS` still needs one coherent unit to own that outer contract. That is what the app layer provides.
+Once a capability needs lifecycle, state, integrations, UI, MCP exposure, and outputs to stay coordinated over time, `holaOS` needs one coherent unit to own that outer contract. That is the role of the app layer.
 
-An app can still be thin. It may depend on one integration, expose only a small MCP tool surface, or internally rely on a CLI. But `holaOS` still models that unit as an app so the same capability can later grow to include state, UI, outputs, review flow, and workflow logic without changing layers.
+An app can still be thin. It may depend on one integration, expose only a small MCP tool surface, or internally rely on a CLI. `holaOS` models that unit as an app when the workspace and runtime need to manage those pieces as one installed capability over time.
 
-So the app layer does not reject the simpler paths. It subsumes them.
+So the app layer does not reject the simpler paths. It gives the workspace one place to assemble them when they need to persist together.
 
 ## How apps differ from other surfaces
 

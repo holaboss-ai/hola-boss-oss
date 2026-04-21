@@ -40,3 +40,13 @@ test("browser tabs register a native context menu for BrowserView content", asyn
   assert.match(source, /x: popupX,/);
   assert.match(source, /y: popupY,/);
 });
+
+test("desktop browser service exposes a real context-click endpoint for BrowserView input", async () => {
+  const source = await readFile(MAIN_PATH, "utf8");
+
+  assert.match(source, /if \(method === "POST" && pathname === "\/api\/v1\/browser\/context-click"\)/);
+  assert.match(source, /activeTab\.view\.webContents\.focus\(\);/);
+  assert.match(source, /await activeTab\.view\.webContents\.sendInputEvent\(\{\s*type: "mouseMove",/);
+  assert.match(source, /await activeTab\.view\.webContents\.sendInputEvent\(\{\s*type: "mouseDown",[\s\S]*button: "right",/);
+  assert.match(source, /await activeTab\.view\.webContents\.sendInputEvent\(\{\s*type: "mouseUp",[\s\S]*button: "right",/);
+});

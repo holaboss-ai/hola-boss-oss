@@ -61,6 +61,10 @@ import {
   useDesktopAuthSession,
 } from "@/lib/auth/authClient";
 import { useDesktopBilling } from "@/lib/billing/useDesktopBilling";
+import {
+  pushRendererSentryActivity,
+  useRendererSentrySection,
+} from "@/lib/rendererSentry";
 import { preferredSessionId } from "@/lib/sessionRouting";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
@@ -3236,6 +3240,8 @@ export function ChatPane({
   const composerIsComposingRef = useRef(false);
   const shouldAutoScrollRef = useRef(true);
   const lastChatScrollTopRef = useRef(0);
+  const chatScrollMetricsSyncFrameRef = useRef<number | null>(null);
+  const chatScrollMetricsSyncTargetRef = useRef<HTMLDivElement | null>(null);
   const chatScrollbarDragStateRef = useRef<ChatScrollbarDragState | null>(null);
   const chatScrollbarBodyUserSelectRef = useRef<string | null>(null);
   const chatScrollbarBodyCursorRef = useRef<string | null>(null);
@@ -3253,6 +3259,7 @@ export function ChatPane({
     scrollHeight: number;
     scrollTop: number;
   } | null>(null);
+  const isLoadingOlderHistoryRef = useRef(false);
   const seenMainDebugKeysRef = useRef<Set<string>>(new Set());
   const selectedWorkspaceRef = useRef<WorkspaceRecordPayload | null>(null);
   const isOnboardingVariant = variant === "onboarding";
@@ -3266,6 +3273,8 @@ export function ChatPane({
   const localSessionOpenRequestRef =
     useRef<ChatPaneSessionOpenRequest | null>(null);
   const draftParentSessionIdRef = useRef<string | null>(null);
+  const draftHydrationWorkspaceIdRef = useRef((selectedWorkspaceId || "").trim());
+  const skipNextComposerDraftPublishRef = useRef(false);
   const liveAssistantSegmentsRef = useRef<ChatAssistantSegment[]>([]);
   const liveAssistantTextRef = useRef("");
   const liveExecutionItemsRef = useRef<ChatExecutionTimelineItem[]>([]);
@@ -3424,6 +3433,11 @@ export function ChatPane({
     setIsHistoryViewportPending(false);
   }
 
+  function setIsLoadingOlderHistoryState(nextValue: boolean) {
+    isLoadingOlderHistoryRef.current = nextValue;
+    setIsLoadingOlderHistory(nextValue);
+  }
+
   function resetLiveTurn() {
     liveAssistantSegmentsRef.current = [];
     liveAssistantTextRef.current = "";
@@ -3442,7 +3456,7 @@ export function ChatPane({
     setCurrentTodoPlan(null);
     setLoadedHistoryMessageCount(0);
     setTotalHistoryMessageCount(0);
-    setIsLoadingOlderHistory(false);
+    setIsLoadingOlderHistoryState(false);
     setArtifactBrowserOpen(false);
     setArtifactBrowserFilter("all");
     setMemoryProposalAction(null);
@@ -3836,7 +3850,7 @@ export function ChatPane({
     setMessages(page.renderedMessages);
     setLoadedHistoryMessageCount(page.history.count);
     setTotalHistoryMessageCount(page.history.total);
-    setIsLoadingOlderHistory(false);
+    setIsLoadingOlderHistoryState(false);
     pendingHistoryPrependRestoreRef.current = null;
     setChatErrorMessage(page.warnings.join(" "));
     resetLiveTurn();
@@ -3948,7 +3962,8 @@ export function ChatPane({
       !sessionId ||
       !workspaceId ||
       isLoadingHistory ||
-      isLoadingOlderHistory ||
+      isLoadingOlderHistoryRef.current ||
+      pendingHistoryPrependRestoreRef.current ||
       loadedHistoryMessageCount >= totalHistoryMessageCount
     ) {
       return;
@@ -3962,7 +3977,7 @@ export function ChatPane({
       };
     }
     shouldAutoScrollRef.current = false;
-    setIsLoadingOlderHistory(true);
+    setIsLoadingOlderHistoryState(true);
 
     try {
       const page = await loadSessionHistoryPage({
@@ -4002,8 +4017,10 @@ export function ChatPane({
       }
     } finally {
       if (isSessionHistoryTargetActive(sessionId, workspaceId)) {
-        setIsLoadingOlderHistory(false);
+        setIsLoadingOlderHistoryState(false);
+        return;
       }
+      isLoadingOlderHistoryRef.current = false;
     }
   }
 
@@ -4269,6 +4286,39 @@ export function ChatPane({
     });
   }
 
+  const cancelChatScrollMetricsSync = () => {
+    if (chatScrollMetricsSyncFrameRef.current !== null) {
+      window.cancelAnimationFrame(chatScrollMetricsSyncFrameRef.current);
+      chatScrollMetricsSyncFrameRef.current = null;
+    }
+    chatScrollMetricsSyncTargetRef.current = null;
+  };
+
+  const scheduleChatScrollMetricsSync = (
+    container?: HTMLDivElement | null,
+  ) => {
+    if (container) {
+      chatScrollMetricsSyncTargetRef.current = container;
+    } else if (chatScrollMetricsSyncTargetRef.current === null) {
+      chatScrollMetricsSyncTargetRef.current = messagesRef.current;
+    }
+
+    if (chatScrollMetricsSyncTargetRef.current === null) {
+      return;
+    }
+    if (chatScrollMetricsSyncFrameRef.current !== null) {
+      return;
+    }
+
+    chatScrollMetricsSyncFrameRef.current = window.requestAnimationFrame(() => {
+      chatScrollMetricsSyncFrameRef.current = null;
+      const target =
+        chatScrollMetricsSyncTargetRef.current ?? messagesRef.current;
+      chatScrollMetricsSyncTargetRef.current = null;
+      syncChatScrollMetrics(target);
+    });
+  };
+
   function clearChatScrollbarDragState() {
     chatScrollbarDragStateRef.current = null;
     if (typeof document === "undefined") {
@@ -4307,7 +4357,8 @@ export function ChatPane({
 
     shouldAutoScrollRef.current = false;
     container.scrollTop = nextScrollTop;
-    syncChatScrollMetrics(container);
+    lastChatScrollTopRef.current = nextScrollTop;
+    scheduleChatScrollMetricsSync(container);
   }
 
   function handleChatScrollbarPointerDown(
@@ -4449,7 +4500,8 @@ export function ChatPane({
     const scrollHeightDelta =
       container.scrollHeight - pendingRestore.scrollHeight;
     container.scrollTop = pendingRestore.scrollTop + scrollHeightDelta;
-    syncChatScrollMetrics(container);
+    lastChatScrollTopRef.current = container.scrollTop;
+    scheduleChatScrollMetricsSync(container);
   }, [messages]);
 
   useLayoutEffect(() => {
@@ -4467,7 +4519,8 @@ export function ChatPane({
       top: container.scrollHeight,
       behavior: "auto",
     });
-    syncChatScrollMetrics(container);
+    lastChatScrollTopRef.current = container.scrollTop;
+    scheduleChatScrollMetricsSync(container);
 
     const frameId = window.requestAnimationFrame(() => {
       if (historyViewportGenerationRef.current !== restoreGeneration) {
@@ -4485,7 +4538,13 @@ export function ChatPane({
     selectedWorkspaceRef.current = selectedWorkspace;
   }, [selectedWorkspace]);
 
-  useEffect(() => clearChatScrollbarDragState, []);
+  useEffect(
+    () => () => {
+      clearChatScrollbarDragState();
+      cancelChatScrollMetricsSync();
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!isResponding) {
@@ -4565,12 +4624,22 @@ export function ChatPane({
   }, [selectedWorkspaceId]);
 
   useEffect(() => {
+    const normalizedWorkspaceId = (selectedWorkspaceId || "").trim();
+    if (draftHydrationWorkspaceIdRef.current === normalizedWorkspaceId) {
+      return;
+    }
+    draftHydrationWorkspaceIdRef.current = normalizedWorkspaceId;
+    skipNextComposerDraftPublishRef.current = true;
     setInput((current) =>
       current === composerDraftText ? current : composerDraftText,
     );
-  }, [composerDraftText]);
+  }, [composerDraftText, selectedWorkspaceId]);
 
   useEffect(() => {
+    if (skipNextComposerDraftPublishRef.current) {
+      skipNextComposerDraftPublishRef.current = false;
+      return;
+    }
     onComposerDraftTextChange?.(input);
   }, [input, onComposerDraftTextChange]);
 
@@ -6676,6 +6745,185 @@ export function ChatPane({
   const showLowBalanceWarning =
     usesHostedManagedCredits && isLowBalance && !isOutOfCredits;
   const showOutOfCreditsWarning = usesHostedManagedCredits && isOutOfCredits;
+  const chatPaneSentryState = useMemo(
+    () => ({
+      workspace_id: selectedWorkspaceId || null,
+      session_id: activeSessionId || null,
+      variant,
+      signed_in: isSignedIn,
+      workspace_ready: Boolean(selectedWorkspace) && workspaceAppsReady,
+      workspace_blocking_reason: workspaceBlockingReason || null,
+      runtime_default_model: runtimeConfig?.defaultModel ?? null,
+      session_metrics: {
+        available_session_count: availableSessions.length,
+        active_queued_input_count: activeQueuedSessionInputs.length,
+        message_count: messages.length,
+        session_output_count: sessionOutputs.length,
+        live_segment_count: liveAssistantSegments.length,
+        live_execution_item_count: liveExecutionItems.length,
+        todo_phase_count: displayedTodoPlan?.phases.length ?? 0,
+      },
+      composer: {
+        input_length: input.length,
+        quoted_skill_count: quotedSkillIds.length,
+        pending_attachment_count: pendingAttachments.length,
+        disabled: composerDisabled,
+        disabled_reason: composerDisabledReason || null,
+        attachment_gate_message: attachmentGateMessage || null,
+        pending_image_input_unsupported_message:
+          pendingImageInputUnsupportedMessage || null,
+      },
+      activity: {
+        is_loading_history: isLoadingHistory,
+        is_loading_older_history: isLoadingOlderHistory,
+        is_history_viewport_pending: isHistoryViewportPending,
+        is_responding: isResponding,
+        is_submitting_message: isSubmittingMessage,
+        is_pause_pending: isPausePending,
+        live_agent_status: liveAgentStatus || null,
+        chat_error_message: chatErrorMessage || null,
+        artifact_browser_open: artifactBrowserOpen,
+        todo_panel_expanded: displayedTodoPanelExpanded,
+      },
+      model_selection: {
+        selected_model: effectiveChatModelPreference || null,
+        resolved_model: resolvedChatModel || null,
+        selected_model_label: selectedModelDisplayLabel || null,
+        thinking_value: effectiveThinkingValue,
+        supports_reasoning: selectedModelSupportsReasoning,
+        supports_image_input: selectedModelSupportsImageInput,
+      },
+      browser_state: {
+        space: visibleBrowserState.space,
+        active_tab_id: visibleBrowserState.activeTabId || null,
+        tab_count: visibleBrowserState.tabs.length,
+        user_tab_count: visibleBrowserState.tabCounts.user,
+        agent_tab_count: visibleBrowserState.tabCounts.agent,
+        session_id: visibleBrowserState.sessionId || null,
+        control_mode: visibleBrowserState.controlMode,
+        control_session_id: visibleBrowserState.controlSessionId || null,
+        lifecycle_state: visibleBrowserState.lifecycleState ?? null,
+      },
+      billing: {
+        low_balance: showLowBalanceWarning,
+        out_of_credits: showOutOfCreditsWarning,
+        uses_hosted_managed_credits: usesHostedManagedCredits,
+      },
+    }),
+    [
+      activeQueuedSessionInputs.length,
+      activeSessionId,
+      artifactBrowserOpen,
+      attachmentGateMessage,
+      availableSessions.length,
+      chatErrorMessage,
+      composerDisabled,
+      composerDisabledReason,
+      displayedTodoPanelExpanded,
+      displayedTodoPlan,
+      effectiveChatModelPreference,
+      effectiveThinkingValue,
+      input.length,
+      isLoadingHistory,
+      isLoadingOlderHistory,
+      isHistoryViewportPending,
+      isPausePending,
+      isResponding,
+      isSignedIn,
+      isSubmittingMessage,
+      liveAgentStatus,
+      liveAssistantSegments.length,
+      liveExecutionItems.length,
+      messages.length,
+      pendingAttachments.length,
+      pendingImageInputUnsupportedMessage,
+      quotedSkillIds.length,
+      resolvedChatModel,
+      runtimeConfig?.defaultModel,
+      selectedModelDisplayLabel,
+      selectedModelSupportsImageInput,
+      selectedModelSupportsReasoning,
+      selectedWorkspace,
+      selectedWorkspaceId,
+      sessionOutputs.length,
+      showLowBalanceWarning,
+      showOutOfCreditsWarning,
+      variant,
+      visibleBrowserState,
+      usesHostedManagedCredits,
+      workspaceAppsReady,
+      workspaceBlockingReason,
+    ],
+  );
+  useRendererSentrySection("chat_pane", chatPaneSentryState);
+
+  useEffect(() => {
+    pushRendererSentryActivity("chat", "chat session changed", {
+      workspace_id: selectedWorkspaceId || null,
+      session_id: activeSessionId || null,
+    });
+  }, [activeSessionId, selectedWorkspaceId]);
+
+  useEffect(() => {
+    pushRendererSentryActivity("chat", "chat model selection changed", {
+      session_id: activeSessionId || null,
+      selected_model: effectiveChatModelPreference || null,
+      resolved_model: resolvedChatModel || null,
+      thinking_value: effectiveThinkingValue,
+    });
+  }, [
+    activeSessionId,
+    effectiveChatModelPreference,
+    effectiveThinkingValue,
+    resolvedChatModel,
+  ]);
+
+  useEffect(() => {
+    if (!chatErrorMessage) {
+      return;
+    }
+    pushRendererSentryActivity("chat", "chat error surfaced", {
+      session_id: activeSessionId || null,
+      workspace_id: selectedWorkspaceId || null,
+      message: chatErrorMessage,
+    });
+  }, [activeSessionId, chatErrorMessage, selectedWorkspaceId]);
+
+  useEffect(() => {
+    pushRendererSentryActivity("chat", "chat activity state changed", {
+      session_id: activeSessionId || null,
+      is_responding: isResponding,
+      is_submitting_message: isSubmittingMessage,
+      is_pause_pending: isPausePending,
+      live_agent_status: liveAgentStatus || null,
+    });
+  }, [
+    activeSessionId,
+    isPausePending,
+    isResponding,
+    isSubmittingMessage,
+    liveAgentStatus,
+  ]);
+
+  useEffect(() => {
+    pushRendererSentryActivity("browser", "chat browser state changed", {
+      session_id: activeSessionId || null,
+      browser_space: visibleBrowserState.space,
+      tab_count: visibleBrowserState.tabs.length,
+      control_mode: visibleBrowserState.controlMode,
+      browser_session_id: visibleBrowserState.sessionId || null,
+      control_session_id: visibleBrowserState.controlSessionId || null,
+      lifecycle_state: visibleBrowserState.lifecycleState ?? null,
+    });
+  }, [
+    activeSessionId,
+    visibleBrowserState.controlMode,
+    visibleBrowserState.controlSessionId,
+    visibleBrowserState.lifecycleState,
+    visibleBrowserState.sessionId,
+    visibleBrowserState.space,
+    visibleBrowserState.tabs.length,
+  ]);
 
   useEffect(() => {
     if (!effectiveChatModelPreference) {
@@ -6752,6 +7000,7 @@ export function ChatPane({
 
   useEffect(() => {
     if (!hasMessages) {
+      cancelChatScrollMetricsSync();
       setChatScrollMetrics({
         scrollTop: 0,
         scrollHeight: 0,
@@ -6760,7 +7009,7 @@ export function ChatPane({
       return;
     }
 
-    syncChatScrollMetrics();
+    scheduleChatScrollMetricsSync();
 
     const container = messagesRef.current;
     if (!container) {
@@ -6768,7 +7017,7 @@ export function ChatPane({
     }
 
     const resizeObserver = new ResizeObserver(() => {
-      syncChatScrollMetrics(container);
+      scheduleChatScrollMetricsSync(container);
     });
     resizeObserver.observe(container);
 
@@ -7032,11 +7281,12 @@ export function ChatPane({
               }}
               onScroll={(event) => {
                 const { currentTarget } = event;
-                const scrolledUp =
-                  currentTarget.scrollTop < lastChatScrollTopRef.current;
+                const nextScrollTop = currentTarget.scrollTop;
+                const scrolledUp = nextScrollTop < lastChatScrollTopRef.current;
+                lastChatScrollTopRef.current = nextScrollTop;
                 const nearBottom = isNearChatBottom(currentTarget);
                 shouldAutoScrollRef.current = scrolledUp ? false : nearBottom;
-                syncChatScrollMetrics(currentTarget);
+                scheduleChatScrollMetricsSync(currentTarget);
                 if (
                   currentTarget.scrollTop <=
                   CHAT_HISTORY_TOP_LOAD_THRESHOLD_PX
@@ -9340,6 +9590,7 @@ function Composer({
   const [highlightedSlashIndex, setHighlightedSlashIndex] = useState(0);
   const composerFooterRef = useRef<HTMLDivElement | null>(null);
   const composerActionsRef = useRef<HTMLDivElement | null>(null);
+  const composerFooterLayoutSyncFrameRef = useRef<number | null>(null);
   const slashCommandMenuRef = useRef<HTMLDivElement | null>(null);
   const [composerFooterLayout, setComposerFooterLayout] = useState({
     width: 0,
@@ -9402,6 +9653,13 @@ function Composer({
       ?.selectedLabel ??
     modelOptions.find((option) => option.value === selectedModel)?.label ??
     resolvedModelLabel;
+  const cancelComposerFooterLayoutSync = () => {
+    if (composerFooterLayoutSyncFrameRef.current === null) {
+      return;
+    }
+    window.cancelAnimationFrame(composerFooterLayoutSyncFrameRef.current);
+    composerFooterLayoutSyncFrameRef.current = null;
+  };
   const syncComposerFooterLayout = () => {
     const footer = composerFooterRef.current;
     if (!footer) {
@@ -9425,6 +9683,19 @@ function Composer({
         : { width, actionsWidth },
     );
   };
+  // Coalesce ResizeObserver bursts so compact/full footer transitions do not
+  // synchronously re-enter render while the DOM is still settling.
+  const scheduleComposerFooterLayoutSync = () => {
+    if (composerFooterLayoutSyncFrameRef.current !== null) {
+      return;
+    }
+    composerFooterLayoutSyncFrameRef.current = window.requestAnimationFrame(
+      () => {
+        composerFooterLayoutSyncFrameRef.current = null;
+        syncComposerFooterLayout();
+      },
+    );
+  };
   useLayoutEffect(() => {
     const footer = composerFooterRef.current;
     if (!footer) {
@@ -9437,31 +9708,17 @@ function Composer({
     }
 
     const resizeObserver = new ResizeObserver(() => {
-      syncComposerFooterLayout();
+      scheduleComposerFooterLayoutSync();
     });
     resizeObserver.observe(footer);
     if (composerActionsRef.current) {
       resizeObserver.observe(composerActionsRef.current);
     }
-    Array.from(footer.children).forEach((child) => {
-      if (child instanceof HTMLElement) {
-        resizeObserver.observe(child);
-      }
-    });
     return () => {
       resizeObserver.disconnect();
+      cancelComposerFooterLayoutSync();
     };
-  }, [
-    noAvailableModels,
-    resolvedModelLabel,
-    runtimeDefaultModelAvailable,
-    selectedModel,
-    selectedModelOptionLabel,
-    selectedThinkingValue,
-    showModelSelector,
-    showThinkingValueSelector,
-    thinkingValues,
-  ]);
+  }, []);
   useEffect(() => {
     setHighlightedSlashIndex(0);
   }, [activeSlashRange?.query, filteredSlashCommands.length]);

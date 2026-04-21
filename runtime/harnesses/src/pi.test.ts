@@ -47,6 +47,7 @@ test("pi harness enables browser tools only for workspace sessions", () => {
 
   const workspaceRequest = buildHarnessHostRequest({
     ...baseParams,
+    browserSpace: "user",
     request: {
       ...baseParams.request,
       session_kind: "workspace_session",
@@ -61,5 +62,9 @@ test("pi harness enables browser tools only for workspace sessions", () => {
   });
 
   assert.equal(workspaceRequest.browser_tools_enabled, true);
+  assert.equal(workspaceRequest.browser_space, "user");
   assert.equal(onboardingRequest.browser_tools_enabled, false);
+  assert.equal(onboardingRequest.browser_space, null);
+  assert.deepEqual(workspaceRequest.context_messages, []);
+  assert.deepEqual(onboardingRequest.context_messages, []);
 });

@@ -652,6 +652,15 @@ function authorityBoundaryForDescriptor(params: {
     };
   }
   if (params.kind === "runtime_tool") {
+    if (normalizedId === "download_url") {
+      return {
+        filesystem: true,
+        shell: false,
+        network: true,
+        browser: false,
+        runtime_state: true,
+      };
+    }
     return {
       filesystem: false,
       shell: false,
@@ -1272,6 +1281,9 @@ export function renderCapabilityPolicyPromptSection(manifest: AgentCapabilityMan
     lines.push("Background terminal routing: prefer `terminal_session_start` for long-running, interactive, or revisitable shell work such as dev servers, watch mode, and background jobs.");
     lines.push("Prefer one-shot `bash` for short commands that should complete within the current tool call.");
     lines.push("After starting a background terminal, inspect it with `terminal_session_read` or `terminal_session_wait` before claiming success.");
+  }
+  if (manifest.runtime_tools.some((capability) => capability.id === "download_url")) {
+    lines.push("Remote file transfer: prefer `download_url` when you already have a direct asset URL and need a saved workspace file instead of relying on browser-only downloads or ad hoc shell fetches.");
   }
   lines.push(summarizeAvailability("Workspace commands", manifest.workspace_commands.length));
   lines.push(summarizeAvailability("Workspace skills", manifest.workspace_skills.length));

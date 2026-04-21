@@ -1262,6 +1262,29 @@ function buildAgentRuntimeConfigRequest(params: {
   };
 }
 
+function browserSpaceFromOperatorSurfaceContext(
+  context: AgentOperatorSurfaceContext | null | undefined,
+): "agent" | "user" | null {
+  const activeSurfaceId =
+    typeof context?.active_surface_id === "string"
+      ? context.active_surface_id.trim()
+      : "";
+  if (activeSurfaceId === "browser:user") {
+    return "user";
+  }
+  if (activeSurfaceId === "browser:agent") {
+    return "agent";
+  }
+  const activeBrowserSurface =
+    context?.surfaces?.find(
+      (surface) => surface.active === true && surface.surface_type === "browser",
+    ) ?? null;
+  if (!activeBrowserSurface) {
+    return null;
+  }
+  return activeBrowserSurface.owner === "user" ? "user" : "agent";
+}
+
 function terminalHarnessSessionId(event: TsRunnerEvent): string | null {
   if (event.event_type !== "run_completed") {
     return null;
@@ -1948,6 +1971,9 @@ export async function executeTsRunnerRequest(
         request,
         bootstrap,
         runtimeConfig,
+        browserSpace: browserSpaceFromOperatorSurfaceContext(
+          operatorSurfaceContext,
+        ),
         runtimeApiBaseUrl: currentRuntimeApiUrl(),
         workspaceSkills,
         mcpServers: effectiveMcpServers,
@@ -1987,6 +2013,9 @@ export async function executeTsRunnerRequest(
       request,
       bootstrap,
       runtimeConfig,
+      browserSpace: browserSpaceFromOperatorSurfaceContext(
+        operatorSurfaceContext,
+      ),
       runtimeApiBaseUrl: currentRuntimeApiUrl(),
       workspaceSkills,
       mcpServers: effectiveMcpServers,

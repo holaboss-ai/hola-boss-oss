@@ -59,6 +59,325 @@ test("workspace registry round trip uses hidden identity file", () => {
   store.close();
 });
 
+test("createWorkspace honors explicit workspacePath and registers it", () => {
+  const root = makeTempDir("hb-state-store-");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceRoot = path.join(root, "workspace");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const customPath = path.join(customRoot, "my-workspace");
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+
+  const created = store.createWorkspace({
+    workspaceId: "ws-custom",
+    name: "Custom",
+    harness: "pi",
+    workspacePath: customPath
+  });
+
+  assert.equal(created.id, "ws-custom");
+  assert.equal(fs.existsSync(customPath), true);
+  const identityPath = path.join(customPath, ".holaboss", "workspace_id");
+  assert.equal(fs.readFileSync(identityPath, "utf-8").trim(), "ws-custom");
+  assert.equal(path.resolve(store.workspaceDir("ws-custom")), path.resolve(customPath));
+  // Default workspaceRoot was not touched.
+  assert.equal(fs.existsSync(path.join(workspaceRoot, "ws-custom")), false);
+  store.close();
+});
+
+test("createWorkspace rejects non-absolute workspacePath", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  assert.throws(
+    () =>
+      store.createWorkspace({
+        workspaceId: "ws-rel",
+        name: "Rel",
+        harness: "pi",
+        workspacePath: "relative/dir"
+      }),
+    /must be absolute/
+  );
+  store.close();
+});
+
+test("createWorkspace rejects workspacePath that is a non-empty directory", () => {
+  const root = makeTempDir("hb-state-store-");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceRoot = path.join(root, "workspace");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const customPath = path.join(customRoot, "not-empty");
+  fs.mkdirSync(customPath, { recursive: true });
+  fs.writeFileSync(path.join(customPath, "leftover.txt"), "hello");
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+
+  assert.throws(
+    () =>
+      store.createWorkspace({
+        workspaceId: "ws-nonempty",
+        name: "NE",
+        harness: "pi",
+        workspacePath: customPath
+      }),
+    /must be empty/
+  );
+  store.close();
+});
+
+test("createWorkspace rejects workspacePath that overlaps an existing workspace", () => {
+  const root = makeTempDir("hb-state-store-");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceRoot = path.join(root, "workspace");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const parent = path.join(customRoot, "parent");
+  const child = path.join(parent, "child");
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+
+  store.createWorkspace({
+    workspaceId: "ws-parent",
+    name: "Parent",
+    harness: "pi",
+    workspacePath: parent
+  });
+
+  assert.throws(
+    () =>
+      store.createWorkspace({
+        workspaceId: "ws-child",
+        name: "Child",
+        harness: "pi",
+        workspacePath: child
+      }),
+    /overlaps/
+  );
+  store.close();
+});
+
+test("workspaceFolderState returns healthy when the folder exists", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({ workspaceId: "ws-h", name: "H", harness: "pi" });
+  assert.equal(store.workspaceFolderState("ws-h"), "healthy");
+  store.close();
+});
+
+test("workspaceFolderState reports missing when a custom folder is deleted", () => {
+  const root = makeTempDir("hb-state-store-");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const customPath = path.join(customRoot, "ws");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "ws-custom",
+    name: "C",
+    harness: "pi",
+    workspacePath: customPath
+  });
+  assert.equal(store.workspaceFolderState("ws-custom"), "healthy");
+
+  fs.rmSync(customPath, { recursive: true, force: true });
+
+  assert.equal(store.workspaceFolderState("ws-custom"), "missing");
+  // Registered path must NOT be rewritten to the managed default.
+  assert.equal(path.resolve(store.workspaceDir("ws-custom")), path.resolve(customPath));
+  store.close();
+});
+
+test("assertWorkspaceFolderHealthy throws a structured error when missing", () => {
+  const root = makeTempDir("hb-state-store-");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const customPath = path.join(customRoot, "ws");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "ws-custom",
+    name: "C",
+    harness: "pi",
+    workspacePath: customPath
+  });
+  fs.rmSync(customPath, { recursive: true, force: true });
+
+  let caught: unknown;
+  try {
+    store.assertWorkspaceFolderHealthy("ws-custom");
+  } catch (e) {
+    caught = e;
+  }
+  const err = caught as Error & { code?: string; workspacePath?: string };
+  assert.ok(err instanceof Error);
+  assert.equal(err.code, "workspace_folder_missing");
+  assert.equal(path.resolve(err.workspacePath ?? ""), path.resolve(customPath));
+  store.close();
+});
+
+test("createWorkspace rejects the managed workspace root as a custom path", () => {
+  const root = makeTempDir("hb-state-store-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  assert.throws(
+    () =>
+      store.createWorkspace({
+        workspaceId: "ws-root",
+        name: "R",
+        harness: "pi",
+        workspacePath: workspaceRoot
+      }),
+    /cannot be the runtime's managed workspace root/
+  );
+  store.close();
+});
+
+test("createWorkspace rejects a parent of the managed workspace root as a custom path", () => {
+  const root = makeTempDir("hb-state-store-");
+  const workspaceRoot = path.join(root, "nested", "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  assert.throws(
+    () =>
+      store.createWorkspace({
+        workspaceId: "ws-parent",
+        name: "P",
+        harness: "pi",
+        workspacePath: path.join(root, "nested")
+      }),
+    /cannot contain the runtime's managed workspace root/
+  );
+  store.close();
+});
+
+test("createWorkspace allows reusing a soft-deleted workspace's former path", () => {
+  const root = makeTempDir("hb-state-store-");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const customPath = path.join(customRoot, "shared-folder");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  store.createWorkspace({
+    workspaceId: "ws-first",
+    name: "First",
+    harness: "pi",
+    workspacePath: customPath
+  });
+  store.deleteWorkspace("ws-first");
+  // Clean up the directory as the DELETE endpoint would (with keep_files=false).
+  fs.rmSync(customPath, { recursive: true, force: true });
+
+  // Same path should now be reusable for a fresh workspace — the prior
+  // record is soft-deleted and its path claim is released.
+  const reclaimed = store.createWorkspace({
+    workspaceId: "ws-second",
+    name: "Second",
+    harness: "pi",
+    workspacePath: customPath
+  });
+  assert.equal(reclaimed.id, "ws-second");
+  assert.equal(path.resolve(store.workspaceDir("ws-second")), path.resolve(customPath));
+  store.close();
+});
+
+test("relocateWorkspace accepts an empty directory and re-registers", () => {
+  const root = makeTempDir("hb-state-store-");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const newPath = path.join(customRoot, "new-home");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({ workspaceId: "ws-r", name: "R", harness: "pi" });
+
+  const updated = store.relocateWorkspace("ws-r", newPath);
+
+  assert.equal(updated.id, "ws-r");
+  assert.equal(path.resolve(store.workspaceDir("ws-r")), path.resolve(newPath));
+  const identity = fs
+    .readFileSync(path.join(newPath, ".holaboss", "workspace_id"), "utf-8")
+    .trim();
+  assert.equal(identity, "ws-r");
+  store.close();
+});
+
+test("relocateWorkspace accepts a directory that already has a matching identity file", () => {
+  const root = makeTempDir("hb-state-store-");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const movedPath = path.join(customRoot, "moved");
+  // Pre-seed the folder as if the user moved a workspace dir here.
+  fs.mkdirSync(path.join(movedPath, ".holaboss"), { recursive: true });
+  fs.writeFileSync(path.join(movedPath, ".holaboss", "workspace_id"), "ws-moved");
+  fs.writeFileSync(path.join(movedPath, "AGENTS.md"), "preserved");
+
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({ workspaceId: "ws-moved", name: "M", harness: "pi" });
+
+  store.relocateWorkspace("ws-moved", movedPath);
+
+  // Pre-existing content is preserved (we don't wipe).
+  assert.equal(fs.readFileSync(path.join(movedPath, "AGENTS.md"), "utf-8"), "preserved");
+  assert.equal(path.resolve(store.workspaceDir("ws-moved")), path.resolve(movedPath));
+  store.close();
+});
+
+test("relocateWorkspace rejects a non-empty directory without matching identity", () => {
+  const root = makeTempDir("hb-state-store-");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const dirtyPath = path.join(customRoot, "dirty");
+  fs.mkdirSync(dirtyPath, { recursive: true });
+  fs.writeFileSync(path.join(dirtyPath, "someone-elses-file.txt"), "not mine");
+
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({ workspaceId: "ws-x", name: "X", harness: "pi" });
+
+  assert.throws(
+    () => store.relocateWorkspace("ws-x", dirtyPath),
+    /must be empty/
+  );
+  store.close();
+});
+
+test("relocateWorkspace rejects a path that overlaps another workspace", () => {
+  const root = makeTempDir("hb-state-store-");
+  const customRoot = makeTempDir("hb-custom-ws-");
+  const usedPath = path.join(customRoot, "used");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "ws-a",
+    name: "A",
+    harness: "pi",
+    workspacePath: usedPath
+  });
+  store.createWorkspace({ workspaceId: "ws-b", name: "B", harness: "pi" });
+
+  assert.throws(
+    () => store.relocateWorkspace("ws-b", usedPath),
+    /already registered/
+  );
+  store.close();
+});
+
 test("runtime schema migrates workspace rows to registry and identity file", () => {
   const root = makeTempDir("hb-state-store-");
   const dbPath = path.join(root, "runtime.db");
@@ -675,6 +994,54 @@ test("claimInputs can select at most one queued input per session", () => {
     claimed.map((record) => record.sessionId),
     ["session-one", "session-two"]
   );
+  store.close();
+});
+
+test("claimInputs skips queued work for sessions that already have a live claimed input", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const active = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-one",
+    payload: { text: "session-one-active" },
+    priority: 5
+  });
+  const blocked = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-one",
+    payload: { text: "session-one-blocked" },
+    priority: 4
+  });
+  const available = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-two",
+    payload: { text: "session-two" },
+    priority: 3
+  });
+
+  const firstClaim = store.claimInputs({
+    limit: 1,
+    claimedBy: "worker-1",
+    leaseSeconds: 300
+  });
+  assert.equal(firstClaim.length, 1);
+  assert.equal(firstClaim[0]?.inputId, active.inputId);
+
+  const secondClaim = store.claimInputs({
+    limit: 2,
+    claimedBy: "worker-2",
+    leaseSeconds: 300
+  });
+  assert.deepEqual(
+    secondClaim.map((record) => record.inputId),
+    [available.inputId]
+  );
+  assert.equal(store.getInput(blocked.inputId)?.status, "QUEUED");
+
   store.close();
 });
 

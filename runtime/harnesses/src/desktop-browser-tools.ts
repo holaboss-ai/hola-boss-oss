@@ -3,6 +3,7 @@ export const DESKTOP_BROWSER_TOOL_IDS = [
   "browser_open_tab",
   "browser_get_state",
   "browser_click",
+  "browser_context_click",
   "browser_type",
   "browser_press",
   "browser_scroll",
@@ -58,7 +59,7 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   {
     id: "browser_get_state",
     description:
-      "Read the current desktop browser page, visible interactive elements, and optional screenshot. Prefer this as the DOM-first browser inspection tool for actions and structured extraction. By default it returns a compact state snapshot; set include_page_text=true only when you need the current page text, and set include_screenshot=true when visual appearance, layout, prominence, overlays, canvas/chart/PDF content, or user-visible confirmation matters, or when DOM signals are ambiguous or unreliable.",
+      "Read the current desktop browser page, visible interactive elements, visible media such as images, and optional screenshot. Prefer this as the DOM-first browser inspection tool for actions and structured extraction. By default it returns a compact state snapshot; set include_page_text=true only when you need the current page text, and set include_screenshot=true when visual appearance, layout, prominence, overlays, canvas/chart/PDF content, or user-visible confirmation matters, or when DOM signals are ambiguous or unreliable.",
     policy: "inspect",
     session_scope: "workspace_session_only",
     input_schema: {
@@ -82,6 +83,22 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
       required: ["index"],
       properties: {
         index: { type: "integer", minimum: 1 },
+      },
+    },
+  },
+  {
+    id: "browser_context_click",
+    description:
+      "Open the native browser context menu on an interactive element or visible media item from browser_get_state by index. Use target=`media` for images and other visible media content.",
+    policy: "mutate",
+    session_scope: "workspace_session_only",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["index"],
+      properties: {
+        index: { type: "integer", minimum: 1 },
+        target: { type: "string", enum: ["element", "media"] },
       },
     },
   },

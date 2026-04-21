@@ -329,7 +329,7 @@ test("session checkpoint merges snapshot compaction into a live session that onl
   }
 });
 
-test("session checkpoint re-resolves model client auth instead of using redacted snapshot credentials", async () => {
+test("session checkpoint re-resolves model client auth while preserving snapshot proxy context headers", async () => {
   const { store, root } = makeStore("hb-session-checkpoint-auth-");
   const sessions = new Map<string, FakeSessionState>();
   const sessionOps = createFakeSessionOps(sessions);
@@ -388,12 +388,20 @@ test("session checkpoint re-resolves model client auth instead of using redacted
           workspace_id: workspace.id,
           session_id: "session-auth",
           input_id: "input-auth",
-          provider_id: "openai_codex",
+          provider_id: "openai",
           model_id: "gpt-5.4",
           model_client: {
             api_key: "[redacted]",
-            base_url: "https://chatgpt.com/backend-api/codex",
-            default_headers: null,
+            base_url: "http://127.0.0.1:3060/api/v1/model-proxy/openai/v1",
+            default_headers: {
+              "X-API-Key": "[redacted]",
+              "X-Holaboss-User-Id": "user-auth",
+              "X-Holaboss-Sandbox-Id": "sandbox-auth",
+              "X-Holaboss-Workspace-Id": workspace.id,
+              "X-Holaboss-Session-Id": "session-auth",
+              "X-Holaboss-Input-Id": "input-auth",
+              "X-Holaboss-Run-Id": `${workspace.id}:session-auth:input-auth`,
+            },
           },
         },
       },
@@ -421,15 +429,15 @@ test("session checkpoint re-resolves model client auth instead of using redacted
       record: queued!,
       sessionOps,
       resolveRuntimeModelClientFn: () => ({
-        providerId: "openai_codex",
-        configuredProviderId: "openai_codex",
+        providerId: "openai",
+        configuredProviderId: "holaboss_model_proxy",
         modelId: "gpt-5.4",
-        modelToken: "openai_codex/gpt-5.4",
+        modelToken: "openai/gpt-5.4",
         modelProxyProvider: "openai_compatible",
         modelClient: {
           model_proxy_provider: "openai_compatible",
-          api_key: "real-codex-access-token",
-          base_url: "https://chatgpt.com/backend-api/codex",
+          api_key: "real-proxy-token",
+          base_url: "http://127.0.0.1:3060/api/v1/model-proxy/openai/v1",
           default_headers: null,
         },
       }),
@@ -458,10 +466,22 @@ test("session checkpoint re-resolves model client auth instead of using redacted
     assert.ok(observedRequest);
     const observedRequestRecord = observedRequest as Record<string, unknown>;
     const observedModelClient =
-      "model_client" in observedRequestRecord
-        ? (observedRequestRecord.model_client as { api_key?: string } | undefined)
+      "model_client" in observedRequestRecord && observedRequestRecord.model_client
+        ? (observedRequestRecord.model_client as {
+            api_key?: string;
+            default_headers?: Record<string, string> | null;
+          })
         : undefined;
-    assert.equal(observedModelClient?.api_key, "real-codex-access-token");
+    assert.equal(observedModelClient?.api_key, "real-proxy-token");
+    assert.deepEqual(observedModelClient?.default_headers, {
+      "X-API-Key": "real-proxy-token",
+      "X-Holaboss-User-Id": "user-auth",
+      "X-Holaboss-Sandbox-Id": "sandbox-auth",
+      "X-Holaboss-Workspace-Id": workspace.id,
+      "X-Holaboss-Session-Id": "session-auth",
+      "X-Holaboss-Input-Id": "input-auth",
+      "X-Holaboss-Run-Id": `${workspace.id}:session-auth:input-auth`,
+    });
 
     const updatedJob = store.getPostRunJob(queued!.jobId);
     assert.equal(

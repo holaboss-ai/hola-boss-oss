@@ -27,6 +27,7 @@ import type { ResourceDiagnostic } from "@mariozechner/pi-coding-agent";
 import { APIError as OpenAIApiError } from "openai";
 import ExcelJS from "exceljs";
 import { createCallResult, createRuntime, type Runtime as McporterRuntime, type ServerDefinition, type ServerToolInfo } from "mcporter";
+import { MODELS } from "../node_modules/@mariozechner/pi-ai/dist/models.generated.js";
 
 import type {
   HarnessHostInputAttachmentPayload,
@@ -79,7 +80,7 @@ type PiInternalCompactionSession = {
   _checkCompaction?: (assistantMessage: unknown, skipAbortedCheck?: boolean) => Promise<void>;
 };
 
-type PiCompactionDiagnosticsSession = AgentSession & {
+type PiCompactionDiagnosticsSession = {
   sessionManager?: {
     getBranch?: () => unknown[];
     getLeafId?: () => string | null;
@@ -95,6 +96,15 @@ type PiCompactionDiagnosticsSession = AgentSession & {
   getContextUsage?: () => unknown;
   subscribe?: (listener: (event: AgentSessionEvent) => void) => (() => void) | void;
 };
+
+type PiSnapshotPostRunCompactionSession = PiCompactionDiagnosticsSession &
+  PiInternalCompactionSession & {
+    agent?: {
+      continue?: () => Promise<void>;
+      hasQueuedMessages?: () => boolean;
+    };
+    messages?: unknown[];
+  };
 
 type PiPrepareCompactionResult = {
   firstKeptEntryId?: unknown;
@@ -129,6 +139,18 @@ const PI_MAX_INLINE_IMAGE_BYTES = 10 * 1024 * 1024;
 const PI_MAX_INLINE_TEXT_BYTES = 128 * 1024;
 const PI_MAX_EXTRACTED_TEXT_CHARS = 120_000;
 const PI_MCP_DISCOVERY_RETRY_INTERVAL_MS = 250;
+const PI_FALLBACK_CONTEXT_WINDOW = 65_536;
+const PI_FALLBACK_MAX_TOKENS = 8_192;
+
+type PiModelBudget = {
+  contextWindow: number;
+  maxTokens: number;
+};
+
+const PI_MODEL_CATALOG = MODELS as Record<
+  string,
+  Record<string, { contextWindow?: unknown; maxTokens?: unknown }>
+>;
 const PI_MCP_DISCOVERY_MAX_WAIT_MS = 10000;
 const PI_TODO_STATE_DIR = "todos";
 const PI_TODO_STATE_VERSION = 2;
@@ -605,6 +627,21 @@ function inlineImageAttachment(request: HarnessHostPiRequest, attachment: PiAtta
   };
 }
 
+function runtimeContextMessagesBlock(request: HarnessHostPiRequest): string {
+  const messages = Array.isArray(request.context_messages)
+    ? request.context_messages.map((message) => message.trim()).filter(Boolean)
+    : [];
+  if (messages.length === 0) {
+    return "";
+  }
+  return [
+    "Runtime context:",
+    ...messages.map((message, index) =>
+      [`[Runtime Context ${index + 1}]`, message, `[/Runtime Context ${index + 1}]`].join("\n")
+    ),
+  ].join("\n\n");
+}
+
 export async function buildPiPromptPayload(request: HarnessHostPiRequest): Promise<PiPromptPayload> {
   const sections: string[] = [];
   const imageLines: string[] = [];
@@ -631,6 +668,11 @@ export async function buildPiPromptPayload(request: HarnessHostPiRequest): Promi
   const instruction = quotedSkills.body.trim();
   if (instruction) {
     sections.push(instruction);
+  }
+
+  const runtimeContextBlock = runtimeContextMessagesBlock(request);
+  if (runtimeContextBlock) {
+    sections.push(runtimeContextBlock);
   }
 
   for (const attachment of attachments) {
@@ -1029,6 +1071,90 @@ function summarizePiCompactionError(
         : null,
     compaction_end: compactionEnd,
   };
+}
+
+function latestCompactionId(session: PiCompactionDiagnosticsSession): string | null {
+  const branch = session.sessionManager?.getBranch?.();
+  if (!Array.isArray(branch)) {
+    return null;
+  }
+  return optionalTrimmedString(latestCompactionBranchEntry(branch)?.id);
+}
+
+function compactionResultFromBranchEntry(entry: Record<string, unknown> | null): JsonObject | null {
+  if (!entry) {
+    return null;
+  }
+  const summary = optionalTrimmedString(entry.summary);
+  const firstKeptEntryId = optionalTrimmedString(entry.firstKeptEntryId);
+  const tokensBefore = finiteNumberOrNull(entry.tokensBefore);
+  if (!summary || !firstKeptEntryId || tokensBefore === null) {
+    return null;
+  }
+  return {
+    summary,
+    firstKeptEntryId,
+    tokensBefore,
+    details: isRecord(entry.details) ? jsonObject(entry.details) : jsonValue(entry.details),
+  };
+}
+
+function findLastAssistantMessage(session: PiSnapshotPostRunCompactionSession): unknown | null {
+  const messages = Array.isArray(session.messages) ? session.messages : [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (isRecord(message) && message.role === "assistant") {
+      return message;
+    }
+  }
+  return null;
+}
+
+function suppressSnapshotCompactionContinuation(session: PiSnapshotPostRunCompactionSession): void {
+  if (!session.agent) {
+    return;
+  }
+  session.agent.continue = async () => {};
+  session.agent.hasQueuedMessages = () => false;
+}
+
+type SnapshotPostRunMaintenanceOutcome =
+  | { kind: "unsupported" }
+  | { kind: "compacted"; result: JsonObject }
+  | { kind: "not_compacted"; reason: string | null }
+  | { kind: "error"; error: unknown };
+
+async function runSnapshotPostRunMaintenanceCompaction(
+  session: PiSnapshotPostRunCompactionSession,
+): Promise<SnapshotPostRunMaintenanceOutcome> {
+  if (typeof session._checkCompaction !== "function") {
+    return { kind: "unsupported" };
+  }
+  const lastAssistant = findLastAssistantMessage(session);
+  if (!lastAssistant) {
+    return { kind: "not_compacted", reason: "not_needed" };
+  }
+  const beforeCompactionId = latestCompactionId(session);
+  suppressSnapshotCompactionContinuation(session);
+  try {
+    await session._checkCompaction.call(session, lastAssistant);
+  } catch (error) {
+    return { kind: "error", error };
+  }
+  const branch = session.sessionManager?.getBranch?.();
+  const latestCompaction = Array.isArray(branch) ? latestCompactionBranchEntry(branch) : null;
+  const afterCompactionId = optionalTrimmedString(latestCompaction?.id);
+  if (!afterCompactionId || afterCompactionId === beforeCompactionId) {
+    return { kind: "not_compacted", reason: "not_needed" };
+  }
+  const result = compactionResultFromBranchEntry(latestCompaction);
+  if (!result) {
+    return {
+      kind: "error",
+      error: new Error("Snapshot post-run compaction appended an invalid compaction entry"),
+    };
+  }
+  return { kind: "compacted", result };
 }
 
 function stringRecord(value: unknown): Record<string, string> {
@@ -3657,6 +3783,23 @@ function shouldUseOpenAiResponsesProvider(request: HarnessHostPiRequest): boolea
   return isOpenAiGpt5Model(normalizedPiModelId(request));
 }
 
+function configurePiPromptCacheRetention(request: HarnessHostPiRequest): () => void {
+  if (!shouldUseOpenAiResponsesProvider(request)) {
+    return () => {};
+  }
+  const previousValue = process.env.PI_CACHE_RETENTION;
+  // Keep the override scoped to the harness session so PI's internal
+  // compaction/summarization requests inherit long cache retention.
+  process.env.PI_CACHE_RETENTION = "long";
+  return () => {
+    if (previousValue === undefined) {
+      delete process.env.PI_CACHE_RETENTION;
+      return;
+    }
+    process.env.PI_CACHE_RETENTION = previousValue;
+  };
+}
+
 function piGoogleGenerativeAiBaseUrlForRequest(request: HarnessHostPiRequest): string {
   const baseUrl = firstNonEmptyString(request.model_client.base_url);
   const normalized = baseUrl ? baseUrl.replace(/\/+$/, "") : "";
@@ -3890,6 +4033,173 @@ export function requestedPiThinkingConfig(
   };
 }
 
+function knownPiModelBudgetOverride(
+  request: Pick<HarnessHostPiRequest, "model_id">,
+  api: Api,
+): PiModelBudget | null {
+  const normalizedModelId = normalizedPiModelId(request);
+  if (api !== "openai-responses") {
+    return null;
+  }
+
+  switch (normalizedModelId) {
+    case "gpt-5.4":
+    case "gpt-5.4-pro":
+      return {
+        contextWindow: 1_050_000,
+        maxTokens: 128_000,
+      };
+    case "gpt-5.4-mini":
+    case "gpt-5.4-nano":
+      return {
+        contextWindow: 400_000,
+        maxTokens: 128_000,
+      };
+    default:
+      return null;
+  }
+}
+
+function piCatalogProviderCandidatesForRequest(
+  request: HarnessHostPiRequest,
+  api: Api,
+): string[] {
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  const push = (value: string | null | undefined) => {
+    const normalized = value?.trim().toLowerCase() ?? "";
+    if (!normalized || seen.has(normalized) || !(normalized in PI_MODEL_CATALOG)) {
+      return;
+    }
+    seen.add(normalized);
+    candidates.push(normalized);
+  };
+
+  const providerId = request.provider_id.trim().toLowerCase();
+  const modelProxyProvider = request.model_client.model_proxy_provider
+    .trim()
+    .toLowerCase();
+  const baseUrl = firstNonEmptyString(request.model_client.base_url)?.toLowerCase() ?? "";
+
+  push(providerId);
+  if (providerId.endsWith("_direct")) {
+    push(providerId.slice(0, -"_direct".length));
+  }
+  if (providerId === "gemini_direct") {
+    push("google");
+  }
+  if (providerId === "openai_codex") {
+    push("openai-codex");
+  }
+  if (providerId.includes("openrouter") || baseUrl.includes("openrouter.ai")) {
+    push("openrouter");
+  }
+
+  if (api === "openai-responses") {
+    push("openai");
+  }
+  if (api === "openai-codex-responses") {
+    push("openai-codex");
+  }
+  if (modelProxyProvider === "anthropic_native") {
+    push("anthropic");
+  }
+  if (modelProxyProvider === "google_compatible") {
+    push("google");
+  }
+
+  return candidates;
+}
+
+function piCatalogModelIdCandidates(
+  request: Pick<HarnessHostPiRequest, "model_id">,
+): string[] {
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  const push = (value: string | undefined) => {
+    const normalized = value?.trim();
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+    seen.add(normalized);
+    candidates.push(normalized);
+  };
+
+  push(request.model_id);
+  push(normalizedPiModelId(request));
+  return candidates;
+}
+
+function piModelBudgetFromCatalogEntry(entry: {
+  contextWindow?: unknown;
+  maxTokens?: unknown;
+} | null | undefined): PiModelBudget | null {
+  if (
+    typeof entry?.contextWindow !== "number" ||
+    !Number.isFinite(entry.contextWindow) ||
+    entry.contextWindow <= 0 ||
+    typeof entry.maxTokens !== "number" ||
+    !Number.isFinite(entry.maxTokens) ||
+    entry.maxTokens <= 0
+  ) {
+    return null;
+  }
+
+  return {
+    contextWindow: entry.contextWindow,
+    maxTokens: entry.maxTokens,
+  };
+}
+
+function piCatalogModelBudgetForRequest(
+  request: HarnessHostPiRequest,
+  api: Api,
+): PiModelBudget | null {
+  const providerCandidates = piCatalogProviderCandidatesForRequest(request, api);
+  const modelIdCandidates = piCatalogModelIdCandidates(request);
+
+  for (const provider of providerCandidates) {
+    for (const modelId of modelIdCandidates) {
+      const matched = piModelBudgetFromCatalogEntry(
+        PI_MODEL_CATALOG[provider]?.[modelId],
+      );
+      if (matched) {
+        return matched;
+      }
+    }
+  }
+
+  const globalMatches = new Map<string, PiModelBudget>();
+  for (const provider of Object.keys(PI_MODEL_CATALOG)) {
+    for (const modelId of modelIdCandidates) {
+      const matched = piModelBudgetFromCatalogEntry(
+        PI_MODEL_CATALOG[provider]?.[modelId],
+      );
+      if (!matched) {
+        continue;
+      }
+      globalMatches.set(`${matched.contextWindow}:${matched.maxTokens}`, matched);
+    }
+  }
+
+  return globalMatches.size === 1
+    ? Array.from(globalMatches.values())[0] ?? null
+    : null;
+}
+
+function resolvedPiModelBudgetForRequest(
+  request: HarnessHostPiRequest,
+  api: Api,
+): PiModelBudget {
+  return (
+    knownPiModelBudgetOverride(request, api) ??
+    piCatalogModelBudgetForRequest(request, api) ?? {
+      contextWindow: PI_FALLBACK_CONTEXT_WINDOW,
+      maxTokens: PI_FALLBACK_MAX_TOKENS,
+    }
+  );
+}
+
 export function buildPiProviderConfig(request: HarnessHostPiRequest) {
   const providerHeaders = isRecord(request.model_client.default_headers)
     ? Object.fromEntries(
@@ -3919,6 +4229,7 @@ export function buildPiProviderConfig(request: HarnessHostPiRequest) {
   const requestedCompat =
     api === "openai-completions" ? requestedPiOpenAiCompat(request) : undefined;
   const mergedCompat = mergePiOpenAiCompat(compat, requestedCompat);
+  const modelBudget = resolvedPiModelBudgetForRequest(request, api);
 
   return {
     baseUrl,
@@ -3940,8 +4251,8 @@ export function buildPiProviderConfig(request: HarnessHostPiRequest) {
           cacheRead: 0,
           cacheWrite: 0,
         },
-        contextWindow: 65536,
-        maxTokens: 8192,
+        contextWindow: modelBudget.contextWindow,
+        maxTokens: modelBudget.maxTokens,
         ...(mergedCompat ? { compat: mergedCompat } : {}),
       },
     ],
@@ -3986,6 +4297,7 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
         runtimeApiBaseUrl: request.runtime_api_base_url,
         workspaceId: request.workspace_id,
         sessionId: request.session_id,
+        space: request.browser_space ?? undefined,
       })
     : [];
   const resourceLoader = new DefaultResourceLoader({
@@ -4053,6 +4365,7 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     ...skillTools.map((tool) => wrapToolWithWorkspaceBoundary(tool, workspaceBoundaryPolicy)),
   ];
 
+  const restorePromptCacheRetention = configurePiPromptCacheRetention(request);
   let session: AgentSession;
   try {
     ({ session } = await createAgentSession({
@@ -4068,14 +4381,22 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
       customTools,
     }));
   } catch (error) {
+    restorePromptCacheRetention();
     await mcpToolset.runtime?.close();
     throw error;
   }
 
   const sessionFile = sessionManager.getSessionFile();
   if (!sessionFile) {
-    session.dispose();
-    await mcpToolset.runtime?.close();
+    try {
+      session.dispose();
+    } finally {
+      try {
+        await mcpToolset.runtime?.close();
+      } finally {
+        restorePromptCacheRetention();
+      }
+    }
     throw new Error("Pi session manager did not provide a persisted session file");
   }
 
@@ -4085,8 +4406,15 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     mcpToolMetadata: mcpToolset.mcpToolMetadata,
     skillMetadataByAlias,
     dispose: async () => {
-      session.dispose();
-      await mcpToolset.runtime?.close();
+      try {
+        session.dispose();
+      } finally {
+        try {
+          await mcpToolset.runtime?.close();
+        } finally {
+          restorePromptCacheRetention();
+        }
+      }
     },
   };
 }
@@ -4698,11 +5026,11 @@ export async function compactPiSession(
   deps: PiDeps = defaultPiDeps(),
 ): Promise<PiCompactionCommandResult> {
   const handle = await deps.createSession(request);
-  const session = handle.session as PiCompactionDiagnosticsSession;
+  const session = handle.session as unknown as PiSnapshotPostRunCompactionSession;
   const diagnostics = await collectPiCompactionDiagnostics(session);
   let compactionStart: JsonObject | null = null;
   let compactionEnd: JsonObject | null = null;
-  const unsubscribe = session.subscribe?.((event) => {
+  const unsubscribe = session.subscribe?.((event: AgentSessionEvent) => {
     if (event.type === "compaction_start") {
       compactionStart = summarizeCompactionEvent(event);
       return;
@@ -4712,6 +5040,68 @@ export async function compactPiSession(
     }
   });
   try {
+    const maintenanceResult = await runSnapshotPostRunMaintenanceCompaction(session);
+    if (maintenanceResult.kind === "compacted") {
+      return {
+        compacted: true,
+        session_file: handle.sessionFile,
+        result: maintenanceResult.result,
+        reason: null,
+        diagnostics: withCompactionEventDiagnostics(
+          diagnostics,
+          compactionStart,
+          compactionEnd,
+        ),
+        error: null,
+      };
+    }
+    if (maintenanceResult.kind === "not_compacted") {
+      const compactionErrorMessage = compactionEnd
+        ? optionalTrimmedString(compactionEnd["error_message"])
+        : null;
+      if (compactionErrorMessage) {
+        const error = new Error(compactionErrorMessage);
+        error.name = "PiSnapshotCompactionError";
+        return {
+          compacted: false,
+          session_file: handle.sessionFile,
+          result: null,
+          reason: null,
+          diagnostics: withCompactionEventDiagnostics(
+            diagnostics,
+            compactionStart,
+            compactionEnd,
+          ),
+          error: summarizePiCompactionError(error, compactionEnd),
+        };
+      }
+      return {
+        compacted: false,
+        session_file: handle.sessionFile,
+        result: null,
+        reason: maintenanceResult.reason,
+        diagnostics: withCompactionEventDiagnostics(
+          diagnostics,
+          compactionStart,
+          compactionEnd,
+        ),
+        error: null,
+      };
+    }
+    if (maintenanceResult.kind === "error") {
+      return {
+        compacted: false,
+        session_file: handle.sessionFile,
+        result: null,
+        reason: null,
+        diagnostics: withCompactionEventDiagnostics(
+          diagnostics,
+          compactionStart,
+          compactionEnd,
+        ),
+        error: summarizePiCompactionError(maintenanceResult.error, compactionEnd),
+      };
+    }
     const result = await handle.session.compact();
     return {
       compacted: true,
