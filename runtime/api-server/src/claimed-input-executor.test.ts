@@ -1326,6 +1326,114 @@ test("claimed input fails when runner becomes idle after run_started", async () 
   store.close();
 });
 
+test("claimed input stops without overwriting state after it loses its claim mid-run", async () => {
+  const store = makeStore("hb-claimed-input-claim-lost-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "hello" },
+  });
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      store.updateInput(queued.inputId, {
+        status: "FAILED",
+        claimedBy: null,
+        claimedUntil: null,
+      });
+      store.updateRuntimeState({
+        workspaceId: workspace.id,
+        sessionId: "session-main",
+        status: "ERROR",
+        currentInputId: null,
+        currentWorkerId: null,
+        leaseUntil: null,
+        heartbeatAt: null,
+        lastError: { message: "recovered elsewhere" },
+      });
+      store.appendOutputEvent({
+        workspaceId: workspace.id,
+        sessionId: "session-main",
+        inputId: queued.inputId,
+        sequence: 2,
+        eventType: "run_failed",
+        payload: {
+          type: "RuntimeError",
+          message: "recovered elsewhere",
+        },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 3,
+        event_type: "output_delta",
+        payload: { delta: "should not persist" },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "runner command aborted by caller",
+        returnCode: 130,
+        sawTerminal: false,
+        aborted: true,
+        abortReason:
+          typeof options.signal?.reason === "string"
+            ? options.signal.reason
+            : null,
+      };
+    },
+  });
+
+  const updated = store.getInput(queued.inputId);
+  const runtimeState = store.getRuntimeState({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+  });
+  const events = store.listOutputEvents({
+    sessionId: "session-main",
+    inputId: queued.inputId,
+  });
+  const messages = store.listSessionMessages({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+  });
+  const turnResult = store.getTurnResult({ inputId: queued.inputId });
+
+  assert.equal(updated?.status, "FAILED");
+  assert.equal(updated?.claimedBy, null);
+  assert.equal(runtimeState?.status, "ERROR");
+  assert.deepEqual(
+    events.map((event) => event.eventType),
+    ["run_started", "run_failed"],
+  );
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]?.id, `user-${queued.inputId}`);
+  assert.equal(turnResult, null);
+
+  store.close();
+});
+
 test("claimed input reports synthesized runner timeouts to Sentry", async () => {
   const store = makeStore("hb-claimed-input-sentry-timeout-");
   const workspace = store.createWorkspace({

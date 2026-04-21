@@ -39,7 +39,8 @@ import {
 
 import {
   type QueueWorkerLike,
-  RuntimeQueueWorker
+  RuntimeQueueWorker,
+  runtimeQueueWorkerClaimedBy,
 } from "./queue-worker.js";
 import {
   type DurableMemoryWorkerLike,
@@ -190,6 +191,7 @@ function resolveQueueWorker(
     logger: app.log,
     memoryService,
     wakeDurableMemoryWorker: durableMemoryWorker?.wake.bind(durableMemoryWorker) ?? null,
+    claimedBy: runtimeQueueWorkerClaimedBy(),
   });
 }
 

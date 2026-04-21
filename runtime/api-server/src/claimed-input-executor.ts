@@ -1097,11 +1097,35 @@ export async function processClaimedInput(params: {
   const { store, record } = params;
   const claimedBy =
     params.claimedBy ?? record.claimedBy ?? "sandbox-agent-ts-worker";
+  const shouldTrackClaimOwnership = record.status === "CLAIMED";
   const leaseSeconds = params.leaseSeconds ?? DEFAULT_CLAIM_LEASE_SECONDS;
   const turnStartedAt = new Date().toISOString();
+  const executionAbortController = new AbortController();
+  const forwardAbortSignal = () => {
+    if (executionAbortController.signal.aborted) {
+      return;
+    }
+    const reason =
+      typeof params.abortSignal?.reason === "string" &&
+      params.abortSignal.reason.trim()
+        ? params.abortSignal.reason.trim()
+        : "aborted";
+    executionAbortController.abort(reason);
+  };
+  if (params.abortSignal?.aborted) {
+    forwardAbortSignal();
+  } else {
+    params.abortSignal?.addEventListener("abort", forwardAbortSignal, {
+      once: true,
+    });
+  }
   const workspace = store.getWorkspace(record.workspaceId);
   if (!workspace) {
-    store.updateInput(record.inputId, { status: "FAILED" });
+    store.updateInput(record.inputId, {
+      status: "FAILED",
+      claimedBy: null,
+      claimedUntil: null,
+    });
     store.updateRuntimeState({
       workspaceId: record.workspaceId,
       sessionId: record.sessionId,
@@ -1163,25 +1187,83 @@ export async function processClaimedInput(params: {
     let activeLeaseUntil =
       record.claimedUntil ?? claimLeaseUntilIso(leaseSeconds);
     let lastClaimRenewalAtMs = 0;
+    let claimOwnershipLost = false;
     const EVENT_CLAIM_RENEWAL_MIN_INTERVAL_MS = 250;
+    const claimStillOwned = () => {
+      if (!shouldTrackClaimOwnership) {
+        return true;
+      }
+      const currentRecord = store.getInput(record.inputId);
+      return (
+        currentRecord?.status === "CLAIMED" &&
+        currentRecord.claimedBy === claimedBy
+      );
+    };
+    const markClaimOwnershipLost = (
+      source: "checkpoint" | "heartbeat" | "event",
+    ) => {
+      if (!shouldTrackClaimOwnership || claimOwnershipLost) {
+        return false;
+      }
+      claimOwnershipLost = true;
+      if (!executionAbortController.signal.aborted) {
+        executionAbortController.abort("claim_lost");
+      }
+      (params.captureRuntimeExceptionFn ?? captureRuntimeException)({
+        error: new Error("claimed input lost ownership during execution"),
+        level: "warning",
+        fingerprint: ["runtime", "claimed_input", "claim_lost", harness],
+        tags: {
+          surface: "claimed_input_executor",
+          failure_kind: "claim_lost",
+          harness,
+          session_kind: sessionKind,
+        },
+        contexts: {
+          claimed_input: {
+            workspace_id: record.workspaceId,
+            session_id: record.sessionId,
+            input_id: record.inputId,
+            run_id: runId,
+            harness_session_id: checkpointHarnessSessionId,
+            selected_model: selectedModel,
+          },
+        },
+        extras: {
+          source,
+          claimed_by: claimedBy,
+          claimed_until: store.getInput(record.inputId)?.claimedUntil ?? null,
+        },
+      });
+      return true;
+    };
     const renewClaimLeaseOnly = (source: "checkpoint" | "heartbeat" | "event") => {
       const nowMs = Date.now();
       if (
         source === "event" &&
         nowMs - lastClaimRenewalAtMs < EVENT_CLAIM_RENEWAL_MIN_INTERVAL_MS
       ) {
-        return;
+        if (shouldTrackClaimOwnership && !claimStillOwned()) {
+          markClaimOwnershipLost(source);
+          return false;
+        }
+        return !claimOwnershipLost;
       }
 
-      const renewedClaim = store.renewInputClaim({
-        inputId: record.inputId,
-        claimedBy,
-        leaseSeconds,
-      });
-      if (renewedClaim?.claimedUntil) {
+      if (shouldTrackClaimOwnership) {
+        const renewedClaim = store.renewInputClaim({
+          inputId: record.inputId,
+          claimedBy,
+          leaseSeconds,
+        });
+        if (!renewedClaim?.claimedUntil) {
+          markClaimOwnershipLost(source);
+          return false;
+        }
         activeLeaseUntil = renewedClaim.claimedUntil;
       }
       lastClaimRenewalAtMs = nowMs;
+      return !claimOwnershipLost;
     };
     await (
       params.waitForSessionCheckpointCompletionFn ??
@@ -1194,8 +1276,11 @@ export async function processClaimedInput(params: {
       renewLease: () => {
         renewClaimLeaseOnly("checkpoint");
       },
-      abortSignal: params.abortSignal,
+      abortSignal: executionAbortController.signal,
     });
+    if (claimOwnershipLost || !claimStillOwned()) {
+      return;
+    }
     const attachments = sessionInputAttachments(record.payload.attachments);
 
     const instruction = buildOnboardingInstruction({
@@ -1385,15 +1470,23 @@ export async function processClaimedInput(params: {
         source === "event" &&
         nowMs - lastClaimRenewalAtMs < EVENT_CLAIM_RENEWAL_MIN_INTERVAL_MS
       ) {
-        return;
+        if (shouldTrackClaimOwnership && !claimStillOwned()) {
+          markClaimOwnershipLost(source);
+          return false;
+        }
+        return !claimOwnershipLost;
       }
 
-      const renewedClaim = store.renewInputClaim({
-        inputId: record.inputId,
-        claimedBy,
-        leaseSeconds,
-      });
-      if (renewedClaim?.claimedUntil) {
+      if (shouldTrackClaimOwnership) {
+        const renewedClaim = store.renewInputClaim({
+          inputId: record.inputId,
+          claimedBy,
+          leaseSeconds,
+        });
+        if (!renewedClaim?.claimedUntil) {
+          markClaimOwnershipLost(source);
+          return false;
+        }
         activeLeaseUntil = renewedClaim.claimedUntil;
       }
       lastClaimRenewalAtMs = nowMs;
@@ -1406,18 +1499,21 @@ export async function processClaimedInput(params: {
         leaseUntil: activeLeaseUntil,
         lastError: null,
       });
+      return !claimOwnershipLost;
     };
 
     try {
       const executeRunner =
         params.executeRunnerRequestFn ?? executeRunnerRequest;
       const execution = await executeRunner(payload, {
-        signal: params.abortSignal,
+        signal: executionAbortController.signal,
         onHeartbeat: () => {
           renewClaimLease("heartbeat");
         },
         onEvent: async (event) => {
-          renewClaimLease("event");
+          if (!renewClaimLease("event")) {
+            return;
+          }
           const sequence =
             typeof event.sequence === "number" ? event.sequence : 0;
           lastSequence = Math.max(lastSequence, sequence);
@@ -1642,6 +1738,9 @@ export async function processClaimedInput(params: {
           }
         },
       });
+      if (claimOwnershipLost || !claimStillOwned()) {
+        return;
+      }
 
       const persistedTerminalEvent = latestPersistedTerminalOutputEvent({
         store,
@@ -1829,6 +1928,7 @@ export async function processClaimedInput(params: {
             : terminalStatus === "PAUSED"
               ? "PAUSED"
               : "DONE",
+        claimedBy: null,
         claimedUntil: null,
       });
       store.updateRuntimeState({
@@ -2031,9 +2131,17 @@ export async function processClaimedInput(params: {
         turnResult,
       });
     } catch (error) {
+      if (
+        claimOwnershipLost ||
+        executionAbortController.signal.reason === "claim_lost" ||
+        !claimStillOwned()
+      ) {
+        return;
+      }
       const message = error instanceof Error ? error.message : String(error);
       store.updateInput(record.inputId, {
         status: "FAILED",
+        claimedBy: null,
         claimedUntil: null,
       });
       store.appendOutputEvent({
@@ -2087,5 +2195,9 @@ export async function processClaimedInput(params: {
     }
   };
 
-  return await executeClaimedInput();
+  try {
+    return await executeClaimedInput();
+  } finally {
+    params.abortSignal?.removeEventListener("abort", forwardAbortSignal);
+  }
 }
