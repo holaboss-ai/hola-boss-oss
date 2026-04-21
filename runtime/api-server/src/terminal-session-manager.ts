@@ -14,6 +14,7 @@ import * as pty from "node-pty";
 
 import { buildRunnerEnv } from "./runner-worker.js";
 import { shellCommandInvocation } from "./runtime-shell.js";
+import type { RuntimeSentryCaptureOptions } from "./runtime-sentry.js";
 
 interface LoggerLike {
   info?(payload: unknown, message?: string): void;
@@ -26,6 +27,7 @@ interface LiveTerminalSession {
   ptyProcess: TerminalSessionPtyProcess;
   finalized: boolean;
   requestedClose: boolean;
+  closingForPersistenceFailure: boolean;
   lastKnownStatus: TerminalSessionStatus;
 }
 
@@ -62,6 +64,9 @@ export interface TerminalSessionManagerLike {
 export interface TerminalSessionManagerOptions {
   store: RuntimeStateStore;
   logger?: LoggerLike;
+  captureRuntimeException?: (
+    options: RuntimeSentryCaptureOptions,
+  ) => void;
   maxActiveSessions?: number;
   maxActiveSessionsPerWorkspace?: number;
   spawnImpl?: (
@@ -139,6 +144,14 @@ function requireTerminalSession(
   return record;
 }
 
+function terminalSessionFailureKind(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/database is locked/i.test(message)) {
+    return "sqlite_database_locked";
+  }
+  return "terminal_session_persistence_failed";
+}
+
 export class TerminalSessionManagerError extends Error {
   readonly statusCode: number;
   readonly code: string;
@@ -167,7 +180,7 @@ export class TerminalSessionManager implements TerminalSessionManagerLike {
       statuses: ["starting", "running"],
     });
     for (const session of staleSessions) {
-      const event = this.options.store.appendTerminalSessionEvent({
+      const event = this.appendTerminalSessionEventWithCapture({
         terminalId: session.terminalId,
         eventType: "exit",
         payload: {
@@ -178,8 +191,19 @@ export class TerminalSessionManager implements TerminalSessionManagerLike {
         status: "interrupted",
         exitCode: session.exitCode,
         endedAt: utcNowIso(),
+      }, {
+        surface: "startup_reconcile",
+        workspace_id: session.workspaceId,
+        session_id: session.sessionId,
+        input_id: session.inputId,
+        owner: session.owner,
+        title: session.title,
+        command: session.command,
+        cwd: session.cwd,
       });
-      this.emit(event);
+      if (event) {
+        this.emit(event);
+      }
     }
   }
 
@@ -293,20 +317,41 @@ export class TerminalSessionManager implements TerminalSessionManagerLike {
       ptyProcess,
       finalized: false,
       requestedClose: false,
+      closingForPersistenceFailure: false,
       lastKnownStatus: "running",
     };
     this.liveSessions.set(record.terminalId, live);
 
     ptyProcess.onData((data) => {
-      if (live.finalized) {
+      if (live.finalized || live.closingForPersistenceFailure) {
         return;
       }
-      const event = this.options.store.appendTerminalSessionEvent({
+      const event = this.appendTerminalSessionEventWithCapture({
         terminalId: record.terminalId,
         eventType: "output",
         payload: { data },
+      }, {
+        surface: "pty_data",
+        workspace_id: record.workspaceId,
+        session_id: record.sessionId,
+        input_id: record.inputId,
+        owner: record.owner,
+        title: record.title,
+        command: record.command,
+        cwd: record.cwd,
+        data_bytes: Buffer.byteLength(data),
       });
-      this.emit(event);
+      if (event) {
+        this.emit(event);
+        return;
+      }
+      live.closingForPersistenceFailure = true;
+      live.requestedClose = true;
+      try {
+        live.ptyProcess.kill();
+      } catch {
+        // ignore
+      }
     });
 
     ptyProcess.onExit(({ exitCode, signal }) => {
@@ -472,18 +517,72 @@ export class TerminalSessionManager implements TerminalSessionManagerLike {
     }
     live.finalized = true;
     this.liveSessions.delete(live.terminalId);
-    const event = this.options.store.appendTerminalSessionEvent({
+    const event = this.appendTerminalSessionEventWithCapture({
       terminalId: live.terminalId,
       eventType: params.eventType,
       payload: params.payload,
       status: params.status,
       exitCode: params.exitCode,
       endedAt: utcNowIso(),
+    }, {
+      surface: "pty_exit",
+      status: params.status,
+      requested_close: live.requestedClose,
+      closing_for_persistence_failure: live.closingForPersistenceFailure,
     });
-    this.emit(event);
+    if (event) {
+      this.emit(event);
+    }
   }
 
   private emit(event: TerminalSessionEventRecord): void {
     this.emitter.emit(eventChannel(event.terminalId), event);
+  }
+
+  private appendTerminalSessionEventWithCapture(
+    params: Parameters<RuntimeStateStore["appendTerminalSessionEvent"]>[0],
+    context: Record<string, unknown>,
+  ): TerminalSessionEventRecord | null {
+    try {
+      return this.options.store.appendTerminalSessionEvent(params);
+    } catch (error) {
+      const failureKind = terminalSessionFailureKind(error);
+      this.options.logger?.error?.(
+        {
+          terminalId: params.terminalId,
+          eventType: params.eventType,
+          failureKind,
+          err: error instanceof Error ? error.message : String(error),
+        },
+        "terminal session event persistence failed",
+      );
+      this.options.captureRuntimeException?.({
+        error,
+        level: "error",
+        tags: {
+          surface: "terminal_session_manager",
+          failure_kind: failureKind,
+          terminal_event_type: params.eventType,
+        },
+        fingerprint: [
+          "terminal-session-manager",
+          failureKind,
+          params.eventType,
+        ],
+        contexts: {
+          terminal_session: {
+            terminal_id: params.terminalId,
+            status: params.status ?? null,
+            exit_code: params.exitCode ?? null,
+            ended_at: params.endedAt ?? null,
+            ...context,
+          },
+        },
+        extras: {
+          payload: params.payload,
+        },
+      });
+      return null;
+    }
   }
 }

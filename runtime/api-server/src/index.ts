@@ -1,20 +1,66 @@
 import * as Sentry from "@sentry/node";
 import { setTimeout as sleep } from "node:timers/promises";
+import { buildRuntimeSentryDiagnostics } from "./runtime-sentry.js";
 
 Sentry.init({
   dsn: process.env.SENTRY_DSN,
   enabled: !!process.env.SENTRY_DSN,
+  enableLogs: !!process.env.SENTRY_DSN,
   release: process.env.HOLABOSS_RUNTIME_VERSION,
   environment: process.env.SENTRY_ENVIRONMENT ?? "production",
-  beforeSend(event) {
+  maxBreadcrumbs: 200,
+  integrations: [
+    Sentry.pinoIntegration({
+      log: {
+        levels: ["info", "warn", "error", "fatal"],
+      },
+      error: {
+        levels: ["error", "fatal"],
+        handled: true,
+      },
+    }),
+    Sentry.consoleLoggingIntegration({
+      levels: ["warn", "error"],
+    }),
+  ],
+  beforeSend(event, hint) {
     if (event.request?.headers) {
       delete event.request.headers["authorization"];
       delete event.request.headers["cookie"];
       delete event.request.headers["x-api-key"];
     }
+    const diagnostics = buildRuntimeSentryDiagnostics();
+    event.contexts = {
+      ...(event.contexts ?? {}),
+      ...diagnostics.contexts,
+    };
+    const attachments = diagnostics.attachments.map((attachment) => ({
+      filename: attachment.filename,
+      data: attachment.data,
+      contentType: attachment.contentType,
+    }));
+    if (hint && attachments.length > 0) {
+      hint.attachments = [...(hint.attachments ?? []), ...attachments];
+    }
     return event;
   },
 });
+
+Sentry.setTags({
+  runtime_surface:
+    process.env.HOLABOSS_EMBEDDED_RUNTIME === "1"
+      ? "desktop_embedded"
+      : "standalone",
+  runtime_workflow_backend:
+    process.env.HOLABOSS_RUNTIME_WORKFLOW_BACKEND ?? "unknown",
+});
+
+if (process.env.HOLABOSS_DESKTOP_LAUNCH_ID?.trim()) {
+  Sentry.setTag(
+    "desktop_launch_id",
+    process.env.HOLABOSS_DESKTOP_LAUNCH_ID.trim(),
+  );
+}
 
 import { buildRuntimeApiServer } from "./app.js";
 

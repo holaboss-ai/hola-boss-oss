@@ -82,6 +82,11 @@ test("runtime queue worker claims queued inputs and executes them in claim order
     store,
     executeClaimedInput: async (record) => {
       seen.push(record.inputId);
+      store.updateInput(record.inputId, {
+        status: "DONE",
+        claimedBy: null,
+        claimedUntil: null,
+      });
     }
   });
 
@@ -434,6 +439,145 @@ test("runtime queue worker recovers expired claimed input before processing fres
   assert.equal(staleEvents.at(-1)?.eventType, "run_failed");
   assert.ok(runtimeState);
   assert.equal(runtimeState.status, "IDLE");
+
+  store.close();
+});
+
+test("runtime queue worker recovers a stale claimed input from another worker before lease expiry", async () => {
+  const root = makeTempDir("hb-runtime-queue-worker-stale-owner-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const stale = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    payload: { text: "stale" }
+  });
+  const fresh = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    payload: { text: "fresh" }
+  });
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "worker-old",
+    leaseSeconds: 300
+  });
+  assert.equal(claimed[0]?.inputId, stale.inputId);
+  store.updateRuntimeState({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    status: "BUSY",
+    currentInputId: stale.inputId,
+    currentWorkerId: "worker-old",
+    leaseUntil: new Date(Date.now() + 300_000).toISOString(),
+    heartbeatAt: "2000-01-01T00:00:00.000Z",
+    lastError: null
+  });
+
+  const seen: string[] = [];
+  const worker = new RuntimeQueueWorker({
+    store,
+    claimedBy: "worker-new",
+    claimStaleHeartbeatMs: 1_000,
+    executeClaimedInput: async (record) => {
+      seen.push(record.inputId);
+      store.updateInput(record.inputId, {
+        status: "DONE",
+        claimedBy: null,
+        claimedUntil: null
+      });
+      store.updateRuntimeState({
+        workspaceId: record.workspaceId,
+        sessionId: record.sessionId,
+        status: "IDLE",
+        currentInputId: null,
+        currentWorkerId: null,
+        leaseUntil: null,
+        heartbeatAt: null,
+        lastError: null
+      });
+    }
+  });
+
+  const processed = await worker.processAvailableInputsOnce();
+  const staleUpdated = store.getInput(stale.inputId);
+  const freshUpdated = store.getInput(fresh.inputId);
+  const events = store.listOutputEvents({
+    sessionId: "session-main",
+    inputId: stale.inputId
+  });
+
+  assert.equal(processed, 2);
+  assert.deepEqual(seen, [fresh.inputId]);
+  assert.equal(staleUpdated?.status, "FAILED");
+  assert.equal(freshUpdated?.status, "DONE");
+  assert.equal(events.at(-1)?.eventType, "run_failed");
+  assert.match(String(events.at(-1)?.payload.message ?? ""), /abandoned/i);
+
+  store.close();
+});
+
+test("runtime queue worker does not recover a claimed input from another worker while its heartbeat is fresh", async () => {
+  const root = makeTempDir("hb-runtime-queue-worker-live-owner-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const active = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    payload: { text: "active" }
+  });
+  const blocked = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    payload: { text: "blocked" }
+  });
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "worker-old",
+    leaseSeconds: 300
+  });
+  assert.equal(claimed[0]?.inputId, active.inputId);
+  store.updateRuntimeState({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    status: "BUSY",
+    currentInputId: active.inputId,
+    currentWorkerId: "worker-old",
+    leaseUntil: new Date(Date.now() + 300_000).toISOString(),
+    heartbeatAt: new Date().toISOString(),
+    lastError: null
+  });
+
+  const worker = new RuntimeQueueWorker({
+    store,
+    claimedBy: "worker-new",
+    claimStaleHeartbeatMs: 1_000,
+    executeClaimedInput: async () => {
+      throw new Error("should not execute new work while another worker is still active");
+    }
+  });
+
+  const processed = await worker.processAvailableInputsOnce();
+
+  assert.equal(processed, 0);
+  assert.equal(store.getInput(active.inputId)?.status, "CLAIMED");
+  assert.equal(store.getInput(blocked.inputId)?.status, "QUEUED");
 
   store.close();
 });

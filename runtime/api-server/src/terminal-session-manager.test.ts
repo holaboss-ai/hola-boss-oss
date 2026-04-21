@@ -8,6 +8,7 @@ import { afterEach, test } from "node:test";
 import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
 import { TerminalSessionManager } from "./terminal-session-manager.js";
+import type { RuntimeSentryCaptureOptions } from "./runtime-sentry.js";
 
 const tempDirs: string[] = [];
 
@@ -235,6 +236,69 @@ test("terminal session manager reconciles stale running sessions on startup", as
   assert.equal(stale.status, "interrupted");
   assert.deepEqual(events.map((event) => event.eventType), ["exit"]);
   assert.equal(events[0]?.payload.reason, "runtime_restarted");
+
+  await manager.close();
+  store.close();
+});
+
+test("terminal session manager captures output persistence failures instead of crashing", async () => {
+  const root = makeTempDir("hb-terminal-session-manager-sentry-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace"),
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  fs.mkdirSync(workspaceDir(root, "workspace-1"), { recursive: true });
+
+  const appendTerminalSessionEvent = store.appendTerminalSessionEvent.bind(store);
+  store.appendTerminalSessionEvent = ((params) => {
+    if (params.eventType === "output") {
+      throw new Error("database is locked");
+    }
+    return appendTerminalSessionEvent(params);
+  }) as typeof store.appendTerminalSessionEvent;
+
+  let currentPty: FakePtyProcess | null = null;
+  const sentryCaptures: RuntimeSentryCaptureOptions[] = [];
+  const manager = new TerminalSessionManager({
+    store,
+    captureRuntimeException(capture) {
+      sentryCaptures.push(capture);
+    },
+    spawnImpl: () => {
+      currentPty = new FakePtyProcess();
+      return currentPty;
+    },
+  });
+  await manager.start();
+
+  const session = await manager.createSession({
+    workspaceId: "workspace-1",
+    command: testCommand(),
+  });
+
+  const ptyProcess = requirePty(currentPty);
+  assert.doesNotThrow(() => {
+    ptyProcess.emitData("terminal-ready\n");
+  });
+
+  await waitFor(() => manager.getSession({ terminalId: session.terminalId })?.status === "closed");
+
+  assert.equal(sentryCaptures.length, 1);
+  assert.equal(
+    sentryCaptures[0]?.tags?.failure_kind,
+    "sqlite_database_locked",
+  );
+  assert.equal(
+    sentryCaptures[0]?.tags?.terminal_event_type,
+    "output",
+  );
+  assert.equal(ptyProcess.killCalls[0], "SIGTERM");
 
   await manager.close();
   store.close();

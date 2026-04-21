@@ -1,6 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { type RuntimeStateStore, type SessionInputRecord, utcNowIso } from "@holaboss/runtime-state-store";
+import {
+  type RuntimeStateStore,
+  type SessionInputRecord,
+  type SessionRuntimeStateRecord,
+  utcNowIso,
+} from "@holaboss/runtime-state-store";
 
 import { processClaimedInput } from "./claimed-input-executor.js";
 import type { MemoryServiceLike } from "./memory.js";
@@ -11,6 +17,7 @@ const DEFAULT_CLAIMED_BY = "sandbox-agent-ts-worker";
 const DEFAULT_LEASE_SECONDS = 300;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_MAX_CONCURRENCY = 2;
+const DEFAULT_CLAIM_STALE_HEARTBEAT_MS = 20_000;
 const TERMINAL_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
 const SESSION_CHECKPOINT_JOB_TYPE = "session_checkpoint";
 
@@ -42,6 +49,7 @@ export interface RuntimeQueueWorkerOptions {
   leaseSeconds?: number;
   pollIntervalMs?: number;
   maxConcurrency?: number;
+  claimStaleHeartbeatMs?: number;
 }
 
 function queueWorkerMaxConcurrency(): number {
@@ -53,6 +61,35 @@ function queueWorkerMaxConcurrency(): number {
   return Math.max(1, parsed);
 }
 
+function queueWorkerClaimStaleHeartbeatMs(): number {
+  const raw = (process.env.HB_QUEUE_CLAIM_STALE_HEARTBEAT_MS ?? "").trim();
+  const parsed = raw
+    ? Number.parseInt(raw, 10)
+    : DEFAULT_CLAIM_STALE_HEARTBEAT_MS;
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_CLAIM_STALE_HEARTBEAT_MS;
+  }
+  return Math.max(1_000, parsed);
+}
+
+function isoTimeMs(value: string | null | undefined): number | null {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return null;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isExpiredIso(value: string | null | undefined, nowMs: number): boolean {
+  const valueMs = isoTimeMs(value);
+  return valueMs !== null && valueMs <= nowMs;
+}
+
+export function runtimeQueueWorkerClaimedBy(prefix = DEFAULT_CLAIMED_BY): string {
+  const normalized = prefix.trim() || DEFAULT_CLAIMED_BY;
+  return `${normalized}:${process.pid}:${randomUUID()}`;
+}
+
 export class RuntimeQueueWorker implements QueueWorkerLike {
   readonly #store: RuntimeStateStore;
   readonly #logger: RuntimeQueueWorkerOptions["logger"];
@@ -62,6 +99,7 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
   readonly #leaseSeconds: number;
   readonly #pollIntervalMs: number;
   readonly #maxConcurrency: number;
+  readonly #claimStaleHeartbeatMs: number;
   #stopped = false;
   #task: Promise<void> | null = null;
   #wakeResolver: (() => void) | null = null;
@@ -95,6 +133,8 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
     this.#leaseSeconds = options.leaseSeconds ?? DEFAULT_LEASE_SECONDS;
     this.#pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.#maxConcurrency = options.maxConcurrency ?? queueWorkerMaxConcurrency();
+    this.#claimStaleHeartbeatMs =
+      options.claimStaleHeartbeatMs ?? queueWorkerClaimStaleHeartbeatMs();
   }
 
   async start(): Promise<void> {
@@ -164,7 +204,7 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
   }
 
   async processAvailableInputsOnce(): Promise<number> {
-    const recovered = this.#recoverExpiredClaims();
+    const recovered = this.#recoverClaimedInputs();
     const availableSlots = Math.max(0, this.#maxConcurrency - this.#activeRuns.size);
     if (availableSlots === 0) {
       return recovered;
@@ -261,11 +301,23 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
     this.#activeRuns.set(record.inputId, { controller, record, promise });
   }
 
-  #recoverExpiredClaims(): number {
-    const expired = this.#store.listExpiredClaimedInputs();
-    for (const record of expired) {
+  #recoverClaimedInputs(): number {
+    const claimed = this.#store.listClaimedInputs();
+    const nowMs = Date.now();
+    const recoveredIds: string[] = [];
+
+    for (const record of claimed) {
       const activeRun = this.#activeRuns.get(record.inputId);
+      const runtimeState = this.#store.getRuntimeState({
+        workspaceId: record.workspaceId,
+        sessionId: record.sessionId,
+      });
+      const recovery = this.#claimRecovery(record, runtimeState, activeRun, nowMs);
+      if (!recovery) {
+        continue;
+      }
       const waitingForSessionCheckpoint =
+        recovery.failureKind === "claim_expired" &&
         Boolean(activeRun) &&
         this.#store.listPostRunJobs({
           workspaceId: record.workspaceId,
@@ -315,14 +367,12 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
       const hasTerminal = events.some((event) => TERMINAL_EVENT_TYPES.has(event.eventType));
       if (!hasTerminal) {
         this.#captureRuntimeException({
-          error: new Error(
-            "claimed input lease expired before the runner emitted a terminal event",
-          ),
-          level: "error",
-          fingerprint: ["runtime", "queue_worker", "claim_expired"],
+          error: new Error(recovery.message),
+          level: recovery.failureKind === "claim_expired" ? "error" : "warning",
+          fingerprint: ["runtime", "queue_worker", recovery.failureKind],
           tags: {
             surface: "queue_worker",
-            failure_kind: "claim_expired",
+            failure_kind: recovery.failureKind,
           },
           contexts: {
             claimed_input: {
@@ -334,13 +384,24 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
           extras: {
             active_run_present: Boolean(activeRun),
             output_event_count: events.length,
+            claimed_by: record.claimedBy,
+            claimed_until: record.claimedUntil,
+            runtime_state: runtimeState
+              ? {
+                  status: runtimeState.status,
+                  current_input_id: runtimeState.currentInputId,
+                  current_worker_id: runtimeState.currentWorkerId,
+                  lease_until: runtimeState.leaseUntil,
+                  heartbeat_at: runtimeState.heartbeatAt,
+                }
+              : null,
           },
         });
         const failure = buildRunFailedEvent({
           sessionId: record.sessionId,
           inputId: record.inputId,
           sequence: Math.max(0, ...events.map((event) => event.sequence)) + 1,
-          message: "claimed input lease expired before the runner emitted a terminal event",
+          message: recovery.message,
           errorType: "RuntimeError"
         });
         this.#store.appendOutputEvent({
@@ -359,11 +420,11 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
         claimedUntil: null
       });
 
-      const runtimeState = this.#store.getRuntimeState({
+      const runtimeStateAfterRecovery = this.#store.getRuntimeState({
         workspaceId: record.workspaceId,
         sessionId: record.sessionId
       });
-      if (runtimeState?.currentInputId === record.inputId) {
+      if (runtimeStateAfterRecovery?.currentInputId === record.inputId) {
         this.#store.updateRuntimeState({
           workspaceId: record.workspaceId,
           sessionId: record.sessionId,
@@ -372,17 +433,79 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
           currentWorkerId: null,
           leaseUntil: null,
           heartbeatAt: null,
-          lastError: { message: "claimed input lease expired before the runner emitted a terminal event" }
+          lastError: { message: recovery.message }
         });
       }
+      recoveredIds.push(record.inputId);
     }
-    if (expired.length > 0) {
-      this.#logger?.error?.("Recovered expired claimed runtime inputs", {
-        count: expired.length,
-        inputIds: expired.map((record) => record.inputId)
+    if (recoveredIds.length > 0) {
+      this.#logger?.error?.("Recovered stale claimed runtime inputs", {
+        count: recoveredIds.length,
+        inputIds: recoveredIds,
       });
     }
-    return expired.length;
+    return recoveredIds.length;
+  }
+
+  #claimRecovery(
+    record: SessionInputRecord,
+    runtimeState: SessionRuntimeStateRecord | null,
+    activeRun: { controller: AbortController; record: SessionInputRecord; promise: Promise<void> } | undefined,
+    nowMs: number,
+  ): { failureKind: "claim_expired" | "claim_abandoned"; message: string } | null {
+    const claimExpired = isExpiredIso(record.claimedUntil, nowMs);
+    if (claimExpired) {
+      const runtimeOwnsInput =
+        runtimeState?.currentInputId === record.inputId;
+      const runtimeOwnerId =
+        typeof runtimeState?.currentWorkerId === "string"
+          ? runtimeState.currentWorkerId.trim()
+          : "";
+      const heartbeatAtMs = isoTimeMs(runtimeState?.heartbeatAt);
+      const heartbeatFresh =
+        heartbeatAtMs !== null &&
+        nowMs - heartbeatAtMs <= this.#claimStaleHeartbeatMs;
+      if (
+        !activeRun &&
+        runtimeOwnsInput &&
+        runtimeOwnerId &&
+        runtimeOwnerId !== this.#claimedBy &&
+        heartbeatFresh
+      ) {
+        return null;
+      }
+      return {
+        failureKind: "claim_expired",
+        message:
+          "claimed input lease expired before the runner emitted a terminal event",
+      };
+    }
+
+    const runtimeOwnsInput =
+      runtimeState?.currentInputId === record.inputId;
+    const runtimeOwnerId =
+      typeof runtimeState?.currentWorkerId === "string"
+        ? runtimeState.currentWorkerId.trim()
+        : "";
+    const heartbeatAtMs = isoTimeMs(runtimeState?.heartbeatAt);
+    const heartbeatStale =
+      heartbeatAtMs !== null &&
+      nowMs - heartbeatAtMs > this.#claimStaleHeartbeatMs;
+    if (
+      !activeRun &&
+      runtimeOwnsInput &&
+      runtimeOwnerId &&
+      runtimeOwnerId !== this.#claimedBy &&
+      heartbeatStale
+    ) {
+      return {
+        failureKind: "claim_abandoned",
+        message:
+          "claimed input was abandoned by a stale worker before the runner emitted a terminal event",
+      };
+    }
+
+    return null;
   }
 
   #persistPausedQueuedInput(record: SessionInputRecord): void {

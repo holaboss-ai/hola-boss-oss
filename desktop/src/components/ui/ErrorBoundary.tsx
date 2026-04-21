@@ -26,6 +26,12 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error("[ErrorBoundary]", error, info.componentStack);
     Sentry.captureException(error, {
+      tags: {
+        surface: "renderer_error_boundary",
+      },
+      extra: {
+        page_url: window.location.href,
+      },
       contexts: { react: { componentStack: info.componentStack } },
     });
   }

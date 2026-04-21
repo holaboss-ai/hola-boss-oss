@@ -10,6 +10,7 @@ import {
 } from "./package_windows_runtime.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const buildRuntimeRootPath = path.join(__dirname, "build_runtime_root.mjs");
 const macosPackagerPath = path.join(__dirname, "package_macos_runtime.sh");
 const linuxPackagerPath = path.join(__dirname, "package_linux_runtime.sh");
 const windowsPackagerPath = path.join(__dirname, "package_windows_runtime.mjs");
@@ -73,4 +74,13 @@ test("package_windows_runtime.mjs writes launchers that use the bundled node run
   assert.match(cmdLauncherSource, /HOLABOSS_RUNTIME_TOOLCHAIN_ROOT/);
   assert.match(cmdLauncherSource, /node-runtime\\bin\\node\.exe/);
   assert.match(cmdLauncherSource, /sandbox-runtime\.mjs/);
+});
+
+test("build_runtime_root stages package-local scripts before npm ci", async () => {
+  const source = await readFile(buildRuntimeRootPath, "utf8");
+
+  assert.match(
+    source,
+    /copyIfPresent\(path\.join\(packageDir, "scripts"\), path\.join\(targetDir, "scripts"\)\);/,
+  );
 });

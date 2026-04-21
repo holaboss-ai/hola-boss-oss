@@ -605,6 +605,11 @@ test("runtime tools capability routes expose local onboarding and cronjob action
   assert.ok(
     capabilityStatus
       .json()
+      .tools.some((tool: { id: string }) => tool.id === "download_url")
+  );
+  assert.ok(
+    capabilityStatus
+      .json()
       .tools.some((tool: { id: string }) => tool.id === "write_report")
   );
   assert.ok(
@@ -672,6 +677,65 @@ test("runtime tools capability routes expose local onboarding and cronjob action
 
   await app.close();
   store.close();
+});
+
+test("runtime download_url tool saves a remote asset into the workspace", async () => {
+  const root = makeTempDir("hb-runtime-api-download-tools-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  fs.mkdirSync(path.join(workspaceRoot, "workspace-1"), { recursive: true });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const imageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02, 0x03]);
+  const assetServer = await startStaticHttpServer((request, response) => {
+    assert.equal(request.url, "/cover");
+    response.writeHead(200, {
+      "content-type": "image/png",
+      "content-disposition": 'inline; filename="cover.png"',
+    });
+    response.end(imageBytes);
+  });
+
+  try {
+    const download = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/downloads",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+      },
+      payload: {
+        url: `${assetServer.url}/cover`,
+        output_path: "assets/reference/cover",
+        expected_mime_prefix: "image/",
+      },
+    });
+
+    assert.equal(download.statusCode, 200);
+    assert.deepEqual(download.json(), {
+      file_path: "assets/reference/cover.png",
+      source_url: `${assetServer.url}/cover`,
+      final_url: `${assetServer.url}/cover`,
+      mime_type: "image/png",
+      size_bytes: imageBytes.length,
+    });
+    assert.deepEqual(
+      fs.readFileSync(path.join(workspaceRoot, "workspace-1", "assets/reference/cover.png")),
+      imageBytes,
+    );
+  } finally {
+    await assetServer.close();
+    await app.close();
+    store.close();
+  }
 });
 
 test("runtime terminal session tools proxy terminal session manager operations", async () => {

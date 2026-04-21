@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
+import { DESKTOP_BROWSER_TOOL_IDS } from "../../harnesses/src/desktop-browser-tools.js";
 import {
   listRuntimeHarnessAdapters,
   normalizeHarnessId,
@@ -95,20 +96,7 @@ test("requireRuntimeHarnessPlugin stages browser tools only for workspace sessio
     }),
     {
       changed: false,
-      toolIds: [
-        "browser_navigate",
-        "browser_open_tab",
-        "browser_get_state",
-        "browser_click",
-        "browser_type",
-        "browser_press",
-        "browser_scroll",
-        "browser_back",
-        "browser_forward",
-        "browser_reload",
-        "browser_screenshot",
-        "browser_list_tabs"
-      ]
+      toolIds: [...DESKTOP_BROWSER_TOOL_IDS]
     }
   );
   assert.deepEqual(
