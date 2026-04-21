@@ -20,7 +20,11 @@ import {
   resolveRuntimeHarnessAdapter,
   resolveRuntimeHarnessPlugin,
 } from "./harness-registry.js";
-import { captureRuntimeException } from "./runtime-sentry.js";
+import {
+  captureRuntimeException,
+  redactRuntimeSentryText,
+  redactRuntimeSentryValue,
+} from "./runtime-sentry.js";
 import type { MemoryServiceLike } from "./memory.js";
 import { createBackgroundTaskMemoryModelClient } from "./background-task-model.js";
 import {
@@ -46,6 +50,12 @@ const RUNTIME_EXEC_SANDBOX_ID_KEY = "sandbox_id";
 const RUNTIME_EXEC_RUN_ID_KEY = "run_id";
 const DEFAULT_CLAIM_LEASE_SECONDS = 300;
 const TERMINAL_OUTPUT_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
+const CLAIMED_INPUT_SENTRY_TEXT_LIMIT = 1200;
+const CLAIMED_INPUT_SENTRY_EVENT_PREVIEW_LIMIT = 400;
+const CLAIMED_INPUT_SENTRY_ARRAY_LIMIT = 10;
+const CLAIMED_INPUT_SENTRY_OBJECT_LIMIT = 20;
+const CLAIMED_INPUT_SENTRY_RECENT_EVENT_LIMIT = 8;
+const CLAIMED_INPUT_SENTRY_PERMISSION_DENIAL_LIMIT = 10;
 
 interface SessionInputAttachment {
   id: string;
@@ -54,6 +64,15 @@ interface SessionInputAttachment {
   mime_type: string;
   size_bytes: number;
   workspace_path: string;
+}
+
+interface RuntimeBindingSentryContextInput {
+  authToken: string;
+  userId: string;
+  sandboxId: string;
+  modelProxyBaseUrl: string;
+  defaultModel?: string;
+  defaultProvider?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -152,6 +171,35 @@ function claimedInputRunId(params: {
   return `${params.workspaceId}:${params.sessionId}:${params.inputId}`;
 }
 
+function runtimeBindingSentryContext(params: {
+  runtimeBinding: RuntimeBindingSentryContextInput;
+  runtimeExecContext?: Record<string, unknown> | null;
+}): Record<string, unknown> {
+  return {
+    user_id: nonEmptyString(params.runtimeBinding.userId),
+    sandbox_id: nonEmptyString(params.runtimeBinding.sandboxId),
+    model_proxy_base_url: nonEmptyString(
+      params.runtimeBinding.modelProxyBaseUrl,
+    ),
+    default_model: nonEmptyString(params.runtimeBinding.defaultModel),
+    default_provider: nonEmptyString(params.runtimeBinding.defaultProvider),
+    has_auth_token: Boolean(params.runtimeBinding.authToken.trim()),
+    exec_sandbox_id: params.runtimeExecContext
+      ? nonEmptyString(params.runtimeExecContext[RUNTIME_EXEC_SANDBOX_ID_KEY])
+      : null,
+    exec_run_id: params.runtimeExecContext
+      ? nonEmptyString(params.runtimeExecContext[RUNTIME_EXEC_RUN_ID_KEY])
+      : null,
+    has_exec_model_proxy_api_key: params.runtimeExecContext
+      ? Boolean(
+          nonEmptyString(
+            params.runtimeExecContext[RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY],
+          ),
+        )
+      : false,
+  };
+}
+
 function backendAgentRunsEndpoint(params: {
   workspaceId: string;
   modelProxyBaseUrl: string;
@@ -199,6 +247,7 @@ async function postWorkspaceAgentRunRequest(params: {
   fetchImpl?: typeof fetch;
   failureLabel: string;
   runId: string;
+  captureRuntimeExceptionFn?: typeof captureRuntimeException;
 }): Promise<void> {
   const authToken = params.runtimeBinding.authToken.trim();
   const userId = params.runtimeBinding.userId.trim();
@@ -236,11 +285,80 @@ async function postWorkspaceAgentRunRequest(params: {
       signal: controller.signal,
     });
     if (!response.ok) {
+      const responseBody = sanitizeRuntimeSentryValue(
+        await response.text().catch(() => ""),
+        "response_body",
+        CLAIMED_INPUT_SENTRY_EVENT_PREVIEW_LIMIT,
+      );
+      (params.captureRuntimeExceptionFn ?? captureRuntimeException)({
+        error: new Error(
+          `${params.failureLabel} failed with status ${response.status} for run ${params.runId}`,
+        ),
+        level: "error",
+        fingerprint: [
+          "runtime",
+          "claimed_input",
+          `backend_run_${params.pathSuffix}_registration`,
+          String(response.status),
+        ],
+        tags: {
+          surface: "claimed_input_executor",
+          failure_kind: `backend_run_${params.pathSuffix}_registration`,
+          backend_path: params.pathSuffix,
+          http_status: response.status,
+        },
+        contexts: {
+          agent_run_registration: {
+            workspace_id: params.workspaceId,
+            run_id: params.runId,
+            path_suffix: params.pathSuffix,
+            endpoint,
+          },
+          runtime_binding: runtimeBindingSentryContext({
+            runtimeBinding: params.runtimeBinding,
+          }),
+        },
+        extras: {
+          request_body: sanitizeRuntimeSentryValue(params.body),
+          response_body: responseBody,
+          timeout_ms: 2000,
+        },
+      });
       console.warn(
         `${params.failureLabel} failed with status ${response.status} for run ${params.runId}`,
       );
     }
   } catch (error) {
+    (params.captureRuntimeExceptionFn ?? captureRuntimeException)({
+      error,
+      level: "error",
+      fingerprint: [
+        "runtime",
+        "claimed_input",
+        `backend_run_${params.pathSuffix}_registration`,
+        "fetch_error",
+      ],
+      tags: {
+        surface: "claimed_input_executor",
+        failure_kind: `backend_run_${params.pathSuffix}_registration`,
+        backend_path: params.pathSuffix,
+      },
+      contexts: {
+        agent_run_registration: {
+          workspace_id: params.workspaceId,
+          run_id: params.runId,
+          path_suffix: params.pathSuffix,
+          endpoint,
+        },
+        runtime_binding: runtimeBindingSentryContext({
+          runtimeBinding: params.runtimeBinding,
+        }),
+      },
+      extras: {
+        request_body: sanitizeRuntimeSentryValue(params.body),
+        timeout_ms: 2000,
+      },
+    });
     console.warn(
       `${params.failureLabel} failed for run ${params.runId}`,
       error,
@@ -263,6 +381,7 @@ async function registerWorkspaceAgentRunStarted(params: {
     modelProxyBaseUrl: string;
   };
   fetchImpl?: typeof fetch;
+  captureRuntimeExceptionFn?: typeof captureRuntimeException;
 }): Promise<void> {
   await postWorkspaceAgentRunRequest({
     workspaceId: params.workspaceId,
@@ -277,6 +396,7 @@ async function registerWorkspaceAgentRunStarted(params: {
     fetchImpl: params.fetchImpl,
     failureLabel: "Backend run-start registration",
     runId: params.runId,
+    captureRuntimeExceptionFn: params.captureRuntimeExceptionFn,
   });
 }
 
@@ -296,6 +416,7 @@ async function registerWorkspaceAgentRunEvent(params: {
     modelProxyBaseUrl: string;
   };
   fetchImpl?: typeof fetch;
+  captureRuntimeExceptionFn?: typeof captureRuntimeException;
 }): Promise<void> {
   await postWorkspaceAgentRunRequest({
     workspaceId: params.workspaceId,
@@ -313,6 +434,7 @@ async function registerWorkspaceAgentRunEvent(params: {
     fetchImpl: params.fetchImpl,
     failureLabel: "Backend run-event registration",
     runId: params.runId,
+    captureRuntimeExceptionFn: params.captureRuntimeExceptionFn,
   });
 }
 
@@ -490,6 +612,53 @@ function payloadForEvent(event: RunnerEvent): Record<string, unknown> {
   return isRecord(event.payload) ? event.payload : {};
 }
 
+function truncateRuntimeSentryText(text: string, limit: number): string {
+  const redacted = redactRuntimeSentryText(text);
+  if (redacted.length <= limit) {
+    return redacted;
+  }
+  return `${redacted.slice(0, limit)}...[truncated ${redacted.length - limit} chars]`;
+}
+
+function sanitizeRuntimeSentryValue(
+  value: unknown,
+  keyName = "",
+  textLimit = CLAIMED_INPUT_SENTRY_TEXT_LIMIT,
+): unknown {
+  const redacted = redactRuntimeSentryValue(value, keyName);
+  if (typeof redacted === "string") {
+    return truncateRuntimeSentryText(redacted, textLimit);
+  }
+  if (Array.isArray(redacted)) {
+    const items = redacted
+      .slice(0, CLAIMED_INPUT_SENTRY_ARRAY_LIMIT)
+      .map((entry) => sanitizeRuntimeSentryValue(entry, "", textLimit));
+    if (redacted.length > CLAIMED_INPUT_SENTRY_ARRAY_LIMIT) {
+      items.push(
+        `[truncated ${redacted.length - CLAIMED_INPUT_SENTRY_ARRAY_LIMIT} items]`,
+      );
+    }
+    return items;
+  }
+  if (isRecord(redacted)) {
+    const entries = Object.entries(redacted);
+    const limitedEntries = entries
+      .slice(0, CLAIMED_INPUT_SENTRY_OBJECT_LIMIT)
+      .map(([key, entry]) => [
+        key,
+        sanitizeRuntimeSentryValue(entry, key, textLimit),
+      ]);
+    if (entries.length > CLAIMED_INPUT_SENTRY_OBJECT_LIMIT) {
+      limitedEntries.push([
+        "truncated_entries",
+        entries.length - CLAIMED_INPUT_SENTRY_OBJECT_LIMIT,
+      ]);
+    }
+    return Object.fromEntries(limitedEntries);
+  }
+  return redacted;
+}
+
 function stringList(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
@@ -627,6 +796,86 @@ function permissionDenialFromEventPayload(
     tool_id: typeof payload.tool_id === "string" ? payload.tool_id : null,
     reason: denialText,
   };
+}
+
+function normalizedFailureKindSegment(value: string): string {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return normalized || "unknown";
+}
+
+function terminalFailureKindFromPayload(
+  payload: Record<string, unknown>,
+): string {
+  const errorType = optionalString(payload.type);
+  if (errorType) {
+    return `terminal_${normalizedFailureKindSegment(errorType)}`;
+  }
+  const stopReason = optionalString(payload.stop_reason);
+  if (stopReason) {
+    return `terminal_${normalizedFailureKindSegment(stopReason)}`;
+  }
+  return "terminal_run_failed";
+}
+
+function summarizeRunnerEventForSentry(params: {
+  sequence: number;
+  eventType: string;
+  timestamp: string;
+  payload: Record<string, unknown>;
+}): Record<string, unknown> {
+  const summary: Record<string, unknown> = {
+    sequence: params.sequence,
+    event_type: params.eventType,
+    timestamp: params.timestamp,
+  };
+  if (params.eventType === "output_delta") {
+    const delta = optionalString(params.payload.delta);
+    summary.payload = {
+      delta_chars: typeof delta === "string" ? delta.length : 0,
+    };
+    return summary;
+  }
+
+  const payloadSummary: Record<string, unknown> = {};
+  for (const key of [
+    "type",
+    "status",
+    "message",
+    "error_message",
+    "stop_reason",
+    "source",
+    "phase",
+    "tool_name",
+    "tool_id",
+    "call_id",
+    "harness_session_id",
+  ]) {
+    if (!(key in params.payload)) {
+      continue;
+    }
+    payloadSummary[key] = sanitizeRuntimeSentryValue(
+      params.payload[key],
+      key,
+      CLAIMED_INPUT_SENTRY_EVENT_PREVIEW_LIMIT,
+    );
+  }
+  if (typeof params.payload.error === "boolean") {
+    payloadSummary.error = params.payload.error;
+  }
+  if (Object.keys(payloadSummary).length === 0 && Object.keys(params.payload).length > 0) {
+    payloadSummary.preview = truncateRuntimeSentryText(
+      JSON.stringify(sanitizeRuntimeSentryValue(params.payload)) ?? "{}",
+      CLAIMED_INPUT_SENTRY_EVENT_PREVIEW_LIMIT,
+    );
+  }
+  if (Object.keys(payloadSummary).length > 0) {
+    summary.payload = payloadSummary;
+  }
+  return summary;
 }
 
 function optionalString(value: unknown): string | null {
@@ -1357,6 +1606,7 @@ export async function processClaimedInput(params: {
       runId,
       selectedModel,
       runtimeBinding,
+      captureRuntimeExceptionFn: params.captureRuntimeExceptionFn,
     });
 
     const harnessTimeoutSeconds =
@@ -1374,10 +1624,15 @@ export async function processClaimedInput(params: {
       message: string,
       extra: Record<string, unknown> = {},
     ) => {
+      const sanitizedExtra = sanitizeRuntimeSentryValue(extra);
+      const sanitizedMessage = truncateRuntimeSentryText(
+        message,
+        CLAIMED_INPUT_SENTRY_EVENT_PREVIEW_LIMIT,
+      );
       (
         params.captureRuntimeExceptionFn ?? captureRuntimeException
       )({
-        error: new Error(message),
+        error: new Error(sanitizedMessage),
         level: "error",
         fingerprint: ["runtime", "claimed_input", failureKind, harness],
         tags: {
@@ -1395,11 +1650,32 @@ export async function processClaimedInput(params: {
             harness_session_id: checkpointHarnessSessionId,
             selected_model: selectedModel,
           },
+          runtime_binding: runtimeBindingSentryContext({
+            runtimeBinding,
+            runtimeExecContext: priorExecContext,
+          }),
         },
         extras: {
           last_sequence: lastSequence,
           harness_timeout_seconds: harnessTimeoutSeconds,
-          ...extra,
+          tool_usage_summary: sanitizeRuntimeSentryValue(
+            summarizeToolCalls(toolCallsById, skillInvocationsById, wideningAudit),
+          ),
+          permission_denials: sanitizeRuntimeSentryValue(
+            permissionDenials.slice(0, CLAIMED_INPUT_SENTRY_PERMISSION_DENIAL_LIMIT),
+          ),
+          prompt_section_ids: promptSectionIds,
+          capability_manifest_fingerprint: capabilityManifestFingerprint,
+          request_snapshot_fingerprint: requestSnapshotFingerprint,
+          prompt_cache_profile: sanitizeRuntimeSentryValue(promptCacheProfile),
+          assistant_excerpt: assistantParts.length
+            ? truncateRuntimeSentryText(
+                assistantParts.join("").trim(),
+                CLAIMED_INPUT_SENTRY_TEXT_LIMIT,
+              )
+            : null,
+          recent_runner_events: sanitizeRuntimeSentryValue(recentRunnerEvents),
+          ...(isRecord(sanitizedExtra) ? sanitizedExtra : {}),
         },
       });
     };
@@ -1451,11 +1727,13 @@ export async function processClaimedInput(params: {
     const skillInvocationsById = new Map<string, SkillInvocationSummaryEntry>();
     const wideningAudit = createSkillWideningAudit();
     const permissionDenials: Array<Record<string, unknown>> = [];
+    const recentRunnerEvents: Array<Record<string, unknown>> = [];
     let deferredTerminalEvent: {
       eventType: "run_completed" | "run_failed";
       payload: Record<string, unknown>;
       createdAt: string;
     } | null = null;
+    let terminalFailureCaptured = false;
     let workspaceFileManifestBefore: WorkspaceFileManifest | null = null;
 
     try {
@@ -1521,6 +1799,20 @@ export async function processClaimedInput(params: {
           const eventTimestamp = eventTimestampOrNow(event);
           const eventType =
             typeof event.event_type === "string" ? event.event_type : "unknown";
+          recentRunnerEvents.push(
+            summarizeRunnerEventForSentry({
+              sequence,
+              eventType,
+              timestamp: eventTimestamp,
+              payload: eventPayload,
+            }),
+          );
+          if (recentRunnerEvents.length > CLAIMED_INPUT_SENTRY_RECENT_EVENT_LIMIT) {
+            recentRunnerEvents.splice(
+              0,
+              recentRunnerEvents.length - CLAIMED_INPUT_SENTRY_RECENT_EVENT_LIMIT,
+            );
+          }
           const terminalHarnessSessionId = nonEmptyString(
             eventPayload.harness_session_id,
           );
@@ -1722,6 +2014,23 @@ export async function processClaimedInput(params: {
             });
             tokenUsage = tokenUsageFromPayload(eventPayload) ?? tokenUsage;
             contextUsage = contextUsageFromPayload(eventPayload) ?? contextUsage;
+            if (!terminalFailureCaptured) {
+              terminalFailureCaptured = true;
+              captureClaimedInputFailure(
+                terminalFailureKindFromPayload(eventPayload),
+                optionalString(eventPayload.message) ??
+                  optionalString(eventPayload.type) ??
+                  "runner emitted run_failed",
+                {
+                  failure_source: "terminal_event",
+                  terminal_status: "ERROR",
+                  terminal_stop_reason: stopReason,
+                  terminal_payload: sanitizeRuntimeSentryValue(eventPayload),
+                  event_sequence: sequence,
+                  event_timestamp: eventTimestamp,
+                },
+              );
+            }
           }
           if (event.event_type === "tool_call") {
             await relayRunEvent({
@@ -1734,6 +2043,7 @@ export async function processClaimedInput(params: {
               payload: eventPayload,
               timestamp: eventTimestamp,
               runtimeBinding,
+              captureRuntimeExceptionFn: params.captureRuntimeExceptionFn,
             });
           }
         },
@@ -1849,6 +2159,14 @@ export async function processClaimedInput(params: {
               : "runner_aborted",
             String(failurePayload.message ?? "runner aborted before terminal event"),
             {
+              failure_source: "synthetic_terminal_event",
+              terminal_status: "ERROR",
+              terminal_stop_reason: stopReasonForTerminalEvent({
+                eventType: "run_failed",
+                payload: failurePayload,
+                terminalStatus: "ERROR",
+              }),
+              terminal_payload: sanitizeRuntimeSentryValue(failurePayload),
               abort_reason: execution.abortReason,
               return_code: execution.returnCode,
               stderr: execution.stderr,
@@ -1905,6 +2223,14 @@ export async function processClaimedInput(params: {
             : "runner_missing_terminal",
           String(failurePayload.message ?? "runner ended before terminal event"),
           {
+            failure_source: "synthetic_terminal_event",
+            terminal_status: "ERROR",
+            terminal_stop_reason: stopReasonForTerminalEvent({
+              eventType: "run_failed",
+              payload: failurePayload,
+              terminalStatus: "ERROR",
+            }),
+            terminal_payload: sanitizeRuntimeSentryValue(failurePayload),
             return_code: execution.returnCode,
             stderr: execution.stderr,
             saw_terminal: execution.sawTerminal,
@@ -2083,6 +2409,7 @@ export async function processClaimedInput(params: {
           payload: relayPayload,
           timestamp: terminalEventToRelay.createdAt,
           runtimeBinding,
+          captureRuntimeExceptionFn: params.captureRuntimeExceptionFn,
         });
       }
       if (deferredTerminalEvent) {
