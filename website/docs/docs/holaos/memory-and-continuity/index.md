@@ -1,18 +1,19 @@
 # Memory and Continuity
 
-`holaOS` separates memory into three different jobs:
+`holaOS` separates three concerns that are easy to blur together:
 
-1. resume the current session safely
-2. remember durable facts, preferences, and identity
-3. keep workspace instructions stable and human-readable
+1. standing workspace policy
+2. runtime continuity for resuming active work
+3. durable memory for facts, procedures, preferences, and identity
 
-That split is deliberate. It prevents runtime state, long-term memory, and workspace policy from getting mixed together.
+That split is deliberate. It keeps runtime state, long-term memory, and workspace policy from getting mixed together.
 
-## The model at a glance
+## The current storage model
 
-`holaOS` currently treats memory as four layers:
+Today the runtime stores those concerns on different surfaces:
 
-- session continuity lives in runtime-owned artifacts such as `turn_results` and compaction boundaries in `state/runtime.db`
+- standing workspace policy lives in authored workspace files such as `AGENTS.md`
+- session continuity lives in runtime-owned artifacts such as `turn_results`, request snapshots, and occasional compaction boundaries in `state/runtime.db`
 - session-memory continuity projections live under `memory/workspace/<workspace-id>/runtime/session-memory/`
 - operational projections live under `memory/workspace/<workspace-id>/runtime/`, including the latest turn, session state, blockers, recent turns, and permission-blocker snapshots
 - durable recalled memory lives under `memory/workspace/<workspace-id>/knowledge/`, `memory/preference/`, and `memory/identity/`
@@ -25,7 +26,7 @@ The easiest way to think about the storage boundary is:
 
 | Layer | Purpose | Durable? |
 | --- | --- | --- |
-| `state/runtime.db` | execution truth, profile state, continuity boundaries | yes |
+| `state/runtime.db` | execution truth, profile state, continuity records | yes |
 | `memory/workspace/<workspace-id>/runtime/` | latest-turn projections, blockers, recent-turn snapshots | no |
 | `memory/workspace/<workspace-id>/runtime/session-memory/` | resume-friendly continuity snapshots | semi-volatile |
 | `memory/workspace/<workspace-id>/knowledge/` | workspace facts, procedures, blockers, reference memories | yes |
@@ -52,7 +53,7 @@ That is what keeps continuity inspectable without turning workspace policy or du
     title="Runtime Continuity"
     eyebrow="Resume Layer"
     href="/holaos/memory-and-continuity/runtime-continuity"
-    description="See how run artifacts, compaction boundaries, and session-memory snapshots let the next run resume cleanly."
+    description="See how run artifacts, session-memory snapshots, and compaction handoff artifacts help the next run resume cleanly."
   />
   <DocCard
     title="Durable Memory"

@@ -52,6 +52,10 @@ export default defineConfig({
             text: "Environment Engineering",
             link: "/holaos/environment-engineering",
           },
+          {
+            text: "Environment Engineering V2",
+            link: "/holaos/environment-engineering-v2",
+          },
           { text: "Concepts", link: "/holaos/concepts" },
           { text: "Workspace Model", link: "/holaos/workspace-model" },
           {

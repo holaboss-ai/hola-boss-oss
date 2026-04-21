@@ -1,10 +1,18 @@
 # holaOS Overview
 
-The overview now lives on the docs landing page.
+`holaOS` is the environment layer underneath Holaboss Desktop.
 
-Use [Overview](/) for the merged entry page, then continue with [Environment Engineering](/holaos/environment-engineering).
+It defines the durable operating context around a run: the workspace contract, runtime services, memory and continuity surfaces, capability boundaries, and the harness boundary the runtime controls.
 
-This section stays conceptual on purpose. It explains the environment model, layer boundaries, and durable system surfaces. When you need exact commands, payloads, routes, or source-file seams, continue into [Build on holaOS](/build-on-holaos/).
+This section stays conceptual on purpose. It explains what should remain stable across runs, what the runtime owns, and how the major layers fit together. When you need exact commands, payloads, routes, or source-file seams, continue into [Build on holaOS](/build-on-holaos/).
+
+Use [Overview](/) for the merged landing page. Use the pages in this section when you want the system model behind that landing-page summary.
+
+At a glance:
+
+- the workspace is the authored operating context for one workflow
+- the runtime owns continuity, recall, capability projection, and app orchestration around that workspace
+- the harness executes a prepared run inside that broader environment contract
 
 ## Read next
 
