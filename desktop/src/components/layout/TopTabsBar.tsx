@@ -95,7 +95,6 @@ export function TopTabsBar({
     deletingWorkspaceId,
     workspaceErrorMessage,
     deleteWorkspace,
-    runtimeStatus,
   } = useWorkspaceDesktop();
 
   const onDeleteWorkspace = async (workspace: WorkspaceRecordPayload) => {
@@ -367,20 +366,9 @@ export function TopTabsBar({
           <DropdownMenu>
             <DropdownMenuTrigger
               ref={userButtonRef}
-              render={<Button variant="outline" size="icon" className="relative rounded-lg" />}
+              render={<Button variant="outline" size="icon" className="rounded-lg" />}
             >
               <User2 />
-              <span
-                className={`absolute -right-0.5 -top-0.5 size-2 rounded-full ring-2 ring-background ${
-                  runtimeStatus?.status === "running"
-                    ? "bg-success"
-                    : runtimeStatus?.status === "starting"
-                      ? "animate-pulse bg-warning"
-                      : runtimeStatus?.status === "error"
-                        ? "bg-destructive"
-                        : "bg-muted-foreground/40"
-                }`}
-              />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" sideOffset={8} className="w-52">
               <DropdownMenuGroup>

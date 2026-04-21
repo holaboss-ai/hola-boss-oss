@@ -60,12 +60,69 @@ export function BillingSummaryCard({
   error = null,
   onRefresh,
 }: BillingSummaryCardProps) {
+  if (isLoading) {
+    return (
+      <section
+        role="status"
+        aria-busy="true"
+        aria-label="Loading billing summary"
+        className="rounded-xl border border-border/40 px-4 py-4"
+      >
+        {/* Header skeleton */}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="h-4 w-24 animate-pulse rounded bg-muted-foreground/20" />
+            <span className="h-5 w-20 animate-pulse rounded-full bg-muted-foreground/20" />
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            {onRefresh ? (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Refresh billing"
+                onClick={onRefresh}
+                disabled
+              >
+                <RefreshCw size={13} className="animate-spin" />
+              </Button>
+            ) : null}
+          </div>
+        </div>
+
+        {/* Stats grid skeleton */}
+        <div className="mt-4 border-t border-border/40 pt-4">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+            <div>
+              <span className="block h-6 w-16 animate-pulse rounded bg-muted-foreground/20" />
+              <span className="mt-1 block h-3 w-12 animate-pulse rounded bg-muted-foreground/20" />
+            </div>
+            <div className="text-right">
+              <span className="ml-auto block h-6 w-14 animate-pulse rounded bg-muted-foreground/20" />
+              <span className="mt-1 ml-auto block h-3 w-12 animate-pulse rounded bg-muted-foreground/20" />
+            </div>
+          </div>
+
+          {/* Bottom stats skeleton */}
+          <div className="mt-3 grid gap-1.5 border-t border-border/30 pt-3">
+            {[72, 56, 64].map((w) => (
+              <div key={w} className="flex items-center justify-between">
+                <span
+                  className="h-3 animate-pulse rounded bg-muted-foreground/20"
+                  style={{ width: `${w}px` }}
+                />
+                <span className="h-3 w-10 animate-pulse rounded bg-muted-foreground/20" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   const hasOverview = Boolean(overview);
-  const creditsValue = isLoading
-    ? "..."
-    : hasOverview
-      ? (overview?.creditsBalance ?? 0).toLocaleString()
-      : "—";
+  const creditsValue = hasOverview
+    ? (overview?.creditsBalance ?? 0).toLocaleString()
+    : "—";
 
   const timelineLabel = billingTimelineLabel(overview);
 
@@ -75,9 +132,9 @@ export function BillingSummaryCard({
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate text-sm font-semibold text-foreground">
-            {isLoading ? "Loading..." : overview?.planName || "Free"}
+            {overview?.planName || "Free"}
           </span>
-          {!isLoading && timelineLabel !== "Billing managed on web" ? (
+          {timelineLabel !== "Billing managed on web" ? (
             <Badge variant="outline" className="shrink-0 text-muted-foreground">
               {timelineLabel}
             </Badge>
@@ -91,39 +148,32 @@ export function BillingSummaryCard({
               size="icon-sm"
               aria-label="Refresh billing"
               onClick={onRefresh}
-              disabled={isLoading}
             >
-              <RefreshCw size={13} className={isLoading ? "animate-spin" : ""} />
+              <RefreshCw size={13} />
             </Button>
           ) : null}
-          {!isLoading ? (
-            <>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => openBillingLink(links?.billingPageUrl)}
-              >
-                Manage
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => openBillingLink(links?.addCreditsUrl)}
-              >
-                Add credits
-              </Button>
-            </>
-          ) : null}
+          <Button
+            variant="ghost"
+            onClick={() => openBillingLink(links?.billingPageUrl)}
+          >
+            Manage
+          </Button>
+          <Button
+            onClick={() => openBillingLink(links?.addCreditsUrl)}
+          >
+            Add credits
+          </Button>
         </div>
       </div>
 
       {error ? (
-        <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+        <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           {error.message}
         </div>
       ) : null}
 
-      {!isLoading && !hasOverview && !error ? (
-        <div className="mt-3 rounded-md border border-border/40 px-3 py-2 text-xs text-muted-foreground">
+      {!hasOverview && !error ? (
+        <div className="mt-3 rounded-md border border-border/40 px-3 py-2 text-sm text-muted-foreground">
           Sign in to view billing details.
         </div>
       ) : null}
@@ -134,7 +184,7 @@ export function BillingSummaryCard({
             <div className="text-lg font-semibold tabular-nums text-foreground">
               {creditsValue}
             </div>
-            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <div className="flex items-center gap-1 text-sm text-muted-foreground">
               <span>Credits</span>
               <Popover>
                 <PopoverTrigger
@@ -166,11 +216,11 @@ export function BillingSummaryCard({
             <div className="text-lg font-semibold tabular-nums text-foreground">
               {overview?.monthlyCreditsIncluded?.toLocaleString() ?? "—"}
             </div>
-            <div className="text-xs text-muted-foreground">Monthly</div>
+            <div className="text-sm text-muted-foreground">Monthly</div>
           </div>
         </div>
 
-        <div className="mt-3 grid gap-1.5 border-t border-border/30 pt-3 text-xs text-muted-foreground">
+        <div className="mt-3 grid gap-1.5 border-t border-border/30 pt-3 text-sm text-muted-foreground">
           <div className="flex items-center justify-between">
             <span>Total allocated</span>
             <span className="tabular-nums text-foreground">

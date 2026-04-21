@@ -1,4 +1,4 @@
-import { Loader2, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface CreditsPillProps {
@@ -14,6 +14,20 @@ export function CreditsPill({
   isLowBalance = false,
   onClick,
 }: CreditsPillProps) {
+  if (isLoading) {
+    return (
+      <div
+        role="status"
+        aria-busy="true"
+        aria-label="Loading credits balance"
+        className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border/55 px-2.5"
+      >
+        <span className="size-3 animate-pulse rounded-full bg-muted-foreground/20" />
+        <span className="h-3 w-10 animate-pulse rounded bg-muted-foreground/20" />
+      </div>
+    );
+  }
+
   return (
     <Button
       type="button"
@@ -27,13 +41,9 @@ export function CreditsPill({
       }`}
       aria-label="Open credits and billing details"
     >
-      {isLoading ? (
-        <Loader2 size={13} className="animate-spin" />
-      ) : (
-        <Sparkles size={13} className="opacity-80" />
-      )}
+      <Sparkles className="opacity-80" />
       <span className="font-medium tabular-nums">
-        {isLoading ? "..." : (balance ?? 0).toLocaleString()}
+        {(balance ?? 0).toLocaleString()}
       </span>
     </Button>
   );

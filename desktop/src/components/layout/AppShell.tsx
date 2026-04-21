@@ -4,6 +4,7 @@ import {
   OperationsInboxPane,
   type OperationsDrawerTab,
 } from "@/components/layout/OperationsDrawer";
+import { RuntimeStatusIndicator } from "@/components/layout/RuntimeStatusIndicator";
 import { SettingsDialog } from "@/components/layout/SettingsDialog";
 import { TopTabsBar } from "@/components/layout/TopTabsBar";
 import { WorkspaceAppsDialog } from "@/components/layout/WorkspaceAppsDialog";
@@ -348,7 +349,9 @@ function isPathWithin(parentPath: string, targetPath: string) {
 function buildReportedSurfaceFromInternalView(params: {
   owner: OperatorSurfaceOwner;
   active: boolean;
-  view: Extract<AgentView, { type: "internal" }> | Extract<SpaceDisplayView, { type: "internal" }>;
+  view:
+    | Extract<AgentView, { type: "internal" }>
+    | Extract<SpaceDisplayView, { type: "internal" }>;
 }): OperatorSurfacePayload | null {
   const resourceId = nonEmptySurfaceText(params.view.resourceId);
   const ownerLabel = params.owner === "user" ? "User" : "Agent";
@@ -391,7 +394,9 @@ function buildReportedSurfaceFromInternalView(params: {
 function buildReportedSurfaceFromAppView(params: {
   owner: OperatorSurfaceOwner;
   active: boolean;
-  view: Extract<AgentView, { type: "app" }> | Extract<SpaceDisplayView, { type: "app" }>;
+  view:
+    | Extract<AgentView, { type: "app" }>
+    | Extract<SpaceDisplayView, { type: "app" }>;
 }): OperatorSurfacePayload {
   const resourceId = nonEmptySurfaceText(params.view.resourceId);
   const routePath = nonEmptySurfaceText(params.view.path);
@@ -460,7 +465,8 @@ function buildReportedOperatorSurfaceContext(params: {
     return null;
   }
 
-  const activeSurface = surfaces.find((surface) => surface.active) ?? surfaces[0];
+  const activeSurface =
+    surfaces.find((surface) => surface.active) ?? surfaces[0];
   return {
     active_surface_id: activeSurface?.surface_id ?? null,
     surfaces,
@@ -586,8 +592,7 @@ function buildTaskProposalToastNotification(params: {
     cronjob_id: null,
     source_type: "task_proposal",
     source_label: "Task proposals",
-    title:
-      proposalCount === 1 ? "Task proposal ready" : "Task proposals ready",
+    title: proposalCount === 1 ? "Task proposal ready" : "Task proposals ready",
     message:
       proposalCount === 1
         ? `"${firstProposalName}" is ready to review in the inbox${workspaceQualifier}.`
@@ -1146,8 +1151,7 @@ function AppShellContent() {
   const [publishOpen, setPublishOpen] = useState(false);
   const [createWorkspacePanelOpen, setCreateWorkspacePanelOpen] =
     useState(false);
-  const [workspaceAppsDialogOpen, setWorkspaceAppsDialogOpen] =
-    useState(false);
+  const [workspaceAppsDialogOpen, setWorkspaceAppsDialogOpen] = useState(false);
   const [
     createWorkspacePanelAnchorWorkspaceId,
     setCreateWorkspacePanelAnchorWorkspaceId,
@@ -1161,10 +1165,15 @@ function AppShellContent() {
   } | null>(null);
   const [chatSessionOpenRequest, setChatSessionOpenRequest] =
     useState<ChatSessionOpenRequest | null>(null);
-  const [chatBrowserJumpRequestKeysBySessionId, setChatBrowserJumpRequestKeysBySessionId] =
-    useState<Record<string, number>>({});
-  const [chatComposerDraftTextByWorkspace, setChatComposerDraftTextByWorkspace] =
-    useState<Record<string, string>>({});
+  const [
+    chatBrowserJumpRequestKeysBySessionId,
+    setChatBrowserJumpRequestKeysBySessionId,
+  ] = useState<Record<string, number>>({});
+  const [browserDisplayFlashNonce, setBrowserDisplayFlashNonce] = useState(0);
+  const [
+    chatComposerDraftTextByWorkspace,
+    setChatComposerDraftTextByWorkspace,
+  ] = useState<Record<string, string>>({});
   const [chatComposerPrefillRequest, setChatComposerPrefillRequest] =
     useState<ChatComposerPrefillRequest | null>(null);
   const [chatExplorerAttachmentRequest, setChatExplorerAttachmentRequest] =
@@ -2130,8 +2139,17 @@ function AppShellContent() {
         .setActiveWorkspace(selectedWorkspaceId, "agent", normalizedSessionId)
         .catch(() => undefined);
       consumeChatBrowserJumpRequest(normalizedSessionId, requestKey);
+      setBrowserDisplayFlashNonce((current) => current + 1);
     },
     [consumeChatBrowserJumpRequest, revealBrowserPane, selectedWorkspaceId],
+  );
+
+  const hasPendingAgentJump = useMemo(
+    () =>
+      Object.values(chatBrowserJumpRequestKeysBySessionId).some(
+        (value) => value > 0,
+      ),
+    [chatBrowserJumpRequestKeysBySessionId],
   );
 
   const activeChatBrowserJumpRequest = useMemo(() => {
@@ -2805,36 +2823,36 @@ function AppShellContent() {
     [],
   );
 
-  const handleOpenAutomationRunSession = useCallback((
-    sessionId: string,
-    workspaceId?: string | null,
-  ) => {
-    const normalizedSessionId = sessionId.trim();
-    const normalizedWorkspaceId =
-      workspaceId?.trim() || selectedWorkspaceId?.trim() || "";
-    if (!normalizedSessionId) {
-      return;
-    }
-    if (!normalizedWorkspaceId) {
-      return;
-    }
+  const handleOpenAutomationRunSession = useCallback(
+    (sessionId: string, workspaceId?: string | null) => {
+      const normalizedSessionId = sessionId.trim();
+      const normalizedWorkspaceId =
+        workspaceId?.trim() || selectedWorkspaceId?.trim() || "";
+      if (!normalizedSessionId) {
+        return;
+      }
+      if (!normalizedWorkspaceId) {
+        return;
+      }
 
-    if (normalizedWorkspaceId !== (selectedWorkspaceId?.trim() || "")) {
-      setSelectedWorkspaceId(normalizedWorkspaceId);
-    }
+      if (normalizedWorkspaceId !== (selectedWorkspaceId?.trim() || "")) {
+        setSelectedWorkspaceId(normalizedWorkspaceId);
+      }
 
-    setActiveShellView("space");
-    setSpaceVisibility((previous) => ({
-      ...previous,
-      agent: true,
-    }));
-    setAgentView({ type: "chat" });
-    setChatSessionJumpRequest({
-      sessionId: normalizedSessionId,
-      requestKey: Date.now(),
-    });
-    setChatFocusRequestKey((current) => current + 1);
-  }, [selectedWorkspaceId, setSelectedWorkspaceId]);
+      setActiveShellView("space");
+      setSpaceVisibility((previous) => ({
+        ...previous,
+        agent: true,
+      }));
+      setAgentView({ type: "chat" });
+      setChatSessionJumpRequest({
+        sessionId: normalizedSessionId,
+        requestKey: Date.now(),
+      });
+      setChatFocusRequestKey((current) => current + 1);
+    },
+    [selectedWorkspaceId, setSelectedWorkspaceId],
+  );
 
   const nextChatSessionOpenRequestKey = useCallback(() => {
     chatSessionOpenRequestKeyRef.current += 1;
@@ -2851,87 +2869,91 @@ function AppShellContent() {
     return chatExplorerAttachmentRequestKeyRef.current;
   }, []);
 
-  const handleCreateScheduleInChat = useCallback((workspaceId?: string | null) => {
-    const normalizedWorkspaceId =
-      workspaceId?.trim() || selectedWorkspaceId?.trim() || "";
-    if (!normalizedWorkspaceId) {
-      return;
-    }
+  const handleCreateScheduleInChat = useCallback(
+    (workspaceId?: string | null) => {
+      const normalizedWorkspaceId =
+        workspaceId?.trim() || selectedWorkspaceId?.trim() || "";
+      if (!normalizedWorkspaceId) {
+        return;
+      }
 
-    if (normalizedWorkspaceId !== (selectedWorkspaceId?.trim() || "")) {
-      setSelectedWorkspaceId(normalizedWorkspaceId);
-    }
+      if (normalizedWorkspaceId !== (selectedWorkspaceId?.trim() || "")) {
+        setSelectedWorkspaceId(normalizedWorkspaceId);
+      }
 
-    setActiveShellView("space");
-    setSpaceVisibility((previous) => ({
-      ...previous,
-      agent: true,
-    }));
-    setAgentView({ type: "chat" });
-    setChatSessionJumpRequest(null);
-    setChatSessionOpenRequest({
-      sessionId: "",
-      mode: "draft",
-      parentSessionId: null,
-      requestKey: nextChatSessionOpenRequestKey(),
-    });
-    setChatComposerPrefillRequest({
-      text: "Create a cronjob for ",
-      requestKey: nextChatComposerPrefillRequestKey(),
-      mode: "replace",
-    });
-    setChatFocusRequestKey((current) => current + 1);
-  }, [
-    nextChatComposerPrefillRequestKey,
-    nextChatSessionOpenRequestKey,
-    selectedWorkspaceId,
-    setSelectedWorkspaceId,
-  ]);
+      setActiveShellView("space");
+      setSpaceVisibility((previous) => ({
+        ...previous,
+        agent: true,
+      }));
+      setAgentView({ type: "chat" });
+      setChatSessionJumpRequest(null);
+      setChatSessionOpenRequest({
+        sessionId: "",
+        mode: "draft",
+        parentSessionId: null,
+        requestKey: nextChatSessionOpenRequestKey(),
+      });
+      setChatComposerPrefillRequest({
+        text: "Create a cronjob for ",
+        requestKey: nextChatComposerPrefillRequestKey(),
+        mode: "replace",
+      });
+      setChatFocusRequestKey((current) => current + 1);
+    },
+    [
+      nextChatComposerPrefillRequestKey,
+      nextChatSessionOpenRequestKey,
+      selectedWorkspaceId,
+      setSelectedWorkspaceId,
+    ],
+  );
 
-  const handleEditScheduleInChat = useCallback((
-    job: CronjobRecordPayload,
-    workspaceId?: string | null,
-  ) => {
-    const normalizedWorkspaceId =
-      workspaceId?.trim() || selectedWorkspaceId?.trim() || "";
-    if (!normalizedWorkspaceId) {
-      return;
-    }
+  const handleEditScheduleInChat = useCallback(
+    (job: CronjobRecordPayload, workspaceId?: string | null) => {
+      const normalizedWorkspaceId =
+        workspaceId?.trim() || selectedWorkspaceId?.trim() || "";
+      if (!normalizedWorkspaceId) {
+        return;
+      }
 
-    if (normalizedWorkspaceId !== (selectedWorkspaceId?.trim() || "")) {
-      setSelectedWorkspaceId(normalizedWorkspaceId);
-    }
+      if (normalizedWorkspaceId !== (selectedWorkspaceId?.trim() || "")) {
+        setSelectedWorkspaceId(normalizedWorkspaceId);
+      }
 
-    const jobName =
-      job.name?.trim() || job.description?.trim() || "Untitled schedule";
-    const instruction = job.instruction?.trim() || job.description?.trim() || "";
-    setActiveShellView("space");
-    setSpaceVisibility((previous) => ({
-      ...previous,
-      agent: true,
-    }));
-    setAgentView({ type: "chat" });
-    setChatSessionJumpRequest(null);
-    setChatSessionOpenRequest({
-      sessionId: "",
-      mode: "draft",
-      parentSessionId: null,
-      requestKey: nextChatSessionOpenRequestKey(),
-    });
-    setChatComposerPrefillRequest({
-      text:
-        `Edit cronjob "${jobName}" (id: ${job.id}). Current cron: ${job.cron}. ` +
-        `Current instruction: ${instruction}\n\nUpdate it to: `,
-      requestKey: nextChatComposerPrefillRequestKey(),
-      mode: "replace",
-    });
-    setChatFocusRequestKey((current) => current + 1);
-  }, [
-    nextChatComposerPrefillRequestKey,
-    nextChatSessionOpenRequestKey,
-    selectedWorkspaceId,
-    setSelectedWorkspaceId,
-  ]);
+      const jobName =
+        job.name?.trim() || job.description?.trim() || "Untitled schedule";
+      const instruction =
+        job.instruction?.trim() || job.description?.trim() || "";
+      setActiveShellView("space");
+      setSpaceVisibility((previous) => ({
+        ...previous,
+        agent: true,
+      }));
+      setAgentView({ type: "chat" });
+      setChatSessionJumpRequest(null);
+      setChatSessionOpenRequest({
+        sessionId: "",
+        mode: "draft",
+        parentSessionId: null,
+        requestKey: nextChatSessionOpenRequestKey(),
+      });
+      setChatComposerPrefillRequest({
+        text:
+          `Edit cronjob "${jobName}" (id: ${job.id}). Current cron: ${job.cron}. ` +
+          `Current instruction: ${instruction}\n\nUpdate it to: `,
+        requestKey: nextChatComposerPrefillRequestKey(),
+        mode: "replace",
+      });
+      setChatFocusRequestKey((current) => current + 1);
+    },
+    [
+      nextChatComposerPrefillRequestKey,
+      nextChatSessionOpenRequestKey,
+      selectedWorkspaceId,
+      setSelectedWorkspaceId,
+    ],
+  );
 
   const handleCreateSession = useCallback(
     (request?: {
@@ -3064,7 +3086,8 @@ function AppShellContent() {
         return;
       }
       if (
-        (displayView.surface === "document" || displayView.surface === "file") &&
+        (displayView.surface === "document" ||
+          displayView.surface === "file") &&
         displayView.resourceId?.trim()
       ) {
         setFileExplorerFocusRequest({
@@ -3147,7 +3170,9 @@ function AppShellContent() {
         ) {
           return current;
         }
-        if (!isPathWithin(normalizedDeletedPath, current.resourceId?.trim() ?? "")) {
+        if (
+          !isPathWithin(normalizedDeletedPath, current.resourceId?.trim() ?? "")
+        ) {
           return current;
         }
         return { type: "chat" };
@@ -3160,7 +3185,9 @@ function AppShellContent() {
         ) {
           return current;
         }
-        if (!isPathWithin(normalizedDeletedPath, current.resourceId?.trim() ?? "")) {
+        if (
+          !isPathWithin(normalizedDeletedPath, current.resourceId?.trim() ?? "")
+        ) {
           return current;
         }
         if (selectedWorkspaceId) {
@@ -3172,7 +3199,10 @@ function AppShellContent() {
       });
 
       setFileExplorerFocusRequest((current) => {
-        if (!current?.path || !isPathWithin(normalizedDeletedPath, current.path)) {
+        if (
+          !current?.path ||
+          !isPathWithin(normalizedDeletedPath, current.path)
+        ) {
           return current;
         }
         return null;
@@ -3362,7 +3392,11 @@ function AppShellContent() {
     const nextDisplayView = lastDisplayView ?? spaceDisplayView;
     setSpaceDisplayView(nextDisplayView);
     syncFileExplorerFocusWithDisplayView(nextDisplayView);
-  }, [selectedWorkspaceId, spaceDisplayView, syncFileExplorerFocusWithDisplayView]);
+  }, [
+    selectedWorkspaceId,
+    spaceDisplayView,
+    syncFileExplorerFocusWithDisplayView,
+  ]);
 
   const restoreLastSpaceAppDisplayView = useCallback(() => {
     if (!selectedWorkspaceId) {
@@ -3440,34 +3474,31 @@ function AppShellContent() {
     };
   }, [reportedOperatorSurfaceContext, selectedWorkspaceId]);
 
-  const handleSyncAgentOperationFileDisplay = useCallback(
-    (path: string) => {
-      const targetPath = path.trim();
-      if (!targetPath) {
-        return;
-      }
+  const handleSyncAgentOperationFileDisplay = useCallback((path: string) => {
+    const targetPath = path.trim();
+    if (!targetPath) {
+      return;
+    }
 
-      setActiveShellView("space");
-      setSpaceExplorerMode("files");
-      setSpaceExplorerCollapsed(false);
-      setSpaceVisibility((previous) => ({
-        ...previous,
-        agent: true,
-        files: true,
-      }));
-      setAgentView({ type: "chat" });
-      setSpaceDisplayView({
-        type: "internal",
-        surface: "file",
-        resourceId: targetPath,
-      });
-      setFileExplorerFocusRequest({
-        path: targetPath,
-        requestKey: Date.now(),
-      });
-    },
-    [],
-  );
+    setActiveShellView("space");
+    setSpaceExplorerMode("files");
+    setSpaceExplorerCollapsed(false);
+    setSpaceVisibility((previous) => ({
+      ...previous,
+      agent: true,
+      files: true,
+    }));
+    setAgentView({ type: "chat" });
+    setSpaceDisplayView({
+      type: "internal",
+      surface: "file",
+      resourceId: targetPath,
+    });
+    setFileExplorerFocusRequest({
+      path: targetPath,
+      requestKey: Date.now(),
+    });
+  }, []);
 
   const handleOpenWorkspaceOutput = useCallback(
     (output: WorkspaceOutputRecordPayload) => {
@@ -3578,10 +3609,9 @@ function AppShellContent() {
     runtimeStatus,
     workspaceBlockingReason || workspaceErrorMessage,
   );
-  const bootstrapErrorMessage =
-    !hasHydratedWorkspaceList
-      ? runtimeStartupBlockedMessage(runtimeStatus, workspaceErrorMessage)
-      : "";
+  const bootstrapErrorMessage = !hasHydratedWorkspaceList
+    ? runtimeStartupBlockedMessage(runtimeStatus, workspaceErrorMessage)
+    : "";
   const hydratedRuntimeErrorMessage =
     hasHydratedWorkspaceList &&
     runtimeStartupBlockedDetail &&
@@ -3682,7 +3712,9 @@ function AppShellContent() {
           <MissingWorkspacePane
             workspaceName={selectedWorkspace.name}
             workspacePath={selectedWorkspace.workspace_path ?? null}
-            onRelocate={() => chooseWorkspaceRelocationFolder(selectedWorkspace.id)}
+            onRelocate={() =>
+              chooseWorkspaceRelocationFolder(selectedWorkspace.id)
+            }
             onDeleteRecord={async () => {
               await deleteWorkspace(selectedWorkspace.id);
             }}
@@ -3721,7 +3753,9 @@ function AppShellContent() {
           onJumpToSessionBrowser={handleJumpToSessionBrowser}
           onOpenInbox={handleOpenInboxPane}
           inboxUnreadCount={unreadTaskProposalCount}
-          onRequestCreateSession={(request) => void handleCreateSession(request)}
+          onRequestCreateSession={(request) =>
+            void handleCreateSession(request)
+          }
           composerDraftText={
             selectedWorkspaceId
               ? (chatComposerDraftTextByWorkspace[selectedWorkspaceId] ?? "")
@@ -3823,6 +3857,7 @@ function AppShellContent() {
           browserSpace={spaceBrowserSpace}
           suspendNativeView={shouldSuspendBrowserNativeView}
           layoutSyncKey={spaceDisplayLayoutSyncKey}
+          jumpPulseKey={browserDisplayFlashNonce}
           embedded
         />
       );
@@ -3875,6 +3910,7 @@ function AppShellContent() {
   }, [
     activeApp,
     activeAppId,
+    browserDisplayFlashNonce,
     handleMissingInternalResource,
     handleOpenLinkInNewAppBrowserTab,
     hasSelectedWorkspace,
@@ -3883,6 +3919,7 @@ function AppShellContent() {
     showOperationsDrawer,
     spaceAgentPaneWidth,
     spaceBrowserSpace,
+    spaceDisplayLayoutSyncKey,
     spaceDisplayView,
     spaceExplorerCollapsed,
     spaceExplorerMode,
@@ -4210,6 +4247,18 @@ function AppShellContent() {
         />
 
         {hasWorkspaces ? (
+          <div className="pointer-events-none absolute bottom-2 left-2 z-20 sm:bottom-4 sm:left-4">
+            <RuntimeStatusIndicator
+              status={runtimeStatus}
+              onClick={() => {
+                setSettingsDialogSection("providers");
+                setSettingsDialogOpen(true);
+              }}
+            />
+          </div>
+        ) : null}
+
+        {hasWorkspaces ? (
           <div className={titleBarContainerClassName}>
             <TopTabsBar
               integratedTitleBar={hasIntegratedTitleBar}
@@ -4268,20 +4317,20 @@ function AppShellContent() {
                               <div className="flex shrink-0 items-center gap-2 border-b border-border/45 px-3 py-2.5">
                                 <Tabs
                                   value={spaceExplorerMode}
-                                    onValueChange={(value) => {
-                                      const mode = value as SpaceExplorerMode;
-                                      setSpaceExplorerMode(mode);
-                                      if (mode === "browser") {
-                                        setSpaceDisplayView({
-                                          type: "browser",
-                                        });
-                                      } else if (mode === "applications") {
-                                        restoreLastSpaceAppDisplayView();
-                                      } else {
-                                        restoreLastSpaceFileDisplayView();
-                                      }
-                                    }}
-                                    className="min-w-0 flex-1"
+                                  onValueChange={(value) => {
+                                    const mode = value as SpaceExplorerMode;
+                                    setSpaceExplorerMode(mode);
+                                    if (mode === "browser") {
+                                      setSpaceDisplayView({
+                                        type: "browser",
+                                      });
+                                    } else if (mode === "applications") {
+                                      restoreLastSpaceAppDisplayView();
+                                    } else {
+                                      restoreLastSpaceFileDisplayView();
+                                    }
+                                  }}
+                                  className="min-w-0 flex-1"
                                 >
                                   <TabsList className="w-full">
                                     <TabsTrigger
@@ -4316,7 +4365,9 @@ function AppShellContent() {
                                 <Button
                                   variant="ghost"
                                   size="icon-sm"
-                                  onClick={() => setSpaceExplorerCollapsed(true)}
+                                  onClick={() =>
+                                    setSpaceExplorerCollapsed(true)
+                                  }
                                   aria-label="Collapse explorer"
                                 >
                                   <PanelLeftClose />
@@ -4376,6 +4427,7 @@ function AppShellContent() {
                                     onActivateDisplay={() =>
                                       setSpaceDisplayView({ type: "browser" })
                                     }
+                                    hasPendingAgentJump={hasPendingAgentJump}
                                   />
                                 ) : null}
                               </div>

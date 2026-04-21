@@ -60,6 +60,8 @@
     "@better-auth/electron": "^1.5.5",
     "@fontsource-variable/inter": "^5.2.8",
     "@holaboss/app-sdk": "file:../sdk/app-sdk",
+    "@iconify-json/catppuccin": "^1.2.17",
+    "@iconify/react": "^6.0.2",
     "@sentry/electron": "^7.11.0",
     "@tailwindcss/vite": "^4.2.1",
     "archiver": "^7.0.1",

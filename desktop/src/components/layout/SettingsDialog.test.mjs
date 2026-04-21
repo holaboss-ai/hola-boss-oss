@@ -20,10 +20,10 @@ test("settings dialog includes an automations section with a workspace selector"
   assert.match(source, /toolbarLeading=\{/);
   assert.match(source, /<Select\s+value=\{automationsWorkspaceId \|\| undefined\}/);
   assert.match(source, /onValueChange=\{\(value\) =>\s*setAutomationsWorkspaceId\(value \?\? ""\)\s*\}/);
-  assert.match(source, /<SelectTrigger className="min-w-\[220px\] rounded-full border-border\/40 bg-background\/80 px-3\.5 text-sm shadow-none sm:w-\[280px\]">/);
-  assert.match(source, /<SelectValue placeholder="Select workspace">/);
-  assert.match(source, /\{\(value: string \| null\) =>/);
-  assert.match(source, /workspaces\.find\(\(workspace\) => workspace\.id === value\)\?\.name/);
+  assert.match(source, /<SelectTrigger className="w-56">/);
+  assert.match(source, /<FolderKanban\s+size=\{14\}/);
+  assert.match(source, /placeholder=\{\s*workspaces\.length === 0\s*\? "No workspaces available"\s*: "Select workspace"\s*\}/);
+  assert.doesNotMatch(source, /<SelectTrigger className="min-w-\[220px\] rounded-full/);
   assert.match(source, /<AutomationsPane[\s\S]*workspaceId=\{automationsWorkspaceId \|\| null\}[\s\S]*showHeader=\{false\}[\s\S]*toolbarLeading=\{/);
   assert.match(source, /onEditSchedule=\{\(job\) => \{/);
   assert.match(source, /onEditAutomationSchedule\(automationsWorkspaceId, job\);/);
