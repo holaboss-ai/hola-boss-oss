@@ -66,6 +66,7 @@ import {
   type RecallEmbeddingBackfillWorkerLike,
   RuntimeRecallEmbeddingBackfillWorker,
 } from "./recall-embedding-backfill-worker.js";
+import { captureRuntimeException } from "./runtime-sentry.js";
 import {
   AppLifecycleExecutorError,
   appBuildHasCompletedSetup,
@@ -2128,7 +2129,11 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const browserToolService = options.browserToolService ?? new DesktopBrowserToolService();
   const terminalSessionManager =
     options.terminalSessionManager === undefined
-      ? new TerminalSessionManager({ store, logger: app.log })
+      ? new TerminalSessionManager({
+        store,
+        logger: app.log,
+        captureRuntimeException,
+      })
       : options.terminalSessionManager;
   const integrationService = new RuntimeIntegrationService(store);
   const honoBaseUrl = process.env.HOLABOSS_AUTH_BASE_URL ?? "";

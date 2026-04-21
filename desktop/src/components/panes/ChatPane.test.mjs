@@ -165,6 +165,58 @@ test("chat composer footer wraps controls based on available pane width instead 
   assert.doesNotMatch(source, /sm:w-\[208px\]/);
 });
 
+test("chat pane defers scroll metrics updates out of resize and scroll callbacks", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const chatScrollMetricsSyncFrameRef = useRef<number \| null>\(null\);/,
+  );
+  assert.match(
+    source,
+    /const chatScrollMetricsSyncTargetRef = useRef<HTMLDivElement \| null>\(null\);/,
+  );
+  assert.match(
+    source,
+    /const cancelChatScrollMetricsSync = \(\) => \{[\s\S]*window\.cancelAnimationFrame\(chatScrollMetricsSyncFrameRef\.current\);[\s\S]*chatScrollMetricsSyncTargetRef\.current = null;[\s\S]*\};/,
+  );
+  assert.match(
+    source,
+    /const scheduleChatScrollMetricsSync = \(\s*container\?: HTMLDivElement \| null,\s*\) => \{[\s\S]*window\.requestAnimationFrame\(\(\) => \{[\s\S]*syncChatScrollMetrics\(target\);[\s\S]*\}\);[\s\S]*\};/,
+  );
+  assert.match(
+    source,
+    /useEffect\(\s*\(\) => \(\) => \{[\s\S]*clearChatScrollbarDragState\(\);[\s\S]*cancelChatScrollMetricsSync\(\);[\s\S]*\},\s*\[\],\s*\);/,
+  );
+  assert.match(
+    source,
+    /const resizeObserver = new ResizeObserver\(\(\) => \{\s*scheduleChatScrollMetricsSync\(container\);\s*\}\);/,
+  );
+  assert.match(source, /scheduleChatScrollMetricsSync\(currentTarget\);/);
+  assert.doesNotMatch(
+    source,
+    /const resizeObserver = new ResizeObserver\(\(\) => \{\s*syncChatScrollMetrics\(container\);\s*\}\);/,
+  );
+  assert.doesNotMatch(source, /syncChatScrollMetrics\(currentTarget\);/);
+});
+
+test("chat pane blocks overlapping older-history loads before state commits", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /function setIsLoadingOlderHistoryState\(nextValue: boolean\)/,
+  );
+  assert.match(
+    source,
+    /isLoadingHistory \|\|\s*isLoadingOlderHistoryRef\.current \|\|\s*pendingHistoryPrependRestoreRef\.current \|\|/,
+  );
+  assert.match(
+    source,
+    /setIsLoadingOlderHistoryState\(true\);[\s\S]*finally \{[\s\S]*setIsLoadingOlderHistoryState\(false\);[\s\S]*isLoadingOlderHistoryRef\.current = false;/,
+  );
+});
+
 test("chat composer switches model and thinking selectors into icon-led compact triggers", async () => {
   const source = await readFile(sourcePath, "utf8");
 

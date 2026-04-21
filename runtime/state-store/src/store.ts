@@ -4765,6 +4765,7 @@ export class RuntimeStateStore {
     fs.mkdirSync(path.dirname(this.dbPath), { recursive: true });
     const db = new Database(this.dbPath);
     db.pragma("journal_mode = WAL");
+    db.pragma("busy_timeout = 5000");
     db.pragma("foreign_keys = ON");
     this.#vectorIndexSupported = this.tryLoadVectorExtension(db);
     this.ensureRuntimeDbSchema(db);
