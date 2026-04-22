@@ -7596,7 +7596,7 @@ export function ChatPane({
                   className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 rounded-full"
                   style={{
                     background:
-                      "color-mix(in oklch, var(--foreground) 10%, transparent)",
+                      "color-mix(in oklch, var(--foreground) 5%, transparent)",
                   }}
                 />
                 <div
@@ -7612,7 +7612,7 @@ export function ChatPane({
                     className="absolute left-1/2 top-0 h-full w-[3px] -translate-x-1/2 rounded-full"
                     style={{
                       background:
-                        "color-mix(in oklch, var(--muted-foreground) 55%, transparent)",
+                        "color-mix(in oklch, var(--muted-foreground) 25%, transparent)",
                     }}
                   />
                 </div>

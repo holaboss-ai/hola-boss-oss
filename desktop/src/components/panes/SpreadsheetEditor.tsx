@@ -313,8 +313,8 @@ export function SpreadsheetEditor({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-background">
-      <div className="min-h-0 flex-1 overflow-auto">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-background">
+      <div className="min-h-0 flex-1 overflow-auto rounded-[inherit]">
         <table className="w-max min-w-full border-separate border-spacing-0 text-sm text-foreground">
           <thead className="sticky top-0 z-[2]">
             <tr>
