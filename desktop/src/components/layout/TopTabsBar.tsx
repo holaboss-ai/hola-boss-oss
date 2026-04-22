@@ -48,7 +48,6 @@ interface TopTabsBarProps {
   integratedTitleBar?: boolean;
   desktopPlatform?: string | null;
   runtimeStatus?: RuntimeStatusPayload | null;
-  onOpenRuntimeSettings?: () => void;
   onWorkspaceSwitcherVisibilityChange?: (open: boolean) => void;
   onOpenWorkspaceCreatePanel?: () => void;
   onOpenSettings?: () => void;
@@ -62,7 +61,6 @@ export function TopTabsBar({
   integratedTitleBar = false,
   desktopPlatform = null,
   runtimeStatus = null,
-  onOpenRuntimeSettings,
   onWorkspaceSwitcherVisibilityChange,
   onOpenWorkspaceCreatePanel,
   onOpenSettings,
@@ -370,10 +368,7 @@ export function TopTabsBar({
               onClick={() => onOpenBilling?.()}
             />
           ) : null}
-          <RuntimeStatusIndicator
-            status={runtimeStatus}
-            onClick={onOpenRuntimeSettings}
-          />
+          <RuntimeStatusIndicator status={runtimeStatus} />
           <DropdownMenu>
             <DropdownMenuTrigger
               ref={userButtonRef}

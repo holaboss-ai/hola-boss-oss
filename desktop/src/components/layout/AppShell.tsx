@@ -4273,10 +4273,6 @@ function AppShellContent() {
               integratedTitleBar={hasIntegratedTitleBar}
               desktopPlatform={desktopPlatform}
               runtimeStatus={runtimeStatus}
-              onOpenRuntimeSettings={() => {
-                setSettingsDialogSection("providers");
-                setSettingsDialogOpen(true);
-              }}
               onWorkspaceSwitcherVisibilityChange={setWorkspaceSwitcherOpen}
               onOpenWorkspaceCreatePanel={handleOpenCreateWorkspacePanel}
               onOpenSettings={() => {

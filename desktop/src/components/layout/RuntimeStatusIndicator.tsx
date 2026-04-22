@@ -1,5 +1,5 @@
 import { Server } from "lucide-react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import {
   Popover,
   PopoverContent,
@@ -8,7 +8,6 @@ import {
 
 interface RuntimeStatusIndicatorProps {
   status: RuntimeStatusPayload | null;
-  onClick?: () => void;
 }
 
 function runtimeStatusVisual(status: RuntimeStatus | undefined): {
@@ -38,10 +37,8 @@ function runtimeStatusVisual(status: RuntimeStatus | undefined): {
 
 export function RuntimeStatusIndicator({
   status,
-  onClick,
 }: RuntimeStatusIndicatorProps) {
   const [open, setOpen] = useState(false);
-  const closeTimerRef = useRef<number | null>(null);
 
   if (!status) {
     return null;
@@ -49,24 +46,6 @@ export function RuntimeStatusIndicator({
 
   const { dotClass, label } = runtimeStatusVisual(status.status);
   const detail = status.lastError.trim();
-
-  const scheduleOpen = () => {
-    if (closeTimerRef.current !== null) {
-      window.clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = null;
-    }
-    setOpen(true);
-  };
-
-  const scheduleClose = () => {
-    if (closeTimerRef.current !== null) {
-      window.clearTimeout(closeTimerRef.current);
-    }
-    closeTimerRef.current = window.setTimeout(() => {
-      setOpen(false);
-      closeTimerRef.current = null;
-    }, 120);
-  };
 
   const rows: Array<[string, string]> = [];
   if (status.harness) {
@@ -86,14 +65,6 @@ export function RuntimeStatusIndicator({
         render={
           <button
             type="button"
-            onClick={() => {
-              setOpen(false);
-              onClick?.();
-            }}
-            onPointerEnter={scheduleOpen}
-            onPointerLeave={scheduleClose}
-            onFocus={scheduleOpen}
-            onBlur={scheduleClose}
             aria-label={label}
             className="relative flex size-7 shrink-0 items-center justify-center rounded-lg bg-background text-muted-foreground shadow-subtle-xs transition-colors hover:bg-muted hover:text-foreground dark:border-border"
           >
@@ -109,9 +80,7 @@ export function RuntimeStatusIndicator({
         side="bottom"
         align="end"
         sideOffset={8}
-        className="w-60 gap-0 p-0"
-        onPointerEnter={scheduleOpen}
-        onPointerLeave={scheduleClose}
+        className="w-60 gap-0 rounded-lg p-0 shadow-subtle-sm ring-0"
       >
         <div className="flex items-center gap-2 px-3 pt-3 pb-2">
           <span
@@ -122,7 +91,7 @@ export function RuntimeStatusIndicator({
         </div>
 
         {rows.length > 0 ? (
-          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 px-3 pb-2 text-xs">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 px-3 pb-3 text-xs">
             {rows.map(([key, value]) => (
               <div key={key} className="contents">
                 <dt className="text-muted-foreground">{key}</dt>
@@ -133,14 +102,10 @@ export function RuntimeStatusIndicator({
         ) : null}
 
         {detail ? (
-          <div className="mx-3 mb-2 rounded-md bg-destructive/10 px-2 py-1.5 text-xs leading-5 text-destructive">
+          <div className="mx-3 mb-3 rounded-md bg-destructive/10 px-2 py-1.5 text-xs leading-5 text-destructive">
             {detail}
           </div>
         ) : null}
-
-        <div className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
-          Click to configure providers
-        </div>
       </PopoverContent>
     </Popover>
   );

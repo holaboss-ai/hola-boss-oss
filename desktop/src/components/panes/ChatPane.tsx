@@ -8191,9 +8191,7 @@ function QueuedSessionInputRail({
                       {isEditing ? (
                         <div className="space-y-1.5">
                           <div className="flex items-center gap-2">
-                            <CornerDownLeft
-                              className="size-4 shrink-0 text-muted-foreground"
-                            />
+                            <CornerDownLeft className="size-4 shrink-0 text-muted-foreground" />
                             <Input
                               value={editingDraft}
                               onChange={(event) =>
@@ -8249,9 +8247,7 @@ function QueuedSessionInputRail({
                         </div>
                       ) : (
                         <div className="flex items-center gap-3">
-                          <CornerDownLeft
-                            className="size-4 shrink-0 text-muted-foreground"
-                          />
+                          <CornerDownLeft className="size-4 shrink-0 text-muted-foreground" />
                           <div className="min-w-0 flex-1 truncate">
                             {previewText || "Queued message"}
                           </div>
@@ -8418,9 +8414,7 @@ function AssistantTurn({
               className="theme-chat-system-bubble mt-2 rounded-xl border px-3 py-2.5 text-xs text-foreground"
             >
               <div className="flex items-start gap-2">
-                <AlertTriangle
-                  className="size-3.5 mt-0.5 shrink-0 text-destructive"
-                />
+                <AlertTriangle className="size-3.5 mt-0.5 shrink-0 text-destructive" />
                 <SimpleMarkdown
                   className="chat-markdown max-w-full text-foreground"
                   onLinkClick={onLinkClick}
@@ -8748,9 +8742,7 @@ function AssistantTurnOutputs({
               {outputSecondaryLabel(output)}
             </div>
           </div>
-          <ArrowUpRight
-            className="size-3.5 shrink-0 text-muted-foreground/0 transition-colors group-hover:text-muted-foreground"
-          />
+          <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground/0 transition-colors group-hover:text-muted-foreground" />
         </button>
       ))}
 
@@ -9387,9 +9379,7 @@ function TraceStepGroup({
         {groupHasTerminalError ? (
           <AlertTriangle className="size-3.5 shrink-0 text-destructive" />
         ) : showLiveSummarySpinner ? (
-          <Loader2
-            className="size-3.5 shrink-0 animate-spin text-muted-foreground"
-          />
+          <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
         ) : groupIsLive || runningCount > 0 ? (
           <Clock3 className="size-3.5 shrink-0 text-muted-foreground" />
         ) : (
@@ -9587,7 +9577,7 @@ function ModelCombobox({
       >
         <span className="truncate">{option.label}</span>
         {!active && option.statusLabel ? (
-          <span className="shrink-0 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+          <span className="shrink-0 text-[10px] font-medium uppercase text-muted-foreground">
             {option.statusLabel}
           </span>
         ) : null}
@@ -9625,12 +9615,7 @@ function ModelCombobox({
           </Button>
         }
       />
-      <PopoverContent
-        align="start"
-        side="top"
-        sideOffset={8}
-        className="w-[280px] gap-0 rounded-lg p-0 shadow-subtle-sm ring-0"
-      >
+      <PopoverContent align="start" side="top" sideOffset={8} className="p-0">
         <div className="border-b border-border p-1.5">
           <div className="relative flex h-7 items-center rounded-md border border-border bg-background px-2.5">
             <Search className="size-3.5 shrink-0 text-muted-foreground" />
@@ -9639,7 +9624,6 @@ function ModelCombobox({
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search models..."
               className="embedded-input h-full w-full bg-transparent pl-2 text-xs text-foreground outline-none placeholder:text-muted-foreground"
-              autoFocus
             />
           </div>
         </div>
@@ -9659,7 +9643,7 @@ function ModelCombobox({
                   className={idx > 0 ? "mt-2" : ""}
                 >
                   {group.label ? (
-                    <div className="px-2.5 pb-1 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                    <div className="px-2.5 pb-1 text-[10px] font-medium uppercase text-muted-foreground">
                       {group.label}
                     </div>
                   ) : null}
@@ -9767,9 +9751,7 @@ function ThinkingValueSelect({
             ) : (
               <>
                 <span className="truncate">{selectedThinkingLabel}</span>
-                <ChevronDown
-                  className="size-3.5 shrink-0 text-muted-foreground"
-                />
+                <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
               </>
             )}
           </Button>
@@ -9779,9 +9761,9 @@ function ThinkingValueSelect({
         align="start"
         side="top"
         sideOffset={8}
-        className="w-[200px] gap-0 rounded-lg p-1 shadow-subtle-sm ring-0"
+        className="gap-0 rounded-lg p-1 shadow-subtle-sm ring-0"
       >
-        <div className="px-2.5 pb-1 pt-1 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+        <div className="px-2.5 pb-1 pt-1 text-[10px] font-medium uppercase text-muted-foreground">
           Reasoning effort
         </div>
         {thinkingValues.map((value) => renderOption(value))}
@@ -10258,9 +10240,7 @@ function Composer({
                         : "hover:bg-accent/50"
                     }`}
                   >
-                    <Sparkles
-                      className="size-3.5 mt-0.5 shrink-0 text-primary"
-                    />
+                    <Sparkles className="size-3.5 mt-0.5 shrink-0 text-primary" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-medium">
                         {command.label}
@@ -10382,18 +10362,14 @@ function Composer({
                     aria-label="Configure model providers"
                   >
                     <span className="flex min-w-0 items-center gap-2">
-                      <Waypoints
-                        className="size-3.5 shrink-0 text-muted-foreground"
-                      />
+                      <Waypoints className="size-3.5 shrink-0 text-muted-foreground" />
                       <span className="truncate">
                         {compactComposerControls
                           ? "Providers"
                           : "Set up providers"}
                       </span>
                     </span>
-                    <ArrowRight
-                      className="size-3.5 shrink-0 text-muted-foreground"
-                    />
+                    <ArrowRight className="size-3.5 shrink-0 text-muted-foreground" />
                   </Button>
                   <div
                     className={`min-w-0 text-[10px] leading-5 text-muted-foreground ${
@@ -10492,9 +10468,7 @@ function Composer({
                   <div className="flex flex-col">
                     <div className="border-b border-border p-2">
                       <div className="relative flex items-center rounded-lg border border-border bg-muted px-2.5 transition-colors focus-within:border-border focus-within:bg-background/70">
-                        <Search
-                          className="size-3.5 shrink-0 text-muted-foreground"
-                        />
+                        <Search className="size-3.5 shrink-0 text-muted-foreground" />
                         <input
                           value={skillPickerQuery}
                           onChange={(event) =>
@@ -10543,9 +10517,7 @@ function Composer({
                                 </span>
                               </span>
                               {isSelected ? (
-                                <Check
-                                  className="size-3.5 mt-0.5 shrink-0 text-primary"
-                                />
+                                <Check className="size-3.5 mt-0.5 shrink-0 text-primary" />
                               ) : null}
                             </button>
                           );
@@ -10567,9 +10539,7 @@ function Composer({
                       }}
                       className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-foreground transition-colors hover:bg-accent/50"
                     >
-                      <Paperclip
-                        className="size-3.5 shrink-0 text-muted-foreground"
-                      />
+                      <Paperclip className="size-3.5 shrink-0 text-muted-foreground" />
                       <span className="min-w-0 flex-1 truncate">
                         Attach a file
                       </span>
