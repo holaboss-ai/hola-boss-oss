@@ -219,7 +219,7 @@ export function SpaceBrowserExplorerPane({
             </div>
           ) : sortedAgentSessions.length === 1 ? (
             <div
-              className="flex items-center gap-2 px-2.5 py-1 text-xs"
+              className="flex items-center gap-2 px-2.5 py-1 text-xs leading-none"
               title={sessionBrowserStatus?.label ?? "Agent session"}
             >
               <span
@@ -239,7 +239,7 @@ export function SpaceBrowserExplorerPane({
               onValueChange={selectAgentSessionBrowser}
             >
               <SelectTrigger
-                className="h-7 w-full gap-2 rounded-md border-transparent bg-transparent px-2.5 text-xs shadow-none hover:bg-accent data-[popup-open]:bg-accent dark:bg-transparent dark:hover:bg-accent"
+                className="h-7 w-full gap-2 rounded-md border-transparent bg-transparent px-2.5 text-xs leading-none shadow-none hover:bg-accent data-[popup-open]:bg-accent dark:bg-transparent dark:hover:bg-accent"
                 title={sessionBrowserStatus?.label ?? "Agent session"}
               >
                 <SelectValue>
@@ -251,7 +251,7 @@ export function SpaceBrowserExplorerPane({
                       sessionBrowserStatus?.flashing ?? false,
                     )}`}
                   />
-                  <span className="min-w-0 flex-1 truncate text-foreground">
+                  <span className="min-w-0 flex-1 truncate leading-none text-foreground">
                     {currentSessionLabel}
                   </span>
                 </SelectValue>
@@ -266,7 +266,7 @@ export function SpaceBrowserExplorerPane({
                     <SelectItem
                       key={session.session_id}
                       value={session.session_id}
-                      className="gap-2 rounded-md px-2.5 py-1.5 text-xs"
+                      className="gap-2 rounded-md px-2.5 py-1.5 text-xs leading-none"
                     >
                       <span
                         aria-hidden="true"
@@ -276,7 +276,7 @@ export function SpaceBrowserExplorerPane({
                         )}`}
                       />
                       <span
-                        className="min-w-0 flex-1 truncate text-foreground"
+                        className="min-w-0 flex-1 truncate leading-none text-foreground"
                         title={browserSessionStatusLabel(runtimeState)}
                       >
                         {browserSessionTitle(session, session.session_id)}

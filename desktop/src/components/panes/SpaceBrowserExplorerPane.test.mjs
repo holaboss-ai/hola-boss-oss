@@ -47,7 +47,7 @@ test("space browser explorer keeps the agent session line compact and only on ag
   // Ghost-styled SelectTrigger (no border, transparent bg, text-xs).
   assert.match(
     source,
-    /<SelectTrigger\s[\s\S]*?className="h-7 w-full gap-2 rounded-md border-transparent bg-transparent px-2\.5 text-xs shadow-none/,
+    /<SelectTrigger\s[\s\S]*?className="h-7 w-full gap-2 rounded-md border-transparent bg-transparent px-2\.5 text-xs leading-none shadow-none/,
   );
 
   assert.match(
@@ -68,7 +68,7 @@ test("space browser explorer adapts the session line to session count", async ()
   // 1-session branch: static row with dot + title, no Select/chevron.
   assert.match(
     source,
-    /sortedAgentSessions\.length === 1 \? \(\s*<div\s+className="flex items-center gap-2 px-2\.5 py-1 text-xs"/,
+    /sortedAgentSessions\.length === 1 \? \(\s*<div\s+className="flex items-center gap-2 px-2\.5 py-1 text-xs leading-none"/,
   );
 
   // ≥2 sessions fall through to the Select (chevron auto-rendered).
