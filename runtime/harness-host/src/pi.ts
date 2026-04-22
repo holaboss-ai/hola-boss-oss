@@ -34,6 +34,7 @@ import type {
   HarnessHostInputAttachmentPayload,
   HarnessHostPiMcpToolRef,
   HarnessHostPiRequest,
+  HarnessHostWorkspaceSkillPayload,
   JsonObject,
   JsonValue,
   RunnerEventType,
@@ -46,7 +47,6 @@ import {
 } from "./harness-ai-monitoring.js";
 import { resolvePiDesktopBrowserToolDefinitions } from "./pi-browser-tools.js";
 import { resolvePiRuntimeToolDefinitions } from "./pi-runtime-tools.js";
-import { resolvePiWebSearchToolDefinitions } from "./pi-web-search.js";
 
 export type PiMappedEvent = {
   event_type: RunnerEventType;
@@ -1336,15 +1336,6 @@ function loadPiSkills(skillDirs: string[]): LoadSkillsResult {
   return { skills, diagnostics };
 }
 
-function stripMarkdownFrontmatter(value: string): string {
-  const normalized = value.replace(/^\uFEFF/, "");
-  const match = normalized.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
-  if (!match) {
-    return normalized;
-  }
-  return normalized.slice(match[0].length);
-}
-
 function normalizeSkillLookupToken(value: unknown): string {
   if (typeof value !== "string") {
     return "";
@@ -2011,181 +2002,12 @@ export function workspaceBoundaryViolationForToolCall(params: {
   return null;
 }
 
-function skillIdFromFilePath(filePath: string): string {
-  const parsed = path.parse(filePath);
-  if (parsed.base.toLowerCase() === "skill.md") {
-    return path.basename(path.dirname(filePath));
-  }
-  return parsed.name;
-}
-
-function markdownFrontmatterBlock(value: string): string | null {
-  const normalized = value.replace(/^\uFEFF/, "");
-  const match = normalized.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
-  return match?.[1] ?? null;
-}
-
-function normalizeGrantedToolName(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const normalized = value.trim().toLowerCase();
-  return normalized.length > 0 ? normalized : null;
-}
-
-function parseInlineStringList(value: string): string[] {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return [];
-  }
-  const bracketMatch = trimmed.match(/^\[([\s\S]*?)\]$/);
-  const body = bracketMatch ? bracketMatch[1] ?? "" : trimmed;
-  return body
-    .split(",")
-    .map((item) => item.trim().replace(/^['"]|['"]$/g, ""))
-    .map((item) => normalizeGrantedToolName(item))
-    .filter((item): item is string => Boolean(item));
-}
-
-function parseFrontmatterStringList(frontmatter: string, keyName: string): string[] {
-  const lines = frontmatter.split(/\r?\n/);
-  const escapedKey = keyName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const keyPattern = new RegExp(`^\\s*${escapedKey}\\s*:\\s*(.*)$`, "i");
-  for (let index = 0; index < lines.length; index += 1) {
-    const current = lines[index] ?? "";
-    const match = current.match(keyPattern);
-    if (!match) {
-      continue;
-    }
-    const inlineValue = (match[1] ?? "").trim();
-    if (inlineValue.length > 0) {
-      return parseInlineStringList(inlineValue);
-    }
-    const collected: string[] = [];
-    for (let lookahead = index + 1; lookahead < lines.length; lookahead += 1) {
-      const candidate = lines[lookahead] ?? "";
-      if (!candidate.trim()) {
-        if (collected.length > 0) {
-          break;
-        }
-        continue;
-      }
-      const itemMatch = candidate.match(/^\s*-\s*(.+?)\s*$/);
-      if (!itemMatch) {
-        break;
-      }
-      const normalized = normalizeGrantedToolName(itemMatch[1]?.replace(/^['"]|['"]$/g, ""));
-      if (normalized) {
-        collected.push(normalized);
-      }
-    }
-    return collected;
-  }
-  return [];
-}
-
-function parseHolabossNestedStringList(frontmatter: string, nestedKeyNames: string[]): string[] {
-  const lines = frontmatter.split(/\r?\n/);
-  let holabossStart = -1;
-  let holabossIndent = -1;
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index] ?? "";
-    const match = line.match(/^(\s*)holaboss\s*:\s*$/i);
-    if (!match) {
-      continue;
-    }
-    holabossStart = index + 1;
-    holabossIndent = match[1]?.length ?? 0;
-    break;
-  }
-  if (holabossStart < 0) {
-    return [];
-  }
-
-  const nestedLines: string[] = [];
-  for (let index = holabossStart; index < lines.length; index += 1) {
-    const line = lines[index] ?? "";
-    if (!line.trim()) {
-      nestedLines.push(line);
-      continue;
-    }
-    const indent = line.match(/^\s*/)?.[0]?.length ?? 0;
-    if (indent <= holabossIndent) {
-      break;
-    }
-    nestedLines.push(line.slice(holabossIndent + 2));
-  }
-
-  const nestedFrontmatter = nestedLines.join("\n");
-  for (const nestedKey of nestedKeyNames) {
-    const parsed = parseFrontmatterStringList(nestedFrontmatter, nestedKey);
-    if (parsed.length > 0) {
-      return parsed;
-    }
-  }
-  return [];
-}
-
-function parseGrantedToolsFromSkillFrontmatter(frontmatter: string | null): string[] {
-  if (!frontmatter) {
-    return [];
-  }
-  const directKeys = [
-    "holaboss_granted_tools",
-    "holaboss-granted-tools",
-    "holaboss_tools",
-    "holaboss-tools",
-    "capability_grants",
-    "capability-grants",
-  ];
-  for (const key of directKeys) {
-    const parsed = parseFrontmatterStringList(frontmatter, key);
-    if (parsed.length > 0) {
-      return [...new Set(parsed)];
-    }
-  }
-  const nested = parseHolabossNestedStringList(frontmatter, ["granted_tools", "granted-tools", "tools"]);
-  if (nested.length > 0) {
-    return [...new Set(nested)];
-  }
-  return [];
-}
-
 function normalizeWorkspaceCommandId(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
   }
   const normalized = value.trim().toLowerCase();
   return normalized.length > 0 ? normalized : null;
-}
-
-function parseGrantedCommandsFromSkillFrontmatter(frontmatter: string | null): string[] {
-  if (!frontmatter) {
-    return [];
-  }
-  const directKeys = [
-    "holaboss_granted_commands",
-    "holaboss-granted-commands",
-    "holaboss_commands",
-    "holaboss-commands",
-    "command_grants",
-    "command-grants",
-  ];
-  for (const key of directKeys) {
-    const parsed = parseFrontmatterStringList(frontmatter, key)
-      .map((commandId) => normalizeWorkspaceCommandId(commandId))
-      .filter((commandId): commandId is string => Boolean(commandId));
-    if (parsed.length > 0) {
-      return [...new Set(parsed)];
-    }
-  }
-  const nested = parseHolabossNestedStringList(frontmatter, ["granted_commands", "granted-commands", "commands"])
-    .map((commandId) => normalizeWorkspaceCommandId(commandId))
-    .filter((commandId): commandId is string => Boolean(commandId));
-  if (nested.length > 0) {
-    return [...new Set(nested)];
-  }
-  return [];
 }
 
 function workspaceCommandIdsFromRunStartedPayload(payload: JsonObject): string[] {
@@ -2255,36 +2077,6 @@ function requiredSkillIdsForTool(state: PiSkillWideningState, toolName: string):
   );
 }
 
-function applySkillWideningGrants(
-  state: PiSkillWideningState,
-  skillMetadata: PiSkillMetadata
-): { grantedTools: string[]; grantedCommands: string[] } {
-  const newlyGrantedTools: string[] = [];
-  const newlyGrantedCommands: string[] = [];
-  for (const toolName of skillMetadata.grantedTools) {
-    if (!state.managedToolNames.has(toolName)) {
-      continue;
-    }
-    if (!state.grantedToolNames.has(toolName)) {
-      newlyGrantedTools.push(toolName);
-    }
-    state.grantedToolNames.add(toolName);
-  }
-  for (const commandId of skillMetadata.grantedCommands) {
-    if (!state.managedCommandIds.has(commandId)) {
-      continue;
-    }
-    if (!state.grantedCommandIds.has(commandId)) {
-      newlyGrantedCommands.push(commandId);
-    }
-    state.grantedCommandIds.add(commandId);
-  }
-  return {
-    grantedTools: newlyGrantedTools.sort((left, right) => left.localeCompare(right)),
-    grantedCommands: newlyGrantedCommands.sort((left, right) => left.localeCompare(right)),
-  };
-}
-
 function activeGrantedTools(state: PiSkillWideningState): string[] {
   return [...state.grantedToolNames].sort((left, right) => left.localeCompare(right));
 }
@@ -2301,24 +2093,19 @@ function addSkillAlias(aliasMap: Map<string, PiSkillMetadata>, alias: unknown, m
   aliasMap.set(normalized, metadata);
 }
 
-function buildPiSkillMetadataByAlias(skills: Skill[]): Map<string, PiSkillMetadata> {
+function buildPiSkillMetadataByAlias(skills: HarnessHostWorkspaceSkillPayload[]): Map<string, PiSkillMetadata> {
   const aliasMap = new Map<string, PiSkillMetadata>();
   for (const skill of skills) {
-    const skillId = skillIdFromFilePath(skill.filePath);
-    const rawSkillFile = fs.readFileSync(skill.filePath, "utf8");
-    const frontmatter = markdownFrontmatterBlock(rawSkillFile);
-    const grantedTools = parseGrantedToolsFromSkillFrontmatter(frontmatter);
-    const grantedCommands = parseGrantedCommandsFromSkillFrontmatter(frontmatter);
     const metadata: PiSkillMetadata = {
-      skillId,
-      skillName: skill.name,
-      filePath: skill.filePath,
-      baseDir: skill.baseDir,
-      grantedTools,
-      grantedCommands,
+      skillId: skill.skill_id,
+      skillName: skill.skill_name,
+      filePath: skill.file_path,
+      baseDir: skill.source_dir,
+      grantedTools: [...skill.granted_tools],
+      grantedCommands: [...skill.granted_commands],
     };
-    addSkillAlias(aliasMap, skillId, metadata);
-    addSkillAlias(aliasMap, skill.name, metadata);
+    addSkillAlias(aliasMap, skill.skill_id, metadata);
+    addSkillAlias(aliasMap, skill.skill_name, metadata);
   }
   return aliasMap;
 }
@@ -2334,83 +2121,88 @@ function resolveSkillMetadata(
   return skillMetadataByAlias.get(normalizedName) ?? null;
 }
 
-function uniqueSkillIds(skillMetadataByAlias: ReadonlyMap<string, PiSkillMetadata>): string[] {
-  return [...new Set([...skillMetadataByAlias.values()].map((metadata) => metadata.skillId))]
-    .filter((value) => value.trim().length > 0)
-    .sort((left, right) => left.localeCompare(right));
+function uniqueNormalizedStrings(values: unknown): string[] {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  return [...new Set(values.map((value) => normalizeSkillLookupToken(value)).filter(Boolean))].sort((left, right) =>
+    left.localeCompare(right)
+  );
 }
 
-function skillToolParametersSchema(): Record<string, unknown> {
+function applySkillWideningGrantsFromLists(
+  skillWideningState: PiSkillWideningState,
+  grantedTools: string[],
+  grantedCommands: string[]
+): { grantedTools: string[]; grantedCommands: string[] } {
+  const newlyGrantedTools: string[] = [];
+  const newlyGrantedCommands: string[] = [];
+  for (const toolName of grantedTools) {
+    if (!skillWideningState.managedToolNames.has(toolName)) {
+      continue;
+    }
+    if (!skillWideningState.grantedToolNames.has(toolName)) {
+      newlyGrantedTools.push(toolName);
+    }
+    skillWideningState.grantedToolNames.add(toolName);
+  }
+  for (const commandId of grantedCommands) {
+    if (!skillWideningState.managedCommandIds.has(commandId)) {
+      continue;
+    }
+    if (!skillWideningState.grantedCommandIds.has(commandId)) {
+      newlyGrantedCommands.push(commandId);
+    }
+    skillWideningState.grantedCommandIds.add(commandId);
+  }
   return {
-    type: "object",
-    properties: {
-      name: {
-        type: "string",
-        description: "Skill id or skill name to invoke.",
-      },
-      args: {
-        type: "string",
-        description: "Optional follow-up instructions appended after the invoked skill content.",
-      },
-    },
-    required: ["name"],
-    additionalProperties: false,
+    grantedTools: newlyGrantedTools.sort((left, right) => left.localeCompare(right)),
+    grantedCommands: newlyGrantedCommands.sort((left, right) => left.localeCompare(right)),
   };
 }
 
-function createPiSkillToolDefinition(
+function wrapRuntimeSkillTool<TTool extends { name: string; execute: (...args: any[]) => Promise<any> }>(
+  tool: TTool,
   skillMetadataByAlias: ReadonlyMap<string, PiSkillMetadata>,
   skillWideningState: PiSkillWideningState,
   workspaceBoundaryPolicy: PiWorkspaceBoundaryPolicy
-): ToolDefinition {
-  return {
-    name: "skill",
-    label: "Skill",
-    description: "Load a workspace skill by id or name and return its canonical skill block.",
-    parameters: skillToolParametersSchema() as never,
-    execute: async (_toolCallId, toolParams, signal) => {
-      if (signal?.aborted) {
-        throw new Error("Skill invocation aborted before execution");
-      }
-      const params = isRecord(toolParams) ? toolParams : {};
-      const requestedName = optionalTrimmedString(params.name);
-      if (!requestedName) {
-        throw new Error("Skill invocation requires a non-empty `name` argument");
-      }
-      const resolvedSkill = resolveSkillMetadata(skillMetadataByAlias, requestedName);
-      if (!resolvedSkill) {
-        const availableSkills = uniqueSkillIds(skillMetadataByAlias);
-        throw new Error(
-          availableSkills.length > 0
-            ? `Skill "${requestedName}" was not found. Available skills: ${availableSkills.join(", ")}`
-            : `Skill "${requestedName}" was not found. No skills are currently available.`
-        );
-      }
-      let body: string;
-      try {
-        body = stripMarkdownFrontmatter(fs.readFileSync(resolvedSkill.filePath, "utf8")).trim();
-      } catch (error) {
-        throw new Error(
-          `Failed to load skill "${resolvedSkill.skillId}" from ${resolvedSkill.filePath}: ${sdkErrorMessage(
-            error,
-            "file read failed"
-          )}`
-        );
-      }
+): TTool {
+  if (tool.name.trim().toLowerCase() !== "skill") {
+    return tool;
+  }
 
-      const skillBlock = `<skill name="${resolvedSkill.skillName}" location="${resolvedSkill.filePath}">\nReferences are relative to ${resolvedSkill.baseDir}.\n\n${body}\n</skill>`;
-      const args = optionalTrimmedString(params.args);
-      const wideningGrant = applySkillWideningGrants(skillWideningState, resolvedSkill);
+  const originalExecute = tool.execute.bind(tool);
+  const wrapped: TTool = {
+    ...tool,
+    execute: (async (...args: any[]) => {
+      const toolParams = isRecord(args[1]) ? args[1] : {};
+      const requestedName = optionalTrimmedString(toolParams.name);
+      const runtimeResult = await originalExecute(...args);
+      const details = isRecord(runtimeResult?.details) ? runtimeResult.details : {};
+      const resolvedSkill =
+        resolveSkillMetadata(skillMetadataByAlias, details.skill_id) ??
+        resolveSkillMetadata(skillMetadataByAlias, details.skill_name) ??
+        resolveSkillMetadata(skillMetadataByAlias, requestedName);
+      const grantedTools = uniqueNormalizedStrings(details.granted_tools ?? resolvedSkill?.grantedTools ?? []);
+      const grantedCommands = uniqueNormalizedStrings(details.granted_commands ?? resolvedSkill?.grantedCommands ?? []);
+      const wideningGrant = applySkillWideningGrantsFromLists(
+        skillWideningState,
+        grantedTools,
+        grantedCommands
+      );
       return {
-        content: [{ type: "text", text: args ? `${skillBlock}\n\n${args}` : skillBlock }],
+        ...runtimeResult,
         details: {
+          ...details,
           invocation_type: "skill",
-          requested_name: requestedName,
-          skill_id: resolvedSkill.skillId,
-          skill_name: resolvedSkill.skillName,
-          skill_file_path: resolvedSkill.filePath,
-          skill_base_dir: resolvedSkill.baseDir,
-          args: args ?? null,
+          requested_name: requestedName ?? optionalTrimmedString(details.requested_name),
+          skill_id: optionalTrimmedString(details.skill_id) ?? resolvedSkill?.skillId ?? null,
+          skill_name: optionalTrimmedString(details.skill_name) ?? resolvedSkill?.skillName ?? requestedName ?? null,
+          skill_file_path: optionalTrimmedString(details.skill_file_path) ?? resolvedSkill?.filePath ?? null,
+          skill_base_dir: optionalTrimmedString(details.skill_base_dir) ?? resolvedSkill?.baseDir ?? null,
+          args: optionalTrimmedString(details.args) ?? optionalTrimmedString(toolParams.args),
+          granted_tools: grantedTools,
+          granted_commands: grantedCommands,
           policy_widening: {
             scope: skillWideningState.scope,
             managed_tools: [...skillWideningState.managedToolNames].sort((left, right) => left.localeCompare(right)),
@@ -2423,8 +2215,9 @@ function createPiSkillToolDefinition(
           },
         },
       };
-    },
+    }) as TTool["execute"],
   };
+  return wrapped;
 }
 
 function wrapToolWithSkillWidening<TTool extends { name: string; execute: (...args: any[]) => Promise<any> }>(
@@ -3432,7 +3225,7 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
   });
   const skillDirs = resolvePiSkillDirs(request);
   const loadedSkills = loadPiSkills(skillDirs);
-  const skillMetadataByAlias = buildPiSkillMetadataByAlias(loadedSkills.skills);
+  const skillMetadataByAlias = buildPiSkillMetadataByAlias(request.workspace_skills ?? []);
   const browserTools = request.browser_tools_enabled
     ? await resolvePiDesktopBrowserToolDefinitions({
         runtimeApiBaseUrl: request.runtime_api_base_url,
@@ -3467,7 +3260,6 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     inputId: request.input_id,
     selectedModel: `${request.provider_id}/${request.model_id}`,
   });
-  const webSearchTools = await resolvePiWebSearchToolDefinitions();
   const baseTools = [
     ...createCodingTools(request.workspace_dir),
     createGrepTool(request.workspace_dir),
@@ -3477,7 +3269,6 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
   const nonSkillCustomTools: ToolDefinition[] = [
     ...browserTools,
     ...runtimeTools,
-    ...webSearchTools,
     ...mcpToolset.customTools,
   ];
   const availableToolNames = [...baseTools, ...nonSkillCustomTools].map((tool) => tool.name);
@@ -3491,18 +3282,19 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     [...availableToolNames, "skill"],
     availableCommandIds
   );
-  const skillTools =
-    skillMetadataByAlias.size > 0
-      ? [createPiSkillToolDefinition(skillMetadataByAlias, skillWideningState, workspaceBoundaryPolicy)]
-      : [];
   const tools = baseTools.map((tool) =>
     wrapToolWithWorkspaceBoundary(wrapToolWithSkillWidening(tool, skillWideningState), workspaceBoundaryPolicy)
   );
   const customTools = [
     ...nonSkillCustomTools.map((tool) =>
-      wrapToolWithWorkspaceBoundary(wrapToolWithSkillWidening(tool, skillWideningState), workspaceBoundaryPolicy)
+      wrapToolWithWorkspaceBoundary(
+        wrapToolWithSkillWidening(
+          wrapRuntimeSkillTool(tool, skillMetadataByAlias, skillWideningState, workspaceBoundaryPolicy),
+          skillWideningState
+        ),
+        workspaceBoundaryPolicy
+      )
     ),
-    ...skillTools.map((tool) => wrapToolWithWorkspaceBoundary(tool, workspaceBoundaryPolicy)),
   ];
 
   const restorePromptCacheRetention = configurePiPromptCacheRetention(request);

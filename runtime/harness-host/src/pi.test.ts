@@ -50,6 +50,7 @@ function baseRequest(): HarnessHostPiRequest {
     runtime_api_base_url: "http://127.0.0.1:5060",
     system_prompt: "You are concise.",
     workspace_skill_dirs: [],
+    workspace_skills: [],
     mcp_servers: [],
     mcp_tool_refs: [],
     workspace_config_checksum: "checksum-1",

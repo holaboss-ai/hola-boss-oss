@@ -7,6 +7,8 @@ This page covers the tool surface the runtime currently projects into the shippe
 
 The runtime still chooses which tools appear. The harness does not invent its own environment. But for readers, category is the more useful view than internal tool surface.
 
+In the shipped `pi` path today, tools such as `todoread`, `todowrite`, `skill`, `web_search`, scratchpad tools, onboarding tools, cronjob tools, image generation, and `write_report` all execute through the shared runtime capability API. The PI host only packages and proxies them.
+
 ## Workspace and Files
 
 | Tool | What it does |
@@ -26,13 +28,13 @@ The runtime still chooses which tools appear. The harness does not invent its ow
 | `question` | Pause and ask the user for clarification or confirmation. |
 | `todowrite` | Create or update the current phased todo plan for the current workspace session. |
 | `todoread` | Read the current phased todo plan for the current workspace session, including the phase and task ids needed for later updates. |
-| `skill` | Consult available embedded or workspace skills when they are relevant. |
+| `skill` | Load an embedded or workspace skill by id or name and return its canonical skill block plus any declared tool or command grants. |
 
 ## Research
 
 | Tool | What it does |
 | --- | --- |
-| `web_search` | Search the public web for exploratory research, source discovery, and approximate or aggregated answers. |
+| `web_search` | Search the public web for exploratory research, source discovery, and approximate or aggregated answers across multiple sources. |
 
 ## Browser
 

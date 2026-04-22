@@ -15,6 +15,7 @@ import {
 import { RUNTIME_AGENT_TOOL_DEFINITIONS as RUNTIME_AGENT_TOOL_BASE_DEFINITIONS } from "../../harnesses/src/runtime-agent-tools.js";
 import { cronjobNextRunAt } from "./cron-worker.js";
 import { generateWorkspaceImage } from "./image-generation.js";
+import { searchPublicWeb } from "./native-web-search.js";
 import {
   readSessionScratchpad,
   type SessionScratchpadWriteOperation,
@@ -32,6 +33,7 @@ import {
   writeSessionTodo,
 } from "./session-todo.js";
 import type { TerminalSessionManagerLike } from "./terminal-session-manager.js";
+import { invokeWorkspaceSkill, resolveWorkspaceSkills } from "./workspace-skills.js";
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 type JsonObject = { [key: string]: JsonValue };
@@ -112,6 +114,21 @@ export interface RuntimeAgentToolsWriteReportParams {
   filename?: string | null;
   summary?: string | null;
   content: string;
+}
+
+export interface RuntimeAgentToolsSearchWebParams {
+  query: string;
+  numResults?: number | null;
+  maxResults?: number | null;
+  livecrawl?: string | null;
+  type?: string | null;
+  contextMaxCharacters?: number | null;
+}
+
+export interface RuntimeAgentToolsInvokeSkillParams {
+  workspaceId: string;
+  requestedName: string;
+  args?: string | null;
 }
 
 export interface RuntimeAgentToolsReadScratchpadParams {
@@ -269,6 +286,12 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
     description: runtimeToolBaseDefinition("write_report").description
   },
   {
+    id: runtimeToolBaseDefinition("web_search").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/web-search",
+    description: runtimeToolBaseDefinition("web_search").description
+  },
+  {
     id: runtimeToolBaseDefinition("todoread").id,
     method: "GET",
     path: "/api/v1/capabilities/runtime-tools/todo",
@@ -291,6 +314,12 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/scratchpad",
     description: runtimeToolBaseDefinition("holaboss_scratchpad_write").description
+  },
+  {
+    id: runtimeToolBaseDefinition("skill").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/skill",
+    description: runtimeToolBaseDefinition("skill").description
   },
   {
     id: runtimeToolBaseDefinition("terminal_sessions_list").id,
@@ -1299,6 +1328,59 @@ export class RuntimeAgentToolsService {
       size_bytes: sizeBytes,
       created_at: output.createdAt,
     };
+  }
+
+  async searchWeb(params: RuntimeAgentToolsSearchWebParams): Promise<JsonObject> {
+    try {
+      const result = await searchPublicWeb({
+        query: params.query,
+        numResults: params.numResults,
+        maxResults: params.maxResults,
+        livecrawl: params.livecrawl,
+        type: params.type,
+        contextMaxCharacters: params.contextMaxCharacters,
+      });
+      return {
+        text: result.text,
+        provider: result.providerId,
+        tool_id: "web_search",
+      };
+    } catch (error) {
+      throw new RuntimeAgentToolsServiceError(
+        502,
+        "web_search_failed",
+        error instanceof Error ? error.message : "web search failed"
+      );
+    }
+  }
+
+  invokeSkill(params: RuntimeAgentToolsInvokeSkillParams): JsonObject {
+    this.requireWorkspace(params.workspaceId);
+    try {
+      const workspaceDir = path.join(this.options.workspaceRoot, params.workspaceId);
+      const result = invokeWorkspaceSkill({
+        requestedName: params.requestedName,
+        args: params.args,
+        workspaceSkills: resolveWorkspaceSkills(workspaceDir),
+      });
+      return {
+        text: result.text,
+        skill_block: result.skill_block,
+        requested_name: result.requested_name,
+        skill_id: result.skill_id,
+        skill_name: result.skill_name,
+        skill_file_path: result.skill_file_path,
+        skill_base_dir: result.skill_base_dir,
+        granted_tools: result.granted_tools as unknown as JsonValue,
+        granted_commands: result.granted_commands as unknown as JsonValue,
+        args: result.args,
+        tool_id: "skill",
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "skill invocation failed";
+      const statusCode = /was not found/i.test(message) ? 404 : /requires a non-empty `name` argument/i.test(message) ? 400 : 500;
+      throw new RuntimeAgentToolsServiceError(statusCode, "skill_invocation_failed", message);
+    }
   }
 
   async readScratchpad(params: RuntimeAgentToolsReadScratchpadParams): Promise<JsonObject> {

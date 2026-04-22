@@ -17,8 +17,10 @@ const RUNTIME_TOOLS_CRONJOBS_PATH = "/api/v1/capabilities/runtime-tools/cronjobs
 const RUNTIME_TOOLS_IMAGE_GENERATE_PATH = "/api/v1/capabilities/runtime-tools/images/generate";
 const RUNTIME_TOOLS_DOWNLOADS_PATH = "/api/v1/capabilities/runtime-tools/downloads";
 const RUNTIME_TOOLS_REPORTS_PATH = "/api/v1/capabilities/runtime-tools/reports";
+const RUNTIME_TOOLS_WEB_SEARCH_PATH = "/api/v1/capabilities/runtime-tools/web-search";
 const RUNTIME_TOOLS_TODO_PATH = "/api/v1/capabilities/runtime-tools/todo";
 const RUNTIME_TOOLS_SCRATCHPAD_PATH = "/api/v1/capabilities/runtime-tools/scratchpad";
+const RUNTIME_TOOLS_SKILL_PATH = "/api/v1/capabilities/runtime-tools/skill";
 const RUNTIME_TOOLS_TERMINAL_SESSIONS_PATH = "/api/v1/capabilities/runtime-tools/terminal-sessions";
 const DEFAULT_RUNTIME_TOOL_TIMEOUT_MS = 30000;
 const IMAGE_GENERATE_RUNTIME_TOOL_TIMEOUT_MS = 180000;
@@ -351,6 +353,53 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId) {
             description:
               "Full markdown report content to save as an artifact. Put the detailed research findings in this field instead of in chat.",
           }),
+        },
+        { additionalProperties: false },
+      );
+    case "web_search":
+      return Type.Object(
+        {
+          query: Type.String({ description: "Search query for the public web.", minLength: 1 }),
+          num_results: Type.Optional(
+            Type.Integer({
+              description: "Number of search results to return (1-10). Defaults to 8.",
+              minimum: 1,
+              maximum: 10,
+            })
+          ),
+          max_results: Type.Optional(
+            Type.Integer({
+              description: "Compatibility alias for num_results (1-10).",
+              minimum: 1,
+              maximum: 10,
+            })
+          ),
+          livecrawl: Type.Optional(
+            Type.Union([Type.Literal("fallback"), Type.Literal("preferred")], {
+              description: "Whether to prefer live crawling or only use it as fallback.",
+            })
+          ),
+          type: Type.Optional(
+            Type.Union([Type.Literal("auto"), Type.Literal("fast"), Type.Literal("deep")], {
+              description: "Search depth mode.",
+            })
+          ),
+          context_max_characters: Type.Optional(
+            Type.Integer({
+              description: "Maximum number of context characters to request from the search backend.",
+              minimum: 1,
+            })
+          ),
+        },
+        { additionalProperties: false }
+      );
+    case "skill":
+      return Type.Object(
+        {
+          name: Type.String({ description: "Skill id or skill name to invoke." }),
+          args: Type.Optional(
+            Type.String({ description: "Optional follow-up instructions appended after the invoked skill content." })
+          ),
         },
         { additionalProperties: false },
       );
@@ -695,6 +744,28 @@ function createWriteReportBody(toolParams: unknown): Record<string, unknown> {
   };
 }
 
+function createWebSearchBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    query: String(params.query ?? ""),
+    ...(typeof params.num_results === "number" ? { num_results: params.num_results } : {}),
+    ...(typeof params.max_results === "number" ? { max_results: params.max_results } : {}),
+    ...(optionalString(params.livecrawl) ? { livecrawl: optionalString(params.livecrawl) } : {}),
+    ...(optionalString(params.type) ? { type: optionalString(params.type) } : {}),
+    ...(typeof params.context_max_characters === "number"
+      ? { context_max_characters: params.context_max_characters }
+      : {}),
+  };
+}
+
+function createSkillBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    name: String(params.name ?? ""),
+    ...(optionalString(params.args) ? { args: optionalString(params.args) } : {}),
+  };
+}
+
 function createTodoWriteBody(toolParams: unknown): Record<string, unknown> {
   const params = isRecord(toolParams) ? toolParams : {};
   return {
@@ -780,6 +851,21 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "A step like 'summarize findings for the user' still means: save the full findings with `write_report`, then keep the chat reply brief.",
       "After calling `write_report`, keep the chat reply short: mention the report title or path and give only the key takeaways.",
       "Write the full markdown report in `content` instead of pasting the full report inline in chat.",
+    ];
+  }
+  if (toolId === "web_search") {
+    return [
+      "Use `web_search` for exploratory research, source discovery, and approximate or aggregated answers across multiple public sources.",
+      "Do not rely on `web_search` alone for exact live values, UI-only state, or tasks that require direct interaction with a site or product surface.",
+      "When searching for recent information, include the current year in the query.",
+      "If required facts remain unverified after search, escalate to browser tools or another more direct capability.",
+    ];
+  }
+  if (toolId === "skill") {
+    return [
+      "Use `skill` when a workspace or embedded skill is relevant and you need its canonical guidance block.",
+      "Pass the specific skill id or name in `name` instead of paraphrasing the skill body yourself.",
+      "Use `args` only for short follow-up instructions that should accompany the skill block.",
     ];
   }
   if (toolId === "todoread") {
@@ -898,6 +984,16 @@ async function executeRuntimeTool(params: {
       method = "POST";
       requestPath = RUNTIME_TOOLS_REPORTS_PATH;
       body = createWriteReportBody(params.toolParams);
+      break;
+    case "web_search":
+      method = "POST";
+      requestPath = RUNTIME_TOOLS_WEB_SEARCH_PATH;
+      body = createWebSearchBody(params.toolParams);
+      break;
+    case "skill":
+      method = "POST";
+      requestPath = RUNTIME_TOOLS_SKILL_PATH;
+      body = createSkillBody(params.toolParams);
       break;
     case "todoread":
       requestPath = RUNTIME_TOOLS_TODO_PATH;

@@ -160,20 +160,20 @@ test("buildAgentCapabilityManifest excludes browser tools for onboarding session
   assert.equal(buildEnabledToolMapFromManifest(manifest).browser_get_state, undefined);
 });
 
-test("buildAgentCapabilityManifest includes native web search as a custom tool", () => {
+test("buildAgentCapabilityManifest includes native web search as a runtime tool", () => {
   const manifest = buildAgentCapabilityManifest({
     harnessId: "pi",
     sessionKind: "workspace_session",
     browserToolsAvailable: false,
     browserToolIds: [],
-    runtimeToolIds: [],
+    runtimeToolIds: ["web_search"],
     defaultTools: ["read"],
     extraTools: ["web_search"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
   });
 
-  const capability = manifest.custom_tools.find((entry) => entry.id === "web_search");
+  const capability = manifest.runtime_tools.find((entry) => entry.id === "web_search");
   assert.ok(capability);
   assert.equal(capability.title, "Web Search");
   assert.match(capability.description, /discover and summarize information across multiple sources/i);

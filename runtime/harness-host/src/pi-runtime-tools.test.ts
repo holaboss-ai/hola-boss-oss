@@ -104,6 +104,105 @@ test("Pi runtime tools execute through the local runtime capability API", async 
   assert.deepEqual(result.details, { tool_id: "holaboss_onboarding_complete" });
 });
 
+test("Pi runtime web search and skill tools proxy through the runtime capability API", async () => {
+  const requests: Array<{
+    method: string;
+    url: string;
+    body: string;
+  }> = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/api/v1/capabilities/runtime-tools")) {
+      return new Response(JSON.stringify({ available: true }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+    requests.push({
+      method: String(init?.method ?? "GET"),
+      url,
+      body: init?.body ? String(init.body) : "",
+    });
+    if (url.endsWith("/api/v1/capabilities/runtime-tools/web-search")) {
+      return new Response(JSON.stringify({ text: "search results", provider: "exa_hosted_mcp" }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+    if (url.endsWith("/api/v1/capabilities/runtime-tools/skill")) {
+      return new Response(
+        JSON.stringify({
+          text: "<skill name=\"deploy-helper\">Body</skill>",
+          skill_id: "deploy-helper",
+          skill_name: "deploy-helper",
+          skill_file_path: "/tmp/workspace-1/skills/deploy-helper/SKILL.md",
+          skill_base_dir: "/tmp/workspace-1/skills/deploy-helper",
+          granted_tools: ["bash"],
+          granted_commands: ["deploy-docs"],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json; charset=utf-8" },
+        }
+      );
+    }
+    throw new Error(`unexpected request: ${url}`);
+  };
+
+  const tools = await resolvePiRuntimeToolDefinitions({
+    runtimeApiBaseUrl: "http://127.0.0.1:5060",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    fetchImpl,
+  });
+
+  const webSearchTool = tools.find((tool) => tool.name === "web_search");
+  const skillTool = tools.find((tool) => tool.name === "skill");
+  assert.ok(webSearchTool);
+  assert.ok(skillTool);
+
+  const webSearchResult = await webSearchTool.execute(
+    "call-1",
+    { query: "latest alpha 2026", max_results: 2, livecrawl: "preferred" },
+    undefined,
+    undefined,
+    {} as never
+  );
+  const skillResult = await skillTool.execute(
+    "call-2",
+    { name: "deploy-helper", args: "Only docs." },
+    undefined,
+    undefined,
+    {} as never
+  );
+
+  assert.equal(webSearchResult.content[0]?.type === "text" ? webSearchResult.content[0].text : "", "search results");
+  assert.equal(
+    skillResult.content[0]?.type === "text" ? skillResult.content[0].text : "",
+    "<skill name=\"deploy-helper\">Body</skill>"
+  );
+
+  assert.deepEqual(requests, [
+    {
+      method: "POST",
+      url: "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/web-search",
+      body: JSON.stringify({
+        query: "latest alpha 2026",
+        max_results: 2,
+        livecrawl: "preferred",
+      }),
+    },
+    {
+      method: "POST",
+      url: "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/skill",
+      body: JSON.stringify({
+        name: "deploy-helper",
+        args: "Only docs.",
+      }),
+    },
+  ]);
+});
+
 test("Pi runtime cronjob tools send instruction separately from description", async () => {
   const requests: Array<{
     method: string;

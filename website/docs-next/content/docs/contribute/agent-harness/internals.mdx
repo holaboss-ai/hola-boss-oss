@@ -16,9 +16,9 @@ For the shipped `pi` path, a single run currently moves through these seams:
 1. `runtime/api-server/src/ts-runner.ts`: compiles the workspace runtime plan, stages MCP and app state, loads or persists harness session state, and decides which harness plugin to use.
 2. `runtime/api-server/src/agent-runtime-config.ts`: projects prompt layers, response-delivery policy, operator-surface context, capability manifests, selected model client config, and the tool map passed into the harness.
 3. `runtime/api-server/src/harness-registry.ts`: selects the runtime harness plugin, timeout behavior, browser tools, runtime tools, and MCP preparation policy.
-4. `runtime/harnesses/src/pi.ts`: builds the reduced host request that crosses from runtime code into the harness host, including the raw `thinking_value` requested for this run and any runtime-prepared quoted skill payloads.
+4. `runtime/harnesses/src/pi.ts`: builds the reduced host request that crosses from runtime code into the harness host, including the raw `thinking_value` requested for this run, runtime-prepared quoted skill payloads, and runtime-resolved workspace skill manifests.
 5. `runtime/harness-host/src/index.ts`: dispatches the registered host plugin by command.
-6. `runtime/harness-host/src/pi.ts`: creates the Pi session, loads skills, injects runtime and browser tools, materializes the resolved MCP tool surface, enforces workspace boundaries, renders any runtime-prepared quoted skill blocks, maps `thinking_value` onto Pi-native reasoning settings, and maps native events back out.
+6. `runtime/harness-host/src/pi.ts`: creates the Pi session, loads file-backed skills for PI resource compatibility, injects runtime and browser tools, materializes the resolved MCP tool surface, applies local skill widening, enforces workspace boundaries, renders any runtime-prepared quoted skill blocks, maps `thinking_value` onto Pi-native reasoning settings, and maps native events back out.
 7. `runtime/harness-host/src/contracts.ts`: defines the normalized runner event types that the host emits back to the runtime.
 
 If you are unsure where a behavior belongs, trace this path before you patch anything.
@@ -36,10 +36,21 @@ Representative reduced host request from `runtime/harnesses/src/pi.ts`:
   missing_quoted_skill_ids: params.prepared_instruction?.missing_quoted_skill_ids ?? [],
   context_messages: params.runtimeConfig.context_messages ?? [],
   attachments: params.request.attachments ?? [],
+  system_prompt: params.runtimeConfig.system_prompt,
   thinking_value: params.request.thinking_value ?? null,
   provider_id: params.runtimeConfig.provider_id,
   model_id: params.runtimeConfig.model_id,
   model_client: params.runtimeConfig.model_client,
+  workspace_skill_dirs: params.workspaceSkills.map((skill) => skill.source_dir),
+  workspace_skills: params.workspaceSkills.map((skill) => ({
+    skill_id: skill.skill_id,
+    skill_name: skill.skill_name,
+    source_dir: skill.source_dir,
+    file_path: skill.file_path,
+    origin: skill.origin,
+    granted_tools: [...skill.granted_tools],
+    granted_commands: [...skill.granted_commands],
+  })),
   mcp_servers: params.mcpServers,
   mcp_tool_refs: params.mcpToolRefs,
 }
@@ -52,15 +63,15 @@ Representative reduced host request from `runtime/harnesses/src/pi.ts`:
 - `runtime/harnesses/src/types.ts`: canonical harness contracts, including adapter capabilities, runner prep plans, prompt-layer payloads, prepared MCP payloads, and host request build parameters.
 - `runtime/harnesses/src/pi.ts`: the current `pi` runtime adapter. This is where the shipped path declares capabilities, chooses its runner prep plan, and builds the reduced host request.
 - `runtime/api-server/src/harness-registry.ts`: runtime-side harness registration. This is where browser tools, runtime tools, skill staging, command staging, readiness, and harness-specific timeouts are coordinated.
-- `runtime/api-server/src/ts-runner.ts`: per-run bootstrap. This is where the runtime applies the default tool set, adds extra tools such as `web_search` and `write_report`, prepares browser/runtime/MCP state, loads operator-surface context, and builds the agent runtime config request.
-- `runtime/api-server/src/agent-runtime-config.ts`: prompt and capability projection. This is where prompt layers, recalled memory, recent runtime context, operator-surface context, response-delivery policy, capability manifests, and tool visibility are composed before the harness runs. For MCP, this layer distinguishes pre-enumerated tool refs from connected server ids that still require host-side discovery.
+- `runtime/api-server/src/ts-runner.ts`: per-run bootstrap. This is where the runtime applies the default tool set, adds extra tools such as `web_search` and `write_report`, resolves workspace skills into runtime-owned manifests, prepares browser/runtime/MCP state, loads operator-surface context, and builds the agent runtime config request.
+- `runtime/api-server/src/agent-runtime-config.ts`: prompt and capability projection. This is where prompt layers, session-memory-backed resume context, recalled memory, operator-surface context, response-delivery policy, capability manifests, and tool visibility are composed before the harness runs. For MCP, this layer distinguishes pre-enumerated tool refs from connected server ids that still require host-side discovery.
 - `runtime/harness-host/src/contracts.ts`: host-side request and event contracts. This is the source of truth for the decoded host request and the normalized runner event types the host must emit back.
 - `runtime/harness-host/src/index.ts`: harness-host CLI entrypoint that dispatches a registered host plugin by command.
-- `runtime/harness-host/src/pi.ts`: the current host implementation. This is where the host loads workspace skills, applies skill widening, enforces workspace-boundary policy, injects browser/runtime/web search tools, materializes per-server allowlisted MCP subsets or full discovered tool catalogs when a configured server has no explicit refs, and normalizes provider-native `thinking_value` choices onto Pi reasoning levels or budgets.
+- `runtime/harness-host/src/pi.ts`: the current host implementation. This is where the host consumes runtime-resolved workspace skill manifests, applies local skill widening, enforces workspace-boundary policy, injects browser and runtime tools, materializes per-server allowlisted MCP subsets or full discovered tool catalogs when a configured server has no explicit refs, and normalizes provider-native `thinking_value` choices onto Pi reasoning levels or budgets.
 - `runtime/harness-host/src/pi-browser-tools.ts`: desktop browser bridge used by the current host.
-- `runtime/harness-host/src/pi-runtime-tools.ts`: runtime-managed tool bridge for onboarding, cronjobs, image generation, and `write_report`. This is also where the host attaches workspace/session/input/model headers to runtime-tool calls.
-- `runtime/harness-host/src/pi-web-search.ts`: hosted native web search bridge for the current `web_search` tool.
-- `runtime/harnesses/src/desktop-browser-tools.ts`, `runtime/harnesses/src/runtime-agent-tools.ts`, and `runtime/harnesses/src/native-web-search-tools.ts`: canonical ids and descriptions for the projected browser, runtime, and native web-search surfaces.
+- `runtime/harness-host/src/pi-runtime-tools.ts`: runtime-managed tool bridge for todo, scratchpad, `skill`, `web_search`, onboarding, cronjobs, image generation, and `write_report`. This is also where the host attaches workspace/session/input/model headers to runtime-tool calls.
+- `runtime/harnesses/src/desktop-browser-tools.ts`, `runtime/harnesses/src/runtime-agent-tools.ts`, and `runtime/harnesses/src/native-web-search-tools.ts`: canonical ids and descriptions for the projected browser, runtime, and shared web-search surfaces.
+- `runtime/api-server/src/runtime-agent-tools.ts` and `runtime/api-server/src/native-web-search.ts`: shared runtime execution path for runtime-backed tools, including `skill` and `web_search`.
 - `runtime/api-server/src/backend-agent-runs-contract.ts`: backend-owned run registration contract for Sentry waterfall reconstruction and model-proxy usage correlation.
 
 Representative event normalization from `runtime/harness-host/src/pi.ts`:
@@ -151,6 +162,22 @@ The PI adapter forwards that prepared payload as:
 
 `buildPiPromptPayload()` no longer resolves slash skills from raw instruction text. It only renders the already-prepared `quoted_skill_blocks` and the missing-skill warning section. Keep that behavior stable so composer-selected skills remain inspectable in runtime traces and harness prompts without making the feature semantics PI-specific.
 
+## Runtime-backed `skill` and `web_search`
+
+The current shipped path no longer treats `skill` or `web_search` as PI-owned executor behavior.
+
+- `runtime/api-server/src/runtime-agent-tools.ts` owns the shared runtime capability endpoints
+- `runtime/api-server/src/workspace-skills.ts` owns canonical skill resolution and skill-block rendering
+- `runtime/api-server/src/native-web-search.ts` owns the current Exa-backed public-web search execution
+- `runtime/harness-host/src/pi-runtime-tools.ts` only packages and proxies those tool calls for PI
+
+PI still keeps two local responsibilities around `skill`:
+
+- applying returned tool and command grants to the live widening state
+- mapping skill lifecycle events onto normalized runtime events
+
+That split is deliberate. Skill meaning is runtime-owned; local enforcement over PI-managed tools remains host-local.
+
 ## Change the right seam
 
 - If you are changing prompt layers, model selection, or capability projection, start in `runtime/api-server/src/agent-runtime-config.ts`.
@@ -167,7 +194,7 @@ The PI adapter forwards that prepared payload as:
 2. Build the host request from the runtime's reduced execution package instead of letting the executor infer state implicitly.
 3. Implement a host plugin under `runtime/harness-host/src/` that decodes that request and emits normalized lifecycle events.
 4. Register the runtime plugin in `runtime/api-server/src/harness-registry.ts` so browser tools, runtime tools, skill staging, timeouts, and readiness rules match the new harness.
-5. Decide deliberately which capability surfaces the harness should expose: browser tools, runtime tools, MCP, skills, native web search, or future additions.
+5. Decide deliberately which capability surfaces the harness should expose: browser tools, runtime tools, MCP, skill widening, or future additions.
 6. Keep event normalization stable so the runtime and desktop can observe runs without depending on harness-native output.
 
 ## Invariants to preserve

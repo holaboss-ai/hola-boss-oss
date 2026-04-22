@@ -1,27 +1,73 @@
 ---
 title: Skills Usage
-description: How workspace skills enter the run and how skill-driven widening works.
+description: How runtime-resolved skills enter the run and how skill-driven widening still works in the current host path.
 ---
 
-Skills are a first-class part of the current harness path. They are not hidden prompt fragments glued onto the executor.
+Skills are now a runtime-owned capability surface, not a PI-local prompt trick.
 
-## How they enter the run
+## How skills enter the run
 
-The runtime passes workspace skill directories into the host request, and the current `pi` host exposes a `skill` tool that loads a workspace skill by id or name.
+The runtime resolves both workspace and embedded skills before the host request is built.
 
-That means skills remain:
+That runtime-owned preparation currently does three separate things:
 
-- workspace-owned
+- resolves the available skill set into normalized manifests with ids, names, file paths, origins, and declared grants
+- prepares any quoted skill blocks referenced by leading slash lines in the user instruction
+- exposes a shared runtime-backed `skill` tool that can load a canonical skill block by id or name during the run
+
+So the current harness path keeps skills:
+
+- workspace-owned or embedded-owned
 - inspectable on disk
-- explicitly invoked during the run
+- explicitly surfaced in the runtime contract
+- available both as prepared prompt material and as an explicit runtime tool
+
+## What the PI host still does
+
+The current `pi` host still receives:
+
+- `workspace_skill_dirs`
+- `workspace_skills`
+- prepared `quoted_skill_blocks`
+
+That split exists for a reason:
+
+- `workspace_skill_dirs` are still used for PI's file-backed skill resource loading
+- `workspace_skills` are the runtime-owned manifests used for local widening metadata and event mapping
+- `quoted_skill_blocks` are already prepared, so the host no longer parses slash skills from raw instruction text
+
+The important boundary is that the host is no longer the source of truth for skill meaning.
+
+## The `skill` tool path
+
+The `skill` tool is now runtime-backed.
+
+When the model calls `skill`:
+
+1. the PI host packages the request through `pi-runtime-tools.ts`
+2. the shared runtime capability API resolves the requested skill
+3. runtime returns:
+   - the canonical `<skill ...>` block
+   - resolved skill identity and file metadata
+   - declared tool and command grants
+4. the PI host relays that result back into the run
+
+That means canonical skill resolution no longer depends on PI-local file parsing at tool-execution time.
 
 ## Skill widening
 
-The current host also supports skill-driven widening.
+Skill widening still remains partly host-local.
 
-Skill frontmatter can grant additional managed tools or workspace commands for the run through fields such as:
+Skill frontmatter can declare additional managed tools or workspace commands for the run through fields such as:
 
 - `holaboss_granted_tools`
 - `holaboss_granted_commands`
 
-So the skill system is not just about loading instructions. It can also widen the effective tool or command surface in a controlled, inspectable way.
+After a successful runtime-backed `skill` invocation, the PI host applies the returned grants to its live widening state. That local step matters because PI still owns enforcement over its wrapped local tools and commands.
+
+So the current split is:
+
+- runtime owns skill resolution and canonical skill payloads
+- the host owns local enforcement of widening over PI-managed tool surfaces
+
+That keeps skills inspectable and explicit without leaving their meaning inside one harness implementation.

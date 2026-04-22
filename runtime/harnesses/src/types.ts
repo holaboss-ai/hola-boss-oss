@@ -11,6 +11,16 @@ export interface HarnessToolRefPayload {
   tool_name: string;
 }
 
+export interface HarnessWorkspaceSkillPayload {
+  skill_id: string;
+  skill_name: string;
+  source_dir: string;
+  file_path: string;
+  origin: "workspace" | "embedded";
+  granted_tools: string[];
+  granted_commands: string[];
+}
+
 export interface HarnessInputAttachmentPayload {
   id: string;
   kind: "image" | "file" | "folder";
@@ -138,10 +148,7 @@ export interface HarnessHostRequestBuildParams {
   } | null;
   browserSpace?: "agent" | "user" | null;
   runtimeApiBaseUrl?: string | null;
-  workspaceSkills: Array<{
-    skill_id: string;
-    source_dir: string;
-  }>;
+  workspaceSkills: HarnessWorkspaceSkillPayload[];
   mcpServers: HarnessPreparedMcpServerPayload[];
   mcpToolRefs: HarnessToolRefPayload[];
   runStartedPayload: Record<string, unknown>;

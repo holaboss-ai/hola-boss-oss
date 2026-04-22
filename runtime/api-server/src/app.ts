@@ -3785,6 +3785,54 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
+  app.post("/api/v1/capabilities/runtime-tools/web-search", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return await runtimeAgentToolsService.searchWeb({
+        query: requiredString(request.body.query, "query"),
+        numResults: hasOwn(request.body, "num_results")
+          ? optionalInteger(request.body.num_results, 0) || null
+          : undefined,
+        maxResults: hasOwn(request.body, "max_results")
+          ? optionalInteger(request.body.max_results, 0) || null
+          : undefined,
+        livecrawl: nullableString(request.body.livecrawl) ?? undefined,
+        type: nullableString(request.body.type) ?? undefined,
+        contextMaxCharacters: hasOwn(request.body, "context_max_characters")
+          ? optionalInteger(request.body.context_max_characters, 0) || null
+          : undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime web search failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/skill", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return runtimeAgentToolsService.invokeSkill({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        requestedName: requiredString(request.body.name, "name"),
+        args: nullableString(request.body.args) ?? undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime skill invocation failed");
+    }
+  });
+
   app.get("/api/v1/capabilities/runtime-tools/todo", async (request, reply) => {
     try {
       return await runtimeAgentToolsService.readTodo({

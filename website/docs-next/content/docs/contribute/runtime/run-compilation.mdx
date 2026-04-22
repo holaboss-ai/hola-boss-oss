@@ -20,7 +20,7 @@ For the shipped path, a run moves through these stages:
 1. collect the workspace references the runtime needs
 2. compile `workspace.yaml` plus those references into a `CompiledWorkspaceRuntimePlan`
 3. stage runtime-owned capability surfaces such as browser tools, runtime tools, MCP, skills, and commands
-4. load recent runtime context, session resume context, recalled memory, operator surface context, and pending user-memory proposals
+4. load session resume context, session scratchpad context, recalled memory, operator surface context, and pending user-memory proposals
 5. project the final runtime config passed into the harness
 6. build the harness-host request, persist a sanitized request snapshot, and launch the host
 
@@ -123,7 +123,7 @@ Before the harness launch it also:
 
 - stages browser tools through the selected harness plugin
 - stages runtime tools through the selected harness plugin, including runtime-owned mutate paths such as `write_report`
-- resolves workspace skills
+- resolves workspace skills into manifests used for quoted-skill preparation, capability projection, and runtime-backed `skill` invocation
 - optionally stages skills and workspace commands depending on the runner prep plan
 - maps logical MCP server ids to physical server ids with `mcpServerIdMap()`
 - starts the workspace MCP sidecar when `workspace_mcp_catalog` is non-empty

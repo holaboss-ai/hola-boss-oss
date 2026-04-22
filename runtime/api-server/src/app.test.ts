@@ -615,6 +615,11 @@ test("runtime tools capability routes expose local onboarding and cronjob action
   assert.ok(
     capabilityStatus
       .json()
+      .tools.some((tool: { id: string }) => tool.id === "web_search")
+  );
+  assert.ok(
+    capabilityStatus
+      .json()
       .tools.some((tool: { id: string }) => tool.id === "todoread")
   );
   assert.ok(
@@ -626,6 +631,11 @@ test("runtime tools capability routes expose local onboarding and cronjob action
     capabilityStatus
       .json()
       .tools.some((tool: { id: string }) => tool.id === "terminal_session_start")
+  );
+  assert.ok(
+    capabilityStatus
+      .json()
+      .tools.some((tool: { id: string }) => tool.id === "skill")
   );
 
   const onboardingStatus = await app.inject({
@@ -687,6 +697,64 @@ test("runtime tools capability routes expose local onboarding and cronjob action
 
   await app.close();
   store.close();
+});
+
+test("runtime skill tool resolves a workspace skill through shared runtime state", async () => {
+  const root = makeTempDir("hb-runtime-api-skill-tool-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const skillDir = path.join(workspaceRoot, "workspace-1", "skills", "deploy-helper");
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(skillDir, "SKILL.md"),
+    [
+      "---",
+      "name: deploy-helper",
+      "description: Deployment helper",
+      "holaboss:",
+      "  granted_tools: [bash]",
+      "  granted_commands: [deploy-docs]",
+      "---",
+      "",
+      "# Deploy Helper",
+      "",
+      "Use the deploy workflow carefully.",
+    ].join("\n"),
+    "utf8"
+  );
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/skill",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+      },
+      payload: {
+        name: "deploy-helper",
+        args: "Only use the docs path.",
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.match(response.json().text, /<skill name="deploy-helper" location=".*deploy-helper\/SKILL\.md">/);
+    assert.deepEqual(response.json().granted_tools, ["bash"]);
+    assert.deepEqual(response.json().granted_commands, ["deploy-docs"]);
+    assert.equal(response.json().tool_id, "skill");
+  } finally {
+    await app.close();
+    store.close();
+  }
 });
 
 test("runtime download_url tool saves a remote asset into the workspace", async () => {

@@ -40,7 +40,12 @@ function baseBuildParams() {
     workspaceSkills: [
       {
         skill_id: "skill-creator",
+        skill_name: "skill-creator",
         source_dir: "/tmp/workspace-1/skills/skill-creator",
+        file_path: "/tmp/workspace-1/skills/skill-creator/SKILL.md",
+        origin: "workspace" as const,
+        granted_tools: ["bash"],
+        granted_commands: ["deploy-docs"],
       },
     ],
     mcpServers: [
@@ -114,6 +119,17 @@ test("shared harness definitions build pi harness request shapes", () => {
   assert.equal(piRequest.system_prompt, "You are concise.");
   assert.deepEqual(piRequest.context_messages, []);
   assert.deepEqual(piRequest.workspace_skill_dirs, ["/tmp/workspace-1/skills/skill-creator"]);
+  assert.deepEqual(piRequest.workspace_skills, [
+    {
+      skill_id: "skill-creator",
+      skill_name: "skill-creator",
+      source_dir: "/tmp/workspace-1/skills/skill-creator",
+      file_path: "/tmp/workspace-1/skills/skill-creator/SKILL.md",
+      origin: "workspace",
+      granted_tools: ["bash"],
+      granted_commands: ["deploy-docs"],
+    },
+  ]);
   assert.deepEqual(piRequest.mcp_tool_refs, [{ tool_id: "workspace.lookup", server_id: "workspace", tool_name: "lookup" }]);
   assert.equal("output_format" in piRequest, false);
 });

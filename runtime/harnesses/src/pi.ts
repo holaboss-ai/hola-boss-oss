@@ -45,6 +45,15 @@ export const piHarnessDefinition: HarnessDefinition = {
         runtime_api_base_url: params.runtimeApiBaseUrl ?? null,
         system_prompt: params.runtimeConfig.system_prompt,
         workspace_skill_dirs: params.workspaceSkills.map((skill) => skill.source_dir),
+        workspace_skills: params.workspaceSkills.map((skill) => ({
+          skill_id: skill.skill_id,
+          skill_name: skill.skill_name,
+          source_dir: skill.source_dir,
+          file_path: skill.file_path,
+          origin: skill.origin,
+          granted_tools: [...skill.granted_tools],
+          granted_commands: [...skill.granted_commands],
+        })),
         mcp_servers: params.mcpServers.map((server) => ({
           name: server.name,
           config: { ...server.config },
