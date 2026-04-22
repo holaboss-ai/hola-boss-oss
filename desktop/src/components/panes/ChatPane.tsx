@@ -1301,19 +1301,19 @@ function sessionStatusIndicator(statusLabel: string) {
   if (normalized === "running") {
     return {
       className: "text-primary",
-      icon: <Loader2 size={12} className="animate-spin" />,
+      icon: <Loader2 className="size-3 animate-spin" />,
     };
   }
   if (normalized === "queued") {
     return {
       className: "text-info",
-      icon: <Clock3 size={12} />,
+      icon: <Clock3 className="size-3" />,
     };
   }
   if (normalized === "waiting") {
     return {
       className: "text-warning",
-      icon: <Clock3 size={12} />,
+      icon: <Clock3 className="size-3" />,
     };
   }
   if (normalized === "paused") {
@@ -1325,18 +1325,18 @@ function sessionStatusIndicator(statusLabel: string) {
   if (normalized === "error") {
     return {
       className: "text-destructive",
-      icon: <AlertTriangle size={12} />,
+      icon: <AlertTriangle className="size-3" />,
     };
   }
   if (normalized === "completed") {
     return {
       className: "text-success",
-      icon: <Check size={12} />,
+      icon: <Check className="size-3" />,
     };
   }
   return {
     className: "text-muted-foreground",
-    icon: <Clock3 size={12} />,
+    icon: <Clock3 className="size-3" />,
   };
 }
 
@@ -3293,7 +3293,9 @@ export function ChatPane({
     null,
   );
   const draftParentSessionIdRef = useRef<string | null>(null);
-  const draftHydrationWorkspaceIdRef = useRef((selectedWorkspaceId || "").trim());
+  const draftHydrationWorkspaceIdRef = useRef(
+    (selectedWorkspaceId || "").trim(),
+  );
   const skipNextComposerDraftPublishRef = useRef(false);
   const liveAssistantSegmentsRef = useRef<ChatAssistantSegment[]>([]);
   const liveAssistantTextRef = useRef("");
@@ -4319,9 +4321,7 @@ export function ChatPane({
     chatScrollMetricsSyncTargetRef.current = null;
   };
 
-  const scheduleChatScrollMetricsSync = (
-    container?: HTMLDivElement | null,
-  ) => {
+  const scheduleChatScrollMetricsSync = (container?: HTMLDivElement | null) => {
     if (container) {
       chatScrollMetricsSyncTargetRef.current = container;
     } else if (chatScrollMetricsSyncTargetRef.current === null) {
@@ -7747,7 +7747,7 @@ function SessionSelector({
     ? sessionStatusIndicator(activeSession.statusLabel)
     : {
         className: "text-muted-foreground",
-        icon: <PencilLine size={12} />,
+        icon: <PencilLine className="size-3" />,
       };
   const filteredSessions = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -7782,7 +7782,7 @@ function SessionSelector({
             }
           >
             <span
-              className={`grid size-4 shrink-0 place-items-center ${activeIndicator.className}`}
+              className={`grid size-3 shrink-0 place-items-center mr-1 ${activeIndicator.className}`}
             >
               {activeIndicator.icon}
             </span>
@@ -8039,8 +8039,7 @@ function UserTurn({
               ref={bubbleContentRef}
               className="relative overflow-hidden transition-[max-height] duration-300 ease-out"
               style={{
-                maxHeight:
-                  showExpandButton && !isExpanded ? 180 : undefined,
+                maxHeight: showExpandButton && !isExpanded ? 180 : undefined,
               }}
             >
               <SimpleMarkdown
@@ -8555,9 +8554,7 @@ const DOCUMENT_EXTENSIONS = new Set([
   "htm",
 ]);
 
-function outputFileExtension(
-  output: WorkspaceOutputRecordPayload,
-): string {
+function outputFileExtension(output: WorkspaceOutputRecordPayload): string {
   const metadataExt = outputMetadataString(output, "extension");
   if (metadataExt) {
     return metadataExt.replace(/^\./, "").toLowerCase();
@@ -8622,8 +8619,7 @@ function outputVisualTheme(kind: OutputVisualKind): {
     case "spreadsheet":
       return {
         Icon: FileSpreadsheet,
-        tileClass:
-          "bg-success/12 ring-1 ring-inset ring-success/20",
+        tileClass: "bg-success/12 ring-1 ring-inset ring-success/20",
         iconClass: "text-success",
       };
     case "pdf":
@@ -8641,15 +8637,13 @@ function outputVisualTheme(kind: OutputVisualKind): {
     case "code":
       return {
         Icon: FileCode2,
-        tileClass:
-          "bg-info/12 ring-1 ring-inset ring-info/20",
+        tileClass: "bg-info/12 ring-1 ring-inset ring-info/20",
         iconClass: "text-info",
       };
     case "image":
       return {
         Icon: ImageIcon,
-        tileClass:
-          "bg-warning/12 ring-1 ring-inset ring-warning/20",
+        tileClass: "bg-warning/12 ring-1 ring-inset ring-warning/20",
         iconClass: "text-warning",
       };
     case "link":
@@ -8826,9 +8820,7 @@ function CurrentTodoPanel({
       >
         <div
           className={`inline-flex size-5 shrink-0 items-center justify-center rounded-full ${
-            remainingTaskCount > 0
-              ? "text-muted-foreground"
-              : "text-success"
+            remainingTaskCount > 0 ? "text-muted-foreground" : "text-success"
           }`}
         >
           {remainingTaskCount > 0 ? (
@@ -9975,8 +9967,7 @@ function Composer({
       composerActionsRef.current?.getBoundingClientRect().width ?? 0,
     );
     setComposerFooterLayout((current) =>
-      current.width === width &&
-      current.actionsWidth === actionsWidth
+      current.width === width && current.actionsWidth === actionsWidth
         ? current
         : { width, actionsWidth },
     );
@@ -10331,10 +10322,8 @@ function Composer({
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
-        className={`overflow-hidden rounded-xl border border-border bg-muted transition-colors focus-within:border-ring ${
-          isDragActive
-            ? "border-primary bg-primary/[0.04]"
-            : "border-border"
+        className={`overflow-hidden rounded-xl border border-border bg-background transition-colors focus-within:border-ring ${
+          isDragActive ? "border-primary bg-primary/[0.04]" : "border-border"
         }`}
       >
         <input
@@ -10375,7 +10364,7 @@ function Composer({
             </div>
           </div>
         ) : null}
-        <div className="px-4 pb-2 pt-4">
+        <div className="px-4 pb-2 pt-3">
           <textarea
             ref={textareaRef}
             value={input}
@@ -10399,10 +10388,10 @@ function Composer({
 
         <div
           ref={composerFooterRef}
-          className={`border-t border-border px-3 py-3 text-muted-foreground ${
+          className={`border-t border-border px-2.5 py-2 text-muted-foreground ${
             compactComposerControls
-              ? "flex items-center gap-2 overflow-hidden"
-              : "flex flex-wrap items-center gap-2"
+              ? "flex items-center gap-1.5 overflow-hidden"
+              : "flex flex-wrap items-center gap-1.5"
           }`}
         >
           {showModelSelector ? (
@@ -10506,7 +10495,7 @@ function Composer({
 
           <div
             ref={composerActionsRef}
-            className="ml-auto flex shrink-0 items-center gap-2"
+            className="ml-auto flex shrink-0 items-center gap-1.5"
           >
             <Popover
               open={composerActionsMenuOpen}
@@ -10523,13 +10512,13 @@ function Composer({
                 render={
                   <Button
                     variant="outline"
-                    size="icon"
+                    size="icon-sm"
                     aria-label="Open composer actions"
                     className="rounded-full"
                   />
                 }
               >
-                <Plus size={15} />
+                <Plus className="size-3.5" />
               </PopoverTrigger>
               <PopoverContent
                 align="end"
@@ -10636,10 +10625,7 @@ function Composer({
                       onClick={openSkillPickerFromComposerMenu}
                       className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-foreground transition-colors hover:bg-accent/50"
                     >
-                      <Sparkles
-                        size={14}
-                        className="shrink-0 text-primary"
-                      />
+                      <Sparkles size={14} className="shrink-0 text-primary" />
                       <span className="min-w-0 flex-1 truncate">
                         Use Skills
                       </span>
@@ -10655,18 +10641,18 @@ function Composer({
                 size="sm"
                 disabled={pausePending || pauseDisabled || disabled}
                 onClick={onPause}
-                className="rounded-full px-3"
+                className="rounded-full px-2.5"
               >
                 {pausePending ? (
-                  <Loader2 size={14} className="mr-1.5 animate-spin" />
+                  <Loader2 className="mr-1 size-3.5 animate-spin" />
                 ) : (
-                  <Square size={12} className="mr-1.5 fill-current" />
+                  <Square className="mr-1 size-3 fill-current" />
                 )}
                 Pause
               </Button>
             ) : null}
             <Button
-              size="icon"
+              size="icon-sm"
               aria-label={isResponding ? "Queue message" : "Send message"}
               disabled={
                 (!input.trim() &&
@@ -10678,7 +10664,7 @@ function Composer({
               render={<button type="submit" />}
               className="rounded-full"
             >
-              <ArrowUp size={16} />
+              <ArrowUp className="size-3.5" />
             </Button>
           </div>
         </div>
