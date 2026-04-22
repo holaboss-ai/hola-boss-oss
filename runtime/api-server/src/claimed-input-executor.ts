@@ -14,6 +14,11 @@ import {
   executeRunnerRequest,
   type RunnerEvent,
 } from "./runner-worker.js";
+import type {
+  BackendAgentRunEventRequest,
+  BackendAgentRunEventType,
+  BackendAgentRunStartRequest,
+} from "./backend-agent-runs-contract.js";
 import { resolveProductRuntimeConfig } from "./runtime-config.js";
 import {
   normalizeHarnessId,
@@ -56,6 +61,7 @@ const CLAIMED_INPUT_SENTRY_ARRAY_LIMIT = 10;
 const CLAIMED_INPUT_SENTRY_OBJECT_LIMIT = 20;
 const CLAIMED_INPUT_SENTRY_RECENT_EVENT_LIMIT = 8;
 const CLAIMED_INPUT_SENTRY_PERMISSION_DENIAL_LIMIT = 10;
+const BACKEND_OUTPUT_DELTA_RELAY_FLUSH_CHARS = 1200;
 
 interface SessionInputAttachment {
   id: string;
@@ -171,6 +177,42 @@ function claimedInputRunId(params: {
   return `${params.workspaceId}:${params.sessionId}:${params.inputId}`;
 }
 
+function canMergeOutputDeltaRelayPayload(
+  existing: Record<string, unknown>,
+  next: Record<string, unknown>,
+): boolean {
+  const existingKeys = Object.keys(existing)
+    .filter((key) => key !== "delta")
+    .sort();
+  const nextKeys = Object.keys(next)
+    .filter((key) => key !== "delta")
+    .sort();
+  if (existingKeys.length !== nextKeys.length) {
+    return false;
+  }
+  for (let index = 0; index < existingKeys.length; index += 1) {
+    const existingKey = existingKeys[index];
+    const nextKey = nextKeys[index];
+    if (existingKey !== nextKey) {
+      return false;
+    }
+    if (JSON.stringify(existing[existingKey]) !== JSON.stringify(next[nextKey])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function mergeOutputDeltaRelayPayload(
+  existing: Record<string, unknown>,
+  next: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    ...existing,
+    delta: `${typeof existing.delta === "string" ? existing.delta : ""}${typeof next.delta === "string" ? next.delta : ""}`,
+  };
+}
+
 function runtimeBindingSentryContext(params: {
   runtimeBinding: RuntimeBindingSentryContextInput;
   runtimeExecContext?: Record<string, unknown> | null;
@@ -243,7 +285,7 @@ async function postWorkspaceAgentRunRequest(params: {
     modelProxyBaseUrl: string;
   };
   pathSuffix: "start" | "events";
-  body: Record<string, unknown>;
+  body: object;
   fetchImpl?: typeof fetch;
   failureLabel: string;
   runId: string;
@@ -383,16 +425,17 @@ async function registerWorkspaceAgentRunStarted(params: {
   fetchImpl?: typeof fetch;
   captureRuntimeExceptionFn?: typeof captureRuntimeException;
 }): Promise<void> {
+  const requestBody: BackendAgentRunStartRequest = {
+    session_id: params.sessionId,
+    input_id: params.inputId,
+    run_id: params.runId,
+    model: params.selectedModel ?? undefined,
+  };
   await postWorkspaceAgentRunRequest({
     workspaceId: params.workspaceId,
     runtimeBinding: params.runtimeBinding,
     pathSuffix: "start",
-    body: {
-      session_id: params.sessionId,
-      input_id: params.inputId,
-      run_id: params.runId,
-      model: params.selectedModel ?? undefined,
-    },
+    body: requestBody,
     fetchImpl: params.fetchImpl,
     failureLabel: "Backend run-start registration",
     runId: params.runId,
@@ -406,7 +449,7 @@ async function registerWorkspaceAgentRunEvent(params: {
   inputId: string;
   runId: string;
   sequence: number;
-  eventType: "tool_call" | "run_completed" | "run_failed";
+  eventType: BackendAgentRunEventType;
   payload: Record<string, unknown>;
   timestamp: string;
   runtimeBinding: {
@@ -418,19 +461,20 @@ async function registerWorkspaceAgentRunEvent(params: {
   fetchImpl?: typeof fetch;
   captureRuntimeExceptionFn?: typeof captureRuntimeException;
 }): Promise<void> {
+  const requestBody: BackendAgentRunEventRequest = {
+    session_id: params.sessionId,
+    input_id: params.inputId,
+    run_id: params.runId,
+    sequence: params.sequence,
+    event_type: params.eventType,
+    payload: params.payload,
+    timestamp: params.timestamp,
+  };
   await postWorkspaceAgentRunRequest({
     workspaceId: params.workspaceId,
     runtimeBinding: params.runtimeBinding,
     pathSuffix: "events",
-    body: {
-      session_id: params.sessionId,
-      input_id: params.inputId,
-      run_id: params.runId,
-      sequence: params.sequence,
-      event_type: params.eventType,
-      payload: params.payload,
-      timestamp: params.timestamp,
-    },
+    body: requestBody,
     fetchImpl: params.fetchImpl,
     failureLabel: "Backend run-event registration",
     runId: params.runId,
@@ -1293,6 +1337,42 @@ function terminalStatusForCompletedPayload(
     : "IDLE";
 }
 
+function backendRunStatePayload(params: {
+  terminalEventType: "run_completed" | "run_failed";
+  terminalStatus: "IDLE" | "WAITING_USER" | "PAUSED" | "ERROR";
+  stopReason: string | null;
+  payload: Record<string, unknown>;
+}): Record<string, unknown> | null {
+  if (
+    params.terminalStatus !== "WAITING_USER" &&
+    params.terminalStatus !== "PAUSED"
+  ) {
+    return null;
+  }
+  const status =
+    params.terminalStatus === "WAITING_USER" ? "waiting_user" : "paused";
+  const message =
+    optionalString(params.payload.summary) ??
+    optionalString(params.payload.message) ??
+    (status === "waiting_user"
+      ? "Run paused waiting for user input"
+      : "Run paused by user request");
+  const relayPayload: Record<string, unknown> = {
+    status,
+    stop_reason: params.stopReason ?? status,
+    source: nonEmptyString(params.payload.source) ?? "runner",
+    terminal_event_type: params.terminalEventType,
+  };
+  if (message) {
+    relayPayload.message = message;
+  }
+  const harnessSessionId = nonEmptyString(params.payload.harness_session_id);
+  if (harnessSessionId) {
+    relayPayload.harness_session_id = harnessSessionId;
+  }
+  return relayPayload;
+}
+
 function maybePersistHarnessSessionId(params: {
   store: RuntimeStateStore;
   workspaceId: string;
@@ -1735,6 +1815,54 @@ export async function processClaimedInput(params: {
     } | null = null;
     let terminalFailureCaptured = false;
     let workspaceFileManifestBefore: WorkspaceFileManifest | null = null;
+    let lastRelayedRunEventSequence = 0;
+    let pendingOutputDeltaPayload: Record<string, unknown> | null = null;
+    let pendingOutputDeltaSequence = 0;
+    let pendingOutputDeltaTimestamp: string | null = null;
+
+    const relayBackendRunEvent = async (relayParams: {
+      eventType: BackendAgentRunEventType;
+      payload: Record<string, unknown>;
+      timestamp: string;
+      preferredSequence: number;
+    }): Promise<void> => {
+      const relaySequence = Math.max(
+        Math.max(0, relayParams.preferredSequence),
+        lastRelayedRunEventSequence + 1,
+        1,
+      );
+      lastRelayedRunEventSequence = relaySequence;
+      await relayRunEvent({
+        workspaceId: record.workspaceId,
+        sessionId: record.sessionId,
+        inputId: record.inputId,
+        runId,
+        sequence: relaySequence,
+        eventType: relayParams.eventType,
+        payload: relayParams.payload,
+        timestamp: relayParams.timestamp,
+        runtimeBinding,
+        captureRuntimeExceptionFn: params.captureRuntimeExceptionFn,
+      });
+    };
+
+    const flushPendingOutputDelta = async (): Promise<void> => {
+      if (!pendingOutputDeltaPayload || !pendingOutputDeltaTimestamp) {
+        pendingOutputDeltaPayload = null;
+        pendingOutputDeltaSequence = 0;
+        pendingOutputDeltaTimestamp = null;
+        return;
+      }
+      await relayBackendRunEvent({
+        eventType: "output_delta",
+        payload: pendingOutputDeltaPayload,
+        timestamp: pendingOutputDeltaTimestamp,
+        preferredSequence: pendingOutputDeltaSequence,
+      });
+      pendingOutputDeltaPayload = null;
+      pendingOutputDeltaSequence = 0;
+      pendingOutputDeltaTimestamp = null;
+    };
 
     try {
       workspaceFileManifestBefore = collectWorkspaceFileManifest(workspaceDir);
@@ -1849,6 +1977,26 @@ export async function processClaimedInput(params: {
             typeof eventPayload.delta === "string"
           ) {
             assistantParts.push(eventPayload.delta);
+            if (
+              pendingOutputDeltaPayload &&
+              canMergeOutputDeltaRelayPayload(
+                pendingOutputDeltaPayload,
+                eventPayload,
+              ) &&
+              String(pendingOutputDeltaPayload.delta ?? "").length +
+                eventPayload.delta.length <=
+                BACKEND_OUTPUT_DELTA_RELAY_FLUSH_CHARS
+            ) {
+              pendingOutputDeltaPayload = mergeOutputDeltaRelayPayload(
+                pendingOutputDeltaPayload,
+                eventPayload,
+              );
+            } else {
+              await flushPendingOutputDelta();
+              pendingOutputDeltaPayload = { ...eventPayload };
+            }
+            pendingOutputDeltaSequence = Math.max(sequence, 1);
+            pendingOutputDeltaTimestamp = eventTimestamp;
           }
           if (event.event_type === "run_started") {
             promptSectionIds = stringList(eventPayload.prompt_section_ids);
@@ -2033,17 +2181,21 @@ export async function processClaimedInput(params: {
             }
           }
           if (event.event_type === "tool_call") {
-            await relayRunEvent({
-              workspaceId: record.workspaceId,
-              sessionId: record.sessionId,
-              inputId: record.inputId,
-              runId,
-              sequence: Math.max(sequence, 1),
+            await flushPendingOutputDelta();
+            await relayBackendRunEvent({
               eventType: "tool_call",
               payload: eventPayload,
               timestamp: eventTimestamp,
-              runtimeBinding,
-              captureRuntimeExceptionFn: params.captureRuntimeExceptionFn,
+              preferredSequence: Math.max(sequence, 1),
+            });
+          }
+          if (event.event_type === "skill_invocation") {
+            await flushPendingOutputDelta();
+            await relayBackendRunEvent({
+              eventType: "skill_invocation",
+              payload: eventPayload,
+              timestamp: eventTimestamp,
+              preferredSequence: Math.max(sequence, 1),
             });
           }
         },
@@ -2051,6 +2203,7 @@ export async function processClaimedInput(params: {
       if (claimOwnershipLost || !claimStillOwned()) {
         return;
       }
+      await flushPendingOutputDelta();
 
       const persistedTerminalEvent = latestPersistedTerminalOutputEvent({
         store,
@@ -2399,17 +2552,26 @@ export async function processClaimedInput(params: {
         if (!nonEmptyString(relayPayload.source)) {
           relayPayload.source = "runner";
         }
-        await relayRunEvent({
-          workspaceId: record.workspaceId,
-          sessionId: record.sessionId,
-          inputId: record.inputId,
-          runId,
-          sequence: Math.max(terminalEventToRelay.sequence, 1),
+        const runStatePayload = backendRunStatePayload({
+          terminalEventType: terminalEventToRelay.eventType,
+          terminalStatus,
+          stopReason,
+          payload: relayPayload,
+        });
+        if (runStatePayload) {
+          await relayBackendRunEvent({
+            eventType: "run_state",
+            payload: runStatePayload,
+            timestamp: terminalEventToRelay.createdAt,
+            preferredSequence: Math.max(terminalEventToRelay.sequence, 1),
+          });
+        }
+        await relayBackendRunEvent({
           eventType: terminalEventToRelay.eventType,
           payload: relayPayload,
           timestamp: terminalEventToRelay.createdAt,
-          runtimeBinding,
-          captureRuntimeExceptionFn: params.captureRuntimeExceptionFn,
+          preferredSequence:
+            Math.max(terminalEventToRelay.sequence, 1) + (runStatePayload ? 1 : 0),
         });
       }
       if (deferredTerminalEvent) {

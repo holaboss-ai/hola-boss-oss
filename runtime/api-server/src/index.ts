@@ -1,11 +1,14 @@
 import * as Sentry from "@sentry/node";
 import { setTimeout as sleep } from "node:timers/promises";
+import { createAiOnlyTracesSampler } from "./runtime-ai-monitoring.js";
 import { buildRuntimeSentryDiagnostics } from "./runtime-sentry.js";
 
 Sentry.init({
   dsn: process.env.SENTRY_DSN,
   enabled: !!process.env.SENTRY_DSN,
   enableLogs: !!process.env.SENTRY_DSN,
+  // Sample only spans we explicitly mark as GenAI telemetry.
+  tracesSampler: createAiOnlyTracesSampler(),
   release: process.env.HOLABOSS_RUNTIME_VERSION,
   environment: process.env.SENTRY_ENVIRONMENT ?? "production",
   maxBreadcrumbs: 200,

@@ -1,6 +1,9 @@
 import { fileURLToPath } from "node:url";
 
+import * as Sentry from "@sentry/node";
+
 import { decodeHarnessHostPiRequestBase64 } from "./contracts.js";
+import { flushHarnessSentry, initHarnessSentry } from "./harness-ai-monitoring.js";
 import { requireHarnessHostPluginByCommand } from "./harness-registry.js";
 import { compactPiSession } from "./pi.js";
 
@@ -68,14 +71,19 @@ export async function runHarnessHostMain(argv: string[], deps: HarnessHostCliDep
   try {
     const exitCode = await runHarnessHostCli(argv, deps);
     await Promise.allSettled([flushWritableStream(stdout), flushWritableStream(stderr)]);
+    await flushHarnessSentry();
     exit(exitCode);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
+    Sentry.captureException(error);
     stderr.write(`${message}\n`);
     await Promise.allSettled([flushWritableStream(stdout), flushWritableStream(stderr)]);
+    await flushHarnessSentry();
     exit(1);
   }
 }
+
+initHarnessSentry();
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   void runHarnessHostMain(process.argv.slice(2));

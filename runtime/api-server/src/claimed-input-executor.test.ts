@@ -1758,7 +1758,7 @@ test("claimed input hydrates runtime exec context from runtime config", async ()
   store.close();
 });
 
-test("claimed input relays tool and terminal run events for backend-owned sentry traces", async () => {
+test("claimed input relays tool, output, and terminal run events for backend-owned sentry traces", async () => {
   const store = makeStore("hb-claimed-input-sentry-run-events-");
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
@@ -1865,6 +1865,7 @@ test("claimed input relays tool and terminal run events for backend-owned sentry
     [
       [2, "tool_call"],
       [3, "tool_call"],
+      [4, "output_delta"],
       [6, "run_completed"],
     ],
   );
@@ -1885,9 +1886,209 @@ test("claimed input relays tool and terminal run events for backend-owned sentry
     agent_id: "member-research",
   });
   assert.deepEqual(relayedEvents[2]?.payload, {
+    delta: "Opened Bing.",
+  });
+  assert.deepEqual(relayedEvents[3]?.payload, {
     status: "ok",
     usage: { input_tokens: 12, output_tokens: 34, total_tokens: 46 },
     final_output_text: "Opened Bing.",
+    source: "runner",
+  });
+
+  store.close();
+});
+
+test("claimed input relays skill invocations, coalesced output, and waiting-user run state", async () => {
+  const store = makeStore("hb-claimed-input-sentry-rich-run-events-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "deploy after approval" },
+  });
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+  const relayedEvents: Array<{
+    sequence: number;
+    eventType: string;
+    payload: Record<string, unknown>;
+    timestamp: string;
+  }> = [];
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+    registerRunStartedFn: async () => {},
+    relayRunEventFn: async (params) => {
+      relayedEvents.push({
+        sequence: params.sequence,
+        eventType: params.eventType,
+        payload: params.payload,
+        timestamp: params.timestamp,
+      });
+    },
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: { instruction_preview: "deploy after approval" },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "output_delta",
+        payload: { delta: "Need " },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 3,
+        event_type: "output_delta",
+        payload: { delta: "approval." },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 4,
+        event_type: "skill_invocation",
+        payload: {
+          phase: "started",
+          call_id: "skill-1",
+          requested_name: "deployment_review",
+          skill_name: "deployment_review",
+          skill_id: "deployment_review",
+          source: "member-ops",
+          agent_id: "member-ops",
+        },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 5,
+        event_type: "skill_invocation",
+        payload: {
+          phase: "completed",
+          call_id: "skill-1",
+          requested_name: "deployment_review",
+          skill_name: "deployment_review",
+          skill_id: "deployment_review",
+          source: "member-ops",
+          agent_id: "member-ops",
+          granted_tools: ["deploy"],
+          active_granted_tools: ["deploy"],
+        },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 6,
+        event_type: "tool_call",
+        payload: {
+          phase: "started",
+          tool_name: "deploy",
+          call_id: "call-1",
+          tool_args: { env: "prod" },
+          source: "member-ops",
+          agent_id: "member-ops",
+        },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 7,
+        event_type: "tool_call",
+        payload: {
+          phase: "completed",
+          tool_name: "deploy",
+          call_id: "call-1",
+          result: { status: "waiting_for_user" },
+          source: "member-ops",
+          agent_id: "member-ops",
+        },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 8,
+        event_type: "run_completed",
+        payload: {
+          status: "waiting_user",
+          stop_reason: "waiting_user",
+          summary: "Deploy paused waiting for confirmation.",
+          usage: { input_tokens: 18, output_tokens: 7, total_tokens: 25 },
+        },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  assert.deepEqual(
+    relayedEvents.map((event) => [event.sequence, event.eventType]),
+    [
+      [3, "output_delta"],
+      [4, "skill_invocation"],
+      [5, "skill_invocation"],
+      [6, "tool_call"],
+      [7, "tool_call"],
+      [9, "run_state"],
+      [10, "run_completed"],
+    ],
+  );
+  assert.deepEqual(relayedEvents[0]?.payload, {
+    delta: "Need approval.",
+  });
+  assert.deepEqual(relayedEvents[1]?.payload, {
+    phase: "started",
+    call_id: "skill-1",
+    requested_name: "deployment_review",
+    skill_name: "deployment_review",
+    skill_id: "deployment_review",
+    source: "member-ops",
+    agent_id: "member-ops",
+  });
+  assert.deepEqual(relayedEvents[2]?.payload, {
+    phase: "completed",
+    call_id: "skill-1",
+    requested_name: "deployment_review",
+    skill_name: "deployment_review",
+    skill_id: "deployment_review",
+    source: "member-ops",
+    agent_id: "member-ops",
+    granted_tools: ["deploy"],
+    active_granted_tools: ["deploy"],
+  });
+  assert.deepEqual(relayedEvents[5]?.payload, {
+    status: "waiting_user",
+    stop_reason: "waiting_user",
+    message: "Deploy paused waiting for confirmation.",
+    source: "runner",
+    terminal_event_type: "run_completed",
+  });
+  assert.deepEqual(relayedEvents[6]?.payload, {
+    status: "waiting_user",
+    stop_reason: "waiting_user",
+    summary: "Deploy paused waiting for confirmation.",
+    usage: { input_tokens: 18, output_tokens: 7, total_tokens: 25 },
+    final_output_text: "Need approval.",
     source: "runner",
   });
 
