@@ -435,16 +435,19 @@ export function SpaceBrowserDisplayPane({
 
           <Button
             type="button"
-            variant={isBookmarked ? "secondary" : "outline"}
-            size="icon"
+            variant={isBookmarked ? "secondary" : "ghost"}
+            size="icon-sm"
             onClick={onToggleBookmark}
             disabled={!activeTab.url}
-            className={`shrink-0 rounded-full ${
+            className={`shrink-0 rounded-md ${
               isBookmarked ? "text-primary" : ""
             }`}
             aria-label={isBookmarked ? "Remove bookmark" : "Add bookmark"}
           >
-            <Star size={13} fill={isBookmarked ? "currentColor" : "none"} />
+            <Star
+              className="size-3.5"
+              fill={isBookmarked ? "currentColor" : "none"}
+            />
           </Button>
         </div>
       </div>
