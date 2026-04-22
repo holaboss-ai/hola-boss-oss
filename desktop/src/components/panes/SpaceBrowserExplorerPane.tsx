@@ -260,7 +260,7 @@ export function SpaceBrowserExplorerPane({
                 align="start"
                 alignItemWithTrigger={false}
                 sideOffset={6}
-                className="w-auto! min-w-[280px] max-w-[360px] p-1"
+                className="p-1"
               >
                 {sortedAgentSessions.map((session) => {
                   const runtimeState =
@@ -271,17 +271,17 @@ export function SpaceBrowserExplorerPane({
                     <SelectItem
                       key={session.session_id}
                       value={session.session_id}
-                      className="gap-2 rounded-md px-2.5 py-1.5 text-xs leading-none"
+                      className="items-start gap-2 rounded-md px-2.5 py-1.5 text-xs"
                     >
                       <span
                         aria-hidden="true"
-                        className={`size-1.5 shrink-0 rounded-full ${sessionDotClass(
+                        className={`mt-1 size-1.5 shrink-0 rounded-full ${sessionDotClass(
                           tone,
                           flashing,
                         )}`}
                       />
                       <span
-                        className="min-w-0 flex-1 truncate leading-none text-foreground"
+                        className="min-w-0 flex-1 whitespace-normal leading-snug text-foreground line-clamp-2"
                         title={browserSessionStatusLabel(runtimeState)}
                       >
                         {browserSessionTitle(session, session.session_id)}
