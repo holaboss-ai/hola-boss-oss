@@ -59,8 +59,6 @@
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
 
-  /* ---- Synced from llmchat (质感层) ---- */
-
   /* Font weight scale — each step ~50 lighter than Tailwind default.
      Depends on Inter Variable for continuous weights. */
   --font-weight-thin: 300;
@@ -923,7 +921,7 @@ webview {
   margin: 36px 0;
 }
 
-/* ---- Hairline borders (synced from llmchat) ----
+/* ---- Hairline borders ----
    Tailwind v4's border utility is hardcoded to 1px with no var entry,
    so override by source order. 0.8px reads more refined on hi-dpi. */
 .border {
