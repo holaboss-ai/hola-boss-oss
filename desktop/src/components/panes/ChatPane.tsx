@@ -1319,7 +1319,7 @@ function sessionStatusIndicator(statusLabel: string) {
   if (normalized === "paused") {
     return {
       className: "text-warning",
-      icon: <Square size={9} className="fill-current" />,
+      icon: <Square className="size-2.5 fill-current" />,
     };
   }
   if (normalized === "error") {
@@ -1715,15 +1715,15 @@ function TodoStatusIcon({ status }: { status: ChatTodoStatus }) {
   const label = todoStatusLabel(status);
   const icon =
     status === "in_progress" ? (
-      <Loader2 size={12} className="animate-spin" />
+      <Loader2 className="size-3 animate-spin" />
     ) : status === "blocked" ? (
-      <AlertTriangle size={12} />
+      <AlertTriangle className="size-3" />
     ) : status === "completed" ? (
-      <Check size={12} />
+      <Check className="size-3" />
     ) : status === "abandoned" ? (
-      <X size={12} />
+      <X className="size-3" />
     ) : (
-      <Clock3 size={12} />
+      <Clock3 className="size-3" />
     );
 
   return (
@@ -6428,9 +6428,9 @@ export function ChatPane({
       onClick={jumpToSessionBrowser}
       className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:bg-accent/50 focus-visible:text-foreground"
     >
-      <Globe size={12} className="opacity-80" />
+      <Globe className="size-3 opacity-80" />
       <span>View in agent browser</span>
-      <ArrowUpRight size={12} className="opacity-80" />
+      <ArrowUpRight className="size-3 opacity-80" />
     </button>
   ) : null;
   const renderedLiveAssistantSegments = liveAssistantSegmentsForRender(
@@ -7180,7 +7180,7 @@ export function ChatPane({
 
         {isOnboardingVariant && selectedWorkspace ? (
           <div className="shrink-0 px-4 pt-4 sm:px-5">
-            <div className="bg-muted overflow-hidden rounded-[22px] border border-primary/20 shadow-subtle-xs">
+            <div className="bg-muted overflow-hidden rounded-2xl border border-primary/20 shadow-subtle-xs">
               <div className="bg-[radial-gradient(circle_at_top_left,rgba(247,90,84,0.12),transparent_42%),radial-gradient(circle_at_92%_12%,rgba(247,170,126,0.12),transparent_36%)] px-4 py-4 sm:px-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -7224,12 +7224,12 @@ export function ChatPane({
 
         {showLowBalanceWarning || showOutOfCreditsWarning ? (
           <div className="shrink-0 px-4 pt-3 sm:px-5">
-            <div className="bg-muted flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-border px-3 py-2.5">
+            <div className="bg-muted flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border px-3 py-2.5">
               <div className="min-w-0">
                 <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
                   Hosted credits
                 </div>
-                <div className="mt-1 text-[12px] leading-5 text-muted-foreground">
+                <div className="mt-1 text-xs leading-5 text-muted-foreground">
                   {showOutOfCreditsWarning
                     ? "You're out of credits for managed usage."
                     : "Credits are running low. Add more on web to avoid interruptions."}
@@ -7269,25 +7269,25 @@ export function ChatPane({
         verboseTelemetryEnabled ? (
           <div className="shrink-0 px-4 pt-3 sm:px-5">
             {chatErrorMessage ? (
-              <div className="theme-chat-system-bubble rounded-[14px] border px-3 py-2 text-xs">
+              <div className="theme-chat-system-bubble rounded-xl border px-3 py-2 text-xs">
                 {chatErrorMessage}
               </div>
             ) : null}
 
             {attachmentGateMessage ? (
-              <div className="theme-chat-system-bubble mt-3 rounded-[14px] border px-3 py-2 text-xs">
+              <div className="theme-chat-system-bubble mt-3 rounded-xl border px-3 py-2 text-xs">
                 {attachmentGateMessage}
               </div>
             ) : null}
 
             {!attachmentGateMessage && pendingImageInputUnsupportedMessage ? (
-              <div className="theme-chat-system-bubble mt-3 rounded-[14px] border px-3 py-2 text-xs">
+              <div className="theme-chat-system-bubble mt-3 rounded-xl border px-3 py-2 text-xs">
                 {pendingImageInputUnsupportedMessage}
               </div>
             ) : null}
 
             {verboseTelemetryEnabled ? (
-              <div className="bg-muted mt-3 rounded-[14px] border border-border px-3 py-2">
+              <div className="bg-muted mt-3 rounded-xl border border-border px-3 py-2">
                 <div className="mb-2 flex items-center justify-between">
                   <div className="text-[10px] tracking-[0.12em] text-muted-foreground">
                     Stream telemetry ({streamTelemetry.length})
@@ -7487,7 +7487,7 @@ export function ChatPane({
                           ? "Complete workspace onboarding"
                           : "Ask the workspace agent"}
                     </div>
-                    <div className="mt-3 text-[13px] leading-7 text-muted-foreground">
+                    <div className="mt-3 text-sm leading-7 text-muted-foreground">
                       {selectedWorkspace
                         ? readinessMessage ||
                           (isOnboardingVariant
@@ -7784,14 +7784,16 @@ function SessionSelector({
               {activeTitle}
             </span>
             <ChevronDown
-              size={12}
-              className={`shrink-0 text-muted-foreground transition-transform ${
+              className={`size-3 shrink-0 text-muted-foreground transition-transform ${
                 open ? "rotate-180" : ""
               }`}
             />
           </PopoverTrigger>
         </div>
-        <PopoverContent align="start" className="w-[300px] p-0">
+        <PopoverContent
+          align="start"
+          className="w-[300px] rounded-lg p-0 shadow-subtle-sm ring-0"
+        >
           <div className="border-b border-border p-2">
             <div className="relative flex h-8 items-center rounded-md border border-border bg-background px-2.5 transition-colors focus-within:border-muted-foreground">
               <Search className="size-3.5 shrink-0 text-muted-foreground" />
@@ -7807,15 +7809,15 @@ function SessionSelector({
 
           <div className="max-h-[320px] overflow-y-auto p-1.5">
             {isLoading ? (
-              <div className="px-3 py-3 text-[12px] text-muted-foreground">
+              <div className="px-3 py-3 text-xs text-muted-foreground">
                 Loading sessions...
               </div>
             ) : errorMessage ? (
-              <div className="px-3 py-3 text-[12px] text-destructive">
+              <div className="px-3 py-3 text-xs text-destructive">
                 {errorMessage}
               </div>
             ) : filteredSessions.length === 0 ? (
-              <div className="px-3 py-3 text-[12px] text-muted-foreground">
+              <div className="px-3 py-3 text-xs text-muted-foreground">
                 {query.trim()
                   ? "No matching sessions."
                   : "No saved sessions yet."}
@@ -7870,7 +7872,7 @@ function SessionSelector({
             aria-label="Show inbox"
             className="relative rounded-lg text-muted-foreground hover:text-foreground"
           >
-            <Inbox size={15} />
+            <Inbox className="size-4" />
             {inboxUnreadCount > 0 ? (
               <span className="absolute right-1.5 top-1.5 size-2 rounded-full border border-card bg-destructive" />
             ) : null}
@@ -7889,7 +7891,7 @@ function SessionSelector({
           aria-label="Create new session"
           className="rounded-lg text-muted-foreground hover:text-foreground"
         >
-          <Plus size={15} />
+          <Plus className="size-4" />
         </Button>
       </div>
     </div>
@@ -8013,14 +8015,14 @@ function UserTurn({
                 key={skillId}
                 className="inline-flex items-center gap-1.5 rounded-full border border-primary bg-primary/8 px-3 py-1 text-xs font-medium text-foreground"
               >
-                <Sparkles size={12} className="text-primary" />
+                <Sparkles className="size-3 text-primary" />
                 <span className="truncate">/{skillId}</span>
               </div>
             ))}
           </div>
         ) : null}
         {parsedQuotedSkills.body ? (
-          <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full flex-col items-stretch rounded-[20px] px-[18px] py-2.5 text-foreground">
+          <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full flex-col items-stretch rounded-2xl px-[18px] py-2.5 text-foreground">
             <div
               ref={bubbleContentRef}
               className="relative overflow-hidden transition-[max-height] duration-300 ease-out"
@@ -8074,12 +8076,12 @@ function UserTurn({
                 onClick={() => {
                   void handleCopy();
                 }}
-                className="size-6 rounded-[10px] text-muted-foreground hover:bg-foreground/6 hover:text-foreground"
+                className="size-6 rounded-lg text-muted-foreground hover:bg-foreground/6 hover:text-foreground"
               >
                 {copyFeedbackVisible ? (
-                  <Check size={13} strokeWidth={1.9} />
+                  <Check className="size-3.5" strokeWidth={1.9} />
                 ) : (
-                  <Copy size={13} strokeWidth={1.9} />
+                  <Copy className="size-3.5" strokeWidth={1.9} />
                 )}
               </Button>
             ) : null}
@@ -8164,7 +8166,7 @@ function QueuedSessionInputRail({
     <div className="relative" style={{ paddingTop: `${reservedTopPx}px` }}>
       <div className="pointer-events-none absolute inset-x-0 top-0">
         <div
-          className="pointer-events-auto absolute inset-x-0 overflow-hidden rounded-[28px] border border-border bg-background shadow-subtle-xs"
+          className="pointer-events-auto absolute inset-x-0 overflow-hidden rounded-3xl border border-border bg-background shadow-subtle-xs"
           style={{
             left: `${panelInsetPx}px`,
             right: `${panelInsetPx}px`,
@@ -8184,14 +8186,13 @@ function QueuedSessionInputRail({
                   return (
                     <div
                       key={item.inputId}
-                      className="rounded-[14px] px-1 text-sm leading-7 text-foreground"
+                      className="rounded-xl px-1 text-sm leading-7 text-foreground"
                     >
                       {isEditing ? (
                         <div className="space-y-1.5">
                           <div className="flex items-center gap-2">
                             <CornerDownLeft
-                              size={15}
-                              className="shrink-0 text-muted-foreground"
+                              className="size-4 shrink-0 text-muted-foreground"
                             />
                             <Input
                               value={editingDraft}
@@ -8209,7 +8210,7 @@ function QueuedSessionInputRail({
                               }}
                               disabled={isSaving}
                               autoFocus
-                              className="h-8 min-w-0 flex-1 rounded-[10px] border-border bg-background px-2.5 text-[13px]"
+                              className="h-8 min-w-0 flex-1 rounded-lg border-border bg-background px-2.5 text-sm"
                             />
                             <Button
                               type="button"
@@ -8223,9 +8224,9 @@ function QueuedSessionInputRail({
                               aria-label="Save queued message edit"
                             >
                               {isSaving ? (
-                                <Loader2 size={13} className="animate-spin" />
+                                <Loader2 className="size-3.5 animate-spin" />
                               ) : (
-                                <Check size={13} />
+                                <Check className="size-3.5" />
                               )}
                             </Button>
                             <Button
@@ -8237,7 +8238,7 @@ function QueuedSessionInputRail({
                               className="size-7 rounded-full text-muted-foreground hover:bg-foreground/6 hover:text-foreground"
                               aria-label="Cancel queued message edit"
                             >
-                              <X size={13} />
+                              <X className="size-3.5" />
                             </Button>
                           </div>
                           {editingError ? (
@@ -8249,8 +8250,7 @@ function QueuedSessionInputRail({
                       ) : (
                         <div className="flex items-center gap-3">
                           <CornerDownLeft
-                            size={15}
-                            className="shrink-0 text-muted-foreground"
+                            className="size-4 shrink-0 text-muted-foreground"
                           />
                           <div className="min-w-0 flex-1 truncate">
                             {previewText || "Queued message"}
@@ -8268,7 +8268,7 @@ function QueuedSessionInputRail({
                               className="size-7 rounded-full text-muted-foreground hover:bg-foreground/6 hover:text-foreground"
                               aria-label="Edit queued message"
                             >
-                              <PencilLine size={13} />
+                              <PencilLine className="size-3.5" />
                             </Button>
                           ) : null}
                         </div>
@@ -8282,7 +8282,7 @@ function QueuedSessionInputRail({
         </div>
       </div>
       <div
-        className="relative z-10 rounded-[24px] bg-background"
+        className="relative z-10 rounded-3xl bg-background"
         style={{ marginTop: `${-overlapPx}px` }}
       >
         {children}
@@ -8415,12 +8415,11 @@ function AssistantTurn({
           ) : segment.tone === "error" ? (
             <div
               key={`output-${index}`}
-              className="theme-chat-system-bubble mt-2 rounded-[14px] border px-3 py-2.5 text-[12px] text-foreground"
+              className="theme-chat-system-bubble mt-2 rounded-xl border px-3 py-2.5 text-xs text-foreground"
             >
               <div className="flex items-start gap-2">
                 <AlertTriangle
-                  size={14}
-                  className="mt-0.5 shrink-0 text-destructive"
+                  className="size-3.5 mt-0.5 shrink-0 text-destructive"
                 />
                 <SimpleMarkdown
                   className="chat-markdown max-w-full text-foreground"
@@ -8666,7 +8665,7 @@ function OutputArtifactIcon({
   const iconSize = size === "sm" ? 14 : 16;
   return (
     <div
-      className={`grid ${tileSize} shrink-0 place-items-center rounded-[10px] ${tileClass}`}
+      className={`grid ${tileSize} shrink-0 place-items-center rounded-lg ${tileClass}`}
     >
       <Icon size={iconSize} className={iconClass} />
     </div>
@@ -8698,7 +8697,7 @@ function HistoryRestoreSkeleton() {
         </div>
 
         <div className="mt-auto">
-          <div className="rounded-[22px] border border-border bg-muted p-4">
+          <div className="rounded-2xl border border-border bg-muted p-4">
             <div className="animate-pulse space-y-3">
               <div className="h-6 w-full rounded-lg bg-muted" />
               <div className="flex items-center justify-between gap-3">
@@ -8750,8 +8749,7 @@ function AssistantTurnOutputs({
             </div>
           </div>
           <ArrowUpRight
-            size={14}
-            className="shrink-0 text-muted-foreground/0 transition-colors group-hover:text-muted-foreground"
+            className="size-3.5 shrink-0 text-muted-foreground/0 transition-colors group-hover:text-muted-foreground"
           />
         </button>
       ))}
@@ -8762,8 +8760,8 @@ function AssistantTurnOutputs({
           onClick={onOpenAllArtifacts}
           className="flex max-w-[380px] items-center gap-3 rounded-xl border border-dashed border-border px-3 py-2 text-left text-muted-foreground transition-colors hover:border-border hover:bg-accent/40 hover:text-foreground"
         >
-          <div className="grid size-7 shrink-0 place-items-center rounded-[9px] bg-muted text-muted-foreground">
-            <Folder size={14} />
+          <div className="grid size-7 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
+            <Folder className="size-3.5" />
           </div>
           <span className="text-xs">
             View all artifacts ({sessionOutputs.length})
@@ -8797,7 +8795,7 @@ function CurrentTodoPanel({
     totalTaskCount > 0 ? `${currentTaskPosition}/${totalTaskCount}` : "0/0";
 
   return (
-    <div className="overflow-hidden rounded-[12px] border border-border bg-background/80 shadow-subtle-sm backdrop-blur-xl">
+    <div className="overflow-hidden rounded-lg border border-border bg-background/80 shadow-subtle-sm backdrop-blur-xl">
       <button
         type="button"
         onClick={onToggle}
@@ -8837,10 +8835,10 @@ function CurrentTodoPanel({
               return (
                 <div
                   key={phase.id}
-                  className="rounded-[16px] border border-border bg-muted px-3 py-3"
+                  className="rounded-xl border border-border bg-muted px-3 py-3"
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <div className="text-[12px] font-medium text-foreground">
+                    <div className="text-xs font-medium text-foreground">
                       {phase.name}
                     </div>
                     <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
@@ -8855,7 +8853,7 @@ function CurrentTodoPanel({
                       return (
                         <div
                           key={task.id}
-                          className={`flex gap-3 text-[12px] leading-5 ${hasVisibleDetails ? "items-start" : "items-center"}`}
+                          className={`flex gap-3 text-xs leading-5 ${hasVisibleDetails ? "items-start" : "items-center"}`}
                         >
                           <TodoStatusIcon status={task.status} />
                           <div className="min-w-0 flex-1">
@@ -8923,12 +8921,12 @@ function AssistantTurnMemoryProposals({
         return (
           <article
             key={proposal.proposal_id}
-            className="bg-card rounded-[22px] border border-border px-4 py-4 shadow-sm"
+            className="bg-card rounded-2xl border border-border px-4 py-4 shadow-sm"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                  <Lightbulb size={15} className="shrink-0 text-primary" />
+                  <Lightbulb className="size-4 shrink-0 text-primary" />
                   <span>{proposal.title}</span>
                 </div>
                 {isEditing ? (
@@ -8937,7 +8935,7 @@ function AssistantTurnMemoryProposals({
                     onChange={(event) =>
                       onDraftChange(proposal.proposal_id, event.target.value)
                     }
-                    className="bg-muted mt-3 min-h-[86px] w-full rounded-[16px] border border-border px-3 py-2 text-sm leading-6 text-foreground outline-none transition focus:border-primary"
+                    className="bg-muted mt-3 min-h-[86px] w-full rounded-xl border border-border px-3 py-2 text-sm leading-6 text-foreground outline-none transition focus:border-primary"
                   />
                 ) : (
                   <div className="mt-3 text-sm leading-6 text-muted-foreground">
@@ -8945,7 +8943,7 @@ function AssistantTurnMemoryProposals({
                   </div>
                 )}
                 {proposal.evidence ? (
-                  <div className="mt-3 text-[12px] leading-5 text-muted-foreground">
+                  <div className="mt-3 text-xs leading-5 text-muted-foreground">
                     {proposal.evidence}
                   </div>
                 ) : null}
@@ -8961,10 +8959,10 @@ function AssistantTurnMemoryProposals({
                     variant="outline"
                     size="icon"
                     onClick={() => onEditProposal(proposal.proposal_id)}
-                    className="rounded-[14px]"
+                    className="rounded-xl"
                     aria-label="Edit memory proposal"
                   >
-                    <PencilLine size={14} />
+                    <PencilLine className="size-3.5" />
                   </Button>
                 ) : null}
               </div>
@@ -8981,9 +8979,9 @@ function AssistantTurnMemoryProposals({
                   className="rounded-2xl"
                 >
                   {isActing && proposalAction?.action === "dismiss" ? (
-                    <Loader2 size={12} className="animate-spin" />
+                    <Loader2 className="size-3 animate-spin" />
                   ) : (
-                    <X size={12} />
+                    <X className="size-3" />
                   )}
                   <span>Dismiss</span>
                 </Button>
@@ -8996,9 +8994,9 @@ function AssistantTurnMemoryProposals({
                   className="rounded-2xl border-primary bg-primary/10 text-primary hover:bg-primary/14"
                 >
                   {isActing && proposalAction?.action === "accept" ? (
-                    <Loader2 size={12} className="animate-spin" />
+                    <Loader2 className="size-3 animate-spin" />
                   ) : (
-                    <Check size={12} />
+                    <Check className="size-3" />
                   )}
                   <span>Accept</span>
                 </Button>
@@ -9066,7 +9064,7 @@ function ArtifactBrowserModal({
             onClick={onClose}
             aria-label="Close"
           >
-            <X size={14} />
+            <X className="size-3.5" />
           </Button>
         </div>
 
@@ -9153,8 +9151,8 @@ function IntegrationErrorBanner({ details }: { details: string[] }) {
   const integrationError = isIntegrationError(errorText);
   if (!integrationError) return null;
   return (
-    <div className="mt-1.5 flex items-center gap-2 rounded-[10px] border border-warning/20 bg-warning/8 px-2.5 py-1.5 text-xs text-warning">
-      <Cable size={12} className="shrink-0" />
+    <div className="mt-1.5 flex items-center gap-2 rounded-lg border border-warning/20 bg-warning/8 px-2.5 py-1.5 text-xs text-warning">
+      <Cable className="size-3 shrink-0" />
       <span>{integrationError.action}</span>
     </div>
   );
@@ -9202,7 +9200,7 @@ function LiveStatusLine({
   return (
     <div
       aria-live="polite"
-      className={`inline-flex items-baseline gap-0.5 text-[12px] leading-6 text-muted-foreground ${className}`.trim()}
+      className={`inline-flex items-baseline gap-0.5 text-xs leading-6 text-muted-foreground ${className}`.trim()}
     >
       <span>{normalizedLabel}</span>
       <LiveStatusEllipsis />
@@ -9242,13 +9240,13 @@ function TraceTimelineStepEntry({
       >
         <span className="mt-0.5 shrink-0">
           {step.status === "completed" ? (
-            <Check size={12} className="text-success" />
+            <Check className="size-3 text-success" />
           ) : step.status === "error" ? (
-            <AlertTriangle size={12} className="text-destructive" />
+            <AlertTriangle className="size-3 text-destructive" />
           ) : step.status === "running" ? (
-            <Loader2 size={12} className="animate-spin text-muted-foreground" />
+            <Loader2 className="size-3 animate-spin text-muted-foreground" />
           ) : (
-            <Clock3 size={12} className="text-muted-foreground" />
+            <Clock3 className="size-3 text-muted-foreground" />
           )}
         </span>
         <span className="min-w-0 flex-1">
@@ -9261,8 +9259,7 @@ function TraceTimelineStepEntry({
         </span>
         {step.details.length > 1 ? (
           <ChevronDown
-            size={12}
-            className={`mt-0.5 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`}
+            className={`size-3 mt-0.5 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`}
           />
         ) : null}
       </button>
@@ -9287,7 +9284,7 @@ function ExecutionTimelineThinkingEntry({
 }) {
   return (
     <div className="py-1">
-      <div className="-ml-2.5 w-[calc(100%+0.625rem)] rounded-[16px] border border-border bg-muted px-3.5 py-3">
+      <div className="-ml-2.5 w-[calc(100%+0.625rem)] rounded-xl border border-border bg-muted px-3.5 py-3">
         <SimpleMarkdown
           className="chat-markdown chat-thinking-markdown max-w-full text-foreground"
           onLinkClick={onLinkClick}
@@ -9388,24 +9385,22 @@ function TraceStepGroup({
         className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 -ml-2.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted"
       >
         {groupHasTerminalError ? (
-          <AlertTriangle size={13} className="shrink-0 text-destructive" />
+          <AlertTriangle className="size-3.5 shrink-0 text-destructive" />
         ) : showLiveSummarySpinner ? (
           <Loader2
-            size={13}
-            className="shrink-0 animate-spin text-muted-foreground"
+            className="size-3.5 shrink-0 animate-spin text-muted-foreground"
           />
         ) : groupIsLive || runningCount > 0 ? (
-          <Clock3 size={13} className="shrink-0 text-muted-foreground" />
+          <Clock3 className="size-3.5 shrink-0 text-muted-foreground" />
         ) : (
-          <Check size={13} className="shrink-0 text-success" />
+          <Check className="size-3.5 shrink-0 text-success" />
         )}
         <span className="min-w-0 flex-1 leading-5">
           {summaryLabel}
           {summarySuffix}
         </span>
         <ChevronDown
-          size={12}
-          className={`shrink-0 transition-transform ${groupExpanded ? "rotate-180" : ""}`}
+          className={`size-3 shrink-0 transition-transform ${groupExpanded ? "rotate-180" : ""}`}
         />
       </button>
 
@@ -9455,11 +9450,11 @@ function AttachmentList({
           className="bg-muted inline-flex max-w-full items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs text-foreground"
         >
           {attachment.kind === "image" ? (
-            <ImageIcon size={12} className="shrink-0 text-primary" />
+            <ImageIcon className="size-3 shrink-0 text-primary" />
           ) : attachment.kind === "folder" ? (
-            <Folder size={12} className="shrink-0 text-primary" />
+            <Folder className="size-3 shrink-0 text-primary" />
           ) : (
-            <FileText size={12} className="shrink-0 text-primary" />
+            <FileText className="size-3 shrink-0 text-primary" />
           )}
           <span className="truncate">{attachmentButtonLabel(attachment)}</span>
           {onRemove ? (
@@ -9469,7 +9464,7 @@ function AttachmentList({
               className="grid h-4 w-4 place-items-center rounded-full text-muted-foreground transition hover:text-foreground"
               aria-label={`Remove ${attachment.name}`}
             >
-              <X size={11} />
+              <X className="size-3" />
             </button>
           ) : null}
         </div>
@@ -9634,7 +9629,7 @@ function ModelCombobox({
         align="start"
         side="top"
         sideOffset={8}
-        className="w-[280px] p-0"
+        className="w-[280px] rounded-lg p-0 shadow-subtle-sm ring-0"
       >
         <div className="border-b border-border p-1.5">
           <div className="relative flex h-7 items-center rounded-md border border-border bg-background px-2.5">
@@ -9658,10 +9653,13 @@ function ModelCombobox({
               {filteredAutoOption ? (
                 <div className="pb-1">{renderOption(filteredAutoOption)}</div>
               ) : null}
-              {filteredOptionGroups.map((group) => (
-                <div key={group.label || "models"} className="py-1">
+              {filteredOptionGroups.map((group, idx) => (
+                <div
+                  key={group.label || "models"}
+                  className={idx > 0 ? "mt-2" : ""}
+                >
                   {group.label ? (
-                    <div className="px-2.5 pb-1 pt-1 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                    <div className="px-2.5 pb-1 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
                       {group.label}
                     </div>
                   ) : null}
@@ -9770,8 +9768,7 @@ function ThinkingValueSelect({
               <>
                 <span className="truncate">{selectedThinkingLabel}</span>
                 <ChevronDown
-                  size={13}
-                  className="shrink-0 text-muted-foreground"
+                  className="size-3.5 shrink-0 text-muted-foreground"
                 />
               </>
             )}
@@ -9782,7 +9779,7 @@ function ThinkingValueSelect({
         align="start"
         side="top"
         sideOffset={8}
-        className="w-[200px] p-0"
+        className="w-[200px] rounded-lg p-0 shadow-subtle-sm ring-0"
       >
         <div className="px-2.5 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
           Reasoning effort
@@ -10248,7 +10245,7 @@ function Composer({
         <div className="pointer-events-none absolute left-3 right-3 top-4 z-20 -translate-y-[calc(100%+2px)]">
           <div
             ref={slashCommandMenuRef}
-            className="pointer-events-auto overflow-hidden rounded-[24px] border border-border bg-popover shadow-2xl ring-1 ring-border"
+            className="pointer-events-auto overflow-hidden rounded-3xl border border-border bg-popover shadow-2xl ring-1 ring-border"
           >
             {filteredSlashCommands.length > 0 ? (
               <div className="max-h-[280px] overflow-y-auto py-1.5">
@@ -10264,8 +10261,7 @@ function Composer({
                     }`}
                   >
                     <Sparkles
-                      size={13}
-                      className="mt-0.5 shrink-0 text-primary"
+                      className="size-3.5 mt-0.5 shrink-0 text-primary"
                     />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-medium">
@@ -10276,7 +10272,7 @@ function Composer({
                 ))}
               </div>
             ) : (
-              <div className="px-4 py-4 text-[12px] text-muted-foreground">
+              <div className="px-4 py-4 text-xs text-muted-foreground">
                 No slash commands match.
               </div>
             )}
@@ -10315,7 +10311,7 @@ function Composer({
                   key={skill.skillId}
                   className="inline-flex max-w-full items-center gap-2 rounded-full border border-primary bg-primary/8 px-3 py-1.5 text-xs text-foreground"
                 >
-                  <Sparkles size={12} className="text-primary" />
+                  <Sparkles className="size-3 text-primary" />
                   <span className="truncate">{skill.title}</span>
                   <button
                     type="button"
@@ -10323,7 +10319,7 @@ function Composer({
                     className="grid h-4 w-4 place-items-center rounded-full text-muted-foreground transition hover:text-foreground"
                     aria-label={`Remove quoted skill ${skill.title}`}
                   >
-                    <X size={11} />
+                    <X className="size-3" />
                   </button>
                 </div>
               ))}
@@ -10382,15 +10378,14 @@ function Composer({
                     variant="outline"
                     size="lg"
                     onClick={onOpenModelProviders}
-                    className={`shrink-0 justify-between rounded-[11px] bg-card text-[12px] font-semibold hover:border-primary hover:bg-card ${
+                    className={`shrink-0 justify-between rounded-lg bg-card text-xs font-semibold hover:border-primary hover:bg-card ${
                       compactComposerControls ? "px-2.5" : ""
                     }`}
                     aria-label="Configure model providers"
                   >
                     <span className="flex min-w-0 items-center gap-2">
                       <Waypoints
-                        size={13}
-                        className="shrink-0 text-muted-foreground"
+                        className="size-3.5 shrink-0 text-muted-foreground"
                       />
                       <span className="truncate">
                         {compactComposerControls
@@ -10399,8 +10394,7 @@ function Composer({
                       </span>
                     </span>
                     <ArrowRight
-                      size={14}
-                      className="shrink-0 text-muted-foreground"
+                      className="size-3.5 shrink-0 text-muted-foreground"
                     />
                   </Button>
                   <div
@@ -10490,19 +10484,18 @@ function Composer({
                 align="end"
                 side="top"
                 sideOffset={8}
-                className={
+                className={`rounded-lg shadow-subtle-sm ring-0 ${
                   composerActionsView === "skills"
                     ? "w-[320px] p-0"
                     : "w-[220px] p-1.5"
-                }
+                }`}
               >
                 {composerActionsView === "skills" ? (
                   <div className="flex flex-col">
                     <div className="border-b border-border p-2">
-                      <div className="relative flex items-center rounded-[10px] border border-border bg-muted px-2.5 transition-colors focus-within:border-border focus-within:bg-background/70">
+                      <div className="relative flex items-center rounded-lg border border-border bg-muted px-2.5 transition-colors focus-within:border-border focus-within:bg-background/70">
                         <Search
-                          size={13}
-                          className="shrink-0 text-muted-foreground"
+                          className="size-3.5 shrink-0 text-muted-foreground"
                         />
                         <input
                           value={skillPickerQuery}
@@ -10533,8 +10526,7 @@ function Composer({
                               }`}
                             >
                               <Sparkles
-                                size={14}
-                                className={`mt-0.5 shrink-0 ${
+                                className={`size-3.5 mt-0.5 shrink-0 ${
                                   isSelected
                                     ? "text-primary"
                                     : "text-muted-foreground"
@@ -10554,8 +10546,7 @@ function Composer({
                               </span>
                               {isSelected ? (
                                 <Check
-                                  size={13}
-                                  className="mt-0.5 shrink-0 text-primary"
+                                  className="size-3.5 mt-0.5 shrink-0 text-primary"
                                 />
                               ) : null}
                             </button>
@@ -10579,8 +10570,7 @@ function Composer({
                       className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-foreground transition-colors hover:bg-accent/50"
                     >
                       <Paperclip
-                        size={14}
-                        className="shrink-0 text-muted-foreground"
+                        className="size-3.5 shrink-0 text-muted-foreground"
                       />
                       <span className="min-w-0 flex-1 truncate">
                         Attach a file
@@ -10591,7 +10581,7 @@ function Composer({
                       onClick={openSkillPickerFromComposerMenu}
                       className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-foreground transition-colors hover:bg-accent/50"
                     >
-                      <Sparkles size={14} className="shrink-0 text-primary" />
+                      <Sparkles className="size-3.5 shrink-0 text-primary" />
                       <span className="min-w-0 flex-1 truncate">
                         Use Skills
                       </span>
