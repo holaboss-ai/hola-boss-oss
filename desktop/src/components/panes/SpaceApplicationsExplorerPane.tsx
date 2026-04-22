@@ -1,5 +1,6 @@
 import { AppWindow, Plus } from "lucide-react";
 import { providerIcon } from "@/components/onboarding/constants";
+import { Button } from "@/components/ui/button";
 import type { WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
 
 interface SpaceApplicationsExplorerPaneProps {
@@ -61,14 +62,19 @@ export function SpaceApplicationsExplorerPane({
     <div className="flex h-full min-h-0 flex-col bg-transparent">
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
         <div className="space-y-0.5">
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             onClick={onAddApp}
-            className="flex w-full items-center gap-2.5 rounded-md px-2 py-1 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            aria-label="Add application"
+            className="h-auto w-full justify-start gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
-            <Plus className="size-3.5 shrink-0" />
-            <span>Add application</span>
-          </button>
+            <div className="grid size-4 shrink-0 place-items-center">
+              <Plus className="size-3.5" />
+            </div>
+            <span className="text-sm">Add application</span>
+          </Button>
 
           {isEmpty ? null : (
             installedApps.map((app) => {
@@ -77,26 +83,31 @@ export function SpaceApplicationsExplorerPane({
               const showStatus = tone !== "ready";
               const icon = providerIcon(app.id, 16);
               return (
-                <button
+                <Button
                   key={app.id}
                   type="button"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => onSelectApp(app.id)}
                   aria-current={isActive ? "page" : undefined}
+                  aria-label={`${app.label} — ${statusPipLabel(tone)}`}
                   title={app.summary || app.label}
-                  className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1 text-left text-xs transition-colors ${
+                  className={`h-auto w-full justify-start gap-2.5 rounded-lg px-2.5 py-1.5 text-left transition-colors ${
                     isActive
                       ? "bg-accent text-foreground"
                       : "text-foreground hover:bg-accent"
                   }`}
                 >
-                  <span className="flex size-4 shrink-0 items-center justify-center">
+                  <div className="grid size-4 shrink-0 place-items-center">
                     {icon ?? (
                       <span className="grid size-4 place-items-center rounded-[4px] bg-muted text-[9px] font-semibold uppercase text-muted-foreground">
                         {appInitials(app.label)}
                       </span>
                     )}
+                  </div>
+                  <span className="min-w-0 flex-1 truncate text-sm">
+                    {app.label}
                   </span>
-                  <span className="min-w-0 flex-1 truncate">{app.label}</span>
                   {showStatus ? (
                     <span
                       aria-hidden="true"
@@ -104,7 +115,7 @@ export function SpaceApplicationsExplorerPane({
                       className={`size-1.5 shrink-0 rounded-full ${statusPipClass(tone)}`}
                     />
                   ) : null}
-                </button>
+                </Button>
               );
             })
           )}
