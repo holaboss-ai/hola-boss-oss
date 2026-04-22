@@ -7976,6 +7976,19 @@ function UserTurn({
     [text],
   );
 
+  const bubbleContentRef = useRef<HTMLDivElement>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [showExpandButton, setShowExpandButton] = useState(false);
+
+  useEffect(() => {
+    const node = bubbleContentRef.current;
+    if (!node) {
+      return;
+    }
+    // 180px ~= 6–7 lines of chat-user-markdown at 0.875rem / 1.6 leading.
+    setShowExpandButton(node.scrollHeight > 188);
+  }, [parsedQuotedSkills.body]);
+
   useEffect(() => {
     return () => {
       if (copyResetTimerRef.current !== null) {
@@ -8021,13 +8034,41 @@ function UserTurn({
           </div>
         ) : null}
         {parsedQuotedSkills.body ? (
-          <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full rounded-[20px] px-[18px] py-2.5 text-foreground">
-            <SimpleMarkdown
-              className="chat-markdown chat-user-markdown max-w-full"
-              onLinkClick={onLinkClick}
+          <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full flex-col items-stretch rounded-[20px] px-[18px] py-2.5 text-foreground">
+            <div
+              ref={bubbleContentRef}
+              className="relative overflow-hidden transition-[max-height] duration-300 ease-out"
+              style={{
+                maxHeight:
+                  showExpandButton && !isExpanded ? 180 : undefined,
+              }}
             >
-              {parsedQuotedSkills.body}
-            </SimpleMarkdown>
+              <SimpleMarkdown
+                className="chat-markdown chat-user-markdown max-w-full"
+                onLinkClick={onLinkClick}
+              >
+                {parsedQuotedSkills.body}
+              </SimpleMarkdown>
+              {showExpandButton && !isExpanded ? (
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute inset-x-0 bottom-0 h-10"
+                  style={{
+                    background:
+                      "linear-gradient(to bottom, transparent, color-mix(in oklch, var(--muted) 85%, var(--foreground) 4%))",
+                  }}
+                />
+              ) : null}
+            </div>
+            {showExpandButton ? (
+              <button
+                type="button"
+                onClick={() => setIsExpanded((value) => !value)}
+                className="mt-1.5 self-start text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {isExpanded ? "Show less" : "Show more"}
+              </button>
+            ) : null}
           </div>
         ) : null}
         {attachments.length > 0 ? (
