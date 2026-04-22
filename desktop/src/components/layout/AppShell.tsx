@@ -23,7 +23,6 @@ import { SpaceBrowserDisplayPane } from "@/components/panes/SpaceBrowserDisplayP
 import { SpaceBrowserExplorerPane } from "@/components/panes/SpaceBrowserExplorerPane";
 import { PublishDialog } from "@/components/publish/PublishDialog";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
 import { type ExplorerAttachmentDragPayload } from "@/lib/attachmentDrag";
 import { DesktopBillingProvider } from "@/lib/billing/useDesktopBilling";
@@ -4306,54 +4305,76 @@ function AppShellContent() {
                         <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
                           {showSpaceExplorer ? (
                             <>
-                              <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2.5">
-                                <Tabs
-                                  value={spaceExplorerMode}
-                                  onValueChange={(value) => {
-                                    const mode = value as SpaceExplorerMode;
-                                    setSpaceExplorerMode(mode);
-                                    if (mode === "browser") {
-                                      setSpaceDisplayView({
-                                        type: "browser",
-                                      });
-                                    } else if (mode === "applications") {
-                                      restoreLastSpaceAppDisplayView();
-                                    } else {
-                                      restoreLastSpaceFileDisplayView();
-                                    }
-                                  }}
-                                  className="min-w-0 flex-1"
+                              <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-2 py-1.5">
+                                <div
+                                  role="tablist"
+                                  aria-label="Space explorer mode"
+                                  className="flex min-w-0 flex-1 gap-0.5"
                                 >
-                                  <TabsList className="w-full">
-                                    <TabsTrigger
-                                      value="files"
-                                      className="group min-w-0 grow-0 basis-9 gap-0 px-0 duration-200 ease-out data-active:grow data-active:basis-0 data-active:justify-start data-active:gap-1.5 data-active:px-3"
-                                    >
-                                      <Folder />
-                                      <span className="ml-0 inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-out group-data-active:max-w-[120px] group-data-active:opacity-100">
-                                        Files
-                                      </span>
-                                    </TabsTrigger>
-                                    <TabsTrigger
-                                      value="browser"
-                                      className="group min-w-0 grow-0 basis-9 gap-0 px-0 duration-200 ease-out data-active:grow data-active:basis-0 data-active:justify-start data-active:gap-1.5 data-active:px-3"
-                                    >
-                                      <Globe />
-                                      <span className="ml-0 inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-out group-data-active:max-w-[120px] group-data-active:opacity-100">
-                                        Browser
-                                      </span>
-                                    </TabsTrigger>
-                                    <TabsTrigger
-                                      value="applications"
-                                      className="group min-w-0 grow-0 basis-9 gap-0 px-0 duration-200 ease-out data-active:grow data-active:basis-0 data-active:justify-start data-active:gap-1.5 data-active:px-3"
-                                    >
-                                      <LayoutGrid />
-                                      <span className="ml-0 inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-out group-data-active:max-w-[120px] group-data-active:opacity-100">
-                                        Apps
-                                      </span>
-                                    </TabsTrigger>
-                                  </TabsList>
-                                </Tabs>
+                                  {(
+                                    [
+                                      {
+                                        value: "files",
+                                        label: "Files",
+                                        icon: Folder,
+                                      },
+                                      {
+                                        value: "browser",
+                                        label: "Browser",
+                                        icon: Globe,
+                                      },
+                                      {
+                                        value: "applications",
+                                        label: "Apps",
+                                        icon: LayoutGrid,
+                                      },
+                                    ] as const
+                                  ).map(({ value, label, icon: Icon }) => {
+                                    const isActive =
+                                      spaceExplorerMode === value;
+                                    return (
+                                      <button
+                                        key={value}
+                                        type="button"
+                                        role="tab"
+                                        aria-selected={isActive}
+                                        title={label}
+                                        onClick={() => {
+                                          setSpaceExplorerMode(value);
+                                          if (value === "browser") {
+                                            setSpaceDisplayView({
+                                              type: "browser",
+                                            });
+                                          } else if (value === "applications") {
+                                            restoreLastSpaceAppDisplayView();
+                                          } else {
+                                            restoreLastSpaceFileDisplayView();
+                                          }
+                                        }}
+                                        className={`flex h-7 min-w-0 items-center justify-center gap-1.5 overflow-hidden rounded-md px-2 text-xs font-medium transition-[flex-basis,flex-grow,background-color,color] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] active:scale-[0.98] ${
+                                          isActive
+                                            ? "grow basis-0 bg-muted text-foreground"
+                                            : "grow-0 basis-9 text-muted-foreground hover:bg-accent hover:text-foreground"
+                                        }`}
+                                      >
+                                        <Icon className="size-3.5 shrink-0" />
+                                        <span
+                                          className={`overflow-hidden whitespace-nowrap transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                                            isActive
+                                              ? "max-w-[120px] opacity-100 delay-100"
+                                              : "max-w-0 opacity-0"
+                                          }`}
+                                        >
+                                          {label}
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                                <div
+                                  aria-hidden="true"
+                                  className="h-4 w-px shrink-0 bg-border"
+                                />
                                 <Button
                                   variant="ghost"
                                   size="icon-sm"
@@ -4361,8 +4382,9 @@ function AppShellContent() {
                                     setSpaceExplorerCollapsed(true)
                                   }
                                   aria-label="Collapse explorer"
+                                  title="Collapse explorer"
                                 >
-                                  <PanelLeftClose />
+                                  <PanelLeftClose className="size-3.5" />
                                 </Button>
                               </div>
 
