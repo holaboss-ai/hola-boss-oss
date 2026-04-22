@@ -529,13 +529,13 @@ webview {
 /* ---- Simple Markdown ---- */
 
 .simple-markdown {
-  font-size: 15px;
+  font-size: 0.875rem;
   line-height: 1.72;
   color: var(--foreground);
 }
 
 .simple-markdown .md-h1 {
-  font-size: 28px;
+  font-size: 1.475rem;
   font-weight: var(--font-weight-bold);
   letter-spacing: -0.03em;
   line-height: 1.2;
@@ -545,7 +545,7 @@ webview {
 }
 
 .simple-markdown .md-h2 {
-  font-size: 22px;
+  font-size: 1.275rem;
   font-weight: var(--font-weight-bold);
   letter-spacing: -0.02em;
   line-height: 1.3;
@@ -555,7 +555,7 @@ webview {
 }
 
 .simple-markdown .md-h3 {
-  font-size: 18px;
+  font-size: 1.175rem;
   font-weight: var(--font-weight-bold);
   letter-spacing: -0.01em;
   line-height: 1.4;
@@ -565,7 +565,7 @@ webview {
 }
 
 .simple-markdown .md-h4 {
-  font-size: 15px;
+  font-size: 0.875rem;
   font-weight: var(--font-weight-bold);
   line-height: 1.5;
   margin-top: 20px;
@@ -575,7 +575,7 @@ webview {
 
 .simple-markdown .md-h5,
 .simple-markdown .md-h6 {
-  font-size: 13px;
+  font-size: 0.775rem;
   font-weight: var(--font-weight-bold);
   line-height: 1.5;
   margin-top: 16px;
@@ -621,17 +621,19 @@ webview {
   padding: 14px 16px;
   margin: 12px 0;
   overflow-x: auto;
-  font-size: 12.5px;
+  font-size: 0.775rem;
   line-height: 1.6;
   white-space: pre;
   font-family: ui-monospace, monospace;
 }
 
 .simple-markdown .md-inline-code {
-  background: color-mix(in oklch, var(--muted) 70%, transparent);
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+  color: var(--primary);
+  border: 0.8px solid color-mix(in oklch, var(--primary) 20%, transparent);
   border-radius: 5px;
   padding: 1px 5px;
-  font-size: 12.5px;
+  font-size: 0.775rem;
   font-family: ui-monospace, monospace;
   font-weight: var(--font-weight-medium);
 }
@@ -654,9 +656,13 @@ webview {
 
 .simple-markdown .md-table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 0.8px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
   margin: 14px 0;
-  font-size: 13.5px;
+  font-size: 0.875rem;
 }
 
 .simple-markdown .md-table th,
@@ -668,8 +674,9 @@ webview {
 .simple-markdown .md-table th {
   font-weight: var(--font-weight-bold);
   color: var(--muted-foreground);
-  font-size: 12.5px;
-  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklch, var(--muted) 60%, transparent);
+  font-size: 0.775rem;
+  border-bottom: 0.8px solid var(--border);
 }
 
 .simple-markdown .md-table td {
@@ -732,12 +739,12 @@ webview {
 
 /* font-size per role */
 .chat-user-markdown {
-  font-size: 14px;
+  font-size: 0.875rem;
   line-height: 1.6;
 }
 
 .chat-assistant-markdown {
-  font-size: 15px;
+  font-size: 0.875rem;
   line-height: 1.72;
 }
 
@@ -814,11 +821,13 @@ webview {
 }
 
 .chat-assistant-markdown .md-inline-code {
-  background: color-mix(in oklch, var(--muted) 80%, transparent);
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+  color: var(--primary);
+  border: 0.8px solid color-mix(in oklch, var(--primary) 20%, transparent);
   border-radius: 4px;
   padding: 0.15em 0.38em;
   font-size: 0.875em;
-  font-weight: var(--font-weight-bold);
+  font-weight: var(--font-weight-medium);
 }
 
 .chat-assistant-markdown .md-blockquote {
@@ -830,7 +839,7 @@ webview {
 }
 
 .chat-thinking-markdown {
-  font-size: 12px;
+  font-size: 0.725rem;
   line-height: 1.6;
   color: color-mix(in oklch, var(--foreground) 70%, transparent);
 }
@@ -849,7 +858,7 @@ webview {
 
 /* headings — same DNA as simple-markdown but scaled for chat bubbles */
 .chat-markdown .md-h1 {
-  font-size: 18px;
+  font-size: 1.175rem;
   font-weight: var(--font-weight-bold);
   letter-spacing: -0.02em;
   line-height: 1.3;
@@ -858,7 +867,7 @@ webview {
 }
 
 .chat-markdown .md-h2 {
-  font-size: 16px;
+  font-size: 0.975rem;
   font-weight: var(--font-weight-bold);
   letter-spacing: -0.01em;
   line-height: 1.35;
@@ -868,7 +877,7 @@ webview {
 
 .chat-markdown .md-h3,
 .chat-markdown .md-h4 {
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: var(--font-weight-bold);
   line-height: 1.4;
   margin-top: 12px;
@@ -877,7 +886,7 @@ webview {
 
 .chat-markdown .md-h5,
 .chat-markdown .md-h6 {
-  font-size: 13px;
+  font-size: 0.775rem;
   font-weight: var(--font-weight-bold);
   line-height: 1.4;
   margin-top: 10px;
@@ -929,7 +938,7 @@ webview {
 
 .chat-markdown .md-code-block {
   margin: 10px 0;
-  font-size: 12px;
+  font-size: 0.725rem;
   line-height: 1.55;
 }
 
