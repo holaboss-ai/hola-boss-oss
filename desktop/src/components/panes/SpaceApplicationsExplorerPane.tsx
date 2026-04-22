@@ -1,6 +1,5 @@
 import { AppWindow, Plus } from "lucide-react";
 import { providerIcon } from "@/components/onboarding/constants";
-import { Button } from "@/components/ui/button";
 import type { WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
 
 interface SpaceApplicationsExplorerPaneProps {
@@ -37,9 +36,6 @@ function statusPipClass(tone: AppStatusTone): string {
   if (tone === "error") {
     return "bg-destructive";
   }
-  if (tone === "ready") {
-    return "bg-success";
-  }
   return "bg-info animate-pulse";
 }
 
@@ -63,78 +59,67 @@ export function SpaceApplicationsExplorerPane({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-transparent">
-      <div className="flex items-center justify-between gap-3 border-b border-border p-2">
-        <Button type="button" variant="ghost" size="sm" onClick={onAddApp}>
-          <Plus className="size-4" />
-          <span className="text-muted-foreground">Add Application</span>
-        </Button>
-      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+        <div className="space-y-0.5">
+          <button
+            type="button"
+            onClick={onAddApp}
+            className="flex w-full items-center gap-2.5 rounded-md px-2 py-1 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <Plus className="size-3.5 shrink-0" />
+            <span>Add application</span>
+          </button>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-2">
-        {isEmpty ? (
-          <div className="flex flex-col items-center justify-center gap-2.5 px-4 py-10 text-center">
-            <div className="grid size-10 place-items-center rounded-[10px] bg-muted text-muted-foreground">
-              <AppWindow size={16} />
-            </div>
-            <div className="text-xs leading-5 text-muted-foreground">
-              No apps installed in this workspace yet.
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-0.5">
-            {installedApps.map((app) => {
+          {isEmpty ? null : (
+            installedApps.map((app) => {
               const isActive = activeAppId === app.id;
               const tone = appStatusTone(app);
-              const statusLabel = statusPipLabel(tone);
+              const showStatus = tone !== "ready";
+              const icon = providerIcon(app.id, 16);
               return (
-                <Button
+                <button
                   key={app.id}
                   type="button"
-                  variant="ghost"
-                  size="sm"
                   onClick={() => onSelectApp(app.id)}
                   aria-current={isActive ? "page" : undefined}
-                  aria-label={`${app.label} — ${statusLabel}`}
-                  className={`relative h-auto w-full justify-start gap-0 rounded-lg px-2.5 py-2 text-left transition-colors ${
+                  title={app.summary || app.label}
+                  className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1 text-left text-xs transition-colors ${
                     isActive
-                      ? "bg-accent text-accent-foreground"
-                      : "hover:bg-accent/55"
+                      ? "bg-accent text-foreground"
+                      : "text-foreground hover:bg-accent"
                   }`}
                 >
-                  {isActive ? (
+                  <span className="flex size-4 shrink-0 items-center justify-center">
+                    {icon ?? (
+                      <span className="grid size-4 place-items-center rounded-[4px] bg-muted text-[9px] font-semibold uppercase text-muted-foreground">
+                        {appInitials(app.label)}
+                      </span>
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{app.label}</span>
+                  {showStatus ? (
                     <span
                       aria-hidden="true"
-                      className="absolute left-0 top-1/2 h-5 w-[2px] -translate-y-1/2 rounded-full bg-primary"
+                      title={statusPipLabel(tone)}
+                      className={`size-1.5 shrink-0 rounded-full ${statusPipClass(tone)}`}
                     />
                   ) : null}
-                  <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                    <div className="relative shrink-0">
-                      <div className="grid size-9 place-items-center rounded-[10px] bg-muted text-muted-foreground">
-                        {providerIcon(app.id, 16) ?? (
-                          <span className="text-xs font-semibold uppercase tracking-wide">
-                            {appInitials(app.label)}
-                          </span>
-                        )}
-                      </div>
-                      <span
-                        aria-hidden="true"
-                        className={`absolute -bottom-0.5 -right-0.5 size-[9px] rounded-full ring-2 ring-background ${statusPipClass(tone)}`}
-                      />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium text-foreground">
-                        {app.label}
-                      </div>
-                      <div className="mt-0.5 line-clamp-1 text-xs leading-5 text-muted-foreground">
-                        {app.summary}
-                      </div>
-                    </div>
-                  </div>
-                </Button>
+                </button>
               );
-            })}
+            })
+          )}
+        </div>
+
+        {isEmpty ? (
+          <div className="mt-6 flex flex-col items-center justify-center gap-2.5 px-4 py-8 text-center">
+            <div className="grid size-8 place-items-center rounded-[10px] bg-muted text-muted-foreground">
+              <AppWindow className="size-3.5" />
+            </div>
+            <div className="text-xs leading-5 text-muted-foreground">
+              No apps installed yet.
+            </div>
           </div>
-        )}
+        ) : null}
       </div>
     </div>
   );
