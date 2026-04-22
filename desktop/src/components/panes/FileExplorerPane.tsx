@@ -11,11 +11,28 @@ import {
   AtSign,
   ArrowLeft,
   ChevronRight,
+  File,
+  FileArchive,
+  FileAudio,
+  FileCode,
+  FileImage,
+  FileJson,
+  FileSpreadsheet,
+  FileText,
+  FileVideo,
+  Folder,
+  FolderOpen,
+  GitBranch,
+  KeyRound,
   Loader2,
+  Lock,
+  type LucideIcon,
   MoreHorizontal,
+  Package,
   Plus,
   Save,
   Search,
+  Settings,
   Star,
 } from "lucide-react";
 import { Icon as IconifyIcon, addCollection } from "@iconify/react";
@@ -535,6 +552,83 @@ function getExplorerIconDescriptor(
     default:
       return { name: "text" };
   }
+}
+
+function getLucideIconForDescriptor(name: string): LucideIcon {
+  switch (name) {
+    case "folder":
+      return Folder;
+    case "folder-open":
+      return FolderOpen;
+    case "image":
+    case "svg":
+      return FileImage;
+    case "audio":
+      return FileAudio;
+    case "video":
+      return FileVideo;
+    case "zip":
+      return FileArchive;
+    case "csv":
+      return FileSpreadsheet;
+    case "pdf":
+    case "markdown":
+    case "readme":
+      return FileText;
+    case "json":
+    case "yaml":
+    case "toml":
+      return FileJson;
+    case "typescript":
+    case "javascript":
+    case "python":
+    case "go":
+    case "rust":
+    case "java":
+    case "kotlin":
+    case "php":
+    case "swift":
+    case "c":
+    case "cpp":
+    case "bash":
+    case "html":
+    case "css":
+    case "sass":
+    case "xml":
+    case "database":
+      return FileCode;
+    case "env":
+      return KeyRound;
+    case "lock":
+      return Lock;
+    case "git":
+      return GitBranch;
+    case "docker":
+    case "npm":
+    case "bun":
+    case "pnpm":
+      return Package;
+    case "config":
+      return Settings;
+    default:
+      return File;
+  }
+}
+
+function FileTreeIcon({
+  descriptorName,
+  className = "",
+}: {
+  descriptorName: string;
+  className?: string;
+}) {
+  const Icon = getLucideIconForDescriptor(descriptorName);
+  return (
+    <Icon
+      className={`size-3.5 shrink-0 text-muted-foreground ${className}`.trim()}
+      strokeWidth={1.7}
+    />
+  );
 }
 
 function isMarkdownPreviewPayload(
@@ -3578,7 +3672,7 @@ export function FileExplorerPane({
                         ? "opacity-100"
                         : "opacity-0 pointer-events-none group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
                     }`;
-                    const rowClassName = `group w-full rounded-sm px-1.5 py-1 text-left transition-colors ${
+                    const rowClassName = `group w-full rounded-sm px-1.5 py-0.5 text-left transition-colors ${
                       selected
                         ? "bg-accent text-foreground"
                         : "text-foreground hover:bg-muted"
@@ -3637,16 +3731,11 @@ export function FileExplorerPane({
                     );
                     const rowContent = (
                       <span
-                        className="flex min-w-0 flex-1 items-center gap-1.5"
+                        className="flex min-w-0 flex-1 items-center gap-1"
                         style={{ paddingLeft: `${depth * 12}px` }}
                       >
                         {disclosureControl}
-                        <IconifyIcon
-                          icon={`catppuccin:${descriptor.name}`}
-                          strokeWidth={1.25}
-                          stroke="currentColor"
-                          className="shrink-0 size-4 text-foreground"
-                        />
+                        <FileTreeIcon descriptorName={descriptor.name} />
                         {nameField}
                       </span>
                     );
