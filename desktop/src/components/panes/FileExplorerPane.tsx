@@ -11,6 +11,7 @@ import {
   AtSign,
   ArrowLeft,
   ChevronRight,
+  Eye,
   File,
   FileArchive,
   FileAudio,
@@ -3982,28 +3983,35 @@ export function FileExplorerPane({
               />
             </Button>
             {supportsRenderedTextPreview ? (
-              <div className="inline-flex items-center gap-px rounded-lg border border-border bg-muted p-[3px]">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="xs"
-                  onClick={() => setTextPreviewMode("preview")}
-                  className={`px-3 font-normal ${textPreviewMode === "preview" ? "bg-background text-foreground shadow-sm hover:bg-background" : "text-muted-foreground"}`}
-                >
-                  Preview
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="xs"
-                  onClick={() => setTextPreviewMode("edit")}
-                  className={`px-3 font-normal ${textPreviewMode === "edit" ? "bg-background text-foreground shadow-sm hover:bg-background" : "text-muted-foreground"}`}
-                >
-                  Edit
-                </Button>
-              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={() =>
+                  setTextPreviewMode(
+                    textPreviewMode === "preview" ? "edit" : "preview",
+                  )
+                }
+                aria-label={
+                  textPreviewMode === "preview"
+                    ? "Switch to edit mode"
+                    : "Switch to preview mode"
+                }
+                title={
+                  textPreviewMode === "preview"
+                    ? "Previewing — click to edit"
+                    : "Editing — click to preview"
+                }
+                className={
+                  textPreviewMode === "preview"
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                }
+              >
+                <Eye className="size-3.5" />
+              </Button>
             ) : null}
-            {preview?.isEditable ? (
+            {preview?.isEditable && (isDirty || saving) ? (
               <Button
                 type="button"
                 variant="outline"
@@ -4011,7 +4019,7 @@ export function FileExplorerPane({
                 onClick={() => void savePreview()}
                 disabled={!isDirty || saving}
               >
-                <Save size={12} />
+                <Save className="size-3.5" />
                 {saving ? "Saving" : "Save"}
               </Button>
             ) : null}
