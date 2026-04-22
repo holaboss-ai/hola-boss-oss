@@ -25,11 +25,12 @@ import {
   requestedPiThinkingBudgets,
   requestedPiThinkingConfig,
   requestedPiThinkingLevel,
-  resolvePiSkillDirs,
-  workspaceBoundaryOverrideRequested,
-  workspaceBoundaryViolationForToolCall,
   runPi
 } from "./pi.js";
+import {
+  workspaceBoundaryOverrideRequested,
+  workspaceBoundaryViolationForToolCall,
+} from "./workspace-boundary.js";
 
 function baseRequest(): HarnessHostPiRequest {
   return {
@@ -49,7 +50,6 @@ function baseRequest(): HarnessHostPiRequest {
     timeout_seconds: 30,
     runtime_api_base_url: "http://127.0.0.1:5060",
     system_prompt: "You are concise.",
-    workspace_skill_dirs: [],
     workspace_skills: [],
     mcp_servers: [],
     mcp_tool_refs: [],
@@ -916,30 +916,6 @@ test("buildPiMcpServerBindings converts remote and local MCP payloads into mcpor
       },
     },
   ]);
-});
-
-test("resolvePiSkillDirs returns existing source skill directories in order", () => {
-  const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-skills-workspace-"));
-  const skillAlphaDir = path.join(workspaceDir, "skills", "alpha");
-  const skillBetaDir = path.join(workspaceDir, "skills", "beta");
-  fs.mkdirSync(skillAlphaDir, { recursive: true });
-  fs.mkdirSync(skillBetaDir, { recursive: true });
-  const request: HarnessHostPiRequest = {
-    ...baseRequest(),
-    workspace_dir: workspaceDir,
-    workspace_skill_dirs: [
-      skillAlphaDir,
-      skillAlphaDir,
-      path.join(workspaceDir, "skills", "missing"),
-      skillBetaDir,
-    ],
-  };
-
-  try {
-    assert.deepEqual(resolvePiSkillDirs(request), [skillAlphaDir, skillBetaDir]);
-  } finally {
-    fs.rmSync(workspaceDir, { recursive: true, force: true });
-  }
 });
 
 test("workspaceBoundaryOverrideRequested requires explicit insist signal", () => {

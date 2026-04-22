@@ -118,7 +118,7 @@ test("shared harness definitions build pi harness request shapes", () => {
 
   assert.equal(piRequest.system_prompt, "You are concise.");
   assert.deepEqual(piRequest.context_messages, []);
-  assert.deepEqual(piRequest.workspace_skill_dirs, ["/tmp/workspace-1/skills/skill-creator"]);
+  assert.equal("workspace_skill_dirs" in piRequest, false);
   assert.deepEqual(piRequest.workspace_skills, [
     {
       skill_id: "skill-creator",

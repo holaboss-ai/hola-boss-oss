@@ -110,7 +110,6 @@ test("decodeHarnessHostPiRequestBase64 validates and normalizes request payloads
       timeout_seconds: 30,
       runtime_api_base_url: "http://127.0.0.1:5060",
       system_prompt: "system",
-      workspace_skill_dirs: ["/tmp/workspace-1/skills/skill-a"],
       workspace_skills: [
         {
           skill_id: "skill-a",
@@ -158,7 +157,6 @@ test("decodeHarnessHostPiRequestBase64 validates and normalizes request payloads
     timeout_seconds: 30,
     runtime_api_base_url: "http://127.0.0.1:5060",
     system_prompt: "system",
-    workspace_skill_dirs: ["/tmp/workspace-1/skills/skill-a"],
     workspace_skills: [
       {
         skill_id: "skill-a",
@@ -196,7 +194,6 @@ test("decodeHarnessHostPiRequestBase64 allows empty or missing system_prompt", (
       model_id: "gpt-5.1",
       timeout_seconds: 30,
       system_prompt: "",
-      workspace_skill_dirs: [],
       workspace_skills: [],
       mcp_servers: [],
       mcp_tool_refs: [],
@@ -219,7 +216,6 @@ test("decodeHarnessHostPiRequestBase64 allows empty or missing system_prompt", (
       provider_id: "openai",
       model_id: "gpt-5.1",
       timeout_seconds: 30,
-      workspace_skill_dirs: [],
       workspace_skills: [],
       mcp_servers: [],
       mcp_tool_refs: [],

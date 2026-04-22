@@ -4,7 +4,6 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import * as Sentry from "@sentry/node";
-import JSZip from "jszip";
 import {
   AuthStorage,
   createAgentSession,
@@ -13,25 +12,19 @@ import {
   createGrepTool,
   createLsTool,
   DefaultResourceLoader,
-  loadSkillsFromDir,
   ModelRegistry,
   SessionManager,
   SettingsManager,
   type AgentSession,
   type AgentSessionEvent,
-  type LoadSkillsResult,
-  type Skill,
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
 import type { Api, ImageContent, Model, TextContent } from "@mariozechner/pi-ai";
-import type { ResourceDiagnostic } from "@mariozechner/pi-coding-agent";
 import { APIError as OpenAIApiError } from "openai";
-import ExcelJS from "exceljs";
 import { createCallResult, createRuntime, type Runtime as McporterRuntime, type ServerDefinition, type ServerToolInfo } from "mcporter";
 import { MODELS } from "../node_modules/@mariozechner/pi-ai/dist/models.generated.js";
 
 import type {
-  HarnessHostInputAttachmentPayload,
   HarnessHostPiMcpToolRef,
   HarnessHostPiRequest,
   HarnessHostWorkspaceSkillPayload,
@@ -45,8 +38,18 @@ import {
   harnessGenAiSpanAttributes,
   type HarnessGenAiUsageMetrics,
 } from "./harness-ai-monitoring.js";
+import { buildAttachmentPromptContent } from "./attachment-prompt-content.js";
 import { resolvePiDesktopBrowserToolDefinitions } from "./pi-browser-tools.js";
 import { resolvePiRuntimeToolDefinitions } from "./pi-runtime-tools.js";
+import { RuntimeTodoCoordinator } from "./runtime-todo-coordinator.js";
+import {
+  createWorkspaceBoundaryPolicy,
+  workspaceBoundaryOverrideRequested,
+  workspaceBoundaryViolationForToolCall,
+  type WorkspaceBoundaryPolicy,
+} from "./workspace-boundary.js";
+
+const require = createRequire(import.meta.url);
 
 export type PiMappedEvent = {
   event_type: RunnerEventType;
@@ -141,9 +144,6 @@ const PI_AGENT_STATE_DIR = ".holaboss/pi-agent";
 const PI_SESSION_DIR = ".holaboss/pi-sessions";
 const PI_HARNESS_CLIENT_NAME = "holaboss-pi-harness";
 const PI_HARNESS_CLIENT_VERSION = "0.1.0";
-const PI_MAX_INLINE_IMAGE_BYTES = 10 * 1024 * 1024;
-const PI_MAX_INLINE_TEXT_BYTES = 128 * 1024;
-const PI_MAX_EXTRACTED_TEXT_CHARS = 120_000;
 const PI_MCP_DISCOVERY_RETRY_INTERVAL_MS = 250;
 const PI_FALLBACK_CONTEXT_WINDOW = 65_536;
 const PI_FALLBACK_MAX_TOKENS = 8_192;
@@ -176,91 +176,9 @@ const PI_MODEL_CATALOG = MODELS as Record<
   Record<string, PiCatalogModelEntry>
 >;
 const PI_MCP_DISCOVERY_MAX_WAIT_MS = 10000;
-const require = createRequire(import.meta.url);
 let cachedPrepareCompactionFnPromise:
   | Promise<((entries: unknown[], settings: unknown) => PiPrepareCompactionResult) | null>
   | null = null;
-
-const PI_TEXT_ATTACHMENT_MIME_TYPES = new Set([
-  "application/json",
-  "application/ld+json",
-  "application/xml",
-  "application/yaml",
-  "application/x-yaml",
-  "application/toml",
-  "application/x-sh",
-  "application/javascript",
-  "application/x-javascript",
-  "application/typescript",
-  "application/sql",
-]);
-
-const PI_TEXT_ATTACHMENT_EXTENSIONS = new Set([
-  ".c",
-  ".cc",
-  ".cfg",
-  ".conf",
-  ".cpp",
-  ".cs",
-  ".css",
-  ".csv",
-  ".env",
-  ".go",
-  ".graphql",
-  ".h",
-  ".hpp",
-  ".html",
-  ".ini",
-  ".java",
-  ".js",
-  ".json",
-  ".jsonl",
-  ".jsx",
-  ".kt",
-  ".log",
-  ".lua",
-  ".md",
-  ".mdx",
-  ".mjs",
-  ".php",
-  ".pl",
-  ".properties",
-  ".py",
-  ".rb",
-  ".rs",
-  ".scss",
-  ".sh",
-  ".sql",
-  ".svg",
-  ".swift",
-  ".toml",
-  ".ts",
-  ".tsx",
-  ".txt",
-  ".xml",
-  ".yaml",
-  ".yml",
-  ".zsh",
-]);
-
-const PI_PDF_ATTACHMENT_MIME_TYPES = new Set(["application/pdf"]);
-const PI_DOCX_ATTACHMENT_MIME_TYPES = new Set(["application/vnd.openxmlformats-officedocument.wordprocessingml.document"]);
-const PI_PPTX_ATTACHMENT_MIME_TYPES = new Set(["application/vnd.openxmlformats-officedocument.presentationml.presentation"]);
-const PI_EXCEL_ATTACHMENT_MIME_TYPES = new Set([
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "application/vnd.ms-excel",
-]);
-
-function normalizePdfjsFactoryPath(directory: string): string {
-  return `${directory.replaceAll("\\", "/").replace(/\/+$/u, "")}/`;
-}
-
-function resolvePdfStandardFontDataPath(): string {
-  const packageJsonPath = require.resolve("pdfjs-dist/package.json");
-  return normalizePdfjsFactoryPath(path.join(path.dirname(packageJsonPath), "standard_fonts"));
-}
-
-const PI_PDF_STANDARD_FONT_DATA_PATH = resolvePdfStandardFontDataPath();
 
 export interface PiMcpToolMetadata {
   piToolName: string;
@@ -288,11 +206,7 @@ export interface PiSkillWideningState {
   skillIdsByManagedCommand: ReadonlyMap<string, ReadonlySet<string>>;
 }
 
-export interface PiWorkspaceBoundaryPolicy {
-  workspaceDir: string;
-  workspaceRealDir: string;
-  overrideRequested: boolean;
-}
+type PiWorkspaceBoundaryPolicy = WorkspaceBoundaryPolicy;
 
 export type PiMcpServerBinding = {
   serverId: string;
@@ -309,307 +223,6 @@ export type PiMcpToolset = {
 export interface PiPromptPayload {
   text: string;
   images: ImageContent[];
-}
-
-type PiAttachment = HarnessHostInputAttachmentPayload;
-
-const WORKSPACE_PATH_KEY_PATTERN =
-  /(?:^|_)(?:path|file|filepath|filename|target|source|destination|cwd|dir|directory|root)$/i;
-const TOOL_COMMAND_KEY_PATTERN = /^(?:command|cmd|script)$/i;
-const WORKSPACE_LOCAL_TOOL_NAMES = new Set([
-  "read",
-  "edit",
-  "write",
-  "bash",
-  "glob",
-  "grep",
-  "find",
-  "ls",
-  "list",
-  "mkdir",
-  "rm",
-  "mv",
-  "cp",
-  "todoread",
-  "todowrite",
-  "skill",
-]);
-
-function shouldEnforceWorkspaceBoundaryForTool(toolName: string): boolean {
-  const normalized = toolName.trim().toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-  if (normalized.startsWith("mcp__") || normalized.startsWith("holaboss_")) {
-    return false;
-  }
-  return WORKSPACE_LOCAL_TOOL_NAMES.has(normalized);
-}
-
-function attachmentPromptPath(attachment: PiAttachment): string {
-  return `./${attachment.workspace_path}`;
-}
-
-function resolveAttachmentAbsolutePath(request: HarnessHostPiRequest, attachment: PiAttachment): string {
-  const policy = createWorkspaceBoundaryPolicy(request.workspace_dir, false);
-  const resolved = resolvePathWithinWorkspace(policy, attachment.workspace_path);
-  if (!resolved) {
-    throw new Error(
-      `Attachment '${attachment.name}' resolves outside workspace boundary: ${attachment.workspace_path}`
-    );
-  }
-  return resolved;
-}
-
-function isTextLikeAttachment(attachment: PiAttachment): boolean {
-  const mimeType = attachment.mime_type.trim().toLowerCase();
-  if (mimeType.startsWith("text/") || PI_TEXT_ATTACHMENT_MIME_TYPES.has(mimeType)) {
-    return true;
-  }
-  return PI_TEXT_ATTACHMENT_EXTENSIONS.has(path.extname(attachment.name).toLowerCase());
-}
-
-function isBinaryBuffer(buffer: Buffer): boolean {
-  return buffer.subarray(0, Math.min(buffer.length, 1024)).includes(0);
-}
-
-function truncateExtractedText(text: string): { text: string; truncated: boolean } {
-  if (text.length <= PI_MAX_EXTRACTED_TEXT_CHARS) {
-    return { text, truncated: false };
-  }
-  return {
-    text: text.slice(0, PI_MAX_EXTRACTED_TEXT_CHARS),
-    truncated: true,
-  };
-}
-
-function decodeXmlEntities(value: string): string {
-  return value
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, "&")
-    .replace(/&#x([0-9a-f]+);/gi, (_match, hex) => String.fromCodePoint(Number.parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_match, decimal) => String.fromCodePoint(Number.parseInt(decimal, 10)));
-}
-
-function normalizeExtractedText(value: string): string {
-  return value
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .replace(/\u0000/g, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function escapeXmlAttribute(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function isPdfAttachment(attachment: PiAttachment): boolean {
-  const lowerName = attachment.name.toLowerCase();
-  return PI_PDF_ATTACHMENT_MIME_TYPES.has(attachment.mime_type.toLowerCase()) || lowerName.endsWith(".pdf");
-}
-
-function isDocxAttachment(attachment: PiAttachment): boolean {
-  const lowerName = attachment.name.toLowerCase();
-  return PI_DOCX_ATTACHMENT_MIME_TYPES.has(attachment.mime_type.toLowerCase()) || lowerName.endsWith(".docx");
-}
-
-function isPptxAttachment(attachment: PiAttachment): boolean {
-  const lowerName = attachment.name.toLowerCase();
-  return PI_PPTX_ATTACHMENT_MIME_TYPES.has(attachment.mime_type.toLowerCase()) || lowerName.endsWith(".pptx");
-}
-
-function isExcelAttachment(attachment: PiAttachment): boolean {
-  const lowerName = attachment.name.toLowerCase();
-  return (
-    PI_EXCEL_ATTACHMENT_MIME_TYPES.has(attachment.mime_type.toLowerCase()) ||
-    lowerName.endsWith(".xlsx") ||
-    lowerName.endsWith(".xls")
-  );
-}
-
-function fallbackPromptLine(attachment: PiAttachment): string {
-  const label =
-    attachment.kind === "image"
-      ? "image"
-      : attachment.kind === "folder"
-        ? "folder"
-        : "file";
-  return `- ${attachment.name} (${label}, ${attachment.mime_type}) at ${attachmentPromptPath(attachment)}`;
-}
-
-function isFolderAttachment(attachment: PiAttachment): boolean {
-  return attachment.kind === "folder" || attachment.mime_type.trim().toLowerCase() === "inode/directory";
-}
-
-async function extractPdfAttachmentText(buffer: Buffer, fileName: string): Promise<string> {
-  const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const pdf = await pdfjsLib.getDocument({
-    data: new Uint8Array(buffer),
-    standardFontDataUrl: PI_PDF_STANDARD_FONT_DATA_PATH,
-  }).promise;
-  try {
-    let extractedText = `<pdf filename="${escapeXmlAttribute(fileName)}">`;
-    for (let index = 1; index <= pdf.numPages; index += 1) {
-      const page = await pdf.getPage(index);
-      const textContent = await page.getTextContent();
-      const pageText = textContent.items
-        .map((item) => ("str" in item ? item.str : ""))
-        .filter((part) => part.trim().length > 0)
-        .join(" ");
-      extractedText += `\n<page number="${index}">\n${pageText}\n</page>`;
-    }
-    extractedText += "\n</pdf>";
-    return normalizeExtractedText(extractedText);
-  } finally {
-    await pdf.destroy();
-  }
-}
-
-async function extractDocxAttachmentText(buffer: Buffer, fileName: string): Promise<string> {
-  const zip = await JSZip.loadAsync(buffer);
-  const documentXml = await zip.file("word/document.xml")?.async("text");
-  if (!documentXml) {
-    throw new Error(`DOCX document XML not found for ${fileName}`);
-  }
-  const paragraphs = documentXml.match(/<w:p[\s\S]*?<\/w:p>/g) ?? [];
-  const lines = paragraphs
-    .map((paragraph) => {
-      const matches = [...paragraph.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g)];
-      return decodeXmlEntities(matches.map((match) => match[1] ?? "").join("")).trim();
-    })
-    .filter((line) => line.length > 0);
-  const extractedText = `<docx filename="${escapeXmlAttribute(fileName)}">\n<page number="1">\n${lines.join("\n")}\n</page>\n</docx>`;
-  return normalizeExtractedText(extractedText);
-}
-
-async function extractPptxAttachmentText(buffer: Buffer, fileName: string): Promise<string> {
-  const zip = await JSZip.loadAsync(buffer);
-  const slideFiles = Object.keys(zip.files)
-    .filter((name) => /ppt\/slides\/slide\d+\.xml$/i.test(name))
-    .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
-
-  let extractedText = `<pptx filename="${escapeXmlAttribute(fileName)}">`;
-  for (let index = 0; index < slideFiles.length; index += 1) {
-    const slideFile = zip.file(slideFiles[index]);
-    if (!slideFile) {
-      continue;
-    }
-    const slideXml = await slideFile.async("text");
-    const matches = [...slideXml.matchAll(/<a:t[^>]*>([\s\S]*?)<\/a:t>/g)];
-    const slideText = matches.map((match) => decodeXmlEntities(match[1] ?? "").trim()).filter(Boolean).join("\n");
-    if (!slideText) {
-      continue;
-    }
-    extractedText += `\n<slide number="${index + 1}">\n${slideText}\n</slide>`;
-  }
-  extractedText += "\n</pptx>";
-  return normalizeExtractedText(extractedText);
-}
-
-async function extractExcelAttachmentText(buffer: Buffer, fileName: string): Promise<string> {
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(
-    buffer as unknown as Parameters<ExcelJS.Workbook["xlsx"]["load"]>[0],
-  );
-  let extractedText = `<excel filename="${escapeXmlAttribute(fileName)}">`;
-  workbook.eachSheet((worksheet, index) => {
-    const csvRows: string[] = [];
-    worksheet.eachRow({ includeEmpty: false }, (row) => {
-      const cells: string[] = [];
-      row.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
-        const raw = cell.text ?? "";
-        cells[columnNumber - 1] = /[",\n\r]/.test(raw)
-          ? `"${raw.replace(/"/g, "\"\"")}"`
-          : raw;
-      });
-
-      let lastNonEmptyIndex = cells.length - 1;
-      while (lastNonEmptyIndex >= 0 && cells[lastNonEmptyIndex] === "") {
-        lastNonEmptyIndex -= 1;
-      }
-      const normalized = cells.slice(0, lastNonEmptyIndex + 1);
-      if (normalized.length > 0) {
-        csvRows.push(normalized.join(","));
-      }
-    });
-
-    extractedText += `\n<sheet name="${escapeXmlAttribute(worksheet.name)}" index="${index}">\n${csvRows.join("\n").trim()}\n</sheet>`;
-  });
-  extractedText += "\n</excel>";
-  return normalizeExtractedText(extractedText);
-}
-
-async function extractAttachmentText(request: HarnessHostPiRequest, attachment: PiAttachment): Promise<string | null> {
-  const attachmentPath = resolveAttachmentAbsolutePath(request, attachment);
-  const buffer = fs.readFileSync(attachmentPath);
-
-  if (isPdfAttachment(attachment)) {
-    return await extractPdfAttachmentText(buffer, attachment.name);
-  }
-  if (isDocxAttachment(attachment)) {
-    return await extractDocxAttachmentText(buffer, attachment.name);
-  }
-  if (isPptxAttachment(attachment)) {
-    return await extractPptxAttachmentText(buffer, attachment.name);
-  }
-  if (isExcelAttachment(attachment)) {
-    try {
-      return await extractExcelAttachmentText(buffer, attachment.name);
-    } catch {
-      return null;
-    }
-  }
-  if (!isTextLikeAttachment(attachment) || isBinaryBuffer(buffer)) {
-    return null;
-  }
-
-  const truncated = buffer.length > PI_MAX_INLINE_TEXT_BYTES;
-  const text = normalizeExtractedText(buffer.subarray(0, PI_MAX_INLINE_TEXT_BYTES).toString("utf8"));
-  if (!text) {
-    return "[file is empty]";
-  }
-  return truncated ? `${text}\n\n[truncated to first ${PI_MAX_INLINE_TEXT_BYTES} bytes]` : text;
-}
-
-async function inlineDocumentAttachmentSection(request: HarnessHostPiRequest, attachment: PiAttachment): Promise<string | null> {
-  if (isFolderAttachment(attachment)) {
-    return null;
-  }
-  const extractedText = await extractAttachmentText(request, attachment);
-  if (!extractedText) {
-    return null;
-  }
-  const truncatedText = truncateExtractedText(extractedText);
-  const notice = truncatedText.truncated ? "\n[document text truncated for prompt size]" : "";
-  return [
-    `[Document: ${attachment.name}]`,
-    `Mime-Type: ${attachment.mime_type}`,
-    `Workspace Path: ${attachmentPromptPath(attachment)}`,
-    "",
-    `${truncatedText.text}${notice}`.trim(),
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-function inlineImageAttachment(request: HarnessHostPiRequest, attachment: PiAttachment): ImageContent | null {
-  if (attachment.kind !== "image" && !attachment.mime_type.startsWith("image/")) {
-    return null;
-  }
-  const attachmentPath = resolveAttachmentAbsolutePath(request, attachment);
-  const buffer = fs.readFileSync(attachmentPath);
-  if (buffer.length > PI_MAX_INLINE_IMAGE_BYTES) {
-    return null;
-  }
-  return {
-    type: "image",
-    data: buffer.toString("base64"),
-    mimeType: attachment.mime_type,
-  };
 }
 
 function runtimeContextMessagesBlock(request: HarnessHostPiRequest): string {
@@ -629,12 +242,6 @@ function runtimeContextMessagesBlock(request: HarnessHostPiRequest): string {
 
 export async function buildPiPromptPayload(request: HarnessHostPiRequest): Promise<PiPromptPayload> {
   const sections: string[] = [];
-  const imageLines: string[] = [];
-  const folderLines: string[] = [];
-  const fallbackLines: string[] = [];
-  const images: ImageContent[] = [];
-  const attachments = request.attachments ?? [];
-
   const quotedSkillBlocks = Array.isArray(request.quoted_skill_blocks)
     ? request.quoted_skill_blocks.map((block) => block.trim()).filter(Boolean)
     : [];
@@ -660,56 +267,14 @@ export async function buildPiPromptPayload(request: HarnessHostPiRequest): Promi
     sections.push(runtimeContextBlock);
   }
 
-  for (const attachment of attachments) {
-    if (isFolderAttachment(attachment)) {
-      folderLines.push(fallbackPromptLine(attachment));
-      continue;
-    }
-    if (attachment.kind === "image" || attachment.mime_type.startsWith("image/")) {
-      const image = inlineImageAttachment(request, attachment);
-      if (image) {
-        images.push(image);
-        imageLines.push(`- ${attachment.name} (${attachment.mime_type}) at ${attachmentPromptPath(attachment)}`);
-        continue;
-      }
-    }
-
-    const textSection = await inlineDocumentAttachmentSection(request, attachment);
-    if (textSection) {
-      sections.push(textSection);
-      continue;
-    }
-
-    fallbackLines.push(fallbackPromptLine(attachment));
-  }
-
-  if (attachments.length === 0) {
-    sections.push(["Attachments: none.", "Image inputs: none."].join("\n"));
-  } else if (imageLines.length > 0) {
-    sections.push(["Attached images:", ...imageLines].join("\n"));
-  } else {
-    sections.push("Image inputs: none.");
-  }
-  if (folderLines.length > 0) {
-    sections.push(
-      [
-        "Attached folders:",
-        ...folderLines,
-        "Treat attached folders as scoped workspace context. Inspect relevant files inside them when needed; their contents are not inlined automatically.",
-      ].join("\n")
-    );
-  }
-  if (fallbackLines.length > 0) {
-    sections.push(
-      [
-        "Other attachments are staged in the workspace and should be inspected from these paths:",
-        ...fallbackLines,
-      ].join("\n")
-    );
-  }
+  const attachmentPromptContent = await buildAttachmentPromptContent({
+    workspaceDir: request.workspace_dir,
+    attachments: request.attachments,
+  });
+  sections.push(...attachmentPromptContent.sections);
 
   const text = sections.join("\n\n").trim() || "Review the attached files.";
-  return { text, images };
+  return { text, images: attachmentPromptContent.images };
 }
 
 export async function promptTextForRequest(request: HarnessHostPiRequest): Promise<string> {
@@ -1295,47 +860,6 @@ function resolvePiSessionDir(workspaceDir: string): string {
   return path.join(workspaceDir, PI_SESSION_DIR);
 }
 
-function directoryExists(target: string): boolean {
-  return fs.statSync(target, { throwIfNoEntry: false })?.isDirectory() ?? false;
-}
-
-export function resolvePiSkillDirs(request: HarnessHostPiRequest): string[] {
-  const ordered: string[] = [];
-  const seen = new Set<string>();
-  for (const rawDir of request.workspace_skill_dirs) {
-    const resolvedDir = path.resolve(rawDir);
-    if (seen.has(resolvedDir) || !directoryExists(resolvedDir)) {
-      continue;
-    }
-    seen.add(resolvedDir);
-    ordered.push(resolvedDir);
-  }
-  return ordered;
-}
-
-function loadPiSkills(skillDirs: string[]): LoadSkillsResult {
-  const skills: Skill[] = [];
-  const diagnostics: ResourceDiagnostic[] = [];
-  const seenFilePaths = new Set<string>();
-
-  for (const skillDir of skillDirs) {
-    const result = loadSkillsFromDir({
-      dir: skillDir,
-      source: "holaboss",
-    });
-    diagnostics.push(...result.diagnostics);
-    for (const skill of result.skills) {
-      if (seenFilePaths.has(skill.filePath)) {
-        continue;
-      }
-      seenFilePaths.add(skill.filePath);
-      skills.push(skill);
-    }
-  }
-
-  return { skills, diagnostics };
-}
-
 function normalizeSkillLookupToken(value: unknown): string {
   if (typeof value !== "string") {
     return "";
@@ -1355,221 +879,7 @@ function effectiveSystemPromptForRequest(request: HarnessHostPiRequest): string 
   return request.system_prompt.trim();
 }
 
-function normalizeRuntimeApiBaseUrl(value: unknown): string {
-  return typeof value === "string" ? value.trim().replace(/\/+$/, "") : "";
-}
-
-async function fetchRuntimeTodoStatus(request: HarnessHostPiRequest): Promise<{ exists: boolean; blocked: boolean }> {
-  const runtimeApiBaseUrl = normalizeRuntimeApiBaseUrl(request.runtime_api_base_url);
-  if (!runtimeApiBaseUrl) {
-    return { exists: false, blocked: false };
-  }
-  try {
-    const response = await fetch(`${runtimeApiBaseUrl}/api/v1/capabilities/runtime-tools/todo/status`, {
-      method: "GET",
-      headers: {
-        "x-holaboss-workspace-id": request.workspace_id,
-        "x-holaboss-session-id": request.session_id,
-      },
-      signal: AbortSignal.timeout(2000),
-    });
-    if (!response.ok) {
-      return { exists: false, blocked: false };
-    }
-    const payload = await response.json();
-    if (!isRecord(payload)) {
-      return { exists: false, blocked: false };
-    }
-    return {
-      exists: payload.exists === true,
-      blocked: payload.blocked === true,
-    };
-  } catch {
-    return { exists: false, blocked: false };
-  }
-}
-
-async function blockRuntimeTodoTask(params: {
-  request: HarnessHostPiRequest;
-  detail: string;
-}): Promise<{ exists: boolean; blocked: boolean } | null> {
-  const runtimeApiBaseUrl = normalizeRuntimeApiBaseUrl(params.request.runtime_api_base_url);
-  if (!runtimeApiBaseUrl) {
-    return null;
-  }
-  try {
-    const response = await fetch(`${runtimeApiBaseUrl}/api/v1/capabilities/runtime-tools/todo/block`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json; charset=utf-8",
-        "x-holaboss-workspace-id": params.request.workspace_id,
-        "x-holaboss-session-id": params.request.session_id,
-      },
-      body: JSON.stringify({ detail: params.detail }),
-      signal: AbortSignal.timeout(2000),
-    });
-    if (!response.ok) {
-      return null;
-    }
-    const payload = await response.json();
-    if (!isRecord(payload)) {
-      return null;
-    }
-    return {
-      exists: payload.exists === true,
-      blocked: payload.blocked === true,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function summarizeQuestionPrompt(args: JsonValue | null, result: unknown): string | null {
-  const candidates: unknown[] = [];
-  if (isRecord(args)) {
-    candidates.push(args.question, args.prompt, args.message, args.text, args.content);
-  }
-  if (isRecord(result)) {
-    candidates.push(result.question, result.prompt, result.message, result.text, result.content);
-    if (isRecord(result.details)) {
-      candidates.push(
-        result.details.question,
-        result.details.prompt,
-        result.details.message,
-        result.details.text,
-        result.details.content
-      );
-    }
-  }
-  for (const candidate of candidates) {
-    const normalized = optionalTrimmedString(candidate);
-    if (normalized) {
-      return normalized;
-    }
-  }
-  return null;
-}
-
-function normalizedWorkspaceDir(workspaceDir: string): { resolved: string; real: string } {
-  const resolved = path.resolve(workspaceDir);
-  try {
-    return { resolved, real: fs.realpathSync(resolved) };
-  } catch {
-    return { resolved, real: resolved };
-  }
-}
-
-function isPathInsideWorkspaceRoot(workspaceRealDir: string, candidatePath: string): boolean {
-  const normalizedRoot = path.resolve(workspaceRealDir);
-  const normalizedCandidate = path.resolve(candidatePath);
-  if (normalizedCandidate === normalizedRoot) {
-    return true;
-  }
-  const relative = path.relative(normalizedRoot, normalizedCandidate);
-  return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
-}
-
-function resolvePathWithinWorkspace(
-  policy: Pick<PiWorkspaceBoundaryPolicy, "workspaceDir" | "workspaceRealDir">,
-  candidate: string
-): string | null {
-  const raw = candidate.trim();
-  if (!raw) {
-    return null;
-  }
-  const resolved = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(policy.workspaceDir, raw);
-  let canonical = resolved;
-  try {
-    canonical = fs.realpathSync(resolved);
-  } catch {
-    canonical = resolved;
-  }
-  return isPathInsideWorkspaceRoot(policy.workspaceRealDir, canonical) ? canonical : null;
-}
-
-export function workspaceBoundaryOverrideRequested(instruction: string): boolean {
-  const normalized = instruction.trim().toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-  if (
-    /(?:workspace[_ -]?boundary[_ -]?override\s*[:=]\s*(?:1|true|yes|on))|(?:#allow-outside-workspace)/i.test(
-      normalized
-    )
-  ) {
-    return true;
-  }
-  const insist = /\b(i insist|insist|override|must)\b/i.test(normalized);
-  const outsideScope =
-    /\b(outside (?:the )?workspace|outside workspace|cross[- ]workspace|parent directory|external path|beyond (?:the )?workspace)\b/i.test(
-      normalized
-    ) || /(?:\.\.\/|~\/|\/users\/|\/etc\/|\/var\/)/i.test(normalized);
-  return insist && outsideScope;
-}
-
-function createWorkspaceBoundaryPolicy(workspaceDir: string, overrideRequested: boolean): PiWorkspaceBoundaryPolicy {
-  const normalized = normalizedWorkspaceDir(workspaceDir);
-  return {
-    workspaceDir: normalized.resolved,
-    workspaceRealDir: normalized.real,
-    overrideRequested,
-  };
-}
-
-function commandTokens(command: string): string[] {
-  const tokens: string[] = [];
-  const tokenPattern = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|`([^`\\]*(?:\\.[^`\\]*)*)`|(\S+)/g;
-  let match: RegExpExecArray | null = tokenPattern.exec(command);
-  while (match) {
-    const value = match[1] ?? match[2] ?? match[3] ?? match[4] ?? "";
-    const trimmed = value.trim();
-    if (trimmed) {
-      tokens.push(trimmed);
-    }
-    match = tokenPattern.exec(command);
-  }
-  return tokens;
-}
-
-function pathCandidatesFromCommandToken(token: string): string[] {
-  const candidates = new Set<string>();
-  const normalized = token.trim();
-  if (!normalized) {
-    return [];
-  }
-  candidates.add(normalized);
-
-  const assignmentIndex = normalized.indexOf("=");
-  if (assignmentIndex >= 0 && assignmentIndex < normalized.length - 1) {
-    candidates.add(normalized.slice(assignmentIndex + 1));
-  }
-
-  if (normalized.startsWith("--")) {
-    const pathMatch = normalized.match(/^--(?:cwd|directory|dir|path|file|root)=(.+)$/i);
-    if (pathMatch?.[1]) {
-      candidates.add(pathMatch[1]);
-    }
-  }
-  return [...candidates];
-}
-
-function commandPathLooksExternal(pathValue: string): boolean {
-  const trimmed = pathValue.trim();
-  if (!trimmed) {
-    return false;
-  }
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
-    return false;
-  }
-  if (trimmed === ".." || trimmed.startsWith("../") || trimmed.includes("/../") || trimmed.includes("\\..\\")) {
-    return true;
-  }
-  if (trimmed.startsWith("~")) {
-    return true;
-  }
-  return false;
-}
-
+/*
 function commandBoundaryViolation(command: string, policy: PiWorkspaceBoundaryPolicy): string | null {
   const trimmed = command.trim();
   if (!trimmed) {
@@ -2001,6 +1311,7 @@ export function workspaceBoundaryViolationForToolCall(params: {
 
   return null;
 }
+*/
 
 function normalizeWorkspaceCommandId(value: unknown): string | null {
   if (typeof value !== "string") {
@@ -3223,8 +2534,6 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
       ? { thinkingBudgets: requestedThinkingBudgets }
       : {}),
   });
-  const skillDirs = resolvePiSkillDirs(request);
-  const loadedSkills = loadPiSkills(skillDirs);
   const skillMetadataByAlias = buildPiSkillMetadataByAlias(request.workspace_skills ?? []);
   const browserTools = request.browser_tools_enabled
     ? await resolvePiDesktopBrowserToolDefinitions({
@@ -3243,7 +2552,6 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     noSkills: true,
     noPromptTemplates: true,
     noThemes: true,
-    skillsOverride: () => loadedSkills,
     systemPromptOverride: () => effectiveSystemPromptForRequest(request),
   });
   await resourceLoader.reload();
@@ -3834,7 +3142,12 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
     return sequence;
   };
 
-  const runtimeTodoStatus = await fetchRuntimeTodoStatus(request);
+  const todoCoordinator = new RuntimeTodoCoordinator({
+    runtimeApiBaseUrl: request.runtime_api_base_url,
+    workspaceId: request.workspace_id,
+    sessionId: request.session_id,
+  });
+  await todoCoordinator.initialize();
   const handle = await deps.createSession(request);
   suppressPiPostRunAutoCompaction(handle.session);
   const requestedThinking = requestedPiThinkingLevel(request) ?? "off";
@@ -3852,8 +3165,7 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
       ).getContextUsage?.() ?? null,
     );
   const state = createPiEventMapperState(handle.mcpToolMetadata, handle.skillMetadataByAlias);
-  const shouldEmitWaitingUser = () => state.waitingForUser || runtimeTodoStatus.blocked;
-  const pendingTodoUpdates = new Set<Promise<void>>();
+  const shouldEmitWaitingUser = () => todoCoordinator.shouldEmitWaitingUser(state.waitingForUser);
   let terminalEmitted = false;
   let aggregatedUsage: HarnessGenAiUsageMetrics | null = null;
   const unsubscribe = handle.session.subscribe((event) => {
@@ -3883,31 +3195,14 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
       if (
         mapped.event_type === "tool_call" &&
         mapped.payload.phase === "completed" &&
-        mapped.payload.error !== true &&
-        typeof mapped.payload.tool_name === "string" &&
-        mapped.payload.tool_name.trim().toLowerCase() === "question"
+        typeof mapped.payload.tool_name === "string"
       ) {
-        const questionText = summarizeQuestionPrompt(
-          (mapped.payload.tool_args as JsonValue | null) ?? null,
-          mapped.payload.result
-        );
-        const detail = questionText
-          ? `Blocked waiting for user input: ${questionText}`
-          : "Blocked waiting for user input.";
-        let todoUpdatePromise: Promise<void> | null = null;
-        todoUpdatePromise = blockRuntimeTodoTask({ request, detail })
-          .then((nextStatus) => {
-            if (nextStatus) {
-              runtimeTodoStatus.exists = nextStatus.exists;
-              runtimeTodoStatus.blocked = nextStatus.blocked;
-            }
-          })
-          .finally(() => {
-            if (todoUpdatePromise) {
-              pendingTodoUpdates.delete(todoUpdatePromise);
-            }
-          });
-        pendingTodoUpdates.add(todoUpdatePromise);
+        todoCoordinator.noteToolCompletion({
+          toolName: mapped.payload.tool_name,
+          error: mapped.payload.error === true,
+          toolArgs: (mapped.payload.tool_args as JsonValue | null) ?? null,
+          result: mapped.payload.result,
+        });
       }
       if (mapped.event_type === "run_completed" || mapped.event_type === "run_failed") {
         terminalEmitted = true;
@@ -3953,9 +3248,7 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
     async (span) => {
       try {
         await handle.session.sendUserMessage(await promptContentForRequest(request));
-        if (pendingTodoUpdates.size > 0) {
-          await Promise.allSettled([...pendingTodoUpdates]);
-        }
+        await todoCoordinator.waitForPendingUpdates();
         if (!terminalEmitted) {
           const usagePayload = tokenUsagePayloadFromHarnessUsage(aggregatedUsage);
           emitRunnerEvent(request, nextSequence(), "run_completed", {
@@ -4011,9 +3304,7 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
         if (timeoutHandle) {
           clearTimeout(timeoutHandle);
         }
-        if (pendingTodoUpdates.size > 0) {
-          await Promise.allSettled([...pendingTodoUpdates]);
-        }
+        await todoCoordinator.waitForPendingUpdates();
         unsubscribe();
         await handle.dispose();
       }

@@ -2752,8 +2752,11 @@ test("runTsRunnerCli includes embedded default skill ids and source directories 
   );
   assert.ok(capturedHarnessRequest);
   assert.deepEqual(
-    (capturedHarnessRequest as { workspace_skill_dirs: string[] })
-      .workspace_skill_dirs,
+    (
+      capturedHarnessRequest as {
+        workspace_skills: Array<{ source_dir: string }>;
+      }
+    ).workspace_skills.map((skill) => skill.source_dir),
     [fs.realpathSync(embeddedSkillDir)],
   );
 });
@@ -2864,8 +2867,11 @@ test("runTsRunnerCli keeps embedded skills authoritative when a workspace skill 
   );
   assert.ok(capturedHarnessRequest);
   assert.deepEqual(
-    (capturedHarnessRequest as { workspace_skill_dirs: string[] })
-      .workspace_skill_dirs,
+    (
+      capturedHarnessRequest as {
+        workspace_skills: Array<{ source_dir: string }>;
+      }
+    ).workspace_skills.map((skill) => skill.source_dir),
     [fs.realpathSync(embeddedSkillDir)],
   );
 });
@@ -2989,8 +2995,10 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
   );
   assert.deepEqual(
     (
-      capturedHarnessRequest as { workspace_skill_dirs: string[] }
-    ).workspace_skill_dirs.map((dir) => path.basename(dir)),
+      capturedHarnessRequest as {
+        workspace_skills: Array<{ source_dir: string }>;
+      }
+    ).workspace_skills.map((skill) => path.basename(skill.source_dir)),
     ["skill-creator", "skill-installer", "alpha"],
   );
 });

@@ -83,7 +83,6 @@ export interface HarnessHostPiRequest {
   timeout_seconds: number;
   runtime_api_base_url?: string | null;
   system_prompt: string;
-  workspace_skill_dirs: string[];
   workspace_skills: HarnessHostWorkspaceSkillPayload[];
   mcp_servers: JsonObject[];
   mcp_tool_refs: HarnessHostPiMcpToolRef[];
@@ -435,7 +434,6 @@ export function decodeHarnessHostPiRequestBase64(encoded: string): HarnessHostPi
     timeout_seconds: requiredInteger(parsed.timeout_seconds, "timeout_seconds"),
     runtime_api_base_url: optionalString(parsed.runtime_api_base_url),
     system_prompt: stringOrEmpty(parsed.system_prompt, "system_prompt"),
-    workspace_skill_dirs: stringArray(parsed.workspace_skill_dirs),
     workspace_skills: workspaceSkills(parsed.workspace_skills, "workspace_skills"),
     mcp_servers: jsonObjectArray(parsed.mcp_servers),
     mcp_tool_refs: Array.isArray(parsed.mcp_tool_refs)

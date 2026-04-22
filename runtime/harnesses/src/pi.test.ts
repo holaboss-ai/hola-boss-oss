@@ -69,6 +69,8 @@ test("pi harness enables browser tools only for workspace sessions", () => {
   assert.deepEqual(workspaceRequest.missing_quoted_skill_ids, []);
   assert.deepEqual(workspaceRequest.context_messages, []);
   assert.deepEqual(onboardingRequest.context_messages, []);
+  assert.equal("workspace_skill_dirs" in workspaceRequest, false);
+  assert.equal("workspace_skill_dirs" in onboardingRequest, false);
   assert.deepEqual(workspaceRequest.workspace_skills, []);
   assert.deepEqual(onboardingRequest.workspace_skills, []);
 });
@@ -193,4 +195,5 @@ test("pi harness request forwards resolved workspace skill metadata", () => {
       granted_commands: ["deploy-docs"],
     },
   ]);
+  assert.equal("workspace_skill_dirs" in request, false);
 });
