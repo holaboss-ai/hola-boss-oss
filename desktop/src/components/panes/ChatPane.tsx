@@ -9573,6 +9573,7 @@ function ModelCombobox({
         key={option.value}
         type="button"
         disabled={optionDisabled}
+        aria-current={active ? "true" : undefined}
         onClick={() => {
           if (optionDisabled) {
             return;
@@ -9581,19 +9582,17 @@ function ModelCombobox({
           setOpen(false);
           setQuery("");
         }}
-        className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs transition-colors ${
+        className={`flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors ${
           active
-            ? "bg-accent text-accent-foreground"
+            ? "bg-accent text-foreground"
             : optionDisabled
               ? "cursor-not-allowed text-muted-foreground"
-              : "text-foreground hover:bg-accent/50"
+              : "text-foreground hover:bg-accent"
         }`}
       >
         <span className="truncate">{option.label}</span>
-        {active ? (
-          <Check size={13} className="shrink-0 text-primary" />
-        ) : option.statusLabel ? (
-          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+        {!active && option.statusLabel ? (
+          <span className="shrink-0 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
             {option.statusLabel}
           </span>
         ) : null}
@@ -9614,23 +9613,20 @@ function ModelCombobox({
         render={
           <Button
             variant="outline"
-            size="lg"
-            className={`w-full justify-between rounded-[11px] bg-card text-xs font-medium ${
+            size="sm"
+            className={`w-full justify-between rounded-md bg-card text-xs font-medium ${
               compact ? "px-2.5" : ""
             }`}
           >
             {compact ? (
-              <span className="flex min-w-0 items-center gap-2">
-                <Waypoints
-                  size={13}
-                  className="shrink-0 text-muted-foreground"
-                />
+              <span className="flex min-w-0 items-center gap-1.5">
+                <Waypoints className="size-3.5 shrink-0 text-muted-foreground" />
                 <span className="truncate">{compactLabel}</span>
               </span>
             ) : (
               <span className="truncate">{displayLabel}</span>
             )}
-            <ChevronDown size={13} className="shrink-0 text-muted-foreground" />
+            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
           </Button>
         }
       />
@@ -9640,22 +9636,19 @@ function ModelCombobox({
         sideOffset={8}
         className="w-[280px] p-0"
       >
-        <div className="border-b border-border p-2">
-          <div className="relative">
-            <Search
-              size={13}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
-            />
-            <Input
+        <div className="border-b border-border p-1.5">
+          <div className="relative flex h-7 items-center rounded-md border border-border bg-background px-2.5">
+            <Search className="size-3.5 shrink-0 text-muted-foreground" />
+            <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search models..."
-              className="h-8 pl-8 text-xs"
+              className="embedded-input h-full w-full bg-transparent pl-2 text-xs text-foreground outline-none placeholder:text-muted-foreground"
               autoFocus
             />
           </div>
         </div>
-        <div className="max-h-[240px] overflow-y-auto py-1">
+        <div className="max-h-[240px] overflow-y-auto p-1">
           {!hasFilteredOptions ? (
             <div className="px-3 py-4 text-center text-xs text-muted-foreground">
               No models found
@@ -9668,7 +9661,7 @@ function ModelCombobox({
               {filteredOptionGroups.map((group) => (
                 <div key={group.label || "models"} className="py-1">
                   {group.label ? (
-                    <div className="px-3 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                    <div className="px-2.5 pb-1 pt-1 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
                       {group.label}
                     </div>
                   ) : null}
@@ -9718,18 +9711,18 @@ function ThinkingValueSelect({
       <button
         key={value}
         type="button"
+        aria-current={active ? "true" : undefined}
         onClick={() => {
           onThinkingValueChange(value);
           setOpen(false);
         }}
-        className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs transition-colors ${
+        className={`flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors ${
           active
-            ? "bg-accent text-accent-foreground"
-            : "text-foreground hover:bg-accent/50"
+            ? "bg-accent text-foreground"
+            : "text-foreground hover:bg-accent"
         }`}
       >
         <span className="truncate">{displayThinkingValueLabel(value)}</span>
-        {active ? <Check size={13} className="shrink-0 text-primary" /> : null}
       </button>
     );
   };
@@ -9746,11 +9739,11 @@ function ThinkingValueSelect({
         render={
           <Button
             variant="outline"
-            size="lg"
+            size="sm"
             aria-label={
               compact ? `Reasoning effort: ${selectedThinkingLabel}` : undefined
             }
-            className={`w-full rounded-[11px] bg-card text-xs font-medium ${
+            className={`w-full rounded-md bg-card text-xs font-medium ${
               compact
                 ? showCompactLabel
                   ? "min-w-0 justify-between px-2.5"
@@ -9762,27 +9755,15 @@ function ThinkingValueSelect({
               showCompactLabel ? (
                 <>
                   <span className="flex min-w-0 items-center gap-1.5">
-                    <Lightbulb
-                      size={13}
-                      className="shrink-0 text-muted-foreground"
-                    />
+                    <Lightbulb className="size-3.5 shrink-0 text-muted-foreground" />
                     <span className="truncate">{selectedThinkingLabel}</span>
                   </span>
-                  <ChevronDown
-                    size={13}
-                    className="shrink-0 text-muted-foreground"
-                  />
+                  <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
                 </>
               ) : (
                 <span className="flex min-w-0 items-center gap-1.5">
-                  <Lightbulb
-                    size={13}
-                    className="shrink-0 text-muted-foreground"
-                  />
-                  <ChevronDown
-                    size={13}
-                    className="shrink-0 text-muted-foreground"
-                  />
+                  <Lightbulb className="size-3.5 shrink-0 text-muted-foreground" />
+                  <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
                 </span>
               )
             ) : (
@@ -9801,12 +9782,12 @@ function ThinkingValueSelect({
         align="start"
         side="top"
         sideOffset={8}
-        className="w-[220px] p-0"
+        className="w-[200px] p-0"
       >
-        <div className="border-b border-border px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+        <div className="px-2.5 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
           Reasoning effort
         </div>
-        <div className="py-1">
+        <div className="p-1">
           {thinkingValues.map((value) => renderOption(value))}
         </div>
       </PopoverContent>
