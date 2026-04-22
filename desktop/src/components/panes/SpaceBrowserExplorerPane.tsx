@@ -121,8 +121,21 @@ export function SpaceBrowserExplorerPane({
   const hasBookmarks = bookmarks.length > 0;
   const hasTabs = browserState.tabs.length > 0;
 
+  // Slide direction mirrors the switcher button position — scopes slide in
+  // from their own side, giving clicks a spatial "pushed-from-here" feel.
+  const slideInClass =
+    browserSpace === "user"
+      ? "slide-in-from-left-3"
+      : "slide-in-from-right-3";
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-transparent">
+      {/* Animated content region — remounts on scope change to replay
+          the slide-in; the bottom switcher below stays stable. */}
+      <div
+        key={browserSpace}
+        className={`flex min-h-0 flex-1 flex-col animate-in fade-in-0 duration-200 ease-out ${slideInClass}`}
+      >
       {/* Agent session chip — only surfaces when on Agent scope */}
       {browserSpace === "agent" ? (
         <div className="shrink-0 border-b border-border px-2 py-1.5">
@@ -321,6 +334,7 @@ export function SpaceBrowserExplorerPane({
           )}
         </div>
       </div>
+      </div>
 
       {/* Bottom scope switcher */}
       <div className="flex shrink-0 gap-1 border-t border-border p-1">
@@ -349,7 +363,7 @@ export function SpaceBrowserExplorerPane({
               type="button"
               onClick={() => openBrowserSpace(value)}
               aria-pressed={isActive}
-              className={`relative flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
+              className={`relative flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-[background-color,color,transform] duration-150 active:scale-[0.98] ${
                 isActive
                   ? "bg-muted text-foreground"
                   : "text-muted-foreground hover:bg-accent hover:text-foreground"
