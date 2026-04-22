@@ -50,9 +50,12 @@ test("space browser explorer keeps the agent session line compact and only on ag
     /<SelectTrigger\s[\s\S]*?className="h-7 w-full gap-2 rounded-md border-transparent bg-transparent px-2\.5 text-xs leading-none shadow-none/,
   );
 
+  // SelectContent unbinds from the trigger's width so long session titles
+  // aren't clipped; min-w-[280px] gives enough room for human-readable
+  // query titles.
   assert.match(
     source,
-    /<SelectContent align="start" className="p-1">/,
+    /<SelectContent[\s\S]*?alignItemWithTrigger=\{false\}[\s\S]*?min-w-\[280px\]/,
   );
 });
 

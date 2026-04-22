@@ -256,7 +256,12 @@ export function SpaceBrowserExplorerPane({
                   </span>
                 </SelectValue>
               </SelectTrigger>
-              <SelectContent align="start" className="p-1">
+              <SelectContent
+                align="start"
+                alignItemWithTrigger={false}
+                sideOffset={6}
+                className="w-auto! min-w-[280px] max-w-[360px] p-1"
+              >
                 {sortedAgentSessions.map((session) => {
                   const runtimeState =
                     runtimeStatesBySessionId[session.session_id] ?? null;
