@@ -4302,7 +4302,7 @@ function AppShellContent() {
                 <div className="relative flex h-full min-h-0 min-w-0 overflow-hidden">
                   <div
                     ref={utilityPaneHostRef}
-                    className="flex min-h-0 min-w-0 flex-1 items-stretch overflow-hidden"
+                    className="flex min-h-0 min-w-0 flex-1 items-stretch p-0.5"
                   >
                     <section className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-card shadow-subtle-xs backdrop-blur-sm">
                       <div
@@ -4526,12 +4526,11 @@ function AppShellContent() {
                       onPointerDown={startSpaceDisplayResize}
                       className="group relative z-10 flex w-4 shrink-0 cursor-col-resize touch-none items-center justify-center"
                     >
-                      <div className="pointer-events-none absolute inset-y-2 left-1/2 w-px -translate-x-1/2 rounded-full bg-border transition-[width,background-color] duration-150 group-hover:w-0.5 group-hover:bg-primary/50" />
                       <div className="pointer-events-none absolute left-1/2 top-1/2 h-14 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/8 opacity-0 transition duration-150 group-hover:opacity-100" />
                     </div>
 
                     <div
-                      className="min-h-0 shrink-0 overflow-hidden rounded-xl"
+                      className="min-h-0 shrink-0 rounded-xl"
                       style={{
                         width: `${spaceAgentPaneWidth}px`,
                         minWidth: `${MIN_AGENT_CONTENT_WIDTH}px`,
