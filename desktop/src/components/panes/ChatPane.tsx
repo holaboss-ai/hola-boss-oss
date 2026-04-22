@@ -7792,7 +7792,7 @@ function SessionSelector({
         </div>
         <PopoverContent
           align="start"
-          className="w-[300px] rounded-lg p-0 shadow-subtle-sm ring-0"
+          className="w-[300px] gap-0 rounded-lg p-0 shadow-subtle-sm ring-0"
         >
           <div className="border-b border-border p-2">
             <div className="relative flex h-8 items-center rounded-md border border-border bg-background px-2.5 transition-colors focus-within:border-muted-foreground">
@@ -9629,7 +9629,7 @@ function ModelCombobox({
         align="start"
         side="top"
         sideOffset={8}
-        className="w-[280px] rounded-lg p-0 shadow-subtle-sm ring-0"
+        className="w-[280px] gap-0 rounded-lg p-0 shadow-subtle-sm ring-0"
       >
         <div className="border-b border-border p-1.5">
           <div className="relative flex h-7 items-center rounded-md border border-border bg-background px-2.5">
@@ -9779,14 +9779,12 @@ function ThinkingValueSelect({
         align="start"
         side="top"
         sideOffset={8}
-        className="w-[200px] rounded-lg p-0 shadow-subtle-sm ring-0"
+        className="w-[200px] gap-0 rounded-lg p-1 shadow-subtle-sm ring-0"
       >
-        <div className="px-2.5 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+        <div className="px-2.5 pb-1 pt-1 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
           Reasoning effort
         </div>
-        <div className="p-1">
-          {thinkingValues.map((value) => renderOption(value))}
-        </div>
+        {thinkingValues.map((value) => renderOption(value))}
       </PopoverContent>
     </Popover>
   );
@@ -10484,7 +10482,7 @@ function Composer({
                 align="end"
                 side="top"
                 sideOffset={8}
-                className={`rounded-lg shadow-subtle-sm ring-0 ${
+                className={`gap-0 rounded-lg shadow-subtle-sm ring-0 ${
                   composerActionsView === "skills"
                     ? "w-[320px] p-0"
                     : "w-[220px] p-1.5"
