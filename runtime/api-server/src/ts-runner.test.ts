@@ -2746,9 +2746,9 @@ test("runTsRunnerCli includes embedded default skill ids and source directories 
   assert.deepEqual(
     (
       capturedHarnessRequest as {
-        workspace_skills: Array<{ source_dir: string }>;
+        workspace_skill_dirs: string[];
       }
-    ).workspace_skills.map((skill) => skill.source_dir),
+    ).workspace_skill_dirs,
     [fs.realpathSync(embeddedSkillDir)],
   );
 });
@@ -2861,9 +2861,9 @@ test("runTsRunnerCli keeps embedded skills authoritative when a workspace skill 
   assert.deepEqual(
     (
       capturedHarnessRequest as {
-        workspace_skills: Array<{ source_dir: string }>;
+        workspace_skill_dirs: string[];
       }
-    ).workspace_skills.map((skill) => skill.source_dir),
+    ).workspace_skill_dirs,
     [fs.realpathSync(embeddedSkillDir)],
   );
 });
@@ -2965,32 +2965,14 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
   assert.ok(capturedHarnessRequest);
   assert.equal(
     (capturedHarnessRequest as { instruction: string }).instruction,
-    "Draft the follow-up email.",
-  );
-  assert.equal(
-    (
-      capturedHarnessRequest as { quoted_skill_blocks: string[] }
-    ).quoted_skill_blocks.length,
-    1,
-  );
-  assert.match(
-    (
-      capturedHarnessRequest as { quoted_skill_blocks: string[] }
-    ).quoted_skill_blocks[0] ?? "",
-    /<skill name="alpha" location=".*alpha\/SKILL\.md">/,
-  );
-  assert.deepEqual(
-    (
-      capturedHarnessRequest as { missing_quoted_skill_ids: string[] }
-    ).missing_quoted_skill_ids,
-    [],
+    ["/alpha", "", "Draft the follow-up email."].join("\n"),
   );
   assert.deepEqual(
     (
       capturedHarnessRequest as {
-        workspace_skills: Array<{ source_dir: string }>;
+        workspace_skill_dirs: string[];
       }
-    ).workspace_skills.map((skill) => path.basename(skill.source_dir)),
+    ).workspace_skill_dirs.map((skillDir) => path.basename(skillDir)),
     ["skill-creator", "skill-installer", "alpha"],
   );
 });
