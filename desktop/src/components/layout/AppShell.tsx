@@ -4524,9 +4524,9 @@ function AppShellContent() {
                       aria-label="Resize display pane"
                       aria-orientation="vertical"
                       onPointerDown={startSpaceDisplayResize}
-                      className="group relative z-10 flex w-4 shrink-0 cursor-col-resize touch-none items-center justify-center"
+                      className="group relative z-10 flex w-2 shrink-0 cursor-col-resize touch-none items-center justify-center"
                     >
-                      <div className="pointer-events-none absolute left-1/2 top-1/2 h-14 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/8 opacity-0 transition duration-150 group-hover:opacity-100" />
+                      <div className="pointer-events-none absolute left-1/2 top-1/2 h-14 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/8 opacity-0 transition duration-150 group-hover:opacity-100" />
                     </div>
 
                     <div

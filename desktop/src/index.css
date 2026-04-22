@@ -75,14 +75,14 @@
      (0 0 0 1px / 0.5px). Gives cards & buttons a "glass edge" without
      a real border. Use: shadow-subtle-xs / shadow-subtle-sm */
   --shadow-subtle-xs:
-    rgba(0, 0, 0, 0.04) 0 1px 1px -0.5px,
-    rgba(0, 0, 0, 0.08) 0 2px 2px -1px,
-    rgba(0, 0, 0, 0.08) 0 0 0 1px;
+    rgba(0, 0, 0, 0.025) 0 1px 1px -0.5px,
+    rgba(0, 0, 0, 0.05) 0 2px 2px -1px,
+    rgba(0, 0, 0, 0.05) 0 0 0 1px;
   --shadow-subtle-sm:
-    rgba(0, 0, 0, 0.03) 0 1px 1px -0.5px,
-    rgba(0, 0, 0, 0.06) 0 1px 1px -0.5px,
-    rgba(0, 0, 0, 0.06) 0 2px 2px -1px,
-    rgba(0, 0, 0, 0.05) 0 0 0 0.5px;
+    rgba(0, 0, 0, 0.02) 0 1px 1px -0.5px,
+    rgba(0, 0, 0, 0.04) 0 1px 1px -0.5px,
+    rgba(0, 0, 0, 0.04) 0 2px 2px -1px,
+    rgba(0, 0, 0, 0.03) 0 0 0 0.5px;
 
   /* Tight type scale — ~10-20% denser than Tailwind default. The
      small/extra-small steps shift down for labels/captions; headings
