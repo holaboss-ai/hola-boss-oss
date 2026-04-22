@@ -1181,6 +1181,29 @@ function AppShellContent() {
   const [spaceExplorerMode, setSpaceExplorerMode] =
     useState<SpaceExplorerMode>("files");
   const [spaceExplorerCollapsed, setSpaceExplorerCollapsed] = useState(false);
+  // Animate the content swap when the Space explorer mode changes. Direction
+  // mirrors the tab position journey (leftward mode → slide-in-from-left,
+  // rightward mode → slide-in-from-right), matching the Browser pane's
+  // User↔Agent scope animation so every tab-content reveal shares one idiom.
+  const SPACE_EXPLORER_MODE_INDEX: Record<SpaceExplorerMode, number> = {
+    files: 0,
+    browser: 1,
+    applications: 2,
+  };
+  const previousSpaceExplorerModeRef = useRef<SpaceExplorerMode>(
+    spaceExplorerMode,
+  );
+  let spaceExplorerSlideInClass = "slide-in-from-left-3";
+  if (previousSpaceExplorerModeRef.current !== spaceExplorerMode) {
+    spaceExplorerSlideInClass =
+      SPACE_EXPLORER_MODE_INDEX[spaceExplorerMode] >
+      SPACE_EXPLORER_MODE_INDEX[previousSpaceExplorerModeRef.current]
+        ? "slide-in-from-right-3"
+        : "slide-in-from-left-3";
+  }
+  useEffect(() => {
+    previousSpaceExplorerModeRef.current = spaceExplorerMode;
+  }, [spaceExplorerMode]);
   const [spaceBrowserSpace, setSpaceBrowserSpace] =
     useState<BrowserSpaceId>("user");
   const [spaceDisplayView, setSpaceDisplayView] = useState<SpaceDisplayView>({
@@ -4388,7 +4411,11 @@ function AppShellContent() {
                                 </Button>
                               </div>
 
-                              <div className="min-h-0 flex-1 overflow-hidden">
+                              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                                <div
+                                  key={spaceExplorerMode}
+                                  className={`flex min-h-0 flex-1 flex-col animate-in fade-in-0 duration-200 ease-out ${spaceExplorerSlideInClass}`}
+                                >
                                 {spaceExplorerMode === "files" ? (
                                   <FileExplorerPane
                                     focusRequest={fileExplorerFocusRequest}
@@ -4444,6 +4471,7 @@ function AppShellContent() {
                                     hasPendingAgentJump={hasPendingAgentJump}
                                   />
                                 ) : null}
+                                </div>
                               </div>
                             </>
                           ) : (
