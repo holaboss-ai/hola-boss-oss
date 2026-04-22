@@ -1,4 +1,9 @@
-import { useMemo } from "react";
+import {
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { Bot, Globe, Pause, Plus, Star, User, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,6 +30,49 @@ interface SpaceBrowserExplorerPaneProps {
 }
 
 type SessionStatusTone = "active" | "waiting" | "paused" | "error" | "idle";
+
+// Module-level cache so favicon error state survives remounts (e.g. when
+// switching scopes). The browser's HTTP cache handles "successfully loaded"
+// images for free; we only need to remember the ones that failed so we
+// don't flash broken-image glyphs or re-trigger network requests to 404s.
+const faviconErrorCache = new Set<string>();
+
+interface FaviconProps {
+  url?: string | null;
+  fallback: ReactNode;
+  className?: string;
+}
+
+function Favicon({ url, fallback, className }: FaviconProps) {
+  const [errored, setErrored] = useState(
+    () => !url || faviconErrorCache.has(url),
+  );
+
+  useEffect(() => {
+    if (!url) {
+      setErrored(true);
+      return;
+    }
+    setErrored(faviconErrorCache.has(url));
+  }, [url]);
+
+  if (!url || errored) {
+    return <>{fallback}</>;
+  }
+
+  return (
+    <img
+      src={url}
+      alt=""
+      className={className}
+      decoding="async"
+      onError={() => {
+        faviconErrorCache.add(url);
+        setErrored(true);
+      }}
+    />
+  );
+}
 
 function sessionStatusBadgeClasses(tone: SessionStatusTone): string {
   switch (tone) {
@@ -229,17 +277,15 @@ export function SpaceBrowserExplorerPane({
                 onClick={() => openBookmark(bookmark)}
                 className="h-auto w-full justify-start gap-2.5 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-accent"
               >
-                {bookmark.faviconUrl ? (
-                  <img
-                    src={bookmark.faviconUrl}
-                    alt=""
-                    className="size-4 shrink-0 rounded-sm"
-                  />
-                ) : (
-                  <div className="grid size-4 shrink-0 place-items-center rounded-sm bg-muted text-muted-foreground">
-                    <Star className="size-2.5" />
-                  </div>
-                )}
+                <Favicon
+                  url={bookmark.faviconUrl}
+                  className="size-4 shrink-0 rounded-sm"
+                  fallback={
+                    <div className="grid size-4 shrink-0 place-items-center rounded-sm bg-muted text-muted-foreground">
+                      <Star className="size-2.5" />
+                    </div>
+                  }
+                />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm text-foreground">
                     {bookmark.title}
@@ -286,21 +332,19 @@ export function SpaceBrowserExplorerPane({
                     className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
                     title={tab.title || tab.url}
                   >
-                    {tab.faviconUrl ? (
-                      <img
-                        src={tab.faviconUrl}
-                        alt=""
-                        className="size-4 shrink-0 rounded-sm"
-                      />
-                    ) : (
-                      <div className="grid size-4 shrink-0 place-items-center rounded-sm bg-muted text-muted-foreground">
-                        {browserSpace === "agent" ? (
-                          <Bot className="size-2.5" />
-                        ) : (
-                          <Globe className="size-2.5" />
-                        )}
-                      </div>
-                    )}
+                    <Favicon
+                      url={tab.faviconUrl}
+                      className="size-4 shrink-0 rounded-sm"
+                      fallback={
+                        <div className="grid size-4 shrink-0 place-items-center rounded-sm bg-muted text-muted-foreground">
+                          {browserSpace === "agent" ? (
+                            <Bot className="size-2.5" />
+                          ) : (
+                            <Globe className="size-2.5" />
+                          )}
+                        </div>
+                      }
+                    />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm">
                         {tab.title || "New Tab"}
