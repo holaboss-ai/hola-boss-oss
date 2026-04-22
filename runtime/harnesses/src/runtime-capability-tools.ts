@@ -11,6 +11,11 @@ import {
 
 const CRONJOB_DELIVERY_CHANNELS = ["system_notification", "session_run"] as const;
 const CRONJOB_DELIVERY_MODES = ["announce", "none"] as const;
+const SCRATCHPAD_WRITE_OPS = ["append", "replace", "clear"] as const;
+const TODO_STATUSES = ["pending", "in_progress", "blocked", "completed", "abandoned"] as const;
+const TODO_WRITE_OPS_TEXT = "`replace`, `add_phase`, `add_task`, `update`, and `remove_task`";
+const TODO_WRITE_ALIAS_WARNING =
+  "Do not invent alias op names such as `replace_all`, `update_task`, or `set_status`.";
 
 export interface HarnessRuntimeToolOptions {
   runtimeApiBaseUrl: string;
@@ -50,6 +55,17 @@ function cronjobDeliveryModeSchema(): Record<string, unknown> {
     CRONJOB_DELIVERY_MODES,
     "Delivery mode. Allowed values: `announce` or `none`.",
   );
+}
+
+function scratchpadWriteOpSchema(): Record<string, unknown> {
+  return literalStringUnion(
+    SCRATCHPAD_WRITE_OPS,
+    "Scratchpad write operation. Use `append` to add notes, `replace` to compact the scratchpad into a new summary, or `clear` to remove it.",
+  );
+}
+
+function todoStatusSchema(): Record<string, unknown> {
+  return literalStringUnion(TODO_STATUSES, "Todo task status.");
 }
 
 function runtimeToolLabel(toolId: RuntimeAgentToolId): string {
@@ -192,6 +208,201 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         required: ["content"],
         additionalProperties: false,
       };
+    case "web_search":
+      return {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Search query for the public web.", minLength: 1 },
+          num_results: {
+            type: "integer",
+            description: "Number of search results to return (1-10). Defaults to 8.",
+            minimum: 1,
+            maximum: 10,
+          },
+          max_results: {
+            type: "integer",
+            description: "Compatibility alias for num_results (1-10).",
+            minimum: 1,
+            maximum: 10,
+          },
+          livecrawl: literalStringUnion(
+            ["fallback", "preferred"] as const,
+            "Whether to prefer live crawling or only use it as fallback.",
+          ),
+          type: literalStringUnion(["auto", "fast", "deep"] as const, "Search depth mode."),
+          context_max_characters: {
+            type: "integer",
+            description: "Maximum number of context characters to request from the search backend.",
+            minimum: 1,
+          },
+        },
+        required: ["query"],
+        additionalProperties: false,
+      };
+    case "skill":
+      return {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Skill id or skill name to invoke." },
+          args: {
+            type: "string",
+            description: "Optional follow-up instructions appended after the invoked skill content.",
+          },
+        },
+        required: ["name"],
+        additionalProperties: false,
+      };
+    case "todoread":
+      return { type: "object", properties: {}, additionalProperties: false };
+    case "todowrite":
+      return {
+        type: "object",
+        properties: {
+          ops: {
+            type: "array",
+            items: {
+              anyOf: [
+                {
+                  type: "object",
+                  properties: {
+                    op: { type: "string", const: "replace" },
+                    phases: {
+                      type: "array",
+                      description: "Full replacement list of phases. Each phase requires `name`.",
+                      items: {
+                        type: "object",
+                        properties: {
+                          name: { type: "string", description: "Human-readable phase title." },
+                          tasks: {
+                            type: "array",
+                            description: "Task objects for this phase. Use `content`, not `title`.",
+                            items: {
+                              type: "object",
+                              properties: {
+                                content: { type: "string", description: "Required task text." },
+                                status: todoStatusSchema(),
+                                notes: { type: "string", description: "Short note for the task." },
+                                details: { type: "string", description: "Longer supporting detail for the task." },
+                              },
+                              required: ["content"],
+                              additionalProperties: false,
+                            },
+                          },
+                        },
+                        required: ["name"],
+                        additionalProperties: false,
+                      },
+                    },
+                  },
+                  required: ["op", "phases"],
+                  additionalProperties: false,
+                },
+                {
+                  type: "object",
+                  properties: {
+                    op: { type: "string", const: "add_phase" },
+                    name: { type: "string", description: "Human-readable phase title." },
+                    tasks: {
+                      type: "array",
+                      description: "Optional initial tasks for the new phase.",
+                      items: {
+                        type: "object",
+                        properties: {
+                          content: { type: "string", description: "Required task text." },
+                          status: todoStatusSchema(),
+                          notes: { type: "string", description: "Short note for the task." },
+                          details: { type: "string", description: "Longer supporting detail for the task." },
+                        },
+                        required: ["content"],
+                        additionalProperties: false,
+                      },
+                    },
+                  },
+                  required: ["op", "name"],
+                  additionalProperties: false,
+                },
+                {
+                  type: "object",
+                  properties: {
+                    op: { type: "string", const: "add_task" },
+                    phase: {
+                      type: "string",
+                      description: "Existing phase id from `todoread` or a prior `todowrite` result, for example `phase-2`.",
+                    },
+                    content: { type: "string", description: "Required task text." },
+                    status: todoStatusSchema(),
+                    notes: { type: "string", description: "Short note for the task." },
+                    details: { type: "string", description: "Longer supporting detail for the task." },
+                  },
+                  required: ["op", "phase", "content"],
+                  additionalProperties: false,
+                },
+                {
+                  type: "object",
+                  properties: {
+                    op: { type: "string", const: "update" },
+                    id: {
+                      type: "string",
+                      description: "Existing task id from `todoread` or a prior `todowrite` result, for example `task-3`.",
+                    },
+                    status: todoStatusSchema(),
+                    content: { type: "string", description: "Replacement task text." },
+                    notes: { type: "string", description: "Replacement short note for the task." },
+                    details: { type: "string", description: "Replacement longer supporting detail for the task." },
+                  },
+                  required: ["op", "id"],
+                  additionalProperties: false,
+                },
+                {
+                  type: "object",
+                  properties: {
+                    op: { type: "string", const: "remove_task" },
+                    id: {
+                      type: "string",
+                      description: "Existing task id from `todoread` or a prior `todowrite` result.",
+                    },
+                  },
+                  required: ["op", "id"],
+                  additionalProperties: false,
+                },
+                {
+                  type: "object",
+                  properties: {
+                    op: { type: "string" },
+                    id: { type: "string" },
+                    phase: { type: "string" },
+                    name: { type: "string" },
+                    title: { type: "string" },
+                    content: { type: "string" },
+                    status: { type: "string" },
+                    notes: { type: "string" },
+                    details: { type: "string" },
+                  },
+                  additionalProperties: false,
+                },
+              ],
+            },
+          },
+        },
+        required: ["ops"],
+        additionalProperties: false,
+      };
+    case "holaboss_scratchpad_read":
+      return { type: "object", properties: {}, additionalProperties: false };
+    case "holaboss_scratchpad_write":
+      return {
+        type: "object",
+        properties: {
+          op: scratchpadWriteOpSchema(),
+          content: {
+            type: "string",
+            description:
+              "Scratchpad markdown or plain-text content. Required for `append` and `replace`, omitted for `clear`.",
+          },
+        },
+        required: ["op"],
+        additionalProperties: false,
+      };
     case "terminal_sessions_list":
       return { type: "object", properties: {}, additionalProperties: false };
     case "terminal_session_start":
@@ -296,6 +507,55 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "A step like 'summarize findings for the user' still means: save the full findings with `write_report`, then keep the chat reply brief.",
       "After calling `write_report`, keep the chat reply short: mention the report title or path and give only the key takeaways.",
       "Write the full markdown report in `content` instead of pasting the full report inline in chat.",
+    ];
+  }
+  if (toolId === "web_search") {
+    return [
+      "Use `web_search` for exploratory research, source discovery, and approximate or aggregated answers across multiple public sources.",
+      "Do not rely on `web_search` alone for exact live values, UI-only state, or tasks that require direct interaction with a site or product surface.",
+      "When searching for recent information, include the current year in the query.",
+      "If required facts remain unverified after search, escalate to browser tools or another more direct capability.",
+    ];
+  }
+  if (toolId === "skill") {
+    return [
+      "Use `skill` when a workspace or embedded skill is relevant and you need its canonical guidance block.",
+      "Pass the specific skill id or name in `name` instead of paraphrasing the skill body yourself.",
+      "Use `args` only for short follow-up instructions that should accompany the skill block.",
+    ];
+  }
+  if (toolId === "todoread") {
+    return [
+      "Use `todoread` before changing an existing phased plan when current todo state may matter.",
+      "Use `todoread` to recover the exact phase ids and task ids before calling `update`, `add_task`, or `remove_task` on an existing plan.",
+      "When current task ids or phase ids matter, read them instead of guessing.",
+    ];
+  }
+  if (toolId === "todowrite") {
+    return [
+      "Use `todowrite` for complex or long-running tasks that benefit from an explicit phased plan.",
+      "The top-level phases are grouped tasks, and each phase's `tasks` entries are the actionable task items within that grouped task.",
+      `Valid \`op\` values are exactly ${TODO_WRITE_OPS_TEXT}.`,
+      TODO_WRITE_ALIAS_WARNING,
+      "Use `replace` only for the initial plan or a full rewrite of the entire plan, not for a single task status change.",
+      "Use `update` to change an existing task's status, content, notes, or details by task id.",
+      "Use `add_phase` to append a new phase, `add_task` to append a task to an existing phase by phase id, and `remove_task` to delete a task by task id.",
+      "On an existing plan, call `todoread` first so you have the current phase ids and task ids before writing mutations.",
+      "Keep exactly one task `in_progress` whenever unfinished tasks remain unless the current task is blocked on user input or another external dependency.",
+    ];
+  }
+  if (toolId === "holaboss_scratchpad_read") {
+    return [
+      "Use `holaboss_scratchpad_read` when a resumed or long-running session likely has session-scoped notes that matter for the current turn.",
+      "Treat scratchpad notes as session continuity, not as durable memory or verified current truth.",
+      "Read the scratchpad when you need the saved notes again; do not assume they are already in prompt context.",
+    ];
+  }
+  if (toolId === "holaboss_scratchpad_write") {
+    return [
+      "Use `holaboss_scratchpad_write` for long-running working notes, interim findings, open questions, or compacted current state that should survive beyond the current prompt window.",
+      "Use `append` while accumulating notes, `replace` when compacting the scratchpad into a fresher shorter summary, and `clear` when the notes are no longer useful.",
+      "Keep durable memory, user-visible deliverables, and final answers out of the scratchpad unless they are explicitly session-scoped working notes.",
     ];
   }
   if (

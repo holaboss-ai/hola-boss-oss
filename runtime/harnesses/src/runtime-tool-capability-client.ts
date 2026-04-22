@@ -14,6 +14,10 @@ const RUNTIME_TOOLS_CRONJOBS_PATH = "/api/v1/capabilities/runtime-tools/cronjobs
 const RUNTIME_TOOLS_IMAGE_GENERATE_PATH = "/api/v1/capabilities/runtime-tools/images/generate";
 const RUNTIME_TOOLS_DOWNLOADS_PATH = "/api/v1/capabilities/runtime-tools/downloads";
 const RUNTIME_TOOLS_REPORTS_PATH = "/api/v1/capabilities/runtime-tools/reports";
+const RUNTIME_TOOLS_WEB_SEARCH_PATH = "/api/v1/capabilities/runtime-tools/web-search";
+const RUNTIME_TOOLS_TODO_PATH = "/api/v1/capabilities/runtime-tools/todo";
+const RUNTIME_TOOLS_SCRATCHPAD_PATH = "/api/v1/capabilities/runtime-tools/scratchpad";
+const RUNTIME_TOOLS_SKILL_PATH = "/api/v1/capabilities/runtime-tools/skill";
 const RUNTIME_TOOLS_TERMINAL_SESSIONS_PATH = "/api/v1/capabilities/runtime-tools/terminal-sessions";
 const DEFAULT_RUNTIME_TOOL_TIMEOUT_MS = 30000;
 const IMAGE_GENERATE_RUNTIME_TOOL_TIMEOUT_MS = 180000;
@@ -142,6 +146,43 @@ function createWriteReportBody(toolParams: unknown): Record<string, unknown> {
     ...(optionalString(params.title) ? { title: optionalString(params.title) } : {}),
     ...(optionalString(params.filename) ? { filename: optionalString(params.filename) } : {}),
     ...(optionalString(params.summary) ? { summary: optionalString(params.summary) } : {}),
+  };
+}
+
+function createWebSearchBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    query: String(params.query ?? ""),
+    ...(typeof params.num_results === "number" ? { num_results: params.num_results } : {}),
+    ...(typeof params.max_results === "number" ? { max_results: params.max_results } : {}),
+    ...(optionalString(params.livecrawl) ? { livecrawl: optionalString(params.livecrawl) } : {}),
+    ...(optionalString(params.type) ? { type: optionalString(params.type) } : {}),
+    ...(typeof params.context_max_characters === "number"
+      ? { context_max_characters: params.context_max_characters }
+      : {}),
+  };
+}
+
+function createSkillBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    name: String(params.name ?? ""),
+    ...(optionalString(params.args) ? { args: optionalString(params.args) } : {}),
+  };
+}
+
+function createTodoWriteBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    ops: Array.isArray(params.ops) ? params.ops : [],
+  };
+}
+
+function createScratchpadWriteBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    op: String(params.op ?? ""),
+    ...(optionalString(params.content) ? { content: optionalString(params.content) } : {}),
   };
 }
 
@@ -308,6 +349,18 @@ function requestPlan(
       return { method: "POST", requestPath: RUNTIME_TOOLS_DOWNLOADS_PATH, body: createDownloadUrlBody(toolParams) };
     case "write_report":
       return { method: "POST", requestPath: RUNTIME_TOOLS_REPORTS_PATH, body: createWriteReportBody(toolParams) };
+    case "web_search":
+      return { method: "POST", requestPath: RUNTIME_TOOLS_WEB_SEARCH_PATH, body: createWebSearchBody(toolParams) };
+    case "skill":
+      return { method: "POST", requestPath: RUNTIME_TOOLS_SKILL_PATH, body: createSkillBody(toolParams) };
+    case "todoread":
+      return { method: "GET", requestPath: RUNTIME_TOOLS_TODO_PATH };
+    case "todowrite":
+      return { method: "POST", requestPath: RUNTIME_TOOLS_TODO_PATH, body: createTodoWriteBody(toolParams) };
+    case "holaboss_scratchpad_read":
+      return { method: "GET", requestPath: RUNTIME_TOOLS_SCRATCHPAD_PATH };
+    case "holaboss_scratchpad_write":
+      return { method: "POST", requestPath: RUNTIME_TOOLS_SCRATCHPAD_PATH, body: createScratchpadWriteBody(toolParams) };
     case "terminal_sessions_list":
       return { method: "GET", requestPath: RUNTIME_TOOLS_TERMINAL_SESSIONS_PATH };
     case "terminal_session_start":
