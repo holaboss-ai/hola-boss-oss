@@ -416,7 +416,7 @@ export function SettingsDialog({
         </aside>
 
         <section className="flex min-h-0 min-w-0 flex-col overflow-hidden">
-          <header className="flex items-center justify-between gap-4 border-b border-border/35 px-6 py-4">
+          <header className="flex items-center justify-between gap-4 border-b border-border px-6 py-4">
             <div className="text-lg font-semibold text-foreground">
               {titleForSection(activeSection)}
             </div>
@@ -464,7 +464,7 @@ export function SettingsDialog({
                   </div>
 
                   <div className="mt-4 grid gap-3">
-                    <div className="flex items-center justify-between gap-4 rounded-xl border border-border/35 bg-background/70 px-4 py-3">
+                    <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-background/70 px-4 py-3">
                       <div className="min-w-0">
                         <div className="text-sm font-medium text-foreground">
                           Holaboss Desktop
@@ -476,7 +476,7 @@ export function SettingsDialog({
 
                       <Badge
                         variant="outline"
-                        className="rounded-full border-border/40 bg-background/80 font-mono text-xs text-foreground"
+                        className="rounded-full border-border bg-background/80 font-mono text-xs text-foreground"
                       >
                         v{displayAppVersion}
                       </Badge>
@@ -484,7 +484,7 @@ export function SettingsDialog({
 
                     <div
                       aria-live="polite"
-                      className="rounded-xl border border-border/35 bg-background/70 px-4 py-3"
+                      className="rounded-xl border border-border bg-background/70 px-4 py-3"
                     >
                       <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0">
@@ -492,7 +492,7 @@ export function SettingsDialog({
                             <span>Desktop updates</span>
                             <Badge
                               variant="outline"
-                              className={`rounded-full border-border/40 bg-background/80 text-[11px] ${
+                              className={`rounded-full border-border bg-background/80 text-xs ${
                                 appUpdateState.error
                                   ? "text-destructive"
                                   : "text-muted-foreground"
@@ -522,7 +522,7 @@ export function SettingsDialog({
                       {appUpdateState.progressPercent !== null ? (
                         <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-border/35">
                           <div
-                            className={`h-full rounded-full transition-all ${
+                            className={`h-full rounded-full transition-[width] ${
                               appUpdateState.error
                                 ? "bg-destructive"
                                 : "bg-primary/80"
@@ -555,13 +555,13 @@ export function SettingsDialog({
                       ) : null}
                     </div>
 
-                    <div className="flex items-center justify-between gap-4 rounded-xl border border-border/35 bg-background/70 px-4 py-3">
+                    <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-background/70 px-4 py-3">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 text-sm font-medium text-foreground">
                           <span>Beta updates</span>
                           <Badge
                             variant="outline"
-                            className="rounded-full border-border/40 bg-background/80 text-[11px] text-muted-foreground"
+                            className="rounded-full border-border bg-background/80 text-xs text-muted-foreground"
                           >
                             {betaChannelEnabled ? "Beta" : "Latest"}
                           </Badge>
@@ -608,8 +608,8 @@ export function SettingsDialog({
                           onClick={() => onThemeChange(themeOption)}
                           className={`h-auto flex-col items-stretch rounded-xl border p-2.5 text-left ${
                             selected
-                              ? "border-primary/40 bg-primary/6"
-                              : "border-border/40 hover:border-border hover:bg-accent"
+                              ? "border-primary bg-primary/6"
+                              : "border-border hover:border-border hover:bg-accent"
                           }`}
                         >
                           <div className="grid grid-cols-[1.2fr_0.9fr] gap-2">
@@ -640,7 +640,7 @@ export function SettingsDialog({
                             {selected ? (
                               <Badge
                                 variant="outline"
-                                className="border-primary/40 bg-primary/10 text-primary"
+                                className="border-primary bg-primary/10 text-primary"
                               >
                                 Active
                               </Badge>
@@ -725,10 +725,10 @@ export function SettingsDialog({
                         key={id}
                         type="button"
                         onClick={() => onOpenExternalUrl(href)}
-                        className="flex items-center justify-between gap-3 rounded-xl border border-border/35 bg-background/70 px-4 py-3 text-left transition hover:border-border/60 hover:bg-accent/40"
+                        className="flex items-center justify-between gap-3 rounded-xl border border-border bg-background/70 px-4 py-3 text-left transition hover:border-border hover:bg-accent/40"
                       >
                         <span className="flex min-w-0 items-center gap-3">
-                          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border/35 bg-background/80 text-muted-foreground/82">
+                          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-background/80 text-muted-foreground">
                             <Icon size={16} />
                           </span>
                           <span className="min-w-0 text-sm font-medium text-foreground">
@@ -737,7 +737,7 @@ export function SettingsDialog({
                         </span>
                         <ExternalLink
                           size={15}
-                          className="shrink-0 text-muted-foreground/70"
+                          className="shrink-0 text-muted-foreground"
                         />
                       </button>
                     ))}
@@ -748,7 +748,7 @@ export function SettingsDialog({
                   <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
                     Diagnostics
                   </div>
-                  <div className="mt-4 rounded-xl border border-border/35 bg-background/70 px-4 py-4">
+                  <div className="mt-4 rounded-xl border border-border bg-background/70 px-4 py-4">
                     <div className="max-w-[620px] text-sm leading-6 text-muted-foreground">
                       Export a local diagnostics bundle with <code>runtime.log</code>,
                       a consistent snapshot of <code>runtime.db</code>, and a
@@ -761,7 +761,7 @@ export function SettingsDialog({
                         size="sm"
                         onClick={() => void handleExportDiagnosticsBundle()}
                         disabled={diagnosticsExportState.status === "exporting"}
-                        className="border-border/40 bg-background/80"
+                        className="border-border bg-background/80"
                       >
                         {diagnosticsExportState.status === "exporting" ? (
                           <Loader2 className="size-4 animate-spin" />
@@ -776,7 +776,7 @@ export function SettingsDialog({
                         className={`mt-4 rounded-xl border px-4 py-3 text-sm ${
                           diagnosticsExportState.status === "error"
                             ? "border-destructive/25 bg-destructive/5 text-destructive"
-                            : "border-border/35 bg-background/80 text-foreground"
+                            : "border-border bg-background/80 text-foreground"
                         }`}
                       >
                         <div>{diagnosticsExportState.message}</div>

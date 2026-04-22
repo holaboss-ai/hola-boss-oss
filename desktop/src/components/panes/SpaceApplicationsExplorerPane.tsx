@@ -38,9 +38,9 @@ function statusPipClass(tone: AppStatusTone): string {
     return "bg-destructive";
   }
   if (tone === "ready") {
-    return "bg-emerald-500";
+    return "bg-success";
   }
-  return "bg-sky-500 animate-pulse";
+  return "bg-info animate-pulse";
 }
 
 function statusPipLabel(tone: AppStatusTone): string {
@@ -63,17 +63,17 @@ export function SpaceApplicationsExplorerPane({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-transparent">
-      <div className="flex items-center justify-between gap-3 border-b border-border/40 p-2">
+      <div className="flex items-center justify-between gap-3 border-b border-border p-2">
         <Button type="button" variant="ghost" size="sm" onClick={onAddApp}>
           <Plus className="size-4" />
-          <span className="text-muted-foreground/80">Add Application</span>
+          <span className="text-muted-foreground">Add Application</span>
         </Button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {isEmpty ? (
           <div className="flex flex-col items-center justify-center gap-2.5 px-4 py-10 text-center">
-            <div className="grid size-10 place-items-center rounded-[10px] bg-muted text-muted-foreground/70">
+            <div className="grid size-10 place-items-center rounded-[10px] bg-muted text-muted-foreground">
               <AppWindow size={16} />
             </div>
             <div className="text-xs leading-5 text-muted-foreground">

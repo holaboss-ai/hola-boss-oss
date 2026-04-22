@@ -1306,19 +1306,19 @@ function sessionStatusIndicator(statusLabel: string) {
   }
   if (normalized === "queued") {
     return {
-      className: "text-sky-600",
+      className: "text-info",
       icon: <Clock3 size={12} />,
     };
   }
   if (normalized === "waiting") {
     return {
-      className: "text-amber-600",
+      className: "text-warning",
       icon: <Clock3 size={12} />,
     };
   }
   if (normalized === "paused") {
     return {
-      className: "text-orange-600",
+      className: "text-warning",
       icon: <Square size={9} className="fill-current" />,
     };
   }
@@ -1330,7 +1330,7 @@ function sessionStatusIndicator(statusLabel: string) {
   }
   if (normalized === "completed") {
     return {
-      className: "text-emerald-600",
+      className: "text-success",
       icon: <Check size={12} />,
     };
   }
@@ -1375,15 +1375,15 @@ function onboardingStatusLabel(value: string | null | undefined) {
 function onboardingStatusTone(value: string | null | undefined) {
   const normalized = (value || "").trim().toLowerCase();
   if (normalized === "awaiting_confirmation") {
-    return "border-[rgba(247,170,126,0.22)] bg-[rgba(247,170,126,0.1)] text-[rgba(224,146,103,0.96)]";
+    return "border-warning/22 bg-warning/10 text-warning";
   }
   if (normalized === "in_progress") {
-    return "border-primary/30 bg-primary/10 text-primary";
+    return "border-primary bg-primary/10 text-primary";
   }
   if (normalized === "completed") {
-    return "border-[rgba(92,180,120,0.22)] bg-[rgba(92,180,120,0.08)] text-[rgba(118,196,144,0.94)]";
+    return "border-success/22 bg-success/8 text-success";
   }
-  return "border-[rgba(247,90,84,0.22)] bg-[rgba(247,90,84,0.08)] text-[rgba(206,92,84,0.94)]";
+  return "border-destructive/22 bg-destructive/8 text-destructive";
 }
 
 function startCase(value: string) {
@@ -1701,9 +1701,9 @@ function todoStatusTone(status: ChatTodoStatus) {
     case "in_progress":
       return "text-primary";
     case "blocked":
-      return "text-amber-700";
+      return "text-warning";
     case "completed":
-      return "text-emerald-600";
+      return "text-success";
     case "abandoned":
       return "text-muted-foreground";
     default:
@@ -6426,7 +6426,7 @@ export function ChatPane({
     <button
       type="button"
       onClick={jumpToSessionBrowser}
-      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground/80 transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:bg-accent/50 focus-visible:text-foreground"
+      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:bg-accent/50 focus-visible:text-foreground"
     >
       <Globe size={12} className="opacity-80" />
       <span>View in agent browser</span>
@@ -7172,8 +7172,8 @@ export function ChatPane({
     <PaneCard
       className={
         isOnboardingVariant
-          ? "w-full shadow-md border-[rgba(247,90,84,0.2)]"
-          : "w-full shadow-md"
+          ? "w-full shadow-subtle-xs border-primary/20"
+          : "w-full shadow-subtle-xs"
       }
     >
       <div className="relative flex h-full min-h-0 min-w-0 flex-col">
@@ -7181,11 +7181,11 @@ export function ChatPane({
 
         {isOnboardingVariant && selectedWorkspace ? (
           <div className="shrink-0 px-4 pt-4 sm:px-5">
-            <div className="bg-muted overflow-hidden rounded-[22px] border border-[rgba(247,90,84,0.2)] shadow-[0_24px_60px_rgba(233,117,109,0.08)]">
+            <div className="bg-muted overflow-hidden rounded-[22px] border border-primary/20 shadow-subtle-xs">
               <div className="bg-[radial-gradient(circle_at_top_left,rgba(247,90,84,0.12),transparent_42%),radial-gradient(circle_at_92%_12%,rgba(247,170,126,0.12),transparent_36%)] px-4 py-4 sm:px-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-[rgba(206,92,84,0.88)]">
+                    <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-primary">
                       Workspace onboarding
                     </div>
                     <div className="mt-2 text-[22px] font-semibold tracking-[-0.04em] text-foreground">
@@ -7207,7 +7207,7 @@ export function ChatPane({
         ) : null}
 
         {!isOnboardingVariant ? (
-          <div className="shrink-0 border-b border-border/45 px-4 py-2.5 sm:px-5">
+          <div className="shrink-0 border-b border-border px-4 py-2.5 sm:px-5">
             <SessionSelector
               activeSessionId={activeSessionId}
               activeTitle={activeSessionTitle}
@@ -7225,7 +7225,7 @@ export function ChatPane({
 
         {showLowBalanceWarning || showOutOfCreditsWarning ? (
           <div className="shrink-0 px-4 pt-3 sm:px-5">
-            <div className="bg-muted/72 flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-border/55 px-3 py-2.5">
+            <div className="bg-muted flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-border px-3 py-2.5">
               <div className="min-w-0">
                 <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
                   Hosted credits
@@ -7242,7 +7242,7 @@ export function ChatPane({
                   variant="outline"
                   size="sm"
                   onClick={() => openExternalUrl(billingLinks?.addCreditsUrl)}
-                  className="rounded-full border-primary/35 bg-primary/10 text-primary hover:bg-primary/16"
+                  className="rounded-full border-primary bg-primary/10 text-primary hover:bg-primary/16"
                 >
                   Add credits
                 </Button>
@@ -7270,25 +7270,25 @@ export function ChatPane({
         verboseTelemetryEnabled ? (
           <div className="shrink-0 px-4 pt-3 sm:px-5">
             {chatErrorMessage ? (
-              <div className="theme-chat-system-bubble rounded-[14px] border px-3 py-2 text-[11px]">
+              <div className="theme-chat-system-bubble rounded-[14px] border px-3 py-2 text-xs">
                 {chatErrorMessage}
               </div>
             ) : null}
 
             {attachmentGateMessage ? (
-              <div className="theme-chat-system-bubble mt-3 rounded-[14px] border px-3 py-2 text-[11px]">
+              <div className="theme-chat-system-bubble mt-3 rounded-[14px] border px-3 py-2 text-xs">
                 {attachmentGateMessage}
               </div>
             ) : null}
 
             {!attachmentGateMessage && pendingImageInputUnsupportedMessage ? (
-              <div className="theme-chat-system-bubble mt-3 rounded-[14px] border px-3 py-2 text-[11px]">
+              <div className="theme-chat-system-bubble mt-3 rounded-[14px] border px-3 py-2 text-xs">
                 {pendingImageInputUnsupportedMessage}
               </div>
             ) : null}
 
             {verboseTelemetryEnabled ? (
-              <div className="bg-muted mt-3 rounded-[14px] border border-border/45 px-3 py-2">
+              <div className="bg-muted mt-3 rounded-[14px] border border-border px-3 py-2">
                 <div className="mb-2 flex items-center justify-between">
                   <div className="text-[10px] tracking-[0.12em] text-muted-foreground">
                     Stream telemetry ({streamTelemetry.length})
@@ -7303,7 +7303,7 @@ export function ChatPane({
                     Clear
                   </Button>
                 </div>
-                <div className="bg-muted max-h-36 overflow-y-auto rounded border border-border/35 p-2 font-mono text-[10px] text-muted-foreground">
+                <div className="bg-muted max-h-36 overflow-y-auto rounded border border-border p-2 font-mono text-[10px] text-muted-foreground">
                   {streamTelemetryTail.length === 0 ? (
                     <div className="text-muted-foreground">
                       No stream events yet.
@@ -7374,7 +7374,7 @@ export function ChatPane({
                   {isLoadingOlderHistory ||
                   loadedHistoryMessageCount < totalHistoryMessageCount ? (
                     <div className="flex justify-center">
-                      <div className="rounded-full border border-border/45 bg-muted/45 px-3 py-1 text-[11px] text-muted-foreground">
+                      <div className="rounded-full border border-border bg-muted px-3 py-1 text-xs text-muted-foreground">
                         {isLoadingOlderHistory
                           ? "Loading earlier messages..."
                           : "Scroll up for earlier messages"}
@@ -7492,7 +7492,7 @@ export function ChatPane({
                           ? "Complete workspace onboarding"
                           : "Ask the workspace agent"}
                     </div>
-                    <div className="mt-3 text-[13px] leading-7 text-muted-foreground/68">
+                    <div className="mt-3 text-[13px] leading-7 text-muted-foreground">
                       {selectedWorkspace
                         ? readinessMessage ||
                           (isOnboardingVariant
@@ -7798,8 +7798,8 @@ function SessionSelector({
           </PopoverTrigger>
         </div>
         <PopoverContent align="start" className="w-[300px] p-0">
-          <div className="border-b border-border/40 p-2">
-            <div className="relative flex items-center rounded-[10px] border border-border/40 bg-muted/35 px-2.5 transition-colors focus-within:border-border/55 focus-within:bg-background/70">
+          <div className="border-b border-border p-2">
+            <div className="relative flex items-center rounded-[10px] border border-border bg-muted px-2.5 transition-colors focus-within:border-border focus-within:bg-background/70">
               <Search size={13} className="shrink-0 text-muted-foreground" />
               <input
                 value={query}
@@ -7855,7 +7855,7 @@ function SessionSelector({
                       <div className="truncate text-[13px] font-medium text-current">
                         {session.title}
                       </div>
-                      <div className="truncate text-[11px] text-muted-foreground">
+                      <div className="truncate text-xs text-muted-foreground">
                         {session.statusLabel}
                       </div>
                     </div>
@@ -8012,16 +8012,16 @@ function UserTurn({
             {parsedQuotedSkills.skillIds.map((skillId) => (
               <div
                 key={skillId}
-                className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/8 px-3 py-1 text-[11px] font-medium text-foreground/88"
+                className="inline-flex items-center gap-1.5 rounded-full border border-primary bg-primary/8 px-3 py-1 text-xs font-medium text-foreground"
               >
-                <Sparkles size={12} className="text-primary/80" />
+                <Sparkles size={12} className="text-primary" />
                 <span className="truncate">/{skillId}</span>
               </div>
             ))}
           </div>
         ) : null}
         {parsedQuotedSkills.body ? (
-          <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full rounded-[20px] px-[18px] py-2.5 text-foreground/95">
+          <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full rounded-[20px] px-[18px] py-2.5 text-foreground">
             <SimpleMarkdown
               className="chat-markdown chat-user-markdown max-w-full"
               onLinkClick={onLinkClick}
@@ -8034,7 +8034,7 @@ function UserTurn({
           <AttachmentList attachments={attachments} className="justify-end" />
         ) : null}
         {canCopy || timeLabel ? (
-          <div className="flex items-center justify-end gap-2 pr-1 text-[11px] text-muted-foreground/72 opacity-0 pointer-events-none transition duration-150 group-hover/user-turn:opacity-100 group-hover/user-turn:pointer-events-auto group-focus-within/user-turn:opacity-100 group-focus-within/user-turn:pointer-events-auto">
+          <div className="flex items-center justify-end gap-2 pr-1 text-xs text-muted-foreground opacity-0 pointer-events-none transition duration-150 group-hover/user-turn:opacity-100 group-hover/user-turn:pointer-events-auto group-focus-within/user-turn:opacity-100 group-focus-within/user-turn:pointer-events-auto">
             {canCopy ? (
               <Button
                 type="button"
@@ -8048,7 +8048,7 @@ function UserTurn({
                 onClick={() => {
                   void handleCopy();
                 }}
-                className="size-6 rounded-[10px] text-muted-foreground/72 hover:bg-foreground/6 hover:text-foreground"
+                className="size-6 rounded-[10px] text-muted-foreground hover:bg-foreground/6 hover:text-foreground"
               >
                 {copyFeedbackVisible ? (
                   <Check size={13} strokeWidth={1.9} />
@@ -8138,7 +8138,7 @@ function QueuedSessionInputRail({
     <div className="relative" style={{ paddingTop: `${reservedTopPx}px` }}>
       <div className="pointer-events-none absolute inset-x-0 top-0">
         <div
-          className="pointer-events-auto absolute inset-x-0 overflow-hidden rounded-[28px] border border-border/32 bg-background shadow-[0_16px_34px_rgba(15,23,42,0.06)]"
+          className="pointer-events-auto absolute inset-x-0 overflow-hidden rounded-[28px] border border-border bg-background shadow-subtle-xs"
           style={{
             left: `${panelInsetPx}px`,
             right: `${panelInsetPx}px`,
@@ -8158,14 +8158,14 @@ function QueuedSessionInputRail({
                   return (
                     <div
                       key={item.inputId}
-                      className="rounded-[14px] px-1 text-[14px] leading-7 text-foreground/84"
+                      className="rounded-[14px] px-1 text-sm leading-7 text-foreground"
                     >
                       {isEditing ? (
                         <div className="space-y-1.5">
                           <div className="flex items-center gap-2">
                             <CornerDownLeft
                               size={15}
-                              className="shrink-0 text-muted-foreground/62"
+                              className="shrink-0 text-muted-foreground"
                             />
                             <Input
                               value={editingDraft}
@@ -8183,7 +8183,7 @@ function QueuedSessionInputRail({
                               }}
                               disabled={isSaving}
                               autoFocus
-                              className="h-8 min-w-0 flex-1 rounded-[10px] border-border/40 bg-background px-2.5 text-[13px]"
+                              className="h-8 min-w-0 flex-1 rounded-[10px] border-border bg-background px-2.5 text-[13px]"
                             />
                             <Button
                               type="button"
@@ -8215,7 +8215,7 @@ function QueuedSessionInputRail({
                             </Button>
                           </div>
                           {editingError ? (
-                            <div className="pl-6 text-[11px] leading-5 text-destructive">
+                            <div className="pl-6 text-xs leading-5 text-destructive">
                               {editingError}
                             </div>
                           ) : null}
@@ -8224,7 +8224,7 @@ function QueuedSessionInputRail({
                         <div className="flex items-center gap-3">
                           <CornerDownLeft
                             size={15}
-                            className="shrink-0 text-muted-foreground/62"
+                            className="shrink-0 text-muted-foreground"
                           />
                           <div className="min-w-0 flex-1 truncate">
                             {previewText || "Queued message"}
@@ -8582,40 +8582,40 @@ function outputVisualTheme(kind: OutputVisualKind): {
       return {
         Icon: FileSpreadsheet,
         tileClass:
-          "bg-emerald-500/12 ring-1 ring-inset ring-emerald-500/20",
-        iconClass: "text-emerald-600 dark:text-emerald-400",
+          "bg-success/12 ring-1 ring-inset ring-success/20",
+        iconClass: "text-success",
       };
     case "pdf":
       return {
         Icon: FileType,
-        tileClass: "bg-rose-500/12 ring-1 ring-inset ring-rose-500/20",
-        iconClass: "text-rose-600 dark:text-rose-400",
+        tileClass: "bg-destructive/12 ring-1 ring-inset ring-destructive/20",
+        iconClass: "text-destructive",
       };
     case "document":
       return {
         Icon: FileText,
-        tileClass: "bg-sky-500/12 ring-1 ring-inset ring-sky-500/20",
-        iconClass: "text-sky-600 dark:text-sky-400",
+        tileClass: "bg-info/12 ring-1 ring-inset ring-info/20",
+        iconClass: "text-info",
       };
     case "code":
       return {
         Icon: FileCode2,
         tileClass:
-          "bg-violet-500/12 ring-1 ring-inset ring-violet-500/20",
-        iconClass: "text-violet-600 dark:text-violet-400",
+          "bg-info/12 ring-1 ring-inset ring-info/20",
+        iconClass: "text-info",
       };
     case "image":
       return {
         Icon: ImageIcon,
         tileClass:
-          "bg-amber-500/12 ring-1 ring-inset ring-amber-500/20",
-        iconClass: "text-amber-600 dark:text-amber-400",
+          "bg-warning/12 ring-1 ring-inset ring-warning/20",
+        iconClass: "text-warning",
       };
     case "link":
       return {
         Icon: Link2,
-        tileClass: "bg-blue-500/12 ring-1 ring-inset ring-blue-500/20",
-        iconClass: "text-blue-600 dark:text-blue-400",
+        tileClass: "bg-info/12 ring-1 ring-inset ring-info/20",
+        iconClass: "text-info",
       };
     case "app":
       return {
@@ -8626,7 +8626,7 @@ function outputVisualTheme(kind: OutputVisualKind): {
     default:
       return {
         Icon: FileIcon,
-        tileClass: "bg-muted ring-1 ring-inset ring-border/50",
+        tileClass: "bg-muted ring-1 ring-inset ring-border",
         iconClass: "text-muted-foreground",
       };
   }
@@ -8662,32 +8662,32 @@ function HistoryRestoreSkeleton() {
       <div className="flex h-full flex-col">
         <div className="animate-pulse space-y-6">
           <div className="flex items-start justify-between gap-6">
-            <div className="h-5 w-28 rounded-md bg-muted/70" />
-            <div className="h-11 w-52 rounded-2xl bg-muted/70" />
+            <div className="h-5 w-28 rounded-md bg-muted" />
+            <div className="h-11 w-52 rounded-2xl bg-muted" />
           </div>
           <div className="space-y-3 px-3">
             <div className="flex items-center gap-2">
-              <div className="h-5 w-6 rounded-md bg-muted/70" />
-              <div className="h-5 w-14 rounded-md bg-muted/70" />
+              <div className="h-5 w-6 rounded-md bg-muted" />
+              <div className="h-5 w-14 rounded-md bg-muted" />
             </div>
-            <div className="h-5 w-full rounded-md bg-muted/70" />
-            <div className="h-5 w-full rounded-md bg-muted/70" />
-            <div className="h-5 w-[42%] rounded-md bg-muted/70" />
+            <div className="h-5 w-full rounded-md bg-muted" />
+            <div className="h-5 w-full rounded-md bg-muted" />
+            <div className="h-5 w-[42%] rounded-md bg-muted" />
           </div>
         </div>
 
         <div className="mt-auto">
-          <div className="rounded-[22px] border border-border/35 bg-muted/50 p-4">
+          <div className="rounded-[22px] border border-border bg-muted p-4">
             <div className="animate-pulse space-y-3">
-              <div className="h-6 w-full rounded-lg bg-muted/80" />
+              <div className="h-6 w-full rounded-lg bg-muted" />
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
-                  <div className="size-8 rounded-full bg-muted/80" />
-                  <div className="size-8 rounded-full bg-muted/80" />
+                  <div className="size-8 rounded-full bg-muted" />
+                  <div className="size-8 rounded-full bg-muted" />
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="size-8 rounded-full bg-muted/80" />
-                  <div className="size-8 rounded-full bg-muted/80" />
+                  <div className="size-8 rounded-full bg-muted" />
+                  <div className="size-8 rounded-full bg-muted" />
                 </div>
               </div>
             </div>
@@ -8716,7 +8716,7 @@ function AssistantTurnOutputs({
           key={output.id}
           type="button"
           onClick={() => onOpenOutput?.(output)}
-          className="group flex max-w-[380px] items-center gap-3 rounded-xl border border-border/45 bg-card px-3 py-2.5 text-left transition-colors hover:border-border/70 hover:bg-accent/50 disabled:cursor-default disabled:hover:border-border/45 disabled:hover:bg-card"
+          className="group flex max-w-[380px] items-center gap-3 rounded-xl border border-border bg-card px-3 py-2.5 text-left transition-colors hover:border-border hover:bg-accent/50 disabled:cursor-default disabled:hover:border-border disabled:hover:bg-card"
           disabled={!onOpenOutput}
         >
           <OutputArtifactIcon output={output} />
@@ -8724,13 +8724,13 @@ function AssistantTurnOutputs({
             <div className="truncate text-sm font-medium tracking-[-0.005em] text-foreground">
               {output.title || "Untitled artifact"}
             </div>
-            <div className="truncate text-xs text-muted-foreground/85">
+            <div className="truncate text-xs text-muted-foreground">
               {outputSecondaryLabel(output)}
             </div>
           </div>
           <ArrowUpRight
             size={14}
-            className="shrink-0 text-muted-foreground/0 transition-colors group-hover:text-muted-foreground/70"
+            className="shrink-0 text-muted-foreground/0 transition-colors group-hover:text-muted-foreground"
           />
         </button>
       ))}
@@ -8739,7 +8739,7 @@ function AssistantTurnOutputs({
         <button
           type="button"
           onClick={onOpenAllArtifacts}
-          className="flex max-w-[380px] items-center gap-3 rounded-xl border border-dashed border-border/50 px-3 py-2 text-left text-muted-foreground transition-colors hover:border-border/80 hover:bg-accent/40 hover:text-foreground"
+          className="flex max-w-[380px] items-center gap-3 rounded-xl border border-dashed border-border px-3 py-2 text-left text-muted-foreground transition-colors hover:border-border hover:bg-accent/40 hover:text-foreground"
         >
           <div className="grid size-7 shrink-0 place-items-center rounded-[9px] bg-muted text-muted-foreground">
             <Folder size={14} />
@@ -8776,18 +8776,18 @@ function CurrentTodoPanel({
     totalTaskCount > 0 ? `${currentTaskPosition}/${totalTaskCount}` : "0/0";
 
   return (
-    <div className="overflow-hidden rounded-[18px] border border-border/45 bg-background shadow-[0_16px_34px_rgba(15,23,42,0.08)]">
+    <div className="overflow-hidden rounded-[18px] border border-border bg-background shadow-subtle-xs">
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={expanded}
-        className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition hover:bg-muted/55"
+        className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition hover:bg-muted"
       >
         <div
           className={`inline-flex size-5 shrink-0 items-center justify-center rounded-full ${
             remainingTaskCount > 0
               ? "text-muted-foreground"
-              : "text-emerald-500"
+              : "text-success"
           }`}
         >
           {remainingTaskCount > 0 ? (
@@ -8799,7 +8799,7 @@ function CurrentTodoPanel({
         <div className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
           {summaryLabel}
         </div>
-        <div className="shrink-0 text-[11px] font-medium tabular-nums text-muted-foreground">
+        <div className="shrink-0 text-xs font-medium tabular-nums text-muted-foreground">
           {progressLabel}
         </div>
         <ChevronDown
@@ -8809,7 +8809,7 @@ function CurrentTodoPanel({
       </button>
 
       {expanded ? (
-        <div className="max-h-[320px] overflow-y-auto border-t border-border/20 px-3 py-3">
+        <div className="max-h-[320px] overflow-y-auto border-t border-border px-3 py-3">
           <div className="space-y-3">
             {visiblePhases.map((phase) => {
               const phaseCompletedCount = phase.tasks.filter(
@@ -8819,7 +8819,7 @@ function CurrentTodoPanel({
               return (
                 <div
                   key={phase.id}
-                  className="rounded-[16px] border border-border/30 bg-muted/75 px-3 py-3"
+                  className="rounded-[16px] border border-border bg-muted px-3 py-3"
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-[12px] font-medium text-foreground">
@@ -8845,7 +8845,7 @@ function CurrentTodoPanel({
                               {task.content}
                             </div>
                             {hasVisibleDetails ? (
-                              <div className="mt-1 whitespace-pre-wrap text-[11px] text-muted-foreground">
+                              <div className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">
                                 {task.details}
                               </div>
                             ) : null}
@@ -8905,12 +8905,12 @@ function AssistantTurnMemoryProposals({
         return (
           <article
             key={proposal.proposal_id}
-            className="bg-card rounded-[22px] border border-border/35 px-4 py-4 shadow-sm"
+            className="bg-card rounded-[22px] border border-border px-4 py-4 shadow-sm"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                  <Lightbulb size={15} className="shrink-0 text-primary/72" />
+                  <Lightbulb size={15} className="shrink-0 text-primary" />
                   <span>{proposal.title}</span>
                 </div>
                 {isEditing ? (
@@ -8919,7 +8919,7 @@ function AssistantTurnMemoryProposals({
                     onChange={(event) =>
                       onDraftChange(proposal.proposal_id, event.target.value)
                     }
-                    className="bg-muted mt-3 min-h-[86px] w-full rounded-[16px] border border-border/45 px-3 py-2 text-sm leading-6 text-foreground outline-none transition focus:border-primary/40"
+                    className="bg-muted mt-3 min-h-[86px] w-full rounded-[16px] border border-border px-3 py-2 text-sm leading-6 text-foreground outline-none transition focus:border-primary"
                   />
                 ) : (
                   <div className="mt-3 text-sm leading-6 text-muted-foreground">
@@ -8927,7 +8927,7 @@ function AssistantTurnMemoryProposals({
                   </div>
                 )}
                 {proposal.evidence ? (
-                  <div className="mt-3 text-[12px] leading-5 text-muted-foreground/82">
+                  <div className="mt-3 text-[12px] leading-5 text-muted-foreground">
                     {proposal.evidence}
                   </div>
                 ) : null}
@@ -8975,7 +8975,7 @@ function AssistantTurnMemoryProposals({
                   size="lg"
                   onClick={() => onAcceptProposal(proposal)}
                   disabled={isActing}
-                  className="rounded-2xl border-primary/40 bg-primary/10 text-primary hover:bg-primary/14"
+                  className="rounded-2xl border-primary bg-primary/10 text-primary hover:bg-primary/14"
                 >
                   {isActing && proposalAction?.action === "accept" ? (
                     <Loader2 size={12} className="animate-spin" />
@@ -9030,8 +9030,8 @@ function ArtifactBrowserModal({
 
   return (
     <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 px-6 py-8 backdrop-blur-[2px]">
-      <div className="flex max-h-full w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border/50 bg-background shadow-xl">
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/30 px-4 py-3">
+      <div className="flex max-h-full w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border bg-background shadow-xl">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
           <div>
             <div className="text-sm font-semibold text-foreground">
               Artifacts
@@ -9052,7 +9052,7 @@ function ArtifactBrowserModal({
           </Button>
         </div>
 
-        <div className="flex shrink-0 flex-wrap gap-1.5 border-b border-border/20 px-4 py-2.5">
+        <div className="flex shrink-0 flex-wrap gap-1.5 border-b border-border px-4 py-2.5">
           {filterLabels.map((item) => {
             const active = filter === item.id;
             return (
@@ -9135,7 +9135,7 @@ function IntegrationErrorBanner({ details }: { details: string[] }) {
   const integrationError = isIntegrationError(errorText);
   if (!integrationError) return null;
   return (
-    <div className="mt-1.5 flex items-center gap-2 rounded-[10px] border border-amber-400/20 bg-amber-400/6 px-2.5 py-1.5 text-[11px] text-amber-400/90">
+    <div className="mt-1.5 flex items-center gap-2 rounded-[10px] border border-warning/20 bg-warning/8 px-2.5 py-1.5 text-xs text-warning">
       <Cable size={12} className="shrink-0" />
       <span>{integrationError.action}</span>
     </div>
@@ -9184,7 +9184,7 @@ function LiveStatusLine({
   return (
     <div
       aria-live="polite"
-      className={`inline-flex items-baseline gap-0.5 text-[12px] leading-6 text-muted-foreground/72 ${className}`.trim()}
+      className={`inline-flex items-baseline gap-0.5 text-[12px] leading-6 text-muted-foreground ${className}`.trim()}
     >
       <span>{normalizedLabel}</span>
       <LiveStatusEllipsis />
@@ -9220,11 +9220,11 @@ function TraceTimelineStepEntry({
       <button
         type="button"
         onClick={() => step.details.length > 0 && onToggleStep(step.id)}
-        className={`flex w-full items-start gap-2 rounded-md px-2.5 -ml-2.5 py-1 text-left text-xs transition-colors ${step.details.length > 0 ? "hover:bg-muted/50 cursor-pointer" : "cursor-default"}`}
+        className={`flex w-full items-start gap-2 rounded-md px-2.5 -ml-2.5 py-1 text-left text-xs transition-colors ${step.details.length > 0 ? "hover:bg-muted cursor-pointer" : "cursor-default"}`}
       >
         <span className="mt-0.5 shrink-0">
           {step.status === "completed" ? (
-            <Check size={12} className="text-emerald-500" />
+            <Check size={12} className="text-success" />
           ) : step.status === "error" ? (
             <AlertTriangle size={12} className="text-destructive" />
           ) : step.status === "running" ? (
@@ -9234,9 +9234,9 @@ function TraceTimelineStepEntry({
           )}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="font-medium text-foreground/80">{step.title}</span>
+          <span className="font-medium text-foreground">{step.title}</span>
           {step.details.length > 0 ? (
-            <span className="ml-1.5 text-muted-foreground/70">
+            <span className="ml-1.5 text-muted-foreground">
               {step.details[0]}
             </span>
           ) : null}
@@ -9244,12 +9244,12 @@ function TraceTimelineStepEntry({
         {step.details.length > 1 ? (
           <ChevronDown
             size={12}
-            className={`mt-0.5 shrink-0 text-muted-foreground/50 transition-transform ${expanded ? "rotate-180" : ""}`}
+            className={`mt-0.5 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`}
           />
         ) : null}
       </button>
       {expanded && step.details.length > 1 ? (
-        <div className="ml-6 mt-0.5 mb-1 rounded-md border border-border/30 bg-muted/30 px-3 py-2 text-[11px] leading-5 text-muted-foreground whitespace-pre-wrap">
+        <div className="ml-6 mt-0.5 mb-1 rounded-md border border-border bg-muted px-3 py-2 text-xs leading-5 text-muted-foreground whitespace-pre-wrap">
           {step.details.slice(1).join("\n")}
         </div>
       ) : null}
@@ -9269,9 +9269,9 @@ function ExecutionTimelineThinkingEntry({
 }) {
   return (
     <div className="py-1">
-      <div className="-ml-2.5 w-[calc(100%+0.625rem)] rounded-[16px] border border-border/25 bg-muted/30 px-3.5 py-3">
+      <div className="-ml-2.5 w-[calc(100%+0.625rem)] rounded-[16px] border border-border bg-muted px-3.5 py-3">
         <SimpleMarkdown
-          className="chat-markdown chat-thinking-markdown max-w-full text-foreground/82"
+          className="chat-markdown chat-thinking-markdown max-w-full text-foreground"
           onLinkClick={onLinkClick}
         >
           {text}
@@ -9367,7 +9367,7 @@ function TraceStepGroup({
       <button
         type="button"
         onClick={() => setGroupExpanded((v) => !v)}
-        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 -ml-2.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/60"
+        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 -ml-2.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted"
       >
         {groupHasTerminalError ? (
           <AlertTriangle size={13} className="shrink-0 text-destructive" />
@@ -9379,7 +9379,7 @@ function TraceStepGroup({
         ) : groupIsLive || runningCount > 0 ? (
           <Clock3 size={13} className="shrink-0 text-muted-foreground" />
         ) : (
-          <Check size={13} className="shrink-0 text-emerald-500" />
+          <Check size={13} className="shrink-0 text-success" />
         )}
         <span className="min-w-0 flex-1 leading-5">
           {summaryLabel}
@@ -9434,14 +9434,14 @@ function AttachmentList({
       {attachments.map((attachment) => (
         <div
           key={attachment.id}
-          className="bg-muted inline-flex max-w-full items-center gap-2 rounded-full border border-border/35 px-3 py-1.5 text-[11px] text-foreground/84"
+          className="bg-muted inline-flex max-w-full items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs text-foreground"
         >
           {attachment.kind === "image" ? (
-            <ImageIcon size={12} className="shrink-0 text-primary/72" />
+            <ImageIcon size={12} className="shrink-0 text-primary" />
           ) : attachment.kind === "folder" ? (
-            <Folder size={12} className="shrink-0 text-primary/72" />
+            <Folder size={12} className="shrink-0 text-primary" />
           ) : (
-            <FileText size={12} className="shrink-0 text-primary/72" />
+            <FileText size={12} className="shrink-0 text-primary" />
           )}
           <span className="truncate">{attachmentButtonLabel(attachment)}</span>
           {onRemove ? (
@@ -9567,7 +9567,7 @@ function ModelCombobox({
           active
             ? "bg-accent text-accent-foreground"
             : optionDisabled
-              ? "cursor-not-allowed text-muted-foreground/70"
+              ? "cursor-not-allowed text-muted-foreground"
               : "text-foreground hover:bg-accent/50"
         }`}
       >
@@ -9575,7 +9575,7 @@ function ModelCombobox({
         {active ? (
           <Check size={13} className="shrink-0 text-primary" />
         ) : option.statusLabel ? (
-          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/85">
+          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
             {option.statusLabel}
           </span>
         ) : null}
@@ -9622,7 +9622,7 @@ function ModelCombobox({
         sideOffset={8}
         className="w-[280px] p-0"
       >
-        <div className="border-b border-border/40 p-2">
+        <div className="border-b border-border p-2">
           <div className="relative">
             <Search
               size={13}
@@ -9650,7 +9650,7 @@ function ModelCombobox({
               {filteredOptionGroups.map((group) => (
                 <div key={group.label || "models"} className="py-1">
                   {group.label ? (
-                    <div className="px-3 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/70">
+                    <div className="px-3 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                       {group.label}
                     </div>
                   ) : null}
@@ -9785,7 +9785,7 @@ function ThinkingValueSelect({
         sideOffset={8}
         className="w-[220px] p-0"
       >
-        <div className="border-b border-border/40 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/70">
+        <div className="border-b border-border px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
           Reasoning effort
         </div>
         <div className="py-1">
@@ -10250,7 +10250,7 @@ function Composer({
         <div className="pointer-events-none absolute left-3 right-3 top-4 z-20 -translate-y-[calc(100%+2px)]">
           <div
             ref={slashCommandMenuRef}
-            className="pointer-events-auto overflow-hidden rounded-[24px] border border-border/55 bg-popover shadow-2xl ring-1 ring-foreground/5"
+            className="pointer-events-auto overflow-hidden rounded-[24px] border border-border bg-popover shadow-2xl ring-1 ring-border"
           >
             {filteredSlashCommands.length > 0 ? (
               <div className="max-h-[280px] overflow-y-auto py-1.5">
@@ -10267,7 +10267,7 @@ function Composer({
                   >
                     <Sparkles
                       size={13}
-                      className="mt-0.5 shrink-0 text-primary/80"
+                      className="mt-0.5 shrink-0 text-primary"
                     />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-medium">
@@ -10290,10 +10290,10 @@ function Composer({
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
-        className={`overflow-hidden rounded-xl border border-border bg-muted/50 transition-colors focus-within:border-ring ${
+        className={`overflow-hidden rounded-xl border border-border bg-muted transition-colors focus-within:border-ring ${
           isDragActive
-            ? "border-primary/45 bg-primary/[0.04]"
-            : "border-border/35"
+            ? "border-primary bg-primary/[0.04]"
+            : "border-border"
         }`}
       >
         <input
@@ -10304,7 +10304,7 @@ function Composer({
           onChange={onAttachmentInputChange}
         />
         {attachments.length > 0 ? (
-          <div className="border-b border-border/20 px-4 py-3">
+          <div className="border-b border-border px-4 py-3">
             <AttachmentList
               attachments={attachments}
               onRemove={onRemoveAttachment}
@@ -10312,14 +10312,14 @@ function Composer({
           </div>
         ) : null}
         {quotedSkills.length > 0 ? (
-          <div className="border-b border-border/20 px-4 py-3">
+          <div className="border-b border-border px-4 py-3">
             <div className="flex flex-wrap gap-2">
               {quotedSkills.map((skill) => (
                 <div
                   key={skill.skillId}
-                  className="inline-flex max-w-full items-center gap-2 rounded-full border border-primary/20 bg-primary/8 px-3 py-1.5 text-[11px] text-foreground/88"
+                  className="inline-flex max-w-full items-center gap-2 rounded-full border border-primary bg-primary/8 px-3 py-1.5 text-xs text-foreground"
                 >
-                  <Sparkles size={12} className="text-primary/80" />
+                  <Sparkles size={12} className="text-primary" />
                   <span className="truncate">{skill.title}</span>
                   <button
                     type="button"
@@ -10352,13 +10352,13 @@ function Composer({
                 ? disabledReason || "Chat unavailable right now"
                 : placeholder
             }
-            className="composer-input block max-h-[220px] min-h-[40px] w-full resize-none overflow-y-auto bg-transparent text-[14px] leading-7 text-foreground outline-none placeholder:text-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-55"
+            className="composer-input block max-h-[220px] min-h-[40px] w-full resize-none overflow-y-auto bg-transparent text-sm leading-7 text-foreground outline-none placeholder:text-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-55"
           />
         </div>
 
         <div
           ref={composerFooterRef}
-          className={`border-t border-border/20 px-3 py-3 text-muted-foreground ${
+          className={`border-t border-border px-3 py-3 text-muted-foreground ${
             compactComposerControls
               ? "flex items-center gap-2 overflow-hidden"
               : "flex flex-wrap items-center gap-2"
@@ -10386,7 +10386,7 @@ function Composer({
                     variant="outline"
                     size="lg"
                     onClick={onOpenModelProviders}
-                    className={`shrink-0 justify-between rounded-[11px] bg-card text-[12px] font-semibold hover:border-primary/35 hover:bg-card/92 ${
+                    className={`shrink-0 justify-between rounded-[11px] bg-card text-[12px] font-semibold hover:border-primary hover:bg-card ${
                       compactComposerControls ? "px-2.5" : ""
                     }`}
                     aria-label="Configure model providers"
@@ -10430,7 +10430,7 @@ function Composer({
               )}
             </div>
           ) : (
-            <div className="min-w-0 flex-1 text-[11px] leading-6 text-muted-foreground">
+            <div className="min-w-0 flex-1 text-xs leading-6 text-muted-foreground">
               Responses here stay in the workspace onboarding thread.
             </div>
           )}
@@ -10502,8 +10502,8 @@ function Composer({
               >
                 {composerActionsView === "skills" ? (
                   <div className="flex flex-col">
-                    <div className="border-b border-border/40 p-2">
-                      <div className="relative flex items-center rounded-[10px] border border-border/40 bg-muted/35 px-2.5 transition-colors focus-within:border-border/55 focus-within:bg-background/70">
+                    <div className="border-b border-border p-2">
+                      <div className="relative flex items-center rounded-[10px] border border-border bg-muted px-2.5 transition-colors focus-within:border-border focus-within:bg-background/70">
                         <Search
                           size={13}
                           className="shrink-0 text-muted-foreground"
@@ -10541,7 +10541,7 @@ function Composer({
                                 className={`mt-0.5 shrink-0 ${
                                   isSelected
                                     ? "text-primary"
-                                    : "text-muted-foreground/80"
+                                    : "text-muted-foreground"
                                 }`}
                               />
                               <span className="min-w-0 flex-1">
@@ -10597,7 +10597,7 @@ function Composer({
                     >
                       <Sparkles
                         size={14}
-                        className="shrink-0 text-primary/80"
+                        className="shrink-0 text-primary"
                       />
                       <span className="min-w-0 flex-1 truncate">
                         Use Skills

@@ -436,7 +436,7 @@ export function InternalSurfacePane({
               title="Output preview"
               sandbox=""
               srcDoc={htmlContent}
-              className="min-h-[60vh] w-full rounded-[18px] border border-border/35 bg-white"
+              className="min-h-[60vh] w-full rounded-[18px] border border-border bg-white"
             />
           </div>
         );
@@ -488,7 +488,7 @@ export function InternalSurfacePane({
       return (
         <div className="flex h-full min-h-0 flex-col">
           {/* Toolbar */}
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/30 px-4 py-2">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-2">
             <div className="min-w-0">
               <div className="text-sm font-medium text-foreground">{preview.name}</div>
               <div className="text-xs text-muted-foreground">
@@ -499,7 +499,7 @@ export function InternalSurfacePane({
             </div>
             <div className="flex shrink-0 items-center gap-2">
               {supportsRenderedTextPreview ? (
-                <div className="inline-flex items-center rounded-md border border-border bg-muted/50 p-0.5">
+                <div className="inline-flex items-center rounded-md border border-border bg-muted p-0.5">
                   <Button
                     type="button"
                     variant={textPreviewMode === "preview" ? "secondary" : "ghost"}
@@ -555,7 +555,7 @@ export function InternalSurfacePane({
             </div>
           ) : isHtmlPreview && textPreviewMode === "preview" ? (
             previewDraft.trim() ? (
-              <div className="min-h-0 flex-1 overflow-hidden bg-muted/20 p-4">
+              <div className="min-h-0 flex-1 overflow-hidden bg-muted p-4">
                 <iframe
                   title={preview.name}
                   sandbox=""
@@ -587,7 +587,7 @@ export function InternalSurfacePane({
 
     if (preview.kind === "image" && preview.dataUrl) {
       return (
-        <div className="flex h-full items-center justify-center overflow-auto bg-muted/20 p-6">
+        <div className="flex h-full items-center justify-center overflow-auto bg-muted p-6">
           <img
             src={preview.dataUrl}
             alt={preview.name}
@@ -619,12 +619,12 @@ export function InternalSurfacePane({
       if (activeSheet) {
         return (
           <div className="flex h-full min-h-0 flex-col">
-            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/30 px-4 py-2">
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-2">
               <div className="min-w-0">
                 <div className="truncate text-sm font-medium text-foreground">
                   {preview.name}
                 </div>
-                <div className="truncate text-xs text-muted-foreground/85">
+                <div className="truncate text-xs text-muted-foreground">
                   {new Date(preview.modifiedAt).toLocaleDateString(undefined, {
                     month: "short",
                     day: "numeric",
@@ -705,7 +705,7 @@ export function InternalSurfacePane({
   ]);
 
   return (
-    <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border/40 bg-background">
+    <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-background">
       <div className="flex min-h-0 flex-1 flex-col">{body}</div>
     </section>
   );
@@ -719,7 +719,7 @@ function formatPreviewSize(bytes: number): string {
 
 function MetadataRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-border/30 bg-muted/50 px-3 py-1.5">
+    <div className="rounded-lg border border-border bg-muted px-3 py-1.5">
       <div className="text-[10px] uppercase tracking-widest text-muted-foreground">
         {label}
       </div>
@@ -743,12 +743,12 @@ function EmptyState({
     <div
       className={`flex h-full items-center justify-center rounded-[20px] border px-6 py-8 text-center ${
         tone === "error"
-          ? "border-[rgba(255,153,102,0.24)] bg-[rgba(255,153,102,0.08)]"
-          : "border-border/35 bg-black/10"
+          ? "border-warning/24 bg-warning/8"
+          : "border-border bg-black/10"
       }`}
     >
       <div className="max-w-[520px]">
-        <div className="mx-auto grid h-10 w-10 place-items-center rounded-full border border-border/35 text-primary/80">
+        <div className="mx-auto grid h-10 w-10 place-items-center rounded-full border border-border text-primary">
           {tone === "error" ? (
             <FileWarning size={18} />
           ) : (
@@ -758,7 +758,7 @@ function EmptyState({
         <div className="mt-3 text-base font-medium text-foreground">
           {title}
         </div>
-        <div className="mt-2 text-xs leading-6 text-muted-foreground/82">
+        <div className="mt-2 text-xs leading-6 text-muted-foreground">
           {detail}
         </div>
       </div>

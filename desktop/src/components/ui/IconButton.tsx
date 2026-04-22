@@ -25,7 +25,7 @@ export function IconButton({
       onClick={onClick}
       className={`inline-flex size-7 items-center justify-center rounded-md border transition-colors ${
         active
-          ? "border-primary/50 bg-primary/10 text-primary"
+          ? "border-primary bg-primary/10 text-primary"
           : "border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground"
       } ${disabled ? "cursor-not-allowed opacity-40" : ""} ${className}`}
     >

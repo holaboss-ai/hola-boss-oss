@@ -125,12 +125,12 @@ function jobKindLabel(job: CronjobRecordPayload): string {
 function jobKindClassName(job: CronjobRecordPayload): string {
   const channel = jobDeliveryChannel(job);
   if (channel === "system_notification") {
-    return "border-amber-300/40 bg-amber-400/10 text-amber-200";
+    return "border-warning/40 bg-warning/10 text-warning";
   }
   if (channel === "session_run") {
-    return "border-primary/25 bg-primary/10 text-primary";
+    return "border-primary bg-primary/10 text-primary";
   }
-  return "border-border/50 bg-muted/65 text-muted-foreground";
+  return "border-border bg-muted text-muted-foreground";
 }
 
 function runtimeStateErrorMessage(
@@ -178,7 +178,7 @@ function completedStatusClassName(status: string): string {
   if (normalized === "ERROR" || normalized === "FAILED") {
     return "border-destructive/30 bg-destructive/10 text-destructive";
   }
-  return "border-primary/30 bg-primary/10 text-primary";
+  return "border-primary bg-primary/10 text-primary";
 }
 
 export function AutomationsPane({
@@ -220,10 +220,10 @@ export function AutomationsPane({
 
   const statusClassName =
     statusTone === "success"
-      ? "border-primary/25 bg-primary/5 text-foreground"
+      ? "border-primary bg-primary/5 text-foreground"
       : statusTone === "error"
         ? "border-destructive/25 bg-destructive/5 text-destructive"
-        : "border-border/60 bg-muted/55 text-muted-foreground";
+        : "border-border bg-muted text-muted-foreground";
 
   const setInfoMessage = (message: string) => {
     setStatusTone("info");
@@ -449,7 +449,7 @@ export function AutomationsPane({
             </div>
           ) : null}
 
-          <div className="mt-5 min-h-0 flex-1 overflow-hidden rounded-2xl border border-border/40 bg-background/70">
+          <div className="mt-5 min-h-0 flex-1 overflow-hidden rounded-2xl border border-border bg-background/70">
             {!activeWorkspaceId ? (
               <EmptyState message={emptyWorkspaceMessage} />
             ) : isLoading &&
@@ -461,7 +461,7 @@ export function AutomationsPane({
                 aria-label="Loading automations"
                 className="flex h-full min-h-0 flex-col"
               >
-                <div className="shrink-0 border-b border-border/30 px-4 py-4 sm:px-5">
+                <div className="shrink-0 border-b border-border px-4 py-4 sm:px-5">
                   <div className="grid grid-cols-[minmax(0,1.15fr)_minmax(0,1.15fr)_120px_64px] items-center gap-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     <span>Title</span>
                     <span>Schedule at</span>
@@ -478,13 +478,13 @@ export function AutomationsPane({
                   ].map((row, index) => (
                     <div
                       key={index}
-                      className="grid grid-cols-[minmax(0,1.15fr)_minmax(0,1.15fr)_120px_64px] items-center gap-4 border-b border-border/20 px-4 py-4 sm:px-5"
+                      className="grid grid-cols-[minmax(0,1.15fr)_minmax(0,1.15fr)_120px_64px] items-center gap-4 border-b border-border px-4 py-4 sm:px-5"
                     >
                       <div className="flex flex-col gap-1.5 pr-2">
                         <span
                           className={`h-4 ${row.titleW} animate-pulse rounded bg-muted-foreground/20`}
                         />
-                        <span className="h-2.5 w-16 animate-pulse rounded bg-muted/40" />
+                        <span className="h-2.5 w-16 animate-pulse rounded bg-muted" />
                       </div>
                       <span
                         className={`h-4 ${row.scheduleW} animate-pulse rounded bg-muted-foreground/20`}
@@ -502,7 +502,7 @@ export function AutomationsPane({
                 <EmptyState message="No scheduled tasks in this workspace." />
               ) : (
                 <div className="flex h-full min-h-0 flex-col">
-                  <div className="shrink-0 border-b border-border/30 px-4 py-4 sm:px-5">
+                  <div className="shrink-0 border-b border-border px-4 py-4 sm:px-5">
                     <div className="grid grid-cols-[minmax(0,1.15fr)_minmax(0,1.15fr)_120px_64px] items-center gap-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
                       <span>Title</span>
                       <span>Schedule at</span>
@@ -517,7 +517,7 @@ export function AutomationsPane({
                       return (
                         <div
                           key={job.id}
-                          className="grid grid-cols-[minmax(0,1.15fr)_minmax(0,1.15fr)_120px_64px] items-center gap-4 border-b border-border/20 px-4 py-4 transition-colors hover:bg-accent sm:px-5"
+                          className="grid grid-cols-[minmax(0,1.15fr)_minmax(0,1.15fr)_120px_64px] items-center gap-4 border-b border-border px-4 py-4 transition-colors hover:bg-accent sm:px-5"
                         >
                           <div className="min-w-0 pr-2">
                             <div className="truncate text-sm font-medium text-foreground">
@@ -612,7 +612,7 @@ export function AutomationsPane({
               <EmptyState message="No completed automation runs yet." />
             ) : (
               <div className="flex h-full min-h-0 flex-col">
-                <div className="shrink-0 border-b border-border/30 px-4 py-4 sm:px-5">
+                <div className="shrink-0 border-b border-border px-4 py-4 sm:px-5">
                   <div className="grid grid-cols-[minmax(0,1.05fr)_minmax(0,1.25fr)_120px] items-center gap-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     <span>Title</span>
                     <span>Completed at</span>
@@ -627,7 +627,7 @@ export function AutomationsPane({
                       type="button"
                       disabled={!onOpenRunSession}
                       onClick={() => onOpenRunSession?.(run.sessionId)}
-                      className="grid w-full grid-cols-[minmax(0,1.05fr)_minmax(0,1.25fr)_120px] items-center gap-4 border-b border-border/20 px-4 py-4 text-left transition-colors hover:bg-accent disabled:cursor-default disabled:hover:bg-transparent sm:px-5"
+                      className="grid w-full grid-cols-[minmax(0,1.05fr)_minmax(0,1.25fr)_120px] items-center gap-4 border-b border-border px-4 py-4 text-left transition-colors hover:bg-accent disabled:cursor-default disabled:hover:bg-transparent sm:px-5"
                     >
                       <div className="min-w-0">
                         <div className="truncate text-sm font-medium text-foreground">
@@ -667,7 +667,7 @@ export function AutomationsPane({
     return content;
   }
 
-  return <PaneCard className="shadow-md">{content}</PaneCard>;
+  return <PaneCard className="shadow-subtle-xs">{content}</PaneCard>;
 }
 
 function EmptyState({ message }: { message: string }) {

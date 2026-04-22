@@ -55,7 +55,7 @@ export function ConfigureStep({
   return (
     <div>
       <div className="max-w-3xl">
-        <p className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+        <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
           New workspace
         </p>
         <h1 className="mt-3 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
@@ -75,7 +75,7 @@ export function ConfigureStep({
         <div className="grid gap-2">
           <Label
             htmlFor="workspace-name"
-            className="text-[11px] uppercase tracking-widest text-muted-foreground"
+            className="text-xs uppercase tracking-widest text-muted-foreground"
           >
             Workspace name
           </Label>
@@ -89,9 +89,9 @@ export function ConfigureStep({
         </div>
 
         <div className="grid gap-2">
-          <Label className="text-[11px] uppercase tracking-widest text-muted-foreground">
+          <Label className="text-xs uppercase tracking-widest text-muted-foreground">
             Workspace folder
-            <span className="ml-2 text-muted-foreground/70 normal-case tracking-normal">
+            <span className="ml-2 text-muted-foreground normal-case tracking-normal">
               optional
             </span>
           </Label>
@@ -128,7 +128,7 @@ export function ConfigureStep({
             ) : defaultWorkspaceRoot ? (
               <>
                 Defaults to{" "}
-                <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
+                <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
                   {defaultWorkspaceRoot}/workspace/&lt;id&gt;
                 </code>
                 . Pick a folder if you'd rather keep the files somewhere you control.

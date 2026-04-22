@@ -46,7 +46,7 @@ const AUTH_BROWSER_SIGN_IN_MESSAGE =
 const KNOWN_PROVIDER_ORDER = ["holaboss", "openai_direct", "openai_codex", "anthropic_direct", "openrouter_direct", "gemini_direct", "ollama_direct", "minimax_direct"] as const;
 type KnownProviderId = (typeof KNOWN_PROVIDER_ORDER)[number];
 const AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME =
-  "auth-settings-control theme-control-surface relative isolate h-9 w-full overflow-hidden rounded-[10px] border border-border/45 bg-muted px-2.5 text-sm text-foreground shadow-none transition-colors hover:border-border/65 focus-visible:border-border/65 focus-visible:ring-0 focus-visible:ring-transparent aria-invalid:border-border/45 aria-invalid:ring-0";
+  "auth-settings-control theme-control-surface relative isolate h-9 w-full overflow-hidden rounded-[10px] border border-border bg-muted px-2.5 text-sm text-foreground shadow-none transition-colors hover:border-border focus-visible:border-border focus-visible:ring-0 focus-visible:ring-transparent aria-invalid:border-border aria-invalid:ring-0";
 const PROVIDER_ROW_ACTIONS_CLASS_NAME = "flex min-w-[224px] shrink-0 items-center justify-end gap-2";
 const PROVIDER_ROW_ACTION_ITEM_CLASS_NAME = "min-w-[104px] justify-center";
 const ADVANCED_SETTINGS_WARNING_PANEL_STYLE = {
@@ -976,7 +976,7 @@ function ProviderBrandIcon({ providerId }: { providerId: KnownProviderId }) {
     return (
       <span
         aria-hidden="true"
-        className="block h-4 w-4 text-foreground/92 [&_svg]:h-full [&_svg]:w-full"
+        className="block h-4 w-4 text-foreground [&_svg]:h-full [&_svg]:w-full"
         dangerouslySetInnerHTML={{ __html: iconMarkup }}
       />
     );
@@ -1477,7 +1477,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         ? "border-success/30 bg-success/10 text-success"
         : statusTone === "syncing"
           ? "border-warning/30 bg-warning/10 text-warning"
-          : "border-border/45 bg-muted/40 text-muted-foreground";
+          : "border-border bg-muted text-muted-foreground";
 
   useEffect(() => {
     if (
@@ -1501,8 +1501,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   ];
 
   const setupLoadingPanel = (
-    <div className="theme-subtle-surface flex flex-col items-center gap-3 rounded-[20px] border border-border/40 px-5 py-8 text-center">
-      <div className="flex size-11 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-primary">
+    <div className="theme-subtle-surface flex flex-col items-center gap-3 rounded-[20px] border border-border px-5 py-8 text-center">
+      <div className="flex size-11 items-center justify-center rounded-full border border-primary bg-primary/10 text-primary">
         <Loader2 size={18} className="animate-spin" />
       </div>
       <div className="text-base font-medium text-foreground">
@@ -2243,23 +2243,23 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                       key={option.modelId}
                       className={`rounded-[10px] border px-2.5 py-1.5 text-left transition ${
                         selected
-                          ? "border-primary/25 bg-primary/[0.06] text-foreground"
-                          : "border-border/35 bg-card/70 text-muted-foreground"
+                          ? "border-primary bg-primary/[0.06] text-foreground"
+                          : "border-border bg-card text-muted-foreground"
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2">
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-[13px] font-medium leading-4">
+                          <div className="truncate text-sm font-medium leading-4">
                             {option.label}
                           </div>
                           {option.label !== option.modelId ? (
-                            <div className="truncate pt-0.5 text-[10px] leading-4 text-muted-foreground">
+                            <div className="truncate pt-0.5 text-xs leading-4 text-muted-foreground">
                               {option.modelId}
                             </div>
                           ) : null}
                         </div>
                         <div className="flex shrink-0 items-center gap-1.5 pl-1">
-                          <span className="text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground/80">
+                          <span className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
                             {selected ? "On" : "Off"}
                           </span>
                           <Switch
@@ -2278,13 +2278,13 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               </div>
             </div>
           ) : (
-            <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+            <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
               Add models in <code>desktop/shared/model-catalog.ts</code> to configure this provider.
             </div>
           )}
 
           {selectedModelIds.length === 0 ? (
-            <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+            <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
               Select at least one configured model before saving.
             </div>
           ) : null}
@@ -2300,14 +2300,14 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   <Badge
                     key={modelId}
                     variant="outline"
-                    className="flex items-center gap-1 border-border/45 bg-muted/35 pr-1 text-foreground"
+                    className="flex items-center gap-1 border-border bg-muted pr-1 text-foreground"
                   >
                     <span className="max-w-[220px] truncate">
                       {providerModelDisplayLabel(providerId, modelId)}
                     </span>
                     <button
                       type="button"
-                      className="inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted/60 hover:text-foreground"
+                      className="inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground"
                       onClick={() => removeProviderDraftModel(providerId, modelId)}
                       aria-label={`Remove ${modelId}`}
                     >
@@ -2326,7 +2326,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   function renderProviderDrawerContent(providerId: KnownProviderId): ReactNode {
     if (!providerDraftEnabled(providerId)) {
       return (
-        <div className="rounded-[12px] border border-border/40 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+        <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
           Click Connect to configure settings.
         </div>
       );
@@ -2338,7 +2338,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       const supportedModels = holabossSupportedModels(effectiveRuntimeConfig);
       return (
         <div className="grid gap-2">
-          <div className="rounded-[12px] border border-border/35 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+          <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
             Catalog, base URL, and credentials come from your Holaboss runtime binding.
           </div>
           {supportedModels.length > 0 ? (
@@ -2350,13 +2350,13 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 {supportedModels.map((option) => (
                   <div
                     key={option.modelId}
-                    className="rounded-[10px] border border-border/35 bg-card/70 px-2.5 py-1.5 text-left"
+                    className="rounded-[10px] border border-border bg-card px-2.5 py-1.5 text-left"
                   >
-                    <div className="truncate text-[13px] font-medium leading-4 text-foreground">
+                    <div className="truncate text-sm font-medium leading-4 text-foreground">
                       {option.label}
                     </div>
                     {option.label !== option.modelId ? (
-                      <div className="truncate pt-0.5 text-[10px] leading-4 text-muted-foreground">
+                      <div className="truncate pt-0.5 text-xs leading-4 text-muted-foreground">
                         {option.modelId}
                       </div>
                     ) : null}
@@ -2365,7 +2365,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               </div>
             </div>
           ) : (
-            <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+            <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
               No managed models are available yet. Refresh your runtime binding to load the latest Holaboss catalog.
             </div>
           )}
@@ -2375,12 +2375,12 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     if (providerId === "openai_codex") {
       return (
         <div className="grid gap-2">
-          <div className="rounded-[12px] border border-border/35 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+          <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
             Sign in with your ChatGPT account in the browser. holaOS keeps the active Codex access token refreshed locally for this desktop.
           </div>
-          <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2">
+          <div className="rounded-[12px] border border-border bg-muted px-3 py-2">
             <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Base URL</div>
-            <div className="pt-1 font-mono text-[13px] text-foreground">
+            <div className="pt-1 font-mono text-sm text-foreground">
               {template.defaultBaseUrl}
             </div>
           </div>
@@ -2467,10 +2467,10 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     return (
       <div
         key={providerId}
-        className={isLast ? "" : "border-b border-border/30"}
+        className={isLast ? "" : "border-b border-border"}
       >
         <div className="flex items-center gap-3 py-3">
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-border/55 bg-background/80 text-foreground">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-border bg-background text-foreground">
             <ProviderBrandIcon providerId={providerId} />
           </span>
           <div className="min-w-0 flex-1">
@@ -2492,7 +2492,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   </Button>
                   <Badge
                     variant="outline"
-                    className={`border-primary/30 bg-primary/10 text-primary ${PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}`}
+                    className={`border-primary bg-primary/10 text-primary ${PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}`}
                   >
                     Enabled
                   </Badge>
@@ -2634,7 +2634,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         </div>
       ) : null}
 
-      <div className="rounded-[18px] border border-border/40 bg-card/80 p-4">
+      <div className="rounded-[18px] border border-border bg-card p-4">
         <div className="grid gap-3">
           <div className="text-sm font-medium text-foreground">Connected providers</div>
           <div>
@@ -2643,7 +2643,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             )}
           </div>
 
-          <div className="rounded-[14px] border border-border/35 bg-muted/30">
+          <div className="rounded-[14px] border border-border bg-muted">
             <button
               type="button"
               className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
@@ -2657,9 +2657,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             </button>
 
             {showAdvancedRuntimeSettings ? (
-              <div className="border-t border-border/35 px-3 py-3">
+              <div className="border-t border-border px-3 py-3">
                 <div className="grid gap-4">
-                  <div className="rounded-[12px] border border-border/35 bg-muted/20 p-3">
+                  <div className="rounded-[12px] border border-border bg-muted p-3">
                     <div className="text-sm font-medium text-foreground">Background tasks</div>
                     <div className="mt-1 text-sm text-muted-foreground">
                       Used for memory recall and evolve tasks.
@@ -2726,24 +2726,24 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                       </label>
 
                       {backgroundTasksDraft.providerId && !backgroundProviderConnected ? (
-                        <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                        <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
                           Selected provider is not connected. Background tasks stay disabled until you reconnect it or choose another provider.
                         </div>
                       ) : null}
                       {backgroundTasksDraft.providerId && !backgroundTasksDraft.model.trim() ? (
-                        <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                        <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
                           Select a model to enable background tasks.
                         </div>
                       ) : null}
                     </div>
                   </div>
 
-                  <div className="rounded-[12px] border border-border/35 bg-muted/20 p-3">
+                  <div className="rounded-[12px] border border-border bg-muted p-3">
                     <div className="text-sm font-medium text-foreground">Recall embeddings</div>
                     <div className="mt-1 text-sm text-muted-foreground">
                       Used to preselect memory candidates for recall.
                     </div>
-                    <div className="mt-2 rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                    <div className="mt-2 rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
                       Embedding indexing stays off the user input path. Until embeddings have been indexed separately, recall continues to use the staged path.
                     </div>
                     <div className="mt-3 grid gap-2">
@@ -2808,19 +2808,19 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                       </label>
 
                       {recallEmbeddingsDraft.providerId && !recallEmbeddingsProviderConnected ? (
-                        <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                        <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
                           Selected provider is not connected. Vector recall stays disabled until you reconnect it or choose another provider.
                         </div>
                       ) : null}
                       {recallEmbeddingsDraft.providerId && !recallEmbeddingsDraft.model.trim() ? (
-                        <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                        <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
                           Select a model to enable vector recall.
                         </div>
                       ) : null}
                     </div>
                   </div>
 
-                  <div className="rounded-[12px] border border-border/35 bg-muted/20 p-3">
+                  <div className="rounded-[12px] border border-border bg-muted p-3">
                     <div className="text-sm font-medium text-foreground">Image generation</div>
                     <div className="mt-1 text-sm text-muted-foreground">
                       Used when the agent generates new images into the workspace.
@@ -2887,12 +2887,12 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                       </label>
 
                       {imageGenerationDraft.providerId && !imageGenerationProviderConnected ? (
-                        <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                        <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
                           Selected provider is not connected. Image generation stays disabled until you reconnect it or choose another provider.
                         </div>
                       ) : null}
                       {imageGenerationDraft.providerId && !imageGenerationDraft.model.trim() ? (
-                        <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                        <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
                           Select a model to enable image generation.
                         </div>
                       ) : null}
@@ -2921,7 +2921,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         <div className="grid gap-4">
           <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
             <div className="flex min-w-0 items-center gap-3">
-              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-border/30 bg-muted/70 text-sm font-semibold text-foreground">
+              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-border bg-muted text-sm font-semibold text-foreground">
                 {sessionInitials(session)}
               </div>
               <div className="min-w-0">
@@ -2944,7 +2944,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                     <ShieldCheck size={12} />
                     <span>{statusBadgeLabel}</span>
                   </Badge>
-                  <Badge variant="outline" className="border-border/40 bg-muted/40 text-muted-foreground">
+                  <Badge variant="outline" className="border-border bg-muted text-muted-foreground">
                     <span className={`inline-block h-1.5 w-1.5 rounded-full ${runtimeBindingReady ? "bg-success" : isSignedIn ? "bg-warning" : "bg-muted-foreground"}`} />
                     <span>
                       {runtimeBindingReady
@@ -3028,7 +3028,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
           <div
             className={`mt-3 rounded-[16px] border px-4 py-3 text-sm ${
               authError
-                ? "border-rose-400/35 bg-rose-500/8 text-rose-400"
+                ? "border-destructive/35 bg-destructive/8 text-destructive"
                 : "border-success/30 bg-success/10 text-success"
             }`}
           >
@@ -3041,7 +3041,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
   if (showsSetupLoadingState) {
     return (
-      <section className="theme-shell w-full max-w-none overflow-hidden rounded-[24px] border border-border/40 text-sm text-foreground shadow-card">
+      <section className="theme-shell w-full max-w-none overflow-hidden rounded-[24px] border border-border text-sm text-foreground shadow-card">
         <div className="px-4 py-5">
           {setupLoadingPanel}
         </div>
@@ -3050,13 +3050,13 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   }
 
   return (
-    <section className="theme-shell w-full max-w-none overflow-hidden rounded-[24px] border border-border/40 text-sm text-foreground shadow-card">
+    <section className="theme-shell w-full max-w-none overflow-hidden rounded-[24px] border border-border text-sm text-foreground shadow-card">
       {showAccountSection && (
         <>
           <div className="border-b border-panel-border/40 px-4 py-4">
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 items-start gap-3">
-                <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-primary/30 bg-primary/10 text-lg font-semibold text-primary">
+                <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-primary bg-primary/10 text-lg font-semibold text-primary">
                   {sessionInitials(session)}
                 </div>
                 <div className="min-w-0">
@@ -3116,7 +3116,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               <div
                 className={`mt-3 rounded-[16px] border px-4 py-3 text-sm ${
                   authError
-                    ? "border-rose-400/35 bg-rose-500/8 text-rose-400"
+                    ? "border-destructive/35 bg-destructive/8 text-destructive"
                     : "border-success/30 bg-success/10 text-success"
                 }`}
               >
@@ -3134,7 +3134,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             <div
               className={`mt-3 rounded-[16px] border px-4 py-3 text-sm ${
                 authError
-                  ? "border-rose-400/35 bg-rose-500/8 text-rose-400"
+                  ? "border-destructive/35 bg-destructive/8 text-destructive"
                   : "border-success/30 bg-success/10 text-success"
               }`}
             >

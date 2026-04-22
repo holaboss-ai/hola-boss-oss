@@ -359,7 +359,7 @@ export function SpaceBrowserDisplayPane({
           : "rounded-xl border border-border bg-card"
       }`}
     >
-      <div className="shrink-0 border-b border-border/30 px-4 py-2">
+      <div className="shrink-0 border-b border-border px-4 py-2">
         <div className="flex flex-wrap items-center gap-1.5">
           <Button
             variant="ghost"
@@ -454,7 +454,7 @@ export function SpaceBrowserDisplayPane({
           ref={viewportRef}
           className={`relative h-full min-h-0 overflow-hidden rounded-xl border bg-card transition-colors ${
             showAgentActivityHighlight
-              ? "browser-active-glow border-border/30"
+              ? "browser-active-glow border-border"
               : "border-border"
           } ${jumpFlashActive ? "browser-jump-flash" : ""}`}
         >
@@ -484,8 +484,8 @@ export function SpaceBrowserDisplayPane({
           ) : null}
 
           {activeTab.error ? (
-            <div className="absolute inset-x-4 bottom-4 flex items-start gap-2 rounded-lg border-l-2 border-amber-500 bg-card px-3 py-2 text-xs leading-5 text-foreground shadow-sm">
-              <span className="mt-0.5 size-1.5 shrink-0 rounded-full bg-amber-500" />
+            <div className="absolute inset-x-4 bottom-4 flex items-start gap-2 rounded-lg border-l-2 border-warning bg-card px-3 py-2 text-xs leading-5 text-foreground shadow-sm">
+              <span className="mt-0.5 size-1.5 shrink-0 rounded-full bg-warning" />
               <span className="min-w-0 flex-1">{activeTab.error}</span>
             </div>
           ) : null}

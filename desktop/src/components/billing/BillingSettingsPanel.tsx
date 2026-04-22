@@ -244,8 +244,8 @@ function UsageRow({ item }: { item: UsageItem }) {
         <div
           className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
             isCredit
-              ? "bg-green-500/10 text-green-600"
-              : "bg-red-500/10 text-red-600"
+              ? "bg-success/10 text-success"
+              : "bg-destructive/10 text-destructive"
           }`}
         >
           <UsageIcon item={item} />
@@ -262,13 +262,13 @@ function UsageRow({ item }: { item: UsageItem }) {
       </div>
       <div className="flex shrink-0 items-center gap-1">
         {isCredit ? (
-          <ArrowDownLeft size={14} className="text-green-600" />
+          <ArrowDownLeft size={14} className="text-success" />
         ) : (
-          <ArrowUpRight size={14} className="text-red-600" />
+          <ArrowUpRight size={14} className="text-destructive" />
         )}
         <span
           className={`font-semibold text-sm tabular-nums ${
-            isCredit ? "text-green-600" : "text-red-600"
+            isCredit ? "text-success" : "text-destructive"
           }`}
         >
           {isCredit ? "+" : "-"}
@@ -315,8 +315,8 @@ function UsageGroupRow({
           <div
             className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
               isCredit
-                ? "bg-green-500/10 text-green-600"
-                : "bg-red-500/10 text-red-600"
+                ? "bg-success/10 text-success"
+                : "bg-destructive/10 text-destructive"
             }`}
           >
             <ChevronRight
@@ -336,13 +336,13 @@ function UsageGroupRow({
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {isCredit ? (
-            <ArrowDownLeft size={14} className="text-green-600" />
+            <ArrowDownLeft size={14} className="text-success" />
           ) : (
-            <ArrowUpRight size={14} className="text-red-600" />
+            <ArrowUpRight size={14} className="text-destructive" />
           )}
           <span
             className={`font-semibold text-sm tabular-nums ${
-              isCredit ? "text-green-600" : "text-red-600"
+              isCredit ? "text-success" : "text-destructive"
             }`}
           >
             {isCredit ? "+" : "-"}
@@ -353,7 +353,7 @@ function UsageGroupRow({
 
       {/* Expanded children */}
       {expanded && (
-        <div className="ml-9 border-l border-border/30 pl-2">
+        <div className="ml-9 border-l border-border pl-2">
           {group.items.map((item) => (
             <UsageRow key={item.id} item={item} />
           ))}
@@ -433,7 +433,7 @@ export function BillingSettingsPanel() {
         }}
       />
 
-      <section className="grid gap-2 rounded-[24px] border border-border/40 bg-card/40 px-4 py-3">
+      <section className="grid gap-2 rounded-[24px] border border-border bg-card px-4 py-3">
         <div className="flex items-center justify-between gap-2">
           <div className="text-lg font-semibold text-foreground">
             Usage record
@@ -463,7 +463,7 @@ export function BillingSettingsPanel() {
           </Tooltip>
         </div>
 
-        <div className="divide-y divide-border/30">
+        <div className="divide-y divide-border">
           {isLoading && groups.length === 0 ? (
             <div
               role="status"

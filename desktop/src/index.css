@@ -59,6 +59,8 @@
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
 
+  /* ---- Synced from llmchat (质感层) ---- */
+
   /* Font weight scale — each step ~50 lighter than Tailwind default.
      Depends on Inter Variable for continuous weights. */
   --font-weight-thin: 300;
@@ -481,7 +483,7 @@ webview {
 
 .simple-markdown .md-h1 {
   font-size: 28px;
-  font-weight: 500;
+  font-weight: var(--font-weight-bold);
   letter-spacing: -0.03em;
   line-height: 1.2;
   margin-top: 0;
@@ -491,7 +493,7 @@ webview {
 
 .simple-markdown .md-h2 {
   font-size: 22px;
-  font-weight: 500;
+  font-weight: var(--font-weight-bold);
   letter-spacing: -0.02em;
   line-height: 1.3;
   margin-top: 36px;
@@ -501,7 +503,7 @@ webview {
 
 .simple-markdown .md-h3 {
   font-size: 18px;
-  font-weight: 500;
+  font-weight: var(--font-weight-bold);
   letter-spacing: -0.01em;
   line-height: 1.4;
   margin-top: 28px;
@@ -511,7 +513,7 @@ webview {
 
 .simple-markdown .md-h4 {
   font-size: 15px;
-  font-weight: 500;
+  font-weight: var(--font-weight-bold);
   line-height: 1.5;
   margin-top: 20px;
   margin-bottom: 6px;
@@ -521,7 +523,7 @@ webview {
 .simple-markdown .md-h5,
 .simple-markdown .md-h6 {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: var(--font-weight-bold);
   line-height: 1.5;
   margin-top: 16px;
   margin-bottom: 4px;
@@ -578,7 +580,7 @@ webview {
   padding: 1px 5px;
   font-size: 12.5px;
   font-family: ui-monospace, monospace;
-  font-weight: 400;
+  font-weight: var(--font-weight-medium);
 }
 
 .simple-markdown .md-code-block > code {
@@ -611,7 +613,7 @@ webview {
 }
 
 .simple-markdown .md-table th {
-  font-weight: 500;
+  font-weight: var(--font-weight-bold);
   color: var(--muted-foreground);
   font-size: 12.5px;
   border-bottom: 1px solid var(--border);
@@ -657,7 +659,7 @@ webview {
 }
 
 .simple-markdown strong {
-  font-weight: 500;
+  font-weight: var(--font-weight-bold);
 }
 
 .simple-markdown .md-hr {
@@ -702,7 +704,7 @@ webview {
 
 .chat-assistant-markdown .md-h1 {
   font-size: 1.45em;
-  font-weight: 600;
+  font-weight: var(--font-weight-black);
   line-height: 1.35;
   margin-top: 1.6em;
   margin-bottom: 0.6em;
@@ -710,7 +712,7 @@ webview {
 
 .chat-assistant-markdown .md-h2 {
   font-size: 1.25em;
-  font-weight: 600;
+  font-weight: var(--font-weight-black);
   line-height: 1.4;
   margin-top: 1.5em;
   margin-bottom: 0.5em;
@@ -718,7 +720,7 @@ webview {
 
 .chat-assistant-markdown .md-h3 {
   font-size: 1.1em;
-  font-weight: 600;
+  font-weight: var(--font-weight-black);
   line-height: 1.45;
   margin-top: 1.3em;
   margin-bottom: 0.4em;
@@ -726,7 +728,7 @@ webview {
 
 .chat-assistant-markdown .md-h4 {
   font-size: 1em;
-  font-weight: 600;
+  font-weight: var(--font-weight-black);
   line-height: 1.5;
   margin-top: 1.1em;
   margin-bottom: 0.35em;
@@ -743,7 +745,7 @@ webview {
 }
 
 .chat-assistant-markdown strong {
-  font-weight: 600;
+  font-weight: var(--font-weight-black);
 }
 
 .chat-assistant-markdown .md-p + .md-ul,
@@ -763,7 +765,7 @@ webview {
   border-radius: 4px;
   padding: 0.15em 0.38em;
   font-size: 0.875em;
-  font-weight: 500;
+  font-weight: var(--font-weight-bold);
 }
 
 .chat-assistant-markdown .md-blockquote {
@@ -771,7 +773,7 @@ webview {
   padding: 0.35em 0 0.35em 1em;
   margin: 1em 0;
   color: color-mix(in oklch, var(--foreground) 75%, transparent);
-  font-weight: 500;
+  font-weight: var(--font-weight-bold);
 }
 
 .chat-thinking-markdown {
@@ -795,7 +797,7 @@ webview {
 /* headings — same DNA as simple-markdown but scaled for chat bubbles */
 .chat-markdown .md-h1 {
   font-size: 18px;
-  font-weight: 500;
+  font-weight: var(--font-weight-bold);
   letter-spacing: -0.02em;
   line-height: 1.3;
   margin-top: 18px;
@@ -804,7 +806,7 @@ webview {
 
 .chat-markdown .md-h2 {
   font-size: 16px;
-  font-weight: 500;
+  font-weight: var(--font-weight-bold);
   letter-spacing: -0.01em;
   line-height: 1.35;
   margin-top: 16px;
@@ -814,7 +816,7 @@ webview {
 .chat-markdown .md-h3,
 .chat-markdown .md-h4 {
   font-size: 14px;
-  font-weight: 500;
+  font-weight: var(--font-weight-bold);
   line-height: 1.4;
   margin-top: 12px;
   margin-bottom: 4px;
@@ -823,7 +825,7 @@ webview {
 .chat-markdown .md-h5,
 .chat-markdown .md-h6 {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: var(--font-weight-bold);
   line-height: 1.4;
   margin-top: 10px;
   margin-bottom: 4px;
@@ -921,7 +923,7 @@ webview {
   margin: 36px 0;
 }
 
-/* ---- Hairline borders ----
+/* ---- Hairline borders (synced from llmchat) ----
    Tailwind v4's border utility is hardcoded to 1px with no var entry,
    so override by source order. 0.8px reads more refined on hi-dpi. */
 .border {

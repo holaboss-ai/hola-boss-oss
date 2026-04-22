@@ -36,7 +36,7 @@ export function ConnectIntegrationsStep({
   return (
     <div>
       <div className="max-w-3xl">
-        <p className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+        <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
           Connect integrations
         </p>
         <h1 className="mt-3 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">

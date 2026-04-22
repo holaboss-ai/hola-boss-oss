@@ -55,7 +55,7 @@ export function RuntimeStatusIndicator({
       onClick={onClick}
       aria-label={label}
       title={hoverText}
-      className="pointer-events-auto flex h-6 items-center gap-1.5 rounded-full border border-border/40 bg-background/70 px-2.5 text-[11px] font-medium text-muted-foreground backdrop-blur-sm transition-colors hover:bg-accent hover:text-foreground"
+      className="pointer-events-auto flex h-6 items-center gap-1.5 rounded-full border border-border bg-background/70 px-2.5 text-xs font-medium text-muted-foreground backdrop-blur-sm transition-colors hover:bg-accent hover:text-foreground"
     >
       <span
         className={`size-1.5 rounded-full ${dotClass}`}

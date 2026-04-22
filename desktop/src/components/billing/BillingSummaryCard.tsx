@@ -66,7 +66,7 @@ export function BillingSummaryCard({
         role="status"
         aria-busy="true"
         aria-label="Loading billing summary"
-        className="rounded-xl border border-border/40 px-4 py-4"
+        className="rounded-xl border border-border px-4 py-4"
       >
         {/* Header skeleton */}
         <div className="flex items-center justify-between gap-3">
@@ -90,7 +90,7 @@ export function BillingSummaryCard({
         </div>
 
         {/* Stats grid skeleton */}
-        <div className="mt-4 border-t border-border/40 pt-4">
+        <div className="mt-4 border-t border-border pt-4">
           <div className="grid grid-cols-2 gap-x-4 gap-y-1">
             <div>
               <span className="block h-6 w-16 animate-pulse rounded bg-muted-foreground/20" />
@@ -103,7 +103,7 @@ export function BillingSummaryCard({
           </div>
 
           {/* Bottom stats skeleton */}
-          <div className="mt-3 grid gap-1.5 border-t border-border/30 pt-3">
+          <div className="mt-3 grid gap-1.5 border-t border-border pt-3">
             {[72, 56, 64].map((w) => (
               <div key={w} className="flex items-center justify-between">
                 <span
@@ -173,7 +173,7 @@ export function BillingSummaryCard({
       ) : null}
 
       {!hasOverview && !error ? (
-        <div className="mt-3 rounded-md border border-border/40 px-3 py-2 text-sm text-muted-foreground">
+        <div className="mt-3 rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">
           Sign in to view billing details.
         </div>
       ) : null}

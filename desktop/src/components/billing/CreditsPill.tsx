@@ -36,7 +36,7 @@ export function CreditsPill({
       onClick={onClick}
       className={`inline-flex shrink-0 items-center rounded-lg border px-2.5 text-xs transition ${
         isLowBalance
-          ? "border-amber-300/40 bg-amber-400/10 text-amber-200 hover:bg-amber-400/14"
+          ? "border-warning/40 bg-warning/10 text-warning hover:bg-warning/14"
           : "border-border/55"
       }`}
       aria-label="Open credits and billing details"

@@ -41,16 +41,16 @@ export function WorkspaceAppsDialog({
         type="button"
         aria-label="Close add apps"
         onClick={onClose}
-        className="pointer-events-auto absolute inset-0 bg-[rgba(7,10,14,0.46)] backdrop-blur-sm"
+        className="pointer-events-auto absolute inset-0 bg-scrim backdrop-blur-sm"
       />
 
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Add apps"
-        className="pointer-events-auto relative z-10 flex h-[min(820px,calc(100vh-36px))] w-[min(1120px,calc(100vw-32px))] min-w-0 flex-col overflow-hidden rounded-[28px] border border-border/55 bg-background shadow-2xl"
+        className="pointer-events-auto relative z-10 flex h-[min(820px,calc(100vh-36px))] w-[min(1120px,calc(100vw-32px))] min-w-0 flex-col overflow-hidden rounded-[28px] border border-border bg-background shadow-subtle-sm"
       >
-        <header className="flex items-center justify-between gap-4 border-b border-border/35 px-6 py-5">
+        <header className="flex items-center justify-between gap-4 border-b border-border px-6 py-5">
           <div className="inline-flex min-w-0 items-center gap-2 text-[17px] font-semibold tracking-[-0.02em] text-foreground">
             <LayoutGrid size={16} className="shrink-0 text-muted-foreground" />
             <span className="truncate">Add apps</span>

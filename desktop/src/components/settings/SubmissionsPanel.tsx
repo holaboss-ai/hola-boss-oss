@@ -108,7 +108,7 @@ function SubmissionRow({
   const config = STATUS_CONFIG[submission.status] ?? {
     label: submission.status,
     icon: Clock,
-    badgeClass: "border-border/40 bg-muted/50 text-muted-foreground",
+    badgeClass: "border-border bg-muted text-muted-foreground",
   };
   const StatusIcon = config.icon;
   const category = getCategory(submission.manifest);
@@ -120,9 +120,9 @@ function SubmissionRow({
     (submission.status === "rejected" && submission.review_notes);
 
   return (
-    <div className="border-b border-border/30">
+    <div className="border-b border-border">
       <div
-        className="grid grid-cols-[20px_minmax(0,1fr)_100px_80px_110px_40px] items-center gap-3 px-4 py-3 text-sm cursor-pointer hover:bg-muted/30 transition-colors"
+        className="grid grid-cols-[20px_minmax(0,1fr)_100px_80px_110px_40px] items-center gap-3 px-4 py-3 text-sm cursor-pointer hover:bg-muted transition-colors"
         onClick={() => hasDetails && setExpanded((v) => !v)}
       >
         <span className="flex items-center justify-center text-muted-foreground">
@@ -195,7 +195,7 @@ function SubmissionRow({
           )}
 
           {appNames.length > 0 && (
-            <div className="rounded-lg border border-border/30 px-3 py-2">
+            <div className="rounded-lg border border-border px-3 py-2">
               <p className="text-xs font-medium text-muted-foreground mb-1.5">
                 Bundled apps
               </p>
@@ -210,22 +210,22 @@ function SubmissionRow({
           )}
 
           {submission.onboarding_md && (
-            <div className="rounded-lg border border-border/30 px-3 py-2">
+            <div className="rounded-lg border border-border px-3 py-2">
               <p className="text-xs font-medium text-muted-foreground mb-1">
                 Onboarding script
               </p>
-              <pre className="text-xs text-foreground/80 whitespace-pre-wrap max-h-32 overflow-y-auto leading-relaxed">
+              <pre className="text-xs text-foreground whitespace-pre-wrap max-h-32 overflow-y-auto leading-relaxed">
                 {submission.onboarding_md}
               </pre>
             </div>
           )}
 
           {submission.readme_md && (
-            <div className="rounded-lg border border-border/30 px-3 py-2">
+            <div className="rounded-lg border border-border px-3 py-2">
               <p className="text-xs font-medium text-muted-foreground mb-1">
                 README
               </p>
-              <pre className="text-xs text-foreground/80 whitespace-pre-wrap max-h-32 overflow-y-auto leading-relaxed">
+              <pre className="text-xs text-foreground whitespace-pre-wrap max-h-32 overflow-y-auto leading-relaxed">
                 {submission.readme_md}
               </pre>
             </div>
@@ -320,7 +320,7 @@ export function SubmissionsPanel() {
         aria-label="Loading submissions"
         className="max-w-[960px]"
       >
-        <div className="grid grid-cols-[20px_minmax(0,1fr)_100px_80px_110px_40px] items-center gap-3 border-b border-border/40 px-4 pb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        <div className="grid grid-cols-[20px_minmax(0,1fr)_100px_80px_110px_40px] items-center gap-3 border-b border-border px-4 pb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
           <span />
           <span>Template</span>
           <span>Status</span>
@@ -329,7 +329,7 @@ export function SubmissionsPanel() {
           <span />
         </div>
         {skeletonWidths.map((w, i) => (
-          <div key={i} className="border-b border-border/30">
+          <div key={i} className="border-b border-border">
             <div className="grid grid-cols-[20px_minmax(0,1fr)_100px_80px_110px_40px] items-center gap-3 px-4 py-3">
               <span className="size-3.5 animate-pulse rounded-sm bg-muted-foreground/20" />
               <div className="min-w-0 space-y-1.5">
@@ -360,7 +360,7 @@ export function SubmissionsPanel() {
 
   if (!isSignedIn) {
     return (
-      <div className="rounded-[24px] border border-border/40 bg-card/80 px-6 py-6">
+      <div className="rounded-[24px] border border-border bg-card px-6 py-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
@@ -390,8 +390,8 @@ export function SubmissionsPanel() {
 
   if (submissions.length === 0) {
     return (
-      <div className="rounded-[24px] border border-dashed border-border/50 px-6 py-14 text-center">
-        <Package className="mx-auto mb-3 size-8 text-muted-foreground/40" />
+      <div className="rounded-[24px] border border-dashed border-border px-6 py-14 text-center">
+        <Package className="mx-auto mb-3 size-8 text-muted-foreground" />
         <p className="text-sm font-medium text-foreground">
           No submissions yet
         </p>
@@ -404,7 +404,7 @@ export function SubmissionsPanel() {
 
   return (
     <div className="max-w-[960px]">
-      <div className="grid grid-cols-[20px_minmax(0,1fr)_100px_80px_110px_40px] items-center gap-3 border-b border-border/40 px-4 pb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+      <div className="grid grid-cols-[20px_minmax(0,1fr)_100px_80px_110px_40px] items-center gap-3 border-b border-border px-4 pb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
         <span />
         <span>Template</span>
         <span>Status</span>

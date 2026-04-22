@@ -3225,8 +3225,8 @@ export function FileExplorerPane({
   const content = showInlinePreview ? (
     <div className="flex h-full min-h-0 flex-col bg-background">
       {/* File identity header */}
-      <div className="flex shrink-0 items-center gap-3 border-b border-border/30 px-4 py-2.5">
-        <span className="grid size-7 shrink-0 place-items-center rounded-lg border border-border/40 bg-muted/30">
+      <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2.5">
+        <span className="grid size-7 shrink-0 place-items-center rounded-lg border border-border bg-muted">
           <IconifyIcon
             icon={`catppuccin:${previewFileIcon.name}`}
             width={15}
@@ -3314,7 +3314,7 @@ export function FileExplorerPane({
             </div>
           ) : isHtmlPreview && textPreviewMode === "preview" ? (
             previewDraft.trim() ? (
-              <div className="h-full overflow-hidden bg-muted/20 p-4">
+              <div className="h-full overflow-hidden bg-muted p-4">
                 <iframe
                   title={preview.name}
                   sandbox=""
@@ -3330,7 +3330,7 @@ export function FileExplorerPane({
               </div>
             )
           ) : (
-            <div className="h-full overflow-auto bg-muted/20">
+            <div className="h-full overflow-auto bg-muted">
               <textarea
                 aria-label={`Edit ${preview.name}`}
                 value={previewDraft}
@@ -3344,7 +3344,7 @@ export function FileExplorerPane({
             </div>
           )
         ) : preview?.kind === "image" && preview.dataUrl ? (
-          <div className="flex h-full items-center justify-center overflow-auto bg-muted/20 p-6">
+          <div className="flex h-full items-center justify-center overflow-auto bg-muted p-6">
             <img
               src={preview.dataUrl}
               alt={preview.name}
@@ -3483,7 +3483,7 @@ export function FileExplorerPane({
               disabled={!bookmarkTargetPath}
               className={`shrink-0 ${
                 activeBookmark
-                  ? "border-primary/40 bg-primary/10 text-primary"
+                  ? "border-primary bg-primary/10 text-primary"
                   : "text-muted-foreground"
               }`}
             >
@@ -3645,7 +3645,7 @@ export function FileExplorerPane({
                           icon={`catppuccin:${descriptor.name}`}
                           strokeWidth={1.25}
                           stroke="currentColor"
-                          className="shrink-0 size-4 text-foreground/80"
+                          className="shrink-0 size-4 text-foreground"
                         />
                         {nameField}
                       </span>
@@ -3883,7 +3883,7 @@ export function FileExplorerPane({
               disabled={!bookmarkTargetPath}
               className={
                 activeBookmark
-                  ? "border-primary/40 bg-primary/10 text-primary"
+                  ? "border-primary bg-primary/10 text-primary"
                   : "text-muted-foreground"
               }
             >
@@ -3893,7 +3893,7 @@ export function FileExplorerPane({
               />
             </Button>
             {supportsRenderedTextPreview ? (
-              <div className="inline-flex items-center gap-px rounded-lg border border-border/40 bg-muted/25 p-[3px]">
+              <div className="inline-flex items-center gap-px rounded-lg border border-border bg-muted p-[3px]">
                 <Button
                   type="button"
                   variant="ghost"
@@ -3997,7 +3997,7 @@ export function FileExplorerPane({
                   items[nextIndex].focus();
                 }
               }}
-              className="fixed z-[80] rounded-xl border border-border/70 bg-popover/92 p-1.5 text-popover-foreground shadow-xl ring-1 ring-foreground/10 backdrop-blur-xl"
+              className="fixed z-[80] rounded-xl border border-border bg-popover/92 p-1.5 text-popover-foreground shadow-xl ring-1 ring-border backdrop-blur-xl"
             >
               <Button
                 type="button"

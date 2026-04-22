@@ -69,10 +69,10 @@ export function UpdateReminder({
       : null;
   const progressWidth = `${Math.max(progressPercent ?? 8, 8)}%`;
   const toneClassName = hasError
-    ? "bg-amber-400/15 text-amber-200 ring-amber-300/30"
+    ? "bg-warning/15 text-warning ring-warning/30"
     : status.downloaded
-      ? "bg-emerald-500/15 text-emerald-300 ring-emerald-400/30"
-      : "bg-sky-500/15 text-sky-200 ring-sky-400/30";
+      ? "bg-success/15 text-success ring-success/30"
+      : "bg-info/15 text-info ring-info/30";
   const title = hasError
     ? `Couldn’t install ${releaseLabel}`
     : status.downloaded
@@ -83,7 +83,7 @@ export function UpdateReminder({
   const shouldShowBackgroundAction = !status.downloaded && !hasError;
 
   return (
-    <div className="pointer-events-auto overflow-hidden rounded-[24px] border border-border/60 bg-popover/95 shadow-2xl ring-1 ring-foreground/5 backdrop-blur-xl animate-in fade-in-0 slide-in-from-top-2">
+    <div className="pointer-events-auto overflow-hidden rounded-[24px] border border-border bg-popover/95 shadow-2xl ring-1 ring-border backdrop-blur-xl animate-in fade-in-0 slide-in-from-top-2">
       <div className="flex items-start gap-3 px-3.5 py-3">
         <div
           className={cn(
@@ -96,7 +96,7 @@ export function UpdateReminder({
 
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
-            <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
               <span>Desktop update</span>
             </div>
             {shouldShowDismissIcon ? (
@@ -123,19 +123,19 @@ export function UpdateReminder({
                 <div
                   className={cn(
                     "h-full rounded-full transition-[width]",
-                    hasError ? "bg-amber-400/85" : "bg-primary",
+                    hasError ? "bg-warning" : "bg-primary",
                   )}
                   style={{ width: progressWidth }}
                 />
               </div>
-              <div className="mt-1 text-[11px] text-muted-foreground/78">
+              <div className="mt-1 text-xs text-muted-foreground">
                 {progressLabel(status, progressPercent, hasError)}
               </div>
             </div>
           ) : null}
 
           {errorHint ? (
-            <div className="mt-2.5 rounded-2xl border border-amber-500/20 bg-amber-500/8 px-3 py-2 text-[11px] leading-5 text-amber-700 dark:text-amber-200">
+            <div className="mt-2.5 rounded-2xl border border-warning/20 bg-warning/8 px-3 py-2 text-xs leading-5 text-warning">
               {errorHint}
             </div>
           ) : null}

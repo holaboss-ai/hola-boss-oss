@@ -243,7 +243,7 @@ export function TopTabsBar({
     ? isWindowsIntegratedTitleBar
       ? "window-drag relative h-[42px] px-2 pt-0.5 sm:px-3"
       : "window-drag relative h-[42px] px-2 sm:px-3"
-    : "rounded-xl border border-border bg-card/80 px-2.5 py-0.5 shadow-md backdrop-blur-sm sm:px-4";
+    : "rounded-xl border border-border bg-card px-2.5 py-0.5 shadow-subtle-xs backdrop-blur-sm sm:px-4";
   const headerGridClassName = isWindowsIntegratedTitleBar
     ? "relative z-10 grid min-w-0 grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-1 lg:h-full lg:grid-cols-[42px_minmax(220px,400px)_minmax(0,1fr)_auto]"
     : `relative z-10 grid min-w-0 items-center gap-1 sm:gap-1.5 lg:h-full lg:grid-cols-[minmax(260px,440px)_minmax(0,1fr)_auto] ${
@@ -251,7 +251,7 @@ export function TopTabsBar({
       }`;
 
   const windowControlButtonClassName =
-    "window-no-drag flex h-5 w-5 items-center justify-center rounded-[7px] border border-transparent text-muted-foreground/72 transition-colors duration-150 hover:bg-foreground/6 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
+    "window-no-drag flex h-5 w-5 items-center justify-center rounded-[7px] border border-transparent text-muted-foreground transition-colors duration-150 hover:bg-foreground/6 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
   const workspaceSwitcherContainerClassName = `${integratedTitleBar ? "window-no-drag " : ""}relative min-w-55 max-w-full`;
   const workspaceSwitcherButtonClassName =
     "h-8 w-full justify-start gap-1.5 px-2.5 rounded-lg text-xs";
@@ -433,7 +433,7 @@ export function TopTabsBar({
               <button
                 type="button"
                 aria-label="Close window"
-                className={`${windowControlButtonClassName} hover:bg-[rgba(247,90,84,0.12)] hover:text-[rgb(247,90,84)]`}
+                className={`${windowControlButtonClassName} hover:bg-destructive/12 hover:text-destructive`}
                 onClick={() => {
                   void window.electronAPI.ui.closeWindow();
                 }}
@@ -447,7 +447,7 @@ export function TopTabsBar({
 
       {workspaceErrorMessage ? (
         <div
-          className={`${integratedTitleBar ? "window-no-drag " : ""}theme-chat-system-bubble mt-2 rounded-[14px] border px-3 py-2 text-[11px] leading-6`}
+          className={`${integratedTitleBar ? "window-no-drag " : ""}theme-chat-system-bubble mt-2 rounded-[14px] border px-3 py-2 text-xs leading-6`}
         >
           {workspaceErrorMessage}
         </div>
@@ -459,7 +459,7 @@ export function TopTabsBar({
         ? createPortal(
             <div
               ref={workspaceSwitcherPopupRef}
-              className={`${integratedTitleBar ? "window-no-drag " : ""}fixed z-[80] rounded-xl border border-border bg-popover p-3 shadow-lg`}
+              className={`${integratedTitleBar ? "window-no-drag " : ""}fixed z-[80] rounded-xl border border-border bg-popover p-3 shadow-subtle-sm`}
               style={{
                 top: workspaceSwitcherPosition.top,
                 left: workspaceSwitcherPosition.left,
@@ -492,7 +492,7 @@ export function TopTabsBar({
                           key={workspace.id}
                           className={`flex items-center gap-1 rounded-lg border px-2 py-1.5 transition-colors ${
                             isActive
-                              ? "border-primary/30 bg-primary/10"
+                              ? "border-primary bg-primary/10"
                               : "border-transparent hover:bg-accent"
                           } ${isDeleting ? "opacity-50" : ""}`}
                         >
@@ -508,7 +508,7 @@ export function TopTabsBar({
                             <span
                               aria-hidden="true"
                               className={`inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full ${
-                                folderMissing ? "bg-amber-500" : "bg-emerald-500"
+                                folderMissing ? "bg-warning" : "bg-success"
                               }`}
                               title={
                                 folderMissing

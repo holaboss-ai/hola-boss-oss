@@ -60,10 +60,10 @@ function proactiveStateLabel(state: string): string {
 
 function proactiveStateClasses(state: string): string {
   if (state === "sent") {
-    return "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300";
+    return "border-info/25 bg-info/10 text-info";
   }
   if (state === "claimed") {
-    return "border-indigo-500/25 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300";
+    return "border-info/25 bg-info/10 text-info";
   }
   if (state === "analyzing") {
     return "border-warning/30 bg-warning/10 text-warning";
@@ -72,9 +72,9 @@ function proactiveStateClasses(state: string): string {
     return "border-destructive/30 bg-destructive/10 text-destructive";
   }
   if (state === "idle" || state === "ready") {
-    return "border-border/45 bg-background/70 text-muted-foreground";
+    return "border-border bg-background/70 text-muted-foreground";
   }
-  return "border-border/45 bg-background/70 text-foreground/72";
+  return "border-border bg-background/70 text-foreground";
 }
 
 type ProactiveScheduleUnit = "minute" | "hour" | "day";
@@ -266,7 +266,7 @@ function ProactiveScheduleEditor({
       >
         <span className="flex items-center gap-2 text-xs text-muted-foreground">
           <span>Schedule</span>
-          <span className="text-foreground/72">
+          <span className="text-foreground">
             {scheduleSummaryLabel(currentSchedule)}
           </span>
         </span>
@@ -368,7 +368,7 @@ function ProactiveScheduleEditor({
             </Button>
           </div>
           {currentSchedule.customCronDetected ? (
-            <div className="mt-2 text-[11px] leading-5 text-muted-foreground/72">
+            <div className="mt-2 text-xs leading-5 text-muted-foreground">
               Saving here replaces the current custom cron with this simpler
               cadence.
             </div>
@@ -502,15 +502,15 @@ export function ProactiveLifecyclePanel({
   }
 
   return (
-    <section className="w-full overflow-hidden rounded-xl border border-border/40 bg-card shadow-sm">
+    <section className="w-full overflow-hidden rounded-xl border border-border bg-card shadow-sm">
       <div className="px-4 py-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <div className="text-[13px] leading-6 text-foreground/90">
+            <div className="text-[13px] leading-6 text-foreground">
               {summary}
             </div>
             {detail ? (
-              <div className="mt-1.5 text-[11px] leading-5 text-muted-foreground/88">
+              <div className="mt-1.5 text-xs leading-5 text-muted-foreground">
                 {detail}
               </div>
             ) : null}
@@ -549,7 +549,7 @@ export function ProactiveLifecyclePanel({
                         aria-label="Run proactive analysis"
                         onClick={onTriggerProposal}
                         disabled={!hasWorkspace || isTriggeringProposal}
-                        className="rounded-full border-border/45 bg-background/90 text-muted-foreground hover:border-primary/35 hover:bg-background hover:text-primary"
+                        className="rounded-full border-border bg-background/90 text-muted-foreground hover:border-primary hover:bg-background hover:text-primary"
                       />
                     }
                   >

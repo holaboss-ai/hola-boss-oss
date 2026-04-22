@@ -30,15 +30,15 @@ type SessionStatusTone = "active" | "waiting" | "paused" | "error" | "idle";
 function sessionStatusBadgeClasses(tone: SessionStatusTone): string {
   switch (tone) {
     case "active":
-      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200";
+      return "border-success/30 bg-success/10 text-success";
     case "waiting":
-      return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-100";
+      return "border-warning/30 bg-warning/10 text-warning";
     case "paused":
-      return "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-100";
+      return "border-info/30 bg-info/10 text-info";
     case "error":
-      return "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-100";
+      return "border-destructive/30 bg-destructive/10 text-destructive";
     default:
-      return "border-border/50 bg-muted text-muted-foreground";
+      return "border-border bg-muted text-muted-foreground";
   }
 }
 
@@ -124,7 +124,7 @@ export function SpaceBrowserExplorerPane({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-transparent">
-      <div className="border-b border-border/30 px-3 py-2.5">
+      <div className="border-b border-border px-3 py-2.5">
         <Tabs
           value={browserSpace}
           onValueChange={(value) => openBrowserSpace(value as BrowserSpaceId)}
@@ -169,7 +169,7 @@ export function SpaceBrowserExplorerPane({
               onValueChange={selectAgentSessionBrowser}
               disabled={!hasAgentSessionBrowsers}
             >
-              <SelectTrigger className="h-9 min-w-0 flex-1 basis-0 rounded-lg border-border/45 bg-card px-3 text-left text-xs shadow-none">
+              <SelectTrigger className="h-9 min-w-0 flex-1 basis-0 rounded-lg border-border bg-card px-3 text-left text-xs shadow-none">
                 <SelectValue
                   placeholder={
                     hasAgentSessionBrowsers
@@ -226,7 +226,7 @@ export function SpaceBrowserExplorerPane({
                     aria-hidden="true"
                     className={`inline-block size-1.5 rounded-full ${
                       sessionBrowserStatus.flashing
-                        ? "animate-pulse bg-emerald-500"
+                        ? "animate-pulse bg-success"
                         : "bg-current opacity-70"
                     }`}
                   />
@@ -274,7 +274,7 @@ export function SpaceBrowserExplorerPane({
           )}
         </div>
 
-        <div className="mt-4 border-t border-border/30 pt-2">
+        <div className="mt-4 border-t border-border pt-2">
           <div className="mb-1.5 flex items-center justify-between gap-2">
             <Button
               type="button"
