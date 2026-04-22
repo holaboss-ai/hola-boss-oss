@@ -1,4 +1,4 @@
-import { AppWindow, CheckCircle2, LoaderCircle, Plus, TriangleAlert } from "lucide-react";
+import { AppWindow, Plus } from "lucide-react";
 import { providerIcon } from "@/components/onboarding/constants";
 import { Button } from "@/components/ui/button";
 import type { WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
@@ -21,77 +21,114 @@ function appInitials(label: string): string {
   return `${parts[0].slice(0, 1)}${parts[1].slice(0, 1)}`.toUpperCase();
 }
 
+type AppStatusTone = "ready" | "loading" | "error";
+
+function appStatusTone(app: WorkspaceInstalledAppDefinition): AppStatusTone {
+  if (app.error?.trim()) {
+    return "error";
+  }
+  if (app.ready) {
+    return "ready";
+  }
+  return "loading";
+}
+
+function statusPipClass(tone: AppStatusTone): string {
+  if (tone === "error") {
+    return "bg-destructive";
+  }
+  if (tone === "ready") {
+    return "bg-emerald-500";
+  }
+  return "bg-sky-500 animate-pulse";
+}
+
+function statusPipLabel(tone: AppStatusTone): string {
+  if (tone === "error") {
+    return "Error";
+  }
+  if (tone === "ready") {
+    return "Ready";
+  }
+  return "Starting";
+}
+
 export function SpaceApplicationsExplorerPane({
   installedApps,
   activeAppId = null,
   onSelectApp,
   onAddApp,
 }: SpaceApplicationsExplorerPaneProps) {
+  const isEmpty = installedApps.length === 0;
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-transparent">
-      <div className="flex items-center justify-between gap-3 border-b border-border/45 px-3 py-2.5">
-        <div className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground/70">
-          Applications
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={onAddApp}
-          className="h-7 gap-1.5 rounded-md px-2.5 text-[11px]"
-        >
-          <Plus size={12} />
-          Add apps
+      <div className="flex items-center justify-between gap-3 border-b border-border/40 p-2">
+        <Button type="button" variant="ghost" size="sm" onClick={onAddApp}>
+          <Plus className="size-4" />
+          <span className="text-muted-foreground/80">Add Application</span>
         </Button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
-        {installedApps.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border/40 px-3 py-3 text-xs leading-5 text-muted-foreground/70">
-            Installed workspace apps will appear here once the selected workspace has applications.
+      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+        {isEmpty ? (
+          <div className="flex flex-col items-center justify-center gap-2.5 px-4 py-10 text-center">
+            <div className="grid size-10 place-items-center rounded-[10px] bg-muted text-muted-foreground/70">
+              <AppWindow size={16} />
+            </div>
+            <div className="text-xs leading-5 text-muted-foreground">
+              No apps installed in this workspace yet.
+            </div>
           </div>
         ) : (
-          <div className="space-y-1">
+          <div className="space-y-0.5">
             {installedApps.map((app) => {
               const isActive = activeAppId === app.id;
-              const hasError = Boolean(app.error?.trim());
-              const isReady = app.ready && !hasError;
+              const tone = appStatusTone(app);
+              const statusLabel = statusPipLabel(tone);
               return (
                 <Button
                   key={app.id}
+                  type="button"
                   variant="ghost"
                   size="sm"
                   onClick={() => onSelectApp(app.id)}
-                  className={`h-auto w-full justify-start rounded-lg px-2.5 py-2 text-left ${
-                    isActive ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
+                  aria-current={isActive ? "page" : undefined}
+                  aria-label={`${app.label} — ${statusLabel}`}
+                  className={`relative h-auto w-full justify-start gap-0 rounded-lg px-2.5 py-2 text-left transition-colors ${
+                    isActive
+                      ? "bg-accent text-accent-foreground"
+                      : "hover:bg-accent/55"
                   }`}
                 >
-                  <div className="flex min-w-0 flex-1 items-start gap-2.5">
-                    <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
-                      {providerIcon(app.id, 16) ?? (
-                        <span className="text-[11px] font-semibold uppercase tracking-wide">
-                          {appInitials(app.label)}
-                        </span>
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="truncate text-xs font-medium text-foreground">
-                          {app.label}
-                        </span>
-                        {hasError ? (
-                          <TriangleAlert size={12} className="shrink-0 text-destructive" />
-                        ) : isReady ? (
-                          <CheckCircle2 size={12} className="shrink-0 text-emerald-500" />
-                        ) : (
-                          <LoaderCircle size={12} className="shrink-0 animate-spin text-sky-500" />
+                  {isActive ? (
+                    <span
+                      aria-hidden="true"
+                      className="absolute left-0 top-1/2 h-5 w-[2px] -translate-y-1/2 rounded-full bg-primary"
+                    />
+                  ) : null}
+                  <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                    <div className="relative shrink-0">
+                      <div className="grid size-9 place-items-center rounded-[10px] bg-muted text-muted-foreground">
+                        {providerIcon(app.id, 16) ?? (
+                          <span className="text-xs font-semibold uppercase tracking-wide">
+                            {appInitials(app.label)}
+                          </span>
                         )}
                       </div>
-                      <div className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-muted-foreground">
+                      <span
+                        aria-hidden="true"
+                        className={`absolute -bottom-0.5 -right-0.5 size-[9px] rounded-full ring-2 ring-background ${statusPipClass(tone)}`}
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium text-foreground">
+                        {app.label}
+                      </div>
+                      <div className="mt-0.5 line-clamp-1 text-xs leading-5 text-muted-foreground">
                         {app.summary}
                       </div>
                     </div>
-                    <AppWindow size={14} className="mt-0.5 shrink-0 text-muted-foreground/70" />
                   </div>
                 </Button>
               );

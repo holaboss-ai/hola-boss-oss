@@ -176,14 +176,5 @@ export function browserSurfaceStatusSummary(params: {
     };
   }
 
-  if (params.controlMode === "session_owned") {
-    return {
-      label: "Ready",
-      detail: "Choose a different agent session to inspect another browser surface.",
-      tone: "idle",
-      flashing: false,
-    };
-  }
-
   return null;
 }

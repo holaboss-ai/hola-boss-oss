@@ -302,68 +302,29 @@ export function SpreadsheetEditor({
     );
   }
 
+  const metadataParts: string[] = [];
+  metadataParts.push(`${activeSheet.rows.length} rows`);
+  metadataParts.push(`${activeSheet.columns.length} columns`);
+  if (activeSheet.truncated) {
+    metadataParts.push("Preview trimmed");
+  }
+  if (!editable && readOnlyReason) {
+    metadataParts.push(readOnlyReason);
+  }
+
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-muted">
-      {sheets.length > 1 ? (
-        <div className="chat-scrollbar-hidden flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-2 py-2">
-          {sheets.map((sheet, index) => {
-            const isActive = index === activeSheetIndex;
-            return (
-              <button
-                key={`${sheet.name}-${sheet.index}`}
-                type="button"
-                onClick={() => onActiveSheetIndexChange(index)}
-                className={`rounded-md border px-2 py-1 text-[11px] transition-colors ${
-                  isActive
-                    ? "border-primary/35 bg-primary/12 text-primary"
-                    : "border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                }`}
-              >
-                {sheet.name}
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
-
-      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/70 bg-background/70 px-3 py-2">
-        <div className="text-[11px] text-muted-foreground">
-          {activeSheet.rows.length} visible rows
-          {" · "}
-          {activeSheet.columns.length} visible columns
-          {activeSheet.truncated ? " · Preview trimmed" : ""}
-          {!editable && readOnlyReason ? ` · ${readOnlyReason}` : ""}
-        </div>
-        {editable ? (
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              onClick={addColumn}
-            >
-              <Plus size={11} />
-              Column
-            </Button>
-            <Button type="button" variant="ghost" size="xs" onClick={addRow}>
-              <Plus size={11} />
-              Row
-            </Button>
-          </div>
-        ) : null}
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-auto bg-background">
-        <table className="w-max min-w-full border-collapse text-xs text-foreground">
-          <thead className="sticky top-0 z-[1] bg-background/95 backdrop-blur-sm">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border/40 bg-background">
+      <div className="min-h-0 flex-1 overflow-auto">
+        <table className="w-max min-w-full border-separate border-spacing-0 text-sm text-foreground">
+          <thead className="sticky top-0 z-[2]">
             <tr>
-              <th className="sticky left-0 z-[2] border-b border-r border-border bg-background/95 px-2 py-1.5 text-left text-[11px] text-muted-foreground backdrop-blur-sm">
-                #
+              <th className="sticky left-0 z-[3] w-11 border-b border-r border-border/35 bg-muted/45 px-0 py-0 text-center text-xs font-normal uppercase tracking-[0.08em] text-muted-foreground/70 backdrop-blur-sm">
+                <div className="flex h-8 items-center justify-center">#</div>
               </th>
               {activeSheet.columns.map((column, columnIndex) => (
                 <th
                   key={`${column}-${columnIndex}`}
-                  className="min-w-[164px] border-b border-r border-border bg-background/95 px-0 py-0 text-left text-[11px] text-muted-foreground backdrop-blur-sm"
+                  className="min-w-[172px] border-b border-r border-border/35 bg-muted/45 px-0 py-0 text-left text-xs font-medium text-foreground/88 backdrop-blur-sm last:border-r-0"
                 >
                   {activeSheet.hasHeaderRow && editable ? (
                     <input
@@ -372,7 +333,7 @@ export function SpreadsheetEditor({
                         updateHeaderValue(columnIndex, event.target.value)
                       }
                       aria-label={`Column ${columnIndex + 1}`}
-                      className="embedded-input h-9 w-full border-0 bg-transparent px-3 text-[11px] font-medium text-foreground outline-none"
+                      className="embedded-input h-8 w-full border-0 bg-transparent px-3 text-xs font-medium text-foreground outline-none"
                     />
                   ) : (
                     <div className="px-3 py-2 font-medium text-foreground/88">
@@ -388,7 +349,7 @@ export function SpreadsheetEditor({
               <tr>
                 <td
                   colSpan={activeSheet.columns.length + 1}
-                  className="px-3 py-8 text-center text-xs text-muted-foreground"
+                  className="px-3 py-10 text-center text-xs text-muted-foreground"
                 >
                   {editable
                     ? "No rows yet. Add a row to start editing."
@@ -397,12 +358,11 @@ export function SpreadsheetEditor({
               </tr>
             ) : (
               activeSheet.rows.map((row, rowIndex) => (
-                <tr
-                  key={`row-${rowIndex}`}
-                  className="odd:bg-background even:bg-muted/10"
-                >
-                  <td className="sticky left-0 border-b border-r border-border bg-inherit px-2 py-1.5 align-top text-[11px] text-muted-foreground">
-                    {rowIndex + 1}
+                <tr key={`row-${rowIndex}`} className="group/row">
+                  <td className="sticky left-0 z-[1] w-11 border-b border-r border-border/25 bg-background px-0 py-0 text-center align-middle text-xs text-muted-foreground/70 transition-colors group-hover/row:bg-accent/25 group-hover/row:text-muted-foreground">
+                    <div className="flex min-h-8 items-center justify-center">
+                      {rowIndex + 1}
+                    </div>
                   </td>
                   {activeSheet.columns.map((_column, columnIndex) => {
                     const value = row[columnIndex] ?? "";
@@ -412,10 +372,10 @@ export function SpreadsheetEditor({
                     return (
                       <td
                         key={`cell-${rowIndex}-${columnIndex}`}
-                        className="min-w-[164px] border-b border-r border-border px-0 py-0 align-top"
+                        className="min-w-[172px] border-b border-r border-border/20 px-0 py-0 align-top transition-colors last:border-r-0 group-hover/row:bg-accent/20"
                       >
                         {editable ? (
-                          <div className="flex h-9 items-center gap-1 px-2">
+                          <div className="flex min-h-8 items-center gap-1 px-2 py-1">
                             <input
                               value={value}
                               onChange={(event) =>
@@ -432,7 +392,7 @@ export function SpreadsheetEditor({
                                 )
                               }
                               aria-label={`Row ${rowIndex + 1}, Column ${columnIndex + 1}`}
-                              className={`embedded-input h-full min-w-0 flex-1 border-0 bg-transparent px-1 text-xs outline-none ${
+                              className={`embedded-input h-6 min-w-0 flex-1 border-0 bg-transparent px-1 text-sm outline-none ${
                                 cellLink
                                   ? "text-primary underline underline-offset-2"
                                   : "text-foreground"
@@ -444,7 +404,7 @@ export function SpreadsheetEditor({
                                 onClick={() => openSpreadsheetCellLink(cellLink)}
                                 aria-label={`Open link from row ${rowIndex + 1}, column ${columnIndex + 1}`}
                                 title={cellLink}
-                                className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-primary transition-colors hover:bg-primary/10 hover:text-primary/85"
+                                className="inline-flex size-5 shrink-0 items-center justify-center rounded-md text-primary/70 transition-colors hover:bg-primary/10 hover:text-primary"
                               >
                                 <ArrowUpRight size={12} />
                               </button>
@@ -455,12 +415,12 @@ export function SpreadsheetEditor({
                             type="button"
                             onClick={() => openSpreadsheetCellLink(cellLink)}
                             title={cellLink}
-                            className="block h-full w-full cursor-pointer bg-transparent px-3 py-2 text-left text-xs break-words whitespace-pre-wrap text-primary underline underline-offset-2 transition-colors hover:text-primary/80"
+                            className="block h-full w-full cursor-pointer bg-transparent px-3 py-2 text-left text-sm break-words whitespace-pre-wrap text-primary underline underline-offset-2 transition-colors hover:text-primary/80"
                           >
                             {value || cellLink}
                           </button>
                         ) : (
-                          <div className="px-3 py-2 break-words whitespace-pre-wrap">
+                          <div className="px-3 py-2 text-sm break-words whitespace-pre-wrap">
                             {value || "\u00a0"}
                           </div>
                         )}
@@ -472,6 +432,51 @@ export function SpreadsheetEditor({
             )}
           </tbody>
         </table>
+      </div>
+
+      <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border/35 bg-muted/25 px-2.5 py-1.5">
+        <div className="chat-scrollbar-hidden flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+          {sheets.length > 1 ? (
+            sheets.map((sheet, index) => {
+              const isActive = index === activeSheetIndex;
+              return (
+                <button
+                  key={`${sheet.name}-${sheet.index}`}
+                  type="button"
+                  onClick={() => onActiveSheetIndexChange(index)}
+                  className={`shrink-0 rounded-md px-2.5 py-1 text-xs transition-colors ${
+                    isActive
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                  }`}
+                >
+                  {sheet.name}
+                </button>
+              );
+            })
+          ) : (
+            <span className="truncate px-1 text-xs text-muted-foreground/75">
+              {activeSheet.name}
+            </span>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="hidden text-xs text-muted-foreground/75 sm:inline">
+            {metadataParts.join(" · ")}
+          </span>
+          {editable ? (
+            <div className="flex items-center gap-1">
+              <Button type="button" variant="ghost" size="xs" onClick={addColumn}>
+                <Plus size={11} />
+                Column
+              </Button>
+              <Button type="button" variant="ghost" size="xs" onClick={addRow}>
+                <Plus size={11} />
+                Row
+              </Button>
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   );

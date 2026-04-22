@@ -1431,9 +1431,21 @@ test("chat pane offers an explicit jump-to-browser CTA instead of auto-switching
   );
   assert.doesNotMatch(source, /showLiveAssistantTurn \|\|\s*showSessionBrowserJumpCta/);
   assert.doesNotMatch(source, /This session started using its browser\./);
-  assert.match(source, /Jump to browser/);
+  assert.match(source, /View in agent browser/);
   assert.match(
     source,
-    /<AssistantTurn[\s\S]*statusAccessory=\{\s*showSessionBrowserJumpCta\s*\?\s*\(/,
+    /const sessionBrowserJumpCta = showSessionBrowserJumpCta \? \(/,
+  );
+  assert.match(
+    source,
+    /statusAccessory=\{sessionBrowserJumpCta\}/,
+  );
+  assert.match(
+    source,
+    /footerAccessory=\{\s*message\.id === lastCompletedAssistantMessageId\s*\?\s*sessionBrowserJumpCta\s*:\s*null\s*\}/,
+  );
+  assert.match(
+    source,
+    /const lastCompletedAssistantMessageId = useMemo\(/,
   );
 });

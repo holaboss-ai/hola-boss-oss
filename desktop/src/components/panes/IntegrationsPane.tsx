@@ -315,13 +315,69 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
   }
 
   if (isLoading) {
-    return embedded ? (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 size={18} className="animate-spin text-muted-foreground" />
+    const skeletonCards = [
+      "w-24", "w-20", "w-28", "w-16", "w-24", "w-20",
+    ];
+    const skeletonGrid = (
+      <div
+        role="status"
+        aria-busy="true"
+        aria-label="Loading integrations"
+      >
+        {/* Skeleton search bar */}
+        <div className="mt-5 flex items-center gap-3">
+          <div className="h-9 flex-1 animate-pulse rounded-lg bg-muted-foreground/20" />
+          <div className="h-9 w-20 animate-pulse rounded-lg bg-muted-foreground/20" />
+        </div>
+        {/* Skeleton section label */}
+        <div className="mt-6 h-3 w-24 animate-pulse rounded bg-muted-foreground/20" />
+        {/* Skeleton cards */}
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          {skeletonCards.map((descWidth, index) => (
+            <div
+              // biome-ignore lint/suspicious/noArrayIndexKey: static skeleton list
+              key={index}
+              className="flex items-center gap-3 rounded-xl border border-border px-3 py-3"
+            >
+              {/* Icon placeholder */}
+              <div className="size-9 shrink-0 animate-pulse rounded-md bg-muted-foreground/20" />
+              {/* Name + description */}
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <div className="h-3 w-16 animate-pulse rounded bg-muted-foreground/20" />
+                <div className={`h-2.5 animate-pulse rounded bg-muted-foreground/20 ${descWidth}`} />
+              </div>
+              {/* Button placeholder */}
+              <div className="size-7 shrink-0 animate-pulse rounded-md bg-muted-foreground/20" />
+            </div>
+          ))}
+        </div>
       </div>
-    ) : (
-      <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
-        <Loader2 size={18} className="animate-spin text-muted-foreground" />
+    );
+
+    if (embedded) {
+      return (
+        <div className="max-w-5xl">
+          <p className="text-sm text-muted-foreground">
+            Connect your accounts to use them in workspaces.
+          </p>
+          {skeletonGrid}
+        </div>
+      );
+    }
+
+    return (
+      <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
+        <div className="relative min-h-0 flex-1 overflow-auto">
+          <div className="mx-auto max-w-5xl px-6 py-6">
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">
+              Integrations
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Connect your accounts to use them in workspaces.
+            </p>
+            {skeletonGrid}
+          </div>
+        </div>
       </section>
     );
   }
@@ -332,14 +388,14 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
       {!authSessionState.isPending && !isSignedIn ? (
         <div className="mt-4 flex items-center justify-between gap-4 rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3">
           <div className="min-w-0">
-            <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-widest text-destructive">
+            <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.14em] text-destructive">
               <ShieldAlert size={13} />
               <span>Sign-In Required</span>
             </div>
             <p className="mt-1 text-sm font-medium text-foreground">
               Managed integrations are unavailable until you sign in.
             </p>
-            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
               You can browse the catalog below, but connecting requires an authenticated session.
             </p>
           </div>
@@ -382,7 +438,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
       {/* Connected */}
       {connectedIntegrations.length > 0 ? (
         <div className="mt-6">
-          <h2 className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+          <h2 className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
             Connected
           </h2>
           <div className="mt-3 grid grid-cols-2 gap-2">
@@ -405,13 +461,13 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
       ) : null}
 
       {statusMessage ? (
-        <p className="mt-4 text-xs text-muted-foreground">{statusMessage}</p>
+        <p className="mt-4 text-sm text-muted-foreground">{statusMessage}</p>
       ) : null}
 
       {/* Available — grouped by category */}
       {groupedIntegrations.map(([category, items]) => (
         <div key={category} className="mt-6">
-          <h2 className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+          <h2 className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
             {category.charAt(0).toUpperCase() + category.slice(1)}
           </h2>
           <div className="mt-3 grid grid-cols-2 gap-2">
@@ -503,7 +559,7 @@ function IntegrationRow({
   const muted = actionMode === "disabled";
   return (
     <div
-      className={`flex items-center gap-3 rounded-xl border border-border px-3 py-2.5 transition-colors ${
+      className={`flex items-center gap-3 rounded-xl border border-border px-3 py-3 transition-colors ${
         muted ? "opacity-50" : "hover:bg-muted"
       }`}
     >
@@ -521,7 +577,7 @@ function IntegrationRow({
         <div className="truncate text-sm font-medium text-foreground">
           {integration.name}
         </div>
-        <div className="truncate text-xs text-muted-foreground">
+        <div className="truncate text-sm text-muted-foreground">
           {integration.description}
         </div>
       </div>

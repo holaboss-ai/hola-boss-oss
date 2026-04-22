@@ -24,7 +24,7 @@ test("scheduled tab toggle updates cronjob enabled state", async () => {
 
   assert.match(source, /await window\.electronAPI\.workspace\.updateCronjob\(job\.id, \{\s*enabled: !job\.enabled,\s*\}\);/);
   assert.match(source, /setCronjobs\(\(previous\) =>\s*previous\.map\(\(item\) => \(item\.id === updated\.id \? updated : item\)\),\s*\);/);
-  assert.match(source, /aria-label=\{job\.enabled \? "Disable schedule" : "Enable schedule"\}/);
+  assert.match(source, /aria-label=\{\s*job\.enabled\s*\?\s*"Disable schedule"\s*:\s*"Enable schedule"\s*\}/);
 });
 
 test("scheduled rows expose a run-now action for each automation", async () => {
@@ -41,7 +41,7 @@ test("post-action refresh preserves the current banner and suppresses transient 
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(source, /interface RefreshDataOptions \{\s*preserveStatusMessage\?: boolean;\s*suppressErrors\?: boolean;\s*\}/);
-  assert.match(source, /const refreshData = useCallback\(async \(options\?: RefreshDataOptions\) => \{/);
+  assert.match(source, /const refreshData = useCallback\(\s*async \(options\?: RefreshDataOptions\) => \{/);
   assert.match(source, /if \(!preserveStatusMessage\) \{\s*setStatusMessage\(""\);\s*\}/);
   assert.match(source, /if \(!suppressErrors\) \{\s*setStatusTone\("error"\);\s*setStatusMessage\(normalizeErrorMessage\(error\)\);\s*\}/);
   assert.match(source, /void refreshData\(\{\s*preserveStatusMessage: true,\s*suppressErrors: true,\s*\}\);/);
@@ -92,7 +92,7 @@ test("scheduled rows use a kebab menu for run, edit, and delete actions", async 
   assert.match(source, /const handleEdit = \(job: CronjobRecordPayload\) => \{/);
   assert.match(source, /if \(onEditSchedule\) \{\s*onEditSchedule\(job\);\s*return;\s*\}/);
   assert.match(source, /Actions for \$\{jobTitle\(job\)\}/);
-  assert.match(source, /<MoreHorizontal size=\{20\} \/>/);
+  assert.match(source, /<MoreHorizontal size=\{16\} \/>/);
   assert.match(source, /<Pencil size=\{16\} \/>/);
   assert.match(source, /Run now/);
   assert.match(source, /Edit/);
@@ -106,17 +106,10 @@ test("new schedule button uses the shared primary button style", async () => {
   assert.doesNotMatch(source, /bg-foreground/);
 });
 
-test("embedded automations toolbar uses the shared compact control height", async () => {
+test("automations toolbar uses shadcn Tabs primitive instead of custom pill buttons", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /theme-subtle-surface mt-5 inline-flex items-center rounded-full border border-border\/45 bg-muted\/40 p-1/);
-  assert.match(source, /min-w-\[124px\] rounded-full px-4 text-sm font-semibold/);
-  assert.doesNotMatch(source, /h-9 min-w-\[132px\]/);
-});
-
-test("automation tabs keep a distinct hover state instead of blending into the track", async () => {
-  const source = await readFile(sourcePath, "utf8");
-
-  assert.match(source, /bg-background text-foreground shadow-sm hover:bg-background hover:text-foreground/);
-  assert.match(source, /text-muted-foreground hover:bg-background\/70 hover:text-foreground/);
+  assert.match(source, /from "@\/components\/ui\/tabs"/);
+  assert.match(source, /<TabsTrigger value="scheduled">/);
+  assert.match(source, /<TabsTrigger value="completed">/);
 });

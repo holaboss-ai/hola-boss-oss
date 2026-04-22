@@ -461,7 +461,7 @@ export function InternalSurfacePane({
     if (isLoading) {
       return (
         <div className="flex h-full items-center justify-center">
-          <div className="inline-flex items-center gap-2 text-[12px] text-muted-foreground">
+          <div className="inline-flex items-center gap-2 text-xs text-muted-foreground">
             <Loader2 size={14} className="animate-spin" />
             <span>Loading file preview...</span>
           </div>
@@ -490,8 +490,8 @@ export function InternalSurfacePane({
           {/* Toolbar */}
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/30 px-4 py-2">
             <div className="min-w-0">
-              <div className="text-[13px] font-medium text-foreground">{preview.name}</div>
-              <div className="text-[11px] text-muted-foreground">
+              <div className="text-sm font-medium text-foreground">{preview.name}</div>
+              <div className="text-xs text-muted-foreground">
                 {new Date(preview.modifiedAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
                 {preview.size != null ? ` · ${formatPreviewSize(preview.size)}` : ""}
                 {isDirty ? " · Unsaved changes" : ""}
@@ -536,8 +536,8 @@ export function InternalSurfacePane({
           </div>
 
           {/* Content */}
-          <div className="min-h-0 flex-1 overflow-auto">
-            {isMarkdownPreview && textPreviewMode === "preview" ? (
+          {isMarkdownPreview && textPreviewMode === "preview" ? (
+            <div className="min-h-0 flex-1 overflow-auto">
               <div className="mx-auto max-w-2xl px-6 py-6">
                 {previewDraft.trim() ? (
                   <SimpleMarkdown
@@ -552,35 +552,35 @@ export function InternalSurfacePane({
                   </div>
                 )}
               </div>
-            ) : isHtmlPreview && textPreviewMode === "preview" ? (
-              previewDraft.trim() ? (
-                <div className="h-full overflow-hidden bg-muted/20 p-4">
-                  <iframe
-                    title={preview.name}
-                    sandbox=""
-                    srcDoc={previewDraft}
-                    className="h-full w-full rounded-lg border border-border bg-white"
-                  />
-                </div>
-              ) : (
-                <div className="grid h-full place-items-center px-6 text-center">
-                  <div className="text-xs text-muted-foreground">
-                    Empty file — switch to Edit to add markup.
-                  </div>
-                </div>
-              )
+            </div>
+          ) : isHtmlPreview && textPreviewMode === "preview" ? (
+            previewDraft.trim() ? (
+              <div className="min-h-0 flex-1 overflow-hidden bg-muted/20 p-4">
+                <iframe
+                  title={preview.name}
+                  sandbox=""
+                  srcDoc={previewDraft}
+                  className="h-full w-full rounded-lg border border-border bg-white"
+                />
+              </div>
             ) : (
-              <textarea
-                value={previewDraft}
-                onChange={(event) => setPreviewDraft(event.target.value)}
-                readOnly={!preview.isEditable}
-                spellCheck={false}
-                className={`h-full min-h-full w-full resize-none border-0 bg-transparent px-6 py-5 font-mono text-[13px] leading-6 text-foreground outline-none ${
-                  preview.isEditable ? "" : "cursor-default opacity-80"
-                }`}
-              />
-            )}
-          </div>
+              <div className="grid min-h-0 flex-1 place-items-center px-6 text-center">
+                <div className="text-xs text-muted-foreground">
+                  Empty file — switch to Edit to add markup.
+                </div>
+              </div>
+            )
+          ) : (
+            <textarea
+              value={previewDraft}
+              onChange={(event) => setPreviewDraft(event.target.value)}
+              readOnly={!preview.isEditable}
+              spellCheck={false}
+              className={`min-h-0 flex-1 w-full resize-none border-0 bg-transparent px-6 py-5 font-mono text-sm text-foreground outline-none ${
+                preview.isEditable ? "" : "cursor-default opacity-80"
+              }`}
+            />
+          )}
         </div>
       );
     }
@@ -618,21 +618,59 @@ export function InternalSurfacePane({
         ];
       if (activeSheet) {
         return (
-          <SpreadsheetEditor
-            sheets={tablePreviewDraft}
-            activeSheetIndex={activeTableSheetIndex}
-            onActiveSheetIndexChange={setActiveTableSheetIndex}
-            editable={preview.isEditable}
-            readOnlyReason={
-              activeSheet.truncated
-                ? "Trimmed previews are read-only"
-                : preview.extension === ".xls"
-                  ? "Legacy .xls files are read-only"
-                  : null
-            }
-            onChange={setTablePreviewDraft}
-            onOpenLinkInBrowser={openPreviewLink}
-          />
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/30 px-4 py-2">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium text-foreground">
+                  {preview.name}
+                </div>
+                <div className="truncate text-xs text-muted-foreground/85">
+                  {new Date(preview.modifiedAt).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                  {preview.size != null
+                    ? ` · ${formatPreviewSize(preview.size)}`
+                    : ""}
+                  {` · ${tablePreviewDraft.length} sheet${tablePreviewDraft.length === 1 ? "" : "s"}`}
+                  {isDirty ? " · Unsaved changes" : ""}
+                </div>
+              </div>
+              {preview.isEditable ? (
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void savePreview()}
+                    disabled={!isDirty || isSaving}
+                  >
+                    <Save size={12} />
+                    {isSaving ? "Saving" : "Save"}
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-hidden p-3">
+              <SpreadsheetEditor
+                sheets={tablePreviewDraft}
+                activeSheetIndex={activeTableSheetIndex}
+                onActiveSheetIndexChange={setActiveTableSheetIndex}
+                editable={preview.isEditable}
+                readOnlyReason={
+                  activeSheet.truncated
+                    ? "Trimmed previews are read-only"
+                    : preview.extension === ".xls"
+                      ? "Legacy .xls files are read-only"
+                      : null
+                }
+                onChange={setTablePreviewDraft}
+                onOpenLinkInBrowser={openPreviewLink}
+              />
+            </div>
+          </div>
         );
       }
     }
@@ -668,7 +706,7 @@ export function InternalSurfacePane({
 
   return (
     <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border/40 bg-background">
-      <div className="min-h-0 flex-1 overflow-auto">{body}</div>
+      <div className="flex min-h-0 flex-1 flex-col">{body}</div>
     </section>
   );
 }
@@ -717,10 +755,10 @@ function EmptyState({
             <FileText size={18} />
           )}
         </div>
-        <div className="mt-3 text-[16px] font-medium text-foreground">
+        <div className="mt-3 text-base font-medium text-foreground">
           {title}
         </div>
-        <div className="mt-2 text-[12px] leading-6 text-muted-foreground/82">
+        <div className="mt-2 text-xs leading-6 text-muted-foreground/82">
           {detail}
         </div>
       </div>
