@@ -26,6 +26,7 @@ import {
 import { createPortal } from "react-dom";
 import { CreditsPill } from "@/components/billing/CreditsPill";
 import { Button } from "@/components/ui/button";
+import { UserAvatar } from "@/components/ui/UserAvatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,6 +37,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { useDesktopAuthSession } from "@/lib/auth/authClient";
 import { useDesktopBilling } from "@/lib/billing/useDesktopBilling";
 import { holabossLogoUrl } from "@/lib/assetPaths";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
@@ -70,6 +72,8 @@ export function TopTabsBar({
     integratedTitleBar && desktopPlatform === "win32";
   const { isAvailable: isBillingAvailable, overview, isLoading: isBillingLoading, isLowBalance } =
     useDesktopBilling();
+  const { data: authSession } = useDesktopAuthSession();
+  const currentUser = authSession?.user ?? null;
   const userButtonRef = useRef<HTMLButtonElement | null>(null);
   const workspaceSwitcherRef = useRef<HTMLDivElement | null>(null);
   const workspaceSwitcherButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -267,7 +271,7 @@ export function TopTabsBar({
             <img
               src={holabossLogoUrl}
               alt="Holaboss"
-              className="size-7 shrink-0 overflow-hidden rounded-[9px] border border-border shadow-subtle-xs"
+              className="size-7 shrink-0 overflow-hidden rounded-[9px] shadow-floating-xs"
             />
           </div>
         ) : (
@@ -275,7 +279,7 @@ export function TopTabsBar({
             <img
               src={holabossLogoUrl}
               alt="Holaboss"
-              className="size-7 shrink-0 overflow-hidden rounded-[9px] border border-border shadow-subtle-xs"
+              className="size-7 shrink-0 overflow-hidden rounded-[9px] shadow-floating-xs"
             />
             <div
               ref={workspaceSwitcherRef}
@@ -366,9 +370,16 @@ export function TopTabsBar({
           <DropdownMenu>
             <DropdownMenuTrigger
               ref={userButtonRef}
-              render={<Button variant="bordered" size="icon" className="rounded-lg" />}
+              render={
+                <Button
+                  variant="bordered"
+                  size="icon-sm"
+                  aria-label="Open account menu"
+                  className="overflow-hidden rounded-full p-0"
+                />
+              }
             >
-              <User2 />
+              <UserAvatar user={currentUser} />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" sideOffset={8} className="w-52">
               <DropdownMenuGroup>

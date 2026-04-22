@@ -84,6 +84,13 @@
     rgba(0, 0, 0, 0.04) 0 2px 2px -1px,
     rgba(0, 0, 0, 0.03) 0 0 0 0.5px;
 
+  /* One step up from shadow-subtle-xs — for elements that should
+     read as gently lifted off the surface (logos, badges, pills). */
+  --shadow-floating-xs:
+    rgba(0, 0, 0, 0.04) 0 1px 2px,
+    rgba(0, 0, 0, 0.06) 0 3px 6px -1px,
+    rgba(0, 0, 0, 0.08) 0 0 0 1px;
+
   /* Tight type scale — ~10-20% denser than Tailwind default. The
      small/extra-small steps shift down for labels/captions; headings
      compress from 1.875rem → 1.375rem for a refined, Cursor-like feel.
