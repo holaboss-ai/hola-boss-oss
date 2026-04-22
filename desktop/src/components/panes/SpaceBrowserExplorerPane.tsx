@@ -4,8 +4,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { Bot, Globe, Pause, Plus, Star, User, X } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { Bot, Globe, Plus, Star, User, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -74,19 +73,44 @@ function Favicon({ url, fallback, className }: FaviconProps) {
   );
 }
 
-function sessionStatusBadgeClasses(tone: SessionStatusTone): string {
-  switch (tone) {
-    case "active":
-      return "border-success/30 bg-success/10 text-success";
-    case "waiting":
-      return "border-warning/30 bg-warning/10 text-warning";
-    case "paused":
-      return "border-info/30 bg-info/10 text-info";
-    case "error":
-      return "border-destructive/30 bg-destructive/10 text-destructive";
-    default:
-      return "border-border bg-muted text-muted-foreground";
+function sessionDotClass(tone: SessionStatusTone, flashing = false): string {
+  const base = (() => {
+    switch (tone) {
+      case "active":
+        return "bg-success";
+      case "waiting":
+        return "bg-warning";
+      case "paused":
+        return "bg-info";
+      case "error":
+        return "bg-destructive";
+      default:
+        return "bg-muted-foreground";
+    }
+  })();
+  return flashing ? `${base} animate-pulse` : base;
+}
+
+function toneFromRuntimeStatus(
+  runtime: SessionRuntimeRecordPayload | null | undefined,
+): { tone: SessionStatusTone; flashing: boolean } {
+  const status =
+    runtime?.effective_state?.trim().toUpperCase() ||
+    runtime?.status?.trim().toUpperCase() ||
+    "";
+  if (status === "BUSY" || status === "QUEUED" || status === "PAUSING") {
+    return { tone: "active", flashing: true };
   }
+  if (status === "WAITING_USER") {
+    return { tone: "waiting", flashing: false };
+  }
+  if (status === "PAUSED") {
+    return { tone: "paused", flashing: false };
+  }
+  if (status === "ERROR") {
+    return { tone: "error", flashing: false };
+  }
+  return { tone: "idle", flashing: false };
 }
 
 export function SpaceBrowserExplorerPane({
@@ -184,81 +208,85 @@ export function SpaceBrowserExplorerPane({
         key={browserSpace}
         className={`flex min-h-0 flex-1 flex-col animate-in fade-in-0 duration-200 ease-out ${slideInClass}`}
       >
-      {/* Agent session chip — only surfaces when on Agent scope */}
+      {/* Agent session line — single-row indicator. Dot color carries
+          status; chevron only when there are multiple sessions to switch
+          between. Sits flush with the content below, no border. */}
       {browserSpace === "agent" ? (
-        <div className="shrink-0 border-b border-border px-2 py-1.5">
-          <div className="flex items-center gap-1.5">
+        <div className="shrink-0 px-2 pt-2">
+          {sortedAgentSessions.length === 0 ? (
+            <div className="px-2.5 py-1 text-xs text-muted-foreground">
+              No agent sessions
+            </div>
+          ) : sortedAgentSessions.length === 1 ? (
+            <div
+              className="flex items-center gap-2 px-2.5 py-1 text-xs"
+              title={sessionBrowserStatus?.label ?? "Agent session"}
+            >
+              <span
+                aria-hidden="true"
+                className={`size-1.5 shrink-0 rounded-full ${sessionDotClass(
+                  (sessionBrowserStatus?.tone as SessionStatusTone) ?? "idle",
+                  sessionBrowserStatus?.flashing ?? false,
+                )}`}
+              />
+              <span className="min-w-0 flex-1 truncate text-foreground">
+                {currentSessionLabel}
+              </span>
+            </div>
+          ) : (
             <Select
               value={browserState.sessionId ?? undefined}
               onValueChange={selectAgentSessionBrowser}
-              disabled={!hasAgentSessionBrowsers}
             >
-              <SelectTrigger className="h-7 min-w-0 flex-1 basis-0 rounded-md border-border bg-card px-2 text-left text-xs shadow-none">
-                <SelectValue
-                  placeholder={
-                    hasAgentSessionBrowsers
-                      ? "Choose session browser"
-                      : "No session browsers"
-                  }
-                >
-                  {browserState.sessionId
-                    ? currentSessionLabel
-                    : hasAgentSessionBrowsers
-                      ? "Choose session browser"
-                      : "No session browsers"}
+              <SelectTrigger
+                className="h-7 w-full gap-2 rounded-md border-transparent bg-transparent px-2.5 text-xs shadow-none hover:bg-accent data-[popup-open]:bg-accent dark:bg-transparent dark:hover:bg-accent"
+                title={sessionBrowserStatus?.label ?? "Agent session"}
+              >
+                <SelectValue>
+                  <span
+                    aria-hidden="true"
+                    className={`size-1.5 shrink-0 rounded-full ${sessionDotClass(
+                      (sessionBrowserStatus?.tone as SessionStatusTone) ??
+                        "idle",
+                      sessionBrowserStatus?.flashing ?? false,
+                    )}`}
+                  />
+                  <span className="min-w-0 flex-1 truncate text-foreground">
+                    {currentSessionLabel}
+                  </span>
                 </SelectValue>
               </SelectTrigger>
               <SelectContent align="start" className="p-1">
                 {sortedAgentSessions.map((session) => {
                   const runtimeState =
                     runtimeStatesBySessionId[session.session_id] ?? null;
-                  const isSelectedSession =
-                    (browserState.sessionId ?? "") === session.session_id;
+                  const { tone, flashing } =
+                    toneFromRuntimeStatus(runtimeState);
                   return (
                     <SelectItem
                       key={session.session_id}
                       value={session.session_id}
-                      className="rounded-md px-3 py-2 text-xs"
+                      className="gap-2 rounded-md px-2.5 py-1.5 text-xs"
                     >
-                      <span className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
-                        <span className="min-w-0 truncate text-foreground">
-                          {browserSessionTitle(session, session.session_id)}
-                        </span>
-                        {!isSelectedSession ? (
-                          <span className="shrink-0 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                            {browserSessionStatusLabel(runtimeState)}
-                          </span>
-                        ) : null}
+                      <span
+                        aria-hidden="true"
+                        className={`size-1.5 shrink-0 rounded-full ${sessionDotClass(
+                          tone,
+                          flashing,
+                        )}`}
+                      />
+                      <span
+                        className="min-w-0 flex-1 truncate text-foreground"
+                        title={browserSessionStatusLabel(runtimeState)}
+                      >
+                        {browserSessionTitle(session, session.session_id)}
                       </span>
                     </SelectItem>
                   );
                 })}
               </SelectContent>
             </Select>
-
-            {sessionBrowserStatus ? (
-              <Badge
-                variant="secondary"
-                className={`shrink-0 gap-1 rounded-full border px-2 py-0.5 text-[10px] ${sessionStatusBadgeClasses(
-                  sessionBrowserStatus.tone as SessionStatusTone,
-                )}`}
-              >
-                {sessionBrowserStatus.tone === "paused" ? (
-                  <Pause className="size-2.5" />
-                ) : (
-                  <span
-                    aria-hidden="true"
-                    className={`inline-block size-1.5 rounded-full ${
-                      sessionBrowserStatus.flashing
-                        ? "animate-pulse bg-success"
-                        : "bg-current opacity-70"
-                    }`}
-                  />
-                )}
-                {sessionBrowserStatus.label}
-              </Badge>
-            ) : null}
-          </div>
+          )}
         </div>
       ) : null}
 

@@ -32,31 +32,47 @@ test("space browser explorer renders the arc-inspired bottom scope switcher", as
   );
 });
 
-test("space browser explorer keeps the agent session selector compact and only on agent scope", async () => {
+test("space browser explorer keeps the agent session line compact and only on agent scope", async () => {
   const source = await readFile(sourcePath, "utf8");
 
   assert.doesNotMatch(source, /Agent Session Browser/);
 
-  // Agent session chip container is conditional on browserSpace === "agent".
+  // Agent session row is conditional on browserSpace === "agent" and the
+  // wrapper is ghost-styled (no border, no background).
   assert.match(
     source,
-    /browserSpace === "agent" \? \(\s*<div className="shrink-0 border-b border-border px-2 py-1\.5">/,
+    /browserSpace === "agent" \? \(\s*<div className="shrink-0 px-2 pt-2">/,
   );
 
-  // Compact SelectTrigger inside the chip.
+  // Ghost-styled SelectTrigger (no border, transparent bg, text-xs).
   assert.match(
     source,
-    /<SelectTrigger className="h-7 min-w-0 flex-1 basis-0 rounded-md border-border bg-card px-2 text-left text-xs shadow-none">/,
+    /<SelectTrigger\s[\s\S]*?className="h-7 w-full gap-2 rounded-md border-transparent bg-transparent px-2\.5 text-xs shadow-none/,
   );
 
   assert.match(
     source,
     /<SelectContent align="start" className="p-1">/,
   );
+});
+
+test("space browser explorer adapts the session line to session count", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  // 0-session branch: plain muted text, no dot, no chevron.
   assert.match(
     source,
-    /className="rounded-md px-3 py-2 text-xs"/,
+    /sortedAgentSessions\.length === 0 \? \(\s*<div className="px-2\.5 py-1 text-xs text-muted-foreground">\s*No agent sessions/,
   );
+
+  // 1-session branch: static row with dot + title, no Select/chevron.
+  assert.match(
+    source,
+    /sortedAgentSessions\.length === 1 \? \(\s*<div\s+className="flex items-center gap-2 px-2\.5 py-1 text-xs"/,
+  );
+
+  // ≥2 sessions fall through to the Select (chevron auto-rendered).
+  assert.match(source, /<Select\s+value=\{browserState\.sessionId \?\? undefined\}/);
 });
 
 test("browser session status badges use short single-word labels", async () => {
@@ -72,16 +88,17 @@ test("browser session status badges use short single-word labels", async () => {
   assert.doesNotMatch(source, /label: "Agent operating"/);
 });
 
-test("space browser explorer uses semantic tokens for session status tones", async () => {
+test("space browser explorer encodes session status tone via dot color only", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /border-success\/30 bg-success\/10 text-success/);
-  assert.match(source, /border-warning\/30 bg-warning\/10 text-warning/);
-  assert.match(source, /border-info\/30 bg-info\/10 text-info/);
-  assert.match(
-    source,
-    /border-destructive\/30 bg-destructive\/10 text-destructive/,
-  );
+  // Status is now carried purely by a colored dot, not a bordered badge.
+  assert.match(source, /case "active":\s*return "bg-success";/);
+  assert.match(source, /case "waiting":\s*return "bg-warning";/);
+  assert.match(source, /case "paused":\s*return "bg-info";/);
+  assert.match(source, /case "error":\s*return "bg-destructive";/);
+
+  // No more old-style status badge classnames.
+  assert.doesNotMatch(source, /border-success\/30 bg-success\/10 text-success/);
 });
 
 test("space browser explorer does not render a per-tab agent status dot", async () => {
