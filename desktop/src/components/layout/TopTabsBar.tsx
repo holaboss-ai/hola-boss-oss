@@ -267,7 +267,7 @@ export function TopTabsBar({
             <img
               src={holabossLogoUrl}
               alt="Holaboss"
-              className="size-7 shrink-0 rounded-[9px] border border-border overflow-hidden"
+              className="size-7 shrink-0 overflow-hidden rounded-[9px] border border-border shadow-subtle-xs"
             />
           </div>
         ) : (
@@ -275,7 +275,7 @@ export function TopTabsBar({
             <img
               src={holabossLogoUrl}
               alt="Holaboss"
-              className="size-7 shrink-0 rounded-[9px] border border-border overflow-hidden"
+              className="size-7 shrink-0 overflow-hidden rounded-[9px] border border-border shadow-subtle-xs"
             />
             <div
               ref={workspaceSwitcherRef}
@@ -283,7 +283,7 @@ export function TopTabsBar({
             >
               <Button
                 ref={workspaceSwitcherButtonRef}
-                variant={workspaceSwitcherOpen ? "secondary" : "outline"}
+                variant={workspaceSwitcherOpen ? "secondary" : "bordered"}
                 size="default"
                 onClick={() => {
                   setWorkspaceSwitcherOpen((open) => {
@@ -320,7 +320,7 @@ export function TopTabsBar({
             >
               <Button
                 ref={workspaceSwitcherButtonRef}
-                variant={workspaceSwitcherOpen ? "secondary" : "outline"}
+                variant={workspaceSwitcherOpen ? "secondary" : "bordered"}
                 size="default"
                 onClick={() => {
                   setWorkspaceSwitcherOpen((open) => {
@@ -366,7 +366,7 @@ export function TopTabsBar({
           <DropdownMenu>
             <DropdownMenuTrigger
               ref={userButtonRef}
-              render={<Button variant="outline" size="icon" className="rounded-lg" />}
+              render={<Button variant="bordered" size="icon" className="rounded-lg" />}
             >
               <User2 />
             </DropdownMenuTrigger>
