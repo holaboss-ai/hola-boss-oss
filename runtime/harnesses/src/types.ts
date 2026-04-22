@@ -53,7 +53,6 @@ export type HarnessPromptLayerApplyAt = "runtime_config" | "harness_adapter";
 export type HarnessPromptSectionChannel =
   | "system_prompt"
   | "context_message"
-  | "resume_context"
   | "attachment";
 
 export type HarnessPromptSectionPrecedence =
@@ -80,7 +79,6 @@ export type HarnessPromptLayerId =
   | "evolve_candidate_context"
   | "memory_recall"
   | "workspace_policy"
-  | "resume_context"
   | "harness_quirks";
 
 export interface HarnessPromptLayerPayload {
@@ -93,7 +91,6 @@ export interface HarnessPromptCacheProfilePayload {
   cacheable_section_ids: HarnessPromptLayerId[];
   volatile_section_ids: HarnessPromptLayerId[];
   context_message_ids: HarnessPromptLayerId[];
-  resume_context_ids: HarnessPromptLayerId[];
   attachment_ids: HarnessPromptLayerId[];
   compatibility_context_ids: HarnessPromptLayerId[];
   delta_section_ids: HarnessPromptLayerId[];

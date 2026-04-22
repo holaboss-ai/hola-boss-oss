@@ -17,11 +17,6 @@ import type {
   HarnessPromptLayerPayload,
 } from "../../harnesses/src/types.js";
 
-export interface AgentSessionResumeContext {
-  session_memory_path?: string | null;
-  session_memory_excerpt?: string | null;
-}
-
 export interface AgentRecalledMemoryContext {
   entries?: Array<{
     scope: string;
@@ -113,7 +108,6 @@ export interface ComposeBaseAgentPromptRequest {
   sessionKind?: string | null;
   sessionMode?: string | null;
   harnessId?: string | null;
-  sessionResumeContext?: AgentSessionResumeContext | null;
   recalledMemoryContext?: AgentRecalledMemoryContext | null;
   currentUserContext?: AgentCurrentUserContext | null;
   operatorSurfaceContext?: AgentOperatorSurfaceContext | null;
@@ -403,36 +397,6 @@ function evolveCandidateContextPromptSection(context: AgentEvolveCandidateContex
   return linesSection(lines);
 }
 
-function sessionResumeContextPromptSection(context: AgentSessionResumeContext | null | undefined): string {
-  if (!context) {
-    return "";
-  }
-  const sessionMemoryPath = nonEmptyText(context.session_memory_path);
-  const sessionMemoryExcerpt = nonEmptyText(context.session_memory_excerpt);
-
-  if (!sessionMemoryPath && !sessionMemoryExcerpt) {
-    return "";
-  }
-
-  const lines = [
-    "Session resume context:",
-    "Use this as continuity context derived from runtime-managed session memory excerpts. Verify current workspace state before acting on details that may have changed.",
-    "Treat the user's newest message as authoritative for this turn. Do not resume unfinished prior work unless that newest message clearly asks to continue it or clearly advances the same task.",
-    "If the newest message is conversational, brief, or ambiguous about continuation, respond to it directly first and ask whether the user wants to continue the unfinished prior work.",
-    "This runtime-managed resume summary is already loaded into prompt context. Do not reopen runtime-managed continuity files just to restate this context; inspect a referenced file only when you need details not included here or need to verify that it changed during this run.",
-  ];
-
-  lines.push("", "Session memory:");
-  if (sessionMemoryPath) {
-    lines.push(`- Path: \`${sessionMemoryPath}\``);
-  }
-  if (sessionMemoryExcerpt) {
-    lines.push(`- Excerpt: ${sessionMemoryExcerpt}`);
-  }
-
-  return linesSection(lines);
-}
-
 function recalledMemoryPromptSection(context: AgentRecalledMemoryContext | null | undefined): string {
   const entries = Array.isArray(context?.entries) ? context.entries : [];
   if (entries.length === 0) {
@@ -641,16 +605,6 @@ export function buildBaseAgentPromptSections(
     priority: 495,
     volatility: "run",
     content: evolveCandidateContextPromptSection(request.evolveCandidateContext)
-  });
-
-  pushPromptLayer(promptSections, {
-    id: "resume_context",
-    channel: "resume_context",
-    apply_at: "runtime_config",
-    precedence: "runtime_context",
-    priority: 550,
-    volatility: "run",
-    content: sessionResumeContextPromptSection(request.sessionResumeContext)
   });
 
   pushPromptLayer(promptSections, {

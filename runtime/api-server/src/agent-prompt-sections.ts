@@ -9,7 +9,6 @@ import type {
 export type AgentPromptSectionChannel =
   | "system_prompt"
   | "context_message"
-  | "resume_context"
   | "attachment";
 
 export type AgentPromptSectionVolatility = "stable" | "workspace" | "run";
@@ -40,7 +39,6 @@ export interface AgentPromptCacheProfile {
   cacheable_section_ids: HarnessPromptLayerId[];
   volatile_section_ids: HarnessPromptLayerId[];
   context_message_ids: HarnessPromptLayerId[];
-  resume_context_ids: HarnessPromptLayerId[];
   attachment_ids: HarnessPromptLayerId[];
   compatibility_context_ids: HarnessPromptLayerId[];
   delta_section_ids: HarnessPromptLayerId[];
@@ -66,7 +64,6 @@ const AGENT_PROMPT_SECTION_PRECEDENCE_ORDER: AgentPromptSectionPrecedence[] = [
 
 const COMPATIBILITY_CONTEXT_CHANNELS = new Set<AgentPromptSectionChannel>([
   "context_message",
-  "resume_context",
   "attachment",
 ]);
 
@@ -201,7 +198,6 @@ export function buildPromptCacheProfileFromSections(
     {}
   );
   const contextMessageIds = channelSectionIds.context_message ?? [];
-  const resumeContextIds = channelSectionIds.resume_context ?? [];
   const attachmentIds = channelSectionIds.attachment ?? [];
   const compatibilityContextIds = sortedSections
     .filter((section) => COMPATIBILITY_CONTEXT_CHANNELS.has(section.channel))
@@ -213,7 +209,6 @@ export function buildPromptCacheProfileFromSections(
     cacheable_section_ids: cacheableSections.map((section) => section.id),
     volatile_section_ids: volatileSections.map((section) => section.id),
     context_message_ids: contextMessageIds,
-    resume_context_ids: resumeContextIds,
     attachment_ids: attachmentIds,
     compatibility_context_ids: compatibilityContextIds,
     delta_section_ids: compatibilityContextIds,
