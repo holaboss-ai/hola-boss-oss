@@ -35,6 +35,8 @@
   --color-destructive: var(--destructive);
   --color-success: var(--success);
   --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-scrim: var(--scrim);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -88,6 +90,8 @@
   --radius: 0.675rem;
   --success: oklch(0.72 0.19 145);
   --warning: oklch(0.82 0.17 83);
+  --info: oklch(0.68 0.15 235);
+  --scrim: oklch(0.15 0.01 240 / 0.46);
 }
 
 @layer base {
