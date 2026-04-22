@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import * as Sentry from "@sentry/node";
 import JSZip from "jszip";
 import {
   AuthStorage,
@@ -38,6 +39,11 @@ import type {
   RunnerEventType,
   RunnerOutputEventPayload,
 } from "./contracts.js";
+import {
+  applyHarnessGenAiUsageMetrics,
+  harnessGenAiSpanAttributes,
+  type HarnessGenAiUsageMetrics,
+} from "./harness-ai-monitoring.js";
 import { resolvePiDesktopBrowserToolDefinitions } from "./pi-browser-tools.js";
 import { resolvePiRuntimeToolDefinitions } from "./pi-runtime-tools.js";
 import { resolvePiWebSearchToolDefinitions } from "./pi-web-search.js";
@@ -147,9 +153,27 @@ type PiModelBudget = {
   maxTokens: number;
 };
 
+type PiModelCost = {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+};
+
+type PiCatalogModelEntry = {
+  contextWindow?: unknown;
+  maxTokens?: unknown;
+  cost?: {
+    input?: unknown;
+    output?: unknown;
+    cacheRead?: unknown;
+    cacheWrite?: unknown;
+  };
+};
+
 const PI_MODEL_CATALOG = MODELS as Record<
   string,
-  Record<string, { contextWindow?: unknown; maxTokens?: unknown }>
+  Record<string, PiCatalogModelEntry>
 >;
 const PI_MCP_DISCOVERY_MAX_WAIT_MS = 10000;
 const PI_TODO_STATE_DIR = "todos";
@@ -820,6 +844,135 @@ function jsonObject(value: Record<string, unknown>): JsonObject {
 
 function finiteNumberOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function sumFiniteNumbers(...values: Array<number | null | undefined>): number | null {
+  const present = values.filter(
+    (value): value is number =>
+      typeof value === "number" && Number.isFinite(value),
+  );
+  if (present.length === 0) {
+    return null;
+  }
+  return present.reduce((total, value) => total + value, 0);
+}
+
+function piUsageMetricsFromAssistantMessage(
+  message: unknown,
+): HarnessGenAiUsageMetrics | null {
+  if (!isRecord(message) || message.role !== "assistant" || !isRecord(message.usage)) {
+    return null;
+  }
+  const usage = message.usage;
+  const uncachedInputTokens = finiteNumberOrNull(usage.input) ?? 0;
+  const cachedInputTokens = finiteNumberOrNull(usage.cacheRead) ?? 0;
+  const cacheWriteInputTokens = finiteNumberOrNull(usage.cacheWrite) ?? 0;
+  const outputTokens = finiteNumberOrNull(usage.output) ?? 0;
+  const inputCostUsd =
+    isRecord(usage.cost) ? finiteNumberOrNull(usage.cost.input) : null;
+  const outputCostUsd =
+    isRecord(usage.cost) ? finiteNumberOrNull(usage.cost.output) : null;
+  const totalCostUsd =
+    (isRecord(usage.cost) ? finiteNumberOrNull(usage.cost.total) : null) ??
+    sumFiniteNumbers(
+      inputCostUsd,
+      outputCostUsd,
+      isRecord(usage.cost) ? finiteNumberOrNull(usage.cost.cacheRead) : null,
+      isRecord(usage.cost) ? finiteNumberOrNull(usage.cost.cacheWrite) : null,
+    );
+  return {
+    inputTokens: uncachedInputTokens + cachedInputTokens,
+    outputTokens,
+    cachedInputTokens,
+    cacheWriteInputTokens,
+    totalTokens:
+      finiteNumberOrNull(usage.totalTokens) ??
+      uncachedInputTokens +
+        cachedInputTokens +
+        cacheWriteInputTokens +
+        outputTokens,
+    inputCostUsd,
+    outputCostUsd,
+    totalCostUsd,
+  };
+}
+
+function mergeHarnessUsageMetrics(
+  current: HarnessGenAiUsageMetrics | null,
+  next: HarnessGenAiUsageMetrics | null,
+): HarnessGenAiUsageMetrics | null {
+  if (!next) {
+    return current;
+  }
+  if (!current) {
+    return { ...next };
+  }
+  return {
+    inputTokens: (current.inputTokens ?? 0) + (next.inputTokens ?? 0),
+    outputTokens: (current.outputTokens ?? 0) + (next.outputTokens ?? 0),
+    cachedInputTokens:
+      (current.cachedInputTokens ?? 0) + (next.cachedInputTokens ?? 0),
+    cacheWriteInputTokens:
+      (current.cacheWriteInputTokens ?? 0) +
+      (next.cacheWriteInputTokens ?? 0),
+    totalTokens: (current.totalTokens ?? 0) + (next.totalTokens ?? 0),
+    inputCostUsd: sumFiniteNumbers(current.inputCostUsd, next.inputCostUsd),
+    outputCostUsd: sumFiniteNumbers(
+      current.outputCostUsd,
+      next.outputCostUsd,
+    ),
+    totalCostUsd: sumFiniteNumbers(current.totalCostUsd, next.totalCostUsd),
+  };
+}
+
+function tokenUsagePayloadFromHarnessUsage(
+  usage: HarnessGenAiUsageMetrics | null,
+): JsonObject | null {
+  if (!usage) {
+    return null;
+  }
+  const inputTokens = usage.inputTokens ?? 0;
+  const cachedInputTokens = usage.cachedInputTokens ?? 0;
+  const cacheWriteInputTokens = usage.cacheWriteInputTokens ?? 0;
+  const outputTokens = usage.outputTokens ?? 0;
+  const totalTokens =
+    usage.totalTokens ??
+    inputTokens + cacheWriteInputTokens + outputTokens;
+  const payload: Record<string, JsonValue> = {
+    input_tokens: inputTokens,
+    uncached_input_tokens: Math.max(0, inputTokens - cachedInputTokens),
+    output_tokens: outputTokens,
+    cached_input_tokens: cachedInputTokens,
+    cache_write_input_tokens: cacheWriteInputTokens,
+    total_tokens: totalTokens,
+  };
+  if (usage.inputCostUsd !== null && usage.inputCostUsd !== undefined) {
+    payload.cost_input_usd = usage.inputCostUsd;
+  }
+  if (usage.outputCostUsd !== null && usage.outputCostUsd !== undefined) {
+    payload.cost_output_usd = usage.outputCostUsd;
+  }
+  if (usage.totalCostUsd !== null && usage.totalCostUsd !== undefined) {
+    payload.estimated_cost_usd = usage.totalCostUsd;
+  }
+  return jsonObject(payload);
+}
+
+function requestDefaultHeaderValue(
+  request: Pick<HarnessHostPiRequest, "model_client">,
+  headerName: string,
+): string | null {
+  if (!isRecord(request.model_client.default_headers)) {
+    return null;
+  }
+  const expected = headerName.trim().toLowerCase();
+  for (const [key, value] of Object.entries(request.model_client.default_headers)) {
+    if (key.trim().toLowerCase() === expected && typeof value === "string") {
+      const trimmed = value.trim();
+      return trimmed || null;
+    }
+  }
+  return null;
 }
 
 function summarizeCompactionBranchEntry(entry: unknown): JsonObject | null {
@@ -4127,6 +4280,34 @@ function piModelBudgetFromCatalogEntry(entry: {
   };
 }
 
+function piModelCostFromCatalogEntry(
+  entry: PiCatalogModelEntry | null | undefined,
+): PiModelCost | null {
+  if (
+    typeof entry?.cost?.input !== "number" ||
+    !Number.isFinite(entry.cost.input) ||
+    entry.cost.input < 0 ||
+    typeof entry.cost.output !== "number" ||
+    !Number.isFinite(entry.cost.output) ||
+    entry.cost.output < 0 ||
+    typeof entry.cost.cacheRead !== "number" ||
+    !Number.isFinite(entry.cost.cacheRead) ||
+    entry.cost.cacheRead < 0 ||
+    typeof entry.cost.cacheWrite !== "number" ||
+    !Number.isFinite(entry.cost.cacheWrite) ||
+    entry.cost.cacheWrite < 0
+  ) {
+    return null;
+  }
+
+  return {
+    input: entry.cost.input,
+    output: entry.cost.output,
+    cacheRead: entry.cost.cacheRead,
+    cacheWrite: entry.cost.cacheWrite,
+  };
+}
+
 function piCatalogModelBudgetForRequest(
   request: HarnessHostPiRequest,
   api: Api,
@@ -4163,6 +4344,45 @@ function piCatalogModelBudgetForRequest(
     : null;
 }
 
+function piCatalogModelCostForRequest(
+  request: HarnessHostPiRequest,
+  api: Api,
+): PiModelCost | null {
+  const providerCandidates = piCatalogProviderCandidatesForRequest(request, api);
+  const modelIdCandidates = piCatalogModelIdCandidates(request);
+
+  for (const provider of providerCandidates) {
+    for (const modelId of modelIdCandidates) {
+      const matched = piModelCostFromCatalogEntry(
+        PI_MODEL_CATALOG[provider]?.[modelId],
+      );
+      if (matched) {
+        return matched;
+      }
+    }
+  }
+
+  const globalMatches = new Map<string, PiModelCost>();
+  for (const provider of Object.keys(PI_MODEL_CATALOG)) {
+    for (const modelId of modelIdCandidates) {
+      const matched = piModelCostFromCatalogEntry(
+        PI_MODEL_CATALOG[provider]?.[modelId],
+      );
+      if (!matched) {
+        continue;
+      }
+      globalMatches.set(
+        `${matched.input}:${matched.output}:${matched.cacheRead}:${matched.cacheWrite}`,
+        matched,
+      );
+    }
+  }
+
+  return globalMatches.size === 1
+    ? Array.from(globalMatches.values())[0] ?? null
+    : null;
+}
+
 function resolvedPiModelBudgetForRequest(
   request: HarnessHostPiRequest,
   api: Api,
@@ -4172,6 +4392,20 @@ function resolvedPiModelBudgetForRequest(
     piCatalogModelBudgetForRequest(request, api) ?? {
       contextWindow: PI_FALLBACK_CONTEXT_WINDOW,
       maxTokens: PI_FALLBACK_MAX_TOKENS,
+    }
+  );
+}
+
+function resolvedPiModelCostForRequest(
+  request: HarnessHostPiRequest,
+  api: Api,
+): PiModelCost {
+  return (
+    piCatalogModelCostForRequest(request, api) ?? {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
     }
   );
 }
@@ -4206,6 +4440,7 @@ export function buildPiProviderConfig(request: HarnessHostPiRequest) {
     api === "openai-completions" ? requestedPiOpenAiCompat(request) : undefined;
   const mergedCompat = mergePiOpenAiCompat(compat, requestedCompat);
   const modelBudget = resolvedPiModelBudgetForRequest(request, api);
+  const modelCost = resolvedPiModelCostForRequest(request, api);
 
   return {
     baseUrl,
@@ -4221,12 +4456,7 @@ export function buildPiProviderConfig(request: HarnessHostPiRequest) {
         api,
         reasoning: requestedThinking !== null,
         input: piInputModalitiesForRequest(request),
-        cost: {
-          input: 0,
-          output: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
-        },
+        cost: modelCost,
         contextWindow: modelBudget.contextWindow,
         maxTokens: modelBudget.maxTokens,
         ...(mergedCompat ? { compat: mergedCompat } : {}),
@@ -4898,11 +5128,24 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
   const shouldEmitWaitingUser = () =>
     state.waitingForUser || hasBlockedPersistedPiTodoState(stateDir, request.session_id);
   let terminalEmitted = false;
+  let aggregatedUsage: HarnessGenAiUsageMetrics | null = null;
   const stateDir = resolvePiStateDir(request.workspace_dir);
   const unsubscribe = handle.session.subscribe((event) => {
+    if (event.type === "message_end") {
+      aggregatedUsage = mergeHarnessUsageMetrics(
+        aggregatedUsage,
+        piUsageMetricsFromAssistantMessage(event.message),
+      );
+    }
     for (const mapped of mapPiEvent(event, handle.sessionFile, state, {
       contextUsage: event.type === "agent_end" ? currentContextUsage() : null,
     })) {
+      if (mapped.event_type === "run_completed" || mapped.event_type === "run_failed") {
+        const usagePayload = tokenUsagePayloadFromHarnessUsage(aggregatedUsage);
+        if (usagePayload && !isRecord(mapped.payload.usage) && !isRecord(mapped.payload.token_usage)) {
+          mapped.payload.usage = usagePayload;
+        }
+      }
       if (
         mapped.event_type === "run_completed" &&
         typeof mapped.payload.status === "string" &&
@@ -4952,38 +5195,89 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
     }, request.timeout_seconds * 1000);
   }
 
-  try {
-    await handle.session.sendUserMessage(await promptContentForRequest(request));
-    if (!terminalEmitted) {
-      emitRunnerEvent(request, nextSequence(), "run_completed", {
-        status: shouldEmitWaitingUser() ? "waiting_user" : "success",
-        source: "pi",
-        event: "send_user_message_resolved",
-        harness_session_id: handle.sessionFile,
-        context_usage: currentContextUsage(),
-      });
-    }
-    return 0;
-  } catch (error) {
-    if (!terminalEmitted) {
-      const message = timedOut
-        ? `Pi session timed out after ${request.timeout_seconds} seconds`
-        : sdkErrorMessage(error, "Pi session failed");
-      emitRunnerEvent(request, nextSequence(), "run_failed", {
-        type: timedOut ? "TimeoutError" : error instanceof Error && error.name ? error.name : "Error",
-        message,
-        source: "pi",
-        harness_session_id: handle.sessionFile,
-      });
-    }
-    return 1;
-  } finally {
-    if (timeoutHandle) {
-      clearTimeout(timeoutHandle);
-    }
-    unsubscribe();
-    await handle.dispose();
-  }
+  return await Sentry.startSpan(
+    {
+      name: `invoke_agent ${normalizedPiModelId(request) || request.model_id}`,
+      op: "gen_ai.invoke_agent",
+      attributes: harnessGenAiSpanAttributes({
+        operationName: "invoke_agent",
+        model: normalizedPiModelId(request) || request.model_id,
+        providerId: request.provider_id,
+        workspaceId: request.workspace_id,
+        sessionId: request.session_id,
+        inputId: request.input_id,
+        userId: requestDefaultHeaderValue(request, "x-holaboss-user-id"),
+        sandboxId: requestDefaultHeaderValue(
+          request,
+          "x-holaboss-sandbox-id",
+        ),
+        agentName: "PI Agent",
+        thinkingValue: request.thinking_value ?? null,
+      }),
+    },
+    async (span) => {
+      try {
+        await handle.session.sendUserMessage(await promptContentForRequest(request));
+        if (!terminalEmitted) {
+          const usagePayload = tokenUsagePayloadFromHarnessUsage(aggregatedUsage);
+          emitRunnerEvent(request, nextSequence(), "run_completed", {
+            status: shouldEmitWaitingUser() ? "waiting_user" : "success",
+            source: "pi",
+            event: "send_user_message_resolved",
+            harness_session_id: handle.sessionFile,
+            context_usage: currentContextUsage(),
+            ...(usagePayload ? { usage: usagePayload } : {}),
+          });
+        }
+        applyHarnessGenAiUsageMetrics(span, aggregatedUsage);
+        if (state.terminalState === "failed") {
+          span.setAttribute("holaboss.run_status", "failed");
+          span.setStatus({ code: 2, message: "internal_error" });
+        } else {
+          const runStatus = shouldEmitWaitingUser() ? "waiting_user" : "success";
+          span.setAttribute("holaboss.run_status", runStatus);
+          span.setStatus({ code: 1, message: "ok" });
+        }
+        return 0;
+      } catch (error) {
+        if (!terminalEmitted) {
+          const message = timedOut
+            ? `Pi session timed out after ${request.timeout_seconds} seconds`
+            : sdkErrorMessage(error, "Pi session failed");
+          const usagePayload = tokenUsagePayloadFromHarnessUsage(aggregatedUsage);
+          emitRunnerEvent(request, nextSequence(), "run_failed", {
+            type:
+              timedOut
+                ? "TimeoutError"
+                : error instanceof Error && error.name
+                  ? error.name
+                  : "Error",
+            message,
+            source: "pi",
+            harness_session_id: handle.sessionFile,
+            ...(usagePayload ? { usage: usagePayload } : {}),
+          });
+        }
+        applyHarnessGenAiUsageMetrics(span, aggregatedUsage);
+        span.setAttribute("holaboss.run_status", "failed");
+        span.setStatus({
+          code: 2,
+          message: timedOut
+            ? "deadline_exceeded"
+            : error instanceof Error && error.name
+              ? error.name
+              : "internal_error",
+        });
+        return 1;
+      } finally {
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle);
+        }
+        unsubscribe();
+        await handle.dispose();
+      }
+    },
+  );
 }
 
 function compactionNoOpReason(error: unknown): string | null {
@@ -5006,7 +5300,14 @@ export async function compactPiSession(
   const diagnostics = await collectPiCompactionDiagnostics(session);
   let compactionStart: JsonObject | null = null;
   let compactionEnd: JsonObject | null = null;
+  let aggregatedUsage: HarnessGenAiUsageMetrics | null = null;
   const unsubscribe = session.subscribe?.((event: AgentSessionEvent) => {
+    if (event.type === "message_end") {
+      aggregatedUsage = mergeHarnessUsageMetrics(
+        aggregatedUsage,
+        piUsageMetricsFromAssistantMessage(event.message),
+      );
+    }
     if (event.type === "compaction_start") {
       compactionStart = summarizeCompactionEvent(event);
       return;
@@ -5015,29 +5316,141 @@ export async function compactPiSession(
       compactionEnd = summarizeCompactionEvent(event);
     }
   });
-  try {
-    const maintenanceResult = await runSnapshotPostRunMaintenanceCompaction(session);
-    if (maintenanceResult.kind === "compacted") {
-      return {
-        compacted: true,
-        session_file: handle.sessionFile,
-        result: maintenanceResult.result,
-        reason: null,
-        diagnostics: withCompactionEventDiagnostics(
-          diagnostics,
-          compactionStart,
-          compactionEnd,
+  return await Sentry.startSpan(
+    {
+      name: `compaction ${normalizedPiModelId(request) || request.model_id}`,
+      op: "gen_ai.request",
+      attributes: harnessGenAiSpanAttributes({
+        operationName: "compaction",
+        model: normalizedPiModelId(request) || request.model_id,
+        providerId: request.provider_id,
+        workspaceId: request.workspace_id,
+        sessionId: request.session_id,
+        inputId: request.input_id,
+        userId: requestDefaultHeaderValue(request, "x-holaboss-user-id"),
+        sandboxId: requestDefaultHeaderValue(
+          request,
+          "x-holaboss-sandbox-id",
         ),
-        error: null,
-      };
-    }
-    if (maintenanceResult.kind === "not_compacted") {
-      const compactionErrorMessage = compactionEnd
-        ? optionalTrimmedString(compactionEnd["error_message"])
-        : null;
-      if (compactionErrorMessage) {
-        const error = new Error(compactionErrorMessage);
-        error.name = "PiSnapshotCompactionError";
+        agentName: "PI Compaction",
+      }),
+    },
+    async (span) => {
+      try {
+        const maintenanceResult = await runSnapshotPostRunMaintenanceCompaction(session);
+        applyHarnessGenAiUsageMetrics(span, aggregatedUsage);
+        if (maintenanceResult.kind === "compacted") {
+          span.setAttribute("holaboss.compaction_result", "compacted");
+          span.setStatus({ code: 1, message: "ok" });
+          return {
+            compacted: true,
+            session_file: handle.sessionFile,
+            result: maintenanceResult.result,
+            reason: null,
+            diagnostics: withCompactionEventDiagnostics(
+              diagnostics,
+              compactionStart,
+              compactionEnd,
+            ),
+            error: null,
+          };
+        }
+        if (maintenanceResult.kind === "not_compacted") {
+          const compactionErrorMessage = compactionEnd
+            ? optionalTrimmedString(compactionEnd["error_message"])
+            : null;
+          if (compactionErrorMessage) {
+            const error = new Error(compactionErrorMessage);
+            error.name = "PiSnapshotCompactionError";
+            span.setAttribute("holaboss.compaction_result", "error");
+            span.setStatus({ code: 2, message: error.name });
+            return {
+              compacted: false,
+              session_file: handle.sessionFile,
+              result: null,
+              reason: null,
+              diagnostics: withCompactionEventDiagnostics(
+                diagnostics,
+                compactionStart,
+                compactionEnd,
+              ),
+              error: summarizePiCompactionError(error, compactionEnd),
+            };
+          }
+          span.setAttribute(
+            "holaboss.compaction_result",
+            maintenanceResult.reason ?? "not_compacted",
+          );
+          span.setStatus({ code: 1, message: "ok" });
+          return {
+            compacted: false,
+            session_file: handle.sessionFile,
+            result: null,
+            reason: maintenanceResult.reason,
+            diagnostics: withCompactionEventDiagnostics(
+              diagnostics,
+              compactionStart,
+              compactionEnd,
+            ),
+            error: null,
+          };
+        }
+        if (maintenanceResult.kind === "error") {
+          span.setAttribute("holaboss.compaction_result", "error");
+          span.setStatus({ code: 2, message: "internal_error" });
+          return {
+            compacted: false,
+            session_file: handle.sessionFile,
+            result: null,
+            reason: null,
+            diagnostics: withCompactionEventDiagnostics(
+              diagnostics,
+              compactionStart,
+              compactionEnd,
+            ),
+            error: summarizePiCompactionError(maintenanceResult.error, compactionEnd),
+          };
+        }
+        const result = await handle.session.compact();
+        applyHarnessGenAiUsageMetrics(span, aggregatedUsage);
+        span.setAttribute("holaboss.compaction_result", "compacted");
+        span.setStatus({ code: 1, message: "ok" });
+        return {
+          compacted: true,
+          session_file: handle.sessionFile,
+          result: jsonObject(JSON.parse(JSON.stringify(result)) as Record<string, unknown>),
+          reason: null,
+          diagnostics: withCompactionEventDiagnostics(
+            diagnostics,
+            compactionStart,
+            compactionEnd,
+          ),
+          error: null,
+        };
+      } catch (error) {
+        applyHarnessGenAiUsageMetrics(span, aggregatedUsage);
+        const reason = compactionNoOpReason(error);
+        if (reason) {
+          span.setAttribute("holaboss.compaction_result", reason);
+          span.setStatus({ code: 1, message: "ok" });
+          return {
+            compacted: false,
+            session_file: handle.sessionFile,
+            result: null,
+            reason,
+            diagnostics: withCompactionEventDiagnostics(
+              diagnostics,
+              compactionStart,
+              compactionEnd,
+            ),
+            error: null,
+          };
+        }
+        span.setAttribute("holaboss.compaction_result", "error");
+        span.setStatus({
+          code: 2,
+          message: error instanceof Error && error.name ? error.name : "internal_error",
+        });
         return {
           compacted: false,
           session_file: handle.sessionFile,
@@ -5050,77 +5463,10 @@ export async function compactPiSession(
           ),
           error: summarizePiCompactionError(error, compactionEnd),
         };
+      } finally {
+        unsubscribe?.();
+        await handle.dispose();
       }
-      return {
-        compacted: false,
-        session_file: handle.sessionFile,
-        result: null,
-        reason: maintenanceResult.reason,
-        diagnostics: withCompactionEventDiagnostics(
-          diagnostics,
-          compactionStart,
-          compactionEnd,
-        ),
-        error: null,
-      };
-    }
-    if (maintenanceResult.kind === "error") {
-      return {
-        compacted: false,
-        session_file: handle.sessionFile,
-        result: null,
-        reason: null,
-        diagnostics: withCompactionEventDiagnostics(
-          diagnostics,
-          compactionStart,
-          compactionEnd,
-        ),
-        error: summarizePiCompactionError(maintenanceResult.error, compactionEnd),
-      };
-    }
-    const result = await handle.session.compact();
-    return {
-      compacted: true,
-      session_file: handle.sessionFile,
-      result: jsonObject(JSON.parse(JSON.stringify(result)) as Record<string, unknown>),
-      reason: null,
-      diagnostics: withCompactionEventDiagnostics(
-        diagnostics,
-        compactionStart,
-        compactionEnd,
-      ),
-      error: null,
-    };
-  } catch (error) {
-    const reason = compactionNoOpReason(error);
-    if (reason) {
-      return {
-        compacted: false,
-        session_file: handle.sessionFile,
-        result: null,
-        reason,
-        diagnostics: withCompactionEventDiagnostics(
-          diagnostics,
-          compactionStart,
-          compactionEnd,
-        ),
-        error: null,
-      };
-    }
-    return {
-      compacted: false,
-      session_file: handle.sessionFile,
-      result: null,
-      reason: null,
-      diagnostics: withCompactionEventDiagnostics(
-        diagnostics,
-        compactionStart,
-        compactionEnd,
-      ),
-      error: summarizePiCompactionError(error, compactionEnd),
-    };
-  } finally {
-    unsubscribe?.();
-    await handle.dispose();
-  }
+    },
+  );
 }

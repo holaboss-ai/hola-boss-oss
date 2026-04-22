@@ -57,7 +57,8 @@ test("top tabs bar renders custom compact window controls for Windows title bar 
   assert.doesNotMatch(source, /onOpenMarketplace\?: \(\) => void;/);
   assert.doesNotMatch(source, /isMarketplaceActive\?: boolean;/);
   assert.doesNotMatch(source, /LayoutGrid/);
-  assert.match(source, /render=\{<Button variant="outline" size="icon" className="relative rounded-lg" \/>\}/);
+  assert.match(source, /render=\{<Button variant="outline" size="icon" className="rounded-lg" \/>\}/);
+  assert.doesNotMatch(source, /absolute -right-0\.5 -top-0\.5 size-2 rounded-full ring-2 ring-background/);
   assert.match(source, /window\.electronAPI\.ui\.getWindowState\(\)/);
   assert.match(source, /window\.electronAPI\.ui\.minimizeWindow\(\)/);
   assert.match(source, /window\.electronAPI\.ui\.closeWindow\(\)/);

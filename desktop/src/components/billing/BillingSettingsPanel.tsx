@@ -5,6 +5,7 @@ import {
   ArrowUpRight,
   ChevronRight,
   Gift,
+  RefreshCw,
   ShoppingCart,
   Sparkles,
   UserCog,
@@ -12,6 +13,11 @@ import {
 } from "lucide-react";
 import { BillingSummaryCard } from "@/components/billing/BillingSummaryCard";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useDesktopBilling } from "@/lib/billing/useDesktopBilling";
 
 // ============================================================================
@@ -233,7 +239,7 @@ function UsageRow({ item }: { item: UsageItem }) {
   const subtitle = resolveUsageSubtitle(item);
 
   return (
-    <div className="flex items-center justify-between gap-3 py-2">
+    <div className="flex items-center justify-between gap-3 py-3">
       <div className="flex min-w-0 items-center gap-2.5">
         <div
           className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
@@ -294,7 +300,7 @@ function UsageGroupRow({
     <div>
       {/* Group header */}
       <div
-        className="flex cursor-pointer items-center justify-between gap-3 py-2 transition-colors hover:bg-accent/30"
+        className="flex cursor-pointer items-center justify-between gap-3 py-3 transition-colors hover:bg-accent/30"
         onClick={onToggle}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -422,17 +428,66 @@ export function BillingSettingsPanel() {
         links={links}
         isLoading={isLoading}
         error={error}
-        onRefresh={() => void refresh()}
+        onRefresh={() => {
+          void refresh();
+        }}
       />
+
       <section className="grid gap-2 rounded-[24px] border border-border/40 bg-card/40 px-4 py-3">
-        <div className="text-lg font-semibold text-foreground">
-          Usage record
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-lg font-semibold text-foreground">
+            Usage record
+          </div>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={isLoading ? "Refreshing usage" : "Refresh usage"}
+                  onClick={() => {
+                    void refresh();
+                  }}
+                  disabled={isLoading}
+                />
+              }
+            >
+              <RefreshCw
+                size={14}
+                className={isLoading ? "animate-spin" : ""}
+              />
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              {isLoading ? "Refreshing..." : "Refresh"}
+            </TooltipContent>
+          </Tooltip>
         </div>
 
         <div className="divide-y divide-border/30">
-          {groups.length === 0 ? (
+          {isLoading && groups.length === 0 ? (
+            <div
+              role="status"
+              aria-busy="true"
+              aria-label="Loading usage"
+              className="py-1"
+            >
+              {[80, 96, 64].map((w) => (
+                <div key={w} className="flex items-center gap-2.5 py-3">
+                  <span className="h-7 w-7 shrink-0 animate-pulse rounded-full bg-muted-foreground/20" />
+                  <div className="flex min-w-0 flex-1 flex-col gap-1">
+                    <span
+                      className="h-3 animate-pulse rounded bg-muted-foreground/20"
+                      style={{ width: `${w}%` }}
+                    />
+                    <span className="h-2.5 w-32 animate-pulse rounded bg-muted-foreground/20" />
+                  </div>
+                  <span className="h-3 w-10 shrink-0 animate-pulse rounded bg-muted-foreground/20" />
+                </div>
+              ))}
+            </div>
+          ) : groups.length === 0 ? (
             <div className="py-3 text-sm text-muted-foreground">
-              {isLoading ? "Loading usage..." : "No usage yet."}
+              No usage yet.
             </div>
           ) : (
             groups.map((group) => (

@@ -1,10 +1,17 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import * as Sentry from "@sentry/node";
+
 import {
   createImageGenerationModelClient,
   resolveImageGenerationModelSelection,
 } from "./image-generation-model.js";
+import {
+  applyGenAiUsageMetrics,
+  genAiSpanAttributes,
+  openAiCompatibleUsageMetrics,
+} from "./runtime-ai-monitoring.js";
 
 export interface GenerateWorkspaceImageParams {
   workspaceRoot: string;
@@ -331,55 +338,97 @@ export async function generateWorkspaceImage(
     headers.Authorization = `Bearer ${client.apiKey.trim()}`;
   }
 
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(requestBody),
-  });
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || `image generation failed with status ${response.status}`);
-  }
+  return await Sentry.startSpan(
+    {
+      name: `images ${client.modelId}`,
+      op: "gen_ai.request",
+      attributes: genAiSpanAttributes({
+        operationName: "image_generation",
+        model: client.modelId,
+        providerId: selection.providerId,
+        workspaceId: params.workspaceId,
+        sessionId: params.sessionId,
+        inputId: params.inputId,
+        promptUserChars: prompt.length,
+        size: firstString(params.size) || null,
+      }),
+    },
+    async (span) => {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(requestBody),
+      });
+      span.setAttribute("http.response.status_code", response.status);
+      if (!response.ok) {
+        const detail = await response.text();
+        span.setStatus({
+          code: 2,
+          message: `status_${response.status}`,
+        });
+        throw new Error(detail || `image generation failed with status ${response.status}`);
+      }
 
-  const payload = await response.json().catch(() => ({}));
-  const openAiImageData = isRecord(payload) && Array.isArray(payload.data) && isRecord(payload.data[0])
-    ? payload.data[0]
-    : null;
-  const googleImageData = client.apiStyle === "google_native" ? googleNativeImageResult(payload) : null;
-  const openRouterImageData = client.apiStyle === "openrouter_image" ? openRouterImageResult(payload) : null;
-  const b64 = firstString(openAiImageData?.b64_json, googleImageData?.b64, openRouterImageData?.b64);
-  if (!b64) {
-    throw new Error("image generation did not return b64_json output");
-  }
+      const payload = await response.json().catch(() => ({}));
+      applyGenAiUsageMetrics(
+        span,
+        openAiCompatibleUsageMetrics(payload, { defaultOutputTokens: 0 }),
+      );
+      const openAiImageData =
+        isRecord(payload) && Array.isArray(payload.data) && isRecord(payload.data[0])
+          ? payload.data[0]
+          : null;
+      const googleImageData =
+        client.apiStyle === "google_native" ? googleNativeImageResult(payload) : null;
+      const openRouterImageData =
+        client.apiStyle === "openrouter_image" ? openRouterImageResult(payload) : null;
+      const b64 = firstString(
+        openAiImageData?.b64_json,
+        googleImageData?.b64,
+        openRouterImageData?.b64,
+      );
+      if (!b64) {
+        span.setStatus({ code: 2, message: "invalid_payload" });
+        throw new Error("image generation did not return b64_json output");
+      }
 
-  const buffer = Buffer.from(b64, "base64");
-  const detectedFormat =
-    openRouterImageData?.mimeType === "image/png"
-      ? { extension: ".png", mimeType: "image/png" }
-      : openRouterImageData?.mimeType === "image/jpeg"
-        ? { extension: ".jpg", mimeType: "image/jpeg" }
-        : openRouterImageData?.mimeType === "image/webp"
-          ? { extension: ".webp", mimeType: "image/webp" }
-          : detectImageFormat(buffer);
-  const revisedPrompt =
-    firstString(openAiImageData?.revised_prompt, googleImageData?.revisedPrompt, openRouterImageData?.revisedPrompt) || null;
-  const { absolutePath, relativePath } = outputFilePath({
-    workspaceRoot: params.workspaceRoot,
-    workspaceId: params.workspaceId,
-    filename: params.filename,
-    extension: detectedFormat.extension,
-  });
+      const buffer = Buffer.from(b64, "base64");
+      const detectedFormat =
+        openRouterImageData?.mimeType === "image/png"
+          ? { extension: ".png", mimeType: "image/png" }
+          : openRouterImageData?.mimeType === "image/jpeg"
+            ? { extension: ".jpg", mimeType: "image/jpeg" }
+            : openRouterImageData?.mimeType === "image/webp"
+              ? { extension: ".webp", mimeType: "image/webp" }
+              : detectImageFormat(buffer);
+      const revisedPrompt =
+        firstString(
+          openAiImageData?.revised_prompt,
+          googleImageData?.revisedPrompt,
+          openRouterImageData?.revisedPrompt,
+        ) || null;
+      const { absolutePath, relativePath } = outputFilePath({
+        workspaceRoot: params.workspaceRoot,
+        workspaceId: params.workspaceId,
+        filename: params.filename,
+        extension: detectedFormat.extension,
+      });
 
-  await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-  await fs.writeFile(absolutePath, buffer);
+      await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+      await fs.writeFile(absolutePath, buffer);
+      span.setAttribute("holaboss.image.output_bytes", buffer.length);
+      span.setAttribute("holaboss.image.mime_type", detectedFormat.mimeType);
+      span.setStatus({ code: 1, message: "ok" });
 
-  return {
-    filePath: relativePath,
-    mimeType: detectedFormat.mimeType,
-    sizeBytes: buffer.length,
-    providerId: selection.providerId,
-    modelId: selection.modelId,
-    prompt,
-    revisedPrompt,
-  };
+      return {
+        filePath: relativePath,
+        mimeType: detectedFormat.mimeType,
+        sizeBytes: buffer.length,
+        providerId: selection.providerId,
+        modelId: client.modelId,
+        prompt,
+        revisedPrompt,
+      };
+    },
+  );
 }

@@ -236,13 +236,13 @@ body {
   0%,
   100% {
     opacity: 0.62;
-    box-shadow:
-      inset 0 0 18px color-mix(in oklch, var(--primary) 14%, transparent);
+    box-shadow: inset 0 0 18px
+      color-mix(in oklch, var(--primary) 14%, transparent);
   }
   50% {
     opacity: 0.96;
-    box-shadow:
-      inset 0 0 38px color-mix(in oklch, var(--primary) 30%, transparent);
+    box-shadow: inset 0 0 38px
+      color-mix(in oklch, var(--primary) 30%, transparent);
   }
 }
 
@@ -256,9 +256,32 @@ body {
   animation: holaboss-browser-active-frame 2.8s ease-in-out infinite;
 }
 
+@keyframes holaboss-browser-jump-flash {
+  0% {
+    box-shadow:
+      0 0 0 0 transparent,
+      inset 0 0 0 0 transparent;
+  }
+  18% {
+    box-shadow:
+      0 0 36px color-mix(in oklch, var(--primary) 48%, transparent),
+      inset 0 0 36px color-mix(in oklch, var(--primary) 24%, transparent);
+  }
+  100% {
+    box-shadow:
+      0 0 0 0 transparent,
+      inset 0 0 0 0 transparent;
+  }
+}
+
+.browser-jump-flash {
+  animation: holaboss-browser-jump-flash 720ms ease-out;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .browser-active-glow,
-  .browser-active-glow-frame {
+  .browser-active-glow-frame,
+  .browser-jump-flash {
     animation: none;
   }
 }
@@ -282,8 +305,8 @@ body {
 /* ---- Chat bubbles ---- */
 
 .theme-chat-user-bubble {
-  background: color-mix(in oklch, var(--primary) 14%, transparent);
-  border-color: color-mix(in oklch, var(--primary) 24%, transparent);
+  background: color-mix(in oklch, var(--muted) 85%, var(--foreground) 4%);
+  border-color: transparent;
   box-shadow: none;
 }
 
@@ -415,61 +438,61 @@ webview {
   color: var(--foreground);
 }
 
-/* ---- Simple Markdown (marketplace kit README) ---- */
+
+/* ---- Simple Markdown ---- */
 
 .simple-markdown {
+  font-size: 15px;
+  line-height: 1.72;
   color: var(--foreground);
-  font-size: 13px;
-  line-height: 1.75;
 }
 
 .simple-markdown .md-h1 {
-  font-size: 22px;
-  font-weight: 600;
+  font-size: 28px;
+  font-weight: 500;
   letter-spacing: -0.03em;
-  margin-top: 28px;
-  margin-bottom: 12px;
+  line-height: 1.2;
+  margin-top: 0;
+  margin-bottom: 16px;
   color: var(--foreground);
 }
 
 .simple-markdown .md-h2 {
-  font-size: 17px;
-  font-weight: 600;
+  font-size: 22px;
+  font-weight: 500;
   letter-spacing: -0.02em;
-  margin-top: 24px;
+  line-height: 1.3;
+  margin-top: 36px;
   margin-bottom: 10px;
   color: var(--foreground);
 }
 
 .simple-markdown .md-h3 {
-  font-size: 14px;
-  font-weight: 600;
-  margin-top: 20px;
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.4;
+  margin-top: 28px;
   margin-bottom: 8px;
   color: var(--foreground);
 }
 
 .simple-markdown .md-h4 {
-  font-size: 13px;
-  font-weight: 600;
-  margin-top: 18px;
-  margin-bottom: 8px;
-  color: var(--foreground);
-}
-
-.simple-markdown .md-h5 {
-  font-size: 12px;
-  font-weight: 600;
-  margin-top: 16px;
-  margin-bottom: 8px;
-  color: var(--foreground);
-}
-
-.simple-markdown .md-h6 {
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 500;
-  margin-top: 14px;
+  line-height: 1.5;
+  margin-top: 20px;
   margin-bottom: 6px;
+  color: var(--foreground);
+}
+
+.simple-markdown .md-h5,
+.simple-markdown .md-h6 {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  margin-top: 16px;
+  margin-bottom: 4px;
   color: var(--muted-foreground);
 }
 
@@ -483,13 +506,23 @@ webview {
 }
 
 .simple-markdown .md-p {
-  margin-top: 8px;
-  margin-bottom: 8px;
+  margin-top: 12px;
+  margin-bottom: 0;
+  color: color-mix(in oklch, var(--foreground) 88%, transparent);
+}
+
+.simple-markdown .md-p:first-child,
+.simple-markdown .md-ul:first-child,
+.simple-markdown .md-ol:first-child,
+.simple-markdown .md-blockquote:first-child,
+.simple-markdown .md-code-block:first-child,
+.simple-markdown .md-table:first-child {
+  margin-top: 0;
 }
 
 .simple-markdown .md-img {
   max-width: 100%;
-  border-radius: 12px;
+  border-radius: 10px;
   margin-top: 12px;
   margin-bottom: 12px;
 }
@@ -497,161 +530,25 @@ webview {
 .simple-markdown .md-code-block {
   background: color-mix(in oklch, var(--background) 80%, black);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 10px;
   padding: 14px 16px;
   margin: 12px 0;
   overflow-x: auto;
-  font-size: 11px;
+  font-size: 12.5px;
   line-height: 1.6;
   white-space: pre;
   font-family: ui-monospace, monospace;
 }
 
 .simple-markdown .md-inline-code {
-  background: color-mix(in oklch, var(--muted) 60%, transparent);
+  background: color-mix(in oklch, var(--muted) 70%, transparent);
   border-radius: 5px;
-  padding: 2px 6px;
-  font-size: 11.5px;
+  padding: 1px 5px;
+  font-size: 12.5px;
   font-family: ui-monospace, monospace;
+  font-weight: 400;
 }
 
-.simple-markdown .md-blockquote {
-  border-left: 3px solid var(--border);
-  padding-left: 14px;
-  margin: 12px 0;
-  color: var(--muted-foreground);
-  font-style: italic;
-}
-
-.simple-markdown .md-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 12px 0;
-  font-size: 12px;
-}
-
-.simple-markdown .md-table th,
-.simple-markdown .md-table td {
-  border: 1px solid var(--border);
-  padding: 8px 12px;
-  text-align: left;
-}
-
-.simple-markdown .md-table th {
-  font-weight: 600;
-  background: var(--muted);
-}
-
-.simple-markdown .md-ul,
-.simple-markdown .md-ol {
-  padding-left: 20px;
-  margin: 8px 0;
-}
-
-.simple-markdown .md-li,
-.simple-markdown .md-oli {
-  margin: 4px 0;
-}
-
-.simple-markdown .md-link {
-  color: var(--primary);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.simple-markdown .md-hr {
-  border: none;
-  border-top: 1px solid var(--border);
-  margin: 20px 0;
-}
-
-/* ---- Simple Markdown (marketplace kit README) ---- */
-.simple-markdown {
-  color: rgb(var(--color-text-main) / 0.88);
-  font-size: 13px;
-  line-height: 1.75;
-}
-.simple-markdown .md-h1 {
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.03em;
-  margin-top: 28px;
-  margin-bottom: 12px;
-  color: rgb(var(--color-text-main));
-}
-.simple-markdown .md-h2 {
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  margin-top: 24px;
-  margin-bottom: 10px;
-  color: rgb(var(--color-text-main));
-}
-.simple-markdown .md-h3 {
-  font-size: 14px;
-  font-weight: 600;
-  margin-top: 20px;
-  margin-bottom: 8px;
-  color: rgb(var(--color-text-main));
-}
-.simple-markdown .md-h4 {
-  font-size: 13px;
-  font-weight: 600;
-  margin-top: 18px;
-  margin-bottom: 8px;
-  color: rgb(var(--color-text-main));
-}
-.simple-markdown .md-h5 {
-  font-size: 12px;
-  font-weight: 600;
-  margin-top: 16px;
-  margin-bottom: 8px;
-  color: rgb(var(--color-text-main));
-}
-.simple-markdown .md-h6 {
-  font-size: 12px;
-  font-weight: 500;
-  margin-top: 14px;
-  margin-bottom: 6px;
-  color: rgb(var(--color-text-muted));
-}
-.simple-markdown .md-h1:first-child,
-.simple-markdown .md-h2:first-child,
-.simple-markdown .md-h3:first-child,
-.simple-markdown .md-h4:first-child,
-.simple-markdown .md-h5:first-child,
-.simple-markdown .md-h6:first-child {
-  margin-top: 0;
-}
-.simple-markdown .md-p {
-  margin-top: 8px;
-  margin-bottom: 8px;
-}
-.simple-markdown .md-img {
-  max-width: 100%;
-  border-radius: 12px;
-  margin-top: 12px;
-  margin-bottom: 12px;
-}
-.simple-markdown .md-code-block {
-  background: rgba(0, 0, 0, 0.12);
-  border: 1px solid rgb(var(--color-panel-border) / 0.3);
-  border-radius: 12px;
-  padding: 14px 16px;
-  margin: 12px 0;
-  overflow-x: auto;
-  font-size: 11px;
-  line-height: 1.6;
-  white-space: pre;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
-}
-.simple-markdown .md-inline-code {
-  background: rgba(0, 0, 0, 0.1);
-  border-radius: 5px;
-  padding: 2px 6px;
-  font-size: 11.5px;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
-}
 .simple-markdown .md-code-block > code {
   background: transparent;
   border-radius: 0;
@@ -659,54 +556,86 @@ webview {
   font-size: inherit;
   font-family: inherit;
 }
+
 .simple-markdown .md-blockquote {
-  border-left: 3px solid rgb(var(--color-panel-border) / 0.5);
-  padding-left: 14px;
-  margin: 12px 0;
-  color: rgb(var(--color-text-muted) / 0.82);
-  font-style: italic;
+  border-left: 2px solid var(--border);
+  padding-left: 16px;
+  margin: 14px 0;
+  color: var(--muted-foreground);
+  font-style: normal;
 }
+
 .simple-markdown .md-table {
   width: 100%;
   border-collapse: collapse;
-  margin: 12px 0;
-  font-size: 12px;
+  margin: 14px 0;
+  font-size: 13.5px;
 }
+
 .simple-markdown .md-table th,
 .simple-markdown .md-table td {
-  border: 1px solid rgb(var(--color-panel-border) / 0.3);
   padding: 8px 12px;
   text-align: left;
 }
+
 .simple-markdown .md-table th {
-  font-weight: 600;
-  background: rgba(0, 0, 0, 0.06);
+  font-weight: 500;
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--border);
 }
+
+.simple-markdown .md-table td {
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+}
+
+.simple-markdown .md-table tr:last-child td {
+  border-bottom: none;
+}
+
 .simple-markdown .md-ul,
 .simple-markdown .md-ol {
-  padding-left: 20px;
-  margin: 8px 0;
+  padding-left: 22px;
+  margin: 12px 0;
 }
+
 .simple-markdown .md-ul {
   list-style: disc;
 }
+
 .simple-markdown .md-ol {
   list-style: decimal;
 }
+
 .simple-markdown .md-li,
 .simple-markdown .md-oli {
   margin: 4px 0;
+  color: color-mix(in oklch, var(--foreground) 80%, transparent);
 }
+
 .simple-markdown .md-link {
-  color: rgb(var(--color-text-main));
+  color: var(--foreground);
   text-decoration: underline;
-  text-underline-offset: 2px;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in oklch, var(--foreground) 30%, transparent);
 }
+
+.simple-markdown .md-link:hover {
+  text-decoration-color: var(--foreground);
+}
+
+.simple-markdown strong {
+  font-weight: 500;
+}
+
 .simple-markdown .md-hr {
   border: none;
-  border-top: 1px solid rgb(var(--color-panel-border) / 0.3);
-  margin: 20px 0;
+  border-top: 1px solid var(--border);
+  margin: 24px 0;
+  opacity: 0.4;
 }
+
+/* ---- Chat Markdown (conversation context — scales down simple-markdown) ---- */
 
 .chat-markdown {
   max-width: 100%;
@@ -714,21 +643,112 @@ webview {
   word-break: break-word;
 }
 
+/* font-size per role */
 .chat-user-markdown {
-  font-size: 13px;
-  line-height: 1.75;
+  font-size: 14px;
+  line-height: 1.6;
 }
 
 .chat-assistant-markdown {
-  font-size: 14px;
-  line-height: 1.8;
+  font-size: 15px;
+  line-height: 1.72;
+}
+
+.chat-assistant-markdown .md-p {
+  margin-top: 14px;
+}
+
+.chat-assistant-markdown .md-ul,
+.chat-assistant-markdown .md-ol {
+  margin: 14px 0;
+}
+
+.chat-assistant-markdown .md-li,
+.chat-assistant-markdown .md-oli {
+  margin: 6px 0;
+}
+
+.chat-assistant-markdown .md-h1 {
+  font-size: 1.45em;
+  font-weight: 600;
+  line-height: 1.35;
+  margin-top: 1.6em;
+  margin-bottom: 0.6em;
+}
+
+.chat-assistant-markdown .md-h2 {
+  font-size: 1.25em;
+  font-weight: 600;
+  line-height: 1.4;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+
+.chat-assistant-markdown .md-h3 {
+  font-size: 1.1em;
+  font-weight: 600;
+  line-height: 1.45;
+  margin-top: 1.3em;
+  margin-bottom: 0.4em;
+}
+
+.chat-assistant-markdown .md-h4 {
+  font-size: 1em;
+  font-weight: 600;
+  line-height: 1.5;
+  margin-top: 1.1em;
+  margin-bottom: 0.35em;
+}
+
+.chat-assistant-markdown .md-h1:first-child,
+.chat-assistant-markdown .md-h2:first-child,
+.chat-assistant-markdown .md-h3:first-child,
+.chat-assistant-markdown .md-h4:first-child,
+.chat-assistant-markdown .md-p:first-child,
+.chat-assistant-markdown .md-ul:first-child,
+.chat-assistant-markdown .md-ol:first-child {
+  margin-top: 0;
+}
+
+.chat-assistant-markdown strong {
+  font-weight: 600;
+}
+
+.chat-assistant-markdown .md-p + .md-ul,
+.chat-assistant-markdown .md-p + .md-ol {
+  margin-top: 0;
+}
+
+.chat-assistant-markdown .md-h1 + *,
+.chat-assistant-markdown .md-h2 + *,
+.chat-assistant-markdown .md-h3 + *,
+.chat-assistant-markdown .md-h4 + * {
+  margin-top: 0;
+}
+
+.chat-assistant-markdown .md-inline-code {
+  background: color-mix(in oklch, var(--muted) 80%, transparent);
+  border-radius: 4px;
+  padding: 0.15em 0.38em;
+  font-size: 0.875em;
+  font-weight: 500;
+}
+
+.chat-assistant-markdown .md-blockquote {
+  border-left: 2px solid color-mix(in oklch, var(--foreground) 25%, transparent);
+  padding: 0.35em 0 0.35em 1em;
+  margin: 1em 0;
+  color: color-mix(in oklch, var(--foreground) 75%, transparent);
+  font-weight: 500;
 }
 
 .chat-thinking-markdown {
   font-size: 12px;
-  line-height: 1.55;
+  line-height: 1.6;
+  color: color-mix(in oklch, var(--foreground) 70%, transparent);
 }
 
+/* overflow-wrap for chat URLs and long tokens */
 .chat-markdown .md-link,
 .chat-markdown .md-p,
 .chat-markdown .md-li,
@@ -740,27 +760,56 @@ webview {
   word-break: break-word;
 }
 
+/* headings — same DNA as simple-markdown but scaled for chat bubbles */
 .chat-markdown .md-h1 {
-  font-size: 17px;
-  line-height: 1.5;
-  margin-top: 14px;
-  margin-bottom: 6px;
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  margin-top: 18px;
+  margin-bottom: 8px;
 }
 
 .chat-markdown .md-h2 {
-  font-size: 15px;
-  line-height: 1.55;
-  margin-top: 12px;
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+  margin-top: 16px;
   margin-bottom: 6px;
 }
 
 .chat-markdown .md-h3,
-.chat-markdown .md-h4,
+.chat-markdown .md-h4 {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  margin-top: 12px;
+  margin-bottom: 4px;
+}
+
 .chat-markdown .md-h5,
 .chat-markdown .md-h6 {
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
   margin-top: 10px;
   margin-bottom: 4px;
+  color: var(--muted-foreground);
+}
+
+.chat-markdown .md-h1:first-child,
+.chat-markdown .md-h2:first-child,
+.chat-markdown .md-h3:first-child,
+.chat-markdown .md-h4:first-child,
+.chat-markdown .md-h5:first-child,
+.chat-markdown .md-h6:first-child {
+  margin-top: 0;
+}
+
+.chat-markdown .md-p {
+  margin-top: 10px;
+  margin-bottom: 0;
 }
 
 .chat-markdown .md-p:first-child,
@@ -781,8 +830,61 @@ webview {
   margin-bottom: 0;
 }
 
+.chat-markdown .md-ul,
+.chat-markdown .md-ol {
+  margin: 10px 0;
+}
+
+.chat-markdown .md-li,
+.chat-markdown .md-oli {
+  margin: 3px 0;
+}
+
 .chat-markdown .md-code-block {
   margin: 10px 0;
   font-size: 12px;
   line-height: 1.55;
+}
+
+
+/* ---- File Preview Markdown (document reader — spacing modifier) ---- */
+
+.simple-markdown.file-preview-markdown .md-h1 {
+  margin-bottom: 18px;
+}
+
+.simple-markdown.file-preview-markdown .md-h2 {
+  margin-top: 48px;
+  margin-bottom: 12px;
+}
+
+.simple-markdown.file-preview-markdown .md-h3 {
+  margin-top: 36px;
+  margin-bottom: 10px;
+}
+
+.simple-markdown.file-preview-markdown .md-h4 {
+  margin-top: 26px;
+}
+
+.simple-markdown.file-preview-markdown .md-p {
+  margin-top: 14px;
+}
+
+.simple-markdown.file-preview-markdown .md-ul,
+.simple-markdown.file-preview-markdown .md-ol {
+  margin: 14px 0;
+}
+
+.simple-markdown.file-preview-markdown .md-li,
+.simple-markdown.file-preview-markdown .md-oli {
+  margin: 6px 0;
+}
+
+.simple-markdown.file-preview-markdown .md-blockquote {
+  margin: 18px 0;
+}
+
+.simple-markdown.file-preview-markdown .md-hr {
+  margin: 36px 0;
 }

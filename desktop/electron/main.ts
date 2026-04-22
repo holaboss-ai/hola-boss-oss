@@ -288,7 +288,7 @@ const DEV_SHELL_CSP = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: http: https:",
   "font-src 'self' data:",
-  "connect-src 'self' http://localhost:* ws://localhost:* https: wss:",
+  "connect-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* https: wss:",
   "worker-src 'self' blob:",
   // App surfaces are rendered in renderer iframes and resolve to local
   // runtime ports such as http://localhost:38090 during development.

@@ -3,6 +3,7 @@ import {
   CreditCard,
   ExternalLink,
   FileArchive,
+  FolderKanban,
   Globe,
   Info,
   Loader2,
@@ -400,7 +401,7 @@ export function SettingsDialog({
                   key={id}
                   type="button"
                   onClick={() => onSectionChange(id)}
-                  className={`flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] transition-colors ${
+                  className={`flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-left text-sm transition-colors ${
                     active
                       ? "bg-sidebar-accent text-sidebar-accent-foreground"
                       : "text-sidebar-foreground/72 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
@@ -416,7 +417,7 @@ export function SettingsDialog({
 
         <section className="flex min-h-0 min-w-0 flex-col overflow-hidden">
           <header className="flex items-center justify-between gap-4 border-b border-border/35 px-6 py-4">
-            <div className="text-base font-semibold text-foreground">
+            <div className="text-lg font-semibold text-foreground">
               {titleForSection(activeSection)}
             </div>
 
@@ -456,9 +457,9 @@ export function SettingsDialog({
             ) : null}
 
             {activeSection === "settings" ? (
-              <div className="grid gap-5">
+              <div className="grid gap-6">
                 <section>
-                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                  <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
                     App
                   </div>
 
@@ -587,7 +588,7 @@ export function SettingsDialog({
                 </section>
 
                 <section>
-                  <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+                  <div className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
                     Appearance
                   </div>
 
@@ -633,7 +634,7 @@ export function SettingsDialog({
                           </div>
 
                           <div className="mt-2.5 flex items-center justify-between gap-2">
-                            <span className="text-[13px] font-medium text-foreground">
+                            <span className="text-sm font-medium text-foreground">
                               {prettifyThemeLabel(themeOption)}
                             </span>
                             {selected ? (
@@ -667,17 +668,20 @@ export function SettingsDialog({
                       }
                       disabled={workspaces.length === 0}
                     >
-                      <SelectTrigger className="min-w-[220px] rounded-full border-border/40 bg-background/80 px-3.5 text-sm shadow-none sm:w-[280px]">
-                        <SelectValue placeholder="Select workspace">
-                          {(value: string | null) =>
-                            value
-                              ? workspaces.find((workspace) => workspace.id === value)?.name ??
-                                "Select workspace"
+                      <SelectTrigger className="w-56">
+                        <FolderKanban
+                          size={14}
+                          className="text-muted-foreground"
+                        />
+                        <SelectValue
+                          placeholder={
+                            workspaces.length === 0
+                              ? "No workspaces available"
                               : "Select workspace"
                           }
-                        </SelectValue>
+                        />
                       </SelectTrigger>
-                      <SelectContent align="end">
+                      <SelectContent>
                         {workspaces.map((workspace) => (
                           <SelectItem key={workspace.id} value={workspace.id}>
                             {workspace.name}
@@ -711,7 +715,7 @@ export function SettingsDialog({
             {activeSection === "about" ? (
               <div className="grid max-w-[720px] gap-6">
                 <section>
-                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                  <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
                     Links
                   </div>
 
@@ -741,7 +745,7 @@ export function SettingsDialog({
                 </section>
 
                 <section>
-                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                  <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
                     Diagnostics
                   </div>
                   <div className="mt-4 rounded-xl border border-border/35 bg-background/70 px-4 py-4">

@@ -306,9 +306,43 @@ export function SubmissionsPanel() {
   }
 
   if (loading) {
+    const skeletonWidths = [
+      { name: "w-32", sub: "w-20", badge: "w-16", size: "w-8", date: "w-16" },
+      { name: "w-44", sub: "w-28", badge: "w-14", size: "w-10", date: "w-14" },
+      { name: "w-36", sub: "w-16", badge: "w-16", size: "w-6", date: "w-20" },
+      { name: "w-28", sub: "w-24", badge: "w-14", size: "w-8", date: "w-16" },
+      { name: "w-40", sub: "w-20", badge: "w-16", size: "w-10", date: "w-14" },
+    ];
     return (
-      <div className="flex items-center justify-center py-16">
-        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+      <div
+        role="status"
+        aria-busy="true"
+        aria-label="Loading submissions"
+        className="max-w-[960px]"
+      >
+        <div className="grid grid-cols-[20px_minmax(0,1fr)_100px_80px_110px_40px] items-center gap-3 border-b border-border/40 px-4 pb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          <span />
+          <span>Template</span>
+          <span>Status</span>
+          <span>Size</span>
+          <span>Date</span>
+          <span />
+        </div>
+        {skeletonWidths.map((w, i) => (
+          <div key={i} className="border-b border-border/30">
+            <div className="grid grid-cols-[20px_minmax(0,1fr)_100px_80px_110px_40px] items-center gap-3 px-4 py-3">
+              <span className="size-3.5 animate-pulse rounded-sm bg-muted-foreground/20" />
+              <div className="min-w-0 space-y-1.5">
+                <span className={`block h-3.5 animate-pulse rounded bg-muted-foreground/20 ${w.name}`} />
+                <span className={`block h-2.5 animate-pulse rounded bg-muted-foreground/20 ${w.sub}`} />
+              </div>
+              <span className={`h-5 animate-pulse rounded-full bg-muted-foreground/20 ${w.badge}`} />
+              <span className={`h-3 animate-pulse rounded bg-muted-foreground/20 ${w.size}`} />
+              <span className={`h-3 animate-pulse rounded bg-muted-foreground/20 ${w.date}`} />
+              <span className="size-5 animate-pulse rounded bg-muted-foreground/20" />
+            </div>
+          </div>
+        ))}
       </div>
     );
   }
@@ -329,14 +363,14 @@ export function SubmissionsPanel() {
       <div className="rounded-[24px] border border-border/40 bg-card/80 px-6 py-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+            <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
               <ShieldAlert className="size-3.5 text-primary" />
               <span>Sign-In Required</span>
             </div>
             <p className="mt-2 text-sm font-medium text-foreground">
               Your template submissions are only available after you sign in.
             </p>
-            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
               Connect this desktop app to your account to review and
               manage marketplace submissions.
             </p>
@@ -361,7 +395,7 @@ export function SubmissionsPanel() {
         <p className="text-sm font-medium text-foreground">
           No submissions yet
         </p>
-        <p className="mt-1 text-xs text-muted-foreground">
+        <p className="mt-1 text-sm text-muted-foreground">
           Publish a workspace template to see it listed here.
         </p>
       </div>

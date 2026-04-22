@@ -59,6 +59,7 @@ interface SpaceBrowserDisplayPaneProps {
   suspendNativeView?: boolean;
   layoutSyncKey?: string;
   embedded?: boolean;
+  jumpPulseKey?: number;
 }
 
 export function SpaceBrowserDisplayPane({
@@ -66,6 +67,7 @@ export function SpaceBrowserDisplayPane({
   suspendNativeView = false,
   layoutSyncKey = "",
   embedded = false,
+  jumpPulseKey = 0,
 }: SpaceBrowserDisplayPaneProps) {
   const [inputValue, setInputValue] = useState("");
   const [addressFocused, setAddressFocused] = useState(false);
@@ -106,6 +108,21 @@ export function SpaceBrowserDisplayPane({
 
   const showAgentActivityHighlight =
     sessionBrowserStatus?.tone === "active" || glowPreviewEnabled;
+
+  const [jumpFlashActive, setJumpFlashActive] = useState(false);
+  useEffect(() => {
+    if (jumpPulseKey <= 0) {
+      return;
+    }
+    setJumpFlashActive(true);
+    const timeoutId = window.setTimeout(() => {
+      setJumpFlashActive(false);
+    }, 720);
+    return () => {
+      window.clearTimeout(timeoutId);
+      setJumpFlashActive(false);
+    };
+  }, [jumpPulseKey]);
 
   useEffect(() => {
     setInputValue(activeTab.url || "");
@@ -339,10 +356,10 @@ export function SpaceBrowserDisplayPane({
       className={`relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden ${
         embedded
           ? "bg-transparent"
-          : "rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm"
+          : "rounded-xl border border-border bg-card"
       }`}
     >
-      <div className="shrink-0 border-b border-border/45 px-4 py-2">
+      <div className="shrink-0 border-b border-border/30 px-4 py-2">
         <div className="flex flex-wrap items-center gap-1.5">
           <Button
             variant="ghost"
@@ -386,13 +403,13 @@ export function SpaceBrowserDisplayPane({
           <form onSubmit={onSubmit} className="min-w-0 flex-1">
             <div
               ref={addressFieldRef}
-              className="flex min-w-0 items-center gap-2 rounded-md border border-border bg-muted/50 px-3 py-2 transition-colors focus-within:border-ring"
+              className="flex min-w-0 items-center gap-2 rounded-md border border-border bg-muted px-3 py-2 transition-colors focus-within:border-ring"
               onClick={selectAddressInput}
             >
               {isActiveTabBusy ? (
                 <Loader2
                   size={13}
-                  className="shrink-0 animate-spin text-primary/85"
+                  className="shrink-0 animate-spin text-primary"
                 />
               ) : (
                 <Globe size={13} className="shrink-0 text-muted-foreground" />
@@ -410,7 +427,7 @@ export function SpaceBrowserDisplayPane({
                   window.setTimeout(() => setAddressFocused(false), 120)
                 }
                 onKeyDown={onAddressKeyDown}
-                className="embedded-input w-full min-w-0 bg-transparent text-[12px] text-foreground outline-none placeholder:text-muted-foreground/55"
+                className="embedded-input w-full min-w-0 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
                 placeholder="Enter URL or search"
               />
             </div>
@@ -423,24 +440,23 @@ export function SpaceBrowserDisplayPane({
             onClick={onToggleBookmark}
             disabled={!activeTab.url}
             className={`shrink-0 rounded-full ${
-              isBookmarked ? "border-primary/50 bg-primary/10 text-primary" : ""
+              isBookmarked ? "text-primary" : ""
             }`}
             aria-label={isBookmarked ? "Remove bookmark" : "Add bookmark"}
           >
             <Star size={13} fill={isBookmarked ? "currentColor" : "none"} />
           </Button>
-
         </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden p-3">
         <div
           ref={viewportRef}
-          className={`relative h-full min-h-0 overflow-hidden rounded-xl border bg-card transition-all ${
+          className={`relative h-full min-h-0 overflow-hidden rounded-xl border bg-card transition-colors ${
             showAgentActivityHighlight
-              ? "browser-active-glow border-border/45"
+              ? "browser-active-glow border-border/30"
               : "border-border"
-          }`}
+          } ${jumpFlashActive ? "browser-jump-flash" : ""}`}
         >
           {showAgentActivityHighlight ? (
             <div
@@ -451,11 +467,14 @@ export function SpaceBrowserDisplayPane({
 
           {!activeTab.initialized ? (
             <div className="absolute inset-0 grid place-items-center bg-card p-6 text-center">
-              <div className="pointer-events-none w-full max-w-[360px] rounded-[24px] border border-border bg-card/92 px-6 py-6 shadow-lg backdrop-blur-sm">
-                <div className="mt-4 text-[15px] font-medium tracking-[-0.02em] text-foreground">
+              <div className="flex flex-col items-center gap-3">
+                <div className="grid size-11 place-items-center rounded-[12px] bg-muted text-muted-foreground">
+                  <Loader2 size={18} className="animate-spin" />
+                </div>
+                <div className="text-sm font-medium tracking-[-0.01em] text-foreground">
                   Starting {browserSpace === "agent" ? "agent" : "user"} browser
                 </div>
-                <div className="mt-1.5 text-[12px] leading-6 text-muted-foreground">
+                <div className="max-w-[320px] text-xs leading-5 text-muted-foreground">
                   Opening the embedded{" "}
                   {browserSpace === "agent" ? "agent" : "user"} browser for this
                   workspace.
@@ -465,8 +484,9 @@ export function SpaceBrowserDisplayPane({
           ) : null}
 
           {activeTab.error ? (
-            <div className="absolute inset-x-4 bottom-4 rounded-xl border border-amber-300/40 bg-black/70 px-3 py-2 text-xs text-amber-100/85">
-              {activeTab.error}
+            <div className="absolute inset-x-4 bottom-4 flex items-start gap-2 rounded-lg border-l-2 border-amber-500 bg-card px-3 py-2 text-xs leading-5 text-foreground shadow-sm">
+              <span className="mt-0.5 size-1.5 shrink-0 rounded-full bg-amber-500" />
+              <span className="min-w-0 flex-1">{activeTab.error}</span>
             </div>
           ) : null}
         </div>

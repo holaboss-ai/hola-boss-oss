@@ -7,6 +7,7 @@ import test from "node:test";
 import JSZip from "jszip";
 import ExcelJS from "exceljs";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
+import type { Model } from "@mariozechner/pi-ai";
 import { streamOpenAIResponses } from "../node_modules/@mariozechner/pi-ai/dist/providers/openai-responses.js";
 
 import type { HarnessHostPiRequest } from "./contracts.js";
@@ -1481,8 +1482,49 @@ test("buildPiProviderConfig uses OpenAI Responses API for managed Holaboss GPT-5
   assert.deepEqual(providerConfig.headers, {
     "X-Holaboss-User-Id": "user-1",
   });
+  assert.deepEqual(providerConfig.models[0]?.cost, {
+    input: 2.5,
+    output: 15,
+    cacheRead: 0.25,
+    cacheWrite: 0,
+  });
   assert.equal(providerConfig.models[0]?.contextWindow, 1_050_000);
   assert.equal(providerConfig.models[0]?.maxTokens, 128_000);
+});
+
+test("buildPiProviderConfig preserves catalog pricing after runtime provider registration", () => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-pricing-registry-"));
+
+  try {
+    const request: HarnessHostPiRequest = {
+      ...baseRequest(),
+      provider_id: "holaboss_model_proxy",
+      model_id: "gpt-5.4",
+      model_client: {
+        model_proxy_provider: "openai_compatible",
+        api_key: "hbmk-test",
+        base_url: "http://127.0.0.1:3060/api/v1/model-proxy/openai/v1",
+      },
+    };
+
+    const authStorage = AuthStorage.create(path.join(stateDir, "auth.json"));
+    const modelRegistry = ModelRegistry.create(
+      authStorage,
+      path.join(stateDir, "models.json"),
+    );
+    modelRegistry.registerProvider(request.provider_id, buildPiProviderConfig(request));
+
+    const model = modelRegistry.find("holaboss_model_proxy", "gpt-5.4");
+    assert.ok(model);
+    assert.deepEqual(model.cost, {
+      input: 2.5,
+      output: 15,
+      cacheRead: 0.25,
+      cacheWrite: 0,
+    });
+  } finally {
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
 });
 
 test("OpenAI Responses proxy routes request prompt cache retention and stable cache keys", async () => {
@@ -1502,8 +1544,9 @@ test("OpenAI Responses proxy routes request prompt cache retention and stable ca
     });
     const templateModel = providerConfig.models[0];
     assert.ok(templateModel);
-    const model = {
+    const model: Model<"openai-responses"> = {
       ...templateModel,
+      api: "openai-responses",
       provider: "holaboss_model_proxy",
       baseUrl: providerConfig.baseUrl,
       headers: providerConfig.headers,
@@ -1981,6 +2024,32 @@ test("runPi emits run_started and terminal success when the session completes", 
         },
       });
       this.listener?.({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "Done" }],
+          api: "openai-responses",
+          provider: "holaboss_model_proxy",
+          model: "gpt-5.4",
+          usage: {
+            input: 120,
+            output: 40,
+            cacheRead: 80,
+            cacheWrite: 12,
+            totalTokens: 252,
+            cost: {
+              input: 0.3,
+              output: 0.6,
+              cacheRead: 0.02,
+              cacheWrite: 0,
+              total: 0.92,
+            },
+          },
+          stopReason: "stop",
+          timestamp: Date.now(),
+        },
+      });
+      this.listener?.({
         type: "compaction_start",
         reason: "threshold",
       });
@@ -2040,6 +2109,17 @@ test("runPi emits run_started and terminal success when the session completes", 
     ]);
     assert.equal(events[0]?.payload.harness_session_id, "/tmp/pi-session.jsonl");
     assert.equal(derivedEvents[4]?.payload.harness_session_id, "/tmp/pi-session.jsonl");
+    assert.deepEqual(derivedEvents[4]?.payload.usage, {
+      input_tokens: 200,
+      uncached_input_tokens: 120,
+      output_tokens: 40,
+      cached_input_tokens: 80,
+      cache_write_input_tokens: 12,
+      total_tokens: 252,
+      cost_input_usd: 0.3,
+      cost_output_usd: 0.6,
+      estimated_cost_usd: 0.92,
+    });
     assert.equal(derivedEvents[2]?.payload.reason, "threshold");
     assert.deepEqual(derivedEvents[3]?.payload.result, {
       summary: "Compacted older context.",
@@ -2048,7 +2128,7 @@ test("runPi emits run_started and terminal success when the session completes", 
     });
     assert.deepEqual(
       onlyPiNativeEvents(events).map((event) => event.payload.native_type),
-      ["message_update", "compaction_start", "compaction_end", "agent_end"]
+      ["message_update", "message_end", "compaction_start", "compaction_end", "agent_end"]
     );
   } finally {
     process.stdout.write = originalWrite;
@@ -2074,12 +2154,12 @@ test("runPi emits terminal failure from assistant error messages and suppresses 
           provider: "anthropic_direct",
           model: "claude-sonnet-4-6",
           usage: {
-            input: 0,
-            output: 0,
-            cacheRead: 0,
+            input: 12,
+            output: 7,
+            cacheRead: 3,
             cacheWrite: 0,
-            totalTokens: 0,
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+            totalTokens: 22,
+            cost: { input: 0.12, output: 0.35, cacheRead: 0.01, cacheWrite: 0, total: 0.48 },
           },
           stopReason: "error",
           errorMessage: "404 Not Found",
@@ -2125,6 +2205,17 @@ test("runPi emits terminal failure from assistant error messages and suppresses 
     );
     assert.equal(derivedEvents[1]?.payload.message, "404 Not Found");
     assert.equal(derivedEvents[1]?.payload.harness_session_id, "/tmp/pi-session.jsonl");
+    assert.deepEqual(derivedEvents[1]?.payload.usage, {
+      input_tokens: 15,
+      uncached_input_tokens: 12,
+      output_tokens: 7,
+      cached_input_tokens: 3,
+      cache_write_input_tokens: 0,
+      total_tokens: 22,
+      cost_input_usd: 0.12,
+      cost_output_usd: 0.35,
+      estimated_cost_usd: 0.48,
+    });
     assert.deepEqual(
       onlyPiNativeEvents(events).map((event) => event.payload.native_type),
       ["message_end", "agent_end"]

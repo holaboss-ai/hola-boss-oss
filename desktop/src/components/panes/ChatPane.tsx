@@ -19,17 +19,24 @@ import {
   AlertTriangle,
   ArrowRight,
   ArrowUp,
+  ArrowUpRight,
   Cable,
   Check,
   ChevronDown,
   Clock3,
   CornerDownLeft,
   Copy,
+  File as FileIcon,
+  FileCode2,
+  FileSpreadsheet,
   FileText,
+  FileType,
   Folder,
+  Globe,
   Image as ImageIcon,
   Inbox,
   Lightbulb,
+  Link2,
   Loader2,
   Paperclip,
   PencilLine,
@@ -268,7 +275,9 @@ function pendingAttachmentIsImage(attachment: PendingAttachment): boolean {
   );
 }
 
-function supportsImageInput(inputModalities?: readonly string[] | null): boolean {
+function supportsImageInput(
+  inputModalities?: readonly string[] | null,
+): boolean {
   if (!Array.isArray(inputModalities) || inputModalities.length === 0) {
     return true;
   }
@@ -360,8 +369,7 @@ const CHAT_MODEL_STORAGE_KEY = "holaboss-chat-model-v1";
 const CHAT_THINKING_STORAGE_KEY = "holaboss-chat-thinking-v1";
 const CHAT_MODEL_USE_RUNTIME_DEFAULT = "__runtime_default__";
 const CHAT_SERIALIZED_SKILL_COMMAND_PATTERN = /^\/([A-Za-z0-9_-]+)$/;
-const QUEUED_MESSAGES_PREVIEW_EVENT =
-  "holaboss:queued-messages-preview-change";
+const QUEUED_MESSAGES_PREVIEW_EVENT = "holaboss:queued-messages-preview-change";
 const TODO_PREVIEW_EVENT = "holaboss:todo-preview-change";
 const LEGACY_UNAVAILABLE_CHAT_MODELS = new Set(["openai/gpt-5.2-mini"]);
 const DEPRECATED_CHAT_MODELS = new Set([
@@ -515,7 +523,9 @@ function normalizeStoredChatThinkingPreferences(
     }
     return Object.fromEntries(
       Object.entries(parsed)
-        .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+        .filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string",
+        )
         .map(([key, rawValue]) => [key.trim(), rawValue.trim()])
         .filter(([key, rawValue]) => Boolean(key) && Boolean(rawValue)),
     );
@@ -640,7 +650,8 @@ function buildComposerSlashCommandOptions(
       command: `/${skill.skill_id}`,
       label: skill.title,
       description: skill.summary,
-      searchText: `${skill.skill_id} ${skill.title} ${skill.summary}`.toLowerCase(),
+      searchText:
+        `${skill.skill_id} ${skill.title} ${skill.summary}`.toLowerCase(),
       skillId: skill.skill_id,
     }))
     .sort((left, right) => left.command.localeCompare(right.command));
@@ -795,11 +806,11 @@ function normalizeChatAttachment(value: unknown): ChatAttachment | null {
       ? "image"
       : value.kind === "folder"
         ? "folder"
-      : value.kind === "file"
-        ? "file"
-        : mimeType.startsWith("image/")
-          ? "image"
-          : "file";
+        : value.kind === "file"
+          ? "file"
+          : mimeType.startsWith("image/")
+            ? "image"
+            : "file";
 
   if (!id || !name || !mimeType || !workspacePath) {
     return null;
@@ -859,10 +870,7 @@ function appendAssistantOutputSegment(
   }
   const next = [...segments];
   const previous = next[next.length - 1];
-  if (
-    previous?.kind === "output" &&
-    (previous.tone ?? "default") === tone
-  ) {
+  if (previous?.kind === "output" && (previous.tone ?? "default") === tone) {
     next[next.length - 1] = {
       ...previous,
       text: `${previous.text}${text}`,
@@ -1159,7 +1167,9 @@ function normalizeClipboardAttachmentFile(file: File, index: number): File {
   });
 }
 
-function clipboardFilesFromDataTransfer(dataTransfer: DataTransfer | null): File[] {
+function clipboardFilesFromDataTransfer(
+  dataTransfer: DataTransfer | null,
+): File[] {
   if (!dataTransfer) {
     return [];
   }
@@ -1581,7 +1591,9 @@ function phaseHasRemainingTodoTasks(phase: ChatTodoPhase) {
 }
 
 function visibleTodoPhases(phases: ChatTodoPhase[]) {
-  const activePhases = phases.filter((phase) => phaseHasRemainingTodoTasks(phase));
+  const activePhases = phases.filter((phase) =>
+    phaseHasRemainingTodoTasks(phase),
+  );
   if (activePhases.length > 0) {
     return activePhases;
   }
@@ -1900,7 +1912,11 @@ function normalizeQueuedSessionInputPreviewEntries(
   entries: unknown,
 ): QueuedSessionInputPreviewDescriptor[] {
   const rawEntries =
-    typeof entries === "string" ? [entries] : Array.isArray(entries) ? entries : [];
+    typeof entries === "string"
+      ? [entries]
+      : Array.isArray(entries)
+        ? entries
+        : [];
   const normalized: QueuedSessionInputPreviewDescriptor[] = [];
   rawEntries.forEach((entry, index) => {
     if (typeof entry === "string") {
@@ -1927,8 +1943,8 @@ function normalizeQueuedSessionInputPreviewEntries(
     const attachments = Array.isArray(payload.attachments)
       ? payload.attachments
           .map((attachment) => normalizeChatAttachment(attachment))
-          .filter(
-            (attachment): attachment is ChatAttachment => Boolean(attachment),
+          .filter((attachment): attachment is ChatAttachment =>
+            Boolean(attachment),
           )
       : [];
     normalized.push({
@@ -1968,7 +1984,8 @@ function defaultTodoPlanPreview(): ChatTodoPlan {
             id: "task-research-2",
             content: "Pull the latest account context before replying",
             status: "in_progress",
-            details: "Waiting on the current run to finish before the follow-up can start.",
+            details:
+              "Waiting on the current run to finish before the follow-up can start.",
           },
         ],
       },
@@ -2203,7 +2220,9 @@ function syncableWorkspacePathFromRecord(
     }
   }
   for (const [key, candidate] of Object.entries(value)) {
-    if (!/(?:^|_)(?:path|file|filepath|filename|target|destination)$/i.test(key)) {
+    if (
+      !/(?:^|_)(?:path|file|filepath|filename|target|destination)$/i.test(key)
+    ) {
       continue;
     }
     const match = normalizeWorkspaceFileSyncPath(candidate);
@@ -2733,7 +2752,8 @@ function mergeTraceStep(
   const incomingIsNewer =
     incoming.order > existing.order ||
     (incoming.order === existing.order &&
-      traceStepStatusRank(incoming.status) >= traceStepStatusRank(existing.status));
+      traceStepStatusRank(incoming.status) >=
+        traceStepStatusRank(existing.status));
   const preferred = incomingIsNewer ? incoming : existing;
   const fallback = incomingIsNewer ? existing : incoming;
 
@@ -2741,7 +2761,8 @@ function mergeTraceStep(
     ...fallback,
     ...preferred,
     order: Math.min(existing.order, incoming.order),
-    details: preferred.details.length > 0 ? preferred.details : fallback.details,
+    details:
+      preferred.details.length > 0 ? preferred.details : fallback.details,
   };
 }
 
@@ -2760,10 +2781,7 @@ function appendExecutionTimelineThinkingDelta(
       ...lastItem,
       text: `${lastItem.text}${delta}`,
     };
-    return [
-      ...previous.slice(0, -1),
-      nextItem,
-    ];
+    return [...previous.slice(0, -1), nextItem];
   }
 
   const nextItem: ChatExecutionTimelineItem = {
@@ -2772,10 +2790,7 @@ function appendExecutionTimelineThinkingDelta(
     text: delta,
     order,
   };
-  return [
-    ...previous,
-    nextItem,
-  ];
+  return [...previous, nextItem];
 }
 
 function upsertExecutionTimelineTraceItem(
@@ -2792,7 +2807,9 @@ function upsertExecutionTimelineTraceItem(
       step,
       order: step.order,
     };
-    return [...previous, nextItem].sort((left, right) => left.order - right.order);
+    return [...previous, nextItem].sort(
+      (left, right) => left.order - right.order,
+    );
   }
 
   return previous.map((item, index) =>
@@ -2825,7 +2842,9 @@ function finalizeExecutionTimelineTraceItems(
 function traceStepsFromExecutionItems(items: ChatExecutionTimelineItem[]) {
   return items
     .filter(
-      (item): item is Extract<ChatExecutionTimelineItem, { kind: "trace_step" }> =>
+      (
+        item,
+      ): item is Extract<ChatExecutionTimelineItem, { kind: "trace_step" }> =>
         item.kind === "trace_step",
     )
     .map((item) => item.step);
@@ -3270,8 +3289,9 @@ export function ChatPane({
   const lastHandledComposerPrefillRequestKeyRef = useRef(0);
   const lastHandledExplorerAttachmentRequestKeyRef = useRef(0);
   const consumedSessionOpenRequestKeysRef = useRef<Set<number>>(new Set());
-  const localSessionOpenRequestRef =
-    useRef<ChatPaneSessionOpenRequest | null>(null);
+  const localSessionOpenRequestRef = useRef<ChatPaneSessionOpenRequest | null>(
+    null,
+  );
   const draftParentSessionIdRef = useRef<string | null>(null);
   const draftHydrationWorkspaceIdRef = useRef((selectedWorkspaceId || "").trim());
   const skipNextComposerDraftPublishRef = useRef(false);
@@ -3338,10 +3358,7 @@ export function ChatPane({
         ) => ChatPaneSessionOpenRequest | null),
   ) {
     setLocalSessionOpenRequest((current) => {
-      const resolved =
-        typeof next === "function"
-          ? next(current)
-          : next;
+      const resolved = typeof next === "function" ? next(current) : next;
       localSessionOpenRequestRef.current = resolved;
       return resolved;
     });
@@ -3471,7 +3488,10 @@ export function ChatPane({
     shouldAutoScrollRef.current = true;
   }
 
-  function isSessionHistoryTargetActive(sessionId: string, workspaceId: string) {
+  function isSessionHistoryTargetActive(
+    sessionId: string,
+    workspaceId: string,
+  ) {
     return (
       activeSessionIdRef.current === sessionId &&
       (selectedWorkspaceRef.current?.id || "").trim() === workspaceId
@@ -3493,8 +3513,9 @@ export function ChatPane({
     }
     terminalEventTypeByInputIdRef.current.set(normalizedInputId, eventType);
     while (terminalEventTypeByInputIdRef.current.size > 64) {
-      const oldestInputId =
-        terminalEventTypeByInputIdRef.current.keys().next().value;
+      const oldestInputId = terminalEventTypeByInputIdRef.current
+        .keys()
+        .next().value;
       if (typeof oldestInputId !== "string") {
         break;
       }
@@ -3594,7 +3615,8 @@ export function ChatPane({
               nextMessage.text = "";
               nextMessage.executionItems = undefined;
             } else if (restoredAssistantState.executionItems) {
-              nextMessage.executionItems = restoredAssistantState.executionItems;
+              nextMessage.executionItems =
+                restoredAssistantState.executionItems;
             }
             if (
               !nextMessage.text &&
@@ -3625,7 +3647,9 @@ export function ChatPane({
           const restoredAssistantState = assistantHistoryStateFromOutputEvents(
             outputEventsByInputId.get(userInputId) ?? [],
           );
-          const turnOutputs = sortOutputs(outputsByInputId.get(userInputId) ?? []);
+          const turnOutputs = sortOutputs(
+            outputsByInputId.get(userInputId) ?? [],
+          );
           const turnMemoryProposals = sortMemoryUpdateProposals(
             memoryProposalsByInputId.get(userInputId) ?? [],
           );
@@ -3633,20 +3657,21 @@ export function ChatPane({
             id: `assistant-${userInputId}`,
             role: "assistant",
             text:
-              restoredAssistantState.segments || !restoredAssistantState.failureText
+              restoredAssistantState.segments ||
+              !restoredAssistantState.failureText
                 ? ""
                 : restoredAssistantState.failureText,
             tone:
-              restoredAssistantState.segments || !restoredAssistantState.failureText
+              restoredAssistantState.segments ||
+              !restoredAssistantState.failureText
                 ? "default"
                 : "error",
             createdAt:
               restoredAssistantState.terminalCreatedAt || nextMessage.createdAt,
             segments: restoredAssistantState.segments,
-            executionItems:
-              restoredAssistantState.segments
-                ? undefined
-                : restoredAssistantState.executionItems,
+            executionItems: restoredAssistantState.segments
+              ? undefined
+              : restoredAssistantState.executionItems,
             outputs: turnOutputs.length > 0 ? turnOutputs : undefined,
             memoryProposals:
               turnMemoryProposals.length > 0 ? turnMemoryProposals : undefined,
@@ -3698,9 +3723,7 @@ export function ChatPane({
       history.messages,
       params.order,
     );
-    const assistantInputIds = turnInputIdsFromHistoryMessages(
-      historyMessages,
-    );
+    const assistantInputIds = turnInputIdsFromHistoryMessages(historyMessages);
     if (assistantInputIds.length === 0) {
       return {
         history,
@@ -3750,7 +3773,10 @@ export function ChatPane({
         }
         if (outputListResult.status !== "fulfilled") {
           auxiliaryHistoryWarnings.push(
-            optionalHistoryLoadErrorMessage("Artifacts", outputListResult.reason),
+            optionalHistoryLoadErrorMessage(
+              "Artifacts",
+              outputListResult.reason,
+            ),
           );
         }
         if (memoryProposalListResult.status !== "fulfilled") {
@@ -4110,8 +4136,7 @@ export function ChatPane({
     }
 
     const hasOutputSegment = nextSegments.some(
-      (segment) =>
-        segment.kind === "output" && Boolean(segment.text.trim()),
+      (segment) => segment.kind === "output" && Boolean(segment.text.trim()),
     );
     if (options?.fallbackText && !hasOutputSegment) {
       nextSegments = appendAssistantOutputSegment(
@@ -4573,9 +4598,8 @@ export function ChatPane({
       }
       requestInFlight = true;
       try {
-        const result = await window.electronAPI.workspace.listSkills(
-          selectedWorkspaceId,
-        );
+        const result =
+          await window.electronAPI.workspace.listSkills(selectedWorkspaceId);
         if (cancelled) {
           return;
         }
@@ -5718,6 +5742,16 @@ export function ChatPane({
     ) {
       return;
     }
+    if (
+      browserJumpRequest &&
+      activeSessionIdRef.current &&
+      browserJumpRequest.sessionId === activeSessionIdRef.current
+    ) {
+      onBrowserJumpRequestConsumed?.(
+        browserJumpRequest.sessionId,
+        browserJumpRequest.requestKey,
+      );
+    }
     if (usesHostedManagedCredits) {
       if (isOutOfCredits) {
         setChatErrorMessage("You're out of credits for managed usage.");
@@ -6052,9 +6086,10 @@ export function ChatPane({
       if (!queueOntoActiveRun) {
         const activeStreamId = activeStreamIdRef.current;
         if (activeStreamId) {
-          await closeStreamWithReason(activeStreamId, "send_message_error").catch(
-            () => undefined,
-          );
+          await closeStreamWithReason(
+            activeStreamId,
+            "send_message_error",
+          ).catch(() => undefined);
         }
       }
       setChatErrorMessage(normalizeErrorMessage(error));
@@ -6153,12 +6188,14 @@ export function ChatPane({
       throw new Error("Only queued messages can be edited.");
     }
 
-    const updated = await window.electronAPI.workspace.updateQueuedSessionInput({
-      workspace_id: item.workspaceId,
-      session_id: item.sessionId,
-      input_id: item.inputId,
-      text: serializedText,
-    });
+    const updated = await window.electronAPI.workspace.updateQueuedSessionInput(
+      {
+        workspace_id: item.workspaceId,
+        session_id: item.sessionId,
+        input_id: item.inputId,
+        text: serializedText,
+      },
+    );
 
     setQueuedSessionInputs((current) =>
       current.map((currentItem) =>
@@ -6282,8 +6319,9 @@ export function ChatPane({
     };
 
     void window.electronAPI.browser.getState().then(applyVisibleBrowserState);
-    const unsubscribe =
-      window.electronAPI.browser.onStateChange(applyVisibleBrowserState);
+    const unsubscribe = window.electronAPI.browser.onStateChange(
+      applyVisibleBrowserState,
+    );
 
     return () => {
       mounted = false;
@@ -6321,7 +6359,10 @@ export function ChatPane({
   };
 
   const jumpToSessionBrowser = () => {
-    if (!browserJumpRequest || browserJumpRequest.sessionId !== activeSessionId) {
+    if (
+      !browserJumpRequest ||
+      browserJumpRequest.sessionId !== activeSessionId
+    ) {
       return;
     }
     onJumpToSessionBrowser?.(
@@ -6370,15 +6411,28 @@ export function ChatPane({
       );
   const visibleAgentBrowserSessionId =
     visibleBrowserState.space === "agent"
-      ? visibleBrowserState.controlSessionId || visibleBrowserState.sessionId || ""
+      ? visibleBrowserState.controlSessionId ||
+        visibleBrowserState.sessionId ||
+        ""
       : "";
   const showSessionBrowserJumpCta = Boolean(
     browserJumpRequest &&
-      activeSessionId &&
-      browserJumpRequest.sessionId === activeSessionId &&
-      (visibleBrowserState.space !== "agent" ||
-        visibleAgentBrowserSessionId !== activeSessionId),
+    activeSessionId &&
+    browserJumpRequest.sessionId === activeSessionId &&
+    (visibleBrowserState.space !== "agent" ||
+      visibleAgentBrowserSessionId !== activeSessionId),
   );
+  const sessionBrowserJumpCta = showSessionBrowserJumpCta ? (
+    <button
+      type="button"
+      onClick={jumpToSessionBrowser}
+      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground/80 transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:bg-accent/50 focus-visible:text-foreground"
+    >
+      <Globe size={12} className="opacity-80" />
+      <span>View in agent browser</span>
+      <ArrowUpRight size={12} className="opacity-80" />
+    </button>
+  ) : null;
   const renderedLiveAssistantSegments = liveAssistantSegmentsForRender(
     liveAssistantSegments,
     liveExecutionItems,
@@ -6389,6 +6443,18 @@ export function ChatPane({
     liveAssistantSegments.length > 0 ||
     Boolean(liveAssistantText) ||
     liveExecutionItems.length > 0;
+  const lastCompletedAssistantMessageId = useMemo(() => {
+    if (showLiveAssistantTurn) {
+      return null;
+    }
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const candidate = messages[index];
+      if (candidate && candidate.role !== "user") {
+        return candidate.id;
+      }
+    }
+    return null;
+  }, [messages, showLiveAssistantTurn]);
   const queuedSessionInputPreview = useQueuedSessionInputPreview({
     workspaceId: selectedWorkspaceId,
     sessionId: activeSessionId,
@@ -6465,7 +6531,9 @@ export function ChatPane({
   const availableWorkspaceSkillMap = useMemo(
     () =>
       new Map(
-        availableWorkspaceSkills.map((skill) => [skill.skill_id, skill] as const),
+        availableWorkspaceSkills.map(
+          (skill) => [skill.skill_id, skill] as const,
+        ),
       ),
     [availableWorkspaceSkills],
   );
@@ -6668,8 +6736,8 @@ export function ChatPane({
     ? selectedConfiguredModel.reasoning === true
     : Boolean(selectedFallbackModelMetadata?.reasoning);
   const selectedInputModalities = selectedConfiguredModel
-    ? selectedConfiguredModel.inputModalities ?? []
-    : selectedFallbackModelMetadata?.inputModalities ?? [];
+    ? (selectedConfiguredModel.inputModalities ?? [])
+    : (selectedFallbackModelMetadata?.inputModalities ?? []);
   const selectedModelDisplayLabel = selectedConfiguredModel
     ? runtimeModelDisplayLabel(selectedConfiguredModel)
     : selectedFallbackModelMetadata?.label?.trim() ||
@@ -6679,10 +6747,10 @@ export function ChatPane({
   );
   const selectedThinkingValues = selectedConfiguredModel
     ? runtimeModelThinkingValues(selectedConfiguredModel)
-    : selectedFallbackModelMetadata?.thinkingValues ?? [];
+    : (selectedFallbackModelMetadata?.thinkingValues ?? []);
   const selectedDefaultThinkingValue = selectedConfiguredModel
     ? selectedConfiguredModel.defaultThinkingValue?.trim() || null
-    : selectedFallbackModelMetadata?.defaultThinkingValue ?? null;
+    : (selectedFallbackModelMetadata?.defaultThinkingValue ?? null);
   const selectedStoredThinkingValue = resolvedChatModel
     ? (chatThinkingPreferences[resolvedChatModel] ?? "").trim()
     : "";
@@ -6696,7 +6764,7 @@ export function ChatPane({
           : selectedDefaultThinkingValue &&
               selectedThinkingValues.includes(selectedDefaultThinkingValue)
             ? selectedDefaultThinkingValue
-            : selectedThinkingValues[0] ?? null;
+            : (selectedThinkingValues[0] ?? null);
   const showThinkingValueSelector =
     !isOnboardingVariant &&
     selectedModelSupportsReasoning &&
@@ -6738,8 +6806,9 @@ export function ChatPane({
     (isSubmittingMessage ? "Submitting message..." : "");
   const composerDisabled = Boolean(composerDisabledReason);
   const pendingImageInputUnsupportedMessage =
-    pendingAttachments.some((attachment) => pendingAttachmentIsImage(attachment)) &&
-    !selectedModelSupportsImageInput
+    pendingAttachments.some((attachment) =>
+      pendingAttachmentIsImage(attachment),
+    ) && !selectedModelSupportsImageInput
       ? `${imageInputUnsupportedMessage(selectedModelDisplayLabel)} Remove the attached image or switch models.`
       : "";
   const showLowBalanceWarning =
@@ -7288,8 +7357,7 @@ export function ChatPane({
                 shouldAutoScrollRef.current = scrolledUp ? false : nearBottom;
                 scheduleChatScrollMetricsSync(currentTarget);
                 if (
-                  currentTarget.scrollTop <=
-                  CHAT_HISTORY_TOP_LOAD_THRESHOLD_PX
+                  currentTarget.scrollTop <= CHAT_HISTORY_TOP_LOAD_THRESHOLD_PX
                 ) {
                   void loadOlderSessionHistory();
                 }
@@ -7299,7 +7367,7 @@ export function ChatPane({
               {hasMessages ? (
                 <div
                   ref={messagesContentRef}
-                  className={`flex min-w-0 w-full flex-col gap-7 px-6 pb-3 pt-5 ${
+                  className={`flex min-w-0 w-full flex-col gap-6 px-6 pb-3 pt-5 ${
                     showHistoryRestoreScreen ? "invisible" : ""
                   }`}
                 >
@@ -7367,6 +7435,11 @@ export function ChatPane({
                         collapsedTraceByStepId={collapsedTraceByStepId}
                         onToggleTraceStep={toggleTraceStep}
                         onLinkClick={onOpenLinkInBrowser}
+                        footerAccessory={
+                          message.id === lastCompletedAssistantMessageId
+                            ? sessionBrowserJumpCta
+                            : null
+                        }
                       />
                     ),
                   )}
@@ -7398,20 +7471,7 @@ export function ChatPane({
                       onToggleTraceStep={toggleTraceStep}
                       onLinkClick={onOpenLinkInBrowser}
                       live
-                      statusAccessory={
-                        showSessionBrowserJumpCta ? (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={jumpToSessionBrowser}
-                            className="rounded-full"
-                          >
-                            <span>Jump to browser</span>
-                            <ArrowRight size={13} />
-                          </Button>
-                        ) : null
-                      }
+                      statusAccessory={sessionBrowserJumpCta}
                       status={
                         liveAgentStatus || (isResponding ? "Working" : "")
                       }
@@ -7455,8 +7515,8 @@ export function ChatPane({
                           isResponding={isResponding}
                           pausePending={isPausePending}
                           pauseDisabled={
-                            pendingInputIdRef.current === STREAM_ATTACH_PENDING ||
-                            isSubmittingMessage
+                            pendingInputIdRef.current ===
+                              STREAM_ATTACH_PENDING || isSubmittingMessage
                           }
                           disabled={composerDisabled}
                           disabledReason={composerDisabledReason}
@@ -7566,9 +7626,9 @@ export function ChatPane({
               className={`shrink-0 px-6 pb-5 pt-3 ${
                 showHistoryRestoreScreen ? "invisible" : ""
               }`}
-          >
-            <form onSubmit={onSubmit} className="w-full">
-              <div className="space-y-3">
+            >
+              <form onSubmit={onSubmit} className="w-full">
+                <div className="space-y-3">
                   <QueuedSessionInputRail
                     items={displayedQueuedSessionInputs}
                     onEditItem={updateQueuedSessionInputText}
@@ -7593,7 +7653,9 @@ export function ChatPane({
                       runtimeDefaultModelLabel={runtimeDefaultModel}
                       modelOptions={availableChatModelOptions}
                       modelOptionGroups={availableChatModelOptionGroups}
-                      runtimeDefaultModelAvailable={runtimeDefaultModelAvailable}
+                      runtimeDefaultModelAvailable={
+                        runtimeDefaultModelAvailable
+                      }
                       selectedThinkingValue={effectiveThinkingValue}
                       thinkingValues={selectedThinkingValues}
                       showThinkingValueSelector={showThinkingValueSelector}
@@ -7619,7 +7681,9 @@ export function ChatPane({
                       onAttachmentInputChange={onAttachmentInputChange}
                       onPause={pauseCurrentRun}
                       onAddDroppedFiles={appendPendingLocalFiles}
-                      onAddExplorerAttachments={appendPendingExplorerAttachments}
+                      onAddExplorerAttachments={
+                        appendPendingExplorerAttachments
+                      }
                       onSelectSlashCommand={(command) => {
                         if (command.kind === "skill") {
                           addQuotedSkill(command.skillId);
@@ -7942,7 +8006,7 @@ function UserTurn({
 
   return (
     <div className="group/user-turn flex min-w-0 justify-end">
-      <div className="flex min-w-0 max-w-[420px] flex-col items-end gap-2 sm:max-w-[560px] lg:max-w-[680px]">
+      <div className="flex min-w-0 max-w-[420px] flex-col items-end gap-1 sm:max-w-[560px] lg:max-w-[680px]">
         {parsedQuotedSkills.skillIds.length > 0 ? (
           <div className="flex max-w-full flex-wrap justify-end gap-2">
             {parsedQuotedSkills.skillIds.map((skillId) => (
@@ -7957,7 +8021,7 @@ function UserTurn({
           </div>
         ) : null}
         {parsedQuotedSkills.body ? (
-          <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full rounded-[18px] border px-4 py-3 text-foreground/95">
+          <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full rounded-[20px] px-[18px] py-2.5 text-foreground/95">
             <SimpleMarkdown
               className="chat-markdown chat-user-markdown max-w-full"
               onLinkClick={onLinkClick}
@@ -7970,7 +8034,7 @@ function UserTurn({
           <AttachmentList attachments={attachments} className="justify-end" />
         ) : null}
         {canCopy || timeLabel ? (
-          <div className="flex min-h-6 items-center justify-end gap-2 pr-1 text-[11px] text-muted-foreground/72 opacity-0 pointer-events-none transition duration-150 group-hover/user-turn:opacity-100 group-hover/user-turn:pointer-events-auto group-focus-within/user-turn:opacity-100 group-focus-within/user-turn:pointer-events-auto">
+          <div className="flex items-center justify-end gap-2 pr-1 text-[11px] text-muted-foreground/72 opacity-0 pointer-events-none transition duration-150 group-hover/user-turn:opacity-100 group-hover/user-turn:pointer-events-auto group-focus-within/user-turn:opacity-100 group-focus-within/user-turn:pointer-events-auto">
             {canCopy ? (
               <Button
                 type="button"
@@ -8226,6 +8290,7 @@ function AssistantTurn({
   status = "",
   live = false,
   statusAccessory = null,
+  footerAccessory = null,
 }: {
   label: string;
   mode: string;
@@ -8256,6 +8321,7 @@ function AssistantTurn({
   status?: string;
   live?: boolean;
   statusAccessory?: ReactNode;
+  footerAccessory?: ReactNode;
 }) {
   const normalizedStatus = status.replace(/\.+$/, "").trim();
   const renderedSegments =
@@ -8283,12 +8349,8 @@ function AssistantTurn({
           ]
         : [];
   const showStatusPlaceholder =
-    live &&
-    Boolean(normalizedStatus) &&
-    renderedSegments.length === 0;
-  const showWorkingStatusLine =
-    live &&
-    renderedSegments.length > 0;
+    live && Boolean(normalizedStatus) && renderedSegments.length === 0;
+  const showWorkingStatusLine = live && renderedSegments.length > 0;
   const renderStatusLine = (nextLabel: string, className = "") => {
     if (!statusAccessory) {
       return <LiveStatusLine label={nextLabel} className={className} />;
@@ -8353,13 +8415,17 @@ function AssistantTurn({
           ),
         )}
 
-        {showWorkingStatusLine ? (
-          renderStatusLine(
-            "Working",
-            renderedSegments.some((segment) => segment.kind === "execution")
-              ? "mt-1"
-              : "",
-          )
+        {showWorkingStatusLine
+          ? renderStatusLine(
+              "Working",
+              renderedSegments.some((segment) => segment.kind === "execution")
+                ? "mt-1"
+                : "",
+            )
+          : null}
+
+        {footerAccessory ? (
+          <div className="mt-2 flex justify-start">{footerAccessory}</div>
         ) : null}
 
         {memoryProposals.length > 0 ? (
@@ -8388,19 +8454,202 @@ function AssistantTurn({
   );
 }
 
+type OutputVisualKind =
+  | "spreadsheet"
+  | "document"
+  | "pdf"
+  | "code"
+  | "image"
+  | "link"
+  | "app"
+  | "file";
+
+const SPREADSHEET_EXTENSIONS = new Set([
+  "xlsx",
+  "xls",
+  "xlsm",
+  "xlsb",
+  "ods",
+  "csv",
+  "tsv",
+]);
+const PDF_EXTENSIONS = new Set(["pdf"]);
+const CODE_EXTENSIONS = new Set([
+  "ts",
+  "tsx",
+  "js",
+  "jsx",
+  "py",
+  "rb",
+  "go",
+  "rs",
+  "java",
+  "c",
+  "cpp",
+  "h",
+  "cs",
+  "php",
+  "swift",
+  "kt",
+  "sh",
+  "json",
+  "yml",
+  "yaml",
+  "toml",
+  "xml",
+  "sql",
+  "css",
+  "scss",
+]);
+const DOCUMENT_EXTENSIONS = new Set([
+  "md",
+  "mdx",
+  "markdown",
+  "txt",
+  "doc",
+  "docx",
+  "rtf",
+  "odt",
+  "html",
+  "htm",
+]);
+
+function outputFileExtension(
+  output: WorkspaceOutputRecordPayload,
+): string {
+  const metadataExt = outputMetadataString(output, "extension");
+  if (metadataExt) {
+    return metadataExt.replace(/^\./, "").toLowerCase();
+  }
+  const fromTitle = output.title?.trim() ?? "";
+  const dotIndex = fromTitle.lastIndexOf(".");
+  if (dotIndex > 0 && dotIndex < fromTitle.length - 1) {
+    return fromTitle.slice(dotIndex + 1).toLowerCase();
+  }
+  return "";
+}
+
+function outputVisualKind(
+  output: WorkspaceOutputRecordPayload,
+): OutputVisualKind {
+  const filter = outputBrowserFilterForOutput(output);
+  if (filter === "apps") {
+    return "app";
+  }
+  if (filter === "images") {
+    return "image";
+  }
+  if (filter === "links") {
+    return "link";
+  }
+
+  const extension = outputFileExtension(output);
+  if (extension) {
+    if (SPREADSHEET_EXTENSIONS.has(extension)) {
+      return "spreadsheet";
+    }
+    if (PDF_EXTENSIONS.has(extension)) {
+      return "pdf";
+    }
+    if (CODE_EXTENSIONS.has(extension)) {
+      return "code";
+    }
+    if (DOCUMENT_EXTENSIONS.has(extension)) {
+      return "document";
+    }
+  }
+
+  if (filter === "code") {
+    return "code";
+  }
+  const category = outputMetadataString(output, "category");
+  if (category === "spreadsheet") {
+    return "spreadsheet";
+  }
+  if (category === "document") {
+    return "document";
+  }
+  return "file";
+}
+
+function outputVisualTheme(kind: OutputVisualKind): {
+  Icon: typeof FileText;
+  tileClass: string;
+  iconClass: string;
+} {
+  switch (kind) {
+    case "spreadsheet":
+      return {
+        Icon: FileSpreadsheet,
+        tileClass:
+          "bg-emerald-500/12 ring-1 ring-inset ring-emerald-500/20",
+        iconClass: "text-emerald-600 dark:text-emerald-400",
+      };
+    case "pdf":
+      return {
+        Icon: FileType,
+        tileClass: "bg-rose-500/12 ring-1 ring-inset ring-rose-500/20",
+        iconClass: "text-rose-600 dark:text-rose-400",
+      };
+    case "document":
+      return {
+        Icon: FileText,
+        tileClass: "bg-sky-500/12 ring-1 ring-inset ring-sky-500/20",
+        iconClass: "text-sky-600 dark:text-sky-400",
+      };
+    case "code":
+      return {
+        Icon: FileCode2,
+        tileClass:
+          "bg-violet-500/12 ring-1 ring-inset ring-violet-500/20",
+        iconClass: "text-violet-600 dark:text-violet-400",
+      };
+    case "image":
+      return {
+        Icon: ImageIcon,
+        tileClass:
+          "bg-amber-500/12 ring-1 ring-inset ring-amber-500/20",
+        iconClass: "text-amber-600 dark:text-amber-400",
+      };
+    case "link":
+      return {
+        Icon: Link2,
+        tileClass: "bg-blue-500/12 ring-1 ring-inset ring-blue-500/20",
+        iconClass: "text-blue-600 dark:text-blue-400",
+      };
+    case "app":
+      return {
+        Icon: Waypoints,
+        tileClass: "bg-primary/12 ring-1 ring-inset ring-primary/20",
+        iconClass: "text-primary",
+      };
+    default:
+      return {
+        Icon: FileIcon,
+        tileClass: "bg-muted ring-1 ring-inset ring-border/50",
+        iconClass: "text-muted-foreground",
+      };
+  }
+}
+
 function OutputArtifactIcon({
   output,
+  size = "md",
 }: {
   output: WorkspaceOutputRecordPayload;
+  size?: "sm" | "md";
 }) {
-  const filter = outputBrowserFilterForOutput(output);
-  if (filter === "images") {
-    return <ImageIcon size={16} className="shrink-0 text-primary/72" />;
-  }
-  if (filter === "apps") {
-    return <Waypoints size={16} className="shrink-0 text-primary/72" />;
-  }
-  return <FileText size={16} className="shrink-0 text-primary/72" />;
+  const kind = outputVisualKind(output);
+  const { Icon, tileClass, iconClass } = outputVisualTheme(kind);
+  const tileSize = size === "sm" ? "size-7" : "size-9";
+  const iconSize = size === "sm" ? 14 : 16;
+  return (
+    <div
+      className={`grid ${tileSize} shrink-0 place-items-center rounded-[10px] ${tileClass}`}
+    >
+      <Icon size={iconSize} className={iconClass} />
+    </div>
+  );
 }
 
 function HistoryRestoreSkeleton() {
@@ -8467,18 +8716,22 @@ function AssistantTurnOutputs({
           key={output.id}
           type="button"
           onClick={() => onOpenOutput?.(output)}
-          className="flex max-w-[360px] items-center gap-3 rounded-xl border border-border/50 bg-card px-3.5 py-2.5 text-left transition-colors hover:bg-accent disabled:cursor-default disabled:hover:bg-card"
+          className="group flex max-w-[380px] items-center gap-3 rounded-xl border border-border/45 bg-card px-3 py-2.5 text-left transition-colors hover:border-border/70 hover:bg-accent/50 disabled:cursor-default disabled:hover:border-border/45 disabled:hover:bg-card"
           disabled={!onOpenOutput}
         >
           <OutputArtifactIcon output={output} />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-[13px] font-medium text-foreground">
+            <div className="truncate text-sm font-medium tracking-[-0.005em] text-foreground">
               {output.title || "Untitled artifact"}
             </div>
-            <div className="text-[11px] text-muted-foreground">
+            <div className="truncate text-xs text-muted-foreground/85">
               {outputSecondaryLabel(output)}
             </div>
           </div>
+          <ArrowUpRight
+            size={14}
+            className="shrink-0 text-muted-foreground/0 transition-colors group-hover:text-muted-foreground/70"
+          />
         </button>
       ))}
 
@@ -8486,10 +8739,12 @@ function AssistantTurnOutputs({
         <button
           type="button"
           onClick={onOpenAllArtifacts}
-          className="flex max-w-[360px] items-center gap-3 rounded-xl border border-border/50 px-3.5 py-2.5 text-left text-muted-foreground transition-colors hover:bg-accent"
+          className="flex max-w-[380px] items-center gap-3 rounded-xl border border-dashed border-border/50 px-3 py-2 text-left text-muted-foreground transition-colors hover:border-border/80 hover:bg-accent/40 hover:text-foreground"
         >
-          <FileText size={15} className="shrink-0" />
-          <span className="text-[13px]">
+          <div className="grid size-7 shrink-0 place-items-center rounded-[9px] bg-muted text-muted-foreground">
+            <Folder size={14} />
+          </div>
+          <span className="text-xs">
             View all artifacts ({sessionOutputs.length})
           </span>
         </button>
@@ -9430,7 +9685,9 @@ function ThinkingValueSelect({
   if (thinkingValues.length === 0 || !selectedThinkingValue) {
     return null;
   }
-  const selectedThinkingLabel = displayThinkingValueLabel(selectedThinkingValue);
+  const selectedThinkingLabel = displayThinkingValueLabel(
+    selectedThinkingValue,
+  );
   const compactLabelMinWidth = 52 + selectedThinkingLabel.length * 7;
   const showCompactLabel =
     !compact ||
@@ -9454,9 +9711,7 @@ function ThinkingValueSelect({
         }`}
       >
         <span className="truncate">{displayThinkingValueLabel(value)}</span>
-        {active ? (
-          <Check size={13} className="shrink-0 text-primary" />
-        ) : null}
+        {active ? <Check size={13} className="shrink-0 text-primary" /> : null}
       </button>
     );
   };
@@ -9533,7 +9788,9 @@ function ThinkingValueSelect({
         <div className="border-b border-border/40 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/70">
           Reasoning effort
         </div>
-        <div className="py-1">{thinkingValues.map((value) => renderOption(value))}</div>
+        <div className="py-1">
+          {thinkingValues.map((value) => renderOption(value))}
+        </div>
       </PopoverContent>
     </Popover>
   );
@@ -9761,8 +10018,7 @@ function Composer({
       document.removeEventListener("pointerdown", handlePointerDown);
     };
   }, [activeSlashCommandKey, showSlashCommandMenu]);
-  const visibleFooterControlCount =
-    1 + (showThinkingValueSelector ? 1 : 0) + 1;
+  const visibleFooterControlCount = 1 + (showThinkingValueSelector ? 1 : 0) + 1;
   const fullPrimaryControlWidth = showModelSelector
     ? noAvailableModels
       ? COMPOSER_FULL_PROVIDER_SETUP_WIDTH_PX
@@ -9854,16 +10110,17 @@ function Composer({
     if (showSlashCommandMenu) {
       if (event.key === "ArrowDown" && filteredSlashCommands.length > 0) {
         event.preventDefault();
-        setHighlightedSlashIndex((current) =>
-          (current + 1) % filteredSlashCommands.length,
+        setHighlightedSlashIndex(
+          (current) => (current + 1) % filteredSlashCommands.length,
         );
         return;
       }
       if (event.key === "ArrowUp" && filteredSlashCommands.length > 0) {
         event.preventDefault();
-        setHighlightedSlashIndex((current) =>
-          (current - 1 + filteredSlashCommands.length) %
-          filteredSlashCommands.length,
+        setHighlightedSlashIndex(
+          (current) =>
+            (current - 1 + filteredSlashCommands.length) %
+            filteredSlashCommands.length,
         );
         return;
       }
@@ -10062,10 +10319,7 @@ function Composer({
                   key={skill.skillId}
                   className="inline-flex max-w-full items-center gap-2 rounded-full border border-primary/20 bg-primary/8 px-3 py-1.5 text-[11px] text-foreground/88"
                 >
-                  <Sparkles
-                    size={12}
-                    className="text-primary/80"
-                  />
+                  <Sparkles size={12} className="text-primary/80" />
                   <span className="truncate">{skill.title}</span>
                   <button
                     type="button"
@@ -10143,7 +10397,9 @@ function Composer({
                         className="shrink-0 text-muted-foreground"
                       />
                       <span className="truncate">
-                        {compactComposerControls ? "Providers" : "Set up providers"}
+                        {compactComposerControls
+                          ? "Providers"
+                          : "Set up providers"}
                       </span>
                     </span>
                     <ArrowRight
@@ -10198,7 +10454,9 @@ function Composer({
                 disabled={disabled}
                 compact={compactComposerControls}
                 compactWidth={
-                  compactComposerControls ? compactThinkingControlWidth : undefined
+                  compactComposerControls
+                    ? compactThinkingControlWidth
+                    : undefined
                 }
                 onThinkingValueChange={onThinkingValueChange}
               />

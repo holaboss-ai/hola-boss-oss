@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
 
+import * as Sentry from "@sentry/node";
+
+import {
+  anthropicUsageMetrics,
+  applyGenAiUsageMetrics,
+  genAiSpanAttributes,
+  openAiCompatibleUsageMetrics,
+} from "./runtime-ai-monitoring.js";
 import {
   captureRuntimeException,
   redactRuntimeSentryText,
@@ -246,6 +254,28 @@ function responseTextForSentry(text: string): string {
   return redactRuntimeSentryText(text);
 }
 
+function spanIdentityAttributes(
+  headers: Record<string, string>,
+  params: {
+    operationName: string;
+    model: string;
+    promptSystemChars?: number | null;
+    promptUserChars?: number | null;
+  },
+) {
+  return genAiSpanAttributes({
+    operationName: params.operationName,
+    model: params.model,
+    workspaceId: headerValue(headers, "x-holaboss-workspace-id") || null,
+    sessionId: headerValue(headers, "x-holaboss-session-id") || null,
+    inputId: headerValue(headers, "x-holaboss-input-id") || null,
+    userId: headerValue(headers, "x-holaboss-user-id") || null,
+    sandboxId: headerValue(headers, "x-holaboss-sandbox-id") || null,
+    promptSystemChars: params.promptSystemChars ?? null,
+    promptUserChars: params.promptUserChars ?? null,
+  });
+}
+
 function captureEmbeddingFailure(params: {
   captureException?: (options: RuntimeSentryCaptureOptions) => void;
   error: unknown;
@@ -405,67 +435,109 @@ export async function queryMemoryModelJson(
   const controller = new AbortController();
   const timeoutMs = Math.max(1000, Math.min(query.timeoutMs ?? 7000, 20000));
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    let endpoint = "";
-    let body: Record<string, unknown> = {};
-    if (apiStyle === "anthropic_native") {
-      endpoint = anthropicMessagesEndpoint(baseUrl);
-      if (!hasExplicitAuthHeader(headers) && config.apiKey.trim()) {
-        headers["x-api-key"] = config.apiKey.trim();
-      }
-      if (!Object.keys(headers).some((key) => key.trim().toLowerCase() === "anthropic-version")) {
-        headers["anthropic-version"] = "2023-06-01";
-      }
-      body = {
+  return await Sentry.startSpan(
+    {
+      name:
+        apiStyle === "anthropic_native"
+          ? `messages ${modelId}`
+          : `chat ${modelId}`,
+      op: "gen_ai.request",
+      attributes: spanIdentityAttributes(headers, {
+        operationName:
+          apiStyle === "anthropic_native" ? "messages" : "chat_completions",
         model: modelId,
-        temperature: 0,
-        max_tokens: 1024,
-        system: query.systemPrompt,
-        messages: [
-          {
-            role: "user",
-            content: query.userPrompt,
-          },
-        ],
-      };
-    } else {
-      endpoint = `${baseUrl}/chat/completions`;
-      if (!hasExplicitAuthHeader(headers) && config.apiKey.trim()) {
-        headers.Authorization = `Bearer ${config.apiKey.trim()}`;
+        promptSystemChars: query.systemPrompt.length,
+        promptUserChars: query.userPrompt.length,
+      }),
+    },
+    async (span) => {
+      try {
+        let endpoint = "";
+        let body: Record<string, unknown> = {};
+        if (apiStyle === "anthropic_native") {
+          endpoint = anthropicMessagesEndpoint(baseUrl);
+          if (!hasExplicitAuthHeader(headers) && config.apiKey.trim()) {
+            headers["x-api-key"] = config.apiKey.trim();
+          }
+          if (
+            !Object.keys(headers).some(
+              (key) => key.trim().toLowerCase() === "anthropic-version",
+            )
+          ) {
+            headers["anthropic-version"] = "2023-06-01";
+          }
+          body = {
+            model: modelId,
+            temperature: 0,
+            max_tokens: 1024,
+            system: query.systemPrompt,
+            messages: [
+              {
+                role: "user",
+                content: query.userPrompt,
+              },
+            ],
+          };
+        } else {
+          endpoint = `${baseUrl}/chat/completions`;
+          if (!hasExplicitAuthHeader(headers) && config.apiKey.trim()) {
+            headers.Authorization = `Bearer ${config.apiKey.trim()}`;
+          }
+          body = {
+            model: modelId,
+            temperature: 0,
+            response_format: { type: "json_object" },
+            messages: [
+              {
+                role: "system",
+                content: query.systemPrompt,
+              },
+              {
+                role: "user",
+                content: query.userPrompt,
+              },
+            ],
+          };
+        }
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers,
+          signal: controller.signal,
+          body: JSON.stringify(body),
+        });
+        span.setAttribute("http.response.status_code", response.status);
+        if (!response.ok) {
+          span.setStatus({
+            code: 2,
+            message: `status_${response.status}`,
+          });
+          return null;
+        }
+        const payload = await response.json().catch(() => null);
+        applyGenAiUsageMetrics(
+          span,
+          apiStyle === "anthropic_native"
+            ? anthropicUsageMetrics(payload)
+            : openAiCompatibleUsageMetrics(payload),
+        );
+        const text =
+          apiStyle === "anthropic_native"
+            ? anthropicCompletionContent(payload)
+            : completionContent(payload);
+        span.setStatus({ code: 1, message: "ok" });
+        return parseJsonObjectCandidate(text);
+      } catch (error) {
+        span.setStatus({
+          code: 2,
+          message:
+            error instanceof Error && error.name ? error.name : "request_exception",
+        });
+        return null;
+      } finally {
+        clearTimeout(timeout);
       }
-      body = {
-        model: modelId,
-        temperature: 0,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content: query.systemPrompt,
-          },
-          {
-            role: "user",
-            content: query.userPrompt,
-          },
-        ],
-      };
-    }
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers,
-      signal: controller.signal,
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) {
-      return null;
-    }
-    const payload = await response.json().catch(() => null);
-    const text = apiStyle === "anthropic_native" ? anthropicCompletionContent(payload) : completionContent(payload);
-    return parseJsonObjectCandidate(text);
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
+    },
+  );
 }
 
 export async function queryMemoryModelEmbedding(
@@ -508,100 +580,138 @@ export async function queryMemoryModelEmbedding(
   const controller = new AbortController();
   const timeoutMs = Math.max(1000, Math.min(query.timeoutMs ?? 7000, 20000));
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers,
-      signal: controller.signal,
-      body: JSON.stringify(requestBody),
-    });
-    const responseText = await response.text().catch(() => "");
-    const responseContentType = firstNonEmptyString(
-      response.headers.get("content-type"),
-    );
-    if (!response.ok) {
-      captureEmbeddingFailure({
-        captureException: options.captureException,
-        error: new Error(
-          `Memory model embedding request failed with status ${response.status}`,
-        ),
-        failureKind: "upstream_non_ok",
-        endpoint,
-        headers,
-        requestBody,
-        responseStatus: response.status,
-        responseContentType,
-        responseText,
-      });
-      return null;
-    }
-    const payload = parseJsonValueCandidate(responseText);
-    if (payload === null) {
-      captureEmbeddingFailure({
-        captureException: options.captureException,
-        error: new Error(
-          "Memory model embedding response was not valid JSON",
-        ),
-        failureKind: "invalid_json",
-        endpoint,
-        headers,
-        requestBody,
-        responseStatus: response.status,
-        responseContentType,
-        responseText,
-      });
-      return null;
-    }
-    if (!isRecord(payload) || !Array.isArray(payload.data) || payload.data.length === 0 || !isRecord(payload.data[0])) {
-      captureEmbeddingFailure({
-        captureException: options.captureException,
-        error: new Error(
-          "Memory model embedding response did not contain a usable embedding payload",
-        ),
-        failureKind: "invalid_payload",
-        endpoint,
-        headers,
-        requestBody,
-        responseStatus: response.status,
-        responseContentType,
-        responseText,
-      });
-      return null;
-    }
-    const embedding = Array.isArray(payload.data[0].embedding) ? payload.data[0].embedding : [];
-    const values = embedding
-      .map((value) => (typeof value === "number" ? value : Number(value)))
-      .filter((value) => Number.isFinite(value));
-    if (values.length === 0) {
-      captureEmbeddingFailure({
-        captureException: options.captureException,
-        error: new Error(
-          "Memory model embedding response contained no numeric embedding values",
-        ),
-        failureKind: "invalid_payload",
-        endpoint,
-        headers,
-        requestBody,
-        responseStatus: response.status,
-        responseContentType,
-        responseText,
-      });
-      return null;
-    }
-    return new Float32Array(values);
-  } catch (error) {
-    captureEmbeddingFailure({
-      captureException: options.captureException,
-      error,
-      failureKind: "request_exception",
-      endpoint,
-      headers,
-      requestBody,
-    });
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
+  return await Sentry.startSpan(
+    {
+      name: `embeddings ${modelId}`,
+      op: "gen_ai.request",
+      attributes: spanIdentityAttributes(headers, {
+        operationName: "embeddings",
+        model: modelId,
+        promptUserChars: normalizedInput.length,
+      }),
+    },
+    async (span) => {
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers,
+          signal: controller.signal,
+          body: JSON.stringify(requestBody),
+        });
+        const responseText = await response.text().catch(() => "");
+        const responseContentType = firstNonEmptyString(
+          response.headers.get("content-type"),
+        );
+        span.setAttribute("http.response.status_code", response.status);
+        if (!response.ok) {
+          span.setStatus({
+            code: 2,
+            message: `status_${response.status}`,
+          });
+          captureEmbeddingFailure({
+            captureException: options.captureException,
+            error: new Error(
+              `Memory model embedding request failed with status ${response.status}`,
+            ),
+            failureKind: "upstream_non_ok",
+            endpoint,
+            headers,
+            requestBody,
+            responseStatus: response.status,
+            responseContentType,
+            responseText,
+          });
+          return null;
+        }
+        const payload = parseJsonValueCandidate(responseText);
+        if (payload === null) {
+          span.setStatus({ code: 2, message: "invalid_json" });
+          captureEmbeddingFailure({
+            captureException: options.captureException,
+            error: new Error(
+              "Memory model embedding response was not valid JSON",
+            ),
+            failureKind: "invalid_json",
+            endpoint,
+            headers,
+            requestBody,
+            responseStatus: response.status,
+            responseContentType,
+            responseText,
+          });
+          return null;
+        }
+        applyGenAiUsageMetrics(
+          span,
+          openAiCompatibleUsageMetrics(payload, { defaultOutputTokens: 0 }),
+        );
+        if (
+          !isRecord(payload) ||
+          !Array.isArray(payload.data) ||
+          payload.data.length === 0 ||
+          !isRecord(payload.data[0])
+        ) {
+          span.setStatus({ code: 2, message: "invalid_payload" });
+          captureEmbeddingFailure({
+            captureException: options.captureException,
+            error: new Error(
+              "Memory model embedding response did not contain a usable embedding payload",
+            ),
+            failureKind: "invalid_payload",
+            endpoint,
+            headers,
+            requestBody,
+            responseStatus: response.status,
+            responseContentType,
+            responseText,
+          });
+          return null;
+        }
+        const embedding = Array.isArray(payload.data[0].embedding)
+          ? payload.data[0].embedding
+          : [];
+        const values = embedding
+          .map((value) => (typeof value === "number" ? value : Number(value)))
+          .filter((value) => Number.isFinite(value));
+        if (values.length === 0) {
+          span.setStatus({ code: 2, message: "invalid_payload" });
+          captureEmbeddingFailure({
+            captureException: options.captureException,
+            error: new Error(
+              "Memory model embedding response contained no numeric embedding values",
+            ),
+            failureKind: "invalid_payload",
+            endpoint,
+            headers,
+            requestBody,
+            responseStatus: response.status,
+            responseContentType,
+            responseText,
+          });
+          return null;
+        }
+        span.setStatus({ code: 1, message: "ok" });
+        return new Float32Array(values);
+      } catch (error) {
+        span.setStatus({
+          code: 2,
+          message:
+            error instanceof Error && error.name ? error.name : "request_exception",
+        });
+        captureEmbeddingFailure({
+          captureException: options.captureException,
+          error,
+          failureKind: "request_exception",
+          endpoint,
+          headers,
+          requestBody,
+        });
+        return null;
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+  );
 }
 
 export function normalizedStringArray(value: unknown): string[] {
