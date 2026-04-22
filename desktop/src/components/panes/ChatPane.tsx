@@ -7772,7 +7772,6 @@ function SessionSelector({
                 variant="outline"
                 className="w-full min-w-0 justify-start"
                 aria-label="Select agent session"
-                title={`${activeTitle} · ${activeDetail}`}
               />
             }
           >
@@ -7794,13 +7793,13 @@ function SessionSelector({
         </div>
         <PopoverContent align="start" className="w-[300px] p-0">
           <div className="border-b border-border p-2">
-            <div className="relative flex items-center rounded-[10px] border border-border bg-muted px-2.5 transition-colors focus-within:border-border focus-within:bg-background/70">
-              <Search size={13} className="shrink-0 text-muted-foreground" />
+            <div className="relative flex h-8 items-center rounded-md border border-border bg-background px-2.5 transition-colors focus-within:border-muted-foreground">
+              <Search className="size-3.5 shrink-0 text-muted-foreground" />
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search sessions..."
-                className="embedded-input h-8 w-full bg-transparent pl-2 text-xs text-foreground outline-none placeholder:text-muted-foreground/60"
+                className="embedded-input h-full w-full bg-transparent pl-2 text-xs text-foreground outline-none placeholder:text-muted-foreground"
                 autoFocus
               />
             </div>
@@ -7834,29 +7833,21 @@ function SessionSelector({
                       setOpen(false);
                       setQuery("");
                     }}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors ${
+                    aria-current={isActive ? "true" : undefined}
+                    className={`flex w-full items-start gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors ${
                       isActive
-                        ? "bg-accent text-accent-foreground"
-                        : "hover:bg-accent/50"
+                        ? "bg-accent text-foreground"
+                        : "text-foreground hover:bg-accent"
                     }`}
-                    title={`${session.title} · ${session.statusLabel} · ${session.updatedLabel}`}
                   >
                     <span
-                      className={`grid size-4 shrink-0 place-items-center ${indicator.className}`}
+                      className={`mt-0.5 grid size-4 shrink-0 place-items-center ${indicator.className}`}
                     >
                       {indicator.icon}
                     </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13px] font-medium text-current">
-                        {session.title}
-                      </div>
-                      <div className="truncate text-xs text-muted-foreground">
-                        {session.statusLabel}
-                      </div>
-                    </div>
-                    {isActive ? (
-                      <Check size={13} className="shrink-0 text-primary" />
-                    ) : null}
+                    <span className="min-w-0 flex-1 whitespace-normal text-xs leading-snug line-clamp-2">
+                      {session.title}
+                    </span>
                   </button>
                 );
               })
