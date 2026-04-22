@@ -46,14 +46,14 @@ The important point is not the specific harness brand. The important point is th
 
 ## What the runtime contract passes in
 
-Today the runtime prepares a harness request that includes:
+The runtime prepares a harness request that includes:
 
 - workspace, session, and input identity
 - the current instruction and staged input attachments
 - selected provider and model client configuration
 - requested reasoning effort for this run when the operator selected one
 - the composed system prompt and runtime context messages
-- workspace skill metadata and directories
+- workspace skill manifests and any quoted skill blocks prepared from the instruction
 - resolved MCP servers and allowlisted MCP tool refs
 - browser capability state for workspace sessions
 - a workspace configuration checksum and run lifecycle metadata
@@ -83,7 +83,7 @@ That is part of the runtime-to-host boundary, not an ad hoc executor detail.
 
 ## Current harness path
 
-Today the OSS repo ships one harness path: `pi`.
+The OSS repo ships one harness path: `pi`.
 
 That path is currently split into:
 
@@ -91,7 +91,7 @@ That path is currently split into:
 - a harness host plugin in `runtime/harness-host/src/pi.ts`
 - a Pi-based executor underneath that path
 
-In practical terms, the currently shipped harness is the `pi` path, implemented by the `pi` runtime adapter and `pi` host plugin. The design choice that matters is that the runtime boundary around it is intentionally broader than the executor package underneath it.
+In practical terms, the shipped harness is the `pi` path, implemented by the `pi` runtime adapter and `pi` host plugin. The design choice that matters is that the runtime boundary around it is intentionally broader than the executor package underneath it.
 
 ## What stays stable even if the harness changes
 

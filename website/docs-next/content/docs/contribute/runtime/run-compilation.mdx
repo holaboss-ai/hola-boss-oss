@@ -13,7 +13,7 @@ The source of truth is:
 - `runtime/api-server/src/agent-runtime-config.ts`
 - `runtime/api-server/src/harness-registry.ts`
 
-## The Current Compile Path
+## Compile Path
 
 For the shipped path, a run moves through these stages:
 
@@ -98,7 +98,7 @@ This is the runtime-owned interpretation of the authored workspace, not a loose 
 
 ## Strict Runtime-Plan Rules
 
-`workspace-runtime-plan.ts` is intentionally strict. Current important rules:
+`workspace-runtime-plan.ts` is intentionally strict. Important rules:
 
 - `workspace.yaml` must parse to a mapping object
 - `mcp_registry` is required

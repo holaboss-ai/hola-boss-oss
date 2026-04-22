@@ -259,9 +259,7 @@ Relevant files:
 
 ### 2. Session restoration
 
-The runtime no longer persists a separate compaction-boundary artifact.
-
-Restoration now relies on:
+Session restoration relies on:
 - persisted harness session history
 - the runtime-managed session-memory excerpt
 - session scratchpad metadata, with explicit scratchpad reads when needed
@@ -429,41 +427,6 @@ Inputs:
 
 That means the desktop lifecycle card is not a canonical remote status API response.
 It is a local synthesis over local state plus runtime readiness.
-
-## Verified Checks
-
-The current branch was verified after the merge and latest desktop follow-up commit with:
-
-Runtime:
-```sh
-cd runtime/api-server
-node --import tsx --test \
-  src/memory.test.ts \
-  src/memory-recall.test.ts \
-  src/turn-memory-writeback.test.ts \
-  src/app.test.ts \
-  src/ts-runner.test.ts \
-  src/bridge-worker.test.ts \
-  src/agent-runtime-config.test.ts
-```
-
-Result:
-- `109` passed
-- `0` failed
-
-Desktop:
-```sh
-cd desktop
-node --test \
-  electron/proactive-preference-fetch.test.mjs \
-  src/components/layout/AppShell.test.mjs \
-  src/components/layout/ProactiveStatusCard.test.mjs \
-  src/components/panes/ChatPane.test.mjs
-```
-
-Result:
-- `40` passed
-- `0` failed
 
 ## Notable Current Caveats
 
