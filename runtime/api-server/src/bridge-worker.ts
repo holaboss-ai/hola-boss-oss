@@ -5,6 +5,12 @@ import type { RuntimeStateStore } from "@holaboss/runtime-state-store";
 import { MemoryServiceError, type MemoryServiceLike } from "./memory.js";
 import { captureWorkspaceContext } from "./proactive-context.js";
 import { runtimeConfigHeaders } from "./runtime-config.js";
+import {
+  captureRuntimeException,
+  extractRuntimeFetchErrorDiagnostics,
+  redactRuntimeSentryText,
+  redactRuntimeSentryValue,
+} from "./runtime-sentry.js";
 
 const TS_BRIDGE_WORKER_FLAG_ENV = "HOLABOSS_RUNTIME_USE_TS_BRIDGE_WORKER";
 const PROACTIVE_ENABLE_REMOTE_BRIDGE_ENV = "PROACTIVE_ENABLE_REMOTE_BRIDGE";
@@ -12,6 +18,7 @@ const PROACTIVE_BRIDGE_BASE_URL_ENV = "PROACTIVE_BRIDGE_BASE_URL";
 const HOLABOSS_BACKEND_BASE_URL_ENV = "HOLABOSS_BACKEND_BASE_URL";
 const PROACTIVE_BRIDGE_POLL_INTERVAL_SECONDS_ENV = "PROACTIVE_BRIDGE_POLL_INTERVAL_SECONDS";
 const PROACTIVE_BRIDGE_MAX_ITEMS_ENV = "PROACTIVE_BRIDGE_MAX_ITEMS";
+const PROACTIVE_BRIDGE_SENTRY_TEXT_LIMIT = 400;
 
 type LoggerLike = {
   info: (message: string, ...args: unknown[]) => void;
@@ -368,15 +375,92 @@ export interface RuntimeRemoteBridgeWorkerOptions {
   executeJob?: (job: ProactiveBridgeJob) => Promise<ProactiveBridgeJobResult>;
   store?: RuntimeStateStore;
   memoryService?: MemoryServiceLike;
+  captureRuntimeException?: typeof captureRuntimeException;
   fetchImpl?: typeof fetch;
   baseUrl?: string;
   pollIntervalMs?: number;
   maxItems?: number;
 }
 
+type ProactiveBridgeRequestPhase = "receive_jobs" | "report_result";
+
+class ProactiveBridgeRequestError extends Error {
+  readonly phase: ProactiveBridgeRequestPhase;
+  readonly endpoint: string;
+  readonly method: "GET" | "POST";
+  readonly status: number | null;
+  readonly responseBody: string | null;
+  readonly responseContentType: string | null;
+
+  constructor(params: {
+    phase: ProactiveBridgeRequestPhase;
+    endpoint: string;
+    method: "GET" | "POST";
+    status?: number | null;
+    responseBody?: string | null;
+    responseContentType?: string | null;
+    cause?: unknown;
+  }) {
+    const statusLabel =
+      typeof params.status === "number" ? ` with status ${params.status}` : "";
+    super(`Proactive bridge request failed during ${params.phase}${statusLabel}`, {
+      cause: params.cause,
+    });
+    this.name = "ProactiveBridgeRequestError";
+    this.phase = params.phase;
+    this.endpoint = params.endpoint;
+    this.method = params.method;
+    this.status = typeof params.status === "number" ? params.status : null;
+    this.responseBody = params.responseBody ?? null;
+    this.responseContentType = params.responseContentType ?? null;
+  }
+}
+
+function bridgeErrorPhase(
+  error: unknown,
+): ProactiveBridgeRequestPhase | "execute_job" {
+  return error instanceof ProactiveBridgeRequestError
+    ? error.phase
+    : "execute_job";
+}
+
+function bridgeResponsePreview(text: string): {
+  text: string;
+  truncated: boolean;
+} {
+  const redacted = redactRuntimeSentryText(text);
+  if (redacted.length <= PROACTIVE_BRIDGE_SENTRY_TEXT_LIMIT) {
+    return { text: redacted, truncated: false };
+  }
+  return {
+    text: `${redacted.slice(0, PROACTIVE_BRIDGE_SENTRY_TEXT_LIMIT)}…`,
+    truncated: true,
+  };
+}
+
+function bridgeTransportErrorCode(error: unknown): string | null {
+  const diagnostics = extractRuntimeFetchErrorDiagnostics(error);
+  const causeCode = diagnostics?.cause;
+  if (causeCode && typeof causeCode === "object" && !Array.isArray(causeCode)) {
+    const code = (causeCode as Record<string, unknown>).code;
+    if (typeof code === "string" && code.trim()) {
+      return code.trim();
+    }
+  }
+  const errorCode = diagnostics?.error;
+  if (errorCode && typeof errorCode === "object" && !Array.isArray(errorCode)) {
+    const code = (errorCode as Record<string, unknown>).code;
+    if (typeof code === "string" && code.trim()) {
+      return code.trim();
+    }
+  }
+  return null;
+}
+
 export class RuntimeRemoteBridgeWorker implements BridgeWorkerLike {
   readonly #logger: LoggerLike | undefined;
   readonly #executeJob: (job: ProactiveBridgeJob) => Promise<ProactiveBridgeJobResult>;
+  readonly #captureRuntimeException: typeof captureRuntimeException;
   readonly #fetch: typeof fetch;
   readonly #baseUrl: string;
   readonly #pollIntervalMs: number;
@@ -395,6 +479,8 @@ export class RuntimeRemoteBridgeWorker implements BridgeWorkerLike {
         : (() => {
             throw new Error("bridge worker requires executeJob or store+memoryService");
           }));
+    this.#captureRuntimeException =
+      options.captureRuntimeException ?? captureRuntimeException;
     this.#fetch = options.fetchImpl ?? fetch;
     this.#baseUrl = options.baseUrl ?? proactiveBridgeBaseUrl();
     this.#pollIntervalMs = options.pollIntervalMs ?? bridgePollIntervalMs();
@@ -421,12 +507,20 @@ export class RuntimeRemoteBridgeWorker implements BridgeWorkerLike {
   }
 
   async pollOnce(): Promise<number> {
-    const jobs = await this.#receiveJobs();
+    let jobs: ProactiveBridgeJob[];
+    try {
+      jobs = await this.#receiveJobs();
+    } catch (error) {
+      this.#capturePollFailure(error);
+      throw error;
+    }
     for (const job of jobs) {
+      let result: ProactiveBridgeJobResult | null = null;
       try {
-        const result = await this.#executeJob(job);
+        result = await this.#executeJob(job);
         await this.#reportResult(result);
       } catch (error) {
+        this.#captureJobFailure(error, job, result);
         this.#logger?.error?.("Remote proactive bridge job failed", {
           event: "runtime.proactive_bridge.job",
           outcome: "error",
@@ -441,12 +535,30 @@ export class RuntimeRemoteBridgeWorker implements BridgeWorkerLike {
   }
 
   async #receiveJobs(): Promise<ProactiveBridgeJob[]> {
-    const response = await this.#fetch(`${this.#baseUrl}/api/v1/proactive/bridge/jobs?limit=${this.#maxItems}`, {
-      method: "GET",
-      headers: this.#headers
-    });
+    const endpoint = `${this.#baseUrl}/api/v1/proactive/bridge/jobs?limit=${this.#maxItems}`;
+    let response: Response;
+    try {
+      response = await this.#fetch(endpoint, {
+        method: "GET",
+        headers: this.#headers
+      });
+    } catch (error) {
+      throw new ProactiveBridgeRequestError({
+        phase: "receive_jobs",
+        endpoint,
+        method: "GET",
+        cause: error,
+      });
+    }
     if (!response.ok) {
-      throw new Error(`Proactive bridge request failed: ${await response.text()}`);
+      throw new ProactiveBridgeRequestError({
+        phase: "receive_jobs",
+        endpoint,
+        method: "GET",
+        status: response.status,
+        responseBody: await response.text().catch(() => ""),
+        responseContentType: response.headers.get("content-type"),
+      });
     }
     const payload = await response.json();
     const jobs = isRecord(payload) && Array.isArray(payload.jobs) ? payload.jobs : [];
@@ -454,17 +566,170 @@ export class RuntimeRemoteBridgeWorker implements BridgeWorkerLike {
   }
 
   async #reportResult(result: ProactiveBridgeJobResult): Promise<void> {
-    const response = await this.#fetch(`${this.#baseUrl}/api/v1/proactive/bridge/results`, {
-      method: "POST",
-      headers: {
-        ...this.#headers,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(result)
-    });
-    if (!response.ok) {
-      throw new Error(`Proactive bridge request failed: ${await response.text()}`);
+    const endpoint = `${this.#baseUrl}/api/v1/proactive/bridge/results`;
+    let response: Response;
+    try {
+      response = await this.#fetch(endpoint, {
+        method: "POST",
+        headers: {
+          ...this.#headers,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(result)
+      });
+    } catch (error) {
+      throw new ProactiveBridgeRequestError({
+        phase: "report_result",
+        endpoint,
+        method: "POST",
+        cause: error,
+      });
     }
+    if (!response.ok) {
+      throw new ProactiveBridgeRequestError({
+        phase: "report_result",
+        endpoint,
+        method: "POST",
+        status: response.status,
+        responseBody: await response.text().catch(() => ""),
+        responseContentType: response.headers.get("content-type"),
+      });
+    }
+  }
+
+  #capturePollFailure(error: unknown): void {
+    const phase = bridgeErrorPhase(error);
+    const bridgeError =
+      error instanceof ProactiveBridgeRequestError ? error : null;
+    const fetchError = extractRuntimeFetchErrorDiagnostics(error);
+    const responsePreview =
+      bridgeError?.responseBody && bridgeError.responseBody.length > 0
+        ? bridgeResponsePreview(bridgeError.responseBody)
+        : null;
+    const transportErrorCode = bridgeTransportErrorCode(error);
+    this.#captureRuntimeException({
+      error,
+      level: "error",
+      fingerprint: [
+        "runtime",
+        "proactive_bridge",
+        "poll_failure",
+        phase,
+        bridgeError?.status !== null && bridgeError?.status !== undefined
+          ? String(bridgeError.status)
+          : transportErrorCode ?? "error",
+      ],
+      tags: {
+        surface: "proactive_bridge",
+        failure_kind: "poll_failure",
+        bridge_phase: phase,
+        ...(typeof bridgeError?.status === "number"
+          ? { http_status: bridgeError.status }
+          : {}),
+        ...(transportErrorCode ? { transport_error_code: transportErrorCode } : {}),
+      },
+      contexts: {
+        proactive_bridge: {
+          base_url: this.#baseUrl,
+          endpoint:
+            bridgeError?.endpoint ??
+            `${this.#baseUrl}/api/v1/proactive/bridge/jobs?limit=${this.#maxItems}`,
+          method: bridgeError?.method ?? "GET",
+          poll_interval_ms: this.#pollIntervalMs,
+          max_items: this.#maxItems,
+        },
+      },
+      extras: {
+        ...(responsePreview
+          ? {
+              response_body: responsePreview.text,
+              response_body_truncated: responsePreview.truncated,
+              response_content_type: bridgeError?.responseContentType ?? null,
+            }
+          : {}),
+        ...(fetchError ? { fetch_error: redactRuntimeSentryValue(fetchError) } : {}),
+      },
+    });
+  }
+
+  #captureJobFailure(
+    error: unknown,
+    job: ProactiveBridgeJob,
+    result: ProactiveBridgeJobResult | null,
+  ): void {
+    const phase = bridgeErrorPhase(error);
+    const bridgeError =
+      error instanceof ProactiveBridgeRequestError ? error : null;
+    const fetchError = extractRuntimeFetchErrorDiagnostics(error);
+    const responsePreview =
+      bridgeError?.responseBody && bridgeError.responseBody.length > 0
+        ? bridgeResponsePreview(bridgeError.responseBody)
+        : null;
+    const transportErrorCode = bridgeTransportErrorCode(error);
+    this.#captureRuntimeException({
+      error,
+      level: "error",
+      fingerprint: [
+        "runtime",
+        "proactive_bridge",
+        "job_failure",
+        phase,
+        job.job_type,
+        bridgeError?.status !== null && bridgeError?.status !== undefined
+          ? String(bridgeError.status)
+          : transportErrorCode ??
+              (phase === "execute_job" ? "execution_error" : "error"),
+      ],
+      tags: {
+        surface: "proactive_bridge",
+        failure_kind: "job_failure",
+        bridge_phase: phase,
+        job_type: job.job_type,
+        ...(typeof bridgeError?.status === "number"
+          ? { http_status: bridgeError.status }
+          : {}),
+        ...(transportErrorCode ? { transport_error_code: transportErrorCode } : {}),
+      },
+      contexts: {
+        proactive_bridge: {
+          base_url: this.#baseUrl,
+          endpoint: bridgeError?.endpoint ?? null,
+          method: bridgeError?.method ?? null,
+          poll_interval_ms: this.#pollIntervalMs,
+          max_items: this.#maxItems,
+        },
+        proactive_bridge_job: {
+          job_id: job.job_id,
+          job_type: job.job_type,
+          workspace_id: job.workspace_id,
+          sandbox_id: job.sandbox_id ?? null,
+          result_status: result?.status ?? null,
+          result_error_code: result?.error_code ?? null,
+          result_has_output: Boolean(result?.output),
+        },
+      },
+      extras: {
+        ...(responsePreview
+          ? {
+              response_body: responsePreview.text,
+              response_body_truncated: responsePreview.truncated,
+              response_content_type: bridgeError?.responseContentType ?? null,
+            }
+          : {}),
+        ...(fetchError ? { fetch_error: redactRuntimeSentryValue(fetchError) } : {}),
+        ...(result
+          ? {
+              reported_result: redactRuntimeSentryValue({
+                status: result.status,
+                error_code: result.error_code ?? null,
+                error_message: result.error_message ?? null,
+                completed_at: result.completed_at ?? null,
+                has_output: Boolean(result.output),
+              }),
+            }
+          : {}),
+      },
+    });
   }
 
   async #runLoop(): Promise<void> {
