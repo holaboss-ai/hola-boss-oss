@@ -165,6 +165,12 @@ const SPECIAL_POLICY_FILENAMES = new Set(["agents.md"]);
 
 const MARKDOWN_PREVIEW_EXTENSIONS = new Set([".md", ".mdx", ".markdown"]);
 const HTML_PREVIEW_EXTENSIONS = new Set([".html", ".htm"]);
+
+// Deterministic varied widths (%) for the file-tree loading skeleton — gives
+// the placeholder rows an organic, non-uniform silhouette without any RNG.
+// First two rows are wider (root-level folders/files), remaining rows sit
+// shorter and are indented to suggest nested content.
+const FILE_SKELETON_ROW_WIDTHS = [68, 52, 64, 44, 58, 40, 50, 46];
 const EXPLORER_INTERNAL_MOVE_DRAG_TYPE =
   "application/x-holaboss-file-explorer-move";
 let explorerClipboardEntry: ExplorerClipboardEntry | null = null;
@@ -3608,8 +3614,29 @@ export function FileExplorerPane({
           onDrop={onPaneDrop}
         >
           {loading ? (
-            <div className="px-1.5 py-2 text-xs text-muted-foreground">
-              Loading…
+            <div
+              className="space-y-0.5"
+              role="status"
+              aria-label="Loading files"
+            >
+              {FILE_SKELETON_ROW_WIDTHS.map((width, index) => (
+                <div
+                  key={index}
+                  className="flex items-center gap-1 px-1.5 py-0.5"
+                  style={{
+                    paddingLeft: `${6 + (index < 2 ? 0 : 12)}px`,
+                  }}
+                >
+                  <div className="size-3.5 shrink-0 rounded-sm bg-muted animate-pulse" />
+                  <div
+                    className="h-3 rounded-sm bg-muted animate-pulse"
+                    style={{
+                      width: `${width}%`,
+                      animationDelay: `${index * 60}ms`,
+                    }}
+                  />
+                </div>
+              ))}
             </div>
           ) : null}
 
