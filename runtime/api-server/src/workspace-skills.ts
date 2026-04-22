@@ -12,6 +12,12 @@ export interface ResolvedWorkspaceSkill {
   origin: ResolvedSkillOrigin;
 }
 
+export interface PreparedQuotedWorkspaceSkills {
+  body: string;
+  quoted_skill_blocks: string[];
+  missing_quoted_skill_ids: string[];
+}
+
 const EMBEDDED_SKILLS_DIR_ENV = "HOLABOSS_EMBEDDED_SKILLS_DIR";
 const WORKSPACE_SKILLS_RELATIVE_PATH = "skills";
 
@@ -69,6 +75,67 @@ function normalizedFrontmatterString(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function stripMarkdownFrontmatter(value: string): string {
+  const normalized = value.replace(/^\uFEFF/, "");
+  const match = normalized.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
+  if (!match) {
+    return normalized;
+  }
+  return normalized.slice(match[0].length);
+}
+
+function parseQuotedSkillInstruction(value: string): {
+  skillIds: string[];
+  body: string;
+} {
+  const normalized = value.replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
+  const skillIds: string[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index]?.trim() ?? "";
+    if (!line) {
+      break;
+    }
+    const match = /^\/([A-Za-z0-9_-]+)$/.exec(line);
+    if (!match) {
+      return { skillIds: [], body: normalized.trim() };
+    }
+    skillIds.push(match[1] ?? "");
+    index += 1;
+  }
+
+  if (skillIds.length === 0) {
+    return { skillIds: [], body: normalized.trim() };
+  }
+
+  if (index < lines.length && (lines[index]?.trim() ?? "") !== "") {
+    return { skillIds: [], body: normalized.trim() };
+  }
+
+  while (index < lines.length && (lines[index]?.trim() ?? "") === "") {
+    index += 1;
+  }
+
+  return {
+    skillIds: [...new Set(skillIds)],
+    body: lines.slice(index).join("\n").trim(),
+  };
+}
+
+function quotedSkillBlock(skill: ResolvedWorkspaceSkill): string | null {
+  const skillFilePath = path.join(skill.source_dir, "SKILL.md");
+  let raw: string;
+  try {
+    raw = fs.readFileSync(skillFilePath, "utf8");
+  } catch {
+    return null;
+  }
+  const body = stripMarkdownFrontmatter(raw).trim();
+  return `<skill name="${skill.skill_id}" location="${skillFilePath}">\nReferences are relative to ${skill.source_dir}.\n\n${body}\n</skill>`;
 }
 
 function hasValidSkillFormat(params: { skillId: string; skillFilePath: string }): boolean {
@@ -190,4 +257,44 @@ export function resolveWorkspaceSkills(workspaceDirInput: string): ResolvedWorks
       return normalizedSkillId ? resolvedById.get(normalizedSkillId) ?? null : null;
     })
     .filter((skill): skill is ResolvedWorkspaceSkill => Boolean(skill));
+}
+
+export function prepareInstructionWithQuotedWorkspaceSkills(params: {
+  instruction: string;
+  workspaceSkills: ResolvedWorkspaceSkill[];
+}): PreparedQuotedWorkspaceSkills {
+  const parsed = parseQuotedSkillInstruction(params.instruction);
+  if (parsed.skillIds.length === 0) {
+    return {
+      body: parsed.body,
+      quoted_skill_blocks: [],
+      missing_quoted_skill_ids: [],
+    };
+  }
+
+  const skillsById = new Map(
+    params.workspaceSkills.map((skill) => [skill.skill_id, skill] as const),
+  );
+  const quotedSkillBlocks: string[] = [];
+  const missingQuotedSkillIds: string[] = [];
+
+  for (const skillId of parsed.skillIds) {
+    const skill = skillsById.get(skillId);
+    if (!skill) {
+      missingQuotedSkillIds.push(skillId);
+      continue;
+    }
+    const block = quotedSkillBlock(skill);
+    if (!block) {
+      missingQuotedSkillIds.push(skillId);
+      continue;
+    }
+    quotedSkillBlocks.push(block);
+  }
+
+  return {
+    body: parsed.body,
+    quoted_skill_blocks: quotedSkillBlocks,
+    missing_quoted_skill_ids: missingQuotedSkillIds,
+  };
 }

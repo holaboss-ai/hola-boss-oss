@@ -615,6 +615,16 @@ test("runtime tools capability routes expose local onboarding and cronjob action
   assert.ok(
     capabilityStatus
       .json()
+      .tools.some((tool: { id: string }) => tool.id === "todoread")
+  );
+  assert.ok(
+    capabilityStatus
+      .json()
+      .tools.some((tool: { id: string }) => tool.id === "todowrite")
+  );
+  assert.ok(
+    capabilityStatus
+      .json()
       .tools.some((tool: { id: string }) => tool.id === "terminal_session_start")
   );
 
@@ -733,6 +743,117 @@ test("runtime download_url tool saves a remote asset into the workspace", async 
     );
   } finally {
     await assetServer.close();
+    await app.close();
+    store.close();
+  }
+});
+
+test("runtime todo tools read, write, and block session todo state", async () => {
+  const root = makeTempDir("hb-runtime-api-todo-tools-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  fs.mkdirSync(path.join(workspaceRoot, "workspace-1"), { recursive: true });
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const initialRead = await app.inject({
+      method: "GET",
+      url: "/api/v1/capabilities/runtime-tools/todo",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+        "x-holaboss-session-id": "session-main",
+      },
+    });
+    assert.equal(initialRead.statusCode, 200);
+    assert.equal(initialRead.json().text, "No todo items are currently recorded for this session.");
+    assert.equal(initialRead.json().exists, false);
+
+    const write = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/todo",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+        "x-holaboss-session-id": "session-main",
+      },
+      payload: {
+        ops: [
+          {
+            op: "replace",
+            phases: [
+              {
+                name: "Implementation",
+                tasks: [
+                  { content: "Wire runtime todo state" },
+                  { content: "Verify runtime tool forwarding" },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    });
+    assert.equal(write.statusCode, 200);
+    assert.match(write.json().text, /Updated todo plan with 2 tasks across 1 phase\./);
+    assert.equal(write.json().exists, true);
+    assert.equal(write.json().blocked, false);
+
+    const reread = await app.inject({
+      method: "GET",
+      url: "/api/v1/capabilities/runtime-tools/todo",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+        "x-holaboss-session-id": "session-main",
+      },
+    });
+    assert.equal(reread.statusCode, 200);
+    assert.equal(reread.json().task_count, 2);
+    assert.equal(reread.json().phases[0].tasks[0].status, "in_progress");
+    assert.equal(reread.json().phases[0].tasks[1].status, "pending");
+
+    const blocked = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/todo/block",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+        "x-holaboss-session-id": "session-main",
+      },
+      payload: {
+        detail: "Blocked waiting for user input: Should I deploy to production?",
+      },
+    });
+    assert.equal(blocked.statusCode, 200);
+    assert.equal(blocked.json().exists, true);
+    assert.equal(blocked.json().blocked, true);
+
+    const status = await app.inject({
+      method: "GET",
+      url: "/api/v1/capabilities/runtime-tools/todo/status",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+        "x-holaboss-session-id": "session-main",
+      },
+    });
+    assert.equal(status.statusCode, 200);
+    assert.equal(status.json().blocked, true);
+
+    const todoPath = path.join(workspaceRoot, "workspace-1", ".holaboss", "todos", "session-main.json");
+    const persisted = JSON.parse(fs.readFileSync(todoPath, "utf8"));
+    assert.equal(persisted.phases[0]?.tasks[0]?.status, "blocked");
+    assert.equal(persisted.phases[0]?.tasks[1]?.status, "pending");
+    assert.match(
+      String(persisted.phases[0]?.tasks[0]?.details ?? ""),
+      /Blocked waiting for user input: Should I deploy to production\?/,
+    );
+  } finally {
     await app.close();
     store.close();
   }

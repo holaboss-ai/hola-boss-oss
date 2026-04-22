@@ -16,9 +16,9 @@ For the shipped `pi` path, a single run currently moves through these seams:
 1. `runtime/api-server/src/ts-runner.ts`: compiles the workspace runtime plan, stages MCP and app state, loads or persists harness session state, and decides which harness plugin to use.
 2. `runtime/api-server/src/agent-runtime-config.ts`: projects prompt layers, response-delivery policy, operator-surface context, capability manifests, selected model client config, and the tool map passed into the harness.
 3. `runtime/api-server/src/harness-registry.ts`: selects the runtime harness plugin, timeout behavior, browser tools, runtime tools, and MCP preparation policy.
-4. `runtime/harnesses/src/pi.ts`: builds the reduced host request that crosses from runtime code into the harness host, including the raw `thinking_value` requested for this run.
+4. `runtime/harnesses/src/pi.ts`: builds the reduced host request that crosses from runtime code into the harness host, including the raw `thinking_value` requested for this run and any runtime-prepared quoted skill payloads.
 5. `runtime/harness-host/src/index.ts`: dispatches the registered host plugin by command.
-6. `runtime/harness-host/src/pi.ts`: creates the Pi session, loads skills, injects runtime and browser tools, materializes the resolved MCP tool surface, enforces workspace boundaries, maps `thinking_value` onto Pi-native reasoning settings, and maps native events back out.
+6. `runtime/harness-host/src/pi.ts`: creates the Pi session, loads skills, injects runtime and browser tools, materializes the resolved MCP tool surface, enforces workspace boundaries, renders any runtime-prepared quoted skill blocks, maps `thinking_value` onto Pi-native reasoning settings, and maps native events back out.
 7. `runtime/harness-host/src/contracts.ts`: defines the normalized runner event types that the host emits back to the runtime.
 
 If you are unsure where a behavior belongs, trace this path before you patch anything.
@@ -31,10 +31,10 @@ Representative reduced host request from `runtime/harnesses/src/pi.ts`:
   workspace_dir: params.bootstrap.workspaceDir,
   session_id: params.request.session_id,
   input_id: params.request.input_id,
-  instruction: instructionWithContextMessages(
-    params.request.instruction,
-    params.runtimeConfig.context_messages,
-  ),
+  instruction: params.prepared_instruction?.body ?? params.request.instruction,
+  quoted_skill_blocks: params.prepared_instruction?.quoted_skill_blocks ?? [],
+  missing_quoted_skill_ids: params.prepared_instruction?.missing_quoted_skill_ids ?? [],
+  context_messages: params.runtimeConfig.context_messages ?? [],
   attachments: params.request.attachments ?? [],
   thinking_value: params.request.thinking_value ?? null,
   provider_id: params.runtimeConfig.provider_id,
@@ -119,7 +119,7 @@ The backend should join these relayed events with model-proxy requests by `run_i
 
 ## Quoted workspace skill expansion
 
-The current prompt path supports leading slash skill references from the composer.
+The current prompt path supports leading slash skill references from the composer, but the expansion semantics now live in the runtime path rather than the PI host.
 
 When the request instruction starts with lines like:
 
@@ -130,20 +130,26 @@ When the request instruction starts with lines like:
 Review this lead and draft next-step guidance.
 ```
 
-`buildPiPromptPayload()` resolves those ids against `workspace_skill_dirs`, injects canonical `<skill ...>` blocks, and leaves the remainder as the instruction body:
+`prepareInstructionWithQuotedWorkspaceSkills(...)` in `runtime/api-server/src/workspace-skills.ts` resolves those ids against the runtime-resolved workspace skill set, renders canonical `<skill ...>` blocks, and strips the leading slash lines from the instruction body before the harness request is built.
 
 ```ts
-const quotedSkills = resolveQuotedSkillSections(
-  request.instruction,
-  request.workspace_skill_dirs,
-);
-if (quotedSkills.blocks.length > 0) {
-  sections.push(["Quoted workspace skills:", ...quotedSkills.blocks].join("\n\n"));
-}
-const instruction = quotedSkills.body.trim();
+const preparedInstruction = prepareInstructionWithQuotedWorkspaceSkills({
+  instruction: request.instruction,
+  workspaceSkills,
+});
 ```
 
-If a quoted skill id is missing, the host appends an explicit warning section rather than silently dropping it. Keep this behavior stable so composer-selected skills remain inspectable in runtime traces and harness prompts.
+The PI adapter forwards that prepared payload as:
+
+```ts
+{
+  instruction: preparedInstruction.body,
+  quoted_skill_blocks: preparedInstruction.quoted_skill_blocks,
+  missing_quoted_skill_ids: preparedInstruction.missing_quoted_skill_ids,
+}
+```
+
+`buildPiPromptPayload()` no longer resolves slash skills from raw instruction text. It only renders the already-prepared `quoted_skill_blocks` and the missing-skill warning section. Keep that behavior stable so composer-selected skills remain inspectable in runtime traces and harness prompts without making the feature semantics PI-specific.
 
 ## Change the right seam
 

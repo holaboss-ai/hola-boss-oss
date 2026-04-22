@@ -3785,6 +3785,98 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
+  app.get("/api/v1/capabilities/runtime-tools/todo", async (request, reply) => {
+    try {
+      return await runtimeAgentToolsService.readTodo({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          query: isRecord(request.query) ? request.query : null,
+        }),
+        sessionId:
+          capabilitySessionId({
+            headers: request.headers as Record<string, unknown>,
+            query: isRecord(request.query) ? request.query : null,
+          }) ?? "",
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime todo read failed");
+    }
+  });
+
+  app.get("/api/v1/capabilities/runtime-tools/todo/status", async (request, reply) => {
+    try {
+      return await runtimeAgentToolsService.readTodoStatus({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          query: isRecord(request.query) ? request.query : null,
+        }),
+        sessionId:
+          capabilitySessionId({
+            headers: request.headers as Record<string, unknown>,
+            query: isRecord(request.query) ? request.query : null,
+          }) ?? "",
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime todo status failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/todo", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return await runtimeAgentToolsService.writeTodo({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        sessionId:
+          capabilitySessionId({
+            headers: request.headers as Record<string, unknown>,
+            body: request.body,
+          }) ?? "",
+        toolParams: request.body,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime todo write failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/todo/block", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return await runtimeAgentToolsService.blockTodo({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        sessionId:
+          capabilitySessionId({
+            headers: request.headers as Record<string, unknown>,
+            body: request.body,
+          }) ?? "",
+        detail: requiredString(request.body.detail, "detail"),
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime todo block failed");
+    }
+  });
+
   app.get("/api/v1/capabilities/runtime-tools/scratchpad", async (request, reply) => {
     try {
       return await runtimeAgentToolsService.readScratchpad({

@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, test } from "node:test";
 
-import { resolveWorkspaceSkills } from "./workspace-skills.js";
+import {
+  prepareInstructionWithQuotedWorkspaceSkills,
+  resolveWorkspaceSkills,
+} from "./workspace-skills.js";
 
 const ORIGINAL_ENV = {
   HOLABOSS_EMBEDDED_SKILLS_DIR: process.env.HOLABOSS_EMBEDDED_SKILLS_DIR,
@@ -169,4 +172,42 @@ test("resolveWorkspaceSkills ignores invalid skill format when frontmatter is mi
     resolveWorkspaceSkills(workspaceDir).map((skill) => skill.skill_id),
     ["valid-skill"]
   );
+});
+
+test("prepareInstructionWithQuotedWorkspaceSkills strips leading slash skills into canonical blocks", () => {
+  const embeddedRoot = makeTempDir("hb-embedded-skills-empty-");
+  process.env.HOLABOSS_EMBEDDED_SKILLS_DIR = embeddedRoot;
+
+  const workspaceDir = makeTempDir("hb-workspace-quoted-skills-");
+  const skillsRoot = path.join(workspaceDir, "skills");
+  const skillDir = path.join(skillsRoot, "customer_lookup");
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(skillDir, "SKILL.md"),
+    [
+      "---",
+      "name: customer_lookup",
+      "description: Customer lookup",
+      "---",
+      "",
+      "# Customer Lookup",
+      "",
+      "Check the customer profile before writing the response.",
+    ].join("\n"),
+    "utf8"
+  );
+
+  const workspaceSkills = resolveWorkspaceSkills(workspaceDir);
+  const prepared = prepareInstructionWithQuotedWorkspaceSkills({
+    instruction: ["/customer_lookup", "/missing_skill", "", "Draft the follow-up email."].join("\n"),
+    workspaceSkills,
+  });
+
+  assert.equal(prepared.body, "Draft the follow-up email.");
+  assert.deepEqual(prepared.missing_quoted_skill_ids, ["missing_skill"]);
+  assert.equal(prepared.quoted_skill_blocks.length, 1);
+  assert.match(prepared.quoted_skill_blocks[0] ?? "", /<skill name="customer_lookup" location=".*customer_lookup\/SKILL\.md">/);
+  assert.match(prepared.quoted_skill_blocks[0] ?? "", /References are relative to .*customer_lookup/);
+  assert.match(prepared.quoted_skill_blocks[0] ?? "", /Check the customer profile before writing the response\./);
+  assert.doesNotMatch(prepared.quoted_skill_blocks[0] ?? "", /^---$/m);
 });

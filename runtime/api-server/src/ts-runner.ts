@@ -62,7 +62,10 @@ import {
   readWorkspaceHarnessSessionId,
   workspaceDirForId,
 } from "./ts-runner-session-state.js";
-import { resolveWorkspaceSkills } from "./workspace-skills.js";
+import {
+  prepareInstructionWithQuotedWorkspaceSkills,
+  resolveWorkspaceSkills,
+} from "./workspace-skills.js";
 import { resolveProductRuntimeConfig } from "./runtime-config.js";
 import {
   normalizeHarnessId,
@@ -1598,6 +1601,10 @@ export async function executeTsRunnerRequest(
       "resolve_workspace_skills",
       () => resolveWorkspaceSkills(bootstrap.workspaceDir),
     );
+    const preparedInstruction = prepareInstructionWithQuotedWorkspaceSkills({
+      instruction: request.instruction,
+      workspaceSkills,
+    });
     const stagedSkills = runnerPrepPlan.stageWorkspaceSkills
       ? measureBootstrapStage(
           bootstrapStageTimingsMs,
@@ -1848,6 +1855,7 @@ export async function executeTsRunnerRequest(
         request,
         bootstrap,
         runtimeConfig,
+        prepared_instruction: preparedInstruction,
         browserSpace: browserSpaceFromOperatorSurfaceContext(
           operatorSurfaceContext,
         ),
@@ -1890,6 +1898,7 @@ export async function executeTsRunnerRequest(
       request,
       bootstrap,
       runtimeConfig,
+      prepared_instruction: preparedInstruction,
       browserSpace: browserSpaceFromOperatorSurfaceContext(
         operatorSurfaceContext,
       ),

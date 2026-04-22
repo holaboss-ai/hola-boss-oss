@@ -355,18 +355,6 @@ const BUILTIN_CAPABILITY_DEFINITIONS: Record<string, ToolCapabilityDefinition> =
     title: "Question",
     description: "Pause and ask the user for clarification or confirmation.",
   },
-  todowrite: {
-    kind: "builtin_tool",
-    policy: "coordinate",
-    title: "Todo Write",
-    description: "Create or update the current working todo.",
-  },
-  todoread: {
-    kind: "builtin_tool",
-    policy: "coordinate",
-    title: "Todo Read",
-    description: "Read the current working todo.",
-  },
   skill: {
     kind: "builtin_tool",
     policy: "coordinate",
@@ -621,7 +609,7 @@ function executionSemanticsForDescriptor(params: {
       requires_user_confirmation: true,
     };
   }
-  if (normalizedId === "read" || normalizedId === "grep" || normalizedId === "glob" || normalizedId === "list" || normalizedId === "todoread") {
+  if (normalizedId === "read" || normalizedId === "grep" || normalizedId === "glob" || normalizedId === "list") {
     return {
       concurrency: "parallel_safe",
       requires_runtime_service: false,

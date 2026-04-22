@@ -131,6 +131,11 @@ export interface HarnessHostRequestBuildParams {
   request: HarnessRunnerRequestLike;
   bootstrap: HarnessBootstrapPayload;
   runtimeConfig: HarnessRuntimeConfigPayload;
+  prepared_instruction?: {
+    body: string;
+    quoted_skill_blocks: string[];
+    missing_quoted_skill_ids: string[];
+  } | null;
   browserSpace?: "agent" | "user" | null;
   runtimeApiBaseUrl?: string | null;
   workspaceSkills: Array<{

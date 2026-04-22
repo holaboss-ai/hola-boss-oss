@@ -2892,6 +2892,7 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
       "--request-base64",
       encodeRequest({
         ...baseRequest(),
+        instruction: ["/alpha", "", "Draft the follow-up email."].join("\n"),
         context: {
           _sandbox_runtime_exec_v1: {
             harness: "pi",
@@ -2964,6 +2965,28 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
     ["skill-creator", "skill-installer", "alpha"],
   );
   assert.ok(capturedHarnessRequest);
+  assert.equal(
+    (capturedHarnessRequest as { instruction: string }).instruction,
+    "Draft the follow-up email.",
+  );
+  assert.equal(
+    (
+      capturedHarnessRequest as { quoted_skill_blocks: string[] }
+    ).quoted_skill_blocks.length,
+    1,
+  );
+  assert.match(
+    (
+      capturedHarnessRequest as { quoted_skill_blocks: string[] }
+    ).quoted_skill_blocks[0] ?? "",
+    /<skill name="alpha" location=".*alpha\/SKILL\.md">/,
+  );
+  assert.deepEqual(
+    (
+      capturedHarnessRequest as { missing_quoted_skill_ids: string[] }
+    ).missing_quoted_skill_ids,
+    [],
+  );
   assert.deepEqual(
     (
       capturedHarnessRequest as { workspace_skill_dirs: string[] }

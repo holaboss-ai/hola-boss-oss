@@ -101,6 +101,8 @@ test("decodeHarnessHostPiRequestBase64 validates and normalizes request payloads
       browser_space: "user",
       input_id: "input-1",
       instruction: "Do the thing",
+      quoted_skill_blocks: ['<skill name="customer_lookup" location="/tmp/workspace-1/skills/customer_lookup/SKILL.md">\nBody\n</skill>'],
+      missing_quoted_skill_ids: ["missing-skill"],
       context_messages: ["Recent runtime context"],
       thinking_value: "medium",
       provider_id: "openai",
@@ -132,6 +134,8 @@ test("decodeHarnessHostPiRequestBase64 validates and normalizes request payloads
     browser_space: "user",
     input_id: "input-1",
     instruction: "Do the thing",
+    quoted_skill_blocks: ['<skill name="customer_lookup" location="/tmp/workspace-1/skills/customer_lookup/SKILL.md">\nBody\n</skill>'],
+    missing_quoted_skill_ids: ["missing-skill"],
     context_messages: ["Recent runtime context"],
     attachments: [],
     thinking_value: "medium",
@@ -206,6 +210,10 @@ test("decodeHarnessHostPiRequestBase64 allows empty or missing system_prompt", (
 
   assert.equal(emptyPrompt.system_prompt, "");
   assert.equal(missingPrompt.system_prompt, "");
+  assert.deepEqual(emptyPrompt.quoted_skill_blocks, []);
+  assert.deepEqual(missingPrompt.quoted_skill_blocks, []);
+  assert.deepEqual(emptyPrompt.missing_quoted_skill_ids, []);
+  assert.deepEqual(missingPrompt.missing_quoted_skill_ids, []);
   assert.deepEqual(emptyPrompt.context_messages, ["Recent runtime context"]);
   assert.deepEqual(missingPrompt.context_messages, ["Recent runtime context"]);
 });

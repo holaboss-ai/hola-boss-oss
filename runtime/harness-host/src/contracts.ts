@@ -70,6 +70,8 @@ export interface HarnessHostPiRequest {
   browser_space?: "agent" | "user" | null;
   input_id: string;
   instruction: string;
+  quoted_skill_blocks?: string[];
+  missing_quoted_skill_ids?: string[];
   context_messages?: string[];
   attachments?: HarnessHostInputAttachmentPayload[];
   thinking_value?: string | null;
@@ -386,6 +388,8 @@ export function decodeHarnessHostPiRequestBase64(encoded: string): HarnessHostPi
     browser_space: optionalBrowserSpace(parsed.browser_space),
     input_id: requiredString(parsed.input_id, "input_id"),
     instruction: requiredString(parsed.instruction, "instruction"),
+    quoted_skill_blocks: stringArray(parsed.quoted_skill_blocks),
+    missing_quoted_skill_ids: stringArray(parsed.missing_quoted_skill_ids),
     context_messages: stringArray(parsed.context_messages),
     attachments: inputAttachments(parsed.attachments, "attachments"),
     thinking_value: optionalString(parsed.thinking_value),

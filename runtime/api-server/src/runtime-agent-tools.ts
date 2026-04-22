@@ -20,6 +20,17 @@ import {
   type SessionScratchpadWriteOperation,
   writeSessionScratchpad,
 } from "./session-scratchpad.js";
+import {
+  blockActiveSessionTodo,
+  countSessionTodoTasks,
+  flattenSessionTodoSummaries,
+  formatSessionTodoListText,
+  formatSessionTodoWriteText,
+  readSessionTodo,
+  readSessionTodoStatus,
+  type SessionTodoState,
+  writeSessionTodo,
+} from "./session-todo.js";
 import type { TerminalSessionManagerLike } from "./terminal-session-manager.js";
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
@@ -106,6 +117,23 @@ export interface RuntimeAgentToolsWriteReportParams {
 export interface RuntimeAgentToolsReadScratchpadParams {
   workspaceId: string;
   sessionId: string;
+}
+
+export interface RuntimeAgentToolsReadTodoParams {
+  workspaceId: string;
+  sessionId: string;
+}
+
+export interface RuntimeAgentToolsWriteTodoParams {
+  workspaceId: string;
+  sessionId: string;
+  toolParams: unknown;
+}
+
+export interface RuntimeAgentToolsBlockTodoParams {
+  workspaceId: string;
+  sessionId: string;
+  detail: string;
 }
 
 export interface RuntimeAgentToolsWriteScratchpadParams {
@@ -239,6 +267,18 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/reports",
     description: runtimeToolBaseDefinition("write_report").description
+  },
+  {
+    id: runtimeToolBaseDefinition("todoread").id,
+    method: "GET",
+    path: "/api/v1/capabilities/runtime-tools/todo",
+    description: runtimeToolBaseDefinition("todoread").description
+  },
+  {
+    id: runtimeToolBaseDefinition("todowrite").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/todo",
+    description: runtimeToolBaseDefinition("todowrite").description
   },
   {
     id: runtimeToolBaseDefinition("holaboss_scratchpad_read").id,
@@ -769,6 +809,62 @@ function terminalSessionReadPayload(params: {
   };
 }
 
+function sessionTodoBlocked(state: SessionTodoState): boolean {
+  return state.phases.flatMap((phase) => phase.tasks).some((task) => task.status === "blocked");
+}
+
+function sessionTodoReadPayload(state: SessionTodoState): JsonObject {
+  const taskCount = countSessionTodoTasks(state.phases);
+  return {
+    text: formatSessionTodoListText(state.phases),
+    session_id: state.session_id,
+    updated_at: state.updated_at,
+    phase_count: state.phases.length,
+    task_count: taskCount,
+    todo_count: taskCount,
+    exists: taskCount > 0,
+    blocked: sessionTodoBlocked(state),
+    phases: state.phases as unknown as JsonValue,
+    todos: flattenSessionTodoSummaries(state.phases) as unknown as JsonValue,
+  };
+}
+
+function sessionTodoWritePayload(params: {
+  previousState: SessionTodoState;
+  nextState: SessionTodoState;
+}): JsonObject {
+  const previousTaskCount = countSessionTodoTasks(params.previousState.phases);
+  const nextTaskCount = countSessionTodoTasks(params.nextState.phases);
+  return {
+    text: formatSessionTodoWriteText(params.nextState),
+    session_id: params.nextState.session_id,
+    updated_at: params.nextState.updated_at,
+    previous_phase_count: params.previousState.phases.length,
+    phase_count: params.nextState.phases.length,
+    previous_task_count: previousTaskCount,
+    task_count: nextTaskCount,
+    previous_todo_count: previousTaskCount,
+    todo_count: nextTaskCount,
+    exists: nextTaskCount > 0,
+    blocked: sessionTodoBlocked(params.nextState),
+    phases: params.nextState.phases as unknown as JsonValue,
+    todos: flattenSessionTodoSummaries(params.nextState.phases) as unknown as JsonValue,
+  };
+}
+
+function sessionTodoStatusPayload(state: SessionTodoState): JsonObject {
+  const taskCount = countSessionTodoTasks(state.phases);
+  return {
+    session_id: state.session_id,
+    updated_at: state.updated_at,
+    phase_count: state.phases.length,
+    task_count: taskCount,
+    todo_count: taskCount,
+    exists: taskCount > 0,
+    blocked: sessionTodoBlocked(state),
+  };
+}
+
 export function runtimeAgentToolCapabilityPayload(context?: {
   workspaceId?: string | null;
 }): RuntimeAgentToolCapabilityPayload {
@@ -1073,6 +1169,75 @@ export class RuntimeAgentToolsService {
       mime_type: mimeType,
       size_bytes: bytes.byteLength,
     };
+  }
+
+  async readTodo(params: RuntimeAgentToolsReadTodoParams): Promise<JsonObject> {
+    this.requireWorkspace(params.workspaceId);
+    const sessionId = normalizedString(params.sessionId);
+    if (!sessionId) {
+      throw new RuntimeAgentToolsServiceError(400, "todo_session_required", "session_id is required");
+    }
+    return sessionTodoReadPayload(
+      await readSessionTodo({
+        workspaceRoot: this.options.workspaceRoot,
+        workspaceId: params.workspaceId,
+        sessionId,
+      }),
+    );
+  }
+
+  async writeTodo(params: RuntimeAgentToolsWriteTodoParams): Promise<JsonObject> {
+    this.requireWorkspace(params.workspaceId);
+    const sessionId = normalizedString(params.sessionId);
+    if (!sessionId) {
+      throw new RuntimeAgentToolsServiceError(400, "todo_session_required", "session_id is required");
+    }
+    const result = await writeSessionTodo({
+      workspaceRoot: this.options.workspaceRoot,
+      workspaceId: params.workspaceId,
+      sessionId,
+      toolParams: params.toolParams,
+    });
+    return sessionTodoWritePayload(result);
+  }
+
+  async readTodoStatus(params: RuntimeAgentToolsReadTodoParams): Promise<JsonObject> {
+    this.requireWorkspace(params.workspaceId);
+    const sessionId = normalizedString(params.sessionId);
+    if (!sessionId) {
+      throw new RuntimeAgentToolsServiceError(400, "todo_session_required", "session_id is required");
+    }
+    const { state } = await readSessionTodoStatus({
+      workspaceRoot: this.options.workspaceRoot,
+      workspaceId: params.workspaceId,
+      sessionId,
+    });
+    return sessionTodoStatusPayload(state);
+  }
+
+  async blockTodo(params: RuntimeAgentToolsBlockTodoParams): Promise<JsonObject> {
+    this.requireWorkspace(params.workspaceId);
+    const sessionId = normalizedString(params.sessionId);
+    if (!sessionId) {
+      throw new RuntimeAgentToolsServiceError(400, "todo_session_required", "session_id is required");
+    }
+    const detail = normalizedString(params.detail);
+    if (!detail) {
+      throw new RuntimeAgentToolsServiceError(400, "todo_detail_required", "detail is required");
+    }
+    const state =
+      (await blockActiveSessionTodo({
+        workspaceRoot: this.options.workspaceRoot,
+        workspaceId: params.workspaceId,
+        sessionId,
+        detail,
+      })) ??
+      (await readSessionTodo({
+        workspaceRoot: this.options.workspaceRoot,
+        workspaceId: params.workspaceId,
+        sessionId,
+      }));
+    return sessionTodoStatusPayload(state);
   }
 
   async writeReport(params: RuntimeAgentToolsWriteReportParams): Promise<JsonObject> {
