@@ -56,6 +56,31 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+
+  /* Font weight scale — each step ~50 lighter than Tailwind default.
+     Depends on Inter Variable for continuous weights. */
+  --font-weight-thin: 300;
+  --font-weight-extralight: 325;
+  --font-weight-light: 350;
+  --font-weight-normal: 350;
+  --font-weight-medium: 400;
+  --font-weight-semibold: 450;
+  --font-weight-bold: 500;
+  --font-weight-extrabold: 550;
+  --font-weight-black: 600;
+
+  /* Subtle layered shadows with a hairline ring as the last layer
+     (0 0 0 1px / 0.5px). Gives cards & buttons a "glass edge" without
+     a real border. Use: shadow-subtle-xs / shadow-subtle-sm */
+  --shadow-subtle-xs:
+    rgba(0, 0, 0, 0.04) 0 1px 1px -0.5px,
+    rgba(0, 0, 0, 0.08) 0 2px 2px -1px,
+    rgba(0, 0, 0, 0.08) 0 0 0 1px;
+  --shadow-subtle-sm:
+    rgba(0, 0, 0, 0.03) 0 1px 1px -0.5px,
+    rgba(0, 0, 0, 0.06) 0 1px 1px -0.5px,
+    rgba(0, 0, 0, 0.06) 0 2px 2px -1px,
+    rgba(0, 0, 0, 0.05) 0 0 0 0.5px;
 }
 
 /* Fallback radius and semantic status colors — themes can override */
@@ -70,10 +95,13 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-normal;
   }
   html {
     @apply font-sans;
+  }
+  strong {
+    @apply font-medium;
   }
 }
 
@@ -887,4 +915,29 @@ webview {
 
 .simple-markdown.file-preview-markdown .md-hr {
   margin: 36px 0;
+}
+
+/* ---- Hairline borders ----
+   Tailwind v4's border utility is hardcoded to 1px with no var entry,
+   so override by source order. 0.8px reads more refined on hi-dpi. */
+.border {
+  border-width: 0.8px;
+}
+.border-x {
+  border-inline-width: 0.8px;
+}
+.border-y {
+  border-block-width: 0.8px;
+}
+.border-t {
+  border-top-width: 0.8px;
+}
+.border-r {
+  border-right-width: 0.8px;
+}
+.border-b {
+  border-bottom-width: 0.8px;
+}
+.border-l {
+  border-left-width: 0.8px;
 }
