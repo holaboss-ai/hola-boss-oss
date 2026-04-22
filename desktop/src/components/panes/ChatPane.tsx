@@ -8185,7 +8185,7 @@ function QueuedSessionInputRail({
             height: `${panelHeightPx}px`,
           }}
         >
-          <div className="px-5 pt-4">
+          <div className="px-4 pt-4">
             <div
               className="overflow-y-auto pr-1.5"
               style={{ maxHeight: `${queueViewportHeightPx}px` }}
@@ -10322,7 +10322,7 @@ function Composer({
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
-        className={`overflow-hidden rounded-xl border border-border bg-background transition-colors focus-within:border-ring ${
+        className={`overflow-hidden rounded-xl border border-border bg-background transition-colors focus-within:border-muted-foreground ${
           isDragActive ? "border-primary bg-primary/[0.04]" : "border-border"
         }`}
       >
