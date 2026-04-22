@@ -7618,7 +7618,7 @@ export function ChatPane({
           {hasMessages ? (
             <div
               ref={composerBlockRef}
-              className={`shrink-0 px-6 pb-5 pt-3 ${
+              className={`shrink-0 px-4 pb-5 pt-3 ${
                 showHistoryRestoreScreen ? "invisible" : ""
               }`}
             >
@@ -10307,8 +10307,8 @@ function Composer({
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
-        className={`overflow-hidden rounded-xl border border-border bg-background transition-colors focus-within:border-muted-foreground ${
-          isDragActive ? "border-primary bg-primary/[0.04]" : "border-border"
+        className={`overflow-hidden rounded-xl border border-border bg-background ${
+          isDragActive ? "border-primary bg-primary/[0.04]" : ""
         }`}
       >
         <input
