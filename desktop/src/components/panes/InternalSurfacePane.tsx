@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileText, FileWarning, Loader2, Save } from "lucide-react";
+import { Eye, FileText, FileWarning, Loader2, Save } from "lucide-react";
 import {
   areTablePreviewSheetsEqual,
   cloneTablePreviewSheets,
@@ -499,28 +499,35 @@ export function InternalSurfacePane({
             </div>
             <div className="flex shrink-0 items-center gap-2">
               {supportsRenderedTextPreview ? (
-                <div className="inline-flex items-center rounded-md border border-border bg-muted p-0.5">
-                  <Button
-                    type="button"
-                    variant={textPreviewMode === "preview" ? "secondary" : "ghost"}
-                    size="xs"
-                    onClick={() => setTextPreviewMode("preview")}
-                    className={textPreviewMode === "preview" ? "shadow-sm" : ""}
-                  >
-                    Preview
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={textPreviewMode === "edit" ? "secondary" : "ghost"}
-                    size="xs"
-                    onClick={() => setTextPreviewMode("edit")}
-                    className={textPreviewMode === "edit" ? "shadow-sm" : ""}
-                  >
-                    Edit
-                  </Button>
-                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() =>
+                    setTextPreviewMode(
+                      textPreviewMode === "preview" ? "edit" : "preview",
+                    )
+                  }
+                  aria-label={
+                    textPreviewMode === "preview"
+                      ? "Switch to edit mode"
+                      : "Switch to preview mode"
+                  }
+                  title={
+                    textPreviewMode === "preview"
+                      ? "Previewing — click to edit"
+                      : "Editing — click to preview"
+                  }
+                  className={
+                    textPreviewMode === "preview"
+                      ? "bg-muted text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  }
+                >
+                  <Eye className="size-3.5" />
+                </Button>
               ) : null}
-              {preview.isEditable ? (
+              {preview.isEditable && (isDirty || isSaving) ? (
                 <Button
                   type="button"
                   variant="outline"
@@ -528,7 +535,7 @@ export function InternalSurfacePane({
                   onClick={() => void savePreview()}
                   disabled={!isDirty || isSaving}
                 >
-                  <Save size={12} />
+                  <Save className="size-3.5" />
                   {isSaving ? "Saving" : "Save"}
                 </Button>
               ) : null}
