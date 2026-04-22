@@ -231,7 +231,6 @@ test("session checkpoint merges snapshot compaction into a live session that onl
       requestSnapshotFingerprint: "snap-1",
       promptCacheProfile: null,
       compactedSummary: null,
-      compactionBoundaryId: null,
       tokenUsage: null,
       createdAt: new Date().toISOString(),
     });
@@ -308,20 +307,12 @@ test("session checkpoint merges snapshot compaction into a live session that onl
     assert.equal(latestEntry.summary, "Compacted older context.");
     assert.ok(branch.some((entry: FakeSessionEntry) => entry.id === baseLeafId));
 
-    const boundaries = store.listCompactionBoundaries({
-      workspaceId: workspace.id,
-      sessionId: "session-main",
-      limit: 10,
-      offset: 0,
-    });
-    assert.equal(boundaries[0]?.boundaryType, "harness_auto_compaction");
-
     const updatedJob = store.getPostRunJob(queued!.jobId);
     assert.equal(
       (
         updatedJob?.payload.checkpoint_result as { outcome?: string } | undefined
       )?.outcome,
-      "merged",
+      "merged_without_boundary",
     );
   } finally {
     store.close();
@@ -369,7 +360,6 @@ test("session checkpoint re-resolves model client auth while preserving snapshot
       requestSnapshotFingerprint: "snap-auth",
       promptCacheProfile: null,
       compactedSummary: null,
-      compactionBoundaryId: null,
       tokenUsage: null,
       createdAt: new Date().toISOString(),
     });
@@ -488,7 +478,7 @@ test("session checkpoint re-resolves model client auth while preserving snapshot
       (
         updatedJob?.payload.checkpoint_result as { outcome?: string } | undefined
       )?.outcome,
-      "merged",
+      "merged_without_boundary",
     );
   } finally {
     store.close();
@@ -536,7 +526,6 @@ test("session checkpoint records not_compacted when PI reports a compaction no-o
       requestSnapshotFingerprint: "snap-not-compacted",
       promptCacheProfile: null,
       compactedSummary: null,
-      compactionBoundaryId: null,
       tokenUsage: null,
       createdAt: new Date().toISOString(),
     });
@@ -645,7 +634,6 @@ test("session checkpoint treats provider 422 summarization failures as a soft no
       requestSnapshotFingerprint: "snap-soft-422",
       promptCacheProfile: null,
       compactedSummary: null,
-      compactionBoundaryId: null,
       tokenUsage: null,
       createdAt: new Date().toISOString(),
     });
@@ -719,14 +707,6 @@ test("session checkpoint treats provider 422 summarization failures as a soft no
 
     const branch = requireFakeSessionState(sessions, liveSessionFile).entries;
     assert.equal(branch.at(-1)?.type, "message");
-
-    const boundaries = store.listCompactionBoundaries({
-      workspaceId: workspace.id,
-      sessionId: "session-soft-422",
-      limit: 10,
-      offset: 0,
-    });
-    assert.equal(boundaries.length, 0);
 
     const updatedJob = store.getPostRunJob(queued!.jobId);
     assert.equal(

@@ -15,7 +15,25 @@ import {
 import { RUNTIME_AGENT_TOOL_DEFINITIONS as RUNTIME_AGENT_TOOL_BASE_DEFINITIONS } from "../../harnesses/src/runtime-agent-tools.js";
 import { cronjobNextRunAt } from "./cron-worker.js";
 import { generateWorkspaceImage } from "./image-generation.js";
+import { searchPublicWeb } from "./native-web-search.js";
+import {
+  readSessionScratchpad,
+  type SessionScratchpadWriteOperation,
+  writeSessionScratchpad,
+} from "./session-scratchpad.js";
+import {
+  blockActiveSessionTodo,
+  countSessionTodoTasks,
+  flattenSessionTodoSummaries,
+  formatSessionTodoListText,
+  formatSessionTodoWriteText,
+  readSessionTodo,
+  readSessionTodoStatus,
+  type SessionTodoState,
+  writeSessionTodo,
+} from "./session-todo.js";
 import type { TerminalSessionManagerLike } from "./terminal-session-manager.js";
+import { invokeWorkspaceSkill, resolveWorkspaceSkills } from "./workspace-skills.js";
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 type JsonObject = { [key: string]: JsonValue };
@@ -96,6 +114,50 @@ export interface RuntimeAgentToolsWriteReportParams {
   filename?: string | null;
   summary?: string | null;
   content: string;
+}
+
+export interface RuntimeAgentToolsSearchWebParams {
+  query: string;
+  numResults?: number | null;
+  maxResults?: number | null;
+  livecrawl?: string | null;
+  type?: string | null;
+  contextMaxCharacters?: number | null;
+}
+
+export interface RuntimeAgentToolsInvokeSkillParams {
+  workspaceId: string;
+  requestedName: string;
+  args?: string | null;
+}
+
+export interface RuntimeAgentToolsReadScratchpadParams {
+  workspaceId: string;
+  sessionId: string;
+}
+
+export interface RuntimeAgentToolsReadTodoParams {
+  workspaceId: string;
+  sessionId: string;
+}
+
+export interface RuntimeAgentToolsWriteTodoParams {
+  workspaceId: string;
+  sessionId: string;
+  toolParams: unknown;
+}
+
+export interface RuntimeAgentToolsBlockTodoParams {
+  workspaceId: string;
+  sessionId: string;
+  detail: string;
+}
+
+export interface RuntimeAgentToolsWriteScratchpadParams {
+  workspaceId: string;
+  sessionId: string;
+  op: SessionScratchpadWriteOperation;
+  content?: string | null;
 }
 
 export interface RuntimeAgentToolsListTerminalSessionsParams {
@@ -222,6 +284,42 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/reports",
     description: runtimeToolBaseDefinition("write_report").description
+  },
+  {
+    id: runtimeToolBaseDefinition("web_search").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/web-search",
+    description: runtimeToolBaseDefinition("web_search").description
+  },
+  {
+    id: runtimeToolBaseDefinition("todoread").id,
+    method: "GET",
+    path: "/api/v1/capabilities/runtime-tools/todo",
+    description: runtimeToolBaseDefinition("todoread").description
+  },
+  {
+    id: runtimeToolBaseDefinition("todowrite").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/todo",
+    description: runtimeToolBaseDefinition("todowrite").description
+  },
+  {
+    id: runtimeToolBaseDefinition("holaboss_scratchpad_read").id,
+    method: "GET",
+    path: "/api/v1/capabilities/runtime-tools/scratchpad",
+    description: runtimeToolBaseDefinition("holaboss_scratchpad_read").description
+  },
+  {
+    id: runtimeToolBaseDefinition("holaboss_scratchpad_write").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/scratchpad",
+    description: runtimeToolBaseDefinition("holaboss_scratchpad_write").description
+  },
+  {
+    id: runtimeToolBaseDefinition("skill").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/skill",
+    description: runtimeToolBaseDefinition("skill").description
   },
   {
     id: runtimeToolBaseDefinition("terminal_sessions_list").id,
@@ -740,6 +838,62 @@ function terminalSessionReadPayload(params: {
   };
 }
 
+function sessionTodoBlocked(state: SessionTodoState): boolean {
+  return state.phases.flatMap((phase) => phase.tasks).some((task) => task.status === "blocked");
+}
+
+function sessionTodoReadPayload(state: SessionTodoState): JsonObject {
+  const taskCount = countSessionTodoTasks(state.phases);
+  return {
+    text: formatSessionTodoListText(state.phases),
+    session_id: state.session_id,
+    updated_at: state.updated_at,
+    phase_count: state.phases.length,
+    task_count: taskCount,
+    todo_count: taskCount,
+    exists: taskCount > 0,
+    blocked: sessionTodoBlocked(state),
+    phases: state.phases as unknown as JsonValue,
+    todos: flattenSessionTodoSummaries(state.phases) as unknown as JsonValue,
+  };
+}
+
+function sessionTodoWritePayload(params: {
+  previousState: SessionTodoState;
+  nextState: SessionTodoState;
+}): JsonObject {
+  const previousTaskCount = countSessionTodoTasks(params.previousState.phases);
+  const nextTaskCount = countSessionTodoTasks(params.nextState.phases);
+  return {
+    text: formatSessionTodoWriteText(params.nextState),
+    session_id: params.nextState.session_id,
+    updated_at: params.nextState.updated_at,
+    previous_phase_count: params.previousState.phases.length,
+    phase_count: params.nextState.phases.length,
+    previous_task_count: previousTaskCount,
+    task_count: nextTaskCount,
+    previous_todo_count: previousTaskCount,
+    todo_count: nextTaskCount,
+    exists: nextTaskCount > 0,
+    blocked: sessionTodoBlocked(params.nextState),
+    phases: params.nextState.phases as unknown as JsonValue,
+    todos: flattenSessionTodoSummaries(params.nextState.phases) as unknown as JsonValue,
+  };
+}
+
+function sessionTodoStatusPayload(state: SessionTodoState): JsonObject {
+  const taskCount = countSessionTodoTasks(state.phases);
+  return {
+    session_id: state.session_id,
+    updated_at: state.updated_at,
+    phase_count: state.phases.length,
+    task_count: taskCount,
+    todo_count: taskCount,
+    exists: taskCount > 0,
+    blocked: sessionTodoBlocked(state),
+  };
+}
+
 export function runtimeAgentToolCapabilityPayload(context?: {
   workspaceId?: string | null;
 }): RuntimeAgentToolCapabilityPayload {
@@ -1046,6 +1200,75 @@ export class RuntimeAgentToolsService {
     };
   }
 
+  async readTodo(params: RuntimeAgentToolsReadTodoParams): Promise<JsonObject> {
+    this.requireWorkspace(params.workspaceId);
+    const sessionId = normalizedString(params.sessionId);
+    if (!sessionId) {
+      throw new RuntimeAgentToolsServiceError(400, "todo_session_required", "session_id is required");
+    }
+    return sessionTodoReadPayload(
+      await readSessionTodo({
+        workspaceRoot: this.options.workspaceRoot,
+        workspaceId: params.workspaceId,
+        sessionId,
+      }),
+    );
+  }
+
+  async writeTodo(params: RuntimeAgentToolsWriteTodoParams): Promise<JsonObject> {
+    this.requireWorkspace(params.workspaceId);
+    const sessionId = normalizedString(params.sessionId);
+    if (!sessionId) {
+      throw new RuntimeAgentToolsServiceError(400, "todo_session_required", "session_id is required");
+    }
+    const result = await writeSessionTodo({
+      workspaceRoot: this.options.workspaceRoot,
+      workspaceId: params.workspaceId,
+      sessionId,
+      toolParams: params.toolParams,
+    });
+    return sessionTodoWritePayload(result);
+  }
+
+  async readTodoStatus(params: RuntimeAgentToolsReadTodoParams): Promise<JsonObject> {
+    this.requireWorkspace(params.workspaceId);
+    const sessionId = normalizedString(params.sessionId);
+    if (!sessionId) {
+      throw new RuntimeAgentToolsServiceError(400, "todo_session_required", "session_id is required");
+    }
+    const { state } = await readSessionTodoStatus({
+      workspaceRoot: this.options.workspaceRoot,
+      workspaceId: params.workspaceId,
+      sessionId,
+    });
+    return sessionTodoStatusPayload(state);
+  }
+
+  async blockTodo(params: RuntimeAgentToolsBlockTodoParams): Promise<JsonObject> {
+    this.requireWorkspace(params.workspaceId);
+    const sessionId = normalizedString(params.sessionId);
+    if (!sessionId) {
+      throw new RuntimeAgentToolsServiceError(400, "todo_session_required", "session_id is required");
+    }
+    const detail = normalizedString(params.detail);
+    if (!detail) {
+      throw new RuntimeAgentToolsServiceError(400, "todo_detail_required", "detail is required");
+    }
+    const state =
+      (await blockActiveSessionTodo({
+        workspaceRoot: this.options.workspaceRoot,
+        workspaceId: params.workspaceId,
+        sessionId,
+        detail,
+      })) ??
+      (await readSessionTodo({
+        workspaceRoot: this.options.workspaceRoot,
+        workspaceId: params.workspaceId,
+        sessionId,
+      }));
+    return sessionTodoStatusPayload(state);
+  }
+
   async writeReport(params: RuntimeAgentToolsWriteReportParams): Promise<JsonObject> {
     this.requireWorkspace(params.workspaceId);
     const sessionId = normalizedString(params.sessionId);
@@ -1105,6 +1328,115 @@ export class RuntimeAgentToolsService {
       size_bytes: sizeBytes,
       created_at: output.createdAt,
     };
+  }
+
+  async searchWeb(params: RuntimeAgentToolsSearchWebParams): Promise<JsonObject> {
+    try {
+      const result = await searchPublicWeb({
+        query: params.query,
+        numResults: params.numResults,
+        maxResults: params.maxResults,
+        livecrawl: params.livecrawl,
+        type: params.type,
+        contextMaxCharacters: params.contextMaxCharacters,
+      });
+      return {
+        text: result.text,
+        provider: result.providerId,
+        tool_id: "web_search",
+      };
+    } catch (error) {
+      throw new RuntimeAgentToolsServiceError(
+        502,
+        "web_search_failed",
+        error instanceof Error ? error.message : "web search failed"
+      );
+    }
+  }
+
+  invokeSkill(params: RuntimeAgentToolsInvokeSkillParams): JsonObject {
+    this.requireWorkspace(params.workspaceId);
+    try {
+      const workspaceDir = path.join(this.options.workspaceRoot, params.workspaceId);
+      const result = invokeWorkspaceSkill({
+        requestedName: params.requestedName,
+        args: params.args,
+        workspaceSkills: resolveWorkspaceSkills(workspaceDir),
+      });
+      return {
+        text: result.text,
+        skill_block: result.skill_block,
+        requested_name: result.requested_name,
+        skill_id: result.skill_id,
+        skill_name: result.skill_name,
+        skill_file_path: result.skill_file_path,
+        skill_base_dir: result.skill_base_dir,
+        granted_tools: result.granted_tools as unknown as JsonValue,
+        granted_commands: result.granted_commands as unknown as JsonValue,
+        args: result.args,
+        tool_id: "skill",
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "skill invocation failed";
+      const statusCode = /was not found/i.test(message) ? 404 : /requires a non-empty `name` argument/i.test(message) ? 400 : 500;
+      throw new RuntimeAgentToolsServiceError(statusCode, "skill_invocation_failed", message);
+    }
+  }
+
+  async readScratchpad(params: RuntimeAgentToolsReadScratchpadParams): Promise<JsonObject> {
+    this.requireWorkspace(params.workspaceId);
+    const sessionId = normalizedString(params.sessionId);
+    if (!sessionId) {
+      throw new RuntimeAgentToolsServiceError(400, "scratchpad_session_required", "session_id is required");
+    }
+    const scratchpad = await readSessionScratchpad({
+      workspaceRoot: this.options.workspaceRoot,
+      workspaceId: params.workspaceId,
+      sessionId,
+      includeContent: true,
+    });
+    return {
+      exists: scratchpad.exists,
+      file_path: scratchpad.file_path,
+      updated_at: scratchpad.updated_at,
+      size_bytes: scratchpad.size_bytes,
+      preview: scratchpad.preview,
+      content: scratchpad.content ?? null,
+    };
+  }
+
+  async writeScratchpad(params: RuntimeAgentToolsWriteScratchpadParams): Promise<JsonObject> {
+    this.requireWorkspace(params.workspaceId);
+    const sessionId = normalizedString(params.sessionId);
+    if (!sessionId) {
+      throw new RuntimeAgentToolsServiceError(400, "scratchpad_session_required", "session_id is required");
+    }
+    const op = normalizedString(params.op) as SessionScratchpadWriteOperation;
+    if (op !== "append" && op !== "replace" && op !== "clear") {
+      throw new RuntimeAgentToolsServiceError(
+        400,
+        "scratchpad_op_invalid",
+        "op must be one of [\"append\",\"replace\",\"clear\"]",
+      );
+    }
+    try {
+      const scratchpad = await writeSessionScratchpad({
+        workspaceRoot: this.options.workspaceRoot,
+        workspaceId: params.workspaceId,
+        sessionId,
+        op,
+        content: params.content,
+      });
+      return {
+        op,
+        ...scratchpad,
+      };
+    } catch (error) {
+      if (error instanceof Error && /content is required/i.test(error.message)) {
+        throw new RuntimeAgentToolsServiceError(400, "scratchpad_content_required", "content is required");
+      }
+      throw error;
+    }
   }
 
   listTerminalSessions(params: RuntimeAgentToolsListTerminalSessionsParams): JsonObject {

@@ -1542,7 +1542,6 @@ test("turn results support upsert, lookup, count, and listing", () => {
       volatile_section_ids: ["execution_policy"],
     },
     compactedSummary: null,
-    compactionBoundaryId: null,
     tokenUsage: { input_tokens: 10, output_tokens: 20 },
   });
   const updated = store.upsertTurnResult({
@@ -1570,7 +1569,6 @@ test("turn results support upsert, lookup, count, and listing", () => {
       volatile_section_ids: ["session_policy"],
     },
     compactedSummary: "summary",
-    compactionBoundaryId: "compaction:input-1",
     tokenUsage: { input_tokens: 11, output_tokens: 21 },
   });
 
@@ -1583,7 +1581,6 @@ test("turn results support upsert, lookup, count, and listing", () => {
     cacheable_section_ids: ["runtime_core"],
     volatile_section_ids: ["session_policy"],
   });
-  assert.equal(updated.compactionBoundaryId, "compaction:input-1");
   assert.deepEqual(updated.permissionDenials, [
     { tool_name: "deploy", tool_id: null, reason: "permission denied" }
   ]);
@@ -1596,7 +1593,7 @@ test("turn results support upsert, lookup, count, and listing", () => {
   store.close();
 });
 
-test("turn request snapshots and compaction boundaries round trip", () => {
+test("turn request snapshots round trip", () => {
   const root = makeTempDir("hb-state-store-");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
@@ -1615,33 +1612,9 @@ test("turn request snapshots and compaction boundaries round trip", () => {
       system_prompt: "You are concise.",
     },
   });
-  const boundary = store.upsertCompactionBoundary({
-    boundaryId: "compaction:input-1",
-    workspaceId: "workspace-1",
-    sessionId: "session-main",
-    inputId: "input-1",
-    previousBoundaryId: null,
-    summary: "Recent work summary.",
-    recentRuntimeContext: {
-      summary: "Recent work summary.",
-      last_stop_reason: "ok",
-    },
-    restorationContext: {
-      session_resume_context: {
-        recent_turns: [{ input_id: "input-1", status: "completed", summary: "Recent work summary." }],
-        recent_user_messages: ["Continue from here."],
-      },
-      restored_memory_paths: ["workspace/workspace-1/runtime/latest-turn.md"],
-    },
-    preservedTurnInputIds: ["input-1"],
-    requestSnapshotFingerprint: snapshot.fingerprint,
-  });
 
   assert.deepEqual(store.getTurnRequestSnapshot({ inputId: "input-1" }), snapshot);
   assert.deepEqual(store.listTurnRequestSnapshots({ workspaceId: "workspace-1", sessionId: "session-main" }), [snapshot]);
-  assert.equal(boundary.boundaryType, "executor_post_turn");
-  assert.deepEqual(store.getCompactionBoundary({ boundaryId: "compaction:input-1" }), boundary);
-  assert.deepEqual(store.listCompactionBoundaries({ workspaceId: "workspace-1", sessionId: "session-main" }), [boundary]);
   store.close();
 });
 

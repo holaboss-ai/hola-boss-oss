@@ -615,7 +615,27 @@ test("runtime tools capability routes expose local onboarding and cronjob action
   assert.ok(
     capabilityStatus
       .json()
+      .tools.some((tool: { id: string }) => tool.id === "web_search")
+  );
+  assert.ok(
+    capabilityStatus
+      .json()
+      .tools.some((tool: { id: string }) => tool.id === "todoread")
+  );
+  assert.ok(
+    capabilityStatus
+      .json()
+      .tools.some((tool: { id: string }) => tool.id === "todowrite")
+  );
+  assert.ok(
+    capabilityStatus
+      .json()
       .tools.some((tool: { id: string }) => tool.id === "terminal_session_start")
+  );
+  assert.ok(
+    capabilityStatus
+      .json()
+      .tools.some((tool: { id: string }) => tool.id === "skill")
   );
 
   const onboardingStatus = await app.inject({
@@ -679,6 +699,64 @@ test("runtime tools capability routes expose local onboarding and cronjob action
   store.close();
 });
 
+test("runtime skill tool resolves a workspace skill through shared runtime state", async () => {
+  const root = makeTempDir("hb-runtime-api-skill-tool-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const skillDir = path.join(workspaceRoot, "workspace-1", "skills", "deploy-helper");
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(skillDir, "SKILL.md"),
+    [
+      "---",
+      "name: deploy-helper",
+      "description: Deployment helper",
+      "holaboss:",
+      "  granted_tools: [bash]",
+      "  granted_commands: [deploy-docs]",
+      "---",
+      "",
+      "# Deploy Helper",
+      "",
+      "Use the deploy workflow carefully.",
+    ].join("\n"),
+    "utf8"
+  );
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/skill",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+      },
+      payload: {
+        name: "deploy-helper",
+        args: "Only use the docs path.",
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.match(response.json().text, /<skill name="deploy-helper" location=".*deploy-helper\/SKILL\.md">/);
+    assert.deepEqual(response.json().granted_tools, ["bash"]);
+    assert.deepEqual(response.json().granted_commands, ["deploy-docs"]);
+    assert.equal(response.json().tool_id, "skill");
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
 test("runtime download_url tool saves a remote asset into the workspace", async () => {
   const root = makeTempDir("hb-runtime-api-download-tools-");
   const workspaceRoot = path.join(root, "workspace");
@@ -733,6 +811,117 @@ test("runtime download_url tool saves a remote asset into the workspace", async 
     );
   } finally {
     await assetServer.close();
+    await app.close();
+    store.close();
+  }
+});
+
+test("runtime todo tools read, write, and block session todo state", async () => {
+  const root = makeTempDir("hb-runtime-api-todo-tools-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  fs.mkdirSync(path.join(workspaceRoot, "workspace-1"), { recursive: true });
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const initialRead = await app.inject({
+      method: "GET",
+      url: "/api/v1/capabilities/runtime-tools/todo",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+        "x-holaboss-session-id": "session-main",
+      },
+    });
+    assert.equal(initialRead.statusCode, 200);
+    assert.equal(initialRead.json().text, "No todo items are currently recorded for this session.");
+    assert.equal(initialRead.json().exists, false);
+
+    const write = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/todo",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+        "x-holaboss-session-id": "session-main",
+      },
+      payload: {
+        ops: [
+          {
+            op: "replace",
+            phases: [
+              {
+                name: "Implementation",
+                tasks: [
+                  { content: "Wire runtime todo state" },
+                  { content: "Verify runtime tool forwarding" },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    });
+    assert.equal(write.statusCode, 200);
+    assert.match(write.json().text, /Updated todo plan with 2 tasks across 1 phase\./);
+    assert.equal(write.json().exists, true);
+    assert.equal(write.json().blocked, false);
+
+    const reread = await app.inject({
+      method: "GET",
+      url: "/api/v1/capabilities/runtime-tools/todo",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+        "x-holaboss-session-id": "session-main",
+      },
+    });
+    assert.equal(reread.statusCode, 200);
+    assert.equal(reread.json().task_count, 2);
+    assert.equal(reread.json().phases[0].tasks[0].status, "in_progress");
+    assert.equal(reread.json().phases[0].tasks[1].status, "pending");
+
+    const blocked = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/todo/block",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+        "x-holaboss-session-id": "session-main",
+      },
+      payload: {
+        detail: "Blocked waiting for user input: Should I deploy to production?",
+      },
+    });
+    assert.equal(blocked.statusCode, 200);
+    assert.equal(blocked.json().exists, true);
+    assert.equal(blocked.json().blocked, true);
+
+    const status = await app.inject({
+      method: "GET",
+      url: "/api/v1/capabilities/runtime-tools/todo/status",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+        "x-holaboss-session-id": "session-main",
+      },
+    });
+    assert.equal(status.statusCode, 200);
+    assert.equal(status.json().blocked, true);
+
+    const todoPath = path.join(workspaceRoot, "workspace-1", ".holaboss", "todos", "session-main.json");
+    const persisted = JSON.parse(fs.readFileSync(todoPath, "utf8"));
+    assert.equal(persisted.phases[0]?.tasks[0]?.status, "blocked");
+    assert.equal(persisted.phases[0]?.tasks[1]?.status, "pending");
+    assert.match(
+      String(persisted.phases[0]?.tasks[0]?.details ?? ""),
+      /Blocked waiting for user input: Should I deploy to production\?/,
+    );
+  } finally {
     await app.close();
     store.close();
   }
@@ -2619,7 +2808,6 @@ test("runtime states and history endpoints read TS state store", async () => {
       volatile_section_ids: ["execution_policy"],
     },
     compactedSummary: null,
-    compactionBoundaryId: "compaction:input-1",
     tokenUsage: {
       input_tokens: 10,
       output_tokens: 20
@@ -2637,44 +2825,21 @@ test("runtime states and history endpoints read TS state store", async () => {
       system_prompt: "You are concise.",
     },
   });
-  store.upsertCompactionBoundary({
-    boundaryId: "compaction:input-1",
-    workspaceId: workspace.id,
-    sessionId: "session-main",
-    inputId: "input-1",
-    summary: "hi",
-    recentRuntimeContext: {
-      summary: "hi",
-      last_stop_reason: "ok",
-      last_error: null,
-      waiting_for_user: null,
-    },
-    restorationContext: {
-      compaction_source: "executor_post_turn",
-      restoration_order: [
-        "boundary_summary",
-        "recent_runtime_context",
-        "session_resume_context",
-        "preserved_turn_input_ids",
-        "restored_memory_paths",
-      ],
-      session_resume_context: {
-        recent_turns: [
-          {
-            input_id: "input-1",
-            status: "completed",
-            stop_reason: "ok",
-            summary: "hi",
-            completed_at: "2026-01-01T00:00:05.000Z",
-          },
-        ],
-        recent_user_messages: ["hello"],
-      },
-      restored_memory_paths: [`workspace/${workspace.id}/runtime/latest-turn.md`],
-    },
-    preservedTurnInputIds: ["input-1"],
-    requestSnapshotFingerprint: "c".repeat(64),
-  });
+  const sessionMemoryPath = path.join(
+    store.workspaceRoot,
+    "memory",
+    "workspace",
+    workspace.id,
+    "runtime",
+    "session-memory",
+    "session-main.md",
+  );
+  fs.mkdirSync(path.dirname(sessionMemoryPath), { recursive: true });
+  fs.writeFileSync(
+    sessionMemoryPath,
+    "User prefers short answers and the draft report is in outputs/reports/summary.md.\n",
+    "utf8",
+  );
   store.ensureSession({
     workspaceId: workspace.id,
     sessionId: "proposal-session-1",
@@ -2709,10 +2874,6 @@ test("runtime states and history endpoints read TS state store", async () => {
   const requestSnapshots = await app.inject({
     method: "GET",
     url: `/api/v1/agent-sessions/session-main/request-snapshots?workspace_id=${workspace.id}`
-  });
-  const compactionBoundaries = await app.inject({
-    method: "GET",
-    url: `/api/v1/agent-sessions/session-main/compaction-boundaries?workspace_id=${workspace.id}`
   });
   const resumeContext = await app.inject({
     method: "GET",
@@ -2754,7 +2915,6 @@ test("runtime states and history endpoints read TS state store", async () => {
     cacheable_section_ids: ["runtime_core"],
     volatile_section_ids: ["execution_policy"],
   });
-  assert.equal(turnResults.json().items[0].compaction_boundary_id, "compaction:input-1");
   assert.deepEqual(turnResults.json().items[0].prompt_section_ids, [
     "runtime_core",
     "execution_policy"
@@ -2766,104 +2926,11 @@ test("runtime states and history endpoints read TS state store", async () => {
   assert.equal(requestSnapshots.statusCode, 200);
   assert.equal(requestSnapshots.json().count, 1);
   assert.equal(requestSnapshots.json().items[0].fingerprint, "c".repeat(64));
-  assert.equal(compactionBoundaries.statusCode, 200);
-  assert.equal(compactionBoundaries.json().count, 1);
-  assert.equal(compactionBoundaries.json().items[0].boundary_id, "compaction:input-1");
-  assert.equal(compactionBoundaries.json().items[0].boundary_type, "executor_post_turn");
-  assert.deepEqual(compactionBoundaries.json().items[0].compaction_restoration_context, {
-    compaction_source: "executor_post_turn",
-    boundary_type: "executor_post_turn",
-    restoration_order: [
-      "boundary_summary",
-      "recent_runtime_context",
-      "session_resume_context",
-      "preserved_turn_input_ids",
-      "restored_memory_paths",
-    ],
-    boundary_summary: "hi",
-    recent_runtime_context: {
-      summary: "hi",
-      last_stop_reason: "ok",
-      last_error: null,
-      waiting_for_user: null,
-    },
-    session_resume_context: {
-      recent_turns: [
-        {
-          input_id: "input-1",
-          status: "completed",
-          stop_reason: "ok",
-          summary: "hi",
-          completed_at: "2026-01-01T00:00:05.000Z",
-        },
-      ],
-      recent_user_messages: ["hello"],
-    },
-    preserved_turn_input_ids: ["input-1"],
-    restored_memory_paths: [`workspace/${workspace.id}/runtime/latest-turn.md`],
-  });
   assert.equal(resumeContext.statusCode, 200);
-  assert.deepEqual(resumeContext.json().compaction_restoration_context, {
-    compaction_source: "executor_post_turn",
-    boundary_type: "executor_post_turn",
-    restoration_order: [
-      "boundary_summary",
-      "recent_runtime_context",
-      "session_resume_context",
-      "preserved_turn_input_ids",
-      "restored_memory_paths",
-    ],
-    boundary_summary: "hi",
-    recent_runtime_context: {
-      summary: "hi",
-      last_stop_reason: "ok",
-      last_error: null,
-      waiting_for_user: null
-    },
-    session_resume_context: {
-      recent_turns: [
-        {
-          input_id: "input-1",
-          status: "completed",
-          stop_reason: "ok",
-          summary: "hi",
-          completed_at: "2026-01-01T00:00:05.000Z"
-        }
-      ],
-      recent_user_messages: ["hello"]
-    },
-    preserved_turn_input_ids: ["input-1"],
-    restored_memory_paths: [`workspace/${workspace.id}/runtime/latest-turn.md`]
-  });
-  assert.deepEqual(resumeContext.json().recent_runtime_context, {
-    summary: "hi",
-    last_stop_reason: "ok",
-    last_error: null,
-    waiting_for_user: null
-  });
   assert.deepEqual(resumeContext.json().session_resume_context, {
-    recent_turns: [
-      {
-        input_id: "input-1",
-        status: "completed",
-        stop_reason: "ok",
-        summary: "hi",
-        completed_at: "2026-01-01T00:00:05.000Z"
-      }
-    ],
-    recent_user_messages: ["hello"],
-    compaction_source: "executor_post_turn",
-    compaction_boundary_id: "compaction:input-1",
-    compaction_boundary_summary: "hi",
-    restoration_order: [
-      "boundary_summary",
-      "recent_runtime_context",
-      "session_resume_context",
-      "preserved_turn_input_ids",
-      "restored_memory_paths"
-    ],
-    preserved_turn_input_ids: ["input-1"],
-    restored_memory_paths: [`workspace/${workspace.id}/runtime/latest-turn.md`]
+    session_memory_path: `workspace/${workspace.id}/runtime/session-memory/session-main.md`,
+    session_memory_excerpt:
+      "User prefers short answers and the draft report is in outputs/reports/summary.md."
   });
 
   await app.close();

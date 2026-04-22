@@ -310,7 +310,6 @@ test("claimed input persists runner events, assistant text, and idle state on su
     cacheable_section_ids: ["runtime_core", "execution_policy"],
     volatile_section_ids: ["capability_policy"],
   });
-  assert.equal(turnResult.compactionBoundaryId, null);
   assert.deepEqual(turnResult.toolUsageSummary, {
     total_calls: 3,
     completed_calls: 2,
@@ -351,10 +350,6 @@ test("claimed input persists runner events, assistant text, and idle state on su
   });
   const snapshot = store.getTurnRequestSnapshot({ inputId: queued.inputId });
   assert.equal(snapshot, null);
-  assert.equal(
-    store.getCompactionBoundary({ boundaryId: `compaction:${queued.inputId}` }),
-    null,
-  );
 
   store.close();
 });

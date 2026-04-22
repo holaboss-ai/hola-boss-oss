@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 
 import type {
-  CompactionBoundaryType,
   MemoryEntryScope,
   MemoryEntrySourceType,
   MemoryEntryType,
@@ -16,9 +15,7 @@ import type {
 import type { MemoryServiceLike } from "./memory.js";
 import { governanceRuleForMemoryType } from "./memory-governance.js";
 import {
-  buildCompactionBoundaryArtifacts,
   compactTurnSummary,
-  compactionRestorationContextFromCompactionBoundary,
 } from "./turn-result-summary.js";
 import {
   extractDurableMemoryCandidatesFromModel,
@@ -1540,89 +1537,9 @@ function upsertCompactedSummary(store: RuntimeStateStore, turnResult: TurnResult
     requestSnapshotFingerprint: turnResult.requestSnapshotFingerprint,
     promptCacheProfile: turnResult.promptCacheProfile,
     compactedSummary,
-    compactionBoundaryId: turnResult.compactionBoundaryId,
     tokenUsage: turnResult.tokenUsage,
     createdAt: turnResult.createdAt,
   });
-}
-
-function compactionBoundaryId(turnResult: TurnResultRecord): string {
-  return `compaction:${turnResult.inputId}`;
-}
-
-function upsertCompactionBoundaryArtifact(params: {
-  store: RuntimeStateStore;
-  turnResult: TurnResultRecord;
-  recentTurns: TurnResultRecord[];
-  sessionMessages: SessionMessageRecord[];
-  restoredMemoryPaths: string[];
-  boundaryType?: CompactionBoundaryType;
-}): TurnResultRecord {
-  const previousBoundary = params.store
-    .listCompactionBoundaries({
-      workspaceId: params.turnResult.workspaceId,
-      sessionId: params.turnResult.sessionId,
-      limit: 2,
-      offset: 0,
-    })
-    .find((boundary) => boundary.inputId !== params.turnResult.inputId) ?? null;
-  const boundaryArtifacts = buildCompactionBoundaryArtifacts({
-    turnResult: params.turnResult,
-    recentTurns: params.recentTurns,
-    sessionMessages: params.sessionMessages,
-    restoredMemoryPaths: params.restoredMemoryPaths,
-  });
-  const boundaryId = compactionBoundaryId(params.turnResult);
-  params.store.upsertCompactionBoundary({
-    boundaryId,
-    workspaceId: params.turnResult.workspaceId,
-    sessionId: params.turnResult.sessionId,
-    inputId: params.turnResult.inputId,
-    boundaryType: params.boundaryType ?? "executor_post_turn",
-    previousBoundaryId: previousBoundary?.boundaryId ?? null,
-    summary: boundaryArtifacts.summary,
-    recentRuntimeContext: boundaryArtifacts.recentRuntimeContext as Record<string, unknown> | null,
-    restorationContext: boundaryArtifacts.restorationContext,
-    preservedTurnInputIds: boundaryArtifacts.preservedTurnInputIds,
-    requestSnapshotFingerprint: params.turnResult.requestSnapshotFingerprint,
-  });
-  if (params.turnResult.compactionBoundaryId === boundaryId) {
-    return params.turnResult;
-  }
-  return params.store.upsertTurnResult({
-    workspaceId: params.turnResult.workspaceId,
-    sessionId: params.turnResult.sessionId,
-    inputId: params.turnResult.inputId,
-    startedAt: params.turnResult.startedAt,
-    completedAt: params.turnResult.completedAt,
-    status: params.turnResult.status,
-    stopReason: params.turnResult.stopReason,
-    assistantText: params.turnResult.assistantText,
-    toolUsageSummary: params.turnResult.toolUsageSummary,
-    permissionDenials: params.turnResult.permissionDenials,
-    promptSectionIds: params.turnResult.promptSectionIds,
-    capabilityManifestFingerprint: params.turnResult.capabilityManifestFingerprint,
-    requestSnapshotFingerprint: params.turnResult.requestSnapshotFingerprint,
-    promptCacheProfile: params.turnResult.promptCacheProfile,
-    compactedSummary: params.turnResult.compactedSummary,
-    compactionBoundaryId: boundaryId,
-    tokenUsage: params.turnResult.tokenUsage,
-    createdAt: params.turnResult.createdAt,
-  });
-}
-
-function runtimeRestoredMemoryPaths(params: {
-  turnResult: TurnResultRecord;
-  compactedSummary: string | null;
-  recentTurns: TurnResultRecord[];
-  recentUserMessages: SessionMessageRecord[];
-}): string[] {
-  return buildRuntimeMemoryCandidates({
-    turnResult: params.turnResult,
-    summary: params.compactedSummary,
-    recentTurns: params.recentTurns,
-    sessionMessages: params.recentUserMessages,
-  }).map((candidate) => candidate.path);
 }
 
 async function upsertRuntimeMemoryCandidate(params: {
@@ -1730,61 +1647,6 @@ function loadTurnWritebackContext(store: RuntimeStateStore, turnResult: TurnResu
   };
 }
 
-function mergeUniquePaths(existing: string[], additional: string[]): string[] {
-  const merged: string[] = [];
-  const seen = new Set<string>();
-  for (const value of [...existing, ...additional]) {
-    const normalized = value.trim();
-    if (!normalized || seen.has(normalized)) {
-      continue;
-    }
-    seen.add(normalized);
-    merged.push(normalized);
-  }
-  return merged;
-}
-
-function appendRestoredMemoryPathsToCompactionBoundary(params: {
-  store: RuntimeStateStore;
-  turnResult: TurnResultRecord;
-  restoredMemoryPaths: string[];
-}): void {
-  if (params.restoredMemoryPaths.length === 0) {
-    return;
-  }
-  const boundaryId = params.turnResult.compactionBoundaryId ?? compactionBoundaryId(params.turnResult);
-  const boundary = params.store.getCompactionBoundary({ boundaryId });
-  if (!boundary) {
-    return;
-  }
-  const restorationContext = compactionRestorationContextFromCompactionBoundary(boundary);
-  const mergedPaths = mergeUniquePaths(restorationContext?.restored_memory_paths ?? [], params.restoredMemoryPaths);
-  const restorationOrder = restorationContext?.restoration_order?.filter(Boolean) ?? [];
-  if (mergedPaths.length > 0 && !restorationOrder.includes("restored_memory_paths")) {
-    restorationOrder.push("restored_memory_paths");
-  }
-  params.store.upsertCompactionBoundary({
-    boundaryId: boundary.boundaryId,
-    workspaceId: boundary.workspaceId,
-    sessionId: boundary.sessionId,
-    inputId: boundary.inputId,
-    boundaryType: boundary.boundaryType,
-    previousBoundaryId: boundary.previousBoundaryId,
-    summary: boundary.summary,
-    recentRuntimeContext: boundary.recentRuntimeContext,
-    restorationContext: {
-      compaction_source: restorationContext?.compaction_source ?? "executor_post_turn",
-      boundary_type: restorationContext?.boundary_type ?? boundary.boundaryType ?? "executor_post_turn",
-      restoration_order: restorationOrder,
-      session_resume_context: restorationContext?.session_resume_context ?? null,
-      restored_memory_paths: mergedPaths,
-    },
-    preservedTurnInputIds: boundary.preservedTurnInputIds,
-    requestSnapshotFingerprint: boundary.requestSnapshotFingerprint,
-    createdAt: boundary.createdAt,
-  });
-}
-
 export async function persistDurableMemoryCandidate(params: {
   store: RuntimeStateStore;
   memoryService: MemoryServiceLike;
@@ -1810,6 +1672,7 @@ export async function writeTurnContinuity(params: {
   turnResult: TurnResultRecord;
   persistBoundary?: boolean;
 }): Promise<TurnResultRecord> {
+  void params.persistBoundary;
   const context = loadTurnWritebackContext(params.store, params.turnResult);
   const runtimeCandidates = buildRuntimeMemoryCandidates({
     turnResult: context.turnResult,
@@ -1817,60 +1680,20 @@ export async function writeTurnContinuity(params: {
     recentTurns: context.recentTurns,
     sessionMessages: context.recentUserMessages,
   });
-  const restoredMemoryPaths: string[] = [];
 
   try {
     for (const candidate of runtimeCandidates) {
-      restoredMemoryPaths.push(await upsertRuntimeMemoryCandidate({
+      await upsertRuntimeMemoryCandidate({
         memoryService: params.memoryService,
         workspaceId: context.turnResult.workspaceId,
         candidate,
-      }));
-    }
-  } catch {
-    if (params.persistBoundary !== false) {
-      return upsertCompactionBoundaryArtifact({
-        store: params.store,
-        turnResult: context.turnResult,
-        recentTurns: context.recentTurns,
-        sessionMessages: context.recentUserMessages,
-        restoredMemoryPaths,
       });
     }
+  } catch {
     return params.store.getTurnResult({ inputId: context.turnResult.inputId }) ?? context.turnResult;
   }
 
-  if (params.persistBoundary !== false) {
-    return upsertCompactionBoundaryArtifact({
-      store: params.store,
-      turnResult: context.turnResult,
-      recentTurns: context.recentTurns,
-      sessionMessages: context.recentUserMessages,
-      restoredMemoryPaths,
-    });
-  }
   return params.store.getTurnResult({ inputId: context.turnResult.inputId }) ?? context.turnResult;
-}
-
-export function writeTurnCompactionBoundary(params: {
-  store: RuntimeStateStore;
-  turnResult: TurnResultRecord;
-  boundaryType?: CompactionBoundaryType;
-}): TurnResultRecord {
-  const context = loadTurnWritebackContext(params.store, params.turnResult);
-  return upsertCompactionBoundaryArtifact({
-    store: params.store,
-    turnResult: context.turnResult,
-    recentTurns: context.recentTurns,
-    sessionMessages: context.recentUserMessages,
-    restoredMemoryPaths: runtimeRestoredMemoryPaths({
-      turnResult: context.turnResult,
-      compactedSummary: context.compactedSummary,
-      recentTurns: context.recentTurns,
-      recentUserMessages: context.recentUserMessages,
-    }),
-    boundaryType: params.boundaryType ?? "executor_post_turn",
-  });
 }
 
 export async function writeTurnDurableMemory(params: {
@@ -1902,7 +1725,6 @@ export async function writeTurnDurableMemory(params: {
   if (durableCandidates.length === 0) {
     return params.store.getTurnResult({ inputId: context.turnResult.inputId }) ?? context.turnResult;
   }
-  const restoredMemoryPaths: string[] = [];
   const changedWorkspaceIds = new Set<string>();
   let rebuildPreference = false;
   let rebuildIdentity = false;
@@ -1917,7 +1739,6 @@ export async function writeTurnDurableMemory(params: {
       inputId: context.turnResult.inputId,
       candidate,
     });
-    restoredMemoryPaths.push(persisted.path);
     for (const indexedScope of persisted.changedIndexedScopes) {
       if (indexedScope.kind === "workspace") {
         changedWorkspaceIds.add(indexedScope.workspaceId);
@@ -1930,23 +1751,16 @@ export async function writeTurnDurableMemory(params: {
     rebuildRoot = rebuildRoot || persisted.rootCountChanged;
   }
   if (changedWorkspaceIds.size > 0 || rebuildPreference || rebuildIdentity || rebuildRoot) {
-    restoredMemoryPaths.push(
-      ...(await upsertMemoryIndexes({
-        store: params.store,
-        memoryService: params.memoryService,
-        workspaceId: context.turnResult.workspaceId,
-        changedWorkspaceIds: Array.from(changedWorkspaceIds),
-        rebuildPreference,
-        rebuildIdentity,
-        rebuildRoot,
-      }))
-    );
+    await upsertMemoryIndexes({
+      store: params.store,
+      memoryService: params.memoryService,
+      workspaceId: context.turnResult.workspaceId,
+      changedWorkspaceIds: Array.from(changedWorkspaceIds),
+      rebuildPreference,
+      rebuildIdentity,
+      rebuildRoot,
+    });
   }
-  appendRestoredMemoryPathsToCompactionBoundary({
-    store: params.store,
-    turnResult: context.turnResult,
-    restoredMemoryPaths,
-  });
   return params.store.getTurnResult({ inputId: context.turnResult.inputId }) ?? context.turnResult;
 }
 

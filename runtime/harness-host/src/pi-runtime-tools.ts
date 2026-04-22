@@ -17,6 +17,10 @@ const RUNTIME_TOOLS_CRONJOBS_PATH = "/api/v1/capabilities/runtime-tools/cronjobs
 const RUNTIME_TOOLS_IMAGE_GENERATE_PATH = "/api/v1/capabilities/runtime-tools/images/generate";
 const RUNTIME_TOOLS_DOWNLOADS_PATH = "/api/v1/capabilities/runtime-tools/downloads";
 const RUNTIME_TOOLS_REPORTS_PATH = "/api/v1/capabilities/runtime-tools/reports";
+const RUNTIME_TOOLS_WEB_SEARCH_PATH = "/api/v1/capabilities/runtime-tools/web-search";
+const RUNTIME_TOOLS_TODO_PATH = "/api/v1/capabilities/runtime-tools/todo";
+const RUNTIME_TOOLS_SCRATCHPAD_PATH = "/api/v1/capabilities/runtime-tools/scratchpad";
+const RUNTIME_TOOLS_SKILL_PATH = "/api/v1/capabilities/runtime-tools/skill";
 const RUNTIME_TOOLS_TERMINAL_SESSIONS_PATH = "/api/v1/capabilities/runtime-tools/terminal-sessions";
 const DEFAULT_RUNTIME_TOOL_TIMEOUT_MS = 30000;
 const IMAGE_GENERATE_RUNTIME_TOOL_TIMEOUT_MS = 180000;
@@ -24,6 +28,11 @@ const DOWNLOAD_URL_RUNTIME_TOOL_TIMEOUT_MS = 120000;
 const TERMINAL_WAIT_RUNTIME_TOOL_TIMEOUT_MS = 65000;
 const CRONJOB_DELIVERY_CHANNELS = ["system_notification", "session_run"] as const;
 const CRONJOB_DELIVERY_MODES = ["announce", "none"] as const;
+const SCRATCHPAD_WRITE_OPS = ["append", "replace", "clear"] as const;
+const TODO_STATUSES = ["pending", "in_progress", "blocked", "completed", "abandoned"] as const;
+const TODO_WRITE_OPS_TEXT = "`replace`, `add_phase`, `add_task`, `update`, and `remove_task`";
+const TODO_WRITE_ALIAS_WARNING =
+  "Do not invent alias op names such as `replace_all`, `update_task`, or `set_status`.";
 
 function cronjobDeliveryChannelSchema() {
   return Type.Union(
@@ -40,6 +49,25 @@ function cronjobDeliveryModeSchema() {
     CRONJOB_DELIVERY_MODES.map((value) => Type.Literal(value)),
     {
       description: "Delivery mode. Allowed values: `announce` or `none`."
+    }
+  );
+}
+
+function scratchpadWriteOpSchema() {
+  return Type.Union(
+    SCRATCHPAD_WRITE_OPS.map((value) => Type.Literal(value)),
+    {
+      description:
+        "Scratchpad write operation. Use `append` to add notes, `replace` to compact the scratchpad into a new summary, or `clear` to remove it.",
+    }
+  );
+}
+
+function todoStatusSchema() {
+  return Type.Union(
+    TODO_STATUSES.map((value) => Type.Literal(value)),
+    {
+      description: "Todo task status.",
     }
   );
 }
@@ -178,6 +206,9 @@ async function nodeRequestJson(params: {
 }
 
 function formatRuntimeToolResult(payload: unknown): string {
+  if (isRecord(payload) && typeof payload.text === "string" && payload.text.trim()) {
+    return payload.text;
+  }
   if (typeof payload === "string") {
     return payload;
   }
@@ -322,6 +353,204 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId) {
             description:
               "Full markdown report content to save as an artifact. Put the detailed research findings in this field instead of in chat.",
           }),
+        },
+        { additionalProperties: false },
+      );
+    case "web_search":
+      return Type.Object(
+        {
+          query: Type.String({ description: "Search query for the public web.", minLength: 1 }),
+          num_results: Type.Optional(
+            Type.Integer({
+              description: "Number of search results to return (1-10). Defaults to 8.",
+              minimum: 1,
+              maximum: 10,
+            })
+          ),
+          max_results: Type.Optional(
+            Type.Integer({
+              description: "Compatibility alias for num_results (1-10).",
+              minimum: 1,
+              maximum: 10,
+            })
+          ),
+          livecrawl: Type.Optional(
+            Type.Union([Type.Literal("fallback"), Type.Literal("preferred")], {
+              description: "Whether to prefer live crawling or only use it as fallback.",
+            })
+          ),
+          type: Type.Optional(
+            Type.Union([Type.Literal("auto"), Type.Literal("fast"), Type.Literal("deep")], {
+              description: "Search depth mode.",
+            })
+          ),
+          context_max_characters: Type.Optional(
+            Type.Integer({
+              description: "Maximum number of context characters to request from the search backend.",
+              minimum: 1,
+            })
+          ),
+        },
+        { additionalProperties: false }
+      );
+    case "skill":
+      return Type.Object(
+        {
+          name: Type.String({ description: "Skill id or skill name to invoke." }),
+          args: Type.Optional(
+            Type.String({ description: "Optional follow-up instructions appended after the invoked skill content." })
+          ),
+        },
+        { additionalProperties: false },
+      );
+    case "todoread":
+      return Type.Object({}, { additionalProperties: false });
+    case "todowrite":
+      return Type.Object(
+        {
+          ops: Type.Array(
+            Type.Union(
+              [
+                Type.Object(
+                  {
+                    op: Type.Literal("replace"),
+                    phases: Type.Array(
+                      Type.Object(
+                        {
+                          name: Type.String({ description: "Human-readable phase title." }),
+                          tasks: Type.Optional(
+                            Type.Array(
+                              Type.Object(
+                                {
+                                  content: Type.String({ description: "Required task text." }),
+                                  status: Type.Optional(todoStatusSchema()),
+                                  notes: Type.Optional(Type.String({ description: "Short note for the task." })),
+                                  details: Type.Optional(
+                                    Type.String({ description: "Longer supporting detail for the task." })
+                                  ),
+                                },
+                                { additionalProperties: false }
+                              ),
+                              { description: "Task objects for this phase. Use `content`, not `title`." }
+                            )
+                          ),
+                        },
+                        { additionalProperties: false }
+                      ),
+                      { description: "Full replacement list of phases. Each phase requires `name`." }
+                    ),
+                  },
+                  { additionalProperties: false, description: "Replace the entire phased plan." }
+                ),
+                Type.Object(
+                  {
+                    op: Type.Literal("add_phase"),
+                    name: Type.String({ description: "Human-readable phase title." }),
+                    tasks: Type.Optional(
+                      Type.Array(
+                        Type.Object(
+                          {
+                            content: Type.String({ description: "Required task text." }),
+                            status: Type.Optional(todoStatusSchema()),
+                            notes: Type.Optional(Type.String({ description: "Short note for the task." })),
+                            details: Type.Optional(
+                              Type.String({ description: "Longer supporting detail for the task." })
+                            ),
+                          },
+                          { additionalProperties: false }
+                        ),
+                        { description: "Optional initial tasks for the new phase." }
+                      )
+                    ),
+                  },
+                  { additionalProperties: false, description: "Append a new phase to the current plan." }
+                ),
+                Type.Object(
+                  {
+                    op: Type.Literal("add_task"),
+                    phase: Type.String({
+                      description: "Existing phase id from `todoread` or a prior `todowrite` result, for example `phase-2`.",
+                    }),
+                    content: Type.String({ description: "Required task text." }),
+                    status: Type.Optional(todoStatusSchema()),
+                    notes: Type.Optional(Type.String({ description: "Short note for the task." })),
+                    details: Type.Optional(Type.String({ description: "Longer supporting detail for the task." })),
+                  },
+                  { additionalProperties: false, description: "Append a new task to an existing phase by phase id." }
+                ),
+                Type.Object(
+                  {
+                    op: Type.Literal("update"),
+                    id: Type.String({
+                      description: "Existing task id from `todoread` or a prior `todowrite` result, for example `task-3`.",
+                    }),
+                    status: Type.Optional(todoStatusSchema()),
+                    content: Type.Optional(Type.String({ description: "Replacement task text." })),
+                    notes: Type.Optional(Type.String({ description: "Replacement short note for the task." })),
+                    details: Type.Optional(Type.String({ description: "Replacement longer supporting detail for the task." })),
+                  },
+                  {
+                    additionalProperties: false,
+                    description: "Update an existing task by task id. Use this for status changes, content edits, notes, or details.",
+                  }
+                ),
+                Type.Object(
+                  {
+                    op: Type.Literal("remove_task"),
+                    id: Type.String({
+                      description: "Existing task id from `todoread` or a prior `todowrite` result.",
+                    }),
+                  },
+                  { additionalProperties: false, description: "Remove a single task by task id." }
+                ),
+                Type.Object(
+                  {
+                    op: Type.String(),
+                    id: Type.Optional(Type.String()),
+                    phase: Type.Optional(Type.String()),
+                    name: Type.Optional(Type.String()),
+                    title: Type.Optional(Type.String()),
+                    content: Type.Optional(Type.String()),
+                    status: Type.Optional(Type.String()),
+                    notes: Type.Optional(Type.String()),
+                    details: Type.Optional(Type.String()),
+                  },
+                  {
+                    additionalProperties: false,
+                    description:
+                      "Fallback validation branch for malformed todo ops so the tool can return a repair hint. Do not rely on this shape.",
+                  }
+                ),
+              ],
+              {
+                description:
+                  `Incremental phased todo operations over the current session plan. Valid \`op\` values are exactly ${TODO_WRITE_OPS_TEXT}. Use \`name\` for phase titles and \`content\` for task text.`,
+              }
+            ),
+            {
+              description:
+                `Incremental phased todo operations over the current session plan. Valid \`op\` values are exactly ${TODO_WRITE_OPS_TEXT}. Use \`name\` for phase titles and \`content\` for task text.`,
+            }
+          ),
+        },
+        {
+          additionalProperties: false,
+          description:
+            `Update the session todo plan with explicit mutations. Valid \`op\` values are exactly ${TODO_WRITE_OPS_TEXT}. ${TODO_WRITE_ALIAS_WARNING}`,
+        }
+      );
+    case "holaboss_scratchpad_read":
+      return Type.Object({}, { additionalProperties: false });
+    case "holaboss_scratchpad_write":
+      return Type.Object(
+        {
+          op: scratchpadWriteOpSchema(),
+          content: Type.Optional(
+            Type.String({
+              description:
+                "Scratchpad markdown or plain-text content. Required for `append` and `replace`, omitted for `clear`.",
+            }),
+          ),
         },
         { additionalProperties: false },
       );
@@ -515,6 +744,45 @@ function createWriteReportBody(toolParams: unknown): Record<string, unknown> {
   };
 }
 
+function createWebSearchBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    query: String(params.query ?? ""),
+    ...(typeof params.num_results === "number" ? { num_results: params.num_results } : {}),
+    ...(typeof params.max_results === "number" ? { max_results: params.max_results } : {}),
+    ...(optionalString(params.livecrawl) ? { livecrawl: optionalString(params.livecrawl) } : {}),
+    ...(optionalString(params.type) ? { type: optionalString(params.type) } : {}),
+    ...(typeof params.context_max_characters === "number"
+      ? { context_max_characters: params.context_max_characters }
+      : {}),
+  };
+}
+
+function createSkillBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    name: String(params.name ?? ""),
+    ...(optionalString(params.args) ? { args: optionalString(params.args) } : {}),
+  };
+}
+
+function createTodoWriteBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    ops: Array.isArray(params.ops) ? params.ops : [],
+  };
+}
+
+function createScratchpadWriteBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    op: String(params.op ?? ""),
+    ...(Object.prototype.hasOwnProperty.call(params, "content")
+      ? { content: params.content == null ? null : String(params.content) }
+      : {}),
+  };
+}
+
 function terminalSessionPath(terminalId: unknown): string {
   const value = optionalString(terminalId);
   if (!value) {
@@ -583,6 +851,56 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "A step like 'summarize findings for the user' still means: save the full findings with `write_report`, then keep the chat reply brief.",
       "After calling `write_report`, keep the chat reply short: mention the report title or path and give only the key takeaways.",
       "Write the full markdown report in `content` instead of pasting the full report inline in chat.",
+    ];
+  }
+  if (toolId === "web_search") {
+    return [
+      "Use `web_search` for exploratory research, source discovery, and approximate or aggregated answers across multiple public sources.",
+      "Do not rely on `web_search` alone for exact live values, UI-only state, or tasks that require direct interaction with a site or product surface.",
+      "When searching for recent information, include the current year in the query.",
+      "If required facts remain unverified after search, escalate to browser tools or another more direct capability.",
+    ];
+  }
+  if (toolId === "skill") {
+    return [
+      "Use `skill` when a workspace or embedded skill is relevant and you need its canonical guidance block.",
+      "Pass the specific skill id or name in `name` instead of paraphrasing the skill body yourself.",
+      "Use `args` only for short follow-up instructions that should accompany the skill block.",
+    ];
+  }
+  if (toolId === "todoread") {
+    return [
+      "Use `todoread` before changing an existing phased plan when current todo state may matter.",
+      "Use `todoread` to recover the exact phase ids and task ids before calling `update`, `add_task`, or `remove_task` on an existing plan.",
+      "When current task ids or phase ids matter, read them instead of guessing.",
+    ];
+  }
+  if (toolId === "todowrite") {
+    return [
+      "Use `todowrite` for complex or long-running tasks that benefit from an explicit phased plan.",
+      "The top-level phases are grouped tasks, and each phase's `tasks` entries are the actionable task items within that grouped task.",
+      `Valid \`op\` values are exactly ${TODO_WRITE_OPS_TEXT}.`,
+      TODO_WRITE_ALIAS_WARNING,
+      "Use `replace` only for the initial plan or a full rewrite of the entire plan, not for a single task status change.",
+      "Use `update` to change an existing task's status, content, notes, or details by task id.",
+      "Use `add_phase` to append a new phase, `add_task` to append a task to an existing phase by phase id, and `remove_task` to delete a task by task id.",
+      "Use `name` for phase titles and `content` for task text; do not use `title` for either.",
+      "On an existing plan, call `todoread` first so you have the current phase ids and task ids before writing mutations.",
+      "Keep exactly one task `in_progress` whenever unfinished tasks remain unless the current task is blocked on user input or another external dependency.",
+    ];
+  }
+  if (toolId === "holaboss_scratchpad_read") {
+    return [
+      "Use `holaboss_scratchpad_read` when a resumed or long-running session likely has session-scoped notes that matter for the current turn.",
+      "Treat scratchpad notes as session continuity, not as durable memory or verified current truth.",
+      "Read the scratchpad when you need the saved notes again; do not assume they are already in prompt context.",
+    ];
+  }
+  if (toolId === "holaboss_scratchpad_write") {
+    return [
+      "Use `holaboss_scratchpad_write` for long-running working notes, interim findings, open questions, or compacted current state that should survive beyond the current prompt window.",
+      "Use `append` while accumulating notes, `replace` when compacting the scratchpad into a fresher shorter summary, and `clear` when the notes are no longer useful.",
+      "Keep durable memory, user-visible deliverables, and final answers out of the scratchpad unless they are explicitly session-scoped working notes.",
     ];
   }
   if (
@@ -666,6 +984,32 @@ async function executeRuntimeTool(params: {
       method = "POST";
       requestPath = RUNTIME_TOOLS_REPORTS_PATH;
       body = createWriteReportBody(params.toolParams);
+      break;
+    case "web_search":
+      method = "POST";
+      requestPath = RUNTIME_TOOLS_WEB_SEARCH_PATH;
+      body = createWebSearchBody(params.toolParams);
+      break;
+    case "skill":
+      method = "POST";
+      requestPath = RUNTIME_TOOLS_SKILL_PATH;
+      body = createSkillBody(params.toolParams);
+      break;
+    case "todoread":
+      requestPath = RUNTIME_TOOLS_TODO_PATH;
+      break;
+    case "todowrite":
+      method = "POST";
+      requestPath = RUNTIME_TOOLS_TODO_PATH;
+      body = createTodoWriteBody(params.toolParams);
+      break;
+    case "holaboss_scratchpad_read":
+      requestPath = RUNTIME_TOOLS_SCRATCHPAD_PATH;
+      break;
+    case "holaboss_scratchpad_write":
+      method = "POST";
+      requestPath = RUNTIME_TOOLS_SCRATCHPAD_PATH;
+      body = createScratchpadWriteBody(params.toolParams);
       break;
     case "terminal_sessions_list":
       requestPath = RUNTIME_TOOLS_TERMINAL_SESSIONS_PATH;

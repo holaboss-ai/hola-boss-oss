@@ -14,10 +14,10 @@ test("buildAgentCapabilityManifest classifies tools, skills, and MCP aliases", (
     sessionKind: "workspace_session",
     browserToolsAvailable: true,
     browserToolIds: ["browser_get_state"],
-    runtimeToolIds: ["holaboss_onboarding_complete"],
+    runtimeToolIds: ["holaboss_onboarding_complete", "todoread", "todowrite"],
     workspaceCommandIds: ["hello"],
     defaultTools: ["read", "edit", "question", "todoread", "todowrite"],
-    extraTools: ["browser_get_state", "holaboss_onboarding_complete"],
+    extraTools: ["browser_get_state", "holaboss_onboarding_complete", "todoread", "todowrite"],
     workspaceSkillIds: ["skill-creator"],
     resolvedMcpToolRefs: [
       {
@@ -33,7 +33,7 @@ test("buildAgentCapabilityManifest classifies tools, skills, and MCP aliases", (
     session_kind: "workspace_session",
     browser_tools_available: true,
     browser_tool_ids: ["browser_get_state"],
-    runtime_tool_ids: ["holaboss_onboarding_complete"],
+    runtime_tool_ids: ["holaboss_onboarding_complete", "todoread", "todowrite"],
     workspace_command_ids: ["hello"],
     workspace_commands_available: true,
     workspace_skills_available: true,
@@ -43,8 +43,8 @@ test("buildAgentCapabilityManifest classifies tools, skills, and MCP aliases", (
   assert.deepEqual(manifest.workspace_skills, ["skill-creator"]);
   assert.deepEqual(manifest.browser_tools.map((capability) => capability.callable_name), ["browser_get_state"]);
   assert.deepEqual(
-    manifest.runtime_tools.map((capability) => capability.callable_name),
-    ["holaboss_onboarding_complete"]
+    manifest.runtime_tools.map((capability) => capability.callable_name).sort(),
+    ["holaboss_onboarding_complete", "todoread", "todowrite"]
   );
   assert.ok(manifest.inspect.some((capability) => capability.callable_name === "read"));
   assert.ok(manifest.inspect.some((capability) => capability.callable_name === "browser_get_state"));
@@ -59,8 +59,8 @@ test("buildAgentCapabilityManifest classifies tools, skills, and MCP aliases", (
   const todoReadCapability = manifest.coordinate.find((capability) => capability.callable_name === "todoread");
   assert.ok(todoWriteCapability);
   assert.ok(todoReadCapability);
-  assert.match(String(todoWriteCapability?.description ?? ""), /current working todo/i);
-  assert.match(String(todoReadCapability?.description ?? ""), /current working todo/i);
+  assert.match(String(todoWriteCapability?.description ?? ""), /current phased todo plan/i);
+  assert.match(String(todoReadCapability?.description ?? ""), /current phased todo plan/i);
   assert.ok(manifest.capabilities.some((capability) => capability.kind === "skill" && capability.id === "skill-creator"));
   assert.deepEqual(manifest.refresh_semantics, {
     evaluation_scope: "per_run",
@@ -160,20 +160,20 @@ test("buildAgentCapabilityManifest excludes browser tools for onboarding session
   assert.equal(buildEnabledToolMapFromManifest(manifest).browser_get_state, undefined);
 });
 
-test("buildAgentCapabilityManifest includes native web search as a custom tool", () => {
+test("buildAgentCapabilityManifest includes native web search as a runtime tool", () => {
   const manifest = buildAgentCapabilityManifest({
     harnessId: "pi",
     sessionKind: "workspace_session",
     browserToolsAvailable: false,
     browserToolIds: [],
-    runtimeToolIds: [],
+    runtimeToolIds: ["web_search"],
     defaultTools: ["read"],
     extraTools: ["web_search"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
   });
 
-  const capability = manifest.custom_tools.find((entry) => entry.id === "web_search");
+  const capability = manifest.runtime_tools.find((entry) => entry.id === "web_search");
   assert.ok(capability);
   assert.equal(capability.title, "Web Search");
   assert.match(capability.description, /discover and summarize information across multiple sources/i);

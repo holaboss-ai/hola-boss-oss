@@ -283,7 +283,7 @@ await window.electronAPI.workspace.queueSessionInput({
 });
 ```
 
-If you change skill discoverability or prompt shaping, inspect both the desktop serialization path and the harness-host prompt-expansion path.
+If you change skill discoverability or prompt shaping, inspect the desktop serialization path, the runtime quoted-skill preparation and canonical skill-resolution path in `runtime/api-server/src/workspace-skills.ts`, the shared runtime-backed skill tool path in `runtime/api-server/src/runtime-agent-tools.ts`, and the host-side rendering path in `runtime/harness-host/src/pi.ts`.
 
 ## File explorer contract
 

@@ -21,7 +21,7 @@ The current flow is:
 8. The evolve worker reloads the finished turn, recent session state, and current memory catalog state.
 9. Deterministic and optional model-assisted extraction promote durable workspace facts, procedures, and repeated blockers into markdown memory plus catalog rows.
 10. `MEMORY.md` indexes are refreshed only for the durable scopes that changed.
-11. Later runs restore from recent runtime context and `session-memory`, and can also use a compaction boundary when one exists.
+11. Later runs restore from persisted harness session state, `session-memory`, and scratchpad context.
 
 User-memory proposals remain staged in `state/runtime.db` until they are accepted. That acceptance path is what creates durable preference memory or updates the canonical runtime profile; queued evolve does not create user preference or profile memory automatically. Repeated runtime blockers can also graduate into durable `knowledge/blockers/` during queued evolve when they stop looking like a one-off run artifact and start looking like stable workspace knowledge.
 
@@ -47,7 +47,7 @@ When embeddings are configured and the state store has vector support, recall ca
 1. immediate continuity writeback
    - runs inline after the foreground `turn_results` row is committed
    - keeps next-run continuity fresh without waiting on heavier extraction work
-   - refreshes runtime projections and `session-memory` immediately; compaction boundaries can still be written later by checkpoint compaction
+   - refreshes runtime projections and `session-memory` immediately
 2. queued `evolve` jobs
    - persist as post-run jobs in `state/runtime.db`
    - drain through the dedicated evolve worker

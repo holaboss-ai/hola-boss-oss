@@ -38,7 +38,7 @@ import type {
   AgentOperatorSurfaceType,
   AgentPendingUserMemoryContext,
   AgentRecalledMemoryContext,
-  AgentRecentRuntimeContext,
+  AgentScratchpadContext,
   AgentSessionResumeContext,
 } from "./agent-runtime-prompt.js";
 import {
@@ -62,7 +62,10 @@ import {
   readWorkspaceHarnessSessionId,
   workspaceDirForId,
 } from "./ts-runner-session-state.js";
-import { resolveWorkspaceSkills } from "./workspace-skills.js";
+import {
+  prepareInstructionWithQuotedWorkspaceSkills,
+  resolveWorkspaceSkills,
+} from "./workspace-skills.js";
 import { resolveProductRuntimeConfig } from "./runtime-config.js";
 import {
   normalizeHarnessId,
@@ -76,15 +79,10 @@ import {
   type WorkspaceMcpSidecarCliRequest,
 } from "./workspace-mcp-sidecar.js";
 import type { CompiledWorkspaceRuntimePlan } from "./workspace-runtime-plan.js";
-import {
-  recentRuntimeContextFromCompactionBoundary,
-  recentRuntimeContextFromTurnResult,
-  sessionResumeContextFromArtifacts,
-  sessionResumeContextFromCompactionBoundary,
-} from "./turn-result-summary.js";
 import { createBackgroundTaskMemoryModelClient } from "./background-task-model.js";
 import { recalledMemoryContextFromManifest } from "./memory-recall-manifest.js";
 import { createRecallEmbeddingModelClient } from "./recall-embedding-model.js";
+import { readSessionScratchpad } from "./session-scratchpad.js";
 import { pendingUserMemoryContextFromProposals } from "./user-memory-proposals.js";
 import { NATIVE_WEB_SEARCH_TOOL_IDS } from "../../harnesses/src/native-web-search-tools.js";
 
@@ -431,56 +429,6 @@ function runtimeRootDir(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 }
 
-function loadRecentRuntimeContext(params: {
-  workspaceRoot: string;
-  workspaceId: string;
-  sessionId: string;
-  inputId: string;
-  logger?: LoggerLike;
-}): AgentRecentRuntimeContext | null {
-  const sandboxRoot = path.dirname(params.workspaceRoot);
-  const dbPath = path.join(sandboxRoot, "state", "runtime.db");
-  if (!fs.existsSync(dbPath)) {
-    return null;
-  }
-  const store = new RuntimeStateStore({
-    workspaceRoot: params.workspaceRoot,
-    sandboxRoot,
-    dbPath,
-  });
-  try {
-    const latestBoundary =
-      store
-        .listCompactionBoundaries({
-          workspaceId: params.workspaceId,
-          sessionId: params.sessionId,
-          limit: 5,
-          offset: 0,
-        })
-        .find((boundary) => boundary.inputId !== params.inputId) ?? null;
-    const boundaryContext =
-      recentRuntimeContextFromCompactionBoundary(latestBoundary);
-    if (boundaryContext) {
-      return boundaryContext;
-    }
-    const priorTurn = store
-      .listTurnResults({
-        workspaceId: params.workspaceId,
-        sessionId: params.sessionId,
-        limit: 10,
-      })
-      .find((turnResult) => turnResult.inputId !== params.inputId);
-    return priorTurn ? recentRuntimeContextFromTurnResult(priorTurn) : null;
-  } catch (error) {
-    params.logger?.warn?.(
-      `Failed to load recent runtime context workspace_id=${params.workspaceId} session_id=${params.sessionId}: ${errorMessage(error)}`,
-    );
-    return null;
-  } finally {
-    store.close();
-  }
-}
-
 function resolveMemoryRootDir(workspaceRoot: string): string {
   const configured = (process.env.MEMORY_ROOT_DIR ?? "").trim();
   if (!configured) {
@@ -542,90 +490,47 @@ function loadSessionResumeContext(params: {
   workspaceRoot: string;
   workspaceId: string;
   sessionId: string;
-  inputId: string;
-  logger?: LoggerLike;
 }): AgentSessionResumeContext | null {
   const sessionMemory = loadSessionMemoryExcerpt({
     workspaceRoot: params.workspaceRoot,
     workspaceId: params.workspaceId,
     sessionId: params.sessionId,
   });
-  const sandboxRoot = path.dirname(params.workspaceRoot);
-  const dbPath = path.join(sandboxRoot, "state", "runtime.db");
-  if (!fs.existsSync(dbPath)) {
-    if (!sessionMemory) {
-      return null;
-    }
-    return {
-      session_memory_path: sessionMemory.path,
-      session_memory_excerpt: sessionMemory.excerpt,
-    };
+  if (!sessionMemory) {
+    return null;
   }
-  const store = new RuntimeStateStore({
-    workspaceRoot: params.workspaceRoot,
-    sandboxRoot,
-    dbPath,
-  });
+  return {
+    session_memory_path: sessionMemory.path,
+    session_memory_excerpt: sessionMemory.excerpt,
+  };
+}
+
+async function loadSessionScratchpadContext(params: {
+  workspaceRoot: string;
+  workspaceId: string;
+  sessionId: string;
+  logger?: LoggerLike;
+}): Promise<AgentScratchpadContext | null> {
   try {
-    const latestBoundary =
-      store
-        .listCompactionBoundaries({
-          workspaceId: params.workspaceId,
-          sessionId: params.sessionId,
-          limit: 5,
-          offset: 0,
-        })
-        .find((boundary) => boundary.inputId !== params.inputId) ?? null;
-    const boundaryContext =
-      sessionResumeContextFromCompactionBoundary(latestBoundary);
-    if (boundaryContext) {
-      if (!sessionMemory) {
-        return boundaryContext;
-      }
-      return {
-        ...boundaryContext,
-        session_memory_path: sessionMemory.path,
-        session_memory_excerpt: sessionMemory.excerpt,
-      };
-    }
-    const turnResults = store.listTurnResults({
+    const scratchpad = await readSessionScratchpad({
+      workspaceRoot: params.workspaceRoot,
       workspaceId: params.workspaceId,
       sessionId: params.sessionId,
-      limit: 8,
+      includeContent: false,
     });
-    const sessionMessages = store.listSessionMessages({
-      workspaceId: params.workspaceId,
-      sessionId: params.sessionId,
-    });
-    const artifactContext = sessionResumeContextFromArtifacts({
-      turnResults,
-      sessionMessages,
-      currentInputId: params.inputId,
-    });
-    if (!artifactContext && !sessionMemory) {
+    if (!scratchpad.exists) {
       return null;
     }
-    if (!sessionMemory) {
-      return artifactContext ?? null;
-    }
     return {
-      ...(artifactContext ?? {}),
-      session_memory_path: sessionMemory.path,
-      session_memory_excerpt: sessionMemory.excerpt,
+      exists: true,
+      file_path: scratchpad.file_path,
+      updated_at: scratchpad.updated_at,
+      size_bytes: scratchpad.size_bytes,
+      preview: scratchpad.preview,
     };
   } catch (error) {
-    params.logger?.warn?.(
-      `Failed to load session resume context workspace_id=${params.workspaceId} session_id=${params.sessionId}: ${errorMessage(error)}`,
-    );
-    if (!sessionMemory) {
-      return null;
-    }
-    return {
-      session_memory_path: sessionMemory.path,
-      session_memory_excerpt: sessionMemory.excerpt,
-    };
-  } finally {
-    store.close();
+    params.logger?.warn?.(`Failed to load session scratchpad context: ${errorMessage(error)}`);
+    return null;
   }
 }
 
@@ -1200,12 +1105,12 @@ function buildAgentRuntimeConfigRequest(params: {
   toolServerIdMap: Readonly<Record<string, string>>;
   resolvedMcpToolRefs: CompiledWorkspaceRuntimePlan["resolved_mcp_tool_refs"];
   resolvedMcpServerIds: string[];
-  recentRuntimeContext?: AgentRecentRuntimeContext | null;
   sessionResumeContext?: AgentSessionResumeContext | null;
   recalledMemoryContext?: AgentRecalledMemoryContext | null;
   currentUserContext?: AgentCurrentUserContext | null;
   operatorSurfaceContext?: AgentOperatorSurfaceContext | null;
   pendingUserMemoryContext?: AgentPendingUserMemoryContext | null;
+  sessionScratchpadContext?: AgentScratchpadContext | null;
   evolveCandidateContext?: AgentEvolveCandidateContext | null;
 }): AgentRuntimeConfigCliRequest {
   const extraTools = Array.from(
@@ -1227,12 +1132,12 @@ function buildAgentRuntimeConfigRequest(params: {
       runtimeExecContextString(params.request, "sandbox_id") ?? undefined,
     runtime_exec_run_id:
       runtimeExecContextString(params.request, "run_id") ?? undefined,
-    recent_runtime_context: params.recentRuntimeContext ?? undefined,
     session_resume_context: params.sessionResumeContext ?? undefined,
     recalled_memory_context: params.recalledMemoryContext ?? undefined,
     current_user_context: params.currentUserContext ?? undefined,
     operator_surface_context: params.operatorSurfaceContext ?? undefined,
     pending_user_memory_context: params.pendingUserMemoryContext ?? undefined,
+    session_scratchpad_context: params.sessionScratchpadContext ?? undefined,
     evolve_candidate_context: params.evolveCandidateContext ?? undefined,
     selected_model: firstNonEmptyString(params.request.model) ?? undefined,
     default_provider_id: defaultProviderId(),
@@ -1696,6 +1601,10 @@ export async function executeTsRunnerRequest(
       "resolve_workspace_skills",
       () => resolveWorkspaceSkills(bootstrap.workspaceDir),
     );
+    const preparedInstruction = prepareInstructionWithQuotedWorkspaceSkills({
+      instruction: request.instruction,
+      workspaceSkills,
+    });
     const stagedSkills = runnerPrepPlan.stageWorkspaceSkills
       ? measureBootstrapStage(
           bootstrapStageTimingsMs,
@@ -1806,18 +1715,6 @@ export async function executeTsRunnerRequest(
       );
     }
 
-    const recentRuntimeContext = measureBootstrapStage(
-      bootstrapStageTimingsMs,
-      "load_recent_runtime_context",
-      () =>
-        loadRecentRuntimeContext({
-          workspaceRoot: bootstrap.workspaceRoot,
-          workspaceId: request.workspace_id,
-          sessionId: request.session_id,
-          inputId: request.input_id,
-          logger,
-        }),
-    );
     const sessionResumeContext = measureBootstrapStage(
       bootstrapStageTimingsMs,
       "load_session_resume_context",
@@ -1826,32 +1723,19 @@ export async function executeTsRunnerRequest(
           workspaceRoot: bootstrap.workspaceRoot,
           workspaceId: request.workspace_id,
           sessionId: request.session_id,
-          inputId: request.input_id,
+        }),
+    );
+    const sessionScratchpadContext = await measureBootstrapStageAsync(
+      bootstrapStageTimingsMs,
+      "load_session_scratchpad_context",
+      async () =>
+        await loadSessionScratchpadContext({
+          workspaceRoot: bootstrap.workspaceRoot,
+          workspaceId: request.workspace_id,
+          sessionId: request.session_id,
           logger,
         }),
     );
-    if (sessionResumeContext?.compaction_boundary_id) {
-      await relayTsRunnerEvent({
-        emitEvent: options.emitEvent,
-        harness: bootstrap.harness,
-        workspaceDir: bootstrap.workspaceDir,
-        logger,
-        event: buildTsRunnerEvent({
-          sessionId: request.session_id,
-          inputId: request.input_id,
-          sequence: ++syntheticSequence,
-          eventType: "compaction_restored",
-          payload: {
-            source:
-              sessionResumeContext.compaction_source ?? "executor_post_turn",
-            boundary_id: sessionResumeContext.compaction_boundary_id,
-            restoration_order: sessionResumeContext.restoration_order ?? [],
-            restored_memory_paths:
-              sessionResumeContext.restored_memory_paths ?? [],
-          },
-        }),
-      });
-    }
     const recalledMemoryContext = await measureBootstrapStageAsync(
       bootstrapStageTimingsMs,
       "load_recalled_memory_context",
@@ -1915,12 +1799,12 @@ export async function executeTsRunnerRequest(
             resolvedMcpServerIds: effectiveMcpServers.map(
               (server) => server.name,
             ),
-            recentRuntimeContext,
             sessionResumeContext,
             recalledMemoryContext,
             currentUserContext,
             operatorSurfaceContext,
             pendingUserMemoryContext,
+            sessionScratchpadContext,
             evolveCandidateContext: evolveCandidateContext(request),
           }),
         ),
@@ -1971,6 +1855,7 @@ export async function executeTsRunnerRequest(
         request,
         bootstrap,
         runtimeConfig,
+        prepared_instruction: preparedInstruction,
         browserSpace: browserSpaceFromOperatorSurfaceContext(
           operatorSurfaceContext,
         ),
@@ -2013,6 +1898,7 @@ export async function executeTsRunnerRequest(
       request,
       bootstrap,
       runtimeConfig,
+      prepared_instruction: preparedInstruction,
       browserSpace: browserSpaceFromOperatorSurfaceContext(
         operatorSurfaceContext,
       ),

@@ -20,7 +20,7 @@ It does not replace the workspace filesystem or the markdown memory tree. It sto
 - workspace registry and discovery
 - session and harness binding state
 - input and post-run job queues
-- turn results, request snapshots, and compaction boundaries
+- turn results and request snapshots
 - memory registry metadata and vector index entries
 - outputs, app build state, cronjobs, notifications, and proposals
 
@@ -81,9 +81,8 @@ The store persists:
 - output events
 - turn results
 - turn request snapshots
-- compaction boundaries
 
-This is the persistent continuity seam between runs. It is how the runtime reconstructs recent context, emits output streams, and restores compacted sessions without relying on the harness to remember everything.
+This is part of the persistent continuity seam between runs. It is how the runtime reconstructs recent execution state, emits output streams, and preserves request/debug artifacts while session-memory projections and persisted harness state carry the resume-specific handoff.
 
 ### Memory registry and vector index
 

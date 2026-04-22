@@ -13,7 +13,7 @@ import {
   type AgentOperatorSurfaceContext,
   type AgentPendingUserMemoryContext,
   type AgentRecalledMemoryContext,
-  type AgentRecentRuntimeContext,
+  type AgentScratchpadContext,
   type AgentSessionResumeContext,
 } from "./agent-runtime-prompt.js";
 import type {
@@ -45,12 +45,12 @@ export interface AgentRuntimeConfigCliRequest {
   runtime_exec_model_proxy_api_key?: string | null;
   runtime_exec_sandbox_id?: string | null;
   runtime_exec_run_id?: string | null;
-  recent_runtime_context?: AgentRecentRuntimeContext | null;
   session_resume_context?: AgentSessionResumeContext | null;
   recalled_memory_context?: AgentRecalledMemoryContext | null;
   current_user_context?: AgentCurrentUserContext | null;
   operator_surface_context?: AgentOperatorSurfaceContext | null;
   pending_user_memory_context?: AgentPendingUserMemoryContext | null;
+  session_scratchpad_context?: AgentScratchpadContext | null;
   evolve_candidate_context?: AgentEvolveCandidateContext | null;
   selected_model?: string | null;
   default_provider_id: string;
@@ -1500,12 +1500,12 @@ export function projectAgentRuntimeConfig(
     sessionKind: request.session_kind ?? null,
     sessionMode: request.session_mode,
     harnessId: request.harness_id ?? null,
-    recentRuntimeContext: request.recent_runtime_context ?? null,
     sessionResumeContext: request.session_resume_context ?? null,
     recalledMemoryContext: request.recalled_memory_context ?? null,
     currentUserContext: request.current_user_context ?? null,
     operatorSurfaceContext: request.operator_surface_context ?? null,
     pendingUserMemoryContext: request.pending_user_memory_context ?? null,
+    scratchpadContext: request.session_scratchpad_context ?? null,
     evolveCandidateContext: request.evolve_candidate_context ?? null,
     capabilityManifest,
   });

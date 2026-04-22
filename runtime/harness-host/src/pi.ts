@@ -4,7 +4,6 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import * as Sentry from "@sentry/node";
-import JSZip from "jszip";
 import {
   AuthStorage,
   createAgentSession,
@@ -13,27 +12,22 @@ import {
   createGrepTool,
   createLsTool,
   DefaultResourceLoader,
-  loadSkillsFromDir,
   ModelRegistry,
   SessionManager,
   SettingsManager,
   type AgentSession,
   type AgentSessionEvent,
-  type LoadSkillsResult,
-  type Skill,
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
 import type { Api, ImageContent, Model, TextContent } from "@mariozechner/pi-ai";
-import type { ResourceDiagnostic } from "@mariozechner/pi-coding-agent";
 import { APIError as OpenAIApiError } from "openai";
-import ExcelJS from "exceljs";
 import { createCallResult, createRuntime, type Runtime as McporterRuntime, type ServerDefinition, type ServerToolInfo } from "mcporter";
 import { MODELS } from "../node_modules/@mariozechner/pi-ai/dist/models.generated.js";
 
 import type {
-  HarnessHostInputAttachmentPayload,
   HarnessHostPiMcpToolRef,
   HarnessHostPiRequest,
+  HarnessHostWorkspaceSkillPayload,
   JsonObject,
   JsonValue,
   RunnerEventType,
@@ -44,9 +38,18 @@ import {
   harnessGenAiSpanAttributes,
   type HarnessGenAiUsageMetrics,
 } from "./harness-ai-monitoring.js";
+import { buildAttachmentPromptContent } from "./attachment-prompt-content.js";
 import { resolvePiDesktopBrowserToolDefinitions } from "./pi-browser-tools.js";
 import { resolvePiRuntimeToolDefinitions } from "./pi-runtime-tools.js";
-import { resolvePiWebSearchToolDefinitions } from "./pi-web-search.js";
+import { RuntimeTodoCoordinator } from "./runtime-todo-coordinator.js";
+import {
+  createWorkspaceBoundaryPolicy,
+  workspaceBoundaryOverrideRequested,
+  workspaceBoundaryViolationForToolCall,
+  type WorkspaceBoundaryPolicy,
+} from "./workspace-boundary.js";
+
+const require = createRequire(import.meta.url);
 
 export type PiMappedEvent = {
   event_type: RunnerEventType;
@@ -141,9 +144,6 @@ const PI_AGENT_STATE_DIR = ".holaboss/pi-agent";
 const PI_SESSION_DIR = ".holaboss/pi-sessions";
 const PI_HARNESS_CLIENT_NAME = "holaboss-pi-harness";
 const PI_HARNESS_CLIENT_VERSION = "0.1.0";
-const PI_MAX_INLINE_IMAGE_BYTES = 10 * 1024 * 1024;
-const PI_MAX_INLINE_TEXT_BYTES = 128 * 1024;
-const PI_MAX_EXTRACTED_TEXT_CHARS = 120_000;
 const PI_MCP_DISCOVERY_RETRY_INTERVAL_MS = 250;
 const PI_FALLBACK_CONTEXT_WINDOW = 65_536;
 const PI_FALLBACK_MAX_TOKENS = 8_192;
@@ -176,130 +176,9 @@ const PI_MODEL_CATALOG = MODELS as Record<
   Record<string, PiCatalogModelEntry>
 >;
 const PI_MCP_DISCOVERY_MAX_WAIT_MS = 10000;
-const PI_TODO_STATE_DIR = "todos";
-const PI_TODO_STATE_VERSION = 2;
-const PI_TODO_STATUSES = [
-  "pending",
-  "in_progress",
-  "blocked",
-  "completed",
-  "abandoned",
-] as const;
-const PI_TODO_WRITE_OPS = ["replace", "add_phase", "add_task", "update", "remove_task"] as const;
-const PI_TODO_WRITE_OPS_TEXT =
-  "`replace`, `add_phase`, `add_task`, `update`, and `remove_task`";
-const PI_TODO_WRITE_ALIAS_WARNING =
-  "Do not invent alias op names such as `replace_all`, `update_task`, or `set_status`.";
-const require = createRequire(import.meta.url);
 let cachedPrepareCompactionFnPromise:
   | Promise<((entries: unknown[], settings: unknown) => PiPrepareCompactionResult) | null>
   | null = null;
-
-type PiTodoStatus = (typeof PI_TODO_STATUSES)[number];
-
-interface PiTodoItem {
-  id: string;
-  content: string;
-  status: PiTodoStatus;
-  notes?: string;
-  details?: string;
-}
-
-interface PiTodoPhase {
-  id: string;
-  name: string;
-  tasks: PiTodoItem[];
-}
-
-interface PiTodoState {
-  version: number;
-  session_id: string;
-  updated_at: string | null;
-  phases: PiTodoPhase[];
-  next_task_id: number;
-  next_phase_id: number;
-}
-
-const PI_TEXT_ATTACHMENT_MIME_TYPES = new Set([
-  "application/json",
-  "application/ld+json",
-  "application/xml",
-  "application/yaml",
-  "application/x-yaml",
-  "application/toml",
-  "application/x-sh",
-  "application/javascript",
-  "application/x-javascript",
-  "application/typescript",
-  "application/sql",
-]);
-
-const PI_TEXT_ATTACHMENT_EXTENSIONS = new Set([
-  ".c",
-  ".cc",
-  ".cfg",
-  ".conf",
-  ".cpp",
-  ".cs",
-  ".css",
-  ".csv",
-  ".env",
-  ".go",
-  ".graphql",
-  ".h",
-  ".hpp",
-  ".html",
-  ".ini",
-  ".java",
-  ".js",
-  ".json",
-  ".jsonl",
-  ".jsx",
-  ".kt",
-  ".log",
-  ".lua",
-  ".md",
-  ".mdx",
-  ".mjs",
-  ".php",
-  ".pl",
-  ".properties",
-  ".py",
-  ".rb",
-  ".rs",
-  ".scss",
-  ".sh",
-  ".sql",
-  ".svg",
-  ".swift",
-  ".toml",
-  ".ts",
-  ".tsx",
-  ".txt",
-  ".xml",
-  ".yaml",
-  ".yml",
-  ".zsh",
-]);
-
-const PI_PDF_ATTACHMENT_MIME_TYPES = new Set(["application/pdf"]);
-const PI_DOCX_ATTACHMENT_MIME_TYPES = new Set(["application/vnd.openxmlformats-officedocument.wordprocessingml.document"]);
-const PI_PPTX_ATTACHMENT_MIME_TYPES = new Set(["application/vnd.openxmlformats-officedocument.presentationml.presentation"]);
-const PI_EXCEL_ATTACHMENT_MIME_TYPES = new Set([
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "application/vnd.ms-excel",
-]);
-
-function normalizePdfjsFactoryPath(directory: string): string {
-  return `${directory.replaceAll("\\", "/").replace(/\/+$/u, "")}/`;
-}
-
-function resolvePdfStandardFontDataPath(): string {
-  const packageJsonPath = require.resolve("pdfjs-dist/package.json");
-  return normalizePdfjsFactoryPath(path.join(path.dirname(packageJsonPath), "standard_fonts"));
-}
-
-const PI_PDF_STANDARD_FONT_DATA_PATH = resolvePdfStandardFontDataPath();
 
 export interface PiMcpToolMetadata {
   piToolName: string;
@@ -327,11 +206,7 @@ export interface PiSkillWideningState {
   skillIdsByManagedCommand: ReadonlyMap<string, ReadonlySet<string>>;
 }
 
-export interface PiWorkspaceBoundaryPolicy {
-  workspaceDir: string;
-  workspaceRealDir: string;
-  overrideRequested: boolean;
-}
+type PiWorkspaceBoundaryPolicy = WorkspaceBoundaryPolicy;
 
 export type PiMcpServerBinding = {
   serverId: string;
@@ -348,307 +223,6 @@ export type PiMcpToolset = {
 export interface PiPromptPayload {
   text: string;
   images: ImageContent[];
-}
-
-type PiAttachment = HarnessHostInputAttachmentPayload;
-
-const WORKSPACE_PATH_KEY_PATTERN =
-  /(?:^|_)(?:path|file|filepath|filename|target|source|destination|cwd|dir|directory|root)$/i;
-const TOOL_COMMAND_KEY_PATTERN = /^(?:command|cmd|script)$/i;
-const WORKSPACE_LOCAL_TOOL_NAMES = new Set([
-  "read",
-  "edit",
-  "write",
-  "bash",
-  "glob",
-  "grep",
-  "find",
-  "ls",
-  "list",
-  "mkdir",
-  "rm",
-  "mv",
-  "cp",
-  "todoread",
-  "todowrite",
-  "skill",
-]);
-
-function shouldEnforceWorkspaceBoundaryForTool(toolName: string): boolean {
-  const normalized = toolName.trim().toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-  if (normalized.startsWith("mcp__") || normalized.startsWith("holaboss_")) {
-    return false;
-  }
-  return WORKSPACE_LOCAL_TOOL_NAMES.has(normalized);
-}
-
-function attachmentPromptPath(attachment: PiAttachment): string {
-  return `./${attachment.workspace_path}`;
-}
-
-function resolveAttachmentAbsolutePath(request: HarnessHostPiRequest, attachment: PiAttachment): string {
-  const policy = createWorkspaceBoundaryPolicy(request.workspace_dir, false);
-  const resolved = resolvePathWithinWorkspace(policy, attachment.workspace_path);
-  if (!resolved) {
-    throw new Error(
-      `Attachment '${attachment.name}' resolves outside workspace boundary: ${attachment.workspace_path}`
-    );
-  }
-  return resolved;
-}
-
-function isTextLikeAttachment(attachment: PiAttachment): boolean {
-  const mimeType = attachment.mime_type.trim().toLowerCase();
-  if (mimeType.startsWith("text/") || PI_TEXT_ATTACHMENT_MIME_TYPES.has(mimeType)) {
-    return true;
-  }
-  return PI_TEXT_ATTACHMENT_EXTENSIONS.has(path.extname(attachment.name).toLowerCase());
-}
-
-function isBinaryBuffer(buffer: Buffer): boolean {
-  return buffer.subarray(0, Math.min(buffer.length, 1024)).includes(0);
-}
-
-function truncateExtractedText(text: string): { text: string; truncated: boolean } {
-  if (text.length <= PI_MAX_EXTRACTED_TEXT_CHARS) {
-    return { text, truncated: false };
-  }
-  return {
-    text: text.slice(0, PI_MAX_EXTRACTED_TEXT_CHARS),
-    truncated: true,
-  };
-}
-
-function decodeXmlEntities(value: string): string {
-  return value
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, "&")
-    .replace(/&#x([0-9a-f]+);/gi, (_match, hex) => String.fromCodePoint(Number.parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_match, decimal) => String.fromCodePoint(Number.parseInt(decimal, 10)));
-}
-
-function normalizeExtractedText(value: string): string {
-  return value
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .replace(/\u0000/g, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function escapeXmlAttribute(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function isPdfAttachment(attachment: PiAttachment): boolean {
-  const lowerName = attachment.name.toLowerCase();
-  return PI_PDF_ATTACHMENT_MIME_TYPES.has(attachment.mime_type.toLowerCase()) || lowerName.endsWith(".pdf");
-}
-
-function isDocxAttachment(attachment: PiAttachment): boolean {
-  const lowerName = attachment.name.toLowerCase();
-  return PI_DOCX_ATTACHMENT_MIME_TYPES.has(attachment.mime_type.toLowerCase()) || lowerName.endsWith(".docx");
-}
-
-function isPptxAttachment(attachment: PiAttachment): boolean {
-  const lowerName = attachment.name.toLowerCase();
-  return PI_PPTX_ATTACHMENT_MIME_TYPES.has(attachment.mime_type.toLowerCase()) || lowerName.endsWith(".pptx");
-}
-
-function isExcelAttachment(attachment: PiAttachment): boolean {
-  const lowerName = attachment.name.toLowerCase();
-  return (
-    PI_EXCEL_ATTACHMENT_MIME_TYPES.has(attachment.mime_type.toLowerCase()) ||
-    lowerName.endsWith(".xlsx") ||
-    lowerName.endsWith(".xls")
-  );
-}
-
-function fallbackPromptLine(attachment: PiAttachment): string {
-  const label =
-    attachment.kind === "image"
-      ? "image"
-      : attachment.kind === "folder"
-        ? "folder"
-        : "file";
-  return `- ${attachment.name} (${label}, ${attachment.mime_type}) at ${attachmentPromptPath(attachment)}`;
-}
-
-function isFolderAttachment(attachment: PiAttachment): boolean {
-  return attachment.kind === "folder" || attachment.mime_type.trim().toLowerCase() === "inode/directory";
-}
-
-async function extractPdfAttachmentText(buffer: Buffer, fileName: string): Promise<string> {
-  const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const pdf = await pdfjsLib.getDocument({
-    data: new Uint8Array(buffer),
-    standardFontDataUrl: PI_PDF_STANDARD_FONT_DATA_PATH,
-  }).promise;
-  try {
-    let extractedText = `<pdf filename="${escapeXmlAttribute(fileName)}">`;
-    for (let index = 1; index <= pdf.numPages; index += 1) {
-      const page = await pdf.getPage(index);
-      const textContent = await page.getTextContent();
-      const pageText = textContent.items
-        .map((item) => ("str" in item ? item.str : ""))
-        .filter((part) => part.trim().length > 0)
-        .join(" ");
-      extractedText += `\n<page number="${index}">\n${pageText}\n</page>`;
-    }
-    extractedText += "\n</pdf>";
-    return normalizeExtractedText(extractedText);
-  } finally {
-    await pdf.destroy();
-  }
-}
-
-async function extractDocxAttachmentText(buffer: Buffer, fileName: string): Promise<string> {
-  const zip = await JSZip.loadAsync(buffer);
-  const documentXml = await zip.file("word/document.xml")?.async("text");
-  if (!documentXml) {
-    throw new Error(`DOCX document XML not found for ${fileName}`);
-  }
-  const paragraphs = documentXml.match(/<w:p[\s\S]*?<\/w:p>/g) ?? [];
-  const lines = paragraphs
-    .map((paragraph) => {
-      const matches = [...paragraph.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g)];
-      return decodeXmlEntities(matches.map((match) => match[1] ?? "").join("")).trim();
-    })
-    .filter((line) => line.length > 0);
-  const extractedText = `<docx filename="${escapeXmlAttribute(fileName)}">\n<page number="1">\n${lines.join("\n")}\n</page>\n</docx>`;
-  return normalizeExtractedText(extractedText);
-}
-
-async function extractPptxAttachmentText(buffer: Buffer, fileName: string): Promise<string> {
-  const zip = await JSZip.loadAsync(buffer);
-  const slideFiles = Object.keys(zip.files)
-    .filter((name) => /ppt\/slides\/slide\d+\.xml$/i.test(name))
-    .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
-
-  let extractedText = `<pptx filename="${escapeXmlAttribute(fileName)}">`;
-  for (let index = 0; index < slideFiles.length; index += 1) {
-    const slideFile = zip.file(slideFiles[index]);
-    if (!slideFile) {
-      continue;
-    }
-    const slideXml = await slideFile.async("text");
-    const matches = [...slideXml.matchAll(/<a:t[^>]*>([\s\S]*?)<\/a:t>/g)];
-    const slideText = matches.map((match) => decodeXmlEntities(match[1] ?? "").trim()).filter(Boolean).join("\n");
-    if (!slideText) {
-      continue;
-    }
-    extractedText += `\n<slide number="${index + 1}">\n${slideText}\n</slide>`;
-  }
-  extractedText += "\n</pptx>";
-  return normalizeExtractedText(extractedText);
-}
-
-async function extractExcelAttachmentText(buffer: Buffer, fileName: string): Promise<string> {
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(
-    buffer as unknown as Parameters<ExcelJS.Workbook["xlsx"]["load"]>[0],
-  );
-  let extractedText = `<excel filename="${escapeXmlAttribute(fileName)}">`;
-  workbook.eachSheet((worksheet, index) => {
-    const csvRows: string[] = [];
-    worksheet.eachRow({ includeEmpty: false }, (row) => {
-      const cells: string[] = [];
-      row.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
-        const raw = cell.text ?? "";
-        cells[columnNumber - 1] = /[",\n\r]/.test(raw)
-          ? `"${raw.replace(/"/g, "\"\"")}"`
-          : raw;
-      });
-
-      let lastNonEmptyIndex = cells.length - 1;
-      while (lastNonEmptyIndex >= 0 && cells[lastNonEmptyIndex] === "") {
-        lastNonEmptyIndex -= 1;
-      }
-      const normalized = cells.slice(0, lastNonEmptyIndex + 1);
-      if (normalized.length > 0) {
-        csvRows.push(normalized.join(","));
-      }
-    });
-
-    extractedText += `\n<sheet name="${escapeXmlAttribute(worksheet.name)}" index="${index}">\n${csvRows.join("\n").trim()}\n</sheet>`;
-  });
-  extractedText += "\n</excel>";
-  return normalizeExtractedText(extractedText);
-}
-
-async function extractAttachmentText(request: HarnessHostPiRequest, attachment: PiAttachment): Promise<string | null> {
-  const attachmentPath = resolveAttachmentAbsolutePath(request, attachment);
-  const buffer = fs.readFileSync(attachmentPath);
-
-  if (isPdfAttachment(attachment)) {
-    return await extractPdfAttachmentText(buffer, attachment.name);
-  }
-  if (isDocxAttachment(attachment)) {
-    return await extractDocxAttachmentText(buffer, attachment.name);
-  }
-  if (isPptxAttachment(attachment)) {
-    return await extractPptxAttachmentText(buffer, attachment.name);
-  }
-  if (isExcelAttachment(attachment)) {
-    try {
-      return await extractExcelAttachmentText(buffer, attachment.name);
-    } catch {
-      return null;
-    }
-  }
-  if (!isTextLikeAttachment(attachment) || isBinaryBuffer(buffer)) {
-    return null;
-  }
-
-  const truncated = buffer.length > PI_MAX_INLINE_TEXT_BYTES;
-  const text = normalizeExtractedText(buffer.subarray(0, PI_MAX_INLINE_TEXT_BYTES).toString("utf8"));
-  if (!text) {
-    return "[file is empty]";
-  }
-  return truncated ? `${text}\n\n[truncated to first ${PI_MAX_INLINE_TEXT_BYTES} bytes]` : text;
-}
-
-async function inlineDocumentAttachmentSection(request: HarnessHostPiRequest, attachment: PiAttachment): Promise<string | null> {
-  if (isFolderAttachment(attachment)) {
-    return null;
-  }
-  const extractedText = await extractAttachmentText(request, attachment);
-  if (!extractedText) {
-    return null;
-  }
-  const truncatedText = truncateExtractedText(extractedText);
-  const notice = truncatedText.truncated ? "\n[document text truncated for prompt size]" : "";
-  return [
-    `[Document: ${attachment.name}]`,
-    `Mime-Type: ${attachment.mime_type}`,
-    `Workspace Path: ${attachmentPromptPath(attachment)}`,
-    "",
-    `${truncatedText.text}${notice}`.trim(),
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-function inlineImageAttachment(request: HarnessHostPiRequest, attachment: PiAttachment): ImageContent | null {
-  if (attachment.kind !== "image" && !attachment.mime_type.startsWith("image/")) {
-    return null;
-  }
-  const attachmentPath = resolveAttachmentAbsolutePath(request, attachment);
-  const buffer = fs.readFileSync(attachmentPath);
-  if (buffer.length > PI_MAX_INLINE_IMAGE_BYTES) {
-    return null;
-  }
-  return {
-    type: "image",
-    data: buffer.toString("base64"),
-    mimeType: attachment.mime_type,
-  };
 }
 
 function runtimeContextMessagesBlock(request: HarnessHostPiRequest): string {
@@ -668,28 +242,22 @@ function runtimeContextMessagesBlock(request: HarnessHostPiRequest): string {
 
 export async function buildPiPromptPayload(request: HarnessHostPiRequest): Promise<PiPromptPayload> {
   const sections: string[] = [];
-  const imageLines: string[] = [];
-  const folderLines: string[] = [];
-  const fallbackLines: string[] = [];
-  const images: ImageContent[] = [];
-  const attachments = request.attachments ?? [];
-
-  const todoResumeInstruction = resumeTodoReadInstruction(request);
-  if (todoResumeInstruction) {
-    sections.push(todoResumeInstruction);
+  const quotedSkillBlocks = Array.isArray(request.quoted_skill_blocks)
+    ? request.quoted_skill_blocks.map((block) => block.trim()).filter(Boolean)
+    : [];
+  const missingQuotedSkillIds = Array.isArray(request.missing_quoted_skill_ids)
+    ? request.missing_quoted_skill_ids.map((skillId) => skillId.trim()).filter(Boolean)
+    : [];
+  if (quotedSkillBlocks.length > 0) {
+    sections.push(["Quoted workspace skills:", ...quotedSkillBlocks].join("\n\n"));
   }
-
-  const quotedSkills = resolveQuotedSkillSections(request.instruction, request.workspace_skill_dirs);
-  if (quotedSkills.blocks.length > 0) {
-    sections.push(["Quoted workspace skills:", ...quotedSkills.blocks].join("\n\n"));
-  }
-  if (quotedSkills.missing.length > 0) {
+  if (missingQuotedSkillIds.length > 0) {
     sections.push(
-      `Quoted workspace skills not found in this workspace: ${quotedSkills.missing.join(", ")}`
+      `Quoted workspace skills not found in this workspace: ${missingQuotedSkillIds.join(", ")}`
     );
   }
 
-  const instruction = quotedSkills.body.trim();
+  const instruction = request.instruction.trim();
   if (instruction) {
     sections.push(instruction);
   }
@@ -699,56 +267,14 @@ export async function buildPiPromptPayload(request: HarnessHostPiRequest): Promi
     sections.push(runtimeContextBlock);
   }
 
-  for (const attachment of attachments) {
-    if (isFolderAttachment(attachment)) {
-      folderLines.push(fallbackPromptLine(attachment));
-      continue;
-    }
-    if (attachment.kind === "image" || attachment.mime_type.startsWith("image/")) {
-      const image = inlineImageAttachment(request, attachment);
-      if (image) {
-        images.push(image);
-        imageLines.push(`- ${attachment.name} (${attachment.mime_type}) at ${attachmentPromptPath(attachment)}`);
-        continue;
-      }
-    }
-
-    const textSection = await inlineDocumentAttachmentSection(request, attachment);
-    if (textSection) {
-      sections.push(textSection);
-      continue;
-    }
-
-    fallbackLines.push(fallbackPromptLine(attachment));
-  }
-
-  if (attachments.length === 0) {
-    sections.push(["Attachments: none.", "Image inputs: none."].join("\n"));
-  } else if (imageLines.length > 0) {
-    sections.push(["Attached images:", ...imageLines].join("\n"));
-  } else {
-    sections.push("Image inputs: none.");
-  }
-  if (folderLines.length > 0) {
-    sections.push(
-      [
-        "Attached folders:",
-        ...folderLines,
-        "Treat attached folders as scoped workspace context. Inspect relevant files inside them when needed; their contents are not inlined automatically.",
-      ].join("\n")
-    );
-  }
-  if (fallbackLines.length > 0) {
-    sections.push(
-      [
-        "Other attachments are staged in the workspace and should be inspected from these paths:",
-        ...fallbackLines,
-      ].join("\n")
-    );
-  }
+  const attachmentPromptContent = await buildAttachmentPromptContent({
+    workspaceDir: request.workspace_dir,
+    attachments: request.attachments,
+  });
+  sections.push(...attachmentPromptContent.sections);
 
   const text = sections.join("\n\n").trim() || "Review the attached files.";
-  return { text, images };
+  return { text, images: attachmentPromptContent.images };
 }
 
 export async function promptTextForRequest(request: HarnessHostPiRequest): Promise<string> {
@@ -1334,143 +860,6 @@ function resolvePiSessionDir(workspaceDir: string): string {
   return path.join(workspaceDir, PI_SESSION_DIR);
 }
 
-function directoryExists(target: string): boolean {
-  return fs.statSync(target, { throwIfNoEntry: false })?.isDirectory() ?? false;
-}
-
-export function resolvePiSkillDirs(request: HarnessHostPiRequest): string[] {
-  const ordered: string[] = [];
-  const seen = new Set<string>();
-  for (const rawDir of request.workspace_skill_dirs) {
-    const resolvedDir = path.resolve(rawDir);
-    if (seen.has(resolvedDir) || !directoryExists(resolvedDir)) {
-      continue;
-    }
-    seen.add(resolvedDir);
-    ordered.push(resolvedDir);
-  }
-  return ordered;
-}
-
-function loadPiSkills(skillDirs: string[]): LoadSkillsResult {
-  const skills: Skill[] = [];
-  const diagnostics: ResourceDiagnostic[] = [];
-  const seenFilePaths = new Set<string>();
-
-  for (const skillDir of skillDirs) {
-    const result = loadSkillsFromDir({
-      dir: skillDir,
-      source: "holaboss",
-    });
-    diagnostics.push(...result.diagnostics);
-    for (const skill of result.skills) {
-      if (seenFilePaths.has(skill.filePath)) {
-        continue;
-      }
-      seenFilePaths.add(skill.filePath);
-      skills.push(skill);
-    }
-  }
-
-  return { skills, diagnostics };
-}
-
-function stripMarkdownFrontmatter(value: string): string {
-  const normalized = value.replace(/^\uFEFF/, "");
-  const match = normalized.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
-  if (!match) {
-    return normalized;
-  }
-  return normalized.slice(match[0].length);
-}
-
-function parseQuotedSkillInstruction(value: string): { skillIds: string[]; body: string } {
-  const normalized = value.replace(/\r\n/g, "\n");
-  const lines = normalized.split("\n");
-  const skillIds: string[] = [];
-  let index = 0;
-
-  while (index < lines.length) {
-    const line = lines[index]?.trim() ?? "";
-    if (!line) {
-      break;
-    }
-    const match = /^\/([A-Za-z0-9_-]+)$/.exec(line);
-    if (!match) {
-      return { skillIds: [], body: normalized.trim() };
-    }
-    skillIds.push(match[1] ?? "");
-    index += 1;
-  }
-
-  if (skillIds.length === 0) {
-    return { skillIds: [], body: normalized.trim() };
-  }
-
-  if (index < lines.length && (lines[index]?.trim() ?? "") !== "") {
-    return { skillIds: [], body: normalized.trim() };
-  }
-
-  while (index < lines.length && (lines[index]?.trim() ?? "") === "") {
-    index += 1;
-  }
-
-  return {
-    skillIds: [...new Set(skillIds)],
-    body: lines.slice(index).join("\n").trim(),
-  };
-}
-
-function quotedSkillBlock(metadata: PiSkillMetadata): string {
-  const body = stripMarkdownFrontmatter(fs.readFileSync(metadata.filePath, "utf8")).trim();
-  return `<skill name="${metadata.skillName}" location="${metadata.filePath}">\nReferences are relative to ${metadata.baseDir}.\n\n${body}\n</skill>`;
-}
-
-function resolveQuotedSkillSections(
-  instruction: string,
-  workspaceSkillDirs: string[]
-): { blocks: string[]; missing: string[]; body: string } {
-  const parsed = parseQuotedSkillInstruction(instruction);
-  if (parsed.skillIds.length === 0) {
-    return {
-      blocks: [],
-      missing: [],
-      body: parsed.body,
-    };
-  }
-
-  const resolvedSkillDirs = Array.from(
-    new Set(
-      workspaceSkillDirs
-        .map((dir) => path.resolve(dir))
-        .filter((dir) => directoryExists(dir))
-    )
-  );
-  const loadedSkills = loadPiSkills(resolvedSkillDirs);
-  const skillMetadataByAlias = buildPiSkillMetadataByAlias(loadedSkills.skills);
-  const blocks: string[] = [];
-  const missing: string[] = [];
-
-  for (const skillId of parsed.skillIds) {
-    const metadata = resolveSkillMetadata(skillMetadataByAlias, skillId);
-    if (!metadata) {
-      missing.push(skillId);
-      continue;
-    }
-    try {
-      blocks.push(quotedSkillBlock(metadata));
-    } catch {
-      missing.push(skillId);
-    }
-  }
-
-  return {
-    blocks,
-    missing,
-    body: parsed.body,
-  };
-}
-
 function normalizeSkillLookupToken(value: unknown): string {
   if (typeof value !== "string") {
     return "";
@@ -1486,1184 +875,11 @@ function optionalTrimmedString(value: unknown): string | null {
   return trimmed ? trimmed : null;
 }
 
-function sanitizePiStateSegment(value: string): string {
-  const normalized = value.trim().replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
-  return normalized || "default";
-}
-
-function resolvePiTodoStatePath(stateDir: string, sessionId: string): string {
-  return path.join(stateDir, PI_TODO_STATE_DIR, `${sanitizePiStateSegment(sessionId)}.json`);
-}
-
-function emptyPiTodoState(sessionId: string): PiTodoState {
-  return {
-    version: PI_TODO_STATE_VERSION,
-    session_id: sessionId,
-    updated_at: null,
-    phases: [],
-    next_task_id: 1,
-    next_phase_id: 1,
-  };
-}
-
-function hasPersistedPiTodoState(stateDir: string, sessionId: string): boolean {
-  return countPiTodoTasks(readPiTodoState(stateDir, sessionId).phases) > 0;
-}
-
-function hasBlockedPersistedPiTodoState(stateDir: string, sessionId: string): boolean {
-  return readPiTodoState(stateDir, sessionId).phases
-    .flatMap((phase) => phase.tasks)
-    .some((task) => task.status === "blocked");
-}
-
-function shouldRequireTodoReadBeforePrompt(request: HarnessHostPiRequest): boolean {
-  return Boolean(
-    resolveRequestedSessionFile(request) &&
-      hasPersistedPiTodoState(resolvePiStateDir(request.workspace_dir), request.session_id)
-  );
-}
-
-function resumeTodoReadInstruction(request: HarnessHostPiRequest): string {
-  if (!shouldRequireTodoReadBeforePrompt(request)) {
-    return "";
-  }
-  return [
-    "Resumed session note:",
-    "A persisted phased todo plan already exists for this session.",
-    "Treat the user's newest message as the primary instruction for this turn.",
-    "Use `todoread` when you need the current phase/task ids before continuing or updating the persisted plan.",
-    "Only restore and continue the persisted todo immediately when the user's newest message clearly asks to continue it or clearly advances the same work.",
-    "If the user's newest message is conversational, brief, acknowledges prior progress, or is otherwise ambiguous about continuation, respond to that message directly first and ask whether they want to continue the unfinished work.",
-    `When you use \`todowrite\`, valid \`op\` values are exactly ${PI_TODO_WRITE_OPS_TEXT}.`,
-    PI_TODO_WRITE_ALIAS_WARNING,
-    "When you do resume the plan, continue executing it until the recorded work is complete or genuinely blocked.",
-    "Once the user has clearly asked you to continue an unfinished plan and executable todo items remain, do not stop only to give progress updates or ask whether to continue.",
-    "If the user's newest message clearly redirects to unrelated work, handle that new request first, keep the restored todo marked unfinished, and then propose continuing it once the unrelated request is complete.",
-  ].join("\n");
-}
-
 function effectiveSystemPromptForRequest(request: HarnessHostPiRequest): string {
-  const basePrompt = request.system_prompt.trim();
-  const todoResumeInstruction = resumeTodoReadInstruction(request);
-  return [basePrompt, todoResumeInstruction].filter(Boolean).join("\n\n");
+  return request.system_prompt.trim();
 }
 
-function normalizePiTodoStatus(value: unknown): PiTodoStatus | null {
-  const normalized = optionalTrimmedString(value)?.toLowerCase().replace(/[\s-]+/g, "_") ?? "";
-  switch (normalized) {
-    case "pending":
-    case "in_progress":
-    case "blocked":
-    case "completed":
-    case "abandoned":
-      return normalized;
-    default:
-      return null;
-  }
-}
-
-function clonePiTodoPhases(phases: PiTodoPhase[]): PiTodoPhase[] {
-  return phases.map((phase) => ({
-    id: phase.id,
-    name: phase.name,
-    tasks: phase.tasks.map((task) => ({ ...task })),
-  }));
-}
-
-function countPiTodoTasks(phases: PiTodoPhase[]): number {
-  return phases.reduce((total, phase) => total + phase.tasks.length, 0);
-}
-
-function flattenPiTodoSummaries(phases: PiTodoPhase[]): Array<{ content: string; status: PiTodoStatus }> {
-  return phases.flatMap((phase) =>
-    phase.tasks.map((task) => ({
-      content: task.content,
-      status: task.status,
-    }))
-  );
-}
-
-function nextPiTodoIds(phases: PiTodoPhase[]): { nextTaskId: number; nextPhaseId: number } {
-  let maxTaskId = 0;
-  let maxPhaseId = 0;
-
-  for (const phase of phases) {
-    const phaseMatch = /^phase-(\d+)$/u.exec(phase.id);
-    if (phaseMatch) {
-      maxPhaseId = Math.max(maxPhaseId, Number.parseInt(phaseMatch[1] ?? "0", 10));
-    }
-    for (const task of phase.tasks) {
-      const taskMatch = /^task-(\d+)$/u.exec(task.id);
-      if (taskMatch) {
-        maxTaskId = Math.max(maxTaskId, Number.parseInt(taskMatch[1] ?? "0", 10));
-      }
-    }
-  }
-
-  return { nextTaskId: maxTaskId + 1, nextPhaseId: maxPhaseId + 1 };
-}
-
-function normalizePersistedPiTodoItem(value: unknown, fallbackId: string): PiTodoItem | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-  const content = firstNonEmptyString(value.content, value.text, value.task, value.title);
-  if (!content) {
-    return null;
-  }
-  const status = normalizePiTodoStatus(value.status) ?? "pending";
-  const notes = optionalTrimmedString(value.notes) ?? undefined;
-  const details = optionalTrimmedString(value.details) ?? undefined;
-  const id = firstNonEmptyString(value.id, fallbackId) ?? fallbackId;
-  return {
-    id,
-    content,
-    status,
-    ...(notes ? { notes } : {}),
-    ...(details ? { details } : {}),
-  };
-}
-
-function normalizePersistedPiTodoPhase(
-  value: unknown,
-  fallbackId: string,
-  nextTaskId: number
-): { phase: PiTodoPhase | null; nextTaskId: number } {
-  if (!isRecord(value)) {
-    return { phase: null, nextTaskId };
-  }
-  const name = firstNonEmptyString(value.name, value.title);
-  if (!name) {
-    return { phase: null, nextTaskId };
-  }
-  const tasks: PiTodoItem[] = [];
-  let localNextTaskId = nextTaskId;
-  if (Array.isArray(value.tasks)) {
-    for (const rawTask of value.tasks) {
-      const task = normalizePersistedPiTodoItem(rawTask, `task-${localNextTaskId}`);
-      localNextTaskId += 1;
-      if (task) {
-        tasks.push(task);
-      }
-    }
-  }
-  return {
-    phase: {
-      id: firstNonEmptyString(value.id, fallbackId) ?? fallbackId,
-      name,
-      tasks,
-    },
-    nextTaskId: localNextTaskId,
-  };
-}
-
-function normalizeLegacyPiTodoPhases(todos: unknown[]): PiTodoPhase[] {
-  const tasks: PiTodoItem[] = [];
-  let nextTaskId = 1;
-  for (const rawTask of todos) {
-    const task = normalizePersistedPiTodoItem(rawTask, `task-${nextTaskId}`);
-    nextTaskId += 1;
-    if (task) {
-      tasks.push(task);
-    }
-  }
-  return tasks.length > 0
-    ? [
-        {
-          id: "phase-1",
-          name: "Tasks",
-          tasks,
-        },
-      ]
-    : [];
-}
-
-function normalizeInProgressPiTodoTask(phases: PiTodoPhase[]): void {
-  const orderedTasks = phases.flatMap((phase) => phase.tasks);
-  if (orderedTasks.length === 0) {
-    return;
-  }
-
-  const inProgressTasks = orderedTasks.filter((task) => task.status === "in_progress");
-  if (inProgressTasks.length > 1) {
-    for (const task of inProgressTasks.slice(1)) {
-      task.status = "pending";
-    }
-  }
-  if (inProgressTasks.length > 0) {
-    return;
-  }
-
-  const hasBlockedTask = orderedTasks.some((task) => task.status === "blocked");
-  if (hasBlockedTask) {
-    return;
-  }
-
-  const firstPendingTask = orderedTasks.find((task) => task.status === "pending");
-  if (firstPendingTask) {
-    firstPendingTask.status = "in_progress";
-  }
-}
-
-function summarizeQuestionPrompt(args: JsonValue | null, result: unknown): string | null {
-  const candidates: unknown[] = [];
-  if (isRecord(args)) {
-    candidates.push(args.question, args.prompt, args.message, args.text, args.content);
-  }
-  if (isRecord(result)) {
-    candidates.push(result.question, result.prompt, result.message, result.text, result.content);
-    if (isRecord(result.details)) {
-      candidates.push(
-        result.details.question,
-        result.details.prompt,
-        result.details.message,
-        result.details.text,
-        result.details.content
-      );
-    }
-  }
-  for (const candidate of candidates) {
-    const normalized = optionalTrimmedString(candidate);
-    if (normalized) {
-      return normalized;
-    }
-  }
-  return null;
-}
-
-function blockActivePiTodoTask(params: {
-  stateDir: string;
-  sessionId: string;
-  detail: string;
-}): PiTodoState | null {
-  const currentState = readPiTodoState(params.stateDir, params.sessionId);
-  if (countPiTodoTasks(currentState.phases) === 0) {
-    return null;
-  }
-  const nextPhases = clonePiTodoPhases(currentState.phases);
-  const activeTask =
-    nextPhases.flatMap((phase) => phase.tasks).find((task) => task.status === "in_progress") ??
-    nextPhases.flatMap((phase) => phase.tasks).find((task) => task.status === "pending");
-  if (!activeTask) {
-    return null;
-  }
-  activeTask.status = "blocked";
-  const existingDetails = optionalTrimmedString(activeTask.details);
-  activeTask.details =
-    existingDetails && existingDetails !== params.detail
-      ? `${existingDetails}\n${params.detail}`
-      : params.detail;
-  return writePiTodoState({
-    stateDir: params.stateDir,
-    sessionId: params.sessionId,
-    phases: nextPhases,
-  });
-}
-
-function readPiTodoState(stateDir: string, sessionId: string): PiTodoState {
-  const statePath = resolvePiTodoStatePath(stateDir, sessionId);
-  let raw: string;
-  try {
-    raw = fs.readFileSync(statePath, "utf8");
-  } catch {
-    return emptyPiTodoState(sessionId);
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return emptyPiTodoState(sessionId);
-  }
-  if (!isRecord(parsed)) {
-    return emptyPiTodoState(sessionId);
-  }
-
-  const normalizedSessionId = firstNonEmptyString(parsed.session_id, sessionId) ?? sessionId;
-  let phases: PiTodoPhase[] = [];
-  let nextTaskId = 1;
-
-  if (Array.isArray(parsed.phases)) {
-    for (const rawPhase of parsed.phases) {
-      const normalized = normalizePersistedPiTodoPhase(rawPhase, `phase-${phases.length + 1}`, nextTaskId);
-      nextTaskId = normalized.nextTaskId;
-      if (normalized.phase) {
-        phases.push(normalized.phase);
-      }
-    }
-  } else if (Array.isArray(parsed.todos)) {
-    phases = normalizeLegacyPiTodoPhases(parsed.todos);
-  }
-
-  normalizeInProgressPiTodoTask(phases);
-  const computedIds = nextPiTodoIds(phases);
-  return {
-    version:
-      typeof parsed.version === "number" && Number.isFinite(parsed.version)
-        ? parsed.version
-        : PI_TODO_STATE_VERSION,
-    session_id: normalizedSessionId,
-    updated_at: optionalTrimmedString(parsed.updated_at) ?? null,
-    phases,
-    next_task_id:
-      typeof parsed.next_task_id === "number" && Number.isFinite(parsed.next_task_id)
-        ? Math.max(parsed.next_task_id, computedIds.nextTaskId)
-        : computedIds.nextTaskId,
-    next_phase_id:
-      typeof parsed.next_phase_id === "number" && Number.isFinite(parsed.next_phase_id)
-        ? Math.max(parsed.next_phase_id, computedIds.nextPhaseId)
-        : computedIds.nextPhaseId,
-  };
-}
-
-function writePiTodoState(params: { stateDir: string; sessionId: string; phases: PiTodoPhase[] }): PiTodoState {
-  const statePath = resolvePiTodoStatePath(params.stateDir, params.sessionId);
-  fs.mkdirSync(path.dirname(statePath), { recursive: true });
-  const phases = clonePiTodoPhases(params.phases);
-  normalizeInProgressPiTodoTask(phases);
-  const ids = nextPiTodoIds(phases);
-  const nextState: PiTodoState = {
-    version: PI_TODO_STATE_VERSION,
-    session_id: params.sessionId,
-    updated_at: new Date().toISOString(),
-    phases,
-    next_task_id: ids.nextTaskId,
-    next_phase_id: ids.nextPhaseId,
-  };
-  const tempPath = `${statePath}.tmp`;
-  fs.writeFileSync(tempPath, `${JSON.stringify(nextState, null, 2)}\n`, "utf8");
-  fs.renameSync(tempPath, statePath);
-  return nextState;
-}
-
-function parsePiTodoInputTask(value: unknown, fallbackId: string): PiTodoItem {
-  if (!isRecord(value)) {
-    throw new Error("Todo task entries must be objects.");
-  }
-  const content = optionalTrimmedString(value.content);
-  if (!content) {
-    if (optionalTrimmedString(value.title)) {
-      throw new Error("Todo tasks require `content`; use `content` instead of `title`.");
-    }
-    throw new Error("Todo tasks require a non-empty `content`.");
-  }
-  const status = value.status === undefined ? "pending" : normalizePiTodoStatus(value.status);
-  if (!status) {
-    throw new Error(`Unsupported todo status: ${String(value.status)}`);
-  }
-  const notes = optionalTrimmedString(value.notes) ?? undefined;
-  const details = optionalTrimmedString(value.details) ?? undefined;
-  const id = firstNonEmptyString(value.id, fallbackId) ?? fallbackId;
-  return {
-    id,
-    content,
-    status,
-    ...(notes ? { notes } : {}),
-    ...(details ? { details } : {}),
-  };
-}
-
-function buildPiTodoPhaseFromInput(
-  value: unknown,
-  phaseId: string,
-  nextTaskId: number
-): { phase: PiTodoPhase; nextTaskId: number } {
-  if (!isRecord(value)) {
-    throw new Error("Todo phases must be objects.");
-  }
-  const name = optionalTrimmedString(value.name);
-  if (!name) {
-    if (optionalTrimmedString(value.title)) {
-      throw new Error("Todo phases require `name`; use `name` instead of `title`.");
-    }
-    throw new Error("Todo phases require a non-empty `name`.");
-  }
-  const tasks: PiTodoItem[] = [];
-  let localNextTaskId = nextTaskId;
-  const rawTasks = Array.isArray(value.tasks) ? value.tasks : [];
-  for (const rawTask of rawTasks) {
-    tasks.push(parsePiTodoInputTask(rawTask, `task-${localNextTaskId}`));
-    localNextTaskId += 1;
-  }
-  return {
-    phase: {
-      id: firstNonEmptyString(value.id, phaseId) ?? phaseId,
-      name,
-      tasks,
-    },
-    nextTaskId: localNextTaskId,
-  };
-}
-
-function parsePiTodoWriteOps(toolParams: unknown): Array<Record<string, unknown>> {
-  if (!isRecord(toolParams) || !Array.isArray(toolParams.ops)) {
-    throw new Error("Todo Write requires an `ops` array.");
-  }
-  if (toolParams.ops.length === 0) {
-    throw new Error("Todo Write requires at least one op.");
-  }
-  return toolParams.ops.map((op) => {
-    if (!isRecord(op)) {
-      throw new Error("Todo ops must be objects.");
-    }
-    return op;
-  });
-}
-
-function piTodoWriteRepairError(op: Record<string, unknown>): Error {
-  const opName = firstNonEmptyString(op.op);
-  const baseLines = [
-    `Unsupported todo op ${opName ? `"${opName}"` : '"<missing>"'}.`,
-    `Valid \`op\` values are exactly ${PI_TODO_WRITE_OPS_TEXT}.`,
-    PI_TODO_WRITE_ALIAS_WARNING,
-  ];
-
-  if (opName === "set_status" || opName === "update_task") {
-    return new Error(
-      [
-        ...baseLines,
-        "Use `update` to change an existing task's status by task id.",
-        "Example:",
-        '{"ops":[{"op":"update","id":"task-1","status":"completed"}]}',
-        "Call `todoread` first if you need the current task ids.",
-      ].join("\n")
-    );
-  }
-
-  if (opName === "replace_all") {
-    return new Error(
-      [
-        ...baseLines,
-        "Use `replace` to replace the entire phased plan.",
-        "Example:",
-        '{"ops":[{"op":"replace","phases":[{"name":"Phase name","tasks":[{"content":"Task text"}]}]}]}',
-      ].join("\n")
-    );
-  }
-
-  return new Error(
-    [
-      ...baseLines,
-      "Use `replace` for a full plan rewrite, `add_phase` to append a phase, `add_task` to append a task, `update` to modify an existing task by id, or `remove_task` to delete a task by id.",
-    ].join("\n")
-  );
-}
-
-function findPiTodoTask(phases: PiTodoPhase[], id: string): PiTodoItem | undefined {
-  for (const phase of phases) {
-    const task = phase.tasks.find((entry) => entry.id === id);
-    if (task) {
-      return task;
-    }
-  }
-  return undefined;
-}
-
-function applyPiTodoOps(
-  currentState: PiTodoState,
-  ops: Array<Record<string, unknown>>
-): { phases: PiTodoPhase[]; nextTaskId: number; nextPhaseId: number } {
-  const nextState = {
-    phases: clonePiTodoPhases(currentState.phases),
-    nextTaskId: currentState.next_task_id,
-    nextPhaseId: currentState.next_phase_id,
-  };
-
-  for (const op of ops) {
-    const opName = firstNonEmptyString(op.op);
-    switch (opName) {
-      case "replace": {
-        if (!Array.isArray(op.phases)) {
-          throw new Error("Todo replace requires a `phases` array.");
-        }
-        nextState.phases = [];
-        nextState.nextTaskId = 1;
-        nextState.nextPhaseId = 1;
-        for (const rawPhase of op.phases) {
-          const built = buildPiTodoPhaseFromInput(rawPhase, `phase-${nextState.nextPhaseId}`, nextState.nextTaskId);
-          nextState.nextPhaseId += 1;
-          nextState.nextTaskId = built.nextTaskId;
-          nextState.phases.push(built.phase);
-        }
-        break;
-      }
-      case "add_phase": {
-        const built = buildPiTodoPhaseFromInput(op, `phase-${nextState.nextPhaseId}`, nextState.nextTaskId);
-        nextState.nextPhaseId += 1;
-        nextState.nextTaskId = built.nextTaskId;
-        nextState.phases.push(built.phase);
-        break;
-      }
-      case "add_task": {
-        const phaseId = firstNonEmptyString(op.phase);
-        if (!phaseId) {
-          throw new Error("Todo add_task requires a `phase` id.");
-        }
-        const phase = nextState.phases.find((entry) => entry.id === phaseId);
-        if (!phase) {
-          throw new Error(`Todo phase "${phaseId}" was not found.`);
-        }
-        phase.tasks.push(parsePiTodoInputTask(op, `task-${nextState.nextTaskId}`));
-        nextState.nextTaskId += 1;
-        break;
-      }
-      case "update": {
-        const taskId = firstNonEmptyString(op.id);
-        if (!taskId) {
-          throw new Error("Todo update requires an `id`.");
-        }
-        const task = findPiTodoTask(nextState.phases, taskId);
-        if (!task) {
-          throw new Error(`Todo task "${taskId}" was not found.`);
-        }
-        if (op.status !== undefined) {
-          const status = normalizePiTodoStatus(op.status);
-          if (!status) {
-            throw new Error(`Unsupported todo status: ${String(op.status)}`);
-          }
-          task.status = status;
-        }
-        if (Object.prototype.hasOwnProperty.call(op, "content")) {
-          const content = optionalTrimmedString(op.content);
-          if (!content) {
-            throw new Error("Todo update requires a non-empty `content` when provided.");
-          }
-          task.content = content;
-        }
-        if (Object.prototype.hasOwnProperty.call(op, "notes")) {
-          const notes = optionalTrimmedString(op.notes);
-          if (notes) {
-            task.notes = notes;
-          } else {
-            delete task.notes;
-          }
-        }
-        if (Object.prototype.hasOwnProperty.call(op, "details")) {
-          const details = optionalTrimmedString(op.details);
-          if (details) {
-            task.details = details;
-          } else {
-            delete task.details;
-          }
-        }
-        break;
-      }
-      case "remove_task": {
-        const taskId = firstNonEmptyString(op.id);
-        if (!taskId) {
-          throw new Error("Todo remove_task requires an `id`.");
-        }
-        let removed = false;
-        for (const phase of nextState.phases) {
-          const taskIndex = phase.tasks.findIndex((task) => task.id === taskId);
-          if (taskIndex === -1) {
-            continue;
-          }
-          phase.tasks.splice(taskIndex, 1);
-          removed = true;
-          break;
-        }
-        if (!removed) {
-          throw new Error(`Todo task "${taskId}" was not found.`);
-        }
-        break;
-      }
-      default:
-        throw piTodoWriteRepairError(op);
-    }
-    normalizeInProgressPiTodoTask(nextState.phases);
-  }
-
-  return nextState;
-}
-
-function currentPiTodoPhaseIndex(phases: PiTodoPhase[]): number {
-  const currentIndex = phases.findIndex((phase) =>
-    phase.tasks.some(
-      (task) =>
-        task.status === "pending" ||
-        task.status === "in_progress" ||
-        task.status === "blocked"
-    )
-  );
-  if (currentIndex !== -1) {
-    return currentIndex;
-  }
-  return phases.length === 0 ? -1 : phases.length - 1;
-}
-
-function formatPiTodoMarker(status: PiTodoStatus): string {
-  switch (status) {
-    case "completed":
-      return "[x]";
-    case "in_progress":
-      return "[>]";
-    case "blocked":
-      return "[!]";
-    case "abandoned":
-      return "[-]";
-    default:
-      return "[ ]";
-  }
-}
-
-function formatPiTodoListText(phases: PiTodoPhase[]): string {
-  const taskCount = countPiTodoTasks(phases);
-  if (taskCount === 0) {
-    return "No todo items are currently recorded for this session.";
-  }
-
-  const lines = [
-    `Current session todo plan (${taskCount} task${taskCount === 1 ? "" : "s"} across ${phases.length} phase${phases.length === 1 ? "" : "s"}):`,
-  ];
-  for (const [index, phase] of phases.entries()) {
-    const completedTasks = phase.tasks.filter(
-      (task) => task.status === "completed" || task.status === "abandoned"
-    ).length;
-    lines.push(`Phase ${index + 1}/${phases.length} "${phase.name}" - ${completedTasks}/${phase.tasks.length} complete`);
-    for (const task of phase.tasks) {
-      lines.push(`  ${formatPiTodoMarker(task.status)} ${task.id} ${task.content}`);
-      if ((task.status === "in_progress" || task.status === "blocked") && task.details) {
-        for (const detailLine of task.details.split("\n")) {
-          lines.push(`      ${detailLine}`);
-        }
-      }
-    }
-  }
-  return lines.join("\n");
-}
-
-function formatPiTodoWriteText(nextState: PiTodoState): string {
-  const taskCount = countPiTodoTasks(nextState.phases);
-  if (taskCount === 0) {
-    return "Todo plan cleared.";
-  }
-
-  const incomplete = nextState.phases.flatMap((phase) =>
-    phase.tasks
-      .filter(
-        (task) =>
-          task.status === "pending" ||
-          task.status === "in_progress" ||
-          task.status === "blocked"
-      )
-      .map((task) => ({ ...task, phaseName: phase.name }))
-  );
-  const currentPhaseIndex = currentPiTodoPhaseIndex(nextState.phases);
-  const lines = [
-    `Updated todo plan with ${taskCount} task${taskCount === 1 ? "" : "s"} across ${nextState.phases.length} phase${nextState.phases.length === 1 ? "" : "s"}.`,
-  ];
-
-  if (incomplete.length === 0) {
-    lines.push("Remaining items: none.");
-  } else {
-    lines.push(`Remaining items (${incomplete.length}):`);
-    for (const task of incomplete) {
-      lines.push(`  - ${task.id} ${task.content} [${task.status}] (${task.phaseName})`);
-      if ((task.status === "in_progress" || task.status === "blocked") && task.details) {
-        for (const detailLine of task.details.split("\n")) {
-          lines.push(`      ${detailLine}`);
-        }
-      }
-    }
-  }
-
-  if (currentPhaseIndex !== -1) {
-    const currentPhase = nextState.phases[currentPhaseIndex];
-    const completedTasks = currentPhase.tasks.filter(
-      (task) => task.status === "completed" || task.status === "abandoned"
-    ).length;
-    lines.push(`Current phase: ${currentPhase.name} (${completedTasks}/${currentPhase.tasks.length} complete).`);
-  }
-
-  lines.push("");
-  lines.push(formatPiTodoListText(nextState.phases));
-  return lines.join("\n");
-}
-
-function todoReadParametersSchema(): Record<string, unknown> {
-  return {
-    type: "object",
-    properties: {},
-    additionalProperties: false,
-  };
-}
-
-function todoWriteParametersSchema(): Record<string, unknown> {
-  return {
-    type: "object",
-    description:
-      `Update the session todo plan with explicit mutations. Valid \`op\` values are exactly ${PI_TODO_WRITE_OPS_TEXT}. ${PI_TODO_WRITE_ALIAS_WARNING}`,
-    properties: {
-      ops: {
-        type: "array",
-        description:
-          `Incremental phased todo operations over the current session plan. Valid \`op\` values are exactly ${PI_TODO_WRITE_OPS_TEXT}. Use \`name\` for phase titles and \`content\` for task text.`,
-        items: {
-          anyOf: [
-            {
-              type: "object",
-              description:
-                "Replace the entire phased plan. Use this to create the initial plan or rewrite the whole plan, not for a single task status change.",
-              properties: {
-                op: {
-                  const: "replace",
-                  description: "Replace the entire phased plan.",
-                },
-                phases: {
-                  type: "array",
-                  description: "Full replacement list of phases. Each phase requires `name`; each task requires `content`.",
-                  items: {
-                    type: "object",
-                    description: "Phase object for a full-plan replacement. Use `name`, not `title`.",
-                    properties: {
-                      name: {
-                        type: "string",
-                        description: "Human-readable phase title.",
-                      },
-                      tasks: {
-                        type: "array",
-                        description: "Task objects for this phase. Use `content`, not `title`.",
-                        items: {
-                          type: "object",
-                          description: "Task object. Use `content` as the task text.",
-                          properties: {
-                            content: {
-                              type: "string",
-                              description: "Required task text.",
-                            },
-                            status: {
-                              type: "string",
-                              enum: [...PI_TODO_STATUSES],
-                              description: "Optional task status.",
-                            },
-                            notes: {
-                              type: "string",
-                              description: "Short note for the task.",
-                            },
-                            details: {
-                              type: "string",
-                              description: "Longer supporting detail for the task.",
-                            },
-                          },
-                          required: ["content"],
-                          additionalProperties: false,
-                        },
-                      },
-                    },
-                    required: ["name"],
-                    additionalProperties: false,
-                  },
-                },
-              },
-              required: ["op", "phases"],
-              additionalProperties: false,
-            },
-            {
-              type: "object",
-              description: "Append a new phase to the current plan.",
-              properties: {
-                op: {
-                  const: "add_phase",
-                  description: "Append a new phase to the current plan.",
-                },
-                name: {
-                  type: "string",
-                  description: "Human-readable phase title.",
-                },
-                tasks: {
-                  type: "array",
-                  description: "Optional initial tasks for the new phase.",
-                  items: {
-                    type: "object",
-                    description: "Task object. Use `content` as the task text.",
-                    properties: {
-                      content: {
-                        type: "string",
-                        description: "Required task text.",
-                      },
-                      status: {
-                        type: "string",
-                        enum: [...PI_TODO_STATUSES],
-                        description: "Optional task status.",
-                      },
-                      notes: {
-                        type: "string",
-                        description: "Short note for the task.",
-                      },
-                      details: {
-                        type: "string",
-                        description: "Longer supporting detail for the task.",
-                      },
-                    },
-                    required: ["content"],
-                    additionalProperties: false,
-                  },
-                },
-              },
-              required: ["op", "name"],
-              additionalProperties: false,
-            },
-            {
-              type: "object",
-              description: "Append a new task to an existing phase by phase id.",
-              properties: {
-                op: {
-                  const: "add_task",
-                  description: "Append a new task to an existing phase by phase id.",
-                },
-                phase: {
-                  type: "string",
-                  description: "Existing phase id from `todoread` or a prior `todowrite` result, for example `phase-2`.",
-                },
-                content: {
-                  type: "string",
-                  description: "Required task text.",
-                },
-                status: {
-                  type: "string",
-                  enum: [...PI_TODO_STATUSES],
-                  description: "Optional task status.",
-                },
-                notes: {
-                  type: "string",
-                  description: "Short note for the task.",
-                },
-                details: {
-                  type: "string",
-                  description: "Longer supporting detail for the task.",
-                },
-              },
-              required: ["op", "phase", "content"],
-              additionalProperties: false,
-            },
-            {
-              type: "object",
-              description:
-                "Update an existing task by task id. Use this for status changes, content edits, notes, or details.",
-              properties: {
-                op: {
-                  const: "update",
-                  description: "Update an existing task by task id. Use this for status changes.",
-                },
-                id: {
-                  type: "string",
-                  description: "Existing task id from `todoread` or a prior `todowrite` result, for example `task-3`.",
-                },
-                status: {
-                  type: "string",
-                  enum: [...PI_TODO_STATUSES],
-                  description: "New task status when changing status.",
-                },
-                content: {
-                  type: "string",
-                  description: "Replacement task text.",
-                },
-                notes: {
-                  type: "string",
-                  description: "Replacement short note for the task.",
-                },
-                details: {
-                  type: "string",
-                  description: "Replacement longer supporting detail for the task.",
-                },
-              },
-              required: ["op", "id"],
-              additionalProperties: false,
-            },
-            {
-              type: "object",
-              description: "Remove a single task by task id.",
-              properties: {
-                op: {
-                  const: "remove_task",
-                  description: "Remove a single task by task id.",
-                },
-                id: {
-                  type: "string",
-                  description: "Existing task id from `todoread` or a prior `todowrite` result.",
-                },
-              },
-              required: ["op", "id"],
-              additionalProperties: false,
-            },
-            {
-              type: "object",
-              description:
-                "Fallback validation branch for malformed todo ops so the tool can return a repair hint. Do not rely on this shape.",
-              properties: {
-                op: { type: "string" },
-                id: { type: "string" },
-                phase: { type: "string" },
-                name: { type: "string" },
-                title: { type: "string" },
-                content: { type: "string" },
-                status: { type: "string" },
-                notes: { type: "string" },
-                details: { type: "string" },
-                phases: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      id: { type: "string" },
-                      name: { type: "string" },
-                      title: { type: "string" },
-                      tasks: {
-                        type: "array",
-                        items: {
-                          type: "object",
-                          properties: {
-                            id: { type: "string" },
-                            content: { type: "string" },
-                            title: { type: "string" },
-                            status: { type: "string" },
-                            notes: { type: "string" },
-                            details: { type: "string" },
-                          },
-                          additionalProperties: false,
-                        },
-                      },
-                    },
-                    additionalProperties: false,
-                  },
-                },
-              },
-              required: ["op"],
-              additionalProperties: false,
-            },
-          ],
-        },
-      },
-    },
-    required: ["ops"],
-    additionalProperties: false,
-  };
-}
-
-export function createPiTodoToolDefinitions(params: { stateDir: string; sessionId: string }): ToolDefinition[] {
-  const readDefinition: ToolDefinition = {
-    name: "todoread",
-    label: "Todo Read",
-    description:
-      "Read the current phased todo plan for this session, including the phase ids and task ids needed for later `todowrite` calls.",
-    parameters: todoReadParametersSchema() as never,
-    promptSnippet:
-      "todoread: Read the current phased todo plan for this session and recover the phase/task ids needed for later `todowrite` mutations.",
-    promptGuidelines: [
-      "Use todoread before changing an existing phased plan when current todo state may matter.",
-      "When resuming a session that already has todo state, call todoread before continuing that plan if you need the current phase/task ids.",
-      "Use todoread to recover the exact phase ids and task ids before calling `update`, `add_task`, or `remove_task` on an existing plan.",
-      "Treat the user's newest message as the primary instruction for the current turn.",
-      "If the user's newest message clearly asks to continue the unfinished plan or clearly advances it, resume the plan after reading it.",
-      "If the user's newest message is conversational, brief, acknowledges prior progress, or is otherwise ambiguous about continuation, respond first and ask whether they want to continue before resuming the unfinished plan.",
-      "After reading an existing todo that the user has clearly asked you to continue, keep executing it until the recorded work is complete or genuinely blocked.",
-      "Once the user has clearly asked you to continue an unfinished plan, do not stop only to give progress updates or ask whether to continue while executable todo items remain.",
-      "If the user's newest message is clearly unrelated to the unfinished todo, preserve that todo as unfinished, handle the new request first, and then propose continuing the unfinished work.",
-    ],
-    execute: async (_toolCallId, _toolParams, signal) => {
-      if (signal?.aborted) {
-        throw new Error("Todo Read aborted before execution");
-      }
-      const state = readPiTodoState(params.stateDir, params.sessionId);
-      const todoCount = countPiTodoTasks(state.phases);
-      return {
-        content: [{ type: "text", text: formatPiTodoListText(state.phases) }],
-        details: {
-          invocation_type: "todo_read",
-          session_id: state.session_id,
-          updated_at: state.updated_at,
-          phase_count: state.phases.length,
-          task_count: todoCount,
-          todo_count: todoCount,
-          phases: state.phases,
-          todos: flattenPiTodoSummaries(state.phases),
-        },
-      };
-    },
-  };
-
-  const writeDefinition: ToolDefinition = {
-    name: "todowrite",
-    label: "Todo Write",
-    description:
-      `Update the current phased todo plan for this session. Valid \`op\` values are exactly ${PI_TODO_WRITE_OPS_TEXT}.`,
-    parameters: todoWriteParametersSchema() as never,
-    promptSnippet:
-      `todowrite: Update the current phased todo plan for this session using only these \`op\` values: ${PI_TODO_WRITE_OPS_TEXT}.`,
-    promptGuidelines: [
-      "Use todowrite for complex or long-running tasks that benefit from an explicit phased plan.",
-      "The top-level phases are grouped tasks, and each phase's `tasks` entries are the actionable task items within that grouped task.",
-      "Treat the user's newest message as the primary instruction for the current turn even when an unfinished todo already exists.",
-      "When the user has clearly asked you to continue an unfinished todo, keep executing it until the recorded work is complete or genuinely blocked.",
-      "If the user's newest message is conversational, brief, acknowledges prior progress, or is otherwise ambiguous about continuation, respond directly and ask whether they want to continue instead of auto-resuming the unfinished todo.",
-      "Once the user has clearly asked you to continue an unfinished todo, do not stop only to give progress updates or ask whether to continue while executable todo items remain.",
-      "If a new user message clearly redirects to unrelated work, do that work first without marking the existing unfinished todo complete, then propose resuming the unfinished work afterward.",
-      `Valid \`op\` values are exactly ${PI_TODO_WRITE_OPS_TEXT}.`,
-      PI_TODO_WRITE_ALIAS_WARNING,
-      "Use `replace` only for the initial plan or a full rewrite of the entire plan, not for a single task status change.",
-      "Use `update` to change an existing task's status, content, notes, or details by task id.",
-      "Use `add_phase` to append a new phase, `add_task` to append a task to an existing phase by phase id, and `remove_task` to delete a task by task id.",
-      "Use `name` for phase titles and `content` for task text; do not use `title` for either.",
-      "On an existing plan, call `todoread` first so you have the current phase ids and task ids before writing mutations.",
-      "Keep exactly one task `in_progress` whenever unfinished tasks remain unless the current task is blocked on user input or another external dependency.",
-    ],
-    execute: async (_toolCallId, toolParams, signal) => {
-      if (signal?.aborted) {
-        throw new Error("Todo Write aborted before execution");
-      }
-      const previousState = readPiTodoState(params.stateDir, params.sessionId);
-      const ops = parsePiTodoWriteOps(toolParams);
-      const nextPlan = applyPiTodoOps(previousState, ops);
-      const nextState = writePiTodoState({
-        stateDir: params.stateDir,
-        sessionId: params.sessionId,
-        phases: nextPlan.phases,
-      });
-      const previousTodoCount = countPiTodoTasks(previousState.phases);
-      const nextTodoCount = countPiTodoTasks(nextState.phases);
-      return {
-        content: [{ type: "text", text: formatPiTodoWriteText(nextState) }],
-        details: {
-          invocation_type: "todo_write",
-          session_id: nextState.session_id,
-          updated_at: nextState.updated_at,
-          previous_phase_count: previousState.phases.length,
-          phase_count: nextState.phases.length,
-          previous_task_count: previousTodoCount,
-          task_count: nextTodoCount,
-          previous_todo_count: previousTodoCount,
-          todo_count: nextTodoCount,
-          phases: nextState.phases,
-          todos: flattenPiTodoSummaries(nextState.phases),
-        },
-      };
-    },
-  };
-
-  return [readDefinition, writeDefinition];
-}
-
-function normalizedWorkspaceDir(workspaceDir: string): { resolved: string; real: string } {
-  const resolved = path.resolve(workspaceDir);
-  try {
-    return { resolved, real: fs.realpathSync(resolved) };
-  } catch {
-    return { resolved, real: resolved };
-  }
-}
-
-function isPathInsideWorkspaceRoot(workspaceRealDir: string, candidatePath: string): boolean {
-  const normalizedRoot = path.resolve(workspaceRealDir);
-  const normalizedCandidate = path.resolve(candidatePath);
-  if (normalizedCandidate === normalizedRoot) {
-    return true;
-  }
-  const relative = path.relative(normalizedRoot, normalizedCandidate);
-  return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
-}
-
-function resolvePathWithinWorkspace(
-  policy: Pick<PiWorkspaceBoundaryPolicy, "workspaceDir" | "workspaceRealDir">,
-  candidate: string
-): string | null {
-  const raw = candidate.trim();
-  if (!raw) {
-    return null;
-  }
-  const resolved = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(policy.workspaceDir, raw);
-  let canonical = resolved;
-  try {
-    canonical = fs.realpathSync(resolved);
-  } catch {
-    canonical = resolved;
-  }
-  return isPathInsideWorkspaceRoot(policy.workspaceRealDir, canonical) ? canonical : null;
-}
-
-export function workspaceBoundaryOverrideRequested(instruction: string): boolean {
-  const normalized = instruction.trim().toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-  if (
-    /(?:workspace[_ -]?boundary[_ -]?override\s*[:=]\s*(?:1|true|yes|on))|(?:#allow-outside-workspace)/i.test(
-      normalized
-    )
-  ) {
-    return true;
-  }
-  const insist = /\b(i insist|insist|override|must)\b/i.test(normalized);
-  const outsideScope =
-    /\b(outside (?:the )?workspace|outside workspace|cross[- ]workspace|parent directory|external path|beyond (?:the )?workspace)\b/i.test(
-      normalized
-    ) || /(?:\.\.\/|~\/|\/users\/|\/etc\/|\/var\/)/i.test(normalized);
-  return insist && outsideScope;
-}
-
-function createWorkspaceBoundaryPolicy(workspaceDir: string, overrideRequested: boolean): PiWorkspaceBoundaryPolicy {
-  const normalized = normalizedWorkspaceDir(workspaceDir);
-  return {
-    workspaceDir: normalized.resolved,
-    workspaceRealDir: normalized.real,
-    overrideRequested,
-  };
-}
-
-function commandTokens(command: string): string[] {
-  const tokens: string[] = [];
-  const tokenPattern = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|`([^`\\]*(?:\\.[^`\\]*)*)`|(\S+)/g;
-  let match: RegExpExecArray | null = tokenPattern.exec(command);
-  while (match) {
-    const value = match[1] ?? match[2] ?? match[3] ?? match[4] ?? "";
-    const trimmed = value.trim();
-    if (trimmed) {
-      tokens.push(trimmed);
-    }
-    match = tokenPattern.exec(command);
-  }
-  return tokens;
-}
-
-function pathCandidatesFromCommandToken(token: string): string[] {
-  const candidates = new Set<string>();
-  const normalized = token.trim();
-  if (!normalized) {
-    return [];
-  }
-  candidates.add(normalized);
-
-  const assignmentIndex = normalized.indexOf("=");
-  if (assignmentIndex >= 0 && assignmentIndex < normalized.length - 1) {
-    candidates.add(normalized.slice(assignmentIndex + 1));
-  }
-
-  if (normalized.startsWith("--")) {
-    const pathMatch = normalized.match(/^--(?:cwd|directory|dir|path|file|root)=(.+)$/i);
-    if (pathMatch?.[1]) {
-      candidates.add(pathMatch[1]);
-    }
-  }
-  return [...candidates];
-}
-
-function commandPathLooksExternal(pathValue: string): boolean {
-  const trimmed = pathValue.trim();
-  if (!trimmed) {
-    return false;
-  }
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
-    return false;
-  }
-  if (trimmed === ".." || trimmed.startsWith("../") || trimmed.includes("/../") || trimmed.includes("\\..\\")) {
-    return true;
-  }
-  if (trimmed.startsWith("~")) {
-    return true;
-  }
-  return false;
-}
-
+/*
 function commandBoundaryViolation(command: string, policy: PiWorkspaceBoundaryPolicy): string | null {
   const trimmed = command.trim();
   if (!trimmed) {
@@ -3095,146 +1311,7 @@ export function workspaceBoundaryViolationForToolCall(params: {
 
   return null;
 }
-
-function skillIdFromFilePath(filePath: string): string {
-  const parsed = path.parse(filePath);
-  if (parsed.base.toLowerCase() === "skill.md") {
-    return path.basename(path.dirname(filePath));
-  }
-  return parsed.name;
-}
-
-function markdownFrontmatterBlock(value: string): string | null {
-  const normalized = value.replace(/^\uFEFF/, "");
-  const match = normalized.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
-  return match?.[1] ?? null;
-}
-
-function normalizeGrantedToolName(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const normalized = value.trim().toLowerCase();
-  return normalized.length > 0 ? normalized : null;
-}
-
-function parseInlineStringList(value: string): string[] {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return [];
-  }
-  const bracketMatch = trimmed.match(/^\[([\s\S]*?)\]$/);
-  const body = bracketMatch ? bracketMatch[1] ?? "" : trimmed;
-  return body
-    .split(",")
-    .map((item) => item.trim().replace(/^['"]|['"]$/g, ""))
-    .map((item) => normalizeGrantedToolName(item))
-    .filter((item): item is string => Boolean(item));
-}
-
-function parseFrontmatterStringList(frontmatter: string, keyName: string): string[] {
-  const lines = frontmatter.split(/\r?\n/);
-  const escapedKey = keyName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const keyPattern = new RegExp(`^\\s*${escapedKey}\\s*:\\s*(.*)$`, "i");
-  for (let index = 0; index < lines.length; index += 1) {
-    const current = lines[index] ?? "";
-    const match = current.match(keyPattern);
-    if (!match) {
-      continue;
-    }
-    const inlineValue = (match[1] ?? "").trim();
-    if (inlineValue.length > 0) {
-      return parseInlineStringList(inlineValue);
-    }
-    const collected: string[] = [];
-    for (let lookahead = index + 1; lookahead < lines.length; lookahead += 1) {
-      const candidate = lines[lookahead] ?? "";
-      if (!candidate.trim()) {
-        if (collected.length > 0) {
-          break;
-        }
-        continue;
-      }
-      const itemMatch = candidate.match(/^\s*-\s*(.+?)\s*$/);
-      if (!itemMatch) {
-        break;
-      }
-      const normalized = normalizeGrantedToolName(itemMatch[1]?.replace(/^['"]|['"]$/g, ""));
-      if (normalized) {
-        collected.push(normalized);
-      }
-    }
-    return collected;
-  }
-  return [];
-}
-
-function parseHolabossNestedStringList(frontmatter: string, nestedKeyNames: string[]): string[] {
-  const lines = frontmatter.split(/\r?\n/);
-  let holabossStart = -1;
-  let holabossIndent = -1;
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index] ?? "";
-    const match = line.match(/^(\s*)holaboss\s*:\s*$/i);
-    if (!match) {
-      continue;
-    }
-    holabossStart = index + 1;
-    holabossIndent = match[1]?.length ?? 0;
-    break;
-  }
-  if (holabossStart < 0) {
-    return [];
-  }
-
-  const nestedLines: string[] = [];
-  for (let index = holabossStart; index < lines.length; index += 1) {
-    const line = lines[index] ?? "";
-    if (!line.trim()) {
-      nestedLines.push(line);
-      continue;
-    }
-    const indent = line.match(/^\s*/)?.[0]?.length ?? 0;
-    if (indent <= holabossIndent) {
-      break;
-    }
-    nestedLines.push(line.slice(holabossIndent + 2));
-  }
-
-  const nestedFrontmatter = nestedLines.join("\n");
-  for (const nestedKey of nestedKeyNames) {
-    const parsed = parseFrontmatterStringList(nestedFrontmatter, nestedKey);
-    if (parsed.length > 0) {
-      return parsed;
-    }
-  }
-  return [];
-}
-
-function parseGrantedToolsFromSkillFrontmatter(frontmatter: string | null): string[] {
-  if (!frontmatter) {
-    return [];
-  }
-  const directKeys = [
-    "holaboss_granted_tools",
-    "holaboss-granted-tools",
-    "holaboss_tools",
-    "holaboss-tools",
-    "capability_grants",
-    "capability-grants",
-  ];
-  for (const key of directKeys) {
-    const parsed = parseFrontmatterStringList(frontmatter, key);
-    if (parsed.length > 0) {
-      return [...new Set(parsed)];
-    }
-  }
-  const nested = parseHolabossNestedStringList(frontmatter, ["granted_tools", "granted-tools", "tools"]);
-  if (nested.length > 0) {
-    return [...new Set(nested)];
-  }
-  return [];
-}
+*/
 
 function normalizeWorkspaceCommandId(value: unknown): string | null {
   if (typeof value !== "string") {
@@ -3242,35 +1319,6 @@ function normalizeWorkspaceCommandId(value: unknown): string | null {
   }
   const normalized = value.trim().toLowerCase();
   return normalized.length > 0 ? normalized : null;
-}
-
-function parseGrantedCommandsFromSkillFrontmatter(frontmatter: string | null): string[] {
-  if (!frontmatter) {
-    return [];
-  }
-  const directKeys = [
-    "holaboss_granted_commands",
-    "holaboss-granted-commands",
-    "holaboss_commands",
-    "holaboss-commands",
-    "command_grants",
-    "command-grants",
-  ];
-  for (const key of directKeys) {
-    const parsed = parseFrontmatterStringList(frontmatter, key)
-      .map((commandId) => normalizeWorkspaceCommandId(commandId))
-      .filter((commandId): commandId is string => Boolean(commandId));
-    if (parsed.length > 0) {
-      return [...new Set(parsed)];
-    }
-  }
-  const nested = parseHolabossNestedStringList(frontmatter, ["granted_commands", "granted-commands", "commands"])
-    .map((commandId) => normalizeWorkspaceCommandId(commandId))
-    .filter((commandId): commandId is string => Boolean(commandId));
-  if (nested.length > 0) {
-    return [...new Set(nested)];
-  }
-  return [];
 }
 
 function workspaceCommandIdsFromRunStartedPayload(payload: JsonObject): string[] {
@@ -3340,36 +1388,6 @@ function requiredSkillIdsForTool(state: PiSkillWideningState, toolName: string):
   );
 }
 
-function applySkillWideningGrants(
-  state: PiSkillWideningState,
-  skillMetadata: PiSkillMetadata
-): { grantedTools: string[]; grantedCommands: string[] } {
-  const newlyGrantedTools: string[] = [];
-  const newlyGrantedCommands: string[] = [];
-  for (const toolName of skillMetadata.grantedTools) {
-    if (!state.managedToolNames.has(toolName)) {
-      continue;
-    }
-    if (!state.grantedToolNames.has(toolName)) {
-      newlyGrantedTools.push(toolName);
-    }
-    state.grantedToolNames.add(toolName);
-  }
-  for (const commandId of skillMetadata.grantedCommands) {
-    if (!state.managedCommandIds.has(commandId)) {
-      continue;
-    }
-    if (!state.grantedCommandIds.has(commandId)) {
-      newlyGrantedCommands.push(commandId);
-    }
-    state.grantedCommandIds.add(commandId);
-  }
-  return {
-    grantedTools: newlyGrantedTools.sort((left, right) => left.localeCompare(right)),
-    grantedCommands: newlyGrantedCommands.sort((left, right) => left.localeCompare(right)),
-  };
-}
-
 function activeGrantedTools(state: PiSkillWideningState): string[] {
   return [...state.grantedToolNames].sort((left, right) => left.localeCompare(right));
 }
@@ -3386,24 +1404,19 @@ function addSkillAlias(aliasMap: Map<string, PiSkillMetadata>, alias: unknown, m
   aliasMap.set(normalized, metadata);
 }
 
-function buildPiSkillMetadataByAlias(skills: Skill[]): Map<string, PiSkillMetadata> {
+function buildPiSkillMetadataByAlias(skills: HarnessHostWorkspaceSkillPayload[]): Map<string, PiSkillMetadata> {
   const aliasMap = new Map<string, PiSkillMetadata>();
   for (const skill of skills) {
-    const skillId = skillIdFromFilePath(skill.filePath);
-    const rawSkillFile = fs.readFileSync(skill.filePath, "utf8");
-    const frontmatter = markdownFrontmatterBlock(rawSkillFile);
-    const grantedTools = parseGrantedToolsFromSkillFrontmatter(frontmatter);
-    const grantedCommands = parseGrantedCommandsFromSkillFrontmatter(frontmatter);
     const metadata: PiSkillMetadata = {
-      skillId,
-      skillName: skill.name,
-      filePath: skill.filePath,
-      baseDir: skill.baseDir,
-      grantedTools,
-      grantedCommands,
+      skillId: skill.skill_id,
+      skillName: skill.skill_name,
+      filePath: skill.file_path,
+      baseDir: skill.source_dir,
+      grantedTools: [...skill.granted_tools],
+      grantedCommands: [...skill.granted_commands],
     };
-    addSkillAlias(aliasMap, skillId, metadata);
-    addSkillAlias(aliasMap, skill.name, metadata);
+    addSkillAlias(aliasMap, skill.skill_id, metadata);
+    addSkillAlias(aliasMap, skill.skill_name, metadata);
   }
   return aliasMap;
 }
@@ -3419,83 +1432,88 @@ function resolveSkillMetadata(
   return skillMetadataByAlias.get(normalizedName) ?? null;
 }
 
-function uniqueSkillIds(skillMetadataByAlias: ReadonlyMap<string, PiSkillMetadata>): string[] {
-  return [...new Set([...skillMetadataByAlias.values()].map((metadata) => metadata.skillId))]
-    .filter((value) => value.trim().length > 0)
-    .sort((left, right) => left.localeCompare(right));
+function uniqueNormalizedStrings(values: unknown): string[] {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  return [...new Set(values.map((value) => normalizeSkillLookupToken(value)).filter(Boolean))].sort((left, right) =>
+    left.localeCompare(right)
+  );
 }
 
-function skillToolParametersSchema(): Record<string, unknown> {
+function applySkillWideningGrantsFromLists(
+  skillWideningState: PiSkillWideningState,
+  grantedTools: string[],
+  grantedCommands: string[]
+): { grantedTools: string[]; grantedCommands: string[] } {
+  const newlyGrantedTools: string[] = [];
+  const newlyGrantedCommands: string[] = [];
+  for (const toolName of grantedTools) {
+    if (!skillWideningState.managedToolNames.has(toolName)) {
+      continue;
+    }
+    if (!skillWideningState.grantedToolNames.has(toolName)) {
+      newlyGrantedTools.push(toolName);
+    }
+    skillWideningState.grantedToolNames.add(toolName);
+  }
+  for (const commandId of grantedCommands) {
+    if (!skillWideningState.managedCommandIds.has(commandId)) {
+      continue;
+    }
+    if (!skillWideningState.grantedCommandIds.has(commandId)) {
+      newlyGrantedCommands.push(commandId);
+    }
+    skillWideningState.grantedCommandIds.add(commandId);
+  }
   return {
-    type: "object",
-    properties: {
-      name: {
-        type: "string",
-        description: "Skill id or skill name to invoke.",
-      },
-      args: {
-        type: "string",
-        description: "Optional follow-up instructions appended after the invoked skill content.",
-      },
-    },
-    required: ["name"],
-    additionalProperties: false,
+    grantedTools: newlyGrantedTools.sort((left, right) => left.localeCompare(right)),
+    grantedCommands: newlyGrantedCommands.sort((left, right) => left.localeCompare(right)),
   };
 }
 
-function createPiSkillToolDefinition(
+function wrapRuntimeSkillTool<TTool extends { name: string; execute: (...args: any[]) => Promise<any> }>(
+  tool: TTool,
   skillMetadataByAlias: ReadonlyMap<string, PiSkillMetadata>,
   skillWideningState: PiSkillWideningState,
   workspaceBoundaryPolicy: PiWorkspaceBoundaryPolicy
-): ToolDefinition {
-  return {
-    name: "skill",
-    label: "Skill",
-    description: "Load a workspace skill by id or name and return its canonical skill block.",
-    parameters: skillToolParametersSchema() as never,
-    execute: async (_toolCallId, toolParams, signal) => {
-      if (signal?.aborted) {
-        throw new Error("Skill invocation aborted before execution");
-      }
-      const params = isRecord(toolParams) ? toolParams : {};
-      const requestedName = optionalTrimmedString(params.name);
-      if (!requestedName) {
-        throw new Error("Skill invocation requires a non-empty `name` argument");
-      }
-      const resolvedSkill = resolveSkillMetadata(skillMetadataByAlias, requestedName);
-      if (!resolvedSkill) {
-        const availableSkills = uniqueSkillIds(skillMetadataByAlias);
-        throw new Error(
-          availableSkills.length > 0
-            ? `Skill "${requestedName}" was not found. Available skills: ${availableSkills.join(", ")}`
-            : `Skill "${requestedName}" was not found. No skills are currently available.`
-        );
-      }
-      let body: string;
-      try {
-        body = stripMarkdownFrontmatter(fs.readFileSync(resolvedSkill.filePath, "utf8")).trim();
-      } catch (error) {
-        throw new Error(
-          `Failed to load skill "${resolvedSkill.skillId}" from ${resolvedSkill.filePath}: ${sdkErrorMessage(
-            error,
-            "file read failed"
-          )}`
-        );
-      }
+): TTool {
+  if (tool.name.trim().toLowerCase() !== "skill") {
+    return tool;
+  }
 
-      const skillBlock = `<skill name="${resolvedSkill.skillName}" location="${resolvedSkill.filePath}">\nReferences are relative to ${resolvedSkill.baseDir}.\n\n${body}\n</skill>`;
-      const args = optionalTrimmedString(params.args);
-      const wideningGrant = applySkillWideningGrants(skillWideningState, resolvedSkill);
+  const originalExecute = tool.execute.bind(tool);
+  const wrapped: TTool = {
+    ...tool,
+    execute: (async (...args: any[]) => {
+      const toolParams = isRecord(args[1]) ? args[1] : {};
+      const requestedName = optionalTrimmedString(toolParams.name);
+      const runtimeResult = await originalExecute(...args);
+      const details = isRecord(runtimeResult?.details) ? runtimeResult.details : {};
+      const resolvedSkill =
+        resolveSkillMetadata(skillMetadataByAlias, details.skill_id) ??
+        resolveSkillMetadata(skillMetadataByAlias, details.skill_name) ??
+        resolveSkillMetadata(skillMetadataByAlias, requestedName);
+      const grantedTools = uniqueNormalizedStrings(details.granted_tools ?? resolvedSkill?.grantedTools ?? []);
+      const grantedCommands = uniqueNormalizedStrings(details.granted_commands ?? resolvedSkill?.grantedCommands ?? []);
+      const wideningGrant = applySkillWideningGrantsFromLists(
+        skillWideningState,
+        grantedTools,
+        grantedCommands
+      );
       return {
-        content: [{ type: "text", text: args ? `${skillBlock}\n\n${args}` : skillBlock }],
+        ...runtimeResult,
         details: {
+          ...details,
           invocation_type: "skill",
-          requested_name: requestedName,
-          skill_id: resolvedSkill.skillId,
-          skill_name: resolvedSkill.skillName,
-          skill_file_path: resolvedSkill.filePath,
-          skill_base_dir: resolvedSkill.baseDir,
-          args: args ?? null,
+          requested_name: requestedName ?? optionalTrimmedString(details.requested_name),
+          skill_id: optionalTrimmedString(details.skill_id) ?? resolvedSkill?.skillId ?? null,
+          skill_name: optionalTrimmedString(details.skill_name) ?? resolvedSkill?.skillName ?? requestedName ?? null,
+          skill_file_path: optionalTrimmedString(details.skill_file_path) ?? resolvedSkill?.filePath ?? null,
+          skill_base_dir: optionalTrimmedString(details.skill_base_dir) ?? resolvedSkill?.baseDir ?? null,
+          args: optionalTrimmedString(details.args) ?? optionalTrimmedString(toolParams.args),
+          granted_tools: grantedTools,
+          granted_commands: grantedCommands,
           policy_widening: {
             scope: skillWideningState.scope,
             managed_tools: [...skillWideningState.managedToolNames].sort((left, right) => left.localeCompare(right)),
@@ -3508,8 +1526,9 @@ function createPiSkillToolDefinition(
           },
         },
       };
-    },
+    }) as TTool["execute"],
   };
+  return wrapped;
 }
 
 function wrapToolWithSkillWidening<TTool extends { name: string; execute: (...args: any[]) => Promise<any> }>(
@@ -4515,13 +2534,7 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
       ? { thinkingBudgets: requestedThinkingBudgets }
       : {}),
   });
-  const skillDirs = resolvePiSkillDirs(request);
-  const loadedSkills = loadPiSkills(skillDirs);
-  const skillMetadataByAlias = buildPiSkillMetadataByAlias(loadedSkills.skills);
-  const todoTools = createPiTodoToolDefinitions({
-    stateDir,
-    sessionId: request.session_id,
-  });
+  const skillMetadataByAlias = buildPiSkillMetadataByAlias(request.workspace_skills ?? []);
   const browserTools = request.browser_tools_enabled
     ? await resolvePiDesktopBrowserToolDefinitions({
         runtimeApiBaseUrl: request.runtime_api_base_url,
@@ -4539,7 +2552,6 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     noSkills: true,
     noPromptTemplates: true,
     noThemes: true,
-    skillsOverride: () => loadedSkills,
     systemPromptOverride: () => effectiveSystemPromptForRequest(request),
   });
   await resourceLoader.reload();
@@ -4556,7 +2568,6 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     inputId: request.input_id,
     selectedModel: `${request.provider_id}/${request.model_id}`,
   });
-  const webSearchTools = await resolvePiWebSearchToolDefinitions();
   const baseTools = [
     ...createCodingTools(request.workspace_dir),
     createGrepTool(request.workspace_dir),
@@ -4564,10 +2575,8 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     createLsTool(request.workspace_dir),
   ];
   const nonSkillCustomTools: ToolDefinition[] = [
-    ...todoTools,
     ...browserTools,
     ...runtimeTools,
-    ...webSearchTools,
     ...mcpToolset.customTools,
   ];
   const availableToolNames = [...baseTools, ...nonSkillCustomTools].map((tool) => tool.name);
@@ -4581,18 +2590,19 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     [...availableToolNames, "skill"],
     availableCommandIds
   );
-  const skillTools =
-    skillMetadataByAlias.size > 0
-      ? [createPiSkillToolDefinition(skillMetadataByAlias, skillWideningState, workspaceBoundaryPolicy)]
-      : [];
   const tools = baseTools.map((tool) =>
     wrapToolWithWorkspaceBoundary(wrapToolWithSkillWidening(tool, skillWideningState), workspaceBoundaryPolicy)
   );
   const customTools = [
     ...nonSkillCustomTools.map((tool) =>
-      wrapToolWithWorkspaceBoundary(wrapToolWithSkillWidening(tool, skillWideningState), workspaceBoundaryPolicy)
+      wrapToolWithWorkspaceBoundary(
+        wrapToolWithSkillWidening(
+          wrapRuntimeSkillTool(tool, skillMetadataByAlias, skillWideningState, workspaceBoundaryPolicy),
+          skillWideningState
+        ),
+        workspaceBoundaryPolicy
+      )
     ),
-    ...skillTools.map((tool) => wrapToolWithWorkspaceBoundary(tool, workspaceBoundaryPolicy)),
   ];
 
   const restorePromptCacheRetention = configurePiPromptCacheRetention(request);
@@ -5132,6 +3142,12 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
     return sequence;
   };
 
+  const todoCoordinator = new RuntimeTodoCoordinator({
+    runtimeApiBaseUrl: request.runtime_api_base_url,
+    workspaceId: request.workspace_id,
+    sessionId: request.session_id,
+  });
+  await todoCoordinator.initialize();
   const handle = await deps.createSession(request);
   suppressPiPostRunAutoCompaction(handle.session);
   const requestedThinking = requestedPiThinkingLevel(request) ?? "off";
@@ -5149,11 +3165,9 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
       ).getContextUsage?.() ?? null,
     );
   const state = createPiEventMapperState(handle.mcpToolMetadata, handle.skillMetadataByAlias);
-  const shouldEmitWaitingUser = () =>
-    state.waitingForUser || hasBlockedPersistedPiTodoState(stateDir, request.session_id);
+  const shouldEmitWaitingUser = () => todoCoordinator.shouldEmitWaitingUser(state.waitingForUser);
   let terminalEmitted = false;
   let aggregatedUsage: HarnessGenAiUsageMetrics | null = null;
-  const stateDir = resolvePiStateDir(request.workspace_dir);
   const unsubscribe = handle.session.subscribe((event) => {
     if (event.type === "message_end") {
       aggregatedUsage = mergeHarnessUsageMetrics(
@@ -5181,21 +3195,13 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
       if (
         mapped.event_type === "tool_call" &&
         mapped.payload.phase === "completed" &&
-        mapped.payload.error !== true &&
-        typeof mapped.payload.tool_name === "string" &&
-        mapped.payload.tool_name.trim().toLowerCase() === "question"
+        typeof mapped.payload.tool_name === "string"
       ) {
-        const questionText = summarizeQuestionPrompt(
-          (mapped.payload.tool_args as JsonValue | null) ?? null,
-          mapped.payload.result
-        );
-        const detail = questionText
-          ? `Blocked waiting for user input: ${questionText}`
-          : "Blocked waiting for user input.";
-        blockActivePiTodoTask({
-          stateDir,
-          sessionId: request.session_id,
-          detail,
+        todoCoordinator.noteToolCompletion({
+          toolName: mapped.payload.tool_name,
+          error: mapped.payload.error === true,
+          toolArgs: (mapped.payload.tool_args as JsonValue | null) ?? null,
+          result: mapped.payload.result,
         });
       }
       if (mapped.event_type === "run_completed" || mapped.event_type === "run_failed") {
@@ -5242,6 +3248,7 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
     async (span) => {
       try {
         await handle.session.sendUserMessage(await promptContentForRequest(request));
+        await todoCoordinator.waitForPendingUpdates();
         if (!terminalEmitted) {
           const usagePayload = tokenUsagePayloadFromHarnessUsage(aggregatedUsage);
           emitRunnerEvent(request, nextSequence(), "run_completed", {
@@ -5297,6 +3304,7 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
         if (timeoutHandle) {
           clearTimeout(timeoutHandle);
         }
+        await todoCoordinator.waitForPendingUpdates();
         unsubscribe();
         await handle.dispose();
       }
