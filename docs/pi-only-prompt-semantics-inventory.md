@@ -1,212 +1,130 @@
-# PI-Only Prompt Semantics Inventory
+# PI Harness Prompt Boundary
 
-This note inventories behavior-shaping prompt semantics that currently exist only in the PI harness path instead of the harness-agnostic runtime prompt contract.
+This document describes the prompt-facing boundary between the shared runtime contract and the `pi` harness host.
 
-Relevant runtime contract:
-- [agent-runtime-config.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/api-server/src/agent-runtime-config.ts:1527) returns `system_prompt`, `context_messages`, `prompt_sections`, and `prompt_layers`
-- Anything that should behave the same across harnesses should ideally originate there
+Use it when you need to decide whether a behavior belongs in:
 
-## What Counts As PI-Only Prompt Semantics
+- `runtime/api-server`, where the runtime defines agent behavior that should apply across harnesses
+- `runtime/harness-host/src/pi.ts` and related PI host helpers, where the `pi` path serializes that behavior into a PI-native request shape or enforces PI-local execution rules
 
-PI-only prompt semantics are instructions or behavior nudges that:
-- change what the model is encouraged to do
-- are injected in `runtime/harness-host/src/pi.ts` or PI-specific tool definitions
-- are not represented upstream in `runtime/api-server`
+## Runtime-Owned Prompt Contract
 
-Pure transport formatting does not count unless it carries behavior policy.
+The runtime owns the parts of the prompt that should stay consistent even if the harness changes.
 
-## Should Move Upstream
+That includes:
 
-### 1. Todo resume and continuation policy
+- the base workspace instructions from `AGENTS.md`
+- execution doctrine and response-delivery policy
+- todo continuity policy
+- session-memory-backed resume context
+- scratchpad metadata and scratchpad usage guidance
+- recalled durable memory
+- current-user context
+- operator-surface context
+- pending user-memory proposals
+- capability policy derived from the run's tool and MCP surface
+- runtime-backed tool semantics for `todoread`, `todowrite`, `skill`, `web_search`, `write_report`, scratchpad tools, onboarding tools, cronjob tools, and image generation
+- quoted workspace-skill preparation from leading `/skill-id` lines in the user instruction
 
-Current PI-only sources:
-- [pi.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/harness-host/src/pi.ts:1368) `resumeTodoReadInstruction(...)`
-- [pi.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/harness-host/src/pi.ts:2288) `todoread` prompt guidelines
-- [pi.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/harness-host/src/pi.ts:2328) `todowrite` prompt guidelines
+The shared sources of truth are:
 
-Behavior encoded there:
-- newest user message is primary
-- do not auto-resume unfinished todo on ambiguous user messages
-- ask first on conversational or ambiguous continuation messages
-- keep executing resumed work until complete or genuinely blocked
-- do not stop only for progress updates while executable todo items remain
-- preserve unfinished todo when user redirects to unrelated work
-
-Why this should move:
-- this is not PI transport behavior
-- this is core session continuation policy
-- other harnesses should follow the same continuation logic
-
-Suggested home:
 - `runtime/api-server/src/agent-runtime-prompt.ts`
-- likely a dedicated runtime section such as `todo_continuity_policy`
+- `runtime/api-server/src/agent-runtime-config.ts`
+- `runtime/api-server/src/workspace-skills.ts`
+- `runtime/api-server/src/runtime-agent-tools.ts`
+- `runtime/api-server/src/native-web-search.ts`
 
-### 2. Quoted workspace skill expansion
+If a rule changes how the agent should plan, continue work, use memory, or decide between tools independent of harness, it belongs here.
 
-Current PI-only sources:
-- [pi.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/harness-host/src/pi.ts:1271) `resolveQuotedSkillSections(...)`
-- [pi.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/harness-host/src/pi.ts:653) prompt-body insertion of `Quoted workspace skills:`
+## What PI Owns
 
-Behavior encoded there:
-- leading slash skill references in the instruction are expanded into full skill markdown blocks
-- missing quoted skills produce explicit prompt feedback
+The PI host keeps the parts of the execution boundary that are specific to the PI request shape or to PI-managed local tool state.
 
-Why this should move:
-- this is user-visible behavior
-- if `/skill-name` works in one harness, it should work in all harnesses
-- the current implementation makes quoted skill support a PI feature instead of a runtime feature
+### Prompt payload construction
 
-Suggested home:
-- runtime-side instruction preprocessing before harness dispatch
-- or a dedicated prompt section emitted by `runtime/api-server`
+`runtime/harness-host/src/pi.ts` owns `buildPiPromptPayload(...)`.
 
-### 3. `write_report` usage policy
+That function turns the already-prepared runtime request into the PI prompt body by concatenating:
 
-Current PI-only source:
-- [pi-runtime-tools.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/harness-host/src/pi-runtime-tools.ts:614) `runtimeToolPromptGuidelines("write_report")`
+1. runtime-prepared `quoted_skill_blocks`
+2. a missing-skill warning when `missing_quoted_skill_ids` is non-empty
+3. the cleaned user instruction
+4. a `Runtime context:` block that wraps each runtime `context_message`
+5. attachment-derived prompt sections returned by `attachment-prompt-content.ts`
 
-Behavior encoded there:
-- use `write_report` for long, evidence-heavy, or multi-source work
-- do not use it for short self-contained answers
-- if the user asked for research or latest information and findings were gathered, save a report before final answer
-- keep chat reply short after report creation
+This is transport and serialization logic. It is not the source of truth for prompt semantics.
 
-Why this should move:
-- `write_report` is a runtime tool, not a PI-only tool
-- the threshold for creating an artifact should be consistent across harnesses
+### Attachment projection
 
-Suggested home:
-- shared runtime tool metadata in `runtime/harnesses/src/runtime-agent-tools.ts`
-- or a runtime prompt section keyed off capability availability
+`runtime/harness-host/src/attachment-prompt-content.ts` owns how staged attachments become PI prompt content.
 
-### 4. Web-search recency wording
+It is responsible for:
 
-Current PI-only source:
-- [pi-web-search.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/harness-host/src/pi-web-search.ts:99)
+- extracting inline text from common document formats such as PDF, DOCX, PPTX, and spreadsheets
+- keeping image attachments separate so they can be passed as image content rather than flattened into text
+- producing the human-readable attachment sections that `buildPiPromptPayload(...)` appends to the PI request body
 
-Behavior encoded there:
-- PI appends “The current year is X; include X in recent-information queries.”
+The runtime decides which attachments belong to the run. The PI host decides how those attachments are encoded for PI.
 
-Why this should move:
-- this is a query-planning heuristic, not a PI transport detail
-- if web search exists in multiple harnesses, recency handling should be shared
+### Runtime-tool packaging
 
-Suggested home:
-- shared web-search tool definition metadata
-- or a general runtime recency policy
+`runtime/harness-host/src/pi-runtime-tools.ts` owns PI `ToolDefinition` wrappers for runtime-backed tools.
 
-## Should Probably Move Upstream Or Be Derived From Shared Metadata
+This layer is responsible for:
 
-These items are partially duplicated already. The projection can remain harness-local, but the source text should not be handwritten only in PI.
+- PI-native parameter schemas
+- PI-specific tool descriptions and usage guidance
+- HTTP proxying to the runtime capability endpoints
+- attaching workspace, session, input, and model metadata to runtime-tool calls
 
-### 5. Scratchpad tool guidance
+The underlying tool behavior still comes from the runtime. PI only packages and forwards those tool calls.
 
-Current PI-only source:
-- [pi-runtime-tools.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/harness-host/src/pi-runtime-tools.ts:625)
+### Skill widening over PI-managed tools
 
-Behavior encoded there:
-- when to read scratchpad
-- how to interpret scratchpad truth status
-- when to append vs replace vs clear
+The `skill` tool itself is runtime-backed, but PI still owns local widening enforcement for PI-managed tools and commands.
 
-Why only “probably”:
-- some scratchpad guidance already exists upstream in [agent-runtime-prompt.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/api-server/src/agent-runtime-prompt.ts:375) and [agent-runtime-prompt.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/api-server/src/agent-runtime-prompt.ts:663)
-- PI still adds extra tool-specific policy that other harnesses would miss
+That logic lives in `runtime/harness-host/src/pi.ts` and is built from the runtime-provided `workspace_skills` manifests.
 
-Suggested direction:
-- keep tool-level projection in harnesses
-- move canonical scratchpad guidance into shared metadata or runtime prompt sections
+PI keeps:
 
-### 6. `download_url` and background terminal routing guidance
+- the live widening state for the run
+- wrappers that deny managed tools or commands until a skill grants them
+- application of granted tools and commands returned by the runtime-backed `skill` call
+- `skill_invocation` event mapping for the PI event stream
 
-Current PI-only source:
-- [pi-runtime-tools.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/harness-host/src/pi-runtime-tools.ts:606)
-- [pi-runtime-tools.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/harness-host/src/pi-runtime-tools.ts:639)
+This remains host-local because it governs PI-managed tool wrappers, not the shared meaning of a skill.
 
-Upstream duplication already exists:
-- [agent-capability-registry.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/api-server/src/agent-capability-registry.ts:1280)
-- [agent-capability-registry.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/api-server/src/agent-capability-registry.ts:1285)
+### MCP materialization for PI
 
-Assessment:
-- the decision policy is already becoming runtime-owned
-- PI still contains a second, more detailed version
-- this should be deduplicated so harnesses derive from one shared source
+The runtime prepares `mcp_servers` and any explicit `mcp_tool_refs`.
 
-### 7. Todo tool schema usage advice
+The PI host still owns:
 
-Current PI-only source:
-- [pi.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/harness-host/src/pi.ts:2334)
+- building PI MCP server bindings from that prepared payload
+- discovering tools from those configured servers
+- constraining servers that have explicit `mcp_tool_refs`
+- exposing the discovered tool set to the PI session
 
-Behavior encoded there:
-- valid todo ops
-- use `name` instead of `title`
-- use `content` instead of `title` for tasks
-- read current ids before mutating an existing plan
-- keep one task `in_progress`
+This is part of host-side tool materialization, not prompt policy.
 
-Assessment:
-- some of this belongs in tool parameter schemas and runtime-side validation
-- some of it is true cross-harness usage guidance
-- the projection should remain harness-local, but the canonical rules should be shared
+## What Stays Outside Prompt Semantics But Remains PI-Local
 
-## Can Stay Harness-Local
+The `pi` path also owns several execution details that are not really prompt semantics at all:
 
-These are projection concerns. They affect prompt shape, but not the underlying policy contract.
+- PI session creation and persisted harness session reuse
+- PI-native post-run compaction
+- provider-specific reasoning normalization
+- local coding tools from the PI SDK
+- workspace-boundary enforcement wrappers around PI-managed local tools
+- native event normalization back into the runtime event contract
 
-### 8. Runtime context block wrappers
+Those are part of the harness host, but they are separate from the shared runtime prompt contract.
 
-Current PI-only source:
-- [pi.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/harness-host/src/pi.ts:638)
+## Boundary Rule
 
-Behavior:
-- wraps runtime context messages as:
-  - `Runtime context:`
-  - `[Runtime Context N]`
+Use this rule when deciding where a change belongs:
 
-Assessment:
-- this is serialization, not policy
-- another harness may project the same `context_messages` differently
+- If the change affects what the agent should know, prioritize, remember, or do across harnesses, implement it in the runtime.
+- If the change affects how the PI host serializes prompt content, wraps PI-local tools, or maps PI-native events, keep it in the PI host.
 
-### 9. Attachment, folder, and image prompt serialization
-
-Current PI-only source:
-- [pi.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/harness-host/src/pi.ts:687)
-- [pi.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/harness-host/src/pi.ts:703)
-- [pi.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/harness-host/src/pi.ts:712)
-
-Behavior:
-- inlines extracted document text
-- lists image attachments
-- lists folder attachment paths
-- says folder contents are not inlined automatically
-
-Assessment:
-- this is mostly harness projection
-- the runtime may later define a richer attachment contract, but this is not the highest-priority prompt-policy leak
-
-### 10. Tool `promptSnippet` packaging itself
-
-Current PI-only sources:
-- [pi.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/harness-host/src/pi.ts:2293)
-- [pi-runtime-tools.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/harness-host/src/pi-runtime-tools.ts:820)
-- [pi-browser-tools.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/harness-host/src/pi-browser-tools.ts:331)
-- [pi-web-search.ts](/Users/jeffrey/Desktop/holaboss/holaOS-runtime-work-checkpoints/runtime/harness-host/src/pi-web-search.ts:261)
-
-Assessment:
-- each harness may need to package tool metadata differently
-- that projection can stay local
-- but the meaning carried inside descriptions and guidelines should come from shared definitions where possible
-
-## Priority Order
-
-1. Move todo continuation policy upstream.
-2. Move quoted skill expansion upstream.
-3. Move `write_report` policy into shared runtime tool metadata.
-4. Move web-search recency guidance into shared metadata.
-5. Deduplicate scratchpad, terminal, and download guidance so PI only projects shared text.
-
-## Practical Rule
-
-Use this boundary:
-- if it changes agent behavior across sessions or tools, define it in `runtime/api-server` or shared tool metadata
-- if it only changes how one harness serializes already-defined content, keep it in the harness adapter
+That boundary keeps the runtime as the owner of agent behavior and keeps the harness host as the owner of transport, projection, and PI-local enforcement.
