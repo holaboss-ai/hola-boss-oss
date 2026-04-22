@@ -10,7 +10,6 @@ import type { PostRunJobRecord, RuntimeStateStore } from "@holaboss/runtime-stat
 import { resolveRuntimeModelClient } from "./agent-runtime-config.js";
 import { buildRunnerEnv } from "./runner-worker.js";
 import { captureRuntimeException } from "./runtime-sentry.js";
-import { writeTurnCompactionBoundary } from "./turn-memory-writeback.js";
 
 export const SESSION_CHECKPOINT_JOB_TYPE = "session_checkpoint";
 const PI_DEFAULT_COMPACTION_RESERVE_TOKENS = 16_384;
@@ -895,30 +894,12 @@ export async function processSessionCheckpointJob(params: {
       });
       return;
     }
-    const turnResult = params.store.getTurnResult({ inputId: params.record.inputId });
-    if (turnResult) {
-      writeTurnCompactionBoundary({
-        store: params.store,
-        turnResult,
-        boundaryType: "harness_auto_compaction",
-      });
-      recordSessionCheckpointResult({
-        store: params.store,
-        record: params.record,
-        outcome: "merged",
-        merged: true,
-        boundaryWritten: true,
-        compaction,
-      });
-      return;
-    }
     recordSessionCheckpointResult({
       store: params.store,
       record: params.record,
       outcome: "merged_without_boundary",
       merged: true,
       boundaryWritten: false,
-      detail: "live session was compacted but no turn result was available to write a boundary",
       compaction,
     });
   } catch (error) {

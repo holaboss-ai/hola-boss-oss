@@ -154,6 +154,27 @@ function baseRequest(): TsRunnerRequest {
   };
 }
 
+function writeSessionMemory(params: {
+  sandboxRoot: string;
+  workspaceId: string;
+  sessionId: string;
+  content: string;
+}): string {
+  const targetPath = path.join(
+    params.sandboxRoot,
+    "workspace",
+    "memory",
+    "workspace",
+    params.workspaceId,
+    "runtime",
+    "session-memory",
+    `${params.sessionId}.md`,
+  );
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.writeFileSync(targetPath, `${params.content}\n`, "utf8");
+  return targetPath;
+}
+
 function baseCompiledPlan() {
   return {
     workspace_id: "workspace-1",
@@ -941,8 +962,8 @@ test("runTsRunnerCli only advertises structured output when the selected harness
     "load_operator_surface_context",
     "load_pending_user_memory_context",
     "load_recalled_memory_context",
-    "load_recent_runtime_context",
     "load_session_resume_context",
+    "load_session_scratchpad_context",
     "persist_turn_request_snapshot",
     "prepare_harness_run",
     "project_runtime_config",
@@ -1123,7 +1144,7 @@ test("runTsRunnerCli includes staged runtime tool ids in the projected extra too
   );
 });
 
-test("runTsRunnerCli derives recent runtime context from the latest prior turn result", async () => {
+test("runTsRunnerCli does not derive resume context from the latest prior turn result alone", async () => {
   const sandboxRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "hb-ts-runner-recent-context-"),
   );
@@ -1225,47 +1246,17 @@ test("runTsRunnerCli derives recent runtime context from the latest prior turn r
 
   assert.equal(exitCode, 0);
   assert.ok(capturedProjectRequest);
-  assert.deepEqual(
-    (
-      capturedProjectRequest as {
-        recent_runtime_context: Record<string, unknown>;
-      }
-    ).recent_runtime_context,
-    {
-      summary:
-        "Run failed while trying to deploy because policy denied the action.",
-      last_stop_reason: "permission_denied",
-      last_error: "permission_denied",
-      waiting_for_user: null,
-    },
-  );
-  assert.deepEqual(
-    (
-      capturedProjectRequest as {
-        session_resume_context: Record<string, unknown>;
-      }
-    ).session_resume_context,
-    {
-      recent_turns: [
-        {
-          input_id: "input-0",
-          status: "failed",
-          stop_reason: "permission_denied",
-          summary:
-            "Run failed while trying to deploy because policy denied the action.",
-          completed_at: "2026-01-01T00:00:05.000Z",
-        },
-      ],
-      recent_user_messages: [
-        "Please continue after deploy permissions are fixed.",
-      ],
-    },
+  assert.equal("recent_runtime_context" in capturedProjectRequest, false);
+  assert.equal(
+    (capturedProjectRequest as { session_resume_context?: Record<string, unknown> })
+      .session_resume_context,
+    undefined,
   );
 });
 
-test("runTsRunnerCli restores resume context from the latest prior compaction boundary", async () => {
+test("runTsRunnerCli loads session resume context from session memory", async () => {
   const sandboxRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "hb-ts-runner-compaction-boundary-"),
+    path.join(os.tmpdir(), "hb-ts-runner-session-memory-"),
   );
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   const workspaceRoot = path.join(sandboxRoot, "workspace");
@@ -1279,46 +1270,14 @@ test("runTsRunnerCli restores resume context from the latest prior compaction bo
     harness: "pi",
     status: "active",
   });
-  store.upsertCompactionBoundary({
-    boundaryId: "compaction:input-0",
+  store.close();
+  writeSessionMemory({
+    sandboxRoot,
     workspaceId: "workspace-1",
     sessionId: "session-1",
-    inputId: "input-0",
-    summary: "Resume from compacted deploy attempt.",
-    recentRuntimeContext: {
-      summary: "Resume from compacted deploy attempt.",
-      last_stop_reason: "waiting_user",
-      last_error: null,
-      waiting_for_user: true,
-    },
-    restorationContext: {
-      compaction_source: "executor_post_turn",
-      restoration_order: [
-        "boundary_summary",
-        "recent_runtime_context",
-        "session_resume_context",
-        "preserved_turn_input_ids",
-        "restored_memory_paths",
-      ],
-      session_resume_context: {
-        recent_turns: [
-          {
-            input_id: "input-0",
-            status: "waiting_user",
-            stop_reason: "waiting_user",
-            summary: "Deploy paused waiting for confirmation.",
-            completed_at: "2026-01-01T00:00:05.000Z",
-          },
-        ],
-        recent_user_messages: [
-          "Continue after confirmation once the deploy is approved.",
-        ],
-      },
-      restored_memory_paths: ["workspace/workspace-1/runtime/latest-turn.md"],
-    },
-    preservedTurnInputIds: ["input-0"],
+    content:
+      "Resume from compacted deploy attempt. Draft report path: outputs/reports/deploy.md.",
   });
-  store.close();
 
   let capturedProjectRequest: Record<string, unknown> | null = null;
   const exitCode = await runTsRunnerCli(
@@ -1368,19 +1327,7 @@ test("runTsRunnerCli restores resume context from the latest prior compaction bo
 
   assert.equal(exitCode, 0);
   assert.ok(capturedProjectRequest);
-  assert.deepEqual(
-    (
-      capturedProjectRequest as {
-        recent_runtime_context: Record<string, unknown>;
-      }
-    ).recent_runtime_context,
-    {
-      summary: "Resume from compacted deploy attempt.",
-      last_stop_reason: "waiting_user",
-      last_error: null,
-      waiting_for_user: true,
-    },
-  );
+  assert.equal("recent_runtime_context" in capturedProjectRequest, false);
   assert.deepEqual(
     (
       capturedProjectRequest as {
@@ -1388,37 +1335,16 @@ test("runTsRunnerCli restores resume context from the latest prior compaction bo
       }
     ).session_resume_context,
     {
-      recent_turns: [
-        {
-          input_id: "input-0",
-          status: "waiting_user",
-          stop_reason: "waiting_user",
-          summary: "Deploy paused waiting for confirmation.",
-          completed_at: "2026-01-01T00:00:05.000Z",
-        },
-      ],
-      recent_user_messages: [
-        "Continue after confirmation once the deploy is approved.",
-      ],
-      compaction_source: "executor_post_turn",
-      compaction_boundary_id: "compaction:input-0",
-      compaction_boundary_summary: "Resume from compacted deploy attempt.",
-      restoration_order: [
-        "boundary_summary",
-        "recent_runtime_context",
-        "session_resume_context",
-        "preserved_turn_input_ids",
-        "restored_memory_paths",
-      ],
-      preserved_turn_input_ids: ["input-0"],
-      restored_memory_paths: ["workspace/workspace-1/runtime/latest-turn.md"],
+      session_memory_path: "workspace/workspace-1/runtime/session-memory/session-1.md",
+      session_memory_excerpt:
+        "Resume from compacted deploy attempt. Draft report path: outputs/reports/deploy.md.",
     },
   );
 });
 
-test("runTsRunnerCli emits compaction_restored before harness run events when resume boundary exists", async () => {
+test("runTsRunnerCli does not emit a synthetic resume event before harness run events", async () => {
   const sandboxRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "hb-ts-runner-compaction-restored-event-"),
+    path.join(os.tmpdir(), "hb-ts-runner-resume-event-"),
   );
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   const workspaceRoot = path.join(sandboxRoot, "workspace");
@@ -1432,34 +1358,13 @@ test("runTsRunnerCli emits compaction_restored before harness run events when re
     harness: "pi",
     status: "active",
   });
-  store.upsertCompactionBoundary({
-    boundaryId: "compaction:input-0",
+  store.close();
+  writeSessionMemory({
+    sandboxRoot,
     workspaceId: "workspace-1",
     sessionId: "session-1",
-    inputId: "input-0",
-    summary: "Resume from compacted deploy attempt.",
-    restorationContext: {
-      compaction_source: "executor_post_turn",
-      restoration_order: ["boundary_summary", "session_resume_context"],
-      session_resume_context: {
-        recent_turns: [
-          {
-            input_id: "input-0",
-            status: "waiting_user",
-            stop_reason: "waiting_user",
-            summary: "Deploy paused waiting for confirmation.",
-            completed_at: "2026-01-01T00:00:05.000Z",
-          },
-        ],
-        recent_user_messages: [
-          "Continue after confirmation once the deploy is approved.",
-        ],
-      },
-      restored_memory_paths: ["workspace/workspace-1/runtime/latest-turn.md"],
-    },
-    preservedTurnInputIds: ["input-0"],
+    content: "Resume from compacted deploy attempt.",
   });
-  store.close();
 
   const output: string[] = [];
   const exitCode = await runTsRunnerCli(
@@ -1514,10 +1419,8 @@ test("runTsRunnerCli emits compaction_restored before harness run events when re
     .map((line) => JSON.parse(line) as TsRunnerEvent);
 
   assert.equal(lines[0].event_type, "run_claimed");
-  assert.equal(lines[1].event_type, "compaction_restored");
-  assert.equal(lines[1].payload.boundary_id, "compaction:input-0");
-  assert.equal(lines[2].event_type, "run_started");
-  assert.equal(lines[3].event_type, "run_completed");
+  assert.equal(lines[1].event_type, "run_started");
+  assert.equal(lines[2].event_type, "run_completed");
 });
 
 test("runTsRunnerCli derives recalled durable memory from indexed memory entries", async () => {

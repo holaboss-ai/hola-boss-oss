@@ -135,20 +135,13 @@ test("queued evolve memory writeback persists durable memories and refreshes ind
 
   const captured = await memoryService.capture({ workspace_id: "workspace-1" });
   const files = captured.files as Record<string, string>;
-  const boundary = store.getCompactionBoundary({
-    boundaryId: updatedTurnResult.compactionBoundaryId ?? `compaction:${updatedTurnResult.inputId}`,
-  });
-  const restorationContext = boundary?.restorationContext as Record<string, unknown> | null;
-  const restoredMemoryPaths = Array.isArray(restorationContext?.restored_memory_paths)
-    ? (restorationContext?.restored_memory_paths as string[])
-    : [];
 
   assert.ok(files["workspace/workspace-1/knowledge/facts/verification-command.md"]);
   assert.ok(files["workspace/workspace-1/knowledge/procedures/release-procedure.md"]);
   assert.match(files["workspace/workspace-1/MEMORY.md"], /Verification command/);
   assert.match(files["workspace/workspace-1/MEMORY.md"], /Release procedure/);
-  assert.ok(restoredMemoryPaths.includes("workspace/workspace-1/knowledge/facts/verification-command.md"));
-  assert.ok(restoredMemoryPaths.includes("workspace/workspace-1/MEMORY.md"));
+  assert.ok(files["workspace/workspace-1/knowledge/facts/verification-command.md"]);
+  assert.ok(files["workspace/workspace-1/MEMORY.md"]);
 
   store.close();
 });

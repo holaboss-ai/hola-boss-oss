@@ -61,16 +61,17 @@ export type HarnessPromptLayerId =
   | "execution_policy"
   | "response_delivery_policy"
   | "session_policy"
+  | "todo_continuity_policy"
   | "capability_policy"
   | "current_user_context"
   | "operator_surface_context"
   | "pending_user_memory"
+  | "scratchpad_context"
   | "evolve_candidate_context"
   | "memory_recall"
   | "workspace_policy"
   | "resume_context"
-  | "harness_quirks"
-  | "recent_runtime_context";
+  | "harness_quirks";
 
 export interface HarnessPromptLayerPayload {
   id: HarnessPromptLayerId;

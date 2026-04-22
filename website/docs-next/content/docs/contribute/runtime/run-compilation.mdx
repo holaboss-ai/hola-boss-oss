@@ -160,8 +160,8 @@ That last shape is now rejected during runner prep instead of being forwarded as
 
 The runner then loads the context that is specific to this run:
 
-- recent runtime context from turn results or compaction boundaries
-- session resume context from artifacts, compaction boundaries, and session-memory files
+- session resume context from session-memory files
+- session scratchpad context from scratchpad metadata
 - recalled memory context from the memory registry and vector recall path
 - current user profile context
 - operator surface context from the desktop browser capability base URL when desktop browser tooling is active

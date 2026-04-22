@@ -2870,7 +2870,7 @@ test("buildPiPromptPayload keeps runtime context in a separate prompt section", 
   assert.ok(prompt.text.startsWith("List the files\n\nRuntime context:\n\n[Runtime Context 1]"));
 });
 
-test("buildPiPromptPayload frames persisted todo state as advisory continuity when resuming", async () => {
+test("buildPiPromptPayload does not inline persisted todo continuity guidance into the PI prompt body", async () => {
   const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-resume-todo-"));
   const stateDir = path.join(workspaceDir, ".holaboss", "pi-agent");
   fs.mkdirSync(path.join(workspaceDir, ".holaboss", "pi-sessions"), { recursive: true });
@@ -2908,19 +2908,9 @@ test("buildPiPromptPayload frames persisted todo state as advisory continuity wh
       persisted_harness_session_id: persistedSessionPath,
     });
 
-    assert.match(prompt.text, /Resumed session note:/);
-    assert.match(prompt.text, /Treat the user's newest message as the primary instruction for this turn\./i);
-    assert.match(prompt.text, /Use `todoread` when you need the current phase\/task ids before continuing or updating the persisted plan\./i);
-    assert.match(prompt.text, /Only restore and continue the persisted todo immediately when the user's newest message clearly asks to continue it or clearly advances the same work\./i);
-    assert.match(prompt.text, /If the user's newest message is conversational, brief, acknowledges prior progress, or is otherwise ambiguous about continuation, respond to that message directly first and ask whether they want to continue the unfinished work\./i);
-    assert.match(
-      prompt.text,
-      /valid `op` values are exactly `replace`, `add_phase`, `add_task`, `update`, and `remove_task`/i
-    );
-    assert.match(
-      prompt.text,
-      /Do not invent alias op names such as `replace_all`, `update_task`, or `set_status`/i
-    );
+    assert.doesNotMatch(prompt.text, /Resumed session note:/);
+    assert.doesNotMatch(prompt.text, /A persisted phased todo plan already exists for this session\./i);
+    assert.match(prompt.text, /^List the files\s+Attachments: none\.\s+Image inputs: none\.$/);
   } finally {
     fs.rmSync(workspaceDir, { recursive: true, force: true });
   }

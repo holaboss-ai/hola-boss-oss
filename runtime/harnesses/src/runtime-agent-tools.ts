@@ -52,6 +52,18 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS = [
     policy: "mutate"
   },
   {
+    id: "holaboss_scratchpad_read",
+    description:
+      "Read the current session scratchpad stored in the workspace-local runtime folder.",
+    policy: "inspect"
+  },
+  {
+    id: "holaboss_scratchpad_write",
+    description:
+      "Append to, replace, or clear the current session scratchpad stored in the workspace-local runtime folder.",
+    policy: "mutate"
+  },
+  {
     id: "terminal_sessions_list",
     description: "List background terminal sessions for the current workspace.",
     policy: "inspect"

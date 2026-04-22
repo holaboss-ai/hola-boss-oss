@@ -2619,7 +2619,6 @@ test("runtime states and history endpoints read TS state store", async () => {
       volatile_section_ids: ["execution_policy"],
     },
     compactedSummary: null,
-    compactionBoundaryId: "compaction:input-1",
     tokenUsage: {
       input_tokens: 10,
       output_tokens: 20
@@ -2637,44 +2636,21 @@ test("runtime states and history endpoints read TS state store", async () => {
       system_prompt: "You are concise.",
     },
   });
-  store.upsertCompactionBoundary({
-    boundaryId: "compaction:input-1",
-    workspaceId: workspace.id,
-    sessionId: "session-main",
-    inputId: "input-1",
-    summary: "hi",
-    recentRuntimeContext: {
-      summary: "hi",
-      last_stop_reason: "ok",
-      last_error: null,
-      waiting_for_user: null,
-    },
-    restorationContext: {
-      compaction_source: "executor_post_turn",
-      restoration_order: [
-        "boundary_summary",
-        "recent_runtime_context",
-        "session_resume_context",
-        "preserved_turn_input_ids",
-        "restored_memory_paths",
-      ],
-      session_resume_context: {
-        recent_turns: [
-          {
-            input_id: "input-1",
-            status: "completed",
-            stop_reason: "ok",
-            summary: "hi",
-            completed_at: "2026-01-01T00:00:05.000Z",
-          },
-        ],
-        recent_user_messages: ["hello"],
-      },
-      restored_memory_paths: [`workspace/${workspace.id}/runtime/latest-turn.md`],
-    },
-    preservedTurnInputIds: ["input-1"],
-    requestSnapshotFingerprint: "c".repeat(64),
-  });
+  const sessionMemoryPath = path.join(
+    store.workspaceRoot,
+    "memory",
+    "workspace",
+    workspace.id,
+    "runtime",
+    "session-memory",
+    "session-main.md",
+  );
+  fs.mkdirSync(path.dirname(sessionMemoryPath), { recursive: true });
+  fs.writeFileSync(
+    sessionMemoryPath,
+    "User prefers short answers and the draft report is in outputs/reports/summary.md.\n",
+    "utf8",
+  );
   store.ensureSession({
     workspaceId: workspace.id,
     sessionId: "proposal-session-1",
@@ -2709,10 +2685,6 @@ test("runtime states and history endpoints read TS state store", async () => {
   const requestSnapshots = await app.inject({
     method: "GET",
     url: `/api/v1/agent-sessions/session-main/request-snapshots?workspace_id=${workspace.id}`
-  });
-  const compactionBoundaries = await app.inject({
-    method: "GET",
-    url: `/api/v1/agent-sessions/session-main/compaction-boundaries?workspace_id=${workspace.id}`
   });
   const resumeContext = await app.inject({
     method: "GET",
@@ -2754,7 +2726,6 @@ test("runtime states and history endpoints read TS state store", async () => {
     cacheable_section_ids: ["runtime_core"],
     volatile_section_ids: ["execution_policy"],
   });
-  assert.equal(turnResults.json().items[0].compaction_boundary_id, "compaction:input-1");
   assert.deepEqual(turnResults.json().items[0].prompt_section_ids, [
     "runtime_core",
     "execution_policy"
@@ -2766,104 +2737,11 @@ test("runtime states and history endpoints read TS state store", async () => {
   assert.equal(requestSnapshots.statusCode, 200);
   assert.equal(requestSnapshots.json().count, 1);
   assert.equal(requestSnapshots.json().items[0].fingerprint, "c".repeat(64));
-  assert.equal(compactionBoundaries.statusCode, 200);
-  assert.equal(compactionBoundaries.json().count, 1);
-  assert.equal(compactionBoundaries.json().items[0].boundary_id, "compaction:input-1");
-  assert.equal(compactionBoundaries.json().items[0].boundary_type, "executor_post_turn");
-  assert.deepEqual(compactionBoundaries.json().items[0].compaction_restoration_context, {
-    compaction_source: "executor_post_turn",
-    boundary_type: "executor_post_turn",
-    restoration_order: [
-      "boundary_summary",
-      "recent_runtime_context",
-      "session_resume_context",
-      "preserved_turn_input_ids",
-      "restored_memory_paths",
-    ],
-    boundary_summary: "hi",
-    recent_runtime_context: {
-      summary: "hi",
-      last_stop_reason: "ok",
-      last_error: null,
-      waiting_for_user: null,
-    },
-    session_resume_context: {
-      recent_turns: [
-        {
-          input_id: "input-1",
-          status: "completed",
-          stop_reason: "ok",
-          summary: "hi",
-          completed_at: "2026-01-01T00:00:05.000Z",
-        },
-      ],
-      recent_user_messages: ["hello"],
-    },
-    preserved_turn_input_ids: ["input-1"],
-    restored_memory_paths: [`workspace/${workspace.id}/runtime/latest-turn.md`],
-  });
   assert.equal(resumeContext.statusCode, 200);
-  assert.deepEqual(resumeContext.json().compaction_restoration_context, {
-    compaction_source: "executor_post_turn",
-    boundary_type: "executor_post_turn",
-    restoration_order: [
-      "boundary_summary",
-      "recent_runtime_context",
-      "session_resume_context",
-      "preserved_turn_input_ids",
-      "restored_memory_paths",
-    ],
-    boundary_summary: "hi",
-    recent_runtime_context: {
-      summary: "hi",
-      last_stop_reason: "ok",
-      last_error: null,
-      waiting_for_user: null
-    },
-    session_resume_context: {
-      recent_turns: [
-        {
-          input_id: "input-1",
-          status: "completed",
-          stop_reason: "ok",
-          summary: "hi",
-          completed_at: "2026-01-01T00:00:05.000Z"
-        }
-      ],
-      recent_user_messages: ["hello"]
-    },
-    preserved_turn_input_ids: ["input-1"],
-    restored_memory_paths: [`workspace/${workspace.id}/runtime/latest-turn.md`]
-  });
-  assert.deepEqual(resumeContext.json().recent_runtime_context, {
-    summary: "hi",
-    last_stop_reason: "ok",
-    last_error: null,
-    waiting_for_user: null
-  });
   assert.deepEqual(resumeContext.json().session_resume_context, {
-    recent_turns: [
-      {
-        input_id: "input-1",
-        status: "completed",
-        stop_reason: "ok",
-        summary: "hi",
-        completed_at: "2026-01-01T00:00:05.000Z"
-      }
-    ],
-    recent_user_messages: ["hello"],
-    compaction_source: "executor_post_turn",
-    compaction_boundary_id: "compaction:input-1",
-    compaction_boundary_summary: "hi",
-    restoration_order: [
-      "boundary_summary",
-      "recent_runtime_context",
-      "session_resume_context",
-      "preserved_turn_input_ids",
-      "restored_memory_paths"
-    ],
-    preserved_turn_input_ids: ["input-1"],
-    restored_memory_paths: [`workspace/${workspace.id}/runtime/latest-turn.md`]
+    session_memory_path: `workspace/${workspace.id}/runtime/session-memory/session-main.md`,
+    session_memory_excerpt:
+      "User prefers short answers and the draft report is in outputs/reports/summary.md."
   });
 
   await app.close();

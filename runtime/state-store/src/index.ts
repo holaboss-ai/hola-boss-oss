@@ -11,8 +11,6 @@ export {
   sanitizeWorkspaceId,
   utcNowIso,
   type CronjobRecord,
-  type CompactionBoundaryType,
-  type CompactionBoundaryRecord,
   type CreateWorkspaceParams,
   type EvolveSkillCandidateKind,
   type EvolveSkillCandidateRecord,

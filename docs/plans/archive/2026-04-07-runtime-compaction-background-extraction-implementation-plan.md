@@ -1,3 +1,13 @@
+> Archived historical plan.
+>
+> Superseded on `2026-04-22`. This document describes a compaction-boundary-based continuity design that has since been removed.
+>
+> Current runtime continuity uses:
+> - persisted harness session history
+> - runtime-managed session-memory excerpts
+> - session scratchpad metadata and explicit scratchpad reads
+> - bounded recalled durable memory
+
 # Runtime Compaction + Background Durable Extraction — Implementation Plan
 
 **Goal:** Smooth the end-of-turn user experience by removing synchronous post-turn memory writeback from the foreground run path, while preserving continuity via existing session history and moving durable extraction to a separate periodic worker.

@@ -16,7 +16,7 @@ That split is deliberate. It keeps runtime state, long-term memory, and workspac
 Today the runtime stores those concerns on different surfaces:
 
 - standing workspace policy lives in authored workspace files such as `AGENTS.md`
-- session continuity lives in runtime-owned artifacts such as `turn_results`, request snapshots, and occasional compaction boundaries in `state/runtime.db`
+- session continuity lives in runtime-owned artifacts such as `turn_results`, request snapshots, persisted harness state, and session-memory projections
 - session-memory continuity projections live under `memory/workspace/<workspace-id>/runtime/session-memory/`
 - operational projections live under `memory/workspace/<workspace-id>/runtime/`, including the latest turn, session state, blockers, recent turns, and permission-blocker snapshots
 - durable recalled memory lives under `memory/workspace/<workspace-id>/knowledge/`, `memory/preference/`, and `memory/identity/`
@@ -56,7 +56,7 @@ That is what keeps continuity inspectable without turning workspace policy or du
     title="Runtime Continuity"
     eyebrow="Resume Layer"
     href="/docs/concepts/memory-and-continuity/runtime-continuity"
-    description="See how run artifacts, session-memory snapshots, and compaction handoff artifacts help the next run resume cleanly."
+    description="See how run artifacts, persisted harness state, scratchpad context, and session-memory snapshots help the next run resume cleanly."
   />
   <DocCard
     title="Durable Memory"

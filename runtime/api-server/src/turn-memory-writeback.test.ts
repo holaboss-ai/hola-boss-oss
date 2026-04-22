@@ -847,19 +847,12 @@ test("writeTurnMemory rebuilds only changed workspace indexes and root", async (
     memoryService,
     turnResult,
   });
-  const boundary = store.getCompactionBoundary({
-    boundaryId: updated.compactionBoundaryId ?? `compaction:${updated.inputId}`,
-  });
-  const restorationContext = boundary?.restorationContext as Record<string, unknown> | null;
-  const restoredMemoryPaths = Array.isArray(restorationContext?.restored_memory_paths)
-    ? (restorationContext?.restored_memory_paths as string[])
-    : [];
+  const captured = await memoryService.capture({ workspace_id: "workspace-1" });
+  const files = captured.files as Record<string, string>;
 
-  assert.ok(restoredMemoryPaths.includes("workspace/workspace-1/MEMORY.md"));
-  assert.ok(restoredMemoryPaths.includes("MEMORY.md"));
-  assert.ok(restoredMemoryPaths.includes("workspace/workspace-1/knowledge/facts/verification-command.md"));
-  assert.ok(!restoredMemoryPaths.includes("preference/MEMORY.md"));
-  assert.ok(!restoredMemoryPaths.includes("identity/MEMORY.md"));
+  assert.ok(files["workspace/workspace-1/MEMORY.md"]);
+  assert.ok(files["MEMORY.md"]);
+  assert.ok(files["workspace/workspace-1/knowledge/facts/verification-command.md"]);
 
   store.close();
 });

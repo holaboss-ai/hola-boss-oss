@@ -195,7 +195,6 @@ export interface TurnResultRecord {
   requestSnapshotFingerprint: string | null;
   promptCacheProfile: Record<string, unknown> | null;
   compactedSummary: string | null;
-  compactionBoundaryId: string | null;
   tokenUsage: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
@@ -211,24 +210,6 @@ export interface TurnRequestSnapshotRecord {
   createdAt: string;
   updatedAt: string;
 }
-
-export interface CompactionBoundaryRecord {
-  boundaryId: string;
-  workspaceId: string;
-  sessionId: string;
-  inputId: string;
-  boundaryType: CompactionBoundaryType;
-  previousBoundaryId: string | null;
-  summary: string | null;
-  recentRuntimeContext: Record<string, unknown> | null;
-  restorationContext: Record<string, unknown> | null;
-  preservedTurnInputIds: string[];
-  requestSnapshotFingerprint: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export type CompactionBoundaryType = "executor_post_turn" | "harness_auto_compaction";
 
 const SESSION_RUNTIME_STATE_STATUSES = [
   "IDLE",
@@ -2722,7 +2703,6 @@ export class RuntimeStateStore {
     requestSnapshotFingerprint?: string | null;
     promptCacheProfile?: Record<string, unknown> | null;
     compactedSummary?: string | null;
-    compactionBoundaryId?: string | null;
     tokenUsage?: Record<string, unknown> | null;
     createdAt?: string;
     updatedAt?: string;
@@ -2756,11 +2736,10 @@ export class RuntimeStateStore {
             request_snapshot_fingerprint,
             prompt_cache_profile,
             compacted_summary,
-            compaction_boundary_id,
             token_usage,
             created_at,
             updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(input_id) DO UPDATE SET
             workspace_id = excluded.workspace_id,
             session_id = excluded.session_id,
@@ -2776,7 +2755,6 @@ export class RuntimeStateStore {
             request_snapshot_fingerprint = excluded.request_snapshot_fingerprint,
             prompt_cache_profile = excluded.prompt_cache_profile,
             compacted_summary = excluded.compacted_summary,
-            compaction_boundary_id = excluded.compaction_boundary_id,
             token_usage = excluded.token_usage,
             updated_at = excluded.updated_at
       `)
@@ -2796,7 +2774,6 @@ export class RuntimeStateStore {
         params.requestSnapshotFingerprint ?? null,
         params.promptCacheProfile ? JSON.stringify(params.promptCacheProfile) : null,
         params.compactedSummary ?? null,
-        params.compactionBoundaryId ?? null,
         params.tokenUsage ? JSON.stringify(params.tokenUsage) : null,
         createdAt,
         now
@@ -3471,122 +3448,6 @@ export class RuntimeStateStore {
     values.push(params.limit ?? 100, params.offset ?? 0);
     const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
     return rows.map((row) => this.rowToTurnRequestSnapshot(row));
-  }
-
-  upsertCompactionBoundary(params: {
-    boundaryId: string;
-    workspaceId: string;
-    sessionId: string;
-    inputId: string;
-    boundaryType?: CompactionBoundaryType;
-    previousBoundaryId?: string | null;
-    summary?: string | null;
-    recentRuntimeContext?: Record<string, unknown> | null;
-    restorationContext?: Record<string, unknown> | null;
-    preservedTurnInputIds?: string[] | null;
-    requestSnapshotFingerprint?: string | null;
-    createdAt?: string;
-    updatedAt?: string;
-  }): CompactionBoundaryRecord {
-    this.ensureSession(
-      {
-        workspaceId: params.workspaceId,
-        sessionId: params.sessionId,
-      },
-      { touchExisting: false }
-    );
-
-    const existing = this.getCompactionBoundary({ boundaryId: params.boundaryId });
-    const now = params.updatedAt ?? utcNowIso();
-    const createdAt = existing?.createdAt ?? params.createdAt ?? now;
-    this.db()
-      .prepare(`
-        INSERT INTO compaction_boundaries (
-            boundary_id,
-            workspace_id,
-            session_id,
-            input_id,
-            boundary_type,
-            previous_boundary_id,
-            summary,
-            recent_runtime_context,
-            restoration_context,
-            preserved_turn_input_ids,
-            request_snapshot_fingerprint,
-            created_at,
-            updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(boundary_id) DO UPDATE SET
-            workspace_id = excluded.workspace_id,
-            session_id = excluded.session_id,
-            input_id = excluded.input_id,
-            boundary_type = excluded.boundary_type,
-            previous_boundary_id = excluded.previous_boundary_id,
-            summary = excluded.summary,
-            recent_runtime_context = excluded.recent_runtime_context,
-            restoration_context = excluded.restoration_context,
-            preserved_turn_input_ids = excluded.preserved_turn_input_ids,
-            request_snapshot_fingerprint = excluded.request_snapshot_fingerprint,
-            updated_at = excluded.updated_at
-      `)
-      .run(
-        params.boundaryId,
-        params.workspaceId,
-        params.sessionId,
-        params.inputId,
-        params.boundaryType ?? "executor_post_turn",
-        params.previousBoundaryId ?? null,
-        params.summary ?? null,
-        params.recentRuntimeContext ? JSON.stringify(params.recentRuntimeContext) : null,
-        params.restorationContext ? JSON.stringify(params.restorationContext) : null,
-        JSON.stringify(params.preservedTurnInputIds ?? []),
-        params.requestSnapshotFingerprint ?? null,
-        createdAt,
-        now
-      );
-
-    const record = this.getCompactionBoundary({ boundaryId: params.boundaryId });
-    if (!record) {
-      throw new Error("compaction boundary row not found after upsert");
-    }
-    return record;
-  }
-
-  getCompactionBoundary(params: { boundaryId: string }): CompactionBoundaryRecord | null {
-    const row = this.db()
-      .prepare<[string], Record<string, unknown>>("SELECT * FROM compaction_boundaries WHERE boundary_id = ? LIMIT 1")
-      .get(params.boundaryId);
-    return row ? this.rowToCompactionBoundary(row) : null;
-  }
-
-  listCompactionBoundaries(params: {
-    sessionId: string;
-    workspaceId?: string;
-    inputId?: string;
-    limit?: number;
-    offset?: number;
-  }): CompactionBoundaryRecord[] {
-    let query = `
-      SELECT *
-      FROM compaction_boundaries
-      WHERE session_id = ?
-    `;
-    const values: Array<string | number> = [params.sessionId];
-    if (params.workspaceId) {
-      query += " AND workspace_id = ?";
-      values.push(params.workspaceId);
-    }
-    if (params.inputId) {
-      query += " AND input_id = ?";
-      values.push(params.inputId);
-    }
-    query += `
-      ORDER BY datetime(updated_at) DESC, created_at DESC, boundary_id DESC
-      LIMIT ? OFFSET ?
-    `;
-    values.push(params.limit ?? 100, params.offset ?? 0);
-    const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.rowToCompactionBoundary(row));
   }
 
   createOutputFolder(params: { workspaceId: string; name: string }): OutputFolderRecord {
@@ -5095,7 +4956,6 @@ export class RuntimeStateStore {
           request_snapshot_fingerprint TEXT,
           prompt_cache_profile TEXT,
           compacted_summary TEXT,
-          compaction_boundary_id TEXT,
           token_usage TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
@@ -5120,25 +4980,6 @@ export class RuntimeStateStore {
 
       CREATE INDEX IF NOT EXISTS idx_turn_request_snapshots_workspace_session_updated
           ON turn_request_snapshots (workspace_id, session_id, updated_at DESC, created_at DESC);
-
-      CREATE TABLE IF NOT EXISTS compaction_boundaries (
-          boundary_id TEXT PRIMARY KEY,
-          workspace_id TEXT NOT NULL,
-          session_id TEXT NOT NULL,
-          input_id TEXT NOT NULL,
-          boundary_type TEXT NOT NULL DEFAULT 'executor_post_turn',
-          previous_boundary_id TEXT,
-          summary TEXT,
-          recent_runtime_context TEXT,
-          restoration_context TEXT,
-          preserved_turn_input_ids TEXT NOT NULL DEFAULT '[]',
-          request_snapshot_fingerprint TEXT,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_compaction_boundaries_workspace_session_updated
-          ON compaction_boundaries (workspace_id, session_id, updated_at DESC, created_at DESC);
 
       CREATE TABLE IF NOT EXISTS runtime_user_profiles (
           profile_id TEXT PRIMARY KEY,
@@ -5797,6 +5638,82 @@ export class RuntimeStateStore {
     }
   }
 
+  private rebuildTurnResultsWithoutCompactionBoundary(db: Database.Database): void {
+    db.exec(`
+      ALTER TABLE turn_results RENAME TO turn_results_legacy_with_compaction_boundary;
+
+      CREATE TABLE turn_results (
+          input_id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          started_at TEXT NOT NULL,
+          completed_at TEXT,
+          status TEXT NOT NULL,
+          stop_reason TEXT,
+          assistant_text TEXT NOT NULL DEFAULT '',
+          tool_usage_summary TEXT NOT NULL DEFAULT '{}',
+          permission_denials TEXT NOT NULL DEFAULT '[]',
+          prompt_section_ids TEXT NOT NULL DEFAULT '[]',
+          capability_manifest_fingerprint TEXT,
+          request_snapshot_fingerprint TEXT,
+          prompt_cache_profile TEXT,
+          compacted_summary TEXT,
+          token_usage TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+      );
+
+      INSERT INTO turn_results (
+          input_id,
+          workspace_id,
+          session_id,
+          started_at,
+          completed_at,
+          status,
+          stop_reason,
+          assistant_text,
+          tool_usage_summary,
+          permission_denials,
+          prompt_section_ids,
+          capability_manifest_fingerprint,
+          request_snapshot_fingerprint,
+          prompt_cache_profile,
+          compacted_summary,
+          token_usage,
+          created_at,
+          updated_at
+      )
+      SELECT
+          input_id,
+          workspace_id,
+          session_id,
+          started_at,
+          completed_at,
+          status,
+          stop_reason,
+          assistant_text,
+          tool_usage_summary,
+          permission_denials,
+          prompt_section_ids,
+          capability_manifest_fingerprint,
+          request_snapshot_fingerprint,
+          prompt_cache_profile,
+          compacted_summary,
+          token_usage,
+          created_at,
+          updated_at
+      FROM turn_results_legacy_with_compaction_boundary;
+
+      DROP TABLE turn_results_legacy_with_compaction_boundary;
+
+      CREATE INDEX IF NOT EXISTS idx_turn_results_workspace_session_completed
+          ON turn_results (workspace_id, session_id, completed_at DESC, started_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_turn_results_session_input
+          ON turn_results (session_id, input_id);
+    `);
+  }
+
   private ensureTurnArtifactsSchema(db: Database.Database): void {
     const tableNames = new Set<string>(
       (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(
@@ -5814,17 +5731,12 @@ export class RuntimeStateStore {
       if (!columns.has("prompt_cache_profile")) {
         db.exec("ALTER TABLE turn_results ADD COLUMN prompt_cache_profile TEXT;");
       }
-      if (!columns.has("compaction_boundary_id")) {
-        db.exec("ALTER TABLE turn_results ADD COLUMN compaction_boundary_id TEXT;");
+      if (columns.has("compaction_boundary_id")) {
+        this.rebuildTurnResultsWithoutCompactionBoundary(db);
       }
     }
     if (tableNames.has("compaction_boundaries")) {
-      const columns = new Set<string>(
-        (db.prepare("PRAGMA table_info(compaction_boundaries)").all() as Array<{ name: string }>).map((row) => row.name)
-      );
-      if (!columns.has("boundary_type")) {
-        db.exec("ALTER TABLE compaction_boundaries ADD COLUMN boundary_type TEXT NOT NULL DEFAULT 'executor_post_turn';");
-      }
+      db.exec("DROP TABLE compaction_boundaries;");
     }
 
     if (tableNames.has("memory_entries")) {
@@ -5865,25 +5777,6 @@ export class RuntimeStateStore {
 
       CREATE INDEX IF NOT EXISTS idx_turn_request_snapshots_workspace_session_updated
           ON turn_request_snapshots (workspace_id, session_id, updated_at DESC, created_at DESC);
-
-      CREATE TABLE IF NOT EXISTS compaction_boundaries (
-          boundary_id TEXT PRIMARY KEY,
-          workspace_id TEXT NOT NULL,
-          session_id TEXT NOT NULL,
-          input_id TEXT NOT NULL,
-          boundary_type TEXT NOT NULL DEFAULT 'executor_post_turn',
-          previous_boundary_id TEXT,
-          summary TEXT,
-          recent_runtime_context TEXT,
-          restoration_context TEXT,
-          preserved_turn_input_ids TEXT NOT NULL DEFAULT '[]',
-          request_snapshot_fingerprint TEXT,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_compaction_boundaries_workspace_session_updated
-          ON compaction_boundaries (workspace_id, session_id, updated_at DESC, created_at DESC);
     `);
   }
 
@@ -6422,7 +6315,6 @@ export class RuntimeStateStore {
         row.request_snapshot_fingerprint == null ? null : String(row.request_snapshot_fingerprint),
       promptCacheProfile: row.prompt_cache_profile == null ? null : this.parseJsonObjectOrMessage(row.prompt_cache_profile),
       compactedSummary: row.compacted_summary == null ? null : String(row.compacted_summary),
-      compactionBoundaryId: row.compaction_boundary_id == null ? null : String(row.compaction_boundary_id),
       tokenUsage: row.token_usage == null ? null : this.parseJsonObjectOrMessage(row.token_usage),
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
@@ -6437,35 +6329,6 @@ export class RuntimeStateStore {
       snapshotKind: String(row.snapshot_kind),
       fingerprint: String(row.fingerprint),
       payload: this.parseJsonDict(row.payload),
-      createdAt: String(row.created_at),
-      updatedAt: String(row.updated_at),
-    };
-  }
-
-  private rowToCompactionBoundary(row: Record<string, unknown>): CompactionBoundaryRecord {
-    const rawBoundaryType =
-      row.boundary_type == null || String(row.boundary_type).trim().length === 0
-        ? "executor_post_turn"
-        : String(row.boundary_type).trim();
-    const boundaryType: CompactionBoundaryType =
-      rawBoundaryType === "harness_auto_compaction" ? "harness_auto_compaction" : "executor_post_turn";
-    return {
-      boundaryId: String(row.boundary_id),
-      workspaceId: String(row.workspace_id),
-      sessionId: String(row.session_id),
-      inputId: String(row.input_id),
-      boundaryType,
-      previousBoundaryId: row.previous_boundary_id == null ? null : String(row.previous_boundary_id),
-      summary: row.summary == null ? null : String(row.summary),
-      recentRuntimeContext:
-        row.recent_runtime_context == null ? null : this.parseJsonObjectOrMessage(row.recent_runtime_context),
-      restorationContext:
-        row.restoration_context == null ? null : this.parseJsonObjectOrMessage(row.restoration_context),
-      preservedTurnInputIds: this.parseJsonList(row.preserved_turn_input_ids).filter(
-        (item): item is string => typeof item === "string"
-      ),
-      requestSnapshotFingerprint:
-        row.request_snapshot_fingerprint == null ? null : String(row.request_snapshot_fingerprint),
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
     };

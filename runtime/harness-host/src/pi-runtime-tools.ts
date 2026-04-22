@@ -17,6 +17,7 @@ const RUNTIME_TOOLS_CRONJOBS_PATH = "/api/v1/capabilities/runtime-tools/cronjobs
 const RUNTIME_TOOLS_IMAGE_GENERATE_PATH = "/api/v1/capabilities/runtime-tools/images/generate";
 const RUNTIME_TOOLS_DOWNLOADS_PATH = "/api/v1/capabilities/runtime-tools/downloads";
 const RUNTIME_TOOLS_REPORTS_PATH = "/api/v1/capabilities/runtime-tools/reports";
+const RUNTIME_TOOLS_SCRATCHPAD_PATH = "/api/v1/capabilities/runtime-tools/scratchpad";
 const RUNTIME_TOOLS_TERMINAL_SESSIONS_PATH = "/api/v1/capabilities/runtime-tools/terminal-sessions";
 const DEFAULT_RUNTIME_TOOL_TIMEOUT_MS = 30000;
 const IMAGE_GENERATE_RUNTIME_TOOL_TIMEOUT_MS = 180000;
@@ -24,6 +25,7 @@ const DOWNLOAD_URL_RUNTIME_TOOL_TIMEOUT_MS = 120000;
 const TERMINAL_WAIT_RUNTIME_TOOL_TIMEOUT_MS = 65000;
 const CRONJOB_DELIVERY_CHANNELS = ["system_notification", "session_run"] as const;
 const CRONJOB_DELIVERY_MODES = ["announce", "none"] as const;
+const SCRATCHPAD_WRITE_OPS = ["append", "replace", "clear"] as const;
 
 function cronjobDeliveryChannelSchema() {
   return Type.Union(
@@ -40,6 +42,16 @@ function cronjobDeliveryModeSchema() {
     CRONJOB_DELIVERY_MODES.map((value) => Type.Literal(value)),
     {
       description: "Delivery mode. Allowed values: `announce` or `none`."
+    }
+  );
+}
+
+function scratchpadWriteOpSchema() {
+  return Type.Union(
+    SCRATCHPAD_WRITE_OPS.map((value) => Type.Literal(value)),
+    {
+      description:
+        "Scratchpad write operation. Use `append` to add notes, `replace` to compact the scratchpad into a new summary, or `clear` to remove it.",
     }
   );
 }
@@ -325,6 +337,21 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId) {
         },
         { additionalProperties: false },
       );
+    case "holaboss_scratchpad_read":
+      return Type.Object({}, { additionalProperties: false });
+    case "holaboss_scratchpad_write":
+      return Type.Object(
+        {
+          op: scratchpadWriteOpSchema(),
+          content: Type.Optional(
+            Type.String({
+              description:
+                "Scratchpad markdown or plain-text content. Required for `append` and `replace`, omitted for `clear`.",
+            }),
+          ),
+        },
+        { additionalProperties: false },
+      );
     case "terminal_sessions_list":
       return Type.Object({}, { additionalProperties: false });
     case "terminal_session_start":
@@ -515,6 +542,16 @@ function createWriteReportBody(toolParams: unknown): Record<string, unknown> {
   };
 }
 
+function createScratchpadWriteBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    op: String(params.op ?? ""),
+    ...(Object.prototype.hasOwnProperty.call(params, "content")
+      ? { content: params.content == null ? null : String(params.content) }
+      : {}),
+  };
+}
+
 function terminalSessionPath(terminalId: unknown): string {
   const value = optionalString(terminalId);
   if (!value) {
@@ -583,6 +620,20 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "A step like 'summarize findings for the user' still means: save the full findings with `write_report`, then keep the chat reply brief.",
       "After calling `write_report`, keep the chat reply short: mention the report title or path and give only the key takeaways.",
       "Write the full markdown report in `content` instead of pasting the full report inline in chat.",
+    ];
+  }
+  if (toolId === "holaboss_scratchpad_read") {
+    return [
+      "Use `holaboss_scratchpad_read` when a resumed or long-running session likely has session-scoped notes that matter for the current turn.",
+      "Treat scratchpad notes as session continuity, not as durable memory or verified current truth.",
+      "Read the scratchpad when you need the saved notes again; do not assume they are already in prompt context.",
+    ];
+  }
+  if (toolId === "holaboss_scratchpad_write") {
+    return [
+      "Use `holaboss_scratchpad_write` for long-running working notes, interim findings, open questions, or compacted current state that should survive beyond the current prompt window.",
+      "Use `append` while accumulating notes, `replace` when compacting the scratchpad into a fresher shorter summary, and `clear` when the notes are no longer useful.",
+      "Keep durable memory, user-visible deliverables, and final answers out of the scratchpad unless they are explicitly session-scoped working notes.",
     ];
   }
   if (
@@ -666,6 +717,14 @@ async function executeRuntimeTool(params: {
       method = "POST";
       requestPath = RUNTIME_TOOLS_REPORTS_PATH;
       body = createWriteReportBody(params.toolParams);
+      break;
+    case "holaboss_scratchpad_read":
+      requestPath = RUNTIME_TOOLS_SCRATCHPAD_PATH;
+      break;
+    case "holaboss_scratchpad_write":
+      method = "POST";
+      requestPath = RUNTIME_TOOLS_SCRATCHPAD_PATH;
+      body = createScratchpadWriteBody(params.toolParams);
       break;
     case "terminal_sessions_list":
       requestPath = RUNTIME_TOOLS_TERMINAL_SESSIONS_PATH;

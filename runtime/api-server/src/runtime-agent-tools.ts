@@ -15,6 +15,11 @@ import {
 import { RUNTIME_AGENT_TOOL_DEFINITIONS as RUNTIME_AGENT_TOOL_BASE_DEFINITIONS } from "../../harnesses/src/runtime-agent-tools.js";
 import { cronjobNextRunAt } from "./cron-worker.js";
 import { generateWorkspaceImage } from "./image-generation.js";
+import {
+  readSessionScratchpad,
+  type SessionScratchpadWriteOperation,
+  writeSessionScratchpad,
+} from "./session-scratchpad.js";
 import type { TerminalSessionManagerLike } from "./terminal-session-manager.js";
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
@@ -96,6 +101,18 @@ export interface RuntimeAgentToolsWriteReportParams {
   filename?: string | null;
   summary?: string | null;
   content: string;
+}
+
+export interface RuntimeAgentToolsReadScratchpadParams {
+  workspaceId: string;
+  sessionId: string;
+}
+
+export interface RuntimeAgentToolsWriteScratchpadParams {
+  workspaceId: string;
+  sessionId: string;
+  op: SessionScratchpadWriteOperation;
+  content?: string | null;
 }
 
 export interface RuntimeAgentToolsListTerminalSessionsParams {
@@ -222,6 +239,18 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/reports",
     description: runtimeToolBaseDefinition("write_report").description
+  },
+  {
+    id: runtimeToolBaseDefinition("holaboss_scratchpad_read").id,
+    method: "GET",
+    path: "/api/v1/capabilities/runtime-tools/scratchpad",
+    description: runtimeToolBaseDefinition("holaboss_scratchpad_read").description
+  },
+  {
+    id: runtimeToolBaseDefinition("holaboss_scratchpad_write").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/scratchpad",
+    description: runtimeToolBaseDefinition("holaboss_scratchpad_write").description
   },
   {
     id: runtimeToolBaseDefinition("terminal_sessions_list").id,
@@ -1105,6 +1134,62 @@ export class RuntimeAgentToolsService {
       size_bytes: sizeBytes,
       created_at: output.createdAt,
     };
+  }
+
+  async readScratchpad(params: RuntimeAgentToolsReadScratchpadParams): Promise<JsonObject> {
+    this.requireWorkspace(params.workspaceId);
+    const sessionId = normalizedString(params.sessionId);
+    if (!sessionId) {
+      throw new RuntimeAgentToolsServiceError(400, "scratchpad_session_required", "session_id is required");
+    }
+    const scratchpad = await readSessionScratchpad({
+      workspaceRoot: this.options.workspaceRoot,
+      workspaceId: params.workspaceId,
+      sessionId,
+      includeContent: true,
+    });
+    return {
+      exists: scratchpad.exists,
+      file_path: scratchpad.file_path,
+      updated_at: scratchpad.updated_at,
+      size_bytes: scratchpad.size_bytes,
+      preview: scratchpad.preview,
+      content: scratchpad.content ?? null,
+    };
+  }
+
+  async writeScratchpad(params: RuntimeAgentToolsWriteScratchpadParams): Promise<JsonObject> {
+    this.requireWorkspace(params.workspaceId);
+    const sessionId = normalizedString(params.sessionId);
+    if (!sessionId) {
+      throw new RuntimeAgentToolsServiceError(400, "scratchpad_session_required", "session_id is required");
+    }
+    const op = normalizedString(params.op) as SessionScratchpadWriteOperation;
+    if (op !== "append" && op !== "replace" && op !== "clear") {
+      throw new RuntimeAgentToolsServiceError(
+        400,
+        "scratchpad_op_invalid",
+        "op must be one of [\"append\",\"replace\",\"clear\"]",
+      );
+    }
+    try {
+      const scratchpad = await writeSessionScratchpad({
+        workspaceRoot: this.options.workspaceRoot,
+        workspaceId: params.workspaceId,
+        sessionId,
+        op,
+        content: params.content,
+      });
+      return {
+        op,
+        ...scratchpad,
+      };
+    } catch (error) {
+      if (error instanceof Error && /content is required/i.test(error.message)) {
+        throw new RuntimeAgentToolsServiceError(400, "scratchpad_content_required", "content is required");
+      }
+      throw error;
+    }
   }
 
   listTerminalSessions(params: RuntimeAgentToolsListTerminalSessionsParams): JsonObject {
