@@ -309,13 +309,12 @@ export function TopTabsBar({
                 }}
                 className={workspaceSwitcherButtonClassName}
               >
-                <FolderKanban size={13} className="shrink-0 text-primary" />
+                <FolderKanban className="size-3.5 shrink-0 text-primary" />
                 <span className="min-w-0 flex-1 truncate text-left font-medium">
                   {selectedWorkspace?.name || "Select workspace"}
                 </span>
                 <ChevronDown
-                  size={12}
-                  className={`shrink-0 text-muted-foreground transition-transform ${workspaceSwitcherOpen ? "rotate-180" : ""}`}
+                  className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${workspaceSwitcherOpen ? "rotate-180" : ""}`}
                 />
               </Button>
             </div>
@@ -346,13 +345,12 @@ export function TopTabsBar({
                 }}
                 className={workspaceSwitcherButtonClassName}
               >
-                <FolderKanban size={13} className="shrink-0 text-primary" />
+                <FolderKanban className="size-3.5 shrink-0 text-primary" />
                 <span className="min-w-0 flex-1 truncate text-left font-medium">
                   {selectedWorkspace?.name || "Select workspace"}
                 </span>
                 <ChevronDown
-                  size={12}
-                  className={`shrink-0 text-muted-foreground transition-transform ${workspaceSwitcherOpen ? "rotate-180" : ""}`}
+                  className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${workspaceSwitcherOpen ? "rotate-180" : ""}`}
                 />
               </Button>
             </div>
@@ -430,7 +428,7 @@ export function TopTabsBar({
                   void window.electronAPI.ui.minimizeWindow();
                 }}
               >
-                <Minus size={13} strokeWidth={2.1} />
+                <Minus className="size-3.5" strokeWidth={2.1} />
               </button>
               <button
                 type="button"
@@ -445,9 +443,9 @@ export function TopTabsBar({
                 }}
               >
                 {windowState.isMaximized || windowState.isFullScreen ? (
-                  <Copy size={12} strokeWidth={1.9} />
+                  <Copy className="size-3.5" strokeWidth={1.9} />
                 ) : (
-                  <Square size={12} strokeWidth={1.9} />
+                  <Square className="size-3.5" strokeWidth={1.9} />
                 )}
               </button>
               <button
@@ -458,7 +456,7 @@ export function TopTabsBar({
                   void window.electronAPI.ui.closeWindow();
                 }}
               >
-                <X size={13} strokeWidth={2.1} />
+                <X className="size-3.5" strokeWidth={2.1} />
               </button>
             </div>
           ) : null}
@@ -489,8 +487,7 @@ export function TopTabsBar({
             >
               <div className="relative mb-2">
                 <Search
-                  size={13}
-                  className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+                  className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
                 />
                 <Input
                   value={workspaceQuery}
@@ -547,9 +544,9 @@ export function TopTabsBar({
                             className="text-muted-foreground hover:text-destructive"
                           >
                             {isDeleting ? (
-                              <Loader2 size={13} className="animate-spin" />
+                              <Loader2 className="size-3.5 animate-spin" />
                             ) : (
-                              <Trash2 size={13} />
+                              <Trash2 className="size-3.5" />
                             )}
                           </Button>
                         </div>
@@ -574,7 +571,7 @@ export function TopTabsBar({
                     }}
                     className="mb-2 w-full justify-start gap-2"
                   >
-                    <Upload size={14} />
+                    <Upload className="size-3.5" />
                     <span>Publish to Store</span>
                   </Button>
                 ) : null}
@@ -587,7 +584,7 @@ export function TopTabsBar({
                   }}
                   className="w-full justify-start gap-2"
                 >
-                  <Plus size={14} />
+                  <Plus className="size-3.5" />
                   Create new workspace
                 </Button>
               </div>

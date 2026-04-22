@@ -41,7 +41,7 @@ export function CreditsPill({
       }`}
       aria-label="Open credits and billing details"
     >
-      <Sparkles className="opacity-80" />
+      <Sparkles className="size-3.5 opacity-80" />
       <span className="font-medium tabular-nums">
         {(balance ?? 0).toLocaleString()}
       </span>
