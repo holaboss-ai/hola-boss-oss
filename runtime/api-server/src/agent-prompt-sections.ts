@@ -39,6 +39,7 @@ export interface AgentPromptCacheProfile {
   cacheable_section_ids: HarnessPromptLayerId[];
   volatile_section_ids: HarnessPromptLayerId[];
   context_message_ids: HarnessPromptLayerId[];
+  resume_context_ids: HarnessPromptLayerId[];
   attachment_ids: HarnessPromptLayerId[];
   compatibility_context_ids: HarnessPromptLayerId[];
   delta_section_ids: HarnessPromptLayerId[];
@@ -209,6 +210,7 @@ export function buildPromptCacheProfileFromSections(
     cacheable_section_ids: cacheableSections.map((section) => section.id),
     volatile_section_ids: volatileSections.map((section) => section.id),
     context_message_ids: contextMessageIds,
+    resume_context_ids: [],
     attachment_ids: attachmentIds,
     compatibility_context_ids: compatibilityContextIds,
     delta_section_ids: compatibilityContextIds,

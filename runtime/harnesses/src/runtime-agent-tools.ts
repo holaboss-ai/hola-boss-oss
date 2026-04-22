@@ -52,42 +52,6 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS = [
     policy: "mutate"
   },
   {
-    id: "web_search",
-    description:
-      "Search the public web to discover and summarize information across multiple sources. Best for exploratory research, source discovery, and approximate or aggregated answers. Do not rely on it alone for exact live values, platform-native rankings or filters, UI-only state, or tasks that require interaction. If required facts remain unverified after search, escalate to browser tools or another more direct capability.",
-    policy: "inspect"
-  },
-  {
-    id: "todoread",
-    description:
-      "Read the current phased todo plan for the current workspace session, including the phase ids and task ids needed for later `todowrite` calls.",
-    policy: "coordinate"
-  },
-  {
-    id: "todowrite",
-    description:
-      "Update the current phased todo plan for the current workspace session. Valid `op` values are exactly `replace`, `add_phase`, `add_task`, `update`, and `remove_task`.",
-    policy: "coordinate"
-  },
-  {
-    id: "holaboss_scratchpad_read",
-    description:
-      "Read the current session scratchpad stored in the workspace-local runtime folder.",
-    policy: "inspect"
-  },
-  {
-    id: "holaboss_scratchpad_write",
-    description:
-      "Append to, replace, or clear the current session scratchpad stored in the workspace-local runtime folder.",
-    policy: "mutate"
-  },
-  {
-    id: "skill",
-    description:
-      "Load a workspace skill by id or name and return its canonical skill block, including any declared tool or command grants.",
-    policy: "coordinate"
-  },
-  {
     id: "terminal_sessions_list",
     description: "List background terminal sessions for the current workspace.",
     policy: "inspect"

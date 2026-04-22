@@ -101,8 +101,6 @@ test("decodeHarnessHostPiRequestBase64 validates and normalizes request payloads
       browser_space: "user",
       input_id: "input-1",
       instruction: "Do the thing",
-      quoted_skill_blocks: ['<skill name="customer_lookup" location="/tmp/workspace-1/skills/customer_lookup/SKILL.md">\nBody\n</skill>'],
-      missing_quoted_skill_ids: ["missing-skill"],
       context_messages: ["Recent runtime context"],
       thinking_value: "medium",
       provider_id: "openai",
@@ -110,17 +108,7 @@ test("decodeHarnessHostPiRequestBase64 validates and normalizes request payloads
       timeout_seconds: 30,
       runtime_api_base_url: "http://127.0.0.1:5060",
       system_prompt: "system",
-      workspace_skills: [
-        {
-          skill_id: "skill-a",
-          skill_name: "skill-a",
-          source_dir: "/tmp/workspace-1/skills/skill-a",
-          file_path: "/tmp/workspace-1/skills/skill-a/SKILL.md",
-          origin: "workspace",
-          granted_tools: ["bash"],
-          granted_commands: ["deploy-docs"],
-        },
-      ],
+      workspace_skill_dirs: ["/tmp/workspace-1/skills/skill-a"],
       mcp_servers: [{ name: "workspace", config: { type: "remote", url: "http://127.0.0.1:5000" } }],
       mcp_tool_refs: [{ tool_id: "workspace.lookup", server_id: "workspace", tool_name: "lookup" }],
       workspace_config_checksum: "checksum-1",
@@ -144,8 +132,6 @@ test("decodeHarnessHostPiRequestBase64 validates and normalizes request payloads
     browser_space: "user",
     input_id: "input-1",
     instruction: "Do the thing",
-    quoted_skill_blocks: ['<skill name="customer_lookup" location="/tmp/workspace-1/skills/customer_lookup/SKILL.md">\nBody\n</skill>'],
-    missing_quoted_skill_ids: ["missing-skill"],
     context_messages: ["Recent runtime context"],
     attachments: [],
     thinking_value: "medium",
@@ -157,17 +143,7 @@ test("decodeHarnessHostPiRequestBase64 validates and normalizes request payloads
     timeout_seconds: 30,
     runtime_api_base_url: "http://127.0.0.1:5060",
     system_prompt: "system",
-    workspace_skills: [
-      {
-        skill_id: "skill-a",
-        skill_name: "skill-a",
-        source_dir: "/tmp/workspace-1/skills/skill-a",
-        file_path: "/tmp/workspace-1/skills/skill-a/SKILL.md",
-        origin: "workspace",
-        granted_tools: ["bash"],
-        granted_commands: ["deploy-docs"],
-      },
-    ],
+    workspace_skill_dirs: ["/tmp/workspace-1/skills/skill-a"],
     mcp_servers: [{ name: "workspace", config: { type: "remote", url: "http://127.0.0.1:5000" } }],
     mcp_tool_refs: [{ tool_id: "workspace.lookup", server_id: "workspace", tool_name: "lookup" } satisfies HarnessHostPiMcpToolRef],
     workspace_config_checksum: "checksum-1",
@@ -194,7 +170,7 @@ test("decodeHarnessHostPiRequestBase64 allows empty or missing system_prompt", (
       model_id: "gpt-5.1",
       timeout_seconds: 30,
       system_prompt: "",
-      workspace_skills: [],
+      workspace_skill_dirs: [],
       mcp_servers: [],
       mcp_tool_refs: [],
       workspace_config_checksum: "checksum-1",
@@ -216,7 +192,7 @@ test("decodeHarnessHostPiRequestBase64 allows empty or missing system_prompt", (
       provider_id: "openai",
       model_id: "gpt-5.1",
       timeout_seconds: 30,
-      workspace_skills: [],
+      workspace_skill_dirs: [],
       mcp_servers: [],
       mcp_tool_refs: [],
       workspace_config_checksum: "checksum-1",
@@ -230,10 +206,6 @@ test("decodeHarnessHostPiRequestBase64 allows empty or missing system_prompt", (
 
   assert.equal(emptyPrompt.system_prompt, "");
   assert.equal(missingPrompt.system_prompt, "");
-  assert.deepEqual(emptyPrompt.quoted_skill_blocks, []);
-  assert.deepEqual(missingPrompt.quoted_skill_blocks, []);
-  assert.deepEqual(emptyPrompt.missing_quoted_skill_ids, []);
-  assert.deepEqual(missingPrompt.missing_quoted_skill_ids, []);
   assert.deepEqual(emptyPrompt.context_messages, ["Recent runtime context"]);
   assert.deepEqual(missingPrompt.context_messages, ["Recent runtime context"]);
 });

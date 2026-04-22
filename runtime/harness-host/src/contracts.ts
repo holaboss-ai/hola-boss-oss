@@ -70,8 +70,6 @@ export interface HarnessHostPiRequest {
   browser_space?: "agent" | "user" | null;
   input_id: string;
   instruction: string;
-  quoted_skill_blocks?: string[];
-  missing_quoted_skill_ids?: string[];
   context_messages?: string[];
   attachments?: HarnessHostInputAttachmentPayload[];
   thinking_value?: string | null;
@@ -83,7 +81,7 @@ export interface HarnessHostPiRequest {
   timeout_seconds: number;
   runtime_api_base_url?: string | null;
   system_prompt: string;
-  workspace_skills: HarnessHostWorkspaceSkillPayload[];
+  workspace_skill_dirs: string[];
   mcp_servers: JsonObject[];
   mcp_tool_refs: HarnessHostPiMcpToolRef[];
   workspace_config_checksum: string;
@@ -97,16 +95,6 @@ export interface HarnessHostPiMcpToolRef {
   tool_id: string;
   server_id: string;
   tool_name: string;
-}
-
-export interface HarnessHostWorkspaceSkillPayload {
-  skill_id: string;
-  skill_name: string;
-  source_dir: string;
-  file_path: string;
-  origin: "workspace" | "embedded";
-  granted_tools: string[];
-  granted_commands: string[];
 }
 
 export interface WorkspaceMcpSidecarCliRequest {
@@ -291,29 +279,6 @@ function jsonObjectArray(value: unknown): JsonObject[] {
   return value.filter((item): item is JsonObject => isRecord(item) && isJsonValue(item));
 }
 
-function workspaceSkills(value: unknown, fieldName: string): HarnessHostWorkspaceSkillPayload[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return value.map((item, index) => {
-    if (!isRecord(item)) {
-      throw new Error(`${fieldName}[${index}] must be an object`);
-    }
-    const origin = item.origin === "workspace" ? "workspace" : item.origin === "embedded" ? "embedded" : (() => {
-      throw new Error(`${fieldName}[${index}].origin must be \`workspace\` or \`embedded\``);
-    })();
-    return {
-      skill_id: requiredString(item.skill_id, `${fieldName}[${index}].skill_id`),
-      skill_name: requiredString(item.skill_name, `${fieldName}[${index}].skill_name`),
-      source_dir: requiredString(item.source_dir, `${fieldName}[${index}].source_dir`),
-      file_path: requiredString(item.file_path, `${fieldName}[${index}].file_path`),
-      origin,
-      granted_tools: stringArray(item.granted_tools),
-      granted_commands: stringArray(item.granted_commands),
-    };
-  });
-}
-
 function inputAttachments(value: unknown, fieldName: string): HarnessHostInputAttachmentPayload[] {
   if (!Array.isArray(value)) {
     return [];
@@ -421,8 +386,6 @@ export function decodeHarnessHostPiRequestBase64(encoded: string): HarnessHostPi
     browser_space: optionalBrowserSpace(parsed.browser_space),
     input_id: requiredString(parsed.input_id, "input_id"),
     instruction: requiredString(parsed.instruction, "instruction"),
-    quoted_skill_blocks: stringArray(parsed.quoted_skill_blocks),
-    missing_quoted_skill_ids: stringArray(parsed.missing_quoted_skill_ids),
     context_messages: stringArray(parsed.context_messages),
     attachments: inputAttachments(parsed.attachments, "attachments"),
     thinking_value: optionalString(parsed.thinking_value),
@@ -434,7 +397,7 @@ export function decodeHarnessHostPiRequestBase64(encoded: string): HarnessHostPi
     timeout_seconds: requiredInteger(parsed.timeout_seconds, "timeout_seconds"),
     runtime_api_base_url: optionalString(parsed.runtime_api_base_url),
     system_prompt: stringOrEmpty(parsed.system_prompt, "system_prompt"),
-    workspace_skills: workspaceSkills(parsed.workspace_skills, "workspace_skills"),
+    workspace_skill_dirs: stringArray(parsed.workspace_skill_dirs),
     mcp_servers: jsonObjectArray(parsed.mcp_servers),
     mcp_tool_refs: Array.isArray(parsed.mcp_tool_refs)
       ? parsed.mcp_tool_refs

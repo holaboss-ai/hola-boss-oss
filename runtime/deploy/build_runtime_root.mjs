@@ -133,7 +133,24 @@ function stageSourcePackage(outputRoot, packageDir, outputName) {
   const targetDir = path.join(outputRoot, outputName);
   mkdirSync(targetDir, { recursive: true });
   copyIfPresent(path.join(packageDir, "package.json"), path.join(targetDir, "package.json"));
+  copyIfPresent(path.join(packageDir, "package-lock.json"), path.join(targetDir, "package-lock.json"));
   copyIfPresent(path.join(packageDir, "src"), path.join(targetDir, "src"));
+
+  if (existsSync(path.join(targetDir, "package-lock.json"))) {
+    runNpmCommand(["ci", "--omit=dev"], { cwd: targetDir });
+    return;
+  }
+
+  const packageJson = JSON.parse(readFileSync(path.join(targetDir, "package.json"), "utf8"));
+  const hasDependencies =
+    packageJson &&
+    typeof packageJson === "object" &&
+    packageJson.dependencies &&
+    typeof packageJson.dependencies === "object" &&
+    Object.keys(packageJson.dependencies).length > 0;
+  if (hasDependencies) {
+    runNpmCommand(["install", "--omit=dev"], { cwd: targetDir });
+  }
 }
 
 export function buildRuntimeRoot(outputRootArg = path.join(repoRoot, "out", "runtime-root")) {

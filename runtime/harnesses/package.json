@@ -1,5 +1,10 @@
 {
   "name": "@holaboss/runtime-harnesses",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "jszip": "^3.10.1",
+    "pdfjs-dist": "^5.5.207"
+  }
 }
