@@ -27,6 +27,7 @@ import {
 } from "./harness-registry.js";
 import {
   captureRuntimeException,
+  extractRuntimeFetchErrorDiagnostics,
   redactRuntimeSentryText,
   redactRuntimeSentryValue,
 } from "./runtime-sentry.js";
@@ -371,6 +372,7 @@ async function postWorkspaceAgentRunRequest(params: {
       );
     }
   } catch (error) {
+    const fetchError = extractRuntimeFetchErrorDiagnostics(error);
     (params.captureRuntimeExceptionFn ?? captureRuntimeException)({
       error,
       level: "error",
@@ -399,6 +401,7 @@ async function postWorkspaceAgentRunRequest(params: {
       extras: {
         request_body: sanitizeRuntimeSentryValue(params.body),
         timeout_ms: 2000,
+        ...(fetchError ? { fetch_error: sanitizeRuntimeSentryValue(fetchError) } : {}),
       },
     });
     console.warn(

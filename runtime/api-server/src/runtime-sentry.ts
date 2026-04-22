@@ -129,6 +129,116 @@ function normalizeError(value: unknown): Error {
   return new Error(message);
 }
 
+function stringDiagnostic(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = redactRuntimeSentryText(value).trim();
+  return normalized || null;
+}
+
+function numberDiagnostic(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function errorDiagnostic(value: unknown): Record<string, unknown> | null {
+  if (!(value instanceof Error) && !isRecord(value)) {
+    return null;
+  }
+  const source: Record<string, unknown> = value instanceof Error
+    ? ((value as unknown as Record<string, unknown>) ?? {})
+    : value;
+  const diagnostic: Record<string, unknown> = {};
+  const name = stringDiagnostic(
+    value instanceof Error ? value.name : source.name,
+  );
+  const message = stringDiagnostic(
+    value instanceof Error ? value.message : source.message,
+  );
+  const code = stringDiagnostic(source.code);
+  if (name) {
+    diagnostic.name = name;
+  }
+  if (message) {
+    diagnostic.message = message;
+  }
+  if (code) {
+    diagnostic.code = code;
+  }
+  return Object.keys(diagnostic).length > 0 ? diagnostic : null;
+}
+
+function socketDiagnostic(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const diagnostic: Record<string, unknown> = {};
+  const localAddress = stringDiagnostic(value.localAddress);
+  const remoteAddress = stringDiagnostic(value.remoteAddress);
+  const remoteFamily = stringDiagnostic(value.remoteFamily);
+  const localPort = numberDiagnostic(value.localPort);
+  const remotePort = numberDiagnostic(value.remotePort);
+  const timeout = numberDiagnostic(value.timeout);
+  const bytesWritten = numberDiagnostic(value.bytesWritten);
+  const bytesRead = numberDiagnostic(value.bytesRead);
+  if (localAddress) {
+    diagnostic.localAddress = localAddress;
+  }
+  if (localPort !== null) {
+    diagnostic.localPort = localPort;
+  }
+  if (remoteAddress) {
+    diagnostic.remoteAddress = remoteAddress;
+  }
+  if (remotePort !== null) {
+    diagnostic.remotePort = remotePort;
+  }
+  if (remoteFamily) {
+    diagnostic.remoteFamily = remoteFamily;
+  }
+  if (timeout !== null) {
+    diagnostic.timeout = timeout;
+  }
+  if (bytesWritten !== null) {
+    diagnostic.bytesWritten = bytesWritten;
+  }
+  if (bytesRead !== null) {
+    diagnostic.bytesRead = bytesRead;
+  }
+  return Object.keys(diagnostic).length > 0 ? diagnostic : null;
+}
+
+export function extractRuntimeFetchErrorDiagnostics(
+  error: unknown,
+): Record<string, unknown> | null {
+  const diagnostic: Record<string, unknown> = {};
+  const errorDetails = errorDiagnostic(error);
+  if (errorDetails) {
+    diagnostic.error = errorDetails;
+  }
+  const causeValue =
+    error instanceof Error
+      ? error.cause
+      : isRecord(error)
+        ? error.cause
+        : undefined;
+  const causeDetails = errorDiagnostic(causeValue);
+  if (causeDetails) {
+    diagnostic.cause = causeDetails;
+  }
+  const socketDetails = socketDiagnostic(
+    isRecord(causeValue)
+      ? causeValue.socket
+      : isRecord(error)
+        ? error.socket
+        : undefined,
+  );
+  if (socketDetails) {
+    diagnostic.socket = socketDetails;
+  }
+  return Object.keys(diagnostic).length > 0 ? diagnostic : null;
+}
+
 function envPath(name: string): string {
   return process.env[name]?.trim() || "";
 }

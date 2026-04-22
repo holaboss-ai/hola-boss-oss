@@ -2154,27 +2154,33 @@ test("run-start registration strips the model-proxy path before calling the back
 
 test("run-start registration reports backend failures to Sentry", async () => {
   const sentryCaptures: RuntimeSentryCaptureOptions[] = [];
+  const originalWarn = console.warn;
+  console.warn = () => {};
 
-  await registerWorkspaceAgentRunStarted({
-    workspaceId: "workspace-1",
-    sessionId: "session-main",
-    inputId: "input-1",
-    runId: "workspace-1:session-main:input-1",
-    selectedModel: "elephant-alpha",
-    runtimeBinding: {
-      authToken: "token-1",
-      userId: "user-1",
-      sandboxId: "sandbox-1",
-      modelProxyBaseUrl: "http://127.0.0.1:3060/api/v1/model-proxy",
-    },
-    captureRuntimeExceptionFn: (capture) => {
-      sentryCaptures.push(capture);
-    },
-    fetchImpl: async () =>
-      new Response("binding lookup failed: api_key=secret-token", {
-        status: 401,
-      }),
-  });
+  try {
+    await registerWorkspaceAgentRunStarted({
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      inputId: "input-1",
+      runId: "workspace-1:session-main:input-1",
+      selectedModel: "elephant-alpha",
+      runtimeBinding: {
+        authToken: "token-1",
+        userId: "user-1",
+        sandboxId: "sandbox-1",
+        modelProxyBaseUrl: "http://127.0.0.1:3060/api/v1/model-proxy",
+      },
+      captureRuntimeExceptionFn: (capture) => {
+        sentryCaptures.push(capture);
+      },
+      fetchImpl: async () =>
+        new Response("binding lookup failed: api_key=secret-token", {
+          status: 401,
+        }),
+    });
+  } finally {
+    console.warn = originalWarn;
+  }
 
   assert.equal(sentryCaptures.length, 1);
   assert.equal(
@@ -2197,6 +2203,76 @@ test("run-start registration reports backend failures to Sentry", async () => {
     run_id: "workspace-1:session-main:input-1",
     model: "elephant-alpha",
   });
+});
+
+test("run-start registration reports fetch socket diagnostics to Sentry", async () => {
+  const sentryCaptures: RuntimeSentryCaptureOptions[] = [];
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  const fetchError = new TypeError("fetch failed");
+  Object.assign(fetchError, {
+    cause: {
+      name: "SocketError",
+      message: "other side closed",
+      code: "UND_ERR_SOCKET",
+      socket: {
+        localAddress: "198.18.0.1",
+        localPort: 51240,
+        remoteAddress: "35.160.37.189",
+        remotePort: 3060,
+        remoteFamily: "IPv4",
+        bytesWritten: 749,
+        bytesRead: 0,
+      },
+    },
+  });
+
+  try {
+    await registerWorkspaceAgentRunStarted({
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      inputId: "input-1",
+      runId: "workspace-1:session-main:input-1",
+      selectedModel: "elephant-alpha",
+      runtimeBinding: {
+        authToken: "token-1",
+        userId: "user-1",
+        sandboxId: "sandbox-1",
+        modelProxyBaseUrl: "http://127.0.0.1:3060/api/v1/model-proxy",
+      },
+      captureRuntimeExceptionFn: (capture) => {
+        sentryCaptures.push(capture);
+      },
+      fetchImpl: async () => {
+        throw fetchError;
+      },
+    });
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(sentryCaptures.length, 1);
+  assert.deepEqual(sentryCaptures[0]?.extras?.fetch_error, {
+    error: {
+      name: "TypeError",
+      message: "fetch failed",
+    },
+    cause: {
+      name: "SocketError",
+      message: "other side closed",
+      code: "UND_ERR_SOCKET",
+    },
+    socket: {
+      localAddress: "198.18.0.1",
+      localPort: 51240,
+      remoteAddress: "35.160.37.189",
+      remotePort: 3060,
+      remoteFamily: "IPv4",
+      bytesWritten: 749,
+      bytesRead: 0,
+    },
+  });
+  assert.equal(sentryCaptures[0]?.extras?.timeout_ms, 2000);
 });
 
 test("run-event registration strips the model-proxy path before calling the backend route", async () => {
