@@ -17,7 +17,6 @@ import {
 } from "./evolve.js";
 import { persistSkillCandidate, reviewTurnForSkillCandidate } from "./evolve-skill-review.js";
 import { RuntimeEvolveWorker } from "./evolve-worker.js";
-import { writeTurnContinuity } from "./turn-memory-writeback.js";
 
 const tempDirs: string[] = [];
 
@@ -114,16 +113,11 @@ test("queued evolve memory writeback persists durable memories and refreshes ind
     assistantText: "Captured workspace-specific instructions for future runs.",
   });
 
-  const updatedTurnResult = await writeTurnContinuity({
-    store,
-    memoryService,
-    turnResult,
-  });
   const queued = enqueueEvolveJob({
     store,
-    workspaceId: updatedTurnResult.workspaceId,
-    sessionId: updatedTurnResult.sessionId,
-    inputId: updatedTurnResult.inputId,
+    workspaceId: turnResult.workspaceId,
+    sessionId: turnResult.sessionId,
+    inputId: turnResult.inputId,
     instruction: "Remember the durable workspace rules from this turn.",
   });
 
@@ -674,7 +668,7 @@ test("processClaimedInput promotes misplaced evolve workspace skill files into t
   store.close();
 });
 
-test("sample completed turn writes continuity immediately and durable memory through the evolve worker", async () => {
+test("sample completed turn queues durable memory work until the evolve worker runs", async () => {
   const { store, memoryService } = makeRuntimeState("hb-evolve-e2e-");
   seedWorkspace(store);
   const queued = store.enqueueInput({
@@ -754,7 +748,7 @@ test("sample completed turn writes continuity immediately and durable memory thr
 
   assert.ok(queuedJob);
   assert.equal(queuedJob.status, "QUEUED");
-  assert.ok(immediateFiles["workspace/workspace-1/runtime/session-memory/session-main.md"]);
+  assert.equal(immediateFiles["workspace/workspace-1/runtime/session-memory/session-main.md"], undefined);
   assert.ok(!immediateFiles["workspace/workspace-1/knowledge/facts/verification-command.md"]);
   assert.ok(!immediateFiles["workspace/workspace-1/knowledge/procedures/release-procedure.md"]);
 
@@ -797,16 +791,11 @@ test("queued evolve memory writeback skips empty index generation when no durabl
     assistantText: "Done.",
   });
 
-  const updatedTurnResult = await writeTurnContinuity({
-    store,
-    memoryService,
-    turnResult,
-  });
   const queued = enqueueEvolveJob({
     store,
-    workspaceId: updatedTurnResult.workspaceId,
-    sessionId: updatedTurnResult.sessionId,
-    inputId: updatedTurnResult.inputId,
+    workspaceId: turnResult.workspaceId,
+    sessionId: turnResult.sessionId,
+    inputId: turnResult.inputId,
     instruction: "Remember the durable workspace rules from this turn.",
   });
 
@@ -920,11 +909,6 @@ test("evolve memory processor accepts legacy durable-memory job types", async ()
     status: "completed",
     stopReason: "ok",
     assistantText: "Captured workspace-specific instructions for future runs.",
-  });
-  await writeTurnContinuity({
-    store,
-    memoryService,
-    turnResult,
   });
   const legacyJob = store.enqueuePostRunJob({
     jobType: LEGACY_DURABLE_MEMORY_WRITEBACK_JOB_TYPE,

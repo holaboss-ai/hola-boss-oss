@@ -143,9 +143,17 @@ Important detail:
 - `agents.model` is not the execution model selector here
 - the main prompt-text contribution from Step 1 is the `AGENTS.md` content
 
-## Step 2: Resolve Workspace Skills and Prepare the Instruction
+## Step 2: Resolve Skills and Prepare the Instruction
 
 Before prompt projection, `ts-runner.ts` resolves the available skills with `resolveWorkspaceSkills(...)`.
+
+Important distinction:
+
+- resolving skills is not the same thing as expanding skills into prompt text
+- the resolved set can include both workspace skills and embedded skills
+- mere availability only affects skill visibility and metadata; it does not inline any `SKILL.md` body
+- prompt-body expansion only happens when the instruction explicitly quotes a skill, for example with a leading `/cloud_costs`
+- that preserves progressive disclosure: skill guidance is loaded on demand, not preloaded wholesale
 
 For this example, assume it finds:
 
@@ -177,6 +185,8 @@ Then `prepareInstructionWithQuotedWorkspaceSkills(...)` parses the leading `/clo
 
 Important detail:
 
+- this is an explicit opt-in expansion because the instruction itself started with `/cloud_costs`
+- if the instruction had not explicitly quoted a skill, `quoted_skill_blocks` would be empty even though the skill was resolved and available
 - the runtime prepares the quoted skill block once
 - the PI host does not parse slash-prefixed skill references from raw instruction text
 
@@ -380,7 +390,7 @@ This is the exact bridge between loaded data and rendered prompt material in the
 | Loaded value | Runtime section id / channel | How it renders | Where the model finally sees it |
 | --- | --- | --- | --- |
 | `general_config.agent.prompt` | `workspace_policy` / `system_prompt` | wrapped with `Workspace instructions from AGENTS.md:` and the guardrails that say root `AGENTS.md` is already loaded | in the final `system_prompt` |
-| `workspaceSkillIds` | `execution_policy` + `capability_policy` / `system_prompt` | indirect wording such as `Use relevant skills instead of improvising when they materially help.` plus workspace-skill availability counts | in the final `system_prompt` |
+| `workspaceSkillIds` | `execution_policy` + `capability_policy` / `system_prompt` | indirect wording such as `Use relevant skills instead of improvising when they materially help.` plus skill availability counts; this does not inline skill bodies | in the final `system_prompt` |
 | `resolved_mcp_tool_refs` | `execution_policy` + `capability_policy` / `system_prompt` | indirect wording such as `Use relevant MCP tools directly...` and `Connected MCP access: available.` | in the final `system_prompt` |
 | `resolved_mcp_server_ids` | `execution_policy` + `capability_policy` / `system_prompt` | indirect wording about connected MCP access when servers exist even without named tools | in the final `system_prompt` |
 | `session_scratchpad_context` | `scratchpad_context` / `context_message` | rendered as `Session scratchpad:` with metadata + preview | flattened into `context_messages`, then included in the PI `Runtime context:` block |
@@ -389,13 +399,14 @@ This is the exact bridge between loaded data and rendered prompt material in the
 | `pending_user_memory_context` | `pending_user_memory` / `context_message` | rendered as `Current-turn inferred user memory:` with pending proposal summaries | flattened into `context_messages`, then included in the PI `Runtime context:` block |
 | `recalled_memory_context` | `memory_recall` / `context_message` | rendered as `Recalled durable memory:` with selected memory summaries | flattened into `context_messages`, then included in the PI `Runtime context:` block |
 | `evolve_candidate_context` | `evolve_candidate_context` / `context_message` | rendered as `Accepted evolve candidate:` with the selected candidate details | flattened into `context_messages`, then included in the PI `Runtime context:` block |
-| `quoted_skill_blocks` | no runtime prompt section; PI-host body serialization only | emitted as a `Quoted workspace skills:` block before the instruction | in the PI prompt body text |
+| `quoted_skill_blocks` | no runtime prompt section; PI-host body serialization only | emitted as a `Quoted workspace skills:` block before the instruction, but only when the user explicitly quoted one or more skills in the instruction | in the PI prompt body text |
 | `attachments` | no runtime prompt section; PI-host attachment serialization only | supported docs become `[Document: ...]` blocks, images become PI image content, unsupported files become fallback path lines | in the PI prompt body text and/or PI image content |
 
 Important detail:
 
 - session-memory continuity is intentionally absent from this map because it is no longer part of prompt projection
 - the model still gets continuity from PI session history when a persisted harness session is reopened
+- resolved skills are intentionally absent from the PI body unless they were explicitly quoted; that is the progressive-disclosure boundary
 
 Important detail:
 
@@ -634,6 +645,7 @@ Important detail:
 - PI receives a separate `system_prompt` channel from the runtime path, and that channel already contains the `Workspace instructions from AGENTS.md:` section
 - the PI user/body prompt text built below is a different channel
 - if you only look at the body text below, you will not see `AGENTS.md`, because it lives in the separate `system_prompt` override instead
+- likewise, you only see the `cloud_costs` skill body below because the instruction explicitly quoted it; skill resolution alone would not have added it
 
 The function appends sections in this order:
 
