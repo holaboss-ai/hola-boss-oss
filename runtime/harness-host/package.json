@@ -27,6 +27,7 @@
     "@sinclair/typebox": "^0.34.41",
     "@mariozechner/pi-ai": "0.66.0",
     "@mariozechner/pi-coding-agent": "0.66.0",
+    "@sentry/node": "^10.48.0",
     "exceljs": "^4.4.0",
     "jszip": "^3.10.1",
     "mcporter": "^0.7.3",

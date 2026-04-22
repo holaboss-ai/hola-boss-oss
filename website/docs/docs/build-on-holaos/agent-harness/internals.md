@@ -58,6 +58,7 @@ Representative reduced host request from `runtime/harnesses/src/pi.ts`:
 - `runtime/harness-host/src/pi-runtime-tools.ts`: runtime-managed tool bridge for onboarding, cronjobs, image generation, and `write_report`. This is also where the host attaches workspace/session/input/model headers to runtime-tool calls.
 - `runtime/harness-host/src/pi-web-search.ts`: hosted native web search bridge for the current `web_search` tool.
 - `runtime/harnesses/src/desktop-browser-tools.ts`, `runtime/harnesses/src/runtime-agent-tools.ts`, and `runtime/harnesses/src/native-web-search-tools.ts`: canonical ids and descriptions for the projected browser, runtime, and native web-search surfaces.
+- `runtime/api-server/src/backend-agent-runs-contract.ts`: backend-owned run registration contract for Sentry waterfall reconstruction and model-proxy usage correlation.
 
 Representative event normalization from `runtime/harness-host/src/pi.ts`:
 
@@ -88,6 +89,30 @@ const settingsManager = SettingsManager.inMemory({
     : {}),
 });
 ```
+
+## Backend-owned waterfall relay
+
+The runtime is also responsible for relaying enough structured run data for a remote backend to render a useful waterfall while still treating model-proxy usage as canonical pricing.
+
+The current relay contract lives in `runtime/api-server/src/backend-agent-runs-contract.ts` and is posted from `runtime/api-server/src/claimed-input-executor.ts` to:
+
+- `POST /api/v1/sandbox/workspaces/:workspaceId/agent-runs/start`
+- `POST /api/v1/sandbox/workspaces/:workspaceId/agent-runs/events`
+
+The runtime currently emits these backend event types:
+
+- `tool_call`: one relay for each started/completed tool lifecycle event.
+- `skill_invocation`: one relay for each started/completed skill lifecycle event.
+- `output_delta`: coalesced assistant text chunks. The runtime buffers adjacent compatible deltas so the backend waterfall is readable instead of receiving one HTTP write per token.
+- `run_completed`: terminal success or waiting-user completion, including `final_output_text` and `usage` when available.
+- `run_failed`: terminal failure payload, including any normalized failure message and usage when available.
+- `run_state`: explicit non-idle terminal state derived from the terminal event. Today this is used for `waiting_user` and `paused` so the backend does not have to infer that state from a generic terminal span.
+
+The backend should join these relayed events with model-proxy requests by `run_id`. The runtime still sends `X-Holaboss-Run-Id` on proxied model calls, so the intended architecture is:
+
+- backend-owned root run trace
+- runtime-relayed lifecycle events for the waterfall shape
+- model-proxy usage and cost as the authoritative pricing source
 
 ## Quoted workspace skill expansion
 
