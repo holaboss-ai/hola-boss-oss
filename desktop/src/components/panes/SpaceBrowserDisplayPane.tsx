@@ -359,7 +359,7 @@ export function SpaceBrowserDisplayPane({
           : "rounded-xl border border-border bg-card"
       }`}
     >
-      <div className="shrink-0 border-b border-border px-4 py-2">
+      <div className="shrink-0 border-b border-border px-2 py-1.5">
         <div className="flex flex-wrap items-center gap-1.5">
           <Button
             variant="ghost"
@@ -403,7 +403,7 @@ export function SpaceBrowserDisplayPane({
           <form onSubmit={onSubmit} className="min-w-0 flex-1">
             <div
               ref={addressFieldRef}
-              className="flex min-w-0 items-center gap-2 rounded-md border border-border bg-muted px-3 py-2 transition-colors focus-within:border-ring"
+              className="flex h-7 min-w-0 items-center gap-2 rounded-md border border-border bg-muted px-2.5 transition-colors focus-within:border-muted-foreground"
               onClick={selectAddressInput}
             >
               {isActiveTabBusy ? (

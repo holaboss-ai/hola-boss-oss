@@ -4351,7 +4351,7 @@ function AppShellContent() {
                                             restoreLastSpaceFileDisplayView();
                                           }
                                         }}
-                                        className={`flex h-7 min-w-0 items-center justify-center gap-1.5 overflow-hidden rounded-md px-2 text-xs font-medium transition-[flex-basis,flex-grow,background-color,color] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] active:scale-[0.98] ${
+                                        className={`flex h-7 min-w-0 items-center justify-center overflow-hidden rounded-md px-2 text-xs font-medium transition-[flex-basis,flex-grow,background-color,color] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] active:scale-[0.98] ${
                                           isActive
                                             ? "grow basis-0 bg-muted text-foreground"
                                             : "grow-0 basis-9 text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -4359,10 +4359,10 @@ function AppShellContent() {
                                       >
                                         <Icon className="size-3.5 shrink-0" />
                                         <span
-                                          className={`overflow-hidden whitespace-nowrap transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                                          className={`overflow-hidden whitespace-nowrap transition-[max-width,opacity,margin-left] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
                                             isActive
-                                              ? "max-w-[120px] opacity-100 delay-100"
-                                              : "max-w-0 opacity-0"
+                                              ? "ml-1.5 max-w-[120px] opacity-100 delay-100"
+                                              : "ml-0 max-w-0 opacity-0"
                                           }`}
                                         >
                                           {label}
