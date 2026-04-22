@@ -318,13 +318,13 @@ export function SpreadsheetEditor({
         <table className="w-max min-w-full border-separate border-spacing-0 text-sm text-foreground">
           <thead className="sticky top-0 z-[2]">
             <tr>
-              <th className="sticky left-0 z-[3] w-11 border-b border-r border-border bg-muted px-0 py-0 text-center text-xs font-normal uppercase tracking-[0.08em] text-muted-foreground backdrop-blur-sm">
+              <th className="sticky left-0 z-[3] w-11 rounded-tl-lg border-b border-r border-border bg-muted px-0 py-0 text-center text-xs font-normal uppercase tracking-[0.08em] text-muted-foreground">
                 <div className="flex h-8 items-center justify-center">#</div>
               </th>
               {activeSheet.columns.map((column, columnIndex) => (
                 <th
                   key={`${column}-${columnIndex}`}
-                  className="min-w-[172px] border-b border-r border-border bg-muted px-0 py-0 text-left text-xs font-medium text-foreground backdrop-blur-sm last:border-r-0"
+                  className="min-w-[172px] border-b border-r border-border bg-muted px-0 py-0 text-left text-xs font-medium text-foreground last:rounded-tr-lg last:border-r-0"
                 >
                   {activeSheet.hasHeaderRow && editable ? (
                     <input
@@ -357,9 +357,13 @@ export function SpreadsheetEditor({
                 </td>
               </tr>
             ) : (
-              activeSheet.rows.map((row, rowIndex) => (
+              activeSheet.rows.map((row, rowIndex) => {
+                const isLastRow = rowIndex === activeSheet.rows.length - 1;
+                return (
                 <tr key={`row-${rowIndex}`} className="group/row">
-                  <td className="sticky left-0 z-[1] w-11 border-b border-r border-border bg-background px-0 py-0 text-center align-middle text-xs text-muted-foreground transition-colors group-hover/row:bg-accent/25 group-hover/row:text-muted-foreground">
+                  <td
+                    className={`sticky left-0 z-[1] w-11 border-b border-r border-border bg-background px-0 py-0 text-center align-middle text-xs text-muted-foreground transition-colors group-hover/row:bg-accent/25 group-hover/row:text-muted-foreground ${isLastRow ? "rounded-bl-lg" : ""}`}
+                  >
                     <div className="flex min-h-8 items-center justify-center">
                       {rowIndex + 1}
                     </div>
@@ -428,7 +432,8 @@ export function SpreadsheetEditor({
                     );
                   })}
                 </tr>
-              ))
+                );
+              })
             )}
           </tbody>
         </table>
