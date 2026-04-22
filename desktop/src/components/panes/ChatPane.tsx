@@ -6476,7 +6476,6 @@ export function ChatPane({
   const displayedTodoPlan = todoPlanPreview?.plan ?? currentTodoPlan;
   const displayedTodoPanelExpanded =
     todoPlanPreview?.expanded ?? todoPanelExpanded;
-  const todoPanelSlotHeightPx = 58;
   const hasMessages = messages.length > 0 || showLiveAssistantTurn;
   const streamTelemetryTail = useMemo(
     () => streamTelemetry.slice(-80).reverse(),
@@ -7324,22 +7323,18 @@ export function ChatPane({
           </div>
         ) : null}
 
-        {displayedTodoPlan ? (
-          <div
-            className="relative z-20 shrink-0 px-6 pt-3"
-            style={{ height: `${todoPanelSlotHeightPx}px` }}
-          >
-            <div className="absolute inset-x-6 top-3">
-              <CurrentTodoPanel
-                todoPlan={displayedTodoPlan}
-                expanded={displayedTodoPanelExpanded}
-                onToggle={toggleTodoPanel}
-              />
-            </div>
-          </div>
-        ) : null}
-
         <div className="relative flex min-h-0 flex-1 flex-col">
+          {displayedTodoPlan ? (
+            <div className="pointer-events-none absolute inset-x-4 top-3 z-20">
+              <div className="pointer-events-auto">
+                <CurrentTodoPanel
+                  todoPlan={displayedTodoPlan}
+                  expanded={displayedTodoPanelExpanded}
+                  onToggle={toggleTodoPanel}
+                />
+              </div>
+            </div>
+          ) : null}
           <div className="min-h-0 flex-1 overflow-hidden">
             <div
               ref={messagesRef}
@@ -7367,9 +7362,9 @@ export function ChatPane({
               {hasMessages ? (
                 <div
                   ref={messagesContentRef}
-                  className={`flex min-w-0 w-full flex-col gap-6 px-6 pb-3 pt-5 ${
-                    showHistoryRestoreScreen ? "invisible" : ""
-                  }`}
+                  className={`flex min-w-0 w-full flex-col gap-4 px-4 pb-3 ${
+                    displayedTodoPlan ? "pt-14" : "pt-5"
+                  } ${showHistoryRestoreScreen ? "invisible" : ""}`}
                 >
                   {isLoadingOlderHistory ||
                   loadedHistoryMessageCount < totalHistoryMessageCount ? (
@@ -8811,33 +8806,32 @@ function CurrentTodoPanel({
     totalTaskCount > 0 ? `${currentTaskPosition}/${totalTaskCount}` : "0/0";
 
   return (
-    <div className="overflow-hidden rounded-[18px] border border-border bg-background shadow-subtle-xs">
+    <div className="overflow-hidden rounded-[12px] border border-border bg-background/80 shadow-subtle-sm backdrop-blur-xl">
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={expanded}
-        className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition hover:bg-muted"
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition hover:bg-muted/60"
       >
         <div
-          className={`inline-flex size-5 shrink-0 items-center justify-center rounded-full ${
+          className={`inline-flex size-4 shrink-0 items-center justify-center ${
             remainingTaskCount > 0 ? "text-muted-foreground" : "text-success"
           }`}
         >
           {remainingTaskCount > 0 ? (
-            <Clock3 size={13} className="shrink-0" />
+            <Clock3 className="size-3.5 shrink-0" />
           ) : (
-            <Check size={13} className="shrink-0" />
+            <Check className="size-3.5 shrink-0" />
           )}
         </div>
-        <div className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
+        <div className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
           {summaryLabel}
         </div>
-        <div className="shrink-0 text-xs font-medium tabular-nums text-muted-foreground">
+        <div className="shrink-0 text-[10px] font-medium tabular-nums text-muted-foreground">
           {progressLabel}
         </div>
         <ChevronDown
-          size={14}
-          className={`shrink-0 text-muted-foreground transition ${expanded ? "rotate-0" : "-rotate-90"}`}
+          className={`size-3.5 shrink-0 text-muted-foreground transition ${expanded ? "rotate-0" : "-rotate-90"}`}
         />
       </button>
 
