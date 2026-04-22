@@ -9,7 +9,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   browserSessionStatusLabel,
   browserSessionTitle,
@@ -124,52 +123,16 @@ export function SpaceBrowserExplorerPane({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-transparent">
-      <div className="border-b border-border px-3 py-2.5">
-        <Tabs
-          value={browserSpace}
-          onValueChange={(value) => openBrowserSpace(value as BrowserSpaceId)}
-        >
-          <TabsList className="w-full">
-            <TabsTrigger value="user" className="flex-1 gap-1.5 text-xs">
-              <User size={12} />
-              User
-              <Badge
-                variant="secondary"
-                className="ml-0.5 h-4 min-w-4 px-1 text-xs"
-              >
-                {browserState.tabCounts.user}
-              </Badge>
-            </TabsTrigger>
-            <TabsTrigger
-              value="agent"
-              className="relative flex-1 gap-1.5 text-xs"
-            >
-              <Bot size={12} />
-              Agent
-              <Badge
-                variant="secondary"
-                className="ml-0.5 h-4 min-w-4 px-1 text-xs"
-              >
-                {browserState.tabCounts.agent}
-              </Badge>
-              {hasPendingAgentJump && browserSpace !== "agent" ? (
-                <span
-                  aria-hidden="true"
-                  className="absolute right-1.5 top-1 size-1.5 animate-pulse rounded-full bg-primary"
-                />
-              ) : null}
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-
-        {browserSpace === "agent" ? (
-          <div className="mt-2.5 flex items-center gap-1.5">
+      {/* Agent session chip — only surfaces when on Agent scope */}
+      {browserSpace === "agent" ? (
+        <div className="shrink-0 border-b border-border px-2 py-1.5">
+          <div className="flex items-center gap-1.5">
             <Select
               value={browserState.sessionId ?? undefined}
               onValueChange={selectAgentSessionBrowser}
               disabled={!hasAgentSessionBrowsers}
             >
-              <SelectTrigger className="h-9 min-w-0 flex-1 basis-0 rounded-lg border-border bg-card px-3 text-left text-xs shadow-none">
+              <SelectTrigger className="h-7 min-w-0 flex-1 basis-0 rounded-md border-border bg-card px-2 text-left text-xs shadow-none">
                 <SelectValue
                   placeholder={
                     hasAgentSessionBrowsers
@@ -215,12 +178,12 @@ export function SpaceBrowserExplorerPane({
             {sessionBrowserStatus ? (
               <Badge
                 variant="secondary"
-                className={`shrink-0 gap-1 rounded-full border px-2 py-0.5 text-xs ${sessionStatusBadgeClasses(
+                className={`shrink-0 gap-1 rounded-full border px-2 py-0.5 text-[10px] ${sessionStatusBadgeClasses(
                   sessionBrowserStatus.tone as SessionStatusTone,
                 )}`}
               >
                 {sessionBrowserStatus.tone === "paused" ? (
-                  <Pause size={10} />
+                  <Pause className="size-2.5" />
                 ) : (
                   <span
                     aria-hidden="true"
@@ -235,19 +198,23 @@ export function SpaceBrowserExplorerPane({
               </Badge>
             ) : null}
           </div>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
-        <div className="space-y-0.5">
-          {hasBookmarks ? (
-            bookmarks.map((bookmark) => (
+      {/* Scrollable content: bookmarks (when any) + tabs */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+        {hasBookmarks ? (
+          <div className="mb-3 space-y-0.5">
+            <div className="px-2.5 pb-1 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+              Bookmarks
+            </div>
+            {bookmarks.map((bookmark) => (
               <Button
                 key={bookmark.id}
                 variant="ghost"
                 size="sm"
                 onClick={() => openBookmark(bookmark)}
-                className="h-auto w-full justify-start gap-2.5 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-accent/55"
+                className="h-auto w-full justify-start gap-2.5 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-accent"
               >
                 {bookmark.faviconUrl ? (
                   <img
@@ -257,7 +224,7 @@ export function SpaceBrowserExplorerPane({
                   />
                 ) : (
                   <div className="grid size-4 shrink-0 place-items-center rounded-sm bg-muted text-muted-foreground">
-                    <Star size={10} />
+                    <Star className="size-2.5" />
                   </div>
                 )}
                 <div className="min-w-0 flex-1">
@@ -266,104 +233,142 @@ export function SpaceBrowserExplorerPane({
                   </div>
                 </div>
               </Button>
-            ))
+            ))}
+          </div>
+        ) : null}
+
+        <div className="space-y-0.5">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={openNewTab}
+            aria-label="Open new tab"
+            className="h-auto w-full justify-start gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <div className="grid size-4 shrink-0 place-items-center">
+              <Plus className="size-3.5" />
+            </div>
+            <span className="text-sm">New tab</span>
+          </Button>
+
+          {hasTabs ? (
+            browserState.tabs.map((tab) => {
+              const isActive = tab.id === activeTab.id;
+              return (
+                <div
+                  key={tab.id}
+                  className={`group relative flex items-center gap-2 rounded-lg px-2.5 py-1.5 transition-colors ${
+                    isActive
+                      ? "bg-accent text-accent-foreground"
+                      : "hover:bg-accent"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onActivateDisplay();
+                      void window.electronAPI.browser.setActiveTab(tab.id);
+                    }}
+                    className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+                    title={tab.title || tab.url}
+                  >
+                    {tab.faviconUrl ? (
+                      <img
+                        src={tab.faviconUrl}
+                        alt=""
+                        className="size-4 shrink-0 rounded-sm"
+                      />
+                    ) : (
+                      <div className="grid size-4 shrink-0 place-items-center rounded-sm bg-muted text-muted-foreground">
+                        {browserSpace === "agent" ? (
+                          <Bot className="size-2.5" />
+                        ) : (
+                          <Globe className="size-2.5" />
+                        )}
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm">
+                        {tab.title || "New Tab"}
+                      </div>
+                    </div>
+                  </button>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    onClick={() => {
+                      onActivateDisplay();
+                      void window.electronAPI.browser.closeTab(tab.id);
+                    }}
+                    aria-label={`Close ${tab.title || "tab"}`}
+                    className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
+                  >
+                    <X className="size-3" />
+                  </Button>
+                </div>
+              );
+            })
           ) : (
-            <div className="px-2.5 py-1.5 text-xs text-muted-foreground">
-              Saved bookmarks will appear here.
+            <div className="flex flex-col items-center justify-center gap-2 px-4 py-8 text-center">
+              <div className="grid size-8 place-items-center rounded-[10px] bg-muted text-muted-foreground">
+                <Globe className="size-3.5" />
+              </div>
+              <div className="text-xs leading-5 text-muted-foreground">
+                No open tabs in the {browserSpace} browser.
+              </div>
             </div>
           )}
         </div>
+      </div>
 
-        <div className="mt-4 border-t border-border pt-2">
-          <div className="mb-1.5 flex items-center justify-between gap-2">
-            <Button
+      {/* Bottom scope switcher */}
+      <div className="flex shrink-0 gap-1 border-t border-border p-1">
+        {(
+          [
+            {
+              value: "user" as const,
+              label: "User",
+              icon: User,
+              count: browserState.tabCounts.user,
+              showPending: false,
+            },
+            {
+              value: "agent" as const,
+              label: "Agent",
+              icon: Bot,
+              count: browserState.tabCounts.agent,
+              showPending: hasPendingAgentJump && browserSpace !== "agent",
+            },
+          ] as const
+        ).map(({ value, label, icon: Icon, count, showPending }) => {
+          const isActive = browserSpace === value;
+          return (
+            <button
+              key={value}
               type="button"
-              variant="ghost"
-              size="sm"
-              onClick={openNewTab}
-              aria-label="Open new tab"
-              className="gap-1.5 text-xs text-muted-foreground"
+              onClick={() => openBrowserSpace(value)}
+              aria-pressed={isActive}
+              className={`relative flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
+                isActive
+                  ? "bg-muted text-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-foreground"
+              }`}
             >
-              <Plus size={12} />
-              New Tab
-            </Button>
-          </div>
-          <div className="space-y-0.5">
-            {hasTabs ? (
-              browserState.tabs.map((tab) => {
-                const isActive = tab.id === activeTab.id;
-                return (
-                  <div
-                    key={tab.id}
-                    className={`group relative flex items-center gap-2 rounded-lg px-2.5 py-1.5 transition-colors ${
-                      isActive
-                        ? "bg-accent text-accent-foreground"
-                        : "hover:bg-accent/55"
-                    }`}
-                  >
-                    {isActive ? (
-                      <span
-                        aria-hidden="true"
-                        className="absolute left-0 top-1/2 h-4 w-[2px] -translate-y-1/2 rounded-full bg-primary"
-                      />
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onActivateDisplay();
-                        void window.electronAPI.browser.setActiveTab(tab.id);
-                      }}
-                      className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
-                      title={tab.title || tab.url}
-                    >
-                      {tab.faviconUrl ? (
-                        <img
-                          src={tab.faviconUrl}
-                          alt=""
-                          className="size-4 shrink-0 rounded-sm"
-                        />
-                      ) : (
-                        <div className="grid size-4 shrink-0 place-items-center rounded-sm bg-muted text-muted-foreground">
-                          {browserSpace === "agent" ? (
-                            <Bot size={10} />
-                          ) : (
-                            <Globe size={10} />
-                          )}
-                        </div>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm">
-                          {tab.title || "New Tab"}
-                        </div>
-                      </div>
-                    </button>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      onClick={() => {
-                        onActivateDisplay();
-                        void window.electronAPI.browser.closeTab(tab.id);
-                      }}
-                      aria-label={`Close ${tab.title || "tab"}`}
-                      className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
-                    >
-                      <X size={12} />
-                    </Button>
-                  </div>
-                );
-              })
-            ) : (
-              <div className="flex flex-col items-center justify-center gap-2 px-4 py-8 text-center">
-                <div className="grid size-9 place-items-center rounded-[10px] bg-muted text-muted-foreground">
-                  <Globe size={14} />
-                </div>
-                <div className="text-xs leading-5 text-muted-foreground">
-                  No open tabs in the {browserSpace} browser.
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+              <Icon className="size-3.5" />
+              <span>{label}</span>
+              <span className="text-muted-foreground tabular-nums">
+                {count}
+              </span>
+              {showPending ? (
+                <span
+                  aria-hidden="true"
+                  className="absolute right-1 top-1 size-1.5 animate-pulse rounded-full bg-primary"
+                />
+              ) : null}
+            </button>
+          );
+        })}
       </div>
     </div>
   );

@@ -8,45 +8,54 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sourcePath = path.join(__dirname, "SpaceBrowserExplorerPane.tsx");
 const browserSessionUiPath = path.join(__dirname, "browserSessionUi.ts");
 
-test("space browser explorer styles the agent session selector like the app's standard dropdowns", async () => {
+test("space browser explorer renders the arc-inspired bottom scope switcher", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  // The top segmented Tabs control should be gone.
+  assert.doesNotMatch(source, /<TabsList/);
+  assert.doesNotMatch(source, /<TabsTrigger/);
+
+  // Bottom switcher container.
+  assert.match(
+    source,
+    /flex shrink-0 gap-1 border-t border-border p-1/,
+  );
+
+  // Both scope buttons must exist with counts from browserState.tabCounts.
+  assert.match(source, /browserState\.tabCounts\.user/);
+  assert.match(source, /browserState\.tabCounts\.agent/);
+
+  // Pending agent dot surfaces only when not already on agent scope.
+  assert.match(
+    source,
+    /hasPendingAgentJump && browserSpace !== "agent"/,
+  );
+});
+
+test("space browser explorer keeps the agent session selector compact and only on agent scope", async () => {
   const source = await readFile(sourcePath, "utf8");
 
   assert.doesNotMatch(source, /Agent Session Browser/);
+
+  // Agent session chip container is conditional on browserSpace === "agent".
   assert.match(
     source,
-    /<div className="mt-2\.5 flex items-center gap-1\.5">/,
+    /browserSpace === "agent" \? \(\s*<div className="shrink-0 border-b border-border px-2 py-1\.5">/,
   );
+
+  // Compact SelectTrigger inside the chip.
   assert.match(
     source,
-    /<SelectTrigger className="h-9 min-w-0 flex-1 basis-0 rounded-\[11px\] border-border\/45 bg-card px-3 text-left text-xs font-medium shadow-none">/,
+    /<SelectTrigger className="h-7 min-w-0 flex-1 basis-0 rounded-md border-border bg-card px-2 text-left text-xs shadow-none">/,
   );
+
   assert.match(
     source,
     /<SelectContent align="start" className="p-1">/,
   );
   assert.match(
     source,
-    /className="rounded-\[11px\] px-3 py-2 text-xs"/,
-  );
-  assert.match(
-    source,
-    /className="grid w-full min-w-0 grid-cols-\[minmax\(0,1fr\)_auto\] items-center gap-3"/,
-  );
-  assert.match(
-    source,
-    /className="min-w-0 truncate font-medium text-foreground"/,
-  );
-  assert.match(
-    source,
-    /const isSelectedSession =\s*\(browserState\.sessionId \?\? ""\) === session\.session_id;/,
-  );
-  assert.match(
-    source,
-    /!isSelectedSession \?\s*\(\s*<span className="shrink-0 text-\[10px\] font-semibold uppercase tracking-\[0\.12em\] text-muted-foreground\/85">/,
-  );
-  assert.match(
-    source,
-    /className=\{`shrink-0 gap-1 rounded-full px-1\.5 py-0\.5 text-\[10px\]/,
+    /className="rounded-md px-3 py-2 text-xs"/,
   );
 });
 
@@ -59,29 +68,19 @@ test("browser session status badges use short single-word labels", async () => {
   assert.match(source, /label: "Error"/);
   assert.match(source, /label: "Sleeping"/);
   assert.match(source, /label: "Locked"/);
-  assert.match(source, /label: "Ready"/);
   assert.doesNotMatch(source, /label: "Agent paused"/);
   assert.doesNotMatch(source, /label: "Agent operating"/);
 });
 
-test("space browser explorer uses readable light-theme colors for session status badges", async () => {
+test("space browser explorer uses semantic tokens for session status tones", async () => {
   const source = await readFile(sourcePath, "utf8");
 
+  assert.match(source, /border-success\/30 bg-success\/10 text-success/);
+  assert.match(source, /border-warning\/30 bg-warning\/10 text-warning/);
+  assert.match(source, /border-info\/30 bg-info\/10 text-info/);
   assert.match(
     source,
-    /text-emerald-700 dark:border-emerald-400\/40 dark:bg-emerald-500\/10 dark:text-emerald-200/,
-  );
-  assert.match(
-    source,
-    /text-amber-700 dark:border-amber-400\/30 dark:bg-amber-500\/10 dark:text-amber-100/,
-  );
-  assert.match(
-    source,
-    /text-sky-700 dark:border-sky-400\/30 dark:bg-sky-500\/10 dark:text-sky-100/,
-  );
-  assert.match(
-    source,
-    /text-rose-700 dark:border-rose-400\/35 dark:bg-rose-500\/10 dark:text-rose-100/,
+    /border-destructive\/30 bg-destructive\/10 text-destructive/,
   );
 });
 
@@ -92,4 +91,13 @@ test("space browser explorer does not render a per-tab agent status dot", async 
     source,
     /tab\.id === activeTab\.id[\s\S]*sessionBrowserStatus[\s\S]*inline-block size-2 shrink-0 rounded-full/,
   );
+});
+
+test("space browser explorer hides the bookmarks section when empty", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  // Empty-state placeholder text should be gone — empty bookmarks render nothing.
+  assert.doesNotMatch(source, /Saved bookmarks will appear here/);
+  // Bookmarks block is conditional on hasBookmarks.
+  assert.match(source, /\{hasBookmarks \? \(/);
 });
