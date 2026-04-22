@@ -1,19 +1,40 @@
 import fs from "node:fs";
-import path from "node:path";
 import { createRequire } from "node:module";
+import path from "node:path";
 
-import JSZip from "jszip";
 import ExcelJS from "exceljs";
-import type { ImageContent } from "@mariozechner/pi-ai";
+import JSZip from "jszip";
 
-import type { HarnessHostInputAttachmentPayload } from "./contracts.js";
-import { resolveAttachmentAbsolutePath } from "./workspace-boundary.js";
+import type { HarnessInputAttachmentPayload } from "./types.js";
 
 const require = createRequire(import.meta.url);
 
-const MAX_INLINE_IMAGE_BYTES = 10 * 1024 * 1024;
-const MAX_INLINE_TEXT_BYTES = 128 * 1024;
-const MAX_EXTRACTED_TEXT_CHARS = 120_000;
+export interface HarnessInlineImageContent {
+  type: "image";
+  data: string;
+  mimeType: string;
+}
+
+export interface HarnessAttachmentTextExtractionParams {
+  attachment: HarnessInputAttachmentPayload;
+  absolutePath: string;
+  maxInlineTextBytes?: number;
+}
+
+export interface HarnessDocumentAttachmentSectionParams extends HarnessAttachmentTextExtractionParams {
+  promptPath?: string;
+  maxExtractedTextChars?: number;
+}
+
+export interface HarnessInlineImageAttachmentParams {
+  attachment: HarnessInputAttachmentPayload;
+  absolutePath: string;
+  maxInlineImageBytes?: number;
+}
+
+export const DEFAULT_HARNESS_MAX_INLINE_IMAGE_BYTES = 10 * 1024 * 1024;
+export const DEFAULT_HARNESS_MAX_INLINE_TEXT_BYTES = 128 * 1024;
+export const DEFAULT_HARNESS_MAX_EXTRACTED_TEXT_CHARS = 120_000;
 
 const TEXT_ATTACHMENT_MIME_TYPES = new Set([
   "application/json",
@@ -96,18 +117,7 @@ function resolvePdfStandardFontDataPath(): string {
 
 const PDF_STANDARD_FONT_DATA_PATH = resolvePdfStandardFontDataPath();
 
-type PromptAttachment = HarnessHostInputAttachmentPayload;
-
-export interface AttachmentPromptContent {
-  sections: string[];
-  images: ImageContent[];
-}
-
-function attachmentPromptPath(attachment: PromptAttachment): string {
-  return `./${attachment.workspace_path}`;
-}
-
-function isTextLikeAttachment(attachment: PromptAttachment): boolean {
+function isTextLikeAttachment(attachment: HarnessInputAttachmentPayload): boolean {
   const mimeType = attachment.mime_type.trim().toLowerCase();
   if (mimeType.startsWith("text/") || TEXT_ATTACHMENT_MIME_TYPES.has(mimeType)) {
     return true;
@@ -119,12 +129,12 @@ function isBinaryBuffer(buffer: Buffer): boolean {
   return buffer.subarray(0, Math.min(buffer.length, 1024)).includes(0);
 }
 
-function truncateExtractedText(text: string): { text: string; truncated: boolean } {
-  if (text.length <= MAX_EXTRACTED_TEXT_CHARS) {
+function truncateExtractedText(text: string, maxExtractedTextChars: number): { text: string; truncated: boolean } {
+  if (text.length <= maxExtractedTextChars) {
     return { text, truncated: false };
   }
   return {
-    text: text.slice(0, MAX_EXTRACTED_TEXT_CHARS),
+    text: text.slice(0, maxExtractedTextChars),
     truncated: true,
   };
 }
@@ -153,22 +163,22 @@ function escapeXmlAttribute(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function isPdfAttachment(attachment: PromptAttachment): boolean {
+function isPdfAttachment(attachment: HarnessInputAttachmentPayload): boolean {
   const lowerName = attachment.name.toLowerCase();
   return PDF_ATTACHMENT_MIME_TYPES.has(attachment.mime_type.toLowerCase()) || lowerName.endsWith(".pdf");
 }
 
-function isDocxAttachment(attachment: PromptAttachment): boolean {
+function isDocxAttachment(attachment: HarnessInputAttachmentPayload): boolean {
   const lowerName = attachment.name.toLowerCase();
   return DOCX_ATTACHMENT_MIME_TYPES.has(attachment.mime_type.toLowerCase()) || lowerName.endsWith(".docx");
 }
 
-function isPptxAttachment(attachment: PromptAttachment): boolean {
+function isPptxAttachment(attachment: HarnessInputAttachmentPayload): boolean {
   const lowerName = attachment.name.toLowerCase();
   return PPTX_ATTACHMENT_MIME_TYPES.has(attachment.mime_type.toLowerCase()) || lowerName.endsWith(".pptx");
 }
 
-function isExcelAttachment(attachment: PromptAttachment): boolean {
+function isExcelAttachment(attachment: HarnessInputAttachmentPayload): boolean {
   const lowerName = attachment.name.toLowerCase();
   return (
     EXCEL_ATTACHMENT_MIME_TYPES.has(attachment.mime_type.toLowerCase()) ||
@@ -177,18 +187,8 @@ function isExcelAttachment(attachment: PromptAttachment): boolean {
   );
 }
 
-function fallbackPromptLine(attachment: PromptAttachment): string {
-  const label =
-    attachment.kind === "image"
-      ? "image"
-      : attachment.kind === "folder"
-        ? "folder"
-        : "file";
-  return `- ${attachment.name} (${label}, ${attachment.mime_type}) at ${attachmentPromptPath(attachment)}`;
-}
-
-function isFolderAttachment(attachment: PromptAttachment): boolean {
-  return attachment.kind === "folder" || attachment.mime_type.trim().toLowerCase() === "inode/directory";
+function buildAttachmentXmlPromptPath(attachment: HarnessInputAttachmentPayload): string {
+  return `./${attachment.workspace_path}`;
 }
 
 async function extractPdfAttachmentText(buffer: Buffer, fileName: string): Promise<string> {
@@ -258,7 +258,9 @@ async function extractPptxAttachmentText(buffer: Buffer, fileName: string): Prom
 
 async function extractExcelAttachmentText(buffer: Buffer, fileName: string): Promise<string> {
   const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(buffer as unknown as Parameters<ExcelJS.Workbook["xlsx"]["load"]>[0]);
+  await workbook.xlsx.load(
+    buffer as unknown as Parameters<ExcelJS.Workbook["xlsx"]["load"]>[0],
+  );
   let extractedText = `<excel filename="${escapeXmlAttribute(fileName)}">`;
   workbook.eachSheet((worksheet, index) => {
     const csvRows: string[] = [];
@@ -287,16 +289,34 @@ async function extractExcelAttachmentText(buffer: Buffer, fileName: string): Pro
   return normalizeExtractedText(extractedText);
 }
 
-async function extractAttachmentText(
-  workspaceDir: string,
-  attachment: PromptAttachment
-): Promise<string | null> {
-  const attachmentPath = resolveAttachmentAbsolutePath({
-    workspaceDir,
-    attachmentName: attachment.name,
-    workspacePath: attachment.workspace_path,
-  });
-  const buffer = fs.readFileSync(attachmentPath);
+export function buildHarnessAttachmentPromptPath(attachment: HarnessInputAttachmentPayload): string {
+  return buildAttachmentXmlPromptPath(attachment);
+}
+
+export function buildHarnessAttachmentFallbackPromptLine(
+  attachment: HarnessInputAttachmentPayload,
+  promptPath = buildHarnessAttachmentPromptPath(attachment),
+): string {
+  const label =
+    attachment.kind === "image"
+      ? "image"
+      : attachment.kind === "folder"
+        ? "folder"
+        : "file";
+  return `- ${attachment.name} (${label}, ${attachment.mime_type}) at ${promptPath}`;
+}
+
+export function isHarnessFolderAttachment(attachment: HarnessInputAttachmentPayload): boolean {
+  return attachment.kind === "folder" || attachment.mime_type.trim().toLowerCase() === "inode/directory";
+}
+
+export async function extractHarnessAttachmentText(params: HarnessAttachmentTextExtractionParams): Promise<string | null> {
+  const {
+    attachment,
+    absolutePath,
+    maxInlineTextBytes = DEFAULT_HARNESS_MAX_INLINE_TEXT_BYTES,
+  } = params;
+  const buffer = fs.readFileSync(absolutePath);
 
   if (isPdfAttachment(attachment)) {
     return await extractPdfAttachmentText(buffer, attachment.name);
@@ -318,31 +338,41 @@ async function extractAttachmentText(
     return null;
   }
 
-  const truncated = buffer.length > MAX_INLINE_TEXT_BYTES;
-  const text = normalizeExtractedText(buffer.subarray(0, MAX_INLINE_TEXT_BYTES).toString("utf8"));
+  const truncated = buffer.length > maxInlineTextBytes;
+  const text = normalizeExtractedText(buffer.subarray(0, maxInlineTextBytes).toString("utf8"));
   if (!text) {
     return "[file is empty]";
   }
-  return truncated ? `${text}\n\n[truncated to first ${MAX_INLINE_TEXT_BYTES} bytes]` : text;
+  return truncated ? `${text}\n\n[truncated to first ${maxInlineTextBytes} bytes]` : text;
 }
 
-async function inlineDocumentAttachmentSection(
-  workspaceDir: string,
-  attachment: PromptAttachment
+export async function inlineHarnessDocumentAttachmentSection(
+  params: HarnessDocumentAttachmentSectionParams,
 ): Promise<string | null> {
-  if (isFolderAttachment(attachment)) {
+  const {
+    attachment,
+    absolutePath,
+    promptPath = buildHarnessAttachmentPromptPath(attachment),
+    maxExtractedTextChars = DEFAULT_HARNESS_MAX_EXTRACTED_TEXT_CHARS,
+    maxInlineTextBytes,
+  } = params;
+  if (isHarnessFolderAttachment(attachment)) {
     return null;
   }
-  const extractedText = await extractAttachmentText(workspaceDir, attachment);
+  const extractedText = await extractHarnessAttachmentText({
+    attachment,
+    absolutePath,
+    maxInlineTextBytes,
+  });
   if (!extractedText) {
     return null;
   }
-  const truncatedText = truncateExtractedText(extractedText);
+  const truncatedText = truncateExtractedText(extractedText, maxExtractedTextChars);
   const notice = truncatedText.truncated ? "\n[document text truncated for prompt size]" : "";
   return [
     `[Document: ${attachment.name}]`,
     `Mime-Type: ${attachment.mime_type}`,
-    `Workspace Path: ${attachmentPromptPath(attachment)}`,
+    `Workspace Path: ${promptPath}`,
     "",
     `${truncatedText.text}${notice}`.trim(),
   ]
@@ -350,17 +380,19 @@ async function inlineDocumentAttachmentSection(
     .join("\n");
 }
 
-function inlineImageAttachment(workspaceDir: string, attachment: PromptAttachment): ImageContent | null {
+export function inlineHarnessImageAttachment(
+  params: HarnessInlineImageAttachmentParams,
+): HarnessInlineImageContent | null {
+  const {
+    attachment,
+    absolutePath,
+    maxInlineImageBytes = DEFAULT_HARNESS_MAX_INLINE_IMAGE_BYTES,
+  } = params;
   if (attachment.kind !== "image" && !attachment.mime_type.startsWith("image/")) {
     return null;
   }
-  const attachmentPath = resolveAttachmentAbsolutePath({
-    workspaceDir,
-    attachmentName: attachment.name,
-    workspacePath: attachment.workspace_path,
-  });
-  const buffer = fs.readFileSync(attachmentPath);
-  if (buffer.length > MAX_INLINE_IMAGE_BYTES) {
+  const buffer = fs.readFileSync(absolutePath);
+  if (buffer.length > maxInlineImageBytes) {
     return null;
   }
   return {
@@ -368,66 +400,4 @@ function inlineImageAttachment(workspaceDir: string, attachment: PromptAttachmen
     data: buffer.toString("base64"),
     mimeType: attachment.mime_type,
   };
-}
-
-export async function buildAttachmentPromptContent(params: {
-  workspaceDir: string;
-  attachments?: HarnessHostInputAttachmentPayload[];
-}): Promise<AttachmentPromptContent> {
-  const sections: string[] = [];
-  const imageLines: string[] = [];
-  const folderLines: string[] = [];
-  const fallbackLines: string[] = [];
-  const images: ImageContent[] = [];
-  const attachments = params.attachments ?? [];
-
-  for (const attachment of attachments) {
-    if (isFolderAttachment(attachment)) {
-      folderLines.push(fallbackPromptLine(attachment));
-      continue;
-    }
-    if (attachment.kind === "image" || attachment.mime_type.startsWith("image/")) {
-      const image = inlineImageAttachment(params.workspaceDir, attachment);
-      if (image) {
-        images.push(image);
-        imageLines.push(`- ${attachment.name} (${attachment.mime_type}) at ${attachmentPromptPath(attachment)}`);
-        continue;
-      }
-    }
-
-    const textSection = await inlineDocumentAttachmentSection(params.workspaceDir, attachment);
-    if (textSection) {
-      sections.push(textSection);
-      continue;
-    }
-
-    fallbackLines.push(fallbackPromptLine(attachment));
-  }
-
-  if (attachments.length === 0) {
-    sections.push(["Attachments: none.", "Image inputs: none."].join("\n"));
-  } else if (imageLines.length > 0) {
-    sections.push(["Attached images:", ...imageLines].join("\n"));
-  } else {
-    sections.push("Image inputs: none.");
-  }
-  if (folderLines.length > 0) {
-    sections.push(
-      [
-        "Attached folders:",
-        ...folderLines,
-        "Treat attached folders as scoped workspace context. Inspect relevant files inside them when needed; their contents are not inlined automatically.",
-      ].join("\n")
-    );
-  }
-  if (fallbackLines.length > 0) {
-    sections.push(
-      [
-        "Other attachments are staged in the workspace and should be inspected from these paths:",
-        ...fallbackLines,
-      ].join("\n")
-    );
-  }
-
-  return { sections, images };
 }

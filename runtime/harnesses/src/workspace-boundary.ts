@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export interface WorkspaceBoundaryPolicy {
+export interface HarnessWorkspaceBoundaryPolicy {
   workspaceDir: string;
   workspaceRealDir: string;
   overrideRequested: boolean;
@@ -29,15 +29,8 @@ const WORKSPACE_LOCAL_TOOL_NAMES = new Set([
   "skill",
 ]);
 
-function shouldEnforceWorkspaceBoundaryForTool(toolName: string): boolean {
-  const normalized = toolName.trim().toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-  if (normalized.startsWith("mcp__") || normalized.startsWith("holaboss_")) {
-    return false;
-  }
-  return WORKSPACE_LOCAL_TOOL_NAMES.has(normalized);
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function normalizedWorkspaceDir(workspaceDir: string): { resolved: string; real: string } {
@@ -57,36 +50,6 @@ function isPathInsideWorkspaceRoot(workspaceRealDir: string, candidatePath: stri
   }
   const relative = path.relative(normalizedRoot, normalizedCandidate);
   return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
-}
-
-export function resolvePathWithinWorkspace(
-  policy: Pick<WorkspaceBoundaryPolicy, "workspaceDir" | "workspaceRealDir">,
-  candidate: string
-): string | null {
-  const raw = candidate.trim();
-  if (!raw) {
-    return null;
-  }
-  const resolved = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(policy.workspaceDir, raw);
-  let canonical = resolved;
-  try {
-    canonical = fs.realpathSync(resolved);
-  } catch {
-    canonical = resolved;
-  }
-  return isPathInsideWorkspaceRoot(policy.workspaceRealDir, canonical) ? canonical : null;
-}
-
-export function createWorkspaceBoundaryPolicy(
-  workspaceDir: string,
-  overrideRequested: boolean
-): WorkspaceBoundaryPolicy {
-  const normalized = normalizedWorkspaceDir(workspaceDir);
-  return {
-    workspaceDir: normalized.resolved,
-    workspaceRealDir: normalized.real,
-    overrideRequested,
-  };
 }
 
 function commandTokens(command: string): string[] {
@@ -143,10 +106,54 @@ function commandPathLooksExternal(pathValue: string): boolean {
   return false;
 }
 
-function workspaceBoundaryViolationForCommand(command: string, policy: WorkspaceBoundaryPolicy): string | null {
+function shouldEnforceWorkspaceBoundaryForTool(toolName: string): boolean {
+  const normalized = toolName.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  if (normalized.startsWith("mcp__") || normalized.startsWith("holaboss_")) {
+    return false;
+  }
+  return WORKSPACE_LOCAL_TOOL_NAMES.has(normalized);
+}
+
+function commandBoundaryViolation(command: string, policy: HarnessWorkspaceBoundaryPolicy): string | null {
   const trimmed = command.trim();
   if (!trimmed || policy.overrideRequested) {
     return null;
+  }
+
+  const tokens = commandTokens(trimmed);
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index] ?? "";
+    const normalized = token.toLowerCase();
+    if (normalized === "cd") {
+      const destination = tokens[index + 1] ?? "";
+      if (commandPathLooksExternal(destination)) {
+        return `command uses external directory '${destination}'`;
+      }
+      const resolved = resolvePathWithinHarnessWorkspace(policy, destination);
+      if (destination.trim() && !resolved) {
+        return `command changes directory outside workspace: '${destination}'`;
+      }
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+  }
+  return null;
+}
+
+function workspaceBoundaryViolationForCommand(command: string, policy: HarnessWorkspaceBoundaryPolicy): string | null {
+  const trimmed = command.trim();
+  if (!trimmed || policy.overrideRequested) {
+    return null;
+  }
+
+  const baselineViolation = commandBoundaryViolation(trimmed, policy);
+  if (baselineViolation) {
+    return baselineViolation;
   }
 
   const tokens = commandTokens(trimmed);
@@ -159,7 +166,7 @@ function workspaceBoundaryViolationForCommand(command: string, policy: Workspace
       if (commandPathLooksExternal(destination)) {
         return `command uses external directory '${destination}'`;
       }
-      const resolved = resolvePathWithinWorkspace(policy, destination);
+      const resolved = resolvePathWithinHarnessWorkspace(policy, destination);
       if (destination.trim() && !resolved) {
         return `command changes directory outside workspace: '${destination}'`;
       }
@@ -174,7 +181,7 @@ function workspaceBoundaryViolationForCommand(command: string, policy: Workspace
       if (commandPathLooksExternal(repositoryRoot)) {
         return `git command points outside workspace: '${repositoryRoot}'`;
       }
-      if (!resolvePathWithinWorkspace(policy, repositoryRoot)) {
+      if (!resolvePathWithinHarnessWorkspace(policy, repositoryRoot)) {
         return `git command points outside workspace: '${repositoryRoot}'`;
       }
       continue;
@@ -195,7 +202,7 @@ function workspaceBoundaryViolationForCommand(command: string, policy: Workspace
       if (!hasPathSignal) {
         continue;
       }
-      if (!resolvePathWithinWorkspace(policy, candidate)) {
+      if (!resolvePathWithinHarnessWorkspace(policy, candidate)) {
         return `command references outside-workspace path '${candidate}'`;
       }
     }
@@ -206,7 +213,7 @@ function workspaceBoundaryViolationForCommand(command: string, policy: Workspace
 function workspacePathViolationForValue(
   value: string,
   pathRef: string,
-  policy: WorkspaceBoundaryPolicy
+  policy: HarnessWorkspaceBoundaryPolicy,
 ): string | null {
   const trimmed = value.trim();
   if (!trimmed || policy.overrideRequested) {
@@ -218,16 +225,66 @@ function workspacePathViolationForValue(
   if (commandPathLooksExternal(trimmed)) {
     return `${pathRef} points outside workspace: '${trimmed}'`;
   }
-  if (!resolvePathWithinWorkspace(policy, trimmed)) {
+  if (!resolvePathWithinHarnessWorkspace(policy, trimmed)) {
     return `${pathRef} points outside workspace: '${trimmed}'`;
   }
   return null;
 }
 
+export function createHarnessWorkspaceBoundaryPolicy(
+  workspaceDir: string,
+  overrideRequested: boolean,
+): HarnessWorkspaceBoundaryPolicy {
+  const normalized = normalizedWorkspaceDir(workspaceDir);
+  return {
+    workspaceDir: normalized.resolved,
+    workspaceRealDir: normalized.real,
+    overrideRequested,
+  };
+}
+
+export function resolvePathWithinHarnessWorkspace(
+  policy: Pick<HarnessWorkspaceBoundaryPolicy, "workspaceDir" | "workspaceRealDir">,
+  candidate: string,
+): string | null {
+  const raw = candidate.trim();
+  if (!raw) {
+    return null;
+  }
+  const resolved = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(policy.workspaceDir, raw);
+  let canonical = resolved;
+  try {
+    canonical = fs.realpathSync(resolved);
+  } catch {
+    canonical = resolved;
+  }
+  return isPathInsideWorkspaceRoot(policy.workspaceRealDir, canonical) ? canonical : null;
+}
+
+export function workspaceBoundaryOverrideRequested(instruction: string): boolean {
+  const normalized = instruction.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  if (
+    /(?:workspace[_ -]?boundary[_ -]?override\s*[:=]\s*(?:1|true|yes|on))|(?:#allow-outside-workspace)/i.test(
+      normalized,
+    )
+  ) {
+    return true;
+  }
+  const insist = /\b(i insist|insist|override|must)\b/i.test(normalized);
+  const outsideScope =
+    /\b(outside (?:the )?workspace|outside workspace|cross[- ]workspace|parent directory|external path|beyond (?:the )?workspace)\b/i.test(
+      normalized,
+    ) || /(?:\.\.\/|~\/|\/users\/|\/etc\/|\/var\/)/i.test(normalized);
+  return insist && outsideScope;
+}
+
 export function workspaceBoundaryViolationForToolCall(params: {
   toolName: string;
   toolParams: unknown;
-  policy: WorkspaceBoundaryPolicy;
+  policy: HarnessWorkspaceBoundaryPolicy;
 }): string | null {
   const normalizedToolName = params.toolName.trim().toLowerCase();
   if (!normalizedToolName) {
@@ -276,43 +333,4 @@ export function workspaceBoundaryViolationForToolCall(params: {
   }
 
   return null;
-}
-
-export function workspaceBoundaryOverrideRequested(instruction: string): boolean {
-  const normalized = instruction.trim().toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-  if (
-    /(?:workspace[_ -]?boundary[_ -]?override\s*[:=]\s*(?:1|true|yes|on))|(?:#allow-outside-workspace)/i.test(
-      normalized
-    )
-  ) {
-    return true;
-  }
-  const insist = /\b(i insist|insist|override|must)\b/i.test(normalized);
-  const outsideScope =
-    /\b(outside (?:the )?workspace|outside workspace|cross[- ]workspace|parent directory|external path|beyond (?:the )?workspace)\b/i.test(
-      normalized
-    ) || /(?:\.\.\/|~\/|\/users\/|\/etc\/|\/var\/)/i.test(normalized);
-  return insist && outsideScope;
-}
-
-export function resolveAttachmentAbsolutePath(params: {
-  workspaceDir: string;
-  attachmentName: string;
-  workspacePath: string;
-}): string {
-  const policy = createWorkspaceBoundaryPolicy(params.workspaceDir, false);
-  const resolved = resolvePathWithinWorkspace(policy, params.workspacePath);
-  if (!resolved) {
-    throw new Error(
-      `Attachment '${params.attachmentName}' resolves outside workspace boundary: ${params.workspacePath}`
-    );
-  }
-  return resolved;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

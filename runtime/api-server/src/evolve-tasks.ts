@@ -2,7 +2,7 @@ import type { RuntimeStateStore, SessionInputRecord, TurnResultRecord } from "@h
 
 import type { MemoryServiceLike } from "./memory.js";
 import { enqueueEvolveJob } from "./evolve.js";
-import { writeTurnContinuity, type TurnMemoryWritebackModelContext } from "./turn-memory-writeback.js";
+import type { TurnMemoryWritebackModelContext } from "./turn-memory-writeback.js";
 
 export interface EvolveTaskContext {
   store: RuntimeStateStore;
@@ -12,7 +12,6 @@ export interface EvolveTaskContext {
   modelContext?: TurnMemoryWritebackModelContext | null;
   wakeDurableMemoryWorker?: (() => void) | null;
   enqueueEvolveJobFn?: typeof enqueueEvolveJob;
-  writeTurnContinuityFn?: typeof writeTurnContinuity;
 }
 
 export interface EvolveTask {
@@ -34,17 +33,11 @@ export const turnMemoryEvolveTask: EvolveTask = {
     if (!context.memoryService) {
       return;
     }
-    const updatedTurnResult = await (context.writeTurnContinuityFn ?? writeTurnContinuity)({
-      store: context.store,
-      memoryService: context.memoryService,
-      turnResult: context.turnResult,
-      persistBoundary: false,
-    });
     (context.enqueueEvolveJobFn ?? enqueueEvolveJob)({
       store: context.store,
-      workspaceId: updatedTurnResult.workspaceId,
-      sessionId: updatedTurnResult.sessionId,
-      inputId: updatedTurnResult.inputId,
+      workspaceId: context.turnResult.workspaceId,
+      sessionId: context.turnResult.sessionId,
+      inputId: context.turnResult.inputId,
       instruction: context.modelContext?.instruction ?? null,
       wakeWorker: context.wakeDurableMemoryWorker ?? null,
     });

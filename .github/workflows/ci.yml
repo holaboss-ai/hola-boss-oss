@@ -87,6 +87,7 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: |
+            runtime/harnesses/package-lock.json
             runtime/harness-host/package-lock.json
             runtime/state-store/package-lock.json
 
@@ -98,6 +99,9 @@ jobs:
 
       - name: Install runtime harness host dependencies
         run: npm --prefix runtime/harness-host ci
+
+      - name: Install shared runtime harness dependencies
+        run: npm --prefix runtime/harnesses ci
 
       - name: Build runtime harness host
         run: npm --prefix runtime/harness-host run build

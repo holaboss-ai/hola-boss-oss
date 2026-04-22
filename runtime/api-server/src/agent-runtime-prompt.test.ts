@@ -410,51 +410,6 @@ test("composeBaseAgentPrompt includes accepted evolve candidate context when pro
   assert.match(prompt.contextMessages.join("\n\n"), /name: release-verification/);
 });
 
-test("composeBaseAgentPrompt includes session resume context only when provided", () => {
-  const prompt = composeBaseAgentPrompt("", {
-    defaultTools: ["read"],
-    extraTools: [],
-    workspaceSkillIds: [],
-    resolvedMcpToolRefs: [],
-    sessionKind: "workspace_session",
-    sessionMode: "code",
-    sessionResumeContext: {
-      session_memory_path: "workspace/workspace-1/runtime/session-memory/session-1.md",
-      session_memory_excerpt:
-        "User prefers short answers and the report draft lives under outputs/reports/brief.md.",
-    },
-  });
-
-  assert.ok(prompt.promptSections.some((section) => section.id === "resume_context"));
-  assert.equal(
-    prompt.promptSections.find((section) => section.id === "resume_context")?.channel,
-    "resume_context"
-  );
-  assert.equal(
-    prompt.promptSections.find((section) => section.id === "resume_context")?.precedence,
-    "runtime_context"
-  );
-  assert.equal(prompt.promptLayers.some((layer) => layer.id === "resume_context"), false);
-  assert.doesNotMatch(prompt.systemPrompt, /Session resume context:/);
-  assert.match(prompt.contextMessages.join("\n\n"), /Session resume context:/);
-  assert.match(prompt.contextMessages.join("\n\n"), /runtime-managed session memory excerpts/i);
-  assert.match(prompt.contextMessages.join("\n\n"), /Treat the user's newest message as authoritative for this turn\./);
-  assert.match(
-    prompt.contextMessages.join("\n\n"),
-    /If the newest message is conversational, brief, or ambiguous about continuation, respond to it directly first and ask whether the user wants to continue the unfinished prior work\./,
-  );
-  assert.match(
-    prompt.contextMessages.join("\n\n"),
-    /Path: `workspace\/workspace-1\/runtime\/session-memory\/session-1\.md`/,
-  );
-  assert.match(
-    prompt.contextMessages.join("\n\n"),
-    /Excerpt: User prefers short answers and the report draft lives under outputs\/reports\/brief\.md\./,
-  );
-  assert.doesNotMatch(prompt.contextMessages.join("\n\n"), /Recent prior turns:/);
-  assert.doesNotMatch(prompt.contextMessages.join("\n\n"), /Recent prior user requests:/);
-});
-
 test("composeBaseAgentPrompt includes recalled durable memory as context message", () => {
   const prompt = composeBaseAgentPrompt("", {
     defaultTools: ["read"],

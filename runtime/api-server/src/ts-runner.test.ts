@@ -962,7 +962,6 @@ test("runTsRunnerCli only advertises structured output when the selected harness
     "load_operator_surface_context",
     "load_pending_user_memory_context",
     "load_recalled_memory_context",
-    "load_session_resume_context",
     "load_session_scratchpad_context",
     "persist_turn_request_snapshot",
     "prepare_harness_run",
@@ -1144,7 +1143,7 @@ test("runTsRunnerCli includes staged runtime tool ids in the projected extra too
   );
 });
 
-test("runTsRunnerCli does not derive resume context from the latest prior turn result alone", async () => {
+test("runTsRunnerCli does not derive prompt continuity from the latest prior turn result alone", async () => {
   const sandboxRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "hb-ts-runner-recent-context-"),
   );
@@ -1254,7 +1253,7 @@ test("runTsRunnerCli does not derive resume context from the latest prior turn r
   );
 });
 
-test("runTsRunnerCli loads session resume context from session memory", async () => {
+test("runTsRunnerCli does not project session memory into runtime prompt config", async () => {
   const sandboxRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "hb-ts-runner-session-memory-"),
   );
@@ -1328,17 +1327,10 @@ test("runTsRunnerCli loads session resume context from session memory", async ()
   assert.equal(exitCode, 0);
   assert.ok(capturedProjectRequest);
   assert.equal("recent_runtime_context" in capturedProjectRequest, false);
-  assert.deepEqual(
-    (
-      capturedProjectRequest as {
-        session_resume_context: Record<string, unknown>;
-      }
-    ).session_resume_context,
-    {
-      session_memory_path: "workspace/workspace-1/runtime/session-memory/session-1.md",
-      session_memory_excerpt:
-        "Resume from compacted deploy attempt. Draft report path: outputs/reports/deploy.md.",
-    },
+  assert.equal(
+    (capturedProjectRequest as { session_resume_context?: Record<string, unknown> })
+      .session_resume_context,
+    undefined,
   );
 });
 
@@ -2754,9 +2746,9 @@ test("runTsRunnerCli includes embedded default skill ids and source directories 
   assert.deepEqual(
     (
       capturedHarnessRequest as {
-        workspace_skills: Array<{ source_dir: string }>;
+        workspace_skill_dirs: string[];
       }
-    ).workspace_skills.map((skill) => skill.source_dir),
+    ).workspace_skill_dirs,
     [fs.realpathSync(embeddedSkillDir)],
   );
 });
@@ -2869,9 +2861,9 @@ test("runTsRunnerCli keeps embedded skills authoritative when a workspace skill 
   assert.deepEqual(
     (
       capturedHarnessRequest as {
-        workspace_skills: Array<{ source_dir: string }>;
+        workspace_skill_dirs: string[];
       }
-    ).workspace_skills.map((skill) => skill.source_dir),
+    ).workspace_skill_dirs,
     [fs.realpathSync(embeddedSkillDir)],
   );
 });
@@ -2973,32 +2965,14 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
   assert.ok(capturedHarnessRequest);
   assert.equal(
     (capturedHarnessRequest as { instruction: string }).instruction,
-    "Draft the follow-up email.",
-  );
-  assert.equal(
-    (
-      capturedHarnessRequest as { quoted_skill_blocks: string[] }
-    ).quoted_skill_blocks.length,
-    1,
-  );
-  assert.match(
-    (
-      capturedHarnessRequest as { quoted_skill_blocks: string[] }
-    ).quoted_skill_blocks[0] ?? "",
-    /<skill name="alpha" location=".*alpha\/SKILL\.md">/,
-  );
-  assert.deepEqual(
-    (
-      capturedHarnessRequest as { missing_quoted_skill_ids: string[] }
-    ).missing_quoted_skill_ids,
-    [],
+    ["/alpha", "", "Draft the follow-up email."].join("\n"),
   );
   assert.deepEqual(
     (
       capturedHarnessRequest as {
-        workspace_skills: Array<{ source_dir: string }>;
+        workspace_skill_dirs: string[];
       }
-    ).workspace_skills.map((skill) => path.basename(skill.source_dir)),
+    ).workspace_skill_dirs.map((skillDir) => path.basename(skillDir)),
     ["skill-creator", "skill-installer", "alpha"],
   );
 });

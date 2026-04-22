@@ -261,14 +261,16 @@ Relevant files:
 
 Session restoration relies on:
 - persisted harness session history
-- the runtime-managed session-memory excerpt
 - session scratchpad metadata, with explicit scratchpad reads when needed
 - bounded recalled durable memory
 
 On the next run:
-- the TS runner loads the runtime-managed session-memory excerpt if available
 - loads scratchpad metadata if a scratchpad exists
-- injects that resume context into runtime config
+- injects scratchpad and recalled-memory context into runtime config
+
+Important detail:
+- runtime-managed `session-memory` files are still written for local continuity and inspection workflows
+- they are no longer injected into the prompt path
 
 Relevant files:
 - `runtime/api-server/src/turn-memory-writeback.ts`
@@ -278,7 +280,6 @@ Relevant files:
 ### 3. Prompt composition inputs
 
 The agent runtime config currently receives these continuity/memory inputs:
-- `session_resume_context`
 - `recalled_memory_context`
 - `current_user_context`
 - `operator_surface_context`

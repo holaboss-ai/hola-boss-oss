@@ -24,15 +24,6 @@ import {
 } from "./memory-writeback-extractor.js";
 import type { MemoryModelClientConfig } from "./memory-model-client.js";
 
-type TurnMemoryScope = "workspace" | "session" | "user" | "ephemeral";
-
-interface RuntimeMemoryCandidate {
-  scope: TurnMemoryScope;
-  key: string;
-  path: string;
-  content: string;
-}
-
 export interface DurableMemoryCandidate {
   memoryId: string;
   scope: Extract<MemoryEntryScope, "workspace" | "user">;
@@ -115,31 +106,6 @@ function fingerprintText(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function sessionStatePath(turnResult: TurnResultRecord): string {
-  return `workspace/${turnResult.workspaceId}/runtime/session-state/${safePathSegment(turnResult.sessionId, "session")}.md`;
-}
-
-function blockerStatePath(turnResult: TurnResultRecord): string {
-  return `workspace/${turnResult.workspaceId}/runtime/blockers/${safePathSegment(turnResult.sessionId, "session")}.md`;
-}
-
-function latestTurnPath(turnResult: TurnResultRecord): string {
-  return `workspace/${turnResult.workspaceId}/runtime/latest-turn.md`;
-}
-
-function recentTurnsPath(turnResult: TurnResultRecord): string {
-  return `workspace/${turnResult.workspaceId}/runtime/recent-turns/${safePathSegment(turnResult.sessionId, "session")}.md`;
-}
-
-function sessionMemoryPath(turnResult: TurnResultRecord): string {
-  return `workspace/${turnResult.workspaceId}/runtime/session-memory/${safePathSegment(turnResult.sessionId, "session")}.md`;
-}
-
-function permissionBlockerPath(turnResult: TurnResultRecord, toolName: string, toolId: string | null, reason: string): string {
-  const key = blockerKey(toolName, toolId, reason);
-  return `workspace/${turnResult.workspaceId}/runtime/permission-blockers/${key}.md`;
-}
-
 function repeatedPermissionKnowledgePath(
   turnResult: TurnResultRecord,
   toolName: string,
@@ -190,189 +156,8 @@ function clippedText(value: string, maxChars: number): string {
   return `${normalized.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
 }
 
-function renderPermissionDenials(turnResult: TurnResultRecord): string[] {
-  if (turnResult.permissionDenials.length === 0) {
-    return ["None."];
-  }
-  return turnResult.permissionDenials.map((denial) => {
-    const toolName = typeof denial.tool_name === "string" && denial.tool_name.trim() ? denial.tool_name.trim() : "unknown";
-    const toolId = typeof denial.tool_id === "string" && denial.tool_id.trim() ? ` (\`${denial.tool_id.trim()}\`)` : "";
-    const reason = typeof denial.reason === "string" && denial.reason.trim() ? denial.reason.trim() : "permission denied";
-    return `- ${toolName}${toolId}: ${reason}`;
-  });
-}
-
-function renderSessionState(turnResult: TurnResultRecord, summary: string | null): string {
-  const lines = [
-    "# Runtime Session Snapshot",
-    "",
-    `- Session ID: \`${turnResult.sessionId}\``,
-    `- Input ID: \`${turnResult.inputId}\``,
-    `- Status: \`${turnResult.status}\``,
-    `- Stop reason: ${turnResult.stopReason ? `\`${turnResult.stopReason}\`` : "none"}`,
-    `- Completed at: ${turnResult.completedAt ?? turnResult.updatedAt}`,
-  ];
-  if (turnResult.capabilityManifestFingerprint) {
-    lines.push(`- Capability fingerprint: \`${turnResult.capabilityManifestFingerprint}\``);
-  }
-  if (turnResult.promptSectionIds.length > 0) {
-    lines.push(`- Prompt sections: ${turnResult.promptSectionIds.map((id) => `\`${id}\``).join(", ")}`);
-  }
-  if (turnResult.tokenUsage) {
-    const inputTokens = typeof turnResult.tokenUsage.input_tokens === "number" ? turnResult.tokenUsage.input_tokens : null;
-    const outputTokens = typeof turnResult.tokenUsage.output_tokens === "number" ? turnResult.tokenUsage.output_tokens : null;
-    if (inputTokens !== null || outputTokens !== null) {
-      lines.push(`- Token usage: input=${inputTokens ?? "?"}, output=${outputTokens ?? "?"}`);
-    }
-  }
-  lines.push("", "## Summary", "", summary ?? "No compact summary available.", "", "## Permission Denials", "");
-  lines.push(...renderPermissionDenials(turnResult));
-  return `${lines.join("\n").trim()}\n`;
-}
-
-function renderBlockerState(turnResult: TurnResultRecord): string {
-  const lines = [
-    "# Runtime Blocker Snapshot",
-    "",
-    `- Session ID: \`${turnResult.sessionId}\``,
-    `- Input ID: \`${turnResult.inputId}\``,
-    `- Updated at: ${turnResult.completedAt ?? turnResult.updatedAt}`,
-    "",
-    "## Current State",
-    "",
-  ];
-
-  if (turnResult.status === "waiting_user") {
-    lines.push("The latest run is paused waiting for user input.");
-  } else if (turnResult.status === "paused") {
-    lines.push("The latest run was paused by the user before completion.");
-  } else if (turnResult.status === "failed") {
-    lines.push(
-      turnResult.stopReason ? `The latest run failed with stop reason \`${turnResult.stopReason}\`.` : "The latest run failed."
-    );
-  } else {
-    lines.push("No active blocker in the latest turn.");
-  }
-
-  lines.push("", "## Permission Denials", "");
-  lines.push(...renderPermissionDenials(turnResult));
-  return `${lines.join("\n").trim()}\n`;
-}
-
-function renderLatestTurn(turnResult: TurnResultRecord, summary: string | null): string {
-  const lines = [
-    "# Latest Runtime Turn",
-    "",
-    `- Session ID: \`${turnResult.sessionId}\``,
-    `- Input ID: \`${turnResult.inputId}\``,
-    `- Status: \`${turnResult.status}\``,
-    `- Stop reason: ${turnResult.stopReason ? `\`${turnResult.stopReason}\`` : "none"}`,
-    `- Completed at: ${turnResult.completedAt ?? turnResult.updatedAt}`,
-    "",
-    "## Summary",
-    "",
-    summary ?? "No compact summary available.",
-  ];
-  return `${lines.join("\n").trim()}\n`;
-}
-
-function renderRecentTurns(turnResults: TurnResultRecord[]): string {
-  const lines = [
-    "# Recent Runtime Turns",
-    "",
-    `- Included turns: ${turnResults.length}`,
-    "",
-  ];
-
-  if (turnResults.length === 0) {
-    lines.push("No recent turn history available.");
-    return `${lines.join("\n").trim()}\n`;
-  }
-
-  turnResults.forEach((turnResult, index) => {
-    const summary = turnResult.compactedSummary ?? compactTurnSummary(turnResult) ?? "No compact summary available.";
-    lines.push(`## ${index + 1}. Input \`${turnResult.inputId}\``);
-    lines.push("");
-    lines.push(`- Status: \`${turnResult.status}\``);
-    lines.push(`- Stop reason: ${turnResult.stopReason ? `\`${turnResult.stopReason}\`` : "none"}`);
-    lines.push(`- Completed at: ${turnResult.completedAt ?? turnResult.updatedAt}`);
-    lines.push(`- Summary: ${summary}`);
-    lines.push("");
-  });
-
-  return `${lines.join("\n").trim()}\n`;
-}
-
-function recentUserRequests(sessionMessages: SessionMessageRecord[], maxCount: number): string[] {
-  const userMessages = sessionMessages
-    .filter((message) => message.role === "user")
-    .map((message) => compactWhitespace(message.text))
-    .filter(Boolean);
-  if (userMessages.length <= maxCount) {
-    return userMessages;
-  }
-  return userMessages.slice(userMessages.length - maxCount);
-}
-
 function shouldRunModelExtractionForTurnCount(completedTurnCount: number): boolean {
   return completedTurnCount > 0 && completedTurnCount % MODEL_EXTRACTION_INTERVAL_TURNS === 0;
-}
-
-function renderSessionMemory(turnResult: TurnResultRecord, recentTurns: TurnResultRecord[], sessionMessages: SessionMessageRecord[]): string {
-  const latestSummary = turnResult.compactedSummary ?? compactTurnSummary(turnResult) ?? "No compact summary available.";
-  const recentTurnSummaries = recentTurns.slice(0, 3).map((item) => ({
-    inputId: item.inputId,
-    status: item.status,
-    summary: item.compactedSummary ?? compactTurnSummary(item) ?? "No compact summary available.",
-  }));
-  const userRequests = recentUserRequests(sessionMessages, 3);
-  const recentErrors = recentTurns
-    .filter((item) => item.status === "failed" || item.permissionDenials.length > 0)
-    .slice(0, 3)
-    .map((item) => {
-      const reason = compactWhitespace(item.stopReason ?? "");
-      return `${item.inputId}: ${reason || "runtime error or permission denial"}`;
-    });
-
-  const lines = [
-    "# Session Memory",
-    "",
-    `- Workspace ID: \`${turnResult.workspaceId}\``,
-    `- Session ID: \`${turnResult.sessionId}\``,
-    `- Updated at: ${turnResult.completedAt ?? turnResult.updatedAt}`,
-    "",
-    "## Current State",
-    "",
-    latestSummary,
-    "",
-    "## Recent User Requests",
-    "",
-  ];
-  if (userRequests.length === 0) {
-    lines.push("- No recent user requests captured.");
-  } else {
-    for (const request of userRequests) {
-      lines.push(`- ${clippedText(request, 220)}`);
-    }
-  }
-
-  lines.push("", "## Recent Runtime Progress", "");
-  for (const item of recentTurnSummaries) {
-    lines.push(`- \`${item.inputId}\` (\`${item.status}\`): ${item.summary}`);
-  }
-  if (recentTurnSummaries.length === 0) {
-    lines.push("- No prior turn summaries available.");
-  }
-
-  lines.push("", "## Errors and Corrections", "");
-  if (recentErrors.length === 0) {
-    lines.push("- No recent runtime errors or permission denials.");
-  } else {
-    for (const error of recentErrors) {
-      lines.push(`- ${error}`);
-    }
-  }
-  return `${lines.join("\n").trim()}\n`;
 }
 
 export interface ResponseStylePreference {
@@ -834,35 +619,6 @@ function workspaceProcedureCandidates(
   return [...deduped.values()];
 }
 
-function permissionBlockerCandidates(turnResult: TurnResultRecord, summary: string | null): RuntimeMemoryCandidate[] {
-  return turnResult.permissionDenials.map((denial, index) => {
-    const toolName = typeof denial.tool_name === "string" && denial.tool_name.trim() ? denial.tool_name.trim() : "unknown";
-    const toolId = typeof denial.tool_id === "string" && denial.tool_id.trim() ? denial.tool_id.trim() : null;
-    const reason = typeof denial.reason === "string" && denial.reason.trim() ? denial.reason.trim() : "permission denied";
-    const lines = [
-      "# Runtime Permission Blocker",
-      "",
-      `- Session ID: \`${turnResult.sessionId}\``,
-      `- Input ID: \`${turnResult.inputId}\``,
-      `- Tool: \`${toolName}\``,
-      `- Tool ID: ${toolId ? `\`${toolId}\`` : "none"}`,
-      `- Reason: ${reason}`,
-      `- Stop reason: ${turnResult.stopReason ? `\`${turnResult.stopReason}\`` : "none"}`,
-      `- Last seen: ${turnResult.completedAt ?? turnResult.updatedAt}`,
-      "",
-      "## Summary",
-      "",
-      summary ?? "No compact summary available.",
-    ];
-    return {
-      scope: "workspace",
-      key: `permission-blocker:${blockerKey(toolName, toolId, reason)}:${index}`,
-      path: permissionBlockerPath(turnResult, toolName, toolId, reason),
-      content: `${lines.join("\n").trim()}\n`,
-    };
-  });
-}
-
 function repeatedPermissionBlockerCandidates(params: {
   turnResult: TurnResultRecord;
   recentTurns: TurnResultRecord[];
@@ -1112,47 +868,6 @@ function mergeDurableCandidates(
     }
   }
   return [...byPath.values()];
-}
-
-function buildRuntimeMemoryCandidates(params: {
-  turnResult: TurnResultRecord;
-  summary: string | null;
-  recentTurns: TurnResultRecord[];
-  sessionMessages: SessionMessageRecord[];
-}): RuntimeMemoryCandidate[] {
-  return [
-    {
-      scope: "session",
-      key: `session-state:${params.turnResult.sessionId}`,
-      path: sessionStatePath(params.turnResult),
-      content: renderSessionState(params.turnResult, params.summary),
-    },
-    {
-      scope: "session",
-      key: `blocker-state:${params.turnResult.sessionId}`,
-      path: blockerStatePath(params.turnResult),
-      content: renderBlockerState(params.turnResult),
-    },
-    {
-      scope: "workspace",
-      key: "latest-turn",
-      path: latestTurnPath(params.turnResult),
-      content: renderLatestTurn(params.turnResult, params.summary),
-    },
-    {
-      scope: "workspace",
-      key: `recent-turns:${params.turnResult.sessionId}`,
-      path: recentTurnsPath(params.turnResult),
-      content: renderRecentTurns(params.recentTurns),
-    },
-    {
-      scope: "session",
-      key: `session-memory:${params.turnResult.sessionId}`,
-      path: sessionMemoryPath(params.turnResult),
-      content: renderSessionMemory(params.turnResult, params.recentTurns, params.sessionMessages),
-    },
-    ...permissionBlockerCandidates(params.turnResult, params.summary),
-  ];
 }
 
 function buildDurableMemoryCandidates(params: {
@@ -1542,20 +1257,6 @@ function upsertCompactedSummary(store: RuntimeStateStore, turnResult: TurnResult
   });
 }
 
-async function upsertRuntimeMemoryCandidate(params: {
-  memoryService: MemoryServiceLike;
-  workspaceId: string;
-  candidate: RuntimeMemoryCandidate;
-}): Promise<string> {
-  await params.memoryService.upsert({
-    workspace_id: params.workspaceId,
-    path: params.candidate.path,
-    content: params.candidate.content,
-    append: false,
-  });
-  return params.candidate.path;
-}
-
 async function upsertDurableMemoryCandidate(params: {
   store: RuntimeStateStore;
   memoryService: MemoryServiceLike;
@@ -1666,36 +1367,6 @@ export async function refreshMemoryIndexes(params: {
   return upsertMemoryIndexes(params);
 }
 
-export async function writeTurnContinuity(params: {
-  store: RuntimeStateStore;
-  memoryService: MemoryServiceLike;
-  turnResult: TurnResultRecord;
-  persistBoundary?: boolean;
-}): Promise<TurnResultRecord> {
-  void params.persistBoundary;
-  const context = loadTurnWritebackContext(params.store, params.turnResult);
-  const runtimeCandidates = buildRuntimeMemoryCandidates({
-    turnResult: context.turnResult,
-    summary: context.compactedSummary,
-    recentTurns: context.recentTurns,
-    sessionMessages: context.recentUserMessages,
-  });
-
-  try {
-    for (const candidate of runtimeCandidates) {
-      await upsertRuntimeMemoryCandidate({
-        memoryService: params.memoryService,
-        workspaceId: context.turnResult.workspaceId,
-        candidate,
-      });
-    }
-  } catch {
-    return params.store.getTurnResult({ inputId: context.turnResult.inputId }) ?? context.turnResult;
-  }
-
-  return params.store.getTurnResult({ inputId: context.turnResult.inputId }) ?? context.turnResult;
-}
-
 export async function writeTurnDurableMemory(params: {
   store: RuntimeStateStore;
   memoryService: MemoryServiceLike;
@@ -1770,19 +1441,14 @@ export async function writeTurnMemory(params: {
   turnResult: TurnResultRecord;
   modelContext?: TurnMemoryWritebackModelContext | null;
 }): Promise<TurnResultRecord> {
-  const updatedTurnResult = await writeTurnContinuity({
-    store: params.store,
-    memoryService: params.memoryService,
-    turnResult: params.turnResult,
-  });
   try {
     return await writeTurnDurableMemory({
       store: params.store,
       memoryService: params.memoryService,
-      turnResult: updatedTurnResult,
+      turnResult: params.turnResult,
       modelContext: params.modelContext ?? null,
     });
   } catch {
-    return params.store.getTurnResult({ inputId: updatedTurnResult.inputId }) ?? updatedTurnResult;
+    return params.store.getTurnResult({ inputId: params.turnResult.inputId }) ?? params.turnResult;
   }
 }

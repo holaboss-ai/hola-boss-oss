@@ -195,7 +195,6 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
       result.prompt_cache_profile?.compatibility_context_ids,
       [],
     );
-    assert.deepEqual(result.prompt_cache_profile?.resume_context_ids, []);
     assert.deepEqual(result.prompt_cache_profile?.attachment_ids, []);
     assert.deepEqual(result.prompt_cache_profile?.delta_section_ids, []);
     assert.deepEqual(result.prompt_cache_profile?.channel_section_ids, {
@@ -375,86 +374,6 @@ test("projectAgentRuntimeConfig ignores workspace agent.model and falls back to 
   assert.equal(result.model_id, "gpt-5.4");
   assert.equal(result.model_client.api_key, "sk-direct-openai");
   assert.equal(result.model_client.base_url, "https://api.openai.com/v1");
-});
-
-test("projectAgentRuntimeConfig includes resume context sections when provided", () => {
-  process.env.HOLABOSS_MODEL_PROXY_BASE_URL =
-    "https://runtime.example/api/v1/model-proxy";
-  process.env.HOLABOSS_USER_ID = "user-1";
-  try {
-    const result = projectAgentRuntimeConfig({
-      session_id: "session-1",
-      workspace_id: "workspace-1",
-      input_id: "input-1",
-      session_kind: "workspace_session",
-      harness_id: "pi",
-      browser_tools_available: false,
-      browser_tool_ids: [],
-      runtime_tool_ids: [],
-      workspace_command_ids: [],
-      runtime_exec_model_proxy_api_key: "hbrt.v1.token",
-      runtime_exec_sandbox_id: "sandbox-1",
-      runtime_exec_run_id: "run-1",
-      session_resume_context: {
-        session_memory_path: "workspace/workspace-1/runtime/session-memory/session-1.md",
-        session_memory_excerpt:
-          "Run paused waiting for confirmation before deploy and the draft report lives under outputs/reports/deploy.md.",
-      },
-      selected_model: null,
-      default_provider_id: "openai",
-      session_mode: "code",
-      workspace_config_checksum: "checksum-1",
-      workspace_skill_ids: [],
-      default_tools: ["read"],
-      extra_tools: [],
-      resolved_mcp_tool_refs: [],
-      resolved_output_schemas: {},
-      agent: {
-        id: "workspace.general",
-        model: "gpt-5.2",
-        prompt: "You are concise.",
-      },
-    });
-
-    assert.ok(
-      result.prompt_sections?.some(
-        (section) => section.id === "resume_context",
-      ),
-    );
-    assert.equal(
-      result.prompt_layers?.some((layer) => layer.id === "resume_context"),
-      false,
-    );
-    assert.equal(
-      result.prompt_sections?.find((section) => section.id === "resume_context")
-        ?.channel,
-      "resume_context",
-    );
-    assert.deepEqual(
-      result.prompt_cache_profile?.resume_context_ids,
-      ["resume_context"],
-    );
-    assert.deepEqual(result.prompt_cache_profile?.compatibility_context_ids, [
-      "resume_context",
-    ]);
-    assert.deepEqual(result.context_messages, [[
-        "Session resume context:",
-        "Use this as continuity context derived from runtime-managed session memory excerpts. Verify current workspace state before acting on details that may have changed.",
-        "Treat the user's newest message as authoritative for this turn. Do not resume unfinished prior work unless that newest message clearly asks to continue it or clearly advances the same task.",
-        "If the newest message is conversational, brief, or ambiguous about continuation, respond to it directly first and ask whether the user wants to continue the unfinished prior work.",
-        "This runtime-managed resume summary is already loaded into prompt context. Do not reopen runtime-managed continuity files just to restate this context; inspect a referenced file only when you need details not included here or need to verify that it changed during this run.",
-        "Session memory:",
-        "- Path: `workspace/workspace-1/runtime/session-memory/session-1.md`",
-        "- Excerpt: Run paused waiting for confirmation before deploy and the draft report lives under outputs/reports/deploy.md.",
-      ].join("\n")]);
-    assert.deepEqual(
-      result.prompt_channel_contents,
-      promptChannelContents(result.prompt_sections ?? []),
-    );
-    assert.doesNotMatch(result.system_prompt, /Session resume context:/);
-  } finally {
-    delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
-  }
 });
 
 test("projectAgentRuntimeConfig includes current user context as a context message", () => {
@@ -814,22 +733,12 @@ test("projectAgentRuntimeConfig omits workspace and recent-runtime layers when n
       false,
     );
     assert.equal(
-      result.prompt_layers?.some((layer) => layer.id === "resume_context"),
-      false,
-    );
-    assert.equal(
       result.prompt_layers?.some((layer) => layer.id === "harness_quirks"),
       false,
     );
     assert.equal(
       result.prompt_sections?.some(
         (section) => section.id === "workspace_policy",
-      ),
-      false,
-    );
-    assert.equal(
-      result.prompt_sections?.some(
-        (section) => section.id === "resume_context",
       ),
       false,
     );

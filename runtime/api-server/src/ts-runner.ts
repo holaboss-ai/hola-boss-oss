@@ -39,7 +39,6 @@ import type {
   AgentPendingUserMemoryContext,
   AgentRecalledMemoryContext,
   AgentScratchpadContext,
-  AgentSessionResumeContext,
 } from "./agent-runtime-prompt.js";
 import {
   decodeTsRunnerRequestPayload,
@@ -427,82 +426,6 @@ function runtimeRootDir(): string {
     return path.resolve(configured);
   }
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-}
-
-function resolveMemoryRootDir(workspaceRoot: string): string {
-  const configured = (process.env.MEMORY_ROOT_DIR ?? "").trim();
-  if (!configured) {
-    return path.join(workspaceRoot, "memory");
-  }
-  if (path.isAbsolute(configured)) {
-    return path.resolve(configured);
-  }
-  return path.resolve(path.join(workspaceRoot, configured));
-}
-
-function sessionMemoryPath(workspaceId: string, sessionId: string): string {
-  const sanitizedSessionId =
-    sessionId
-      .trim()
-      .replace(/[^A-Za-z0-9._-]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "session";
-  return `workspace/${workspaceId}/runtime/session-memory/${sanitizedSessionId}.md`;
-}
-
-function sessionMemoryExcerpt(raw: string, maxChars = 320): string {
-  const normalized = raw.replace(/\s+/g, " ").trim();
-  if (normalized.length <= maxChars) {
-    return normalized;
-  }
-  return `${normalized.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
-}
-
-function loadSessionMemoryExcerpt(params: {
-  workspaceRoot: string;
-  workspaceId: string;
-  sessionId: string;
-}): { path: string; excerpt: string } | null {
-  const relPath = sessionMemoryPath(params.workspaceId, params.sessionId);
-  const memoryRoot = resolveMemoryRootDir(params.workspaceRoot);
-  const targetPath = path.join(memoryRoot, relPath);
-  if (
-    !fs.existsSync(targetPath) ||
-    !fs.statSync(targetPath, { throwIfNoEntry: false })?.isFile()
-  ) {
-    return null;
-  }
-  try {
-    const text = fs.readFileSync(targetPath, "utf8");
-    const excerpt = sessionMemoryExcerpt(text);
-    if (!excerpt) {
-      return null;
-    }
-    return {
-      path: relPath,
-      excerpt,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function loadSessionResumeContext(params: {
-  workspaceRoot: string;
-  workspaceId: string;
-  sessionId: string;
-}): AgentSessionResumeContext | null {
-  const sessionMemory = loadSessionMemoryExcerpt({
-    workspaceRoot: params.workspaceRoot,
-    workspaceId: params.workspaceId,
-    sessionId: params.sessionId,
-  });
-  if (!sessionMemory) {
-    return null;
-  }
-  return {
-    session_memory_path: sessionMemory.path,
-    session_memory_excerpt: sessionMemory.excerpt,
-  };
 }
 
 async function loadSessionScratchpadContext(params: {
@@ -1105,7 +1028,6 @@ function buildAgentRuntimeConfigRequest(params: {
   toolServerIdMap: Readonly<Record<string, string>>;
   resolvedMcpToolRefs: CompiledWorkspaceRuntimePlan["resolved_mcp_tool_refs"];
   resolvedMcpServerIds: string[];
-  sessionResumeContext?: AgentSessionResumeContext | null;
   recalledMemoryContext?: AgentRecalledMemoryContext | null;
   currentUserContext?: AgentCurrentUserContext | null;
   operatorSurfaceContext?: AgentOperatorSurfaceContext | null;
@@ -1132,7 +1054,6 @@ function buildAgentRuntimeConfigRequest(params: {
       runtimeExecContextString(params.request, "sandbox_id") ?? undefined,
     runtime_exec_run_id:
       runtimeExecContextString(params.request, "run_id") ?? undefined,
-    session_resume_context: params.sessionResumeContext ?? undefined,
     recalled_memory_context: params.recalledMemoryContext ?? undefined,
     current_user_context: params.currentUserContext ?? undefined,
     operator_surface_context: params.operatorSurfaceContext ?? undefined,
@@ -1715,16 +1636,6 @@ export async function executeTsRunnerRequest(
       );
     }
 
-    const sessionResumeContext = measureBootstrapStage(
-      bootstrapStageTimingsMs,
-      "load_session_resume_context",
-      () =>
-        loadSessionResumeContext({
-          workspaceRoot: bootstrap.workspaceRoot,
-          workspaceId: request.workspace_id,
-          sessionId: request.session_id,
-        }),
-    );
     const sessionScratchpadContext = await measureBootstrapStageAsync(
       bootstrapStageTimingsMs,
       "load_session_scratchpad_context",
@@ -1799,7 +1710,6 @@ export async function executeTsRunnerRequest(
             resolvedMcpServerIds: effectiveMcpServers.map(
               (server) => server.name,
             ),
-            sessionResumeContext,
             recalledMemoryContext,
             currentUserContext,
             operatorSurfaceContext,

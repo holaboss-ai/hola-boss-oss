@@ -1,72 +1,91 @@
 # Runtime Prompt Construction Walkthrough
 
-Last verified against the local code in this worktree on `2026-04-22`.
+This document shows how a single runtime turn becomes the prompt seen by the `pi` harness host.
 
-This document explains how one runtime turn becomes the prompt seen by the PI harness host after the resume-context and compaction-boundary removal.
-
-It is based on current implementation, not intended architecture.
-
-## Scope
-
-This walkthrough covers the current prompt path for a local runtime turn:
-
-1. `TsRunnerRequest` enters `executeTsRunnerRequest(...)`
-2. runtime bootstrap loads dynamic per-run context
-3. runtime builds `AgentRuntimeConfigCliRequest`
-4. runtime projects that request into prompt sections
-5. sections become:
-   - `system_prompt`
-   - `context_messages`
-   - `prompt_layers`
-   - `prompt_cache_profile`
-6. the PI runtime adapter forwards that into the harness-host request
-7. the PI host combines:
-   - `system_prompt`
-   - user `instruction`
-   - runtime context messages
-   - quoted skills
-   - attachments
-   - persisted PI session history
-
-Relevant implementation files:
+It follows the current implementation in:
 
 - `runtime/api-server/src/ts-runner.ts`
 - `runtime/api-server/src/agent-runtime-config.ts`
 - `runtime/api-server/src/agent-runtime-prompt.ts`
 - `runtime/api-server/src/agent-prompt-sections.ts`
-- `runtime/api-server/src/agent-capability-registry.ts`
+- `runtime/api-server/src/workspace-skills.ts`
 - `runtime/harnesses/src/pi.ts`
 - `runtime/harness-host/src/pi.ts`
+- `runtime/harness-host/src/attachment-prompt-content.ts`
+- `runtime/harness-host/src/pi-runtime-tools.ts`
 
-## High-Level Shape
+## End-To-End Shape
 
-The runtime does not build one monolithic prompt string directly.
+One run moves through these layers:
 
-It first builds structured prompt sections with:
+1. the runtime compiles the workspace manifest and loads dynamic run context
+2. the runtime resolves workspace skills and prepares any quoted skill blocks
+3. the runtime projects structured prompt sections into `system_prompt` and `context_messages`
+4. the PI runtime adapter builds a reduced host request
+5. the PI host turns that request into a PI-native prompt body
+6. the PI host executes the run using:
+   - the PI system prompt override
+   - the PI prompt body
+   - PI session history from the persisted harness session
 
-- `id`
-- `channel`
-- `apply_at`
-- `precedence`
-- `priority`
-- `volatility`
-- `content`
+The runtime owns the prompt contract. The PI host owns the final request shape.
 
-Those sections are then rendered into:
+## What Is Loaded Versus What Reaches Prompt Text
 
-- `system_prompt`
-  - only sections whose `channel === "system_prompt"`
-- `context_messages`
-  - flattened compatibility list of sections whose channel is one of:
-    - `context_message`
-    - `resume_context`
-    - `attachment`
+The runtime bootstrap loads more than the model actually sees.
 
-That split matters because PI host treats them differently.
+For prompt analysis, there are four distinct buckets:
+
+1. loaded and directly serialized into prompt text
+2. loaded and only used to shape prompt policy or capability wording
+3. loaded and forwarded to the harness host, but not rendered as prompt text
+4. loaded for execution/bootstrap only
+
+The table below focuses on the current `pi` path.
+
+| Source | How it is loaded | Intermediate value | Prompt effect in current path |
+| --- | --- | --- | --- |
+| `workspace.yaml` | `compileWorkspaceRuntimePlanFromWorkspace(...)` reads the raw file and compiles it | `CompiledWorkspaceRuntimePlan` | Raw YAML is not dumped into the prompt. It only affects prompt text indirectly through capability-related fields such as resolved MCP visibility. |
+| Root `AGENTS.md` | loaded as the default prompt reference during workspace-plan compilation | `general_config.agent.prompt` | Directly rendered into the `workspace_policy` system-prompt section. |
+| App runtime YAML files referenced by `workspace.yaml` | loaded through `applications[*].config_path` during workspace-plan compilation | `resolved_applications` | Not dumped into prompt text. They may indirectly affect capability wording if bootstrapped apps expose MCP access for the run. |
+| MCP registry in `workspace.yaml` | resolved during workspace-plan compilation | `resolved_mcp_servers`, `resolved_mcp_tool_refs`, `workspace_mcp_catalog` | Not dumped verbatim. They can change capability-related prompt lines such as whether MCP access is available and whether the runtime says to use surfaced MCP tools. |
+| `skills/*/SKILL.md` | `resolveWorkspaceSkills(...)` reads skill frontmatter + body | `workspaceSkills`, optional `quoted_skill_blocks` | Not included automatically. Included only when slash-prefixed quoted skills are expanded or when the `skill` tool is called later. |
+| Session-memory markdown file | not loaded for prompt projection in the current path | runtime continuity file only | Does not reach prompt text. PI session history is the continuity source that still reaches the model. |
+| Session scratchpad markdown file | `loadSessionScratchpadContext(...)` reads metadata with `includeContent: false` | `session_scratchpad_context` | Rendered into `scratchpad_context`. Metadata + preview are included; full scratchpad body is not. |
+| Runtime user profile in `runtime.db` | `loadCurrentUserContext(...)` | `current_user_context` | Rendered into `current_user_context` only if a name is available. |
+| Desktop browser operator-surface endpoint | `loadOperatorSurfaceContext(...)` fetches `/operator-surface-context` | `operator_surface_context` | Rendered into `operator_surface_context`. |
+| Pending memory proposals in `runtime.db` | `loadPendingUserMemoryContext(...)` | `pending_user_memory_context` | Rendered into `pending_user_memory` when proposals exist. |
+| Durable memory entries in `runtime.db` + memory selection | `loadRecalledMemoryContext(...)` | `recalled_memory_context` | Rendered into `memory_recall` after selection/summarization; the full store is not inlined. |
+| `request.context.evolve_candidate` | `evolveCandidateContext(request)` | `evolve_candidate_context` | Rendered into `evolve_candidate_context` only when present in the request. |
+| Attachments on the queued input | `buildAttachmentPromptContent(...)` reads files later in the PI host | text sections + image payloads | Supported document text is appended to the PI prompt body; images become separate PI image content. |
+| Persisted PI harness session file | resolved by the PI host at execution time | PI-native session history | Not serialized into runtime prompt text. It is a separate continuity source inside PI. |
+
+## Prompt-Only Summary
+
+If the question is strictly, `what becomes prompt text`, the shortest accurate answer is:
+
+- `AGENTS.md` becomes prompt text directly
+- dynamic runtime context objects become prompt text after section rendering
+- attachments may become prompt text or image content in the PI host
+- `workspace.yaml` itself does not become prompt text, but it can still affect capability-related prompt lines through resolved MCP/app availability
+
+The fields from the compiled workspace plan that matter most for prompt text in the current `pi` path are:
+
+- `general_config.agent.prompt`
+- `resolved_mcp_tool_refs`
+- `resolved_mcp_servers` after effective runtime/app bootstrap
+
+The compiled-plan fields that currently do not contribute meaningful prompt text in this path are:
+
+- `general_config.agent.model` for execution-model selection
+- most raw application config values
+- the raw workspace MCP catalog payload
+
+`general_config.agent.id` is currently latent plumbing in this path. It is forwarded into runtime config and would matter for output-schema lookup, but `ts-runner.ts` currently sends `resolved_output_schemas: {}`.
 
 ## Worked Example
 
-Assume this turn enters the runtime:
+Assume the runtime receives this queued input:
 
 ```json
 {
@@ -74,57 +93,126 @@ Assume this turn enters the runtime:
   "session_id": "session-main",
   "input_id": "input-42",
   "session_kind": "workspace_session",
-  "instruction": "Continue the cloud cost investigation. Use the notes from earlier, update the findings, and give me the answer in chat.",
+  "instruction": "/cloud_costs\n\nContinue the cloud cost investigation. Update the findings and answer in chat.",
   "model": "openai/gpt-5.4",
-  "attachments": [],
-  "thinking_value": null,
-  "debug": false
+  "thinking_value": "medium",
+  "attachments": [
+    {
+      "id": "attachment-1",
+      "kind": "file",
+      "name": "ec2-cost-breakdown.pdf",
+      "mime_type": "application/pdf",
+      "size_bytes": 238144,
+      "workspace_path": "inputs/input-42/ec2-cost-breakdown.pdf"
+    }
+  ]
 }
 ```
 
-Also assume:
+Assume the workspace also has:
 
-- root `AGENTS.md` exists and contains workspace instructions
-- browser tools are available for this run
-- runtime tools are staged, including scratchpad tools and todo tools
-- one or more MCP servers are available
-- the session already has:
-  - a session memory excerpt
-  - a session scratchpad file
-  - persisted PI session history
+- root `AGENTS.md`
+- a workspace skill `cloud_costs`
+- a session scratchpad file for `session-main`
+- recalled durable memory for cloud-cost investigations
+- a persisted PI harness session file for `session-main`
 
-## Step 1: Workspace Prompt Source
+## Step 1: Compile Workspace Manifest and Load Workspace Instructions
 
-The base workspace prompt comes from root `AGENTS.md`.
+`workspace-runtime-plan.ts` compiles the workspace manifest from `workspace.yaml` and referenced files.
 
-That is loaded into `general_config.agent.prompt` when the workspace runtime plan is compiled in:
+For prompt purposes, this step has two different outcomes:
 
-- `runtime/api-server/src/workspace-runtime-plan.ts`
+1. direct prompt text:
+   - root `AGENTS.md` is loaded into `general_config.agent.prompt`
+   - that value later becomes the `workspace_policy` system-prompt section
+2. indirect prompt-shaping metadata:
+   - MCP/app config from `workspace.yaml` is compiled into resolved capability inputs
+   - those values can later change capability-policy wording, but the raw YAML is never dumped into the prompt
 
-So before runtime adds anything dynamic, there is already a static workspace prompt sourced from `AGENTS.md`.
+At this point the runtime has:
 
-## Step 2: Runtime Bootstrap Loads Dynamic Context
+- authored workspace config from `workspace.yaml`
+- authored workspace instructions from `AGENTS.md`
+- resolved MCP configuration
+- resolved application configuration
 
-Inside `executeTsRunnerRequest(...)` in `runtime/api-server/src/ts-runner.ts`, runtime loads the dynamic prompt inputs before prompt projection.
+Important detail:
 
-### 2.1 `sessionResumeContext`
+- in the current `pi` path, `agents.id` and `agents.model` are carried through the compiled manifest, but they do not meaningfully determine prompt text
+- `agents.model` is not the execution model selector here
+- the main prompt-text contribution from Step 1 is the `AGENTS.md` content
 
-Example:
+## Step 2: Resolve Skills and Prepare the Instruction
+
+Before prompt projection, `ts-runner.ts` resolves the available skills with `resolveWorkspaceSkills(...)`.
+
+Important distinction:
+
+- resolving skills is not the same thing as expanding skills into prompt text
+- the resolved set can include both workspace skills and embedded skills
+- mere availability only affects skill visibility and metadata; it does not inline any `SKILL.md` body
+- prompt-body expansion only happens when the instruction explicitly quotes a skill, for example with a leading `/cloud_costs`
+- that preserves progressive disclosure: skill guidance is loaded on demand, not preloaded wholesale
+
+For this example, assume it finds:
+
+```json
+[
+  {
+    "skill_id": "cloud_costs",
+    "skill_name": "cloud_costs",
+    "source_dir": "/workspace/skills/cloud_costs",
+    "file_path": "/workspace/skills/cloud_costs/SKILL.md",
+    "origin": "workspace",
+    "granted_tools": ["bash"],
+    "granted_commands": ["aws-cost-query"]
+  }
+]
+```
+
+Then `prepareInstructionWithQuotedWorkspaceSkills(...)` parses the leading `/cloud_costs` line and produces:
 
 ```json
 {
-  "session_memory_path": "workspace/workspace-1/runtime/session-memory/session-main.md",
-  "session_memory_excerpt": "Investigation focused on AWS spend growth, vendor overlap, and whether idle GPU instances explain the spike."
+  "body": "Continue the cloud cost investigation. Update the findings and answer in chat.",
+  "quoted_skill_blocks": [
+    "<skill name=\"cloud_costs\" location=\"/workspace/skills/cloud_costs/SKILL.md\">\nReferences are relative to /workspace/skills/cloud_costs.\n\nReview billing evidence before proposing savings actions.\n</skill>"
+  ],
+  "missing_quoted_skill_ids": []
 }
 ```
 
-Current behavior:
+Important detail:
 
-- this comes from the runtime-managed session-memory file only
-- there is no fallback that synthesizes `recent_runtime_context`, `recent_turns`, or `recent_user_messages`
-- runtime does not emit a synthetic resume event before the harness run
+- this is an explicit opt-in expansion because the instruction itself started with `/cloud_costs`
+- if the instruction had not explicitly quoted a skill, `quoted_skill_blocks` would be empty even though the skill was resolved and available
+- the runtime prepares the quoted skill block once
+- the PI host does not parse slash-prefixed skill references from raw instruction text
 
-### 2.2 `sessionScratchpadContext`
+## Step 3: Load Dynamic Run Context
+
+`executeTsRunnerRequest(...)` then loads the runtime-owned context that is specific to this run.
+
+For prompt analysis, the important distinction is:
+
+- some loaders read a raw source and then summarize it before prompt rendering
+- some loaders only contribute metadata or availability signals
+- some loaded data never becomes prompt text at all
+
+### Session memory is not part of prompt projection
+
+Runtime-managed session-memory files may exist for the session, but `executeTsRunnerRequest(...)` does not load them into the prompt path anymore.
+
+That means:
+
+- there is no `session_resume_context` field in the runtime config request
+- there is no `resume_context` prompt section
+- continuity for the model comes from persisted PI session history instead of a runtime excerpt block
+
+### Session scratchpad context
+
+The scratchpad metadata is loaded, but the full scratchpad body is not inlined into the prompt.
 
 Example:
 
@@ -134,16 +222,11 @@ Example:
   "file_path": ".holaboss/scratchpads/session-main.md",
   "updated_at": "2026-04-22T10:15:00.000Z",
   "size_bytes": 1420,
-  "preview": "AWS spend spike mostly correlates with idle GPU workers and duplicate vendor monitoring subscriptions."
+  "preview": "Idle GPU workers and duplicate monitoring subscriptions explain most of the spike."
 }
 ```
 
-Source:
-
-- `runtime/api-server/src/session-scratchpad.ts`
-- loaded by `loadSessionScratchpadContext(...)`
-
-### 2.3 `recalledMemoryContext`
+### Recalled durable memory
 
 Example:
 
@@ -153,8 +236,8 @@ Example:
     {
       "scope": "workspace",
       "memory_type": "procedure",
-      "title": "Cloud spend investigations should verify idle compute first",
-      "summary": "When investigating infra spend spikes, check idle compute, duplicate subscriptions, and recent deployment changes before suggesting optimization work.",
+      "title": "Check idle compute before proposing optimizations",
+      "summary": "For cloud-cost investigations, verify idle compute, duplicate subscriptions, and recent deployment changes before proposing savings work.",
       "path": "workspace/workspace-1/knowledge/cloud-cost-procedure.md",
       "verification_policy": "check_before_use",
       "freshness_state": "fresh"
@@ -163,95 +246,72 @@ Example:
 }
 ```
 
-### 2.4 `currentUserContext`
+### Other runtime context
 
-Example:
+The runtime may also load:
 
-```json
-{
-  "profile_id": "default",
-  "name": "Jeffrey",
-  "name_source": "runtime_profile"
-}
-```
+- `current_user_context`
+- `operator_surface_context`
+- `pending_user_memory_context`
+- `evolve_candidate_context`
 
-### 2.5 `operatorSurfaceContext`
-
-Example:
+For this example, assume:
 
 ```json
 {
-  "active_surface_id": "browser:user",
-  "surfaces": [
-    {
-      "surface_id": "browser:user",
-      "surface_type": "browser",
-      "owner": "user",
-      "active": true,
-      "mutability": "inspect_only",
-      "summary": "AWS billing dashboard is open to EC2 spend breakdown."
-    }
-  ]
+  "current_user_context": {
+    "profile_id": "default",
+    "name": "Jeffrey",
+    "name_source": "runtime_profile"
+  },
+  "operator_surface_context": {
+    "active_surface_id": "browser:user",
+    "surfaces": [
+      {
+        "surface_id": "browser:user",
+        "surface_type": "browser",
+        "owner": "user",
+        "active": true,
+        "mutability": "inspect_only",
+        "summary": "AWS billing dashboard is open to EC2 spend breakdown."
+      }
+    ]
+  },
+  "pending_user_memory_context": null,
+  "evolve_candidate_context": null
 }
 ```
 
-### 2.6 `pendingUserMemoryContext`
+### What this step does not inline
 
-Example:
+Even though the runtime reads or computes more state during bootstrap, the following are not serialized into prompt text in this step:
 
-```json
-{
-  "entries": [
-    {
-      "proposal_id": "proposal-1",
-      "proposal_kind": "response_style",
-      "target_key": "response_style",
-      "title": "Prefers concise answers",
-      "summary": "The user asked for concise output.",
-      "evidence": "give me the answer in chat"
-    }
-  ]
-}
-```
+- the full scratchpad file body
+- the full durable-memory store
+- raw `workspace.yaml`
+- raw app runtime YAML contents
+- raw MCP catalog JSON
 
-### 2.7 `evolveCandidateContext`
+Important detail:
 
-Only present for accepted evolve/task-proposal flows.
+- runtime-managed session-memory files still exist for continuity and inspection workflows, but the current prompt path does not load or serialize them
+- resumed continuity for the model comes from persisted PI session history instead
 
-For a normal workspace session, this is often `null`.
+## Step 4: Build the Runtime Config Request
 
-## Step 3: Runtime Builds the Request for Prompt Projection
+`buildAgentRuntimeConfigRequest(...)` packages the workspace prompt, dynamic context, selected model, and visible capability surface into one `AgentRuntimeConfigCliRequest`.
 
-All of the above is packed into one `AgentRuntimeConfigCliRequest` by:
-
-- `buildAgentRuntimeConfigRequest(...)`
-- file: `runtime/api-server/src/ts-runner.ts`
-
-Conceptually, the request looks like this:
+An abridged representative request looks like this:
 
 ```json
 {
   "session_id": "session-main",
   "workspace_id": "workspace-1",
   "input_id": "input-42",
+  "session_mode": "code",
   "session_kind": "workspace_session",
-  "harness_id": "pi",
-  "browser_tools_available": true,
-  "browser_tool_ids": ["browser_open", "browser_eval"],
-  "runtime_tool_ids": [
-    "write_report",
-    "holaboss_scratchpad_read",
-    "holaboss_scratchpad_write"
-  ],
-  "workspace_command_ids": [],
-  "session_resume_context": { "...": "..." },
-  "recalled_memory_context": { "...": "..." },
-  "current_user_context": { "...": "..." },
-  "operator_surface_context": { "...": "..." },
-  "pending_user_memory_context": { "...": "..." },
-  "session_scratchpad_context": { "...": "..." },
   "selected_model": "openai/gpt-5.4",
-  "workspace_skill_ids": [],
+  "workspace_skill_ids": ["cloud_costs"],
   "default_tools": [
     "read",
     "edit",
@@ -265,613 +325,97 @@ Conceptually, the request looks like this:
     "skill"
   ],
   "extra_tools": [
-    "browser_open",
-    "browser_eval",
+    "web_search",
+    "write_report",
+    "download_url",
     "holaboss_scratchpad_read",
-    "holaboss_scratchpad_write"
+    "holaboss_scratchpad_write",
+    "browser_get_state",
+    "browser_click",
+    "browser_type"
   ],
-  "resolved_mcp_tool_refs": [
-    {
-      "tool_id": "notion_search",
-      "server_id": "mcp-notion",
-      "tool_name": "search"
-    }
-  ],
+  "resolved_mcp_tool_refs": [],
+  "resolved_mcp_server_ids": ["context7"],
   "agent": {
     "id": "workspace.general",
     "model": "gpt-5.2",
-    "prompt": "<contents of AGENTS.md>",
-    "role": null
+    "prompt": "<contents of AGENTS.md>"
+  },
+  "session_scratchpad_context": {
+    "exists": true,
+    "file_path": ".holaboss/scratchpads/session-main.md",
+    "updated_at": "2026-04-22T10:15:00.000Z",
+    "size_bytes": 1420,
+    "preview": "Idle GPU workers and duplicate monitoring subscriptions explain most of the spike."
   }
 }
 ```
 
-Important detail:
-
-- `agent.prompt` is the workspace prompt from `AGENTS.md`
-- dynamic runtime context is still separate at this stage
-- there is no `recent_runtime_context` field anymore
-
-## Step 4: Capability Manifest Is Built
-
-Before prompt rendering, `projectAgentRuntimeConfig(...)` builds a capability manifest with:
-
-- `buildAgentCapabilityManifest(...)`
-- file: `runtime/api-server/src/agent-capability-registry.ts`
-
-This manifest classifies the run surface:
-
-- inspect tools
-- mutate tools
-- coordination tools
-- browser tools
-- runtime tools
-- workspace commands
-- workspace skills
-- MCP connectivity
-
-That manifest is later rendered into the `capability_policy` system-prompt section.
-
-## Step 5: Prompt Sections Are Constructed
-
-`composeBaseAgentPrompt(...)` calls `buildBaseAgentPromptSections(...)`.
-
-This is the actual assembly step.
-
-### 5.1 System-prompt sections
-
-These are rendered into the final `system_prompt`, in sorted order.
-
-Current sections:
-
-1. `runtime_core`
-2. `execution_policy`
-3. `response_delivery_policy`
-4. `session_policy`
-5. `todo_continuity_policy`
-6. `capability_policy`
-7. `workspace_policy`
-
-Notes:
-
-- `todo_continuity_policy` is conditional and only appears when todo coordination tools are available
-- `workspace_policy` is the loaded `AGENTS.md` content wrapped with runtime guidance
-
-### 5.2 Context-message sections
-
-These are not part of `system_prompt`. They are carried as context messages.
-
-Current sections:
-
-1. `current_user_context`
-2. `operator_surface_context`
-3. `pending_user_memory`
-4. `scratchpad_context`
-5. `evolve_candidate_context`
-6. `memory_recall`
-
-### 5.3 Resume-context section
-
-There is one special resume channel:
-
-1. `resume_context`
-
-This is rendered separately from `system_prompt` but still included in compatibility `context_messages`.
-
-There is no `recent_runtime_context` section anymore.
-
-## Step 6: Example Rendered Sections
-
-For the example run, some concrete section outputs would look like this.
-
-### 6.1 Example `todo_continuity_policy`
-
-```text
-Todo continuity policy:
-Treat todo state as explicit coordination state, not hidden memory.
-Treat the user's newest message as the primary instruction for the current turn even when unfinished todo state may already exist.
-Do not resume unfinished todo work unless the newest message clearly asks to continue it or clearly advances the same work.
-If the newest message is conversational, brief, acknowledges prior progress, or is otherwise ambiguous about continuation, respond to that message directly first and ask whether the user wants to continue the unfinished work.
-When you need the current phase ids, task ids, or recorded state from an existing todo before continuing or updating it, use `todoread` first instead of guessing.
-```
-
-### 6.2 Example `scratchpad_context`
-
-```text
-Session scratchpad:
-A session-scoped scratchpad file already exists for this session.
-The scratchpad is not loaded into prompt context automatically. Read it explicitly when those notes are needed for this turn.
-The scratchpad metadata and preview below are already loaded into prompt context. Do not read the scratchpad just to confirm its existence, path, timestamp, or preview; read it only when you need additional note contents for this turn.
-Use the scratchpad for working notes and interim state, not as durable memory or a user-facing deliverable.
-Path: `.holaboss/scratchpads/session-main.md`.
-Last updated: 2026-04-22T10:15:00.000Z.
-Size: 1420 bytes.
-Preview: AWS spend spike mostly correlates with idle GPU workers and duplicate vendor monitoring subscriptions.
-```
-
-### 6.3 Example `resume_context`
-
-```text
-Session resume context:
-Use this as continuity context derived from runtime-managed session memory excerpts. Verify current workspace state before acting on details that may have changed.
-Treat the user's newest message as authoritative for this turn. Do not resume unfinished prior work unless that newest message clearly asks to continue it or clearly advances the same task.
-If the newest message is conversational, brief, or ambiguous about continuation, respond to it directly first and ask whether the user wants to continue the unfinished prior work.
-This runtime-managed resume summary is already loaded into prompt context. Do not reopen runtime-managed continuity files just to restate this context; inspect a referenced file only when you need details not included here or need to verify that it changed during this run.
-
-Session memory:
-- Path: `workspace/workspace-1/runtime/session-memory/session-main.md`
-- Excerpt: Investigation focused on AWS spend growth, vendor overlap, and whether idle GPU instances explain the spike.
-```
-
-## Step 7: Sections Become Prompt Outputs
-
-The helpers in `runtime/api-server/src/agent-prompt-sections.ts` do four important things:
-
-1. normalize section content
-2. sort by:
-   - precedence
-   - priority
-   - apply_at
-   - channel
-   - id
-3. render system-prompt sections into one string
-4. collect compatibility context sections into a flat ordered list
-
-For the example run:
-
-### 7.1 Final `system_prompt`
-
-This is the concatenation of all `system_prompt` sections only:
-
-```text
-Base runtime instructions:
-...
-
-Execution policy:
-...
-
-Response delivery policy:
-...
-
-Session policy:
-...
-
-Todo continuity policy:
-...
-
-Capability policy for this run:
-...
-
-Workspace instructions from AGENTS.md:
-Treat these workspace instructions as additional requirements. Follow them unless they conflict with the base runtime instructions above.
-Root AGENTS.md is already loaded into this prompt. Do not read it again unless the user explicitly asks or you need to verify that the on-disk file changed during this run.
-<contents of AGENTS.md>
-```
-
-### 7.2 Final `context_messages`
-
-This is the ordered list of compatibility context sections:
-
-```json
-[
-  "<current_user_context text>",
-  "<operator_surface_context text>",
-  "<pending_user_memory text>",
-  "<scratchpad_context text>",
-  "<resume_context text>",
-  "<memory_recall text>"
-]
-```
-
-If `evolve_candidate_context` exists for the turn, it appears before `resume_context`.
+This request still is not the final prompt. It is the runtime input to prompt projection.
 
 Important detail:
 
-- `resume_context` is not merged into `system_prompt`
-- it still becomes part of `context_messages`
+- `agent.model` is carried through from the compiled workspace config because `workspace.yaml` requires it
+- the current execution model is resolved from `selected_model` or the runtime default, not from `agent.model`
 
-### 7.3 Final `prompt_layers`
+## Step 5: Project Structured Prompt Sections
 
-Only `system_prompt` sections become `prompt_layers`.
+`projectAgentRuntimeConfig(...)` calls `composeBaseAgentPrompt(...)`, which uses `buildBaseAgentPromptSections(...)`.
 
-Example:
+The runtime builds prompt sections with ids, channels, priorities, and volatility. In the current path those sections are:
 
-```json
-[
-  { "id": "runtime_core", "apply_at": "runtime_config", "content": "..." },
-  { "id": "execution_policy", "apply_at": "runtime_config", "content": "..." },
-  { "id": "response_delivery_policy", "apply_at": "runtime_config", "content": "..." },
-  { "id": "todo_continuity_policy", "apply_at": "runtime_config", "content": "..." },
-  { "id": "session_policy", "apply_at": "runtime_config", "content": "..." },
-  { "id": "capability_policy", "apply_at": "runtime_config", "content": "..." },
-  { "id": "workspace_policy", "apply_at": "runtime_config", "content": "..." }
-]
-```
+- `runtime_core`
+- `execution_policy`
+- `response_delivery_policy`
+- `todo_continuity_policy` when todo tools are available
+- `session_policy`
+- `capability_policy`
+- `current_user_context`
+- `operator_surface_context`
+- `pending_user_memory`
+- `scratchpad_context`
+- `evolve_candidate_context`
+- `memory_recall`
+- `workspace_policy`
 
-If todo tools are unavailable, `todo_continuity_policy` is omitted.
+The key split is:
 
-### 7.4 Final `prompt_cache_profile`
+- `system_prompt` sections become one rendered system prompt
+- `context_message` sections are flattened into the `context_messages` compatibility array forwarded to the harness adapter
 
-The cache profile fingerprints:
+### Loaded Value To Prompt Translation Map
 
-- cacheable system-prompt sections
-- volatile run-level system-prompt sections
-- compatibility context section ids
-- resume-context section ids
+This is the exact bridge between loaded data and rendered prompt material in the current path:
 
-This is used for prompt observability and caching boundaries, not direct model input.
-
-## Step 8: Runtime Config Returned by the API Layer
-
-`projectAgentRuntimeConfig(...)` returns:
-
-```json
-{
-  "provider_id": "openai",
-  "model_id": "gpt-5.4",
-  "mode": "code",
-  "system_prompt": "<rendered system prompt>",
-  "context_messages": [
-    "<current_user_context>",
-    "<operator_surface_context>",
-    "<pending_user_memory>",
-    "<scratchpad_context>",
-    "<resume_context>",
-    "<memory_recall>"
-  ],
-  "prompt_sections": [...],
-  "prompt_layers": [...],
-  "prompt_cache_profile": {...},
-  "tools": {...},
-  "capability_manifest": {...}
-}
-```
-
-That object is the runtime-side prompt projection output.
-
-## Step 9: PI Runtime Adapter Forwards It
-
-The PI adapter in `runtime/harnesses/src/pi.ts` forwards the important fields into the harness-host request:
-
-- `instruction`
-- `context_messages`
-- `system_prompt`
-- `attachments`
-- model selection
-- MCP server payloads
-- workspace skill dirs
-
-Conceptually:
-
-```json
-{
-  "instruction": "Continue the cloud cost investigation. Use the notes from earlier, update the findings, and give me the answer in chat.",
-  "context_messages": [
-    "...",
-    "...",
-    "..."
-  ],
-  "system_prompt": "<rendered system prompt>",
-  "workspace_skill_dirs": [],
-  "mcp_servers": [...],
-  "mcp_tool_refs": [...],
-  "attachments": []
-}
-```
-
-## Step 10: PI Host Builds the Actual Prompt Payload
-
-Inside `runtime/harness-host/src/pi.ts`, the PI host treats `system_prompt` and `context_messages` differently.
-
-### 10.1 System prompt path
-
-`effectiveSystemPromptForRequest(...)` starts from:
-
-- `request.system_prompt`
-
-It may append one additional PI-local note:
-
-- if a resumed PI session already has persisted todo state, PI adds a short note telling the model that a persisted phased todo plan exists and that it should use `todoread` when it needs the current ids/state from that plan
-
-So the system prompt the model receives is:
-
-```text
-<rendered runtime system prompt>
-
-<optional resumed-session todo note>
-```
-
-### 10.2 User content path
-
-`buildPiPromptPayload(...)` builds the non-system content in this order:
-
-1. quoted skill blocks if the instruction references workspace skills
-2. the user `instruction`
-3. the `"Runtime context:"` block built from `context_messages`
-4. inline attachment content and attachment summaries
-
-For the example run, the textual prompt body would look roughly like:
-
-```text
-Continue the cloud cost investigation. Use the notes from earlier, update the findings, and give me the answer in chat.
-
-Runtime context:
-
-[Runtime Context 1]
-Current user context:
-...
-[/Runtime Context 1]
-
-[Runtime Context 2]
-Operator surface context:
-...
-[/Runtime Context 2]
-
-[Runtime Context 3]
-Current-turn inferred user memory:
-...
-[/Runtime Context 3]
-
-[Runtime Context 4]
-Session scratchpad:
-...
-[/Runtime Context 4]
-
-[Runtime Context 5]
-Session resume context:
-...
-[/Runtime Context 5]
-
-[Runtime Context 6]
-Recalled durable memory:
-...
-[/Runtime Context 6]
-
-Attachments: none.
-Image inputs: none.
-```
+| Loaded value | Runtime section id / channel | How it renders | Where the model finally sees it |
+| --- | --- | --- | --- |
+| `general_config.agent.prompt` | `workspace_policy` / `system_prompt` | wrapped with `Workspace instructions from AGENTS.md:` and the guardrails that say root `AGENTS.md` is already loaded | in the final `system_prompt` |
+| `workspaceSkillIds` | `execution_policy` + `capability_policy` / `system_prompt` | indirect wording such as `Use relevant skills instead of improvising when they materially help.` plus skill availability counts; this does not inline skill bodies | in the final `system_prompt` |
+| `resolved_mcp_tool_refs` | `execution_policy` + `capability_policy` / `system_prompt` | indirect wording such as `Use relevant MCP tools directly...` and `Connected MCP access: available.` | in the final `system_prompt` |
+| `resolved_mcp_server_ids` | `execution_policy` + `capability_policy` / `system_prompt` | indirect wording about connected MCP access when servers exist even without named tools | in the final `system_prompt` |
+| `session_scratchpad_context` | `scratchpad_context` / `context_message` | rendered as `Session scratchpad:` with metadata + preview | flattened into `context_messages`, then included in the PI `Runtime context:` block |
+| `current_user_context` | `current_user_context` / `context_message` | rendered as `Current user context:` if a user name exists | flattened into `context_messages`, then included in the PI `Runtime context:` block |
+| `operator_surface_context` | `operator_surface_context` / `context_message` | rendered as `Operator surface context:` with active surface and known surfaces | flattened into `context_messages`, then included in the PI `Runtime context:` block |
+| `pending_user_memory_context` | `pending_user_memory` / `context_message` | rendered as `Current-turn inferred user memory:` with pending proposal summaries | flattened into `context_messages`, then included in the PI `Runtime context:` block |
+| `recalled_memory_context` | `memory_recall` / `context_message` | rendered as `Recalled durable memory:` with selected memory summaries | flattened into `context_messages`, then included in the PI `Runtime context:` block |
+| `evolve_candidate_context` | `evolve_candidate_context` / `context_message` | rendered as `Accepted evolve candidate:` with the selected candidate details | flattened into `context_messages`, then included in the PI `Runtime context:` block |
+| `quoted_skill_blocks` | no runtime prompt section; PI-host body serialization only | emitted as a `Quoted workspace skills:` block before the instruction, but only when the user explicitly quoted one or more skills in the instruction | in the PI prompt body text |
+| `attachments` | no runtime prompt section; PI-host attachment serialization only | supported docs become `[Document: ...]` blocks, images become PI image content, unsupported files become fallback path lines | in the PI prompt body text and/or PI image content |
 
 Important detail:
 
-- PI no longer inserts the todo-resume advisory into the prompt body
-- runtime context is carried only through the `Runtime context:` block
+- session-memory continuity is intentionally absent from this map because it is no longer part of prompt projection
+- the model still gets continuity from PI session history when a persisted harness session is reopened
+- resolved skills are intentionally absent from the PI body unless they were explicitly quoted; that is the progressive-disclosure boundary
 
-## Step 11: Persisted PI Session History Is Also Opened
+Important detail:
 
-This is the most important non-obvious part of the full flow.
+- quoted skill blocks and attachment content do not pass through `buildBaseAgentPromptSections(...)`
+- they are serialized later by the PI host after runtime section projection is already complete
 
-The PI host also opens the persisted PI session file with `SessionManager.open(...)`.
+### Representative rendered `system_prompt`
 
-That means continuity does not come only from:
-
-- `system_prompt`
-- `instruction`
-- `context_messages`
-
-It also comes from:
-
-- prior persisted PI conversation and tool state
-
-So the full effective prompt state for a resumed PI run is:
-
-1. system prompt override from runtime
-2. freshly built instruction + runtime context block + attachments
-3. persisted PI session continuity
-
-This is why runtime-injected replay summaries were redundant for PI and were removed from the runtime prompt contract.
-
-## Full Concrete Trace
-
-This section shows one exact example from start to finish.
-
-Assumptions for this trace:
-
-- no quoted workspace skills in the instruction
-- no file or image attachments
-- no PI-specific resumed-session todo note
-- the persisted PI session file exists, but its prior conversation contents are not reproduced here
-
-### Trace 1: Incoming Turn Request
-
-This is the incoming `TsRunnerRequest` shape we are tracing:
-
-```json
-{
-  "workspace_id": "workspace-1",
-  "session_id": "session-main",
-  "input_id": "input-42",
-  "session_kind": "workspace_session",
-  "instruction": "Continue the cloud cost investigation. Use the notes from earlier, update the findings, and give me the answer in chat.",
-  "model": "openai/gpt-5.4",
-  "attachments": [],
-  "thinking_value": null,
-  "debug": false
-}
-```
-
-### Trace 2: Workspace Prompt Already Loaded From `AGENTS.md`
-
-For this concrete example, assume the loaded workspace prompt is exactly:
-
-```text
-- Keep answers concise.
-- Prefer markdown reports under outputs/reports for deep research.
-- Do not use browser tools unless the task is UI-specific.
-```
-
-This text becomes `agent.prompt` before any dynamic runtime context is added.
-
-### Trace 3: Runtime Bootstrap Loads Dynamic Context
-
-For this example, bootstrap resolves these dynamic context objects:
-
-`session_resume_context`
-
-```json
-{
-  "session_memory_path": "workspace/workspace-1/runtime/session-memory/session-main.md",
-  "session_memory_excerpt": "Investigation focused on AWS spend growth, vendor overlap, and whether idle GPU instances explain the spike."
-}
-```
-
-`session_scratchpad_context`
-
-```json
-{
-  "exists": true,
-  "file_path": ".holaboss/scratchpads/session-main.md",
-  "updated_at": "2026-04-22T10:15:00.000Z",
-  "size_bytes": 1420,
-  "preview": "AWS spend spike mostly correlates with idle GPU workers and duplicate vendor monitoring subscriptions."
-}
-```
-
-`current_user_context`
-
-```json
-{
-  "profile_id": "default",
-  "name": "Jeffrey",
-  "name_source": "runtime_profile"
-}
-```
-
-`operator_surface_context`
-
-```json
-{
-  "active_surface_id": "browser:user",
-  "surfaces": [
-    {
-      "surface_id": "browser:user",
-      "surface_type": "browser",
-      "owner": "user",
-      "active": true,
-      "mutability": "inspect_only",
-      "summary": "AWS billing dashboard is open to EC2 spend breakdown."
-    }
-  ]
-}
-```
-
-`pending_user_memory_context`
-
-```json
-{
-  "entries": [
-    {
-      "proposal_id": "proposal-1",
-      "proposal_kind": "response_style",
-      "target_key": "response_style",
-      "title": "Prefers concise answers",
-      "summary": "The user asked for concise output.",
-      "evidence": "give me the answer in chat"
-    }
-  ]
-}
-```
-
-`recalled_memory_context`
-
-```json
-{
-  "entries": [
-    {
-      "scope": "workspace",
-      "memory_type": "procedure",
-      "title": "Cloud spend investigations should verify idle compute first",
-      "summary": "When investigating infra spend spikes, check idle compute, duplicate subscriptions, and recent deployment changes before suggesting optimization work.",
-      "path": "workspace/workspace-1/knowledge/cloud-cost-procedure.md",
-      "verification_policy": "check_before_use",
-      "staleness_policy": "stable",
-      "freshness_state": "fresh"
-    }
-  ]
-}
-```
-
-The run also stages:
-
-- browser tools: `browser_open_tab`, `browser_get_state`
-- runtime tools: `write_report`, `holaboss_scratchpad_read`, `holaboss_scratchpad_write`
-- MCP tool refs: `notion_search`
-
-### Trace 4: Runtime Builds `AgentRuntimeConfigCliRequest`
-
-Conceptually, the runtime passes this to `projectAgentRuntimeConfig(...)`:
-
-```json
-{
-  "session_id": "session-main",
-  "workspace_id": "workspace-1",
-  "input_id": "input-42",
-  "session_kind": "workspace_session",
-  "harness_id": "pi",
-  "browser_tools_available": true,
-  "browser_tool_ids": ["browser_open_tab", "browser_get_state"],
-  "runtime_tool_ids": [
-    "write_report",
-    "holaboss_scratchpad_read",
-    "holaboss_scratchpad_write"
-  ],
-  "workspace_command_ids": [],
-  "session_resume_context": { "...see above..." },
-  "recalled_memory_context": { "...see above..." },
-  "current_user_context": { "...see above..." },
-  "operator_surface_context": { "...see above..." },
-  "pending_user_memory_context": { "...see above..." },
-  "session_scratchpad_context": { "...see above..." },
-  "selected_model": "openai/gpt-5.4",
-  "workspace_skill_ids": [],
-  "default_tools": ["read", "edit", "todoread", "todowrite", "skill"],
-  "extra_tools": [
-    "browser_open_tab",
-    "browser_get_state",
-    "holaboss_scratchpad_read",
-    "holaboss_scratchpad_write"
-  ],
-  "resolved_mcp_tool_refs": [
-    {
-      "tool_id": "notion_search",
-      "server_id": "mcp-notion",
-      "tool_name": "search"
-    }
-  ],
-  "agent": {
-    "id": "workspace.general",
-    "prompt": "- Keep answers concise.\n- Prefer markdown reports under outputs/reports for deep research.\n- Do not use browser tools unless the task is UI-specific."
-  }
-}
-```
-
-### Trace 5: Runtime Projects Prompt Layers
-
-For this run, `composeBaseAgentPrompt(...)` emits these system-prompt layers in order:
-
-```json
-[
-  "runtime_core",
-  "execution_policy",
-  "response_delivery_policy",
-  "session_policy",
-  "todo_continuity_policy",
-  "capability_policy",
-  "workspace_policy"
-]
-```
-
-It also emits these compatibility context messages, in order:
-
-1. `current_user_context`
-2. `operator_surface_context`
-3. `pending_user_memory`
-4. `scratchpad_context`
-5. `resume_context`
-6. `memory_recall`
-
-### Trace 6: Final Rendered `system_prompt`
-
-This is the exact rendered `system_prompt` for the sample above:
+The actual `system_prompt` is one long string. For this example, its structure looks like:
 
 ```text
 Base runtime instructions:
@@ -881,112 +425,248 @@ Execution doctrine:
 Inspect before mutating workspace, app, browser, runtime state, or external systems when possible.
 After edits, commands, browser actions, or state-changing tool calls, verify the result with the most direct inspection path available.
 Use available tools, skills, and MCP integrations when they are more reliable than reasoning alone.
-Treat explicit user requirements and verification targets as completion criteria, not optional detail.
-If evidence is incomplete, keep retrieving or say exactly what remains unverified.
-Treat local git as an internal recovery tool. Do not surface git chatter unless the user asks, and do not use destructive history operations unless explicitly requested.
 Treat the active workspace root as the default boundary. Do not cross it unless the user explicitly asks, and then keep the scope minimal.
 Use coordination tools instead of hidden state. The newest user message is primary.
 Resume unfinished work only when the newest message clearly asks to continue it; otherwise respond to the new message directly.
-Ask for missing identity details instead of guessing.
-Create or update a workspace-local skill when the user describes a reusable workflow; do not create skills for one-off state.
-When browser tools are available, use them for UI-specific verification and prefer DOM-grounded actions and extraction; use screenshots only when visual confirmation matters.
-Use relevant MCP tools directly instead of only describing them.
 When a task is long-running or multi-step, prefer using the session scratchpad for interim notes, partial findings, open questions, and compacted current state instead of keeping that material only in live context.
-Use the scratchpad for session-scoped working notes, not for durable memory or final user-facing deliverables.
 
 Response delivery policy:
 Default to concise answers.
 Keep short lookups and straightforward explanations inline.
-Do not create a report just because tools were used.
-Use `write_report` for long, structured, evidence-heavy, or referenceable outputs; if it is unavailable, write the artifact under `outputs/reports/`.
-For research, investigation, comparison, timeline, or latest-news tasks across multiple sources, prefer a report artifact and keep the chat reply to a brief summary unless the user asks for inline detail.
-When you create a report, mention the report path or title and only the most important takeaways in chat.
-
-Session policy:
-Session mode is `code`. Default to implementation-oriented work, direct inspection, concrete edits, and explicit verification when the user asks you to do work.
-This is a workspace session. You can operate broadly across the workspace, and browser tooling may be available in this session when the capability manifest exposes it.
+Use `write_report` for long, structured, evidence-heavy, or referenceable outputs.
 
 Todo continuity policy:
 Treat todo state as explicit coordination state, not hidden memory.
 Treat the user's newest message as the primary instruction for the current turn even when unfinished todo state may already exist.
-Do not resume unfinished todo work unless the newest message clearly asks to continue it or clearly advances the same work.
-If the newest message is conversational, brief, acknowledges prior progress, or is otherwise ambiguous about continuation, respond to that message directly first and ask whether the user wants to continue the unfinished work.
 When you need the current phase ids, task ids, or recorded state from an existing todo before continuing or updating it, use `todoread` first instead of guessing.
-When the user has clearly asked to continue unfinished todo work and executable todo items remain, continue until the recorded work is complete or genuinely blocked.
-Do not stop only to give progress updates or ask whether to continue while executable todo items remain after the user already asked you to continue.
-If the user's newest message clearly redirects to unrelated work, handle that new request first without marking the unfinished todo complete, then propose continuing it afterward.
 
-Capability policy for this run:
-Harness: pi.
-Session kind: workspace_session.
-Use inspection capabilities to gather context before mutating workspace, app, browser, or runtime state whenever possible.
-After edits, shell commands, browser actions, MCP mutations, or runtime mutations, run a follow-up inspection or verification step before claiming success.
-Use coordination capabilities to track progress, consult available skills, or ask for clarification instead of keeping hidden state.
-If a capability is not listed below, do not assume it is available in this run.
-Inspect tools: available (4 enabled).
-Mutating tools: available (3 enabled).
-Coordination tools: available (3 enabled).
-Browser tools: available (2 enabled).
-Runtime tools: available (2 enabled).
-Workspace commands: none.
-Workspace skills: none.
-Connected MCP access: available.
-Use surfaced MCP tools when relevant; tool names may be resolved dynamically by the runtime.
+Session policy:
+Session mode is `code`.
+This is a workspace session. You can operate broadly across the workspace, and browser tooling may be available in this session when the capability manifest exposes it.
+
+Capability policy:
+...
 
 Workspace instructions from AGENTS.md:
 Treat these workspace instructions as additional requirements. Follow them unless they conflict with the base runtime instructions above.
 Root AGENTS.md is already loaded into this prompt. Do not read it again unless the user explicitly asks or you need to verify that the on-disk file changed during this run.
-- Keep answers concise.
-- Prefer markdown reports under outputs/reports for deep research.
-- Do not use browser tools unless the task is UI-specific.
+...
 ```
 
-### Trace 7: Final `context_messages`
+Important detail:
 
-This is the exact ordered `context_messages` array:
+- this rendered `system_prompt` is passed to PI as the separate `system_prompt` override field
+- this is where the root `AGENTS.md` content actually lands
+- it does not appear again in the PI prompt body text shown later
+
+### Representative `context_messages`
+
+The runtime also renders a compatibility list of context messages:
 
 ```json
 [
   "Current user context:\nRuntime profile id: `default`.\nThe current operator name is `Jeffrey`.\nName source: `runtime_profile`.",
-  "Operator surface context:\nUse these operator-controlled surfaces as continuity anchors when the user refers to `here`, `this page`, `my current tab`, `the file I'm in`, `this terminal`, or similar language.\nTreat the active user-owned surface as the default referent for deictic questions such as `what am I looking at right now`, `what is this`, `what page/file/screen is this`, or `what about now`, unless the user explicitly narrows to browser, tab, site, URL, terminal, editor, or another surface.\nPrefer the active user-owned surface when the user clearly wants you to continue from what they already opened, navigated, selected, or prepared.\nPrefer agent-owned surfaces for exploratory, multi-step, parallel, or potentially disruptive work.\nIf the active user-owned surface is not a browser surface, do not answer from browser state just because browser tools are available.\nDo not mutate a user-owned surface unless runtime context or capabilities explicitly allow takeover or direct control.\nCurrent active surface id: `browser:user`.\nKnown operator surfaces:\n- [user/browser] `browser:user` (active, mutability=`inspect_only`): AWS billing dashboard is open to EC2 spend breakdown.",
-  "Current-turn inferred user memory:\nThese items were inferred from the latest user input and are not durably saved yet.\nUse them for this run when directly relevant, but do not claim they are saved as long-term memory unless the user later confirms them.\n- Prefers concise answers: The user asked for concise output.\n  Evidence: give me the answer in chat",
-  "Session scratchpad:\nA session-scoped scratchpad file already exists for this session.\nThe scratchpad is not loaded into prompt context automatically. Read it explicitly when those notes are needed for this turn.\nThe scratchpad metadata and preview below are already loaded into prompt context. Do not read the scratchpad just to confirm its existence, path, timestamp, or preview; read it only when you need additional note contents for this turn.\nUse the scratchpad for working notes and interim state, not as durable memory or a user-facing deliverable.\nPath: `.holaboss/scratchpads/session-main.md`.\nLast updated: 2026-04-22T10:15:00.000Z.\nSize: 1420 bytes.\nPreview: AWS spend spike mostly correlates with idle GPU workers and duplicate vendor monitoring subscriptions.",
-  "Session resume context:\nUse this as continuity context derived from runtime-managed session memory excerpts. Verify current workspace state before acting on details that may have changed.\nTreat the user's newest message as authoritative for this turn. Do not resume unfinished prior work unless that newest message clearly asks to continue it or clearly advances the same task.\nIf the newest message is conversational, brief, or ambiguous about continuation, respond to it directly first and ask whether the user wants to continue the unfinished prior work.\nThis runtime-managed resume summary is already loaded into prompt context. Do not reopen runtime-managed continuity files just to restate this context; inspect a referenced file only when you need details not included here or need to verify that it changed during this run.\nSession memory:\n- Path: `workspace/workspace-1/runtime/session-memory/session-main.md`\n- Excerpt: Investigation focused on AWS spend growth, vendor overlap, and whether idle GPU instances explain the spike.",
-  "Recalled durable memory:\nUse these as durable memories, not as guaranteed current truth. Verify entries marked `check_before_use` or `must_reconfirm` before acting on them, and treat stale entries as hints until reconfirmed.\n- [workspace/procedure] Cloud spend investigations should verify idle compute first (`workspace/workspace-1/knowledge/cloud-cost-procedure.md`): When investigating infra spend spikes, check idle compute, duplicate subscriptions, and recent deployment changes before suggesting optimization work. Verification: `check_before_use`. Freshness: `fresh` (`stable`)."
+  "Operator surface context:\nUse these operator-controlled surfaces as continuity anchors when the user refers to `here`, `this page`, `my current tab`, `the file I'm in`, `this terminal`, or similar language.\nCurrent active surface id: `browser:user`.\nKnown operator surfaces:\n- [user/browser] `browser:user` (active, mutability=`inspect_only`): AWS billing dashboard is open to EC2 spend breakdown.",
+  "Session scratchpad:\nA session-scoped scratchpad file already exists for this session.\nThe scratchpad is not loaded into prompt context automatically. Read it explicitly when those notes are needed for this turn.\nThe scratchpad metadata and preview below are already loaded into prompt context. Do not read the scratchpad just to confirm its existence, path, timestamp, or preview; read it only when you need additional note contents for this turn.\nPath: `.holaboss/scratchpads/session-main.md`.\nLast updated: 2026-04-22T10:15:00.000Z.\nSize: 1420 bytes.\nPreview: Idle GPU workers and duplicate monitoring subscriptions explain most of the spike.",
+  "Recalled durable memory:\nUse these as durable memories, not as guaranteed current truth. Verify entries marked `check_before_use` or `must_reconfirm` before acting on them, and treat stale entries as hints until reconfirmed.\n- [workspace/procedure] Check idle compute before proposing optimizations (`workspace/workspace-1/knowledge/cloud-cost-procedure.md`): For cloud-cost investigations, verify idle compute, duplicate subscriptions, and recent deployment changes before proposing savings work. Verification: `check_before_use`. Freshness: `fresh` (`stable`)."
 ]
 ```
 
-### Trace 8: PI Adapter Forwards Runtime Prompt Fields
+### How `context_messages` Are Formed
 
-The PI adapter forwards:
+The `context_messages` array is not handwritten. It is derived mechanically from prompt sections:
 
-- `instruction`
-- `system_prompt`
-- `context_messages`
-- empty `attachments`
-- model/provider selection
-- MCP server metadata
-- workspace skill directories
+1. `buildBaseAgentPromptSections(...)` creates candidate sections for every available runtime-context source.
+2. `collectAgentPromptSections(...)` removes empty sections and sorts the remainder by precedence, priority, channel, and id.
+3. `collectCompatibleContextMessageContents(...)` keeps the sorted sections whose channel is `context_message`.
+4. the PI host wraps each resulting string inside numbered `[Runtime Context N]` blocks.
 
-At this stage, prompt semantics are still split between:
+For this worked example, the runtime creates these non-empty `context_message` sections in this order:
 
-- `system_prompt`
-- `context_messages`
-- the raw user `instruction`
+1. `current_user_context`
+2. `operator_surface_context`
+3. `scratchpad_context`
+4. `memory_recall`
 
-### Trace 9: PI Host Builds the Final Prompt Body
+And it omits these because their rendered content is empty in the example:
 
-Because this example has:
+- `pending_user_memory`
+- `evolve_candidate_context`
 
-- no quoted skills
-- no attachments
-- no images
-- no PI-specific resumed-session todo note
+The ordering comes from the runtime priorities:
 
-the final PI prompt body becomes exactly:
+- `current_user_context`: priority `475`, volatility `workspace`
+- `operator_surface_context`: priority `480`, volatility `run`
+- `pending_user_memory`: priority `490`, volatility `run`
+- `scratchpad_context`: priority `492`, volatility `run`
+- `evolve_candidate_context`: priority `495`, volatility `run`
+- `memory_recall`: priority `575`, volatility `run`
+
+### Representative `prompt_cache_profile`
+
+The runtime also computes cache metadata from the same prompt sections.
+
+For this worked example, the profile shape is approximately:
+
+```json
+{
+  "cacheable_section_ids": [
+    "runtime_core",
+    "execution_policy",
+    "response_delivery_policy",
+    "workspace_policy"
+  ],
+  "volatile_section_ids": [
+    "session_policy",
+    "capability_policy"
+  ],
+  "context_message_ids": [
+    "current_user_context",
+    "operator_surface_context",
+    "scratchpad_context",
+    "memory_recall"
+  ],
+  "attachment_ids": [],
+  "compatibility_context_ids": [
+    "current_user_context",
+    "operator_surface_context",
+    "scratchpad_context",
+    "memory_recall"
+  ],
+  "delta_section_ids": [
+    "current_user_context",
+    "operator_surface_context",
+    "scratchpad_context",
+    "memory_recall"
+  ],
+  "channel_section_ids": {
+    "system_prompt": [
+      "runtime_core",
+      "execution_policy",
+      "response_delivery_policy",
+      "session_policy",
+      "capability_policy",
+      "workspace_policy"
+    ],
+    "context_message": [
+      "current_user_context",
+      "operator_surface_context",
+      "scratchpad_context",
+      "memory_recall"
+    ]
+  }
+}
+```
+
+What this means in practice:
+
+- only `system_prompt` sections contribute to `cacheable_system_prompt` and `volatile_system_prompt`
+- `stable` and `workspace` `system_prompt` sections are treated as cacheable
+- `run` `system_prompt` sections are treated as volatile and recomputed each run
+- `context_message` sections are tracked separately for compatibility/delta purposes; they are not merged into the cacheable system-prompt string
+- `current_user_context` is `workspace` volatility, but because it is a `context_message` section, it is not part of `cacheable_section_ids`
+
+## Step 6: Build the PI Host Request
+
+The runtime adapter in `runtime/harnesses/src/pi.ts` converts the runtime config into a reduced `HarnessHostPiRequest`.
+
+An abridged representative request looks like:
+
+```json
+{
+  "workspace_id": "workspace-1",
+  "workspace_dir": "/workspace",
+  "session_id": "session-main",
+  "input_id": "input-42",
+  "browser_tools_enabled": true,
+  "browser_space": "user",
+  "instruction": "Continue the cloud cost investigation. Update the findings and answer in chat.",
+  "quoted_skill_blocks": [
+    "<skill name=\"cloud_costs\" location=\"/workspace/skills/cloud_costs/SKILL.md\">\nReferences are relative to /workspace/skills/cloud_costs.\n\nReview billing evidence before proposing savings actions.\n</skill>"
+  ],
+  "missing_quoted_skill_ids": [],
+  "context_messages": [
+    "Current user context: ...",
+    "Operator surface context: ...",
+    "Session scratchpad: ...",
+    "Recalled durable memory: ..."
+  ],
+  "attachments": [
+    {
+      "id": "attachment-1",
+      "kind": "file",
+      "name": "ec2-cost-breakdown.pdf",
+      "mime_type": "application/pdf",
+      "size_bytes": 238144,
+      "workspace_path": "inputs/input-42/ec2-cost-breakdown.pdf"
+    }
+  ],
+  "thinking_value": "medium",
+  "provider_id": "openai",
+  "model_id": "gpt-5.4",
+  "runtime_api_base_url": "http://127.0.0.1:5160",
+  "system_prompt": "<rendered runtime system prompt>",
+  "workspace_skills": [
+    {
+      "skill_id": "cloud_costs",
+      "skill_name": "cloud_costs",
+      "source_dir": "/workspace/skills/cloud_costs",
+      "file_path": "/workspace/skills/cloud_costs/SKILL.md",
+      "origin": "workspace",
+      "granted_tools": ["bash"],
+      "granted_commands": ["aws-cost-query"]
+    }
+  ],
+  "mcp_servers": [
+    {
+      "name": "context7",
+      "config": {
+        "type": "remote",
+        "enabled": true,
+        "url": "https://mcp.context7.com/mcp",
+        "timeout": 10000
+      }
+    }
+  ],
+  "mcp_tool_refs": []
+}
+```
+
+With the queued input above and the default managed `openai/gpt-5.4` path, the request resolves to `provider_id: "openai"` and `model_id: "gpt-5.4"`.
+
+This request is the boundary between runtime code and harness-host code.
+
+## Step 7: Build the PI Prompt Body
+
+The PI host uses `buildPiPromptPayload(...)` to build the PI-native user-side prompt body.
+
+Important detail:
+
+- PI receives a separate `system_prompt` channel from the runtime path, and that channel already contains the `Workspace instructions from AGENTS.md:` section
+- the PI user/body prompt text built below is a different channel
+- if you only look at the body text below, you will not see `AGENTS.md`, because it lives in the separate `system_prompt` override instead
+- likewise, you only see the `cloud_costs` skill body below because the instruction explicitly quoted it; skill resolution alone would not have added it
+
+The function appends sections in this order:
+
+1. `Quoted workspace skills:`
+2. any missing quoted-skill warning
+3. the cleaned instruction
+4. `Runtime context:` with numbered context-message blocks
+5. attachment sections returned by `buildAttachmentPromptContent(...)`
+
+For the worked example, the final PI user/body prompt text looks like:
 
 ```text
-Continue the cloud cost investigation. Use the notes from earlier, update the findings, and give me the answer in chat.
+Quoted workspace skills:
+
+<skill name="cloud_costs" location="/workspace/skills/cloud_costs/SKILL.md">
+References are relative to /workspace/skills/cloud_costs.
+
+Review billing evidence before proposing savings actions.
+</skill>
+
+Continue the cloud cost investigation. Update the findings and answer in chat.
 
 Runtime context:
 
@@ -1000,102 +680,107 @@ Name source: `runtime_profile`.
 [Runtime Context 2]
 Operator surface context:
 Use these operator-controlled surfaces as continuity anchors when the user refers to `here`, `this page`, `my current tab`, `the file I'm in`, `this terminal`, or similar language.
-Treat the active user-owned surface as the default referent for deictic questions such as `what am I looking at right now`, `what is this`, `what page/file/screen is this`, or `what about now`, unless the user explicitly narrows to browser, tab, site, URL, terminal, editor, or another surface.
-Prefer the active user-owned surface when the user clearly wants you to continue from what they already opened, navigated, selected, or prepared.
-Prefer agent-owned surfaces for exploratory, multi-step, parallel, or potentially disruptive work.
-If the active user-owned surface is not a browser surface, do not answer from browser state just because browser tools are available.
-Do not mutate a user-owned surface unless runtime context or capabilities explicitly allow takeover or direct control.
 Current active surface id: `browser:user`.
 Known operator surfaces:
 - [user/browser] `browser:user` (active, mutability=`inspect_only`): AWS billing dashboard is open to EC2 spend breakdown.
 [/Runtime Context 2]
 
 [Runtime Context 3]
-Current-turn inferred user memory:
-These items were inferred from the latest user input and are not durably saved yet.
-Use them for this run when directly relevant, but do not claim they are saved as long-term memory unless the user later confirms them.
-- Prefers concise answers: The user asked for concise output.
-  Evidence: give me the answer in chat
-[/Runtime Context 3]
-
-[Runtime Context 4]
 Session scratchpad:
 A session-scoped scratchpad file already exists for this session.
 The scratchpad is not loaded into prompt context automatically. Read it explicitly when those notes are needed for this turn.
 The scratchpad metadata and preview below are already loaded into prompt context. Do not read the scratchpad just to confirm its existence, path, timestamp, or preview; read it only when you need additional note contents for this turn.
-Use the scratchpad for working notes and interim state, not as durable memory or a user-facing deliverable.
 Path: `.holaboss/scratchpads/session-main.md`.
 Last updated: 2026-04-22T10:15:00.000Z.
 Size: 1420 bytes.
-Preview: AWS spend spike mostly correlates with idle GPU workers and duplicate vendor monitoring subscriptions.
-[/Runtime Context 4]
+Preview: Idle GPU workers and duplicate monitoring subscriptions explain most of the spike.
+[/Runtime Context 3]
 
-[Runtime Context 5]
-Session resume context:
-Use this as continuity context derived from runtime-managed session memory excerpts. Verify current workspace state before acting on details that may have changed.
-Treat the user's newest message as authoritative for this turn. Do not resume unfinished prior work unless that newest message clearly asks to continue it or clearly advances the same task.
-If the newest message is conversational, brief, or ambiguous about continuation, respond to it directly first and ask whether the user wants to continue the unfinished prior work.
-This runtime-managed resume summary is already loaded into prompt context. Do not reopen runtime-managed continuity files just to restate this context; inspect a referenced file only when you need details not included here or need to verify that it changed during this run.
-Session memory:
-- Path: `workspace/workspace-1/runtime/session-memory/session-main.md`
-- Excerpt: Investigation focused on AWS spend growth, vendor overlap, and whether idle GPU instances explain the spike.
-[/Runtime Context 5]
-
-[Runtime Context 6]
+[Runtime Context 4]
 Recalled durable memory:
 Use these as durable memories, not as guaranteed current truth. Verify entries marked `check_before_use` or `must_reconfirm` before acting on them, and treat stale entries as hints until reconfirmed.
-- [workspace/procedure] Cloud spend investigations should verify idle compute first (`workspace/workspace-1/knowledge/cloud-cost-procedure.md`): When investigating infra spend spikes, check idle compute, duplicate subscriptions, and recent deployment changes before suggesting optimization work. Verification: `check_before_use`. Freshness: `fresh` (`stable`).
-[/Runtime Context 6]
+- [workspace/procedure] Check idle compute before proposing optimizations (`workspace/workspace-1/knowledge/cloud-cost-procedure.md`): For cloud-cost investigations, verify idle compute, duplicate subscriptions, and recent deployment changes before proposing savings work. Verification: `check_before_use`. Freshness: `fresh` (`stable`).
+[/Runtime Context 4]
 
-Attachments: none.
+[Document: ec2-cost-breakdown.pdf]
+Mime-Type: application/pdf
+Workspace Path: ./inputs/input-42/ec2-cost-breakdown.pdf
+
+<pdf filename="ec2-cost-breakdown.pdf">
+...
+</pdf>
+
 Image inputs: none.
 ```
 
-### Trace 10: Effective Final Model Input State
+If the attachment helper extracts images, those images are passed separately as PI image content rather than being flattened into the prompt text.
 
-For this run, the model effectively sees three continuity layers at once:
+## Step 8: What PI Actually Sends
 
-1. `system_prompt`
-   - the full runtime-rendered policy stack shown in Trace 6
-2. user/body prompt
-   - the exact PI prompt body shown in Trace 9
-3. persisted PI session state
-   - prior PI-native conversation and tool continuity already loaded by `SessionManager.open(...)`
+At execution time the PI path uses:
 
-That is the full end-to-end path from incoming turn request to final PI-visible prompt state.
+- `system_prompt` from the runtime as the PI system prompt override, including the rendered `Workspace instructions from AGENTS.md:` section
+- the prompt body produced by `buildPiPromptPayload(...)`
+- any extracted image content from attachments
+- the persisted PI session history for the harness session
 
-## Summary Table
+The persisted PI session history is a separate continuity source. It is not serialized inside the runtime prompt.
 
-| Layer | Built Where | Example Contents | Sent To Model As |
-| --- | --- | --- | --- |
-| Workspace prompt | `workspace-runtime-plan.ts` | `AGENTS.md` | system prompt section |
-| Runtime core policy | `agent-runtime-prompt.ts` | mandatory base runtime rules | system prompt |
-| Execution policy | `agent-runtime-prompt.ts` | inspect/verify/use tools/scratchpad guidance | system prompt |
-| Response delivery policy | `agent-runtime-prompt.ts` | concise vs `write_report` guidance | system prompt |
-| Todo continuity policy | `agent-runtime-prompt.ts` | continuation rules for todo-backed work | system prompt |
-| Session policy | `agent-runtime-prompt.ts` | workspace/onboarding/task-proposal mode guidance | system prompt |
-| Capability policy | `agent-capability-registry.ts` | available tools and capability routing | system prompt |
-| Current user context | `ts-runner.ts` | profile/name | runtime context block |
-| Operator surface context | desktop/browser bridge | active browser/editor/terminal surface | runtime context block |
-| Pending user memory | `user-memory-proposals.ts` | current-turn inferred preferences | runtime context block |
-| Scratchpad context | `session-scratchpad.ts` + `ts-runner.ts` | scratchpad metadata and preview | runtime context block |
-| Session resume context | `ts-runner.ts` | session-memory excerpt | runtime context block |
-| Recalled durable memory | recall pipeline | recalled memory entries | runtime context block |
-| Attachments | PI host | inline docs, image refs, attachment summaries | user message content |
-| Persisted PI session | PI host | prior PI session state | session continuity |
+That means the model sees continuity from two places:
 
-## Practical Takeaway
+- runtime-provided prompt context
+- PI-native session history
 
-When debugging prompt behavior in this runtime, do not ask only:
+## Step 9: Tool Execution Happens After Prompt Construction
 
-- "What is in `system_prompt`?"
+Prompt construction ends before tool execution begins, but the ownership boundary matters once tools are invoked.
 
-Also ask:
+### Runtime-backed tools
 
-1. What dynamic context objects were loaded in `ts-runner.ts`?
-2. Which prompt sections were emitted?
-3. Which sections went to `system_prompt` versus `context_messages`?
-4. What did PI host append into the runtime context block?
-5. What was already present in the persisted PI session file?
+The following tool families currently execute through runtime-owned capability endpoints and are only proxied by the PI host:
 
-That full stack is the real prompt.
+- `todoread` and `todowrite`
+- `skill`
+- `download_url`
+- `web_search`
+- `write_report`
+- scratchpad tools
+- onboarding tools
+- cronjob tools
+- `image_generate`
+- terminal-session tools
+
+When browser tools are enabled, the PI host also proxies the desktop browser tool family (`browser_get_state`, `browser_click`, `browser_type`, and related calls) to the runtime browser capability API.
+
+### PI-local enforcement that still matters during the run
+
+The PI host still keeps:
+
+- skill widening over PI-managed tools and commands
+- MCP tool materialization from the prepared MCP server payload
+- workspace-boundary enforcement for PI-managed local tools
+- PI-native event normalization
+
+Those are execution-time responsibilities, not prompt-construction responsibilities.
+
+## Ownership Summary
+
+The runtime owns:
+
+- workspace instructions
+- prompt policy
+- dynamic context loading
+- scratchpad metadata
+- recalled durable memory
+- quoted skill preparation
+- runtime-backed tool semantics
+
+The PI host owns:
+
+- prompt-body serialization
+- attachment encoding for PI
+- runtime-tool and browser-tool proxy packaging
+- PI session lifecycle
+- PI-local tool enforcement and event mapping
+
+That is the current prompt path: the runtime defines what the model should receive, and the PI host defines how that prepared payload is encoded for PI.

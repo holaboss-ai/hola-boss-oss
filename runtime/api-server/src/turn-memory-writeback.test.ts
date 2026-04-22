@@ -10,7 +10,7 @@ import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 import { FilesystemMemoryService } from "./memory.js";
 import {
   refreshMemoryIndexes,
-  writeTurnMemory,
+  writeTurnDurableMemory,
   type TurnMemoryWritebackModelContext,
 } from "./turn-memory-writeback.js";
 
@@ -112,7 +112,7 @@ function seedWorkspace(store: RuntimeStateStore): void {
   });
 }
 
-test("writeTurnMemory compacts a turn and writes deterministic runtime memory files", async () => {
+test("writeTurnDurableMemory updates the compacted summary without writing runtime continuity files", async () => {
   const { store, memoryService } = makeRuntimeState("hb-turn-memory-");
   seedWorkspace(store);
   store.insertSessionMessage({
@@ -152,16 +152,13 @@ test("writeTurnMemory compacts a turn and writes deterministic runtime memory fi
     tokenUsage: { input_tokens: 12, output_tokens: 34 },
   });
 
-  const updated = await writeTurnMemory({
+  const updated = await writeTurnDurableMemory({
     store,
     memoryService,
     turnResult,
   });
   const captured = await memoryService.capture({ workspace_id: "workspace-1" });
   const files = captured.files as Record<string, string>;
-  const permissionBlockerPath = Object.keys(files).find((filePath) =>
-    filePath.startsWith("workspace/workspace-1/runtime/permission-blockers/")
-  );
   const memoryEntryIds = store.listMemoryEntries({ status: "active" }).map((entry) => entry.memoryId).sort((left, right) =>
     left.localeCompare(right)
   );
@@ -170,38 +167,13 @@ test("writeTurnMemory compacts a turn and writes deterministic runtime memory fi
     updated.compactedSummary,
     "Implemented the runtime memory writeback path. Verified the affected tests."
   );
-  assert.equal(permissionBlockerPath != null, true);
-  assert.deepEqual(
-    Object.keys(files)
-      .filter((filePath) => !filePath.startsWith("workspace/workspace-1/runtime/permission-blockers/"))
-      .sort((left, right) => left.localeCompare(right)),
-    [
-      "workspace/workspace-1/runtime/blockers/session-main.md",
-      "workspace/workspace-1/runtime/latest-turn.md",
-      "workspace/workspace-1/runtime/recent-turns/session-main.md",
-      "workspace/workspace-1/runtime/session-memory/session-main.md",
-      "workspace/workspace-1/runtime/session-state/session-main.md",
-    ]
-  );
+  assert.deepEqual(Object.keys(files).sort((left, right) => left.localeCompare(right)), []);
   assert.deepEqual(memoryEntryIds, []);
-  assert.match(files["workspace/workspace-1/runtime/session-state/session-main.md"], /Runtime Session Snapshot/);
-  assert.match(files["workspace/workspace-1/runtime/session-state/session-main.md"], /execution_policy/);
-  assert.match(files["workspace/workspace-1/runtime/latest-turn.md"], /Latest Runtime Turn/);
-  assert.match(files["workspace/workspace-1/runtime/recent-turns/session-main.md"], /Recent Runtime Turns/);
-  assert.match(files["workspace/workspace-1/runtime/recent-turns/session-main.md"], /input-1/);
-  assert.match(files["workspace/workspace-1/runtime/session-memory/session-main.md"], /Session Memory/);
-  assert.match(files["workspace/workspace-1/runtime/session-memory/session-main.md"], /Recent User Requests/);
-  assert.equal(files["identity/MEMORY.md"], undefined);
-  assert.equal(files["preference/MEMORY.md"], undefined);
-  assert.equal(files["workspace/workspace-1/MEMORY.md"], undefined);
-  assert.equal(files["MEMORY.md"], undefined);
-  assert.match(String(permissionBlockerPath), /permission-blockers\/[a-f0-9]{16}\.md$/);
-  assert.match(files[permissionBlockerPath as string], /permission denied by policy/);
 
   store.close();
 });
 
-test("writeTurnMemory reuses stable blocker paths across repeated matching denials", async () => {
+test("writeTurnDurableMemory reuses stable durable blocker paths across repeated matching denials", async () => {
   const { store, memoryService } = makeRuntimeState("hb-turn-memory-dedupe-");
   seedWorkspace(store);
 
@@ -222,7 +194,7 @@ test("writeTurnMemory reuses stable blocker paths across repeated matching denia
       },
     ],
   });
-  await writeTurnMemory({
+  await writeTurnDurableMemory({
     store,
     memoryService,
     turnResult: firstTurn,
@@ -245,7 +217,7 @@ test("writeTurnMemory reuses stable blocker paths across repeated matching denia
       },
     ],
   });
-  await writeTurnMemory({
+  await writeTurnDurableMemory({
     store,
     memoryService,
     turnResult: secondTurn,
@@ -254,9 +226,6 @@ test("writeTurnMemory reuses stable blocker paths across repeated matching denia
   const captured = await memoryService.capture({ workspace_id: "workspace-1" });
   const filePaths = (captured.file_paths as string[]).sort((left, right) => left.localeCompare(right));
   const files = captured.files as Record<string, string>;
-  const permissionBlockerPaths = filePaths.filter((filePath) =>
-    filePath.startsWith("workspace/workspace-1/runtime/permission-blockers/")
-  );
   const durableBlockerPaths = filePaths.filter((filePath) =>
     filePath.startsWith("workspace/workspace-1/knowledge/blockers/")
   );
@@ -264,21 +233,14 @@ test("writeTurnMemory reuses stable blocker paths across repeated matching denia
   const blockerEntry = memoryEntries.find((entry) => entry.memoryType === "blocker");
 
   assert.deepEqual(
-    filePaths.filter((filePath) => !filePath.startsWith("workspace/workspace-1/runtime/permission-blockers/")),
+    filePaths,
     [
       "MEMORY.md",
       "workspace/workspace-1/MEMORY.md",
       ...durableBlockerPaths,
-      "workspace/workspace-1/runtime/blockers/session-main.md",
-      "workspace/workspace-1/runtime/latest-turn.md",
-      "workspace/workspace-1/runtime/recent-turns/session-main.md",
-      "workspace/workspace-1/runtime/session-memory/session-main.md",
-      "workspace/workspace-1/runtime/session-state/session-main.md",
     ].sort((left, right) => left.localeCompare(right))
   );
-  assert.equal(permissionBlockerPaths.length, 1);
   assert.equal(durableBlockerPaths.length, 1);
-  assert.match(permissionBlockerPaths[0], /permission-blockers\/[a-f0-9]{16}\.md$/);
   assert.match(durableBlockerPaths[0], /knowledge\/blockers\/permission-[a-f0-9]{16}\.md$/);
   assert.equal(memoryEntries.some((entry) => entry.memoryType === "blocker"), true);
   assert.equal(blockerEntry?.verificationPolicy, "check_before_use");
@@ -286,11 +248,6 @@ test("writeTurnMemory reuses stable blocker paths across repeated matching denia
   assert.equal(blockerEntry?.staleAfterSeconds, 14 * 24 * 60 * 60);
   assert.equal(blockerEntry?.sourceType, "permission_denial");
   assert.equal(blockerEntry?.confidence, 0.92);
-  assert.match(files["workspace/workspace-1/runtime/latest-turn.md"], /input-2/);
-  assert.match(files["workspace/workspace-1/runtime/recent-turns/session-main.md"], /input-2/);
-  assert.match(files["workspace/workspace-1/runtime/recent-turns/session-main.md"], /input-1/);
-  assert.match(files["workspace/workspace-1/runtime/session-memory/session-main.md"], /Session Memory/);
-  assert.match(files["workspace/workspace-1/runtime/blockers/session-main.md"], /policy_denied/);
   assert.match(files[durableBlockerPaths[0]], /Recurring Permission Blocker/);
   assert.equal(files["identity/MEMORY.md"], undefined);
   assert.equal(files["preference/MEMORY.md"], undefined);
@@ -300,7 +257,7 @@ test("writeTurnMemory reuses stable blocker paths across repeated matching denia
   store.close();
 });
 
-test("writeTurnMemory extracts durable workspace facts and procedures from explicit instructions", async () => {
+test("writeTurnDurableMemory extracts durable workspace facts and procedures from explicit instructions", async () => {
   const { store, memoryService } = makeRuntimeState("hb-turn-memory-facts-");
   seedWorkspace(store);
   store.insertSessionMessage({
@@ -332,7 +289,7 @@ test("writeTurnMemory extracts durable workspace facts and procedures from expli
     assistantText: "Captured workspace-specific instructions for future runs.",
   });
 
-  await writeTurnMemory({
+  await writeTurnDurableMemory({
     store,
     memoryService,
     turnResult,
@@ -367,7 +324,7 @@ test("writeTurnMemory extracts durable workspace facts and procedures from expli
   store.close();
 });
 
-test("writeTurnMemory extracts durable business facts and procedures from explicit workspace instructions", async () => {
+test("writeTurnDurableMemory extracts durable business facts and procedures from explicit workspace instructions", async () => {
   const { store, memoryService } = makeRuntimeState("hb-turn-memory-business-");
   seedWorkspace(store);
   store.insertSessionMessage({
@@ -399,7 +356,7 @@ test("writeTurnMemory extracts durable business facts and procedures from explic
     assistantText: "Captured business workflow rules for later recall.",
   });
 
-  await writeTurnMemory({
+  await writeTurnDurableMemory({
     store,
     memoryService,
     turnResult,
@@ -437,7 +394,7 @@ test("writeTurnMemory extracts durable business facts and procedures from explic
   store.close();
 });
 
-test("writeTurnMemory rejects weak uncorroborated model-extracted durable candidates", async () => {
+test("writeTurnDurableMemory rejects weak uncorroborated model-extracted durable candidates", async () => {
   const { store, memoryService } = makeRuntimeState("hb-turn-memory-model-reject-");
   seedWorkspace(store);
   store.insertSessionMessage({
@@ -486,7 +443,7 @@ test("writeTurnMemory rejects weak uncorroborated model-extracted durable candid
       },
     ],
     run: async (modelContext) => {
-      await writeTurnMemory({
+      await writeTurnDurableMemory({
         store,
         memoryService,
         turnResult,
@@ -510,7 +467,7 @@ test("writeTurnMemory rejects weak uncorroborated model-extracted durable candid
   store.close();
 });
 
-test("writeTurnMemory accepts corroborated model-extracted durable candidates with relaxed threshold", async () => {
+test("writeTurnDurableMemory accepts corroborated model-extracted durable candidates with relaxed threshold", async () => {
   const { store, memoryService } = makeRuntimeState("hb-turn-memory-model-corroborated-");
   seedWorkspace(store);
   store.insertSessionMessage({
@@ -559,7 +516,7 @@ test("writeTurnMemory accepts corroborated model-extracted durable candidates wi
       },
     ],
     run: async (modelContext) => {
-      await writeTurnMemory({
+      await writeTurnDurableMemory({
         store,
         memoryService,
         turnResult,
@@ -584,7 +541,7 @@ test("writeTurnMemory accepts corroborated model-extracted durable candidates wi
   store.close();
 });
 
-test("writeTurnMemory skips model extraction before the first cadence turn", async () => {
+test("writeTurnDurableMemory skips model extraction before the first cadence turn", async () => {
   const { store, memoryService } = makeRuntimeState("hb-turn-memory-model-cadence-skip-");
   seedWorkspace(store);
   store.insertSessionMessage({
@@ -621,7 +578,7 @@ test("writeTurnMemory skips model extraction before the first cadence turn", asy
       },
     ],
     run: async (modelContext) => {
-      await writeTurnMemory({
+      await writeTurnDurableMemory({
         store,
         memoryService,
         turnResult,
@@ -640,7 +597,7 @@ test("writeTurnMemory skips model extraction before the first cadence turn", asy
   store.close();
 });
 
-test("writeTurnMemory runs model extraction on cadence turns", async () => {
+test("writeTurnDurableMemory runs model extraction on cadence turns", async () => {
   const { store, memoryService } = makeRuntimeState("hb-turn-memory-model-cadence-run-");
   seedWorkspace(store);
   store.insertSessionMessage({
@@ -689,7 +646,7 @@ test("writeTurnMemory runs model extraction on cadence turns", async () => {
       },
     ],
     run: async (modelContext) => {
-      await writeTurnMemory({
+      await writeTurnDurableMemory({
         store,
         memoryService,
         turnResult,
@@ -759,7 +716,7 @@ test("refreshMemoryIndexes paginates workspace entries beyond 500 rows without t
   store.close();
 });
 
-test("writeTurnMemory rebuilds only changed workspace indexes and root", async () => {
+test("writeTurnDurableMemory rebuilds only changed workspace indexes and root", async () => {
   const { store, memoryService } = makeRuntimeState("hb-turn-memory-incremental-indexes-");
   seedWorkspace(store);
 
@@ -842,7 +799,7 @@ test("writeTurnMemory rebuilds only changed workspace indexes and root", async (
     assistantText: "Captured verification guidance.",
   });
 
-  const updated = await writeTurnMemory({
+  await writeTurnDurableMemory({
     store,
     memoryService,
     turnResult,

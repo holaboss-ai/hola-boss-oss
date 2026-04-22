@@ -11,16 +11,6 @@ export interface HarnessToolRefPayload {
   tool_name: string;
 }
 
-export interface HarnessWorkspaceSkillPayload {
-  skill_id: string;
-  skill_name: string;
-  source_dir: string;
-  file_path: string;
-  origin: "workspace" | "embedded";
-  granted_tools: string[];
-  granted_commands: string[];
-}
-
 export interface HarnessInputAttachmentPayload {
   id: string;
   kind: "image" | "file" | "folder";
@@ -70,8 +60,8 @@ export type HarnessPromptLayerId =
   | "runtime_core"
   | "execution_policy"
   | "response_delivery_policy"
-  | "session_policy"
   | "todo_continuity_policy"
+  | "session_policy"
   | "capability_policy"
   | "current_user_context"
   | "operator_surface_context"
@@ -81,7 +71,8 @@ export type HarnessPromptLayerId =
   | "memory_recall"
   | "workspace_policy"
   | "resume_context"
-  | "harness_quirks";
+  | "harness_quirks"
+  | "recent_runtime_context";
 
 export interface HarnessPromptLayerPayload {
   id: HarnessPromptLayerId;
@@ -141,14 +132,13 @@ export interface HarnessHostRequestBuildParams {
   request: HarnessRunnerRequestLike;
   bootstrap: HarnessBootstrapPayload;
   runtimeConfig: HarnessRuntimeConfigPayload;
-  prepared_instruction?: {
-    body: string;
-    quoted_skill_blocks: string[];
-    missing_quoted_skill_ids: string[];
-  } | null;
+  prepared_instruction?: unknown;
   browserSpace?: "agent" | "user" | null;
   runtimeApiBaseUrl?: string | null;
-  workspaceSkills: HarnessWorkspaceSkillPayload[];
+  workspaceSkills: Array<{
+    skill_id: string;
+    source_dir: string;
+  }>;
   mcpServers: HarnessPreparedMcpServerPayload[];
   mcpToolRefs: HarnessToolRefPayload[];
   runStartedPayload: Record<string, unknown>;

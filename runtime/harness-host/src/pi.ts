@@ -12,22 +12,76 @@ import {
   createGrepTool,
   createLsTool,
   DefaultResourceLoader,
+  loadSkillsFromDir,
   ModelRegistry,
   SessionManager,
   SettingsManager,
   type AgentSession,
   type AgentSessionEvent,
+  type LoadSkillsResult,
+  type Skill,
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
-import type { Api, ImageContent, Model, TextContent } from "@mariozechner/pi-ai";
+import type { ImageContent, TextContent } from "@mariozechner/pi-ai";
+import type { ResourceDiagnostic } from "@mariozechner/pi-coding-agent";
 import { APIError as OpenAIApiError } from "openai";
-import { createCallResult, createRuntime, type Runtime as McporterRuntime, type ServerDefinition, type ServerToolInfo } from "mcporter";
+import { createCallResult, createRuntime, type Runtime as McporterRuntime, type ServerDefinition } from "mcporter";
 import { MODELS } from "../node_modules/@mariozechner/pi-ai/dist/models.generated.js";
+import {
+  buildHarnessAttachmentFallbackPromptLine,
+  buildHarnessAttachmentPromptPath,
+  inlineHarnessDocumentAttachmentSection,
+  inlineHarnessImageAttachment,
+  isHarnessFolderAttachment,
+} from "../../harnesses/src/attachment-content.js";
+import {
+  buildHarnessTodoResumeInstruction,
+  applyHarnessTodoResumeInstruction,
+  buildHarnessSkillMetadataByAlias,
+  buildHarnessMcpServerBindings,
+  buildHarnessMcpToolName,
+  createHarnessWorkspaceBoundaryPolicy,
+  blockActiveHarnessTodoTask,
+  createHarnessSkillToolDefinition,
+  createHarnessTodoToolDefinitions,
+  discoverHarnessMcpTools,
+  hasBlockedPersistedHarnessTodoState,
+  normalizeHarnessMcpToolParametersSchema,
+  normalizeHarnessModelId,
+  noteHarnessWaitingForUserOnToolCompletion,
+  resolveHarnessQuotedSkillSectionsFromWorkspace,
+  resolveHarnessWorkspaceSkillDirs,
+  requestedHarnessThinkingBudgets,
+  requestedHarnessThinkingConfig,
+  requestedHarnessThinkingLevel,
+  loadHarnessWorkspaceSkills,
+  resolveHarnessDesktopBrowserToolDefinitions,
+  resolvePathWithinHarnessWorkspace,
+  resolveHarnessModelProfile,
+  resolveHarnessRuntimeToolDefinitions,
+  resolveHarnessRunStatus,
+  summarizeHarnessQuestionPrompt,
+  buildHarnessSkillInvocationEndPayload,
+  buildHarnessSkillInvocationStartPayload,
+  createHarnessSkillWideningState,
+  wrapToolWithHarnessSkillWidening,
+  workspaceBoundaryOverrideRequested as workspaceBoundaryOverrideRequestedFromHarness,
+  workspaceBoundaryViolationForToolCall as workspaceBoundaryViolationForHarnessToolCall,
+  type HarnessCatalogModelEntry,
+  type HarnessInputAttachmentPayload,
+  type HarnessMcpServerBinding,
+  type HarnessPreparedMcpServerConfig,
+  type HarnessRequestedThinkingLevel,
+  type HarnessSkillMetadata,
+  type HarnessSkillWideningState,
+  type HarnessThinkingBudgetLevel,
+  type HarnessThinkingLevel,
+  type HarnessThinkingSelection,
+  type HarnessWorkspaceBoundaryPolicy,
+} from "../../harnesses/src/index.js";
 
 import type {
-  HarnessHostPiMcpToolRef,
   HarnessHostPiRequest,
-  HarnessHostWorkspaceSkillPayload,
   JsonObject,
   JsonValue,
   RunnerEventType,
@@ -38,18 +92,7 @@ import {
   harnessGenAiSpanAttributes,
   type HarnessGenAiUsageMetrics,
 } from "./harness-ai-monitoring.js";
-import { buildAttachmentPromptContent } from "./attachment-prompt-content.js";
-import { resolvePiDesktopBrowserToolDefinitions } from "./pi-browser-tools.js";
-import { resolvePiRuntimeToolDefinitions } from "./pi-runtime-tools.js";
-import { RuntimeTodoCoordinator } from "./runtime-todo-coordinator.js";
-import {
-  createWorkspaceBoundaryPolicy,
-  workspaceBoundaryOverrideRequested,
-  workspaceBoundaryViolationForToolCall,
-  type WorkspaceBoundaryPolicy,
-} from "./workspace-boundary.js";
-
-const require = createRequire(import.meta.url);
+import { resolvePiWebSearchToolDefinitions } from "./pi-web-search.js";
 
 export type PiMappedEvent = {
   event_type: RunnerEventType;
@@ -126,19 +169,10 @@ type PiPrepareCompactionResult = {
 } | null;
 
 type PiThinkingLevel =
-  | "minimal"
-  | "low"
-  | "medium"
-  | "high"
-  | "xhigh";
-type PiRequestedThinkingLevel = PiThinkingLevel | "off";
-type PiThinkingBudgetLevel = Exclude<PiThinkingLevel, "xhigh">;
-
-interface PiThinkingSelection {
-  rawValue: string | null;
-  level: PiRequestedThinkingLevel | null;
-  thinkingBudgets?: Partial<Record<PiThinkingBudgetLevel, number>>;
-}
+  HarnessThinkingLevel;
+type PiRequestedThinkingLevel = HarnessRequestedThinkingLevel;
+type PiThinkingBudgetLevel = HarnessThinkingBudgetLevel;
+type PiThinkingSelection = HarnessThinkingSelection;
 
 const PI_AGENT_STATE_DIR = ".holaboss/pi-agent";
 const PI_SESSION_DIR = ".holaboss/pi-sessions";
@@ -148,34 +182,9 @@ const PI_MCP_DISCOVERY_RETRY_INTERVAL_MS = 250;
 const PI_FALLBACK_CONTEXT_WINDOW = 65_536;
 const PI_FALLBACK_MAX_TOKENS = 8_192;
 
-type PiModelBudget = {
-  contextWindow: number;
-  maxTokens: number;
-};
-
-type PiModelCost = {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-};
-
-type PiCatalogModelEntry = {
-  contextWindow?: unknown;
-  maxTokens?: unknown;
-  cost?: {
-    input?: unknown;
-    output?: unknown;
-    cacheRead?: unknown;
-    cacheWrite?: unknown;
-  };
-};
-
-const PI_MODEL_CATALOG = MODELS as Record<
-  string,
-  Record<string, PiCatalogModelEntry>
->;
+const PI_MODEL_CATALOG = MODELS as Record<string, Record<string, HarnessCatalogModelEntry>>;
 const PI_MCP_DISCOVERY_MAX_WAIT_MS = 10000;
+const require = createRequire(import.meta.url);
 let cachedPrepareCompactionFnPromise:
   | Promise<((entries: unknown[], settings: unknown) => PiPrepareCompactionResult) | null>
   | null = null;
@@ -187,26 +196,9 @@ export interface PiMcpToolMetadata {
   toolName: string;
 }
 
-export interface PiSkillMetadata {
-  skillId: string;
-  skillName: string;
-  filePath: string;
-  baseDir: string;
-  grantedTools: string[];
-  grantedCommands: string[];
-}
-
-export interface PiSkillWideningState {
-  scope: "run";
-  managedToolNames: Set<string>;
-  grantedToolNames: Set<string>;
-  skillIdsByManagedTool: ReadonlyMap<string, ReadonlySet<string>>;
-  managedCommandIds: Set<string>;
-  grantedCommandIds: Set<string>;
-  skillIdsByManagedCommand: ReadonlyMap<string, ReadonlySet<string>>;
-}
-
-type PiWorkspaceBoundaryPolicy = WorkspaceBoundaryPolicy;
+export type PiSkillMetadata = HarnessSkillMetadata;
+export type PiSkillWideningState = HarnessSkillWideningState;
+export type PiWorkspaceBoundaryPolicy = HarnessWorkspaceBoundaryPolicy;
 
 export type PiMcpServerBinding = {
   serverId: string;
@@ -223,6 +215,19 @@ export type PiMcpToolset = {
 export interface PiPromptPayload {
   text: string;
   images: ImageContent[];
+}
+
+type PiAttachment = HarnessInputAttachmentPayload;
+
+function resolveAttachmentAbsolutePath(request: HarnessHostPiRequest, attachment: PiAttachment): string {
+  const policy = createWorkspaceBoundaryPolicy(request.workspace_dir, false);
+  const resolved = resolvePathWithinHarnessWorkspace(policy, attachment.workspace_path);
+  if (!resolved) {
+    throw new Error(
+      `Attachment '${attachment.name}' resolves outside workspace boundary: ${attachment.workspace_path}`
+    );
+  }
+  return resolved;
 }
 
 function runtimeContextMessagesBlock(request: HarnessHostPiRequest): string {
@@ -242,22 +247,32 @@ function runtimeContextMessagesBlock(request: HarnessHostPiRequest): string {
 
 export async function buildPiPromptPayload(request: HarnessHostPiRequest): Promise<PiPromptPayload> {
   const sections: string[] = [];
-  const quotedSkillBlocks = Array.isArray(request.quoted_skill_blocks)
-    ? request.quoted_skill_blocks.map((block) => block.trim()).filter(Boolean)
-    : [];
-  const missingQuotedSkillIds = Array.isArray(request.missing_quoted_skill_ids)
-    ? request.missing_quoted_skill_ids.map((skillId) => skillId.trim()).filter(Boolean)
-    : [];
-  if (quotedSkillBlocks.length > 0) {
-    sections.push(["Quoted workspace skills:", ...quotedSkillBlocks].join("\n\n"));
+  const imageLines: string[] = [];
+  const folderLines: string[] = [];
+  const fallbackLines: string[] = [];
+  const images: ImageContent[] = [];
+  const attachments = request.attachments ?? [];
+
+  const todoResumeInstruction = buildHarnessTodoResumeInstruction({
+    hasRequestedSessionFile: Boolean(resolveRequestedSessionFile(request)),
+    stateDir: resolvePiStateDir(request.workspace_dir),
+    sessionId: request.session_id,
+  });
+  if (todoResumeInstruction) {
+    sections.push(todoResumeInstruction);
   }
-  if (missingQuotedSkillIds.length > 0) {
+
+  const quotedSkills = resolveQuotedSkillSections(request.instruction, request.workspace_skill_dirs);
+  if (quotedSkills.blocks.length > 0) {
+    sections.push(["Quoted workspace skills:", ...quotedSkills.blocks].join("\n\n"));
+  }
+  if (quotedSkills.missing.length > 0) {
     sections.push(
-      `Quoted workspace skills not found in this workspace: ${missingQuotedSkillIds.join(", ")}`
+      `Quoted workspace skills not found in this workspace: ${quotedSkills.missing.join(", ")}`
     );
   }
 
-  const instruction = request.instruction.trim();
+  const instruction = quotedSkills.body.trim();
   if (instruction) {
     sections.push(instruction);
   }
@@ -267,14 +282,65 @@ export async function buildPiPromptPayload(request: HarnessHostPiRequest): Promi
     sections.push(runtimeContextBlock);
   }
 
-  const attachmentPromptContent = await buildAttachmentPromptContent({
-    workspaceDir: request.workspace_dir,
-    attachments: request.attachments,
-  });
-  sections.push(...attachmentPromptContent.sections);
+  for (const attachment of attachments) {
+    const promptPath = buildHarnessAttachmentPromptPath(attachment);
+    if (isHarnessFolderAttachment(attachment)) {
+      folderLines.push(buildHarnessAttachmentFallbackPromptLine(attachment, promptPath));
+      continue;
+    }
+    const absolutePath = resolveAttachmentAbsolutePath(request, attachment);
+    if (attachment.kind === "image" || attachment.mime_type.startsWith("image/")) {
+      const image = inlineHarnessImageAttachment({
+        attachment,
+        absolutePath,
+      });
+      if (image) {
+        images.push(image);
+        imageLines.push(`- ${attachment.name} (${attachment.mime_type}) at ${promptPath}`);
+        continue;
+      }
+    }
+
+    const textSection = await inlineHarnessDocumentAttachmentSection({
+      attachment,
+      absolutePath,
+      promptPath,
+    });
+    if (textSection) {
+      sections.push(textSection);
+      continue;
+    }
+
+    fallbackLines.push(buildHarnessAttachmentFallbackPromptLine(attachment, promptPath));
+  }
+
+  if (attachments.length === 0) {
+    sections.push(["Attachments: none.", "Image inputs: none."].join("\n"));
+  } else if (imageLines.length > 0) {
+    sections.push(["Attached images:", ...imageLines].join("\n"));
+  } else {
+    sections.push("Image inputs: none.");
+  }
+  if (folderLines.length > 0) {
+    sections.push(
+      [
+        "Attached folders:",
+        ...folderLines,
+        "Treat attached folders as scoped workspace context. Inspect relevant files inside them when needed; their contents are not inlined automatically.",
+      ].join("\n")
+    );
+  }
+  if (fallbackLines.length > 0) {
+    sections.push(
+      [
+        "Other attachments are staged in the workspace and should be inspected from these paths:",
+        ...fallbackLines,
+      ].join("\n")
+    );
+  }
 
   const text = sections.join("\n\n").trim() || "Review the attached files.";
-  return { text, images: attachmentPromptContent.images };
+  return { text, images };
 }
 
 export async function promptTextForRequest(request: HarnessHostPiRequest): Promise<string> {
@@ -860,11 +926,34 @@ function resolvePiSessionDir(workspaceDir: string): string {
   return path.join(workspaceDir, PI_SESSION_DIR);
 }
 
-function normalizeSkillLookupToken(value: unknown): string {
-  if (typeof value !== "string") {
-    return "";
-  }
-  return value.trim().toLowerCase();
+export function resolvePiSkillDirs(request: HarnessHostPiRequest): string[] {
+  return resolveHarnessWorkspaceSkillDirs(request.workspace_skill_dirs);
+}
+
+function loadPiSkills(skillDirs: string[]): LoadSkillsResult {
+  return loadHarnessWorkspaceSkills<Skill, ResourceDiagnostic>({
+    skillDirs,
+    loadSkillsFromDir: (dir) =>
+      loadSkillsFromDir({
+        dir,
+        source: "holaboss",
+      }),
+  });
+}
+
+function resolveQuotedSkillSections(
+  instruction: string,
+  workspaceSkillDirs: string[]
+): { blocks: string[]; missing: string[]; body: string } {
+  return resolveHarnessQuotedSkillSectionsFromWorkspace<Skill, ResourceDiagnostic>({
+    instruction,
+    workspaceSkillDirs,
+    loadSkillsFromDir: (dir) =>
+      loadSkillsFromDir({
+        dir,
+        source: "holaboss",
+      }),
+  });
 }
 
 function optionalTrimmedString(value: unknown): string | null {
@@ -876,442 +965,44 @@ function optionalTrimmedString(value: unknown): string | null {
 }
 
 function effectiveSystemPromptForRequest(request: HarnessHostPiRequest): string {
-  return request.system_prompt.trim();
+  return applyHarnessTodoResumeInstruction(request.system_prompt, {
+    hasRequestedSessionFile: Boolean(resolveRequestedSessionFile(request)),
+    stateDir: resolvePiStateDir(request.workspace_dir),
+    sessionId: request.session_id,
+  });
 }
 
-/*
-function commandBoundaryViolation(command: string, policy: PiWorkspaceBoundaryPolicy): string | null {
-  const trimmed = command.trim();
-  if (!trimmed) {
-    return null;
-  }
-  if (policy.overrideRequested) {
-    return null;
-  }
-
-  const tokens = commandTokens(trimmed);
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index] ?? "";
-    const normalized = token.toLowerCase();
-    if (normalized === "cd") {
-      const destination = tokens[index + 1] ?? "";
-      if (commandPathLooksExternal(destination)) {
-        return `command uses external directory '${destination}'`;
-      }
-      const resolved = resolvePathWithinWorkspace(policy, destination);
-      if (destination.trim() && !resolved) {
-        return `command changes directory outside workspace: '${destination}'`;
-      }
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      continue;
-    }
-  }
-  return null;
+function summarizeQuestionPrompt(args: JsonValue | null, result: unknown): string | null {
+  return summarizeHarnessQuestionPrompt(args, result);
 }
 
-function workspaceBoundaryViolationForCommand(command: string, policy: PiWorkspaceBoundaryPolicy): string | null {
-  const trimmed = command.trim();
-  if (!trimmed || policy.overrideRequested) {
-    return null;
-  }
-
-  const baselineViolation = commandBoundaryViolation(trimmed, policy);
-  if (baselineViolation) {
-    return baselineViolation;
-  }
-
-  const tokens = commandTokens(trimmed);
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index] ?? "";
-    const normalized = token.toLowerCase();
-
-    if (normalized === "cd") {
-      const destination = tokens[index + 1] ?? "";
-      if (commandPathLooksExternal(destination)) {
-        return `command uses external directory '${destination}'`;
-      }
-      const resolved = resolvePathWithinWorkspace(policy, destination);
-      if (destination.trim() && !resolved) {
-        return `command changes directory outside workspace: '${destination}'`;
-      }
-      continue;
-    }
-
-    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
-      const repositoryRoot = tokens[index + 2] ?? "";
-      if (!repositoryRoot.trim()) {
-        continue;
-      }
-      if (commandPathLooksExternal(repositoryRoot)) {
-        return `git command points outside workspace: '${repositoryRoot}'`;
-      }
-      if (!resolvePathWithinWorkspace(policy, repositoryRoot)) {
-        return `git command points outside workspace: '${repositoryRoot}'`;
-      }
-      continue;
-    }
-
-    for (const candidate of pathCandidatesFromCommandToken(token)) {
-      if (!candidate) {
-        continue;
-      }
-      if (commandPathLooksExternal(candidate)) {
-        return `command references outside-workspace path '${candidate}'`;
-      }
-      const hasPathSignal =
-        path.isAbsolute(candidate) ||
-        candidate.includes("/") ||
-        candidate.includes("\\") ||
-        candidate.startsWith(".");
-      if (!hasPathSignal) {
-        continue;
-      }
-      if (!resolvePathWithinWorkspace(policy, candidate)) {
-        return `command references outside-workspace path '${candidate}'`;
-      }
-    }
-  }
-  return null;
+export function createPiTodoToolDefinitions(params: { stateDir: string; sessionId: string }): ToolDefinition[] {
+  return createHarnessTodoToolDefinitions(params) as unknown as ToolDefinition[];
 }
 
-function workspacePathViolationForValue(
-  value: string,
-  pathRef: string,
-  policy: PiWorkspaceBoundaryPolicy
+function resolvePathWithinWorkspace(
+  policy: Pick<PiWorkspaceBoundaryPolicy, "workspaceDir" | "workspaceRealDir">,
+  candidate: string
 ): string | null {
-  const trimmed = value.trim();
-  if (!trimmed || policy.overrideRequested) {
-    return null;
-  }
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
-    return null;
-  }
-  if (commandPathLooksExternal(trimmed)) {
-    return `${pathRef} points outside workspace: '${trimmed}'`;
-  }
-  if (!resolvePathWithinWorkspace(policy, trimmed)) {
-    return `${pathRef} points outside workspace: '${trimmed}'`;
-  }
-  return null;
+  return resolvePathWithinHarnessWorkspace(policy, candidate);
 }
+
+export function workspaceBoundaryOverrideRequested(instruction: string): boolean {
+  return workspaceBoundaryOverrideRequestedFromHarness(instruction);
+}
+
+function createWorkspaceBoundaryPolicy(workspaceDir: string, overrideRequested: boolean): PiWorkspaceBoundaryPolicy {
+  return createHarnessWorkspaceBoundaryPolicy(workspaceDir, overrideRequested);
+}
+
 
 export function workspaceBoundaryViolationForToolCall(params: {
   toolName: string;
   toolParams: unknown;
   policy: PiWorkspaceBoundaryPolicy;
 }): string | null {
-  const normalizedToolName = params.toolName.trim().toLowerCase();
-  if (!normalizedToolName) {
-    return null;
-  }
-  if (!shouldEnforceWorkspaceBoundaryForTool(normalizedToolName)) {
-    return null;
-  }
-  if (params.policy.overrideRequested) {
-    return null;
-  }
-  if (!isRecord(params.toolParams)) {
-    return null;
-  }
-
-  const queue: Array<{ value: unknown; ref: string }> = [{ value: params.toolParams, ref: "params" }];
-  while (queue.length > 0) {
-    const current = queue.shift() as { value: unknown; ref: string };
-    if (Array.isArray(current.value)) {
-      current.value.forEach((entry, index) => queue.push({ value: entry, ref: `${current.ref}[${index}]` }));
-      continue;
-    }
-    if (!isRecord(current.value)) {
-      continue;
-    }
-
-    for (const [key, value] of Object.entries(current.value)) {
-      const childRef = `${current.ref}.${key}`;
-      if (typeof value === "string") {
-        if (TOOL_COMMAND_KEY_PATTERN.test(key)) {
-          const violation = workspaceBoundaryViolationForCommand(value, params.policy);
-          if (violation) {
-            return violation;
-          }
-        }
-        if (WORKSPACE_PATH_KEY_PATTERN.test(key)) {
-          const violation = workspacePathViolationForValue(value, childRef, params.policy);
-          if (violation) {
-            return violation;
-          }
-        }
-      } else if (value && typeof value === "object") {
-        queue.push({ value, ref: childRef });
-      }
-    }
-  }
-
-  return null;
+  return workspaceBoundaryViolationForHarnessToolCall(params);
 }
-*/
 
 function normalizeWorkspaceCommandId(value: unknown): string | null {
   if (typeof value !== "string") {
@@ -1328,234 +1019,35 @@ function workspaceCommandIdsFromRunStartedPayload(payload: JsonObject): string[]
   );
 }
 
-function uniqueSkillMetadata(skillMetadataByAlias: ReadonlyMap<string, PiSkillMetadata>): PiSkillMetadata[] {
-  const bySkillId = new Map<string, PiSkillMetadata>();
-  for (const metadata of skillMetadataByAlias.values()) {
-    if (!bySkillId.has(metadata.skillId)) {
-      bySkillId.set(metadata.skillId, metadata);
-    }
-  }
-  return [...bySkillId.values()].sort((left, right) => left.skillId.localeCompare(right.skillId));
-}
-
 function createPiSkillWideningState(
   skillMetadataByAlias: ReadonlyMap<string, PiSkillMetadata>,
   availableToolNames: string[],
   availableCommandIds: string[]
 ): PiSkillWideningState {
-  const available = new Set(availableToolNames.map((toolName) => toolName.trim().toLowerCase()).filter(Boolean));
-  const availableCommands = new Set(availableCommandIds.map((commandId) => commandId.trim().toLowerCase()).filter(Boolean));
-  const skillIdsByManagedToolMutable = new Map<string, Set<string>>();
-  const skillIdsByManagedCommandMutable = new Map<string, Set<string>>();
-  for (const metadata of uniqueSkillMetadata(skillMetadataByAlias)) {
-    for (const toolName of metadata.grantedTools) {
-      if (!available.has(toolName) || toolName === "skill") {
-        continue;
-      }
-      const skillIds = skillIdsByManagedToolMutable.get(toolName) ?? new Set<string>();
-      skillIds.add(metadata.skillId);
-      skillIdsByManagedToolMutable.set(toolName, skillIds);
-    }
-    for (const commandId of metadata.grantedCommands) {
-      if (!availableCommands.has(commandId)) {
-        continue;
-      }
-      const skillIds = skillIdsByManagedCommandMutable.get(commandId) ?? new Set<string>();
-      skillIds.add(metadata.skillId);
-      skillIdsByManagedCommandMutable.set(commandId, skillIds);
-    }
-  }
-  const skillIdsByManagedTool = new Map<string, ReadonlySet<string>>(
-    [...skillIdsByManagedToolMutable.entries()].map(([toolName, skillIds]) => [toolName, new Set(skillIds)])
-  );
-  const skillIdsByManagedCommand = new Map<string, ReadonlySet<string>>(
-    [...skillIdsByManagedCommandMutable.entries()].map(([commandId, skillIds]) => [commandId, new Set(skillIds)])
-  );
-  return {
-    scope: "run",
-    managedToolNames: new Set(skillIdsByManagedTool.keys()),
-    grantedToolNames: new Set(),
-    skillIdsByManagedTool,
-    managedCommandIds: new Set(skillIdsByManagedCommand.keys()),
-    grantedCommandIds: new Set(),
-    skillIdsByManagedCommand,
-  };
+  return createHarnessSkillWideningState(skillMetadataByAlias, availableToolNames, availableCommandIds);
 }
 
-function requiredSkillIdsForTool(state: PiSkillWideningState, toolName: string): string[] {
-  return [...(state.skillIdsByManagedTool.get(toolName) ?? new Set<string>())].sort((left, right) =>
-    left.localeCompare(right)
-  );
+function buildPiSkillMetadataByAlias(skills: Skill[]): Map<string, PiSkillMetadata> {
+  return buildHarnessSkillMetadataByAlias(skills);
 }
 
-function activeGrantedTools(state: PiSkillWideningState): string[] {
-  return [...state.grantedToolNames].sort((left, right) => left.localeCompare(right));
-}
-
-function activeGrantedCommands(state: PiSkillWideningState): string[] {
-  return [...state.grantedCommandIds].sort((left, right) => left.localeCompare(right));
-}
-
-function addSkillAlias(aliasMap: Map<string, PiSkillMetadata>, alias: unknown, metadata: PiSkillMetadata): void {
-  const normalized = normalizeSkillLookupToken(alias);
-  if (!normalized || aliasMap.has(normalized)) {
-    return;
-  }
-  aliasMap.set(normalized, metadata);
-}
-
-function buildPiSkillMetadataByAlias(skills: HarnessHostWorkspaceSkillPayload[]): Map<string, PiSkillMetadata> {
-  const aliasMap = new Map<string, PiSkillMetadata>();
-  for (const skill of skills) {
-    const metadata: PiSkillMetadata = {
-      skillId: skill.skill_id,
-      skillName: skill.skill_name,
-      filePath: skill.file_path,
-      baseDir: skill.source_dir,
-      grantedTools: [...skill.granted_tools],
-      grantedCommands: [...skill.granted_commands],
-    };
-    addSkillAlias(aliasMap, skill.skill_id, metadata);
-    addSkillAlias(aliasMap, skill.skill_name, metadata);
-  }
-  return aliasMap;
-}
-
-function resolveSkillMetadata(
-  skillMetadataByAlias: ReadonlyMap<string, PiSkillMetadata>,
-  requestedName: unknown
-): PiSkillMetadata | null {
-  const normalizedName = normalizeSkillLookupToken(requestedName);
-  if (!normalizedName) {
-    return null;
-  }
-  return skillMetadataByAlias.get(normalizedName) ?? null;
-}
-
-function uniqueNormalizedStrings(values: unknown): string[] {
-  if (!Array.isArray(values)) {
-    return [];
-  }
-  return [...new Set(values.map((value) => normalizeSkillLookupToken(value)).filter(Boolean))].sort((left, right) =>
-    left.localeCompare(right)
-  );
-}
-
-function applySkillWideningGrantsFromLists(
-  skillWideningState: PiSkillWideningState,
-  grantedTools: string[],
-  grantedCommands: string[]
-): { grantedTools: string[]; grantedCommands: string[] } {
-  const newlyGrantedTools: string[] = [];
-  const newlyGrantedCommands: string[] = [];
-  for (const toolName of grantedTools) {
-    if (!skillWideningState.managedToolNames.has(toolName)) {
-      continue;
-    }
-    if (!skillWideningState.grantedToolNames.has(toolName)) {
-      newlyGrantedTools.push(toolName);
-    }
-    skillWideningState.grantedToolNames.add(toolName);
-  }
-  for (const commandId of grantedCommands) {
-    if (!skillWideningState.managedCommandIds.has(commandId)) {
-      continue;
-    }
-    if (!skillWideningState.grantedCommandIds.has(commandId)) {
-      newlyGrantedCommands.push(commandId);
-    }
-    skillWideningState.grantedCommandIds.add(commandId);
-  }
-  return {
-    grantedTools: newlyGrantedTools.sort((left, right) => left.localeCompare(right)),
-    grantedCommands: newlyGrantedCommands.sort((left, right) => left.localeCompare(right)),
-  };
-}
-
-function wrapRuntimeSkillTool<TTool extends { name: string; execute: (...args: any[]) => Promise<any> }>(
-  tool: TTool,
+function createPiSkillToolDefinition(
   skillMetadataByAlias: ReadonlyMap<string, PiSkillMetadata>,
   skillWideningState: PiSkillWideningState,
   workspaceBoundaryPolicy: PiWorkspaceBoundaryPolicy
-): TTool {
-  if (tool.name.trim().toLowerCase() !== "skill") {
-    return tool;
-  }
-
-  const originalExecute = tool.execute.bind(tool);
-  const wrapped: TTool = {
-    ...tool,
-    execute: (async (...args: any[]) => {
-      const toolParams = isRecord(args[1]) ? args[1] : {};
-      const requestedName = optionalTrimmedString(toolParams.name);
-      const runtimeResult = await originalExecute(...args);
-      const details = isRecord(runtimeResult?.details) ? runtimeResult.details : {};
-      const resolvedSkill =
-        resolveSkillMetadata(skillMetadataByAlias, details.skill_id) ??
-        resolveSkillMetadata(skillMetadataByAlias, details.skill_name) ??
-        resolveSkillMetadata(skillMetadataByAlias, requestedName);
-      const grantedTools = uniqueNormalizedStrings(details.granted_tools ?? resolvedSkill?.grantedTools ?? []);
-      const grantedCommands = uniqueNormalizedStrings(details.granted_commands ?? resolvedSkill?.grantedCommands ?? []);
-      const wideningGrant = applySkillWideningGrantsFromLists(
-        skillWideningState,
-        grantedTools,
-        grantedCommands
-      );
-      return {
-        ...runtimeResult,
-        details: {
-          ...details,
-          invocation_type: "skill",
-          requested_name: requestedName ?? optionalTrimmedString(details.requested_name),
-          skill_id: optionalTrimmedString(details.skill_id) ?? resolvedSkill?.skillId ?? null,
-          skill_name: optionalTrimmedString(details.skill_name) ?? resolvedSkill?.skillName ?? requestedName ?? null,
-          skill_file_path: optionalTrimmedString(details.skill_file_path) ?? resolvedSkill?.filePath ?? null,
-          skill_base_dir: optionalTrimmedString(details.skill_base_dir) ?? resolvedSkill?.baseDir ?? null,
-          args: optionalTrimmedString(details.args) ?? optionalTrimmedString(toolParams.args),
-          granted_tools: grantedTools,
-          granted_commands: grantedCommands,
-          policy_widening: {
-            scope: skillWideningState.scope,
-            managed_tools: [...skillWideningState.managedToolNames].sort((left, right) => left.localeCompare(right)),
-            granted_tools: wideningGrant.grantedTools,
-            active_granted_tools: activeGrantedTools(skillWideningState),
-            managed_commands: [...skillWideningState.managedCommandIds].sort((left, right) => left.localeCompare(right)),
-            granted_commands: wideningGrant.grantedCommands,
-            active_granted_commands: activeGrantedCommands(skillWideningState),
-            workspace_boundary_override: workspaceBoundaryPolicy.overrideRequested,
-          },
-        },
-      };
-    }) as TTool["execute"],
-  };
-  return wrapped;
+): ToolDefinition {
+  return createHarnessSkillToolDefinition({
+    skillMetadataByAlias,
+    skillWideningState,
+    workspaceBoundaryOverrideRequested: workspaceBoundaryPolicy.overrideRequested,
+  }) as unknown as ToolDefinition;
 }
 
 function wrapToolWithSkillWidening<TTool extends { name: string; execute: (...args: any[]) => Promise<any> }>(
   tool: TTool,
   state: PiSkillWideningState
 ): TTool {
-  const normalizedName = tool.name.trim().toLowerCase();
-  if (!state.managedToolNames.has(normalizedName)) {
-    return tool;
-  }
-
-  const originalExecute = tool.execute.bind(tool);
-  const wrapped: TTool = {
-    ...tool,
-    execute: (async (...args: any[]) => {
-      if (!state.grantedToolNames.has(normalizedName)) {
-        const requiredSkills = requiredSkillIdsForTool(state, normalizedName);
-        const requiredSegment =
-          requiredSkills.length > 0 ? ` by invoking one of: ${requiredSkills.join(", ")}` : "";
-        throw new Error(
-          `permission denied by skill policy: tool "${tool.name}" is gated and must be widened${requiredSegment}`
-        );
-      }
-      return await originalExecute(...args);
-    }) as TTool["execute"],
-  };
-  return wrapped;
+  return wrapToolWithHarnessSkillWidening(tool, state);
 }
 
 function wrapToolWithWorkspaceBoundary<TTool extends { name: string; execute: (...args: any[]) => Promise<any> }>(
@@ -1592,48 +1084,8 @@ function resolveRequestedSessionFile(request: HarnessHostPiRequest): string | nu
   return fs.existsSync(resolved) ? resolved : null;
 }
 
-function sanitizePiToolNameSegment(value: string): string {
-  const normalized = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-  return normalized || "tool";
-}
-
 export function buildPiMcpToolName(serverId: string, toolName: string): string {
-  return `mcp__${sanitizePiToolNameSegment(serverId)}__${sanitizePiToolNameSegment(toolName)}`;
-}
-
-function uniquePiMcpToolName(serverId: string, toolName: string, usedNames: ReadonlySet<string>): string {
-  const baseName = buildPiMcpToolName(serverId, toolName);
-  if (!usedNames.has(baseName)) {
-    return baseName;
-  }
-  let suffix = 2;
-  while (usedNames.has(`${baseName}_${suffix}`)) {
-    suffix += 1;
-  }
-  return `${baseName}_${suffix}`;
-}
-
-function fallbackMcpToolParametersSchema(): Record<string, unknown> {
-  return {
-    type: "object",
-    properties: {},
-    additionalProperties: true,
-  };
-}
-
-async function sleep(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function normalizeMcpToolParametersSchema(schema: unknown): Record<string, unknown> {
-  if (!isRecord(schema)) {
-    return fallbackMcpToolParametersSchema();
-  }
-  return JSON.parse(JSON.stringify(schema)) as Record<string, unknown>;
+  return buildHarnessMcpToolName(serverId, toolName);
 }
 
 function resolveMcpToolTextResult(raw: unknown): string {
@@ -1645,100 +1097,66 @@ function resolveMcpToolTextResult(raw: unknown): string {
   );
 }
 
-function toPiMcpServerBinding(payload: JsonObject, workspaceDir: string): PiMcpServerBinding | null {
-  const name = firstNonEmptyString(payload.name);
-  const config = isRecord(payload.config) ? payload.config : null;
-  if (!name || !config) {
-    return null;
-  }
+export function buildPiMcpServerBindings(request: HarnessHostPiRequest): PiMcpServerBinding[] {
+  return buildHarnessMcpServerBindings({
+    servers: request.mcp_servers as unknown as HarnessPreparedMcpServerConfig[],
+    workspaceDir: request.workspace_dir,
+  }).map((binding) => ({
+    serverId: binding.serverId,
+    timeoutMs: binding.timeoutMs,
+    definition: toMcporterServerDefinition(binding),
+  }));
+}
 
-  const enabled = typeof config.enabled === "boolean" ? config.enabled : true;
-  if (!enabled) {
-    return null;
-  }
-
-  const timeoutMs = typeof config.timeout === "number" && Number.isFinite(config.timeout) ? config.timeout : 30000;
-  const description = `Holaboss MCP server ${name}`;
-  if (config.type === "local") {
-    const command = Array.isArray(config.command) ? config.command.filter((item): item is string => typeof item === "string") : [];
-    const [executable, ...args] = command;
-    if (!executable) {
-      throw new Error(`Pi MCP server ${name} is missing a local command`);
-    }
+function toMcporterServerDefinition(binding: HarnessMcpServerBinding): ServerDefinition {
+  if (binding.transport.kind === "stdio") {
     return {
-      serverId: name,
-      timeoutMs,
-      definition: {
-        name,
-        description,
-        command: {
-          kind: "stdio",
-          command: executable,
-          args,
-          cwd: workspaceDir,
-        },
-        env: stringRecord(config.environment),
+      name: binding.serverId,
+      description: binding.description,
+      command: {
+        kind: "stdio",
+        command: binding.transport.command,
+        args: binding.transport.args,
+        cwd: binding.transport.cwd,
       },
+      env: binding.transport.env,
     };
   }
 
-  const url = firstNonEmptyString(config.url);
-  if (!url) {
-    throw new Error(`Pi MCP server ${name} is missing a remote url`);
-  }
   return {
-    serverId: name,
-    timeoutMs,
-    definition: {
-      name,
-      description,
-      command: {
-        kind: "http",
-        url: new URL(url),
-        headers: stringRecord(config.headers),
-      },
+    name: binding.serverId,
+    description: binding.description,
+    command: {
+      kind: "http",
+      url: new URL(binding.transport.url),
+      headers: binding.transport.headers,
     },
   };
-}
-
-export function buildPiMcpServerBindings(request: HarnessHostPiRequest): PiMcpServerBinding[] {
-  return request.mcp_servers
-    .map((server) => toPiMcpServerBinding(server, request.workspace_dir))
-    .filter((binding): binding is PiMcpServerBinding => Boolean(binding));
-}
-
-function mcpToolAllowlist(request: HarnessHostPiRequest): Map<string, Map<string, HarnessHostPiMcpToolRef>> {
-  const allowlist = new Map<string, Map<string, HarnessHostPiMcpToolRef>>();
-  for (const toolRef of request.mcp_tool_refs) {
-    const serverTools = allowlist.get(toolRef.server_id) ?? new Map<string, HarnessHostPiMcpToolRef>();
-    serverTools.set(toolRef.tool_name, toolRef);
-    allowlist.set(toolRef.server_id, serverTools);
-  }
-  return allowlist;
 }
 
 function createPiMcpToolDefinition(params: {
   runtime: McporterRuntime;
   binding: PiMcpServerBinding;
-  tool: ServerToolInfo;
+  tool: {
+    toolName: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+    timeoutMs: number;
+  };
   metadata: PiMcpToolMetadata;
 }): ToolDefinition {
-  const description = [params.tool.description?.trim(), `MCP server: ${params.binding.serverId}`, `MCP tool: ${params.tool.name}`]
-    .filter(Boolean)
-    .join("\n");
-
   return {
     name: params.metadata.piToolName,
-    label: `${params.binding.serverId}:${params.tool.name}`,
-    description,
-    parameters: normalizeMcpToolParametersSchema(params.tool.inputSchema) as never,
+    label: `${params.binding.serverId}:${params.tool.toolName}`,
+    description: params.tool.description,
+    parameters: normalizeHarnessMcpToolParametersSchema(params.tool.inputSchema) as never,
     execute: async (_toolCallId, toolParams, signal) => {
       if (signal?.aborted) {
-        throw new Error(`MCP tool call aborted before execution: ${params.binding.serverId}.${params.tool.name}`);
+        throw new Error(`MCP tool call aborted before execution: ${params.binding.serverId}.${params.tool.toolName}`);
       }
-      const raw = await params.runtime.callTool(params.binding.serverId, params.tool.name, {
+      const raw = await params.runtime.callTool(params.binding.serverId, params.tool.toolName, {
         args: isRecord(toolParams) ? toolParams : {},
-        timeoutMs: params.binding.timeoutMs,
+        timeoutMs: params.tool.timeoutMs,
       });
       const text = resolveMcpToolTextResult(raw);
       return {
@@ -1746,7 +1164,7 @@ function createPiMcpToolDefinition(params: {
         details: {
           server_id: params.binding.serverId,
           tool_id: params.metadata.toolId,
-          tool_name: params.tool.name,
+          tool_name: params.tool.toolName,
           raw: jsonValue(raw),
         },
       };
@@ -1790,73 +1208,45 @@ export async function createPiMcpCustomTools(
   runtime: McporterRuntime,
   bindings: PiMcpServerBinding[] = buildPiMcpServerBindings(request)
 ): Promise<Omit<PiMcpToolset, "runtime">> {
-  const allowlist = mcpToolAllowlist(request);
   const customTools: ToolDefinition[] = [];
   const mcpToolMetadata = new Map<string, PiMcpToolMetadata>();
 
-  for (const binding of bindings) {
-    const allowedTools = allowlist.get(binding.serverId);
-    const discoveryDeadline = Date.now() + Math.max(
-      PI_MCP_DISCOVERY_RETRY_INTERVAL_MS,
-      Math.min(binding.timeoutMs, PI_MCP_DISCOVERY_MAX_WAIT_MS)
+  const discoveredTools = await discoverHarnessMcpTools({
+    bindings: buildHarnessMcpServerBindings({
+      servers: request.mcp_servers as unknown as HarnessPreparedMcpServerConfig[],
+      workspaceDir: request.workspace_dir,
+    }),
+    runtime,
+    toolRefs: request.mcp_tool_refs,
+    retryIntervalMs: PI_MCP_DISCOVERY_RETRY_INTERVAL_MS,
+    maxWaitMs: PI_MCP_DISCOVERY_MAX_WAIT_MS,
+  });
+
+  for (const tool of discoveredTools) {
+    const binding = bindings.find((entry) => entry.serverId === tool.serverId);
+    if (!binding) {
+      continue;
+    }
+    const metadata: PiMcpToolMetadata = {
+      piToolName: tool.harnessToolName,
+      serverId: tool.serverId,
+      toolId: tool.toolId,
+      toolName: tool.toolName,
+    };
+    customTools.push(
+      createPiMcpToolDefinition({
+        runtime,
+        binding,
+        tool: {
+          toolName: tool.toolName,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+          timeoutMs: tool.timeoutMs,
+        },
+        metadata,
+      }),
     );
-    let discoveredTools: ServerToolInfo[] = [];
-    let lastDiscoveryError: unknown = null;
-    while (true) {
-      try {
-        discoveredTools = await runtime.listTools(binding.serverId, { includeSchema: true });
-        lastDiscoveryError = null;
-      } catch (error) {
-        lastDiscoveryError = error;
-        discoveredTools = [];
-      }
-
-      const missingAllowedTools = allowedTools
-        ? [...allowedTools.keys()].filter((toolName) => !discoveredTools.some((tool) => tool.name === toolName))
-        : [];
-      if (missingAllowedTools.length === 0) {
-        break;
-      }
-      if (Date.now() >= discoveryDeadline) {
-        if (lastDiscoveryError) {
-          throw lastDiscoveryError;
-        }
-        throw new Error(
-          `Pi MCP tool ${binding.serverId}.${missingAllowedTools[0]} for tool_id=${allowedTools?.get(missingAllowedTools[0])?.tool_id ?? `${binding.serverId}.${missingAllowedTools[0]}`} was not discovered`
-        );
-      }
-      await sleep(PI_MCP_DISCOVERY_RETRY_INTERVAL_MS);
-    }
-    const filteredTools = allowedTools
-      ? discoveredTools.filter((tool) => allowedTools.has(tool.name))
-      : discoveredTools;
-
-    if (allowedTools) {
-      for (const [toolName, toolRef] of allowedTools.entries()) {
-        if (!discoveredTools.some((tool) => tool.name === toolName)) {
-          throw new Error(`Pi MCP tool ${binding.serverId}.${toolName} for tool_id=${toolRef.tool_id} was not discovered`);
-        }
-      }
-    }
-
-    for (const tool of filteredTools) {
-      const toolRef = allowedTools?.get(tool.name);
-      const metadata: PiMcpToolMetadata = {
-        piToolName: uniquePiMcpToolName(binding.serverId, tool.name, new Set(mcpToolMetadata.keys())),
-        serverId: binding.serverId,
-        toolId: toolRef?.tool_id ?? `${binding.serverId}.${tool.name}`,
-        toolName: tool.name,
-      };
-      customTools.push(
-        createPiMcpToolDefinition({
-          runtime,
-          binding,
-          tool,
-          metadata,
-        })
-      );
-      mcpToolMetadata.set(metadata.piToolName, metadata);
-    }
+    mcpToolMetadata.set(metadata.piToolName, metadata);
   }
 
   return {
@@ -1891,72 +1281,22 @@ function resolvePiModel(request: HarnessHostPiRequest, modelRegistry: ModelRegis
   throw new Error(`Pi model not found for provider=${request.provider_id} model=${request.model_id}`);
 }
 
-function piApiForRequest(request: HarnessHostPiRequest): Api {
-  const normalizedProvider = request.model_client.model_proxy_provider.trim().toLowerCase();
-  if (normalizedProvider === "anthropic_native") {
-    return "anthropic-messages";
-  }
-  if (shouldUseNativeGoogleProvider(request)) {
-    return "google-generative-ai";
-  }
-  if (shouldUseOpenAiCodexResponsesProvider(request)) {
-    return "openai-codex-responses";
-  }
-  if (shouldUseOpenAiResponsesProvider(request)) {
-    return "openai-responses";
-  }
-  return "openai-completions";
-}
-
-function shouldUseNativeGoogleProvider(request: HarnessHostPiRequest): boolean {
-  const normalizedProvider = request.model_client.model_proxy_provider.trim().toLowerCase();
-  const providerId = request.provider_id.trim().toLowerCase();
-  return normalizedProvider === "google_compatible" && providerId === "gemini_direct";
-}
-
-function shouldUseOpenAiCodexResponsesProvider(request: HarnessHostPiRequest): boolean {
-  const normalizedProvider = request.model_client.model_proxy_provider.trim().toLowerCase();
-  const providerId = request.provider_id.trim().toLowerCase();
-  return normalizedProvider === "openai_compatible" && providerId === "openai_codex";
-}
-
 function normalizedPiModelId(request: Pick<HarnessHostPiRequest, "model_id">): string {
-  const normalizedModelId = request.model_id.trim().toLowerCase();
-  if (!normalizedModelId) {
-    return "";
-  }
-  if (normalizedModelId.startsWith("openai/")) {
-    return normalizedModelId.slice("openai/".length);
-  }
-  if (normalizedModelId.startsWith("holaboss_model_proxy/")) {
-    return normalizedModelId.slice("holaboss_model_proxy/".length);
-  }
-  return normalizedModelId;
+  return normalizeHarnessModelId(request.model_id);
 }
 
-function isOpenAiGpt5Model(modelId: string): boolean {
-  return /^gpt-5(?:[.-]|$)/.test(modelId);
-}
-
-function shouldUseOpenAiResponsesProvider(request: HarnessHostPiRequest): boolean {
-  const normalizedProvider = request.model_client.model_proxy_provider.trim().toLowerCase();
-  const providerId = request.provider_id.trim().toLowerCase();
-  if (normalizedProvider !== "openai_compatible") {
-    return false;
-  }
-  if (
-    providerId !== "openai_direct" &&
-    providerId !== "openai" &&
-    providerId !== "holaboss_model_proxy" &&
-    providerId !== "holaboss"
-  ) {
-    return false;
-  }
-  return isOpenAiGpt5Model(normalizedPiModelId(request));
+function resolvePiModelProfile(request: HarnessHostPiRequest) {
+  return resolveHarnessModelProfile(request, {
+    modelCatalog: PI_MODEL_CATALOG,
+    fallbackBudget: {
+      contextWindow: PI_FALLBACK_CONTEXT_WINDOW,
+      maxTokens: PI_FALLBACK_MAX_TOKENS,
+    },
+  });
 }
 
 function configurePiPromptCacheRetention(request: HarnessHostPiRequest): () => void {
-  if (!shouldUseOpenAiResponsesProvider(request)) {
+  if (resolvePiModelProfile(request).api !== "openai-responses") {
     return () => {};
   }
   const previousValue = process.env.PI_CACHE_RETENTION;
@@ -1972,537 +1312,44 @@ function configurePiPromptCacheRetention(request: HarnessHostPiRequest): () => v
   };
 }
 
-function piGoogleGenerativeAiBaseUrlForRequest(request: HarnessHostPiRequest): string {
-  const baseUrl = firstNonEmptyString(request.model_client.base_url);
-  const normalized = baseUrl ? baseUrl.replace(/\/+$/, "") : "";
-  if (!normalized) {
-    return "https://generativelanguage.googleapis.com/v1beta";
-  }
-  return normalized.replace(/\/openai$/i, "") || "https://generativelanguage.googleapis.com/v1beta";
-}
-
-function piAnthropicBaseUrlForRequest(request: HarnessHostPiRequest): string {
-  const baseUrl = firstNonEmptyString(request.model_client.base_url);
-  const normalized = baseUrl ? baseUrl.replace(/\/+$/, "") : "";
-  if (!normalized) {
-    return "";
-  }
-  return normalized.replace(/\/v1$/i, "");
-}
-
-function piOpenAiCompatForRequest(request: HarnessHostPiRequest): Model<"openai-completions">["compat"] | undefined {
-  const modelProxyProvider = request.model_client.model_proxy_provider.trim().toLowerCase();
-  const providerId = request.provider_id.trim().toLowerCase();
-  const baseUrl = firstNonEmptyString(request.model_client.base_url)?.toLowerCase() ?? "";
-  if (providerId.includes("ollama") || baseUrl.includes("localhost:11434") || baseUrl.includes("ollama")) {
-    return {
-      supportsStore: false,
-      supportsDeveloperRole: false,
-      supportsReasoningEffort: false,
-    };
-  }
-  if (
-    modelProxyProvider === "google_compatible" ||
-    providerId.includes("gemini") ||
-    providerId.includes("google") ||
-    baseUrl.includes("generativelanguage.googleapis.com")
-  ) {
-    return {
-      supportsStore: false,
-    };
-  }
-  return undefined;
-}
-
-function mergePiOpenAiCompat(
-  base: Model<"openai-completions">["compat"] | undefined,
-  extra: Model<"openai-completions">["compat"] | undefined,
-): Model<"openai-completions">["compat"] | undefined {
-  if (!base) {
-    return extra;
-  }
-  if (!extra) {
-    return base;
-  }
-  return {
-    ...base,
-    ...extra,
-    ...(base.reasoningEffortMap || extra.reasoningEffortMap
-      ? {
-          reasoningEffortMap: {
-            ...(base.reasoningEffortMap ?? {}),
-            ...(extra.reasoningEffortMap ?? {}),
-          },
-        }
-      : {}),
-  };
-}
-
-function piInputModalitiesForRequest(
-  request: HarnessHostPiRequest,
-): Array<"text" | "image"> {
-  const providerId = request.provider_id.trim().toLowerCase();
-  const modelId = request.model_id.trim().toLowerCase();
-  if (
-    providerId.includes("ollama") ||
-    providerId.includes("minimax") ||
-    modelId.startsWith("llama") ||
-    modelId.startsWith("qwen3:") ||
-    modelId.startsWith("gpt-oss:")
-  ) {
-    return ["text"];
-  }
-  return ["text", "image"];
-}
-
 export function requestedPiThinkingLevel(
   request: Pick<HarnessHostPiRequest, "thinking_value">,
 ): PiRequestedThinkingLevel | null {
-  return piThinkingSelectionForRequest(request).level;
-}
-
-function piNumericThinkingLevel(value: number): PiThinkingBudgetLevel | "off" {
-  if (value === 0) {
-    return "off";
-  }
-  if (value < 0) {
-    return "high";
-  }
-  if (value <= 1024) {
-    return "minimal";
-  }
-  if (value <= 4096) {
-    return "low";
-  }
-  if (value <= 12288) {
-    return "medium";
-  }
-  return "high";
-}
-
-function piThinkingSelectionForRequest(
-  request: Pick<HarnessHostPiRequest, "thinking_value">,
-): PiThinkingSelection {
-  const rawValue = request.thinking_value?.trim() ?? "";
-  const normalizedValue = rawValue.toLowerCase();
-  if (!normalizedValue) {
-    return {
-      rawValue: null,
-      level: null,
-    };
-  }
-  if (
-    normalizedValue === "off" ||
-    normalizedValue === "none" ||
-    normalizedValue === "false"
-  ) {
-    return {
-      rawValue,
-      level: "off",
-    };
-  }
-  if (
-    normalizedValue === "minimal" ||
-    normalizedValue === "low" ||
-    normalizedValue === "medium" ||
-    normalizedValue === "high" ||
-    normalizedValue === "xhigh"
-  ) {
-    return {
-      rawValue,
-      level: normalizedValue,
-    };
-  }
-  if (normalizedValue === "max") {
-    return {
-      rawValue,
-      level: "xhigh",
-    };
-  }
-  if (normalizedValue === "default") {
-    return {
-      rawValue,
-      level: "low",
-    };
-  }
-  if (normalizedValue === "true" || normalizedValue === "enabled") {
-    return {
-      rawValue,
-      level: "medium",
-    };
-  }
-  const numericValue = Number(normalizedValue);
-  if (!Number.isFinite(numericValue)) {
-    return {
-      rawValue,
-      level: null,
-    };
-  }
-  const level = piNumericThinkingLevel(numericValue);
-  if (level === "off") {
-    return {
-      rawValue,
-      level,
-    };
-  }
-  return {
-    rawValue,
-    level,
-    thinkingBudgets: {
-      [level]: numericValue,
-    },
-  };
-}
-
-function piOpenAiCompatForThinkingSelection(
-  selection: PiThinkingSelection,
-): Model<"openai-completions">["compat"] | undefined {
-  if (!selection.rawValue || !selection.level || selection.level === "off") {
-    return undefined;
-  }
-  const normalizedLevel = selection.level.toLowerCase();
-  const normalizedRawValue = selection.rawValue.trim().toLowerCase();
-  if (
-    normalizedRawValue === normalizedLevel ||
-    Number.isFinite(Number(normalizedRawValue))
-  ) {
-    return undefined;
-  }
-  return {
-    reasoningEffortMap: {
-      [selection.level]: selection.rawValue,
-    },
-  };
+  return requestedHarnessThinkingLevel(request);
 }
 
 export function requestedPiThinkingBudgets(
   request: Pick<HarnessHostPiRequest, "thinking_value">,
 ): Partial<Record<PiThinkingBudgetLevel, number>> | undefined {
-  const selection = piThinkingSelectionForRequest(request);
-  return selection.thinkingBudgets
-    ? { ...selection.thinkingBudgets }
-    : undefined;
-}
-
-function requestedPiOpenAiCompat(
-  request: Pick<HarnessHostPiRequest, "thinking_value">,
-): Model<"openai-completions">["compat"] | undefined {
-  return piOpenAiCompatForThinkingSelection(
-    piThinkingSelectionForRequest(request),
-  );
+  return requestedHarnessThinkingBudgets(request);
 }
 
 export function requestedPiThinkingConfig(
   request: Pick<HarnessHostPiRequest, "thinking_value">,
 ): PiThinkingSelection {
-  const selection = piThinkingSelectionForRequest(request);
-  return {
-    rawValue: selection.rawValue,
-    level: selection.level,
-    ...(selection.thinkingBudgets
-      ? { thinkingBudgets: { ...selection.thinkingBudgets } }
-      : {}),
-  };
-}
-
-function knownPiModelBudgetOverride(
-  request: Pick<HarnessHostPiRequest, "model_id">,
-  api: Api,
-): PiModelBudget | null {
-  const normalizedModelId = normalizedPiModelId(request);
-  if (api !== "openai-responses") {
-    return null;
-  }
-
-  switch (normalizedModelId) {
-    case "gpt-5.4":
-    case "gpt-5.4-pro":
-      return {
-        contextWindow: 1_050_000,
-        maxTokens: 128_000,
-      };
-    case "gpt-5.4-mini":
-    case "gpt-5.4-nano":
-      return {
-        contextWindow: 400_000,
-        maxTokens: 128_000,
-      };
-    default:
-      return null;
-  }
-}
-
-function piCatalogProviderCandidatesForRequest(
-  request: HarnessHostPiRequest,
-  api: Api,
-): string[] {
-  const candidates: string[] = [];
-  const seen = new Set<string>();
-  const push = (value: string | null | undefined) => {
-    const normalized = value?.trim().toLowerCase() ?? "";
-    if (!normalized || seen.has(normalized) || !(normalized in PI_MODEL_CATALOG)) {
-      return;
-    }
-    seen.add(normalized);
-    candidates.push(normalized);
-  };
-
-  const providerId = request.provider_id.trim().toLowerCase();
-  const modelProxyProvider = request.model_client.model_proxy_provider
-    .trim()
-    .toLowerCase();
-  const baseUrl = firstNonEmptyString(request.model_client.base_url)?.toLowerCase() ?? "";
-
-  push(providerId);
-  if (providerId.endsWith("_direct")) {
-    push(providerId.slice(0, -"_direct".length));
-  }
-  if (providerId === "gemini_direct") {
-    push("google");
-  }
-  if (providerId === "openai_codex") {
-    push("openai-codex");
-  }
-  if (providerId.includes("openrouter") || baseUrl.includes("openrouter.ai")) {
-    push("openrouter");
-  }
-
-  if (api === "openai-responses") {
-    push("openai");
-  }
-  if (api === "openai-codex-responses") {
-    push("openai-codex");
-  }
-  if (modelProxyProvider === "anthropic_native") {
-    push("anthropic");
-  }
-  if (modelProxyProvider === "google_compatible") {
-    push("google");
-  }
-
-  return candidates;
-}
-
-function piCatalogModelIdCandidates(
-  request: Pick<HarnessHostPiRequest, "model_id">,
-): string[] {
-  const candidates: string[] = [];
-  const seen = new Set<string>();
-  const push = (value: string | undefined) => {
-    const normalized = value?.trim();
-    if (!normalized || seen.has(normalized)) {
-      return;
-    }
-    seen.add(normalized);
-    candidates.push(normalized);
-  };
-
-  push(request.model_id);
-  push(normalizedPiModelId(request));
-  return candidates;
-}
-
-function piModelBudgetFromCatalogEntry(entry: {
-  contextWindow?: unknown;
-  maxTokens?: unknown;
-} | null | undefined): PiModelBudget | null {
-  if (
-    typeof entry?.contextWindow !== "number" ||
-    !Number.isFinite(entry.contextWindow) ||
-    entry.contextWindow <= 0 ||
-    typeof entry.maxTokens !== "number" ||
-    !Number.isFinite(entry.maxTokens) ||
-    entry.maxTokens <= 0
-  ) {
-    return null;
-  }
-
-  return {
-    contextWindow: entry.contextWindow,
-    maxTokens: entry.maxTokens,
-  };
-}
-
-function piModelCostFromCatalogEntry(
-  entry: PiCatalogModelEntry | null | undefined,
-): PiModelCost | null {
-  if (
-    typeof entry?.cost?.input !== "number" ||
-    !Number.isFinite(entry.cost.input) ||
-    entry.cost.input < 0 ||
-    typeof entry.cost.output !== "number" ||
-    !Number.isFinite(entry.cost.output) ||
-    entry.cost.output < 0 ||
-    typeof entry.cost.cacheRead !== "number" ||
-    !Number.isFinite(entry.cost.cacheRead) ||
-    entry.cost.cacheRead < 0 ||
-    typeof entry.cost.cacheWrite !== "number" ||
-    !Number.isFinite(entry.cost.cacheWrite) ||
-    entry.cost.cacheWrite < 0
-  ) {
-    return null;
-  }
-
-  return {
-    input: entry.cost.input,
-    output: entry.cost.output,
-    cacheRead: entry.cost.cacheRead,
-    cacheWrite: entry.cost.cacheWrite,
-  };
-}
-
-function piCatalogModelBudgetForRequest(
-  request: HarnessHostPiRequest,
-  api: Api,
-): PiModelBudget | null {
-  const providerCandidates = piCatalogProviderCandidatesForRequest(request, api);
-  const modelIdCandidates = piCatalogModelIdCandidates(request);
-
-  for (const provider of providerCandidates) {
-    for (const modelId of modelIdCandidates) {
-      const matched = piModelBudgetFromCatalogEntry(
-        PI_MODEL_CATALOG[provider]?.[modelId],
-      );
-      if (matched) {
-        return matched;
-      }
-    }
-  }
-
-  const globalMatches = new Map<string, PiModelBudget>();
-  for (const provider of Object.keys(PI_MODEL_CATALOG)) {
-    for (const modelId of modelIdCandidates) {
-      const matched = piModelBudgetFromCatalogEntry(
-        PI_MODEL_CATALOG[provider]?.[modelId],
-      );
-      if (!matched) {
-        continue;
-      }
-      globalMatches.set(`${matched.contextWindow}:${matched.maxTokens}`, matched);
-    }
-  }
-
-  return globalMatches.size === 1
-    ? Array.from(globalMatches.values())[0] ?? null
-    : null;
-}
-
-function piCatalogModelCostForRequest(
-  request: HarnessHostPiRequest,
-  api: Api,
-): PiModelCost | null {
-  const providerCandidates = piCatalogProviderCandidatesForRequest(request, api);
-  const modelIdCandidates = piCatalogModelIdCandidates(request);
-
-  for (const provider of providerCandidates) {
-    for (const modelId of modelIdCandidates) {
-      const matched = piModelCostFromCatalogEntry(
-        PI_MODEL_CATALOG[provider]?.[modelId],
-      );
-      if (matched) {
-        return matched;
-      }
-    }
-  }
-
-  const globalMatches = new Map<string, PiModelCost>();
-  for (const provider of Object.keys(PI_MODEL_CATALOG)) {
-    for (const modelId of modelIdCandidates) {
-      const matched = piModelCostFromCatalogEntry(
-        PI_MODEL_CATALOG[provider]?.[modelId],
-      );
-      if (!matched) {
-        continue;
-      }
-      globalMatches.set(
-        `${matched.input}:${matched.output}:${matched.cacheRead}:${matched.cacheWrite}`,
-        matched,
-      );
-    }
-  }
-
-  return globalMatches.size === 1
-    ? Array.from(globalMatches.values())[0] ?? null
-    : null;
-}
-
-function resolvedPiModelBudgetForRequest(
-  request: HarnessHostPiRequest,
-  api: Api,
-): PiModelBudget {
-  return (
-    knownPiModelBudgetOverride(request, api) ??
-    piCatalogModelBudgetForRequest(request, api) ?? {
-      contextWindow: PI_FALLBACK_CONTEXT_WINDOW,
-      maxTokens: PI_FALLBACK_MAX_TOKENS,
-    }
-  );
-}
-
-function resolvedPiModelCostForRequest(
-  request: HarnessHostPiRequest,
-  api: Api,
-): PiModelCost {
-  return (
-    piCatalogModelCostForRequest(request, api) ?? {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-    }
-  );
+  return requestedHarnessThinkingConfig(request);
 }
 
 export function buildPiProviderConfig(request: HarnessHostPiRequest) {
-  const providerHeaders = isRecord(request.model_client.default_headers)
-    ? Object.fromEntries(
-        Object.entries(request.model_client.default_headers).filter(
-          (entry): entry is [string, string] => typeof entry[1] === "string"
-        )
-      )
-    : undefined;
-  const hasExplicitAuthHeader = Object.keys(providerHeaders ?? {}).some((headerName) => {
-    const normalizedHeaderName = headerName.trim().toLowerCase();
-    return normalizedHeaderName === "x-api-key" || normalizedHeaderName === "authorization";
-  });
-  const api = piApiForRequest(request);
-  const baseUrl =
-    api === "google-generative-ai"
-      ? piGoogleGenerativeAiBaseUrlForRequest(request)
-      : api === "anthropic-messages"
-        ? piAnthropicBaseUrlForRequest(request)
-      : firstNonEmptyString(request.model_client.base_url);
-  if (!baseUrl) {
-    throw new Error(`Pi provider ${request.provider_id} is missing a model client base URL`);
-  }
-
-  const compat =
-    api === "openai-completions" ? piOpenAiCompatForRequest(request) : undefined;
-  const requestedThinking = requestedPiThinkingLevel(request);
-  const requestedCompat =
-    api === "openai-completions" ? requestedPiOpenAiCompat(request) : undefined;
-  const mergedCompat = mergePiOpenAiCompat(compat, requestedCompat);
-  const modelBudget = resolvedPiModelBudgetForRequest(request, api);
-  const modelCost = resolvedPiModelCostForRequest(request, api);
+  const profile = resolvePiModelProfile(request);
 
   return {
-    baseUrl,
+    baseUrl: profile.baseUrl,
     apiKey: request.model_client.api_key,
-    api,
-    headers: providerHeaders,
-    // Prefer runtime-managed auth headers when provided by the server, otherwise let Pi attach auth from api_key.
-    authHeader: api !== "google-generative-ai" && !hasExplicitAuthHeader,
+    api: profile.api,
+    headers: profile.headers,
+    authHeader: profile.authHeader,
     models: [
       {
         id: request.model_id,
         name: request.model_id,
-        api,
-        reasoning: requestedThinking !== null,
-        input: piInputModalitiesForRequest(request),
-        cost: modelCost,
-        contextWindow: modelBudget.contextWindow,
-        maxTokens: modelBudget.maxTokens,
-        ...(mergedCompat ? { compat: mergedCompat } : {}),
+        api: profile.api,
+        reasoning: profile.reasoning,
+        input: profile.input,
+        cost: profile.cost,
+        contextWindow: profile.budget.contextWindow,
+        maxTokens: profile.budget.maxTokens,
+        ...(profile.compat ? { compat: profile.compat } : {}),
       },
     ],
   };
@@ -2534,9 +1381,15 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
       ? { thinkingBudgets: requestedThinkingBudgets }
       : {}),
   });
-  const skillMetadataByAlias = buildPiSkillMetadataByAlias(request.workspace_skills ?? []);
+  const skillDirs = resolvePiSkillDirs(request);
+  const loadedSkills = loadPiSkills(skillDirs);
+  const skillMetadataByAlias = buildPiSkillMetadataByAlias(loadedSkills.skills);
+  const todoTools = createPiTodoToolDefinitions({
+    stateDir,
+    sessionId: request.session_id,
+  });
   const browserTools = request.browser_tools_enabled
-    ? await resolvePiDesktopBrowserToolDefinitions({
+    ? await resolveHarnessDesktopBrowserToolDefinitions({
         runtimeApiBaseUrl: request.runtime_api_base_url,
         workspaceId: request.workspace_id,
         sessionId: request.session_id,
@@ -2552,6 +1405,7 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     noSkills: true,
     noPromptTemplates: true,
     noThemes: true,
+    skillsOverride: () => loadedSkills,
     systemPromptOverride: () => effectiveSystemPromptForRequest(request),
   });
   await resourceLoader.reload();
@@ -2561,13 +1415,14 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     ? SessionManager.open(persistedSessionFile)
     : SessionManager.create(request.workspace_dir, sessionDir);
   const mcpToolset = await createPiMcpToolset(request);
-  const runtimeTools = await resolvePiRuntimeToolDefinitions({
+  const runtimeTools = await resolveHarnessRuntimeToolDefinitions({
     runtimeApiBaseUrl: request.runtime_api_base_url,
     workspaceId: request.workspace_id,
     sessionId: request.session_id,
     inputId: request.input_id,
     selectedModel: `${request.provider_id}/${request.model_id}`,
   });
+  const webSearchTools = await resolvePiWebSearchToolDefinitions();
   const baseTools = [
     ...createCodingTools(request.workspace_dir),
     createGrepTool(request.workspace_dir),
@@ -2575,8 +1430,10 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     createLsTool(request.workspace_dir),
   ];
   const nonSkillCustomTools: ToolDefinition[] = [
-    ...browserTools,
-    ...runtimeTools,
+    ...todoTools,
+    ...(browserTools as unknown as ToolDefinition[]),
+    ...(runtimeTools as unknown as ToolDefinition[]),
+    ...webSearchTools,
     ...mcpToolset.customTools,
   ];
   const availableToolNames = [...baseTools, ...nonSkillCustomTools].map((tool) => tool.name);
@@ -2590,19 +1447,18 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     [...availableToolNames, "skill"],
     availableCommandIds
   );
+  const skillTools =
+    skillMetadataByAlias.size > 0
+      ? [createPiSkillToolDefinition(skillMetadataByAlias, skillWideningState, workspaceBoundaryPolicy)]
+      : [];
   const tools = baseTools.map((tool) =>
     wrapToolWithWorkspaceBoundary(wrapToolWithSkillWidening(tool, skillWideningState), workspaceBoundaryPolicy)
   );
   const customTools = [
     ...nonSkillCustomTools.map((tool) =>
-      wrapToolWithWorkspaceBoundary(
-        wrapToolWithSkillWidening(
-          wrapRuntimeSkillTool(tool, skillMetadataByAlias, skillWideningState, workspaceBoundaryPolicy),
-          skillWideningState
-        ),
-        workspaceBoundaryPolicy
-      )
+      wrapToolWithWorkspaceBoundary(wrapToolWithSkillWidening(tool, skillWideningState), workspaceBoundaryPolicy)
     ),
+    ...skillTools.map((tool) => wrapToolWithWorkspaceBoundary(tool, workspaceBoundaryPolicy)),
   ];
 
   const restorePromptCacheRetention = configurePiPromptCacheRetention(request);
@@ -2666,57 +1522,21 @@ function toolCallId(event: AgentSessionEvent): string {
   return "";
 }
 
-function isSkillToolName(toolName: unknown): boolean {
-  return typeof toolName === "string" && toolName.trim().toLowerCase() === "skill";
-}
-
-function skillInvocationArgs(value: unknown): { requestedName: string | null; args: string | null } {
-  if (!isRecord(value)) {
-    return { requestedName: null, args: null };
-  }
-  return {
-    requestedName: optionalTrimmedString(value.name),
-    args: optionalTrimmedString(value.args),
-  };
-}
-
-function skillInvocationResultDetails(value: unknown): Record<string, unknown> | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-  return isRecord(value.details) ? value.details : null;
-}
-
-function stringList(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return value
-    .map((item) => optionalTrimmedString(item))
-    .filter((item): item is string => Boolean(item));
-}
-
 function maybeMapSkillInvocationStart(event: AgentSessionEvent, state: PiEventMapperState): PiMappedEvent | null {
-  if (event.type !== "tool_execution_start" || !isSkillToolName(event.toolName)) {
+  const payload = buildHarnessSkillInvocationStartPayload({
+    toolName: event.type === "tool_execution_start" ? event.toolName : null,
+    toolCallId: event.type === "tool_execution_start" ? event.toolCallId : "",
+    args: event.type === "tool_execution_start" ? event.args : null,
+    skillMetadataByAlias: state.skillMetadataByAlias,
+  });
+  if (!payload) {
     return null;
   }
-  const invocationArgs = skillInvocationArgs(event.args);
-  const resolvedSkill = resolveSkillMetadata(state.skillMetadataByAlias, invocationArgs.requestedName);
   return {
     event_type: "skill_invocation",
     payload: {
-      phase: "started",
-      requested_name: invocationArgs.requestedName,
-      skill_id: resolvedSkill?.skillId ?? null,
-      skill_name: resolvedSkill?.skillName ?? invocationArgs.requestedName,
-      skill_location: resolvedSkill?.filePath ?? null,
-      granted_tools_expected: resolvedSkill?.grantedTools ?? [],
-      granted_commands_expected: resolvedSkill?.grantedCommands ?? [],
-      args: invocationArgs.args,
-      error: false,
-      event: "tool_execution_start",
       source: "pi",
-      call_id: event.toolCallId,
+      ...jsonObject(payload),
     },
   };
 }
@@ -2726,56 +1546,22 @@ function maybeMapSkillInvocationEnd(
   toolArgs: JsonValue | null,
   state: PiEventMapperState
 ): PiMappedEvent | null {
-  if (event.type !== "tool_execution_end" || !isSkillToolName(event.toolName)) {
+  const payload = buildHarnessSkillInvocationEndPayload({
+    toolName: event.type === "tool_execution_end" ? event.toolName : null,
+    toolCallId: toolCallId(event),
+    toolArgs,
+    result: event.type === "tool_execution_end" ? event.result : null,
+    isError: event.type === "tool_execution_end" ? Boolean(event.isError) : false,
+    skillMetadataByAlias: state.skillMetadataByAlias,
+  });
+  if (!payload) {
     return null;
   }
-  const invocationArgs = skillInvocationArgs(toolArgs);
-  const resolvedSkill = resolveSkillMetadata(state.skillMetadataByAlias, invocationArgs.requestedName);
-  const details = skillInvocationResultDetails(event.result);
-  const skillId = firstNonEmptyString(details?.skill_id, resolvedSkill?.skillId) ?? null;
-  const skillName = firstNonEmptyString(details?.skill_name, resolvedSkill?.skillName, invocationArgs.requestedName) ?? null;
-  const skillLocation = firstNonEmptyString(details?.skill_file_path, resolvedSkill?.filePath) ?? null;
-  const policyWidening = isRecord(details?.policy_widening) ? details?.policy_widening : null;
-  const wideningScope = optionalTrimmedString(policyWidening?.scope);
-  const managedTools = stringList(policyWidening?.managed_tools);
-  const grantedTools = stringList(policyWidening?.granted_tools);
-  const activeGrantedToolsSnapshot = stringList(policyWidening?.active_granted_tools);
-  const managedCommands = stringList(policyWidening?.managed_commands);
-  const grantedCommands = stringList(policyWidening?.granted_commands);
-  const activeGrantedCommandsSnapshot = stringList(policyWidening?.active_granted_commands);
-  const workspaceBoundaryOverride =
-    typeof policyWidening?.workspace_boundary_override === "boolean"
-      ? policyWidening.workspace_boundary_override
-      : null;
-  const resultMessage = firstNonEmptyString(
-    details?.message,
-    details?.error_message,
-    isRecord(event.result) ? event.result.message : undefined,
-    isRecord(event.result) ? event.result.error : undefined,
-    typeof event.result === "string" ? event.result : undefined
-  );
   return {
     event_type: "skill_invocation",
     payload: {
-      phase: "completed",
-      requested_name: invocationArgs.requestedName,
-      skill_id: skillId,
-      skill_name: skillName,
-      skill_location: skillLocation,
-      widening_scope: wideningScope,
-      managed_tools: managedTools,
-      granted_tools: grantedTools,
-      active_granted_tools: activeGrantedToolsSnapshot,
-      managed_commands: managedCommands,
-      granted_commands: grantedCommands,
-      active_granted_commands: activeGrantedCommandsSnapshot,
-      workspace_boundary_override: workspaceBoundaryOverride,
-      args: invocationArgs.args,
-      error: Boolean(event.isError),
-      error_message: Boolean(event.isError) ? resultMessage ?? null : null,
-      event: "tool_execution_end",
       source: "pi",
-      call_id: toolCallId(event),
+      ...jsonObject(payload),
     },
   };
 }
@@ -3029,9 +1815,11 @@ function mapPiEvent(
           },
         },
       ];
-      if (!event.isError && toolName.trim().toLowerCase() === "question") {
-        state.waitingForUser = true;
-      }
+      noteHarnessWaitingForUserOnToolCompletion({
+        toolName,
+        isError: Boolean(event.isError),
+        state,
+      });
       const skillMapped = maybeMapSkillInvocationEnd(event, args, state);
       if (skillMapped) {
         mapped.push(skillMapped);
@@ -3075,7 +1863,7 @@ function mapPiEvent(
         {
           event_type: "run_completed",
           payload: {
-            status: state.waitingForUser ? "waiting_user" : "success",
+            status: resolveHarnessRunStatus({ waitingForUser: state.waitingForUser }),
             event: "agent_end",
             source: "pi",
             harness_session_id: sessionFile,
@@ -3142,12 +1930,6 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
     return sequence;
   };
 
-  const todoCoordinator = new RuntimeTodoCoordinator({
-    runtimeApiBaseUrl: request.runtime_api_base_url,
-    workspaceId: request.workspace_id,
-    sessionId: request.session_id,
-  });
-  await todoCoordinator.initialize();
   const handle = await deps.createSession(request);
   suppressPiPostRunAutoCompaction(handle.session);
   const requestedThinking = requestedPiThinkingLevel(request) ?? "off";
@@ -3165,9 +1947,14 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
       ).getContextUsage?.() ?? null,
     );
   const state = createPiEventMapperState(handle.mcpToolMetadata, handle.skillMetadataByAlias);
-  const shouldEmitWaitingUser = () => todoCoordinator.shouldEmitWaitingUser(state.waitingForUser);
+  const shouldEmitWaitingUser = () =>
+    resolveHarnessRunStatus({
+      waitingForUser: state.waitingForUser,
+      blockedOnUser: hasBlockedPersistedHarnessTodoState(stateDir, request.session_id),
+    }) === "waiting_user";
   let terminalEmitted = false;
   let aggregatedUsage: HarnessGenAiUsageMetrics | null = null;
+  const stateDir = resolvePiStateDir(request.workspace_dir);
   const unsubscribe = handle.session.subscribe((event) => {
     if (event.type === "message_end") {
       aggregatedUsage = mergeHarnessUsageMetrics(
@@ -3190,18 +1977,29 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
         mapped.payload.status.trim().toLowerCase() !== "waiting_user" &&
         shouldEmitWaitingUser()
       ) {
-        mapped.payload.status = "waiting_user";
+        mapped.payload.status = resolveHarnessRunStatus({
+          waitingForUser: state.waitingForUser,
+          blockedOnUser: true,
+        });
       }
       if (
         mapped.event_type === "tool_call" &&
         mapped.payload.phase === "completed" &&
-        typeof mapped.payload.tool_name === "string"
+        mapped.payload.error !== true &&
+        typeof mapped.payload.tool_name === "string" &&
+        mapped.payload.tool_name.trim().toLowerCase() === "question"
       ) {
-        todoCoordinator.noteToolCompletion({
-          toolName: mapped.payload.tool_name,
-          error: mapped.payload.error === true,
-          toolArgs: (mapped.payload.tool_args as JsonValue | null) ?? null,
-          result: mapped.payload.result,
+        const questionText = summarizeQuestionPrompt(
+          (mapped.payload.tool_args as JsonValue | null) ?? null,
+          mapped.payload.result
+        );
+        const detail = questionText
+          ? `Blocked waiting for user input: ${questionText}`
+          : "Blocked waiting for user input.";
+        blockActiveHarnessTodoTask({
+          stateDir,
+          sessionId: request.session_id,
+          detail,
         });
       }
       if (mapped.event_type === "run_completed" || mapped.event_type === "run_failed") {
@@ -3248,11 +2046,13 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
     async (span) => {
       try {
         await handle.session.sendUserMessage(await promptContentForRequest(request));
-        await todoCoordinator.waitForPendingUpdates();
         if (!terminalEmitted) {
           const usagePayload = tokenUsagePayloadFromHarnessUsage(aggregatedUsage);
           emitRunnerEvent(request, nextSequence(), "run_completed", {
-            status: shouldEmitWaitingUser() ? "waiting_user" : "success",
+            status: resolveHarnessRunStatus({
+              waitingForUser: state.waitingForUser,
+              blockedOnUser: hasBlockedPersistedHarnessTodoState(stateDir, request.session_id),
+            }),
             source: "pi",
             event: "send_user_message_resolved",
             harness_session_id: handle.sessionFile,
@@ -3265,7 +2065,10 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
           span.setAttribute("holaboss.run_status", "failed");
           span.setStatus({ code: 2, message: "internal_error" });
         } else {
-          const runStatus = shouldEmitWaitingUser() ? "waiting_user" : "success";
+          const runStatus = resolveHarnessRunStatus({
+            waitingForUser: state.waitingForUser,
+            blockedOnUser: hasBlockedPersistedHarnessTodoState(stateDir, request.session_id),
+          });
           span.setAttribute("holaboss.run_status", runStatus);
           span.setStatus({ code: 1, message: "ok" });
         }
@@ -3304,7 +2107,6 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
         if (timeoutHandle) {
           clearTimeout(timeoutHandle);
         }
-        await todoCoordinator.waitForPendingUpdates();
         unsubscribe();
         await handle.dispose();
       }
