@@ -1,3 +1,5 @@
+import { Server } from "lucide-react";
+
 interface RuntimeStatusIndicatorProps {
   status: RuntimeStatusPayload | null;
   onClick?: () => void;
@@ -20,20 +22,11 @@ function runtimeStatusVisual(status: RuntimeStatus | undefined): {
     case "missing":
       return { dotClass: "bg-destructive", label: "Runtime missing" };
     case "stopped":
-      return {
-        dotClass: "bg-muted-foreground/60",
-        label: "Runtime stopped",
-      };
+      return { dotClass: "bg-muted-foreground", label: "Runtime stopped" };
     case "disabled":
-      return {
-        dotClass: "bg-muted-foreground/40",
-        label: "Runtime disabled",
-      };
+      return { dotClass: "bg-muted-foreground", label: "Runtime disabled" };
     default:
-      return {
-        dotClass: "bg-muted-foreground/40",
-        label: "Runtime unknown",
-      };
+      return { dotClass: "bg-muted-foreground", label: "Runtime unknown" };
   }
 }
 
@@ -55,13 +48,13 @@ export function RuntimeStatusIndicator({
       onClick={onClick}
       aria-label={label}
       title={hoverText}
-      className="pointer-events-auto flex h-6 items-center gap-1.5 rounded-full border border-border bg-background/70 px-2.5 text-xs font-medium text-muted-foreground backdrop-blur-sm transition-colors hover:bg-accent hover:text-foreground"
+      className="relative flex size-7 shrink-0 items-center justify-center rounded-lg bg-background text-muted-foreground shadow-subtle-xs transition-colors hover:bg-muted hover:text-foreground dark:border-border"
     >
+      <Server size={14} strokeWidth={1.8} />
       <span
-        className={`size-1.5 rounded-full ${dotClass}`}
         aria-hidden="true"
+        className={`absolute -right-0.5 -top-0.5 size-2 rounded-full ring-2 ring-background ${dotClass}`}
       />
-      <span>{label}</span>
     </button>
   );
 }

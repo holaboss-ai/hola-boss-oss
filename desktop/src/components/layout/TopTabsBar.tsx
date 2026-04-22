@@ -25,6 +25,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { CreditsPill } from "@/components/billing/CreditsPill";
+import { RuntimeStatusIndicator } from "@/components/layout/RuntimeStatusIndicator";
 import { Button } from "@/components/ui/button";
 import { UserAvatar } from "@/components/ui/UserAvatar";
 import {
@@ -46,6 +47,8 @@ import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 interface TopTabsBarProps {
   integratedTitleBar?: boolean;
   desktopPlatform?: string | null;
+  runtimeStatus?: RuntimeStatusPayload | null;
+  onOpenRuntimeSettings?: () => void;
   onWorkspaceSwitcherVisibilityChange?: (open: boolean) => void;
   onOpenWorkspaceCreatePanel?: () => void;
   onOpenSettings?: () => void;
@@ -58,6 +61,8 @@ interface TopTabsBarProps {
 export function TopTabsBar({
   integratedTitleBar = false,
   desktopPlatform = null,
+  runtimeStatus = null,
+  onOpenRuntimeSettings,
   onWorkspaceSwitcherVisibilityChange,
   onOpenWorkspaceCreatePanel,
   onOpenSettings,
@@ -367,6 +372,10 @@ export function TopTabsBar({
               onClick={() => onOpenBilling?.()}
             />
           ) : null}
+          <RuntimeStatusIndicator
+            status={runtimeStatus}
+            onClick={onOpenRuntimeSettings}
+          />
           <DropdownMenu>
             <DropdownMenuTrigger
               ref={userButtonRef}

@@ -4,7 +4,6 @@ import {
   OperationsInboxPane,
   type OperationsDrawerTab,
 } from "@/components/layout/OperationsDrawer";
-import { RuntimeStatusIndicator } from "@/components/layout/RuntimeStatusIndicator";
 import { SettingsDialog } from "@/components/layout/SettingsDialog";
 import { TopTabsBar } from "@/components/layout/TopTabsBar";
 import { WorkspaceAppsDialog } from "@/components/layout/WorkspaceAppsDialog";
@@ -4247,22 +4246,15 @@ function AppShellContent() {
         />
 
         {hasWorkspaces ? (
-          <div className="pointer-events-none absolute bottom-2 left-2 z-20 sm:bottom-4 sm:left-4">
-            <RuntimeStatusIndicator
-              status={runtimeStatus}
-              onClick={() => {
-                setSettingsDialogSection("providers");
-                setSettingsDialogOpen(true);
-              }}
-            />
-          </div>
-        ) : null}
-
-        {hasWorkspaces ? (
           <div className={titleBarContainerClassName}>
             <TopTabsBar
               integratedTitleBar={hasIntegratedTitleBar}
               desktopPlatform={desktopPlatform}
+              runtimeStatus={runtimeStatus}
+              onOpenRuntimeSettings={() => {
+                setSettingsDialogSection("providers");
+                setSettingsDialogOpen(true);
+              }}
               onWorkspaceSwitcherVisibilityChange={setWorkspaceSwitcherOpen}
               onOpenWorkspaceCreatePanel={handleOpenCreateWorkspacePanel}
               onOpenSettings={() => {
