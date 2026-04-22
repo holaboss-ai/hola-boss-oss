@@ -2103,7 +2103,7 @@ test("run-start registration strips the model-proxy path before calling the back
     sessionId: "session-main",
     inputId: "input-1",
     runId: "workspace-1:session-main:input-1",
-    selectedModel: "elephant-alpha",
+    selectedModel: "gpt-5.4",
     runtimeBinding: {
       authToken: "token-1",
       userId: "user-1",
@@ -2147,7 +2147,7 @@ test("run-start registration strips the model-proxy path before calling the back
       session_id: "session-main",
       input_id: "input-1",
       run_id: "workspace-1:session-main:input-1",
-      model: "elephant-alpha",
+      model: "gpt-5.4",
     }),
   );
 });
@@ -2163,7 +2163,7 @@ test("run-start registration reports backend failures to Sentry", async () => {
       sessionId: "session-main",
       inputId: "input-1",
       runId: "workspace-1:session-main:input-1",
-      selectedModel: "elephant-alpha",
+      selectedModel: "gpt-5.4",
       runtimeBinding: {
         authToken: "token-1",
         userId: "user-1",
@@ -2201,7 +2201,7 @@ test("run-start registration reports backend failures to Sentry", async () => {
     session_id: "session-main",
     input_id: "input-1",
     run_id: "workspace-1:session-main:input-1",
-    model: "elephant-alpha",
+    model: "gpt-5.4",
   });
 });
 

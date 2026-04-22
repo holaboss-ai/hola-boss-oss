@@ -77,7 +77,7 @@ function normalizeGeminiNativeBaseUrl(baseUrl: string): string {
 export interface ImageGenerationModelSelection {
   providerId: string;
   modelId: string | null;
-  source: "configured" | "default" | "disabled";
+  source: "selected" | "configured" | "default" | "disabled";
 }
 
 export interface CreateImageGenerationModelClientParams {
@@ -219,6 +219,122 @@ function configuredImageModelForProvider(
   );
 }
 
+function configuredModelsPayload(
+  document: Record<string, unknown>,
+): Record<string, unknown> {
+  return asRecord(document.models);
+}
+
+function modelCapabilities(
+  modelPayload: Record<string, unknown>,
+): string[] {
+  const capabilities = modelPayload.capabilities;
+  if (!Array.isArray(capabilities)) {
+    return [];
+  }
+  return capabilities
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function looksLikeImageGenerationModelId(modelId: string): boolean {
+  const normalized = modelId.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    normalized.startsWith("gpt-image-") ||
+    normalized === "chatgpt-image-latest" ||
+    normalized.startsWith("imagen-") ||
+    normalized.endsWith("-image") ||
+    normalized.includes("-image-")
+  );
+}
+
+function selectedModelSupportsImageGeneration(params: {
+  document: Record<string, unknown>;
+  selectedModel: string;
+  providerId: string;
+  configuredProviderId: string | null;
+  modelId: string;
+  modelToken: string;
+}): boolean {
+  const modelsPayload = configuredModelsPayload(params.document);
+  const candidateKeys = new Set(
+    [
+      params.selectedModel,
+      params.modelToken,
+      `${params.providerId}/${params.modelId}`,
+      params.configuredProviderId
+        ? `${params.configuredProviderId}/${params.modelId}`
+        : null,
+      params.modelId,
+    ]
+      .map((value) => (value ?? "").trim())
+      .filter(Boolean),
+  );
+  let sawCapabilities = false;
+  for (const key of candidateKeys) {
+    const payload = asRecord(modelsPayload[key]);
+    const capabilities = modelCapabilities(payload);
+    if (capabilities.length === 0) {
+      continue;
+    }
+    sawCapabilities = true;
+    if (capabilities.includes("image_generation")) {
+      return true;
+    }
+  }
+  if (sawCapabilities) {
+    return false;
+  }
+  return looksLikeImageGenerationModelId(params.modelId);
+}
+
+function selectedImageGenerationSettings(
+  document: Record<string, unknown>,
+  runtimeConfig: ReturnType<typeof resolveProductRuntimeConfig>,
+  params: {
+    selectedModel?: string | null;
+    defaultProviderId?: string | null;
+  },
+): { providerId: string; modelId: string } | null {
+  const selectedModel = firstNonEmptyString(params.selectedModel);
+  if (!selectedModel) {
+    return null;
+  }
+  let resolved;
+  try {
+    resolved = resolveRuntimeModelReference(
+      selectedModel,
+      firstNonEmptyString(params.defaultProviderId, runtimeConfig.defaultProvider),
+    );
+  } catch {
+    return null;
+  }
+  const providerId = normalizeImageGenerationProviderId(
+    resolved.configuredProviderId ?? resolved.providerId,
+  );
+  const modelId = normalizeImageGenerationModelId(providerId, resolved.modelId);
+  if (!providerId || !modelId) {
+    return null;
+  }
+  if (
+    !selectedModelSupportsImageGeneration({
+      document,
+      selectedModel,
+      providerId: resolved.providerId,
+      configuredProviderId: resolved.configuredProviderId,
+      modelId,
+      modelToken: resolved.modelToken,
+    })
+  ) {
+    return null;
+  }
+  return { providerId, modelId };
+}
+
 function imageGenerationProviderIsAvailable(
   document: Record<string, unknown>,
   providerId: string,
@@ -263,6 +379,34 @@ export function resolveImageGenerationModelSelection(params: {
     includeDefaultBaseUrl: false,
   });
   const document = runtimeConfigDocument();
+  const selectedSettings = selectedImageGenerationSettings(
+    document,
+    runtimeConfig,
+    {
+      selectedModel: params.selectedModel,
+      defaultProviderId: params.defaultProviderId,
+    },
+  );
+  if (selectedSettings) {
+    if (
+      !imageGenerationProviderIsAvailable(
+        document,
+        selectedSettings.providerId,
+        runtimeConfig,
+      )
+    ) {
+      return {
+        providerId: selectedSettings.providerId,
+        modelId: null,
+        source: "disabled",
+      };
+    }
+    return {
+      providerId: selectedSettings.providerId,
+      modelId: selectedSettings.modelId,
+      source: "selected",
+    };
+  }
   const configuredSettings = configuredImageGenerationSettings(document);
   if (configuredSettings.providerId) {
     if (
