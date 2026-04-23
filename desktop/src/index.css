@@ -147,6 +147,28 @@
   }
 }
 
+@keyframes holaboss-splash-halo {
+  0%, 100% {
+    opacity: 0.35;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes holaboss-splash-dot {
+  0%, 100% {
+    opacity: 0.2;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-1.5px);
+  }
+}
+
 /* Fallback radius and semantic status colors — themes can override */
 :root {
   --radius: 0.675rem;

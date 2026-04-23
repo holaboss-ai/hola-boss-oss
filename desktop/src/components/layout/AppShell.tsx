@@ -1,8 +1,27 @@
+import {
+  ArrowLeft,
+  CircleCheck,
+  Folder,
+  Globe,
+  Inbox,
+  LayoutGrid,
+  Loader2,
+  TriangleAlert,
+  XCircle,
+} from "lucide-react";
+import {
+  type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { appShellMainGridClassName } from "@/components/layout/appShellLayout";
 import { NotificationToastStack } from "@/components/layout/NotificationToastStack";
 import {
-  OperationsInboxPane,
   type OperationsDrawerTab,
+  OperationsInboxPane,
 } from "@/components/layout/OperationsDrawer";
 import { SettingsDialog } from "@/components/layout/SettingsDialog";
 import { TopTabsBar } from "@/components/layout/TopTabsBar";
@@ -11,12 +30,12 @@ import { FirstWorkspacePane } from "@/components/onboarding";
 import { AppSurfacePane } from "@/components/panes/AppSurfacePane";
 import { BrowserPane } from "@/components/panes/BrowserPane";
 import { ChatPane } from "@/components/panes/ChatPane";
-import { MissingWorkspacePane } from "@/components/panes/MissingWorkspacePane";
 import {
-  FileExplorerPane,
   type FileExplorerFocusRequest,
+  FileExplorerPane,
 } from "@/components/panes/FileExplorerPane";
 import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
+import { MissingWorkspacePane } from "@/components/panes/MissingWorkspacePane";
 import { OnboardingPane } from "@/components/panes/OnboardingPane";
 import { SpaceApplicationsExplorerPane } from "@/components/panes/SpaceApplicationsExplorerPane";
 import { SpaceBrowserDisplayPane } from "@/components/panes/SpaceBrowserDisplayPane";
@@ -24,6 +43,7 @@ import { SpaceBrowserExplorerPane } from "@/components/panes/SpaceBrowserExplore
 import { PublishDialog } from "@/components/publish/PublishDialog";
 import { Button } from "@/components/ui/button";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
+import { holabossLogoUrl } from "@/lib/assetPaths";
 import { type ExplorerAttachmentDragPayload } from "@/lib/attachmentDrag";
 import { DesktopBillingProvider } from "@/lib/billing/useDesktopBilling";
 import {
@@ -39,27 +59,7 @@ import {
   useWorkspaceSelection,
   WorkspaceSelectionProvider,
 } from "@/lib/workspaceSelection";
-import {
-  ArrowLeft,
-  CircleCheck,
-  Folder,
-  Globe,
-  Inbox,
-  LayoutGrid,
-  Loader2,
-  PanelLeftClose,
-  PanelLeftOpen,
-  TriangleAlert,
-  XCircle,
-} from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
-} from "react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 
 const THEME_STORAGE_KEY = "holaboss-theme-v1";
 const DEV_APP_UPDATE_PREVIEW_STORAGE_KEY = "holaboss-dev-app-update-preview-v1";
@@ -87,16 +87,17 @@ const THEMES = [
   "bubblegum-dark",
   "bubblegum-light",
 ] as const;
-const MIN_FILES_PANE_WIDTH = 260;
+const MIN_EXPLORER_PANEL_WIDTH = 220;
+const MAX_EXPLORER_PANEL_WIDTH = 480;
+const MIN_FILES_PANE_WIDTH = MIN_EXPLORER_PANEL_WIDTH;
 const MIN_BROWSER_PANE_WIDTH = 120;
 const MAX_UTILITY_PANE_WIDTH = 720;
-const DEFAULT_FILES_PANE_WIDTH = MIN_FILES_PANE_WIDTH;
+const DEFAULT_FILES_PANE_WIDTH = 260;
 const DEFAULT_BROWSER_PANE_WIDTH = 460;
 const MIN_AGENT_CONTENT_WIDTH = 380;
-const SPACE_EXPLORER_WIDTH = DEFAULT_FILES_PANE_WIDTH;
 const SPACE_AGENT_PANE_WIDTH = 420;
 const SPACE_DISPLAY_MIN_WIDTH = 420;
-const SPACE_EXPLORER_COLLAPSED_WIDTH = 68;
+const SPACE_EXPLORER_RAIL_WIDTH = 52;
 const UTILITY_PANE_RESIZER_WIDTH = 16;
 const APP_UPDATE_CHANGELOG_BASE_URL =
   "https://github.com/holaboss-ai/holaOS/releases/tag";
@@ -1000,15 +1001,63 @@ function EmptyWorkspacePane() {
 
 function WorkspaceBootstrapPane() {
   return (
-    <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden px-6">
-      <div className="flex flex-col items-center text-center">
-        <Loader2 size={20} className="animate-spin text-muted-foreground" />
-        <h2 className="mt-5 text-[17px] font-medium text-foreground">
-          Preparing desktop...
-        </h2>
-        <p className="mt-2 max-w-sm text-[13px] leading-6 text-muted-foreground">
-          Restoring workspace state and attaching surfaces.
+    <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden bg-background px-6">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(ellipse 60% 50% at 50% 42%, color-mix(in srgb, var(--primary) 10%, transparent), transparent 70%)",
+        }}
+      />
+      <div
+        className="relative flex flex-col items-center text-center"
+        style={{ animation: "var(--animate-fade-in-once)" }}
+      >
+        <div className="relative flex h-16 w-16 items-center justify-center">
+          <div
+            aria-hidden="true"
+            className="absolute inset-0 rounded-[22px] blur-2xl"
+            style={{
+              background:
+                "radial-gradient(circle, color-mix(in srgb, var(--primary) 55%, transparent), transparent 70%)",
+              animation: "holaboss-splash-halo 2.8s ease-in-out infinite",
+            }}
+          />
+          <img
+            src={holabossLogoUrl}
+            alt="Holaboss"
+            width={56}
+            height={56}
+            draggable={false}
+            className="relative h-14 w-14 rounded-2xl shadow-[0_10px_28px_-12px_rgba(245,132,25,0.55)] select-none"
+          />
+        </div>
+        <h1
+          className="mt-6 text-[17px] font-semibold tracking-tight text-foreground"
+          style={{ letterSpacing: "-0.01em" }}
+        >
+          Holaboss
+        </h1>
+        <p className="mt-1.5 text-[12.5px] font-medium text-muted-foreground">
+          Preparing your desktop
         </p>
+        <div
+          className="mt-5 flex items-center gap-1.5"
+          aria-label="Loading"
+          role="status"
+        >
+          {[0, 1, 2].map((i) => (
+            <span
+              key={i}
+              className="block h-1 w-1 rounded-full bg-muted-foreground/70"
+              style={{
+                animation: "holaboss-splash-dot 1.2s ease-in-out infinite",
+                animationDelay: `${i * 160}ms`,
+              }}
+            />
+          ))}
+        </div>
       </div>
     </section>
   );
@@ -1266,29 +1315,9 @@ function AppShellContent() {
     useState<FileExplorerFocusRequest | null>(null);
   const [spaceExplorerMode, setSpaceExplorerMode] =
     useState<SpaceExplorerMode>("files");
-  const [spaceExplorerCollapsed, setSpaceExplorerCollapsed] = useState(false);
-  // Animate the content swap when the Space explorer mode changes. Direction
-  // mirrors the tab position journey (leftward mode → slide-in-from-left,
-  // rightward mode → slide-in-from-right), matching the Browser pane's
-  // User↔Agent scope animation so every tab-content reveal shares one idiom.
-  const SPACE_EXPLORER_MODE_INDEX: Record<SpaceExplorerMode, number> = {
-    files: 0,
-    browser: 1,
-    applications: 2,
-  };
-  const previousSpaceExplorerModeRef =
-    useRef<SpaceExplorerMode>(spaceExplorerMode);
-  let spaceExplorerSlideInClass = "slide-in-from-left-3";
-  if (previousSpaceExplorerModeRef.current !== spaceExplorerMode) {
-    spaceExplorerSlideInClass =
-      SPACE_EXPLORER_MODE_INDEX[spaceExplorerMode] >
-      SPACE_EXPLORER_MODE_INDEX[previousSpaceExplorerModeRef.current]
-        ? "slide-in-from-right-3"
-        : "slide-in-from-left-3";
-  }
-  useEffect(() => {
-    previousSpaceExplorerModeRef.current = spaceExplorerMode;
-  }, [spaceExplorerMode]);
+  // Animate the content swap when the Space explorer mode changes. Every mode
+  // enters from the right so all three tabs share one consistent idiom.
+  const spaceExplorerSlideInClass = "slide-in-from-right-3";
   const [spaceBrowserSpace, setSpaceBrowserSpace] =
     useState<BrowserSpaceId>("user");
   const [spaceDisplayView, setSpaceDisplayView] = useState<SpaceDisplayView>({
@@ -1393,6 +1422,10 @@ function AppShellContent() {
     Record<string, RestorableSpaceAppDisplayView>
   >({});
   const spaceDisplayResizeStateRef = useRef<{
+    startWidth: number;
+    startX: number;
+  } | null>(null);
+  const explorerPanelResizeStateRef = useRef<{
     startWidth: number;
     startX: number;
   } | null>(null);
@@ -1905,7 +1938,6 @@ function AppShellContent() {
           setSpaceExplorerMode("browser");
           setSpaceBrowserSpace(targetBrowserSpace);
           setSpaceDisplayView({ type: "browser" });
-          setSpaceExplorerCollapsed(false);
           setSpaceVisibility((previous) => ({
             ...previous,
             browser: true,
@@ -2224,7 +2256,6 @@ function AppShellContent() {
     setSpaceExplorerMode("browser");
     setSpaceBrowserSpace(space);
     setSpaceDisplayView({ type: "browser" });
-    setSpaceExplorerCollapsed(false);
     setSpaceVisibility((previous) => ({
       ...previous,
       browser: true,
@@ -2924,7 +2955,6 @@ function AppShellContent() {
     ) => {
       setActiveShellView("space");
       setSpaceExplorerMode("applications");
-      setSpaceExplorerCollapsed(false);
       setSpaceVisibility((previous) => ({
         ...previous,
         agent: true,
@@ -3350,7 +3380,6 @@ function AppShellContent() {
       space_display_view: summarizeAppShellView(spaceDisplayView),
       space_layout: {
         explorer_mode: spaceExplorerMode,
-        explorer_collapsed: spaceExplorerCollapsed,
         browser_space: spaceBrowserSpace,
         visibility: spaceVisibility,
       },
@@ -3425,7 +3454,6 @@ function AppShellContent() {
       settingsDialogOpen,
       spaceBrowserSpace,
       spaceDisplayView,
-      spaceExplorerCollapsed,
       spaceExplorerMode,
       spaceVisibility,
       taskProposalDetailsDialogOpen,
@@ -3606,7 +3634,6 @@ function AppShellContent() {
 
     setActiveShellView("space");
     setSpaceExplorerMode("files");
-    setSpaceExplorerCollapsed(false);
     setSpaceVisibility((previous) => ({
       ...previous,
       agent: true,
@@ -3644,7 +3671,6 @@ function AppShellContent() {
         ) {
           setActiveShellView("space");
           setSpaceExplorerMode("files");
-          setSpaceExplorerCollapsed(false);
           setSpaceVisibility((previous) => ({
             ...previous,
             agent: true,
@@ -3717,8 +3743,6 @@ function AppShellContent() {
   const flexSpacePaneId = visibleSpacePaneIds.includes("agent")
     ? "agent"
     : (visibleSpacePaneIds[visibleSpacePaneIds.length - 1] ?? null);
-  const showOperationsDrawer = false;
-  const showSpaceExplorer = !spaceExplorerCollapsed;
   const shouldShowAppUpdateReminder = Boolean(
     effectiveAppUpdateStatus && effectiveAppUpdateStatus.downloaded,
   );
@@ -3969,7 +3993,7 @@ function AppShellContent() {
     deleteWorkspace,
   ]);
 
-  const spaceDisplayLayoutSyncKey = `${spaceExplorerMode}:${spaceBrowserSpace}:${spaceExplorerCollapsed ? "collapsed" : "open"}:${spaceAgentPaneWidth}:${showOperationsDrawer ? 1 : 0}`;
+  const spaceDisplayLayoutSyncKey = `${spaceExplorerMode}:${spaceBrowserSpace}:${filesPaneWidth}:${spaceAgentPaneWidth}`;
   const spaceDisplayContent = useMemo(() => {
     if (!hasSelectedWorkspace) {
       return <EmptyWorkspacePane />;
@@ -4040,12 +4064,10 @@ function AppShellContent() {
     hasSelectedWorkspace,
     installedApps,
     shouldSuspendBrowserNativeView,
-    showOperationsDrawer,
     spaceAgentPaneWidth,
     spaceBrowserSpace,
     spaceDisplayLayoutSyncKey,
     spaceDisplayView,
-    spaceExplorerCollapsed,
     spaceExplorerMode,
   ]);
 
@@ -4078,7 +4100,7 @@ function AppShellContent() {
           ) : (
             <BrowserPane
               suspendNativeView={shouldSuspendBrowserNativeView}
-              layoutSyncKey={`${visibleSpacePaneIds.join("|")}:${filesPaneWidth}:${browserPaneWidth}:${showOperationsDrawer ? 1 : 0}`}
+              layoutSyncKey={`${visibleSpacePaneIds.join("|")}:${filesPaneWidth}:${browserPaneWidth}`}
             />
           ),
       })),
@@ -4092,18 +4114,22 @@ function AppShellContent() {
       handleReferenceWorkspacePathInChat,
       handleOpenLinkInNewAppBrowserTab,
       shouldSuspendBrowserNativeView,
-      showOperationsDrawer,
       visibleSpacePaneIds,
     ],
   );
+
+  const clampExplorerPanelWidth = useCallback((width: number) => {
+    return Math.max(
+      MIN_EXPLORER_PANEL_WIDTH,
+      Math.min(width, MAX_EXPLORER_PANEL_WIDTH),
+    );
+  }, []);
 
   const clampSpaceAgentPaneWidth = useCallback(
     (width: number) => {
       const hostWidth =
         utilityPaneHostRef.current?.getBoundingClientRect().width ?? 0;
-      const explorerWidth = spaceExplorerCollapsed
-        ? SPACE_EXPLORER_COLLAPSED_WIDTH
-        : filesPaneWidth;
+      const explorerWidth = SPACE_EXPLORER_RAIL_WIDTH + filesPaneWidth;
       const maxWidth =
         hostWidth > 0
           ? Math.min(
@@ -4119,7 +4145,7 @@ function AppShellContent() {
           : MAX_UTILITY_PANE_WIDTH;
       return Math.max(MIN_AGENT_CONTENT_WIDTH, Math.min(width, maxWidth));
     },
-    [filesPaneWidth, spaceExplorerCollapsed],
+    [filesPaneWidth],
   );
 
   useEffect(() => {
@@ -4149,7 +4175,7 @@ function AppShellContent() {
       observer?.disconnect();
       window.removeEventListener("resize", syncDisplayWidth);
     };
-  }, [clampSpaceAgentPaneWidth, showOperationsDrawer, spaceMode]);
+  }, [clampSpaceAgentPaneWidth, spaceMode]);
 
   const startSpaceDisplayResize = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -4205,6 +4231,61 @@ function AppShellContent() {
       stopResize();
     };
   }, [clampSpaceAgentPaneWidth]);
+
+  const startExplorerPanelResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      explorerPanelResizeStateRef.current = {
+        startWidth: filesPaneWidth,
+        startX: event.clientX,
+      };
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // BrowserView resizing falls back to the window listeners below.
+      }
+      setIsUtilityPaneResizing(true);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      event.preventDefault();
+    },
+    [filesPaneWidth],
+  );
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const resizeState = explorerPanelResizeStateRef.current;
+      if (!resizeState) {
+        return;
+      }
+
+      setFilesPaneWidth(
+        clampExplorerPanelWidth(
+          resizeState.startWidth + (event.clientX - resizeState.startX),
+        ),
+      );
+    };
+
+    const stopResize = () => {
+      if (!explorerPanelResizeStateRef.current) {
+        return;
+      }
+
+      explorerPanelResizeStateRef.current = null;
+      setIsUtilityPaneResizing(false);
+      document.body.style.removeProperty("cursor");
+      document.body.style.removeProperty("user-select");
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopResize);
+    window.addEventListener("pointercancel", stopResize);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopResize);
+      window.removeEventListener("pointercancel", stopResize);
+      stopResize();
+    };
+  }, [clampExplorerPanelWidth]);
 
   const startUtilityPaneResize = useCallback(
     (
@@ -4276,7 +4357,7 @@ function AppShellContent() {
       observer?.disconnect();
       window.removeEventListener("resize", syncUtilityPaneWidths);
     };
-  }, [showOperationsDrawer, syncUtilityPaneWidths, visibleSpacePaneIds.length]);
+  }, [syncUtilityPaneWidths, visibleSpacePaneIds.length]);
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
@@ -4419,237 +4500,160 @@ function AppShellContent() {
                   >
                     <section className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-card shadow-subtle-xs backdrop-blur-sm">
                       <div
-                        className="shrink-0 overflow-hidden border-r border-border bg-card transition-[width] duration-200 ease-out"
+                        className="shrink-0 overflow-hidden border-r border-border bg-card"
                         style={{
-                          width: `${showSpaceExplorer ? SPACE_EXPLORER_WIDTH : SPACE_EXPLORER_COLLAPSED_WIDTH}px`,
+                          width: `${SPACE_EXPLORER_RAIL_WIDTH}px`,
                         }}
                       >
-                        <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-                          {showSpaceExplorer ? (
-                            <>
-                              <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-2 py-1.5">
-                                <div
-                                  role="tablist"
-                                  aria-label="Space explorer mode"
-                                  className="flex min-w-0 flex-1 gap-0.5"
-                                >
-                                  {(
-                                    [
-                                      {
-                                        value: "files",
-                                        label: "Files",
-                                        icon: Folder,
-                                      },
-                                      {
-                                        value: "browser",
-                                        label: "Browser",
-                                        icon: Globe,
-                                      },
-                                      {
-                                        value: "applications",
-                                        label: "Apps",
-                                        icon: LayoutGrid,
-                                      },
-                                    ] as const
-                                  ).map(({ value, label, icon: Icon }) => {
-                                    const isActive =
-                                      spaceExplorerMode === value;
-                                    return (
-                                      <button
-                                        key={value}
-                                        type="button"
-                                        role="tab"
-                                        aria-selected={isActive}
-                                        title={label}
-                                        onClick={() => {
-                                          setSpaceExplorerMode(value);
-                                          if (value === "browser") {
-                                            setSpaceDisplayView({
-                                              type: "browser",
-                                            });
-                                          } else if (value === "applications") {
-                                            restoreLastSpaceAppDisplayView();
-                                          } else {
-                                            restoreLastSpaceFileDisplayView();
-                                          }
-                                        }}
-                                        className={`flex h-7 min-w-0 items-center justify-center overflow-hidden rounded-md px-2 text-xs font-medium transition-[flex-basis,flex-grow,background-color,color] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] active:scale-[0.98] ${
-                                          isActive
-                                            ? "grow basis-0 bg-muted text-foreground"
-                                            : "grow-0 basis-9 text-muted-foreground hover:bg-accent hover:text-foreground"
-                                        }`}
-                                      >
-                                        <Icon className="size-3.5 shrink-0" />
-                                        <span
-                                          className={`overflow-hidden whitespace-nowrap transition-[max-width,opacity,margin-left] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-                                            isActive
-                                              ? "ml-1.5 max-w-[120px] opacity-100 delay-100"
-                                              : "ml-0 max-w-0 opacity-0"
-                                          }`}
-                                        >
-                                          {label}
-                                        </span>
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                                <div
-                                  aria-hidden="true"
-                                  className="h-4 w-px shrink-0 bg-border"
-                                />
-                                <Button
-                                  variant="ghost"
-                                  size="icon-sm"
-                                  onClick={() =>
-                                    setSpaceExplorerCollapsed(true)
+                        <nav
+                          aria-label="Space explorer mode"
+                          className="flex h-full min-h-0 flex-col items-center gap-1 px-1.5 py-2"
+                        >
+                          {(
+                            [
+                              {
+                                value: "files",
+                                label: "Files",
+                                icon: Folder,
+                              },
+                              {
+                                value: "browser",
+                                label: "Browser",
+                                icon: Globe,
+                              },
+                              {
+                                value: "applications",
+                                label: "Apps",
+                                icon: LayoutGrid,
+                              },
+                            ] as const
+                          ).map(({ value, label, icon: Icon }) => {
+                            const isActive = spaceExplorerMode === value;
+                            return (
+                              <Tooltip>
+                                <TooltipTrigger
+                                  render={
+                                    <Button
+                                      key={value}
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => {
+                                        setSpaceExplorerMode(value);
+                                        if (value === "browser") {
+                                          setSpaceDisplayView({
+                                            type: "browser",
+                                          });
+                                        } else if (value === "applications") {
+                                          restoreLastSpaceAppDisplayView();
+                                        } else {
+                                          restoreLastSpaceFileDisplayView();
+                                        }
+                                      }}
+                                      aria-label={`Open ${label.toLowerCase()} explorer`}
+                                      aria-pressed={isActive}
+                                      aria-controls="space-explorer-panel"
+                                      title={label}
+                                      className={
+                                        isActive
+                                          ? "bg-muted text-foreground"
+                                          : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                                      }
+                                    >
+                                      <Icon />
+                                    </Button>
                                   }
-                                  aria-label="Collapse explorer"
-                                  title="Collapse explorer"
+                                />
+                                <TooltipContent
+                                  side="right"
+                                  align="center"
+                                  className="py-1"
                                 >
-                                  <PanelLeftClose className="size-3.5" />
-                                </Button>
-                              </div>
+                                  {label}
+                                </TooltipContent>
+                              </Tooltip>
+                            );
+                          })}
+                        </nav>
+                      </div>
 
-                              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                                <div
-                                  key={spaceExplorerMode}
-                                  className={`flex min-h-0 flex-1 flex-col animate-in fade-in-0 duration-200 ease-out ${spaceExplorerSlideInClass}`}
-                                >
-                                  {spaceExplorerMode === "files" ? (
-                                    <FileExplorerPane
-                                      focusRequest={fileExplorerFocusRequest}
-                                      onFocusRequestConsumed={(requestKey) => {
-                                        setFileExplorerFocusRequest(
-                                          (current) =>
-                                            current?.requestKey === requestKey
-                                              ? null
-                                              : current,
-                                        );
-                                      }}
-                                      onReferenceInChat={
-                                        handleReferenceWorkspacePathInChat
-                                      }
-                                      onDeleteEntry={handleDeleteWorkspaceEntry}
-                                      onOpenLinkInBrowser={
-                                        handleOpenLinkInNewAppBrowserTab
-                                      }
-                                      previewInPane={false}
-                                      embedded
-                                      onFileOpen={(path) => {
-                                        setSpaceDisplayView({
-                                          type: "internal",
-                                          surface: "file",
-                                          resourceId: path,
-                                        });
-                                      }}
-                                    />
-                                  ) : spaceExplorerMode === "applications" ? (
-                                    <SpaceApplicationsExplorerPane
-                                      installedApps={installedApps}
-                                      activeAppId={
-                                        spaceDisplayView.type === "app"
-                                          ? spaceDisplayView.appId
-                                          : null
-                                      }
-                                      onAddApp={handleAddApp}
-                                      onSelectApp={(appId) =>
-                                        handleOpenSpaceApp(appId)
-                                      }
-                                    />
-                                  ) : spaceExplorerMode === "browser" ? (
-                                    <SpaceBrowserExplorerPane
-                                      browserSpace={spaceBrowserSpace}
-                                      onBrowserSpaceChange={(space) => {
-                                        setSpaceBrowserSpace(space);
-                                        setSpaceDisplayView({
-                                          type: "browser",
-                                        });
-                                      }}
-                                      onActivateDisplay={() =>
-                                        setSpaceDisplayView({ type: "browser" })
-                                      }
-                                      hasPendingAgentJump={hasPendingAgentJump}
-                                    />
-                                  ) : null}
-                                </div>
-                              </div>
-                            </>
-                          ) : (
-                            <div className="flex h-full min-h-0 flex-col items-center gap-2 px-2 py-3">
-                              <Button
-                                variant={
-                                  spaceExplorerMode === "files"
-                                    ? "outline"
-                                    : "ghost"
-                                }
-                                size="icon"
-                                onClick={() => {
-                                  setSpaceExplorerMode("files");
-                                  restoreLastSpaceFileDisplayView();
-                                  setSpaceExplorerCollapsed(false);
-                                }}
-                                aria-label="Open file explorer"
-                                className={
-                                  spaceExplorerMode === "files"
-                                    ? "border-primary bg-primary/10 text-primary"
-                                    : "text-muted-foreground"
-                                }
-                              >
-                                <Folder />
-                              </Button>
-                              <Button
-                                variant={
-                                  spaceExplorerMode === "browser"
-                                    ? "outline"
-                                    : "ghost"
-                                }
-                                size="icon"
-                                onClick={() => {
-                                  setSpaceExplorerMode("browser");
-                                  setSpaceDisplayView({ type: "browser" });
-                                  setSpaceExplorerCollapsed(false);
-                                }}
-                                aria-label="Open browser explorer"
-                                className={
-                                  spaceExplorerMode === "browser"
-                                    ? "border-primary bg-primary/10 text-primary"
-                                    : "text-muted-foreground"
-                                }
-                              >
-                                <Globe />
-                              </Button>
-                              <Button
-                                variant={
-                                  spaceExplorerMode === "applications"
-                                    ? "outline"
-                                    : "ghost"
-                                }
-                                size="icon"
-                                onClick={() => {
-                                  setSpaceExplorerMode("applications");
-                                  restoreLastSpaceAppDisplayView();
-                                  setSpaceExplorerCollapsed(false);
-                                }}
-                                aria-label="Open applications explorer"
-                                className={
-                                  spaceExplorerMode === "applications"
-                                    ? "border-primary bg-primary/10 text-primary"
-                                    : "text-muted-foreground"
-                                }
-                              >
-                                <LayoutGrid />
-                              </Button>
-                              <div className="min-h-0 flex-1" />
-                              <Button
-                                variant="outline"
-                                size="icon"
-                                onClick={() => setSpaceExplorerCollapsed(false)}
-                                aria-label="Expand explorer"
-                              >
-                                <PanelLeftOpen />
-                              </Button>
+                      <div
+                        className="relative shrink-0"
+                        style={{ width: `${filesPaneWidth}px` }}
+                      >
+                        <div
+                          role="separator"
+                          aria-label="Resize explorer panel"
+                          aria-orientation="vertical"
+                          onPointerDown={startExplorerPanelResize}
+                          className="group absolute inset-y-0 -right-1 z-20 flex w-2 cursor-col-resize touch-none items-center justify-center"
+                        >
+                          <div className="pointer-events-none absolute left-1/2 top-1/2 h-14 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/8 opacity-0 transition duration-150 group-hover:opacity-100" />
+                        </div>
+                        <div
+                          id="space-explorer-panel"
+                          className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-r border-border bg-card">
+                          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                            <div
+                              key={spaceExplorerMode}
+                              className={`flex min-h-0 flex-1 flex-col animate-in fade-in-0 duration-200 ease-out ${spaceExplorerSlideInClass}`}
+                            >
+                              {spaceExplorerMode === "files" ? (
+                                <FileExplorerPane
+                                  focusRequest={fileExplorerFocusRequest}
+                                  onFocusRequestConsumed={(requestKey) => {
+                                    setFileExplorerFocusRequest((current) =>
+                                      current?.requestKey === requestKey
+                                        ? null
+                                        : current,
+                                    );
+                                  }}
+                                  onReferenceInChat={
+                                    handleReferenceWorkspacePathInChat
+                                  }
+                                  onDeleteEntry={handleDeleteWorkspaceEntry}
+                                  onOpenLinkInBrowser={
+                                    handleOpenLinkInNewAppBrowserTab
+                                  }
+                                  previewInPane={false}
+                                  embedded
+                                  onFileOpen={(path) => {
+                                    setSpaceDisplayView({
+                                      type: "internal",
+                                      surface: "file",
+                                      resourceId: path,
+                                    });
+                                  }}
+                                />
+                              ) : spaceExplorerMode === "applications" ? (
+                                <SpaceApplicationsExplorerPane
+                                  installedApps={installedApps}
+                                  activeAppId={
+                                    spaceDisplayView.type === "app"
+                                      ? spaceDisplayView.appId
+                                      : null
+                                  }
+                                  onAddApp={handleAddApp}
+                                  onSelectApp={(appId) =>
+                                    handleOpenSpaceApp(appId)
+                                  }
+                                />
+                              ) : spaceExplorerMode === "browser" ? (
+                                <SpaceBrowserExplorerPane
+                                  browserSpace={spaceBrowserSpace}
+                                  onBrowserSpaceChange={(space) => {
+                                    setSpaceBrowserSpace(space);
+                                    setSpaceDisplayView({
+                                      type: "browser",
+                                    });
+                                  }}
+                                  onActivateDisplay={() =>
+                                    setSpaceDisplayView({ type: "browser" })
+                                  }
+                                  hasPendingAgentJump={hasPendingAgentJump}
+                                />
+                              ) : null}
                             </div>
-                          )}
+                          </div>
                         </div>
                       </div>
 

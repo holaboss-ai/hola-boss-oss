@@ -17,12 +17,14 @@ import {
 import { flushSync } from "react-dom";
 import {
   AlertTriangle,
+  ArrowLeft,
   ArrowRight,
   ArrowUp,
   ArrowUpRight,
   Cable,
   Check,
   ChevronDown,
+  ChevronRight,
   Clock3,
   CornerDownLeft,
   Copy,
@@ -10147,8 +10149,14 @@ function Composer({
   };
 
   const selectSkillFromPicker = (command: ChatComposerSlashCommandOption) => {
+    const alreadyQuoted = quotedSkills.some(
+      (skill) => skill.skillId === command.skillId,
+    );
+    if (alreadyQuoted) {
+      onRemoveQuotedSkill(command.skillId);
+      return;
+    }
     onSelectSlashCommand(command);
-    closeComposerActionsMenu();
     window.requestAnimationFrame(() => {
       const textarea = textareaRef.current;
       if (!textarea) {
@@ -10463,30 +10471,44 @@ function Composer({
                 align="end"
                 side="top"
                 sideOffset={8}
-                className={`gap-0 rounded-lg shadow-subtle-sm ring-0 ${
+                className={`gap-0 rounded-xl border border-border bg-popover p-0 shadow-subtle-sm ring-0 ${
                   composerActionsView === "skills"
-                    ? "w-[320px] p-0"
-                    : "w-[220px] p-1.5"
+                    ? "w-[320px]"
+                    : "w-[224px]"
                 }`}
               >
                 {composerActionsView === "skills" ? (
                   <div className="flex flex-col">
-                    <div className="border-b border-border p-2">
-                      <div className="relative flex items-center rounded-lg border border-border bg-muted px-2.5 transition-colors focus-within:border-border focus-within:bg-background/70">
-                        <Search className="size-3.5 shrink-0 text-muted-foreground" />
-                        <input
-                          value={skillPickerQuery}
-                          onChange={(event) =>
-                            setSkillPickerQuery(event.target.value)
-                          }
-                          placeholder="Search skills..."
-                          className="embedded-input h-8 w-full bg-transparent pl-2 text-xs text-foreground outline-none placeholder:text-muted-foreground/60"
-                          autoFocus
-                        />
-                      </div>
+                    <div className="flex items-center gap-1.5 border-b border-border px-2 py-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setComposerActionsView("menu");
+                          setSkillPickerQuery("");
+                        }}
+                        aria-label="Back to actions"
+                        className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      >
+                        <ArrowLeft className="size-3.5" />
+                      </button>
+                      <Search className="size-3.5 shrink-0 text-muted-foreground" />
+                      <input
+                        value={skillPickerQuery}
+                        onChange={(event) =>
+                          setSkillPickerQuery(event.target.value)
+                        }
+                        placeholder="Search skills"
+                        className="embedded-input h-7 w-full min-w-0 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
+                        autoFocus
+                      />
+                      {quotedSkillIdSet.size > 0 ? (
+                        <span className="shrink-0 rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
+                          {quotedSkillIdSet.size}
+                        </span>
+                      ) : null}
                     </div>
                     {filteredSkillCommands.length > 0 ? (
-                      <div className="max-h-[280px] overflow-y-auto px-2 py-2">
+                      <div className="max-h-[288px] overflow-y-auto p-1">
                         {filteredSkillCommands.map((command) => {
                           const isSelected = quotedSkillIdSet.has(
                             command.skillId,
@@ -10496,53 +10518,55 @@ function Composer({
                               key={command.key}
                               type="button"
                               onClick={() => selectSkillFromPicker(command)}
-                              className={`flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left text-xs transition-colors ${
+                              aria-pressed={isSelected}
+                              className={`group flex w-full items-start gap-2.5 rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
                                 isSelected
-                                  ? "bg-primary/8 text-foreground"
-                                  : "hover:bg-accent/50"
+                                  ? "bg-accent text-foreground"
+                                  : "text-foreground hover:bg-accent"
                               }`}
                             >
-                              <Sparkles
-                                className={`size-3.5 mt-0.5 shrink-0 ${
-                                  isSelected
-                                    ? "text-primary"
-                                    : "text-muted-foreground"
-                                }`}
-                              />
-                              <span className="min-w-0 flex-1">
-                                <span className="flex items-center gap-2">
-                                  <span className="truncate font-medium text-foreground">
-                                    {command.label}
-                                  </span>
-                                  {isSelected ? (
-                                    <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary">
-                                      Added
-                                    </span>
-                                  ) : null}
-                                </span>
+                              <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center">
+                                {isSelected ? (
+                                  <Check className="size-3.5 text-primary" />
+                                ) : (
+                                  <Sparkles className="size-3.5 text-muted-foreground" />
+                                )}
                               </span>
-                              {isSelected ? (
-                                <Check className="size-3.5 mt-0.5 shrink-0 text-primary" />
-                              ) : null}
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate font-medium text-foreground">
+                                  {command.label}
+                                </span>
+                                {command.description ? (
+                                  <span className="mt-0.5 block truncate text-[11px] leading-4 text-muted-foreground">
+                                    {command.description}
+                                  </span>
+                                ) : null}
+                              </span>
                             </button>
                           );
                         })}
                       </div>
                     ) : (
-                      <div className="px-4 py-5 text-xs text-muted-foreground">
-                        No skills match this search.
+                      <div className="flex flex-col items-center gap-1 px-4 py-6 text-center">
+                        <Sparkles className="size-4 text-muted-foreground" />
+                        <span className="text-xs font-medium text-foreground">
+                          No matching skills
+                        </span>
+                        <span className="text-[11px] leading-4 text-muted-foreground">
+                          Try a different search term.
+                        </span>
                       </div>
                     )}
                   </div>
                 ) : (
-                  <div className="flex flex-col gap-1">
+                  <div className="flex flex-col gap-0.5 p-1">
                     <button
                       type="button"
                       onClick={() => {
                         closeComposerActionsMenu();
                         fileInputRef.current?.click();
                       }}
-                      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-foreground transition-colors hover:bg-accent/50"
+                      className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-accent"
                     >
                       <Paperclip className="size-3.5 shrink-0 text-muted-foreground" />
                       <span className="min-w-0 flex-1 truncate">
@@ -10552,12 +10576,18 @@ function Composer({
                     <button
                       type="button"
                       onClick={openSkillPickerFromComposerMenu}
-                      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-foreground transition-colors hover:bg-accent/50"
+                      className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-accent"
                     >
-                      <Sparkles className="size-3.5 shrink-0 text-primary" />
+                      <Sparkles className="size-3.5 shrink-0 text-muted-foreground" />
                       <span className="min-w-0 flex-1 truncate">
                         Use Skills
                       </span>
+                      {quotedSkillIdSet.size > 0 ? (
+                        <span className="shrink-0 rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
+                          {quotedSkillIdSet.size}
+                        </span>
+                      ) : null}
+                      <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
                     </button>
                   </div>
                 )}
