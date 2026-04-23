@@ -688,7 +688,6 @@ type UiSettingsPaneSection =
   | "integrations"
   | "submissions"
   | "settings"
-  | "automations"
   | "about";
 
 interface AddressSuggestionPayload {

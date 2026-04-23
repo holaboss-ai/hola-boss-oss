@@ -1,21 +1,17 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
-import {
+  AlertTriangle,
+  ChevronRight,
   Clock3,
   MoreHorizontal,
   Pencil,
   Play,
   Plus,
+  Sparkles,
   Trash2,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { PaneCard } from "@/components/ui/PaneCard";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -36,9 +32,7 @@ interface CompletedAutomationRun {
 
 interface AutomationsPaneProps {
   workspaceId?: string | null;
-  showHeader?: boolean;
   emptyWorkspaceMessage?: string;
-  toolbarLeading?: ReactNode;
   onOpenRunSession?: (sessionId: string) => void;
   onCreateSchedule?: () => void;
   onEditSchedule?: (job: CronjobRecordPayload) => void;
@@ -53,26 +47,37 @@ function normalizeErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Request failed.";
 }
 
-function formatAbsoluteTimestamp(value: string | null): string {
+function formatRelativeTimestamp(value: string | null): string {
   if (!value) {
-    return "Not available";
+    return "—";
   }
   const parsed = Date.parse(value);
   if (Number.isNaN(parsed)) {
     return value;
   }
+  const diffMs = Date.now() - parsed;
+  const diffMin = Math.round(diffMs / 60_000);
+  if (Math.abs(diffMin) < 1) {
+    return "just now";
+  }
+  if (Math.abs(diffMin) < 60) {
+    return `${diffMin > 0 ? `${diffMin}m ago` : `in ${-diffMin}m`}`;
+  }
+  const diffHr = Math.round(diffMin / 60);
+  if (Math.abs(diffHr) < 24) {
+    return `${diffHr > 0 ? `${diffHr}h ago` : `in ${-diffHr}h`}`;
+  }
   const date = new Date(parsed);
   const datePart = date.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
-    year: "numeric",
   });
   const timePart = date.toLocaleTimeString(undefined, {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
   });
-  return `${datePart} at ${timePart}`;
+  return `${datePart}, ${timePart}`;
 }
 
 function formatDailyCron(cron: string): string | null {
@@ -100,7 +105,7 @@ function formatDailyCron(cron: string): string | null {
 }
 
 function scheduleAtLabel(job: CronjobRecordPayload): string {
-  return formatDailyCron(job.cron) ?? formatAbsoluteTimestamp(job.next_run_at);
+  return formatDailyCron(job.cron) ?? formatRelativeTimestamp(job.next_run_at);
 }
 
 function jobTitle(job: CronjobRecordPayload): string {
@@ -120,17 +125,6 @@ function jobKindLabel(job: CronjobRecordPayload): string {
     return "Task run";
   }
   return "Automation";
-}
-
-function jobKindClassName(job: CronjobRecordPayload): string {
-  const channel = jobDeliveryChannel(job);
-  if (channel === "system_notification") {
-    return "border-warning/40 bg-warning/10 text-warning";
-  }
-  if (channel === "session_run") {
-    return "border-primary bg-primary/10 text-primary";
-  }
-  return "border-border bg-muted text-muted-foreground";
 }
 
 function runtimeStateErrorMessage(
@@ -165,27 +159,14 @@ function isTerminalRunStatus(status: string): boolean {
   );
 }
 
-function completedStatusLabel(status: string): string {
+function isFailedStatus(status: string): boolean {
   const normalized = status.trim().toUpperCase();
-  if (normalized === "ERROR" || normalized === "FAILED") {
-    return "Failed";
-  }
-  return "Completed";
-}
-
-function completedStatusClassName(status: string): string {
-  const normalized = status.trim().toUpperCase();
-  if (normalized === "ERROR" || normalized === "FAILED") {
-    return "border-destructive/30 bg-destructive/10 text-destructive";
-  }
-  return "border-primary bg-primary/10 text-primary";
+  return normalized === "ERROR" || normalized === "FAILED";
 }
 
 export function AutomationsPane({
   workspaceId,
-  showHeader = true,
   emptyWorkspaceMessage = "Choose a workspace from the top bar to view and manage automations.",
-  toolbarLeading,
   onOpenRunSession,
   onCreateSchedule,
   onEditSchedule,
@@ -218,12 +199,12 @@ export function AutomationsPane({
     [cronjobs],
   );
 
-  const statusClassName =
+  const statusBarClassName =
     statusTone === "success"
-      ? "border-primary bg-primary/5 text-foreground"
+      ? "border-b border-primary/20 bg-primary/5 text-foreground"
       : statusTone === "error"
-        ? "border-destructive/25 bg-destructive/5 text-destructive"
-        : "border-border bg-muted text-muted-foreground";
+        ? "border-b border-destructive/20 bg-destructive/5 text-destructive"
+        : "border-b border-border bg-muted/40 text-muted-foreground";
 
   const setInfoMessage = (message: string) => {
     setStatusTone("info");
@@ -313,7 +294,7 @@ export function AutomationsPane({
       await window.electronAPI.workspace.deleteCronjob(job.id);
       setCronjobs((previous) => previous.filter((item) => item.id !== job.id));
       setStatusTone("success");
-      setStatusMessage(`Deleted schedule "${jobTitle(job)}".`);
+      setStatusMessage(`Deleted "${jobTitle(job)}".`);
       void refreshData({
         preserveStatusMessage: true,
         suppressErrors: true,
@@ -338,7 +319,7 @@ export function AutomationsPane({
       );
       setStatusTone("success");
       setStatusMessage(
-        `${updated.enabled ? "Enabled" : "Disabled"} "${jobTitle(updated)}".`,
+        `${updated.enabled ? "Enabled" : "Paused"} "${jobTitle(updated)}".`,
       );
       void refreshData({
         preserveStatusMessage: true,
@@ -363,7 +344,7 @@ export function AutomationsPane({
         ),
       );
       setStatusTone("success");
-      setStatusMessage(`Ran "${jobTitle(response.cronjob)}" now.`);
+      setStatusMessage(`Running "${jobTitle(response.cronjob)}" now.`);
       void refreshData({
         preserveStatusMessage: true,
         suppressErrors: true,
@@ -382,7 +363,7 @@ export function AutomationsPane({
       return;
     }
     setInfoMessage(
-      "Schedule creation is not wired in this pane yet. Use the cronjob API/runtime route for creation.",
+      "Schedule creation is wired through the agent — try asking in chat.",
     );
   };
 
@@ -391,327 +372,107 @@ export function AutomationsPane({
       onEditSchedule(job);
       return;
     }
-    setInfoMessage(
-      "Editing isn't wired in this pane yet. Open the schedule in chat to update it.",
-    );
+    setInfoMessage("Open the schedule in chat to edit it.");
   };
 
-  const content = (
-    <>
-      <div className="relative min-h-0 flex-1 overflow-auto">
-        <div className="mx-auto flex min-h-full max-w-5xl flex-col px-6 py-6">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div className="min-w-0">
-              {showHeader ? (
-                <div>
-                  <h1 className="text-xl font-semibold tracking-tight text-foreground">
-                    Automations
-                  </h1>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Manage recurring schedules and review completed automation
-                    runs.
-                  </p>
-                </div>
-              ) : toolbarLeading ? (
-                toolbarLeading
-              ) : null}
-            </div>
-
-            <Button
-              type="button"
-              size="default"
-              onClick={handleNewSchedule}
-              className="rounded-full px-4"
-            >
-              <Plus size={14} />
-              New schedule
-            </Button>
-          </div>
-
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="shrink-0 border-b border-border px-4 py-2 sm:px-5">
+        <div className="flex items-center justify-between gap-2">
           <Tabs
             value={activeTab}
             onValueChange={(v) => setActiveTab(v as "scheduled" | "completed")}
-            className="mt-5"
           >
             <TabsList>
               <TabsTrigger value="scheduled">Scheduled</TabsTrigger>
               <TabsTrigger value="completed">Completed</TabsTrigger>
             </TabsList>
           </Tabs>
-
-          {statusMessage ? (
-            <div className="mt-4">
-              <div
-                className={`rounded-xl border px-3 py-2 text-sm ${statusClassName}`}
-              >
-                {statusMessage}
-              </div>
-            </div>
-          ) : null}
-
-          <div className="mt-5 min-h-0 flex-1 overflow-hidden rounded-2xl border border-border bg-background/70">
-            {!activeWorkspaceId ? (
-              <EmptyState message={emptyWorkspaceMessage} />
-            ) : isLoading &&
-              scheduledJobs.length === 0 &&
-              completedRuns.length === 0 ? (
-              <div
-                role="status"
-                aria-busy="true"
-                aria-label="Loading automations"
-                className="flex h-full min-h-0 flex-col"
-              >
-                <div className="shrink-0 border-b border-border px-4 py-4 sm:px-5">
-                  <div className="grid grid-cols-[minmax(0,1.15fr)_minmax(0,1.15fr)_120px_64px] items-center gap-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                    <span>Title</span>
-                    <span>Schedule at</span>
-                    <span>Status</span>
-                    <span />
-                  </div>
-                </div>
-                <div className="min-h-0 flex-1 overflow-y-auto">
-                  {[
-                    { titleW: "w-36", scheduleW: "w-28" },
-                    { titleW: "w-48", scheduleW: "w-32" },
-                    { titleW: "w-40", scheduleW: "w-24" },
-                    { titleW: "w-44", scheduleW: "w-36" },
-                  ].map((row, index) => (
-                    <div
-                      key={index}
-                      className="grid grid-cols-[minmax(0,1.15fr)_minmax(0,1.15fr)_120px_64px] items-center gap-4 border-b border-border px-4 py-4 sm:px-5"
-                    >
-                      <div className="flex flex-col gap-1.5 pr-2">
-                        <span
-                          className={`h-4 ${row.titleW} animate-pulse rounded bg-muted-foreground/20`}
-                        />
-                        <span className="h-2.5 w-16 animate-pulse rounded bg-muted" />
-                      </div>
-                      <span
-                        className={`h-4 ${row.scheduleW} animate-pulse rounded bg-muted-foreground/20`}
-                      />
-                      <span className="h-5 w-9 animate-pulse rounded-full bg-muted-foreground/20" />
-                      <div className="flex justify-end">
-                        <span className="size-7 animate-pulse rounded-md bg-muted-foreground/20" />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : activeTab === "scheduled" ? (
-              scheduledJobs.length === 0 ? (
-                <EmptyState message="No scheduled tasks in this workspace." />
-              ) : (
-                <div className="flex h-full min-h-0 flex-col">
-                  <div className="shrink-0 border-b border-border px-4 py-4 sm:px-5">
-                    <div className="grid grid-cols-[minmax(0,1.15fr)_minmax(0,1.15fr)_120px_64px] items-center gap-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                      <span>Title</span>
-                      <span>Schedule at</span>
-                      <span>Status</span>
-                      <span />
-                    </div>
-                  </div>
-
-                  <div className="min-h-0 flex-1 overflow-y-auto">
-                    {scheduledJobs.map((job) => {
-                      const isBusy = busyJobId === job.id;
-                      return (
-                        <div
-                          key={job.id}
-                          className="grid grid-cols-[minmax(0,1.15fr)_minmax(0,1.15fr)_120px_64px] items-center gap-4 border-b border-border px-4 py-4 transition-colors hover:bg-accent sm:px-5"
-                        >
-                          <div className="min-w-0 pr-2">
-                            <div className="truncate text-sm font-medium text-foreground">
-                              {jobTitle(job)}
-                            </div>
-                            {jobKindLabel(job) !== "Automation" ? (
-                              <div className="mt-1">
-                                <Badge
-                                  variant="outline"
-                                  className={`uppercase tracking-[0.12em] ${jobKindClassName(job)}`}
-                                >
-                                  {jobKindLabel(job)}
-                                </Badge>
-                              </div>
-                            ) : null}
-                            {job.last_error ? (
-                              <div className="mt-1 truncate text-xs text-destructive">
-                                {job.last_error}
-                              </div>
-                            ) : null}
-                          </div>
-
-                          <div className="truncate text-sm text-muted-foreground">
-                            {scheduleAtLabel(job)}
-                          </div>
-
-                          <div>
-                            <Switch
-                              checked={job.enabled}
-                              onCheckedChange={() =>
-                                void handleToggleEnabled(job)
-                              }
-                              disabled={isBusy}
-                              aria-label={
-                                job.enabled
-                                  ? "Disable schedule"
-                                  : "Enable schedule"
-                              }
-                            />
-                          </div>
-
-                          <div className="flex justify-end">
-                            <DropdownMenu>
-                              <DropdownMenuTrigger
-                                render={
-                                  <Button
-                                    variant="ghost"
-                                    size="icon-sm"
-                                    aria-label={`Actions for ${jobTitle(job)}`}
-                                  />
-                                }
-                              >
-                                <MoreHorizontal size={16} />
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent
-                                align="end"
-                                sideOffset={8}
-                                className="w-48"
-                              >
-                                <DropdownMenuItem
-                                  onClick={() => void handleRunNow(job)}
-                                  disabled={isBusy}
-                                >
-                                  <Play size={16} />
-                                  Run now
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onClick={() => handleEdit(job)}
-                                  disabled={isBusy}
-                                >
-                                  <Pencil size={16} />
-                                  Edit
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onClick={() => void handleDelete(job)}
-                                  disabled={isBusy}
-                                  variant="destructive"
-                                >
-                                  <Trash2 size={16} />
-                                  Delete
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )
-            ) : completedRuns.length === 0 ? (
-              <EmptyState message="No completed automation runs yet." />
-            ) : (
-              <div className="flex h-full min-h-0 flex-col">
-                <div className="shrink-0 border-b border-border px-4 py-4 sm:px-5">
-                  <div className="grid grid-cols-[minmax(0,1.05fr)_minmax(0,1.25fr)_120px] items-center gap-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                    <span>Title</span>
-                    <span>Completed at</span>
-                    <span>Status</span>
-                  </div>
-                </div>
-
-                <div className="min-h-0 flex-1 overflow-y-auto">
-                  {completedRuns.map((run) => (
-                    <button
-                      key={run.sessionId}
-                      type="button"
-                      disabled={!onOpenRunSession}
-                      onClick={() => onOpenRunSession?.(run.sessionId)}
-                      className="grid w-full grid-cols-[minmax(0,1.05fr)_minmax(0,1.25fr)_120px] items-center gap-4 border-b border-border px-4 py-4 text-left transition-colors hover:bg-accent disabled:cursor-default disabled:hover:bg-transparent sm:px-5"
-                    >
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium text-foreground">
-                          {run.title}
-                        </div>
-                        {run.errorDetail ? (
-                          <div className="mt-0.5 truncate text-xs text-destructive">
-                            {run.errorDetail}
-                          </div>
-                        ) : null}
-                      </div>
-
-                      <div className="truncate text-sm text-muted-foreground">
-                        {formatAbsoluteTimestamp(run.completedAt)}
-                      </div>
-
-                      <div>
-                        <Badge
-                          variant="outline"
-                          className={completedStatusClassName(run.status)}
-                        >
-                          {completedStatusLabel(run.status)}
-                        </Badge>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            onClick={handleNewSchedule}
+            aria-label="New schedule"
+            className="rounded-lg text-muted-foreground hover:text-foreground"
+          >
+            <Plus className="size-4" />
+          </Button>
         </div>
       </div>
-    </>
-  );
 
-  if (!showHeader) {
-    const embeddedBody = !activeWorkspaceId ? (
-      <EmbeddedEmptyState message={emptyWorkspaceMessage} />
-    ) : isLoading &&
-      scheduledJobs.length === 0 &&
-      completedRuns.length === 0 ? (
-      <EmbeddedSkeleton />
-    ) : activeTab === "scheduled" ? (
-      scheduledJobs.length === 0 ? (
-        <EmbeddedEmptyState message="No scheduled tasks in this workspace." />
-      ) : (
-        <div className="overflow-hidden rounded-xl bg-card ring-1 ring-border">
-          {scheduledJobs.map((job, index) => {
-            const isBusy = busyJobId === job.id;
-            return (
-              <div key={job.id}>
-                {index > 0 ? <div className="h-px bg-border" /> : null}
-                <div className="flex items-center justify-between gap-4 px-4 py-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <div className="truncate text-sm font-medium text-foreground">
-                        {jobTitle(job)}
+      {statusMessage ? (
+        <div
+          className={`shrink-0 px-4 py-1.5 text-xs sm:px-5 ${statusBarClassName}`}
+        >
+          {statusMessage}
+        </div>
+      ) : null}
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {!activeWorkspaceId ? (
+          <EmptyState
+            icon={<Clock3 className="size-5 text-muted-foreground" />}
+            title="No workspace selected"
+            description={emptyWorkspaceMessage}
+          />
+        ) : isLoading &&
+          scheduledJobs.length === 0 &&
+          completedRuns.length === 0 ? (
+          <SkeletonList />
+        ) : activeTab === "scheduled" ? (
+          scheduledJobs.length === 0 ? (
+            <EmptyScheduled onCreate={handleNewSchedule} />
+          ) : (
+            <ul>
+              {scheduledJobs.map((job, index) => {
+                const isBusy = busyJobId === job.id;
+                const kindLabel = jobKindLabel(job);
+                return (
+                  <li
+                    key={job.id}
+                    className={`group relative flex items-center gap-3 px-4 py-3 transition-colors hover:bg-accent sm:px-5 ${
+                      index > 0 ? "border-t border-border" : ""
+                    } ${isBusy ? "opacity-60" : ""}`}
+                  >
+                    <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                      <Clock3 className="size-3.5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-sm font-medium text-foreground">
+                          {jobTitle(job)}
+                        </span>
+                        {kindLabel !== "Automation" ? (
+                          <Badge
+                            variant="outline"
+                            className="border-border bg-background/60 px-1.5 py-0 text-[10px] font-medium leading-4 text-muted-foreground"
+                          >
+                            {kindLabel}
+                          </Badge>
+                        ) : null}
                       </div>
-                      {jobKindLabel(job) !== "Automation" ? (
-                        <Badge
-                          variant="outline"
-                          className="border-border bg-background/60 text-[11px] text-muted-foreground"
-                        >
-                          {jobKindLabel(job)}
-                        </Badge>
+                      <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {scheduleAtLabel(job)}
+                        {!job.enabled ? (
+                          <span className="ml-1.5 text-muted-foreground/70">
+                            · paused
+                          </span>
+                        ) : null}
+                      </div>
+                      {job.last_error ? (
+                        <div className="mt-1 flex items-start gap-1 text-xs text-destructive">
+                          <AlertTriangle className="mt-0.5 size-3 shrink-0" />
+                          <span className="truncate">{job.last_error}</span>
+                        </div>
                       ) : null}
                     </div>
-                    <div className="mt-0.5 truncate text-xs leading-5 text-muted-foreground">
-                      {scheduleAtLabel(job)}
-                    </div>
-                    {job.last_error ? (
-                      <div className="mt-0.5 truncate text-xs leading-5 text-destructive">
-                        {job.last_error}
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <div className="flex shrink-0 items-center gap-2">
                     <Switch
                       checked={job.enabled}
                       onCheckedChange={() => void handleToggleEnabled(job)}
                       disabled={isBusy}
                       aria-label={
-                        job.enabled ? "Disable schedule" : "Enable schedule"
+                        job.enabled ? "Pause schedule" : "Enable schedule"
                       }
                     />
                     <DropdownMenu>
@@ -721,188 +482,182 @@ export function AutomationsPane({
                             variant="ghost"
                             size="icon-sm"
                             aria-label={`Actions for ${jobTitle(job)}`}
+                            className="rounded-lg text-muted-foreground hover:text-foreground"
                           />
                         }
                       >
-                        <MoreHorizontal size={16} />
+                        <MoreHorizontal size={14} />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent
                         align="end"
-                        sideOffset={8}
-                        className="w-48"
+                        sideOffset={6}
+                        className="w-44"
                       >
                         <DropdownMenuItem
                           onClick={() => void handleRunNow(job)}
                           disabled={isBusy}
                         >
-                          <Play size={16} />
+                          <Play size={14} />
                           Run now
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           onClick={() => handleEdit(job)}
                           disabled={isBusy}
                         >
-                          <Pencil size={16} />
-                          Edit
+                          <Pencil size={14} />
+                          Edit in chat
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           onClick={() => void handleDelete(job)}
                           disabled={isBusy}
                           variant="destructive"
                         >
-                          <Trash2 size={16} />
+                          <Trash2 size={14} />
                           Delete
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )
-    ) : completedRuns.length === 0 ? (
-      <EmbeddedEmptyState message="No completed automation runs yet." />
-    ) : (
-      <div className="overflow-hidden rounded-xl bg-card ring-1 ring-border">
-        {completedRuns.map((run, index) => (
-          <div key={run.sessionId}>
-            {index > 0 ? <div className="h-px bg-border" /> : null}
-            <button
-              type="button"
-              disabled={!onOpenRunSession}
-              onClick={() => onOpenRunSession?.(run.sessionId)}
-              className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left transition-colors hover:bg-accent disabled:cursor-default disabled:hover:bg-transparent"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium text-foreground">
-                  {run.title}
-                </div>
-                <div className="mt-0.5 truncate text-xs leading-5 text-muted-foreground">
-                  {formatAbsoluteTimestamp(run.completedAt)}
-                </div>
-                {run.errorDetail ? (
-                  <div className="mt-0.5 truncate text-xs leading-5 text-destructive">
-                    {run.errorDetail}
-                  </div>
-                ) : null}
-              </div>
-              <Badge
-                variant="outline"
-                className={`border-border bg-background/60 text-[11px] ${
-                  run.status.trim().toUpperCase() === "ERROR" ||
-                  run.status.trim().toUpperCase() === "FAILED"
-                    ? "text-destructive"
-                    : "text-muted-foreground"
-                }`}
-              >
-                {completedStatusLabel(run.status)}
-              </Badge>
-            </button>
-          </div>
-        ))}
-      </div>
-    );
-
-    return (
-      <div className="grid gap-6">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="min-w-0">{toolbarLeading}</div>
-          <Button
-            type="button"
-            size="sm"
-            onClick={handleNewSchedule}
-            className="rounded-full px-4"
-          >
-            <Plus size={14} />
-            New schedule
-          </Button>
-        </div>
-
-        <Tabs
-          value={activeTab}
-          onValueChange={(v) => setActiveTab(v as "scheduled" | "completed")}
-        >
-          <TabsList>
-            <TabsTrigger value="scheduled">Scheduled</TabsTrigger>
-            <TabsTrigger value="completed">Completed</TabsTrigger>
-          </TabsList>
-        </Tabs>
-
-        {statusMessage ? (
-          <div
-            className={`rounded-xl border px-3 py-2 text-sm ${statusClassName}`}
-          >
-            {statusMessage}
-          </div>
-        ) : null}
-
-        {embeddedBody}
-      </div>
-    );
-  }
-
-  return <PaneCard className="shadow-subtle-xs">{content}</PaneCard>;
-}
-
-function EmbeddedEmptyState({ message }: { message: string }) {
-  return (
-    <div className="overflow-hidden rounded-xl bg-card ring-1 ring-border">
-      <div className="flex flex-col items-center justify-center gap-2 px-4 py-10 text-center">
-        <Clock3 size={18} className="text-muted-foreground" />
-        <div className="text-sm font-medium text-foreground">
-          No tasks to show
-        </div>
-        <div className="max-w-lg text-xs leading-5 text-muted-foreground">
-          {message}
-        </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )
+        ) : completedRuns.length === 0 ? (
+          <EmptyState
+            icon={<Clock3 className="size-5 text-muted-foreground" />}
+            title="No runs yet"
+            description="Once a scheduled task fires, its history will show up here."
+          />
+        ) : (
+          <ul>
+            {completedRuns.map((run, index) => {
+              const failed = isFailedStatus(run.status);
+              return (
+                <li key={run.sessionId}>
+                  <button
+                    type="button"
+                    disabled={!onOpenRunSession}
+                    onClick={() => onOpenRunSession?.(run.sessionId)}
+                    className={`group flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-accent disabled:cursor-default disabled:hover:bg-transparent sm:px-5 ${
+                      index > 0 ? "border-t border-border" : ""
+                    }`}
+                  >
+                    <div
+                      className={`flex size-8 shrink-0 items-center justify-center rounded-md ${
+                        failed
+                          ? "bg-destructive/10 text-destructive"
+                          : "bg-muted text-muted-foreground"
+                      }`}
+                    >
+                      {failed ? (
+                        <AlertTriangle className="size-3.5" />
+                      ) : (
+                        <Clock3 className="size-3.5" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium text-foreground">
+                        {run.title}
+                      </div>
+                      <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {failed ? "Failed" : "Completed"}
+                        <span className="mx-1.5">·</span>
+                        {formatRelativeTimestamp(run.completedAt)}
+                      </div>
+                      {run.errorDetail ? (
+                        <div className="mt-1 truncate text-xs text-destructive">
+                          {run.errorDetail}
+                        </div>
+                      ) : null}
+                    </div>
+                    {onOpenRunSession ? (
+                      <ChevronRight className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+                    ) : null}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </div>
     </div>
   );
 }
 
-function EmbeddedSkeleton() {
-  const rows = ["w-36", "w-48", "w-40", "w-44"];
+function EmptyState({
+  icon,
+  title,
+  description,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+}) {
   return (
-    <div
-      role="status"
-      aria-busy="true"
-      aria-label="Loading automations"
-      className="overflow-hidden rounded-xl bg-card ring-1 ring-border"
-    >
+    <div className="flex h-full flex-col items-center justify-center px-6 py-10 text-center">
+      <div className="grid size-10 place-items-center rounded-xl bg-muted">
+        {icon}
+      </div>
+      <div className="mt-3 text-sm font-medium text-foreground">{title}</div>
+      <p className="mt-1 max-w-xs text-xs leading-5 text-muted-foreground">
+        {description}
+      </p>
+    </div>
+  );
+}
+
+function EmptyScheduled({ onCreate }: { onCreate: () => void }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center px-6 py-10 text-center">
+      <div className="grid size-10 place-items-center rounded-xl bg-muted text-muted-foreground">
+        <Clock3 className="size-5" />
+      </div>
+      <div className="mt-3 text-sm font-medium text-foreground">
+        No schedules yet
+      </div>
+      <p className="mt-1 max-w-[260px] text-xs leading-5 text-muted-foreground">
+        Ask the agent to set one up — try{" "}
+        <span className="text-foreground/80">
+          &ldquo;post a LinkedIn update every Monday at 9am&rdquo;
+        </span>
+        .
+      </p>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={onCreate}
+        className="mt-4 gap-1.5"
+      >
+        <Sparkles className="size-3.5" />
+        Ask the agent
+      </Button>
+    </div>
+  );
+}
+
+function SkeletonList() {
+  const rows = ["w-32", "w-44", "w-36", "w-40"];
+  return (
+    <ul role="status" aria-busy="true" aria-label="Loading automations">
       {rows.map((titleW, index) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: static skeleton list
-        <div key={index}>
-          {index > 0 ? <div className="h-px bg-border" /> : null}
-          <div className="flex items-center justify-between gap-4 px-4 py-3">
-            <div className="min-w-0 flex-1 space-y-1.5">
-              <div
-                className={`h-3.5 ${titleW} animate-pulse rounded bg-muted-foreground/20`}
-              />
-              <div className="h-2.5 w-28 animate-pulse rounded bg-muted-foreground/20" />
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <div className="h-5 w-9 animate-pulse rounded-full bg-muted-foreground/20" />
-              <div className="size-7 animate-pulse rounded-md bg-muted-foreground/20" />
-            </div>
+        <li
+          key={index}
+          className={`flex items-center gap-3 px-4 py-3 sm:px-5 ${
+            index > 0 ? "border-t border-border" : ""
+          }`}
+        >
+          <div className="size-8 shrink-0 animate-pulse rounded-md bg-muted-foreground/15" />
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <div
+              className={`h-3.5 ${titleW} animate-pulse rounded bg-muted-foreground/20`}
+            />
+            <div className="h-2.5 w-24 animate-pulse rounded bg-muted-foreground/15" />
           </div>
-        </div>
+          <div className="h-5 w-9 shrink-0 animate-pulse rounded-full bg-muted-foreground/15" />
+        </li>
       ))}
-    </div>
-  );
-}
-
-function EmptyState({ message }: { message: string }) {
-  return (
-    <div className="flex h-full w-full items-center justify-center p-6 text-center">
-      <div className="max-w-lg">
-        <Clock3 size={20} className="mx-auto text-muted-foreground" />
-        <div className="mt-3 text-sm font-medium text-foreground">
-          No tasks to show
-        </div>
-        <div className="mt-1 text-sm text-muted-foreground">{message}</div>
-      </div>
-    </div>
+    </ul>
   );
 }
