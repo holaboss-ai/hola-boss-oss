@@ -298,7 +298,6 @@ test("claimed input persists runner events, assistant text, and idle state on su
   assert.equal(turnResult.status, "completed");
   assert.equal(turnResult.stopReason, "ok");
   assert.equal(turnResult.assistantText, "Hello from TS");
-  assert.equal(turnResult.compactedSummary, null);
   assert.deepEqual(turnResult.promptSectionIds, [
     "runtime_core",
     "execution_policy",

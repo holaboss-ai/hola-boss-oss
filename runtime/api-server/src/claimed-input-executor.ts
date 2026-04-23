@@ -1298,7 +1298,6 @@ function persistTurnResult(params: {
     capabilityManifestFingerprint: params.capabilityManifestFingerprint,
     requestSnapshotFingerprint: params.requestSnapshotFingerprint,
     promptCacheProfile: params.promptCacheProfile,
-    compactedSummary: null,
     tokenUsage: params.tokenUsage,
   });
 }

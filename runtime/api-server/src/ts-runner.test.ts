@@ -1184,8 +1184,6 @@ test("runTsRunnerCli does not derive prompt continuity from the latest prior tur
     ],
     promptSectionIds: ["runtime_core", "execution_policy"],
     capabilityManifestFingerprint: "c".repeat(64),
-    compactedSummary:
-      "Run failed while trying to deploy because policy denied the action.",
     tokenUsage: { input_tokens: 3, output_tokens: 5 },
   });
   store.insertSessionMessage({

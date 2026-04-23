@@ -112,7 +112,33 @@ function seedWorkspace(store: RuntimeStateStore): void {
   });
 }
 
-test("writeTurnDurableMemory updates the compacted summary without writing runtime continuity files", async () => {
+function appendPermissionDeniedToolCall(params: {
+  store: RuntimeStateStore;
+  workspaceId: string;
+  sessionId: string;
+  inputId: string;
+  toolName?: string;
+  toolId?: string;
+  reason?: string;
+}): void {
+  params.store.appendOutputEvent({
+    workspaceId: params.workspaceId,
+    sessionId: params.sessionId,
+    inputId: params.inputId,
+    sequence: 1,
+    eventType: "tool_call",
+    payload: {
+      call_id: `call-${params.inputId}`,
+      phase: "completed",
+      error: true,
+      tool_name: params.toolName ?? "deploy",
+      tool_id: params.toolId ?? "workspace.deploy",
+      message: params.reason ?? "permission denied by policy",
+    },
+  });
+}
+
+test("writeTurnDurableMemory does not mutate turn result summaries or write runtime continuity files", async () => {
   const { store, memoryService } = makeRuntimeState("hb-turn-memory-");
   seedWorkspace(store);
   store.insertSessionMessage({
@@ -163,10 +189,7 @@ test("writeTurnDurableMemory updates the compacted summary without writing runti
     left.localeCompare(right)
   );
 
-  assert.equal(
-    updated.compactedSummary,
-    "Implemented the runtime memory writeback path. Verified the affected tests."
-  );
+  assert.equal(updated.inputId, turnResult.inputId);
   assert.deepEqual(Object.keys(files).sort((left, right) => left.localeCompare(right)), []);
   assert.deepEqual(memoryEntryIds, []);
 
@@ -194,6 +217,12 @@ test("writeTurnDurableMemory reuses stable durable blocker paths across repeated
       },
     ],
   });
+  appendPermissionDeniedToolCall({
+    store,
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+  });
   await writeTurnDurableMemory({
     store,
     memoryService,
@@ -216,6 +245,12 @@ test("writeTurnDurableMemory reuses stable durable blocker paths across repeated
         reason: "permission denied by policy",
       },
     ],
+  });
+  appendPermissionDeniedToolCall({
+    store,
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-2",
   });
   await writeTurnDurableMemory({
     store,

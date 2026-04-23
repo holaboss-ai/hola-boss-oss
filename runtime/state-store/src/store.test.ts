@@ -1541,7 +1541,6 @@ test("turn results support upsert, lookup, count, and listing", () => {
       cacheable_section_ids: ["runtime_core"],
       volatile_section_ids: ["execution_policy"],
     },
-    compactedSummary: null,
     tokenUsage: { input_tokens: 10, output_tokens: 20 },
   });
   const updated = store.upsertTurnResult({
@@ -1568,7 +1567,6 @@ test("turn results support upsert, lookup, count, and listing", () => {
       cacheable_section_ids: ["runtime_core"],
       volatile_section_ids: ["session_policy"],
     },
-    compactedSummary: "summary",
     tokenUsage: { input_tokens: 11, output_tokens: 21 },
   });
 

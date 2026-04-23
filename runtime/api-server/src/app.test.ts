@@ -2807,7 +2807,6 @@ test("runtime states and history endpoints read TS state store", async () => {
       cacheable_section_ids: ["runtime_core"],
       volatile_section_ids: ["execution_policy"],
     },
-    compactedSummary: null,
     tokenUsage: {
       input_tokens: 10,
       output_tokens: 20
