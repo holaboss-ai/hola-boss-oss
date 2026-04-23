@@ -8415,8 +8415,8 @@ function AssistantTurn({
               key={`output-${index}`}
               className="theme-chat-system-bubble mt-2 rounded-xl border px-3 py-2.5 text-xs text-foreground"
             >
-              <div className="flex items-start gap-2">
-                <AlertTriangle className="size-3.5 mt-0.5 shrink-0 text-destructive" />
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="size-3.5 shrink-0 text-destructive" />
                 <SimpleMarkdown
                   className="chat-markdown max-w-full text-foreground"
                   onLinkClick={onLinkClick}

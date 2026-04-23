@@ -48,9 +48,6 @@ export function RuntimeStatusIndicator({
   const detail = status.lastError.trim();
 
   const rows: Array<[string, string]> = [];
-  if (status.harness) {
-    rows.push(["Harness", status.harness]);
-  }
   if (typeof status.pid === "number") {
     rows.push(["PID", String(status.pid)]);
   }

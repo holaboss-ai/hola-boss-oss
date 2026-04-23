@@ -653,7 +653,7 @@ webview {
   font-size: 0.775rem;
   line-height: 1.6;
   white-space: pre;
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-mono);
 }
 
 .simple-markdown .md-inline-code {
@@ -663,7 +663,7 @@ webview {
   border-radius: 5px;
   padding: 1px 5px;
   font-size: 0.775rem;
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-weight: var(--font-weight-medium);
 }
 
@@ -849,14 +849,29 @@ webview {
   margin-top: 0;
 }
 
-.chat-assistant-markdown .md-inline-code {
-  background: color-mix(in oklch, var(--primary) 10%, transparent);
-  color: var(--primary);
-  border: 0.8px solid color-mix(in oklch, var(--primary) 20%, transparent);
-  border-radius: 4px;
-  padding: 0.15em 0.38em;
+.chat-markdown .md-inline-code {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: break-spaces;
+  background: color-mix(in oklch, var(--input) 84%, var(--card) 16%);
+  color: color-mix(in oklch, var(--foreground) 92%, transparent);
+  border: 0.8px solid color-mix(in oklch, var(--border) 76%, transparent);
+  border-radius: 9px;
+  padding: 0.18em 0.48em;
   font-size: 0.875em;
+  font-family: var(--font-mono);
   font-weight: var(--font-weight-medium);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.chat-markdown .md-p > .md-inline-code:only-child,
+.chat-markdown .md-li > .md-inline-code:only-child,
+.chat-markdown .md-oli > .md-inline-code:only-child {
+  padding: 0.42rem 0.65rem;
+  border-radius: 11px;
+  line-height: 1.55;
 }
 
 .chat-assistant-markdown .md-blockquote {
@@ -967,8 +982,19 @@ webview {
 
 .chat-markdown .md-code-block {
   margin: 10px 0;
+  background: color-mix(in oklch, var(--input) 78%, var(--background) 22%);
+  border: 1px solid color-mix(in oklch, var(--border) 74%, transparent);
+  border-radius: 14px;
+  box-shadow: var(--shadow-subtle-xs);
+  color: color-mix(in oklch, var(--foreground) 94%, transparent);
   font-size: 0.725rem;
-  line-height: 1.55;
+  line-height: 1.62;
+  font-family: var(--font-mono);
+}
+
+.chat-markdown .md-code-block > code {
+  color: inherit;
+  font-family: inherit;
 }
 
 
