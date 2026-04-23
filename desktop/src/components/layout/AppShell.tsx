@@ -1,6 +1,7 @@
 import {
   ArrowLeft,
   CircleCheck,
+  Clock3,
   Folder,
   Globe,
   Inbox,
@@ -29,6 +30,7 @@ import { WorkspaceAppsDialog } from "@/components/layout/WorkspaceAppsDialog";
 import { FirstWorkspacePane } from "@/components/onboarding";
 import { AppSurfacePane } from "@/components/panes/AppSurfacePane";
 import { BrowserPane } from "@/components/panes/BrowserPane";
+import { AutomationsPane } from "@/components/panes/AutomationsPane";
 import { ChatPane } from "@/components/panes/ChatPane";
 import {
   type FileExplorerFocusRequest,
@@ -191,7 +193,6 @@ function isSettingsPaneSection(value: string): value is UiSettingsPaneSection {
     value === "integrations" ||
     value === "submissions" ||
     value === "settings" ||
-    value === "automations" ||
     value === "about"
   );
 }
@@ -199,6 +200,7 @@ function isSettingsPaneSection(value: string): value is UiSettingsPaneSection {
 type AgentView =
   | { type: "chat" }
   | { type: "inbox" }
+  | { type: "automations" }
   | {
       type: "app";
       appId: string;
@@ -3141,6 +3143,15 @@ function AppShellContent() {
     openTaskProposalInbox(selectedWorkspaceId);
   }, [openTaskProposalInbox, selectedWorkspaceId]);
 
+  const handleOpenAutomationsPane = useCallback(() => {
+    setActiveShellView("space");
+    setSpaceVisibility((previous) => ({
+      ...previous,
+      agent: true,
+    }));
+    setAgentView({ type: "automations" });
+  }, []);
+
   const handleReturnToChatPane = useCallback(() => {
     setAgentView({ type: "chat" });
     setChatFocusRequestKey((current) => current + 1);
@@ -3788,6 +3799,44 @@ function AppShellContent() {
       return <EmptyWorkspacePane />;
     }
 
+    if (agentView.type === "automations") {
+      return (
+        <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-subtle-xs backdrop-blur-sm">
+          <div className="shrink-0 border-b border-border px-4 py-2.5 sm:px-5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="inline-flex min-w-0 items-center gap-2 text-base font-semibold text-foreground">
+                <Clock3 size={14} className="shrink-0 text-muted-foreground" />
+                <span className="truncate">Automations</span>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={handleReturnToChatPane}
+                aria-label="Return to chat"
+              >
+                <ArrowLeft size={15} />
+              </Button>
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <AutomationsPane
+              workspaceId={selectedWorkspaceId}
+              emptyWorkspaceMessage="Choose a workspace from the top bar to view and manage automations."
+              onOpenRunSession={(sessionId) =>
+                handleOpenAutomationRunSession(sessionId, selectedWorkspaceId)
+              }
+              onCreateSchedule={() =>
+                handleCreateScheduleInChat(selectedWorkspaceId)
+              }
+              onEditSchedule={(job) =>
+                handleEditScheduleInChat(job, selectedWorkspaceId)
+              }
+            />
+          </div>
+        </section>
+      );
+    }
+
     if (agentView.type === "inbox") {
       return (
         <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-subtle-xs backdrop-blur-sm">
@@ -3901,6 +3950,7 @@ function AppShellContent() {
           onJumpToSessionBrowser={handleJumpToSessionBrowser}
           onOpenInbox={handleOpenInboxPane}
           inboxUnreadCount={unreadTaskProposalCount}
+          onOpenAutomations={handleOpenAutomationsPane}
           onRequestCreateSession={(request) =>
             void handleCreateSession(request)
           }
@@ -3955,6 +4005,10 @@ function AppShellContent() {
     handleJumpToSessionBrowser,
     handleMissingInternalResource,
     handleOpenInboxPane,
+    handleOpenAutomationsPane,
+    handleOpenAutomationRunSession,
+    handleCreateScheduleInChat,
+    handleEditScheduleInChat,
     handleReturnToChatPane,
     handleCreateSession,
     handleOpenLinkInNewAppBrowserTab,
@@ -4715,18 +4769,6 @@ function AppShellContent() {
         themeVariants={THEME_VARIANTS}
         onThemeVariantChange={handleThemeVariantChange}
         onOpenExternalUrl={handleOpenExternalUrl}
-        onOpenAutomationRunSession={(workspaceId, sessionId) => {
-          setSettingsDialogOpen(false);
-          handleOpenAutomationRunSession(sessionId, workspaceId);
-        }}
-        onCreateAutomationSchedule={(workspaceId) => {
-          setSettingsDialogOpen(false);
-          handleCreateScheduleInChat(workspaceId);
-        }}
-        onEditAutomationSchedule={(workspaceId, job) => {
-          setSettingsDialogOpen(false);
-          handleEditScheduleInChat(job, workspaceId);
-        }}
       />
       {selectedWorkspaceId && (
         <PublishDialog

@@ -58,6 +58,11 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
 import {
   EXPLORER_ATTACHMENT_DRAG_TYPE,
@@ -3172,6 +3177,7 @@ interface ChatPaneProps {
   onJumpToSessionBrowser?: (sessionId: string, requestKey: number) => void;
   onOpenInbox?: () => void;
   inboxUnreadCount?: number;
+  onOpenAutomations?: () => void;
   onRequestCreateSession?: (request: ChatPaneSessionOpenRequest) => void;
   composerDraftText?: string;
   onComposerDraftTextChange?: (text: string) => void;
@@ -3197,6 +3203,7 @@ export function ChatPane({
   onJumpToSessionBrowser,
   onOpenInbox,
   inboxUnreadCount = 0,
+  onOpenAutomations,
   onRequestCreateSession,
   composerDraftText = "",
   onComposerDraftTextChange,
@@ -7270,6 +7277,7 @@ export function ChatPane({
               onSelectSession={openSessionFromPicker}
               onOpenInbox={onOpenInbox}
               inboxUnreadCount={inboxUnreadCount}
+              onOpenAutomations={onOpenAutomations}
               onCreateSession={requestDraftSessionFromPicker}
             />
           </div>
@@ -7772,6 +7780,7 @@ interface SessionSelectorProps {
   onSelectSession: (sessionId: string) => void;
   onOpenInbox?: () => void;
   inboxUnreadCount: number;
+  onOpenAutomations?: () => void;
   onCreateSession: () => void;
 }
 
@@ -7785,6 +7794,7 @@ function SessionSelector({
   onSelectSession,
   onOpenInbox,
   inboxUnreadCount,
+  onOpenAutomations,
   onCreateSession,
 }: SessionSelectorProps) {
   const [open, setOpen] = useState(false);
@@ -7913,39 +7923,83 @@ function SessionSelector({
 
       <div className="flex shrink-0 items-center gap-1">
         {onOpenInbox ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => {
-              setOpen(false);
-              setQuery("");
-              onOpenInbox();
-            }}
-            aria-label="Show inbox"
-            className="relative rounded-lg text-muted-foreground hover:text-foreground"
-          >
-            <Inbox className="size-4" />
-            {inboxUnreadCount > 0 ? (
-              <span className="absolute right-1.5 top-1.5 size-2 rounded-full border border-card bg-destructive" />
-            ) : null}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => {
+                    setOpen(false);
+                    setQuery("");
+                    onOpenInbox();
+                  }}
+                  aria-label="Show inbox"
+                  className="relative rounded-lg text-muted-foreground hover:text-foreground"
+                />
+              }
+            >
+              <Inbox className="size-4" />
+              {inboxUnreadCount > 0 ? (
+                <span className="absolute right-1.5 top-1.5 size-2 rounded-full border border-card bg-destructive" />
+              ) : null}
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="py-1">
+              Inbox
+            </TooltipContent>
+          </Tooltip>
         ) : null}
 
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          onClick={() => {
-            setOpen(false);
-            setQuery("");
-            onCreateSession();
-          }}
-          aria-label="Create new session"
-          className="rounded-lg text-muted-foreground hover:text-foreground"
-        >
-          <Plus className="size-4" />
-        </Button>
+        {onOpenAutomations ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => {
+                    setOpen(false);
+                    setQuery("");
+                    onOpenAutomations();
+                  }}
+                  aria-label="Show automations"
+                  className="rounded-lg text-muted-foreground hover:text-foreground"
+                />
+              }
+            >
+              <Clock3 className="size-4" />
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="py-1">
+              Automations
+            </TooltipContent>
+          </Tooltip>
+        ) : null}
+
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => {
+                  setOpen(false);
+                  setQuery("");
+                  onCreateSession();
+                }}
+                aria-label="Create new session"
+                className="rounded-lg text-muted-foreground hover:text-foreground"
+              />
+            }
+          >
+            <Plus className="size-4" />
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="py-1">
+            New session
+          </TooltipContent>
+        </Tooltip>
       </div>
     </div>
   );
