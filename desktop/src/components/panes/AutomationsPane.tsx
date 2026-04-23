@@ -125,12 +125,12 @@ function jobKindLabel(job: CronjobRecordPayload): string {
 function jobKindClassName(job: CronjobRecordPayload): string {
   const channel = jobDeliveryChannel(job);
   if (channel === "system_notification") {
-    return "border-amber-300/40 bg-amber-400/10 text-amber-200";
+    return "border-warning/40 bg-warning/10 text-warning";
   }
   if (channel === "session_run") {
-    return "border-primary/25 bg-primary/10 text-primary";
+    return "border-primary bg-primary/10 text-primary";
   }
-  return "border-border/50 bg-muted/65 text-muted-foreground";
+  return "border-border bg-muted text-muted-foreground";
 }
 
 function runtimeStateErrorMessage(
@@ -178,7 +178,7 @@ function completedStatusClassName(status: string): string {
   if (normalized === "ERROR" || normalized === "FAILED") {
     return "border-destructive/30 bg-destructive/10 text-destructive";
   }
-  return "border-primary/30 bg-primary/10 text-primary";
+  return "border-primary bg-primary/10 text-primary";
 }
 
 export function AutomationsPane({
@@ -220,10 +220,10 @@ export function AutomationsPane({
 
   const statusClassName =
     statusTone === "success"
-      ? "border-primary/25 bg-primary/5 text-foreground"
+      ? "border-primary bg-primary/5 text-foreground"
       : statusTone === "error"
         ? "border-destructive/25 bg-destructive/5 text-destructive"
-        : "border-border/60 bg-muted/55 text-muted-foreground";
+        : "border-border bg-muted text-muted-foreground";
 
   const setInfoMessage = (message: string) => {
     setStatusTone("info");
@@ -449,7 +449,7 @@ export function AutomationsPane({
             </div>
           ) : null}
 
-          <div className="mt-5 min-h-0 flex-1 overflow-hidden rounded-2xl border border-border/40 bg-background/70">
+          <div className="mt-5 min-h-0 flex-1 overflow-hidden rounded-2xl border border-border bg-background/70">
             {!activeWorkspaceId ? (
               <EmptyState message={emptyWorkspaceMessage} />
             ) : isLoading &&
@@ -461,7 +461,7 @@ export function AutomationsPane({
                 aria-label="Loading automations"
                 className="flex h-full min-h-0 flex-col"
               >
-                <div className="shrink-0 border-b border-border/30 px-4 py-4 sm:px-5">
+                <div className="shrink-0 border-b border-border px-4 py-4 sm:px-5">
                   <div className="grid grid-cols-[minmax(0,1.15fr)_minmax(0,1.15fr)_120px_64px] items-center gap-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     <span>Title</span>
                     <span>Schedule at</span>
@@ -478,13 +478,13 @@ export function AutomationsPane({
                   ].map((row, index) => (
                     <div
                       key={index}
-                      className="grid grid-cols-[minmax(0,1.15fr)_minmax(0,1.15fr)_120px_64px] items-center gap-4 border-b border-border/20 px-4 py-4 sm:px-5"
+                      className="grid grid-cols-[minmax(0,1.15fr)_minmax(0,1.15fr)_120px_64px] items-center gap-4 border-b border-border px-4 py-4 sm:px-5"
                     >
                       <div className="flex flex-col gap-1.5 pr-2">
                         <span
                           className={`h-4 ${row.titleW} animate-pulse rounded bg-muted-foreground/20`}
                         />
-                        <span className="h-2.5 w-16 animate-pulse rounded bg-muted/40" />
+                        <span className="h-2.5 w-16 animate-pulse rounded bg-muted" />
                       </div>
                       <span
                         className={`h-4 ${row.scheduleW} animate-pulse rounded bg-muted-foreground/20`}
@@ -502,7 +502,7 @@ export function AutomationsPane({
                 <EmptyState message="No scheduled tasks in this workspace." />
               ) : (
                 <div className="flex h-full min-h-0 flex-col">
-                  <div className="shrink-0 border-b border-border/30 px-4 py-4 sm:px-5">
+                  <div className="shrink-0 border-b border-border px-4 py-4 sm:px-5">
                     <div className="grid grid-cols-[minmax(0,1.15fr)_minmax(0,1.15fr)_120px_64px] items-center gap-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
                       <span>Title</span>
                       <span>Schedule at</span>
@@ -517,7 +517,7 @@ export function AutomationsPane({
                       return (
                         <div
                           key={job.id}
-                          className="grid grid-cols-[minmax(0,1.15fr)_minmax(0,1.15fr)_120px_64px] items-center gap-4 border-b border-border/20 px-4 py-4 transition-colors hover:bg-accent sm:px-5"
+                          className="grid grid-cols-[minmax(0,1.15fr)_minmax(0,1.15fr)_120px_64px] items-center gap-4 border-b border-border px-4 py-4 transition-colors hover:bg-accent sm:px-5"
                         >
                           <div className="min-w-0 pr-2">
                             <div className="truncate text-sm font-medium text-foreground">
@@ -612,7 +612,7 @@ export function AutomationsPane({
               <EmptyState message="No completed automation runs yet." />
             ) : (
               <div className="flex h-full min-h-0 flex-col">
-                <div className="shrink-0 border-b border-border/30 px-4 py-4 sm:px-5">
+                <div className="shrink-0 border-b border-border px-4 py-4 sm:px-5">
                   <div className="grid grid-cols-[minmax(0,1.05fr)_minmax(0,1.25fr)_120px] items-center gap-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     <span>Title</span>
                     <span>Completed at</span>
@@ -627,7 +627,7 @@ export function AutomationsPane({
                       type="button"
                       disabled={!onOpenRunSession}
                       onClick={() => onOpenRunSession?.(run.sessionId)}
-                      className="grid w-full grid-cols-[minmax(0,1.05fr)_minmax(0,1.25fr)_120px] items-center gap-4 border-b border-border/20 px-4 py-4 text-left transition-colors hover:bg-accent disabled:cursor-default disabled:hover:bg-transparent sm:px-5"
+                      className="grid w-full grid-cols-[minmax(0,1.05fr)_minmax(0,1.25fr)_120px] items-center gap-4 border-b border-border px-4 py-4 text-left transition-colors hover:bg-accent disabled:cursor-default disabled:hover:bg-transparent sm:px-5"
                     >
                       <div className="min-w-0">
                         <div className="truncate text-sm font-medium text-foreground">
@@ -664,10 +664,233 @@ export function AutomationsPane({
   );
 
   if (!showHeader) {
-    return content;
+    const embeddedBody = !activeWorkspaceId ? (
+      <EmbeddedEmptyState message={emptyWorkspaceMessage} />
+    ) : isLoading &&
+      scheduledJobs.length === 0 &&
+      completedRuns.length === 0 ? (
+      <EmbeddedSkeleton />
+    ) : activeTab === "scheduled" ? (
+      scheduledJobs.length === 0 ? (
+        <EmbeddedEmptyState message="No scheduled tasks in this workspace." />
+      ) : (
+        <div className="overflow-hidden rounded-xl bg-card ring-1 ring-border">
+          {scheduledJobs.map((job, index) => {
+            const isBusy = busyJobId === job.id;
+            return (
+              <div key={job.id}>
+                {index > 0 ? <div className="h-px bg-border" /> : null}
+                <div className="flex items-center justify-between gap-4 px-4 py-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <div className="truncate text-sm font-medium text-foreground">
+                        {jobTitle(job)}
+                      </div>
+                      {jobKindLabel(job) !== "Automation" ? (
+                        <Badge
+                          variant="outline"
+                          className="border-border bg-background/60 text-[11px] text-muted-foreground"
+                        >
+                          {jobKindLabel(job)}
+                        </Badge>
+                      ) : null}
+                    </div>
+                    <div className="mt-0.5 truncate text-xs leading-5 text-muted-foreground">
+                      {scheduleAtLabel(job)}
+                    </div>
+                    {job.last_error ? (
+                      <div className="mt-0.5 truncate text-xs leading-5 text-destructive">
+                        {job.last_error}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Switch
+                      checked={job.enabled}
+                      onCheckedChange={() => void handleToggleEnabled(job)}
+                      disabled={isBusy}
+                      aria-label={
+                        job.enabled ? "Disable schedule" : "Enable schedule"
+                      }
+                    />
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        render={
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={`Actions for ${jobTitle(job)}`}
+                          />
+                        }
+                      >
+                        <MoreHorizontal size={16} />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        align="end"
+                        sideOffset={8}
+                        className="w-48"
+                      >
+                        <DropdownMenuItem
+                          onClick={() => void handleRunNow(job)}
+                          disabled={isBusy}
+                        >
+                          <Play size={16} />
+                          Run now
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => handleEdit(job)}
+                          disabled={isBusy}
+                        >
+                          <Pencil size={16} />
+                          Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => void handleDelete(job)}
+                          disabled={isBusy}
+                          variant="destructive"
+                        >
+                          <Trash2 size={16} />
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )
+    ) : completedRuns.length === 0 ? (
+      <EmbeddedEmptyState message="No completed automation runs yet." />
+    ) : (
+      <div className="overflow-hidden rounded-xl bg-card ring-1 ring-border">
+        {completedRuns.map((run, index) => (
+          <div key={run.sessionId}>
+            {index > 0 ? <div className="h-px bg-border" /> : null}
+            <button
+              type="button"
+              disabled={!onOpenRunSession}
+              onClick={() => onOpenRunSession?.(run.sessionId)}
+              className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left transition-colors hover:bg-accent disabled:cursor-default disabled:hover:bg-transparent"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium text-foreground">
+                  {run.title}
+                </div>
+                <div className="mt-0.5 truncate text-xs leading-5 text-muted-foreground">
+                  {formatAbsoluteTimestamp(run.completedAt)}
+                </div>
+                {run.errorDetail ? (
+                  <div className="mt-0.5 truncate text-xs leading-5 text-destructive">
+                    {run.errorDetail}
+                  </div>
+                ) : null}
+              </div>
+              <Badge
+                variant="outline"
+                className={`border-border bg-background/60 text-[11px] ${
+                  run.status.trim().toUpperCase() === "ERROR" ||
+                  run.status.trim().toUpperCase() === "FAILED"
+                    ? "text-destructive"
+                    : "text-muted-foreground"
+                }`}
+              >
+                {completedStatusLabel(run.status)}
+              </Badge>
+            </button>
+          </div>
+        ))}
+      </div>
+    );
+
+    return (
+      <div className="grid gap-6">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="min-w-0">{toolbarLeading}</div>
+          <Button
+            type="button"
+            size="sm"
+            onClick={handleNewSchedule}
+            className="rounded-full px-4"
+          >
+            <Plus size={14} />
+            New schedule
+          </Button>
+        </div>
+
+        <Tabs
+          value={activeTab}
+          onValueChange={(v) => setActiveTab(v as "scheduled" | "completed")}
+        >
+          <TabsList>
+            <TabsTrigger value="scheduled">Scheduled</TabsTrigger>
+            <TabsTrigger value="completed">Completed</TabsTrigger>
+          </TabsList>
+        </Tabs>
+
+        {statusMessage ? (
+          <div
+            className={`rounded-xl border px-3 py-2 text-sm ${statusClassName}`}
+          >
+            {statusMessage}
+          </div>
+        ) : null}
+
+        {embeddedBody}
+      </div>
+    );
   }
 
-  return <PaneCard className="shadow-md">{content}</PaneCard>;
+  return <PaneCard className="shadow-subtle-xs">{content}</PaneCard>;
+}
+
+function EmbeddedEmptyState({ message }: { message: string }) {
+  return (
+    <div className="overflow-hidden rounded-xl bg-card ring-1 ring-border">
+      <div className="flex flex-col items-center justify-center gap-2 px-4 py-10 text-center">
+        <Clock3 size={18} className="text-muted-foreground" />
+        <div className="text-sm font-medium text-foreground">
+          No tasks to show
+        </div>
+        <div className="max-w-lg text-xs leading-5 text-muted-foreground">
+          {message}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EmbeddedSkeleton() {
+  const rows = ["w-36", "w-48", "w-40", "w-44"];
+  return (
+    <div
+      role="status"
+      aria-busy="true"
+      aria-label="Loading automations"
+      className="overflow-hidden rounded-xl bg-card ring-1 ring-border"
+    >
+      {rows.map((titleW, index) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: static skeleton list
+        <div key={index}>
+          {index > 0 ? <div className="h-px bg-border" /> : null}
+          <div className="flex items-center justify-between gap-4 px-4 py-3">
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <div
+                className={`h-3.5 ${titleW} animate-pulse rounded bg-muted-foreground/20`}
+              />
+              <div className="h-2.5 w-28 animate-pulse rounded bg-muted-foreground/20" />
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <div className="h-5 w-9 animate-pulse rounded-full bg-muted-foreground/20" />
+              <div className="size-7 animate-pulse rounded-md bg-muted-foreground/20" />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function EmptyState({ message }: { message: string }) {

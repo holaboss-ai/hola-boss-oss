@@ -68,7 +68,7 @@ export function BrowserProfileStep({
   return (
     <div>
       <div className="max-w-3xl">
-        <p className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+        <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
           Step 2 of 2
         </p>
         <h1 className="mt-3 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
@@ -78,7 +78,7 @@ export function BrowserProfileStep({
 
       <div className="mt-6 grid gap-5" style={{ maxWidth: 560 }}>
         <div className="grid gap-2">
-          <Label className="text-[11px] uppercase tracking-widest text-muted-foreground">
+          <Label className="text-xs uppercase tracking-widest text-muted-foreground">
             Setup mode
           </Label>
           <div className="grid gap-2">
@@ -89,8 +89,8 @@ export function BrowserProfileStep({
                 onClick={() => setBrowserBootstrapMode(option.id)}
                 className={`rounded-xl border px-3 py-2 text-left transition ${
                   browserBootstrapMode === option.id
-                    ? "border-primary/55 bg-primary/10"
-                    : "border-border/65 bg-background hover:border-primary/35"
+                    ? "border-primary bg-primary/10"
+                    : "border-border bg-background hover:border-primary"
                 }`}
               >
                 <p className="text-sm font-medium text-foreground">{option.label}</p>
@@ -104,7 +104,7 @@ export function BrowserProfileStep({
           <div className="grid gap-2">
             <Label
               htmlFor="copy-workspace-source"
-              className="text-[11px] uppercase tracking-widest text-muted-foreground"
+              className="text-xs uppercase tracking-widest text-muted-foreground"
             >
               Source workspace
             </Label>
@@ -114,7 +114,7 @@ export function BrowserProfileStep({
               onChange={(event) =>
                 setBrowserBootstrapSourceWorkspaceId(event.target.value)
               }
-              className="h-10 rounded-lg border border-border/65 bg-background px-3 text-sm text-foreground"
+              className="h-10 rounded-lg border border-border bg-background px-3 text-sm text-foreground"
             >
               {copySourceWorkspaces.length > 0 ? null : (
                 <option value="">No workspaces available</option>
@@ -133,7 +133,7 @@ export function BrowserProfileStep({
             <div className="grid gap-2">
               <Label
                 htmlFor="import-browser-source"
-                className="text-[11px] uppercase tracking-widest text-muted-foreground"
+                className="text-xs uppercase tracking-widest text-muted-foreground"
               >
                 Import source
               </Label>
@@ -143,7 +143,7 @@ export function BrowserProfileStep({
                 onChange={(event) =>
                   setBrowserImportSource(event.target.value as BrowserImportSource)
                 }
-                className="h-10 rounded-lg border border-border/65 bg-background px-3 text-sm text-foreground"
+                className="h-10 rounded-lg border border-border bg-background px-3 text-sm text-foreground"
               >
                 <option value="chrome">Chrome</option>
                 <option value="chromium">Chromium</option>
@@ -153,16 +153,16 @@ export function BrowserProfileStep({
             </div>
 
             {browserImportSource === "safari" ? (
-              <p className="rounded-lg border border-border/65 bg-background px-3 py-2 text-sm text-muted-foreground">
+              <p className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-muted-foreground">
                 Safari import uses the exported ZIP file selector when you click
                 Create Workspace.
               </p>
             ) : (
               <div className="grid gap-2">
-                <Label className="text-[11px] uppercase tracking-widest text-muted-foreground">
+                <Label className="text-xs uppercase tracking-widest text-muted-foreground">
                   Profiles
                 </Label>
-                <div className="max-h-44 overflow-y-auto rounded-lg border border-border/65 bg-background">
+                <div className="max-h-44 overflow-y-auto rounded-lg border border-border bg-background">
                   {importProfilesLoading ? (
                     <p className="px-3 py-2 text-sm text-muted-foreground">
                       Loading profiles...
@@ -172,11 +172,11 @@ export function BrowserProfileStep({
                       No importable profiles found for this browser.
                     </p>
                   ) : (
-                    <div className="divide-y divide-border/55">
+                    <div className="divide-y divide-border">
                       {importProfiles.map((profile) => (
                         <label
                           key={profile.profileDir}
-                          className="flex cursor-pointer items-start gap-2 px-3 py-2 text-sm hover:bg-muted/35"
+                          className="flex cursor-pointer items-start gap-2 px-3 py-2 text-sm hover:bg-muted"
                         >
                           <input
                             type="radio"

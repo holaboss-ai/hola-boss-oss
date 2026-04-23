@@ -62,7 +62,7 @@ export function KitDetail({
                 </Badge>
               ) : null}
               {template.source === "official" || template.verified ? (
-                <Badge variant="outline" className="border-blue-500/25 text-blue-500">
+                <Badge variant="outline" className="border-info/25 text-info">
                   Official
                 </Badge>
               ) : null}

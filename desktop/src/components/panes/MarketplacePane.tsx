@@ -127,7 +127,7 @@ export function MarketplacePane({ initialTab = "templates" }: MarketplacePanePro
   return (
     <Tabs
       defaultValue={initialTab}
-      className="flex h-full min-h-0 p-6 min-w-0 flex-col overflow-hidden bg-muted/50 shadow-xs border border-border rounded-xl"
+      className="flex h-full min-h-0 p-6 min-w-0 flex-col overflow-hidden bg-muted shadow-xs border border-border rounded-xl"
     >
       <div className="max-w-4xl mx-auto w-full">
         <TabsList>
@@ -192,7 +192,7 @@ export function MarketplacePane({ initialTab = "templates" }: MarketplacePanePro
               ) : (
                 <div className="mx-auto w-full max-w-sm">
                   {detailTemplate ? (
-                    <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/50 px-3 py-2.5">
+                    <div className="flex items-center gap-3 rounded-lg border border-border bg-muted px-3 py-2.5">
                       <KitEmoji emoji={detailTemplate.emoji} size={24} />
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-medium text-foreground">

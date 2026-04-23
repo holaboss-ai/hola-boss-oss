@@ -1,6 +1,10 @@
-import { useMemo } from "react";
-import { Bot, Globe, Pause, Plus, Star, User, X } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import {
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { Bot, Globe, Plus, Star, User, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -9,7 +13,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   browserSessionStatusLabel,
   browserSessionTitle,
@@ -27,19 +30,87 @@ interface SpaceBrowserExplorerPaneProps {
 
 type SessionStatusTone = "active" | "waiting" | "paused" | "error" | "idle";
 
-function sessionStatusBadgeClasses(tone: SessionStatusTone): string {
-  switch (tone) {
-    case "active":
-      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200";
-    case "waiting":
-      return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-100";
-    case "paused":
-      return "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-100";
-    case "error":
-      return "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-100";
-    default:
-      return "border-border/50 bg-muted text-muted-foreground";
+// Module-level cache so favicon error state survives remounts (e.g. when
+// switching scopes). The browser's HTTP cache handles "successfully loaded"
+// images for free; we only need to remember the ones that failed so we
+// don't flash broken-image glyphs or re-trigger network requests to 404s.
+const faviconErrorCache = new Set<string>();
+
+interface FaviconProps {
+  url?: string | null;
+  fallback: ReactNode;
+  className?: string;
+}
+
+function Favicon({ url, fallback, className }: FaviconProps) {
+  const [errored, setErrored] = useState(
+    () => !url || faviconErrorCache.has(url),
+  );
+
+  useEffect(() => {
+    if (!url) {
+      setErrored(true);
+      return;
+    }
+    setErrored(faviconErrorCache.has(url));
+  }, [url]);
+
+  if (!url || errored) {
+    return <>{fallback}</>;
   }
+
+  return (
+    <img
+      src={url}
+      alt=""
+      className={className}
+      decoding="async"
+      onError={() => {
+        faviconErrorCache.add(url);
+        setErrored(true);
+      }}
+    />
+  );
+}
+
+function sessionDotClass(tone: SessionStatusTone, flashing = false): string {
+  const base = (() => {
+    switch (tone) {
+      case "active":
+        return "bg-success";
+      case "waiting":
+        return "bg-warning";
+      case "paused":
+        return "bg-info";
+      case "error":
+        return "bg-destructive";
+      default:
+        return "bg-muted-foreground";
+    }
+  })();
+  return flashing ? `${base} animate-pulse` : base;
+}
+
+function toneFromRuntimeStatus(
+  runtime: SessionRuntimeRecordPayload | null | undefined,
+): { tone: SessionStatusTone; flashing: boolean } {
+  const status =
+    runtime?.effective_state?.trim().toUpperCase() ||
+    runtime?.status?.trim().toUpperCase() ||
+    "";
+  if (status === "BUSY" || status === "QUEUED" || status === "PAUSING") {
+    return { tone: "active", flashing: true };
+  }
+  if (status === "WAITING_USER") {
+    return { tone: "waiting", flashing: false };
+  }
+  if (status === "PAUSED") {
+    return { tone: "paused", flashing: false };
+  }
+  if (status === "ERROR") {
+    return { tone: "error", flashing: false };
+  }
+  return { tone: "idle", flashing: false };
 }
 
 export function SpaceBrowserExplorerPane({
@@ -122,248 +193,273 @@ export function SpaceBrowserExplorerPane({
   const hasBookmarks = bookmarks.length > 0;
   const hasTabs = browserState.tabs.length > 0;
 
+  // Slide direction mirrors the switcher button position — scopes slide in
+  // from their own side, giving clicks a spatial "pushed-from-here" feel.
+  const slideInClass =
+    browserSpace === "user"
+      ? "slide-in-from-left-3"
+      : "slide-in-from-right-3";
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-transparent">
-      <div className="border-b border-border/30 px-3 py-2.5">
-        <Tabs
-          value={browserSpace}
-          onValueChange={(value) => openBrowserSpace(value as BrowserSpaceId)}
-        >
-          <TabsList className="w-full">
-            <TabsTrigger value="user" className="flex-1 gap-1.5 text-xs">
-              <User size={12} />
-              User
-              <Badge
-                variant="secondary"
-                className="ml-0.5 h-4 min-w-4 px-1 text-xs"
-              >
-                {browserState.tabCounts.user}
-              </Badge>
-            </TabsTrigger>
-            <TabsTrigger
-              value="agent"
-              className="relative flex-1 gap-1.5 text-xs"
+      {/* Animated content region — remounts on scope change to replay
+          the slide-in; the bottom switcher below stays stable. */}
+      <div
+        key={browserSpace}
+        className={`flex min-h-0 flex-1 flex-col animate-in fade-in-0 duration-200 ease-out ${slideInClass}`}
+      >
+      {/* Agent session line — single-row indicator. Dot color carries
+          status; chevron only when there are multiple sessions to switch
+          between. Sits flush with the content below, no border. */}
+      {browserSpace === "agent" ? (
+        <div className="shrink-0 px-2 pt-2">
+          {sortedAgentSessions.length === 0 ? (
+            <div className="px-2.5 py-1 text-xs text-muted-foreground">
+              No agent sessions
+            </div>
+          ) : sortedAgentSessions.length === 1 ? (
+            <div
+              className="flex items-center gap-2 px-2.5 py-1 text-xs leading-none"
+              title={sessionBrowserStatus?.label ?? "Agent session"}
             >
-              <Bot size={12} />
-              Agent
-              <Badge
-                variant="secondary"
-                className="ml-0.5 h-4 min-w-4 px-1 text-xs"
-              >
-                {browserState.tabCounts.agent}
-              </Badge>
-              {hasPendingAgentJump && browserSpace !== "agent" ? (
-                <span
-                  aria-hidden="true"
-                  className="absolute right-1.5 top-1 size-1.5 animate-pulse rounded-full bg-primary"
-                />
-              ) : null}
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-
-        {browserSpace === "agent" ? (
-          <div className="mt-2.5 flex items-center gap-1.5">
+              <span
+                aria-hidden="true"
+                className={`size-1.5 shrink-0 rounded-full ${sessionDotClass(
+                  (sessionBrowserStatus?.tone as SessionStatusTone) ?? "idle",
+                  sessionBrowserStatus?.flashing ?? false,
+                )}`}
+              />
+              <span className="min-w-0 flex-1 truncate text-foreground">
+                {currentSessionLabel}
+              </span>
+            </div>
+          ) : (
             <Select
               value={browserState.sessionId ?? undefined}
               onValueChange={selectAgentSessionBrowser}
-              disabled={!hasAgentSessionBrowsers}
             >
-              <SelectTrigger className="h-9 min-w-0 flex-1 basis-0 rounded-lg border-border/45 bg-card px-3 text-left text-xs shadow-none">
-                <SelectValue
-                  placeholder={
-                    hasAgentSessionBrowsers
-                      ? "Choose session browser"
-                      : "No session browsers"
-                  }
-                >
-                  {browserState.sessionId
-                    ? currentSessionLabel
-                    : hasAgentSessionBrowsers
-                      ? "Choose session browser"
-                      : "No session browsers"}
+              <SelectTrigger
+                className="h-7 w-full gap-2 rounded-md border-transparent bg-transparent px-2.5 text-xs leading-none shadow-none hover:bg-accent data-[popup-open]:bg-accent dark:bg-transparent dark:hover:bg-accent"
+                title={sessionBrowserStatus?.label ?? "Agent session"}
+              >
+                <SelectValue>
+                  <span
+                    aria-hidden="true"
+                    className={`size-1.5 shrink-0 rounded-full ${sessionDotClass(
+                      (sessionBrowserStatus?.tone as SessionStatusTone) ??
+                        "idle",
+                      sessionBrowserStatus?.flashing ?? false,
+                    )}`}
+                  />
+                  <span className="min-w-0 flex-1 truncate leading-none text-foreground">
+                    {currentSessionLabel}
+                  </span>
                 </SelectValue>
               </SelectTrigger>
-              <SelectContent align="start" className="p-1">
+              <SelectContent
+                align="start"
+                alignItemWithTrigger={false}
+                sideOffset={6}
+                className="p-1"
+              >
                 {sortedAgentSessions.map((session) => {
                   const runtimeState =
                     runtimeStatesBySessionId[session.session_id] ?? null;
-                  const isSelectedSession =
-                    (browserState.sessionId ?? "") === session.session_id;
+                  const { tone, flashing } =
+                    toneFromRuntimeStatus(runtimeState);
                   return (
                     <SelectItem
                       key={session.session_id}
                       value={session.session_id}
-                      className="rounded-md px-3 py-2 text-xs"
+                      className="items-start gap-2 rounded-md px-2.5 py-1.5 text-xs"
                     >
-                      <span className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
-                        <span className="min-w-0 truncate text-foreground">
-                          {browserSessionTitle(session, session.session_id)}
-                        </span>
-                        {!isSelectedSession ? (
-                          <span className="shrink-0 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                            {browserSessionStatusLabel(runtimeState)}
-                          </span>
-                        ) : null}
+                      <span
+                        aria-hidden="true"
+                        className={`mt-1 size-1.5 shrink-0 rounded-full ${sessionDotClass(
+                          tone,
+                          flashing,
+                        )}`}
+                      />
+                      <span
+                        className="min-w-0 flex-1 whitespace-normal leading-snug text-foreground line-clamp-2"
+                        title={browserSessionStatusLabel(runtimeState)}
+                      >
+                        {browserSessionTitle(session, session.session_id)}
                       </span>
                     </SelectItem>
                   );
                 })}
               </SelectContent>
             </Select>
+          )}
+        </div>
+      ) : null}
 
-            {sessionBrowserStatus ? (
-              <Badge
-                variant="secondary"
-                className={`shrink-0 gap-1 rounded-full border px-2 py-0.5 text-xs ${sessionStatusBadgeClasses(
-                  sessionBrowserStatus.tone as SessionStatusTone,
-                )}`}
-              >
-                {sessionBrowserStatus.tone === "paused" ? (
-                  <Pause size={10} />
-                ) : (
-                  <span
-                    aria-hidden="true"
-                    className={`inline-block size-1.5 rounded-full ${
-                      sessionBrowserStatus.flashing
-                        ? "animate-pulse bg-emerald-500"
-                        : "bg-current opacity-70"
-                    }`}
-                  />
-                )}
-                {sessionBrowserStatus.label}
-              </Badge>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
-        <div className="space-y-0.5">
-          {hasBookmarks ? (
-            bookmarks.map((bookmark) => (
+      {/* Scrollable content: bookmarks (when any) + tabs */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+        {hasBookmarks ? (
+          <div className="mb-3 space-y-0.5">
+            <div className="px-2.5 pb-1 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+              Bookmarks
+            </div>
+            {bookmarks.map((bookmark) => (
               <Button
                 key={bookmark.id}
                 variant="ghost"
                 size="sm"
                 onClick={() => openBookmark(bookmark)}
-                className="h-auto w-full justify-start gap-2.5 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-accent/55"
+                className="h-auto w-full justify-start gap-2.5 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-accent"
               >
-                {bookmark.faviconUrl ? (
-                  <img
-                    src={bookmark.faviconUrl}
-                    alt=""
-                    className="size-4 shrink-0 rounded-sm"
-                  />
-                ) : (
-                  <div className="grid size-4 shrink-0 place-items-center rounded-sm bg-muted text-muted-foreground">
-                    <Star size={10} />
-                  </div>
-                )}
+                <Favicon
+                  url={bookmark.faviconUrl}
+                  className="size-4 shrink-0 rounded-sm"
+                  fallback={
+                    <div className="grid size-4 shrink-0 place-items-center rounded-sm bg-muted text-muted-foreground">
+                      <Star className="size-2.5" />
+                    </div>
+                  }
+                />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm text-foreground">
                     {bookmark.title}
                   </div>
                 </div>
               </Button>
-            ))
+            ))}
+          </div>
+        ) : null}
+
+        <div className="space-y-0.5">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={openNewTab}
+            aria-label="Open new tab"
+            className="h-auto w-full justify-start gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <div className="grid size-4 shrink-0 place-items-center">
+              <Plus className="size-3.5" />
+            </div>
+            <span className="text-sm">New tab</span>
+          </Button>
+
+          {hasTabs ? (
+            browserState.tabs.map((tab) => {
+              const isActive = tab.id === activeTab.id;
+              return (
+                <div
+                  key={tab.id}
+                  className={`group relative flex items-center gap-2 rounded-lg px-2.5 py-1.5 transition-colors ${
+                    isActive
+                      ? "bg-accent text-accent-foreground"
+                      : "hover:bg-accent"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onActivateDisplay();
+                      void window.electronAPI.browser.setActiveTab(tab.id);
+                    }}
+                    className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+                    title={tab.title || tab.url}
+                  >
+                    <Favicon
+                      url={tab.faviconUrl}
+                      className="size-4 shrink-0 rounded-sm"
+                      fallback={
+                        <div className="grid size-4 shrink-0 place-items-center rounded-sm bg-muted text-muted-foreground">
+                          {browserSpace === "agent" ? (
+                            <Bot className="size-2.5" />
+                          ) : (
+                            <Globe className="size-2.5" />
+                          )}
+                        </div>
+                      }
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm">
+                        {tab.title || "New Tab"}
+                      </div>
+                    </div>
+                  </button>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    onClick={() => {
+                      onActivateDisplay();
+                      void window.electronAPI.browser.closeTab(tab.id);
+                    }}
+                    aria-label={`Close ${tab.title || "tab"}`}
+                    className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
+                  >
+                    <X className="size-3" />
+                  </Button>
+                </div>
+              );
+            })
           ) : (
-            <div className="px-2.5 py-1.5 text-xs text-muted-foreground">
-              Saved bookmarks will appear here.
+            <div className="flex flex-col items-center justify-center gap-2 px-4 py-8 text-center">
+              <div className="grid size-8 place-items-center rounded-[10px] bg-muted text-muted-foreground">
+                <Globe className="size-3.5" />
+              </div>
+              <div className="text-xs leading-5 text-muted-foreground">
+                No open tabs in the {browserSpace} browser.
+              </div>
             </div>
           )}
         </div>
+      </div>
+      </div>
 
-        <div className="mt-4 border-t border-border/30 pt-2">
-          <div className="mb-1.5 flex items-center justify-between gap-2">
-            <Button
+      {/* Bottom scope switcher */}
+      <div className="flex shrink-0 gap-1 border-t border-border p-1">
+        {(
+          [
+            {
+              value: "user" as const,
+              label: "User",
+              icon: User,
+              count: browserState.tabCounts.user,
+              showPending: false,
+            },
+            {
+              value: "agent" as const,
+              label: "Agent",
+              icon: Bot,
+              count: browserState.tabCounts.agent,
+              showPending: hasPendingAgentJump && browserSpace !== "agent",
+            },
+          ] as const
+        ).map(({ value, label, icon: Icon, count, showPending }) => {
+          const isActive = browserSpace === value;
+          return (
+            <button
+              key={value}
               type="button"
-              variant="ghost"
-              size="sm"
-              onClick={openNewTab}
-              aria-label="Open new tab"
-              className="gap-1.5 text-xs text-muted-foreground"
+              onClick={() => openBrowserSpace(value)}
+              aria-pressed={isActive}
+              className={`relative flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-[background-color,color,transform] duration-150 active:scale-[0.98] ${
+                isActive
+                  ? "bg-muted text-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-foreground"
+              }`}
             >
-              <Plus size={12} />
-              New Tab
-            </Button>
-          </div>
-          <div className="space-y-0.5">
-            {hasTabs ? (
-              browserState.tabs.map((tab) => {
-                const isActive = tab.id === activeTab.id;
-                return (
-                  <div
-                    key={tab.id}
-                    className={`group relative flex items-center gap-2 rounded-lg px-2.5 py-1.5 transition-colors ${
-                      isActive
-                        ? "bg-accent text-accent-foreground"
-                        : "hover:bg-accent/55"
-                    }`}
-                  >
-                    {isActive ? (
-                      <span
-                        aria-hidden="true"
-                        className="absolute left-0 top-1/2 h-4 w-[2px] -translate-y-1/2 rounded-full bg-primary"
-                      />
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onActivateDisplay();
-                        void window.electronAPI.browser.setActiveTab(tab.id);
-                      }}
-                      className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
-                      title={tab.title || tab.url}
-                    >
-                      {tab.faviconUrl ? (
-                        <img
-                          src={tab.faviconUrl}
-                          alt=""
-                          className="size-4 shrink-0 rounded-sm"
-                        />
-                      ) : (
-                        <div className="grid size-4 shrink-0 place-items-center rounded-sm bg-muted text-muted-foreground">
-                          {browserSpace === "agent" ? (
-                            <Bot size={10} />
-                          ) : (
-                            <Globe size={10} />
-                          )}
-                        </div>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm">
-                          {tab.title || "New Tab"}
-                        </div>
-                      </div>
-                    </button>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      onClick={() => {
-                        onActivateDisplay();
-                        void window.electronAPI.browser.closeTab(tab.id);
-                      }}
-                      aria-label={`Close ${tab.title || "tab"}`}
-                      className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
-                    >
-                      <X size={12} />
-                    </Button>
-                  </div>
-                );
-              })
-            ) : (
-              <div className="flex flex-col items-center justify-center gap-2 px-4 py-8 text-center">
-                <div className="grid size-9 place-items-center rounded-[10px] bg-muted text-muted-foreground">
-                  <Globe size={14} />
-                </div>
-                <div className="text-xs leading-5 text-muted-foreground">
-                  No open tabs in the {browserSpace} browser.
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+              <Icon className="size-3.5" />
+              <span>{label}</span>
+              <span className="text-muted-foreground tabular-nums">
+                {count}
+              </span>
+              {showPending ? (
+                <span
+                  aria-hidden="true"
+                  className="absolute right-1 top-1 size-1.5 animate-pulse rounded-full bg-primary"
+                />
+              ) : null}
+            </button>
+          );
+        })}
       </div>
     </div>
   );

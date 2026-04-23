@@ -49,7 +49,7 @@ const APP_CATALOG: Record<string, WorkspaceAppDefinition> = {
     id: "linkedin",
     label: "LinkedIn",
     summary: "Long-form post drafting and professional social publishing flows.",
-    accentClassName: "bg-blue-400/80",
+    accentClassName: "bg-primary/80",
     tools: [
       { name: "linkedin_create_post", description: "Create a new post draft" },
       { name: "linkedin_list_posts", description: "List posts by status" },

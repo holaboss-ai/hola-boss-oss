@@ -18,7 +18,7 @@ export function KitCard({ template, onClick, selected = false }: KitCardProps) {
       onClick={() => onClick(template)}
       className={`group relative overflow-hidden rounded-xl border px-4 py-4 text-left transition-colors ${
         isComingSoon
-          ? "cursor-default border-border bg-card/50 opacity-50"
+          ? "cursor-default border-border bg-card opacity-50"
           : selected
             ? "border-primary/35 bg-primary/10"
             : "border-border bg-muted/50 hover:bg-accent"
@@ -32,7 +32,7 @@ export function KitCard({ template, onClick, selected = false }: KitCardProps) {
               {displayName}
             </span>
             {isComingSoon ? (
-              <Badge variant="secondary" className="shrink-0 text-[9px]">
+              <Badge variant="secondary" className="shrink-0 text-xs">
                 Coming soon
               </Badge>
             ) : null}
@@ -50,7 +50,7 @@ export function KitCard({ template, onClick, selected = false }: KitCardProps) {
               {template.description}
             </p>
           ) : null}
-          <div className="mt-2 flex items-center gap-3 text-[10px] uppercase tracking-widest text-muted-foreground">
+          <div className="mt-2 flex items-center gap-3 text-xs uppercase tracking-widest text-muted-foreground">
             {template.install_count != null && template.install_count > 0 ? (
               <span>{template.install_count} installs</span>
             ) : null}

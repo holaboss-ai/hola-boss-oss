@@ -104,7 +104,9 @@ interface RunningSessionEntry {
 
 const RUNNING_SESSIONS_POLL_INTERVAL_MS = 1000;
 
-function proposalSourceLabel(source: TaskProposalRecordPayload["proposal_source"]): string {
+function proposalSourceLabel(
+  source: TaskProposalRecordPayload["proposal_source"],
+): string {
   return source === "evolve" ? "Evolve" : "Proactive";
 }
 
@@ -250,8 +252,8 @@ export function OperationsDrawer({
   }, [activeTab, selectedWorkspaceId]);
 
   return (
-    <aside className="theme-shell neon-border relative flex h-full min-h-0 min-w-[296px] max-w-[336px] flex-col overflow-hidden rounded-xl shadow-lg">
-      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border/40 px-3 py-2">
+    <aside className="theme-shell neon-border relative flex h-full min-h-0 min-w-[296px] max-w-[336px] flex-col overflow-hidden rounded-xl shadow-subtle-sm">
+      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-2">
         <div className="flex items-center gap-1.5">
           <DrawerTabButton
             active={activeTab === "inbox"}
@@ -566,7 +568,7 @@ function runningSessionStatusIndicator(status: string): {
       };
     case "QUEUED":
       return {
-        className: "text-sky-600",
+        className: "text-info",
         icon: <Clock3 size={14} />,
         label: "Queued",
       };
@@ -625,7 +627,7 @@ function DrawerTabButton({
       className={`gap-2 rounded-2xl px-3 ${
         active
           ? "bg-primary/10 text-primary hover:bg-primary/14 hover:text-primary"
-          : "bg-muted/55 text-muted-foreground hover:bg-accent hover:text-foreground"
+          : "bg-muted text-muted-foreground hover:bg-accent hover:text-foreground"
       }`}
     >
       <span className="relative">
@@ -704,8 +706,9 @@ function InboxPanel({
     null,
   );
   const expandedProposal = expandedProposalId
-    ? proposals.find((proposal) => proposal.proposal_id === expandedProposalId) ??
-      null
+    ? (proposals.find(
+        (proposal) => proposal.proposal_id === expandedProposalId,
+      ) ?? null)
     : null;
 
   useEffect(() => {
@@ -741,7 +744,7 @@ function InboxPanel({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
           {proposalStatusMessage ? (
-            <div className="mb-3 rounded-[18px] border border-border/45 bg-muted/35 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+            <div className="mb-3 rounded-[18px] border border-border bg-muted px-3 py-2 text-xs leading-relaxed text-muted-foreground">
               {proposalStatusMessage}
             </div>
           ) : null}
@@ -819,11 +822,11 @@ function InboxPanel({
                   <Card
                     key={proposal.proposal_id}
                     size="sm"
-                    className="gap-2 py-3 ring-border/40"
+                    className="gap-2 py-3 ring-border"
                   >
                     <div className="flex items-start justify-between gap-2 px-3">
                       <div className="min-w-0 flex-1">
-                        <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                        <div className="text-xs uppercase text-muted-foreground">
                           {proposalSourceLabel(proposal.proposal_source)}
                         </div>
                         <div className="text-sm font-medium text-foreground">
@@ -888,7 +891,8 @@ function InboxPanel({
                               />
                             }
                           >
-                            {isActing && proposalAction?.action === "dismiss" ? (
+                            {isActing &&
+                            proposalAction?.action === "dismiss" ? (
                               <Loader2 size={12} className="animate-spin" />
                             ) : (
                               <X size={12} />
@@ -901,7 +905,7 @@ function InboxPanel({
                     <div className="line-clamp-2 px-3 text-xs leading-relaxed text-muted-foreground">
                       {proposal.task_prompt}
                     </div>
-                    <div className="line-clamp-2 px-3 text-xs leading-relaxed text-muted-foreground/90">
+                    <div className="line-clamp-2 px-3 text-xs leading-relaxed text-muted-foreground">
                       Why: {proposal.task_generation_rationale}
                     </div>
                     <div className="px-3 text-xs text-muted-foreground">
@@ -985,21 +989,21 @@ function ProposalDetailsDialog({
         type="button"
         aria-label="Close proposal details"
         onClick={onClose}
-        className="pointer-events-auto absolute inset-0 bg-[rgba(7,10,14,0.52)] backdrop-blur-sm"
+        className="pointer-events-auto absolute inset-0 bg-scrim backdrop-blur-sm"
       />
 
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Proposal details"
-        className="pointer-events-auto relative z-10 flex max-h-[min(760px,calc(100vh-36px))] w-[min(720px,calc(100vw-32px))] min-w-0 flex-col overflow-hidden rounded-[28px] border border-border/55 bg-background shadow-2xl"
+        className="pointer-events-auto relative z-10 flex max-h-[min(760px,calc(100vh-36px))] w-[min(720px,calc(100vw-32px))] min-w-0 flex-col overflow-hidden rounded-[28px] border border-border bg-background shadow-2xl"
       >
-        <header className="flex items-start justify-between gap-4 border-b border-border/35 px-6 py-5">
+        <header className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
           <div className="min-w-0">
-            <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+            <div className="text-xs uppercase text-muted-foreground">
               {proposalSourceLabel(proposal.proposal_source)}
             </div>
-            <div className="mt-1 text-[20px] font-semibold tracking-[-0.02em] text-foreground">
+            <div className="mt-1 text-[20px] font-semibold text-foreground">
               {proposal.task_name}
             </div>
             <div className="mt-1 text-xs text-muted-foreground">
@@ -1021,7 +1025,7 @@ function ProposalDetailsDialog({
 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5 [scrollbar-gutter:stable]">
           <section>
-            <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            <div className="text-xs font-semibold uppercase text-muted-foreground">
               Description
             </div>
             <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground">
@@ -1030,7 +1034,7 @@ function ProposalDetailsDialog({
           </section>
 
           <section>
-            <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            <div className="text-xs font-semibold uppercase text-muted-foreground">
               Why This Was Proposed
             </div>
             <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
@@ -1039,7 +1043,7 @@ function ProposalDetailsDialog({
           </section>
         </div>
 
-        <footer className="flex items-center justify-end gap-2 border-t border-border/35 px-6 py-4">
+        <footer className="flex items-center justify-end gap-2 border-t border-border px-6 py-4">
           <Button type="button" variant="ghost" onClick={onClose}>
             Close
           </Button>
@@ -1133,8 +1137,8 @@ function RunningPanel({
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/40 px-4 py-3">
-        <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
+        <div className="text-xs font-medium uppercase text-muted-foreground">
           Sessions
         </div>
         <Button
@@ -1143,7 +1147,7 @@ function RunningPanel({
           variant="ghost"
           onClick={onCreateSession}
           disabled={!hasWorkspace}
-          className="rounded-full border border-border/55 px-3 text-xs"
+          className="rounded-full border border-border px-3 text-xs"
         >
           <span>New Session</span>
         </Button>
@@ -1174,7 +1178,7 @@ function RunningPanel({
             message="No sessions yet."
           />
         ) : (
-          <div className="divide-y divide-border/30">
+          <div className="divide-y divide-border">
             {sessions.map((session) => {
               const statusIndicator = runningSessionStatusIndicator(
                 session.status,
@@ -1185,9 +1189,9 @@ function RunningPanel({
                   type="button"
                   onClick={() => onOpenSession(session.sessionId)}
                   aria-label={`Open session ${session.title}`}
-                  className={`w-full cursor-pointer px-3 py-3 text-left transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted/50 ${
+                  className={`w-full cursor-pointer px-3 py-3 text-left transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted ${
                     activeSessionId === session.sessionId
-                      ? "border-l-2 border-l-primary bg-muted/30"
+                      ? "border-l-2 border-l-primary bg-muted"
                       : ""
                   }`}
                 >

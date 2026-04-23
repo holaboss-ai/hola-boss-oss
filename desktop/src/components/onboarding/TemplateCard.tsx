@@ -29,7 +29,7 @@ function MarketplaceCard({ template, onChangeKit }: MarketplaceCardProps) {
 function EmptyCard({ onChangeKit }: { onChangeKit: () => void }) {
   return (
     <div className="mt-5 flex items-center gap-3 rounded-xl border border-border bg-muted/50 px-4 py-3">
-      <span className="text-[28px] leading-none">+</span>
+      <span className="text-3xl leading-none">+</span>
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium text-foreground">
           Starting from scratch

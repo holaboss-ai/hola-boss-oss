@@ -1358,6 +1358,7 @@ declare global {
     };
     diagnostics: {
       exportBundle: () => Promise<DiagnosticsExportPayload>;
+      revealBundle: (bundlePath: string) => Promise<boolean>;
     };
     runtime: {
       getStatus: () => Promise<RuntimeStatusPayload>;

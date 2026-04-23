@@ -138,7 +138,7 @@ export function MarketplaceGallery({
             </Button>
           ) : null}
           {onStartFromScratch && onUseLocalTemplate ? (
-            <span className="text-muted-foreground/40">|</span>
+            <span className="text-muted-foreground">|</span>
           ) : null}
           {onUseLocalTemplate ? (
             <Button

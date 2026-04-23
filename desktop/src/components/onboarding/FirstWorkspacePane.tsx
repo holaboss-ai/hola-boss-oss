@@ -302,7 +302,7 @@ export function FirstWorkspacePane({
         className={`w-full ${isPanelVariant ? "h-full max-w-[1020px]" : "max-w-[1080px]"}`}
       >
         <div
-          className={`theme-shell w-full rounded-xl border border-border/45 px-6 py-6 shadow-lg sm:px-8 sm:py-7 lg:px-10 lg:py-8 ${
+          className={`theme-shell w-full rounded-xl border border-border px-6 py-6 shadow-lg sm:px-8 sm:py-7 lg:px-10 lg:py-8 ${
             isPanelVariant ? "h-full overflow-hidden" : ""
           }`}
         >
@@ -423,7 +423,7 @@ export function FirstWorkspacePane({
         type="button"
         aria-label="Close create workspace"
         onClick={onClose}
-        className="pointer-events-auto absolute inset-0 bg-[rgba(7,10,14,0.46)] backdrop-blur-sm"
+        className="pointer-events-auto absolute inset-0 bg-scrim backdrop-blur-sm"
       />
 
       <div

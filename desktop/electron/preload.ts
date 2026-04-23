@@ -1115,6 +1115,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   diagnostics: {
     exportBundle: () =>
       ipcRenderer.invoke("diagnostics:exportBundle") as Promise<DiagnosticsExportPayload>,
+    revealBundle: (bundlePath: string) =>
+      ipcRenderer.invoke("diagnostics:revealBundle", bundlePath) as Promise<boolean>,
   },
   runtime: {
     getStatus: () => ipcRenderer.invoke("runtime:getStatus") as Promise<RuntimeStatusPayload>,

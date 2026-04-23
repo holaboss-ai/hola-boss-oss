@@ -93,7 +93,7 @@ export function AppsGallery() {
             aria-label="Cancel connect account"
             onClick={clearPendingAppInstall}
             disabled={isConnectingAppIntegration}
-            className="absolute inset-0 bg-[rgba(7,10,14,0.46)] backdrop-blur-sm"
+            className="absolute inset-0 bg-scrim backdrop-blur-sm"
           />
           <div
             role="dialog"
@@ -101,7 +101,7 @@ export function AppsGallery() {
             aria-label="Connect account"
             className="relative z-10 w-[min(440px,calc(100vw-32px))] rounded-2xl border border-border/55 bg-background p-5 shadow-2xl"
           >
-            <p className="text-[15px] font-semibold text-foreground">
+            <p className="text-base font-semibold text-foreground">
               Connect{" "}
               {PROVIDER_DISPLAY[pendingAppInstall.provider] ??
                 pendingAppInstall.provider}

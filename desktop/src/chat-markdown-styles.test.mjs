@@ -11,15 +11,18 @@ test("chat markdown styles wrap long content without disabling code block scroll
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(source, /\.chat-markdown \{\s*max-width: 100%;[\s\S]*overflow-wrap: anywhere;[\s\S]*word-break: break-word;/);
-  assert.match(source, /\.chat-user-markdown \{\s*font-size: 13px;[\s\S]*line-height: 1\.75;/);
-  assert.match(source, /\.chat-assistant-markdown \{\s*font-size: 14px;[\s\S]*line-height: 1\.8;/);
-  assert.match(source, /\.chat-thinking-markdown \{\s*font-size: 12px;[\s\S]*line-height: 1\.55;/);
+  assert.match(source, /\.chat-user-markdown \{\s*font-size: 0\.875rem;[\s\S]*line-height: 1\.6;/);
+  assert.match(source, /\.chat-assistant-markdown \{\s*font-size: 0\.875rem;[\s\S]*line-height: 1\.72;/);
+  assert.match(source, /\.chat-thinking-markdown \{\s*font-size: 0\.725rem;[\s\S]*line-height: 1\.6;/);
   assert.match(source, /\.chat-markdown \.md-link,[\s\S]*\.chat-markdown \.md-table th \{\s*overflow-wrap: anywhere;[\s\S]*word-break: break-word;/);
+  assert.match(source, /\.chat-markdown \.md-inline-code \{[\s\S]*background: color-mix\(in oklch, var\(--input\) 84%, var\(--card\) 16%\);[\s\S]*color: color-mix\(in oklch, var\(--foreground\) 92%, transparent\);[\s\S]*font-family: var\(--font-mono\);/);
+  assert.match(source, /\.chat-markdown \.md-p > \.md-inline-code:only-child,[\s\S]*\.chat-markdown \.md-oli > \.md-inline-code:only-child \{[\s\S]*padding: 0\.42rem 0\.65rem;[\s\S]*border-radius: 11px;/);
+  assert.match(source, /\.chat-markdown \.md-code-block \{[\s\S]*background: color-mix\(in oklch, var\(--input\) 78%, var\(--background\) 22%\);[\s\S]*box-shadow: var\(--shadow-subtle-xs\);[\s\S]*font-family: var\(--font-mono\);/);
   assert.match(source, /\.simple-markdown \.md-code-block \{[\s\S]*overflow-x: auto;/);
   assert.match(source, /\.simple-markdown \.md-code-block > code \{[\s\S]*background: transparent;/);
   assert.match(source, /\.simple-markdown \.md-ul \{[\s\S]*list-style: disc;/);
   assert.match(source, /\.simple-markdown \.md-ol \{[\s\S]*list-style: decimal;/);
-  assert.match(source, /\.chat-markdown \.md-h1 \{[\s\S]*font-size: 17px;[\s\S]*line-height: 1\.5;/);
+  assert.match(source, /\.chat-markdown \.md-h1 \{[\s\S]*font-size: 1\.175rem;[\s\S]*line-height: 1\.3;/);
   assert.match(source, /\.chat-markdown \.md-p:first-child,[\s\S]*\.chat-markdown \.md-table:first-child \{[\s\S]*margin-top: 0;/);
   assert.match(source, /\.chat-markdown \.md-p:last-child,[\s\S]*\.chat-markdown \.md-table:last-child \{[\s\S]*margin-bottom: 0;/);
 });

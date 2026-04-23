@@ -157,17 +157,22 @@ const BROWSER_IMPORT_PROFILE_DIR_PATTERNS = [
 const SAFARI_EXPORT_BOOKMARKS_FILE_NAME = "bookmarks.html";
 const SAFARI_EXPORT_HISTORY_FILE_NAME = "history.json";
 const APP_THEMES = new Set([
-  "holaboss",
-  "emerald",
-  "cobalt",
-  "ember",
-  "glacier",
-  "mono",
-  "sepia",
-  "slate",
-  "paper",
-  "graphite",
+  "amber-minimal-dark",
+  "amber-minimal-light",
+  "cosmic-night-dark",
+  "cosmic-night-light",
+  "sepia-dark",
+  "sepia-light",
+  "clean-slate-dark",
+  "clean-slate-light",
+  "bold-tech-dark",
+  "bold-tech-light",
+  "catppuccin-dark",
+  "catppuccin-light",
+  "bubblegum-dark",
+  "bubblegum-light",
 ]);
+const DEFAULT_APP_THEME = "amber-minimal-light";
 const GITHUB_RELEASES_OWNER = "holaboss-ai";
 const GITHUB_RELEASES_REPO = "holaOS";
 const APP_UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
@@ -5052,6 +5057,27 @@ async function exportDesktopDiagnosticsBundle() {
   });
   shell.showItemInFolder(result.bundlePath);
   return result;
+}
+
+function revealDiagnosticsBundle(targetPath: string): boolean {
+  if (typeof targetPath !== "string" || targetPath.length === 0) {
+    return false;
+  }
+  const downloadsDir = app.getPath("downloads");
+  const resolved = path.resolve(targetPath);
+  const relative = path.relative(downloadsDir, resolved);
+  if (
+    relative.startsWith("..") ||
+    path.isAbsolute(relative) ||
+    relative.includes(path.sep)
+  ) {
+    return false;
+  }
+  if (!/^holaboss-diagnostics-.+\.zip$/.test(path.basename(resolved))) {
+    return false;
+  }
+  shell.showItemInFolder(resolved);
+  return true;
 }
 
 const SQLITE_BUSY_TIMEOUT_MS = 5_000;
@@ -22140,7 +22166,14 @@ function createMainWindow() {
     }
 
     const display = screen.getDisplayMatching(win.getBounds());
-    const { x, y, width, height } = display.workArea;
+    const workArea = display.workArea;
+    const TARGET_WIDTH = 1600;
+    const TARGET_HEIGHT = 980;
+    const MARGIN = 48;
+    const width = Math.min(TARGET_WIDTH, Math.max(1180, workArea.width - MARGIN));
+    const height = Math.min(TARGET_HEIGHT, Math.max(720, workArea.height - MARGIN));
+    const x = workArea.x + Math.round((workArea.width - width) / 2);
+    const y = workArea.y + Math.round((workArea.height - height) / 2);
     win.setBounds({ x, y, width, height });
     win.show();
     emitWindowStateChanged(win);
@@ -22690,7 +22723,7 @@ app.whenReady().then(async () => {
     "ui:setTheme",
     ["main", "auth-popup"],
     async (_event, theme: string) => {
-      currentTheme = APP_THEMES.has(theme) ? theme : "holaboss";
+      currentTheme = APP_THEMES.has(theme) ? theme : DEFAULT_APP_THEME;
       emitThemeChanged();
       authPopupWindow?.close();
       authPopupWindow = null;
@@ -23391,6 +23424,11 @@ app.whenReady().then(async () => {
   );
   handleTrustedIpc("diagnostics:exportBundle", ["main"], async () =>
     exportDesktopDiagnosticsBundle(),
+  );
+  handleTrustedIpc(
+    "diagnostics:revealBundle",
+    ["main"],
+    async (_event, targetPath: string) => revealDiagnosticsBundle(targetPath),
   );
   ipcMain.handle(
     "browser:setActiveWorkspace",

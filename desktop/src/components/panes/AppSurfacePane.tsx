@@ -188,7 +188,7 @@ export function AppSurfacePane({
   if (!ready && !error) {
     return (
       <div className="flex h-full min-h-0 gap-2">
-        <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card/80 shadow-xs backdrop-blur-sm">
+        <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xs backdrop-blur-sm">
           <div className="flex flex-1 items-center justify-center p-4">
             <div className="max-w-[200px] text-center">
               <LoaderCircle
@@ -239,13 +239,13 @@ export function AppSurfacePane({
               </Button>
             )}
             {actionError ? (
-              <div className="mt-2 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
+              <div className="mt-2 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">
                 {actionError}
               </div>
             ) : null}
           </div>
         </section>
-        <section className="flex min-w-0 flex-1 items-center justify-center rounded-xl border border-border bg-card/80 shadow-xs backdrop-blur-sm">
+        <section className="flex min-w-0 flex-1 items-center justify-center rounded-xl border border-border bg-card shadow-xs backdrop-blur-sm">
           <div className="text-center">
             <LoaderCircle
               size={16}
@@ -264,7 +264,7 @@ export function AppSurfacePane({
   if (!ready && error) {
     return (
       <div className="flex h-full min-h-0 gap-2">
-        <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card/80 p-4 shadow-xs backdrop-blur-sm">
+        <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card p-4 shadow-xs backdrop-blur-sm">
           <div className="flex items-center gap-2 text-destructive">
             <Activity size={14} />
             <span className="text-[10px] uppercase tracking-widest">
@@ -300,7 +300,7 @@ export function AppSurfacePane({
             </div>
           ) : null}
         </section>
-        <section className="flex min-w-0 flex-1 items-center justify-center rounded-xl border border-border bg-card/80 shadow-xs backdrop-blur-sm">
+        <section className="flex min-w-0 flex-1 items-center justify-center rounded-xl border border-border bg-card shadow-xs backdrop-blur-sm">
           <div className="text-center">
             <Activity size={18} className="mx-auto text-destructive" />
             <div className="mt-2 text-xs text-muted-foreground">
@@ -316,18 +316,18 @@ export function AppSurfacePane({
   return (
     <div className="flex h-full min-h-0 gap-2">
       {/* Left: App info card */}
-      <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card/80 shadow-xs backdrop-blur-sm">
+      <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xs backdrop-blur-sm">
         <div className="chat-scrollbar-hidden flex-1 overflow-y-auto p-4">
           <div className="flex items-center gap-3">
-            <span className="grid size-10 shrink-0 place-items-center rounded-lg border border-border bg-muted/40 text-[11px] font-semibold uppercase text-muted-foreground">
+            <span className="grid size-10 shrink-0 place-items-center rounded-lg border border-border bg-muted text-xs font-semibold uppercase text-muted-foreground">
               {brandIcon ?? iconFallback}
             </span>
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-semibold text-foreground">
                 {label}
               </div>
-              <div className="mt-0.5 flex items-center gap-1.5 text-[11px] font-medium text-emerald-500">
-                <span className="size-1.5 rounded-full bg-emerald-500" />
+              <div className="mt-0.5 flex items-center gap-1.5 text-xs font-medium text-success">
+                <span className="size-1.5 rounded-full bg-success" />
                 Running
               </div>
             </div>
@@ -340,7 +340,7 @@ export function AppSurfacePane({
           ) : null}
 
           {resourceId || path ? (
-            <div className="mt-4 flex items-center justify-between rounded-md border border-border bg-muted/50 px-3 py-2">
+            <div className="mt-4 flex items-center justify-between rounded-md border border-border bg-muted px-3 py-2">
               <span className="text-xs text-muted-foreground">
                 {resourceId ? "Resource" : "Route"}
               </span>
@@ -355,16 +355,16 @@ export function AppSurfacePane({
               <div className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
                 Integrations
               </div>
-              <div className="mt-2 flex items-center justify-between rounded-md border border-border bg-muted/50 px-3 py-2">
+              <div className="mt-2 flex items-center justify-between rounded-md border border-border bg-muted px-3 py-2">
                 <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <Plug size={11} />
                   {integrationStatus.providerName}
                 </span>
                 <span
-                  className={`flex items-center gap-1.5 text-xs font-medium ${integrationStatus.connected ? "text-emerald-500" : "text-destructive"}`}
+                  className={`flex items-center gap-1.5 text-xs font-medium ${integrationStatus.connected ? "text-success" : "text-destructive"}`}
                 >
                   <span
-                    className={`size-1.5 rounded-full ${integrationStatus.connected ? "bg-emerald-500" : "bg-destructive"}`}
+                    className={`size-1.5 rounded-full ${integrationStatus.connected ? "bg-success" : "bg-destructive"}`}
                   />
                   {integrationStatus.connected ? "Connected" : "Not connected"}
                 </span>
@@ -380,7 +380,7 @@ export function AppSurfacePane({
               <div className="mt-2 space-y-0.5">
                 {app.tools.map((tool) => (
                   <div key={tool.name} className="rounded-md px-2 py-1.5">
-                    <div className="text-[11px] font-medium text-foreground/80">
+                    <div className="text-xs font-medium text-foreground">
                       {tool.name}
                     </div>
                     <div className="text-[10px] leading-relaxed text-muted-foreground">
@@ -443,7 +443,7 @@ export function AppSurfacePane({
           </div>
 
           {actionError ? (
-            <div className="mt-2 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
+            <div className="mt-2 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">
               {actionError}
             </div>
           ) : null}

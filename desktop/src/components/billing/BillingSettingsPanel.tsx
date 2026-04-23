@@ -244,8 +244,8 @@ function UsageRow({ item }: { item: UsageItem }) {
         <div
           className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
             isCredit
-              ? "bg-green-500/10 text-green-600"
-              : "bg-red-500/10 text-red-600"
+              ? "bg-success/10 text-success"
+              : "bg-destructive/10 text-destructive"
           }`}
         >
           <UsageIcon item={item} />
@@ -262,13 +262,13 @@ function UsageRow({ item }: { item: UsageItem }) {
       </div>
       <div className="flex shrink-0 items-center gap-1">
         {isCredit ? (
-          <ArrowDownLeft size={14} className="text-green-600" />
+          <ArrowDownLeft size={14} className="text-success" />
         ) : (
-          <ArrowUpRight size={14} className="text-red-600" />
+          <ArrowUpRight size={14} className="text-destructive" />
         )}
         <span
           className={`font-semibold text-sm tabular-nums ${
-            isCredit ? "text-green-600" : "text-red-600"
+            isCredit ? "text-success" : "text-destructive"
           }`}
         >
           {isCredit ? "+" : "-"}
@@ -315,8 +315,8 @@ function UsageGroupRow({
           <div
             className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
               isCredit
-                ? "bg-green-500/10 text-green-600"
-                : "bg-red-500/10 text-red-600"
+                ? "bg-success/10 text-success"
+                : "bg-destructive/10 text-destructive"
             }`}
           >
             <ChevronRight
@@ -336,13 +336,13 @@ function UsageGroupRow({
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {isCredit ? (
-            <ArrowDownLeft size={14} className="text-green-600" />
+            <ArrowDownLeft size={14} className="text-success" />
           ) : (
-            <ArrowUpRight size={14} className="text-red-600" />
+            <ArrowUpRight size={14} className="text-destructive" />
           )}
           <span
             className={`font-semibold text-sm tabular-nums ${
-              isCredit ? "text-green-600" : "text-red-600"
+              isCredit ? "text-success" : "text-destructive"
             }`}
           >
             {isCredit ? "+" : "-"}
@@ -353,7 +353,7 @@ function UsageGroupRow({
 
       {/* Expanded children */}
       {expanded && (
-        <div className="ml-9 border-l border-border/30 pl-2">
+        <div className="ml-9 border-l border-border pl-2">
           {group.items.map((item) => (
             <UsageRow key={item.id} item={item} />
           ))}
@@ -402,9 +402,9 @@ export function BillingSettingsPanel() {
   };
 
   return (
-    <div className="grid max-w-[760px] gap-4">
+    <div className="grid gap-6">
       {showExpirationBanner ? (
-        <div className="flex items-center justify-between gap-3 rounded-[16px] border border-warning/30 bg-warning/10 px-4 py-3">
+        <div className="flex items-center justify-between gap-3 rounded-xl bg-warning/10 px-4 py-3 ring-1 ring-warning/30">
           <div className="flex min-w-0 items-center gap-2 text-sm text-warning">
             <AlertCircle size={16} className="shrink-0" />
             <span className="truncate">
@@ -422,20 +422,25 @@ export function BillingSettingsPanel() {
         </div>
       ) : null}
 
-      <BillingSummaryCard
-        overview={overview}
-        usage={usage}
-        links={links}
-        isLoading={isLoading}
-        error={error}
-        onRefresh={() => {
-          void refresh();
-        }}
-      />
+      <section>
+        <div className="text-base font-medium text-foreground">Plan</div>
+        <div className="mt-3">
+          <BillingSummaryCard
+            overview={overview}
+            usage={usage}
+            links={links}
+            isLoading={isLoading}
+            error={error}
+            onRefresh={() => {
+              void refresh();
+            }}
+          />
+        </div>
+      </section>
 
-      <section className="grid gap-2 rounded-[24px] border border-border/40 bg-card/40 px-4 py-3">
+      <section>
         <div className="flex items-center justify-between gap-2">
-          <div className="text-lg font-semibold text-foreground">
+          <div className="text-base font-medium text-foreground">
             Usage record
           </div>
           <Tooltip>
@@ -463,40 +468,47 @@ export function BillingSettingsPanel() {
           </Tooltip>
         </div>
 
-        <div className="divide-y divide-border/30">
+        <div className="mt-3 overflow-hidden rounded-xl bg-card ring-1 ring-border">
           {isLoading && groups.length === 0 ? (
             <div
               role="status"
               aria-busy="true"
               aria-label="Loading usage"
-              className="py-1"
+              className="px-4 py-2"
             >
-              {[80, 96, 64].map((w) => (
-                <div key={w} className="flex items-center gap-2.5 py-3">
-                  <span className="h-7 w-7 shrink-0 animate-pulse rounded-full bg-muted-foreground/20" />
-                  <div className="flex min-w-0 flex-1 flex-col gap-1">
-                    <span
-                      className="h-3 animate-pulse rounded bg-muted-foreground/20"
-                      style={{ width: `${w}%` }}
-                    />
-                    <span className="h-2.5 w-32 animate-pulse rounded bg-muted-foreground/20" />
+              {[80, 96, 64].map((w, idx) => (
+                <div key={w}>
+                  {idx > 0 ? <div className="h-px bg-border" /> : null}
+                  <div className="flex items-center gap-2.5 py-3">
+                    <span className="h-7 w-7 shrink-0 animate-pulse rounded-full bg-muted-foreground/20" />
+                    <div className="flex min-w-0 flex-1 flex-col gap-1">
+                      <span
+                        className="h-3 animate-pulse rounded bg-muted-foreground/20"
+                        style={{ width: `${w}%` }}
+                      />
+                      <span className="h-2.5 w-32 animate-pulse rounded bg-muted-foreground/20" />
+                    </div>
+                    <span className="h-3 w-10 shrink-0 animate-pulse rounded bg-muted-foreground/20" />
                   </div>
-                  <span className="h-3 w-10 shrink-0 animate-pulse rounded bg-muted-foreground/20" />
                 </div>
               ))}
             </div>
           ) : groups.length === 0 ? (
-            <div className="py-3 text-sm text-muted-foreground">
+            <div className="px-4 py-3 text-sm text-muted-foreground">
               No usage yet.
             </div>
           ) : (
-            groups.map((group) => (
-              <UsageGroupRow
-                key={group.key}
-                group={group}
-                expanded={expandedGroups.has(group.key)}
-                onToggle={() => toggleGroup(group.key)}
-              />
+            groups.map((group, idx) => (
+              <div key={group.key}>
+                {idx > 0 ? <div className="h-px bg-border" /> : null}
+                <div className="px-4">
+                  <UsageGroupRow
+                    group={group}
+                    expanded={expandedGroups.has(group.key)}
+                    onToggle={() => toggleGroup(group.key)}
+                  />
+                </div>
+              </div>
             ))
           )}
         </div>
