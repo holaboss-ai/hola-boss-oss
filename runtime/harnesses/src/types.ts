@@ -63,6 +63,8 @@ export type HarnessPromptLayerId =
   | "todo_continuity_policy"
   | "session_policy"
   | "capability_policy"
+  | "capability_tool_routing"
+  | "capability_availability_context"
   | "current_user_context"
   | "operator_surface_context"
   | "pending_user_memory"

@@ -52,6 +52,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     "response_delivery_policy",
     "session_policy",
     "capability_policy",
+    "capability_availability_context",
     "workspace_policy",
   ]);
   assert.deepEqual(prompt.promptSections.map((section) => section.channel), [
@@ -60,14 +61,16 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     "system_prompt",
     "system_prompt",
     "system_prompt",
+    "context_message",
     "system_prompt",
   ]);
-  assert.deepEqual(prompt.promptSections.map((section) => section.priority), [100, 200, 250, 300, 400, 600]);
+  assert.deepEqual(prompt.promptSections.map((section) => section.priority), [100, 200, 250, 300, 400, 450, 600]);
   assert.deepEqual(prompt.promptSections.map((section) => section.volatility), [
     "stable",
     "stable",
     "stable",
-    "run",
+    "workspace",
+    "workspace",
     "run",
     "workspace",
   ]);
@@ -76,6 +79,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     "base_runtime",
     "base_runtime",
     "session_policy",
+    "capability_policy",
     "capability_policy",
     "workspace_policy",
   ]);
@@ -163,19 +167,26 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   assert.doesNotMatch(prompt.systemPrompt, /Mutating capabilities available now:/);
   assert.doesNotMatch(prompt.systemPrompt, /Connected MCP tools available now:/);
   assert.doesNotMatch(prompt.systemPrompt, /Skills available now:/);
+  assert.doesNotMatch(prompt.systemPrompt, /Connected MCP access: available\./);
   assert.ok(prompt.systemPrompt.length < 4500);
-  assert.deepEqual(prompt.contextMessages, []);
+  assert.equal(prompt.contextMessages.length, 1);
+  assert.match(prompt.contextMessages.join("\n\n"), /Capability availability snapshot:/);
+  assert.match(prompt.contextMessages.join("\n\n"), /Inspect tools: available \(\d+ enabled\)\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Mutating tools: available \(\d+ enabled\)\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Workspace skills: available \(1 enabled\)\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Connected MCP access: available\./);
   assert.deepEqual(prompt.promptCacheProfile.cacheable_section_ids, [
     "runtime_core",
     "execution_policy",
     "response_delivery_policy",
-    "workspace_policy",
-  ]);
-  assert.deepEqual(prompt.promptCacheProfile.volatile_section_ids, [
     "session_policy",
     "capability_policy",
+    "workspace_policy",
   ]);
-  assert.deepEqual(prompt.promptCacheProfile.compatibility_context_ids, []);
+  assert.deepEqual(prompt.promptCacheProfile.volatile_section_ids, []);
+  assert.deepEqual(prompt.promptCacheProfile.compatibility_context_ids, [
+    "capability_availability_context",
+  ]);
   assert.deepEqual(prompt.promptCacheProfile.precedence_order, [
     "base_runtime",
     "session_policy",
@@ -242,11 +253,77 @@ test("composeBaseAgentPrompt includes shared todo continuity policy when todo to
     prompt.systemPrompt,
     /If the user's newest message clearly redirects to unrelated work, handle that new request first without marking the unfinished todo complete, then propose continuing it afterward\./
   );
-  assert.deepEqual(prompt.promptCacheProfile.volatile_section_ids, [
+  assert.deepEqual(prompt.promptCacheProfile.cacheable_section_ids, [
+    "runtime_core",
+    "execution_policy",
+    "response_delivery_policy",
     "session_policy",
     "todo_continuity_policy",
     "capability_policy",
   ]);
+  assert.deepEqual(prompt.promptCacheProfile.volatile_section_ids, []);
+});
+
+test("composeBaseAgentPrompt keeps the cacheable fingerprint stable across runtime-only context changes", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    harnessId: "pi",
+    sessionKind: "workspace_session",
+    defaultTools: ["read"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  const basePrompt = composeBaseAgentPrompt("", {
+    defaultTools: ["read"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    capabilityManifest,
+  });
+
+  const promptWithRuntimeContext = composeBaseAgentPrompt("", {
+    defaultTools: ["read"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    capabilityManifest,
+    operatorSurfaceContext: {
+      active_surface_id: "browser:user",
+      surfaces: [
+        {
+          surface_id: "browser:user",
+          surface_type: "browser",
+          owner: "user",
+          active: true,
+          mutability: "inspect_only",
+          summary: "User browser currently focused on the release dashboard.",
+        },
+      ],
+    },
+    pendingUserMemoryContext: {
+      entries: [
+        {
+          proposal_id: "proposal-1",
+          proposal_kind: "preference",
+          target_key: "response-style",
+          title: "Response style",
+          summary: "Prefer terse answers.",
+        },
+      ],
+    },
+  });
+
+  assert.equal(
+    basePrompt.promptCacheProfile.cacheable_fingerprint,
+    promptWithRuntimeContext.promptCacheProfile.cacheable_fingerprint,
+  );
+  assert.equal(basePrompt.systemPrompt, promptWithRuntimeContext.systemPrompt);
+  assert.notDeepEqual(basePrompt.contextMessages, promptWithRuntimeContext.contextMessages);
 });
 
 test("composeBaseAgentPrompt includes current user context when provided", () => {

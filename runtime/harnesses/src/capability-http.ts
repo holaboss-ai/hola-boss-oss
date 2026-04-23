@@ -2,6 +2,9 @@ import http from "node:http";
 import https from "node:https";
 
 export type CapabilityHttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
+export const TOOL_RESULT_MODE_HEADER = "x-holaboss-tool-result-mode";
+export const TOOL_RESULT_MODE_PREVIEW = "preview";
+const MAX_FORMATTED_CAPABILITY_RESULT_CHARS = 20_000;
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -111,9 +114,23 @@ export async function requestCapabilityJson(params: {
   };
 }
 
+export function withPreviewResultModeHeader(
+  headers: Record<string, string>,
+): Record<string, string> {
+  return {
+    ...headers,
+    [TOOL_RESULT_MODE_HEADER]: TOOL_RESULT_MODE_PREVIEW,
+  };
+}
+
 export function formatCapabilityToolResult(payload: unknown): string {
-  if (typeof payload === "string") {
-    return payload;
+  const serialized =
+    typeof payload === "string" ? payload : JSON.stringify(payload, null, 2);
+  if (serialized.length <= MAX_FORMATTED_CAPABILITY_RESULT_CHARS) {
+    return serialized;
   }
-  return JSON.stringify(payload, null, 2);
+  const clipped = serialized
+    .slice(0, MAX_FORMATTED_CAPABILITY_RESULT_CHARS)
+    .trimEnd();
+  return `${clipped}\n\n[output truncated for safety]`;
 }

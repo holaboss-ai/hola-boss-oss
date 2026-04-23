@@ -34,6 +34,7 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
     workspaceId: string;
     sessionId: string;
     browserSpace: string;
+    resultMode: string;
     body: string;
   }> = [];
   const fetchImpl: typeof fetch = async (input, init) => {
@@ -52,6 +53,9 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
       workspaceId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-workspace-id"] ?? ""),
       sessionId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-session-id"] ?? ""),
       browserSpace: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-browser-space"] ?? ""),
+      resultMode: String(
+        (init?.headers as Record<string, string> | undefined)?.["x-holaboss-tool-result-mode"] ?? ""
+      ),
       body,
     });
     if (url.endsWith("/api/v1/capabilities/browser/tools/browser_get_state")) {
@@ -90,7 +94,35 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
     String((getStateTool.parameters as { properties?: { include_screenshot?: { description?: string } } }).properties?.include_screenshot?.description ?? ""),
     /visual appearance, layout, overlays, charts, PDFs, or user-visible confirmation/i
   );
-  const result = await getStateTool.execute("call-1", { include_screenshot: true }, undefined, undefined, {} as never);
+  assert.ok(
+    (getStateTool.parameters as { properties?: Record<string, unknown> }).properties?.scope_selector
+  );
+  assert.ok(
+    (getStateTool.parameters as { properties?: Record<string, unknown> }).properties?.element_offset
+  );
+  assert.ok(
+    (getStateTool.parameters as { properties?: Record<string, unknown> }).properties?.element_limit
+  );
+  assert.ok(
+    (getStateTool.parameters as { properties?: Record<string, unknown> }).properties?.media_offset
+  );
+  assert.ok(
+    (getStateTool.parameters as { properties?: Record<string, unknown> }).properties?.media_limit
+  );
+  const result = await getStateTool.execute(
+    "call-1",
+    {
+      include_screenshot: true,
+      scope_selector: "#main",
+      element_offset: 40,
+      element_limit: 10,
+      media_offset: 5,
+      media_limit: 4,
+    },
+    undefined,
+    undefined,
+    {} as never
+  );
 
   assert.deepEqual(requests, [
       {
@@ -99,7 +131,15 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
         workspaceId: "workspace-1",
         sessionId: "session-1",
         browserSpace: "user",
-        body: JSON.stringify({ include_screenshot: true }),
+        resultMode: "preview",
+        body: JSON.stringify({
+          include_screenshot: true,
+          scope_selector: "#main",
+          element_offset: 40,
+          element_limit: 10,
+          media_offset: 5,
+          media_limit: 4,
+        }),
       },
     ]);
   assert.equal(result.content[0]?.type, "text");
@@ -108,7 +148,14 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
 });
 
 test("Pi desktop browser tools fall back to node http when no fetch implementation is provided", async () => {
-  const requests: Array<{ method: string; url: string; workspaceId: string; sessionId: string; body: string }> = [];
+  const requests: Array<{
+    method: string;
+    url: string;
+    workspaceId: string;
+    sessionId: string;
+    resultMode: string;
+    body: string;
+  }> = [];
   const server = http.createServer((request, response) => {
     const url = request.url ?? "";
     if (request.method === "GET" && url === "/api/v1/capabilities/browser") {
@@ -129,6 +176,7 @@ test("Pi desktop browser tools fall back to node http when no fetch implementati
           url,
           workspaceId: String(request.headers["x-holaboss-workspace-id"] ?? ""),
           sessionId: String(request.headers["x-holaboss-session-id"] ?? ""),
+          resultMode: String(request.headers["x-holaboss-tool-result-mode"] ?? ""),
           body,
         });
         response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
@@ -167,6 +215,7 @@ test("Pi desktop browser tools fall back to node http when no fetch implementati
         url: "/api/v1/capabilities/browser/tools/browser_get_state",
         workspaceId: "workspace-1",
         sessionId: "session-1",
+        resultMode: "preview",
         body: JSON.stringify({ include_screenshot: false }),
       },
     ]);

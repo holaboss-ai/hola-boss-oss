@@ -235,6 +235,18 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
             description: "Maximum number of context characters to request from the search backend.",
             minimum: 1,
           },
+          text_offset: {
+            type: "integer",
+            description:
+              "Optional character offset for paginating long web_search responses.",
+            minimum: 0,
+          },
+          text_limit: {
+            type: "integer",
+            description:
+              "Optional maximum number of characters to return in this page of web_search text.",
+            minimum: 1,
+          },
         },
         required: ["query"],
         additionalProperties: false,

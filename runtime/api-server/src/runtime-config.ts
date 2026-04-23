@@ -14,6 +14,10 @@ const HOLABOSS_RUNTIME_CONFIG_PATH_ENV = "HOLABOSS_RUNTIME_CONFIG_PATH";
 const HOLABOSS_DESKTOP_BROWSER_ENABLED_ENV = "HOLABOSS_DESKTOP_BROWSER_ENABLED";
 const HOLABOSS_DESKTOP_BROWSER_URL_ENV = "HOLABOSS_DESKTOP_BROWSER_URL";
 const HOLABOSS_DESKTOP_BROWSER_AUTH_TOKEN_ENV = "HOLABOSS_DESKTOP_BROWSER_AUTH_TOKEN";
+const HOLABOSS_DESKTOP_BROWSER_ALLOWED_DOMAINS_ENV = "HOLABOSS_DESKTOP_BROWSER_ALLOWED_DOMAINS";
+const HOLABOSS_DESKTOP_BROWSER_BLOCKED_ACTIONS_ENV = "HOLABOSS_DESKTOP_BROWSER_BLOCKED_ACTIONS";
+const HOLABOSS_DESKTOP_BROWSER_CONFIRM_ACTIONS_ENV = "HOLABOSS_DESKTOP_BROWSER_CONFIRM_ACTIONS";
+const HOLABOSS_DESKTOP_BROWSER_UNTRUSTED_BOUNDARIES_ENV = "HOLABOSS_DESKTOP_BROWSER_UNTRUSTED_BOUNDARIES";
 const HB_SANDBOX_ROOT_ENV = "HB_SANDBOX_ROOT";
 const SANDBOX_AGENT_HARNESS_ENV = "SANDBOX_AGENT_HARNESS";
 
@@ -35,6 +39,10 @@ export type ProductRuntimeConfig = {
   desktopBrowserEnabled: boolean;
   desktopBrowserUrl: string;
   desktopBrowserAuthToken: string;
+  desktopBrowserAllowedDomains?: string[];
+  desktopBrowserBlockedActions?: string[];
+  desktopBrowserConfirmActions?: string[];
+  desktopBrowserUntrustedBoundariesEnabled?: boolean;
   configPath: string;
   loadedFromFile: boolean;
 };
@@ -103,6 +111,39 @@ function normalizeBool(value: unknown): boolean | undefined {
     }
   }
   return undefined;
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    const result: string[] = [];
+    const seen = new Set<string>();
+    for (const entry of value) {
+      if (typeof entry !== "string") {
+        continue;
+      }
+      const normalized = entry.trim();
+      if (!normalized || seen.has(normalized)) {
+        continue;
+      }
+      seen.add(normalized);
+      result.push(normalized);
+    }
+    return result;
+  }
+  if (typeof value !== "string") {
+    return [];
+  }
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const part of value.split(",")) {
+    const normalized = part.trim();
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
 }
 
 function isRecord(value: unknown): value is StringMap {
@@ -181,6 +222,18 @@ function loadRuntimeConfigPayload(): {
   );
   const envDesktopBrowserUrl = firstEnvValue(HOLABOSS_DESKTOP_BROWSER_URL_ENV);
   const envDesktopBrowserAuthToken = firstEnvValue(HOLABOSS_DESKTOP_BROWSER_AUTH_TOKEN_ENV);
+  const envDesktopBrowserAllowedDomains = normalizeStringList(
+    firstEnvValue(HOLABOSS_DESKTOP_BROWSER_ALLOWED_DOMAINS_ENV),
+  );
+  const envDesktopBrowserBlockedActions = normalizeStringList(
+    firstEnvValue(HOLABOSS_DESKTOP_BROWSER_BLOCKED_ACTIONS_ENV),
+  );
+  const envDesktopBrowserConfirmActions = normalizeStringList(
+    firstEnvValue(HOLABOSS_DESKTOP_BROWSER_CONFIRM_ACTIONS_ENV),
+  );
+  const envDesktopBrowserUntrustedBoundariesEnabled = normalizeBool(
+    firstEnvValue(HOLABOSS_DESKTOP_BROWSER_UNTRUSTED_BOUNDARIES_ENV),
+  );
   const explicitDesktopBrowserEnabled = normalizeBool(desktopBrowserCapability.enabled);
   const desktopBrowserEnabled =
     envDesktopBrowserEnabled ??
@@ -192,6 +245,22 @@ function loadRuntimeConfigPayload(): {
     normalizeString(desktopBrowserCapability.mcp_url);
   const desktopBrowserAuthToken =
     envDesktopBrowserAuthToken || normalizeString(desktopBrowserCapability.auth_token);
+  const desktopBrowserAllowedDomains =
+    envDesktopBrowserAllowedDomains.length > 0
+      ? envDesktopBrowserAllowedDomains
+      : normalizeStringList(desktopBrowserCapability.allowed_domains);
+  const desktopBrowserBlockedActions =
+    envDesktopBrowserBlockedActions.length > 0
+      ? envDesktopBrowserBlockedActions
+      : normalizeStringList(desktopBrowserCapability.blocked_actions);
+  const desktopBrowserConfirmActions =
+    envDesktopBrowserConfirmActions.length > 0
+      ? envDesktopBrowserConfirmActions
+      : normalizeStringList(desktopBrowserCapability.confirm_actions);
+  const desktopBrowserUntrustedBoundariesEnabled =
+    envDesktopBrowserUntrustedBoundariesEnabled ??
+    normalizeBool(desktopBrowserCapability.untrusted_boundaries) ??
+    true;
   const runtimeMode =
     normalizeString(runtimePayload.mode) || (holabossEnabled ? "product" : DEFAULT_RUNTIME_MODE);
 
@@ -226,6 +295,17 @@ function loadRuntimeConfigPayload(): {
   if (desktopBrowserAuthToken) {
     payload.desktop_browser_auth_token = desktopBrowserAuthToken;
   }
+  if (desktopBrowserAllowedDomains.length > 0) {
+    payload.desktop_browser_allowed_domains = desktopBrowserAllowedDomains.join(",");
+  }
+  if (desktopBrowserBlockedActions.length > 0) {
+    payload.desktop_browser_blocked_actions = desktopBrowserBlockedActions.join(",");
+  }
+  if (desktopBrowserConfirmActions.length > 0) {
+    payload.desktop_browser_confirm_actions = desktopBrowserConfirmActions.join(",");
+  }
+  payload.desktop_browser_untrusted_boundaries =
+    desktopBrowserUntrustedBoundariesEnabled ? "true" : "false";
 
   return { payload, configPath, loadedFromFile };
 }
@@ -320,6 +400,11 @@ export function resolveProductRuntimeConfig(params?: {
     desktopBrowserEnabled: payload.desktop_browser_enabled === "true",
     desktopBrowserUrl: payload.desktop_browser_url || "",
     desktopBrowserAuthToken: payload.desktop_browser_auth_token || "",
+    desktopBrowserAllowedDomains: normalizeStringList(payload.desktop_browser_allowed_domains),
+    desktopBrowserBlockedActions: normalizeStringList(payload.desktop_browser_blocked_actions),
+    desktopBrowserConfirmActions: normalizeStringList(payload.desktop_browser_confirm_actions),
+    desktopBrowserUntrustedBoundariesEnabled:
+      normalizeBool(payload.desktop_browser_untrusted_boundaries) ?? true,
     configPath,
     loadedFromFile
   };
@@ -423,6 +508,18 @@ function assignOrRemove(target: StringMap, key: string, value: unknown): void {
   }
 }
 
+function assignStringListOrRemove(target: StringMap, key: string, value: unknown): void {
+  if (value === undefined || value === null) {
+    return;
+  }
+  const normalized = normalizeStringList(value);
+  if (normalized.length > 0) {
+    target[key] = normalized;
+    return;
+  }
+  delete target[key];
+}
+
 export function updateRuntimeConfigDocument(payload: Record<string, unknown>): ProductRuntimeConfig {
   const { document, configPath } = loadRuntimeConfigDocument();
   const runtimePayload = asObject(document.runtime);
@@ -451,6 +548,13 @@ export function updateRuntimeConfigDocument(payload: Record<string, unknown>): P
   assignOrRemove(legacyPayload, "default_model", payload.default_model);
   assignOrRemove(desktopBrowserCapability, "url", payload.desktop_browser_url);
   assignOrRemove(desktopBrowserCapability, "auth_token", payload.desktop_browser_auth_token);
+  assignStringListOrRemove(desktopBrowserCapability, "allowed_domains", payload.desktop_browser_allowed_domains);
+  assignStringListOrRemove(desktopBrowserCapability, "blocked_actions", payload.desktop_browser_blocked_actions);
+  assignStringListOrRemove(desktopBrowserCapability, "confirm_actions", payload.desktop_browser_confirm_actions);
+  const untrustedBoundaries = normalizeBool(payload.desktop_browser_untrusted_boundaries);
+  if (untrustedBoundaries !== undefined) {
+    desktopBrowserCapability.untrusted_boundaries = untrustedBoundaries;
+  }
   if (payload.desktop_browser_url !== undefined && payload.desktop_browser_url !== null) {
     delete desktopBrowserCapability.mcp_url;
   }

@@ -5,6 +5,7 @@ import {
   normalizeRuntimeApiBaseUrl,
   requestCapabilityJson,
   toolRequestSignal,
+  withPreviewResultModeHeader,
 } from "./capability-http.js";
 
 const RUNTIME_TOOLS_CAPABILITY_STATUS_PATH = "/api/v1/capabilities/runtime-tools";
@@ -160,6 +161,8 @@ function createWebSearchBody(toolParams: unknown): Record<string, unknown> {
     ...(typeof params.context_max_characters === "number"
       ? { context_max_characters: params.context_max_characters }
       : {}),
+    ...(typeof params.text_offset === "number" ? { text_offset: params.text_offset } : {}),
+    ...(typeof params.text_limit === "number" ? { text_limit: params.text_limit } : {}),
   };
 }
 
@@ -419,7 +422,7 @@ export async function executeRuntimeToolCapability(params: RuntimeToolCapability
   const response = await requestCapabilityJson({
     url: `${params.runtimeApiBaseUrl}${plan.requestPath}`,
     method: plan.method,
-    headers: {
+    headers: withPreviewResultModeHeader({
       "content-type": "application/json; charset=utf-8",
       ...runtimeToolHeaders({
         workspaceId: params.workspaceId,
@@ -427,7 +430,7 @@ export async function executeRuntimeToolCapability(params: RuntimeToolCapability
         inputId: params.inputId,
         selectedModel: params.selectedModel,
       }),
-    },
+    }),
     ...(plan.body && plan.method !== "GET" && plan.method !== "DELETE"
       ? { body: JSON.stringify(plan.body) }
       : {}),

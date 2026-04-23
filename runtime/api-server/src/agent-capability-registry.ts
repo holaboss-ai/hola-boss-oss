@@ -1242,7 +1242,9 @@ function summarizeAvailability(label: string, count: number): string {
   return `${label}: available (${count} enabled).`;
 }
 
-export function renderCapabilityPolicyPromptSection(manifest: AgentCapabilityManifest): string {
+export function renderCapabilityPolicyCorePromptSection(
+  manifest: AgentCapabilityManifest,
+): string {
   const lines = [
     "Capability policy for this run:",
     `Harness: ${manifest.context.harness_id ?? "unknown"}.`,
@@ -1250,37 +1252,71 @@ export function renderCapabilityPolicyPromptSection(manifest: AgentCapabilityMan
     "Use inspection capabilities to gather context before mutating workspace, app, browser, or runtime state whenever possible.",
     "After edits, shell commands, browser actions, MCP mutations, or runtime mutations, run a follow-up inspection or verification step before claiming success.",
     "Use coordination capabilities to track progress, consult available skills, or ask for clarification instead of keeping hidden state.",
-    "If a capability is not listed below, do not assume it is available in this run.",
-    summarizeAvailability("Inspect tools", manifest.inspect.length),
-    summarizeAvailability("Mutating tools", manifest.mutate.length),
-    summarizeAvailability("Coordination tools", manifest.coordinate.length),
+    "If a capability is not surfaced in the runtime context for this run, do not assume it is available.",
   ];
+  return lines.join("\n");
+}
 
-  lines.push(summarizeAvailability("Browser tools", manifest.browser_tools.length));
-  lines.push(summarizeAvailability("Runtime tools", manifest.runtime_tools.length));
-
+export function renderCapabilityToolRoutingPromptSection(
+  manifest: AgentCapabilityManifest,
+): string {
+  const lines: string[] = [];
+  const ensureHeading = () => {
+    if (lines.length === 0) {
+      lines.push("Capability routing addenda:");
+    }
+  };
   if (manifest.runtime_tools.some((capability) => capability.id === "holaboss_cronjobs_create")) {
+    ensureHeading();
     lines.push("Cronjob delivery routing: use `session_run` for recurring agent work such as running instructions, tasks, analysis, browsing, or writing.");
     lines.push("Use `system_notification` only for lightweight reminders or notifications where the primary outcome is a short message rather than agent execution.");
     lines.push("When creating or updating cronjobs, put the executable task in `instruction` and keep `description` as a short display summary only.");
     lines.push("Do not repeat schedule wording such as 'every 5 minutes' inside the cronjob `instruction` unless the task itself genuinely requires saying that phrase.");
   }
   if (manifest.runtime_tools.some((capability) => capability.id === "terminal_session_start")) {
+    ensureHeading();
     lines.push("Background terminal routing: prefer `terminal_session_start` for long-running, interactive, or revisitable shell work such as dev servers, watch mode, and background jobs.");
     lines.push("Prefer one-shot `bash` for short commands that should complete within the current tool call.");
     lines.push("After starting a background terminal, inspect it with `terminal_session_read` or `terminal_session_wait` before claiming success.");
   }
   if (manifest.runtime_tools.some((capability) => capability.id === "download_url")) {
+    ensureHeading();
     lines.push("Remote file transfer: prefer `download_url` when you already have a direct asset URL and need a saved workspace file instead of relying on browser-only downloads or ad hoc shell fetches.");
   }
-  lines.push(summarizeAvailability("Workspace commands", manifest.workspace_commands.length));
-  lines.push(summarizeAvailability("Workspace skills", manifest.workspace_skills.length));
+  return lines.join("\n");
+}
+
+export function renderCapabilityAvailabilityContextPromptSection(
+  manifest: AgentCapabilityManifest,
+): string {
+  const lines = [
+    "Capability availability snapshot:",
+    "Treat this as the currently surfaced capability set for this run. Availability may differ in later runs.",
+    summarizeAvailability("Inspect tools", manifest.inspect.length),
+    summarizeAvailability("Mutating tools", manifest.mutate.length),
+    summarizeAvailability("Coordination tools", manifest.coordinate.length),
+    summarizeAvailability("Browser tools", manifest.browser_tools.length),
+    summarizeAvailability("Runtime tools", manifest.runtime_tools.length),
+    summarizeAvailability("Workspace commands", manifest.workspace_commands.length),
+    summarizeAvailability("Workspace skills", manifest.workspace_skills.length),
+  ];
   if (manifest.mcp_tools.length > 0 || (manifest.context.mcp_server_ids?.length ?? 0) > 0) {
     lines.push("Connected MCP access: available.");
     lines.push("Use surfaced MCP tools when relevant; tool names may be resolved dynamically by the runtime.");
   } else {
     lines.push("Connected MCP access: none.");
   }
-
   return lines.join("\n");
+}
+
+export function renderCapabilityPolicyPromptSection(
+  manifest: AgentCapabilityManifest,
+): string {
+  return [
+    renderCapabilityPolicyCorePromptSection(manifest),
+    renderCapabilityToolRoutingPromptSection(manifest),
+    renderCapabilityAvailabilityContextPromptSection(manifest),
+  ]
+    .filter((section) => section.trim().length > 0)
+    .join("\n");
 }

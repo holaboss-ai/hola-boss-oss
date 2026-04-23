@@ -123,6 +123,8 @@ export interface RuntimeAgentToolsSearchWebParams {
   livecrawl?: string | null;
   type?: string | null;
   contextMaxCharacters?: number | null;
+  textOffset?: number | null;
+  textLimit?: number | null;
 }
 
 export interface RuntimeAgentToolsInvokeSkillParams {
@@ -828,12 +830,37 @@ function terminalSessionEventPayload(record: TerminalSessionEventRecord): JsonOb
 function terminalSessionReadPayload(params: {
   terminal: TerminalSessionRecord;
   events: TerminalSessionEventRecord[];
+  afterSequence: number;
+  limit: number;
   timedOut?: boolean;
 }): JsonObject {
+  const latestEventSequence = normalizedInteger(
+    params.terminal.lastEventSeq,
+    0,
+    0,
+    Number.MAX_SAFE_INTEGER,
+  );
+  let highestSequence = params.afterSequence;
+  for (const event of params.events) {
+    highestSequence = Math.max(
+      highestSequence,
+      normalizedInteger(event.sequence, 0, 0, Number.MAX_SAFE_INTEGER),
+    );
+  }
+  const hasMore = latestEventSequence > highestSequence;
+  const remainingEventCount = hasMore
+    ? Math.max(0, latestEventSequence - highestSequence)
+    : 0;
   return {
     terminal: terminalSessionPayload(params.terminal),
     events: params.events.map((event) => terminalSessionEventPayload(event)),
     count: params.events.length,
+    after_sequence: params.afterSequence,
+    limit: params.limit,
+    has_more: hasMore,
+    next_after_sequence: hasMore ? highestSequence : null,
+    remaining_event_count: remainingEventCount,
+    latest_event_sequence: latestEventSequence,
     timed_out: params.timedOut === true,
   };
 }
@@ -1340,10 +1367,22 @@ export class RuntimeAgentToolsService {
         type: params.type,
         contextMaxCharacters: params.contextMaxCharacters,
       });
+      const fullText = result.text;
+      const textOffset = normalizedInteger(params.textOffset, 0, 0, Number.MAX_SAFE_INTEGER);
+      const textLimit = normalizedInteger(params.textLimit, 12_000, 1, 200_000);
+      const start = Math.min(textOffset, fullText.length);
+      const end = Math.min(fullText.length, start + textLimit);
+      const windowText = fullText.slice(start, end);
+      const hasMore = end < fullText.length;
       return {
-        text: result.text,
+        text: windowText,
         provider: result.providerId,
         tool_id: "web_search",
+        text_offset: start,
+        text_limit: textLimit,
+        text_total_chars: fullText.length,
+        has_more: hasMore,
+        next_text_offset: hasMore ? end : null,
       };
     } catch (error) {
       throw new RuntimeAgentToolsServiceError(
@@ -1489,7 +1528,7 @@ export class RuntimeAgentToolsService {
       afterSequence,
       limit,
     });
-    return terminalSessionReadPayload({ terminal, events });
+    return terminalSessionReadPayload({ terminal, events, afterSequence, limit });
   }
 
   async waitTerminalSession(params: RuntimeAgentToolsWaitTerminalSessionParams): Promise<JsonObject> {
@@ -1505,7 +1544,13 @@ export class RuntimeAgentToolsService {
     });
     if (immediateEvents.length > 0 || !["starting", "running"].includes(initialTerminal.status)) {
       const terminal = this.requireTerminalSession(params);
-      return terminalSessionReadPayload({ terminal, events: immediateEvents, timedOut: false });
+      return terminalSessionReadPayload({
+        terminal,
+        events: immediateEvents,
+        afterSequence,
+        limit,
+        timedOut: false,
+      });
     }
 
     return await new Promise<JsonObject>((resolve) => {
@@ -1526,7 +1571,15 @@ export class RuntimeAgentToolsService {
           afterSequence,
           limit,
         });
-        resolve(terminalSessionReadPayload({ terminal, events, timedOut }));
+        resolve(
+          terminalSessionReadPayload({
+            terminal,
+            events,
+            afterSequence,
+            limit,
+            timedOut,
+          }),
+        );
       };
       const unsubscribe = manager.subscribe(initialTerminal.terminalId, (event) => {
         if (event.sequence > afterSequence) {
