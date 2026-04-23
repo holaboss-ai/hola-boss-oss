@@ -435,19 +435,19 @@ test("app shell uses the top toolbar for shell navigation and removes the left r
 
   assert.match(source, /type ShellView = "space";/);
   assert.match(source, /const \[activeShellView, setActiveShellView\] = useState<ShellView>\("space"\);/);
-  assert.match(source, /<SettingsDialog[\s\S]*onOpenAutomationRunSession=\{\(workspaceId, sessionId\) => \{/);
-  assert.match(source, /<SettingsDialog[\s\S]*onCreateAutomationSchedule=\{\(workspaceId\) => \{/);
-  assert.match(source, /<SettingsDialog[\s\S]*onEditAutomationSchedule=\{\(workspaceId, job\) => \{/);
-  assert.match(source, /setSettingsDialogOpen\(false\);[\s\S]*handleOpenAutomationRunSession\(sessionId, workspaceId\);/);
-  assert.match(source, /setSettingsDialogOpen\(false\);[\s\S]*handleCreateScheduleInChat\(workspaceId\);/);
-  assert.match(source, /setSettingsDialogOpen\(false\);[\s\S]*handleEditScheduleInChat\(job, workspaceId\);/);
+  assert.match(source, /handleOpenAutomationsPane = useCallback/);
+  assert.match(source, /setAgentView\(\{ type: "automations" \}\)/);
+  assert.match(source, /onOpenAutomations=\{handleOpenAutomationsPane\}/);
+  assert.match(source, /<AutomationsPane[\s\S]*onCreateSchedule=\{\(\) =>\s*handleCreateScheduleInChat\(selectedWorkspaceId\)/);
+  assert.doesNotMatch(source, /<SettingsDialog[\s\S]*onCreateAutomationSchedule/);
+  assert.doesNotMatch(source, /<SettingsDialog[\s\S]*onEditAutomationSchedule/);
+  assert.doesNotMatch(source, /<SettingsDialog[\s\S]*onOpenAutomationRunSession/);
   assert.doesNotMatch(source, /handleOpenMarketplace/);
   assert.doesNotMatch(source, /MarketplacePane/);
   assert.doesNotMatch(source, /activeShellView === "marketplace"/);
   assert.doesNotMatch(source, /handleOpenSpace = useCallback/);
   assert.doesNotMatch(source, /onOpenSpace=\{handleOpenSpace\}/);
   assert.doesNotMatch(source, /isSpaceActive=\{spaceMode\}/);
-  assert.doesNotMatch(source, /handleOpenAutomations/);
   assert.doesNotMatch(source, /activeShellView === "automations"/);
   assert.doesNotMatch(source, /LeftNavigationRail/);
 });
@@ -684,7 +684,7 @@ test("app shell can route new schedule creation into a prefilled workspace chat"
   assert.match(source, /const chatComposerPrefillRequestKeyRef = useRef\(0\);/);
   assert.match(source, /const nextChatSessionOpenRequestKey = useCallback\(\(\) => \{\s*chatSessionOpenRequestKeyRef\.current \+= 1;\s*return chatSessionOpenRequestKeyRef\.current;\s*\}, \[\]\);/);
   assert.match(source, /const nextChatComposerPrefillRequestKey = useCallback\(\(\) => \{\s*chatComposerPrefillRequestKeyRef\.current \+= 1;\s*return chatComposerPrefillRequestKeyRef\.current;\s*\}, \[\]\);/);
-  assert.match(source, /const handleCreateScheduleInChat = useCallback\(\(\s*workspaceId\?: string \| null\) => \{/);
+  assert.match(source, /const handleCreateScheduleInChat = useCallback\(\s*\(workspaceId\?: string \| null\) => \{/);
   assert.match(source, /const normalizedWorkspaceId =\s*workspaceId\?\.trim\(\) \|\| selectedWorkspaceId\?\.trim\(\) \|\| "";/);
   assert.match(source, /if \(normalizedWorkspaceId !== \(selectedWorkspaceId\?\.trim\(\) \|\| ""\)\) \{\s*setSelectedWorkspaceId\(normalizedWorkspaceId\);\s*\}/);
   assert.match(source, /setActiveShellView\("space"\);/);
@@ -695,21 +695,19 @@ test("app shell can route new schedule creation into a prefilled workspace chat"
   assert.match(source, /setChatComposerPrefillRequest\(\{\s*text: "Create a cronjob for ",\s*requestKey: nextChatComposerPrefillRequestKey\(\),\s*mode: "replace",\s*\}\);/);
   assert.match(source, /composerPrefillRequest=\{chatComposerPrefillRequest\}/);
   assert.match(source, /onComposerPrefillConsumed=\{handleChatComposerPrefillConsumed\}/);
-  assert.match(source, /onCreateAutomationSchedule=\{\(workspaceId\) => \{/);
-  assert.match(source, /handleCreateScheduleInChat\(workspaceId\);/);
+  assert.match(source, /<AutomationsPane[\s\S]*onCreateSchedule=\{\(\) =>\s*handleCreateScheduleInChat\(selectedWorkspaceId\)/);
 });
 
 test("app shell can route schedule edits into a prefilled workspace chat", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /const handleEditScheduleInChat = useCallback\(\(\s*job: CronjobRecordPayload,\s*workspaceId\?: string \| null,\s*\) => \{/);
+  assert.match(source, /const handleEditScheduleInChat = useCallback\(\s*\(\s*job: CronjobRecordPayload,\s*workspaceId\?: string \| null,?\s*\) => \{/);
   assert.match(source, /const jobName =\s*job\.name\?\.trim\(\) \|\| job\.description\?\.trim\(\) \|\| "Untitled schedule";/);
-  assert.match(source, /const instruction = job\.instruction\?\.trim\(\) \|\| job\.description\?\.trim\(\) \|\| "";/);
+  assert.match(source, /const instruction =\s*job\.instruction\?\.trim\(\) \|\| job\.description\?\.trim\(\) \|\| "";/);
   assert.match(source, /Edit cronjob "\$\{jobName\}" \(id: \$\{job\.id\}\)\. Current cron: \$\{job\.cron\}\./);
   assert.match(source, /Current instruction: \$\{instruction\}\\n\\nUpdate it to:/);
   assert.match(source, /mode: "replace"/);
-  assert.match(source, /onEditAutomationSchedule=\{\(workspaceId, job\) => \{/);
-  assert.match(source, /handleEditScheduleInChat\(job, workspaceId\);/);
+  assert.match(source, /<AutomationsPane[\s\S]*onEditSchedule=\{\(job\) =>\s*handleEditScheduleInChat\(job, selectedWorkspaceId\)/);
 });
 
 test("app shell can route explorer references into chat attachments or text prefills", async () => {
