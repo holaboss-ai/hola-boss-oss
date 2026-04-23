@@ -52,6 +52,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     "response_delivery_policy",
     "session_policy",
     "capability_policy",
+    "capability_availability_context",
     "workspace_policy",
   ]);
   assert.deepEqual(prompt.promptSections.map((section) => section.channel), [
@@ -60,14 +61,16 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     "system_prompt",
     "system_prompt",
     "system_prompt",
+    "context_message",
     "system_prompt",
   ]);
-  assert.deepEqual(prompt.promptSections.map((section) => section.priority), [100, 200, 250, 300, 400, 600]);
+  assert.deepEqual(prompt.promptSections.map((section) => section.priority), [100, 200, 250, 300, 400, 450, 600]);
   assert.deepEqual(prompt.promptSections.map((section) => section.volatility), [
     "stable",
     "stable",
     "stable",
-    "run",
+    "workspace",
+    "workspace",
     "run",
     "workspace",
   ]);
@@ -76,6 +79,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     "base_runtime",
     "base_runtime",
     "session_policy",
+    "capability_policy",
     "capability_policy",
     "workspace_policy",
   ]);
@@ -163,19 +167,26 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   assert.doesNotMatch(prompt.systemPrompt, /Mutating capabilities available now:/);
   assert.doesNotMatch(prompt.systemPrompt, /Connected MCP tools available now:/);
   assert.doesNotMatch(prompt.systemPrompt, /Skills available now:/);
+  assert.doesNotMatch(prompt.systemPrompt, /Connected MCP access: available\./);
   assert.ok(prompt.systemPrompt.length < 4500);
-  assert.deepEqual(prompt.contextMessages, []);
+  assert.equal(prompt.contextMessages.length, 1);
+  assert.match(prompt.contextMessages.join("\n\n"), /Capability availability snapshot:/);
+  assert.match(prompt.contextMessages.join("\n\n"), /Inspect tools: available \(\d+ enabled\)\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Mutating tools: available \(\d+ enabled\)\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Workspace skills: available \(1 enabled\)\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Connected MCP access: available\./);
   assert.deepEqual(prompt.promptCacheProfile.cacheable_section_ids, [
     "runtime_core",
     "execution_policy",
     "response_delivery_policy",
-    "workspace_policy",
-  ]);
-  assert.deepEqual(prompt.promptCacheProfile.volatile_section_ids, [
     "session_policy",
     "capability_policy",
+    "workspace_policy",
   ]);
-  assert.deepEqual(prompt.promptCacheProfile.compatibility_context_ids, []);
+  assert.deepEqual(prompt.promptCacheProfile.volatile_section_ids, []);
+  assert.deepEqual(prompt.promptCacheProfile.compatibility_context_ids, [
+    "capability_availability_context",
+  ]);
   assert.deepEqual(prompt.promptCacheProfile.precedence_order, [
     "base_runtime",
     "session_policy",
@@ -242,11 +253,163 @@ test("composeBaseAgentPrompt includes shared todo continuity policy when todo to
     prompt.systemPrompt,
     /If the user's newest message clearly redirects to unrelated work, handle that new request first without marking the unfinished todo complete, then propose continuing it afterward\./
   );
-  assert.deepEqual(prompt.promptCacheProfile.volatile_section_ids, [
+  assert.deepEqual(prompt.promptCacheProfile.cacheable_section_ids, [
+    "runtime_core",
+    "execution_policy",
+    "response_delivery_policy",
     "session_policy",
     "todo_continuity_policy",
     "capability_policy",
   ]);
+  assert.deepEqual(prompt.promptCacheProfile.volatile_section_ids, []);
+});
+
+test("composeBaseAgentPrompt promotes scratchpad as working memory even before a scratchpad file exists", () => {
+  const defaultTools = ["read", "todoread", "todowrite", "holaboss_scratchpad_read", "holaboss_scratchpad_write"];
+  const capabilityManifest = buildAgentCapabilityManifest({
+    runtimeToolIds: ["todoread", "todowrite", "holaboss_scratchpad_read", "holaboss_scratchpad_write"],
+    defaultTools,
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  const prompt = composeBaseAgentPrompt("", {
+    defaultTools,
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    capabilityManifest,
+  });
+
+  assert.match(
+    prompt.systemPrompt,
+    /When a task becomes multi-step, evidence-heavy, or long-running, create or update the session scratchpad early and keep the current working state there\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Use `todowrite` for task structure and status only; use the scratchpad for verified findings, interim evidence, candidate lists, open questions, and compacted current state\./
+  );
+  assert.ok(prompt.promptSections.some((section) => section.id === "scratchpad_context"));
+  assert.equal(
+    prompt.promptSections.find((section) => section.id === "scratchpad_context")?.channel,
+    "context_message"
+  );
+  assert.match(
+    prompt.contextMessages.join("\n"),
+    /A session-scoped scratchpad is available for this session, but no scratchpad file exists yet\./
+  );
+  assert.match(
+    prompt.contextMessages.join("\n"),
+    /Do not use `todowrite` as a substitute for scratchpad notes; todo state is for task coordination, not evidence or long-form working memory\./
+  );
+  assert.ok(prompt.promptCacheProfile.context_message_ids.includes("scratchpad_context"));
+  assert.ok(prompt.promptCacheProfile.compatibility_context_ids.includes("scratchpad_context"));
+});
+
+test("composeBaseAgentPrompt exposes existing scratchpad metadata without collapsing it into todo state", () => {
+  const defaultTools = ["read", "todoread", "todowrite", "holaboss_scratchpad_read", "holaboss_scratchpad_write"];
+  const capabilityManifest = buildAgentCapabilityManifest({
+    runtimeToolIds: ["todoread", "todowrite", "holaboss_scratchpad_read", "holaboss_scratchpad_write"],
+    defaultTools,
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  const prompt = composeBaseAgentPrompt("", {
+    defaultTools,
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    capabilityManifest,
+    scratchpadContext: {
+      exists: true,
+      file_path: ".holaboss/scratchpads/session-main.md",
+      updated_at: "2026-04-23T15:00:00.000Z",
+      size_bytes: 128,
+      preview: "- verified finding\n- open question",
+    },
+  });
+
+  const scratchpadMessage = prompt.contextMessages.join("\n");
+  assert.match(scratchpadMessage, /A session-scoped scratchpad file already exists for this session\./);
+  assert.match(
+    scratchpadMessage,
+    /Use the scratchpad as the session's working memory for multi-step execution, interim findings, open questions, candidate lists, and compacted current state\./
+  );
+  assert.match(scratchpadMessage, /Path: `\.holaboss\/scratchpads\/session-main\.md`\./);
+  assert.match(scratchpadMessage, /Preview: - verified finding/);
+  assert.match(
+    scratchpadMessage,
+    /Do not use `todowrite` as a substitute for scratchpad notes; todo state is for task coordination, not evidence or long-form working memory\./
+  );
+});
+
+test("composeBaseAgentPrompt keeps the cacheable fingerprint stable across runtime-only context changes", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    harnessId: "pi",
+    sessionKind: "workspace_session",
+    defaultTools: ["read"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  const basePrompt = composeBaseAgentPrompt("", {
+    defaultTools: ["read"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    capabilityManifest,
+  });
+
+  const promptWithRuntimeContext = composeBaseAgentPrompt("", {
+    defaultTools: ["read"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    capabilityManifest,
+    operatorSurfaceContext: {
+      active_surface_id: "browser:user",
+      surfaces: [
+        {
+          surface_id: "browser:user",
+          surface_type: "browser",
+          owner: "user",
+          active: true,
+          mutability: "inspect_only",
+          summary: "User browser currently focused on the release dashboard.",
+        },
+      ],
+    },
+    pendingUserMemoryContext: {
+      entries: [
+        {
+          proposal_id: "proposal-1",
+          proposal_kind: "preference",
+          target_key: "response-style",
+          title: "Response style",
+          summary: "Prefer terse answers.",
+        },
+      ],
+    },
+  });
+
+  assert.equal(
+    basePrompt.promptCacheProfile.cacheable_fingerprint,
+    promptWithRuntimeContext.promptCacheProfile.cacheable_fingerprint,
+  );
+  assert.equal(basePrompt.systemPrompt, promptWithRuntimeContext.systemPrompt);
+  assert.notDeepEqual(basePrompt.contextMessages, promptWithRuntimeContext.contextMessages);
 });
 
 test("composeBaseAgentPrompt includes current user context when provided", () => {

@@ -988,6 +988,20 @@ test("chat pane renders run-scoped memory proposal cards with accept dismiss and
   assert.match(source, /Edit memory proposal/);
 });
 
+test("chat pane surfaces context-budget diagnostics from terminal event payloads", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /function contextBudgetDetails\(/);
+  assert.match(source, /Prompt lanes trimmed/);
+  assert.doesNotMatch(source, /Tool replay clipped/);
+  assert.match(source, /Retrieval-only continuity mode/);
+  assert.match(source, /Checkpoint compaction queued/);
+  assert.match(
+    source,
+    /if \(budgetDetails\.length > 0\) \{\s*return \{\s*id: "phase:context-budget",[\s\S]*title: "Context budget"/,
+  );
+});
+
 test("view all artifacts modal sorts artifacts newest first", async () => {
   const source = await readFile(sourcePath, "utf8");
 

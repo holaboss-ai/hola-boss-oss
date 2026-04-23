@@ -194,7 +194,7 @@ export interface TurnResultRecord {
   capabilityManifestFingerprint: string | null;
   requestSnapshotFingerprint: string | null;
   promptCacheProfile: Record<string, unknown> | null;
-  compactedSummary: string | null;
+  contextBudgetDecisions: Record<string, unknown> | null;
   tokenUsage: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
@@ -2702,7 +2702,7 @@ export class RuntimeStateStore {
     capabilityManifestFingerprint?: string | null;
     requestSnapshotFingerprint?: string | null;
     promptCacheProfile?: Record<string, unknown> | null;
-    compactedSummary?: string | null;
+    contextBudgetDecisions?: Record<string, unknown> | null;
     tokenUsage?: Record<string, unknown> | null;
     createdAt?: string;
     updatedAt?: string;
@@ -2735,7 +2735,7 @@ export class RuntimeStateStore {
             capability_manifest_fingerprint,
             request_snapshot_fingerprint,
             prompt_cache_profile,
-            compacted_summary,
+            context_budget_decisions,
             token_usage,
             created_at,
             updated_at
@@ -2754,7 +2754,7 @@ export class RuntimeStateStore {
             capability_manifest_fingerprint = excluded.capability_manifest_fingerprint,
             request_snapshot_fingerprint = excluded.request_snapshot_fingerprint,
             prompt_cache_profile = excluded.prompt_cache_profile,
-            compacted_summary = excluded.compacted_summary,
+            context_budget_decisions = excluded.context_budget_decisions,
             token_usage = excluded.token_usage,
             updated_at = excluded.updated_at
       `)
@@ -2773,7 +2773,9 @@ export class RuntimeStateStore {
         params.capabilityManifestFingerprint ?? null,
         params.requestSnapshotFingerprint ?? null,
         params.promptCacheProfile ? JSON.stringify(params.promptCacheProfile) : null,
-        params.compactedSummary ?? null,
+        params.contextBudgetDecisions
+          ? JSON.stringify(params.contextBudgetDecisions)
+          : null,
         params.tokenUsage ? JSON.stringify(params.tokenUsage) : null,
         createdAt,
         now
@@ -4955,7 +4957,7 @@ export class RuntimeStateStore {
           capability_manifest_fingerprint TEXT,
           request_snapshot_fingerprint TEXT,
           prompt_cache_profile TEXT,
-          compacted_summary TEXT,
+          context_budget_decisions TEXT,
           token_usage TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
@@ -5638,9 +5640,9 @@ export class RuntimeStateStore {
     }
   }
 
-  private rebuildTurnResultsWithoutCompactionBoundary(db: Database.Database): void {
+  private rebuildTurnResultsWithoutLegacyColumns(db: Database.Database): void {
     db.exec(`
-      ALTER TABLE turn_results RENAME TO turn_results_legacy_with_compaction_boundary;
+      ALTER TABLE turn_results RENAME TO turn_results_legacy_with_removed_columns;
 
       CREATE TABLE turn_results (
           input_id TEXT PRIMARY KEY,
@@ -5657,7 +5659,7 @@ export class RuntimeStateStore {
           capability_manifest_fingerprint TEXT,
           request_snapshot_fingerprint TEXT,
           prompt_cache_profile TEXT,
-          compacted_summary TEXT,
+          context_budget_decisions TEXT,
           token_usage TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
@@ -5678,7 +5680,7 @@ export class RuntimeStateStore {
           capability_manifest_fingerprint,
           request_snapshot_fingerprint,
           prompt_cache_profile,
-          compacted_summary,
+          context_budget_decisions,
           token_usage,
           created_at,
           updated_at
@@ -5698,13 +5700,13 @@ export class RuntimeStateStore {
           capability_manifest_fingerprint,
           request_snapshot_fingerprint,
           prompt_cache_profile,
-          compacted_summary,
+          NULL AS context_budget_decisions,
           token_usage,
           created_at,
           updated_at
-      FROM turn_results_legacy_with_compaction_boundary;
+      FROM turn_results_legacy_with_removed_columns;
 
-      DROP TABLE turn_results_legacy_with_compaction_boundary;
+      DROP TABLE turn_results_legacy_with_removed_columns;
 
       CREATE INDEX IF NOT EXISTS idx_turn_results_workspace_session_completed
           ON turn_results (workspace_id, session_id, completed_at DESC, started_at DESC);
@@ -5731,8 +5733,11 @@ export class RuntimeStateStore {
       if (!columns.has("prompt_cache_profile")) {
         db.exec("ALTER TABLE turn_results ADD COLUMN prompt_cache_profile TEXT;");
       }
-      if (columns.has("compaction_boundary_id")) {
-        this.rebuildTurnResultsWithoutCompactionBoundary(db);
+      if (!columns.has("context_budget_decisions")) {
+        db.exec("ALTER TABLE turn_results ADD COLUMN context_budget_decisions TEXT;");
+      }
+      if (columns.has("compaction_boundary_id") || columns.has("compacted_summary")) {
+        this.rebuildTurnResultsWithoutLegacyColumns(db);
       }
     }
     if (tableNames.has("compaction_boundaries")) {
@@ -6314,7 +6319,10 @@ export class RuntimeStateStore {
       requestSnapshotFingerprint:
         row.request_snapshot_fingerprint == null ? null : String(row.request_snapshot_fingerprint),
       promptCacheProfile: row.prompt_cache_profile == null ? null : this.parseJsonObjectOrMessage(row.prompt_cache_profile),
-      compactedSummary: row.compacted_summary == null ? null : String(row.compacted_summary),
+      contextBudgetDecisions:
+        row.context_budget_decisions == null
+          ? null
+          : this.parseJsonObjectOrMessage(row.context_budget_decisions),
       tokenUsage: row.token_usage == null ? null : this.parseJsonObjectOrMessage(row.token_usage),
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),

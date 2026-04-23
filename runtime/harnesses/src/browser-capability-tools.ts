@@ -13,6 +13,7 @@ export interface HarnessDesktopBrowserToolOptions {
   runtimeApiBaseUrl: string;
   workspaceId?: string | null;
   sessionId?: string | null;
+  inputId?: string | null;
   space?: "agent" | "user" | null;
   fetchImpl?: typeof fetch;
 }
@@ -51,6 +52,11 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
             description: "The URL to open in the in-app browser.",
             minLength: 1,
           },
+          confirm: {
+            type: "boolean",
+            description:
+              "Set true when the runtime browser safety policy requires explicit confirmation for this action category.",
+          },
         },
         required: ["url"],
         additionalProperties: false,
@@ -68,8 +74,88 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
             type: "boolean",
             description: "Open the tab without switching focus.",
           },
+          confirm: {
+            type: "boolean",
+            description:
+              "Set true when the runtime browser safety policy requires explicit confirmation for this action category.",
+          },
         },
         required: ["url"],
+        additionalProperties: false,
+      };
+    case "browser_wait_for_selector":
+      return {
+        type: "object",
+        properties: {
+          selector: {
+            type: "string",
+            description: "CSS selector to wait for.",
+            minLength: 1,
+          },
+          state: literalStringUnion(
+            ["present", "visible", "hidden"],
+            "Selector wait mode.",
+          ),
+          timeout_ms: {
+            type: "integer",
+            description: "Maximum wait time in milliseconds.",
+            minimum: 1,
+          },
+          interval_ms: {
+            type: "integer",
+            description: "Polling interval in milliseconds.",
+            minimum: 1,
+          },
+        },
+        required: ["selector"],
+        additionalProperties: false,
+      };
+    case "browser_wait_for_url":
+      return {
+        type: "object",
+        properties: {
+          url: {
+            type: "string",
+            description: "Expected URL token or pattern.",
+            minLength: 1,
+          },
+          mode: literalStringUnion(
+            ["exact", "contains", "regex"],
+            "URL matching mode.",
+          ),
+          timeout_ms: {
+            type: "integer",
+            description: "Maximum wait time in milliseconds.",
+            minimum: 1,
+          },
+          interval_ms: {
+            type: "integer",
+            description: "Polling interval in milliseconds.",
+            minimum: 1,
+          },
+        },
+        required: ["url"],
+        additionalProperties: false,
+      };
+    case "browser_wait_for_load_state":
+      return {
+        type: "object",
+        properties: {
+          state: literalStringUnion(
+            ["domcontentloaded", "load", "networkidle"],
+            "Load state to wait for.",
+          ),
+          timeout_ms: {
+            type: "integer",
+            description: "Maximum wait time in milliseconds.",
+            minimum: 1,
+          },
+          interval_ms: {
+            type: "integer",
+            description: "Polling interval in milliseconds.",
+            minimum: 1,
+          },
+        },
         additionalProperties: false,
       };
     case "browser_get_state":
@@ -86,6 +172,49 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
             description:
               "Include a page screenshot when visual appearance, layout, overlays, charts, PDFs, or user-visible confirmation matter, or when DOM signals are ambiguous.",
           },
+          scope_selector: {
+            type: "string",
+            description:
+              "Optional CSS selector to scope extraction to a page subtree. Useful for dense pages where only one region is relevant.",
+            minLength: 1,
+          },
+          element_offset: {
+            type: "integer",
+            description:
+              "Zero-based offset into the full interactive-element list for paged browsing.",
+            minimum: 0,
+          },
+          element_limit: {
+            type: "integer",
+            description:
+              "Maximum interactive elements to return for this call. Use with element_offset for continuation.",
+            minimum: 1,
+          },
+          media_offset: {
+            type: "integer",
+            description:
+              "Zero-based offset into the full visible-media list for paged browsing.",
+            minimum: 0,
+          },
+          media_limit: {
+            type: "integer",
+            description:
+              "Maximum media entries to return for this call. Use with media_offset for continuation.",
+            minimum: 1,
+          },
+        },
+        additionalProperties: false,
+      };
+    case "browser_extract_facts":
+      return {
+        type: "object",
+        properties: {
+          scope_selector: {
+            type: "string",
+            description:
+              "Optional CSS selector to scope fact extraction to a relevant page subtree before extracting headings, claims, links, and numeric facts.",
+            minLength: 1,
+          },
         },
         additionalProperties: false,
       };
@@ -97,6 +226,11 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
             type: "integer",
             description: "Interactive element index from browser_get_state.",
             minimum: 1,
+          },
+          confirm: {
+            type: "boolean",
+            description:
+              "Set true when the runtime browser safety policy requires explicit confirmation for this action category.",
           },
         },
         required: ["index"],
@@ -115,6 +249,11 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
             ["element", "media"],
             "Target list to use for the index. Use `media` for visible images or other media items.",
           ),
+          confirm: {
+            type: "boolean",
+            description:
+              "Set true when the runtime browser safety policy requires explicit confirmation for this action category.",
+          },
         },
         required: ["index"],
         additionalProperties: false,
@@ -140,6 +279,11 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
             type: "boolean",
             description: "Submit after typing, typically by pressing Enter.",
           },
+          confirm: {
+            type: "boolean",
+            description:
+              "Set true when the runtime browser safety policy requires explicit confirmation for this action category.",
+          },
         },
         required: ["index", "text"],
         additionalProperties: false,
@@ -152,6 +296,11 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
             type: "string",
             description: "Keyboard key to press.",
             minLength: 1,
+          },
+          confirm: {
+            type: "boolean",
+            description:
+              "Set true when the runtime browser safety policy requires explicit confirmation for this action category.",
           },
         },
         required: ["key"],
@@ -170,6 +319,11 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
           delta_y: {
             type: "integer",
             description: "Raw vertical scroll delta.",
+          },
+          confirm: {
+            type: "boolean",
+            description:
+              "Set true when the runtime browser safety policy requires explicit confirmation for this action category.",
           },
         },
         additionalProperties: false,
@@ -194,7 +348,16 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
     case "browser_list_tabs":
       return {
         type: "object",
-        properties: {},
+        properties:
+          toolId === "browser_list_tabs"
+            ? {}
+            : {
+                confirm: {
+                  type: "boolean",
+                  description:
+                    "Set true when the runtime browser safety policy requires explicit confirmation for this action category.",
+                },
+              },
         additionalProperties: false,
       };
   }
@@ -217,6 +380,7 @@ export function createHarnessDesktopBrowserToolDefinition(
         runtimeApiBaseUrl: options.runtimeApiBaseUrl,
         workspaceId: options.workspaceId,
         sessionId: options.sessionId,
+        inputId: options.inputId,
         space: options.space,
         fetchImpl: options.fetchImpl,
         signal,
@@ -237,6 +401,7 @@ export async function resolveHarnessDesktopBrowserToolDefinitions(
     runtimeApiBaseUrl?: string | null;
     workspaceId?: string | null;
     sessionId?: string | null;
+    inputId?: string | null;
     space?: "agent" | "user" | null;
     fetchImpl?: typeof fetch;
   } = {},
@@ -263,6 +428,7 @@ export async function resolveHarnessDesktopBrowserToolDefinitions(
     runtimeApiBaseUrl,
     workspaceId: options.workspaceId,
     sessionId: options.sessionId,
+    inputId: options.inputId,
     space: options.space,
     fetchImpl: options.fetchImpl,
   });

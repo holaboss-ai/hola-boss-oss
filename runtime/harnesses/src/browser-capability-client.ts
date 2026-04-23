@@ -1,10 +1,12 @@
 import type { DesktopBrowserToolId } from "./desktop-browser-tools.js";
 import {
+  capabilityReplayBudgetKey,
   formatCapabilityToolResult,
   isRecord,
   normalizeRuntimeApiBaseUrl,
   requestCapabilityJson,
   toolRequestSignal,
+  withPreviewResultModeHeader,
 } from "./capability-http.js";
 
 const BROWSER_CAPABILITY_STATUS_PATH = "/api/v1/capabilities/browser";
@@ -15,6 +17,7 @@ export interface BrowserCapabilityClientOptions {
   runtimeApiBaseUrl: string;
   workspaceId?: string | null;
   sessionId?: string | null;
+  inputId?: string | null;
   space?: "agent" | "user" | null;
   fetchImpl?: typeof fetch;
 }
@@ -74,15 +77,18 @@ export async function executeBrowserCapabilityTool(params: BrowserCapabilityClie
   signal?: AbortSignal;
 }): Promise<{
   content: Array<{ type: "text"; text: string }>;
-  details: { tool_id: DesktopBrowserToolId };
+  details: {
+    tool_id: DesktopBrowserToolId;
+    replay_budget?: Record<string, unknown>;
+  };
 }> {
   const response = await requestCapabilityJson({
     url: capabilityToolUrl(params.runtimeApiBaseUrl, params.toolId),
     method: "POST",
-    headers: {
+    headers: withPreviewResultModeHeader({
       "content-type": "application/json; charset=utf-8",
       ...browserCapabilityHeaders(params.workspaceId, params.sessionId, params.space),
-    },
+    }),
     body: JSON.stringify(isRecord(params.toolParams) ? params.toolParams : {}),
     signal: toolRequestSignal(params.signal, DEFAULT_BROWSER_TOOL_TIMEOUT_MS),
     fetchImpl: params.fetchImpl,
@@ -93,10 +99,33 @@ export async function executeBrowserCapabilityTool(params: BrowserCapabilityClie
       : `Holaboss browser tool '${params.toolId}' failed.`;
     throw new Error(message);
   }
+  const formatted = formatCapabilityToolResult({
+    payload: response.payload,
+    toolId: params.toolId,
+    replayBudgetKey: capabilityReplayBudgetKey({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      inputId: params.inputId,
+    }),
+  });
   return {
-    content: [{ type: "text", text: formatCapabilityToolResult(response.payload) }],
-    details: {
-      tool_id: params.toolId,
-    },
+    content: [{ type: "text", text: formatted.text }],
+    details: formatted.replayBudgetDecision?.trimmed
+      ? {
+          tool_id: params.toolId,
+          replay_budget: {
+            mode: formatted.replayBudgetDecision.mode,
+            trimmed: formatted.replayBudgetDecision.trimmed,
+            trim_reason: formatted.replayBudgetDecision.trimReason,
+            replay_chars: formatted.replayBudgetDecision.replayChars,
+            total_replay_chars: formatted.replayBudgetDecision.totalReplayChars,
+            max_replay_chars: formatted.replayBudgetDecision.maxReplayChars,
+            total_replay_items: formatted.replayBudgetDecision.totalReplayItems,
+            max_replay_items: formatted.replayBudgetDecision.maxReplayItems,
+          },
+        }
+      : {
+          tool_id: params.toolId,
+        },
   };
 }

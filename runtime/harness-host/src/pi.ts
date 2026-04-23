@@ -1393,6 +1393,7 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
         runtimeApiBaseUrl: request.runtime_api_base_url,
         workspaceId: request.workspace_id,
         sessionId: request.session_id,
+        inputId: request.input_id,
         space: request.browser_space ?? undefined,
       })
     : [];

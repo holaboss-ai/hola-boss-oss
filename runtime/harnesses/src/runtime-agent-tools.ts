@@ -66,19 +66,19 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS = [
   {
     id: "todowrite",
     description:
-      "Update the current phased todo plan for the current workspace session. Valid `op` values are exactly `replace`, `add_phase`, `add_task`, `update`, and `remove_task`.",
+      "Update the current phased todo plan for the current workspace session. Use it for task coordination, not working notes or evidence. Valid `op` values are exactly `replace`, `add_phase`, `add_task`, `update`, and `remove_task`.",
     policy: "coordinate"
   },
   {
     id: "holaboss_scratchpad_read",
     description:
-      "Read the current session scratchpad stored in the workspace-local runtime folder.",
+      "Read the current session scratchpad stored in the workspace-local runtime folder for working notes and compacted current state.",
     policy: "inspect"
   },
   {
     id: "holaboss_scratchpad_write",
     description:
-      "Append to, replace, or clear the current session scratchpad stored in the workspace-local runtime folder.",
+      "Append to, replace, or clear the current session scratchpad stored in the workspace-local runtime folder for working notes, evidence, and compacted current state.",
     policy: "mutate"
   },
   {

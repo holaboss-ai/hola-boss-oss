@@ -2488,6 +2488,38 @@ function toolTraceStepFromEvent(
   );
 }
 
+function contextBudgetDetails(
+  payload: Record<string, unknown>,
+): string[] {
+  const decisions = isRecord(payload.context_budget_decisions)
+    ? payload.context_budget_decisions
+    : null;
+  if (!decisions) {
+    return [];
+  }
+  const pressureStage =
+    typeof decisions.pressure_stage === "string"
+      ? decisions.pressure_stage.trim().toLowerCase()
+      : "";
+  const details: string[] = [];
+  if (pressureStage === "trim_prompt_lanes") {
+    details.push("Prompt lanes trimmed");
+  }
+  if (
+    decisions.retrieval_clipped === true ||
+    pressureStage === "retrieval_only"
+  ) {
+    details.push("Retrieval-only continuity mode");
+  }
+  if (
+    decisions.checkpoint_queued === true ||
+    pressureStage === "queue_checkpoint"
+  ) {
+    details.push("Checkpoint compaction queued");
+  }
+  return details;
+}
+
 function phaseTraceStepFromEvent(
   eventType: string,
   payload: Record<string, unknown>,
@@ -2648,7 +2680,10 @@ function phaseTraceStepFromEvent(
       kind: "phase",
       title: "Waiting for your input",
       status: "waiting",
-      details: ["The agent needs a follow-up answer before it can continue."],
+      details: [
+        "The agent needs a follow-up answer before it can continue.",
+        ...contextBudgetDetails(payload),
+      ],
       order,
     };
   }
@@ -2658,13 +2693,17 @@ function phaseTraceStepFromEvent(
       typeof payload.status === "string"
         ? payload.status.trim().toLowerCase()
         : "";
+    const budgetDetails = contextBudgetDetails(payload);
     if (status === "waiting_user") {
       return {
         id: "phase:awaiting-user",
         kind: "phase",
         title: "Waiting for your input",
         status: "waiting",
-        details: ["The agent needs a follow-up answer before it can continue."],
+        details: [
+          "The agent needs a follow-up answer before it can continue.",
+          ...budgetDetails,
+        ],
         order,
       };
     }
@@ -2676,13 +2715,25 @@ function phaseTraceStepFromEvent(
         status: "waiting",
         details: [
           "The run was paused before completion and can be continued in a later turn.",
+          ...budgetDetails,
         ],
+        order,
+      };
+    }
+    if (budgetDetails.length > 0) {
+      return {
+        id: "phase:context-budget",
+        kind: "phase",
+        title: "Context budget",
+        status: "completed",
+        details: budgetDetails,
         order,
       };
     }
   }
 
   if (eventType === "run_failed") {
+    details.push(...contextBudgetDetails(payload));
     const errorText = runFailedDetail(payload);
     if (errorText) {
       details.push(`Error: ${summarizeUnknown(errorText, 120)}`);

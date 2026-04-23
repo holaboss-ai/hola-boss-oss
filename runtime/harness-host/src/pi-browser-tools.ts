@@ -28,6 +28,7 @@ export async function resolvePiDesktopBrowserToolDefinitions(
     runtimeApiBaseUrl?: string | null;
     workspaceId?: string | null;
     sessionId?: string | null;
+    inputId?: string | null;
     space?: "agent" | "user" | null;
     fetchImpl?: typeof fetch;
   } = {},

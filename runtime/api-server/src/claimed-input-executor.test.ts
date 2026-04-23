@@ -298,7 +298,6 @@ test("claimed input persists runner events, assistant text, and idle state on su
   assert.equal(turnResult.status, "completed");
   assert.equal(turnResult.stopReason, "ok");
   assert.equal(turnResult.assistantText, "Hello from TS");
-  assert.equal(turnResult.compactedSummary, null);
   assert.deepEqual(turnResult.promptSectionIds, [
     "runtime_core",
     "execution_policy",
@@ -350,6 +349,155 @@ test("claimed input persists runner events, assistant text, and idle state on su
   });
   const snapshot = store.getTurnRequestSnapshot({ inputId: queued.inputId });
   assert.equal(snapshot, null);
+
+  store.close();
+});
+
+test("claimed input persists context-budget telemetry from replay clipping and checkpoint queueing", async () => {
+  const store = makeStore("hb-claimed-input-context-budget-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "summarize this run" },
+  });
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    executeRunnerRequestFn: async (_payload, options = {}) => {
+      await options.onEvent?.({
+        session_id: "session-main",
+        input_id: queued.inputId,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {
+          instruction_preview: "summarize this run",
+          prompt_section_ids: ["runtime_core"],
+          prompt_cache_profile: {
+            cacheable_section_ids: ["runtime_core"],
+            volatile_section_ids: [],
+          },
+        },
+      });
+      await options.onEvent?.({
+        session_id: "session-main",
+        input_id: queued.inputId,
+        sequence: 2,
+        event_type: "tool_call",
+        payload: {
+          phase: "completed",
+          tool_name: "web_search",
+          tool_id: "web_search",
+          call_id: "call-1",
+          error: false,
+          result: {
+            content: [
+              {
+                type: "text",
+                text: "{\"note\":\"Inline replay omitted because the per-turn replay budget was exhausted.\"}",
+              },
+            ],
+            details: {
+              tool_id: "web_search",
+              replay_budget: {
+                mode: "reference_only",
+                trimmed: true,
+                trim_reason: "max_replay_chars",
+                replay_chars: 25000,
+                total_replay_chars: 24000,
+                max_replay_chars: 24000,
+                total_replay_items: 2,
+                max_replay_items: 8,
+              },
+            },
+          },
+        },
+      });
+      await options.onEvent?.({
+        session_id: "session-main",
+        input_id: queued.inputId,
+        sequence: 3,
+        event_type: "run_completed",
+        payload: {
+          status: "ok",
+          usage: { input_tokens: 20, output_tokens: 10 },
+          context_usage: { tokens: 99000, context_window: 100000 },
+          harness_session_id: path.join(
+            store.workspaceDir(workspace.id),
+            "pi-session.json",
+          ),
+        },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        aborted: false,
+        sawTerminal: true,
+        abortReason: null,
+      };
+    },
+    enqueueSessionCheckpointJobFn: () =>
+      ({
+        jobId: 1,
+        jobType: "session_checkpoint",
+        workspaceId: workspace.id,
+        sessionId: "session-main",
+        inputId: queued.inputId,
+        status: "QUEUED",
+        attempts: 0,
+        priority: 10,
+        payload: {},
+        idempotencyKey: "checkpoint-1",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        claimedBy: null,
+        claimedUntil: null,
+        startedAt: null,
+        completedAt: null,
+        lastError: null,
+      }) as never,
+    runEvolveTasksFn: async () => {},
+  });
+
+  const turnResult = store.getTurnResult({ inputId: queued.inputId });
+  const events = store.listOutputEvents({
+    sessionId: "session-main",
+    inputId: queued.inputId,
+  });
+  const terminalEvent = events.at(-1);
+
+  assert.ok(turnResult);
+  assert.deepEqual(turnResult.contextBudgetDecisions, {
+    pressure_stage: "queue_checkpoint",
+    lane_decisions: [],
+    prompt_cache_stable_candidate: true,
+    tool_replay_trimmed: true,
+    retrieval_clipped: false,
+    checkpoint_queued: true,
+  });
+  assert.equal(terminalEvent?.eventType, "run_completed");
+  assert.deepEqual(terminalEvent?.payload.context_budget_decisions, {
+    pressure_stage: "queue_checkpoint",
+    lane_decisions: [],
+    prompt_cache_stable_candidate: true,
+    tool_replay_trimmed: true,
+    retrieval_clipped: false,
+    checkpoint_queued: true,
+  });
 
   store.close();
 });
@@ -633,6 +781,14 @@ test("claimed input persists a paused turn when the run is aborted mid-execution
     status: "paused",
     stop_reason: "paused",
     message: "Run paused by user request",
+    context_budget_decisions: {
+      pressure_stage: "normal",
+      lane_decisions: [],
+      prompt_cache_stable_candidate: false,
+      tool_replay_trimmed: false,
+      retrieval_clipped: false,
+      checkpoint_queued: false,
+    },
   });
   assert.ok(turnResult);
   assert.equal(turnResult.status, "paused");
@@ -1888,6 +2044,14 @@ test("claimed input relays tool, output, and terminal run events for backend-own
     usage: { input_tokens: 12, output_tokens: 34, total_tokens: 46 },
     final_output_text: "Opened Bing.",
     source: "runner",
+    context_budget_decisions: {
+      pressure_stage: "normal",
+      lane_decisions: [],
+      prompt_cache_stable_candidate: false,
+      tool_replay_trimmed: false,
+      retrieval_clipped: false,
+      checkpoint_queued: false,
+    },
   });
 
   store.close();
@@ -2085,6 +2249,14 @@ test("claimed input relays skill invocations, coalesced output, and waiting-user
     usage: { input_tokens: 18, output_tokens: 7, total_tokens: 25 },
     final_output_text: "Need approval.",
     source: "runner",
+    context_budget_decisions: {
+      pressure_stage: "normal",
+      lane_decisions: [],
+      prompt_cache_stable_candidate: false,
+      tool_replay_trimmed: false,
+      retrieval_clipped: false,
+      checkpoint_queued: false,
+    },
   });
 
   store.close();

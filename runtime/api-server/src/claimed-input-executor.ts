@@ -818,6 +818,58 @@ function stopReasonForTerminalEvent(params: {
   return null;
 }
 
+function promptCacheStableCandidate(
+  profile: Record<string, unknown> | null,
+): boolean {
+  if (!isRecord(profile) || !Array.isArray(profile.cacheable_section_ids)) {
+    return false;
+  }
+  return profile.cacheable_section_ids.some(
+    (value) => typeof value === "string" && value.trim(),
+  );
+}
+
+function toolReplayTrimmedFromToolResult(result: unknown): boolean {
+  if (!isRecord(result) || !isRecord(result.details)) {
+    return false;
+  }
+  const replayBudget = isRecord(result.details.replay_budget)
+    ? result.details.replay_budget
+    : null;
+  if (!replayBudget) {
+    return false;
+  }
+  if (replayBudget.trimmed === true) {
+    return true;
+  }
+  return nonEmptyString(replayBudget.mode) === "reference_only";
+}
+
+function buildContextBudgetDecisions(params: {
+  promptCacheProfile: Record<string, unknown> | null;
+  toolReplayTrimmed: boolean;
+  retrievalClipped?: boolean;
+  checkpointQueued: boolean;
+}): Record<string, unknown> {
+  const retrievalClipped = params.retrievalClipped === true;
+  return {
+    pressure_stage: params.checkpointQueued
+      ? "queue_checkpoint"
+      : retrievalClipped
+        ? "retrieval_only"
+        : params.toolReplayTrimmed
+          ? "trim_replay"
+          : "normal",
+    lane_decisions: [],
+    prompt_cache_stable_candidate: promptCacheStableCandidate(
+      params.promptCacheProfile,
+    ),
+    tool_replay_trimmed: params.toolReplayTrimmed,
+    retrieval_clipped: retrievalClipped,
+    checkpoint_queued: params.checkpointQueued,
+  };
+}
+
 function permissionDenialFromEventPayload(
   payload: Record<string, unknown>,
 ): Record<string, unknown> | null {
@@ -1274,6 +1326,7 @@ function persistTurnResult(params: {
   capabilityManifestFingerprint: string | null;
   requestSnapshotFingerprint: string | null;
   promptCacheProfile: Record<string, unknown> | null;
+  contextBudgetDecisions: Record<string, unknown> | null;
   tokenUsage: Record<string, unknown> | null;
 }): TurnResultRecord {
   return params.store.upsertTurnResult({
@@ -1298,7 +1351,7 @@ function persistTurnResult(params: {
     capabilityManifestFingerprint: params.capabilityManifestFingerprint,
     requestSnapshotFingerprint: params.requestSnapshotFingerprint,
     promptCacheProfile: params.promptCacheProfile,
-    compactedSummary: null,
+    contextBudgetDecisions: params.contextBudgetDecisions,
     tokenUsage: params.tokenUsage,
   });
 }
@@ -1482,6 +1535,7 @@ export async function processClaimedInput(params: {
       capabilityManifestFingerprint: null,
       requestSnapshotFingerprint: null,
       promptCacheProfile: null,
+      contextBudgetDecisions: null,
       tokenUsage: null,
     });
     return;
@@ -1798,6 +1852,7 @@ export async function processClaimedInput(params: {
     let capabilityManifestFingerprint: string | null = null;
     let requestSnapshotFingerprint: string | null = null;
     let promptCacheProfile: Record<string, unknown> | null = null;
+    let toolReplayTrimmed = false;
     const toolCallsById = new Map<
       string,
       {
@@ -2045,6 +2100,11 @@ export async function processClaimedInput(params: {
               completed,
               error: errored,
             });
+            if (eventPayload.phase === "completed") {
+              toolReplayTrimmed =
+                toolReplayTrimmed ||
+                toolReplayTrimmedFromToolResult(eventPayload.result);
+            }
             const denial = permissionDenialFromEventPayload(eventPayload);
             if (denial) {
               permissionDenials.push(denial);
@@ -2467,6 +2527,36 @@ export async function processClaimedInput(params: {
       }
 
       const assistantText = assistantParts.join("").trim();
+      const toolUsageSummary = summarizeToolCalls(
+        toolCallsById,
+        skillInvocationsById,
+        wideningAudit,
+      );
+      const checkpointHarness =
+        store.getWorkspace(record.workspaceId)?.harness ??
+        normalizeHarnessId(priorExecContext.harness) ??
+        "pi";
+      const checkpointJob = enqueueCheckpointJob({
+        store,
+        workspaceId: record.workspaceId,
+        sessionId: record.sessionId,
+        inputId: record.inputId,
+        harness: checkpointHarness,
+        harnessSessionId:
+          checkpointHarnessSessionId ||
+          (store.getBinding({
+            workspaceId: record.workspaceId,
+            sessionId: record.sessionId,
+          })?.harnessSessionId ??
+            null),
+        contextUsage,
+        wakeWorker: params.wakeDurableMemoryWorker ?? null,
+      });
+      const contextBudgetDecisions = buildContextBudgetDecisions({
+        promptCacheProfile,
+        toolReplayTrimmed,
+        checkpointQueued: Boolean(checkpointJob),
+      });
       const terminalEventToRelay = persistedTerminalEvent
         ? {
             eventType: persistedTerminalEvent.eventType,
@@ -2519,16 +2609,13 @@ export async function processClaimedInput(params: {
         terminalStatus,
         stopReason,
         assistantText,
-        toolUsageSummary: summarizeToolCalls(
-          toolCallsById,
-          skillInvocationsById,
-          wideningAudit,
-        ),
+        toolUsageSummary,
         permissionDenials,
         promptSectionIds,
         capabilityManifestFingerprint,
         requestSnapshotFingerprint,
         promptCacheProfile,
+        contextBudgetDecisions,
         tokenUsage,
       });
       try {
@@ -2548,6 +2635,7 @@ export async function processClaimedInput(params: {
       ) {
         const relayPayload: Record<string, unknown> = {
           ...terminalEventToRelay.payload,
+          context_budget_decisions: contextBudgetDecisions,
         };
         if (assistantText) {
           relayPayload.final_output_text = assistantText;
@@ -2578,6 +2666,8 @@ export async function processClaimedInput(params: {
         });
       }
       if (deferredTerminalEvent) {
+        deferredTerminalEvent.payload.context_budget_decisions =
+          contextBudgetDecisions;
         lastSequence = appendNextOutputEvent({
           store,
           record,
@@ -2596,26 +2686,6 @@ export async function processClaimedInput(params: {
         modelContext: memoryWritebackModelContext,
         wakeDurableMemoryWorker: params.wakeDurableMemoryWorker ?? null,
         onTaskError: params.onEvolveTaskError,
-      });
-      const checkpointHarness =
-        store.getWorkspace(record.workspaceId)?.harness ??
-        normalizeHarnessId(priorExecContext.harness) ??
-        "pi";
-      enqueueCheckpointJob({
-        store,
-        workspaceId: record.workspaceId,
-        sessionId: record.sessionId,
-        inputId: record.inputId,
-        harness: checkpointHarness,
-        harnessSessionId:
-          checkpointHarnessSessionId ||
-          (store.getBinding({
-            workspaceId: record.workspaceId,
-            sessionId: record.sessionId,
-          })?.harnessSessionId ??
-            null),
-        contextUsage,
-        wakeWorker: params.wakeDurableMemoryWorker ?? null,
       });
       maybeCreateCronjobCompletionNotification({
         store,
@@ -2642,7 +2712,14 @@ export async function processClaimedInput(params: {
         inputId: record.inputId,
         sequence: Math.max(0, lastSequence) + 1,
         eventType: "run_failed",
-        payload: { message },
+        payload: {
+          message,
+          context_budget_decisions: buildContextBudgetDecisions({
+            promptCacheProfile,
+            toolReplayTrimmed,
+            checkpointQueued: false,
+          }),
+        },
       });
       store.updateRuntimeState({
         workspaceId: record.workspaceId,
@@ -2668,6 +2745,11 @@ export async function processClaimedInput(params: {
         capabilityManifestFingerprint: null,
         requestSnapshotFingerprint: null,
         promptCacheProfile: null,
+        contextBudgetDecisions: buildContextBudgetDecisions({
+          promptCacheProfile,
+          toolReplayTrimmed,
+          checkpointQueued: false,
+        }),
         tokenUsage: null,
       });
       await (params.runEvolveTasksFn ?? runEvolveTasks)({

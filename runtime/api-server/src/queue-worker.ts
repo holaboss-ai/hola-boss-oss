@@ -569,7 +569,6 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
       capabilityManifestFingerprint: null,
       requestSnapshotFingerprint: null,
       promptCacheProfile: null,
-      compactedSummary: null,
       tokenUsage: null,
     });
   }

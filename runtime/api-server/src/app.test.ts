@@ -303,6 +303,116 @@ test("browser capability routes proxy to the browser tool service", async () => 
   store.close();
 });
 
+test("browser capability preview mode spills screenshot data and trims browser_get_state lanes", async () => {
+  const root = makeTempDir("hb-runtime-api-browser-preview-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  fs.mkdirSync(path.join(workspaceRoot, "workspace-1"), { recursive: true });
+
+  const browserToolService = {
+    async getStatus() {
+      return { available: true, tools: [{ id: "browser_get_state" }] };
+    },
+    async execute() {
+      return {
+        ok: true,
+        page: { url: "https://example.com", title: "Example" },
+        state: {
+          text: "a".repeat(2400),
+          elements: Array.from({ length: 28 }, (_, index) => ({
+            index: index + 1,
+            text: `element ${index + 1}`,
+          })),
+          media: Array.from({ length: 14 }, (_, index) => ({
+            index: index + 1,
+            label: `media ${index + 1}`,
+          })),
+        },
+        screenshot: {
+          mimeType: "image/png",
+          width: 1,
+          height: 1,
+          base64: Buffer.from("preview-image", "utf8").toString("base64"),
+        },
+      };
+    },
+  };
+  const app = buildTestRuntimeApiServer({ store, browserToolService });
+
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/browser/tools/browser_get_state",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+        "x-holaboss-session-id": "session-main",
+        "x-holaboss-tool-result-mode": "preview",
+      },
+      payload: { include_screenshot: true },
+    });
+    assert.equal(response.statusCode, 200);
+    const body = response.json();
+    assert.equal(body.state.elements.length, 20);
+    assert.equal(body.state.media.length, 12);
+    assert.equal(body.state.elements_offset, 0);
+    assert.equal(body.state.elements_total, 28);
+    assert.equal(body.state.elements_has_more, true);
+    assert.equal(body.state.next_elements_offset, 20);
+    assert.equal(body.state.media_offset, 0);
+    assert.equal(body.state.media_total, 14);
+    assert.equal(body.state.media_has_more, true);
+    assert.equal(body.state.next_media_offset, 12);
+    assert.equal(String(body.state.text ?? "").includes("[truncated]"), true);
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(body.screenshot, "base64"),
+      false,
+    );
+    assert.match(
+      String(body.screenshot.file_path ?? ""),
+      /^\.holaboss\/tool-results\/browser_get_state\/session-main\//,
+    );
+    assert.equal(body._preview.mode, "preview");
+    assert.equal(body._preview.truncated, true);
+    assert.equal(body._preview.spilled, true);
+    assert.match(
+      String(body.full_state_path ?? ""),
+      /^\.holaboss\/tool-results\/browser_get_state\/session-main\//,
+    );
+    assert.equal(
+      fs.existsSync(
+        path.join(
+          workspaceRoot,
+          "workspace-1",
+          String(body.screenshot.file_path ?? ""),
+        ),
+      ),
+      true,
+    );
+    assert.equal(
+      fs.existsSync(
+        path.join(
+          workspaceRoot,
+          "workspace-1",
+          String(body.full_state_path ?? ""),
+        ),
+      ),
+      true,
+    );
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
 test("terminal session routes proxy to the terminal session manager", async () => {
   const root = makeTempDir("hb-runtime-api-terminal-sessions-");
   const store = new RuntimeStateStore({
@@ -699,6 +809,76 @@ test("runtime tools capability routes expose local onboarding and cronjob action
   store.close();
 });
 
+test("runtime web search capability supports paged text windows", async () => {
+  const root = makeTempDir("hb-runtime-api-web-search-window-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+  const originalFetch = globalThis.fetch;
+  const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+  globalThis.fetch = (async (input, init) => {
+    const payload = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    requests.push({ url: String(input), body: payload });
+    return new Response(
+      [
+        "event: message",
+        'data: {"result":{"content":[{"type":"text","text":"abcdefghijklmnopqrstuvwxyz"}]},"jsonrpc":"2.0","id":1}',
+        "",
+      ].join("\n"),
+      {
+        status: 200,
+        headers: { "content-type": "text/event-stream; charset=utf-8" },
+      }
+    );
+  }) as typeof fetch;
+
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/web-search",
+      payload: {
+        query: "alphabet",
+        num_results: 2,
+        text_offset: 5,
+        text_limit: 7,
+      }
+    });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), {
+      text: "fghijkl",
+      provider: "exa_hosted_mcp",
+      tool_id: "web_search",
+      text_offset: 5,
+      text_limit: 7,
+      text_total_chars: 26,
+      has_more: true,
+      next_text_offset: 12,
+    });
+    assert.equal(requests[0]?.url, "https://mcp.exa.ai/mcp");
+    assert.deepEqual(requests[0]?.body, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "web_search_exa",
+        arguments: {
+          query: "alphabet",
+          numResults: 2,
+          livecrawl: "fallback",
+          type: "auto",
+        },
+      },
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    await app.close();
+    store.close();
+  }
+});
+
 test("runtime skill tool resolves a workspace skill through shared runtime state", async () => {
   const root = makeTempDir("hb-runtime-api-skill-tool-");
   const workspaceRoot = path.join(root, "workspace");
@@ -927,6 +1107,54 @@ test("runtime todo tools read, write, and block session todo state", async () =>
   }
 });
 
+test("runtime scratchpad preview mode clips oversized inline content", async () => {
+  const root = makeTempDir("hb-runtime-api-scratchpad-preview-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = path.join(workspaceRoot, "workspace-1");
+  const scratchpadPath = path.join(
+    workspaceDir,
+    ".holaboss",
+    "scratchpads",
+    "session-main.md",
+  );
+  fs.mkdirSync(path.dirname(scratchpadPath), { recursive: true });
+  fs.writeFileSync(scratchpadPath, `${"x".repeat(24000)}\n`, "utf8");
+
+  const app = buildTestRuntimeApiServer({ store });
+  try {
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/capabilities/runtime-tools/scratchpad",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+        "x-holaboss-session-id": "session-main",
+        "x-holaboss-tool-result-mode": "preview",
+      },
+    });
+    assert.equal(response.statusCode, 200);
+    const body = response.json();
+    assert.equal(typeof body.content, "string");
+    assert.equal(body.content_truncated, true);
+    assert.equal(String(body.content_preview ?? "").includes("[truncated]"), true);
+    assert.equal(body.source_file_path, ".holaboss/scratchpads/session-main.md");
+    assert.equal(body._preview.mode, "preview");
+    assert.equal(body._preview.truncated, true);
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
 test("runtime terminal session tools proxy terminal session manager operations", async () => {
   const root = makeTempDir("hb-runtime-api-runtime-terminal-tools-");
   const store = new RuntimeStateStore({
@@ -1094,6 +1322,12 @@ test("runtime terminal session tools proxy terminal session manager operations",
   assert.equal(readResponse.statusCode, 200);
   assert.equal(readResponse.json().count, 1);
   assert.equal(readResponse.json().events[0].event_type, "started");
+  assert.equal(readResponse.json().after_sequence, 0);
+  assert.equal(readResponse.json().limit, 200);
+  assert.equal(readResponse.json().has_more, false);
+  assert.equal(readResponse.json().next_after_sequence, null);
+  assert.equal(readResponse.json().remaining_event_count, 0);
+  assert.equal(readResponse.json().latest_event_sequence, 1);
 
   const waitPromise = app.inject({
     method: "POST",
@@ -1129,6 +1363,12 @@ test("runtime terminal session tools proxy terminal session manager operations",
   assert.equal(waitResponse.statusCode, 200);
   assert.equal(waitResponse.json().timed_out, false);
   assert.equal(waitResponse.json().events[0].event_type, "output");
+  assert.equal(waitResponse.json().after_sequence, 1);
+  assert.equal(waitResponse.json().limit, 200);
+  assert.equal(waitResponse.json().has_more, false);
+  assert.equal(waitResponse.json().next_after_sequence, null);
+  assert.equal(waitResponse.json().remaining_event_count, 0);
+  assert.equal(waitResponse.json().latest_event_sequence, 2);
 
   const inputResponse = await app.inject({
     method: "POST",
@@ -1169,6 +1409,118 @@ test("runtime terminal session tools proxy terminal session manager operations",
 
   await app.close();
   store.close();
+});
+
+test("runtime terminal read preview mode clips large event streams and spills full events", async () => {
+  const root = makeTempDir("hb-runtime-api-runtime-terminal-preview-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  fs.mkdirSync(path.join(workspaceRoot, "workspace-1"), { recursive: true });
+
+  const session = {
+    terminalId: "term-1",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    title: "Background task",
+    backend: "node_pty",
+    owner: "agent",
+    status: "running",
+    cwd: path.join(workspaceRoot, "workspace-1"),
+    shell: "/bin/bash",
+    command: "npm run dev",
+    exitCode: null,
+    lastEventSeq: 55,
+    createdBy: "runtime_tool",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    startedAt: "2026-01-01T00:00:00.000Z",
+    lastActivityAt: "2026-01-01T00:00:00.000Z",
+    endedAt: null,
+    metadata: { origin_type: "runtime_tool" },
+  };
+  const events = Array.from({ length: 55 }, (_, index) => ({
+    id: index + 1,
+    terminalId: "term-1",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    sequence: index + 1,
+    eventType: "output",
+    payload: { text: `line-${index + 1}:${"x".repeat(900)}` },
+    createdAt: "2026-01-01T00:00:00.000Z",
+  }));
+
+  const terminalSessionManager: any = {
+    async start() {},
+    async close() {},
+    getSession(params: { terminalId: string; workspaceId?: string }) {
+      if (params.terminalId !== session.terminalId) {
+        return null;
+      }
+      if (params.workspaceId && params.workspaceId !== session.workspaceId) {
+        return null;
+      }
+      return session;
+    },
+    listEvents(params: { terminalId: string; afterSequence?: number; limit?: number }) {
+      return events
+        .filter((event) => event.terminalId === params.terminalId && event.sequence > (params.afterSequence ?? 0))
+        .slice(0, params.limit ?? events.length);
+    },
+    subscribe() {
+      return () => {};
+    },
+  };
+
+  const app = buildTestRuntimeApiServer({ store, terminalSessionManager });
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/terminal-sessions/term-1/read",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+        "x-holaboss-session-id": "session-main",
+        "x-holaboss-tool-result-mode": "preview",
+      },
+      payload: {
+        after_sequence: 0,
+        limit: 200,
+      },
+    });
+    assert.equal(response.statusCode, 200);
+    const body = response.json();
+    assert.equal(body.events.length, 40);
+    assert.equal(body.count, 40);
+    assert.equal(body.total_event_count, 55);
+    assert.equal(body.has_more, true);
+    assert.equal(body.next_after_sequence, 40);
+    assert.equal(body.remaining_event_count, 15);
+    assert.equal(body.latest_event_sequence, 55);
+    assert.equal(body._preview.mode, "preview");
+    assert.equal(body._preview.truncated, true);
+    assert.equal(body._preview.spilled, true);
+    assert.match(
+      String(body.full_events_path ?? ""),
+      /^\.holaboss\/tool-results\/terminal_session_read\/session-main\//,
+    );
+    assert.equal(
+      fs.existsSync(
+        path.join(workspaceRoot, "workspace-1", String(body.full_events_path ?? "")),
+      ),
+      true,
+    );
+  } finally {
+    await app.close();
+    store.close();
+  }
 });
 
 test("runtime write_report tool writes a markdown report and persists it as a session output", async () => {
@@ -2807,7 +3159,14 @@ test("runtime states and history endpoints read TS state store", async () => {
       cacheable_section_ids: ["runtime_core"],
       volatile_section_ids: ["execution_policy"],
     },
-    compactedSummary: null,
+    contextBudgetDecisions: {
+      pressure_stage: "queue_checkpoint",
+      lane_decisions: [],
+      prompt_cache_stable_candidate: true,
+      tool_replay_trimmed: true,
+      retrieval_clipped: false,
+      checkpoint_queued: true,
+    },
     tokenUsage: {
       input_tokens: 10,
       output_tokens: 20
@@ -2914,6 +3273,14 @@ test("runtime states and history endpoints read TS state store", async () => {
   assert.deepEqual(turnResults.json().items[0].prompt_cache_profile, {
     cacheable_section_ids: ["runtime_core"],
     volatile_section_ids: ["execution_policy"],
+  });
+  assert.deepEqual(turnResults.json().items[0].context_budget_decisions, {
+    pressure_stage: "queue_checkpoint",
+    lane_decisions: [],
+    prompt_cache_stable_candidate: true,
+    tool_replay_trimmed: true,
+    retrieval_clipped: false,
+    checkpoint_queued: true,
   });
   assert.deepEqual(turnResults.json().items[0].prompt_section_ids, [
     "runtime_core",

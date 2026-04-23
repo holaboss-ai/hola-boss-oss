@@ -1,10 +1,12 @@
 import type { RuntimeAgentToolId } from "./runtime-agent-tools.js";
 import {
+  capabilityReplayBudgetKey,
   formatCapabilityToolResult,
   isRecord,
   normalizeRuntimeApiBaseUrl,
   requestCapabilityJson,
   toolRequestSignal,
+  withPreviewResultModeHeader,
 } from "./capability-http.js";
 
 const RUNTIME_TOOLS_CAPABILITY_STATUS_PATH = "/api/v1/capabilities/runtime-tools";
@@ -160,6 +162,8 @@ function createWebSearchBody(toolParams: unknown): Record<string, unknown> {
     ...(typeof params.context_max_characters === "number"
       ? { context_max_characters: params.context_max_characters }
       : {}),
+    ...(typeof params.text_offset === "number" ? { text_offset: params.text_offset } : {}),
+    ...(typeof params.text_limit === "number" ? { text_limit: params.text_limit } : {}),
   };
 }
 
@@ -413,13 +417,16 @@ export async function executeRuntimeToolCapability(params: RuntimeToolCapability
   signal?: AbortSignal;
 }): Promise<{
   content: Array<{ type: "text"; text: string }>;
-  details: { tool_id: RuntimeAgentToolId };
+  details: {
+    tool_id: RuntimeAgentToolId;
+    replay_budget?: Record<string, unknown>;
+  };
 }> {
   const plan = requestPlan(params.toolId, params.toolParams);
   const response = await requestCapabilityJson({
     url: `${params.runtimeApiBaseUrl}${plan.requestPath}`,
     method: plan.method,
-    headers: {
+    headers: withPreviewResultModeHeader({
       "content-type": "application/json; charset=utf-8",
       ...runtimeToolHeaders({
         workspaceId: params.workspaceId,
@@ -427,7 +434,7 @@ export async function executeRuntimeToolCapability(params: RuntimeToolCapability
         inputId: params.inputId,
         selectedModel: params.selectedModel,
       }),
-    },
+    }),
     ...(plan.body && plan.method !== "GET" && plan.method !== "DELETE"
       ? { body: JSON.stringify(plan.body) }
       : {}),
@@ -441,11 +448,34 @@ export async function executeRuntimeToolCapability(params: RuntimeToolCapability
       : `Holaboss runtime tool '${params.toolId}' failed.`;
     throw new Error(message);
   }
+  const formatted = formatCapabilityToolResult({
+    payload: response.payload,
+    toolId: params.toolId,
+    replayBudgetKey: capabilityReplayBudgetKey({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      inputId: params.inputId,
+    }),
+  });
 
   return {
-    content: [{ type: "text", text: formatCapabilityToolResult(response.payload) }],
-    details: {
-      tool_id: params.toolId,
-    },
+    content: [{ type: "text", text: formatted.text }],
+    details: formatted.replayBudgetDecision?.trimmed
+      ? {
+          tool_id: params.toolId,
+          replay_budget: {
+            mode: formatted.replayBudgetDecision.mode,
+            trimmed: formatted.replayBudgetDecision.trimmed,
+            trim_reason: formatted.replayBudgetDecision.trimReason,
+            replay_chars: formatted.replayBudgetDecision.replayChars,
+            total_replay_chars: formatted.replayBudgetDecision.totalReplayChars,
+            max_replay_chars: formatted.replayBudgetDecision.maxReplayChars,
+            total_replay_items: formatted.replayBudgetDecision.totalReplayItems,
+            max_replay_items: formatted.replayBudgetDecision.maxReplayItems,
+          },
+        }
+      : {
+          tool_id: params.toolId,
+        },
   };
 }
