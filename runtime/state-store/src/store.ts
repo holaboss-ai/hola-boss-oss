@@ -194,6 +194,7 @@ export interface TurnResultRecord {
   capabilityManifestFingerprint: string | null;
   requestSnapshotFingerprint: string | null;
   promptCacheProfile: Record<string, unknown> | null;
+  contextBudgetDecisions: Record<string, unknown> | null;
   tokenUsage: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
@@ -2701,6 +2702,7 @@ export class RuntimeStateStore {
     capabilityManifestFingerprint?: string | null;
     requestSnapshotFingerprint?: string | null;
     promptCacheProfile?: Record<string, unknown> | null;
+    contextBudgetDecisions?: Record<string, unknown> | null;
     tokenUsage?: Record<string, unknown> | null;
     createdAt?: string;
     updatedAt?: string;
@@ -2733,10 +2735,11 @@ export class RuntimeStateStore {
             capability_manifest_fingerprint,
             request_snapshot_fingerprint,
             prompt_cache_profile,
+            context_budget_decisions,
             token_usage,
             created_at,
             updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(input_id) DO UPDATE SET
             workspace_id = excluded.workspace_id,
             session_id = excluded.session_id,
@@ -2751,6 +2754,7 @@ export class RuntimeStateStore {
             capability_manifest_fingerprint = excluded.capability_manifest_fingerprint,
             request_snapshot_fingerprint = excluded.request_snapshot_fingerprint,
             prompt_cache_profile = excluded.prompt_cache_profile,
+            context_budget_decisions = excluded.context_budget_decisions,
             token_usage = excluded.token_usage,
             updated_at = excluded.updated_at
       `)
@@ -2769,6 +2773,9 @@ export class RuntimeStateStore {
         params.capabilityManifestFingerprint ?? null,
         params.requestSnapshotFingerprint ?? null,
         params.promptCacheProfile ? JSON.stringify(params.promptCacheProfile) : null,
+        params.contextBudgetDecisions
+          ? JSON.stringify(params.contextBudgetDecisions)
+          : null,
         params.tokenUsage ? JSON.stringify(params.tokenUsage) : null,
         createdAt,
         now
@@ -4950,6 +4957,7 @@ export class RuntimeStateStore {
           capability_manifest_fingerprint TEXT,
           request_snapshot_fingerprint TEXT,
           prompt_cache_profile TEXT,
+          context_budget_decisions TEXT,
           token_usage TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
@@ -5651,6 +5659,7 @@ export class RuntimeStateStore {
           capability_manifest_fingerprint TEXT,
           request_snapshot_fingerprint TEXT,
           prompt_cache_profile TEXT,
+          context_budget_decisions TEXT,
           token_usage TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
@@ -5671,6 +5680,7 @@ export class RuntimeStateStore {
           capability_manifest_fingerprint,
           request_snapshot_fingerprint,
           prompt_cache_profile,
+          context_budget_decisions,
           token_usage,
           created_at,
           updated_at
@@ -5690,6 +5700,7 @@ export class RuntimeStateStore {
           capability_manifest_fingerprint,
           request_snapshot_fingerprint,
           prompt_cache_profile,
+          NULL AS context_budget_decisions,
           token_usage,
           created_at,
           updated_at
@@ -5721,6 +5732,9 @@ export class RuntimeStateStore {
       }
       if (!columns.has("prompt_cache_profile")) {
         db.exec("ALTER TABLE turn_results ADD COLUMN prompt_cache_profile TEXT;");
+      }
+      if (!columns.has("context_budget_decisions")) {
+        db.exec("ALTER TABLE turn_results ADD COLUMN context_budget_decisions TEXT;");
       }
       if (columns.has("compaction_boundary_id") || columns.has("compacted_summary")) {
         this.rebuildTurnResultsWithoutLegacyColumns(db);
@@ -6305,6 +6319,10 @@ export class RuntimeStateStore {
       requestSnapshotFingerprint:
         row.request_snapshot_fingerprint == null ? null : String(row.request_snapshot_fingerprint),
       promptCacheProfile: row.prompt_cache_profile == null ? null : this.parseJsonObjectOrMessage(row.prompt_cache_profile),
+      contextBudgetDecisions:
+        row.context_budget_decisions == null
+          ? null
+          : this.parseJsonObjectOrMessage(row.context_budget_decisions),
       tokenUsage: row.token_usage == null ? null : this.parseJsonObjectOrMessage(row.token_usage),
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),

@@ -3159,6 +3159,14 @@ test("runtime states and history endpoints read TS state store", async () => {
       cacheable_section_ids: ["runtime_core"],
       volatile_section_ids: ["execution_policy"],
     },
+    contextBudgetDecisions: {
+      pressure_stage: "queue_checkpoint",
+      lane_decisions: [],
+      prompt_cache_stable_candidate: true,
+      tool_replay_trimmed: true,
+      retrieval_clipped: false,
+      checkpoint_queued: true,
+    },
     tokenUsage: {
       input_tokens: 10,
       output_tokens: 20
@@ -3265,6 +3273,14 @@ test("runtime states and history endpoints read TS state store", async () => {
   assert.deepEqual(turnResults.json().items[0].prompt_cache_profile, {
     cacheable_section_ids: ["runtime_core"],
     volatile_section_ids: ["execution_policy"],
+  });
+  assert.deepEqual(turnResults.json().items[0].context_budget_decisions, {
+    pressure_stage: "queue_checkpoint",
+    lane_decisions: [],
+    prompt_cache_stable_candidate: true,
+    tool_replay_trimmed: true,
+    retrieval_clipped: false,
+    checkpoint_queued: true,
   });
   assert.deepEqual(turnResults.json().items[0].prompt_section_ids, [
     "runtime_core",

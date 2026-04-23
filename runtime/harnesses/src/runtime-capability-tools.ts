@@ -546,6 +546,7 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
   if (toolId === "todowrite") {
     return [
       "Use `todowrite` for complex or long-running tasks that benefit from an explicit phased plan.",
+      "Use `todowrite` for task coordination only, not as a ledger for evidence, extracted facts, or long-form working notes; keep those in the session scratchpad.",
       "The top-level phases are grouped tasks, and each phase's `tasks` entries are the actionable task items within that grouped task.",
       `Valid \`op\` values are exactly ${TODO_WRITE_OPS_TEXT}.`,
       TODO_WRITE_ALIAS_WARNING,
@@ -561,12 +562,17 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "Use `holaboss_scratchpad_read` when a resumed or long-running session likely has session-scoped notes that matter for the current turn.",
       "Treat scratchpad notes as session continuity, not as durable memory or verified current truth.",
       "Read the scratchpad when you need the saved notes again; do not assume they are already in prompt context.",
+      "When the scratchpad already contains the needed working state, prefer reading it instead of reopening or re-parsing large prior tool artifacts.",
     ];
   }
   if (toolId === "holaboss_scratchpad_write") {
     return [
-      "Use `holaboss_scratchpad_write` for long-running working notes, interim findings, open questions, or compacted current state that should survive beyond the current prompt window.",
+      "Use `holaboss_scratchpad_write` for long-running working notes, interim findings, open questions, evidence ledgers, or compacted current state that should survive beyond the current prompt window.",
+      "After the first material findings in a multi-step task, start or update the scratchpad so verified state does not live only in transient prompt context.",
       "Use `append` while accumulating notes, `replace` when compacting the scratchpad into a fresher shorter summary, and `clear` when the notes are no longer useful.",
+      "Use the scratchpad as working memory for verified findings, extracted facts, candidate lists, artifact handles, open questions, and compacted current state.",
+      "Do not use `todowrite` as a substitute for scratchpad notes; todo state is for coordination, not evidence.",
+      "When replay or context pressure rises, or when a tool returns a large artifact, compact the verified findings and next questions into the scratchpad before continuing.",
       "Keep durable memory, user-visible deliverables, and final answers out of the scratchpad unless they are explicitly session-scoped working notes.",
     ];
   }

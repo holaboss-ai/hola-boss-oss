@@ -877,6 +877,7 @@ function turnResultPayload(record: TurnResultRecord): Record<string, unknown> {
     capability_manifest_fingerprint: record.capabilityManifestFingerprint,
     request_snapshot_fingerprint: record.requestSnapshotFingerprint,
     prompt_cache_profile: record.promptCacheProfile,
+    context_budget_decisions: record.contextBudgetDecisions,
     token_usage: record.tokenUsage,
     created_at: record.createdAt,
     updated_at: record.updatedAt,

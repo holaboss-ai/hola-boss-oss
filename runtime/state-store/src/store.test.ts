@@ -1541,6 +1541,14 @@ test("turn results support upsert, lookup, count, and listing", () => {
       cacheable_section_ids: ["runtime_core"],
       volatile_section_ids: ["execution_policy"],
     },
+    contextBudgetDecisions: {
+      pressure_stage: "normal",
+      lane_decisions: [],
+      prompt_cache_stable_candidate: true,
+      tool_replay_trimmed: false,
+      retrieval_clipped: false,
+      checkpoint_queued: false,
+    },
     tokenUsage: { input_tokens: 10, output_tokens: 20 },
   });
   const updated = store.upsertTurnResult({
@@ -1567,6 +1575,14 @@ test("turn results support upsert, lookup, count, and listing", () => {
       cacheable_section_ids: ["runtime_core"],
       volatile_section_ids: ["session_policy"],
     },
+    contextBudgetDecisions: {
+      pressure_stage: "trim_replay",
+      lane_decisions: [],
+      prompt_cache_stable_candidate: true,
+      tool_replay_trimmed: true,
+      retrieval_clipped: false,
+      checkpoint_queued: false,
+    },
     tokenUsage: { input_tokens: 11, output_tokens: 21 },
   });
 
@@ -1578,6 +1594,14 @@ test("turn results support upsert, lookup, count, and listing", () => {
   assert.deepEqual(updated.promptCacheProfile, {
     cacheable_section_ids: ["runtime_core"],
     volatile_section_ids: ["session_policy"],
+  });
+  assert.deepEqual(updated.contextBudgetDecisions, {
+    pressure_stage: "trim_replay",
+    lane_decisions: [],
+    prompt_cache_stable_candidate: true,
+    tool_replay_trimmed: true,
+    retrieval_clipped: false,
+    checkpoint_queued: false,
   });
   assert.deepEqual(updated.permissionDenials, [
     { tool_name: "deploy", tool_id: null, reason: "permission denied" }

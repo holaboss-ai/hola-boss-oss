@@ -264,6 +264,92 @@ test("composeBaseAgentPrompt includes shared todo continuity policy when todo to
   assert.deepEqual(prompt.promptCacheProfile.volatile_section_ids, []);
 });
 
+test("composeBaseAgentPrompt promotes scratchpad as working memory even before a scratchpad file exists", () => {
+  const defaultTools = ["read", "todoread", "todowrite", "holaboss_scratchpad_read", "holaboss_scratchpad_write"];
+  const capabilityManifest = buildAgentCapabilityManifest({
+    runtimeToolIds: ["todoread", "todowrite", "holaboss_scratchpad_read", "holaboss_scratchpad_write"],
+    defaultTools,
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  const prompt = composeBaseAgentPrompt("", {
+    defaultTools,
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    capabilityManifest,
+  });
+
+  assert.match(
+    prompt.systemPrompt,
+    /When a task becomes multi-step, evidence-heavy, or long-running, create or update the session scratchpad early and keep the current working state there\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Use `todowrite` for task structure and status only; use the scratchpad for verified findings, interim evidence, candidate lists, open questions, and compacted current state\./
+  );
+  assert.ok(prompt.promptSections.some((section) => section.id === "scratchpad_context"));
+  assert.equal(
+    prompt.promptSections.find((section) => section.id === "scratchpad_context")?.channel,
+    "context_message"
+  );
+  assert.match(
+    prompt.contextMessages.join("\n"),
+    /A session-scoped scratchpad is available for this session, but no scratchpad file exists yet\./
+  );
+  assert.match(
+    prompt.contextMessages.join("\n"),
+    /Do not use `todowrite` as a substitute for scratchpad notes; todo state is for task coordination, not evidence or long-form working memory\./
+  );
+  assert.ok(prompt.promptCacheProfile.context_message_ids.includes("scratchpad_context"));
+  assert.ok(prompt.promptCacheProfile.compatibility_context_ids.includes("scratchpad_context"));
+});
+
+test("composeBaseAgentPrompt exposes existing scratchpad metadata without collapsing it into todo state", () => {
+  const defaultTools = ["read", "todoread", "todowrite", "holaboss_scratchpad_read", "holaboss_scratchpad_write"];
+  const capabilityManifest = buildAgentCapabilityManifest({
+    runtimeToolIds: ["todoread", "todowrite", "holaboss_scratchpad_read", "holaboss_scratchpad_write"],
+    defaultTools,
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  const prompt = composeBaseAgentPrompt("", {
+    defaultTools,
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    capabilityManifest,
+    scratchpadContext: {
+      exists: true,
+      file_path: ".holaboss/scratchpads/session-main.md",
+      updated_at: "2026-04-23T15:00:00.000Z",
+      size_bytes: 128,
+      preview: "- verified finding\n- open question",
+    },
+  });
+
+  const scratchpadMessage = prompt.contextMessages.join("\n");
+  assert.match(scratchpadMessage, /A session-scoped scratchpad file already exists for this session\./);
+  assert.match(
+    scratchpadMessage,
+    /Use the scratchpad as the session's working memory for multi-step execution, interim findings, open questions, candidate lists, and compacted current state\./
+  );
+  assert.match(scratchpadMessage, /Path: `\.holaboss\/scratchpads\/session-main\.md`\./);
+  assert.match(scratchpadMessage, /Preview: - verified finding/);
+  assert.match(
+    scratchpadMessage,
+    /Do not use `todowrite` as a substitute for scratchpad notes; todo state is for task coordination, not evidence or long-form working memory\./
+  );
+});
+
 test("composeBaseAgentPrompt keeps the cacheable fingerprint stable across runtime-only context changes", () => {
   const capabilityManifest = buildAgentCapabilityManifest({
     harnessId: "pi",

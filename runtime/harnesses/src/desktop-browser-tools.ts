@@ -5,6 +5,7 @@ export const DESKTOP_BROWSER_TOOL_IDS = [
   "browser_wait_for_url",
   "browser_wait_for_load_state",
   "browser_get_state",
+  "browser_extract_facts",
   "browser_click",
   "browser_context_click",
   "browser_type",
@@ -116,7 +117,7 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   {
     id: "browser_get_state",
     description:
-      "Read the current desktop browser page, visible interactive elements, visible media such as images, and optional screenshot. Prefer this as the DOM-first browser inspection tool for actions and structured extraction. Supports selector scoping and paged windows for elements/media to keep results compact while preserving continuation metadata. Set include_page_text=true only when you need page text, and include_screenshot=true when visual confirmation matters or DOM signals are ambiguous.",
+      "Read the current desktop browser page, visible interactive elements, visible media such as images, compact page facts, and optional screenshot. Prefer this as the DOM-first browser inspection tool for actions and structured extraction. Supports selector scoping and paged windows for elements/media to keep results compact while preserving continuation metadata. Set include_page_text=true only when you need page text, and include_screenshot=true when visual confirmation matters or DOM signals are ambiguous.",
     policy: "inspect",
     session_scope: "workspace_session_only",
     input_schema: {
@@ -130,6 +131,20 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
         element_limit: { type: "integer", minimum: 1 },
         media_offset: { type: "integer", minimum: 0 },
         media_limit: { type: "integer", minimum: 1 },
+      },
+    },
+  },
+  {
+    id: "browser_extract_facts",
+    description:
+      "Extract compact semantic facts from the current desktop browser page without returning a full interactive-element snapshot. Use this when you need canonical page metadata, headings, visible claims, visible links, quoted text, or numeric facts for verification.",
+    policy: "inspect",
+    session_scope: "workspace_session_only",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        scope_selector: { type: "string", minLength: 1 },
       },
     },
   },

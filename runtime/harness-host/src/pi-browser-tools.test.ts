@@ -109,6 +109,15 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
   assert.ok(
     (getStateTool.parameters as { properties?: Record<string, unknown> }).properties?.media_limit
   );
+  const extractFactsTool = tools.find((tool) => tool.name === "browser_extract_facts");
+  assert.ok(extractFactsTool);
+  assert.match(
+    extractFactsTool.description ?? "",
+    /compact semantic facts/i,
+  );
+  assert.ok(
+    (extractFactsTool.parameters as { properties?: Record<string, unknown> }).properties?.scope_selector
+  );
   const result = await getStateTool.execute(
     "call-1",
     {

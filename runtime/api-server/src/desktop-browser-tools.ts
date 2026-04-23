@@ -76,6 +76,14 @@ const DEFAULT_BROWSER_GET_STATE_ELEMENT_LIMIT = 40;
 const MAX_BROWSER_GET_STATE_ELEMENT_LIMIT = 200;
 const DEFAULT_BROWSER_GET_STATE_MEDIA_LIMIT = 20;
 const MAX_BROWSER_GET_STATE_MEDIA_LIMIT = 120;
+const BROWSER_PAGE_FACT_HEADING_LIMIT = 6;
+const BROWSER_PAGE_FACT_CLAIM_LIMIT = 6;
+const BROWSER_PAGE_FACT_LINK_LIMIT = 8;
+const BROWSER_PAGE_FACT_NUMERIC_LIMIT = 8;
+const BROWSER_PAGE_FACT_QUOTE_LIMIT = 4;
+const BROWSER_PAGE_FACT_TEXT_MAX_CHARS = 280;
+const BROWSER_PAGE_FACT_CLAIM_MAX_CHARS = 320;
+const BROWSER_PAGE_FACT_CONTEXT_MAX_CHARS = 220;
 const DEFAULT_BROWSER_WAIT_TIMEOUT_MS = 10_000;
 const MAX_BROWSER_WAIT_TIMEOUT_MS = 120_000;
 const DEFAULT_BROWSER_WAIT_INTERVAL_MS = 250;
@@ -611,6 +619,218 @@ function interactiveElementsExpression(params: {
     const nextMediaOffset = boundedMediaOffset + pagedMedia.length;
     const contentRoot = scope?.root_element instanceof Element ? scope.root_element : document.body;
     const contentText = (contentRoot?.textContent || "").replace(/\\s+/g, " ").trim();
+    const factsTextLimit = ${BROWSER_PAGE_FACT_TEXT_MAX_CHARS};
+    const factsClaimLimit = ${BROWSER_PAGE_FACT_CLAIM_MAX_CHARS};
+    const factsContextLimit = ${BROWSER_PAGE_FACT_CONTEXT_MAX_CHARS};
+    const normalizeFactText = (value, limit = factsTextLimit) =>
+      String(value || "").replace(/\\s+/g, " ").trim().slice(0, limit);
+    const absoluteUrl = (value) => {
+      const normalized = normalizeFactText(value, 1024);
+      if (!normalized) {
+        return "";
+      }
+      try {
+        return String(new URL(normalized, location.href).href || "");
+      } catch {
+        return normalized;
+      }
+    };
+    const firstFactText = (...values) => {
+      for (const value of values) {
+        const normalized = normalizeFactText(value, factsClaimLimit);
+        if (normalized) {
+          return normalized;
+        }
+      }
+      return "";
+    };
+    const metaContent = (selectors, attribute = "content") => {
+      for (const selector of selectors) {
+        const element = document.querySelector(selector);
+        if (!(element instanceof Element)) {
+          continue;
+        }
+        const raw = attribute === "href" ? element.getAttribute("href") : element.getAttribute(attribute);
+        const normalized = normalizeFactText(raw, factsClaimLimit);
+        if (normalized) {
+          return normalized;
+        }
+      }
+      return "";
+    };
+    const collectFactItems = (selector, limit, formatter) => {
+      const items = [];
+      const seen = new Set();
+      const targetEntries =
+        scope && scope.doc instanceof Document
+          ? documentEntries.filter((entry) => entry.doc === scope.doc)
+          : documentEntries;
+      for (const entry of targetEntries) {
+        const root = scope?.root_element instanceof Element ? scope.root_element : entry.doc.body;
+        const nodes = Array.from(root.querySelectorAll(selector));
+        for (const node of nodes) {
+          if (!(node instanceof Element) || !isVisible(node)) {
+            continue;
+          }
+          const item = formatter(node);
+          if (!item) {
+            continue;
+          }
+          const key = String(item.text || item.label || item.href || JSON.stringify(item)).toLowerCase();
+          if (seen.has(key)) {
+            continue;
+          }
+          seen.add(key);
+          items.push(item);
+          if (items.length >= limit) {
+            return items;
+          }
+        }
+      }
+      return items;
+    };
+    const headings = collectFactItems(
+      "h1,h2,h3,[role='heading']",
+      ${BROWSER_PAGE_FACT_HEADING_LIMIT},
+      (node) => {
+        const text = normalizeFactText(node.innerText || node.textContent || "");
+        if (text.length < 2) {
+          return null;
+        }
+        const tagName = node.tagName.toLowerCase();
+        const ariaLevel = Number.parseInt(String(node.getAttribute("aria-level") || ""), 10);
+        const level =
+          /^h[1-6]$/.test(tagName) ? Number.parseInt(tagName.slice(1), 10) : Number.isFinite(ariaLevel) ? ariaLevel : null;
+        return {
+          level,
+          text,
+          tag_name: tagName,
+        };
+      },
+    );
+    const visibleClaims = collectFactItems(
+      "article,[role='article'],p,li",
+      ${BROWSER_PAGE_FACT_CLAIM_LIMIT},
+      (node) => {
+        const text = normalizeFactText(node.innerText || node.textContent || "", factsClaimLimit);
+        if (text.length < 40) {
+          return null;
+        }
+        return {
+          text,
+          tag_name: node.tagName.toLowerCase(),
+        };
+      },
+    );
+    const quotedText = collectFactItems(
+      "blockquote,q",
+      ${BROWSER_PAGE_FACT_QUOTE_LIMIT},
+      (node) => {
+        const text = normalizeFactText(node.innerText || node.textContent || "", factsClaimLimit);
+        if (text.length < 8) {
+          return null;
+        }
+        return {
+          text,
+          tag_name: node.tagName.toLowerCase(),
+        };
+      },
+    );
+    const visibleLinks = [];
+    const seenLinks = new Set();
+    for (const entry of collectVisibleCandidates(documentEntries, "a[href]", scope)) {
+      const anchor = entry.element;
+      if (!(anchor instanceof HTMLAnchorElement)) {
+        continue;
+      }
+      const href = absoluteUrl(anchor.href || anchor.getAttribute("href") || "");
+      const text = normalizeFactText(anchor.innerText || anchor.textContent || "");
+      const label = firstFactText(anchor.getAttribute("aria-label"), anchor.getAttribute("title"), text);
+      if (!href && !label && !text) {
+        continue;
+      }
+      const item = {
+        href,
+        label,
+        text,
+      };
+      const key = JSON.stringify(item).toLowerCase();
+      if (seenLinks.has(key)) {
+        continue;
+      }
+      seenLinks.add(key);
+      visibleLinks.push(item);
+      if (visibleLinks.length >= ${BROWSER_PAGE_FACT_LINK_LIMIT}) {
+        break;
+      }
+    }
+    const numericCandidates = [
+      firstFactText(metaContent(["meta[property='og:title']", "meta[name='twitter:title']"]), document.title),
+      ...headings.map((entry) => entry.text),
+      ...visibleClaims.map((entry) => entry.text),
+      ...quotedText.map((entry) => entry.text),
+      ...visibleLinks.map((entry) => firstFactText(entry.label, entry.text)),
+    ].filter(Boolean);
+    const numericFacts = [];
+    const numericSeen = new Set();
+    const numericPattern = /(?:[$€£¥])?\d[\d,.]*(?:\.\d+)?\s?(?:[KMBTkmbt]|%|views?|likes?|reposts?|replies?|comments?|followers?|following|stars?|downloads?|users?|mins?|minutes?|hours?|days?|years?)?/g;
+    for (const candidate of numericCandidates) {
+      const matches = String(candidate).match(numericPattern) || [];
+      for (const match of matches) {
+        const valueText = normalizeFactText(match, 48);
+        if (!valueText || !/\d/.test(valueText)) {
+          continue;
+        }
+        const contextText = normalizeFactText(candidate, factsContextLimit);
+        const key = valueText.toLowerCase() + "|" + contextText.toLowerCase();
+        if (numericSeen.has(key)) {
+          continue;
+        }
+        numericSeen.add(key);
+        numericFacts.push({
+          value_text: valueText,
+          context_text: contextText,
+        });
+        if (numericFacts.length >= ${BROWSER_PAGE_FACT_NUMERIC_LIMIT}) {
+          break;
+        }
+      }
+      if (numericFacts.length >= ${BROWSER_PAGE_FACT_NUMERIC_LIMIT}) {
+        break;
+      }
+    }
+    const canonicalUrl = absoluteUrl(
+      metaContent(["link[rel='canonical']"], "href") ||
+      metaContent(["meta[property='og:url']", "meta[name='og:url']"]) ||
+      location.href
+    );
+    const pageTitle = firstFactText(
+      metaContent(["meta[property='og:title']", "meta[name='twitter:title']"]),
+      document.title,
+      headings[0]?.text
+    );
+    const pageFacts = {
+      canonical_url: canonicalUrl,
+      page_title: pageTitle,
+      site_name: firstFactText(
+        metaContent(["meta[property='og:site_name']", "meta[name='application-name']"]),
+        location.hostname.replace(/^www\\./, "")
+      ) || null,
+      meta_description: firstFactText(
+        metaContent(["meta[name='description']", "meta[property='og:description']", "meta[name='twitter:description']"])
+      ) || null,
+      published_time: firstFactText(
+        metaContent(["meta[property='article:published_time']", "meta[name='date']"])
+      ) || null,
+      main_heading: headings[0]?.text || null,
+      scope_selector: scopeSelector || null,
+      scope_applied: Boolean(scope),
+      headings,
+      visible_claims: visibleClaims,
+      quoted_text: quotedText,
+      visible_links: visibleLinks,
+      numeric_facts: numericFacts,
+    };
     return {
       url: location.href,
       title: document.title,
@@ -644,7 +864,8 @@ function interactiveElementsExpression(params: {
         frame_path: entry.frame_path,
         frame_url: entry.frame_url || null,
         in_iframe: entry.frame_path !== "main",
-      }))
+      })),
+      page_facts: pageFacts,
     };
   })()`;
 }
@@ -866,6 +1087,19 @@ function normalizeBrowserGetStateState(params: {
   normalized.media_has_more = mediaHasMore;
   normalized.next_media_offset = nextMediaOffset;
   return normalized;
+}
+
+function extractBrowserPageFacts(state: Record<string, unknown>): Record<string, unknown> | null {
+  const pageFacts = asRecord(state.page_facts);
+  if (!pageFacts) {
+    return null;
+  }
+  delete state.page_facts;
+  return pageFacts;
+}
+
+function browserPageFactsFingerprint(pageFacts: Record<string, unknown>): string {
+  return createHash("sha256").update(JSON.stringify(pageFacts)).digest("hex");
 }
 
 function browserStateFingerprint(params: {
@@ -1220,6 +1454,14 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
           },
         };
         const state = asRecord(payload.state);
+        const pageFacts = state ? extractBrowserPageFacts(state) : null;
+        if (pageFacts) {
+          payload.page_facts = pageFacts;
+          payload.page_facts_fingerprint = browserPageFactsFingerprint(pageFacts);
+          const trustBoundary = asRecord(payload.trust_boundary) ?? {};
+          trustBoundary.page_facts_unverified = true;
+          payload.trust_boundary = trustBoundary;
+        }
         const sourceOrigin = browserContentOrigin(snapshot.page);
         if (
           includePageText &&
@@ -1246,6 +1488,47 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
           state: snapshot.state,
           screenshot: snapshot.screenshot,
           includeScreenshot,
+        });
+        if (warnings.length > 0) {
+          payload.warnings = warnings;
+        }
+        return payload;
+      }
+      case "browser_extract_facts": {
+        const scopeSelector = optionalTrimmedString(args.scope_selector);
+        const snapshot = await this.#readBrowserGetStateSnapshot(
+          config,
+          context,
+          {
+            includePageText: false,
+            includeScreenshot: false,
+            scopeSelector,
+            elementOffset: 0,
+            elementLimit: 1,
+            mediaOffset: 0,
+            mediaLimit: 1,
+          }
+        );
+        const pageFacts = extractBrowserPageFacts(snapshot.state) ?? {};
+        const payload: Record<string, unknown> = {
+          ok: true,
+          page: snapshot.page,
+          page_facts: pageFacts,
+          page_facts_fingerprint: browserPageFactsFingerprint(pageFacts),
+          state_fingerprint: browserStateFingerprint({
+            page: snapshot.page,
+            state: snapshot.state,
+          }),
+          trust_boundary: {
+            browser_content_untrusted: true,
+            source_origin: browserContentOrigin(snapshot.page),
+            page_facts_unverified: true,
+          },
+        };
+        const warnings = browserGetStateWarnings({
+          page: snapshot.page,
+          state: snapshot.state,
+          includeScreenshot: false,
         });
         if (warnings.length > 0) {
           payload.warnings = warnings;

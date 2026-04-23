@@ -13,6 +13,7 @@ export interface HarnessDesktopBrowserToolOptions {
   runtimeApiBaseUrl: string;
   workspaceId?: string | null;
   sessionId?: string | null;
+  inputId?: string | null;
   space?: "agent" | "user" | null;
   fetchImpl?: typeof fetch;
 }
@@ -204,6 +205,19 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
         },
         additionalProperties: false,
       };
+    case "browser_extract_facts":
+      return {
+        type: "object",
+        properties: {
+          scope_selector: {
+            type: "string",
+            description:
+              "Optional CSS selector to scope fact extraction to a relevant page subtree before extracting headings, claims, links, and numeric facts.",
+            minLength: 1,
+          },
+        },
+        additionalProperties: false,
+      };
     case "browser_click":
       return {
         type: "object",
@@ -366,6 +380,7 @@ export function createHarnessDesktopBrowserToolDefinition(
         runtimeApiBaseUrl: options.runtimeApiBaseUrl,
         workspaceId: options.workspaceId,
         sessionId: options.sessionId,
+        inputId: options.inputId,
         space: options.space,
         fetchImpl: options.fetchImpl,
         signal,
@@ -386,6 +401,7 @@ export async function resolveHarnessDesktopBrowserToolDefinitions(
     runtimeApiBaseUrl?: string | null;
     workspaceId?: string | null;
     sessionId?: string | null;
+    inputId?: string | null;
     space?: "agent" | "user" | null;
     fetchImpl?: typeof fetch;
   } = {},
@@ -412,6 +428,7 @@ export async function resolveHarnessDesktopBrowserToolDefinitions(
     runtimeApiBaseUrl,
     workspaceId: options.workspaceId,
     sessionId: options.sessionId,
+    inputId: options.inputId,
     space: options.space,
     fetchImpl: options.fetchImpl,
   });

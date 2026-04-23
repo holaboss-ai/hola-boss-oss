@@ -140,21 +140,33 @@ function normalizeSessionKind(value: string | null | undefined): string {
   return nonEmptyText(value).toLowerCase();
 }
 
-function hasTodoCoordinationTools(request: ComposeBaseAgentPromptRequest): boolean {
+function addAvailableToolName(available: Set<string>, value: string | null | undefined): void {
+  const normalized = nonEmptyText(value).toLowerCase();
+  if (normalized) {
+    available.add(normalized);
+  }
+}
+
+function collectAvailableToolNames(request: ComposeBaseAgentPromptRequest): Set<string> {
   const available = new Set<string>();
   for (const toolName of [...request.defaultTools, ...request.extraTools]) {
-    const normalized = nonEmptyText(toolName).toLowerCase();
-    if (normalized) {
-      available.add(normalized);
-    }
+    addAvailableToolName(available, toolName);
   }
-  for (const capability of request.capabilityManifest?.coordinate ?? []) {
-    const normalized = nonEmptyText(capability.id).toLowerCase();
-    if (normalized) {
-      available.add(normalized);
-    }
+  for (const capability of request.capabilityManifest?.tools ?? []) {
+    addAvailableToolName(available, capability.id);
+    addAvailableToolName(available, capability.callable_name);
   }
+  return available;
+}
+
+function hasTodoCoordinationTools(request: ComposeBaseAgentPromptRequest): boolean {
+  const available = collectAvailableToolNames(request);
   return available.has("todoread") || available.has("todowrite");
+}
+
+function hasScratchpadTools(request: ComposeBaseAgentPromptRequest): boolean {
+  const available = collectAvailableToolNames(request);
+  return available.has("holaboss_scratchpad_read") || available.has("holaboss_scratchpad_write");
 }
 
 function sessionPolicyPromptSection(request: ComposeBaseAgentPromptRequest): string {
@@ -327,25 +339,41 @@ function pendingUserMemoryContextPromptSection(context: AgentPendingUserMemoryCo
   return linesSection(lines);
 }
 
-function scratchpadContextPromptSection(context: AgentScratchpadContext | null | undefined): string {
-  if (!context || context.exists !== true) {
+function scratchpadContextPromptSection(
+  context: AgentScratchpadContext | null | undefined,
+  scratchpadAvailable: boolean
+): string {
+  if (!scratchpadAvailable) {
     return "";
   }
-  const filePath = nonEmptyText(context.file_path);
-  const updatedAt = nonEmptyText(context.updated_at);
-  const preview = nonEmptyText(context.preview);
+  const filePath = nonEmptyText(context?.file_path);
+  const updatedAt = nonEmptyText(context?.updated_at);
+  const preview = nonEmptyText(context?.preview);
   const sizeBytes =
-    typeof context.size_bytes === "number" && Number.isFinite(context.size_bytes)
+    typeof context?.size_bytes === "number" && Number.isFinite(context.size_bytes)
       ? Math.max(0, Math.trunc(context.size_bytes))
       : null;
 
-  const lines = [
-    "Session scratchpad:",
-    "A session-scoped scratchpad file already exists for this session.",
-    "The scratchpad is not loaded into prompt context automatically. Read it explicitly when those notes are needed for this turn.",
-    "The scratchpad metadata and preview below are already loaded into prompt context. Do not read the scratchpad just to confirm its existence, path, timestamp, or preview; read it only when you need additional note contents for this turn.",
+  const lines = ["Session scratchpad:"];
+  if (context && context.exists === true) {
+    lines.push(
+      "A session-scoped scratchpad file already exists for this session.",
+      "Use the scratchpad as the session's working memory for multi-step execution, interim findings, open questions, candidate lists, and compacted current state.",
+      "The scratchpad is not loaded into prompt context automatically. Read it explicitly when those notes are needed for this turn.",
+      "The scratchpad metadata and preview below are already loaded into prompt context. Do not read the scratchpad just to confirm its existence, path, timestamp, or preview; read it only when you need additional note contents for this turn."
+    );
+  } else {
+    lines.push(
+      "A session-scoped scratchpad is available for this session, but no scratchpad file exists yet.",
+      "For multi-step, evidence-heavy, or long-running work, create the scratchpad early and keep a compact running ledger of verified findings, open questions, candidate items, and artifact handles there.",
+      "Use `holaboss_scratchpad_write` with `append` while accumulating notes, `replace` when compacting them into a fresher summary, and `clear` when the notes are no longer useful."
+    );
+  }
+  lines.push(
     "Use the scratchpad for working notes and interim state, not as durable memory or a user-facing deliverable.",
-  ];
+    "Do not use `todowrite` as a substitute for scratchpad notes; todo state is for task coordination, not evidence or long-form working memory.",
+    "When replay or context pressure rises, compact the current verified state into the scratchpad before continuing."
+  );
   if (filePath) {
     lines.push(`Path: \`${filePath}\`.`);
   }
@@ -498,10 +526,11 @@ export function buildBaseAgentPromptSections(
       "If connected MCP access exists without tool names listed here, do not assume MCP is unavailable; use surfaced MCP tools when relevant."
     );
   }
-  if (capabilityManifest?.runtime_tools.some((capability) => capability.id === "holaboss_scratchpad_write")) {
+  if (hasScratchpadTools(request)) {
     executionLines.push(
-      "When a task is long-running or multi-step, prefer using the session scratchpad for interim notes, partial findings, open questions, and compacted current state instead of keeping that material only in live context.",
-      "Use the scratchpad for session-scoped working notes, not for durable memory or final user-facing deliverables."
+      "When a task becomes multi-step, evidence-heavy, or long-running, create or update the session scratchpad early and keep the current working state there.",
+      "Use `todowrite` for task structure and status only; use the scratchpad for verified findings, interim evidence, candidate lists, open questions, and compacted current state.",
+      "After extracting material facts from a large tool result, or when replay or context pressure rises, compact the verified findings and artifact handles into the scratchpad before continuing."
     );
   }
   pushPromptLayer(promptSections, {
@@ -626,7 +655,7 @@ export function buildBaseAgentPromptSections(
     precedence: "runtime_context",
     priority: 492,
     volatility: "run",
-    content: scratchpadContextPromptSection(request.scratchpadContext)
+    content: scratchpadContextPromptSection(request.scratchpadContext, hasScratchpadTools(request))
   });
 
   pushPromptLayer(promptSections, {
