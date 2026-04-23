@@ -11556,23 +11556,13 @@ function extractIntegrationRequirementsFromTemplateFiles(
   return requirements;
 }
 
-/**
- * Known app-name → provider mapping. Used to infer integration requirements
- * from template metadata (app names) without materializing the template.
- */
-const APP_TO_PROVIDER: Record<string, string> = {
-  gmail: "gmail",
-  sheets: "googlesheets",
-  github: "github",
-  reddit: "reddit",
-  twitter: "twitter",
-  linkedin: "linkedin",
-};
-
 async function resolveTemplateIntegrations(
   payload: HolabossCreateWorkspacePayload,
 ): Promise<ResolveTemplateIntegrationsResult> {
-  // Infer requirements from the app names in the payload or selected template
+  // Infer requirements from the app names in the payload or selected template.
+  // The provider for each app is read from the marketplace's app_registry —
+  // each module declares its integration in app.runtime.yaml and the backend
+  // surfaces it as `provider_id`. The desktop no longer hardcodes a map.
   const appNames: string[] = payload.template_apps ?? [];
 
   if (appNames.length === 0) {
@@ -11584,11 +11574,27 @@ async function resolveTemplateIntegrations(
     };
   }
 
+  let providerByApp: Map<string, string> = new Map();
+  try {
+    const resp = await listAppTemplatesViaControlPlane();
+    for (const tmpl of resp.templates) {
+      if (tmpl.provider_id) {
+        providerByApp.set(tmpl.name.toLowerCase(), tmpl.provider_id);
+      }
+    }
+  } catch (error) {
+    console.warn(
+      "[apps] resolveTemplateIntegrations could not reach the marketplace; reporting no integration requirements:",
+      error instanceof Error ? error.message : String(error),
+    );
+    providerByApp = new Map();
+  }
+
   const requirements: TemplateIntegrationRequirement[] = [];
   const seenProviders = new Set<string>();
 
   for (const appName of appNames) {
-    const provider = APP_TO_PROVIDER[appName.toLowerCase()];
+    const provider = providerByApp.get(appName.toLowerCase());
     if (provider && !seenProviders.has(provider)) {
       seenProviders.add(provider);
       requirements.push({
@@ -13760,72 +13766,6 @@ async function listWorkspacesViaRuntime(): Promise<WorkspaceListResponsePayload>
   return response;
 }
 
-const STATIC_APP_CATALOG: Record<
-  string,
-  {
-    name: string;
-    description: string | null;
-    icon: string | null;
-    category: string | null;
-    tags: string[];
-  }
-> = {
-  twitter: {
-    name: "Twitter / X",
-    description: "Short-form post drafting and thread editing.",
-    icon: null,
-    category: "social",
-    tags: ["social media", "twitter"],
-  },
-  linkedin: {
-    name: "LinkedIn",
-    description: "Long-form post drafting and professional publishing.",
-    icon: null,
-    category: "social",
-    tags: ["social media", "linkedin"],
-  },
-  reddit: {
-    name: "Reddit",
-    description: "Subreddit posts, comments and community replies.",
-    icon: null,
-    category: "social",
-    tags: ["social media", "reddit"],
-  },
-  gmail: {
-    name: "Gmail",
-    description: "Email drafts, replies, and thread management.",
-    icon: null,
-    category: "communication",
-    tags: ["email", "gmail"],
-  },
-  sheets: {
-    name: "Google Sheets",
-    description: "Spreadsheet data as a lightweight database.",
-    icon: null,
-    category: "productivity",
-    tags: ["spreadsheet", "google sheets"],
-  },
-  github: {
-    name: "GitHub",
-    description: "Repository activity tracking and release notes.",
-    icon: null,
-    category: "developer",
-    tags: ["github", "developer"],
-  },
-};
-
-function staticCatalogMeta(appId: string) {
-  return (
-    STATIC_APP_CATALOG[appId] ?? {
-      name: appId,
-      description: null,
-      icon: null,
-      category: null,
-      tags: [] as string[],
-    }
-  );
-}
-
 async function listAppCatalog(params: {
   source?: "marketplace" | "local";
 }): Promise<AppCatalogListResponse> {
@@ -13844,26 +13784,27 @@ async function syncAppCatalog(params: {
   const target = resolveLocalArchiveTarget();
 
   if (params.source === "marketplace") {
+    // Marketplace metadata is the source of truth — desktop no longer
+    // carries a static fallback. Add a new app by adding it to the
+    // backend's app_registry, not by editing this file.
     const resp = await listAppTemplatesViaControlPlane();
     const entries: Array<Record<string, unknown>> = [];
     for (const tmpl of resp.templates) {
       const archives = Array.isArray(tmpl.archives) ? tmpl.archives : [];
       const matching = archives.find((a) => a?.target === target);
       if (!matching) continue;
-      const meta = staticCatalogMeta(tmpl.name);
       entries.push({
         app_id: tmpl.name,
-        name: meta.name,
-        description: tmpl.description ?? meta.description,
-        icon: tmpl.icon ?? meta.icon,
-        category: tmpl.category ?? meta.category,
-        tags:
-          Array.isArray(tmpl.tags) && tmpl.tags.length > 0
-            ? tmpl.tags
-            : meta.tags,
+        name: tmpl.name,
+        description: tmpl.description ?? null,
+        icon: tmpl.icon ?? null,
+        category: tmpl.category ?? null,
+        tags: Array.isArray(tmpl.tags) ? tmpl.tags : [],
         version: tmpl.version ?? null,
         archive_url: matching.url,
         archive_path: null,
+        provider_id: tmpl.provider_id ?? null,
+        credential_source: tmpl.credential_source ?? null,
       });
     }
     return requestRuntimeJson<AppCatalogSyncResponse>({
@@ -13873,19 +13814,35 @@ async function syncAppCatalog(params: {
     });
   }
 
+  // Local-checkout (dev) mode: enrich each scanned tarball with the
+  // marketplace's metadata so we still know the provider / description /
+  // icon for it. Apps the marketplace doesn't yet know about (e.g. a
+  // brand-new module under development) get a minimal entry.
   const scanned = await scanLocalAppArchives();
+  let marketplaceMeta: Map<string, AppTemplateMetadataPayload> = new Map();
+  try {
+    const resp = await listAppTemplatesViaControlPlane();
+    marketplaceMeta = new Map(resp.templates.map((t) => [t.name, t]));
+  } catch (error) {
+    console.warn(
+      "[apps] local catalog sync could not reach the marketplace; falling back to minimal metadata:",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
   const entries = scanned.map((row) => {
-    const meta = staticCatalogMeta(row.appId);
+    const meta = marketplaceMeta.get(row.appId);
     return {
       app_id: row.appId,
-      name: meta.name,
-      description: meta.description,
-      icon: meta.icon,
-      category: meta.category,
-      tags: meta.tags,
+      name: meta?.name ?? row.appId,
+      description: meta?.description ?? null,
+      icon: meta?.icon ?? null,
+      category: meta?.category ?? null,
+      tags: Array.isArray(meta?.tags) ? meta.tags : [],
       version: null,
       archive_url: null,
       archive_path: row.filePath,
+      provider_id: meta?.provider_id ?? null,
+      credential_source: meta?.credential_source ?? null,
     };
   });
   return requestRuntimeJson<AppCatalogSyncResponse>({

@@ -923,6 +923,8 @@ declare global {
     archive_path: string | null;
     target: string;
     cached_at: string;
+    provider_id?: string | null;
+    credential_source?: string | null;
   }
 
   interface AppCatalogListResponse {
@@ -965,6 +967,10 @@ declare global {
     tags: string[];
     version?: string | null;
     archives?: AppTemplateArchivePayload[];
+    // Self-declared by each module's app.runtime.yaml; surfaced through the
+    // backend so the desktop doesn't need its own static map.
+    provider_id?: string | null;
+    credential_source?: string | null;
   }
 
   interface WorkspaceLifecycleBlockingAppPayload {

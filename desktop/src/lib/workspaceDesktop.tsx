@@ -736,14 +736,15 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     }
   }
 
-  const APP_TO_PROVIDER: Record<string, string> = {
-    twitter: "twitter",
-    linkedin: "linkedin",
-    reddit: "reddit",
-    gmail: "gmail",
-    sheets: "googlesheets",
-    github: "github",
-  };
+  // Resolve an app's required integration provider from the catalog entry.
+  // Each module declares its provider in app.runtime.yaml; backend surfaces
+  // it as `provider_id` on every catalog entry. No more desktop-side map.
+  function providerForCatalogApp(appId: string): string | null {
+    const entry = appCatalog.find(
+      (e) => e.app_id.toLowerCase() === appId.toLowerCase(),
+    );
+    return entry?.provider_id?.trim() || null;
+  }
 
   async function installAppFromCatalog(appId: string) {
     if (!selectedWorkspaceId) {
@@ -756,7 +757,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     setAppCatalogError("");
 
     // Check if this app requires an integration that isn't connected yet
-    const provider = APP_TO_PROVIDER[appId.toLowerCase()];
+    const provider = providerForCatalogApp(appId);
     if (provider) {
       try {
         const { connections } = await window.electronAPI.workspace.listIntegrationConnections();
@@ -787,7 +788,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
         source: appCatalogSource,
       });
       // Bind the integration if we have one
-      const provider = APP_TO_PROVIDER[appId.toLowerCase()];
+      const provider = providerForCatalogApp(appId);
       if (provider && selectedWorkspaceId) {
         try {
           const { connections } = await window.electronAPI.workspace.listIntegrationConnections();
