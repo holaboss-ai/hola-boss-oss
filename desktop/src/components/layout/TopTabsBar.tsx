@@ -250,15 +250,15 @@ export function TopTabsBar({
       ? "window-drag relative h-[42px] px-2 pt-0.5 sm:px-3"
       : "window-drag relative h-[42px] px-2 sm:px-3"
     : "rounded-xl border border-border bg-card px-2.5 py-0.5 shadow-subtle-xs backdrop-blur-sm sm:px-4";
-  const headerGridClassName = `relative z-10 grid min-w-0 items-center gap-1 sm:gap-1.5 lg:h-full lg:grid-cols-[minmax(220px,400px)_minmax(0,1fr)_auto] ${
+  const headerGridClassName = `relative z-10 grid min-w-0 items-center gap-1 sm:gap-1.5 lg:h-full lg:grid-cols-[auto_minmax(0,1fr)_auto] ${
     isMacIntegratedTitleBar ? "pl-24" : ""
   }`;
 
   const windowControlButtonClassName =
     "window-no-drag flex h-5 w-5 items-center justify-center rounded-[7px] border border-transparent text-muted-foreground transition-colors duration-150 hover:bg-foreground/6 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
-  const workspaceSwitcherContainerClassName = `${integratedTitleBar ? "window-no-drag " : ""}relative min-w-55 max-w-full`;
+  const workspaceSwitcherContainerClassName = `${integratedTitleBar ? "window-no-drag " : ""}relative max-w-[240px]`;
   const workspaceSwitcherButtonClassName =
-    "h-8 w-full justify-start gap-1.5 px-2.5 rounded-lg text-xs";
+    "h-8 max-w-full justify-start gap-1.5 px-2.5 rounded-lg text-xs";
 
   return (
     <header
@@ -290,7 +290,7 @@ export function TopTabsBar({
             className={workspaceSwitcherButtonClassName}
           >
             <FolderKanban className="size-3.5 shrink-0 text-primary" />
-            <span className="min-w-0 flex-1 truncate text-left font-medium">
+            <span className="min-w-0 truncate text-left font-medium">
               {selectedWorkspace?.name || "Select workspace"}
             </span>
             <ChevronDown
