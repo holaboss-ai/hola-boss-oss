@@ -230,7 +230,7 @@ test("buildAgentCapabilityManifest carries browser tool descriptions that emphas
   assert.match(capability.description, /DOM-first browser inspection tool for actions and structured extraction/i);
   assert.match(capability.description, /visible media such as images/i);
   assert.match(capability.description, /include_screenshot=true/i);
-  assert.match(capability.description, /visual appearance, layout, prominence, overlays, canvas\/chart\/PDF content/i);
+  assert.match(capability.description, /visual confirmation matters or DOM signals are ambiguous/i);
 });
 
 test("evaluateAgentCapabilities keeps command and skill surfaces while excluding non-staged browser tools", () => {
