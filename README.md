@@ -1,10 +1,8 @@
-# holaOS - The Agent Envionrment Built for Long-Horizon Work and Self-Evolution
-
 <p align="center">
-  <img src="desktop/public/logo.svg" alt="Holaboss logo" width="132" />
+  <img src="docs/images/banner.png" alt="Holaboss logo" />
 </p>
 
-<p align="center"><strong>The agent environment for long-horizon work, continuity, and self-evolution.</strong></p>
+<p align="center"><strong>An Agent Computer for long-horizon work, continuity, and self-improvement.</strong></p>
 
 <p align="center">
   <a href="https://github.com/holaboss-ai/holaOS/actions/workflows/ci.yml"><img src="https://github.com/holaboss-ai/holaOS/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
@@ -22,22 +20,18 @@
   <a href="#quick-start">Quick Start</a>
 </p>
 
-holaOS is the agent environment for long-horizon work. It gives agents a structured operating system made of runtime, memory, tools, apps, and durable state so they can work continuously, evolve over time, and stay inspectable across runs instead of resetting back to one-off task execution.
+# holaOS
 
+holaOS is an Agent Computer for role-driven work. It gives agents full computer capabilities through the file system, apps, and browser so they can work continuously, evolve over time, and stay inspectable across long-horizon runs. Users can build their own agent roles and distribute them through the template marketplace, or start quickly from role templates in the marketplace when they are not sure where to begin.
 
-## Desktop Workspace
 
 <p align="center">
   <img src="docs/images/desktop-workspace.png" alt="Holaboss desktop workspace screenshot" width="1280" />
 </p>
 
-## Star the Repository
 
-<p align="center">
-  <img src="docs/images/star-the-repo.gif" alt="Animated preview from the Holaboss star-the-repo video" width="1280" />
-</p>
 
-<p align="center"><strong>If Holaboss is useful or interesting, a GitHub Star would be greatly appreciated.</strong></p>
+
 
 ## Table of Contents
 
@@ -52,7 +46,7 @@ holaOS is the agent environment for long-horizon work. It gives agents a structu
 
 ## Quick Start
 
-Quick Start is the shortest path to a working local Holaboss Desktop environment powered by `holaOS`. Use the one-line repository installer on a fresh machine, or follow the manual path if you want to control each setup step yourself.
+Quick Start is the shortest path to a working local Holaboss Desktop environment powered by `holaOS`. Use the one-line repository installer on a fresh machine, or follow the manual path if you want to control each setup step.
 
 ### What you need
 
@@ -82,6 +76,14 @@ That installer:
 - runs `npm run desktop:typecheck`
 - only runs `npm run desktop:dev` when you pass `--launch`
 
+## Star the Repository
+
+<p align="center">
+  <img src="docs/images/star-the-repo.gif" alt="Animated preview from the Holaboss star-the-repo video" width="1280" />
+</p>
+
+<p align="center"><strong>If Holaboss is useful or interesting, a GitHub Star would be greatly appreciated.</strong></p>
+
 ## Documentation
 
 All deeper technical and product documentation lives at **[holaboss.ai/docs](https://www.holaboss.ai/docs/)**:
@@ -108,7 +110,7 @@ All deeper technical and product documentation lives at **[holaboss.ai/docs](htt
 
 ## Manual Install
 
-You really shouldn't need this as the one line install is doing the exact same thing. But oh well it's here in case you need it. If you are using the manual path instead, you can verify the usual prerequisites with:
+You likely will not need this section because One-Line Install runs the same setup. Use Manual Install when you want to inspect or control each step. If you use the manual path, verify the usual prerequisites first:
 
 ```bash
 git --version
@@ -121,7 +123,7 @@ npm --version
 If you use Codex, Claude Code, Cursor, Windsurf, or another coding agent, you can hand it the setup instructions in one sentence:
 
 ```text
-Run the Holaboss install script from https://raw.githubusercontent.com/holaboss-ai/holaboss-ai/main/scripts/install.sh. It should install git and Node.js 22/npm if they are missing, clone or update the repo into ~/holaboss-ai unless I specify another --dir, run desktop:install, create desktop/.env from desktop/.env.example if needed, run desktop:prepare-runtime:local and desktop:typecheck, and only run desktop:dev if I ask for --launch. If Electron cannot open, stop after verification and tell me the next manual step.
+Run the Holaboss install script from https://raw.githubusercontent.com/holaboss-ai/holaboss-ai/main/scripts/install.sh. It should install git and Node.js 24.14.1/npm if they are missing, clone or update the repo into ~/holaboss-ai unless I specify another --dir, run desktop:install, create desktop/.env from desktop/.env.example if needed, run desktop:prepare-runtime:local and desktop:typecheck, and only run desktop:dev if I ask for --launch. If Electron cannot open, stop after verification and tell me the next manual step.
 ```
 
 That handoff keeps the installation flow self-contained while leaving the detailed bootstrap steps in the repo-local [INSTALL.md](INSTALL.md) runbook.
