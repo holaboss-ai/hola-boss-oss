@@ -17,6 +17,7 @@ import {
   proactiveBridgeHeaders,
   tsBridgeWorkerEnabled
 } from "./bridge-worker.js";
+import type { RuntimeSentryCaptureOptions } from "./runtime-sentry.js";
 
 test("ts bridge worker is enabled by default when remote bridge is enabled and only disables on explicit opt-out", () => {
   const previousBridge = process.env.PROACTIVE_ENABLE_REMOTE_BRIDGE;
@@ -173,6 +174,141 @@ test("runtime remote bridge worker polls jobs and reports results", async () => 
   assert.equal(fetchCalls[0].method, "GET");
   assert.equal(fetchCalls[1].method, "POST");
   assert.match(fetchCalls[1].body ?? "", /"job_id":"job-1"/);
+
+  if (previousBaseUrl === undefined) {
+    delete process.env.PROACTIVE_BRIDGE_BASE_URL;
+  } else {
+    process.env.PROACTIVE_BRIDGE_BASE_URL = previousBaseUrl;
+  }
+  if (previousAuth === undefined) {
+    delete process.env.HOLABOSS_SANDBOX_AUTH_TOKEN;
+  } else {
+    process.env.HOLABOSS_SANDBOX_AUTH_TOKEN = previousAuth;
+  }
+});
+
+test("runtime remote bridge worker reports poll failures to Sentry", async () => {
+  const previousBaseUrl = process.env.PROACTIVE_BRIDGE_BASE_URL;
+  const previousAuth = process.env.HOLABOSS_SANDBOX_AUTH_TOKEN;
+  process.env.PROACTIVE_BRIDGE_BASE_URL = "http://127.0.0.1:3069";
+  process.env.HOLABOSS_SANDBOX_AUTH_TOKEN = "token-1";
+
+  const sentryCaptures: RuntimeSentryCaptureOptions[] = [];
+  const worker = new RuntimeRemoteBridgeWorker({
+    captureRuntimeException: (capture) => {
+      sentryCaptures.push(capture);
+    },
+    fetchImpl: (async () =>
+      new Response("Invalid or missing API key", {
+        status: 401,
+        headers: { "Content-Type": "text/plain" }
+      })) as typeof fetch,
+  });
+
+  await assert.rejects(worker.pollOnce(), /receive_jobs with status 401/);
+
+  assert.equal(sentryCaptures.length, 1);
+  assert.equal(sentryCaptures[0]?.tags?.surface, "proactive_bridge");
+  assert.equal(sentryCaptures[0]?.tags?.failure_kind, "poll_failure");
+  assert.equal(sentryCaptures[0]?.tags?.bridge_phase, "receive_jobs");
+  assert.equal(sentryCaptures[0]?.tags?.http_status, 401);
+  assert.equal(
+    sentryCaptures[0]?.contexts?.proactive_bridge?.endpoint,
+    "http://127.0.0.1:3069/api/v1/proactive/bridge/jobs?limit=10"
+  );
+  assert.equal(
+    sentryCaptures[0]?.extras?.response_body,
+    "Invalid or missing API key"
+  );
+  assert.equal(
+    sentryCaptures[0]?.extras?.response_content_type,
+    "text/plain"
+  );
+
+  if (previousBaseUrl === undefined) {
+    delete process.env.PROACTIVE_BRIDGE_BASE_URL;
+  } else {
+    process.env.PROACTIVE_BRIDGE_BASE_URL = previousBaseUrl;
+  }
+  if (previousAuth === undefined) {
+    delete process.env.HOLABOSS_SANDBOX_AUTH_TOKEN;
+  } else {
+    process.env.HOLABOSS_SANDBOX_AUTH_TOKEN = previousAuth;
+  }
+});
+
+test("runtime remote bridge worker reports result delivery failures to Sentry", async () => {
+  const previousBaseUrl = process.env.PROACTIVE_BRIDGE_BASE_URL;
+  const previousAuth = process.env.HOLABOSS_SANDBOX_AUTH_TOKEN;
+  process.env.PROACTIVE_BRIDGE_BASE_URL = "http://127.0.0.1:3069";
+  process.env.HOLABOSS_SANDBOX_AUTH_TOKEN = "token-1";
+
+  const sentryCaptures: RuntimeSentryCaptureOptions[] = [];
+  const worker = new RuntimeRemoteBridgeWorker({
+    captureRuntimeException: (capture) => {
+      sentryCaptures.push(capture);
+    },
+    fetchImpl: (async (input, init) => {
+      const url = String(input);
+      if ((init?.method ?? "GET") === "GET") {
+        return new Response(
+          JSON.stringify({
+            jobs: [
+              {
+                job_id: "job-1",
+                job_type: "task_proposal.create",
+                workspace_id: "workspace-1",
+                payload: {
+                  workspace_id: "workspace-1",
+                  task_name: "Review workspace",
+                  task_prompt: "Review the current workspace.",
+                  task_generation_rationale: "Bridge test"
+                }
+              }
+            ]
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      assert.equal(url, "http://127.0.0.1:3069/api/v1/proactive/bridge/results");
+      return new Response("gateway unavailable", {
+        status: 503,
+        headers: { "Content-Type": "text/plain" }
+      });
+    }) as typeof fetch,
+    executeJob: async (job) => ({
+      job_id: job.job_id,
+      status: "succeeded",
+      workspace_id: job.workspace_id,
+      job_type: job.job_type,
+      output: { ok: true }
+    })
+  });
+
+  const processed = await worker.pollOnce();
+
+  assert.equal(processed, 1);
+  assert.equal(sentryCaptures.length, 1);
+  assert.equal(sentryCaptures[0]?.tags?.surface, "proactive_bridge");
+  assert.equal(sentryCaptures[0]?.tags?.failure_kind, "job_failure");
+  assert.equal(sentryCaptures[0]?.tags?.bridge_phase, "report_result");
+  assert.equal(sentryCaptures[0]?.tags?.job_type, "task_proposal.create");
+  assert.equal(sentryCaptures[0]?.tags?.http_status, 503);
+  assert.equal(
+    sentryCaptures[0]?.contexts?.proactive_bridge_job?.job_id,
+    "job-1"
+  );
+  assert.equal(
+    sentryCaptures[0]?.extras?.response_body,
+    "gateway unavailable"
+  );
+  assert.deepEqual(sentryCaptures[0]?.extras?.reported_result, {
+    status: "succeeded",
+    error_code: null,
+    error_message: null,
+    completed_at: null,
+    has_output: true
+  });
 
   if (previousBaseUrl === undefined) {
     delete process.env.PROACTIVE_BRIDGE_BASE_URL;

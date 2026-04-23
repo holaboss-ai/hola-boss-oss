@@ -45,7 +45,44 @@ function writeRuntimeConfig(root: string, document: Record<string, unknown>): vo
   process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
 }
 
-test("image generation model selection prefers explicit runtime.image_generation settings", () => {
+test("image generation model selection honors explicit selected image models over runtime.image_generation", () => {
+  const root = makeTempDir("hb-image-model-selected-");
+  writeRuntimeConfig(root, {
+    runtime: {
+      image_generation: {
+        provider: "openai_direct",
+        model: "gpt-image-1.5",
+      },
+    },
+    providers: {
+      openai_direct: {
+        kind: "openai_compatible",
+        base_url: "https://api.openai.com/v1",
+        api_key: "sk-openai",
+      },
+    },
+    models: {
+      "openai_direct/gpt-image-1-mini": {
+        provider_id: "openai_direct",
+        model_id: "gpt-image-1-mini",
+        capabilities: ["image_generation"],
+      },
+    },
+  });
+
+  const selection = resolveImageGenerationModelSelection({
+    selectedModel: "openai_direct/gpt-image-1-mini",
+    defaultProviderId: "openai_direct",
+  });
+
+  assert.deepEqual(selection, {
+    providerId: "openai_direct",
+    modelId: "gpt-image-1-mini",
+    source: "selected",
+  });
+});
+
+test("image generation model selection still prefers runtime.image_generation for chat models", () => {
   const root = makeTempDir("hb-image-model-selection-");
   writeRuntimeConfig(root, {
     runtime: {
@@ -59,6 +96,13 @@ test("image generation model selection prefers explicit runtime.image_generation
         kind: "openai_compatible",
         base_url: "https://api.openai.com/v1",
         api_key: "sk-openai",
+      },
+    },
+    models: {
+      "openai_direct/gpt-5.4": {
+        provider_id: "openai_direct",
+        model_id: "gpt-5.4",
+        capabilities: ["chat"],
       },
     },
   });
@@ -211,17 +255,18 @@ test("image generation model client resolves OpenRouter image providers with Ope
 test("image generation model client routes managed Holaboss Gemini image models to the Google proxy path", () => {
   const root = makeTempDir("hb-image-model-holaboss-google-");
   writeRuntimeConfig(root, {
-    runtime: {
-      image_generation: {
-        provider: "holaboss_model_proxy",
-        model: "gemini-2.5-flash-image",
-      },
-    },
     providers: {
       holaboss_model_proxy: {
         kind: "holaboss_proxy",
         base_url: "https://runtime.example/api/v1/model-proxy",
         api_key: "hb-token",
+      },
+    },
+    models: {
+      "holaboss_model_proxy/gemini-2.5-flash-image": {
+        provider_id: "holaboss_model_proxy",
+        model_id: "gemini-2.5-flash-image",
+        capabilities: ["image_generation"],
       },
     },
   });
@@ -230,7 +275,7 @@ test("image generation model client routes managed Holaboss Gemini image models 
     workspaceId: "workspace-1",
     sessionId: "session-1",
     inputId: "input-1",
-    selectedModel: "holaboss_model_proxy/gpt-5.4",
+    selectedModel: "holaboss_model_proxy/gemini-2.5-flash-image",
     defaultProviderId: "holaboss_model_proxy",
   });
 

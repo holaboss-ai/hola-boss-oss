@@ -60,11 +60,13 @@ export type HarnessPromptLayerId =
   | "runtime_core"
   | "execution_policy"
   | "response_delivery_policy"
+  | "todo_continuity_policy"
   | "session_policy"
   | "capability_policy"
   | "current_user_context"
   | "operator_surface_context"
   | "pending_user_memory"
+  | "scratchpad_context"
   | "evolve_candidate_context"
   | "memory_recall"
   | "workspace_policy"
@@ -130,6 +132,7 @@ export interface HarnessHostRequestBuildParams {
   request: HarnessRunnerRequestLike;
   bootstrap: HarnessBootstrapPayload;
   runtimeConfig: HarnessRuntimeConfigPayload;
+  prepared_instruction?: unknown;
   browserSpace?: "agent" | "user" | null;
   runtimeApiBaseUrl?: string | null;
   workspaceSkills: Array<{

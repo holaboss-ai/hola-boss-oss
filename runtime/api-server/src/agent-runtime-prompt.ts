@@ -17,32 +17,6 @@ import type {
   HarnessPromptLayerPayload,
 } from "../../harnesses/src/types.js";
 
-export interface AgentRecentRuntimeContext {
-  summary?: string | null;
-  last_stop_reason?: string | null;
-  last_error?: string | null;
-  waiting_for_user?: boolean | null;
-}
-
-export interface AgentSessionResumeContext {
-  recent_turns?: Array<{
-    input_id: string;
-    status: string;
-    stop_reason?: string | null;
-    summary?: string | null;
-    completed_at?: string | null;
-  }> | null;
-  recent_user_messages?: string[] | null;
-  compaction_source?: string | null;
-  compaction_boundary_id?: string | null;
-  compaction_boundary_summary?: string | null;
-  restoration_order?: string[] | null;
-  preserved_turn_input_ids?: string[] | null;
-  restored_memory_paths?: string[] | null;
-  session_memory_path?: string | null;
-  session_memory_excerpt?: string | null;
-}
-
 export interface AgentRecalledMemoryContext {
   entries?: Array<{
     scope: string;
@@ -105,6 +79,14 @@ export interface AgentPendingUserMemoryContext {
   }> | null;
 }
 
+export interface AgentScratchpadContext {
+  exists: boolean;
+  file_path: string;
+  updated_at?: string | null;
+  size_bytes?: number | null;
+  preview?: string | null;
+}
+
 export interface AgentEvolveCandidateContext {
   candidate_id: string;
   kind: string;
@@ -126,12 +108,11 @@ export interface ComposeBaseAgentPromptRequest {
   sessionKind?: string | null;
   sessionMode?: string | null;
   harnessId?: string | null;
-  recentRuntimeContext?: AgentRecentRuntimeContext | null;
-  sessionResumeContext?: AgentSessionResumeContext | null;
   recalledMemoryContext?: AgentRecalledMemoryContext | null;
   currentUserContext?: AgentCurrentUserContext | null;
   operatorSurfaceContext?: AgentOperatorSurfaceContext | null;
   pendingUserMemoryContext?: AgentPendingUserMemoryContext | null;
+  scratchpadContext?: AgentScratchpadContext | null;
   evolveCandidateContext?: AgentEvolveCandidateContext | null;
   capabilityManifest?: AgentCapabilityManifest | null;
 }
@@ -149,16 +130,29 @@ function nonEmptyText(value: string | null | undefined): string {
   return (value ?? "").trim();
 }
 
-function isInternalRuntimeMemoryPath(value: string): boolean {
-  return /^workspace\/[^/]+\/runtime\//.test(value.trim());
-}
-
 function linesSection(lines: string[]): string {
   return lines.filter((line) => line.trim().length > 0).join("\n").trim();
 }
 
 function normalizeSessionKind(value: string | null | undefined): string {
   return nonEmptyText(value).toLowerCase();
+}
+
+function hasTodoCoordinationTools(request: ComposeBaseAgentPromptRequest): boolean {
+  const available = new Set<string>();
+  for (const toolName of [...request.defaultTools, ...request.extraTools]) {
+    const normalized = nonEmptyText(toolName).toLowerCase();
+    if (normalized) {
+      available.add(normalized);
+    }
+  }
+  for (const capability of request.capabilityManifest?.coordinate ?? []) {
+    const normalized = nonEmptyText(capability.id).toLowerCase();
+    if (normalized) {
+      available.add(normalized);
+    }
+  }
+  return available.has("todoread") || available.has("todowrite");
 }
 
 function sessionPolicyPromptSection(request: ComposeBaseAgentPromptRequest): string {
@@ -219,40 +213,21 @@ function responseDeliveryPolicyPromptSection(): string {
   ]);
 }
 
-function recentRuntimeContextPromptSection(context: AgentRecentRuntimeContext | null | undefined): string {
-  if (!context) {
+function todoContinuationPolicyPromptSection(request: ComposeBaseAgentPromptRequest): string {
+  if (!hasTodoCoordinationTools(request)) {
     return "";
   }
-  const lines = ["Recent runtime context:"];
-  const summary = nonEmptyText(context.summary);
-  const stopReason = nonEmptyText(context.last_stop_reason);
-  const lastError = nonEmptyText(context.last_error);
-
-  if (summary) {
-    lines.push(summary);
-  }
-  if (stopReason) {
-    lines.push(`Previous stop reason: ${stopReason}.`);
-  }
-  lines.push("The user's newest message is the primary instruction for this turn. Use unfinished prior work only as continuity context.");
-  if (context.waiting_for_user === true) {
-    lines.push("The previous run paused waiting for user input. Do not treat that state as completed work.");
-  }
-  if (stopReason === "paused") {
-    lines.push("The previous run was paused before completion. Do not treat that work as finished.");
-  }
-  if (context.waiting_for_user === true || stopReason === "paused") {
-    lines.push(
-      "Only resume the unfinished prior work immediately when the user's newest message clearly asks to continue it or clearly advances the same task."
-    );
-    lines.push(
-      "If the user's newest message is conversational, brief, acknowledges the prior result, or is otherwise ambiguous about continuation, respond to that message directly and ask whether they want to continue the unfinished work instead of resuming it automatically."
-    );
-  }
-  if (lastError) {
-    lines.push(`Previous runtime error: ${lastError}.`);
-  }
-  return lines.length > 1 ? linesSection(lines) : "";
+  return linesSection([
+    "Todo continuity policy:",
+    "Treat todo state as explicit coordination state, not hidden memory.",
+    "Treat the user's newest message as the primary instruction for the current turn even when unfinished todo state may already exist.",
+    "Do not resume unfinished todo work unless the newest message clearly asks to continue it or clearly advances the same work.",
+    "If the newest message is conversational, brief, acknowledges prior progress, or is otherwise ambiguous about continuation, respond to that message directly first and ask whether the user wants to continue the unfinished work.",
+    "When you need the current phase ids, task ids, or recorded state from an existing todo before continuing or updating it, use `todoread` first instead of guessing.",
+    "When the user has clearly asked to continue unfinished todo work and executable todo items remain, continue until the recorded work is complete or genuinely blocked.",
+    "Do not stop only to give progress updates or ask whether to continue while executable todo items remain after the user already asked you to continue.",
+    "If the user's newest message clearly redirects to unrelated work, handle that new request first without marking the unfinished todo complete, then propose continuing it afterward.",
+  ]);
 }
 
 function currentUserContextPromptSection(context: AgentCurrentUserContext | null | undefined): string {
@@ -350,6 +325,40 @@ function pendingUserMemoryContextPromptSection(context: AgentPendingUserMemoryCo
   return linesSection(lines);
 }
 
+function scratchpadContextPromptSection(context: AgentScratchpadContext | null | undefined): string {
+  if (!context || context.exists !== true) {
+    return "";
+  }
+  const filePath = nonEmptyText(context.file_path);
+  const updatedAt = nonEmptyText(context.updated_at);
+  const preview = nonEmptyText(context.preview);
+  const sizeBytes =
+    typeof context.size_bytes === "number" && Number.isFinite(context.size_bytes)
+      ? Math.max(0, Math.trunc(context.size_bytes))
+      : null;
+
+  const lines = [
+    "Session scratchpad:",
+    "A session-scoped scratchpad file already exists for this session.",
+    "The scratchpad is not loaded into prompt context automatically. Read it explicitly when those notes are needed for this turn.",
+    "The scratchpad metadata and preview below are already loaded into prompt context. Do not read the scratchpad just to confirm its existence, path, timestamp, or preview; read it only when you need additional note contents for this turn.",
+    "Use the scratchpad for working notes and interim state, not as durable memory or a user-facing deliverable.",
+  ];
+  if (filePath) {
+    lines.push(`Path: \`${filePath}\`.`);
+  }
+  if (updatedAt) {
+    lines.push(`Last updated: ${updatedAt}.`);
+  }
+  if (sizeBytes !== null) {
+    lines.push(`Size: ${sizeBytes} bytes.`);
+  }
+  if (preview) {
+    lines.push(`Preview: ${preview}`);
+  }
+  return linesSection(lines);
+}
+
 function evolveCandidateContextPromptSection(context: AgentEvolveCandidateContext | null | undefined): string {
   if (!context) {
     return "";
@@ -385,135 +394,6 @@ function evolveCandidateContextPromptSection(context: AgentEvolveCandidateContex
       ? `If you do not create the live skill during this session, runtime may promote the stored draft after a successful review run.`
       : "",
   ];
-  return linesSection(lines);
-}
-
-function sessionResumeContextPromptSection(context: AgentSessionResumeContext | null | undefined): string {
-  if (!context) {
-    return "";
-  }
-  const recentTurns = Array.isArray(context.recent_turns) ? context.recent_turns : [];
-  const recentUserMessages = Array.isArray(context.recent_user_messages) ? context.recent_user_messages : [];
-  const restorationOrder = Array.isArray(context.restoration_order)
-    ? context.restoration_order.map((value) => nonEmptyText(value)).filter(Boolean)
-    : [];
-  const preservedTurnInputIds = Array.isArray(context.preserved_turn_input_ids)
-    ? context.preserved_turn_input_ids.map((value) => nonEmptyText(value)).filter(Boolean)
-    : [];
-  const restoredMemoryPaths = Array.isArray(context.restored_memory_paths)
-    ? context.restored_memory_paths.map((value) => nonEmptyText(value)).filter(Boolean)
-    : [];
-  const internalRuntimeMemoryPaths = restoredMemoryPaths.filter((value) =>
-    isInternalRuntimeMemoryPath(value),
-  );
-  const externalRestoredMemoryPaths = restoredMemoryPaths.filter(
-    (value) => !isInternalRuntimeMemoryPath(value),
-  );
-  const sessionMemoryPath = nonEmptyText(context.session_memory_path);
-  const sessionMemoryExcerpt = nonEmptyText(context.session_memory_excerpt);
-  const compactionBoundaryId = nonEmptyText(context.compaction_boundary_id);
-  const compactionBoundarySummary = nonEmptyText(context.compaction_boundary_summary);
-
-  if (
-    recentTurns.length === 0 &&
-    recentUserMessages.length === 0 &&
-    !compactionBoundaryId &&
-    !compactionBoundarySummary &&
-    restorationOrder.length === 0 &&
-    preservedTurnInputIds.length === 0 &&
-    restoredMemoryPaths.length === 0 &&
-    !sessionMemoryPath &&
-    !sessionMemoryExcerpt
-  ) {
-    return "";
-  }
-
-  const lines = [
-    "Session resume context:",
-    "Use this as continuity context derived from persisted turn results and selected prior session messages. Verify current workspace state before acting on details that may have changed.",
-    "Treat the user's newest message as authoritative for this turn. Do not resume unfinished prior work unless that newest message clearly asks to continue it or clearly advances the same task.",
-    "If the newest message is conversational, brief, or ambiguous about continuation, respond to it directly first and ask whether the user wants to continue the unfinished prior work.",
-  ];
-
-  if (compactionBoundaryId || compactionBoundarySummary || restorationOrder.length > 0) {
-    lines.push(
-      "",
-      compactionBoundaryId
-        ? `This resume context was restored from compaction boundary \`${compactionBoundaryId}\`.`
-        : "This resume context was restored from a prior compaction boundary."
-    );
-    if (compactionBoundarySummary) {
-      lines.push(`Boundary summary: ${compactionBoundarySummary}`);
-    }
-    if (restorationOrder.length > 0) {
-      lines.push(`Restoration order: ${restorationOrder.map((value) => `\`${value}\``).join(" -> ")}.`);
-    }
-  }
-
-  if (preservedTurnInputIds.length > 0) {
-    lines.push("", `Preserved turn ids: ${preservedTurnInputIds.map((value) => `\`${value}\``).join(", ")}.`);
-  }
-
-  if (internalRuntimeMemoryPaths.length > 0) {
-    lines.push(
-      "",
-      `Internal runtime memory was restored from ${internalRuntimeMemoryPaths.length} runtime-managed record${internalRuntimeMemoryPaths.length === 1 ? "" : "s"}.`,
-      "These runtime-managed records are continuity metadata, not workspace files or folders for you to create, rename, or edit.",
-      "Do not create or modify a `runtime/` directory in the workspace unless the user explicitly asks for that exact directory."
-    );
-  }
-
-  if (externalRestoredMemoryPaths.length > 0) {
-    lines.push("", "Restored memory references:");
-    for (const memoryPath of externalRestoredMemoryPaths.slice(0, 5)) {
-      lines.push(`- \`${memoryPath}\``);
-    }
-    if (externalRestoredMemoryPaths.length > 5) {
-      lines.push(
-        `- ...and ${externalRestoredMemoryPaths.length - 5} more restored memory references.`
-      );
-    }
-  }
-
-  if (sessionMemoryPath || sessionMemoryExcerpt) {
-    lines.push("", "Session memory:");
-    if (sessionMemoryPath) {
-      if (isInternalRuntimeMemoryPath(sessionMemoryPath)) {
-        lines.push("- Source: internal runtime-managed session memory.");
-      } else {
-        lines.push(`- Path: \`${sessionMemoryPath}\``);
-      }
-    }
-    if (sessionMemoryExcerpt) {
-      lines.push(`- Excerpt: ${sessionMemoryExcerpt}`);
-    }
-  }
-
-  if (recentTurns.length > 0) {
-    lines.push("", "Recent prior turns:");
-    for (const turn of recentTurns) {
-      const stopReason = nonEmptyText(turn.stop_reason);
-      const summary = nonEmptyText(turn.summary);
-      const completedAt = nonEmptyText(turn.completed_at);
-      const details: string[] = [`status=\`${nonEmptyText(turn.status) || "unknown"}\``];
-      if (stopReason) {
-        details.push(`stop=\`${stopReason}\``);
-      }
-      if (completedAt) {
-        details.push(`completed=${completedAt}`);
-      }
-      const detailText = details.length > 0 ? ` (${details.join(", ")})` : "";
-      lines.push(`- \`${nonEmptyText(turn.input_id) || "unknown"}\`${detailText}: ${summary || "No compact summary available."}`);
-    }
-  }
-
-  if (recentUserMessages.length > 0) {
-    lines.push("", "Recent prior user requests:");
-    for (const message of recentUserMessages) {
-      lines.push(`- ${message}`);
-    }
-  }
-
   return linesSection(lines);
 }
 
@@ -616,6 +496,12 @@ export function buildBaseAgentPromptSections(
       "If connected MCP access exists without tool names listed here, do not assume MCP is unavailable; use surfaced MCP tools when relevant."
     );
   }
+  if (capabilityManifest?.runtime_tools.some((capability) => capability.id === "holaboss_scratchpad_write")) {
+    executionLines.push(
+      "When a task is long-running or multi-step, prefer using the session scratchpad for interim notes, partial findings, open questions, and compacted current state instead of keeping that material only in live context.",
+      "Use the scratchpad for session-scoped working notes, not for durable memory or final user-facing deliverables."
+    );
+  }
   pushPromptLayer(promptSections, {
     id: "execution_policy",
     channel: "system_prompt",
@@ -634,6 +520,16 @@ export function buildBaseAgentPromptSections(
     priority: 250,
     volatility: "stable",
     content: responseDeliveryPolicyPromptSection()
+  });
+
+  pushPromptLayer(promptSections, {
+    id: "todo_continuity_policy",
+    channel: "system_prompt",
+    apply_at: "runtime_config",
+    precedence: "capability_policy",
+    priority: 350,
+    volatility: "run",
+    content: todoContinuationPolicyPromptSection(request)
   });
 
   pushPromptLayer(promptSections, {
@@ -692,6 +588,16 @@ export function buildBaseAgentPromptSections(
   });
 
   pushPromptLayer(promptSections, {
+    id: "scratchpad_context",
+    channel: "context_message",
+    apply_at: "runtime_config",
+    precedence: "runtime_context",
+    priority: 492,
+    volatility: "run",
+    content: scratchpadContextPromptSection(request.scratchpadContext)
+  });
+
+  pushPromptLayer(promptSections, {
     id: "evolve_candidate_context",
     channel: "context_message",
     apply_at: "runtime_config",
@@ -699,26 +605,6 @@ export function buildBaseAgentPromptSections(
     priority: 495,
     volatility: "run",
     content: evolveCandidateContextPromptSection(request.evolveCandidateContext)
-  });
-
-  pushPromptLayer(promptSections, {
-    id: "recent_runtime_context",
-    channel: "context_message",
-    apply_at: "runtime_config",
-    precedence: "runtime_context",
-    priority: 500,
-    volatility: "run",
-    content: recentRuntimeContextPromptSection(request.recentRuntimeContext)
-  });
-
-  pushPromptLayer(promptSections, {
-    id: "resume_context",
-    channel: "resume_context",
-    apply_at: "runtime_config",
-    precedence: "runtime_context",
-    priority: 550,
-    volatility: "run",
-    content: sessionResumeContextPromptSection(request.sessionResumeContext)
   });
 
   pushPromptLayer(promptSections, {
@@ -744,6 +630,7 @@ export function buildBaseAgentPromptSections(
           content: linesSection([
             "Workspace instructions from AGENTS.md:",
             "Treat these workspace instructions as additional requirements. Follow them unless they conflict with the base runtime instructions above.",
+            "Root AGENTS.md is already loaded into this prompt. Do not read it again unless the user explicitly asks or you need to verify that the on-disk file changed during this run.",
             trimmedWorkspacePrompt
           ])
         }

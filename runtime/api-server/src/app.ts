@@ -18,7 +18,6 @@ import {
   type AgentSessionRecord,
   type AppBuildRecord,
   type AppCatalogEntryRecord,
-  type CompactionBoundaryRecord,
   type CronjobRecord,
   type MemoryUpdateProposalRecord,
   type OutputFolderRecord,
@@ -130,13 +129,6 @@ import { killChildProcess, spawnShellCommand } from "./runtime-shell.js";
 import { startResolvedApplications } from "./resolved-app-bootstrap.js";
 import { buildAppSetupEnv } from "./app-setup-env.js";
 import { collectWorkspaceSnapshot } from "./workspace-snapshot.js";
-import {
-  compactionRestorationContextFromCompactionBoundary,
-  recentRuntimeContextFromCompactionBoundary,
-  recentRuntimeContextFromTurnResult,
-  sessionResumeContextFromArtifacts,
-  sessionResumeContextFromCompactionBoundary,
-} from "./turn-result-summary.js";
 import {
   buildMemoryUpdateProposalsFromUserInput,
   durableMemoryCandidateFromAcceptedProposal,
@@ -402,6 +394,63 @@ function appSetupTimeoutMs(): number {
 
 function optionalDict(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined;
+}
+
+function resolveMemoryRootDir(workspaceRoot: string): string {
+  const configured = (process.env.MEMORY_ROOT_DIR ?? "").trim();
+  if (!configured) {
+    return path.join(workspaceRoot, "memory");
+  }
+  if (path.isAbsolute(configured)) {
+    return path.resolve(configured);
+  }
+  return path.resolve(path.join(workspaceRoot, configured));
+}
+
+function sessionMemoryPath(workspaceId: string, sessionId: string): string {
+  const sanitizedSessionId =
+    sessionId
+      .trim()
+      .replace(/[^A-Za-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "session";
+  return `workspace/${workspaceId}/runtime/session-memory/${sanitizedSessionId}.md`;
+}
+
+function sessionMemoryExcerpt(raw: string, maxChars = 320): string {
+  const normalized = raw.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+}
+
+function loadSessionResumeContextForApi(params: {
+  workspaceRoot: string;
+  workspaceId: string;
+  sessionId: string;
+}): { session_memory_path: string; session_memory_excerpt: string } | null {
+  const relPath = sessionMemoryPath(params.workspaceId, params.sessionId);
+  const memoryRoot = resolveMemoryRootDir(params.workspaceRoot);
+  const targetPath = path.join(memoryRoot, relPath);
+  if (
+    !fs.existsSync(targetPath) ||
+    !fs.statSync(targetPath, { throwIfNoEntry: false })?.isFile()
+  ) {
+    return null;
+  }
+  try {
+    const text = fs.readFileSync(targetPath, "utf8");
+    const excerpt = sessionMemoryExcerpt(text);
+    if (!excerpt) {
+      return null;
+    }
+    return {
+      session_memory_path: relPath,
+      session_memory_excerpt: excerpt,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function requiredDict(value: unknown, fieldName: string): Record<string, unknown> {
@@ -825,7 +874,6 @@ function turnResultPayload(record: TurnResultRecord): Record<string, unknown> {
     request_snapshot_fingerprint: record.requestSnapshotFingerprint,
     prompt_cache_profile: record.promptCacheProfile,
     compacted_summary: record.compactedSummary,
-    compaction_boundary_id: record.compactionBoundaryId,
     token_usage: record.tokenUsage,
     created_at: record.createdAt,
     updated_at: record.updatedAt,
@@ -840,25 +888,6 @@ function turnRequestSnapshotPayload(record: TurnRequestSnapshotRecord): Record<s
     snapshot_kind: record.snapshotKind,
     fingerprint: record.fingerprint,
     payload: record.payload,
-    created_at: record.createdAt,
-    updated_at: record.updatedAt,
-  };
-}
-
-function compactionBoundaryPayload(record: CompactionBoundaryRecord): Record<string, unknown> {
-  return {
-    boundary_id: record.boundaryId,
-    workspace_id: record.workspaceId,
-    session_id: record.sessionId,
-    input_id: record.inputId,
-    boundary_type: record.boundaryType,
-    previous_boundary_id: record.previousBoundaryId,
-    summary: record.summary,
-    recent_runtime_context: record.recentRuntimeContext,
-    restoration_context: record.restorationContext,
-    compaction_restoration_context: compactionRestorationContextFromCompactionBoundary(record),
-    preserved_turn_input_ids: record.preservedTurnInputIds,
-    request_snapshot_fingerprint: record.requestSnapshotFingerprint,
     created_at: record.createdAt,
     updated_at: record.updatedAt,
   };
@@ -3756,6 +3785,193 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
+  app.post("/api/v1/capabilities/runtime-tools/web-search", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return await runtimeAgentToolsService.searchWeb({
+        query: requiredString(request.body.query, "query"),
+        numResults: hasOwn(request.body, "num_results")
+          ? optionalInteger(request.body.num_results, 0) || null
+          : undefined,
+        maxResults: hasOwn(request.body, "max_results")
+          ? optionalInteger(request.body.max_results, 0) || null
+          : undefined,
+        livecrawl: nullableString(request.body.livecrawl) ?? undefined,
+        type: nullableString(request.body.type) ?? undefined,
+        contextMaxCharacters: hasOwn(request.body, "context_max_characters")
+          ? optionalInteger(request.body.context_max_characters, 0) || null
+          : undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime web search failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/skill", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return runtimeAgentToolsService.invokeSkill({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        requestedName: requiredString(request.body.name, "name"),
+        args: nullableString(request.body.args) ?? undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime skill invocation failed");
+    }
+  });
+
+  app.get("/api/v1/capabilities/runtime-tools/todo", async (request, reply) => {
+    try {
+      return await runtimeAgentToolsService.readTodo({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          query: isRecord(request.query) ? request.query : null,
+        }),
+        sessionId:
+          capabilitySessionId({
+            headers: request.headers as Record<string, unknown>,
+            query: isRecord(request.query) ? request.query : null,
+          }) ?? "",
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime todo read failed");
+    }
+  });
+
+  app.get("/api/v1/capabilities/runtime-tools/todo/status", async (request, reply) => {
+    try {
+      return await runtimeAgentToolsService.readTodoStatus({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          query: isRecord(request.query) ? request.query : null,
+        }),
+        sessionId:
+          capabilitySessionId({
+            headers: request.headers as Record<string, unknown>,
+            query: isRecord(request.query) ? request.query : null,
+          }) ?? "",
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime todo status failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/todo", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return await runtimeAgentToolsService.writeTodo({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        sessionId:
+          capabilitySessionId({
+            headers: request.headers as Record<string, unknown>,
+            body: request.body,
+          }) ?? "",
+        toolParams: request.body,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime todo write failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/todo/block", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return await runtimeAgentToolsService.blockTodo({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        sessionId:
+          capabilitySessionId({
+            headers: request.headers as Record<string, unknown>,
+            body: request.body,
+          }) ?? "",
+        detail: requiredString(request.body.detail, "detail"),
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime todo block failed");
+    }
+  });
+
+  app.get("/api/v1/capabilities/runtime-tools/scratchpad", async (request, reply) => {
+    try {
+      return await runtimeAgentToolsService.readScratchpad({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          query: isRecord(request.query) ? request.query : null,
+        }),
+        sessionId:
+          capabilitySessionId({
+            headers: request.headers as Record<string, unknown>,
+            query: isRecord(request.query) ? request.query : null,
+          }) ?? "",
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime scratchpad read failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/scratchpad", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return await runtimeAgentToolsService.writeScratchpad({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        sessionId:
+          capabilitySessionId({
+            headers: request.headers as Record<string, unknown>,
+            body: request.body,
+          }) ?? "",
+        op: requiredString(request.body.op, "op") as "append" | "replace" | "clear",
+        content: hasOwn(request.body, "content") ? nullableString(request.body.content) : undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime scratchpad write failed");
+    }
+  });
+
   app.get("/api/v1/capabilities/runtime-tools/terminal-sessions", async (request, reply) => {
     try {
       return runtimeAgentToolsService.listTerminalSessions({
@@ -6008,42 +6224,6 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     };
   });
 
-  app.get("/api/v1/agent-sessions/:sessionId/compaction-boundaries", async (request, reply) => {
-    const params = request.params as { sessionId: string };
-    const query = isRecord(request.query) ? request.query : {};
-    const workspaceId = optionalString(query.workspace_id);
-    if (!workspaceId) {
-      return sendError(reply, 400, "workspace_id is required");
-    }
-
-    const workspace = store.getWorkspace(workspaceId);
-    if (!workspace) {
-      return sendError(reply, 404, "workspace not found");
-    }
-
-    const inputId = optionalString(query.input_id);
-    const limit = Math.max(1, Math.min(1000, optionalInteger(query.limit, 200)));
-    const offset = Math.max(0, optionalInteger(query.offset, 0));
-    const items = store
-      .listCompactionBoundaries({
-        workspaceId,
-        sessionId: params.sessionId,
-        inputId: inputId ?? undefined,
-        limit,
-        offset,
-      })
-      .map((item: CompactionBoundaryRecord) => compactionBoundaryPayload(item));
-
-    return {
-      workspace_id: workspaceId,
-      session_id: params.sessionId,
-      items,
-      count: items.length,
-      limit,
-      offset,
-    };
-  });
-
   app.get("/api/v1/agent-sessions/:sessionId/resume-context", async (request, reply) => {
     const params = request.params as { sessionId: string };
     const query = isRecord(request.query) ? request.query : {};
@@ -6058,43 +6238,15 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
 
     const inputId = optionalString(query.input_id) ?? "";
-    const latestBoundary = store
-      .listCompactionBoundaries({
-        workspaceId,
-        sessionId: params.sessionId,
-        limit: 8,
-        offset: 0,
-      })
-      .find((boundary) => boundary.inputId !== inputId) ?? null;
-    const turnResults = store.listTurnResults({
-      workspaceId,
-      sessionId: params.sessionId,
-      limit: 8,
-      offset: 0,
-    });
-    const recentTurn = turnResults.find((turnResult) => turnResult.inputId !== inputId) ?? null;
-    const sessionMessages = latestBoundary
-      ? []
-      : store.listSessionMessages({
-          workspaceId,
-          sessionId: params.sessionId,
-        });
-
     return {
       workspace_id: workspaceId,
       session_id: params.sessionId,
       input_id: inputId || null,
-      compaction_restoration_context: compactionRestorationContextFromCompactionBoundary(latestBoundary),
-      recent_runtime_context:
-        recentRuntimeContextFromCompactionBoundary(latestBoundary) ??
-        (recentTurn ? recentRuntimeContextFromTurnResult(recentTurn) : null),
-      session_resume_context:
-        sessionResumeContextFromCompactionBoundary(latestBoundary) ??
-        sessionResumeContextFromArtifacts({
-          turnResults,
-          sessionMessages,
-          currentInputId: inputId,
-        }),
+      session_resume_context: loadSessionResumeContextForApi({
+        workspaceRoot: store.workspaceRoot,
+        workspaceId,
+        sessionId: params.sessionId,
+      }),
     };
   });
 

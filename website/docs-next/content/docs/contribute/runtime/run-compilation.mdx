@@ -13,14 +13,14 @@ The source of truth is:
 - `runtime/api-server/src/agent-runtime-config.ts`
 - `runtime/api-server/src/harness-registry.ts`
 
-## The Current Compile Path
+## Compile Path
 
 For the shipped path, a run moves through these stages:
 
 1. collect the workspace references the runtime needs
 2. compile `workspace.yaml` plus those references into a `CompiledWorkspaceRuntimePlan`
 3. stage runtime-owned capability surfaces such as browser tools, runtime tools, MCP, skills, and commands
-4. load recent runtime context, session resume context, recalled memory, operator surface context, and pending user-memory proposals
+4. load session resume context, session scratchpad context, recalled memory, operator surface context, and pending user-memory proposals
 5. project the final runtime config passed into the harness
 6. build the harness-host request, persist a sanitized request snapshot, and launch the host
 
@@ -98,7 +98,7 @@ This is the runtime-owned interpretation of the authored workspace, not a loose 
 
 ## Strict Runtime-Plan Rules
 
-`workspace-runtime-plan.ts` is intentionally strict. Current important rules:
+`workspace-runtime-plan.ts` is intentionally strict. Important rules:
 
 - `workspace.yaml` must parse to a mapping object
 - `mcp_registry` is required
@@ -123,7 +123,7 @@ Before the harness launch it also:
 
 - stages browser tools through the selected harness plugin
 - stages runtime tools through the selected harness plugin, including runtime-owned mutate paths such as `write_report`
-- resolves workspace skills
+- resolves workspace skills into manifests used for quoted-skill preparation, capability projection, and runtime-backed `skill` invocation
 - optionally stages skills and workspace commands depending on the runner prep plan
 - maps logical MCP server ids to physical server ids with `mcpServerIdMap()`
 - starts the workspace MCP sidecar when `workspace_mcp_catalog` is non-empty
@@ -160,8 +160,8 @@ That last shape is now rejected during runner prep instead of being forwarded as
 
 The runner then loads the context that is specific to this run:
 
-- recent runtime context from turn results or compaction boundaries
-- session resume context from artifacts, compaction boundaries, and session-memory files
+- session resume context from session-memory files
+- session scratchpad context from scratchpad metadata
 - recalled memory context from the memory registry and vector recall path
 - current user profile context
 - operator surface context from the desktop browser capability base URL when desktop browser tooling is active

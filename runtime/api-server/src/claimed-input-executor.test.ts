@@ -310,7 +310,6 @@ test("claimed input persists runner events, assistant text, and idle state on su
     cacheable_section_ids: ["runtime_core", "execution_policy"],
     volatile_section_ids: ["capability_policy"],
   });
-  assert.equal(turnResult.compactionBoundaryId, null);
   assert.deepEqual(turnResult.toolUsageSummary, {
     total_calls: 3,
     completed_calls: 2,
@@ -351,10 +350,6 @@ test("claimed input persists runner events, assistant text, and idle state on su
   });
   const snapshot = store.getTurnRequestSnapshot({ inputId: queued.inputId });
   assert.equal(snapshot, null);
-  assert.equal(
-    store.getCompactionBoundary({ boundaryId: `compaction:${queued.inputId}` }),
-    null,
-  );
 
   store.close();
 });
@@ -1758,7 +1753,7 @@ test("claimed input hydrates runtime exec context from runtime config", async ()
   store.close();
 });
 
-test("claimed input relays tool and terminal run events for backend-owned sentry traces", async () => {
+test("claimed input relays tool, output, and terminal run events for backend-owned sentry traces", async () => {
   const store = makeStore("hb-claimed-input-sentry-run-events-");
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
@@ -1865,6 +1860,7 @@ test("claimed input relays tool and terminal run events for backend-owned sentry
     [
       [2, "tool_call"],
       [3, "tool_call"],
+      [4, "output_delta"],
       [6, "run_completed"],
     ],
   );
@@ -1885,9 +1881,209 @@ test("claimed input relays tool and terminal run events for backend-owned sentry
     agent_id: "member-research",
   });
   assert.deepEqual(relayedEvents[2]?.payload, {
+    delta: "Opened Bing.",
+  });
+  assert.deepEqual(relayedEvents[3]?.payload, {
     status: "ok",
     usage: { input_tokens: 12, output_tokens: 34, total_tokens: 46 },
     final_output_text: "Opened Bing.",
+    source: "runner",
+  });
+
+  store.close();
+});
+
+test("claimed input relays skill invocations, coalesced output, and waiting-user run state", async () => {
+  const store = makeStore("hb-claimed-input-sentry-rich-run-events-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "deploy after approval" },
+  });
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+  const relayedEvents: Array<{
+    sequence: number;
+    eventType: string;
+    payload: Record<string, unknown>;
+    timestamp: string;
+  }> = [];
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+    registerRunStartedFn: async () => {},
+    relayRunEventFn: async (params) => {
+      relayedEvents.push({
+        sequence: params.sequence,
+        eventType: params.eventType,
+        payload: params.payload,
+        timestamp: params.timestamp,
+      });
+    },
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: { instruction_preview: "deploy after approval" },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "output_delta",
+        payload: { delta: "Need " },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 3,
+        event_type: "output_delta",
+        payload: { delta: "approval." },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 4,
+        event_type: "skill_invocation",
+        payload: {
+          phase: "started",
+          call_id: "skill-1",
+          requested_name: "deployment_review",
+          skill_name: "deployment_review",
+          skill_id: "deployment_review",
+          source: "member-ops",
+          agent_id: "member-ops",
+        },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 5,
+        event_type: "skill_invocation",
+        payload: {
+          phase: "completed",
+          call_id: "skill-1",
+          requested_name: "deployment_review",
+          skill_name: "deployment_review",
+          skill_id: "deployment_review",
+          source: "member-ops",
+          agent_id: "member-ops",
+          granted_tools: ["deploy"],
+          active_granted_tools: ["deploy"],
+        },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 6,
+        event_type: "tool_call",
+        payload: {
+          phase: "started",
+          tool_name: "deploy",
+          call_id: "call-1",
+          tool_args: { env: "prod" },
+          source: "member-ops",
+          agent_id: "member-ops",
+        },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 7,
+        event_type: "tool_call",
+        payload: {
+          phase: "completed",
+          tool_name: "deploy",
+          call_id: "call-1",
+          result: { status: "waiting_for_user" },
+          source: "member-ops",
+          agent_id: "member-ops",
+        },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 8,
+        event_type: "run_completed",
+        payload: {
+          status: "waiting_user",
+          stop_reason: "waiting_user",
+          summary: "Deploy paused waiting for confirmation.",
+          usage: { input_tokens: 18, output_tokens: 7, total_tokens: 25 },
+        },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  assert.deepEqual(
+    relayedEvents.map((event) => [event.sequence, event.eventType]),
+    [
+      [3, "output_delta"],
+      [4, "skill_invocation"],
+      [5, "skill_invocation"],
+      [6, "tool_call"],
+      [7, "tool_call"],
+      [9, "run_state"],
+      [10, "run_completed"],
+    ],
+  );
+  assert.deepEqual(relayedEvents[0]?.payload, {
+    delta: "Need approval.",
+  });
+  assert.deepEqual(relayedEvents[1]?.payload, {
+    phase: "started",
+    call_id: "skill-1",
+    requested_name: "deployment_review",
+    skill_name: "deployment_review",
+    skill_id: "deployment_review",
+    source: "member-ops",
+    agent_id: "member-ops",
+  });
+  assert.deepEqual(relayedEvents[2]?.payload, {
+    phase: "completed",
+    call_id: "skill-1",
+    requested_name: "deployment_review",
+    skill_name: "deployment_review",
+    skill_id: "deployment_review",
+    source: "member-ops",
+    agent_id: "member-ops",
+    granted_tools: ["deploy"],
+    active_granted_tools: ["deploy"],
+  });
+  assert.deepEqual(relayedEvents[5]?.payload, {
+    status: "waiting_user",
+    stop_reason: "waiting_user",
+    message: "Deploy paused waiting for confirmation.",
+    source: "runner",
+    terminal_event_type: "run_completed",
+  });
+  assert.deepEqual(relayedEvents[6]?.payload, {
+    status: "waiting_user",
+    stop_reason: "waiting_user",
+    summary: "Deploy paused waiting for confirmation.",
+    usage: { input_tokens: 18, output_tokens: 7, total_tokens: 25 },
+    final_output_text: "Need approval.",
     source: "runner",
   });
 
@@ -1902,7 +2098,7 @@ test("run-start registration strips the model-proxy path before calling the back
     sessionId: "session-main",
     inputId: "input-1",
     runId: "workspace-1:session-main:input-1",
-    selectedModel: "elephant-alpha",
+    selectedModel: "gpt-5.4",
     runtimeBinding: {
       authToken: "token-1",
       userId: "user-1",
@@ -1946,34 +2142,40 @@ test("run-start registration strips the model-proxy path before calling the back
       session_id: "session-main",
       input_id: "input-1",
       run_id: "workspace-1:session-main:input-1",
-      model: "elephant-alpha",
+      model: "gpt-5.4",
     }),
   );
 });
 
 test("run-start registration reports backend failures to Sentry", async () => {
   const sentryCaptures: RuntimeSentryCaptureOptions[] = [];
+  const originalWarn = console.warn;
+  console.warn = () => {};
 
-  await registerWorkspaceAgentRunStarted({
-    workspaceId: "workspace-1",
-    sessionId: "session-main",
-    inputId: "input-1",
-    runId: "workspace-1:session-main:input-1",
-    selectedModel: "elephant-alpha",
-    runtimeBinding: {
-      authToken: "token-1",
-      userId: "user-1",
-      sandboxId: "sandbox-1",
-      modelProxyBaseUrl: "http://127.0.0.1:3060/api/v1/model-proxy",
-    },
-    captureRuntimeExceptionFn: (capture) => {
-      sentryCaptures.push(capture);
-    },
-    fetchImpl: async () =>
-      new Response("binding lookup failed: api_key=secret-token", {
-        status: 401,
-      }),
-  });
+  try {
+    await registerWorkspaceAgentRunStarted({
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      inputId: "input-1",
+      runId: "workspace-1:session-main:input-1",
+      selectedModel: "gpt-5.4",
+      runtimeBinding: {
+        authToken: "token-1",
+        userId: "user-1",
+        sandboxId: "sandbox-1",
+        modelProxyBaseUrl: "http://127.0.0.1:3060/api/v1/model-proxy",
+      },
+      captureRuntimeExceptionFn: (capture) => {
+        sentryCaptures.push(capture);
+      },
+      fetchImpl: async () =>
+        new Response("binding lookup failed: api_key=secret-token", {
+          status: 401,
+        }),
+    });
+  } finally {
+    console.warn = originalWarn;
+  }
 
   assert.equal(sentryCaptures.length, 1);
   assert.equal(
@@ -1994,8 +2196,78 @@ test("run-start registration reports backend failures to Sentry", async () => {
     session_id: "session-main",
     input_id: "input-1",
     run_id: "workspace-1:session-main:input-1",
-    model: "elephant-alpha",
+    model: "gpt-5.4",
   });
+});
+
+test("run-start registration reports fetch socket diagnostics to Sentry", async () => {
+  const sentryCaptures: RuntimeSentryCaptureOptions[] = [];
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  const fetchError = new TypeError("fetch failed");
+  Object.assign(fetchError, {
+    cause: {
+      name: "SocketError",
+      message: "other side closed",
+      code: "UND_ERR_SOCKET",
+      socket: {
+        localAddress: "198.18.0.1",
+        localPort: 51240,
+        remoteAddress: "35.160.37.189",
+        remotePort: 3060,
+        remoteFamily: "IPv4",
+        bytesWritten: 749,
+        bytesRead: 0,
+      },
+    },
+  });
+
+  try {
+    await registerWorkspaceAgentRunStarted({
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      inputId: "input-1",
+      runId: "workspace-1:session-main:input-1",
+      selectedModel: "elephant-alpha",
+      runtimeBinding: {
+        authToken: "token-1",
+        userId: "user-1",
+        sandboxId: "sandbox-1",
+        modelProxyBaseUrl: "http://127.0.0.1:3060/api/v1/model-proxy",
+      },
+      captureRuntimeExceptionFn: (capture) => {
+        sentryCaptures.push(capture);
+      },
+      fetchImpl: async () => {
+        throw fetchError;
+      },
+    });
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(sentryCaptures.length, 1);
+  assert.deepEqual(sentryCaptures[0]?.extras?.fetch_error, {
+    error: {
+      name: "TypeError",
+      message: "fetch failed",
+    },
+    cause: {
+      name: "SocketError",
+      message: "other side closed",
+      code: "UND_ERR_SOCKET",
+    },
+    socket: {
+      localAddress: "198.18.0.1",
+      localPort: 51240,
+      remoteAddress: "35.160.37.189",
+      remotePort: 3060,
+      remoteFamily: "IPv4",
+      bytesWritten: 749,
+      bytesRead: 0,
+    },
+  });
+  assert.equal(sentryCaptures[0]?.extras?.timeout_ms, 2000);
 });
 
 test("run-event registration strips the model-proxy path before calling the backend route", async () => {

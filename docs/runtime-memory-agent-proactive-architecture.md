@@ -49,11 +49,9 @@ The key entities for this area are:
   - durable memory catalog metadata
   - type: `MemoryEntryRecord`
 - `turn_request_snapshots`
-  - request snapshots used by compaction/restoration
-- `compaction_boundaries`
-  - post-turn boundary artifacts and restoration context
+  - request snapshots used for per-run inspection and debugging
 - `turn_results`
-  - per-run terminal state and linkage to compaction boundary ids
+  - per-run terminal state
 - `task_proposals`
   - locally materialized proactive proposals
 - `memory_update_proposals`
@@ -63,7 +61,7 @@ Important implementation facts:
 
 - `memory_entries` are application-governed, not database-constrained by rich CHECK rules.
 - task proposals have no `updated_at` column; memory update proposals do.
-- session linkage for compaction and memory-update proposals is enforced in code through `ensureSession(...)`, not foreign keys.
+- session linkage for memory update proposals is enforced in code through `ensureSession(...)`, not foreign keys.
 
 Relevant files:
 - `runtime/state-store/src/store.ts`
@@ -113,7 +111,7 @@ High-level path:
 - compacts the turn summary
 - loads recent turns and messages
 - writes runtime continuity files
-- persists the compaction boundary artifact used for later restoration
+- refreshes the runtime-managed continuity projections used by the next run
 
 The queued durable-memory phase currently:
 - derives heuristic durable workspace memories
@@ -124,7 +122,6 @@ The queued durable-memory phase currently:
   - `workspace/<id>/MEMORY.md`
   - `preference/MEMORY.md`
   - `identity/MEMORY.md`
-- patches the compaction boundary restored-memory paths after durable writes land
 
 Current heuristic durable extraction covers:
 - explicit command facts
@@ -260,29 +257,22 @@ Relevant files:
 - `runtime/api-server/src/queue-worker.ts`
 - `runtime/api-server/src/ts-runner.ts`
 
-### 2. Compaction and restoration
+### 2. Session restoration
 
-The evolve phase creates and updates a compaction boundary artifact linked to the turn result.
-
-Boundary contents include:
-- boundary summary
-- recent runtime context
-- `compaction_source`
-- `boundary_type`
-- `restoration_order`
-- `session_resume_context`
-- `restored_memory_paths`
-- preserved turn input ids
+Session restoration relies on:
+- persisted harness session history
+- session scratchpad metadata, with explicit scratchpad reads when needed
+- bounded recalled durable memory
 
 On the next run:
-- the TS runner loads the latest prior compaction boundary
-- converts it to session resume context
-- merges session-memory excerpt if available
-- emits `compaction_restored`
-- injects the resulting resume context into runtime config
+- loads scratchpad metadata if a scratchpad exists
+- injects scratchpad and recalled-memory context into runtime config
+
+Important detail:
+- runtime-managed `session-memory` files are still written for local continuity and inspection workflows
+- they are no longer injected into the prompt path
 
 Relevant files:
-- `runtime/api-server/src/turn-result-summary.ts`
 - `runtime/api-server/src/turn-memory-writeback.ts`
 - `runtime/api-server/src/ts-runner.ts`
 - `runtime/api-server/src/agent-runtime-prompt.ts`
@@ -290,11 +280,11 @@ Relevant files:
 ### 3. Prompt composition inputs
 
 The agent runtime config currently receives these continuity/memory inputs:
-- `recent_runtime_context`
-- `session_resume_context`
 - `recalled_memory_context`
 - `current_user_context`
+- `operator_surface_context`
 - `pending_user_memory_context`
+- `session_scratchpad_context`
 
 Those become prompt sections and context messages, rather than being flattened into one opaque blob.
 
@@ -438,41 +428,6 @@ Inputs:
 
 That means the desktop lifecycle card is not a canonical remote status API response.
 It is a local synthesis over local state plus runtime readiness.
-
-## Verified Checks
-
-The current branch was verified after the merge and latest desktop follow-up commit with:
-
-Runtime:
-```sh
-cd runtime/api-server
-node --import tsx --test \
-  src/memory.test.ts \
-  src/memory-recall.test.ts \
-  src/turn-memory-writeback.test.ts \
-  src/app.test.ts \
-  src/ts-runner.test.ts \
-  src/bridge-worker.test.ts \
-  src/agent-runtime-config.test.ts
-```
-
-Result:
-- `109` passed
-- `0` failed
-
-Desktop:
-```sh
-cd desktop
-node --test \
-  electron/proactive-preference-fetch.test.mjs \
-  src/components/layout/AppShell.test.mjs \
-  src/components/layout/ProactiveStatusCard.test.mjs \
-  src/components/panes/ChatPane.test.mjs
-```
-
-Result:
-- `40` passed
-- `0` failed
 
 ## Notable Current Caveats
 

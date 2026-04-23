@@ -32,7 +32,7 @@ export function ConfirmDialog({
           className={cn(
             "fixed top-1/2 left-1/2 z-[91] w-[min(420px,calc(100vw-32px))]",
             "-translate-x-1/2 -translate-y-1/2 rounded-xl border border-border",
-            "bg-popover p-5 text-popover-foreground shadow-xl ring-1 ring-border",
+            "bg-popover p-5 text-popover-foreground shadow-xl ring-1 ring-foreground/10",
             "data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95",
             "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
             "outline-none",

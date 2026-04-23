@@ -570,7 +570,6 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
       requestSnapshotFingerprint: null,
       promptCacheProfile: null,
       compactedSummary: null,
-      compactionBoundaryId: null,
       tokenUsage: null,
     });
   }

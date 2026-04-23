@@ -190,74 +190,63 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   assert.match(prompt.promptCacheProfile.full_system_prompt_fingerprint, /^[a-f0-9]{64}$/);
 });
 
-test("composeBaseAgentPrompt includes recent runtime context only when provided", () => {
+test("composeBaseAgentPrompt includes shared todo continuity policy when todo tools are available", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read", "todoread", "todowrite"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
   const prompt = composeBaseAgentPrompt("", {
-    defaultTools: ["read"],
+    defaultTools: ["read", "todoread", "todowrite"],
     extraTools: [],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
     sessionKind: "workspace_session",
     sessionMode: "code",
-    recentRuntimeContext: {
-      summary: "Last run failed after editing config.",
-      last_stop_reason: "runner_failed",
-      last_error: "config parse error",
-      waiting_for_user: true,
-    },
+    capabilityManifest,
   });
 
-  assert.ok(prompt.promptSections.some((section) => section.id === "recent_runtime_context"));
+  assert.ok(prompt.promptSections.some((section) => section.id === "todo_continuity_policy"));
   assert.equal(
-    prompt.promptSections.find((section) => section.id === "recent_runtime_context")?.channel,
-    "context_message"
+    prompt.promptSections.find((section) => section.id === "todo_continuity_policy")?.channel,
+    "system_prompt"
   );
   assert.equal(
-    prompt.promptSections.find((section) => section.id === "recent_runtime_context")?.precedence,
-    "runtime_context"
+    prompt.promptSections.find((section) => section.id === "todo_continuity_policy")?.precedence,
+    "capability_policy"
   );
-  assert.equal(prompt.promptLayers.some((layer) => layer.id === "recent_runtime_context"), false);
-  assert.doesNotMatch(prompt.systemPrompt, /Recent runtime context:/);
-  assert.match(prompt.contextMessages.join("\n\n"), /Recent runtime context:/);
-  assert.match(prompt.contextMessages.join("\n\n"), /Last run failed after editing config\./);
-  assert.match(prompt.contextMessages.join("\n\n"), /Previous stop reason: runner_failed\./);
-  assert.match(prompt.contextMessages.join("\n\n"), /The user's newest message is the primary instruction for this turn\./);
-  assert.match(prompt.contextMessages.join("\n\n"), /waiting for user input/i);
+  assert.deepEqual(prompt.promptLayers.map((layer) => layer.id), [
+    "runtime_core",
+    "execution_policy",
+    "response_delivery_policy",
+    "session_policy",
+    "todo_continuity_policy",
+    "capability_policy",
+  ]);
+  assert.match(prompt.systemPrompt, /Todo continuity policy:/);
   assert.match(
-    prompt.contextMessages.join("\n\n"),
-    /If the user's newest message is conversational, brief, acknowledges the prior result, or is otherwise ambiguous about continuation, respond to that message directly and ask whether they want to continue the unfinished work instead of resuming it automatically\./,
-  );
-  assert.match(prompt.contextMessages.join("\n\n"), /Previous runtime error: config parse error\./);
-});
-
-test("composeBaseAgentPrompt warns when the previous run was user-paused", () => {
-  const prompt = composeBaseAgentPrompt("", {
-    defaultTools: ["read"],
-    extraTools: [],
-    workspaceSkillIds: [],
-    resolvedMcpToolRefs: [],
-    sessionKind: "workspace_session",
-    sessionMode: "code",
-    recentRuntimeContext: {
-      summary: "Run was paused by the user before completion.",
-      last_stop_reason: "paused",
-      last_error: null,
-      waiting_for_user: null,
-    },
-  });
-
-  assert.match(prompt.contextMessages.join("\n\n"), /Previous stop reason: paused\./);
-  assert.match(
-    prompt.contextMessages.join("\n\n"),
-    /The previous run was paused before completion\. Do not treat that work as finished\./,
+    prompt.systemPrompt,
+    /Treat the user's newest message as the primary instruction for the current turn even when unfinished todo state may already exist\./
   );
   assert.match(
-    prompt.contextMessages.join("\n\n"),
-    /Only resume the unfinished prior work immediately when the user's newest message clearly asks to continue it or clearly advances the same task\./,
+    prompt.systemPrompt,
+    /When you need the current phase ids, task ids, or recorded state from an existing todo before continuing or updating it, use `todoread` first instead of guessing\./
   );
   assert.match(
-    prompt.contextMessages.join("\n\n"),
-    /If the user's newest message is conversational, brief, acknowledges the prior result, or is otherwise ambiguous about continuation, respond to that message directly and ask whether they want to continue the unfinished work instead of resuming it automatically\./,
+    prompt.systemPrompt,
+    /Do not stop only to give progress updates or ask whether to continue while executable todo items remain after the user already asked you to continue\./
   );
+  assert.match(
+    prompt.systemPrompt,
+    /If the user's newest message clearly redirects to unrelated work, handle that new request first without marking the unfinished todo complete, then propose continuing it afterward\./
+  );
+  assert.deepEqual(prompt.promptCacheProfile.volatile_section_ids, [
+    "session_policy",
+    "todo_continuity_policy",
+    "capability_policy",
+  ]);
 });
 
 test("composeBaseAgentPrompt includes current user context when provided", () => {
@@ -419,78 +408,6 @@ test("composeBaseAgentPrompt includes accepted evolve candidate context when pro
   assert.match(prompt.contextMessages.join("\n\n"), /Target live workspace skill path: `skills\/release-verification\/SKILL\.md`\./);
   assert.match(prompt.contextMessages.join("\n\n"), /Do not create or keep promoted workspace skills under `evolve\/`/);
   assert.match(prompt.contextMessages.join("\n\n"), /name: release-verification/);
-});
-
-test("composeBaseAgentPrompt includes session resume context only when provided", () => {
-  const prompt = composeBaseAgentPrompt("", {
-    defaultTools: ["read"],
-    extraTools: [],
-    workspaceSkillIds: [],
-    resolvedMcpToolRefs: [],
-    sessionKind: "workspace_session",
-    sessionMode: "code",
-    sessionResumeContext: {
-      recent_turns: [
-        {
-          input_id: "input-1",
-          status: "failed",
-          stop_reason: "permission_denied",
-          summary: "Deploy failed because policy denied the action.",
-          completed_at: "2026-04-02T10:00:00.000Z",
-        },
-      ],
-      recent_user_messages: [
-        "Finish the deploy flow after fixing policy.",
-      ],
-      compaction_boundary_id: "compaction:input-1",
-      compaction_boundary_summary: "Deploy failed because policy denied the action.",
-      restoration_order: [
-        "boundary_summary",
-        "recent_runtime_context",
-        "session_resume_context",
-        "preserved_turn_input_ids",
-        "restored_memory_paths",
-      ],
-      preserved_turn_input_ids: ["input-1"],
-      restored_memory_paths: [
-        "workspace/workspace-1/runtime/latest-turn.md",
-        "workspace/workspace-1/runtime/session-state/session-1.md",
-      ],
-    },
-  });
-
-  assert.ok(prompt.promptSections.some((section) => section.id === "resume_context"));
-  assert.equal(
-    prompt.promptSections.find((section) => section.id === "resume_context")?.channel,
-    "resume_context"
-  );
-  assert.equal(
-    prompt.promptSections.find((section) => section.id === "resume_context")?.precedence,
-    "runtime_context"
-  );
-  assert.equal(prompt.promptLayers.some((layer) => layer.id === "resume_context"), false);
-  assert.doesNotMatch(prompt.systemPrompt, /Session resume context:/);
-  assert.match(prompt.contextMessages.join("\n\n"), /Session resume context:/);
-  assert.match(prompt.contextMessages.join("\n\n"), /persisted turn results and selected prior session messages/i);
-  assert.match(prompt.contextMessages.join("\n\n"), /Treat the user's newest message as authoritative for this turn\./);
-  assert.match(
-    prompt.contextMessages.join("\n\n"),
-    /If the newest message is conversational, brief, or ambiguous about continuation, respond to it directly first and ask whether the user wants to continue the unfinished prior work\./,
-  );
-  assert.match(prompt.contextMessages.join("\n\n"), /compaction boundary `compaction:input-1`/i);
-  assert.match(prompt.contextMessages.join("\n\n"), /Boundary summary: Deploy failed because policy denied the action\./);
-  assert.match(prompt.contextMessages.join("\n\n"), /Restoration order: `boundary_summary` -> `recent_runtime_context` -> `session_resume_context` -> `preserved_turn_input_ids` -> `restored_memory_paths`\./);
-  assert.match(prompt.contextMessages.join("\n\n"), /Preserved turn ids: `input-1`\./);
-  assert.match(prompt.contextMessages.join("\n\n"), /Internal runtime memory was restored from 2 runtime-managed records\./);
-  assert.match(prompt.contextMessages.join("\n\n"), /These runtime-managed records are continuity metadata, not workspace files or folders for you to create, rename, or edit\./);
-  assert.match(prompt.contextMessages.join("\n\n"), /Do not create or modify a `runtime\/` directory in the workspace unless the user explicitly asks for that exact directory\./);
-  assert.doesNotMatch(prompt.contextMessages.join("\n\n"), /workspace\/workspace-1\/runtime\/latest-turn\.md/);
-  assert.match(prompt.contextMessages.join("\n\n"), /Recent prior turns:/);
-  assert.match(prompt.contextMessages.join("\n\n"), /input-1/);
-  assert.match(prompt.contextMessages.join("\n\n"), /permission_denied/);
-  assert.match(prompt.contextMessages.join("\n\n"), /Deploy failed because policy denied the action\./);
-  assert.match(prompt.contextMessages.join("\n\n"), /Recent prior user requests:/);
-  assert.match(prompt.contextMessages.join("\n\n"), /Finish the deploy flow after fixing policy\./);
 });
 
 test("composeBaseAgentPrompt includes recalled durable memory as context message", () => {

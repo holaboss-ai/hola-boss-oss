@@ -195,7 +195,6 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
       result.prompt_cache_profile?.compatibility_context_ids,
       [],
     );
-    assert.deepEqual(result.prompt_cache_profile?.resume_context_ids, []);
     assert.deepEqual(result.prompt_cache_profile?.attachment_ids, []);
     assert.deepEqual(result.prompt_cache_profile?.delta_section_ids, []);
     assert.deepEqual(result.prompt_cache_profile?.channel_section_ids, {
@@ -261,6 +260,63 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
   }
 });
 
+test("projectAgentRuntimeConfig includes shared todo continuity policy when todo tools are enabled", () => {
+  process.env.HOLABOSS_MODEL_PROXY_BASE_URL =
+    "https://runtime.example/api/v1/model-proxy";
+  process.env.HOLABOSS_USER_ID = "user-1";
+  try {
+    const result = projectAgentRuntimeConfig({
+      session_id: "session-1",
+      workspace_id: "workspace-1",
+      input_id: "input-1",
+      session_kind: "workspace_session",
+      harness_id: "pi",
+      browser_tools_available: false,
+      browser_tool_ids: [],
+      runtime_tool_ids: [],
+      workspace_command_ids: [],
+      runtime_exec_model_proxy_api_key: "hbrt.v1.token",
+      runtime_exec_sandbox_id: "sandbox-1",
+      runtime_exec_run_id: "run-1",
+      selected_model: null,
+      default_provider_id: "openai",
+      session_mode: "code",
+      workspace_config_checksum: "checksum-1",
+      workspace_skill_ids: [],
+      default_tools: ["read", "todoread", "todowrite"],
+      extra_tools: [],
+      resolved_mcp_tool_refs: [],
+      resolved_output_schemas: {},
+      agent: {
+        id: "workspace.general",
+        model: "gpt-5.2",
+        prompt: "You are concise.",
+      },
+    });
+
+    assert.ok(
+      result.prompt_sections?.some(
+        (section) => section.id === "todo_continuity_policy",
+      ),
+    );
+    assert.ok(
+      result.prompt_layers?.some((layer) => layer.id === "todo_continuity_policy"),
+    );
+    assert.match(result.system_prompt, /Todo continuity policy:/);
+    assert.match(
+      result.system_prompt,
+      /Do not resume unfinished todo work unless the newest message clearly asks to continue it or clearly advances the same work\./,
+    );
+    assert.deepEqual(result.prompt_cache_profile?.volatile_section_ids, [
+      "session_policy",
+      "todo_continuity_policy",
+      "capability_policy",
+    ]);
+  } finally {
+    delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
+  }
+});
+
 test("projectAgentRuntimeConfig ignores workspace agent.model and falls back to the runtime default model", () => {
   const root = makeTempDir("hb-agent-runtime-config-default-model-");
   process.env.HB_SANDBOX_ROOT = root;
@@ -318,137 +374,6 @@ test("projectAgentRuntimeConfig ignores workspace agent.model and falls back to 
   assert.equal(result.model_id, "gpt-5.4");
   assert.equal(result.model_client.api_key, "sk-direct-openai");
   assert.equal(result.model_client.base_url, "https://api.openai.com/v1");
-});
-
-test("projectAgentRuntimeConfig includes resume context sections when provided", () => {
-  process.env.HOLABOSS_MODEL_PROXY_BASE_URL =
-    "https://runtime.example/api/v1/model-proxy";
-  process.env.HOLABOSS_USER_ID = "user-1";
-  try {
-    const result = projectAgentRuntimeConfig({
-      session_id: "session-1",
-      workspace_id: "workspace-1",
-      input_id: "input-1",
-      session_kind: "workspace_session",
-      harness_id: "pi",
-      browser_tools_available: false,
-      browser_tool_ids: [],
-      runtime_tool_ids: [],
-      workspace_command_ids: [],
-      runtime_exec_model_proxy_api_key: "hbrt.v1.token",
-      runtime_exec_sandbox_id: "sandbox-1",
-      runtime_exec_run_id: "run-1",
-      recent_runtime_context: {
-        summary: "Previous run stopped for confirmation.",
-        last_stop_reason: "waiting_user",
-        last_error: null,
-        waiting_for_user: true,
-      },
-      session_resume_context: {
-        recent_turns: [
-          {
-            input_id: "input-0",
-            status: "waiting_user",
-            stop_reason: "waiting_user",
-            summary: "Run paused waiting for confirmation before deploy.",
-            completed_at: "2026-04-02T10:00:00.000Z",
-          },
-        ],
-        recent_user_messages: [
-          "Continue after confirmation once deploy policy is updated.",
-        ],
-        compaction_boundary_id: "compaction:input-0",
-        compaction_boundary_summary:
-          "Run paused waiting for confirmation before deploy.",
-        restoration_order: [
-          "boundary_summary",
-          "recent_runtime_context",
-          "session_resume_context",
-          "preserved_turn_input_ids",
-          "restored_memory_paths",
-        ],
-        preserved_turn_input_ids: ["input-0"],
-        restored_memory_paths: ["workspace/workspace-1/runtime/latest-turn.md"],
-      },
-      selected_model: null,
-      default_provider_id: "openai",
-      session_mode: "code",
-      workspace_config_checksum: "checksum-1",
-      workspace_skill_ids: [],
-      default_tools: ["read"],
-      extra_tools: [],
-      resolved_mcp_tool_refs: [],
-      resolved_output_schemas: {},
-      agent: {
-        id: "workspace.general",
-        model: "gpt-5.2",
-        prompt: "You are concise.",
-      },
-    });
-
-    assert.ok(
-      result.prompt_sections?.some(
-        (section) => section.id === "resume_context",
-      ),
-    );
-    assert.equal(
-      result.prompt_layers?.some((layer) => layer.id === "resume_context"),
-      false,
-    );
-    assert.equal(
-      result.prompt_sections?.find((section) => section.id === "resume_context")
-        ?.channel,
-      "resume_context",
-    );
-    assert.equal(
-      result.prompt_sections?.find(
-        (section) => section.id === "recent_runtime_context",
-      )?.channel,
-      "context_message",
-    );
-    assert.deepEqual(result.prompt_cache_profile?.resume_context_ids, [
-      "resume_context",
-    ]);
-    assert.deepEqual(result.prompt_cache_profile?.compatibility_context_ids, [
-      "recent_runtime_context",
-      "resume_context",
-    ]);
-    assert.deepEqual(result.context_messages, [
-      [
-        "Recent runtime context:",
-        "Previous run stopped for confirmation.",
-        "Previous stop reason: waiting_user.",
-        "The user's newest message is the primary instruction for this turn. Use unfinished prior work only as continuity context.",
-        "The previous run paused waiting for user input. Do not treat that state as completed work.",
-        "Only resume the unfinished prior work immediately when the user's newest message clearly asks to continue it or clearly advances the same task.",
-        "If the user's newest message is conversational, brief, acknowledges the prior result, or is otherwise ambiguous about continuation, respond to that message directly and ask whether they want to continue the unfinished work instead of resuming it automatically.",
-      ].join("\n"),
-      [
-        "Session resume context:",
-        "Use this as continuity context derived from persisted turn results and selected prior session messages. Verify current workspace state before acting on details that may have changed.",
-        "Treat the user's newest message as authoritative for this turn. Do not resume unfinished prior work unless that newest message clearly asks to continue it or clearly advances the same task.",
-        "If the newest message is conversational, brief, or ambiguous about continuation, respond to it directly first and ask whether the user wants to continue the unfinished prior work.",
-        "This resume context was restored from compaction boundary `compaction:input-0`.",
-        "Boundary summary: Run paused waiting for confirmation before deploy.",
-        "Restoration order: `boundary_summary` -> `recent_runtime_context` -> `session_resume_context` -> `preserved_turn_input_ids` -> `restored_memory_paths`.",
-        "Preserved turn ids: `input-0`.",
-        "Internal runtime memory was restored from 1 runtime-managed record.",
-        "These runtime-managed records are continuity metadata, not workspace files or folders for you to create, rename, or edit.",
-        "Do not create or modify a `runtime/` directory in the workspace unless the user explicitly asks for that exact directory.",
-        "Recent prior turns:",
-        "- `input-0` (status=`waiting_user`, stop=`waiting_user`, completed=2026-04-02T10:00:00.000Z): Run paused waiting for confirmation before deploy.",
-        "Recent prior user requests:",
-        "- Continue after confirmation once deploy policy is updated.",
-      ].join("\n"),
-    ]);
-    assert.deepEqual(
-      result.prompt_channel_contents,
-      promptChannelContents(result.prompt_sections ?? []),
-    );
-    assert.doesNotMatch(result.system_prompt, /Session resume context:/);
-  } finally {
-    delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
-  }
 });
 
 test("projectAgentRuntimeConfig includes current user context as a context message", () => {
@@ -808,34 +733,12 @@ test("projectAgentRuntimeConfig omits workspace and recent-runtime layers when n
       false,
     );
     assert.equal(
-      result.prompt_layers?.some(
-        (layer) => layer.id === "recent_runtime_context",
-      ),
-      false,
-    );
-    assert.equal(
-      result.prompt_layers?.some((layer) => layer.id === "resume_context"),
-      false,
-    );
-    assert.equal(
       result.prompt_layers?.some((layer) => layer.id === "harness_quirks"),
       false,
     );
     assert.equal(
       result.prompt_sections?.some(
         (section) => section.id === "workspace_policy",
-      ),
-      false,
-    );
-    assert.equal(
-      result.prompt_sections?.some(
-        (section) => section.id === "recent_runtime_context",
-      ),
-      false,
-    );
-    assert.equal(
-      result.prompt_sections?.some(
-        (section) => section.id === "resume_context",
       ),
       false,
     );
