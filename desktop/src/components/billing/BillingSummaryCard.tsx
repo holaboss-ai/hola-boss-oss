@@ -1,4 +1,3 @@
-import { CircleHelp, Loader2, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -8,6 +7,7 @@ import {
   PopoverTitle,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { CircleHelp, RefreshCw } from "lucide-react";
 
 interface BillingSummaryCardProps {
   overview: DesktopBillingOverviewPayload | null;
@@ -66,10 +66,10 @@ export function BillingSummaryCard({
         role="status"
         aria-busy="true"
         aria-label="Loading billing summary"
-        className="rounded-xl border border-border px-4 py-4"
+        className="overflow-hidden rounded-xl bg-card ring-1 ring-border"
       >
         {/* Header skeleton */}
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center justify-between gap-3 px-4 py-3">
           <div className="flex min-w-0 items-center gap-2">
             <span className="h-4 w-24 animate-pulse rounded bg-muted-foreground/20" />
             <span className="h-5 w-20 animate-pulse rounded-full bg-muted-foreground/20" />
@@ -83,14 +83,16 @@ export function BillingSummaryCard({
                 onClick={onRefresh}
                 disabled
               >
-                <RefreshCw size={13} className="animate-spin" />
+                <RefreshCw className="size-3.5 animate-spin" />
               </Button>
             ) : null}
           </div>
         </div>
 
+        <div className="h-px bg-border" />
+
         {/* Stats grid skeleton */}
-        <div className="mt-4 border-t border-border pt-4">
+        <div className="px-4 py-3">
           <div className="grid grid-cols-2 gap-x-4 gap-y-1">
             <div>
               <span className="block h-6 w-16 animate-pulse rounded bg-muted-foreground/20" />
@@ -101,19 +103,20 @@ export function BillingSummaryCard({
               <span className="mt-1 ml-auto block h-3 w-12 animate-pulse rounded bg-muted-foreground/20" />
             </div>
           </div>
+        </div>
 
-          {/* Bottom stats skeleton */}
-          <div className="mt-3 grid gap-1.5 border-t border-border pt-3">
-            {[72, 56, 64].map((w) => (
-              <div key={w} className="flex items-center justify-between">
-                <span
-                  className="h-3 animate-pulse rounded bg-muted-foreground/20"
-                  style={{ width: `${w}px` }}
-                />
-                <span className="h-3 w-10 animate-pulse rounded bg-muted-foreground/20" />
-              </div>
-            ))}
-          </div>
+        <div className="h-px bg-border" />
+
+        {/* Bottom stats skeleton */}
+        <div className="grid gap-1.5 px-4 py-3">
+          {(["w-20", "w-16", "w-16"] as const).map((w) => (
+            <div key={w} className="flex items-center justify-between">
+              <span
+                className={`h-3 animate-pulse rounded bg-muted-foreground/20 ${w}`}
+              />
+              <span className="h-3 w-10 animate-pulse rounded bg-muted-foreground/20" />
+            </div>
+          ))}
         </div>
       </section>
     );
@@ -127,11 +130,11 @@ export function BillingSummaryCard({
   const timelineLabel = billingTimelineLabel(overview);
 
   return (
-    <section className="rounded-xl border border-border/40 px-4 py-4">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-3">
+    <section className="overflow-hidden rounded-xl bg-card ring-1 ring-border">
+      {/* Header row */}
+      <div className="flex items-center justify-between gap-3 px-4 py-3">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-sm font-semibold text-foreground">
+          <span className="truncate text-sm font-medium text-foreground">
             {overview?.planName || "Free"}
           </span>
           {timelineLabel !== "Billing managed on web" ? (
@@ -149,7 +152,7 @@ export function BillingSummaryCard({
               aria-label="Refresh billing"
               onClick={onRefresh}
             >
-              <RefreshCw size={13} />
+              <RefreshCw className="size-3.5" />
             </Button>
           ) : null}
           <Button
@@ -158,27 +161,34 @@ export function BillingSummaryCard({
           >
             Manage
           </Button>
-          <Button
-            onClick={() => openBillingLink(links?.addCreditsUrl)}
-          >
+          <Button onClick={() => openBillingLink(links?.addCreditsUrl)}>
             Add credits
           </Button>
         </div>
       </div>
 
       {error ? (
-        <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-          {error.message}
-        </div>
+        <>
+          <div className="h-px bg-border" />
+          <div className="bg-destructive/5 px-4 py-3 text-sm text-destructive">
+            {error.message}
+          </div>
+        </>
       ) : null}
 
       {!hasOverview && !error ? (
-        <div className="mt-3 rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">
-          Sign in to view billing details.
-        </div>
+        <>
+          <div className="h-px bg-border" />
+          <div className="px-4 py-3 text-sm text-muted-foreground">
+            Sign in to view billing details.
+          </div>
+        </>
       ) : null}
 
-      <div className="mt-4 border-t border-border/40 pt-4">
+      <div className="h-px bg-border" />
+
+      {/* Credits stat row */}
+      <div className="px-4 py-3">
         <div className="grid grid-cols-2 gap-x-4 gap-y-1">
           <div>
             <div className="text-lg font-semibold tabular-nums text-foreground">
@@ -197,21 +207,21 @@ export function BillingSummaryCard({
                     />
                   }
                 >
-                  <CircleHelp size={12} />
-                  </PopoverTrigger>
-                  <PopoverContent align="start" className="w-80">
-                    <PopoverHeader>
-                      <PopoverTitle>About credits</PopoverTitle>
-                    </PopoverHeader>
-                    <ul className="flex list-disc flex-col gap-2 pl-4 text-sm text-muted-foreground">
-                      {CREDITS_HELP_ITEMS.map((item) => (
-                        <li key={item}>{item}</li>
-                      ))}
-                    </ul>
-                  </PopoverContent>
-                </Popover>
-              </div>
+                  <CircleHelp className="size-3" />
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-80">
+                  <PopoverHeader>
+                    <PopoverTitle>About credits</PopoverTitle>
+                  </PopoverHeader>
+                  <ul className="flex list-disc flex-col gap-2 pl-4 text-sm text-muted-foreground">
+                    {CREDITS_HELP_ITEMS.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </PopoverContent>
+              </Popover>
             </div>
+          </div>
           <div className="text-right">
             <div className="text-lg font-semibold tabular-nums text-foreground">
               {overview?.monthlyCreditsIncluded?.toLocaleString() ?? "—"}
@@ -219,29 +229,32 @@ export function BillingSummaryCard({
             <div className="text-sm text-muted-foreground">Monthly</div>
           </div>
         </div>
+      </div>
 
-        <div className="mt-3 grid gap-1.5 border-t border-border/30 pt-3 text-sm text-muted-foreground">
-          <div className="flex items-center justify-between">
-            <span>Total allocated</span>
-            <span className="tabular-nums text-foreground">
-              {overview?.totalAllocated?.toLocaleString() ?? "—"}
-            </span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span>Total used</span>
-            <span className="tabular-nums text-foreground">
-              {overview?.totalUsed?.toLocaleString() ?? "—"}
-            </span>
-          </div>
-          {overview?.dailyRefreshCredits ? (
-            <div className="flex items-center justify-between">
-              <span>Daily refresh</span>
-              <span className="tabular-nums text-foreground">
-                {overview.dailyRefreshCredits.toLocaleString()}
-              </span>
-            </div>
-          ) : null}
+      <div className="h-px bg-border" />
+
+      {/* List row */}
+      <div className="grid gap-1.5 px-4 py-3 text-sm text-muted-foreground">
+        <div className="flex items-center justify-between">
+          <span>Total allocated</span>
+          <span className="tabular-nums text-foreground">
+            {overview?.totalAllocated?.toLocaleString() ?? "—"}
+          </span>
         </div>
+        <div className="flex items-center justify-between">
+          <span>Total used</span>
+          <span className="tabular-nums tracking-tight text-foreground">
+            {overview?.totalUsed?.toLocaleString() ?? "—"}
+          </span>
+        </div>
+        {overview?.dailyRefreshCredits ? (
+          <div className="flex items-center justify-between">
+            <span>Daily refresh</span>
+            <span className="tabular-nums tracking-tight text-foreground">
+              {overview.dailyRefreshCredits.toLocaleString()}
+            </span>
+          </div>
+        ) : null}
       </div>
     </section>
   );

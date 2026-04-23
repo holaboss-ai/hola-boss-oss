@@ -36,7 +36,9 @@ function normalizeSpreadsheetCellLinkTarget(value: unknown): string | null {
       trimmed,
     )
   ) {
-    return /^www\./i.test(trimmed) ? `https://${trimmed}` : `https://${trimmed}`;
+    return /^www\./i.test(trimmed)
+      ? `https://${trimmed}`
+      : `https://${trimmed}`;
   }
 
   return null;
@@ -65,7 +67,11 @@ export function cloneTablePreviewSheets(
         ...sheet,
         columns: [...sheet.columns],
         rows: sheet.rows.map((row) => [...row]),
-        links: cloneTablePreviewSheetLinks(sheet.links, sheet.rows, sheet.columns),
+        links: cloneTablePreviewSheetLinks(
+          sheet.links,
+          sheet.rows,
+          sheet.columns,
+        ),
       }))
     : [];
 }
@@ -99,7 +105,9 @@ export function areTablePreviewSheetsEqual(
     }
 
     return (
-      sheet.columns.every((column, columnIndex) => column === candidate.columns[columnIndex]) &&
+      sheet.columns.every(
+        (column, columnIndex) => column === candidate.columns[columnIndex],
+      ) &&
       cloneTablePreviewSheetLinks(sheet.links, sheet.rows, sheet.columns).every(
         (row, rowIndex) =>
           row.length ===
@@ -121,7 +129,10 @@ export function areTablePreviewSheetsEqual(
       sheet.rows.every(
         (row, rowIndex) =>
           row.length === candidate.rows[rowIndex]?.length &&
-          row.every((value, columnIndex) => value === candidate.rows[rowIndex]?.[columnIndex]),
+          row.every(
+            (value, columnIndex) =>
+              value === candidate.rows[rowIndex]?.[columnIndex],
+          ),
       )
     );
   });
@@ -219,7 +230,8 @@ export function SpreadsheetEditor({
             sheet.columns,
           );
           nextLinks[rowIndex] = [
-            ...(nextLinks[rowIndex] ?? Array.from({ length: sheet.columns.length }, () => null)),
+            ...(nextLinks[rowIndex] ??
+              Array.from({ length: sheet.columns.length }, () => null)),
           ];
           nextLinks[rowIndex][columnIndex] =
             normalizeSpreadsheetCellLinkTarget(value);
@@ -248,8 +260,15 @@ export function SpreadsheetEditor({
             Array.from({ length: Math.max(sheet.columns.length, 1) }, () => ""),
           ],
           links: [
-            ...cloneTablePreviewSheetLinks(sheet.links, sheet.rows, sheet.columns),
-            Array.from({ length: Math.max(sheet.columns.length, 1) }, () => null),
+            ...cloneTablePreviewSheetLinks(
+              sheet.links,
+              sheet.rows,
+              sheet.columns,
+            ),
+            Array.from(
+              { length: Math.max(sheet.columns.length, 1) },
+              () => null,
+            ),
           ],
           totalRows: Math.max(sheet.totalRows + 1, sheet.rows.length + 1),
         }),
@@ -316,9 +335,9 @@ export function SpreadsheetEditor({
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-background">
       <div className="min-h-0 flex-1 overflow-auto rounded-[inherit]">
         <table className="w-max min-w-full border-separate border-spacing-0 text-sm text-foreground">
-          <thead className="sticky top-0 z-[2]">
+          <thead className="sticky top-0 z-2">
             <tr>
-              <th className="sticky left-0 z-[3] w-11 rounded-tl-lg border-b border-r border-border bg-muted px-0 py-0 text-center text-xs font-normal uppercase tracking-[0.08em] text-muted-foreground">
+              <th className="sticky left-0 z-3 w-11 rounded-tl-lg border-b border-r border-border bg-muted px-0 py-0 text-center text-xs font-normal uppercase text-muted-foreground">
                 <div className="flex h-8 items-center justify-center">#</div>
               </th>
               {activeSheet.columns.map((column, columnIndex) => (
@@ -360,78 +379,80 @@ export function SpreadsheetEditor({
               activeSheet.rows.map((row, rowIndex) => {
                 const isLastRow = rowIndex === activeSheet.rows.length - 1;
                 return (
-                <tr key={`row-${rowIndex}`} className="group/row">
-                  <td
-                    className={`sticky left-0 z-[1] w-11 border-b border-r border-border bg-background px-0 py-0 text-center align-middle text-xs text-muted-foreground transition-colors group-hover/row:bg-accent/25 group-hover/row:text-muted-foreground ${isLastRow ? "rounded-bl-lg" : ""}`}
-                  >
-                    <div className="flex min-h-8 items-center justify-center">
-                      {rowIndex + 1}
-                    </div>
-                  </td>
-                  {activeSheet.columns.map((_column, columnIndex) => {
-                    const value = row[columnIndex] ?? "";
-                    const cellLink =
-                      activeSheet.links?.[rowIndex]?.[columnIndex] ??
-                      normalizeSpreadsheetCellLinkTarget(value);
-                    return (
-                      <td
-                        key={`cell-${rowIndex}-${columnIndex}`}
-                        className="min-w-[172px] border-b border-r border-border px-0 py-0 align-top transition-colors last:border-r-0 group-hover/row:bg-accent/20"
-                      >
-                        {editable ? (
-                          <div className="flex min-h-8 items-center gap-1 px-2 py-1">
-                            <input
-                              value={value}
-                              onChange={(event) =>
-                                updateCellValue(
-                                  rowIndex,
-                                  columnIndex,
-                                  event.target.value,
-                                )
-                              }
-                              onClick={(event) =>
-                                maybeOpenEditableSpreadsheetCellLink(
-                                  event,
-                                  cellLink,
-                                )
-                              }
-                              aria-label={`Row ${rowIndex + 1}, Column ${columnIndex + 1}`}
-                              className={`embedded-input h-6 min-w-0 flex-1 border-0 bg-transparent px-1 text-sm outline-none ${
-                                cellLink
-                                  ? "text-primary underline underline-offset-2"
-                                  : "text-foreground"
-                              }`}
-                            />
-                            {cellLink ? (
-                              <button
-                                type="button"
-                                onClick={() => openSpreadsheetCellLink(cellLink)}
-                                aria-label={`Open link from row ${rowIndex + 1}, column ${columnIndex + 1}`}
-                                title={cellLink}
-                                className="inline-flex size-5 shrink-0 items-center justify-center rounded-md text-primary transition-colors hover:bg-primary/10 hover:text-primary"
-                              >
-                                <ArrowUpRight size={12} />
-                              </button>
-                            ) : null}
-                          </div>
-                        ) : cellLink ? (
-                          <button
-                            type="button"
-                            onClick={() => openSpreadsheetCellLink(cellLink)}
-                            title={cellLink}
-                            className="block h-full w-full cursor-pointer bg-transparent px-3 py-2 text-left text-sm break-words whitespace-pre-wrap text-primary underline underline-offset-2 transition-colors hover:text-primary"
-                          >
-                            {value || cellLink}
-                          </button>
-                        ) : (
-                          <div className="px-3 py-2 text-sm break-words whitespace-pre-wrap">
-                            {value || "\u00a0"}
-                          </div>
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
+                  <tr key={`row-${rowIndex}`} className="group/row">
+                    <td
+                      className={`sticky left-0 z-[1] w-11 border-b border-r border-border bg-background px-0 py-0 text-center align-middle text-xs text-muted-foreground transition-colors group-hover/row:bg-accent/25 group-hover/row:text-muted-foreground ${isLastRow ? "rounded-bl-lg" : ""}`}
+                    >
+                      <div className="flex min-h-8 items-center justify-center">
+                        {rowIndex + 1}
+                      </div>
+                    </td>
+                    {activeSheet.columns.map((_column, columnIndex) => {
+                      const value = row[columnIndex] ?? "";
+                      const cellLink =
+                        activeSheet.links?.[rowIndex]?.[columnIndex] ??
+                        normalizeSpreadsheetCellLinkTarget(value);
+                      return (
+                        <td
+                          key={`cell-${rowIndex}-${columnIndex}`}
+                          className="min-w-[172px] border-b border-r border-border px-0 py-0 align-top transition-colors last:border-r-0 group-hover/row:bg-accent/20"
+                        >
+                          {editable ? (
+                            <div className="flex min-h-8 items-center gap-1 px-2 py-1">
+                              <input
+                                value={value}
+                                onChange={(event) =>
+                                  updateCellValue(
+                                    rowIndex,
+                                    columnIndex,
+                                    event.target.value,
+                                  )
+                                }
+                                onClick={(event) =>
+                                  maybeOpenEditableSpreadsheetCellLink(
+                                    event,
+                                    cellLink,
+                                  )
+                                }
+                                aria-label={`Row ${rowIndex + 1}, Column ${columnIndex + 1}`}
+                                className={`embedded-input h-6 min-w-0 flex-1 border-0 bg-transparent px-1 text-sm outline-none ${
+                                  cellLink
+                                    ? "text-primary underline underline-offset-2"
+                                    : "text-foreground"
+                                }`}
+                              />
+                              {cellLink ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    openSpreadsheetCellLink(cellLink)
+                                  }
+                                  aria-label={`Open link from row ${rowIndex + 1}, column ${columnIndex + 1}`}
+                                  title={cellLink}
+                                  className="inline-flex size-5 shrink-0 items-center justify-center rounded-md text-primary transition-colors hover:bg-primary/10 hover:text-primary"
+                                >
+                                  <ArrowUpRight size={12} />
+                                </button>
+                              ) : null}
+                            </div>
+                          ) : cellLink ? (
+                            <button
+                              type="button"
+                              onClick={() => openSpreadsheetCellLink(cellLink)}
+                              title={cellLink}
+                              className="block h-full w-full cursor-pointer bg-transparent px-3 py-2 text-left text-sm break-words whitespace-pre-wrap text-primary underline underline-offset-2 transition-colors hover:text-primary"
+                            >
+                              {value || cellLink}
+                            </button>
+                          ) : (
+                            <div className="px-3 py-2 text-sm break-words whitespace-pre-wrap">
+                              {value || "\u00a0"}
+                            </div>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
                 );
               })
             )}
@@ -471,7 +492,12 @@ export function SpreadsheetEditor({
           </span>
           {editable ? (
             <div className="flex items-center gap-1">
-              <Button type="button" variant="ghost" size="xs" onClick={addColumn}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                onClick={addColumn}
+              >
                 <Plus size={11} />
                 Column
               </Button>

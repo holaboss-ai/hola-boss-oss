@@ -22,9 +22,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PaneCard } from "@/components/ui/PaneCard";
-import {
-  browserSurfaceStatusSummary,
-} from "@/components/panes/browserSessionUi";
+import { browserSurfaceStatusSummary } from "@/components/panes/browserSessionUi";
 import { useBrowserGlowPreview } from "@/components/panes/useBrowserGlowPreview";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
@@ -144,8 +142,7 @@ export function BrowserPane({
   const visibleBrowserSpace = browserState.space || DEFAULT_BROWSER_SPACE;
   const alternateBrowserSpace =
     visibleBrowserSpace === "user" ? "agent" : "user";
-  const visibleBrowserLabel =
-    visibleBrowserSpace === "user" ? "User" : "Agent";
+  const visibleBrowserLabel = visibleBrowserSpace === "user" ? "User" : "Agent";
   const alternateBrowserLabel =
     alternateBrowserSpace === "user" ? "user" : "agent";
   const VisibleBrowserIcon = visibleBrowserSpace === "user" ? Globe : Bot;
@@ -219,7 +216,9 @@ export function BrowserPane({
         if (cancelled) {
           return;
         }
-        setRuntimeStatesBySessionId(runtimeStateIndex(runtimeStatesResponse.items));
+        setRuntimeStatesBySessionId(
+          runtimeStateIndex(runtimeStatesResponse.items),
+        );
       } catch {
         // Preserve the most recent runtime state snapshot during transient
         // runtime restarts instead of triggering an unhandled rejection.
@@ -247,7 +246,10 @@ export function BrowserPane({
       cancelled = true;
       window.clearInterval(intervalId);
       window.removeEventListener("focus", refreshVisibleSessionState);
-      document.removeEventListener("visibilitychange", refreshVisibleSessionState);
+      document.removeEventListener(
+        "visibilitychange",
+        refreshVisibleSessionState,
+      );
     };
   }, [selectedWorkspaceId]);
 
@@ -420,7 +422,10 @@ export function BrowserPane({
     if (!selectedWorkspaceId || space === visibleBrowserSpace) {
       return;
     }
-    void window.electronAPI.browser.setActiveWorkspace(selectedWorkspaceId, space);
+    void window.electronAPI.browser.setActiveWorkspace(
+      selectedWorkspaceId,
+      space,
+    );
   };
 
   const isBookmarked = useMemo(
@@ -444,7 +449,9 @@ export function BrowserPane({
   );
   const currentRuntimeState = useMemo(
     () =>
-      currentSessionId ? runtimeStatesBySessionId[currentSessionId] ?? null : null,
+      currentSessionId
+        ? (runtimeStatesBySessionId[currentSessionId] ?? null)
+        : null,
     [currentSessionId, runtimeStatesBySessionId],
   );
   const sessionBrowserStatus = useMemo(
@@ -716,11 +723,9 @@ export function BrowserPane({
                   size="icon-sm"
                   aria-label={activeTab.loading ? "Stop loading" : "Refresh"}
                   onClick={() =>
-                    void (
-                      activeTab.loading
-                        ? window.electronAPI.browser.stopLoading()
-                        : window.electronAPI.browser.reload()
-                    )
+                    void (activeTab.loading
+                      ? window.electronAPI.browser.stopLoading()
+                      : window.electronAPI.browser.reload())
                   }
                   disabled={!activeTab.initialized && !activeTab.loading}
                   title={activeTab.loading ? "Stop loading" : "Refresh"}
@@ -906,11 +911,14 @@ export function BrowserPane({
             {!activeTab.initialized ? (
               <div className="absolute inset-0 grid place-items-center bg-card p-6 text-center">
                 <div className="pointer-events-none w-full max-w-[320px] rounded-[24px] border border-border bg-card px-5 py-5 shadow-subtle-sm backdrop-blur">
-                  <div className="mt-4 text-base font-medium tracking-[-0.02em] text-foreground">
-                    Starting {visibleBrowserSpace === "agent" ? "agent" : "user"} browser
+                  <div className="mt-4 text-base font-medium text-foreground">
+                    Starting{" "}
+                    {visibleBrowserSpace === "agent" ? "agent" : "user"} browser
                   </div>
                   <div className="mt-1.5 text-[12px] leading-6 text-muted-foreground">
-                    Opening the embedded {visibleBrowserSpace === "agent" ? "agent" : "user"} browser for this workspace.
+                    Opening the embedded{" "}
+                    {visibleBrowserSpace === "agent" ? "agent" : "user"} browser
+                    for this workspace.
                   </div>
                 </div>
               </div>

@@ -155,6 +155,33 @@ function isAppTheme(value: string): value is AppTheme {
   return THEMES.includes(value as AppTheme);
 }
 
+// Appearance model — two orthogonal axes combined into the legacy AppTheme
+// string for Electron IPC and `data-theme` application.
+export const THEME_VARIANTS = [
+  "amber-minimal",
+  "cosmic-night",
+  "sepia",
+  "clean-slate",
+  "bold-tech",
+  "catppuccin",
+  "bubblegum",
+] as const;
+
+export type ThemeVariant = (typeof THEME_VARIANTS)[number];
+
+function isThemeVariant(value: string): value is ThemeVariant {
+  return THEME_VARIANTS.includes(value as ThemeVariant);
+}
+
+export type ColorScheme = "system" | "light" | "dark";
+
+function isColorScheme(value: string): value is ColorScheme {
+  return value === "system" || value === "light" || value === "dark";
+}
+
+const COLOR_SCHEME_STORAGE_KEY = "holaboss-color-scheme";
+const THEME_VARIANT_STORAGE_KEY = "holaboss-theme-variant";
+
 function isSettingsPaneSection(value: string): value is UiSettingsPaneSection {
   return (
     value === "account" ||
@@ -749,17 +776,66 @@ function loadSeenTaskProposalIdsByWorkspace(): Record<string, string[]> {
   return {};
 }
 
-function loadTheme(): AppTheme {
+function splitAppTheme(
+  value: string,
+): { variant: ThemeVariant; scheme: "light" | "dark" } | null {
+  if (!isAppTheme(value)) {
+    return null;
+  }
+  if (value.endsWith("-dark")) {
+    const variant = value.slice(0, -"-dark".length);
+    if (isThemeVariant(variant)) {
+      return { variant, scheme: "dark" };
+    }
+  }
+  if (value.endsWith("-light")) {
+    const variant = value.slice(0, -"-light".length);
+    if (isThemeVariant(variant)) {
+      return { variant, scheme: "light" };
+    }
+  }
+  return null;
+}
+
+function loadColorScheme(): ColorScheme {
   try {
-    const stored = localStorage.getItem(THEME_STORAGE_KEY);
-    if (stored && isAppTheme(stored)) {
+    const stored = localStorage.getItem(COLOR_SCHEME_STORAGE_KEY);
+    if (stored && isColorScheme(stored)) {
       return stored;
+    }
+    // Migrate from legacy single-string key — if the old theme name encoded
+    // an explicit light/dark, preserve the user's explicit choice; otherwise
+    // fall through to "system" below.
+    const legacy = localStorage.getItem(THEME_STORAGE_KEY);
+    if (legacy) {
+      const split = splitAppTheme(legacy);
+      if (split) {
+        return split.scheme;
+      }
     }
   } catch {
     // ignore
   }
+  return "system";
+}
 
-  return "amber-minimal-light";
+function loadThemeVariant(): ThemeVariant {
+  try {
+    const stored = localStorage.getItem(THEME_VARIANT_STORAGE_KEY);
+    if (stored && isThemeVariant(stored)) {
+      return stored;
+    }
+    const legacy = localStorage.getItem(THEME_STORAGE_KEY);
+    if (legacy) {
+      const split = splitAppTheme(legacy);
+      if (split) {
+        return split.variant;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return "amber-minimal";
 }
 
 function normalizeDevAppUpdatePreviewMode(
@@ -927,7 +1003,7 @@ function WorkspaceBootstrapPane() {
     <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden px-6">
       <div className="flex flex-col items-center text-center">
         <Loader2 size={20} className="animate-spin text-muted-foreground" />
-        <h2 className="mt-5 text-[17px] font-medium tracking-[-0.01em] text-foreground">
+        <h2 className="mt-5 text-[17px] font-medium text-foreground">
           Preparing desktop...
         </h2>
         <p className="mt-2 max-w-sm text-[13px] leading-6 text-muted-foreground">
@@ -989,13 +1065,10 @@ function WorkspaceInitializingGate({
         {hasErrors ? (
           <TriangleAlert size={20} className="text-destructive" />
         ) : (
-          <Loader2
-            size={20}
-            className="animate-spin text-muted-foreground"
-          />
+          <Loader2 size={20} className="animate-spin text-muted-foreground" />
         )}
 
-        <h2 className="mt-5 text-[17px] font-medium tracking-[-0.01em] text-foreground">
+        <h2 className="mt-5 text-[17px] font-medium text-foreground">
           {hasErrors ? "Some apps need attention" : "Setting up workspace"}
         </h2>
         <p className="mt-2 max-w-sm text-[13px] leading-6 text-muted-foreground">
@@ -1061,10 +1134,8 @@ function FocusPlaceholder({
     <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-xl shadow-subtle-sm">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(87,255,173,0.08),transparent_45%)]" />
       <div className="relative max-w-[520px] px-8 text-center">
-        <div className="text-[10px] uppercase tracking-[0.18em] text-primary">
-          {eyebrow}
-        </div>
-        <div className="mt-3 text-[28px] font-semibold tracking-[-0.03em] text-foreground">
+        <div className="text-[10px] uppercase text-primary">{eyebrow}</div>
+        <div className="mt-3 text-[28px] font-semibold text-foreground">
           {title}
         </div>
         <div className="mt-3 text-[13px] leading-7 text-muted-foreground">
@@ -1079,13 +1150,13 @@ function WorkspaceStartupErrorPane({ message }: { message: string }) {
   return (
     <section className="theme-shell relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-xl shadow-subtle-sm">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(247,90,84,0.12),transparent_32%),radial-gradient(circle_at_bottom,rgba(247,170,126,0.08),transparent_36%)]" />
-      <div className="relative w-full max-w-[720px] px-6 py-8">
+      <div className="relative w-full max-w-180 px-6 py-8">
         <div className="theme-subtle-surface rounded-[30px] border border-destructive/24 p-6 shadow-subtle-sm sm:p-8">
-          <div className="inline-flex items-center gap-2 rounded-full border border-destructive/22 bg-destructive/8 px-3 py-1.5 text-[10px] uppercase tracking-[0.22em] text-destructive">
+          <div className="inline-flex items-center gap-2 rounded-full border border-destructive/22 bg-destructive/8 px-3 py-1.5 text-[10px] uppercase text-destructive">
             <TriangleAlert size={12} />
             <span>Desktop startup blocked</span>
           </div>
-          <div className="mt-6 text-[30px] font-semibold tracking-[-0.04em] text-foreground">
+          <div className="mt-6 text-[30px] font-semibold text-foreground">
             The local runtime is unavailable
           </div>
           <div className="mt-3 text-sm leading-7 text-muted-foreground">
@@ -1136,7 +1207,22 @@ function AppShellContent() {
     chooseWorkspaceRelocationFolder,
     deleteWorkspace,
   } = useWorkspaceDesktop();
-  const [theme, setTheme] = useState<AppTheme>(loadTheme);
+  const [colorScheme, setColorScheme] = useState<ColorScheme>(loadColorScheme);
+  const [themeVariant, setThemeVariant] =
+    useState<ThemeVariant>(loadThemeVariant);
+  const [systemPrefersDark, setSystemPrefersDark] = useState<boolean>(() => {
+    if (typeof window === "undefined" || !window.matchMedia) {
+      return false;
+    }
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  });
+  const effectiveScheme: "light" | "dark" =
+    colorScheme === "system"
+      ? systemPrefersDark
+        ? "dark"
+        : "light"
+      : colorScheme;
+  const theme = `${themeVariant}-${effectiveScheme}` as AppTheme;
   const [runtimeStatus, setRuntimeStatus] =
     useState<RuntimeStatusPayload | null>(null);
   const [appUpdateStatus, setAppUpdateStatus] =
@@ -1190,9 +1276,8 @@ function AppShellContent() {
     browser: 1,
     applications: 2,
   };
-  const previousSpaceExplorerModeRef = useRef<SpaceExplorerMode>(
-    spaceExplorerMode,
-  );
+  const previousSpaceExplorerModeRef =
+    useRef<SpaceExplorerMode>(spaceExplorerMode);
   let spaceExplorerSlideInClass = "slide-in-from-left-3";
   if (previousSpaceExplorerModeRef.current !== spaceExplorerMode) {
     spaceExplorerSlideInClass =
@@ -1886,25 +1971,37 @@ function AppShellContent() {
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) {
+      return;
+    }
+    const mql = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = (event: MediaQueryListEvent) => {
+      setSystemPrefersDark(event.matches);
+    };
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
+  }, []);
+
+  useEffect(() => {
     if (!window.electronAPI) {
       return;
     }
 
-    let mounted = true;
-    void window.electronAPI.ui.getTheme().then((nextTheme) => {
-      if (mounted && isAppTheme(nextTheme)) {
-        setTheme(nextTheme);
-      }
-    });
-
+    // Renderer's localStorage is the source of truth for theme. Main holds an
+    // in-memory `currentTheme` that doesn't persist across restart, so pulling
+    // from it on mount would clobber the freshly-loaded localStorage state.
+    // The save effect below pushes the correct value down to main instead.
     const unsubscribe = window.electronAPI.ui.onThemeChange((nextTheme) => {
-      if (isAppTheme(nextTheme)) {
-        setTheme(nextTheme);
+      const split = splitAppTheme(nextTheme);
+      if (split) {
+        setThemeVariant(split.variant);
+        setColorScheme((current) =>
+          current === "system" ? current : split.scheme,
+        );
       }
     });
 
     return () => {
-      mounted = false;
       unsubscribe();
     };
   }, []);
@@ -1912,8 +2009,10 @@ function AppShellContent() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem(THEME_STORAGE_KEY, theme);
+    localStorage.setItem(COLOR_SCHEME_STORAGE_KEY, colorScheme);
+    localStorage.setItem(THEME_VARIANT_STORAGE_KEY, themeVariant);
     void window.electronAPI.ui.setTheme(theme);
-  }, [theme]);
+  }, [theme, colorScheme, themeVariant]);
 
   const dismissNotificationToast = useCallback((notificationId: string) => {
     setToastNotifications((current) =>
@@ -2109,10 +2208,11 @@ function AppShellContent() {
     };
   }, [refreshNotifications]);
 
-  const handleThemeChange = useCallback((nextTheme: string) => {
-    if (isAppTheme(nextTheme)) {
-      setTheme(nextTheme);
-    }
+  const handleColorSchemeChange = useCallback((next: ColorScheme) => {
+    setColorScheme(next);
+  }, []);
+  const handleThemeVariantChange = useCallback((next: ThemeVariant) => {
+    setThemeVariant(next);
   }, []);
 
   const handleOpenExternalUrl = useCallback((url: string) => {
@@ -3287,8 +3387,7 @@ function AppShellContent() {
         updating_workspace_enabled: isUpdatingProactiveWorkspaceEnabled,
         loading_status: isLoadingProactiveStatus,
         has_status: Boolean(proactiveStatus),
-        error:
-          proactiveTaskProposalsError || proactiveHeartbeatError || null,
+        error: proactiveTaskProposalsError || proactiveHeartbeatError || null,
       },
       app_update: summarizeAppUpdateStatusForSentry(effectiveAppUpdateStatus),
       operator_surface: reportedOperatorSurfaceContext
@@ -3370,7 +3469,11 @@ function AppShellContent() {
       available: runtimeStatus?.available ?? false,
       last_error: runtimeStatus?.lastError || null,
     });
-  }, [runtimeStatus?.available, runtimeStatus?.lastError, runtimeStatus?.status]);
+  }, [
+    runtimeStatus?.available,
+    runtimeStatus?.lastError,
+    runtimeStatus?.status,
+  ]);
 
   useEffect(() => {
     if (!activeChatSessionId) {
@@ -3666,7 +3769,7 @@ function AppShellContent() {
         <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-subtle-xs backdrop-blur-sm">
           <div className="shrink-0 border-b border-border px-4 py-2.5 sm:px-5">
             <div className="flex items-center justify-between gap-3">
-              <div className="inline-flex min-w-0 items-center gap-2 text-base font-semibold tracking-[-0.02em] text-foreground">
+              <div className="inline-flex min-w-0 items-center gap-2 text-base font-semibold text-foreground">
                 <Inbox size={14} className="shrink-0 text-muted-foreground" />
                 <span className="truncate">Inbox</span>
               </div>
@@ -4412,61 +4515,62 @@ function AppShellContent() {
                                   key={spaceExplorerMode}
                                   className={`flex min-h-0 flex-1 flex-col animate-in fade-in-0 duration-200 ease-out ${spaceExplorerSlideInClass}`}
                                 >
-                                {spaceExplorerMode === "files" ? (
-                                  <FileExplorerPane
-                                    focusRequest={fileExplorerFocusRequest}
-                                    onFocusRequestConsumed={(requestKey) => {
-                                      setFileExplorerFocusRequest((current) =>
-                                        current?.requestKey === requestKey
-                                          ? null
-                                          : current,
-                                      );
-                                    }}
-                                    onReferenceInChat={
-                                      handleReferenceWorkspacePathInChat
-                                    }
-                                    onDeleteEntry={handleDeleteWorkspaceEntry}
-                                    onOpenLinkInBrowser={
-                                      handleOpenLinkInNewAppBrowserTab
-                                    }
-                                    previewInPane={false}
-                                    embedded
-                                    onFileOpen={(path) => {
-                                      setSpaceDisplayView({
-                                        type: "internal",
-                                        surface: "file",
-                                        resourceId: path,
-                                      });
-                                    }}
-                                  />
-                                ) : spaceExplorerMode === "applications" ? (
-                                  <SpaceApplicationsExplorerPane
-                                    installedApps={installedApps}
-                                    activeAppId={
-                                      spaceDisplayView.type === "app"
-                                        ? spaceDisplayView.appId
-                                        : null
-                                    }
-                                    onAddApp={handleAddApp}
-                                    onSelectApp={(appId) =>
-                                      handleOpenSpaceApp(appId)
-                                    }
-                                  />
-                                ) : spaceExplorerMode === "browser" ? (
-                                  <SpaceBrowserExplorerPane
-                                    browserSpace={spaceBrowserSpace}
-                                    onBrowserSpaceChange={(space) => {
-                                      setSpaceBrowserSpace(space);
-                                      setSpaceDisplayView({
-                                        type: "browser",
-                                      });
-                                    }}
-                                    onActivateDisplay={() =>
-                                      setSpaceDisplayView({ type: "browser" })
-                                    }
-                                    hasPendingAgentJump={hasPendingAgentJump}
-                                  />
-                                ) : null}
+                                  {spaceExplorerMode === "files" ? (
+                                    <FileExplorerPane
+                                      focusRequest={fileExplorerFocusRequest}
+                                      onFocusRequestConsumed={(requestKey) => {
+                                        setFileExplorerFocusRequest(
+                                          (current) =>
+                                            current?.requestKey === requestKey
+                                              ? null
+                                              : current,
+                                        );
+                                      }}
+                                      onReferenceInChat={
+                                        handleReferenceWorkspacePathInChat
+                                      }
+                                      onDeleteEntry={handleDeleteWorkspaceEntry}
+                                      onOpenLinkInBrowser={
+                                        handleOpenLinkInNewAppBrowserTab
+                                      }
+                                      previewInPane={false}
+                                      embedded
+                                      onFileOpen={(path) => {
+                                        setSpaceDisplayView({
+                                          type: "internal",
+                                          surface: "file",
+                                          resourceId: path,
+                                        });
+                                      }}
+                                    />
+                                  ) : spaceExplorerMode === "applications" ? (
+                                    <SpaceApplicationsExplorerPane
+                                      installedApps={installedApps}
+                                      activeAppId={
+                                        spaceDisplayView.type === "app"
+                                          ? spaceDisplayView.appId
+                                          : null
+                                      }
+                                      onAddApp={handleAddApp}
+                                      onSelectApp={(appId) =>
+                                        handleOpenSpaceApp(appId)
+                                      }
+                                    />
+                                  ) : spaceExplorerMode === "browser" ? (
+                                    <SpaceBrowserExplorerPane
+                                      browserSpace={spaceBrowserSpace}
+                                      onBrowserSpaceChange={(space) => {
+                                        setSpaceBrowserSpace(space);
+                                        setSpaceDisplayView({
+                                          type: "browser",
+                                        });
+                                      }}
+                                      onActivateDisplay={() =>
+                                        setSpaceDisplayView({ type: "browser" })
+                                      }
+                                      hasPendingAgentJump={hasPendingAgentJump}
+                                    />
+                                  ) : null}
                                 </div>
                               </div>
                             </>
@@ -4601,9 +4705,11 @@ function AppShellContent() {
         appVersion={effectiveAppUpdateStatus?.currentVersion || ""}
         onSectionChange={setSettingsDialogSection}
         onClose={() => setSettingsDialogOpen(false)}
-        theme={theme}
-        themes={THEMES}
-        onThemeChange={handleThemeChange}
+        colorScheme={colorScheme}
+        onColorSchemeChange={handleColorSchemeChange}
+        themeVariant={themeVariant}
+        themeVariants={THEME_VARIANTS}
+        onThemeVariantChange={handleThemeVariantChange}
         onOpenExternalUrl={handleOpenExternalUrl}
         onOpenAutomationRunSession={(workspaceId, sessionId) => {
           setSettingsDialogOpen(false);

@@ -1,5 +1,7 @@
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
+  AlertTriangle,
+  CheckCircle2,
   ChevronDown,
   Loader2,
   LogOut,
@@ -7,6 +9,7 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react";
+import { UserAvatar } from "@/components/ui/UserAvatar";
 import { Badge } from "@/components/ui/badge";
 import anthropicLogoMarkup from "@/assets/providers/anthropic.svg?raw";
 import geminiLogoMarkup from "@/assets/providers/gemini.svg?raw";
@@ -26,10 +29,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import {
-  useDesktopAuthSession,
-  type AuthSession
-} from "@/lib/auth/authClient";
+import { useDesktopAuthSession, type AuthSession } from "@/lib/auth/authClient";
 import { holabossLogoUrl } from "@/lib/assetPaths";
 import { useDesktopBilling } from "@/lib/billing/useDesktopBilling";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
@@ -43,33 +43,41 @@ interface AuthPanelProps {
 const AUTH_BROWSER_SIGN_IN_MESSAGE =
   "Sign-in opened in the browser. Complete the flow on the Holaboss sign-in page.";
 
-const KNOWN_PROVIDER_ORDER = ["holaboss", "openai_direct", "openai_codex", "anthropic_direct", "openrouter_direct", "gemini_direct", "ollama_direct", "minimax_direct"] as const;
+const KNOWN_PROVIDER_ORDER = [
+  "holaboss",
+  "openai_direct",
+  "openai_codex",
+  "anthropic_direct",
+  "openrouter_direct",
+  "gemini_direct",
+  "ollama_direct",
+  "minimax_direct",
+] as const;
 type KnownProviderId = (typeof KNOWN_PROVIDER_ORDER)[number];
 const AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME =
   "auth-settings-control theme-control-surface relative isolate h-9 w-full overflow-hidden rounded-[10px] border border-border bg-muted px-2.5 text-sm text-foreground shadow-none transition-colors hover:border-border focus-visible:border-border focus-visible:ring-0 focus-visible:ring-transparent aria-invalid:border-border aria-invalid:ring-0";
-const PROVIDER_ROW_ACTIONS_CLASS_NAME = "flex min-w-[224px] shrink-0 items-center justify-end gap-2";
+const PROVIDER_ROW_ACTIONS_CLASS_NAME =
+  "flex min-w-[224px] shrink-0 items-center justify-end gap-2";
 const PROVIDER_ROW_ACTION_ITEM_CLASS_NAME = "min-w-[104px] justify-center";
-const ADVANCED_SETTINGS_WARNING_PANEL_STYLE = {
-  borderColor: "color-mix(in oklch, var(--warning) 40%, var(--border))",
-  backgroundColor: "color-mix(in oklch, var(--warning) 12%, var(--card))",
-  color: "color-mix(in oklch, var(--warning) 36%, var(--foreground))",
-} satisfies CSSProperties;
-const ADVANCED_SETTINGS_WARNING_TITLE_STYLE = {
-  color: "color-mix(in oklch, var(--warning) 52%, var(--foreground))",
-} satisfies CSSProperties;
-const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string, string>> = {
+const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<
+  string,
+  Record<string, string>
+> = {
   anthropic_direct: {
-    "claude-sonnet-4-5": "claude-sonnet-4-6"
+    "claude-sonnet-4-5": "claude-sonnet-4-6",
   },
   gemini_direct: {
     "gemini-3.1-pro-preview": "gemini-2.5-pro",
     "gemini-2.5-flash-lite": "gemini-2.5-flash",
-    "gemini-3.1-flash-lite-preview": "gemini-2.5-flash"
-  }
+    "gemini-3.1-flash-lite-preview": "gemini-2.5-flash",
+  },
 };
 
 type RuntimeCatalogModelCapability = "chat" | "image_generation" | "embedding";
-const RUNTIME_MODEL_CAPABILITY_ALIASES: Record<string, RuntimeCatalogModelCapability> = {
+const RUNTIME_MODEL_CAPABILITY_ALIASES: Record<
+  string,
+  RuntimeCatalogModelCapability
+> = {
   chat: "chat",
   text: "chat",
   completion: "chat",
@@ -122,7 +130,8 @@ const RECALL_EMBEDDING_PROVIDER_IDS = [
 ] as const;
 
 type RecallEmbeddingsDraftProviderId =
-  (typeof RECALL_EMBEDDING_PROVIDER_IDS)[number] | "";
+  | (typeof RECALL_EMBEDDING_PROVIDER_IDS)[number]
+  | "";
 
 interface RecallEmbeddingsDraft {
   providerId: RecallEmbeddingsDraftProviderId;
@@ -137,7 +146,8 @@ const IMAGE_GENERATION_PROVIDER_IDS = [
 ] as const;
 
 type ImageGenerationDraftProviderId =
-  (typeof IMAGE_GENERATION_PROVIDER_IDS)[number] | "";
+  | (typeof IMAGE_GENERATION_PROVIDER_IDS)[number]
+  | "";
 
 interface ImageGenerationDraft {
   providerId: ImageGenerationDraftProviderId;
@@ -151,106 +161,130 @@ interface ProviderSettingsSnapshot {
   imageGeneration: ImageGenerationDraft;
 }
 
-const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> = {
-  holaboss: {
-    id: "holaboss",
-    label: "Holaboss Proxy",
-    description: "Managed by your Holaboss account session and runtime binding.",
-    kind: "holaboss_proxy",
-    defaultBaseUrl: "",
-    defaultModels: [],
-    defaultBackgroundModel: null,
-    defaultImageModel: null,
-    imageModelSuggestions: [],
-    apiKeyPlaceholder: "hbrt.v1.your-proxy-token"
-  },
-  openai_direct: {
-    id: "openai_direct",
-    label: "OpenAI",
-    description: "Direct OpenAI-compatible endpoint with your own API key.",
-    kind: "openai_compatible",
-    defaultBaseUrl: "https://api.openai.com/v1",
-    defaultModels: ["gpt-5.4", "gpt-5.3-codex"],
-    defaultBackgroundModel: "gpt-5.4",
-    defaultImageModel: "gpt-image-1.5",
-    imageModelSuggestions: ["gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini", "chatgpt-image-latest"],
-    apiKeyPlaceholder: "sk-your-openai-key"
-  },
-  openai_codex: {
-    id: "openai_codex",
-    label: "OpenAI Codex",
-    description: "ChatGPT/Codex OAuth for GPT-5 models without a separate API key.",
-    kind: "openai_compatible",
-    defaultBaseUrl: "https://chatgpt.com/backend-api/codex",
-    defaultModels: ["gpt-5.4", "gpt-5.3-codex"],
-    defaultBackgroundModel: "gpt-5.4",
-    defaultImageModel: null,
-    imageModelSuggestions: [],
-    apiKeyPlaceholder: ""
-  },
-  anthropic_direct: {
-    id: "anthropic_direct",
-    label: "Anthropic",
-    description: "Direct Anthropic native endpoint with your own API key.",
-    kind: "anthropic_native",
-    defaultBaseUrl: "https://api.anthropic.com",
-    defaultModels: ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"],
-    defaultBackgroundModel: "claude-sonnet-4-6",
-    defaultImageModel: null,
-    imageModelSuggestions: [],
-    apiKeyPlaceholder: "sk-ant-your-anthropic-key"
-  },
-  openrouter_direct: {
-    id: "openrouter_direct",
-    label: "OpenRouter",
-    description: "OpenRouter endpoint for provider-aggregated model access.",
-    kind: "openrouter",
-    defaultBaseUrl: "https://openrouter.ai/api/v1",
-    defaultModels: ["openai/gpt-5.4", "anthropic/claude-sonnet-4-6", "qwen/qwen3.6-plus"],
-    defaultBackgroundModel: "openai/gpt-5.4",
-    defaultImageModel: "google/gemini-3.1-flash-image-preview",
-    imageModelSuggestions: ["google/gemini-3.1-flash-image-preview"],
-    apiKeyPlaceholder: "sk-or-your-openrouter-key"
-  },
-  gemini_direct: {
-    id: "gemini_direct",
-    label: "Gemini",
-    description: "Google Gemini OpenAI-compatible endpoint with your own API key.",
-    kind: "openai_compatible",
-    defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-    defaultModels: ["gemini-2.5-pro", "gemini-2.5-flash"],
-    defaultBackgroundModel: "gemini-2.5-flash",
-    defaultImageModel: "gemini-3.1-flash-image-preview",
-    imageModelSuggestions: ["gemini-3.1-flash-image-preview", "gemini-2.5-flash-image"],
-    apiKeyPlaceholder: "AIza...your-gemini-api-key"
-  },
-  ollama_direct: {
-    id: "ollama_direct",
-    label: "Ollama",
-    description: "Local Ollama OpenAI-compatible endpoint.",
-    kind: "openai_compatible",
-    defaultBaseUrl: "http://localhost:11434/v1",
-    defaultModels: ["llama3.1:8b", "qwen3:8b", "gpt-oss:20b"],
-    defaultBackgroundModel: null,
-    defaultImageModel: null,
-    imageModelSuggestions: [],
-    apiKeyPlaceholder: "Optional. Use 'ollama' for strict OpenAI SDK compatibility."
-  },
-  minimax_direct: {
-    id: "minimax_direct",
-    label: "MiniMax",
-    description: "MiniMax OpenAI-compatible endpoint with your own API key.",
-    kind: "openai_compatible",
-    defaultBaseUrl: "https://api.minimax.io/v1",
-    defaultModels: ["MiniMax-M2.7", "MiniMax-M2.7-highspeed"],
-    defaultBackgroundModel: "MiniMax-M2.7",
-    defaultImageModel: null,
-    imageModelSuggestions: [],
-    apiKeyPlaceholder: "sk-your-minimax-api-key"
-  }
-};
+const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
+  {
+    holaboss: {
+      id: "holaboss",
+      label: "Holaboss Proxy",
+      description:
+        "Managed by your Holaboss account session and runtime binding.",
+      kind: "holaboss_proxy",
+      defaultBaseUrl: "",
+      defaultModels: [],
+      defaultBackgroundModel: null,
+      defaultImageModel: null,
+      imageModelSuggestions: [],
+      apiKeyPlaceholder: "hbrt.v1.your-proxy-token",
+    },
+    openai_direct: {
+      id: "openai_direct",
+      label: "OpenAI",
+      description: "Direct OpenAI-compatible endpoint with your own API key.",
+      kind: "openai_compatible",
+      defaultBaseUrl: "https://api.openai.com/v1",
+      defaultModels: ["gpt-5.4", "gpt-5.3-codex"],
+      defaultBackgroundModel: "gpt-5.4",
+      defaultImageModel: "gpt-image-1.5",
+      imageModelSuggestions: [
+        "gpt-image-1.5",
+        "gpt-image-1",
+        "gpt-image-1-mini",
+        "chatgpt-image-latest",
+      ],
+      apiKeyPlaceholder: "sk-your-openai-key",
+    },
+    openai_codex: {
+      id: "openai_codex",
+      label: "OpenAI Codex",
+      description:
+        "ChatGPT/Codex OAuth for GPT-5 models without a separate API key.",
+      kind: "openai_compatible",
+      defaultBaseUrl: "https://chatgpt.com/backend-api/codex",
+      defaultModels: ["gpt-5.4", "gpt-5.3-codex"],
+      defaultBackgroundModel: "gpt-5.4",
+      defaultImageModel: null,
+      imageModelSuggestions: [],
+      apiKeyPlaceholder: "",
+    },
+    anthropic_direct: {
+      id: "anthropic_direct",
+      label: "Anthropic",
+      description: "Direct Anthropic native endpoint with your own API key.",
+      kind: "anthropic_native",
+      defaultBaseUrl: "https://api.anthropic.com",
+      defaultModels: [
+        "claude-sonnet-4-6",
+        "claude-opus-4-6",
+        "claude-haiku-4-5",
+      ],
+      defaultBackgroundModel: "claude-sonnet-4-6",
+      defaultImageModel: null,
+      imageModelSuggestions: [],
+      apiKeyPlaceholder: "sk-ant-your-anthropic-key",
+    },
+    openrouter_direct: {
+      id: "openrouter_direct",
+      label: "OpenRouter",
+      description: "OpenRouter endpoint for provider-aggregated model access.",
+      kind: "openrouter",
+      defaultBaseUrl: "https://openrouter.ai/api/v1",
+      defaultModels: [
+        "openai/gpt-5.4",
+        "anthropic/claude-sonnet-4-6",
+        "qwen/qwen3.6-plus",
+      ],
+      defaultBackgroundModel: "openai/gpt-5.4",
+      defaultImageModel: "google/gemini-3.1-flash-image-preview",
+      imageModelSuggestions: ["google/gemini-3.1-flash-image-preview"],
+      apiKeyPlaceholder: "sk-or-your-openrouter-key",
+    },
+    gemini_direct: {
+      id: "gemini_direct",
+      label: "Gemini",
+      description:
+        "Google Gemini OpenAI-compatible endpoint with your own API key.",
+      kind: "openai_compatible",
+      defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+      defaultModels: ["gemini-2.5-pro", "gemini-2.5-flash"],
+      defaultBackgroundModel: "gemini-2.5-flash",
+      defaultImageModel: "gemini-3.1-flash-image-preview",
+      imageModelSuggestions: [
+        "gemini-3.1-flash-image-preview",
+        "gemini-2.5-flash-image",
+      ],
+      apiKeyPlaceholder: "AIza...your-gemini-api-key",
+    },
+    ollama_direct: {
+      id: "ollama_direct",
+      label: "Ollama",
+      description: "Local Ollama OpenAI-compatible endpoint.",
+      kind: "openai_compatible",
+      defaultBaseUrl: "http://localhost:11434/v1",
+      defaultModels: ["llama3.1:8b", "qwen3:8b", "gpt-oss:20b"],
+      defaultBackgroundModel: null,
+      defaultImageModel: null,
+      imageModelSuggestions: [],
+      apiKeyPlaceholder:
+        "Optional. Use 'ollama' for strict OpenAI SDK compatibility.",
+    },
+    minimax_direct: {
+      id: "minimax_direct",
+      label: "MiniMax",
+      description: "MiniMax OpenAI-compatible endpoint with your own API key.",
+      kind: "openai_compatible",
+      defaultBaseUrl: "https://api.minimax.io/v1",
+      defaultModels: ["MiniMax-M2.7", "MiniMax-M2.7-highspeed"],
+      defaultBackgroundModel: "MiniMax-M2.7",
+      defaultImageModel: null,
+      imageModelSuggestions: [],
+      apiKeyPlaceholder: "sk-your-minimax-api-key",
+    },
+  };
 
-const RECALL_EMBEDDING_MODEL_DEFAULTS: Record<Exclude<RecallEmbeddingsDraftProviderId, "">, string | null> = {
+const RECALL_EMBEDDING_MODEL_DEFAULTS: Record<
+  Exclude<RecallEmbeddingsDraftProviderId, "">,
+  string | null
+> = {
   holaboss: "text-embedding-3-small",
   openai_direct: "text-embedding-3-small",
   openrouter_direct: "openai/text-embedding-3-small",
@@ -259,10 +293,16 @@ const RECALL_EMBEDDING_MODEL_DEFAULTS: Record<Exclude<RecallEmbeddingsDraftProvi
   minimax_direct: null,
 };
 
-const RECALL_EMBEDDING_MODEL_SUGGESTIONS: Record<Exclude<RecallEmbeddingsDraftProviderId, "">, string[]> = {
+const RECALL_EMBEDDING_MODEL_SUGGESTIONS: Record<
+  Exclude<RecallEmbeddingsDraftProviderId, "">,
+  string[]
+> = {
   holaboss: ["text-embedding-3-small"],
   openai_direct: ["text-embedding-3-small", "text-embedding-3-large"],
-  openrouter_direct: ["openai/text-embedding-3-small", "openai/text-embedding-3-large"],
+  openrouter_direct: [
+    "openai/text-embedding-3-small",
+    "openai/text-embedding-3-large",
+  ],
   gemini_direct: [],
   ollama_direct: [],
   minimax_direct: [],
@@ -284,44 +324,51 @@ function createDefaultProviderDrafts(): ProviderDraftMap {
       enabled: false,
       baseUrl: KNOWN_PROVIDER_TEMPLATES.openai_direct.defaultBaseUrl,
       apiKey: "",
-      modelsText: KNOWN_PROVIDER_TEMPLATES.openai_direct.defaultModels.join(", "),
+      modelsText:
+        KNOWN_PROVIDER_TEMPLATES.openai_direct.defaultModels.join(", "),
     },
     openai_codex: {
       enabled: false,
       baseUrl: KNOWN_PROVIDER_TEMPLATES.openai_codex.defaultBaseUrl,
       apiKey: "",
-      modelsText: KNOWN_PROVIDER_TEMPLATES.openai_codex.defaultModels.join(", "),
+      modelsText:
+        KNOWN_PROVIDER_TEMPLATES.openai_codex.defaultModels.join(", "),
     },
     anthropic_direct: {
       enabled: false,
       baseUrl: KNOWN_PROVIDER_TEMPLATES.anthropic_direct.defaultBaseUrl,
       apiKey: "",
-      modelsText: KNOWN_PROVIDER_TEMPLATES.anthropic_direct.defaultModels.join(", "),
+      modelsText:
+        KNOWN_PROVIDER_TEMPLATES.anthropic_direct.defaultModels.join(", "),
     },
     openrouter_direct: {
       enabled: false,
       baseUrl: KNOWN_PROVIDER_TEMPLATES.openrouter_direct.defaultBaseUrl,
       apiKey: "",
-      modelsText: KNOWN_PROVIDER_TEMPLATES.openrouter_direct.defaultModels.join(", "),
+      modelsText:
+        KNOWN_PROVIDER_TEMPLATES.openrouter_direct.defaultModels.join(", "),
     },
     gemini_direct: {
       enabled: false,
       baseUrl: KNOWN_PROVIDER_TEMPLATES.gemini_direct.defaultBaseUrl,
       apiKey: "",
-      modelsText: KNOWN_PROVIDER_TEMPLATES.gemini_direct.defaultModels.join(", "),
+      modelsText:
+        KNOWN_PROVIDER_TEMPLATES.gemini_direct.defaultModels.join(", "),
     },
     ollama_direct: {
       enabled: false,
       baseUrl: KNOWN_PROVIDER_TEMPLATES.ollama_direct.defaultBaseUrl,
       apiKey: "",
-      modelsText: KNOWN_PROVIDER_TEMPLATES.ollama_direct.defaultModels.join(", "),
+      modelsText:
+        KNOWN_PROVIDER_TEMPLATES.ollama_direct.defaultModels.join(", "),
     },
     minimax_direct: {
       enabled: false,
       baseUrl: KNOWN_PROVIDER_TEMPLATES.minimax_direct.defaultBaseUrl,
       apiKey: "",
-      modelsText: KNOWN_PROVIDER_TEMPLATES.minimax_direct.defaultModels.join(", "),
-    }
+      modelsText:
+        KNOWN_PROVIDER_TEMPLATES.minimax_direct.defaultModels.join(", "),
+    },
   };
 }
 
@@ -353,7 +400,9 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function firstNonEmptyString(...values: Array<string | null | undefined>): string {
+function firstNonEmptyString(
+  ...values: Array<string | null | undefined>
+): string {
   for (const value of values) {
     const normalized = (value ?? "").trim();
     if (normalized) {
@@ -391,7 +440,7 @@ function parseModelsText(value: string): string[] {
     value
       .split(/[\n,]/)
       .map((item) => item.trim())
-      .filter(Boolean)
+      .filter(Boolean),
   );
 }
 
@@ -416,8 +465,9 @@ function providerModelDisplayLabel(
   modelId: string,
 ): string {
   return (
-    modelCatalog.catalogMetadataForProviderModel(providerId, modelId)?.label?.trim() ||
-    modelId
+    modelCatalog
+      .catalogMetadataForProviderModel(providerId, modelId)
+      ?.label?.trim() || modelId
   );
 }
 
@@ -438,24 +488,38 @@ function holabossSupportedModels(
     }));
 }
 
-function normalizeConfiguredProviderModelId(providerId: string, modelId: string): string {
+function normalizeConfiguredProviderModelId(
+  providerId: string,
+  modelId: string,
+): string {
   const normalizedProviderId = providerId.trim().toLowerCase();
   const normalizedModelId = modelId.trim();
   if (!normalizedProviderId || !normalizedModelId) {
     return normalizedModelId;
   }
-  return LEGACY_DIRECT_PROVIDER_MODEL_ALIASES[normalizedProviderId]?.[normalizedModelId] ?? normalizedModelId;
+  return (
+    LEGACY_DIRECT_PROVIDER_MODEL_ALIASES[normalizedProviderId]?.[
+      normalizedModelId
+    ] ?? normalizedModelId
+  );
 }
 
-function normalizeRuntimeCatalogModelCapability(value: string): RuntimeCatalogModelCapability | "" {
-  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+function normalizeRuntimeCatalogModelCapability(
+  value: string,
+): RuntimeCatalogModelCapability | "" {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
   if (!normalized) {
     return "";
   }
   return RUNTIME_MODEL_CAPABILITY_ALIASES[normalized] ?? "";
 }
 
-function runtimeCatalogModelCapabilities(model: RuntimeProviderModelPayload): RuntimeCatalogModelCapability[] {
+function runtimeCatalogModelCapabilities(
+  model: RuntimeProviderModelPayload,
+): RuntimeCatalogModelCapability[] {
   if (!Array.isArray(model.capabilities)) {
     return [];
   }
@@ -486,13 +550,18 @@ function runtimeCatalogModelSupportsCapability(
   return capabilities.includes(capability);
 }
 
-function enabledProviderIdsForDrafts(providerDrafts: ProviderDraftMap, isSignedIn: boolean): KnownProviderId[] {
+function enabledProviderIdsForDrafts(
+  providerDrafts: ProviderDraftMap,
+  isSignedIn: boolean,
+): KnownProviderId[] {
   return KNOWN_PROVIDER_ORDER.filter((providerId) =>
-    providerId === "holaboss" ? isSignedIn : providerDrafts[providerId].enabled
+    providerId === "holaboss" ? isSignedIn : providerDrafts[providerId].enabled,
   );
 }
 
-function directProviderRequiresManualFields(providerId: KnownProviderId): boolean {
+function directProviderRequiresManualFields(
+  providerId: KnownProviderId,
+): boolean {
   return providerId !== "holaboss" && providerId !== "openai_codex";
 }
 
@@ -526,22 +595,37 @@ function configuredRuntimeProviderModelIds(
   const runtimeProviderId =
     providerId === "holaboss" ? "holaboss_model_proxy" : providerId;
   const providerGroup = runtimeConfig?.providerModelGroups.find(
-    (group) => group.providerId.trim() === runtimeProviderId
+    (group) => group.providerId.trim() === runtimeProviderId,
   );
   if (!providerGroup) {
     return [];
   }
   return uniqueValues(
     providerGroup.models
-      .filter((model) => runtimeCatalogModelSupportsCapability(model, capability))
-      .map((model) => normalizeConfiguredProviderModelId(providerId, model.modelId || model.token))
-      .filter(Boolean)
+      .filter((model) =>
+        runtimeCatalogModelSupportsCapability(model, capability),
+      )
+      .map((model) =>
+        normalizeConfiguredProviderModelId(
+          providerId,
+          model.modelId || model.token,
+        ),
+      )
+      .filter(Boolean),
   );
 }
 
-function configuredRuntimeProviderPrefixes(providerId: KnownProviderId): string[] {
+function configuredRuntimeProviderPrefixes(
+  providerId: KnownProviderId,
+): string[] {
   if (providerId === "holaboss") {
-    return ["openai/", "google/", "anthropic/", "holaboss/", "holaboss_model_proxy/"];
+    return [
+      "openai/",
+      "google/",
+      "anthropic/",
+      "holaboss/",
+      "holaboss_model_proxy/",
+    ];
   }
   return [`${providerId}/`];
 }
@@ -561,11 +645,16 @@ function canonicalDraftProviderStorageId(providerId: string): string {
   return normalized;
 }
 
-function configuredBackgroundModelId(providerId: KnownProviderId, value: string): string {
+function configuredBackgroundModelId(
+  providerId: KnownProviderId,
+  value: string,
+): string {
   return normalizeConfiguredProviderModelId(providerId, value.trim());
 }
 
-function backgroundTaskProviderDraftId(value: string): BackgroundTasksDraftProviderId {
+function backgroundTaskProviderDraftId(
+  value: string,
+): BackgroundTasksDraftProviderId {
   const normalized = value.trim();
   if (!normalized) {
     return "";
@@ -576,7 +665,9 @@ function backgroundTaskProviderDraftId(value: string): BackgroundTasksDraftProvi
   return isKnownProviderId(normalized) ? normalized : "";
 }
 
-function backgroundTaskProviderStorageId(providerId: BackgroundTasksDraftProviderId): string {
+function backgroundTaskProviderStorageId(
+  providerId: BackgroundTasksDraftProviderId,
+): string {
   if (!providerId) {
     return "";
   }
@@ -607,7 +698,9 @@ function backgroundTaskModelPlaceholder(
   return fallbackModel ? `Default: ${fallbackModel}` : "Select a model";
 }
 
-function backgroundTaskProviderLabel(providerId: BackgroundTasksDraftProviderId): string {
+function backgroundTaskProviderLabel(
+  providerId: BackgroundTasksDraftProviderId,
+): string {
   if (!providerId) {
     return "";
   }
@@ -634,15 +727,26 @@ function backgroundTaskModelSuggestions(
     ...managedCatalogModels,
     ...parseModelsText(providerDrafts[providerId].modelsText),
     ...template.defaultModels,
-    ...(template.defaultBackgroundModel ? [template.defaultBackgroundModel] : []),
+    ...(template.defaultBackgroundModel
+      ? [template.defaultBackgroundModel]
+      : []),
   ]);
 }
 
-function isRecallEmbeddingProviderId(value: string): value is RecallEmbeddingsDraftProviderId {
-  return value === "" || RECALL_EMBEDDING_PROVIDER_IDS.includes(value as (typeof RECALL_EMBEDDING_PROVIDER_IDS)[number]);
+function isRecallEmbeddingProviderId(
+  value: string,
+): value is RecallEmbeddingsDraftProviderId {
+  return (
+    value === "" ||
+    RECALL_EMBEDDING_PROVIDER_IDS.includes(
+      value as (typeof RECALL_EMBEDDING_PROVIDER_IDS)[number],
+    )
+  );
 }
 
-function recallEmbeddingsProviderDraftId(value: string): RecallEmbeddingsDraftProviderId {
+function recallEmbeddingsProviderDraftId(
+  value: string,
+): RecallEmbeddingsDraftProviderId {
   const normalized = value.trim();
   if (!normalized) {
     return "";
@@ -653,7 +757,9 @@ function recallEmbeddingsProviderDraftId(value: string): RecallEmbeddingsDraftPr
   return isRecallEmbeddingProviderId(normalized) ? normalized : "";
 }
 
-function recallEmbeddingsProviderStorageId(providerId: RecallEmbeddingsDraftProviderId): string {
+function recallEmbeddingsProviderStorageId(
+  providerId: RecallEmbeddingsDraftProviderId,
+): string {
   if (!providerId) {
     return "";
   }
@@ -692,7 +798,9 @@ function recallEmbeddingsModelPlaceholder(
   return fallbackModel ? `Default: ${fallbackModel}` : "Select a model";
 }
 
-function recallEmbeddingsProviderLabel(providerId: RecallEmbeddingsDraftProviderId): string {
+function recallEmbeddingsProviderLabel(
+  providerId: RecallEmbeddingsDraftProviderId,
+): string {
   if (!providerId) {
     return "";
   }
@@ -708,13 +816,22 @@ function recallEmbeddingsModelSuggestions(
   }
   const managedCatalogEmbeddingModels =
     providerId === "holaboss"
-      ? configuredRuntimeProviderModelIds(runtimeConfig, providerId, "embedding")
+      ? configuredRuntimeProviderModelIds(
+          runtimeConfig,
+          providerId,
+          "embedding",
+        )
       : [];
   if (providerId === "holaboss") {
-    const defaultModel = recallEmbeddingsDefaultModel(providerId, runtimeConfig);
+    const defaultModel = recallEmbeddingsDefaultModel(
+      providerId,
+      runtimeConfig,
+    );
     return uniqueValues([
       ...managedCatalogEmbeddingModels,
-      ...(managedCatalogEmbeddingModels.length === 0 && defaultModel ? [defaultModel] : []),
+      ...(managedCatalogEmbeddingModels.length === 0 && defaultModel
+        ? [defaultModel]
+        : []),
       ...RECALL_EMBEDDING_MODEL_SUGGESTIONS[providerId],
     ]);
   }
@@ -757,11 +874,20 @@ function deriveConfiguredRecallEmbeddingsDraft(
   };
 }
 
-function isImageGenerationProviderId(value: string): value is ImageGenerationDraftProviderId {
-  return value === "" || IMAGE_GENERATION_PROVIDER_IDS.includes(value as (typeof IMAGE_GENERATION_PROVIDER_IDS)[number]);
+function isImageGenerationProviderId(
+  value: string,
+): value is ImageGenerationDraftProviderId {
+  return (
+    value === "" ||
+    IMAGE_GENERATION_PROVIDER_IDS.includes(
+      value as (typeof IMAGE_GENERATION_PROVIDER_IDS)[number],
+    )
+  );
 }
 
-function imageGenerationProviderDraftId(value: string): ImageGenerationDraftProviderId {
+function imageGenerationProviderDraftId(
+  value: string,
+): ImageGenerationDraftProviderId {
   const normalized = value.trim();
   if (!normalized) {
     return "";
@@ -772,14 +898,19 @@ function imageGenerationProviderDraftId(value: string): ImageGenerationDraftProv
   return isImageGenerationProviderId(normalized) ? normalized : "";
 }
 
-function imageGenerationProviderStorageId(providerId: ImageGenerationDraftProviderId): string {
+function imageGenerationProviderStorageId(
+  providerId: ImageGenerationDraftProviderId,
+): string {
   if (!providerId) {
     return "";
   }
   return runtimeProviderStorageId(providerId);
 }
 
-function configuredImageGenerationModelId(providerId: ImageGenerationDraftProviderId, value: string): string {
+function configuredImageGenerationModelId(
+  providerId: ImageGenerationDraftProviderId,
+  value: string,
+): string {
   return normalizeConfiguredProviderModelId(providerId, value.trim());
 }
 
@@ -807,7 +938,9 @@ function imageGenerationModelPlaceholder(
   return fallbackModel ? `Default: ${fallbackModel}` : "Select a model";
 }
 
-function imageGenerationProviderLabel(providerId: ImageGenerationDraftProviderId): string {
+function imageGenerationProviderLabel(
+  providerId: ImageGenerationDraftProviderId,
+): string {
   if (!providerId) {
     return "";
   }
@@ -824,15 +957,23 @@ function imageGenerationModelSuggestions(
   const template = KNOWN_PROVIDER_TEMPLATES[providerId];
   const managedCatalogImageModels =
     providerId === "holaboss"
-      ? configuredRuntimeProviderModelIds(runtimeConfig, providerId, "image_generation")
+      ? configuredRuntimeProviderModelIds(
+          runtimeConfig,
+          providerId,
+          "image_generation",
+        )
       : [];
   if (providerId === "holaboss") {
     return managedCatalogImageModels;
   }
   return uniqueValues([
     ...managedCatalogImageModels,
-    ...(managedCatalogImageModels.length === 0 && template.defaultImageModel ? [template.defaultImageModel] : []),
-    ...(managedCatalogImageModels.length === 0 ? template.imageModelSuggestions : []),
+    ...(managedCatalogImageModels.length === 0 && template.defaultImageModel
+      ? [template.defaultImageModel]
+      : []),
+    ...(managedCatalogImageModels.length === 0
+      ? template.imageModelSuggestions
+      : []),
   ]);
 }
 
@@ -902,15 +1043,17 @@ function deriveConfiguredImageGenerationDraft(
   };
 }
 
-function deriveLegacyBackgroundTasksDraft(document: Record<string, unknown>): BackgroundTasksDraft {
+function deriveLegacyBackgroundTasksDraft(
+  document: Record<string, unknown>,
+): BackgroundTasksDraft {
   const providersPayload = asRecord(document.providers);
   const matches: BackgroundTasksDraft[] = [];
   for (const providerId of KNOWN_PROVIDER_ORDER) {
     const runtimeProviderId = runtimeProviderStorageId(providerId);
     const providerPayload = asRecord(
       providerId === "holaboss"
-        ? providersPayload.holaboss_model_proxy ?? providersPayload.holaboss
-        : providersPayload[runtimeProviderId]
+        ? (providersPayload.holaboss_model_proxy ?? providersPayload.holaboss)
+        : providersPayload[runtimeProviderId],
     );
     const optionsPayload = asRecord(providerPayload.options);
     const model = configuredBackgroundModelId(
@@ -936,15 +1079,17 @@ function deriveLegacyBackgroundTasksDraft(document: Record<string, unknown>): Ba
   return createDefaultBackgroundTasksDraft();
 }
 
-function deriveLegacyImageGenerationDraft(document: Record<string, unknown>): ImageGenerationDraft {
+function deriveLegacyImageGenerationDraft(
+  document: Record<string, unknown>,
+): ImageGenerationDraft {
   const providersPayload = asRecord(document.providers);
   const matches: ImageGenerationDraft[] = [];
   for (const providerId of IMAGE_GENERATION_PROVIDER_IDS) {
     const runtimeProviderId = runtimeProviderStorageId(providerId);
     const providerPayload = asRecord(
       providerId === "holaboss"
-        ? providersPayload.holaboss_model_proxy ?? providersPayload.holaboss
-        : providersPayload[runtimeProviderId]
+        ? (providersPayload.holaboss_model_proxy ?? providersPayload.holaboss)
+        : providersPayload[runtimeProviderId],
     );
     const optionsPayload = asRecord(providerPayload.options);
     const model = configuredImageGenerationModelId(
@@ -969,7 +1114,14 @@ function deriveLegacyImageGenerationDraft(document: Record<string, unknown>): Im
 
 function ProviderBrandIcon({ providerId }: { providerId: KnownProviderId }) {
   if (providerId === "holaboss") {
-    return <img src={holabossLogoUrl} alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;
+    return (
+      <img
+        src={holabossLogoUrl}
+        alt=""
+        className="h-4 w-4 object-contain"
+        aria-hidden="true"
+      />
+    );
   }
   const iconMarkup = providerBrandIconMarkup(providerId);
   if (iconMarkup) {
@@ -986,7 +1138,7 @@ function ProviderBrandIcon({ providerId }: { providerId: KnownProviderId }) {
 
 function deriveProviderDraftsFromDocument(
   document: Record<string, unknown>,
-  runtimeConfig: RuntimeConfigPayload | null
+  runtimeConfig: RuntimeConfigPayload | null,
 ): {
   drafts: ProviderDraftMap;
   sandboxId: string;
@@ -1006,8 +1158,8 @@ function deriveProviderDraftsFromDocument(
     const runtimeProviderId = runtimeProviderStorageId(providerId);
     const providerPayload = asRecord(
       providerId === "holaboss"
-        ? providersPayload.holaboss_model_proxy ?? providersPayload.holaboss
-        : providersPayload[runtimeProviderId]
+        ? (providersPayload.holaboss_model_proxy ?? providersPayload.holaboss)
+        : providersPayload[runtimeProviderId],
     );
     const optionsPayload = asRecord(providerPayload.options);
 
@@ -1016,8 +1168,8 @@ function deriveProviderDraftsFromDocument(
       providerPayload.baseURL as string | undefined,
       optionsPayload.baseURL as string | undefined,
       optionsPayload.base_url as string | undefined,
-      providerId === "holaboss" ? runtimeConfig?.modelProxyBaseUrl ?? "" : "",
-      template.defaultBaseUrl
+      providerId === "holaboss" ? (runtimeConfig?.modelProxyBaseUrl ?? "") : "",
+      template.defaultBaseUrl,
     );
     const apiKey = firstNonEmptyString(
       providerPayload.api_key as string | undefined,
@@ -1026,7 +1178,9 @@ function deriveProviderDraftsFromDocument(
       optionsPayload.api_key as string | undefined,
       optionsPayload.authToken as string | undefined,
       optionsPayload.auth_token as string | undefined,
-      providerId === "holaboss" ? (holabossIntegration.auth_token as string | undefined) : ""
+      providerId === "holaboss"
+        ? (holabossIntegration.auth_token as string | undefined)
+        : "",
     );
     const modelIds: string[] = [];
     if (providerId !== "holaboss") {
@@ -1034,11 +1188,11 @@ function deriveProviderDraftsFromDocument(
         const modelPayload = asRecord(rawModel);
         let modelProvider = firstNonEmptyString(
           modelPayload.provider as string | undefined,
-          modelPayload.provider_id as string | undefined
+          modelPayload.provider_id as string | undefined,
         );
         let modelId = firstNonEmptyString(
           modelPayload.model as string | undefined,
-          modelPayload.model_id as string | undefined
+          modelPayload.model_id as string | undefined,
         );
         if (!modelProvider && token.includes("/")) {
           const [prefix, ...rest] = token.split("/");
@@ -1048,7 +1202,9 @@ function deriveProviderDraftsFromDocument(
           }
         }
         if (modelProvider === providerId && modelId.trim()) {
-          modelIds.push(normalizeConfiguredProviderModelId(providerId, modelId));
+          modelIds.push(
+            normalizeConfiguredProviderModelId(providerId, modelId),
+          );
         }
       }
     }
@@ -1056,11 +1212,18 @@ function deriveProviderDraftsFromDocument(
       providerId === "holaboss"
         ? configuredRuntimeProviderModelIds(runtimeConfig, providerId)
         : uniqueValues(modelIds);
-    const fallbackDefaultModel = firstNonEmptyString(runtimePayload.default_model as string | undefined, runtimeConfig?.defaultModel ?? "");
+    const fallbackDefaultModel = firstNonEmptyString(
+      runtimePayload.default_model as string | undefined,
+      runtimeConfig?.defaultModel ?? "",
+    );
     if (providerId !== "holaboss" && normalizedModelIds.length === 0) {
-      for (const providerPrefix of configuredRuntimeProviderPrefixes(providerId)) {
+      for (const providerPrefix of configuredRuntimeProviderPrefixes(
+        providerId,
+      )) {
         if (fallbackDefaultModel.startsWith(providerPrefix)) {
-          normalizedModelIds.push(fallbackDefaultModel.slice(providerPrefix.length).trim());
+          normalizedModelIds.push(
+            fallbackDefaultModel.slice(providerPrefix.length).trim(),
+          );
           break;
         }
       }
@@ -1068,10 +1231,14 @@ function deriveProviderDraftsFromDocument(
     drafts[providerId] = {
       enabled:
         Object.keys(providerPayload).length > 0 ||
-        (providerId === "holaboss" && Boolean((runtimeConfig?.modelProxyBaseUrl || "").trim())),
+        (providerId === "holaboss" &&
+          Boolean((runtimeConfig?.modelProxyBaseUrl || "").trim())),
       baseUrl,
       apiKey: providerId === "openai_codex" ? "" : apiKey,
-      modelsText: (normalizedModelIds.length > 0 ? normalizedModelIds : template.defaultModels).join(", "),
+      modelsText: (normalizedModelIds.length > 0
+        ? normalizedModelIds
+        : template.defaultModels
+      ).join(", "),
     };
   }
 
@@ -1096,7 +1263,10 @@ function deriveProviderDraftsFromDocument(
 
   return {
     drafts,
-    sandboxId: firstNonEmptyString(runtimePayload.sandbox_id as string | undefined, runtimeConfig?.sandboxId ?? ""),
+    sandboxId: firstNonEmptyString(
+      runtimePayload.sandbox_id as string | undefined,
+      runtimeConfig?.sandboxId ?? "",
+    ),
     backgroundTasks,
     recallEmbeddings,
     imageGeneration,
@@ -1142,6 +1312,28 @@ function sessionDisplayName(session: AuthSession | null): string {
   return typeof maybeUser.name === "string" ? maybeUser.name.trim() : "";
 }
 
+function sessionAvatarUser(session: AuthSession | null): {
+  id?: string;
+  email?: string | null;
+  name?: string | null;
+  image?: string | null;
+} | null {
+  if (!session || typeof session !== "object" || !("user" in session)) {
+    return null;
+  }
+  const maybeUser = session.user;
+  if (!maybeUser || typeof maybeUser !== "object") {
+    return null;
+  }
+  const u = maybeUser as Record<string, unknown>;
+  return {
+    id: typeof u.id === "string" ? u.id : undefined,
+    email: typeof u.email === "string" ? u.email : null,
+    name: typeof u.name === "string" ? u.name : null,
+    image: typeof u.image === "string" ? u.image : null,
+  };
+}
+
 function sessionInitials(session: AuthSession | null): string {
   const name = sessionDisplayName(session);
   if (name) {
@@ -1165,32 +1357,42 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const billingState = useDesktopBilling();
   const { runtimeConfig: sharedRuntimeConfig } = useWorkspaceDesktop();
   const session = sessionState.data;
-  const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigPayload | null>(null);
+  const [runtimeConfig, setRuntimeConfig] =
+    useState<RuntimeConfigPayload | null>(null);
   const [runtimeConfigDocument, setRuntimeConfigDocument] = useState("");
-  const [hasLoadedRuntimeConfigDocument, setHasLoadedRuntimeConfigDocument] = useState(false);
-  const [hydratedRuntimeConfigDocument, setHydratedRuntimeConfigDocument] = useState<string | null>(null);
-  const [providerDrafts, setProviderDrafts] = useState<ProviderDraftMap>(() => createDefaultProviderDrafts());
-  const [backgroundTasksDraft, setBackgroundTasksDraft] = useState<BackgroundTasksDraft>(() =>
-    createDefaultBackgroundTasksDraft(),
+  const [hasLoadedRuntimeConfigDocument, setHasLoadedRuntimeConfigDocument] =
+    useState(false);
+  const [hydratedRuntimeConfigDocument, setHydratedRuntimeConfigDocument] =
+    useState<string | null>(null);
+  const [providerDrafts, setProviderDrafts] = useState<ProviderDraftMap>(() =>
+    createDefaultProviderDrafts(),
   );
-  const [recallEmbeddingsDraft, setRecallEmbeddingsDraft] = useState<RecallEmbeddingsDraft>(() =>
-    createDefaultRecallEmbeddingsDraft(),
-  );
-  const [imageGenerationDraft, setImageGenerationDraft] = useState<ImageGenerationDraft>(() =>
-    createDefaultImageGenerationDraft(),
-  );
-  const [showAdvancedRuntimeSettings, setShowAdvancedRuntimeSettings] = useState(false);
-  const [expandedProviderId, setExpandedProviderId] = useState<KnownProviderId | null>(null);
+  const [backgroundTasksDraft, setBackgroundTasksDraft] =
+    useState<BackgroundTasksDraft>(() => createDefaultBackgroundTasksDraft());
+  const [recallEmbeddingsDraft, setRecallEmbeddingsDraft] =
+    useState<RecallEmbeddingsDraft>(() => createDefaultRecallEmbeddingsDraft());
+  const [imageGenerationDraft, setImageGenerationDraft] =
+    useState<ImageGenerationDraft>(() => createDefaultImageGenerationDraft());
+  const [showAdvancedRuntimeSettings, setShowAdvancedRuntimeSettings] =
+    useState(false);
+  const [expandedProviderId, setExpandedProviderId] =
+    useState<KnownProviderId | null>(null);
   const [sandboxId, setSandboxId] = useState("");
   const [authError, setAuthError] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [isStartingSignIn, setIsStartingSignIn] = useState(false);
-  const [isSavingRuntimeConfigDocument, setIsSavingRuntimeConfigDocument] = useState(false);
-  const [isExchangingRuntimeBinding, setIsExchangingRuntimeBinding] = useState(false);
-  const [connectingProviderId, setConnectingProviderId] = useState<KnownProviderId | null>(null);
-  const [disconnectingProviderId, setDisconnectingProviderId] = useState<KnownProviderId | null>(null);
+  const [isSavingRuntimeConfigDocument, setIsSavingRuntimeConfigDocument] =
+    useState(false);
+  const [isExchangingRuntimeBinding, setIsExchangingRuntimeBinding] =
+    useState(false);
+  const [connectingProviderId, setConnectingProviderId] =
+    useState<KnownProviderId | null>(null);
+  const [disconnectingProviderId, setDisconnectingProviderId] =
+    useState<KnownProviderId | null>(null);
   const [isProviderDraftDirty, setIsProviderDraftDirty] = useState(false);
-  const [providerSaveStatus, setProviderSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [providerSaveStatus, setProviderSaveStatus] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
   const effectiveRuntimeConfig = sharedRuntimeConfig ?? runtimeConfig;
   const hasHydratedProviderDrafts =
     hasLoadedRuntimeConfigDocument &&
@@ -1202,7 +1404,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     }
     const [config, document] = await Promise.all([
       window.electronAPI.runtime.getConfig(),
-      window.electronAPI.runtime.getConfigDocument()
+      window.electronAPI.runtime.getConfigDocument(),
     ]);
     setRuntimeConfig(config);
     setRuntimeConfigDocument(document);
@@ -1218,7 +1420,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     let cancelled = false;
     void Promise.all([
       window.electronAPI.runtime.getConfig(),
-      window.electronAPI.runtime.getConfigDocument()
+      window.electronAPI.runtime.getConfigDocument(),
     ]).then(([config, document]) => {
       if (cancelled) {
         return;
@@ -1355,11 +1557,17 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     effectiveRuntimeConfig,
   ).drafts;
   const providerConnected = (providerId: KnownProviderId) =>
-    providerId === "holaboss" ? isSignedIn : persistedProviderDrafts[providerId].enabled;
+    providerId === "holaboss"
+      ? isSignedIn
+      : persistedProviderDrafts[providerId].enabled;
   const providerDraftEnabled = (providerId: KnownProviderId) =>
     providerId === "holaboss" ? isSignedIn : providerDrafts[providerId].enabled;
-  const connectedProviderIds = KNOWN_PROVIDER_ORDER.filter((providerId) => providerConnected(providerId));
-  const availableProviderIds = KNOWN_PROVIDER_ORDER.filter((providerId) => !providerConnected(providerId));
+  const connectedProviderIds = KNOWN_PROVIDER_ORDER.filter((providerId) =>
+    providerConnected(providerId),
+  );
+  const availableProviderIds = KNOWN_PROVIDER_ORDER.filter(
+    (providerId) => !providerConnected(providerId),
+  );
   const backgroundProviderConnected =
     backgroundTasksDraft.providerId !== "" &&
     connectedProviderIds.includes(backgroundTasksDraft.providerId);
@@ -1368,20 +1576,24 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     providerDrafts,
     effectiveRuntimeConfig,
   );
-  const backgroundProviderOptions = backgroundTasksDraft.providerId
-    && !connectedProviderIds.includes(backgroundTasksDraft.providerId)
+  const backgroundProviderOptions =
+    backgroundTasksDraft.providerId &&
+    !connectedProviderIds.includes(backgroundTasksDraft.providerId)
       ? [backgroundTasksDraft.providerId, ...connectedProviderIds]
       : connectedProviderIds;
   const backgroundTaskModelOptions = uniqueValues([
     backgroundTasksDraft.model.trim(),
     ...backgroundProviderSuggestions,
   ]);
-  const connectedRecallEmbeddingProviderIds = RECALL_EMBEDDING_PROVIDER_IDS.filter((providerId) =>
-    connectedProviderIds.includes(providerId),
-  );
+  const connectedRecallEmbeddingProviderIds =
+    RECALL_EMBEDDING_PROVIDER_IDS.filter((providerId) =>
+      connectedProviderIds.includes(providerId),
+    );
   const recallEmbeddingsProviderConnected =
     recallEmbeddingsDraft.providerId !== "" &&
-    connectedRecallEmbeddingProviderIds.includes(recallEmbeddingsDraft.providerId);
+    connectedRecallEmbeddingProviderIds.includes(
+      recallEmbeddingsDraft.providerId,
+    );
   const recallEmbeddingsProviderSuggestions = recallEmbeddingsModelSuggestions(
     recallEmbeddingsDraft.providerId,
     effectiveRuntimeConfig,
@@ -1390,12 +1602,18 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     recallEmbeddingsDraft.model.trim(),
     ...recallEmbeddingsProviderSuggestions,
   ]);
-  const recallEmbeddingsProviderOptions = recallEmbeddingsDraft.providerId
-    && !connectedRecallEmbeddingProviderIds.includes(recallEmbeddingsDraft.providerId)
-      ? [recallEmbeddingsDraft.providerId, ...connectedRecallEmbeddingProviderIds]
+  const recallEmbeddingsProviderOptions =
+    recallEmbeddingsDraft.providerId &&
+    !connectedRecallEmbeddingProviderIds.includes(
+      recallEmbeddingsDraft.providerId,
+    )
+      ? [
+          recallEmbeddingsDraft.providerId,
+          ...connectedRecallEmbeddingProviderIds,
+        ]
       : connectedRecallEmbeddingProviderIds;
-  const connectedImageProviderIds = IMAGE_GENERATION_PROVIDER_IDS.filter((providerId) =>
-    connectedProviderIds.includes(providerId),
+  const connectedImageProviderIds = IMAGE_GENERATION_PROVIDER_IDS.filter(
+    (providerId) => connectedProviderIds.includes(providerId),
   );
   const imageGenerationProviderConnected =
     imageGenerationDraft.providerId !== "" &&
@@ -1408,16 +1626,23 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     imageGenerationDraft.model.trim(),
     ...imageGenerationProviderSuggestions,
   ]);
-  const imageGenerationProviderOptions = imageGenerationDraft.providerId
-    && !connectedImageProviderIds.includes(imageGenerationDraft.providerId)
+  const imageGenerationProviderOptions =
+    imageGenerationDraft.providerId &&
+    !connectedImageProviderIds.includes(imageGenerationDraft.providerId)
       ? [imageGenerationDraft.providerId, ...connectedImageProviderIds]
       : connectedImageProviderIds;
-  const hasResolvableImageGenerationModel = connectedImageProviderIds.some((providerId) =>
-    Boolean(imageGenerationDefaultModel(providerId, effectiveRuntimeConfig).trim()),
+  const hasResolvableImageGenerationModel = connectedImageProviderIds.some(
+    (providerId) =>
+      Boolean(
+        imageGenerationDefaultModel(providerId, effectiveRuntimeConfig).trim(),
+      ),
   );
-  const hasResolvableRecallEmbeddingsModel = connectedRecallEmbeddingProviderIds.some((providerId) =>
-    Boolean(recallEmbeddingsDefaultModel(providerId, effectiveRuntimeConfig).trim()),
-  );
+  const hasResolvableRecallEmbeddingsModel =
+    connectedRecallEmbeddingProviderIds.some((providerId) =>
+      Boolean(
+        recallEmbeddingsDefaultModel(providerId, effectiveRuntimeConfig).trim(),
+      ),
+    );
   const advancedSettingsWarnings = [
     !hasResolvableRecallEmbeddingsModel
       ? "No embedding model can be resolved from the currently connected providers. Recall will stay on the slower staged path until you connect an embedding-capable provider or choose one in Advanced settings."
@@ -1456,9 +1681,16 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     Boolean(effectiveRuntimeConfig?.authTokenPresent) &&
     Boolean((effectiveRuntimeConfig?.sandboxId || "").trim()) &&
     Boolean((effectiveRuntimeConfig?.modelProxyBaseUrl || "").trim());
-  const isRuntimeSetupPending = isSignedIn && !runtimeBindingReady && !authError;
+  const isRuntimeSetupPending =
+    isSignedIn && !runtimeBindingReady && !authError;
   const showsSetupLoadingState = isRuntimeSetupPending;
-  const statusTone = authError ? "error" : runtimeBindingReady ? "ready" : isRuntimeSetupPending ? "syncing" : "idle";
+  const statusTone = authError
+    ? "error"
+    : runtimeBindingReady
+      ? "ready"
+      : isRuntimeSetupPending
+        ? "syncing"
+        : "idle";
 
   const statusBadgeLabel = sessionState.isPending
     ? "Checking session"
@@ -1492,12 +1724,16 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const infoRows = [
     {
       label: "Profile",
-      value: isSignedIn ? "Connected" : "Sign in required"
+      value: isSignedIn ? "Connected" : "Sign in required",
     },
     {
       label: "Runtime",
-      value: runtimeBindingReady ? "Ready on this desktop" : isSignedIn ? "Connecting desktop" : "Offline"
-    }
+      value: runtimeBindingReady
+        ? "Ready on this desktop"
+        : isSignedIn
+          ? "Connecting desktop"
+          : "Offline",
+    },
   ];
 
   const setupLoadingPanel = (
@@ -1506,10 +1742,13 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         <Loader2 size={18} className="animate-spin" />
       </div>
       <div className="text-base font-medium text-foreground">
-        {isExchangingRuntimeBinding ? "Refreshing desktop connection..." : "Connecting your account..."}
+        {isExchangingRuntimeBinding
+          ? "Refreshing desktop connection..."
+          : "Connecting your account..."}
       </div>
       <div className="max-w-[520px] text-sm leading-6 text-muted-foreground">
-        Finalizing your desktop session and runtime binding. This should only take a moment.
+        Finalizing your desktop session and runtime binding. This should only
+        take a moment.
       </div>
     </div>
   );
@@ -1518,7 +1757,11 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     if (!hasHydratedProviderDrafts) {
       return;
     }
-    if (isProviderDraftDirty || backgroundTasksDraft.providerId || connectedProviderIds.length === 0) {
+    if (
+      isProviderDraftDirty ||
+      backgroundTasksDraft.providerId ||
+      connectedProviderIds.length === 0
+    ) {
       return;
     }
     applyBackgroundTaskProviderSelection(connectedProviderIds[0] ?? "");
@@ -1540,7 +1783,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     ) {
       return;
     }
-    applyRecallEmbeddingsProviderSelection(connectedRecallEmbeddingProviderIds[0] ?? "");
+    applyRecallEmbeddingsProviderSelection(
+      connectedRecallEmbeddingProviderIds[0] ?? "",
+    );
   }, [
     connectedRecallEmbeddingProviderIds,
     hasHydratedProviderDrafts,
@@ -1552,7 +1797,11 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     if (!hasHydratedProviderDrafts) {
       return;
     }
-    if (isProviderDraftDirty || imageGenerationDraft.providerId || connectedImageProviderIds.length === 0) {
+    if (
+      isProviderDraftDirty ||
+      imageGenerationDraft.providerId ||
+      connectedImageProviderIds.length === 0
+    ) {
       return;
     }
     applyImageGenerationProviderSelection(connectedImageProviderIds[0] ?? "");
@@ -1571,7 +1820,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       await sessionState.requestAuth();
       setAuthMessage(AUTH_BROWSER_SIGN_IN_MESSAGE);
     } catch (error) {
-      setAuthError(error instanceof Error ? error.message : "Failed to start sign-in.");
+      setAuthError(
+        error instanceof Error ? error.message : "Failed to start sign-in.",
+      );
     } finally {
       setIsStartingSignIn(false);
     }
@@ -1588,7 +1839,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     try {
       await sessionState.signOut();
     } catch (error) {
-      setAuthError(error instanceof Error ? error.message : "Failed to sign out.");
+      setAuthError(
+        error instanceof Error ? error.message : "Failed to sign out.",
+      );
     }
   }
 
@@ -1599,13 +1852,16 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     setAuthMessage("");
   }
 
-  function updateProviderDraft(providerId: KnownProviderId, update: Partial<ProviderDraft>) {
+  function updateProviderDraft(
+    providerId: KnownProviderId,
+    update: Partial<ProviderDraft>,
+  ) {
     setProviderDrafts((current) => ({
       ...current,
       [providerId]: {
         ...current[providerId],
-        ...update
-      }
+        ...update,
+      },
     }));
     markProviderSettingsDirty();
   }
@@ -1614,24 +1870,36 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     providerId: KnownProviderId,
     modelIds: string[],
   ) {
-    updateProviderDraft(providerId, { modelsText: uniqueValues(modelIds).join(", ") });
+    updateProviderDraft(providerId, {
+      modelsText: uniqueValues(modelIds).join(", "),
+    });
   }
 
-  function toggleProviderDraftModel(providerId: KnownProviderId, modelId: string) {
+  function toggleProviderDraftModel(
+    providerId: KnownProviderId,
+    modelId: string,
+  ) {
     const normalizedModelId = modelId.trim();
     if (!normalizedModelId) {
       return;
     }
-    const currentModelIds = parseModelsText(providerDrafts[providerId].modelsText);
+    const currentModelIds = parseModelsText(
+      providerDrafts[providerId].modelsText,
+    );
     updateProviderDraftModels(
       providerId,
       currentModelIds.includes(normalizedModelId)
-        ? currentModelIds.filter((currentModelId) => currentModelId !== normalizedModelId)
+        ? currentModelIds.filter(
+            (currentModelId) => currentModelId !== normalizedModelId,
+          )
         : [...currentModelIds, normalizedModelId],
     );
   }
 
-  function removeProviderDraftModel(providerId: KnownProviderId, modelId: string) {
+  function removeProviderDraftModel(
+    providerId: KnownProviderId,
+    modelId: string,
+  ) {
     const normalizedModelId = modelId.trim();
     updateProviderDraftModels(
       providerId,
@@ -1649,7 +1917,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     markProviderSettingsDirty();
   }
 
-  function applyBackgroundTaskProviderSelection(providerId: BackgroundTasksDraftProviderId) {
+  function applyBackgroundTaskProviderSelection(
+    providerId: BackgroundTasksDraftProviderId,
+  ) {
     updateBackgroundTasksDraft({
       providerId,
       model: backgroundTaskDefaultModel(providerId, effectiveRuntimeConfig),
@@ -1664,7 +1934,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     markProviderSettingsDirty();
   }
 
-  function applyRecallEmbeddingsProviderSelection(providerId: RecallEmbeddingsDraftProviderId) {
+  function applyRecallEmbeddingsProviderSelection(
+    providerId: RecallEmbeddingsDraftProviderId,
+  ) {
     updateRecallEmbeddingsDraft({
       providerId,
       model: recallEmbeddingsDefaultModel(providerId, effectiveRuntimeConfig),
@@ -1679,7 +1951,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     markProviderSettingsDirty();
   }
 
-  function applyImageGenerationProviderSelection(providerId: ImageGenerationDraftProviderId) {
+  function applyImageGenerationProviderSelection(
+    providerId: ImageGenerationDraftProviderId,
+  ) {
     updateImageGenerationDraft({
       providerId,
       model: imageGenerationDefaultModel(providerId, effectiveRuntimeConfig),
@@ -1725,7 +1999,10 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   function providerDraftValidationError(providerId: KnownProviderId): string {
     const draft = providerDrafts[providerId];
     const label = KNOWN_PROVIDER_TEMPLATES[providerId].label;
-    if (providerId !== "holaboss" && parseModelsText(draft.modelsText).length === 0) {
+    if (
+      providerId !== "holaboss" &&
+      parseModelsText(draft.modelsText).length === 0
+    ) {
       return `${label} requires at least one model before it can be connected.`;
     }
     if (!directProviderRequiresManualFields(providerId)) {
@@ -1747,7 +2024,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       [providerId]: persisted.drafts[providerId],
     };
     setProviderDrafts(nextDrafts);
-    setExpandedProviderId((current) => (current === providerId ? null : current));
+    setExpandedProviderId((current) =>
+      current === providerId ? null : current,
+    );
     setAuthError("");
     setAuthMessage("");
     setProviderSaveStatus("idle");
@@ -1766,13 +2045,10 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     backgroundTasksSnapshot: BackgroundTasksDraft,
     recallEmbeddingsSnapshot: RecallEmbeddingsDraft,
     imageGenerationSnapshot: ImageGenerationDraft,
-  ): Promise<
-    | {
-        nextConfig: RuntimeConfigPayload;
-        nextDocumentText: string;
-      }
-    | null
-  > {
+  ): Promise<{
+    nextConfig: RuntimeConfigPayload;
+    nextDocumentText: string;
+  } | null> {
     if (!window.electronAPI) {
       return null;
     }
@@ -1781,7 +2057,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     setAuthError("");
     setAuthMessage("");
     try {
-      const currentDocumentText = await window.electronAPI.runtime.getConfigDocument();
+      const currentDocumentText =
+        await window.electronAPI.runtime.getConfigDocument();
       const currentDocument = parseRuntimeConfigDocument(currentDocumentText);
       const currentRuntime = asRecord(currentDocument.runtime);
       const currentProviders = asRecord(currentDocument.providers);
@@ -1801,9 +2078,10 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         const modelProviderId = firstNonEmptyString(
           parsedModelPayload.provider as string | undefined,
           parsedModelPayload.provider_id as string | undefined,
-          token.includes("/") ? token.split("/")[0]?.trim() : ""
+          token.includes("/") ? token.split("/")[0]?.trim() : "",
         );
-        const normalizedModelProviderId = canonicalDraftProviderStorageId(modelProviderId);
+        const normalizedModelProviderId =
+          canonicalDraftProviderStorageId(modelProviderId);
         if (
           isKnownProviderId(normalizedModelProviderId) ||
           normalizedModelProviderId === "holaboss_model_proxy"
@@ -1812,7 +2090,10 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         }
       }
 
-      const enabledProviders = enabledProviderIdsForDrafts(draftsSnapshot, isSignedIn);
+      const enabledProviders = enabledProviderIdsForDrafts(
+        draftsSnapshot,
+        isSignedIn,
+      );
       const enabledProviderSet = new Set<KnownProviderId>(enabledProviders);
 
       for (const providerId of enabledProviders) {
@@ -1820,9 +2101,12 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         const providerDraft = draftsSnapshot[providerId];
         const runtimeProviderId = runtimeProviderStorageId(providerId);
         const existingProviderPayload = asRecord(
-          currentProviders[runtimeProviderId] ?? (providerId === "holaboss" ? currentProviders.holaboss : undefined)
+          currentProviders[runtimeProviderId] ??
+            (providerId === "holaboss" ? currentProviders.holaboss : undefined),
         );
-        const existingProviderOptions = asRecord(existingProviderPayload.options);
+        const existingProviderOptions = asRecord(
+          existingProviderPayload.options,
+        );
         const providerOptions =
           Object.keys(existingProviderOptions).length > 0
             ? { ...existingProviderOptions }
@@ -1908,35 +2192,51 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         firstNonEmptyString(
           currentRuntime.sandbox_id as string | undefined,
           runtimeConfig?.sandboxId ?? "",
-          `desktop:${crypto.randomUUID()}`
+          `desktop:${crypto.randomUUID()}`,
         );
       const enabledBackgroundProviderId =
-        backgroundTasksSnapshot.providerId && enabledProviderSet.has(backgroundTasksSnapshot.providerId)
+        backgroundTasksSnapshot.providerId &&
+        enabledProviderSet.has(backgroundTasksSnapshot.providerId)
           ? backgroundTasksSnapshot.providerId
           : "";
-      const normalizedBackgroundProviderId = backgroundTaskProviderStorageId(enabledBackgroundProviderId);
+      const normalizedBackgroundProviderId = backgroundTaskProviderStorageId(
+        enabledBackgroundProviderId,
+      );
       const normalizedBackgroundModel = enabledBackgroundProviderId
-        ? configuredBackgroundModelId(enabledBackgroundProviderId, backgroundTasksSnapshot.model)
+        ? configuredBackgroundModelId(
+            enabledBackgroundProviderId,
+            backgroundTasksSnapshot.model,
+          )
         : "";
       const enabledRecallEmbeddingsProviderId =
-        recallEmbeddingsSnapshot.providerId && enabledProviderSet.has(recallEmbeddingsSnapshot.providerId)
+        recallEmbeddingsSnapshot.providerId &&
+        enabledProviderSet.has(recallEmbeddingsSnapshot.providerId)
           ? recallEmbeddingsSnapshot.providerId
           : "";
-      const normalizedRecallEmbeddingsProviderId = recallEmbeddingsProviderStorageId(enabledRecallEmbeddingsProviderId);
+      const normalizedRecallEmbeddingsProviderId =
+        recallEmbeddingsProviderStorageId(enabledRecallEmbeddingsProviderId);
       const normalizedRecallEmbeddingsModel = enabledRecallEmbeddingsProviderId
-        ? configuredRecallEmbeddingsModelId(enabledRecallEmbeddingsProviderId, recallEmbeddingsSnapshot.model)
+        ? configuredRecallEmbeddingsModelId(
+            enabledRecallEmbeddingsProviderId,
+            recallEmbeddingsSnapshot.model,
+          )
         : "";
       const enabledImageGenerationProviderId =
-        imageGenerationSnapshot.providerId && enabledProviderSet.has(imageGenerationSnapshot.providerId)
+        imageGenerationSnapshot.providerId &&
+        enabledProviderSet.has(imageGenerationSnapshot.providerId)
           ? imageGenerationSnapshot.providerId
           : "";
-      const normalizedImageGenerationProviderId = imageGenerationProviderStorageId(enabledImageGenerationProviderId);
+      const normalizedImageGenerationProviderId =
+        imageGenerationProviderStorageId(enabledImageGenerationProviderId);
       const normalizedImageGenerationModel = enabledImageGenerationProviderId
-        ? configuredImageGenerationModelId(enabledImageGenerationProviderId, imageGenerationSnapshot.model)
+        ? configuredImageGenerationModelId(
+            enabledImageGenerationProviderId,
+            imageGenerationSnapshot.model,
+          )
         : "";
       const nextRuntime: Record<string, unknown> = {
         ...currentRuntime,
-        sandbox_id: resolvedSandboxId
+        sandbox_id: resolvedSandboxId,
       };
       delete nextRuntime.backgroundTasks;
       delete nextRuntime.recallEmbeddings;
@@ -1972,10 +2272,11 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         ...currentDocument,
         runtime: nextRuntime,
         providers: nextProviders,
-        models: nextModels
+        models: nextModels,
       };
       const nextDocumentText = `${JSON.stringify(nextDocument, null, 2)}\n`;
-      const nextConfig = await window.electronAPI.runtime.setConfigDocument(nextDocumentText);
+      const nextConfig =
+        await window.electronAPI.runtime.setConfigDocument(nextDocumentText);
       setRuntimeConfig(nextConfig);
       setRuntimeConfigDocument(nextDocumentText);
       setSandboxId(resolvedSandboxId);
@@ -1984,7 +2285,11 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         nextDocumentText,
       };
     } catch (error) {
-      setAuthError(error instanceof Error ? error.message : "Failed to save runtime provider settings.");
+      setAuthError(
+        error instanceof Error
+          ? error.message
+          : "Failed to save runtime provider settings.",
+      );
       setProviderSaveStatus("error");
       return null;
     } finally {
@@ -2065,7 +2370,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     setIsProviderDraftDirty(hasRemainingUnsavedChanges);
     setProviderSaveStatus(hasRemainingUnsavedChanges ? "idle" : "saved");
     if (providerId) {
-      setExpandedProviderId((current) => (current === providerId ? null : current));
+      setExpandedProviderId((current) =>
+        current === providerId ? null : current,
+      );
       setAuthMessage(
         hasRemainingUnsavedChanges
           ? `${KNOWN_PROVIDER_TEMPLATES[providerId].label} settings saved. Other changes are still unsaved.`
@@ -2073,7 +2380,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       );
       return;
     }
-    setAuthMessage("Runtime provider settings saved. The runtime was restarted with the new settings.");
+    setAuthMessage(
+      "Runtime provider settings saved. The runtime was restarted with the new settings.",
+    );
   }
 
   async function handleDisconnectRuntimeProvider(providerId: KnownProviderId) {
@@ -2112,15 +2421,18 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       [providerId]: persistedAfterDisconnect.drafts[providerId],
     };
     const nextBackgroundTasksDraft =
-      JSON.stringify(backgroundTasksDraft) === JSON.stringify(persistedBeforeDisconnect.backgroundTasks)
+      JSON.stringify(backgroundTasksDraft) ===
+      JSON.stringify(persistedBeforeDisconnect.backgroundTasks)
         ? persistedAfterDisconnect.backgroundTasks
         : backgroundTasksDraft;
     const nextImageGenerationDraft =
-      JSON.stringify(imageGenerationDraft) === JSON.stringify(persistedBeforeDisconnect.imageGeneration)
+      JSON.stringify(imageGenerationDraft) ===
+      JSON.stringify(persistedBeforeDisconnect.imageGeneration)
         ? persistedAfterDisconnect.imageGeneration
         : imageGenerationDraft;
     const nextRecallEmbeddingsDraft =
-      JSON.stringify(recallEmbeddingsDraft) === JSON.stringify(persistedBeforeDisconnect.recallEmbeddings)
+      JSON.stringify(recallEmbeddingsDraft) ===
+      JSON.stringify(persistedBeforeDisconnect.recallEmbeddings)
         ? persistedAfterDisconnect.recallEmbeddings
         : recallEmbeddingsDraft;
     const nextSnapshot: ProviderSettingsSnapshot = {
@@ -2139,7 +2451,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     setBackgroundTasksDraft(nextBackgroundTasksDraft);
     setRecallEmbeddingsDraft(nextRecallEmbeddingsDraft);
     setImageGenerationDraft(nextImageGenerationDraft);
-    setExpandedProviderId((current) => (current === providerId ? null : current));
+    setExpandedProviderId((current) =>
+      current === providerId ? null : current,
+    );
     setIsProviderDraftDirty(hasRemainingUnsavedChanges);
     setProviderSaveStatus(hasRemainingUnsavedChanges ? "idle" : "saved");
     setAuthMessage(
@@ -2154,7 +2468,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       return;
     }
     if (isProviderDraftDirty) {
-      setAuthError("Save or discard your other runtime provider edits before connecting OpenAI Codex.");
+      setAuthError(
+        "Save or discard your other runtime provider edits before connecting OpenAI Codex.",
+      );
       setAuthMessage("");
       return;
     }
@@ -2162,10 +2478,13 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     setConnectingProviderId(providerId);
     setProviderSaveStatus("saving");
     setAuthError("");
-    setAuthMessage("OpenAI Codex sign-in is starting in your browser. The device code will be copied to your clipboard.");
+    setAuthMessage(
+      "OpenAI Codex sign-in is starting in your browser. The device code will be copied to your clipboard.",
+    );
     try {
       const nextConfig = await window.electronAPI.runtime.connectCodexOAuth();
-      const nextDocumentText = await window.electronAPI.runtime.getConfigDocument();
+      const nextDocumentText =
+        await window.electronAPI.runtime.getConfigDocument();
       const persisted = persistedProviderSettingsSnapshot(
         nextDocumentText,
         nextConfig,
@@ -2180,9 +2499,15 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       setExpandedProviderId(providerId);
       setIsProviderDraftDirty(false);
       setProviderSaveStatus("saved");
-      setAuthMessage("OpenAI Codex connected. Future access token refreshes are managed locally on this desktop.");
+      setAuthMessage(
+        "OpenAI Codex connected. Future access token refreshes are managed locally on this desktop.",
+      );
     } catch (error) {
-      setAuthError(error instanceof Error ? error.message : "Failed to connect OpenAI Codex.");
+      setAuthError(
+        error instanceof Error
+          ? error.message
+          : "Failed to connect OpenAI Codex.",
+      );
       setAuthMessage("");
       setProviderSaveStatus("error");
     } finally {
@@ -2200,19 +2525,27 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       return;
     }
 
-    const resolvedSandboxId = sandboxId.trim() || `desktop:${crypto.randomUUID()}`;
+    const resolvedSandboxId =
+      sandboxId.trim() || `desktop:${crypto.randomUUID()}`;
     setIsExchangingRuntimeBinding(true);
     setAuthError("");
     setAuthMessage("");
     try {
-      const nextConfig = await window.electronAPI.runtime.exchangeBinding(resolvedSandboxId);
+      const nextConfig =
+        await window.electronAPI.runtime.exchangeBinding(resolvedSandboxId);
       setRuntimeConfig(nextConfig);
       setSandboxId(nextConfig.sandboxId ?? resolvedSandboxId);
       const nextDocument = await window.electronAPI.runtime.getConfigDocument();
       setRuntimeConfigDocument(nextDocument);
-      setAuthMessage("Runtime binding refreshed and local runtime config updated.");
+      setAuthMessage(
+        "Runtime binding refreshed and local runtime config updated.",
+      );
     } catch (error) {
-      setAuthError(error instanceof Error ? error.message : "Failed to exchange runtime binding.");
+      setAuthError(
+        error instanceof Error
+          ? error.message
+          : "Failed to exchange runtime binding.",
+      );
     } finally {
       setIsExchangingRuntimeBinding(false);
     }
@@ -2231,7 +2564,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
     return (
       <label className="grid gap-1">
-        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Models</span>
+        <span className="text-xs uppercase text-muted-foreground">Models</span>
         <div className="grid gap-2">
           {catalogModelOptions.length > 0 ? (
             <div className="grid gap-2">
@@ -2241,7 +2574,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   return (
                     <div
                       key={option.modelId}
-                      className={`rounded-[10px] border px-2.5 py-1.5 text-left transition ${
+                      className={`rounded-lg border px-2.5 py-1.5 text-left transition ${
                         selected
                           ? "border-primary bg-primary/[0.06] text-foreground"
                           : "border-border bg-card text-muted-foreground"
@@ -2259,14 +2592,17 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                           ) : null}
                         </div>
                         <div className="flex shrink-0 items-center gap-1.5 pl-1">
-                          <span className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                          <span className="text-xs font-medium uppercase text-muted-foreground">
                             {selected ? "On" : "Off"}
                           </span>
                           <Switch
                             checked={selected}
                             aria-label={`Toggle ${option.label}`}
                             onCheckedChange={() =>
-                              toggleProviderDraftModel(providerId, option.modelId)
+                              toggleProviderDraftModel(
+                                providerId,
+                                option.modelId,
+                              )
                             }
                             className="mt-0.5"
                           />
@@ -2278,13 +2614,14 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               </div>
             </div>
           ) : (
-            <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
-              Add models in <code>desktop/shared/model-catalog.ts</code> to configure this provider.
+            <div className="rounded-xl bg-card ring-1 ring-border px-3 py-2 text-sm text-muted-foreground">
+              Add models in <code>desktop/shared/model-catalog.ts</code> to
+              configure this provider.
             </div>
           )}
 
           {selectedModelIds.length === 0 ? (
-            <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
+            <div className="rounded-xl bg-card ring-1 ring-border px-3 py-2 text-sm text-muted-foreground">
               Select at least one configured model before saving.
             </div>
           ) : null}
@@ -2293,7 +2630,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             <div className="grid gap-2">
               <div className="text-xs leading-5 text-muted-foreground">
                 Some saved models are not in the local catalog. Add them in{" "}
-                <code>desktop/shared/model-catalog.ts</code> to make them selectable again.
+                <code>desktop/shared/model-catalog.ts</code> to make them
+                selectable again.
               </div>
               <div className="flex flex-wrap gap-2">
                 {unknownSelectedModelIds.map((modelId) => (
@@ -2308,7 +2646,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                     <button
                       type="button"
                       className="inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                      onClick={() => removeProviderDraftModel(providerId, modelId)}
+                      onClick={() =>
+                        removeProviderDraftModel(providerId, modelId)
+                      }
                       aria-label={`Remove ${modelId}`}
                     >
                       <X size={12} />
@@ -2326,7 +2666,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   function renderProviderDrawerContent(providerId: KnownProviderId): ReactNode {
     if (!providerDraftEnabled(providerId)) {
       return (
-        <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
+        <div className="rounded-xl bg-card ring-1 ring-border px-3 py-2 text-sm text-muted-foreground">
           Click Connect to configure settings.
         </div>
       );
@@ -2338,19 +2678,20 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       const supportedModels = holabossSupportedModels(effectiveRuntimeConfig);
       return (
         <div className="grid gap-2">
-          <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
-            Catalog, base URL, and credentials come from your Holaboss runtime binding.
+          <div className="rounded-xl bg-card ring-1 ring-border px-3 py-2 text-sm text-muted-foreground">
+            Catalog, base URL, and credentials come from your Holaboss runtime
+            binding.
           </div>
           {supportedModels.length > 0 ? (
             <div className="grid gap-2">
-              <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
+              <div className="text-xs uppercase text-muted-foreground">
                 Supported models
               </div>
               <div className="grid gap-1.5">
                 {supportedModels.map((option) => (
                   <div
                     key={option.modelId}
-                    className="rounded-[10px] border border-border bg-card px-2.5 py-1.5 text-left"
+                    className="rounded-lg bg-card ring-1 ring-border px-2.5 py-1.5 text-left"
                   >
                     <div className="truncate text-sm font-medium leading-4 text-foreground">
                       {option.label}
@@ -2365,8 +2706,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               </div>
             </div>
           ) : (
-            <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
-              No managed models are available yet. Refresh your runtime binding to load the latest Holaboss catalog.
+            <div className="rounded-xl bg-card ring-1 ring-border px-3 py-2 text-sm text-muted-foreground">
+              No managed models are available yet. Refresh your runtime binding
+              to load the latest Holaboss catalog.
             </div>
           )}
         </div>
@@ -2375,11 +2717,14 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     if (providerId === "openai_codex") {
       return (
         <div className="grid gap-2">
-          <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
-            Sign in with your ChatGPT account in the browser. holaOS keeps the active Codex access token refreshed locally for this desktop.
+          <div className="rounded-xl bg-card ring-1 ring-border px-3 py-2 text-sm text-muted-foreground">
+            Sign in with your ChatGPT account in the browser. holaOS keeps the
+            active Codex access token refreshed locally for this desktop.
           </div>
-          <div className="rounded-[12px] border border-border bg-muted px-3 py-2">
-            <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Base URL</div>
+          <div className="rounded-xl bg-card ring-1 ring-border px-3 py-2">
+            <div className="text-xs uppercase text-muted-foreground">
+              Base URL
+            </div>
             <div className="pt-1 font-mono text-sm text-foreground">
               {template.defaultBaseUrl}
             </div>
@@ -2409,20 +2754,28 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     return (
       <div className="grid gap-2">
         <label className="grid gap-1">
-          <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Base URL</span>
+          <span className="text-xs uppercase text-muted-foreground">
+            Base URL
+          </span>
           <Input
             value={draft.baseUrl}
-            onChange={(event) => updateProviderDraft(providerId, { baseUrl: event.target.value })}
+            onChange={(event) =>
+              updateProviderDraft(providerId, { baseUrl: event.target.value })
+            }
             placeholder={template.defaultBaseUrl}
             spellCheck={false}
           />
         </label>
         <label className="grid gap-1">
-          <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">API Key</span>
+          <span className="text-xs uppercase text-muted-foreground">
+            API Key
+          </span>
           <Input
             type="password"
             value={draft.apiKey}
-            onChange={(event) => updateProviderDraft(providerId, { apiKey: event.target.value })}
+            onChange={(event) =>
+              updateProviderDraft(providerId, { apiKey: event.target.value })
+            }
             placeholder={template.apiKeyPlaceholder}
             spellCheck={false}
           />
@@ -2459,22 +2812,22 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     const isConnecting = connectingProviderId === providerId;
     const isDisconnecting = disconnectingProviderId === providerId;
     const hasPendingConnection = !isConnected && draftEnabled;
-    const isExpandable = isHolabossProvider || isCodexProvider
-      ? isConnected
-      : draftEnabled || isConnected;
+    const isExpandable =
+      isHolabossProvider || isCodexProvider
+        ? isConnected
+        : draftEnabled || isConnected;
     const isExpanded = isExpandable && expandedProviderId === providerId;
 
     return (
-      <div
-        key={providerId}
-        className={isLast ? "" : "border-b border-border"}
-      >
+      <div key={providerId} className={isLast ? "" : "border-b border-border"}>
         <div className="flex items-center gap-3 py-3">
           <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-border bg-background text-foreground">
             <ProviderBrandIcon providerId={providerId} />
           </span>
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium text-foreground">{template.label}</div>
+            <div className="text-sm font-medium text-foreground">
+              {template.label}
+            </div>
           </div>
 
           <div className={PROVIDER_ROW_ACTIONS_CLASS_NAME}>
@@ -2485,7 +2838,11 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                     variant="ghost"
                     size="sm"
                     className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
-                    onClick={() => setExpandedProviderId((current) => (current === providerId ? null : providerId))}
+                    onClick={() =>
+                      setExpandedProviderId((current) =>
+                        current === providerId ? null : providerId,
+                      )
+                    }
                     disabled={isSavingRuntimeConfigDocument}
                   >
                     {isExpanded ? "Hide" : "Show"}
@@ -2515,7 +2872,11 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                     variant="ghost"
                     size="sm"
                     className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
-                    onClick={() => setExpandedProviderId((current) => (current === providerId ? null : providerId))}
+                    onClick={() =>
+                      setExpandedProviderId((current) =>
+                        current === providerId ? null : providerId,
+                      )
+                    }
                     disabled={isSavingRuntimeConfigDocument}
                   >
                     {isExpanded ? "Hide" : "Edit"}
@@ -2524,7 +2885,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                     variant="ghost"
                     size="sm"
                     className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
-                    onClick={() => void handleDisconnectRuntimeProvider(providerId)}
+                    onClick={() =>
+                      void handleDisconnectRuntimeProvider(providerId)
+                    }
                     disabled={isSavingRuntimeConfigDocument || isConnecting}
                   >
                     {isDisconnecting ? "Disconnecting..." : "Disconnect"}
@@ -2547,7 +2910,11 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   variant="ghost"
                   size="sm"
                   className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
-                  onClick={() => setExpandedProviderId((current) => (current === providerId ? null : providerId))}
+                  onClick={() =>
+                    setExpandedProviderId((current) =>
+                      current === providerId ? null : providerId,
+                    )
+                  }
                   disabled={isSavingRuntimeConfigDocument}
                 >
                   {isExpanded ? "Hide" : "Edit"}
@@ -2556,7 +2923,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   variant="ghost"
                   size="sm"
                   className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
-                  onClick={() => void handleDisconnectRuntimeProvider(providerId)}
+                  onClick={() =>
+                    void handleDisconnectRuntimeProvider(providerId)
+                  }
                   disabled={isSavingRuntimeConfigDocument}
                 >
                   {isDisconnecting ? "Disconnecting..." : "Disconnect"}
@@ -2568,7 +2937,11 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   variant="ghost"
                   size="sm"
                   className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
-                  onClick={() => setExpandedProviderId((current) => (current === providerId ? null : providerId))}
+                  onClick={() =>
+                    setExpandedProviderId((current) =>
+                      current === providerId ? null : providerId,
+                    )
+                  }
                   disabled={isSavingRuntimeConfigDocument}
                 >
                   {isExpanded ? "Hide" : "Edit"}
@@ -2579,7 +2952,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
                   onClick={() => {
                     updateProviderDraft(providerId, { enabled: false });
-                    setExpandedProviderId((current) => (current === providerId ? null : current));
+                    setExpandedProviderId((current) =>
+                      current === providerId ? null : current,
+                    );
                   }}
                   disabled={isSavingRuntimeConfigDocument}
                 >
@@ -2615,58 +2990,77 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const allProviderIds = [...connectedProviderIds, ...availableProviderIds];
 
   const runtimeProviderSettings = (
-    <div className="mt-3 grid gap-4">
+    <div className="grid gap-6">
       {advancedSettingsWarnings.length > 0 ? (
-        <div
-          className="rounded-[18px] border px-4 py-3 text-sm"
-          style={ADVANCED_SETTINGS_WARNING_PANEL_STYLE}
-        >
-          <div className="font-medium" style={ADVANCED_SETTINGS_WARNING_TITLE_STYLE}>
-            Provider model resolution needs attention
-          </div>
-          <div className="mt-2 grid gap-2">
-            {advancedSettingsWarnings.map((warning) => (
-              <div key={warning} className="leading-6">
-                {warning}
-              </div>
-            ))}
+        <div className="flex items-start gap-3 rounded-xl bg-warning/10 px-4 py-3 ring-1 ring-warning/25">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
+          <div className="min-w-0 flex-1 text-sm">
+            <div className="font-medium text-foreground">
+              Provider model resolution needs attention
+            </div>
+            <div className="mt-1 grid gap-1 text-xs leading-5 text-muted-foreground">
+              {advancedSettingsWarnings.map((warning) => (
+                <div key={warning}>{warning}</div>
+              ))}
+            </div>
           </div>
         </div>
       ) : null}
 
-      <div className="rounded-[18px] border border-border bg-card p-4">
-        <div className="grid gap-3">
-          <div className="text-sm font-medium text-foreground">Connected providers</div>
-          <div>
-            {allProviderIds.map((providerId, index) =>
-              renderProviderRow(providerId, index === allProviderIds.length - 1)
-            )}
-          </div>
+      <section>
+        <div className="text-base font-medium text-foreground">
+          Model providers
+        </div>
+        <div className="mt-3 overflow-hidden rounded-xl bg-card ring-1 ring-border p-4">
+          {allProviderIds.map((providerId, index) =>
+            renderProviderRow(providerId, index === allProviderIds.length - 1),
+          )}
+        </div>
+      </section>
 
-          <div className="rounded-[14px] border border-border bg-muted">
-            <button
-              type="button"
-              className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
-              onClick={() => setShowAdvancedRuntimeSettings((current) => !current)}
-            >
-              <div className="text-sm font-medium text-foreground">Advanced settings</div>
-              <ChevronDown
-                size={16}
-                className={`shrink-0 text-muted-foreground transition-transform ${showAdvancedRuntimeSettings ? "rotate-180" : ""}`}
-              />
-            </button>
+      <section>
+        <div className="text-base font-medium text-foreground">
+          Advanced settings
+        </div>
+        <div className="mt-3 overflow-hidden rounded-xl bg-card ring-1 ring-border">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left transition-colors hover:bg-accent"
+            onClick={() =>
+              setShowAdvancedRuntimeSettings((current) => !current)
+            }
+          >
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-foreground">
+                Provider routing
+              </div>
+              <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                Pick providers for background tasks, recall embeddings, and
+                image generation
+              </div>
+            </div>
+            <ChevronDown
+              className={`size-4 shrink-0 text-muted-foreground transition-transform ${showAdvancedRuntimeSettings ? "rotate-180" : ""}`}
+            />
+          </button>
 
-            {showAdvancedRuntimeSettings ? (
-              <div className="border-t border-border px-3 py-3">
+          {showAdvancedRuntimeSettings ? (
+            <>
+              <div className="h-px bg-border" />
+              <div className="px-4 py-4">
                 <div className="grid gap-4">
-                  <div className="rounded-[12px] border border-border bg-muted p-3">
-                    <div className="text-sm font-medium text-foreground">Background tasks</div>
+                  <div className="rounded-xl bg-card ring-1 ring-border p-3">
+                    <div className="text-sm font-medium text-foreground">
+                      Background tasks
+                    </div>
                     <div className="mt-1 text-sm text-muted-foreground">
                       Used for memory recall and evolve tasks.
                     </div>
                     <div className="mt-3 grid gap-2">
                       <label className="grid gap-1">
-                        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Provider</span>
+                        <span className="text-xs uppercase text-muted-foreground">
+                          Provider
+                        </span>
                         <Select
                           value={backgroundTasksDraft.providerId}
                           onValueChange={(value) =>
@@ -2676,12 +3070,15 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                           }
                           disabled={backgroundProviderOptions.length === 0}
                         >
-                          <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
+                          <SelectTrigger
+                            className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}
+                          >
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
                             {backgroundProviderOptions.map((providerId) => {
-                              const isConnected = connectedProviderIds.includes(providerId);
+                              const isConnected =
+                                connectedProviderIds.includes(providerId);
                               const label = isConnected
                                 ? backgroundTaskProviderLabel(providerId)
                                 : `${backgroundTaskProviderLabel(providerId)} (not connected)`;
@@ -2696,7 +3093,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                       </label>
 
                       <label className="grid gap-1">
-                        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Model</span>
+                        <span className="text-xs uppercase text-muted-foreground">
+                          Model
+                        </span>
                         <Select
                           value={backgroundTasksDraft.model || undefined}
                           onValueChange={(value) =>
@@ -2707,7 +3106,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                             backgroundTaskModelOptions.length === 0
                           }
                         >
-                          <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
+                          <SelectTrigger
+                            className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}
+                          >
                             <SelectValue
                               placeholder={backgroundTaskModelPlaceholder(
                                 backgroundTasksDraft.providerId,
@@ -2725,30 +3126,40 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                         </Select>
                       </label>
 
-                      {backgroundTasksDraft.providerId && !backgroundProviderConnected ? (
-                        <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
-                          Selected provider is not connected. Background tasks stay disabled until you reconnect it or choose another provider.
+                      {backgroundTasksDraft.providerId &&
+                      !backgroundProviderConnected ? (
+                        <div className="rounded-xl bg-card ring-1 ring-border px-3 py-2 text-sm text-muted-foreground">
+                          Selected provider is not connected. Background tasks
+                          stay disabled until you reconnect it or choose another
+                          provider.
                         </div>
                       ) : null}
-                      {backgroundTasksDraft.providerId && !backgroundTasksDraft.model.trim() ? (
-                        <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
+                      {backgroundTasksDraft.providerId &&
+                      !backgroundTasksDraft.model.trim() ? (
+                        <div className="rounded-xl bg-card ring-1 ring-border px-3 py-2 text-sm text-muted-foreground">
                           Select a model to enable background tasks.
                         </div>
                       ) : null}
                     </div>
                   </div>
 
-                  <div className="rounded-[12px] border border-border bg-muted p-3">
-                    <div className="text-sm font-medium text-foreground">Recall embeddings</div>
+                  <div className="rounded-xl bg-card ring-1 ring-border p-3">
+                    <div className="text-sm font-medium text-foreground">
+                      Recall embeddings
+                    </div>
                     <div className="mt-1 text-sm text-muted-foreground">
                       Used to preselect memory candidates for recall.
                     </div>
-                    <div className="mt-2 rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
-                      Embedding indexing stays off the user input path. Until embeddings have been indexed separately, recall continues to use the staged path.
+                    <div className="mt-2 rounded-xl bg-card ring-1 ring-border px-3 py-2 text-sm text-muted-foreground">
+                      Embedding indexing stays off the user input path. Until
+                      embeddings have been indexed separately, recall continues
+                      to use the staged path.
                     </div>
                     <div className="mt-3 grid gap-2">
                       <label className="grid gap-1">
-                        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Provider</span>
+                        <span className="text-xs uppercase text-muted-foreground">
+                          Provider
+                        </span>
                         <Select
                           value={recallEmbeddingsDraft.providerId}
                           onValueChange={(value) =>
@@ -2756,29 +3167,43 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                               recallEmbeddingsProviderDraftId(value ?? ""),
                             )
                           }
-                          disabled={recallEmbeddingsProviderOptions.length === 0}
+                          disabled={
+                            recallEmbeddingsProviderOptions.length === 0
+                          }
                         >
-                          <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
+                          <SelectTrigger
+                            className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}
+                          >
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {recallEmbeddingsProviderOptions.map((providerId) => {
-                              const isConnected = connectedRecallEmbeddingProviderIds.includes(providerId);
-                              const label = isConnected
-                                ? recallEmbeddingsProviderLabel(providerId)
-                                : `${recallEmbeddingsProviderLabel(providerId)} (not connected)`;
-                              return (
-                                <SelectItem key={providerId} value={providerId}>
-                                  {label}
-                                </SelectItem>
-                              );
-                            })}
+                            {recallEmbeddingsProviderOptions.map(
+                              (providerId) => {
+                                const isConnected =
+                                  connectedRecallEmbeddingProviderIds.includes(
+                                    providerId,
+                                  );
+                                const label = isConnected
+                                  ? recallEmbeddingsProviderLabel(providerId)
+                                  : `${recallEmbeddingsProviderLabel(providerId)} (not connected)`;
+                                return (
+                                  <SelectItem
+                                    key={providerId}
+                                    value={providerId}
+                                  >
+                                    {label}
+                                  </SelectItem>
+                                );
+                              },
+                            )}
                           </SelectContent>
                         </Select>
                       </label>
 
                       <label className="grid gap-1">
-                        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Model</span>
+                        <span className="text-xs uppercase text-muted-foreground">
+                          Model
+                        </span>
                         <Select
                           value={recallEmbeddingsDraft.model || undefined}
                           onValueChange={(value) =>
@@ -2789,7 +3214,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                             recallEmbeddingsModelOptions.length === 0
                           }
                         >
-                          <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
+                          <SelectTrigger
+                            className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}
+                          >
                             <SelectValue
                               placeholder={recallEmbeddingsModelPlaceholder(
                                 recallEmbeddingsDraft.providerId,
@@ -2807,27 +3234,36 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                         </Select>
                       </label>
 
-                      {recallEmbeddingsDraft.providerId && !recallEmbeddingsProviderConnected ? (
-                        <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
-                          Selected provider is not connected. Vector recall stays disabled until you reconnect it or choose another provider.
+                      {recallEmbeddingsDraft.providerId &&
+                      !recallEmbeddingsProviderConnected ? (
+                        <div className="rounded-xl bg-card ring-1 ring-border px-3 py-2 text-sm text-muted-foreground">
+                          Selected provider is not connected. Vector recall
+                          stays disabled until you reconnect it or choose
+                          another provider.
                         </div>
                       ) : null}
-                      {recallEmbeddingsDraft.providerId && !recallEmbeddingsDraft.model.trim() ? (
-                        <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
+                      {recallEmbeddingsDraft.providerId &&
+                      !recallEmbeddingsDraft.model.trim() ? (
+                        <div className="rounded-xl bg-card ring-1 ring-border px-3 py-2 text-sm text-muted-foreground">
                           Select a model to enable vector recall.
                         </div>
                       ) : null}
                     </div>
                   </div>
 
-                  <div className="rounded-[12px] border border-border bg-muted p-3">
-                    <div className="text-sm font-medium text-foreground">Image generation</div>
+                  <div className="rounded-xl bg-card ring-1 ring-border p-3">
+                    <div className="text-sm font-medium text-foreground">
+                      Image generation
+                    </div>
                     <div className="mt-1 text-sm text-muted-foreground">
-                      Used when the agent generates new images into the workspace.
+                      Used when the agent generates new images into the
+                      workspace.
                     </div>
                     <div className="mt-3 grid gap-2">
                       <label className="grid gap-1">
-                        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Provider</span>
+                        <span className="text-xs uppercase text-muted-foreground">
+                          Provider
+                        </span>
                         <Select
                           value={imageGenerationDraft.providerId}
                           onValueChange={(value) =>
@@ -2837,27 +3273,39 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                           }
                           disabled={imageGenerationProviderOptions.length === 0}
                         >
-                          <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
+                          <SelectTrigger
+                            className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}
+                          >
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {imageGenerationProviderOptions.map((providerId) => {
-                              const isConnected = connectedImageProviderIds.includes(providerId);
-                              const label = isConnected
-                                ? imageGenerationProviderLabel(providerId)
-                                : `${imageGenerationProviderLabel(providerId)} (not connected)`;
-                              return (
-                                <SelectItem key={providerId} value={providerId}>
-                                  {label}
-                                </SelectItem>
-                              );
-                            })}
+                            {imageGenerationProviderOptions.map(
+                              (providerId) => {
+                                const isConnected =
+                                  connectedImageProviderIds.includes(
+                                    providerId,
+                                  );
+                                const label = isConnected
+                                  ? imageGenerationProviderLabel(providerId)
+                                  : `${imageGenerationProviderLabel(providerId)} (not connected)`;
+                                return (
+                                  <SelectItem
+                                    key={providerId}
+                                    value={providerId}
+                                  >
+                                    {label}
+                                  </SelectItem>
+                                );
+                              },
+                            )}
                           </SelectContent>
                         </Select>
                       </label>
 
                       <label className="grid gap-1">
-                        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Model</span>
+                        <span className="text-xs uppercase text-muted-foreground">
+                          Model
+                        </span>
                         <Select
                           value={imageGenerationDraft.model || undefined}
                           onValueChange={(value) =>
@@ -2868,7 +3316,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                             imageGenerationModelOptions.length === 0
                           }
                         >
-                          <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
+                          <SelectTrigger
+                            className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}
+                          >
                             <SelectValue
                               placeholder={imageGenerationModelPlaceholder(
                                 imageGenerationDraft.providerId,
@@ -2886,13 +3336,17 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                         </Select>
                       </label>
 
-                      {imageGenerationDraft.providerId && !imageGenerationProviderConnected ? (
-                        <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
-                          Selected provider is not connected. Image generation stays disabled until you reconnect it or choose another provider.
+                      {imageGenerationDraft.providerId &&
+                      !imageGenerationProviderConnected ? (
+                        <div className="rounded-xl bg-card ring-1 ring-border px-3 py-2 text-sm text-muted-foreground">
+                          Selected provider is not connected. Image generation
+                          stays disabled until you reconnect it or choose
+                          another provider.
                         </div>
                       ) : null}
-                      {imageGenerationDraft.providerId && !imageGenerationDraft.model.trim() ? (
-                        <div className="rounded-[12px] border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
+                      {imageGenerationDraft.providerId &&
+                      !imageGenerationDraft.model.trim() ? (
+                        <div className="rounded-xl bg-card ring-1 ring-border px-3 py-2 text-sm text-muted-foreground">
                           Select a model to enable image generation.
                         </div>
                       ) : null}
@@ -2900,114 +3354,150 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   </div>
                 </div>
               </div>
-            ) : null}
-          </div>
+            </>
+          ) : null}
         </div>
-      </div>
+      </section>
     </div>
   );
 
   if (view === "account") {
     if (showsSetupLoadingState) {
       return (
-        <section className="grid w-full max-w-[1080px] gap-5">
+        <section className="grid w-full gap-5">
           {setupLoadingPanel}
         </section>
       );
     }
 
     return (
-      <section className="grid w-full max-w-[1080px] gap-5">
-        <div className="grid gap-4">
-          <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
-            <div className="flex min-w-0 items-center gap-3">
-              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-border bg-muted text-sm font-semibold text-foreground">
-                {sessionInitials(session)}
+      <section className="grid w-full gap-6">
+        <section>
+          <div className="text-base font-medium text-foreground">Session</div>
+
+          <div className="mt-3 overflow-hidden rounded-xl bg-card ring-1 ring-border">
+            <div className="flex items-center justify-between gap-4 px-4 py-3">
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                <div className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-full bg-muted text-muted-foreground ring-1 ring-border">
+                  <UserAvatar user={sessionAvatarUser(session)} />
+                </div>
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <div className="truncate text-sm font-medium text-foreground">
+                    {isSignedIn
+                      ? sessionDisplayName(session) || "Your account"
+                      : "Your account"}
+                  </div>
+                  {isSignedIn && sessionEmail(session) ? (
+                    <div className="mt-0.5 truncate text-xs leading-5 text-muted-foreground">
+                      {sessionEmail(session)}
+                    </div>
+                  ) : !isSignedIn ? (
+                    <div className="mt-0.5 truncate text-xs leading-5 text-muted-foreground">
+                      Not connected
+                    </div>
+                  ) : null}
+                </div>
               </div>
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-foreground">
-                  {isSignedIn
-                    ? sessionDisplayName(session) || "Your account"
-                    : "Your account"}
-                </div>
-                {isSignedIn && sessionEmail(session) ? (
-                  <div className="truncate text-sm text-muted-foreground">
-                    {sessionEmail(session)}
-                  </div>
-                ) : !isSignedIn ? (
-                  <div className="truncate text-sm text-muted-foreground">
-                    Not connected
-                  </div>
-                ) : null}
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <Badge variant="outline" className={badgeClassName}>
-                    <ShieldCheck size={12} />
-                    <span>{statusBadgeLabel}</span>
-                  </Badge>
-                  <Badge variant="outline" className="border-border bg-muted text-muted-foreground">
-                    <span className={`inline-block h-1.5 w-1.5 rounded-full ${runtimeBindingReady ? "bg-success" : isSignedIn ? "bg-warning" : "bg-muted-foreground"}`} />
-                    <span>
-                      {runtimeBindingReady
-                        ? "Runtime ready on this desktop"
-                        : isSignedIn
-                          ? "Runtime setup in progress"
-                          : "Runtime unavailable"}
-                    </span>
-                  </Badge>
-                </div>
+
+              <div className="flex shrink-0 items-center gap-1">
+                {isSignedIn ? (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Refresh session"
+                      onClick={() => void handleRefreshSession()}
+                      disabled={sessionState.isPending}
+                    >
+                      {sessionState.isPending ? (
+                        <Loader2 size={14} className="animate-spin" />
+                      ) : (
+                        <RefreshCw size={14} />
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Sign out"
+                      onClick={() => void handleSignOut()}
+                      disabled={!isSignedIn}
+                    >
+                      <LogOut size={14} />
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    size="sm"
+                    onClick={() => void handleStartSignIn()}
+                    disabled={isStartingSignIn}
+                  >
+                    {isStartingSignIn ? "Opening sign-in..." : "Sign in"}
+                  </Button>
+                )}
               </div>
             </div>
 
-            <div className="flex shrink-0 items-center gap-2 self-start md:self-auto">
-              {isSignedIn ? (
-                <>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Refresh session"
-                    onClick={() => void handleRefreshSession()}
-                    disabled={sessionState.isPending}
-                  >
-                    {sessionState.isPending ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : (
-                      <RefreshCw size={14} />
-                    )}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Sign out"
-                    onClick={() => void handleSignOut()}
-                    disabled={!isSignedIn}
-                  >
-                    <LogOut size={14} />
-                  </Button>
-                </>
-              ) : (
-                <Button
-                  size="sm"
-                  onClick={() => void handleStartSignIn()}
-                  disabled={isStartingSignIn}
-                >
-                  {isStartingSignIn ? "Opening sign-in..." : "Sign in"}
-                </Button>
-              )}
+            <div className="h-px bg-border" />
+
+            <div className="flex items-center justify-between gap-4 px-4 py-3">
+              <div className="text-sm font-medium text-foreground">Status</div>
+              <Badge
+                variant="outline"
+                className={
+                  statusTone === "error"
+                    ? "border-destructive/40 bg-destructive/10 text-[11px] text-destructive"
+                    : statusTone === "ready"
+                      ? "border-success/40 bg-success/10 text-[11px] text-success"
+                      : statusTone === "syncing"
+                        ? "border-warning/40 bg-warning/10 text-[11px] text-warning"
+                        : "border-border bg-background/60 text-[11px] text-muted-foreground"
+                }
+              >
+                <ShieldCheck size={12} />
+                <span>{statusBadgeLabel}</span>
+              </Badge>
             </div>
+
+            <div className="h-px bg-border" />
+
+            <div className="flex items-center justify-between gap-4 px-4 py-3">
+              <div className="text-sm font-medium text-foreground">Runtime</div>
+              <Badge
+                variant="outline"
+                className="border-border bg-background/60 text-[11px] text-muted-foreground"
+              >
+                <span
+                  className={`inline-block size-1.5 rounded-full ${runtimeBindingReady ? "bg-success" : isSignedIn ? "bg-warning" : "bg-muted-foreground"}`}
+                />
+                <span>
+                  {runtimeBindingReady
+                    ? "Ready on this desktop"
+                    : isSignedIn
+                      ? "Setup in progress"
+                      : "Unavailable"}
+                </span>
+              </Badge>
+            </div>
+
+            {(authMessage || authError) && (
+              <>
+                <div className="h-px bg-border" />
+                <div className="flex items-start gap-2 px-4 py-3 text-xs leading-5">
+                  {authError ? (
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+                  ) : (
+                    <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-success" />
+                  )}
+                  <div
+                    className={`min-w-0 flex-1 ${authError ? "text-destructive" : "text-foreground"}`}
+                  >
+                    {authError || authMessage}
+                  </div>
+                </div>
+              </>
+            )}
           </div>
-
-          {(authMessage || authError) && (
-            <div
-              className={`mt-4 rounded-[20px] border px-4 py-3 text-sm ${
-                authError
-                  ? "border-destructive/30 bg-destructive/10 text-destructive"
-                  : "border-success/30 bg-success/10 text-success"
-              }`}
-            >
-              {authError || authMessage}
-            </div>
-          )}
-        </div>
+        </section>
 
         <BillingSummaryCard
           overview={billingState.overview}
@@ -3026,13 +3516,22 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         {showsSetupLoadingState ? setupLoadingPanel : runtimeProviderSettings}
         {!showsSetupLoadingState && (authMessage || authError) && (
           <div
-            className={`mt-3 rounded-[16px] border px-4 py-3 text-sm ${
+            className={`mt-3 flex items-start gap-3 rounded-xl px-4 py-3 text-sm ring-1 ${
               authError
-                ? "border-destructive/35 bg-destructive/8 text-destructive"
-                : "border-success/30 bg-success/10 text-success"
+                ? "bg-destructive/10 ring-destructive/25"
+                : "bg-success/10 ring-success/25"
             }`}
           >
-            {authError || authMessage}
+            {authError ? (
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
+            ) : (
+              <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
+            )}
+            <div
+              className={`min-w-0 flex-1 leading-5 ${authError ? "text-destructive" : "text-foreground"}`}
+            >
+              {authError || authMessage}
+            </div>
           </div>
         )}
       </div>
@@ -3042,9 +3541,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   if (showsSetupLoadingState) {
     return (
       <section className="theme-shell w-full max-w-none overflow-hidden rounded-[24px] border border-border text-sm text-foreground shadow-card">
-        <div className="px-4 py-5">
-          {setupLoadingPanel}
-        </div>
+        <div className="px-4 py-5">{setupLoadingPanel}</div>
       </section>
     );
   }
@@ -3061,14 +3558,22 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 </div>
                 <div className="min-w-0">
                   <div className="text-base font-medium text-foreground">
-                    {isSignedIn ? sessionDisplayName(session) || "Your account" : "Your account"}
+                    {isSignedIn
+                      ? sessionDisplayName(session) || "Your account"
+                      : "Your account"}
                   </div>
                   <div className="mt-0.5 truncate text-sm text-muted-foreground">
-                    {isSignedIn ? sessionEmail(session) || "Signed in" : "Not connected"}
+                    {isSignedIn
+                      ? sessionEmail(session) || "Signed in"
+                      : "Not connected"}
                   </div>
                 </div>
               </div>
-              <div className={`shrink-0 rounded-full border px-3 py-1 text-xs tracking-[0.14em] ${badgeClassName}`}>{statusBadgeLabel}</div>
+              <div
+                className={`shrink-0 rounded-full border px-3 py-1 text-xs ${badgeClassName}`}
+              >
+                {statusBadgeLabel}
+              </div>
             </div>
           </div>
 
@@ -3080,7 +3585,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   className="theme-subtle-surface flex items-center justify-between gap-3 rounded-[16px] border border-panel-border/35 px-4 py-3"
                 >
                   <div className="text-sm text-foreground">{row.label}</div>
-                  <div className="max-w-[58%] truncate text-right text-sm text-muted-foreground">{row.value}</div>
+                  <div className="max-w-[58%] truncate text-right text-sm text-muted-foreground">
+                    {row.value}
+                  </div>
                 </div>
               ))}
             </div>
@@ -3091,7 +3598,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   onClick={() => void handleStartSignIn()}
                   disabled={isStartingSignIn}
                 >
-                  {isStartingSignIn ? "Opening sign-in..." : "Sign in with browser"}
+                  {isStartingSignIn
+                    ? "Opening sign-in..."
+                    : "Sign in with browser"}
                 </Button>
               )}
 

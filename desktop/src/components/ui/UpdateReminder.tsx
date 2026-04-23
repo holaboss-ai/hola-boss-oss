@@ -91,12 +91,18 @@ export function UpdateReminder({
             toneClassName,
           )}
         >
-          {hasError ? <TriangleAlert size={18} /> : status.downloaded ? <RotateCcw size={18} /> : <Download size={18} />}
+          {hasError ? (
+            <TriangleAlert size={18} />
+          ) : status.downloaded ? (
+            <RotateCcw size={18} />
+          ) : (
+            <Download size={18} />
+          )}
         </div>
 
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
-            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+            <div className="text-xs uppercase text-muted-foreground">
               <span>Desktop update</span>
             </div>
             {shouldShowDismissIcon ? (
@@ -147,12 +153,22 @@ export function UpdateReminder({
                 Restart
               </Button>
             ) : null}
-            <Button type="button" variant="outline" size="sm" onClick={onOpenChangelog}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onOpenChangelog}
+            >
               <ExternalLink size={14} />
               Changelog
             </Button>
             {shouldShowBackgroundAction ? (
-              <Button type="button" variant="ghost" size="sm" onClick={onDismiss}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={onDismiss}
+              >
                 <EyeOff size={14} />
                 Run in background
               </Button>

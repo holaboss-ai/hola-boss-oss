@@ -7184,16 +7184,16 @@ export function ChatPane({
               <div className="bg-[radial-gradient(circle_at_top_left,rgba(247,90,84,0.12),transparent_42%),radial-gradient(circle_at_92%_12%,rgba(247,170,126,0.12),transparent_36%)] px-4 py-4 sm:px-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-primary">
+                    <div className="text-[10px] font-medium uppercase text-primary">
                       Workspace onboarding
                     </div>
-                    <div className="mt-2 text-[22px] font-semibold tracking-[-0.04em] text-foreground">
+                    <div className="mt-2 text-lg font-semibold text-foreground">
                       {selectedWorkspace.name.trim() || "Workspace setup"}
                     </div>
                   </div>
 
                   <div
-                    className={`inline-flex shrink-0 items-center rounded-full border px-3 py-1 text-[10px] font-medium uppercase tracking-[0.16em] ${onboardingStatusTone(
+                    className={`inline-flex shrink-0 items-center rounded-full border px-3 py-1 text-[10px] font-medium uppercase ${onboardingStatusTone(
                       selectedWorkspace.onboarding_status,
                     )}`}
                   >
@@ -7226,7 +7226,7 @@ export function ChatPane({
           <div className="shrink-0 px-4 pt-3 sm:px-5">
             <div className="bg-muted flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border px-3 py-2.5">
               <div className="min-w-0">
-                <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                <div className="text-[10px] font-medium uppercase text-muted-foreground">
                   Hosted credits
                 </div>
                 <div className="mt-1 text-xs leading-5 text-muted-foreground">
@@ -7289,7 +7289,7 @@ export function ChatPane({
             {verboseTelemetryEnabled ? (
               <div className="bg-muted mt-3 rounded-xl border border-border px-3 py-2">
                 <div className="mb-2 flex items-center justify-between">
-                  <div className="text-[10px] tracking-[0.12em] text-muted-foreground">
+                  <div className="text-[10px] text-muted-foreground">
                     Stream telemetry ({streamTelemetry.length})
                   </div>
                   <Button
@@ -8735,7 +8735,7 @@ function AssistantTurnOutputs({
         >
           <OutputArtifactIcon output={output} />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium tracking-[-0.005em] text-foreground">
+            <div className="truncate text-sm font-medium text-foreground">
               {output.title || "Untitled artifact"}
             </div>
             <div className="truncate text-xs text-muted-foreground">
@@ -8833,7 +8833,7 @@ function CurrentTodoPanel({
                     <div className="text-xs font-medium text-foreground">
                       {phase.name}
                     </div>
-                    <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                    <div className="text-[10px] uppercase text-muted-foreground">
                       {phaseCompletedCount}/{phase.tasks.length} complete
                     </div>
                   </div>
@@ -9615,7 +9615,12 @@ function ModelCombobox({
           </Button>
         }
       />
-      <PopoverContent align="start" side="top" sideOffset={8} className="p-0">
+      <PopoverContent
+        align="start"
+        side="top"
+        sideOffset={8}
+        className="p-0 gap-0"
+      >
         <div className="border-b border-border p-1.5">
           <div className="relative flex h-7 items-center rounded-md border border-border bg-background px-2.5">
             <Search className="size-3.5 shrink-0 text-muted-foreground" />
@@ -9627,7 +9632,7 @@ function ModelCombobox({
             />
           </div>
         </div>
-        <div className="max-h-[240px] overflow-y-auto p-1">
+        <div className="max-h-60 overflow-y-auto p-1">
           {!hasFilteredOptions ? (
             <div className="px-3 py-4 text-center text-xs text-muted-foreground">
               No models found
@@ -9761,7 +9766,7 @@ function ThinkingValueSelect({
         align="start"
         side="top"
         sideOffset={8}
-        className="gap-0 rounded-lg p-1 shadow-subtle-sm ring-0"
+        className="max-w-40 gap-0 rounded-lg p-1 shadow-subtle-sm ring-0"
       >
         <div className="px-2.5 pb-1 pt-1 text-[10px] font-medium uppercase text-muted-foreground">
           Reasoning effort
@@ -10510,7 +10515,7 @@ function Composer({
                                     {command.label}
                                   </span>
                                   {isSelected ? (
-                                    <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-primary">
+                                    <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary">
                                       Added
                                     </span>
                                   ) : null}

@@ -1,13 +1,4 @@
 import {
-  FormEvent,
-  KeyboardEvent,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import {
   ChevronLeft,
   ChevronRight,
   Globe,
@@ -16,12 +7,19 @@ import {
   Star,
   X,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import {
-  browserSurfaceStatusSummary,
-} from "@/components/panes/browserSessionUi";
+  type FormEvent,
+  type KeyboardEvent,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { browserSurfaceStatusSummary } from "@/components/panes/browserSessionUi";
 import { useBrowserGlowPreview } from "@/components/panes/useBrowserGlowPreview";
 import { useWorkspaceBrowser } from "@/components/panes/useWorkspaceBrowser";
+import { Button } from "@/components/ui/button";
 
 const HOME_URL = "https://www.google.com";
 const EXPLICIT_SCHEME_PATTERN = /^[a-zA-Z][a-zA-Z\d+\-.]*:/;
@@ -354,9 +352,7 @@ export function SpaceBrowserDisplayPane({
   return (
     <section
       className={`relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden ${
-        embedded
-          ? "bg-transparent"
-          : "rounded-xl border border-border bg-card"
+        embedded ? "bg-transparent" : "rounded-xl border border-border bg-card"
       }`}
     >
       <div className="shrink-0 border-b border-border px-2 py-1.5">
@@ -384,20 +380,14 @@ export function SpaceBrowserDisplayPane({
             size="icon-sm"
             aria-label={activeTab.loading ? "Stop loading" : "Refresh"}
             onClick={() =>
-              void (
-                activeTab.loading
-                  ? window.electronAPI.browser.stopLoading()
-                  : window.electronAPI.browser.reload()
-              )
+              void (activeTab.loading
+                ? window.electronAPI.browser.stopLoading()
+                : window.electronAPI.browser.reload())
             }
             disabled={!activeTab.initialized && !activeTab.loading}
             title={activeTab.loading ? "Stop loading" : "Refresh"}
           >
-            {activeTab.loading ? (
-              <X size={13} />
-            ) : (
-              <RefreshCcw size={13} />
-            )}
+            {activeTab.loading ? <X size={13} /> : <RefreshCcw size={13} />}
           </Button>
 
           <form onSubmit={onSubmit} className="min-w-0 flex-1">
@@ -474,7 +464,7 @@ export function SpaceBrowserDisplayPane({
                 <div className="grid size-11 place-items-center rounded-[12px] bg-muted text-muted-foreground">
                   <Loader2 size={18} className="animate-spin" />
                 </div>
-                <div className="text-sm font-medium tracking-[-0.01em] text-foreground">
+                <div className="text-sm font-medium text-foreground">
                   Starting {browserSpace === "agent" ? "agent" : "user"} browser
                 </div>
                 <div className="max-w-[320px] text-xs leading-5 text-muted-foreground">

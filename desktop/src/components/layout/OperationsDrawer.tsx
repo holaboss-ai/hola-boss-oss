@@ -104,7 +104,9 @@ interface RunningSessionEntry {
 
 const RUNNING_SESSIONS_POLL_INTERVAL_MS = 1000;
 
-function proposalSourceLabel(source: TaskProposalRecordPayload["proposal_source"]): string {
+function proposalSourceLabel(
+  source: TaskProposalRecordPayload["proposal_source"],
+): string {
   return source === "evolve" ? "Evolve" : "Proactive";
 }
 
@@ -704,8 +706,9 @@ function InboxPanel({
     null,
   );
   const expandedProposal = expandedProposalId
-    ? proposals.find((proposal) => proposal.proposal_id === expandedProposalId) ??
-      null
+    ? (proposals.find(
+        (proposal) => proposal.proposal_id === expandedProposalId,
+      ) ?? null)
     : null;
 
   useEffect(() => {
@@ -823,7 +826,7 @@ function InboxPanel({
                   >
                     <div className="flex items-start justify-between gap-2 px-3">
                       <div className="min-w-0 flex-1">
-                        <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
+                        <div className="text-xs uppercase text-muted-foreground">
                           {proposalSourceLabel(proposal.proposal_source)}
                         </div>
                         <div className="text-sm font-medium text-foreground">
@@ -888,7 +891,8 @@ function InboxPanel({
                               />
                             }
                           >
-                            {isActing && proposalAction?.action === "dismiss" ? (
+                            {isActing &&
+                            proposalAction?.action === "dismiss" ? (
                               <Loader2 size={12} className="animate-spin" />
                             ) : (
                               <X size={12} />
@@ -996,10 +1000,10 @@ function ProposalDetailsDialog({
       >
         <header className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
           <div className="min-w-0">
-            <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
+            <div className="text-xs uppercase text-muted-foreground">
               {proposalSourceLabel(proposal.proposal_source)}
             </div>
-            <div className="mt-1 text-[20px] font-semibold tracking-[-0.02em] text-foreground">
+            <div className="mt-1 text-[20px] font-semibold text-foreground">
               {proposal.task_name}
             </div>
             <div className="mt-1 text-xs text-muted-foreground">
@@ -1021,7 +1025,7 @@ function ProposalDetailsDialog({
 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5 [scrollbar-gutter:stable]">
           <section>
-            <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            <div className="text-xs font-semibold uppercase text-muted-foreground">
               Description
             </div>
             <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground">
@@ -1030,7 +1034,7 @@ function ProposalDetailsDialog({
           </section>
 
           <section>
-            <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            <div className="text-xs font-semibold uppercase text-muted-foreground">
               Why This Was Proposed
             </div>
             <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
@@ -1134,7 +1138,7 @@ function RunningPanel({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
-        <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+        <div className="text-xs font-medium uppercase text-muted-foreground">
           Sessions
         </div>
         <Button

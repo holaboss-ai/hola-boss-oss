@@ -40,7 +40,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { useDesktopAuthSession } from "@/lib/auth/authClient";
 import { useDesktopBilling } from "@/lib/billing/useDesktopBilling";
-import { holabossLogoUrl } from "@/lib/assetPaths";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
@@ -251,11 +250,9 @@ export function TopTabsBar({
       ? "window-drag relative h-[42px] px-2 pt-0.5 sm:px-3"
       : "window-drag relative h-[42px] px-2 sm:px-3"
     : "rounded-xl border border-border bg-card px-2.5 py-0.5 shadow-subtle-xs backdrop-blur-sm sm:px-4";
-  const headerGridClassName = isWindowsIntegratedTitleBar
-    ? "relative z-10 grid min-w-0 grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-1 lg:h-full lg:grid-cols-[42px_minmax(220px,400px)_minmax(0,1fr)_auto]"
-    : `relative z-10 grid min-w-0 items-center gap-1 sm:gap-1.5 lg:h-full lg:grid-cols-[minmax(260px,440px)_minmax(0,1fr)_auto] ${
-        isMacIntegratedTitleBar ? "pl-20" : ""
-      }`;
+  const headerGridClassName = `relative z-10 grid min-w-0 items-center gap-1 sm:gap-1.5 lg:h-full lg:grid-cols-[minmax(220px,400px)_minmax(0,1fr)_auto] ${
+    isMacIntegratedTitleBar ? "pl-24" : ""
+  }`;
 
   const windowControlButtonClassName =
     "window-no-drag flex h-5 w-5 items-center justify-center rounded-[7px] border border-transparent text-muted-foreground transition-colors duration-150 hover:bg-foreground/6 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
@@ -269,90 +266,37 @@ export function TopTabsBar({
       className={headerClassName}
     >
       <div className={headerGridClassName}>
-        {isWindowsIntegratedTitleBar ? (
-          <div className="flex min-w-0 items-center justify-center">
-            <img
-              src={holabossLogoUrl}
-              alt="Holaboss"
-              className="size-7 shrink-0 overflow-hidden rounded-[9px] shadow-floating-xs"
-            />
-          </div>
-        ) : (
-          <div className="flex min-w-0 items-center gap-1.5">
-            <img
-              src={holabossLogoUrl}
-              alt="Holaboss"
-              className="size-7 shrink-0 overflow-hidden rounded-[9px] shadow-floating-xs"
-            />
-            <div
-              ref={workspaceSwitcherRef}
-              className={workspaceSwitcherContainerClassName}
-            >
-              <Button
-                ref={workspaceSwitcherButtonRef}
-                variant={workspaceSwitcherOpen ? "secondary" : "bordered"}
-                size="default"
-                onClick={() => {
-                  setWorkspaceSwitcherOpen((open) => {
-                    const nextOpen = !open;
-                    if (!nextOpen) {
-                      setWorkspaceQuery("");
-                    } else {
-                      requestAnimationFrame(() => {
-                        updateWorkspaceSwitcherPosition();
-                      });
-                    }
-                    return nextOpen;
+        <div
+          ref={workspaceSwitcherRef}
+          className={workspaceSwitcherContainerClassName}
+        >
+          <Button
+            ref={workspaceSwitcherButtonRef}
+            variant={workspaceSwitcherOpen ? "secondary" : "bordered"}
+            size="default"
+            onClick={() => {
+              setWorkspaceSwitcherOpen((open) => {
+                const nextOpen = !open;
+                if (!nextOpen) {
+                  setWorkspaceQuery("");
+                } else {
+                  requestAnimationFrame(() => {
+                    updateWorkspaceSwitcherPosition();
                   });
-                }}
-                className={workspaceSwitcherButtonClassName}
-              >
-                <FolderKanban className="size-3.5 shrink-0 text-primary" />
-                <span className="min-w-0 flex-1 truncate text-left font-medium">
-                  {selectedWorkspace?.name || "Select workspace"}
-                </span>
-                <ChevronDown
-                  className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${workspaceSwitcherOpen ? "rotate-180" : ""}`}
-                />
-              </Button>
-            </div>
-          </div>
-        )}
-        <div className={isWindowsIntegratedTitleBar ? "flex min-w-0 items-center" : "hidden"}>
-          {isWindowsIntegratedTitleBar ? (
-            <div
-              ref={workspaceSwitcherRef}
-              className={workspaceSwitcherContainerClassName}
-            >
-              <Button
-                ref={workspaceSwitcherButtonRef}
-                variant={workspaceSwitcherOpen ? "secondary" : "bordered"}
-                size="default"
-                onClick={() => {
-                  setWorkspaceSwitcherOpen((open) => {
-                    const nextOpen = !open;
-                    if (!nextOpen) {
-                      setWorkspaceQuery("");
-                    } else {
-                      requestAnimationFrame(() => {
-                        updateWorkspaceSwitcherPosition();
-                      });
-                    }
-                    return nextOpen;
-                  });
-                }}
-                className={workspaceSwitcherButtonClassName}
-              >
-                <FolderKanban className="size-3.5 shrink-0 text-primary" />
-                <span className="min-w-0 flex-1 truncate text-left font-medium">
-                  {selectedWorkspace?.name || "Select workspace"}
-                </span>
-                <ChevronDown
-                  className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${workspaceSwitcherOpen ? "rotate-180" : ""}`}
-                />
-              </Button>
-            </div>
-          ) : null}
+                }
+                return nextOpen;
+              });
+            }}
+            className={workspaceSwitcherButtonClassName}
+          >
+            <FolderKanban className="size-3.5 shrink-0 text-primary" />
+            <span className="min-w-0 flex-1 truncate text-left font-medium">
+              {selectedWorkspace?.name || "Select workspace"}
+            </span>
+            <ChevronDown
+              className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${workspaceSwitcherOpen ? "rotate-180" : ""}`}
+            />
+          </Button>
         </div>
 
         <div className="hidden lg:block" />

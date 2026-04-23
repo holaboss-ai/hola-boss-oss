@@ -476,10 +476,10 @@ Add the "connect_integrations" view inside the return JSX, as a new branch in th
     </button>
 
     <div className="mx-auto w-full max-w-md">
-      <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">
+      <div className="text-[10px] uppercase text-text-dim/72">
         Connect integrations
       </div>
-      <div className="mt-1 text-[20px] font-semibold tracking-[-0.03em] text-text-main">
+      <div className="mt-1 text-[20px] font-semibold text-text-main">
         This workspace needs access
       </div>
       <div className="mt-2 text-[13px] leading-7 text-text-muted/84">
