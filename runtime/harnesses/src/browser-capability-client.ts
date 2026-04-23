@@ -5,6 +5,7 @@ import {
   normalizeRuntimeApiBaseUrl,
   requestCapabilityJson,
   toolRequestSignal,
+  withPreviewResultModeHeader,
 } from "./capability-http.js";
 
 const BROWSER_CAPABILITY_STATUS_PATH = "/api/v1/capabilities/browser";
@@ -79,10 +80,10 @@ export async function executeBrowserCapabilityTool(params: BrowserCapabilityClie
   const response = await requestCapabilityJson({
     url: capabilityToolUrl(params.runtimeApiBaseUrl, params.toolId),
     method: "POST",
-    headers: {
+    headers: withPreviewResultModeHeader({
       "content-type": "application/json; charset=utf-8",
       ...browserCapabilityHeaders(params.workspaceId, params.sessionId, params.space),
-    },
+    }),
     body: JSON.stringify(isRecord(params.toolParams) ? params.toolParams : {}),
     signal: toolRequestSignal(params.signal, DEFAULT_BROWSER_TOOL_TIMEOUT_MS),
     fetchImpl: params.fetchImpl,

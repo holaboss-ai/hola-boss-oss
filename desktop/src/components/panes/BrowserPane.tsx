@@ -22,9 +22,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PaneCard } from "@/components/ui/PaneCard";
-import {
-  browserSurfaceStatusSummary,
-} from "@/components/panes/browserSessionUi";
+import { browserSurfaceStatusSummary } from "@/components/panes/browserSessionUi";
 import { useBrowserGlowPreview } from "@/components/panes/useBrowserGlowPreview";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
@@ -144,8 +142,7 @@ export function BrowserPane({
   const visibleBrowserSpace = browserState.space || DEFAULT_BROWSER_SPACE;
   const alternateBrowserSpace =
     visibleBrowserSpace === "user" ? "agent" : "user";
-  const visibleBrowserLabel =
-    visibleBrowserSpace === "user" ? "User" : "Agent";
+  const visibleBrowserLabel = visibleBrowserSpace === "user" ? "User" : "Agent";
   const alternateBrowserLabel =
     alternateBrowserSpace === "user" ? "user" : "agent";
   const VisibleBrowserIcon = visibleBrowserSpace === "user" ? Globe : Bot;
@@ -219,7 +216,9 @@ export function BrowserPane({
         if (cancelled) {
           return;
         }
-        setRuntimeStatesBySessionId(runtimeStateIndex(runtimeStatesResponse.items));
+        setRuntimeStatesBySessionId(
+          runtimeStateIndex(runtimeStatesResponse.items),
+        );
       } catch {
         // Preserve the most recent runtime state snapshot during transient
         // runtime restarts instead of triggering an unhandled rejection.
@@ -247,7 +246,10 @@ export function BrowserPane({
       cancelled = true;
       window.clearInterval(intervalId);
       window.removeEventListener("focus", refreshVisibleSessionState);
-      document.removeEventListener("visibilitychange", refreshVisibleSessionState);
+      document.removeEventListener(
+        "visibilitychange",
+        refreshVisibleSessionState,
+      );
     };
   }, [selectedWorkspaceId]);
 
@@ -420,7 +422,10 @@ export function BrowserPane({
     if (!selectedWorkspaceId || space === visibleBrowserSpace) {
       return;
     }
-    void window.electronAPI.browser.setActiveWorkspace(selectedWorkspaceId, space);
+    void window.electronAPI.browser.setActiveWorkspace(
+      selectedWorkspaceId,
+      space,
+    );
   };
 
   const isBookmarked = useMemo(
@@ -444,7 +449,9 @@ export function BrowserPane({
   );
   const currentRuntimeState = useMemo(
     () =>
-      currentSessionId ? runtimeStatesBySessionId[currentSessionId] ?? null : null,
+      currentSessionId
+        ? (runtimeStatesBySessionId[currentSessionId] ?? null)
+        : null,
     [currentSessionId, runtimeStatesBySessionId],
   );
   const sessionBrowserStatus = useMemo(
@@ -629,7 +636,7 @@ export function BrowserPane({
   };
 
   return (
-    <PaneCard title="" className="shadow-md">
+    <PaneCard title="" className="shadow-subtle-xs">
       <div ref={paneRef} className="flex h-full min-h-0 flex-col">
         <div className="shrink-0 border-b border-border px-2 py-1.5">
           <div className="mb-1.5 flex items-center gap-1.5 overflow-x-auto pb-0.5">
@@ -642,7 +649,7 @@ export function BrowserPane({
                   className={[
                     "group flex min-w-0 max-w-[200px] items-center gap-1.5 rounded-lg border px-2.5 py-1 transition-colors",
                     isActive
-                      ? "border-primary/50 bg-primary/12 text-primary"
+                      ? "border-primary bg-primary/12 text-primary"
                       : "bg-muted border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                   ].join(" ")}
                 >
@@ -716,11 +723,9 @@ export function BrowserPane({
                   size="icon-sm"
                   aria-label={activeTab.loading ? "Stop loading" : "Refresh"}
                   onClick={() =>
-                    void (
-                      activeTab.loading
-                        ? window.electronAPI.browser.stopLoading()
-                        : window.electronAPI.browser.reload()
-                    )
+                    void (activeTab.loading
+                      ? window.electronAPI.browser.stopLoading()
+                      : window.electronAPI.browser.reload())
                   }
                   disabled={!activeTab.initialized && !activeTab.loading}
                   title={activeTab.loading ? "Stop loading" : "Refresh"}
@@ -744,8 +749,8 @@ export function BrowserPane({
                     size={12}
                     className={
                       visibleBrowserSpace === "agent"
-                        ? "text-primary/85"
-                        : "text-muted-foreground/80"
+                        ? "text-primary"
+                        : "text-muted-foreground"
                     }
                   />
                   {!isNarrowPane ? <span>{visibleBrowserLabel}</span> : null}
@@ -800,14 +805,14 @@ export function BrowserPane({
                   selectAddressInput();
                 }}
               >
-                <div className="border border-border bg-muted/50 transition-colors focus-within:border-ring flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2.5 py-1.5">
+                <div className="border border-border bg-muted transition-colors focus-within:border-ring flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2.5 py-1.5">
                   {isActiveTabBusy ? (
                     <Loader2
                       size={12}
-                      className="shrink-0 animate-spin text-primary/85"
+                      className="shrink-0 animate-spin text-primary"
                     />
                   ) : (
-                    <Globe size={12} className="shrink-0 text-primary/85" />
+                    <Globe size={12} className="shrink-0 text-primary" />
                   )}
                   <input
                     ref={addressInputRef}
@@ -834,7 +839,7 @@ export function BrowserPane({
                       onClick={onToggleBookmark}
                       className={
                         isBookmarked
-                          ? "border-primary/60 bg-primary/18 text-primary"
+                          ? "border-primary bg-primary/10 text-primary"
                           : "text-muted-foreground"
                       }
                       aria-label={
@@ -890,7 +895,7 @@ export function BrowserPane({
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-px pb-px">
           <div
             ref={viewportRef}
-            className={`relative min-h-0 flex-1 overflow-hidden rounded-b-xl border bg-card transition-all ${
+            className={`relative min-h-0 flex-1 overflow-hidden rounded-b-xl border bg-card transition-colors ${
               showAgentActivityHighlight
                 ? "browser-active-glow border-transparent"
                 : "border-transparent"
@@ -905,19 +910,22 @@ export function BrowserPane({
 
             {!activeTab.initialized ? (
               <div className="absolute inset-0 grid place-items-center bg-card p-6 text-center">
-                <div className="pointer-events-none w-full max-w-[320px] rounded-[24px] border border-border/55 bg-card px-5 py-5 shadow-xl backdrop-blur">
-                  <div className="mt-4 text-[15px] font-medium tracking-[-0.02em] text-foreground">
-                    Starting {visibleBrowserSpace === "agent" ? "agent" : "user"} browser
+                <div className="pointer-events-none w-full max-w-[320px] rounded-[24px] border border-border bg-card px-5 py-5 shadow-subtle-sm backdrop-blur">
+                  <div className="mt-4 text-base font-medium text-foreground">
+                    Starting{" "}
+                    {visibleBrowserSpace === "agent" ? "agent" : "user"} browser
                   </div>
                   <div className="mt-1.5 text-[12px] leading-6 text-muted-foreground">
-                    Opening the embedded {visibleBrowserSpace === "agent" ? "agent" : "user"} browser for this workspace.
+                    Opening the embedded{" "}
+                    {visibleBrowserSpace === "agent" ? "agent" : "user"} browser
+                    for this workspace.
                   </div>
                 </div>
               </div>
             ) : null}
 
             {activeTab.error ? (
-              <div className="absolute inset-x-3 bottom-3 rounded-lg border border-amber-300/40 bg-black/70 px-3 py-2 text-xs text-amber-100/85">
+              <div className="absolute inset-x-3 bottom-3 rounded-lg border border-warning/40 bg-black/70 px-3 py-2 text-xs text-warning">
                 {activeTab.error}
               </div>
             ) : null}

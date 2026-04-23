@@ -34,7 +34,7 @@ function toastAccentClassName(level: RuntimeNotificationLevel): string {
   if (level === "error") {
     return "bg-destructive/10 text-destructive ring-destructive/30";
   }
-  return "bg-sky-500/15 text-sky-200 ring-sky-400/30";
+  return "bg-info/15 text-info ring-info/30";
 }
 
 function toastIcon(level: RuntimeNotificationLevel): React.ReactNode {
@@ -127,10 +127,10 @@ export function NotificationToastStack({
             const isCollapsedBackgroundToast = !isExpanded && index > 0;
             const content = (
               <>
-                <div className="text-[15px] font-semibold leading-tight text-foreground">
+                <div className="text-base font-semibold leading-tight text-foreground">
                   {notification.title}
                 </div>
-                <p className="mt-1 text-[13px] leading-[1.2rem] text-foreground/85">
+                <p className="mt-1 text-[13px] leading-[1.2rem] text-foreground">
                   {notification.message}
                 </p>
               </>
@@ -140,7 +140,7 @@ export function NotificationToastStack({
               <div
                 key={notification.id}
                 className={cn(
-                  "overflow-hidden rounded-[24px] border border-border/60 bg-popover/95 ring-1 ring-foreground/5 backdrop-blur-xl animate-in fade-in-0 slide-in-from-top-2 transition-[margin,transform,opacity,max-height] duration-200 ease-out",
+                  "overflow-hidden rounded-[24px] border border-border bg-popover/95 ring-1 ring-border backdrop-blur-xl animate-in fade-in-0 slide-in-from-top-2 transition-[margin,transform,opacity,max-height] duration-200 ease-out",
                   isCollapsedBackgroundToast
                     ? "pointer-events-none shadow-lg"
                     : "shadow-2xl",

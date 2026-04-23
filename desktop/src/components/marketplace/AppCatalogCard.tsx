@@ -27,7 +27,7 @@ export function AppCatalogCard({ entry, state, disabled, onInstall }: AppCatalog
           <div className="min-w-0 flex-1">
             <CardTitle className="truncate text-sm">{label}</CardTitle>
             {entry.version ? (
-              <Badge variant="secondary" className="mt-1 text-[10px]">
+              <Badge variant="secondary" className="mt-1 text-xs">
                 {entry.version}
               </Badge>
             ) : null}

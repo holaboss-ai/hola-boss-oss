@@ -20,7 +20,6 @@ test("app shell routes file outputs into the explorer and universal display whil
     /setSpaceVisibility\(\(previous\) => \(\{\s*\.\.\.previous,\s*agent: true,\s*files: true,\s*\}\)\);/
   );
   assert.match(source, /setSpaceExplorerMode\("files"\);/);
-  assert.match(source, /setSpaceExplorerCollapsed\(false\);/);
   assert.match(source, /setAgentView\(\{ type: "chat" \}\);/);
   assert.match(
     source,
@@ -37,7 +36,6 @@ test("app shell routes app outputs into the applications explorer and app surfac
 
   assert.match(source, /const handleOpenSpaceApp = useCallback\(/);
   assert.match(source, /setSpaceExplorerMode\("applications"\);/);
-  assert.match(source, /setSpaceExplorerCollapsed\(false\);/);
   assert.match(
     source,
     /setSpaceDisplayView\(\{\s*type: "app",\s*appId,\s*path: options\?\.path,\s*resourceId: options\?\.resourceId,\s*view: options\?\.view,\s*\}\);/,
@@ -70,11 +68,11 @@ test("app shell restores the last app surface when returning to the applications
   );
   assert.match(
     source,
-    /if \(mode === "browser"\) \{\s*setSpaceDisplayView\(\{\s*type: "browser",\s*\}\);\s*\} else if \(mode === "applications"\) \{\s*restoreLastSpaceAppDisplayView\(\);\s*\} else \{\s*restoreLastSpaceFileDisplayView\(\);\s*\}/,
+    /if \(value === "browser"\) \{\s*setSpaceDisplayView\(\{\s*type: "browser",?\s*\}\);\s*\} else if \(value === "applications"\) \{\s*restoreLastSpaceAppDisplayView\(\);\s*\} else \{\s*restoreLastSpaceFileDisplayView\(\);\s*\}/,
   );
   assert.match(
     source,
-    /onClick=\{\(\) => \{\s*setSpaceExplorerMode\("applications"\);\s*restoreLastSpaceAppDisplayView\(\);\s*setSpaceExplorerCollapsed\(false\);\s*\}\}/,
+    /setSpaceExplorerMode\(value\);\s*if \(value === "browser"\) \{\s*setSpaceDisplayView\(\{\s*type: "browser",?\s*\}\);\s*\} else if \(value === "applications"\) \{\s*restoreLastSpaceAppDisplayView\(\);\s*\} else \{\s*restoreLastSpaceFileDisplayView\(\);\s*\}/,
   );
 });
 
@@ -149,7 +147,6 @@ test("app shell syncs file-oriented agent operations into the explorer and displ
   );
   assert.match(source, /const targetPath = path\.trim\(\);/);
   assert.match(source, /setSpaceExplorerMode\("files"\);/);
-  assert.match(source, /setSpaceExplorerCollapsed\(false\);/);
   assert.match(
     source,
     /setSpaceDisplayView\(\{\s*type: "internal",\s*surface: "file",\s*resourceId: targetPath,\s*\}\);/,
@@ -213,11 +210,7 @@ test("app shell restores the last internal display and otherwise keeps the curre
   );
   assert.match(
     source,
-    /onValueChange=\{\(value\) => \{\s*const mode = value as SpaceExplorerMode;\s*setSpaceExplorerMode\(mode\);\s*if \(mode === "browser"\) \{\s*setSpaceDisplayView\(\{\s*type: "browser",\s*\}\);\s*\} else if \(mode === "applications"\) \{\s*restoreLastSpaceAppDisplayView\(\);\s*\} else \{\s*restoreLastSpaceFileDisplayView\(\);\s*\}\s*\}\}/,
-  );
-  assert.match(
-    source,
-    /onClick=\{\(\) => \{\s*setSpaceExplorerMode\("files"\);\s*restoreLastSpaceFileDisplayView\(\);\s*setSpaceExplorerCollapsed\(false\);\s*\}\}/,
+    /onClick=\{\(\) => \{\s*setSpaceExplorerMode\(value\);\s*if \(value === "browser"\) \{\s*setSpaceDisplayView\(\{\s*type: "browser",?\s*\}\);\s*\} else if \(value === "applications"\) \{\s*restoreLastSpaceAppDisplayView\(\);\s*\} else \{\s*restoreLastSpaceFileDisplayView\(\);\s*\}\s*\}\}/,
   );
 });
 
@@ -368,20 +361,27 @@ test("app shell no longer reserves a separate safe pane region for update toasts
   );
 });
 
-test("app shell keeps a fixed explorer width and resizes the display against chat in space mode", async () => {
+test("app shell renders a persistent icon rail beside a drag-resizable explorer panel in space mode", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /const MIN_FILES_PANE_WIDTH = 260;/);
+  assert.match(source, /const MIN_EXPLORER_PANEL_WIDTH = 220;/);
+  assert.match(source, /const MAX_EXPLORER_PANEL_WIDTH = 480;/);
+  assert.match(source, /const MIN_FILES_PANE_WIDTH = MIN_EXPLORER_PANEL_WIDTH;/);
   assert.match(source, /const MIN_BROWSER_PANE_WIDTH = 120;/);
   assert.match(source, /const MIN_AGENT_CONTENT_WIDTH = 380;/);
-  assert.match(source, /const DEFAULT_FILES_PANE_WIDTH = MIN_FILES_PANE_WIDTH;/);
-  assert.match(source, /const SPACE_EXPLORER_WIDTH = DEFAULT_FILES_PANE_WIDTH;/);
+  assert.match(source, /const DEFAULT_FILES_PANE_WIDTH = 260;/);
   assert.match(source, /const SPACE_AGENT_PANE_WIDTH = 420;/);
   assert.match(source, /const SPACE_DISPLAY_MIN_WIDTH = 420;/);
-  assert.match(source, /const SPACE_EXPLORER_COLLAPSED_WIDTH = 68;/);
+  assert.match(source, /const SPACE_EXPLORER_RAIL_WIDTH = 52;/);
+  assert.doesNotMatch(source, /SPACE_EXPLORER_COLLAPSED_WIDTH/);
+  assert.doesNotMatch(source, /const SPACE_EXPLORER_WIDTH/);
   assert.match(
     source,
     /const \[spaceAgentPaneWidth, setSpaceAgentPaneWidth\] = useState\(\s*SPACE_AGENT_PANE_WIDTH,\s*\);/,
+  );
+  assert.match(
+    source,
+    /const clampExplorerPanelWidth = useCallback\(\(width: number\) => \{\s*return Math\.max\(\s*MIN_EXPLORER_PANEL_WIDTH,\s*Math\.min\(width, MAX_EXPLORER_PANEL_WIDTH\),\s*\);\s*\}, \[\]\);/,
   );
   assert.match(
     source,
@@ -389,7 +389,7 @@ test("app shell keeps a fixed explorer width and resizes the display against cha
   );
   assert.match(
     source,
-    /const explorerWidth = spaceExplorerCollapsed\s*\?\s*SPACE_EXPLORER_COLLAPSED_WIDTH\s*:\s*filesPaneWidth;/,
+    /const explorerWidth = SPACE_EXPLORER_RAIL_WIDTH \+ filesPaneWidth;/,
   );
   assert.match(
     source,
@@ -398,7 +398,7 @@ test("app shell keeps a fixed explorer width and resizes the display against cha
   assert.match(source, /new ResizeObserver\(\(\) => \{\s*syncDisplayWidth\(\);\s*\}\)/);
 });
 
-test("app shell always opens the file explorer at minimum width", async () => {
+test("app shell wires filesPaneWidth into the explorer panel and uses a drag handle mirrored from the agent pane resizer", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(
@@ -407,8 +407,25 @@ test("app shell always opens the file explorer at minimum width", async () => {
   );
   assert.match(
     source,
-    /width: `\$\{showSpaceExplorer \? SPACE_EXPLORER_WIDTH : SPACE_EXPLORER_COLLAPSED_WIDTH\}px`,/,
+    /width: `\$\{SPACE_EXPLORER_RAIL_WIDTH\}px`,/,
   );
+  assert.match(
+    source,
+    /id="space-explorer-panel"[\s\S]*?style=\{\{ width: `\$\{filesPaneWidth\}px` \}\}/,
+  );
+  assert.match(
+    source,
+    /const startExplorerPanelResize = useCallback\(\s*\(event: ReactPointerEvent<HTMLDivElement>\) => \{\s*explorerPanelResizeStateRef\.current = \{\s*startWidth: filesPaneWidth,\s*startX: event\.clientX,\s*\};/,
+  );
+  assert.match(
+    source,
+    /setFilesPaneWidth\(\s*clampExplorerPanelWidth\(\s*resizeState\.startWidth \+ \(event\.clientX - resizeState\.startX\),\s*\),\s*\);/,
+  );
+  assert.match(
+    source,
+    /role="separator"\s*aria-label="Resize explorer panel"\s*aria-orientation="vertical"\s*onPointerDown=\{startExplorerPanelResize\}/,
+  );
+  assert.doesNotMatch(source, /showSpaceExplorer/);
   assert.doesNotMatch(source, /function loadFilesPaneWidth\(\): number \{/);
   assert.doesNotMatch(source, /holaboss-files-pane-width-v1/);
 });
@@ -544,7 +561,7 @@ test("app shell tracks unread task proposals and badges the inbox control", asyn
   assert.doesNotMatch(source, /aria-label="Open inbox"/);
 });
 
-test("app shell renders a collapsible explorer and universal display in space mode", async () => {
+test("app shell renders a persistent explorer rail and universal display in space mode", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(source, /function loadSpaceVisibility\(\): SpaceVisibilityState \{/);
@@ -559,12 +576,9 @@ test("app shell renders a collapsible explorer and universal display in space mo
   assert.doesNotMatch(source, /aria-label="Toggle browser pane"/);
   assert.match(source, /type SpaceExplorerMode = "files" \| "browser" \| "applications";/);
   assert.match(source, /const \[spaceExplorerMode, setSpaceExplorerMode\] =\s*useState<SpaceExplorerMode>\("files"\);/);
-  assert.match(source, /const \[spaceExplorerCollapsed, setSpaceExplorerCollapsed\] = useState\(false\);/);
+  assert.doesNotMatch(source, /spaceExplorerCollapsed/);
+  assert.doesNotMatch(source, /setSpaceExplorerCollapsed/);
   assert.match(source, /const \[spaceDisplayView, setSpaceDisplayView\] = useState<SpaceDisplayView>\(\{\s*type: "browser",\s*\}\);/);
-  assert.match(
-    source,
-    /<section className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-card\/80 shadow-md backdrop-blur-sm">/,
-  );
   assert.match(source, /<FileExplorerPane[\s\S]*focusRequest=\{fileExplorerFocusRequest\}/);
   assert.match(source, /<FileExplorerPane[\s\S]*onOpenLinkInBrowser=\{handleOpenLinkInNewAppBrowserTab\}/);
   assert.match(source, /<FileExplorerPane[\s\S]*previewInPane=\{false\}/);
@@ -576,13 +590,16 @@ test("app shell renders a collapsible explorer and universal display in space mo
   assert.match(source, /<SpaceBrowserDisplayPane[\s\S]*embedded/);
   assert.match(
     source,
-    /aria-label="Open file explorer"[\s\S]*aria-label="Open browser explorer"[\s\S]*aria-label="Open applications explorer"/,
+    /aria-label=\{`Open \$\{label\.toLowerCase\(\)\} explorer`\}/,
   );
-  assert.match(source, /aria-label="Open applications explorer"/);
-  assert.match(source, /aria-label="Collapse explorer"/);
-  assert.match(source, /aria-label="Expand explorer"/);
+  assert.match(
+    source,
+    /value: "files",\s*label: "Files",\s*icon: Folder,\s*\},\s*\{\s*value: "browser",\s*label: "Browser",\s*icon: Globe,\s*\},\s*\{\s*value: "applications",\s*label: "Apps",\s*icon: LayoutGrid,/,
+  );
   assert.match(source, /aria-label="Resize display pane"/);
-  assert.doesNotMatch(source, /aria-label="Resize explorer pane"/);
+  assert.match(source, /aria-label="Resize explorer panel"/);
+  assert.doesNotMatch(source, /aria-label="Collapse explorer"/);
+  assert.doesNotMatch(source, /aria-label="Expand explorer"/);
   assert.doesNotMatch(source, /inline-flex h-8 items-center gap-2 rounded-full border px-3/);
   assert.doesNotMatch(source, /spaceDrawerToggleLabel/);
   assert.doesNotMatch(source, /utilityPaneRenderWidth/);
@@ -648,7 +665,7 @@ test("app shell keeps polling task proposals even when proactive auth preference
 test("app shell no longer renders a separate right panel in space mode", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /const showOperationsDrawer = false;/);
+  assert.doesNotMatch(source, /const showOperationsDrawer/);
   assert.match(source, /const mainGridClassName = appShellMainGridClassName\(\{/);
   assert.doesNotMatch(source, /lg:grid-cols-\[60px_minmax\(0,1fr\)_336px\]/);
   assert.doesNotMatch(source, /<OperationsDrawer(?:\s|>)/);

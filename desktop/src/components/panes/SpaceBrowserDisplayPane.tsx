@@ -1,13 +1,4 @@
 import {
-  FormEvent,
-  KeyboardEvent,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import {
   ChevronLeft,
   ChevronRight,
   Globe,
@@ -16,12 +7,19 @@ import {
   Star,
   X,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import {
-  browserSurfaceStatusSummary,
-} from "@/components/panes/browserSessionUi";
+  type FormEvent,
+  type KeyboardEvent,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { browserSurfaceStatusSummary } from "@/components/panes/browserSessionUi";
 import { useBrowserGlowPreview } from "@/components/panes/useBrowserGlowPreview";
 import { useWorkspaceBrowser } from "@/components/panes/useWorkspaceBrowser";
+import { Button } from "@/components/ui/button";
 
 const HOME_URL = "https://www.google.com";
 const EXPLICIT_SCHEME_PATTERN = /^[a-zA-Z][a-zA-Z\d+\-.]*:/;
@@ -354,12 +352,10 @@ export function SpaceBrowserDisplayPane({
   return (
     <section
       className={`relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden ${
-        embedded
-          ? "bg-transparent"
-          : "rounded-xl border border-border bg-card"
+        embedded ? "bg-transparent" : "rounded-xl border border-border bg-card"
       }`}
     >
-      <div className="shrink-0 border-b border-border/30 px-4 py-2">
+      <div className="shrink-0 border-b border-border px-2 py-1.5">
         <div className="flex flex-wrap items-center gap-1.5">
           <Button
             variant="ghost"
@@ -384,26 +380,20 @@ export function SpaceBrowserDisplayPane({
             size="icon-sm"
             aria-label={activeTab.loading ? "Stop loading" : "Refresh"}
             onClick={() =>
-              void (
-                activeTab.loading
-                  ? window.electronAPI.browser.stopLoading()
-                  : window.electronAPI.browser.reload()
-              )
+              void (activeTab.loading
+                ? window.electronAPI.browser.stopLoading()
+                : window.electronAPI.browser.reload())
             }
             disabled={!activeTab.initialized && !activeTab.loading}
             title={activeTab.loading ? "Stop loading" : "Refresh"}
           >
-            {activeTab.loading ? (
-              <X size={13} />
-            ) : (
-              <RefreshCcw size={13} />
-            )}
+            {activeTab.loading ? <X size={13} /> : <RefreshCcw size={13} />}
           </Button>
 
           <form onSubmit={onSubmit} className="min-w-0 flex-1">
             <div
               ref={addressFieldRef}
-              className="flex min-w-0 items-center gap-2 rounded-md border border-border bg-muted px-3 py-2 transition-colors focus-within:border-ring"
+              className="flex h-7 min-w-0 items-center gap-2 rounded-md border border-border bg-muted px-2.5 transition-colors focus-within:border-muted-foreground"
               onClick={selectAddressInput}
             >
               {isActiveTabBusy ? (
@@ -435,16 +425,19 @@ export function SpaceBrowserDisplayPane({
 
           <Button
             type="button"
-            variant={isBookmarked ? "secondary" : "outline"}
-            size="icon"
+            variant={isBookmarked ? "secondary" : "ghost"}
+            size="icon-sm"
             onClick={onToggleBookmark}
             disabled={!activeTab.url}
-            className={`shrink-0 rounded-full ${
+            className={`shrink-0 rounded-md ${
               isBookmarked ? "text-primary" : ""
             }`}
             aria-label={isBookmarked ? "Remove bookmark" : "Add bookmark"}
           >
-            <Star size={13} fill={isBookmarked ? "currentColor" : "none"} />
+            <Star
+              className="size-3.5"
+              fill={isBookmarked ? "currentColor" : "none"}
+            />
           </Button>
         </div>
       </div>
@@ -454,7 +447,7 @@ export function SpaceBrowserDisplayPane({
           ref={viewportRef}
           className={`relative h-full min-h-0 overflow-hidden rounded-xl border bg-card transition-colors ${
             showAgentActivityHighlight
-              ? "browser-active-glow border-border/30"
+              ? "browser-active-glow border-border"
               : "border-border"
           } ${jumpFlashActive ? "browser-jump-flash" : ""}`}
         >
@@ -471,7 +464,7 @@ export function SpaceBrowserDisplayPane({
                 <div className="grid size-11 place-items-center rounded-[12px] bg-muted text-muted-foreground">
                   <Loader2 size={18} className="animate-spin" />
                 </div>
-                <div className="text-sm font-medium tracking-[-0.01em] text-foreground">
+                <div className="text-sm font-medium text-foreground">
                   Starting {browserSpace === "agent" ? "agent" : "user"} browser
                 </div>
                 <div className="max-w-[320px] text-xs leading-5 text-muted-foreground">
@@ -484,8 +477,8 @@ export function SpaceBrowserDisplayPane({
           ) : null}
 
           {activeTab.error ? (
-            <div className="absolute inset-x-4 bottom-4 flex items-start gap-2 rounded-lg border-l-2 border-amber-500 bg-card px-3 py-2 text-xs leading-5 text-foreground shadow-sm">
-              <span className="mt-0.5 size-1.5 shrink-0 rounded-full bg-amber-500" />
+            <div className="absolute inset-x-4 bottom-4 flex items-start gap-2 rounded-lg border-l-2 border-warning bg-card px-3 py-2 text-xs leading-5 text-foreground shadow-sm">
+              <span className="mt-0.5 size-1.5 shrink-0 rounded-full bg-warning" />
               <span className="min-w-0 flex-1">{activeTab.error}</span>
             </div>
           ) : null}

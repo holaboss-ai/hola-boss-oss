@@ -59,9 +59,8 @@ test("chat composer renders a slash-triggered skill menu and removes the typed t
   assert.match(source, /onSelectSlashCommand\(command\);/);
   assert.match(source, /Attach a file/);
   assert.match(source, /Use Skills/);
-  assert.match(source, /Search skills\.\.\./);
-  assert.match(source, /rounded-\[10px\] border border-border\/40 bg-muted\/35 px-2\.5 transition-colors focus-within:border-border\/55 focus-within:bg-background\/70/);
-  assert.match(source, /className="embedded-input h-8 w-full bg-transparent pl-2 text-xs text-foreground outline-none placeholder:text-muted-foreground\/60"/);
+  assert.match(source, /placeholder="Search skills"/);
+  assert.match(source, /className="embedded-input h-7 w-full min-w-0 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"/);
   assert.match(source, /onKeyDown=\{handleTextareaKeyDown\}/);
   assert.match(source, /activeSlashCommandKey !== dismissedSlashCommandKey/);
   assert.match(source, /document\.addEventListener\("pointerdown", handlePointerDown\);/);
@@ -72,9 +71,11 @@ test("chat composer renders a slash-triggered skill menu and removes the typed t
   assert.doesNotMatch(source, /<span className="mt-1 block truncate text-\[11px\] text-muted-foreground">\s*\{command\.command\}\s*<\/span>/);
   assert.doesNotMatch(source, /<span className="mt-0\.5 block truncate text-\[11px\] text-muted-foreground">\s*<span className="truncate">\{command\.command\}<\/span>\s*<\/span>/);
   assert.doesNotMatch(source, /command\.description \|\| command\.command/);
-  assert.doesNotMatch(source, /command\.description \? \(/);
   assert.doesNotMatch(source, /Slash commands/);
   assert.match(source, /No slash commands match\./);
-  assert.match(source, /No skills match this search\./);
+  assert.match(source, /No matching skills/);
   assert.match(source, /Remove quoted skill/);
+  assert.match(source, /aria-label="Back to actions"/);
+  assert.match(source, /command\.description \? \(/);
+  assert.match(source, /onRemoveQuotedSkill\(command\.skillId\);/);
 });

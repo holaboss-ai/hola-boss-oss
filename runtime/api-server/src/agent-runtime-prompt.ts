@@ -1,5 +1,7 @@
 import {
-  renderCapabilityPolicyPromptSection,
+  renderCapabilityAvailabilityContextPromptSection,
+  renderCapabilityPolicyCorePromptSection,
+  renderCapabilityToolRoutingPromptSection,
   type AgentCapabilityManifest,
 } from "./agent-capability-registry.js";
 import {
@@ -528,7 +530,7 @@ export function buildBaseAgentPromptSections(
     apply_at: "runtime_config",
     precedence: "capability_policy",
     priority: 350,
-    volatility: "run",
+    volatility: "workspace",
     content: todoContinuationPolicyPromptSection(request)
   });
 
@@ -538,7 +540,7 @@ export function buildBaseAgentPromptSections(
     apply_at: "runtime_config",
     precedence: "session_policy",
     priority: 300,
-    volatility: "run",
+    volatility: "workspace",
     content: sessionPolicyPromptSection(request)
   });
 
@@ -551,8 +553,38 @@ export function buildBaseAgentPromptSections(
           apply_at: "runtime_config",
           precedence: "capability_policy",
           priority: 400,
+          volatility: "workspace",
+          content: renderCapabilityPolicyCorePromptSection(capabilityManifest)
+        }
+      : null
+  );
+
+  pushPromptLayer(
+    promptSections,
+    capabilityManifest
+      ? {
+          id: "capability_tool_routing",
+          channel: "system_prompt",
+          apply_at: "runtime_config",
+          precedence: "capability_policy",
+          priority: 425,
+          volatility: "workspace",
+          content: renderCapabilityToolRoutingPromptSection(capabilityManifest),
+        }
+      : null
+  );
+
+  pushPromptLayer(
+    promptSections,
+    capabilityManifest
+      ? {
+          id: "capability_availability_context",
+          channel: "context_message",
+          apply_at: "runtime_config",
+          precedence: "capability_policy",
+          priority: 450,
           volatility: "run",
-          content: renderCapabilityPolicyPromptSection(capabilityManifest)
+          content: renderCapabilityAvailabilityContextPromptSection(capabilityManifest),
         }
       : null
   );

@@ -1,6 +1,9 @@
 export const DESKTOP_BROWSER_TOOL_IDS = [
   "browser_navigate",
   "browser_open_tab",
+  "browser_wait_for_selector",
+  "browser_wait_for_url",
+  "browser_wait_for_load_state",
   "browser_get_state",
   "browser_click",
   "browser_context_click",
@@ -37,6 +40,7 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
       required: ["url"],
       properties: {
         url: { type: "string", minLength: 1 },
+        confirm: { type: "boolean" },
       },
     },
   },
@@ -53,13 +57,66 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
       properties: {
         url: { type: "string", minLength: 1 },
         background: { type: "boolean" },
+        confirm: { type: "boolean" },
+      },
+    },
+  },
+  {
+    id: "browser_wait_for_selector",
+    description:
+      "Wait until a selector appears (or matches the requested state) in the current browser page before continuing interaction. Use this to reduce flakiness after navigation or mutation.",
+    policy: "inspect",
+    session_scope: "workspace_session_only",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["selector"],
+      properties: {
+        selector: { type: "string", minLength: 1 },
+        state: { type: "string", enum: ["present", "visible", "hidden"] },
+        timeout_ms: { type: "integer", minimum: 1 },
+        interval_ms: { type: "integer", minimum: 1 },
+      },
+    },
+  },
+  {
+    id: "browser_wait_for_url",
+    description:
+      "Wait until the active page URL matches an expected value. Supports exact, contains, and regex matching modes.",
+    policy: "inspect",
+    session_scope: "workspace_session_only",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["url"],
+      properties: {
+        url: { type: "string", minLength: 1 },
+        mode: { type: "string", enum: ["exact", "contains", "regex"] },
+        timeout_ms: { type: "integer", minimum: 1 },
+        interval_ms: { type: "integer", minimum: 1 },
+      },
+    },
+  },
+  {
+    id: "browser_wait_for_load_state",
+    description:
+      "Wait for browser readiness state. `domcontentloaded` waits for DOM readiness, `load` waits for full document load, and `networkidle` waits for page loading to settle.",
+    policy: "inspect",
+    session_scope: "workspace_session_only",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        state: { type: "string", enum: ["domcontentloaded", "load", "networkidle"] },
+        timeout_ms: { type: "integer", minimum: 1 },
+        interval_ms: { type: "integer", minimum: 1 },
       },
     },
   },
   {
     id: "browser_get_state",
     description:
-      "Read the current desktop browser page, visible interactive elements, visible media such as images, and optional screenshot. Prefer this as the DOM-first browser inspection tool for actions and structured extraction. By default it returns a compact state snapshot; set include_page_text=true only when you need the current page text, and set include_screenshot=true when visual appearance, layout, prominence, overlays, canvas/chart/PDF content, or user-visible confirmation matters, or when DOM signals are ambiguous or unreliable.",
+      "Read the current desktop browser page, visible interactive elements, visible media such as images, and optional screenshot. Prefer this as the DOM-first browser inspection tool for actions and structured extraction. Supports selector scoping and paged windows for elements/media to keep results compact while preserving continuation metadata. Set include_page_text=true only when you need page text, and include_screenshot=true when visual confirmation matters or DOM signals are ambiguous.",
     policy: "inspect",
     session_scope: "workspace_session_only",
     input_schema: {
@@ -68,6 +125,11 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
       properties: {
         include_page_text: { type: "boolean" },
         include_screenshot: { type: "boolean" },
+        scope_selector: { type: "string", minLength: 1 },
+        element_offset: { type: "integer", minimum: 0 },
+        element_limit: { type: "integer", minimum: 1 },
+        media_offset: { type: "integer", minimum: 0 },
+        media_limit: { type: "integer", minimum: 1 },
       },
     },
   },
@@ -83,6 +145,7 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
       required: ["index"],
       properties: {
         index: { type: "integer", minimum: 1 },
+        confirm: { type: "boolean" },
       },
     },
   },
@@ -99,6 +162,7 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
       properties: {
         index: { type: "integer", minimum: 1 },
         target: { type: "string", enum: ["element", "media"] },
+        confirm: { type: "boolean" },
       },
     },
   },
@@ -117,6 +181,7 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
         text: { type: "string" },
         clear: { type: "boolean" },
         submit: { type: "boolean" },
+        confirm: { type: "boolean" },
       },
     },
   },
@@ -132,6 +197,7 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
       required: ["key"],
       properties: {
         key: { type: "string", minLength: 1 },
+        confirm: { type: "boolean" },
       },
     },
   },
@@ -148,6 +214,7 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
         direction: { type: "string", enum: ["up", "down"] },
         amount: { type: "integer", minimum: 1 },
         delta_y: { type: "integer" },
+        confirm: { type: "boolean" },
       },
     },
   },
@@ -159,7 +226,9 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
     input_schema: {
       type: "object",
       additionalProperties: false,
-      properties: {},
+      properties: {
+        confirm: { type: "boolean" },
+      },
     },
   },
   {
@@ -170,7 +239,9 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
     input_schema: {
       type: "object",
       additionalProperties: false,
-      properties: {},
+      properties: {
+        confirm: { type: "boolean" },
+      },
     },
   },
   {
@@ -181,7 +252,9 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
     input_schema: {
       type: "object",
       additionalProperties: false,
-      properties: {},
+      properties: {
+        confirm: { type: "boolean" },
+      },
     },
   },
   {

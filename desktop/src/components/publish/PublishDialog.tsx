@@ -281,7 +281,7 @@ export function PublishDialog({
         type="button"
         aria-label="Close"
         onClick={close}
-        className="fixed inset-0 z-40 bg-[rgba(7,10,14,0.46)] backdrop-blur-sm"
+        className="fixed inset-0 z-40 bg-scrim backdrop-blur-sm"
       />
 
       {/* Dialog panel */}
@@ -291,7 +291,7 @@ export function PublishDialog({
         aria-modal="true"
         aria-labelledby="publish-template-title"
         tabIndex={-1}
-        className="fixed top-1/2 left-1/2 z-50 flex h-[580px] max-h-[85vh] w-full max-w-[780px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl bg-background shadow-xl ring-1 ring-border/60 focus:outline-none"
+        className="fixed top-1/2 left-1/2 z-50 flex h-[580px] max-h-[85vh] w-full max-w-[780px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl bg-background shadow-subtle-sm ring-1 ring-border focus:outline-none"
       >
         <div className="flex h-full w-full">
           {/* Left sidebar */}
@@ -300,7 +300,7 @@ export function PublishDialog({
               {/* Sidebar header */}
               <div className="px-5 pt-5 pb-4">
                 <h2
-                  className="text-[15px] font-semibold tracking-tight"
+                  className="text-base font-semibold tracking-tight"
                   id="publish-template-title"
                 >
                   Publish Template
@@ -348,7 +348,7 @@ export function PublishDialog({
 
                       <span
                         className={cn(
-                          "text-[13px] leading-tight",
+                          "text-sm leading-tight",
                           isCurrent
                             ? "font-medium text-foreground"
                             : "text-muted-foreground",
@@ -368,7 +368,7 @@ export function PublishDialog({
             {/* Content header with close button */}
             <div className="flex shrink-0 items-center justify-between px-6 pt-5 pb-1">
               {!success && (
-                <h3 className="text-[15px] font-semibold tracking-tight">
+                <h3 className="text-base font-semibold tracking-tight">
                   {STEPS[step - 1]?.description}
                 </h3>
               )}
@@ -576,7 +576,7 @@ export function PublishDialog({
                       />
                     </div>
                     <textarea
-                      className="min-h-0 flex-1 resize-none rounded-lg border border-border bg-background px-3 py-2 font-mono text-[13px] text-foreground outline-none focus:ring-2 focus:ring-ring"
+                      className="min-h-0 flex-1 resize-none rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
                       onChange={(e) => setOnboardingMd(e.target.value)}
                       placeholder={`# Welcome to ${name || "My Template"}\n\nHere's how to get started...`}
                       value={onboardingMd}
@@ -603,7 +603,7 @@ export function PublishDialog({
                       />
                     </div>
                     <textarea
-                      className="min-h-0 flex-1 resize-none rounded-lg border border-border bg-background px-3 py-2 font-mono text-[13px] text-foreground outline-none focus:ring-2 focus:ring-ring"
+                      className="min-h-0 flex-1 resize-none rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
                       onChange={(e) => setReadmeMd(e.target.value)}
                       placeholder={`# ${name || "Template Name"}\n\n## Overview\n\n## Features\n\n## Getting Started`}
                       value={readmeMd}

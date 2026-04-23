@@ -101,6 +101,10 @@ import {
   RuntimeAgentToolsServiceError,
 } from "./runtime-agent-tools.js";
 import {
+  capabilityToolResultModeFromHeaders,
+  shapeCapabilityToolResultPayload,
+} from "./tool-result-preview.js";
+import {
   TerminalSessionManager,
   TerminalSessionManagerError,
   type TerminalSessionManagerLike,
@@ -2175,6 +2179,22 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     workspaceRoot: store.workspaceRoot,
     terminalSessionManager,
   });
+  async function maybeShapeCapabilityToolResult(params: {
+    headers: Record<string, unknown>;
+    toolId: string;
+    payload: unknown;
+    workspaceId?: string | null;
+    sessionId?: string | null;
+  }): Promise<unknown> {
+    return await shapeCapabilityToolResultPayload({
+      mode: capabilityToolResultModeFromHeaders(params.headers),
+      toolId: params.toolId,
+      payload: params.payload,
+      workspaceRoot: store.workspaceRoot,
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+    });
+  }
   const runnerExecutor = options.runnerExecutor ?? new NativeRunnerExecutor();
   const durableMemoryWorker = resolveDurableMemoryWorker(options, app, store, memoryService);
   const queueWorker = resolveQueueWorker(options, app, store, memoryService, durableMemoryWorker);
@@ -2968,17 +2988,25 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "request body must be an object");
     }
     const params = request.params as { toolId: string };
+    const toolId = requiredString(params.toolId, "toolId");
     const workspaceId = headerString(request.headers as Record<string, unknown>, "x-holaboss-workspace-id");
     const sessionId = capabilitySessionId({
       headers: request.headers as Record<string, unknown>,
       body: request.body,
     });
     try {
-      return await browserToolService.execute(
-        requiredString(params.toolId, "toolId"),
+      const result = await browserToolService.execute(
+        toolId,
         request.body,
         { workspaceId, sessionId },
       );
+      return await maybeShapeCapabilityToolResult({
+        headers: request.headers as Record<string, unknown>,
+        toolId,
+        payload: result,
+        workspaceId,
+        sessionId,
+      });
     } catch (error) {
       if (error instanceof DesktopBrowserToolServiceError) {
         return sendError(reply, error.statusCode, error.message);
@@ -3789,7 +3817,15 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "request body must be an object");
     }
     try {
-      return await runtimeAgentToolsService.searchWeb({
+      const workspaceId = capabilityWorkspaceId({
+        headers: request.headers as Record<string, unknown>,
+        body: request.body,
+      });
+      const sessionId = capabilitySessionId({
+        headers: request.headers as Record<string, unknown>,
+        body: request.body,
+      });
+      const result = await runtimeAgentToolsService.searchWeb({
         query: requiredString(request.body.query, "query"),
         numResults: hasOwn(request.body, "num_results")
           ? optionalInteger(request.body.num_results, 0) || null
@@ -3802,6 +3838,19 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         contextMaxCharacters: hasOwn(request.body, "context_max_characters")
           ? optionalInteger(request.body.context_max_characters, 0) || null
           : undefined,
+        textOffset: hasOwn(request.body, "text_offset")
+          ? optionalInteger(request.body.text_offset, 0) || null
+          : undefined,
+        textLimit: hasOwn(request.body, "text_limit")
+          ? optionalInteger(request.body.text_limit, 0) || null
+          : undefined,
+      });
+      return await maybeShapeCapabilityToolResult({
+        headers: request.headers as Record<string, unknown>,
+        toolId: "web_search",
+        payload: result,
+        workspaceId,
+        sessionId,
       });
     } catch (error) {
       if (error instanceof RuntimeAgentToolsServiceError) {
@@ -3816,13 +3865,25 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "request body must be an object");
     }
     try {
-      return runtimeAgentToolsService.invokeSkill({
-        workspaceId: requiredCapabilityWorkspaceId({
-          headers: request.headers as Record<string, unknown>,
-          body: request.body,
-        }),
+      const workspaceId = requiredCapabilityWorkspaceId({
+        headers: request.headers as Record<string, unknown>,
+        body: request.body,
+      });
+      const sessionId = capabilitySessionId({
+        headers: request.headers as Record<string, unknown>,
+        body: request.body,
+      });
+      const result = runtimeAgentToolsService.invokeSkill({
+        workspaceId,
         requestedName: requiredString(request.body.name, "name"),
         args: nullableString(request.body.args) ?? undefined,
+      });
+      return await maybeShapeCapabilityToolResult({
+        headers: request.headers as Record<string, unknown>,
+        toolId: "skill",
+        payload: result,
+        workspaceId,
+        sessionId,
       });
     } catch (error) {
       if (error instanceof RuntimeAgentToolsServiceError) {
@@ -3926,16 +3987,25 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
   app.get("/api/v1/capabilities/runtime-tools/scratchpad", async (request, reply) => {
     try {
-      return await runtimeAgentToolsService.readScratchpad({
-        workspaceId: requiredCapabilityWorkspaceId({
+      const workspaceId = requiredCapabilityWorkspaceId({
+        headers: request.headers as Record<string, unknown>,
+        query: isRecord(request.query) ? request.query : null,
+      });
+      const sessionId =
+        capabilitySessionId({
           headers: request.headers as Record<string, unknown>,
           query: isRecord(request.query) ? request.query : null,
-        }),
-        sessionId:
-          capabilitySessionId({
-            headers: request.headers as Record<string, unknown>,
-            query: isRecord(request.query) ? request.query : null,
-          }) ?? "",
+        }) ?? "";
+      const result = await runtimeAgentToolsService.readScratchpad({
+        workspaceId,
+        sessionId,
+      });
+      return await maybeShapeCapabilityToolResult({
+        headers: request.headers as Record<string, unknown>,
+        toolId: "holaboss_scratchpad_read",
+        payload: result,
+        workspaceId,
+        sessionId,
       });
     } catch (error) {
       if (error instanceof RuntimeAgentToolsServiceError) {
@@ -4051,18 +4121,30 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
     const params = request.params as { terminalId: string };
     try {
-      return runtimeAgentToolsService.readTerminalSession({
+      const workspaceId = capabilityWorkspaceId({
+        headers: request.headers as Record<string, unknown>,
+        body: request.body,
+      });
+      const sessionId = capabilitySessionId({
+        headers: request.headers as Record<string, unknown>,
+        body: request.body,
+      });
+      const result = runtimeAgentToolsService.readTerminalSession({
         terminalId: requiredString(params.terminalId, "terminalId"),
-        workspaceId: capabilityWorkspaceId({
-          headers: request.headers as Record<string, unknown>,
-          body: request.body,
-        }),
+        workspaceId,
         afterSequence: hasOwn(request.body, "after_sequence")
           ? optionalInteger(request.body.after_sequence, 0)
           : undefined,
         limit: hasOwn(request.body, "limit")
           ? optionalInteger(request.body.limit, 200)
           : undefined,
+      });
+      return await maybeShapeCapabilityToolResult({
+        headers: request.headers as Record<string, unknown>,
+        toolId: "terminal_session_read",
+        payload: result,
+        workspaceId,
+        sessionId,
       });
     } catch (error) {
       if (error instanceof RuntimeAgentToolsServiceError) {
@@ -4078,12 +4160,17 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
     const params = request.params as { terminalId: string };
     try {
-      return await runtimeAgentToolsService.waitTerminalSession({
+      const workspaceId = capabilityWorkspaceId({
+        headers: request.headers as Record<string, unknown>,
+        body: request.body,
+      });
+      const sessionId = capabilitySessionId({
+        headers: request.headers as Record<string, unknown>,
+        body: request.body,
+      });
+      const result = await runtimeAgentToolsService.waitTerminalSession({
         terminalId: requiredString(params.terminalId, "terminalId"),
-        workspaceId: capabilityWorkspaceId({
-          headers: request.headers as Record<string, unknown>,
-          body: request.body,
-        }),
+        workspaceId,
         afterSequence: hasOwn(request.body, "after_sequence")
           ? optionalInteger(request.body.after_sequence, 0)
           : undefined,
@@ -4093,6 +4180,13 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         timeoutMs: hasOwn(request.body, "timeout_ms")
           ? optionalInteger(request.body.timeout_ms, 15000)
           : undefined,
+      });
+      return await maybeShapeCapabilityToolResult({
+        headers: request.headers as Record<string, unknown>,
+        toolId: "terminal_session_wait",
+        payload: result,
+        workspaceId,
+        sessionId,
       });
     } catch (error) {
       if (error instanceof RuntimeAgentToolsServiceError) {

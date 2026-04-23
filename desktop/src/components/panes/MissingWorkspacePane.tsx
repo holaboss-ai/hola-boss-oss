@@ -52,7 +52,7 @@ export function MissingWorkspacePane({
     <div className="flex h-full w-full items-center justify-center px-6 py-12">
       <div className="w-full max-w-md rounded-xl border border-border bg-card px-6 py-8">
         <div className="flex items-start gap-3">
-          <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">
+          <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-warning/10 text-warning">
             <FolderX size={18} />
           </div>
           <div className="min-w-0 flex-1">

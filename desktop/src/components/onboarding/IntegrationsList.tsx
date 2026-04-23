@@ -35,7 +35,7 @@ export function IntegrationsList({
 
   return (
     <div className="mt-6" style={{ maxWidth: 480 }}>
-      <div className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+      <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
         Integrations
       </div>
       <div className="mt-2 grid gap-2">

@@ -1,12 +1,17 @@
 import {
+  AlertTriangle,
+  Check,
   CircleHelp,
+  Copy,
   CreditCard,
   ExternalLink,
-  FileArchive,
   FolderKanban,
+  FolderOpen,
   Globe,
   Info,
   Loader2,
+  Lock,
+  Package,
   Plug,
   RotateCcw,
   Send,
@@ -51,15 +56,19 @@ const THEME_SWATCHES: Record<string, [string, string, string]> = {
   "bubblegum-light": ["#fef2f8", "#ec4899", "#fce7f3"],
 };
 
+import type { ColorScheme, ThemeVariant } from "@/components/layout/AppShell";
+
 interface SettingsDialogProps {
   open: boolean;
   activeSection: UiSettingsPaneSection;
   appVersion: string;
   onSectionChange: (section: UiSettingsPaneSection) => void;
   onClose: () => void;
-  theme: string;
-  themes: readonly string[];
-  onThemeChange: (theme: string) => void;
+  colorScheme: ColorScheme;
+  onColorSchemeChange: (scheme: ColorScheme) => void;
+  themeVariant: ThemeVariant;
+  themeVariants: readonly ThemeVariant[];
+  onThemeVariantChange: (variant: ThemeVariant) => void;
   onOpenExternalUrl: (url: string) => void;
   onOpenAutomationRunSession: (workspaceId: string, sessionId: string) => void;
   onCreateAutomationSchedule: (workspaceId: string) => void;
@@ -68,6 +77,22 @@ interface SettingsDialogProps {
     job: CronjobRecordPayload,
   ) => void;
 }
+
+const THEME_VARIANT_LABELS: Record<ThemeVariant, string> = {
+  "amber-minimal": "Default",
+  "cosmic-night": "Cosmic Night",
+  sepia: "Sepia",
+  "clean-slate": "Clean Slate",
+  "bold-tech": "Bold Tech",
+  catppuccin: "Catppuccin",
+  bubblegum: "Bubblegum",
+};
+
+const COLOR_SCHEME_LABELS: Record<ColorScheme, string> = {
+  system: "System",
+  light: "Light",
+  dark: "Dark",
+};
 
 const SETTINGS_SECTIONS: Array<{
   id: UiSettingsPaneSection;
@@ -105,10 +130,20 @@ const ABOUT_LINKS = [
   },
 ] as const;
 
-const THEME_DISPLAY_NAMES: Record<string, string> = {
-  "amber-minimal-dark": "Default Dark",
-  "amber-minimal-light": "Default Light",
-};
+function formatBundleBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "0 B";
+  }
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  const rounded = value >= 10 || unitIndex === 0 ? Math.round(value) : Math.round(value * 10) / 10;
+  return `${rounded} ${units[unitIndex]}`;
+}
 
 function titleForSection(section: UiSettingsPaneSection): string {
   switch (section) {
@@ -129,17 +164,6 @@ function titleForSection(section: UiSettingsPaneSection): string {
     default:
       return "Settings";
   }
-}
-
-function prettifyThemeLabel(theme: string): string {
-  if (THEME_DISPLAY_NAMES[theme]) {
-    return THEME_DISPLAY_NAMES[theme];
-  }
-
-  return theme
-    .split("-")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
 }
 
 function aboutAppUpdateState(status: AppUpdateStatusPayload | null): {
@@ -233,9 +257,11 @@ export function SettingsDialog({
   appVersion,
   onSectionChange,
   onClose,
-  theme,
-  themes,
-  onThemeChange,
+  colorScheme,
+  onColorSchemeChange,
+  themeVariant,
+  themeVariants,
+  onThemeVariantChange,
   onOpenExternalUrl,
   onOpenAutomationRunSession,
   onCreateAutomationSchedule,
@@ -248,11 +274,14 @@ export function SettingsDialog({
     status: "idle" | "exporting" | "success" | "error";
     message: string;
     bundlePath: string;
+    sizeBytes: number;
   }>({
     status: "idle",
     message: "",
     bundlePath: "",
+    sizeBytes: 0,
   });
+  const [diagnosticsPathCopied, setDiagnosticsPathCopied] = useState(false);
   const [appUpdateStatus, setAppUpdateStatus] =
     useState<AppUpdateStatusPayload | null>(null);
   const [appUpdateChannelPending, setAppUpdateChannelPending] = useState(false);
@@ -317,28 +346,51 @@ export function SettingsDialog({
   }, [appUpdateStatus?.downloaded]);
 
   async function handleExportDiagnosticsBundle() {
-    setDiagnosticsExportState({
+    setDiagnosticsPathCopied(false);
+    setDiagnosticsExportState((prev) => ({
+      ...prev,
       status: "exporting",
       message: "",
-      bundlePath: "",
-    });
+    }));
     try {
       const result = await window.electronAPI.diagnostics.exportBundle();
       setDiagnosticsExportState({
         status: "success",
-        message:
-          "Diagnostics bundle exported to Downloads and revealed in Finder.",
+        message: "",
         bundlePath: result.bundlePath,
+        sizeBytes: result.archiveSizeBytes,
       });
     } catch (error) {
-      setDiagnosticsExportState({
+      setDiagnosticsExportState((prev) => ({
+        ...prev,
         status: "error",
         message:
           error instanceof Error
             ? error.message
             : "Failed to export diagnostics bundle.",
-        bundlePath: "",
-      });
+      }));
+    }
+  }
+
+  async function handleRevealDiagnosticsBundle() {
+    if (!diagnosticsExportState.bundlePath) {
+      return;
+    }
+    await window.electronAPI.diagnostics.revealBundle(
+      diagnosticsExportState.bundlePath,
+    );
+  }
+
+  async function handleCopyDiagnosticsPath() {
+    if (!diagnosticsExportState.bundlePath) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(diagnosticsExportState.bundlePath);
+      setDiagnosticsPathCopied(true);
+      window.setTimeout(() => setDiagnosticsPathCopied(false), 1500);
+    } catch {
+      setDiagnosticsPathCopied(false);
     }
   }
 
@@ -392,7 +444,7 @@ export function SettingsDialog({
         className="pointer-events-auto relative z-10 grid h-[min(780px,calc(100vh-32px))] w-[min(980px,calc(100vw-24px))] min-w-0 overflow-hidden rounded-2xl border border-border bg-background shadow-lg grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[220px_minmax(0,1fr)] lg:grid-rows-1"
       >
         <aside className="border-b border-sidebar-border bg-sidebar p-4 text-sidebar-foreground lg:border-b-0 lg:border-r">
-          <nav className="mt-6 grid gap-1">
+          <nav className="mt-4 grid gap-1">
             {SETTINGS_SECTIONS.map(({ id, label, icon: Icon }) => {
               const active = id === activeSection;
 
@@ -407,7 +459,7 @@ export function SettingsDialog({
                       : "text-sidebar-foreground/72 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                   }`}
                 >
-                  <Icon className="size-4 shrink-0" />
+                  <Icon className="size-3.5 shrink-0" />
                   <span className="min-w-0 font-medium">{label}</span>
                 </button>
               );
@@ -416,7 +468,7 @@ export function SettingsDialog({
         </aside>
 
         <section className="flex min-h-0 min-w-0 flex-col overflow-hidden">
-          <header className="flex items-center justify-between gap-4 border-b border-border/35 px-6 py-4">
+          <header className="flex items-center justify-between gap-4 border-b border-border px-6 py-4">
             <div className="text-lg font-semibold text-foreground">
               {titleForSection(activeSection)}
             </div>
@@ -452,47 +504,43 @@ export function SettingsDialog({
               <IntegrationsPane embedded />
             ) : null}
 
-            {activeSection === "submissions" ? (
-              <SubmissionsPanel />
-            ) : null}
+            {activeSection === "submissions" ? <SubmissionsPanel /> : null}
 
             {activeSection === "settings" ? (
               <div className="grid gap-6">
                 <section>
-                  <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
+                  <div className="text-base font-medium text-foreground">
                     App
                   </div>
 
-                  <div className="mt-4 grid gap-3">
-                    <div className="flex items-center justify-between gap-4 rounded-xl border border-border/35 bg-background/70 px-4 py-3">
-                      <div className="min-w-0">
+                  <div className="mt-3 overflow-hidden rounded-xl bg-card ring-1 ring-border">
+                    <div className="flex items-center justify-between gap-4 px-4 py-3">
+                      <div className="min-w-0 flex-1">
                         <div className="text-sm font-medium text-foreground">
                           Holaboss Desktop
                         </div>
-                        <div className="mt-1 text-sm text-muted-foreground">
+                        <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
                           Version
                         </div>
                       </div>
-
                       <Badge
                         variant="outline"
-                        className="rounded-full border-border/40 bg-background/80 font-mono text-xs text-foreground"
+                        className="border-border bg-background/60 font-mono text-[11px] text-foreground"
                       >
                         v{displayAppVersion}
                       </Badge>
                     </div>
 
-                    <div
-                      aria-live="polite"
-                      className="rounded-xl border border-border/35 bg-background/70 px-4 py-3"
-                    >
+                    <div className="h-px bg-border" />
+
+                    <div aria-live="polite" className="px-4 py-3">
                       <div className="flex items-start justify-between gap-4">
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2 text-sm font-medium text-foreground">
                             <span>Desktop updates</span>
                             <Badge
                               variant="outline"
-                              className={`rounded-full border-border/40 bg-background/80 text-[11px] ${
+                              className={`border-border bg-background/60 text-[11px] ${
                                 appUpdateState.error
                                   ? "text-destructive"
                                   : "text-muted-foreground"
@@ -502,7 +550,7 @@ export function SettingsDialog({
                             </Badge>
                           </div>
                           <div
-                            className={`mt-1 text-sm ${
+                            className={`mt-0.5 text-xs leading-5 ${
                               appUpdateState.error
                                 ? "text-destructive"
                                 : "text-muted-foreground"
@@ -513,16 +561,16 @@ export function SettingsDialog({
                         </div>
 
                         {appUpdateState.progressPercent !== null ? (
-                          <div className="shrink-0 text-sm font-medium tabular-nums text-foreground">
+                          <div className="shrink-0 text-xs font-medium tabular-nums text-foreground">
                             {appUpdateState.progressPercent}%
                           </div>
                         ) : null}
                       </div>
 
                       {appUpdateState.progressPercent !== null ? (
-                        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-border/35">
+                        <div className="mt-2.5 h-1 overflow-hidden rounded-full bg-border/60">
                           <div
-                            className={`h-full rounded-full transition-all ${
+                            className={`h-full rounded-full transition-[width] ${
                               appUpdateState.error
                                 ? "bg-destructive"
                                 : "bg-primary/80"
@@ -535,7 +583,7 @@ export function SettingsDialog({
                       ) : null}
 
                       {appUpdateState.readyToInstall ? (
-                        <div className="mt-3 flex flex-wrap gap-2">
+                        <div className="mt-2.5 flex flex-wrap gap-2">
                           <Button
                             type="button"
                             size="sm"
@@ -555,18 +603,20 @@ export function SettingsDialog({
                       ) : null}
                     </div>
 
-                    <div className="flex items-center justify-between gap-4 rounded-xl border border-border/35 bg-background/70 px-4 py-3">
-                      <div className="min-w-0">
+                    <div className="h-px bg-border" />
+
+                    <div className="flex items-center justify-between gap-4 px-4 py-3">
+                      <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 text-sm font-medium text-foreground">
                           <span>Beta updates</span>
                           <Badge
                             variant="outline"
-                            className="rounded-full border-border/40 bg-background/80 text-[11px] text-muted-foreground"
+                            className="border-border bg-background/60 text-[11px] text-muted-foreground"
                           >
                             {betaChannelEnabled ? "Beta" : "Latest"}
                           </Badge>
                         </div>
-                        <div className="mt-1 text-sm text-muted-foreground">
+                        <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
                           {appUpdateChannelUnavailable
                             ? "In-app update channels are unavailable on this build."
                             : "Opt into beta desktop releases before they reach the stable channel."}
@@ -588,67 +638,115 @@ export function SettingsDialog({
                 </section>
 
                 <section>
-                  <div className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                  <div className="text-base font-medium text-foreground">
                     Appearance
                   </div>
 
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                    {themes.map((themeOption) => {
-                      const selected = themeOption === theme;
-                      const swatches = THEME_SWATCHES[themeOption] ?? [
-                        "#1a1a1a",
-                        "#777777",
-                        "#2e2e2e",
-                      ];
-
-                      return (
-                        <Button
-                          key={themeOption}
-                          variant="ghost"
-                          onClick={() => onThemeChange(themeOption)}
-                          className={`h-auto flex-col items-stretch rounded-xl border p-2.5 text-left ${
-                            selected
-                              ? "border-primary/40 bg-primary/6"
-                              : "border-border/40 hover:border-border hover:bg-accent"
-                          }`}
+                  <div className="mt-3 overflow-hidden rounded-xl bg-card ring-1 ring-border">
+                    <div className="flex items-center justify-between gap-4 px-4 py-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium text-foreground">
+                          Color scheme
+                        </div>
+                        <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                          Choose whether Holaboss follows the system, light, or
+                          dark theme
+                        </div>
+                      </div>
+                      <Select
+                        value={colorScheme}
+                        onValueChange={(value) =>
+                          onColorSchemeChange(value as ColorScheme)
+                        }
+                      >
+                        <SelectTrigger
+                          size="sm"
+                          className="w-auto min-w-[96px] justify-end gap-1.5 border-transparent bg-transparent px-2 text-xs font-medium hover:bg-accent dark:bg-transparent dark:hover:bg-accent"
                         >
-                          <div className="grid grid-cols-[1.2fr_0.9fr] gap-2">
-                            <div
-                              className="h-14 rounded-lg border border-white/10"
-                              style={{
-                                background: `linear-gradient(160deg, ${swatches[0]}, ${swatches[2]})`,
-                              }}
-                            />
-                            <div className="grid gap-2">
-                              <div
-                                className="h-6 rounded-md border border-white/10"
-                                style={{ background: swatches[1] }}
-                              />
-                              <div
-                                className="h-6 rounded-md border border-white/10"
-                                style={{
-                                  background: `color-mix(in srgb, ${swatches[1]} 42%, ${swatches[0]} 58%)`,
-                                }}
-                              />
-                            </div>
-                          </div>
-
-                          <div className="mt-2.5 flex items-center justify-between gap-2">
-                            <span className="text-sm font-medium text-foreground">
-                              {prettifyThemeLabel(themeOption)}
-                            </span>
-                            {selected ? (
-                              <Badge
-                                variant="outline"
-                                className="border-primary/40 bg-primary/10 text-primary"
+                          <SelectValue>
+                            {(value: string) =>
+                              COLOR_SCHEME_LABELS[value as ColorScheme] ?? value
+                            }
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent
+                          align="end"
+                          alignItemWithTrigger={false}
+                          className="min-w-[140px] gap-0 rounded-lg p-1 shadow-subtle-sm ring-0"
+                        >
+                          {(["system", "light", "dark"] as const).map(
+                            (scheme) => (
+                              <SelectItem
+                                key={scheme}
+                                value={scheme}
+                                className="rounded-md px-2.5 py-1.5 text-xs"
                               >
-                                Active
-                              </Badge>
-                            ) : null}
-                          </div>
-                        </Button>
-                      );
-                    })}
+                                {COLOR_SCHEME_LABELS[scheme]}
+                              </SelectItem>
+                            ),
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="h-px bg-border" />
+
+                    <div className="flex items-center justify-between gap-4 px-4 py-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium text-foreground">
+                          Theme
+                        </div>
+                        <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                          Customise how Holaboss is themed
+                        </div>
+                      </div>
+                      <Select
+                        value={themeVariant}
+                        onValueChange={(value) =>
+                          onThemeVariantChange(value as ThemeVariant)
+                        }
+                      >
+                        <SelectTrigger
+                          size="sm"
+                          className="w-auto min-w-[128px] justify-end gap-1.5 border-transparent bg-transparent px-2 text-xs font-medium hover:bg-accent dark:bg-transparent dark:hover:bg-accent"
+                        >
+                          <SelectValue>
+                            {(value: string) =>
+                              THEME_VARIANT_LABELS[value as ThemeVariant] ??
+                              value
+                            }
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent
+                          align="end"
+                          alignItemWithTrigger={false}
+                          className="min-w-[180px] gap-0 rounded-lg p-1 shadow-subtle-sm ring-0"
+                        >
+                          {themeVariants.map((variant) => {
+                            const swatch =
+                              THEME_SWATCHES[`${variant}-light`]?.[1] ??
+                              THEME_SWATCHES[`${variant}-dark`]?.[1] ??
+                              "#808080";
+                            return (
+                              <SelectItem
+                                key={variant}
+                                value={variant}
+                                className="gap-2 rounded-md px-2.5 py-1.5 text-xs"
+                              >
+                                <span
+                                  aria-hidden="true"
+                                  className="size-3 shrink-0 rounded-[4px] border border-border"
+                                  style={{ background: swatch }}
+                                />
+                                <span className="min-w-0 flex-1">
+                                  {THEME_VARIANT_LABELS[variant]}
+                                </span>
+                              </SelectItem>
+                            );
+                          })}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                 </section>
               </div>
@@ -694,7 +792,10 @@ export function SettingsDialog({
                     if (!automationsWorkspaceId) {
                       return;
                     }
-                    onOpenAutomationRunSession(automationsWorkspaceId, sessionId);
+                    onOpenAutomationRunSession(
+                      automationsWorkspaceId,
+                      sessionId,
+                    );
                   }}
                   onCreateSchedule={() => {
                     if (!automationsWorkspaceId) {
@@ -713,78 +814,181 @@ export function SettingsDialog({
             ) : null}
 
             {activeSection === "about" ? (
-              <div className="grid max-w-[720px] gap-6">
+              <div className="grid gap-6">
                 <section>
-                  <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
+                  <div className="text-base font-medium text-foreground">
                     Links
                   </div>
 
-                  <div className="mt-4 grid gap-3">
-                    {ABOUT_LINKS.map(({ id, label, icon: Icon, href }) => (
-                      <button
-                        key={id}
-                        type="button"
-                        onClick={() => onOpenExternalUrl(href)}
-                        className="flex items-center justify-between gap-3 rounded-xl border border-border/35 bg-background/70 px-4 py-3 text-left transition hover:border-border/60 hover:bg-accent/40"
-                      >
-                        <span className="flex min-w-0 items-center gap-3">
-                          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border/35 bg-background/80 text-muted-foreground/82">
-                            <Icon size={16} />
-                          </span>
-                          <span className="min-w-0 text-sm font-medium text-foreground">
-                            {label}
-                          </span>
-                        </span>
-                        <ExternalLink
-                          size={15}
-                          className="shrink-0 text-muted-foreground/70"
-                        />
-                      </button>
-                    ))}
+                  <div className="mt-3 overflow-hidden rounded-xl bg-card ring-1 ring-border">
+                    {ABOUT_LINKS.map(
+                      ({ id, label, icon: Icon, href }, index) => (
+                        <div key={id}>
+                          {index > 0 ? (
+                            <div className="h-px bg-border" />
+                          ) : null}
+                          <button
+                            type="button"
+                            onClick={() => onOpenExternalUrl(href)}
+                            className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left transition-colors hover:bg-accent"
+                          >
+                            <span className="flex min-w-0 items-center gap-3">
+                              <Icon className="size-4 shrink-0 text-muted-foreground" />
+                              <span className="min-w-0 text-sm font-medium text-foreground">
+                                {label}
+                              </span>
+                            </span>
+                            <ExternalLink className="size-4 shrink-0 text-muted-foreground" />
+                          </button>
+                        </div>
+                      ),
+                    )}
                   </div>
                 </section>
 
                 <section>
-                  <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
+                  <div className="text-base font-medium text-foreground">
                     Diagnostics
                   </div>
-                  <div className="mt-4 rounded-xl border border-border/35 bg-background/70 px-4 py-4">
-                    <div className="max-w-[620px] text-sm leading-6 text-muted-foreground">
-                      Export a local diagnostics bundle with <code>runtime.log</code>,
-                      a consistent snapshot of <code>runtime.db</code>, and a
-                      redacted runtime config file. No upload happens automatically.
-                    </div>
-                    <div className="mt-5 flex flex-wrap items-center gap-3">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => void handleExportDiagnosticsBundle()}
-                        disabled={diagnosticsExportState.status === "exporting"}
-                        className="border-border/40 bg-background/80"
-                      >
-                        {diagnosticsExportState.status === "exporting" ? (
-                          <Loader2 className="size-4 animate-spin" />
-                        ) : (
-                          <FileArchive className="size-4" />
-                        )}
-                        Export Diagnostics Bundle
-                      </Button>
-                    </div>
-                    {diagnosticsExportState.message ? (
-                      <div
-                        className={`mt-4 rounded-xl border px-4 py-3 text-sm ${
-                          diagnosticsExportState.status === "error"
-                            ? "border-destructive/25 bg-destructive/5 text-destructive"
-                            : "border-border/35 bg-background/80 text-foreground"
-                        }`}
-                      >
-                        <div>{diagnosticsExportState.message}</div>
-                        {diagnosticsExportState.bundlePath ? (
-                          <div className="mt-2 break-all font-mono text-xs text-muted-foreground">
-                            {diagnosticsExportState.bundlePath}
+                  <div className="mt-3 overflow-hidden rounded-xl bg-card ring-1 ring-border">
+                    <div className="flex items-start gap-4 px-4 py-4">
+                      <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                        <Package className="size-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium text-foreground">
+                              Diagnostics bundle
+                            </div>
+                            <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                              A zip with logs, a database snapshot, and a
+                              redacted config — useful when reporting an
+                              issue.
+                            </div>
                           </div>
-                        ) : null}
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              void handleExportDiagnosticsBundle()
+                            }
+                            disabled={
+                              diagnosticsExportState.status === "exporting"
+                            }
+                          >
+                            {diagnosticsExportState.status === "exporting" ? (
+                              <>
+                                <Loader2 className="size-3.5 animate-spin" />
+                                Exporting…
+                              </>
+                            ) : diagnosticsExportState.status === "success" ? (
+                              "Re-export"
+                            ) : (
+                              "Export"
+                            )}
+                          </Button>
+                        </div>
+                        <ul className="mt-3 grid gap-1 text-xs text-muted-foreground">
+                          <li className="flex items-center gap-2">
+                            <span
+                              aria-hidden
+                              className="size-1 rounded-full bg-muted-foreground/50"
+                            />
+                            <code className="font-mono text-[11px]">
+                              runtime.log
+                            </code>
+                          </li>
+                          <li className="flex items-center gap-2">
+                            <span
+                              aria-hidden
+                              className="size-1 rounded-full bg-muted-foreground/50"
+                            />
+                            <code className="font-mono text-[11px]">
+                              runtime.db
+                            </code>
+                            <span>(consistent snapshot)</span>
+                          </li>
+                          <li className="flex items-center gap-2">
+                            <span
+                              aria-hidden
+                              className="size-1 rounded-full bg-muted-foreground/50"
+                            />
+                            <span>Runtime config (secrets redacted)</span>
+                          </li>
+                        </ul>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 border-t border-border bg-muted/40 px-4 py-2.5 text-xs text-muted-foreground">
+                      <Lock className="size-3.5 shrink-0" />
+                      <span>
+                        Stays on your device — nothing is uploaded automatically.
+                      </span>
+                    </div>
+                    {diagnosticsExportState.status === "success" &&
+                    diagnosticsExportState.bundlePath ? (
+                      <div className="border-t border-border px-4 py-3">
+                        <div className="flex items-center gap-2 text-sm text-foreground">
+                          <Check className="size-4 text-emerald-600 dark:text-emerald-500" />
+                          <span className="font-medium">Bundle ready</span>
+                          <span className="text-muted-foreground">
+                            ·{" "}
+                            {formatBundleBytes(
+                              diagnosticsExportState.sizeBytes,
+                            )}
+                          </span>
+                        </div>
+                        <div className="mt-1.5 truncate font-mono text-xs text-muted-foreground">
+                          {diagnosticsExportState.bundlePath}
+                        </div>
+                        <div className="mt-2.5 flex items-center gap-1.5">
+                          <Button
+                            type="button"
+                            variant="bordered"
+                            size="xs"
+                            onClick={() =>
+                              void handleRevealDiagnosticsBundle()
+                            }
+                          >
+                            <FolderOpen className="size-3" />
+                            Show in Finder
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="xs"
+                            onClick={() => void handleCopyDiagnosticsPath()}
+                          >
+                            {diagnosticsPathCopied ? (
+                              <>
+                                <Check className="size-3" />
+                                Copied
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="size-3" />
+                                Copy path
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
+                    {diagnosticsExportState.status === "error" &&
+                    diagnosticsExportState.message ? (
+                      <div className="border-t border-border bg-destructive/5 px-4 py-3">
+                        <div className="flex items-start gap-2 text-sm text-destructive">
+                          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                          <div className="min-w-0">
+                            <div className="font-medium">
+                              Couldn&apos;t export bundle
+                            </div>
+                            <div className="mt-0.5 break-words text-xs text-destructive/80">
+                              {diagnosticsExportState.message}
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     ) : null}
                   </div>
