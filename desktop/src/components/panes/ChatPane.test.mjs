@@ -285,6 +285,21 @@ test("chat pane blocks overlapping older-history loads before state commits", as
   );
 });
 
+test("chat pane does not adopt unmatched done or error stream frames and refreshes after matching done", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.doesNotMatch(source, /action: "adopt_stream_for_done"/);
+  assert.doesNotMatch(source, /action: "adopt_stream_for_error"/);
+  assert.match(
+    source,
+    /if \(payload\.type === "done"\) \{[\s\S]*const refreshSessionId = activeSessionIdRef\.current;[\s\S]*action: "applied_done"[\s\S]*if \(refreshSessionId && selectedWorkspaceId\) \{[\s\S]*scheduleConversationRefresh\(refreshSessionId, selectedWorkspaceId\);[\s\S]*\}/,
+  );
+  assert.match(
+    source,
+    /if \(payload\.type === "error"\) \{[\s\S]*action: "drop_error_unmatched_stream"[\s\S]*return;[\s\S]*setChatErrorMessage\(payload\.error \|\| "The agent stream failed\."\)/,
+  );
+});
+
 test("chat composer switches model and thinking selectors into icon-led compact triggers", async () => {
   const source = await readFile(sourcePath, "utf8");
 

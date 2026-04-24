@@ -4673,33 +4673,6 @@ export function ChatPane({
 
         if (payload.type === "error") {
           if (!currentStreamId || payload.streamId !== currentStreamId) {
-            if (hasPendingStreamAttach) {
-              activeStreamIdRef.current = payload.streamId;
-              appendStreamTelemetry({
-                streamId: payload.streamId,
-                transportType: payload.type,
-                eventName,
-                eventType,
-                inputId: eventInputId,
-                sessionId: eventSessionId,
-                action: "adopt_stream_for_error",
-                detail: "pending_attach=true",
-              });
-            } else {
-              appendStreamTelemetry({
-                streamId: payload.streamId,
-                transportType: payload.type,
-                eventName,
-                eventType,
-                inputId: eventInputId,
-                sessionId: eventSessionId,
-                action: "drop_error_unmatched_stream",
-                detail: "no pending attach",
-              });
-              return;
-            }
-          }
-          if (activeStreamIdRef.current !== payload.streamId) {
             appendStreamTelemetry({
               streamId: payload.streamId,
               transportType: payload.type,
@@ -4707,8 +4680,8 @@ export function ChatPane({
               eventType,
               inputId: eventInputId,
               sessionId: eventSessionId,
-              action: "drop_error_stream_mismatch",
-              detail: `active_now=${activeStreamIdRef.current || "-"}`,
+              action: "drop_error_unmatched_stream",
+              detail: `active=${currentStreamId || "-"} pending=${pendingInputId || "-"}`,
             });
             return;
           }
@@ -4732,33 +4705,6 @@ export function ChatPane({
 
         if (payload.type === "done") {
           if (!currentStreamId || payload.streamId !== currentStreamId) {
-            if (hasPendingStreamAttach) {
-              activeStreamIdRef.current = payload.streamId;
-              appendStreamTelemetry({
-                streamId: payload.streamId,
-                transportType: payload.type,
-                eventName,
-                eventType,
-                inputId: eventInputId,
-                sessionId: eventSessionId,
-                action: "adopt_stream_for_done",
-                detail: "pending_attach=true",
-              });
-            } else {
-              appendStreamTelemetry({
-                streamId: payload.streamId,
-                transportType: payload.type,
-                eventName,
-                eventType,
-                inputId: eventInputId,
-                sessionId: eventSessionId,
-                action: "drop_done_unmatched_stream",
-                detail: "no pending attach",
-              });
-              return;
-            }
-          }
-          if (activeStreamIdRef.current !== payload.streamId) {
             appendStreamTelemetry({
               streamId: payload.streamId,
               transportType: payload.type,
@@ -4766,11 +4712,12 @@ export function ChatPane({
               eventType,
               inputId: eventInputId,
               sessionId: eventSessionId,
-              action: "drop_done_stream_mismatch",
-              detail: `active_now=${activeStreamIdRef.current || "-"}`,
+              action: "drop_done_unmatched_stream",
+              detail: `active=${currentStreamId || "-"} pending=${pendingInputId || "-"}`,
             });
             return;
           }
+          const refreshSessionId = activeSessionIdRef.current;
           setIsResponding(false);
           activeAssistantMessageIdRef.current = null;
           activeStreamIdRef.current = null;
@@ -4785,6 +4732,9 @@ export function ChatPane({
             action: "applied_done",
             detail: "stream done",
           });
+          if (refreshSessionId && selectedWorkspaceId) {
+            scheduleConversationRefresh(refreshSessionId, selectedWorkspaceId);
+          }
           return;
         }
 
