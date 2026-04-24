@@ -53,6 +53,21 @@ test("space browser display keeps loading state in the address bar and turns ref
   assert.doesNotMatch(source, /activeTab\.initialized && activeTab\.loading/);
 });
 
+test("space browser display exposes screenshot copy and comment-to-chat actions", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /interface SpaceBrowserDisplayPaneProps \{/);
+  assert.match(source, /onAttachCommentsToChat\?: \(payload: BrowserChatCommentDraftPayload\) => void;/);
+  assert.match(source, /useBrowserCaptureActions\(\{\s*onAttachCommentsToChat,\s*\}\)/);
+  assert.match(source, /aria-label="Copy browser screenshot"/);
+  assert.match(source, /aria-label="Add browser comments to chat"/);
+  assert.match(source, /captureScreenshotToClipboard\(\)/);
+  assert.match(source, /captureCommentsForChat\(\)/);
+  assert.match(source, /screenshotCapturePending \? \(\s*<Loader2 size=\{13\} className="animate-spin" \/>\s*\) : \(\s*<Camera size=\{13\} \/>\s*\)/);
+  assert.match(source, /commentCapturePending \? \(\s*<Loader2 size=\{13\} className="animate-spin" \/>\s*\) : \(\s*<MessageSquarePlus size=\{13\} \/>\s*\)/);
+  assert.match(source, /actionStatus \? \(/);
+});
+
 test("space browser display uses stored history entries for address suggestions", async () => {
   const source = await readFile(sourcePath, "utf8");
 
