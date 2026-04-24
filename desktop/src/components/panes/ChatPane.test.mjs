@@ -98,6 +98,74 @@ test("chat pane falls back to provider setup instead of holaboss pending state w
   );
 });
 
+test("chat pane previews image attachments from both staged paths and local files", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /import \{ createPortal, flushSync \} from "react-dom";/);
+  assert.match(
+    source,
+    /const \[imageAttachmentPreview, setImageAttachmentPreview\] =\s*useState<ImageAttachmentPreviewState \| null>\(null\);/,
+  );
+  assert.match(
+    source,
+    /onImageAttachmentPreviewOpenChange\?: \(open: boolean\) => void;/,
+  );
+  assert.match(source, /function ImageAttachmentPreviewModal\(/);
+  assert.match(
+    source,
+    /attachment\.kind === "image" &&[\s\S]*Boolean\(onPreview\)[\s\S]*attachment\.file[\s\S]*attachment\.workspace_path/,
+  );
+  assert.match(source, /aria-label=\{`Preview \$\{attachment\.name\}`\}/);
+  assert.match(
+    source,
+    /window\.electronAPI\.browser\.captureVisibleSnapshot\(\)\.catch\(\(\) => null\)/,
+  );
+  assert.match(source, /URL\.createObjectURL\(attachment\.file\)/);
+  assert.match(
+    source,
+    /window\.electronAPI\.fs\.readFilePreview\(\s*attachmentPath,\s*selectedWorkspaceId,\s*\)/,
+  );
+  assert.match(
+    source,
+    /onImageAttachmentPreviewOpenChange\?\.\(Boolean\(imageAttachmentPreview\)\);/,
+  );
+  assert.match(
+    source,
+    /browserSnapshot: BrowserVisibleSnapshotPayload \| null;/,
+  );
+  assert.match(
+    source,
+    /<ImageAttachmentPreviewModal[\s\S]*open=\{Boolean\(imageAttachmentPreview\)\}[\s\S]*preview=\{imageAttachmentPreview\}[\s\S]*onClose=\{closeImageAttachmentPreview\}/,
+  );
+  assert.match(source, /const showImage = !preview\.isLoading && !preview\.errorMessage;/);
+  assert.match(
+    source,
+    /preview\.browserSnapshot \? \([\s\S]*src=\{preview\.browserSnapshot\.dataUrl\}[\s\S]*left: `\$\{preview\.browserSnapshot\.bounds\.x\}px`[\s\S]*top: `\$\{preview\.browserSnapshot\.bounds\.y\}px`/,
+  );
+  assert.match(
+    source,
+    /className="absolute inset-0 bg-black\/70 backdrop-blur-\[2px\]"/,
+  );
+  assert.match(
+    source,
+    /className="relative z-10 flex max-h-\[calc\(100vh-64px\)\] flex-col overflow-hidden rounded-2xl border border-white\/10 bg-background shadow-2xl"/,
+  );
+  assert.match(source, /style=\{\{ maxWidth: "92vw" \}\}/);
+  assert.match(
+    source,
+    /className=\{`overflow-auto px-4 py-4 \$\{[\s\S]*showImage \? "bg-transparent" : "min-h-\[240px\] min-w-\[320px\] bg-muted\/20"[\s\S]*`\}/,
+  );
+  assert.match(
+    source,
+    /className="block h-auto w-auto rounded-lg ring-1 ring-black\/8"/,
+  );
+  assert.match(
+    source,
+    /maxWidth: "calc\(92vw - 32px\)",[\s\S]*maxHeight: "calc\(88vh - 128px\)"/,
+  );
+  assert.match(source, /return createPortal\(modalContent, document\.body\);/);
+});
+
 test("chat composer footer wraps controls based on available pane width instead of viewport breakpoints", async () => {
   const source = await readFile(sourcePath, "utf8");
 

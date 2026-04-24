@@ -96,6 +96,11 @@ declare global {
     height: number;
   }
 
+  interface BrowserVisibleSnapshotPayload {
+    bounds: BrowserBoundsPayload;
+    dataUrl: string;
+  }
+
   interface BrowserAnchorBoundsPayload {
     x: number;
     y: number;
@@ -1585,6 +1590,7 @@ declare global {
       ) => Promise<BrowserTabListPayload>;
       getState: () => Promise<BrowserTabListPayload>;
       setBounds: (bounds: BrowserBoundsPayload) => Promise<BrowserTabListPayload>;
+      captureVisibleSnapshot: () => Promise<BrowserVisibleSnapshotPayload | null>;
       navigate: (targetUrl: string) => Promise<BrowserTabListPayload>;
       back: () => Promise<BrowserTabListPayload>;
       forward: () => Promise<BrowserTabListPayload>;

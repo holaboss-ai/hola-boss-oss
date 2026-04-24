@@ -86,6 +86,10 @@ test("app shell opens the centered add apps dialog from the applications explore
   );
   assert.match(
     source,
+    /const \[chatImagePreviewOpen, setChatImagePreviewOpen\] =\s*useState\(false\);/,
+  );
+  assert.match(
+    source,
     /const handleAddApp = \(\) => \{\s*setWorkspaceAppsDialogOpen\(true\);\s*\};/,
   );
   assert.match(
@@ -102,7 +106,7 @@ test("app shell opens the centered add apps dialog from the applications explore
   );
   assert.match(
     source,
-    /const shouldSuspendBrowserNativeView =\s*[\s\S]*taskProposalDetailsDialogOpen[\s\S]*workspaceAppsDialogOpen[\s\S]*createWorkspacePanelOpen[\s\S]*publishOpen;/,
+    /const shouldSuspendBrowserNativeView =\s*[\s\S]*taskProposalDetailsDialogOpen[\s\S]*chatImagePreviewOpen[\s\S]*workspaceAppsDialogOpen[\s\S]*createWorkspacePanelOpen[\s\S]*publishOpen;/,
   );
   assert.doesNotMatch(
     source,
@@ -161,7 +165,15 @@ test("app shell syncs file-oriented agent operations into the explorer and displ
   );
   assert.match(
     source,
+    /<OnboardingPane[\s\S]*onImageAttachmentPreviewOpenChange=\{setChatImagePreviewOpen\}/,
+  );
+  assert.match(
+    source,
     /<ChatPane[\s\S]*onSyncFileDisplayFromAgentOperation=\{\s*handleSyncAgentOperationFileDisplay\s*\}/,
+  );
+  assert.match(
+    source,
+    /<ChatPane[\s\S]*onImageAttachmentPreviewOpenChange=\{setChatImagePreviewOpen\}/,
   );
 });
 
@@ -344,7 +356,7 @@ test("app shell no longer reserves a separate safe pane region for update toasts
   assert.doesNotMatch(source, /anchoredToastStackStyle/);
   assert.match(
     source,
-    /const shouldSuspendBrowserNativeView =\s*workspaceSwitcherOpen \|\|[\s\S]*settingsDialogOpen \|\|[\s\S]*taskProposalDetailsDialogOpen \|\|[\s\S]*createWorkspacePanelOpen \|\|[\s\S]*publishOpen;/,
+    /const shouldSuspendBrowserNativeView =\s*workspaceSwitcherOpen \|\|[\s\S]*settingsDialogOpen \|\|[\s\S]*taskProposalDetailsDialogOpen \|\|[\s\S]*chatImagePreviewOpen \|\|[\s\S]*createWorkspacePanelOpen \|\|[\s\S]*publishOpen;/,
   );
   assert.doesNotMatch(
     source,
@@ -882,5 +894,9 @@ test("app shell passes workspace-scoped chat composer drafts into the chat pane"
   assert.match(
     source,
     /<ChatPane[\s\S]*composerDraftText=\{[\s\S]*chatComposerDraftTextByWorkspace\[selectedWorkspaceId\] \?\? ""[\s\S]*\}[\s\S]*onComposerDraftTextChange=\{handleChatComposerDraftTextChange\}/,
+  );
+  assert.match(
+    source,
+    /<ChatPane[\s\S]*onImageAttachmentPreviewOpenChange=\{setChatImagePreviewOpen\}[\s\S]*composerDraftText=\{/,
   );
 });

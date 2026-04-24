@@ -84,6 +84,11 @@ interface BrowserBoundsPayload {
   height: number;
 }
 
+interface BrowserVisibleSnapshotPayload {
+  bounds: BrowserBoundsPayload;
+  dataUrl: string;
+}
+
 interface BrowserAnchorBoundsPayload {
   x: number;
   y: number;
@@ -1476,6 +1481,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("browser:setActiveWorkspace", workspaceId, space, sessionId) as Promise<BrowserTabListPayload>,
     getState: () => ipcRenderer.invoke("browser:getState") as Promise<BrowserTabListPayload>,
     setBounds: (bounds: BrowserBoundsPayload) => ipcRenderer.invoke("browser:setBounds", bounds) as Promise<BrowserTabListPayload>,
+    captureVisibleSnapshot: () =>
+      ipcRenderer.invoke("browser:captureVisibleSnapshot") as Promise<BrowserVisibleSnapshotPayload | null>,
     navigate: (targetUrl: string) => ipcRenderer.invoke("browser:navigate", targetUrl) as Promise<BrowserTabListPayload>,
     back: () => ipcRenderer.invoke("browser:back") as Promise<BrowserTabListPayload>,
     forward: () => ipcRenderer.invoke("browser:forward") as Promise<BrowserTabListPayload>,

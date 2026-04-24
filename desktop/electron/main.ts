@@ -451,6 +451,11 @@ interface BrowserBoundsPayload {
   height: number;
 }
 
+interface BrowserVisibleSnapshotPayload {
+  bounds: BrowserBoundsPayload;
+  dataUrl: string;
+}
+
 interface BrowserStatePayload {
   id: string;
   url: string;
@@ -21819,6 +21824,24 @@ function setBrowserBounds(bounds: BrowserBoundsPayload) {
   updateAttachedBrowserView();
 }
 
+async function captureVisibleBrowserSnapshot(): Promise<BrowserVisibleSnapshotPayload | null> {
+  const activeTab = getActiveBrowserTab(
+    activeBrowserWorkspaceId,
+    activeBrowserSpaceId,
+    activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+    { useVisibleAgentSession: true },
+  );
+  if (!activeTab || !hasVisibleBrowserBounds()) {
+    return null;
+  }
+
+  const image = await activeTab.view.webContents.capturePage();
+  return {
+    bounds: { ...browserBounds },
+    dataUrl: `data:image/png;base64,${image.toPNG().toString("base64")}`,
+  };
+}
+
 function createDownloadsPopupHtml() {
   return `<!doctype html>
 <html lang="en">
@@ -24364,6 +24387,9 @@ app.whenReady().then(async () => {
       );
     },
   );
+  ipcMain.handle("browser:captureVisibleSnapshot", async () => {
+    return captureVisibleBrowserSnapshot();
+  });
   ipcMain.handle("browser:navigate", async (_event, targetUrl: string) => {
     if (!activeBrowserWorkspaceId) {
       return emptyBrowserTabListPayload(activeBrowserSpaceId);
