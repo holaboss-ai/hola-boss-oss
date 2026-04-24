@@ -1,11 +1,11 @@
 ---
 title: Model Configuration
-description: How Holaboss Desktop configures model providers and routing.
+description: How holaOS Desktop configures model providers and routing.
 ---
 
 ![Model Settings](/images/model-settings.png)
 
-Holaboss ships with a default model setup. In most cases, you do not need to edit `runtime-config.json` by hand, because the desktop app already exposes the main configuration surfaces for provider connection, managed model catalogs, background tasks, recall embeddings, and image generation.
+holaOS ships with a default model setup. In most cases, you do not need to edit `runtime-config.json` by hand, because the desktop app already exposes the main configuration surfaces for provider connection, managed model catalogs, background tasks, recall embeddings, and image generation.
 
 This page is the configuration reference for operators and builders. For the Electron IPC path, runtime model-catalog refresh flow, queued `thinking_value` handoff, and other execution internals, continue into [Desktop Internals](/build-on-holaos/desktop/internals) and [Runtime APIs](/build-on-holaos/runtime/apis).
 
@@ -20,33 +20,33 @@ The OSS runtime supports the following provider kinds:
 
 | Provider kind | Best fit | Notes |
 | --- | --- | --- |
-| `holaboss_proxy` | Holaboss-managed setups | Uses the Holaboss runtime binding and managed model catalog instead of a local seed list. |
+| `holaboss_proxy` | holaOS-managed setups | Uses the holaOS runtime binding and managed model catalog instead of a local seed list. |
 | `openai_compatible` | Self-hosted or compatible APIs | Best when you already have an OpenAI-style endpoint. Also covers OpenAI, Gemini, Ollama, and MiniMax. |
 | `anthropic_native` | Anthropic accounts and native workflows | Good when you want the provider's own integration path. |
 | `openrouter` | Model experimentation and broad access | Useful when you want to swap models without changing the rest of the setup. |
 
-The desktop settings UI (`Settings -> Model Providers`) lets you connect Holaboss Proxy, OpenAI, Anthropic, OpenRouter, Gemini, Ollama, or MiniMax without editing files manually.
+The desktop settings UI (`Settings -> Model Providers`) lets you connect holaOS Proxy, OpenAI, Anthropic, OpenRouter, Gemini, Ollama, or MiniMax without editing files manually.
 
 ## In-app setup
 
-Holaboss already provides model configuration in the desktop app:
+holaOS already provides model configuration in the desktop app:
 
 - open `Settings -> Model Providers`
-- connect a provider such as Holaboss Proxy, OpenAI, Anthropic, OpenRouter, Gemini, Ollama, or MiniMax
+- connect a provider such as holaOS Proxy, OpenAI, Anthropic, OpenRouter, Gemini, Ollama, or MiniMax
 - enter the API key and use the built-in provider defaults or edit the model list for that provider
 - use the `Background tasks` panel to choose one connected provider and model for recall selection, finalization, and evolve tasks
 - use the `Recall embeddings` panel to leave vector-assisted recall on `Automatic` or choose an explicit embedding-capable provider and model
 - use the `Image generation` panel to choose an image-capable provider and model for runtime image generation
 - changes autosave to `runtime-config.json`, and the chat model picker uses the configured provider models
 
-When the first direct provider is connected, the desktop seeds background tasks to that provider and its built-in default background model. Holaboss-managed sessions can also inject managed background and embedding defaults through the runtime binding. For `ollama_direct`, the provider can be selected, but you must choose a model explicitly before background LLM tasks are enabled.
+When the first direct provider is connected, the desktop seeds background tasks to that provider and its built-in default background model. holaOS-managed sessions can also inject managed background and embedding defaults through the runtime binding. For `ollama_direct`, the provider can be selected, but you must choose a model explicitly before background LLM tasks are enabled.
 
 ## Catalog-driven chat models
 
 The current desktop no longer treats chat models as only freeform strings.
 
 - Direct providers use the shipped fallback catalog in `desktop/shared/model-catalog.ts`.
-- Signed-in Holaboss-managed sessions can also fetch a managed runtime model catalog from the control plane.
+- Signed-in holaOS-managed sessions can also fetch a managed runtime model catalog from the control plane.
 - The desktop merges that managed catalog with the locally persisted `runtime-config.json` and exposes the result as `providerModelGroups` in the runtime-config snapshot.
 - Managed defaults for background tasks, embeddings, and image generation are also carried with that snapshot as `defaultBackgroundModel`, `defaultEmbeddingModel`, and `defaultImageModel`.
 
@@ -86,7 +86,7 @@ The shipped fallback catalog currently exposes these reasoning controls:
 | `ollama_direct/*` shipped models | no reasoning selector |
 | `minimax_direct/*` shipped models | no reasoning selector |
 
-For Holaboss Proxy, the managed catalog can provide explicit reasoning metadata. If it does not, the desktop falls back to provider-mapped metadata for known OpenAI, Anthropic, Gemini, and shipped OpenRouter models.
+For holaOS Proxy, the managed catalog can provide explicit reasoning metadata. If it does not, the desktop falls back to provider-mapped metadata for known OpenAI, Anthropic, Gemini, and shipped OpenRouter models.
 
 ## Customization mode
 

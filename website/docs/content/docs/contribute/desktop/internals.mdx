@@ -1,6 +1,6 @@
 ---
 title: Desktop Internals
-description: Implementation details of Holaboss Desktop.
+description: Implementation details of holaOS Desktop.
 ---
 
 Use this page when you are changing the Electron shell, renderer-to-main contracts, BrowserView behavior, or the embedded runtime launch path.
@@ -21,7 +21,7 @@ That means desktop work is usually spread across four boundaries: React renderer
 - `desktop/src/components/layout/AppShell.tsx`: the shell composition and top-level product routing. This is where the top-toolbar shell navigation, agent pane, browser panes, file explorer, applications explorer, app surfaces, operations drawer, task-proposal toasts, settings overlays, and reported non-browser operator surfaces are coordinated.
 - `desktop/src/components/layout/TopTabsBar.tsx`: the shared desktop toolbar, including workspace switching and the shell-level `Space`, `Automations`, and `Marketplace` entry points.
 - `desktop/src/components/onboarding/FirstWorkspacePane.tsx`, `ConfigureStep.tsx`, `BrowserProfileStep.tsx`, and `CreatingView.tsx`: first-workspace flow, including empty/template workspace creation and browser-profile bootstrap choices.
-- `desktop/shared/model-catalog.ts`: shipped fallback model metadata for direct providers and Holaboss Proxy model mapping, including reasoning support, allowed thinking values, and input modalities.
+- `desktop/shared/model-catalog.ts`: shipped fallback model metadata for direct providers and holaOS Proxy model mapping, including reasoning support, allowed thinking values, and input modalities.
 - `desktop/src/lib/workspaceDesktop.tsx` and `desktop/src/lib/workspaceSelection.tsx`: renderer-side workspace state and shell coordination.
 - `desktop/src/components/auth/AuthPanel.tsx`: provider settings, catalog-backed defaults, background-task selection, recall embeddings, and image-generation configuration.
 - `desktop/src/components/panes/ChatPane.tsx`: model picker, per-model reasoning-effort selector, queued chat inputs, and stream/timeline rendering.
@@ -178,7 +178,7 @@ await window.electronAPI.workspace.setOperatorSurfaceContext(
 
 The desktop model path is now catalog-driven rather than a flat model string list.
 
-- `desktop/electron/main.ts` refreshes a managed runtime model catalog from the control plane when a signed-in Holaboss session is active, caches that catalog, and merges it with the locally persisted `runtime-config.json`.
+- `desktop/electron/main.ts` refreshes a managed runtime model catalog from the control plane when a signed-in holaOS session is active, caches that catalog, and merges it with the locally persisted `runtime-config.json`.
 - The merged runtime-config snapshot exposes `providerModelGroups`, `catalogVersion`, and managed defaults for background tasks, embeddings, and image generation.
 - `AuthPanel.tsx` uses that snapshot to show the actual configured provider/model surface instead of a blind text field.
 - `ChatPane.tsx` uses the same provider groups plus the local fallback catalog to decide whether the selected model supports reasoning and which `thinking_value` choices to show.
@@ -252,7 +252,7 @@ nextModels[token] = {
 };
 ```
 
-If a Holaboss-managed proxy model should inherit local fallback metadata, also update the proxy mapping rules in `mappedHolabossProxyProviderModel(...)`:
+If a holaOS-managed proxy model should inherit local fallback metadata, also update the proxy mapping rules in `mappedHolabossProxyProviderModel(...)`:
 
 ```ts
 if (/^gpt-5(?:[.-]|$)/i.test(normalizedModelId)) {

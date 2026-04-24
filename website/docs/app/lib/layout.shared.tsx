@@ -31,7 +31,7 @@ const PRIMARY_NAV: LinkItemType[] = [
 export function baseOptions(): BaseLayoutProps {
   return {
     nav: {
-      // Split brand into two click targets: "Holaboss" (logo + name) → /
+      // Split brand into two click targets: "holaOS" (logo + name) → /
       // (landing worker), "Docs" → /docs (docs home). The docs site and
       // landing live on different Cloudflare Workers on the same domain,
       // so both must be plain <a> — a fumadocs/react-router <Link> would
@@ -54,7 +54,7 @@ export function baseOptions(): BaseLayoutProps {
               className="h-[22px] w-[22px] rounded-md"
             />
             <span className="font-hb-mono text-[13px] tracking-tight text-hb-fg">
-              Holaboss
+              holaOS
             </span>
           </a>
           <span className="mx-1.5 font-hb-mono text-[13px] text-hb-fg-subtle select-none">

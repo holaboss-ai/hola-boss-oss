@@ -5,7 +5,7 @@ description: The shared vocabulary for holaOS — core layers, artifacts, and su
 
 This page is the shared vocabulary for `holaOS`. It defines the core layers, artifacts, and surfaces that show up across the desktop app, the runtime, and the workspace model.
 
-Holaboss Desktop is the operator-facing product surface. `holaOS` is the environment layer underneath it. The concepts below give you the working model for how those pieces fit together, so the rest of the docs are easier to scan and reason about.
+holaOS Desktop is the operator-facing product surface. `holaOS` is the environment layer underneath it. The concepts below give you the working model for how those pieces fit together, so the rest of the docs are easier to scan and reason about.
 
 This page is intentionally conceptual. It defines responsibilities and boundaries, not exact implementation seams. If you need commands, payload fields, runtime routes, or source-file ownership, continue into [Contribute](/docs/contribute).
 
@@ -15,7 +15,7 @@ This page is intentionally conceptual. It defines responsibilities and boundarie
 
 Each layer has a distinct job. Keeping those jobs separate makes the system easier to operate and extend.
 
-In this model, `holaOS` is the environment layer: the workspace contract, the runtime services around it, and the harness boundary the runtime controls. Holaboss Desktop sits above that layer as the operator-facing product surface. A workspace is not just a folder the harness happens to open; in `holaOS`, it is part of the system contract itself.
+In this model, `holaOS` is the environment layer: the workspace contract, the runtime services around it, and the harness boundary the runtime controls. holaOS Desktop sits above that layer as the operator-facing product surface. A workspace is not just a folder the harness happens to open; in `holaOS`, it is part of the system contract itself.
 
 <DocDefinition term="Desktop" meta="operator UI">
   The desktop app is where you create, inspect, and operate workspaces locally. It handles the operator experience: connecting to a runtime, opening workspaces, choosing models, and exposing the state the runtime makes visible.
@@ -74,7 +74,7 @@ In this model, `holaOS` is the environment layer: the workspace contract, the ru
 </DocDefinition>
 
 <DocDefinition term="Bridge SDK" meta="app integration layer">
-  The Bridge SDK is the app-facing helper layer for connecting an app back to the Holaboss runtime and workspace. It lets apps publish outputs, publish turn-scoped artifacts, and use runtime-brokered external access without having to reimplement those contracts from scratch. The current package is `@holaboss/bridge`.
+  The Bridge SDK is the app-facing helper layer for connecting an app back to the holaOS runtime and workspace. It lets apps publish outputs, publish turn-scoped artifacts, and use runtime-brokered external access without having to reimplement those contracts from scratch. The current package is `@holaboss/bridge`.
 </DocDefinition>
 
 <DocDefinition term="Output" meta="durable result">
