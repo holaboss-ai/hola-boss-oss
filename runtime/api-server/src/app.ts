@@ -4198,6 +4198,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return runtimeAgentToolsService.listBackgroundTasks({
         workspaceId,
         sessionId: sessionId ?? undefined,
+        inputId: capabilityInputId({
+          headers: request.headers as Record<string, unknown>,
+          body: query,
+        }) || undefined,
         ownerMainSessionId: nullableString(query.owner_main_session_id) ?? undefined,
         statuses: optionalStringList(query.statuses),
         limit: hasOwn(query, "limit") ? optionalInteger(query.limit, 200) : undefined,
@@ -4225,6 +4229,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return runtimeAgentToolsService.getBackgroundTask({
         workspaceId,
         sessionId: sessionId ?? undefined,
+        inputId: capabilityInputId({
+          headers: request.headers as Record<string, unknown>,
+          body: query,
+        }) || undefined,
         subagentId: requiredString(params.subagentId, "subagentId"),
         ownerMainSessionId: nullableString(query.owner_main_session_id) ?? undefined,
       });

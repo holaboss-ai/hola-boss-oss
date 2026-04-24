@@ -130,6 +130,7 @@ export interface RuntimeAgentToolsResumeSubagentParams {
 export interface RuntimeAgentToolsListBackgroundTasksParams {
   workspaceId: string;
   sessionId?: string | null;
+  inputId?: string | null;
   ownerMainSessionId?: string | null;
   statuses?: string[] | null;
   limit?: number | null;
@@ -138,6 +139,7 @@ export interface RuntimeAgentToolsListBackgroundTasksParams {
 export interface RuntimeAgentToolsGetBackgroundTaskParams {
   workspaceId: string;
   sessionId?: string | null;
+  inputId?: string | null;
   subagentId: string;
   ownerMainSessionId?: string | null;
 }
@@ -1645,8 +1647,9 @@ export class RuntimeAgentToolsService {
 
   listBackgroundTasks(params: RuntimeAgentToolsListBackgroundTasksParams): JsonObject {
     this.requireWorkspace(params.workspaceId);
-    if (normalizedString(params.sessionId)) {
-      this.requireSubagentControllerSession(params.workspaceId, normalizedString(params.sessionId));
+    const requestedSessionId = normalizedString(params.sessionId);
+    if (requestedSessionId) {
+      this.requireSubagentControllerSession(params.workspaceId, requestedSessionId);
     }
     const requestedStatuses = new Set(normalizedStringList(params.statuses).map((status) => status.toLowerCase()));
     const requestedOwnerMainSessionId = normalizedString(params.ownerMainSessionId);
@@ -1656,6 +1659,13 @@ export class RuntimeAgentToolsService {
       .filter((state) => (requestedOwnerMainSessionId ? state.run.ownerMainSessionId === requestedOwnerMainSessionId : true))
       .filter((state) => (requestedStatuses.size > 0 ? requestedStatuses.has(state.run.status.toLowerCase()) : true))
       .slice(0, normalizedInteger(params.limit, 200, 1, 1000));
+    this.assertSameTurnDelegationPollingAllowed({
+      workspaceId: params.workspaceId,
+      sessionId: requestedSessionId || null,
+      inputId: normalizedString(params.inputId) || null,
+      states: synced,
+      toolId: "holaboss_list_background_tasks",
+    });
     return {
       tasks: synced.map((state) => subagentRunPayload(state)),
       count: synced.length,
@@ -1668,13 +1678,19 @@ export class RuntimeAgentToolsService {
     if (requestedSessionId) {
       this.requireSubagentControllerSession(params.workspaceId, requestedSessionId);
     }
-    return subagentRunPayload(
-      this.syncSubagentRunForOwner({
+    const state = this.syncSubagentRunForOwner({
         workspaceId: params.workspaceId,
         subagentId: params.subagentId,
         ownerMainSessionId: normalizedString(params.ownerMainSessionId) || requestedSessionId || null,
-      }),
-    );
+      });
+    this.assertSameTurnDelegationPollingAllowed({
+      workspaceId: params.workspaceId,
+      sessionId: requestedSessionId || null,
+      inputId: normalizedString(params.inputId) || null,
+      states: [state],
+      toolId: "holaboss_get_subagent",
+    });
+    return subagentRunPayload(state);
   }
 
   async generateImage(params: RuntimeAgentToolsGenerateImageParams): Promise<JsonObject> {
@@ -2371,6 +2387,34 @@ export class RuntimeAgentToolsService {
       latestInput,
       latestTurnResult,
     };
+  }
+
+  private assertSameTurnDelegationPollingAllowed(params: {
+    workspaceId: string;
+    sessionId?: string | null;
+    inputId?: string | null;
+    states: SyncedSubagentRunState[];
+    toolId: "holaboss_get_subagent" | "holaboss_list_background_tasks";
+  }): void {
+    const sessionId = normalizedString(params.sessionId);
+    const inputId = normalizedString(params.inputId);
+    if (!sessionId || !inputId || params.states.length === 0) {
+      return;
+    }
+    const blockingStates = params.states.filter((state) =>
+      state.run.workspaceId === params.workspaceId &&
+      state.run.parentSessionId === sessionId &&
+      state.run.parentInputId === inputId &&
+      ["queued", "running"].includes(state.run.status),
+    );
+    if (blockingStates.length === 0) {
+      return;
+    }
+    throw new RuntimeAgentToolsServiceError(
+      409,
+      "same_turn_subagent_poll_forbidden",
+      `do not use ${params.toolId} to poll a freshly delegated task in the same turn while it is still running; return control to the user and let the background task continue`,
+    );
   }
 
   private requireWorkspace(workspaceId: string): WorkspaceRecord {

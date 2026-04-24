@@ -12868,36 +12868,55 @@ function runtimeBaseUrl() {
 }
 
 async function ensureRuntimeReady() {
-  const status = await startEmbeddedRuntime();
-  if (status.status === "running" && status.url) {
-    return status;
-  }
+  let attemptedRecovery = false;
+  for (;;) {
+    const status = await startEmbeddedRuntime();
+    if (status.status === "running" && status.url) {
+      return status;
+    }
 
-  const runtimeUrl = status.url ?? runtimeBaseUrl();
-  if (status.status === "starting" && runtimeUrl) {
-    const healthy = await waitForRuntimeHealth(runtimeUrl, 10, 300);
-    if (healthy) {
-      const refreshed = await refreshRuntimeStatus();
-      if (refreshed.status === "running" && refreshed.url) {
-        return refreshed;
+    const runtimeUrl = status.url ?? runtimeBaseUrl();
+    if (status.status === "starting" && runtimeUrl) {
+      const healthy = await waitForRuntimeHealth(runtimeUrl, 10, 300);
+      if (healthy) {
+        const refreshed = await refreshRuntimeStatus();
+        if (refreshed.status === "running" && refreshed.url) {
+          return refreshed;
+        }
       }
     }
-  }
 
-  const refreshed = await refreshRuntimeStatus();
-  if (refreshed.status === "running" && refreshed.url) {
-    return refreshed;
-  }
+    const refreshed = await refreshRuntimeStatus();
+    if (refreshed.status === "running" && refreshed.url) {
+      return refreshed;
+    }
 
-  throw new Error(
-    refreshed.lastError || status.lastError || "Embedded runtime is not ready.",
-  );
+    const failureMessage =
+      refreshed.lastError || status.lastError || "Embedded runtime is not ready.";
+    if (
+      !attemptedRecovery &&
+      isRuntimeHealthcheckStartupFailureMessage(failureMessage)
+    ) {
+      attemptedRecovery = true;
+      await stopEmbeddedRuntime();
+      await sleep(250);
+      continue;
+    }
+
+    throw new Error(failureMessage);
+  }
 }
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function isRuntimeHealthcheckStartupFailureMessage(message: string): boolean {
+  return message
+    .toLowerCase()
+    .includes("runtime process started but did not pass health checks");
 }
 
 function isTransientRuntimeError(error: unknown): boolean {
@@ -12910,6 +12929,7 @@ function isTransientRuntimeError(error: unknown): boolean {
   const message = error.message.toLowerCase();
   return (
     message.includes("embedded runtime is not ready") ||
+    isRuntimeHealthcheckStartupFailureMessage(message) ||
     message.includes("fetch failed") ||
     message.includes("bad port") ||
     message.includes("invalid url") ||

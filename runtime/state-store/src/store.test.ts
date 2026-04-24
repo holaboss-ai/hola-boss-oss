@@ -785,6 +785,51 @@ test("main session event queue supports materialize deliver supersede lifecycle"
   store.close();
 });
 
+test("main session pending selectors exclude materialized events", () => {
+  const root = makeTempDir("hb-state-store-pending-events-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const pending = store.enqueueMainSessionEvent({
+    workspaceId: "workspace-1",
+    ownerMainSessionId: "session-main",
+    originMainSessionId: "session-main",
+    eventType: "completed",
+    deliveryBucket: "background_update",
+    payload: { summary: "Pending follow-up." }
+  });
+  const materialized = store.enqueueMainSessionEvent({
+    workspaceId: "workspace-1",
+    ownerMainSessionId: "session-main",
+    originMainSessionId: "session-main",
+    eventType: "completed",
+    deliveryBucket: "background_update",
+    payload: { summary: "Already queued." }
+  });
+
+  store.markMainSessionEventsMaterialized({
+    eventIds: [materialized.eventId],
+    materializedInputId: "main-input-1"
+  });
+
+  assert.deepEqual(
+    store
+      .listPendingMainSessionEvents({ ownerMainSessionId: "session-main" })
+      .map((event) => event.eventId),
+    [pending.eventId]
+  );
+  assert.deepEqual(
+    store
+      .listPendingMainSessionEventsByWorkspace({ workspaceId: "workspace-1" })
+      .map((event) => event.eventId),
+    [pending.eventId]
+  );
+
+  store.close();
+});
+
 test("runtime user profile round trip preserves manual value and auth fallback only fills when empty", () => {
   const root = makeTempDir("hb-state-store-profile-");
   const store = new RuntimeStateStore({

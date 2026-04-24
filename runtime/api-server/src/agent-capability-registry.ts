@@ -1278,6 +1278,7 @@ export function renderCapabilityToolRoutingPromptSection(
     lines.push("Delegation routing: when the user asks for work that needs web, browser, terminal, or other execution-heavy capability not surfaced directly in this run, use `holaboss_delegate_task` instead of replying that the current run lacks those tools.");
     lines.push("Treat current-run capability limits as a delegation signal when hidden subagents can perform the task.");
     lines.push("Only surface a hard capability limitation to the user when neither the current run nor delegated subagents can actually carry out the request.");
+    lines.push("Do not simulate waiting on a delegated task by repeatedly calling `holaboss_get_subagent` or `holaboss_list_background_tasks` in the same turn after you just spawned it.");
   }
   if (manifest.runtime_tools.some((capability) => capability.id === "terminal_session_start")) {
     ensureHeading();

@@ -29,7 +29,10 @@ export interface RuntimeMainSessionEventWorkerOptions {
   queueWorker?: QueueWorkerLike | null;
   logger?: LoggerLike;
   pollIntervalMs?: number;
+  initialDelayMs?: number;
 }
+
+const DEFAULT_INITIAL_DELAY_MS = 1_000;
 
 function groupedEventPayload(events: MainSessionEventQueueRecord[]) {
   return events.map((event) => ({
@@ -111,15 +114,18 @@ export class RuntimeMainSessionEventWorker
   readonly #queueWorker: QueueWorkerLike | null;
   readonly #logger: LoggerLike | undefined;
   readonly #pollIntervalMs: number;
+  readonly #initialDelayMs: number;
   #stopped = false;
   #task: Promise<void> | null = null;
   #wakeResolver: (() => void) | null = null;
+  #hasWaitedInitialDelay = false;
 
   constructor(options: RuntimeMainSessionEventWorkerOptions) {
     this.#store = options.store;
     this.#queueWorker = options.queueWorker ?? null;
     this.#logger = options.logger;
     this.#pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    this.#initialDelayMs = options.initialDelayMs ?? DEFAULT_INITIAL_DELAY_MS;
   }
 
   async start(): Promise<void> {
@@ -224,6 +230,13 @@ export class RuntimeMainSessionEventWorker
 
   async #runLoop(): Promise<void> {
     while (!this.#stopped) {
+      if (!this.#hasWaitedInitialDelay && this.#initialDelayMs > 0) {
+        this.#hasWaitedInitialDelay = true;
+        await this.#waitForWakeOrTimeout(this.#initialDelayMs);
+        if (this.#stopped) {
+          return;
+        }
+      }
       try {
         const processed = await this.processAvailableEventsOnce();
         if (processed > 0) {
@@ -239,9 +252,9 @@ export class RuntimeMainSessionEventWorker
     }
   }
 
-  async #waitForWakeOrTimeout(): Promise<void> {
+  async #waitForWakeOrTimeout(timeoutMs = this.#pollIntervalMs): Promise<void> {
     await Promise.race([
-      sleep(this.#pollIntervalMs),
+      sleep(timeoutMs),
       new Promise<void>((resolve) => {
         this.#wakeResolver = resolve;
       }),

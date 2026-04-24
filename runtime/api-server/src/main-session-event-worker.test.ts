@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, test as nodeTest } from "node:test";
 
 import { RuntimeStateStore } from "@holaboss/runtime-state-store";
@@ -160,6 +161,104 @@ test("main-session event worker does not materialize when the main session is bu
     store.listPendingMainSessionEvents({ ownerMainSessionId: "session-main" })
       .length,
     1,
+  );
+
+  store.close();
+});
+
+test("main-session event worker defers its first startup scan until after the initial delay", async () => {
+  const store = makeStore("hb-main-session-event-worker-delay-");
+  const workspace = seedMainSession(store);
+
+  store.enqueueMainSessionEvent({
+    workspaceId: workspace.id,
+    ownerMainSessionId: "session-main",
+    originMainSessionId: "session-main",
+    subagentId: "subagent-1",
+    eventType: "completed",
+    deliveryBucket: "background_update",
+    payload: { summary: "Done." },
+  });
+  const initialEvent = store.listPendingMainSessionEvents({
+    ownerMainSessionId: "session-main",
+  })[0];
+
+  const worker = new RuntimeMainSessionEventWorker({
+    store,
+    initialDelayMs: 50,
+  });
+
+  try {
+    await worker.start();
+
+    assert.equal(
+      store.listPendingMainSessionEvents({ ownerMainSessionId: "session-main" })
+        .length,
+      1,
+    );
+    assert.equal(
+      store.hasAvailableInputsForSession({
+        workspaceId: workspace.id,
+        sessionId: "session-main",
+      }),
+      false,
+    );
+
+    await sleep(250);
+
+    const updatedEvent = initialEvent
+      ? store.getMainSessionEvent({ eventId: initialEvent.eventId })
+      : null;
+    assert.equal(updatedEvent?.status, "materialized");
+    assert.ok(updatedEvent?.materializedInputId);
+    assert.equal(
+      store.hasAvailableInputsForSession({
+        workspaceId: workspace.id,
+        sessionId: "session-main",
+      }),
+      true,
+    );
+  } finally {
+    await worker.close();
+    store.close();
+  }
+});
+
+test("main-session event worker ignores already materialized events", async () => {
+  const store = makeStore("hb-main-session-event-worker-materialized-");
+  const workspace = seedMainSession(store);
+  const event = store.enqueueMainSessionEvent({
+    workspaceId: workspace.id,
+    ownerMainSessionId: "session-main",
+    originMainSessionId: "session-main",
+    subagentId: "subagent-1",
+    eventType: "completed",
+    deliveryBucket: "background_update",
+    payload: { summary: "Done." },
+  });
+  store.markMainSessionEventsMaterialized({
+    eventIds: [event.eventId],
+    materializedInputId: "main-input-1",
+  });
+
+  const worker = new RuntimeMainSessionEventWorker({ store });
+  const processed = await worker.processAvailableEventsOnce();
+  const updatedEvent = store.getMainSessionEvent({ eventId: event.eventId });
+
+  assert.equal(processed, 0);
+  assert.equal(
+    store.listPendingMainSessionEvents({ ownerMainSessionId: "session-main" })
+      .length,
+    0,
+  );
+  assert.equal(updatedEvent?.status, "materialized");
+  assert.equal(updatedEvent?.materializedInputId, "main-input-1");
+  assert.equal(
+    store.hasAvailableInputsForSession({
+      workspaceId: workspace.id,
+      sessionId: "session-main",
+    }),
+    false,
   );
 
   store.close();

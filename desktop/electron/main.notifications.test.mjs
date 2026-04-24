@@ -8,6 +8,10 @@ test("main notification IPC path reuses cached results during transient runtime 
   const source = await readFile(MAIN_PATH, "utf8");
 
   assert.match(source, /const runtimeNotificationListCache = new Map</);
+  assert.match(
+    source,
+    /function isRuntimeHealthcheckStartupFailureMessage\(message: string\): boolean \{[\s\S]*did not pass health checks/s,
+  );
   assert.match(source, /function runtimeNotificationListCacheKey\(/);
   assert.match(source, /function emptyRuntimeNotificationListResponse\(\): RuntimeNotificationListResponsePayload/);
   assert.match(source, /runtimeNotificationListCache\.set\(cacheKey,\s*response\);/);
@@ -15,5 +19,6 @@ test("main notification IPC path reuses cached results during transient runtime 
     source,
     /if \(isTransientRuntimeError\(error\)\) \{\s*return \(\s*runtimeNotificationListCache\.get\(cacheKey\) \?\?\s*emptyRuntimeNotificationListResponse\(\)\s*\);/s,
   );
+  assert.match(source, /isRuntimeHealthcheckStartupFailureMessage\(message\)/);
   assert.match(source, /runtimeNotificationListCache\.clear\(\);/);
 });

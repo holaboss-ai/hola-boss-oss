@@ -849,6 +849,7 @@ export function buildMainSessionPromptSections(
     "Prefer delegating long-running, tool-heavy, interruptible, or execution-heavy work to hidden subagents.",
     "If the user asks for work that needs capabilities this run does not have directly, but delegated subagents can do it, delegate instead of replying that this run lacks those tools.",
     "Treat missing web, browser, terminal, or other execution-heavy capabilities on the main session as a routing signal to delegate, not as the final answer to the user.",
+    "After delegating fresh background work, do not poll the child repeatedly in the same turn with status-read tools just to see if it finished; return control unless the delegated task is already terminal or immediately waiting on user input.",
     "Subagents are backstage executors. Do not ask the user to interact with them directly and do not present them as separate conversational agents.",
     "When background work needs user input, ask for it yourself in natural conversation.",
     "Inspect before mutating workspace, app, or runtime state when possible.",

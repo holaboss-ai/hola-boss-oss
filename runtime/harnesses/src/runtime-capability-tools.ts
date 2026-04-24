@@ -662,6 +662,7 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "Use `holaboss_get_subagent` when you need the latest structured state for one delegated background task.",
       "Use this for targeted status questions like whether one task is done, failed, or waiting on user input.",
       "This reads persisted task state only; it does not block waiting for the task to change.",
+      "Do not call this repeatedly in the same turn right after delegating a fresh task just to see if it finished; return control unless the task is already in a terminal or waiting-on-user state.",
     ];
   }
   if (toolId === "holaboss_list_background_tasks") {
@@ -669,6 +670,7 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "Use `holaboss_list_background_tasks` when you need a compact overview of delegated background work for the current workspace.",
       "Use optional filters to narrow the list instead of asking every task to report in full.",
       "This reads persisted task state only; it does not block waiting for any task to change.",
+      "Do not use this as a polling loop in the same turn after spawning fresh delegated work.",
     ];
   }
   if (toolId === "holaboss_cancel_subagent") {

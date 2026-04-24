@@ -954,6 +954,36 @@ test("runtime subagent capability routes create and cancel hidden background tas
   assert.equal(fetchedViaCapability.statusCode, 200);
   assert.equal(fetchedViaCapability.json().subagent_id, task.subagent_id);
 
+  const blockedSameTurnFetch = await app.inject({
+    method: "GET",
+    url: `/api/v1/capabilities/runtime-tools/subagents/${encodeURIComponent(task.subagent_id)}`,
+    headers: {
+      "x-holaboss-workspace-id": workspace.id,
+      "x-holaboss-session-id": "session-main",
+      "x-holaboss-input-id": parentInput.inputId,
+    },
+  });
+  assert.equal(blockedSameTurnFetch.statusCode, 409);
+  assert.match(
+    blockedSameTurnFetch.body,
+    /do not use holaboss_get_subagent to poll a freshly delegated task in the same turn/i,
+  );
+
+  const blockedSameTurnList = await app.inject({
+    method: "GET",
+    url: "/api/v1/capabilities/runtime-tools/background-tasks?limit=10",
+    headers: {
+      "x-holaboss-workspace-id": workspace.id,
+      "x-holaboss-session-id": "session-main",
+      "x-holaboss-input-id": parentInput.inputId,
+    },
+  });
+  assert.equal(blockedSameTurnList.statusCode, 409);
+  assert.match(
+    blockedSameTurnList.body,
+    /do not use holaboss_list_background_tasks to poll a freshly delegated task in the same turn/i,
+  );
+
   const cancelled = await app.inject({
     method: "POST",
     url: `/api/v1/capabilities/runtime-tools/subagents/${encodeURIComponent(task.subagent_id)}/cancel`,

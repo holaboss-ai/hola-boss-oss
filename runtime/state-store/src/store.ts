@@ -2474,6 +2474,7 @@ export class RuntimeStateStore {
       SELECT *
       FROM main_session_event_queue
       WHERE owner_main_session_id = ?
+        AND status = 'pending'
         AND delivered_at IS NULL
         AND superseded_at IS NULL
     `;
@@ -2506,6 +2507,7 @@ export class RuntimeStateStore {
       SELECT *
       FROM main_session_event_queue
       WHERE workspace_id = ?
+        AND status = 'pending'
         AND delivered_at IS NULL
         AND superseded_at IS NULL
     `;
