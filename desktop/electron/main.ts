@@ -31,6 +31,7 @@ import {
   BrowserView,
   BrowserWindow,
   Menu,
+  Tray,
   clipboard,
   dialog,
   DownloadItem,
@@ -103,6 +104,7 @@ import { buildAppSdkClient } from "./appSdkClient.js";
 import { ensureWorkspaceGitRepo } from "./workspace-git.js";
 
 const APP_DISPLAY_NAME = "Holaboss";
+const MAC_APP_MENU_PRODUCT_LABEL = "holaOS";
 const AUTH_CALLBACK_PROTOCOL = "ai.holaboss.app";
 const DESKTOP_LAUNCH_ID = randomUUID();
 Sentry.setTags({
@@ -870,6 +872,7 @@ let downloadsPopupWindow: BrowserWindow | null = null;
 let historyPopupWindow: BrowserWindow | null = null;
 let overflowPopupWindow: BrowserWindow | null = null;
 let addressSuggestionsPopupWindow: BrowserWindow | null = null;
+let statusItemTray: Tray | null = null;
 const unresponsiveDesktopWindows = new WeakSet<BrowserWindow>();
 let attachedBrowserTabView: BrowserView | null = null;
 let attachedAppSurfaceView: BrowserView | null = null;
@@ -22881,11 +22884,7 @@ function createMainWindow() {
           }
         : {};
 
-  const appIcon = nativeImage.createFromPath(
-    app.isPackaged
-      ? path.join(process.resourcesPath, "icon.png")
-      : path.join(__dirname, "..", "..", "resources", "icon.png"),
-  );
+  const appIcon = nativeImage.createFromPath(desktopAppIconPath());
 
   const win = new BrowserWindow({
     width: 1600,
@@ -23018,11 +23017,97 @@ function createMainWindow() {
   });
 }
 
+function focusOrCreateMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createMainWindow();
+    return;
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  if (!mainWindow.isVisible()) {
+    mainWindow.show();
+  }
+  mainWindow.focus();
+}
+
+function desktopAppIconPath(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "icon.png")
+    : path.join(__dirname, "..", "..", "resources", "icon.png");
+}
+
+function desktopStatusItemIconPath(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "holaStatusTemplate.png")
+    : path.join(__dirname, "..", "..", "resources", "holaStatusTemplate.png");
+}
+
+function installMacStatusItem() {
+  if (process.platform !== "darwin" || statusItemTray) {
+    return;
+  }
+
+  const icon = nativeImage.createFromPath(desktopStatusItemIconPath());
+  if (icon.isEmpty()) {
+    return;
+  }
+  icon.setTemplateImage(true);
+
+  statusItemTray = new Tray(icon);
+  statusItemTray.setToolTip(MAC_APP_MENU_PRODUCT_LABEL);
+  statusItemTray.setContextMenu(
+    Menu.buildFromTemplate([
+      {
+        label: `Open ${MAC_APP_MENU_PRODUCT_LABEL}`,
+        click: () => {
+          focusOrCreateMainWindow();
+        },
+      },
+      {
+        label: `Quit ${MAC_APP_MENU_PRODUCT_LABEL}`,
+        role: "quit",
+      },
+    ]),
+  );
+}
+
+function installMacApplicationMenu() {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
+  const template: MenuItemConstructorOptions[] = [
+    {
+      label: app.getName(),
+      submenu: [
+        {
+          label: `Open ${MAC_APP_MENU_PRODUCT_LABEL}`,
+          click: () => {
+            focusOrCreateMainWindow();
+          },
+        },
+        {
+          label: `Quit ${MAC_APP_MENU_PRODUCT_LABEL}`,
+          role: "quit",
+        },
+      ],
+    },
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 const singleInstanceLock =
   process.env.HOLABOSS_DISABLE_SINGLE_INSTANCE_LOCK?.trim() === "1"
     ? true
     : app.requestSingleInstanceLock();
-app.setName(APP_DISPLAY_NAME);
+app.setName(
+  process.platform === "darwin" && isDev
+    ? MAC_APP_MENU_PRODUCT_LABEL
+    : APP_DISPLAY_NAME,
+);
 if (!singleInstanceLock) {
   app.quit();
 } else {
@@ -23170,16 +23255,14 @@ app.on("child-process-gone", (_event, details) => {
 
 app.whenReady().then(async () => {
   if (process.platform === "darwin" && app.dock) {
-    const dockIcon = nativeImage.createFromPath(
-      app.isPackaged
-        ? path.join(process.resourcesPath, "icon.png")
-        : path.join(__dirname, "..", "..", "resources", "icon.png"),
-    );
+    const dockIcon = nativeImage.createFromPath(desktopAppIconPath());
     if (!dockIcon.isEmpty()) {
       app.dock.setIcon(dockIcon);
     }
   }
 
+  installMacStatusItem();
+  installMacApplicationMenu();
   applyMainShellContentSecurityPolicy(session.defaultSession);
 
   await loadBrowserPersistence();
