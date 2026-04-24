@@ -198,6 +198,14 @@ declare global {
     copied: boolean;
   }
 
+  interface ClipboardImagePayload {
+    name: string;
+    mime_type: string;
+    content_base64: string;
+    width: number;
+    height: number;
+  }
+
   interface BrowserCommentCaptureAttachmentPayload {
     id: string;
     text: string;
@@ -1420,6 +1428,10 @@ declare global {
       onWindowStateChange: (listener: (state: DesktopWindowStatePayload) => void) => () => void;
       onThemeChange: (listener: (theme: string) => void) => () => void;
       onOpenSettingsPane: (listener: (section: UiSettingsPaneSection) => void) => () => void;
+    };
+    clipboard: {
+      readImage: () => Promise<ClipboardImagePayload | null>;
+      writeText: (text: string) => Promise<void>;
     };
     billing: {
       getOverview: () => Promise<DesktopBillingOverviewPayload>;

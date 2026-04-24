@@ -16,6 +16,17 @@ test("top tabs bar removes the notification center and keeps the profile menu", 
 
 test("top tabs bar renders custom compact window controls for Windows title bar integration", async () => {
   const source = await readFile(TOP_TABS_BAR_PATH, "utf8");
+  const rightControlsIndex = source.indexOf(
+    "flex min-w-0 items-center justify-self-end gap-1.5",
+  );
+  const workspaceSwitcherIndex = source.indexOf(
+    "ref={workspaceSwitcherRef}",
+    rightControlsIndex,
+  );
+  const runtimeStatusIndex = source.indexOf(
+    "<RuntimeStatusIndicator status={runtimeStatus} />",
+    rightControlsIndex,
+  );
 
   assert.match(source, /desktopPlatform\?: string \| null;/);
   assert.match(
@@ -24,27 +35,30 @@ test("top tabs bar renders custom compact window controls for Windows title bar 
   );
   assert.match(
     source,
-    /h-\[42px\] px-2 pt-0\.5 sm:px-3/,
+    /h-\[32px\] px-2 pt-0\.5 sm:px-3/,
   );
   assert.match(
     source,
-    /grid-cols-\[32px_minmax\(0,1fr\)_auto\][\s\S]*lg:grid-cols-\[42px_minmax\(220px,400px\)_minmax\(0,1fr\)_auto\]/,
+    /lg:grid-cols-\[minmax\(0,1fr\)_auto\]/,
   );
   assert.match(
     source,
-    /const workspaceSwitcherContainerClassName = `\$\{integratedTitleBar \? "window-no-drag " : ""\}relative min-w-55 max-w-full`;/,
+    /const workspaceSwitcherContainerClassName = `\$\{integratedTitleBar \? "window-no-drag " : ""\}relative w-\[190px\] shrink-0`;/,
   );
   assert.match(
     source,
-    /const workspaceSwitcherButtonClassName =\s*"h-8 w-full justify-start gap-1\.5 px-2\.5 rounded-lg text-xs";/,
+    /const workspaceSwitcherButtonClassName =\s*"h-6 w-full justify-start gap-1 rounded-md px-1\.5 text-\[11px\]";/,
   );
+  assert.match(source, /variant=\{workspaceSwitcherOpen \? "secondary" : "bordered"\}\s*size="xs"/);
+  assert.ok(rightControlsIndex >= 0);
+  assert.ok(workspaceSwitcherIndex > rightControlsIndex);
+  assert.ok(runtimeStatusIndex > workspaceSwitcherIndex);
   assert.match(
     source,
     /const windowControlButtonClassName =\s*"window-no-drag flex h-5 w-5 items-center justify-center rounded-\[7px\]/,
   );
-  assert.match(source, /className="size-7 shrink-0 rounded-\[9px\] border border-border overflow-hidden"/);
-  assert.match(source, /<FolderKanban size=\{13\} className="shrink-0 text-primary" \/>/);
-  assert.match(source, /<ChevronDown\s+size=\{12\}/);
+  assert.match(source, /<FolderKanban className="size-3 shrink-0 text-primary" \/>/);
+  assert.match(source, /<ChevronDown[\s\S]*className=\{`ml-auto size-3 shrink-0 text-muted-foreground transition-transform/);
   assert.doesNotMatch(source, /onOpenSpace\?: \(\) => void;/);
   assert.doesNotMatch(source, /isSpaceActive\?: boolean;/);
   assert.doesNotMatch(source, /aria-label="Space"/);
@@ -57,7 +71,10 @@ test("top tabs bar renders custom compact window controls for Windows title bar 
   assert.doesNotMatch(source, /onOpenMarketplace\?: \(\) => void;/);
   assert.doesNotMatch(source, /isMarketplaceActive\?: boolean;/);
   assert.doesNotMatch(source, /LayoutGrid/);
-  assert.match(source, /render=\{<Button variant="outline" size="icon" className="rounded-lg" \/>\}/);
+  assert.match(
+    source,
+    /render=\{\s*<Button\s+variant="bordered"\s+size="icon-xs"\s+aria-label="Open account menu"/,
+  );
   assert.doesNotMatch(source, /absolute -right-0\.5 -top-0\.5 size-2 rounded-full ring-2 ring-background/);
   assert.match(source, /window\.electronAPI\.ui\.getWindowState\(\)/);
   assert.match(source, /window\.electronAPI\.ui\.minimizeWindow\(\)/);

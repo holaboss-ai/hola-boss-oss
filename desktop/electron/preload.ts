@@ -193,6 +193,14 @@ interface BrowserClipboardScreenshotPayload {
   copied: boolean;
 }
 
+interface ClipboardImagePayload {
+  name: string;
+  mime_type: string;
+  content_base64: string;
+  width: number;
+  height: number;
+}
+
 interface BrowserCommentCaptureAttachmentPayload {
   id: string;
   text: string;
@@ -1204,6 +1212,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.on("ui:openSettingsPane", wrapped);
       return () => ipcRenderer.removeListener("ui:openSettingsPane", wrapped);
     }
+  },
+  clipboard: {
+    readImage: () =>
+      ipcRenderer.invoke("clipboard:readImage") as Promise<ClipboardImagePayload | null>,
+    writeText: (text: string) =>
+      ipcRenderer.invoke("clipboard:writeText", text) as Promise<void>,
   },
   billing: {
     getOverview: () =>

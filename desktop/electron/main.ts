@@ -634,6 +634,14 @@ interface BrowserClipboardScreenshotPayload {
   copied: boolean;
 }
 
+interface ClipboardImagePayload {
+  name: string;
+  mime_type: string;
+  content_base64: string;
+  width: number;
+  height: number;
+}
+
 interface BrowserCommentCaptureAttachmentPayload {
   id: string;
   text: string;
@@ -22899,7 +22907,7 @@ function createMainWindow() {
     process.platform === "darwin"
       ? {
           titleBarStyle: "hiddenInset" as const,
-          trafficLightPosition: { x: 14, y: 23 },
+          trafficLightPosition: { x: 14, y: 16 },
         }
       : process.platform === "win32"
         ? {
@@ -23117,9 +23125,42 @@ function installMacApplicationMenu() {
         },
       ],
     },
+    {
+      label: "Edit",
+      submenu: [
+        { label: "Undo", role: "undo" },
+        { label: "Redo", role: "redo" },
+        { type: "separator" },
+        { label: "Cut", role: "cut" },
+        { label: "Copy", role: "copy" },
+        { label: "Paste", role: "paste" },
+        { label: "Select All", role: "selectAll" },
+      ],
+    },
   ];
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+function readClipboardImagePayload(): ClipboardImagePayload | null {
+  const image = clipboard.readImage();
+  if (image.isEmpty()) {
+    return null;
+  }
+
+  const png = image.toPNG();
+  if (png.length === 0) {
+    return null;
+  }
+
+  const size = image.getSize();
+  return {
+    name: "pasted-image.png",
+    mime_type: "image/png",
+    content_base64: png.toString("base64"),
+    width: size.width,
+    height: size.height,
+  };
 }
 
 const singleInstanceLock =
@@ -23595,6 +23636,18 @@ app.whenReady().then(async () => {
     ["main", "auth-popup"],
     async (_event, rawUrl: string) => {
       await openExternalUrl(rawUrl);
+    },
+  );
+  handleTrustedIpc(
+    "clipboard:readImage",
+    ["main"],
+    async () => readClipboardImagePayload(),
+  );
+  handleTrustedIpc(
+    "clipboard:writeText",
+    ["main"],
+    async (_event, text: string) => {
+      clipboard.writeText(typeof text === "string" ? text : "");
     },
   );
   handleTrustedIpc("ui:getWindowState", ["main"], async (event) => {

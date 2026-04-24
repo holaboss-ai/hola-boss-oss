@@ -19,6 +19,11 @@ test("desktop main process installs a minimal macOS app menu for holaOS", async 
   assert.match(source, /label: `Open \$\{MAC_APP_MENU_PRODUCT_LABEL\}`,/);
   assert.match(source, /click: \(\) => \{\s*focusOrCreateMainWindow\(\);\s*\},/);
   assert.match(source, /label: `Quit \$\{MAC_APP_MENU_PRODUCT_LABEL\}`,\s*role: "quit",/);
+  assert.match(source, /label: "Edit",\s*submenu: \[/);
+  assert.match(source, /label: "Cut", role: "cut"/);
+  assert.match(source, /label: "Copy", role: "copy"/);
+  assert.match(source, /label: "Paste", role: "paste"/);
+  assert.match(source, /label: "Select All", role: "selectAll"/);
   assert.match(source, /Menu\.setApplicationMenu\(Menu\.buildFromTemplate\(template\)\);/);
   assert.match(source, /app\.whenReady\(\)\.then\(async \(\) => \{[\s\S]*installMacApplicationMenu\(\);[\s\S]*applyMainShellContentSecurityPolicy\(session\.defaultSession\);/);
 });

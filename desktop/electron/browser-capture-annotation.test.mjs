@@ -22,14 +22,30 @@ test("desktop browser exposes screenshot clipboard capture through Electron IPC"
 
   assert.match(mainSource, /ipcMain\.handle\("browser:captureScreenshotToClipboard", async \(\) => \{/);
   assert.match(mainSource, /clipboard\.writeImage\(image\);/);
+  assert.match(mainSource, /function readClipboardImagePayload\(\): ClipboardImagePayload \| null \{/);
+  assert.match(mainSource, /const image = clipboard\.readImage\(\);/);
+  assert.match(mainSource, /const png = image\.toPNG\(\);/);
+  assert.match(mainSource, /"clipboard:readImage"/);
+  assert.match(mainSource, /"clipboard:writeText"/);
   assert.match(
     preloadSource,
     /captureScreenshotToClipboard: \(\) =>\s*ipcRenderer\.invoke\("browser:captureScreenshotToClipboard"\) as Promise<BrowserClipboardScreenshotPayload>/,
   );
   assert.match(
+    preloadSource,
+    /readImage: \(\) =>\s*ipcRenderer\.invoke\("clipboard:readImage"\) as Promise<ClipboardImagePayload \| null>/,
+  );
+  assert.match(
+    preloadSource,
+    /writeText: \(text: string\) =>\s*ipcRenderer\.invoke\("clipboard:writeText", text\) as Promise<void>/,
+  );
+  assert.match(
     electronTypes,
     /captureScreenshotToClipboard: \(\) => Promise<BrowserClipboardScreenshotPayload>;/,
   );
+  assert.match(electronTypes, /interface ClipboardImagePayload \{/);
+  assert.match(electronTypes, /readImage: \(\) => Promise<ClipboardImagePayload \| null>;/);
+  assert.match(electronTypes, /writeText: \(text: string\) => Promise<void>;/);
 });
 
 test("desktop browser exposes injected comment capture and crops annotations into chat-ready images", async () => {

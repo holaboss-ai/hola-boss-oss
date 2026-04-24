@@ -654,8 +654,12 @@ test("chat composer can paste clipboard file and image attachments into the pend
   );
   assert.match(
     source,
-    /function clipboardFilesFromDataTransfer\(dataTransfer: DataTransfer \| null\): File\[\]/,
+    /function clipboardFilesFromDataTransfer\(\s*dataTransfer: DataTransfer \| null,\s*\): File\[\]/,
   );
+  assert.match(source, /function fileFromClipboardImagePayload\(\s*payload: ClipboardImagePayload \| null,\s*\): File \| null/);
+  assert.match(source, /window\.electronAPI\.clipboard\.readImage\(\)/);
+  assert.match(source, /function explorerAttachmentFilesFromClipboardText\(\s*clipboardText: string,\s*\): ExplorerAttachmentDragPayload\[\]/);
+  assert.match(source, /getExplorerAttachmentClipboardEntry\(\)/);
   assert.match(
     source,
     /dataTransfer\.files\.length > 0\s*\?\s*Array\.from\(dataTransfer\.files\)/,
@@ -668,6 +672,11 @@ test("chat composer can paste clipboard file and image attachments into the pend
     source,
     /const pastedFiles = clipboardFilesFromDataTransfer\(event\.clipboardData\);/,
   );
+  assert.match(source, /const explorerFiles =\s*explorerAttachmentFilesFromClipboardText\(clipboardText\);/);
+  assert.match(source, /onAddExplorerAttachments\(explorerFiles\);/);
+  assert.match(source, /const hasClipboardImageType = clipboardTypes\.some\(/);
+  assert.match(source, /clipboardImageFileFromElectronClipboard\(\)/);
+  assert.match(source, /onAddDroppedFiles\(\[file\]\);/);
   assert.match(source, /event\.preventDefault\(\);/);
   assert.match(source, /onAddDroppedFiles\(pastedFiles\);/);
   assert.match(source, /onPaste=\{handleTextareaPaste\}/);

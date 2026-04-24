@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { PaneCard } from "@/components/ui/PaneCard";
 import { browserSurfaceStatusSummary } from "@/components/panes/browserSessionUi";
 import {
+  BrowserCaptureStatusToast,
   type BrowserChatCommentDraftPayload,
   useBrowserCaptureActions,
 } from "@/components/panes/useBrowserCaptureActions";
@@ -913,11 +914,7 @@ export function BrowserPane({
               </div>
             </form>
           </div>
-          {actionStatus ? (
-            <div className="px-1.5 pb-1 text-[11px] text-muted-foreground">
-              {actionStatus}
-            </div>
-          ) : null}
+          <BrowserCaptureStatusToast message={actionStatus} />
           {showBookmarkStrip ? (
             <div className="flex min-h-6 items-center gap-0.5 overflow-x-auto px-1.5 py-0.5">
               {bookmarks.slice(0, 12).map((bookmark) => (

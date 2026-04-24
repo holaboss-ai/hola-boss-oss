@@ -72,6 +72,7 @@ import {
   parseExplorerAttachmentDragPayload,
   resolveExplorerAttachmentKind,
 } from "@/lib/attachmentDrag";
+import { getExplorerAttachmentClipboardEntry } from "@/lib/appClipboard";
 import {
   DEFAULT_RUNTIME_MODEL,
   useDesktopAuthSession,
@@ -1221,6 +1222,53 @@ function clipboardFilesFromDataTransfer(
   return clipboardFiles.map((file, index) =>
     normalizeClipboardAttachmentFile(file, index),
   );
+}
+
+function base64ToArrayBuffer(value: string): ArrayBuffer {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes.buffer;
+}
+
+function fileFromClipboardImagePayload(
+  payload: ClipboardImagePayload | null,
+): File | null {
+  const contentBase64 = payload?.content_base64?.trim() ?? "";
+  if (!payload || !contentBase64) {
+    return null;
+  }
+
+  try {
+    return new File([base64ToArrayBuffer(contentBase64)], payload.name, {
+      type: payload.mime_type || "image/png",
+      lastModified: Date.now(),
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function clipboardImageFileFromElectronClipboard(): Promise<File | null> {
+  const payload = await window.electronAPI.clipboard.readImage();
+  return fileFromClipboardImagePayload(payload);
+}
+
+function explorerAttachmentFilesFromClipboardText(
+  clipboardText: string,
+): ExplorerAttachmentDragPayload[] {
+  const entry = getExplorerAttachmentClipboardEntry();
+  if (!entry) {
+    return [];
+  }
+
+  if (clipboardText.trim() !== entry.text) {
+    return [];
+  }
+
+  return [entry.payload];
 }
 
 function pendingAttachmentId(seed: string) {
@@ -10672,6 +10720,35 @@ function Composer({
   const handleTextareaPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
     const pastedFiles = clipboardFilesFromDataTransfer(event.clipboardData);
     if (pastedFiles.length === 0) {
+      const clipboardText =
+        event.clipboardData?.getData("text/plain")?.trim() ?? "";
+      const explorerFiles =
+        explorerAttachmentFilesFromClipboardText(clipboardText);
+      if (explorerFiles.length > 0) {
+        event.preventDefault();
+        onAddExplorerAttachments(explorerFiles);
+        return;
+      }
+
+      const clipboardTypes = Array.from(event.clipboardData?.types ?? []);
+      const hasClipboardImageType = clipboardTypes.some(
+        (type) => type === "Files" || type.startsWith("image/"),
+      );
+      if (
+        clipboardText ||
+        (clipboardTypes.includes("text/html") && !hasClipboardImageType)
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      void clipboardImageFileFromElectronClipboard()
+        .then((file) => {
+          if (file) {
+            onAddDroppedFiles([file]);
+          }
+        })
+        .catch(() => undefined);
       return;
     }
 

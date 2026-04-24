@@ -65,7 +65,9 @@ test("space browser display exposes screenshot copy and comment-to-chat actions"
   assert.match(source, /captureCommentsForChat\(\)/);
   assert.match(source, /screenshotCapturePending \? \(\s*<Loader2 size=\{13\} className="animate-spin" \/>\s*\) : \(\s*<Camera size=\{13\} \/>\s*\)/);
   assert.match(source, /commentCapturePending \? \(\s*<Loader2 size=\{13\} className="animate-spin" \/>\s*\) : \(\s*<MessageSquarePlus size=\{13\} \/>\s*\)/);
-  assert.match(source, /actionStatus \? \(/);
+  assert.match(source, /BrowserCaptureStatusToast/);
+  assert.match(source, /<BrowserCaptureStatusToast message=\{actionStatus\} \/>/);
+  assert.doesNotMatch(source, /px-1\.5 pt-1 text-\[11px\] text-muted-foreground/);
 });
 
 test("space browser display uses stored history entries for address suggestions", async () => {
