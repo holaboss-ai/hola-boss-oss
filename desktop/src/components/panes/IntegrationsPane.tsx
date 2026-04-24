@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useDesktopAuthSession } from "@/lib/auth/authClient";
+import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 interface ComposioToolkit {
   slug: string;
@@ -170,9 +171,29 @@ function mergeIntegrationCards(
   return cards.sort((left, right) => left.name.localeCompare(right.name));
 }
 
-export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
+export interface IntegrationsPaneProps {
+  embedded?: boolean;
+  /**
+   * When set, the pane operates in workspace-scoped mode: new Composio
+   * connections are bound to this workspace, and the "Connected" list only
+   * shows accounts attached to this workspace. When unset, the pane is a
+   * user-global view (legacy behavior).
+   */
+  workspaceId?: string | null;
+}
+
+export function IntegrationsPane({
+  embedded,
+  workspaceId: workspaceIdProp,
+}: IntegrationsPaneProps = {}) {
   const authSessionState = useDesktopAuthSession();
   const isSignedIn = Boolean(authSessionState.data?.user?.id?.trim());
+  const { selectedWorkspaceId } = useWorkspaceSelection();
+  const activeWorkspaceId =
+    (workspaceIdProp ?? selectedWorkspaceId ?? "").trim() || null;
+  const subtitle = activeWorkspaceId
+    ? "Connect accounts for this workspace. Switch workspaces in the top bar to bind a different account."
+    : "Connect your accounts to use them in workspaces.";
   const [integrations, setIntegrations] = useState<IntegrationCard[]>([]);
   const [connections, setConnections] = useState<
     IntegrationConnectionPayload[]
@@ -194,7 +215,9 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
       const [catalogResult, connectionResult, toolkitResult] =
         await Promise.all([
           window.electronAPI.workspace.listIntegrationCatalog(),
-          window.electronAPI.workspace.listIntegrationConnections(),
+          window.electronAPI.workspace.listIntegrationConnections(
+            activeWorkspaceId ? { workspaceId: activeWorkspaceId } : undefined,
+          ),
           window.electronAPI.workspace
             .composioListToolkits()
             .catch(() => ({ toolkits: [] as ComposioToolkit[] })),
@@ -210,7 +233,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [activeWorkspaceId]);
 
   useEffect(() => {
     void loadData();
@@ -312,6 +335,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
       const link = await window.electronAPI.workspace.composioConnect({
         provider: integration.providerId,
         owner_user_id: userId,
+        ...(activeWorkspaceId ? { workspace_id: activeWorkspaceId } : {}),
       });
 
       await window.electronAPI.ui.openExternalUrl(link.redirect_url);
@@ -327,6 +351,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
             provider: integration.providerId,
             owner_user_id: userId,
             account_label: `${integration.name} (Managed)`,
+            ...(activeWorkspaceId ? { workspace_id: activeWorkspaceId } : {}),
           });
           setStatusMessage("");
           void loadData();
@@ -427,7 +452,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
       return (
         <div>
           <p className="text-sm text-muted-foreground">
-            Connect your accounts to use them in workspaces.
+            {subtitle}
           </p>
           {embeddedSkeleton}
         </div>
@@ -442,7 +467,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
               Integrations
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Connect your accounts to use them in workspaces.
+              {subtitle}
             </p>
             {skeletonGrid}
           </div>
@@ -587,7 +612,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     return (
       <div className="grid gap-6">
         <p className="text-sm text-muted-foreground">
-          Connect your accounts to use them in workspaces.
+          {subtitle}
         </p>
 
         {/* Auth gate */}
@@ -757,7 +782,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
             Integrations
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Connect your accounts to use them in workspaces.
+            {subtitle}
           </p>
           {integrationContent}
         </div>

@@ -23,6 +23,7 @@ export interface IntegrationConnectionPayload {
   connection_id: string;
   provider_id: string;
   owner_user_id: string;
+  workspace_id: string | null;
   account_label: string;
   account_external_id: string | null;
   auth_mode: string;
@@ -177,6 +178,7 @@ function toIntegrationConnectionPayload(record: {
   connectionId: string;
   providerId: string;
   ownerUserId: string;
+  workspaceId: string | null;
   accountLabel: string;
   accountExternalId: string | null;
   authMode: string;
@@ -190,6 +192,7 @@ function toIntegrationConnectionPayload(record: {
     connection_id: record.connectionId,
     provider_id: record.providerId,
     owner_user_id: record.ownerUserId,
+    workspace_id: record.workspaceId,
     account_label: record.accountLabel,
     account_external_id: record.accountExternalId,
     auth_mode: record.authMode,
@@ -237,14 +240,15 @@ export class RuntimeIntegrationService {
     return { providers: PHASE_1_INTEGRATION_CATALOG };
   }
 
-  listConnections(params: { providerId?: string; ownerUserId?: string } = {}): {
+  listConnections(params: { providerId?: string; ownerUserId?: string; workspaceId?: string } = {}): {
     connections: IntegrationConnectionPayload[];
   } {
     return {
       connections: this.store
         .listIntegrationConnections({
           providerId: params.providerId,
-          ownerUserId: params.ownerUserId
+          ownerUserId: params.ownerUserId,
+          workspaceId: params.workspaceId
         })
         .map(toIntegrationConnectionPayload)
     };
@@ -324,6 +328,7 @@ export class RuntimeIntegrationService {
   createConnection(params: {
     providerId: string;
     ownerUserId: string;
+    workspaceId?: string | null;
     accountLabel: string;
     authMode: string;
     grantedScopes: string[];
@@ -338,10 +343,19 @@ export class RuntimeIntegrationService {
       rawAccountLabel ||
       (authMode === "manual_token" ? `${lookupProviderDisplayName(providerId)} connection` : requiredString(params.accountLabel, "account_label"));
 
+    const workspaceId =
+      typeof params.workspaceId === "string" && params.workspaceId.trim().length > 0
+        ? params.workspaceId.trim()
+        : null;
+    if (workspaceId) {
+      requireWorkspace(this.store, workspaceId);
+    }
+
     const record = this.store.upsertIntegrationConnection({
       connectionId: randomUUID(),
       providerId,
       ownerUserId,
+      workspaceId,
       accountLabel,
       authMode,
       grantedScopes: params.grantedScopes ?? [],
@@ -358,6 +372,7 @@ export class RuntimeIntegrationService {
     secretRef?: string;
     accountLabel?: string;
     grantedScopes?: string[];
+    workspaceId?: string | null;
   }): IntegrationConnectionPayload {
     const normalizedId = requiredString(connectionId, "connection_id");
     const existing = this.store.getIntegrationConnection(normalizedId);
@@ -365,10 +380,22 @@ export class RuntimeIntegrationService {
       throw new IntegrationServiceError(404, "connection not found");
     }
 
+    let workspaceId: string | null = existing.workspaceId;
+    if (params.workspaceId !== undefined) {
+      if (params.workspaceId === null || params.workspaceId === "") {
+        workspaceId = null;
+      } else {
+        const trimmed = requiredString(params.workspaceId, "workspace_id");
+        requireWorkspace(this.store, trimmed);
+        workspaceId = trimmed;
+      }
+    }
+
     const record = this.store.upsertIntegrationConnection({
       connectionId: existing.connectionId,
       providerId: existing.providerId,
       ownerUserId: existing.ownerUserId,
+      workspaceId,
       accountLabel: params.accountLabel ?? existing.accountLabel,
       authMode: existing.authMode,
       grantedScopes: params.grantedScopes ?? existing.grantedScopes,

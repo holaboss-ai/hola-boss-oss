@@ -1154,6 +1154,7 @@ declare global {
     connection_id: string;
     provider_id: string;
     owner_user_id: string;
+    workspace_id: string | null;
     account_label: string;
     account_external_id: string | null;
     auth_mode: string;
@@ -1498,7 +1499,7 @@ declare global {
       getSessionStreamDebug: () => Promise<HolabossSessionStreamDebugEntry[]>;
       isVerboseTelemetryEnabled: () => Promise<boolean>;
       listIntegrationCatalog: () => Promise<IntegrationCatalogResponsePayload>;
-      listIntegrationConnections: (params?: { providerId?: string; ownerUserId?: string }) => Promise<IntegrationConnectionListResponsePayload>;
+      listIntegrationConnections: (params?: { providerId?: string; ownerUserId?: string; workspaceId?: string }) => Promise<IntegrationConnectionListResponsePayload>;
       listIntegrationBindings: (workspaceId: string) => Promise<IntegrationBindingListResponsePayload>;
       upsertIntegrationBinding: (workspaceId: string, targetType: string, targetId: string, integrationKey: string, payload: IntegrationUpsertBindingPayload) => Promise<IntegrationBindingPayload>;
       createIntegrationConnection: (payload: IntegrationCreateConnectionPayload) => Promise<IntegrationConnectionPayload>;
@@ -1510,9 +1511,9 @@ declare global {
       deleteOAuthConfig: (providerId: string) => Promise<{ deleted: boolean }>;
       startOAuthFlow: (provider: string) => Promise<OAuthAuthorizeResponsePayload>;
       composioListToolkits: () => Promise<{ toolkits: Array<{ slug: string; name: string; description: string; logo: string | null; auth_schemes: string[]; categories: string[] }> }>;
-      composioConnect: (payload: { provider: string; owner_user_id: string; callback_url?: string }) => Promise<ComposioConnectResult>;
+      composioConnect: (payload: { provider: string; owner_user_id: string; callback_url?: string; workspace_id?: string }) => Promise<ComposioConnectResult>;
       composioAccountStatus: (connectedAccountId: string) => Promise<ComposioAccountStatus>;
-      composioFinalize: (payload: { connected_account_id: string; provider: string; owner_user_id: string; account_label?: string }) => Promise<IntegrationConnectionPayload>;
+      composioFinalize: (payload: { connected_account_id: string; provider: string; owner_user_id: string; account_label?: string; workspace_id?: string }) => Promise<IntegrationConnectionPayload>;
       resolveTemplateIntegrations: (payload: HolabossCreateWorkspacePayload) => Promise<ResolveTemplateIntegrationsResult>;
       generateTemplateContent(params: {
         contentType: "onboarding" | "readme";

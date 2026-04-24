@@ -3223,7 +3223,8 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     try {
       return integrationService.listConnections({
         providerId: optionalString(query.provider_id),
-        ownerUserId: optionalString(query.owner_user_id)
+        ownerUserId: optionalString(query.owner_user_id),
+        workspaceId: optionalString(query.workspace_id)
       });
     } catch (error) {
       if (error instanceof IntegrationServiceError) {
@@ -3241,6 +3242,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return integrationService.createConnection({
         providerId: typeof request.body.provider_id === "string" ? request.body.provider_id : "",
         ownerUserId: typeof request.body.owner_user_id === "string" ? request.body.owner_user_id : "",
+        workspaceId: typeof request.body.workspace_id === "string" ? request.body.workspace_id : null,
         accountLabel: typeof request.body.account_label === "string" ? request.body.account_label : "",
         authMode: typeof request.body.auth_mode === "string" ? request.body.auth_mode : "manual_token",
         grantedScopes: Array.isArray(request.body.granted_scopes) ? request.body.granted_scopes : [],
@@ -3261,11 +3263,19 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "request body must be an object");
     }
     try {
+      const workspaceIdField = Object.prototype.hasOwnProperty.call(request.body, "workspace_id")
+        ? (typeof request.body.workspace_id === "string"
+            ? request.body.workspace_id
+            : request.body.workspace_id === null
+              ? null
+              : undefined)
+        : undefined;
       return integrationService.updateConnection(params.connectionId, {
         status: typeof request.body.status === "string" ? request.body.status : undefined,
         secretRef: typeof request.body.secret_ref === "string" ? request.body.secret_ref : undefined,
         accountLabel: typeof request.body.account_label === "string" ? request.body.account_label : undefined,
-        grantedScopes: Array.isArray(request.body.granted_scopes) ? request.body.granted_scopes : undefined
+        grantedScopes: Array.isArray(request.body.granted_scopes) ? request.body.granted_scopes : undefined,
+        workspaceId: workspaceIdField
       });
     } catch (error) {
       if (error instanceof IntegrationServiceError) {
@@ -3498,6 +3508,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const provider = typeof request.body.provider === "string" ? request.body.provider : "";
     const ownerUserId = typeof request.body.owner_user_id === "string" ? request.body.owner_user_id : "local";
     const accountLabel = typeof request.body.account_label === "string" ? request.body.account_label : "";
+    const workspaceId =
+      typeof request.body.workspace_id === "string" && request.body.workspace_id.trim().length > 0
+        ? request.body.workspace_id.trim()
+        : null;
     if (!connectedAccountId || !provider) {
       return sendError(reply, 400, "connected_account_id and provider are required");
     }
@@ -3506,11 +3520,22 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       const connection = integrationService.createConnection({
         providerId: provider,
         ownerUserId,
+        workspaceId,
         accountLabel: label,
         authMode: "composio",
         grantedScopes: [],
         accountExternalId: connectedAccountId
       });
+      if (workspaceId) {
+        integrationService.upsertBinding({
+          workspaceId,
+          targetType: "workspace",
+          targetId: "default",
+          integrationKey: provider,
+          connectionId: connection.connection_id,
+          isDefault: true
+        });
+      }
       return connection;
     } catch (error) {
       if (error instanceof IntegrationServiceError) {

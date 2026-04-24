@@ -218,6 +218,7 @@ export class IntegrationBrokerService {
     secretRef: string | null;
     status: string;
     ownerUserId: string;
+    workspaceId: string | null;
     accountLabel: string;
     authMode: string;
     grantedScopes: string[];
@@ -248,6 +249,7 @@ export class IntegrationBrokerService {
     secretRef: string | null;
     status: string;
     ownerUserId: string;
+    workspaceId: string | null;
     accountLabel: string;
     authMode: string;
     grantedScopes: string[];
@@ -281,6 +283,7 @@ export class IntegrationBrokerService {
         connectionId: connection.connectionId,
         providerId: connection.providerId,
         ownerUserId: connection.ownerUserId,
+        workspaceId: connection.workspaceId,
         accountLabel: connection.accountLabel,
         authMode: connection.authMode,
         grantedScopes: connection.grantedScopes,

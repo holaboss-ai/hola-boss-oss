@@ -1349,7 +1349,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     isVerboseTelemetryEnabled: () => ipcRenderer.invoke("workspace:isVerboseTelemetryEnabled") as Promise<boolean>,
     listIntegrationCatalog: () =>
       ipcRenderer.invoke("workspace:listIntegrationCatalog") as Promise<IntegrationCatalogResponsePayload>,
-    listIntegrationConnections: (params?: { providerId?: string; ownerUserId?: string }) =>
+    listIntegrationConnections: (params?: { providerId?: string; ownerUserId?: string; workspaceId?: string }) =>
       ipcRenderer.invoke("workspace:listIntegrationConnections", params) as Promise<IntegrationConnectionListResponsePayload>,
     listIntegrationBindings: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listIntegrationBindings", workspaceId) as Promise<IntegrationBindingListResponsePayload>,
@@ -1373,11 +1373,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:startOAuthFlow", provider) as Promise<OAuthAuthorizeResponsePayload>,
     composioListToolkits: () =>
       ipcRenderer.invoke("workspace:composioListToolkits") as Promise<{ toolkits: Array<{ slug: string; name: string; description: string; logo: string | null; auth_schemes: string[]; categories: string[] }> }>,
-    composioConnect: (payload: { provider: string; owner_user_id: string; callback_url?: string }) =>
+    composioConnect: (payload: { provider: string; owner_user_id: string; callback_url?: string; workspace_id?: string }) =>
       ipcRenderer.invoke("workspace:composioConnect", payload) as Promise<ComposioConnectResult>,
     composioAccountStatus: (connectedAccountId: string) =>
       ipcRenderer.invoke("workspace:composioAccountStatus", connectedAccountId) as Promise<ComposioAccountStatus>,
-    composioFinalize: (payload: { connected_account_id: string; provider: string; owner_user_id: string; account_label?: string }) =>
+    composioFinalize: (payload: { connected_account_id: string; provider: string; owner_user_id: string; account_label?: string; workspace_id?: string }) =>
       ipcRenderer.invoke("workspace:composioFinalize", payload) as Promise<IntegrationConnectionPayload>,
     resolveTemplateIntegrations: (payload: HolabossCreateWorkspacePayload) =>
       ipcRenderer.invoke("workspace:resolveTemplateIntegrations", payload) as Promise<ResolveTemplateIntegrationsResult>,

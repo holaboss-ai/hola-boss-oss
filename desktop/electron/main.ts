@@ -2679,6 +2679,7 @@ interface IntegrationConnectionPayload {
   connection_id: string;
   provider_id: string;
   owner_user_id: string;
+  workspace_id: string | null;
   account_label: string;
   account_external_id: string | null;
   auth_mode: string;
@@ -11277,6 +11278,7 @@ async function listIntegrationCatalog(): Promise<IntegrationCatalogResponsePaylo
 async function listIntegrationConnections(params?: {
   providerId?: string;
   ownerUserId?: string;
+  workspaceId?: string;
 }): Promise<IntegrationConnectionListResponsePayload> {
   return requestRuntimeJson<IntegrationConnectionListResponsePayload>({
     method: "GET",
@@ -11284,6 +11286,7 @@ async function listIntegrationConnections(params?: {
     params: {
       provider_id: params?.providerId,
       owner_user_id: params?.ownerUserId,
+      workspace_id: params?.workspaceId,
     },
   });
 }
@@ -11432,6 +11435,7 @@ async function composioConnect(payload: {
   provider: string;
   owner_user_id: string;
   callback_url?: string;
+  workspace_id?: string;
 }): Promise<ComposioConnectResult> {
   return composioFetch<ComposioConnectResult>(
     "/api/composio/connect",
@@ -11475,6 +11479,7 @@ async function composioFinalize(payload: {
   provider: string;
   owner_user_id: string;
   account_label?: string;
+  workspace_id?: string;
 }): Promise<IntegrationConnectionPayload> {
   return requestRuntimeJson<IntegrationConnectionPayload>({
     method: "POST",
@@ -23168,8 +23173,10 @@ app.whenReady().then(async () => {
   handleTrustedIpc(
     "workspace:listIntegrationConnections",
     ["main"],
-    async (_event, params?: { providerId?: string; ownerUserId?: string }) =>
-      listIntegrationConnections(params),
+    async (
+      _event,
+      params?: { providerId?: string; ownerUserId?: string; workspaceId?: string },
+    ) => listIntegrationConnections(params),
   );
   handleTrustedIpc(
     "workspace:listIntegrationBindings",
@@ -23253,6 +23260,7 @@ app.whenReady().then(async () => {
         provider: string;
         owner_user_id: string;
         callback_url?: string;
+        workspace_id?: string;
       },
     ) => composioConnect(payload),
   );
@@ -23272,6 +23280,7 @@ app.whenReady().then(async () => {
         provider: string;
         owner_user_id: string;
         account_label?: string;
+        workspace_id?: string;
       },
     ) => composioFinalize(payload),
   );

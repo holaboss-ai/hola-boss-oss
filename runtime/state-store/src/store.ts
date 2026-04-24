@@ -53,6 +53,7 @@ export interface IntegrationConnectionRecord {
   connectionId: string;
   providerId: string;
   ownerUserId: string;
+  workspaceId: string | null;
   accountLabel: string;
   accountExternalId: string | null;
   authMode: string;
@@ -1416,6 +1417,7 @@ export class RuntimeStateStore {
     connectionId: string;
     providerId: string;
     ownerUserId: string;
+    workspaceId?: string | null;
     accountLabel: string;
     accountExternalId?: string | null;
     authMode: string;
@@ -1427,12 +1429,13 @@ export class RuntimeStateStore {
     this.db()
       .prepare(`
         INSERT INTO integration_connections (
-            connection_id, provider_id, owner_user_id, account_label, account_external_id,
+            connection_id, provider_id, owner_user_id, workspace_id, account_label, account_external_id,
             auth_mode, granted_scopes, status, secret_ref, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(connection_id) DO UPDATE SET
             provider_id = excluded.provider_id,
             owner_user_id = excluded.owner_user_id,
+            workspace_id = excluded.workspace_id,
             account_label = excluded.account_label,
             account_external_id = excluded.account_external_id,
             auth_mode = excluded.auth_mode,
@@ -1445,6 +1448,7 @@ export class RuntimeStateStore {
         params.connectionId,
         params.providerId,
         params.ownerUserId,
+        params.workspaceId ?? null,
         params.accountLabel,
         params.accountExternalId ?? null,
         params.authMode,
@@ -1470,7 +1474,9 @@ export class RuntimeStateStore {
     return row ? this.rowToIntegrationConnection(row) : null;
   }
 
-  listIntegrationConnections(params: { providerId?: string; ownerUserId?: string } = {}): IntegrationConnectionRecord[] {
+  listIntegrationConnections(
+    params: { providerId?: string; ownerUserId?: string; workspaceId?: string } = {}
+  ): IntegrationConnectionRecord[] {
     let query = "SELECT * FROM integration_connections";
     const filters: string[] = [];
     const values: string[] = [];
@@ -1481,6 +1487,10 @@ export class RuntimeStateStore {
     if (params.ownerUserId) {
       filters.push("owner_user_id = ?");
       values.push(params.ownerUserId);
+    }
+    if (params.workspaceId) {
+      filters.push("workspace_id = ?");
+      values.push(params.workspaceId);
     }
     if (filters.length > 0) {
       query += ` WHERE ${filters.join(" AND ")}`;
@@ -4756,6 +4766,7 @@ export class RuntimeStateStore {
           connection_id TEXT PRIMARY KEY,
           provider_id TEXT NOT NULL,
           owner_user_id TEXT NOT NULL,
+          workspace_id TEXT,
           account_label TEXT NOT NULL,
           account_external_id TEXT,
           auth_mode TEXT NOT NULL,
@@ -4768,6 +4779,9 @@ export class RuntimeStateStore {
 
       CREATE INDEX IF NOT EXISTS idx_integration_connections_provider_owner_updated
           ON integration_connections (provider_id, owner_user_id, updated_at DESC, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_integration_connections_workspace_provider
+          ON integration_connections (workspace_id, provider_id, updated_at DESC, created_at DESC);
 
       CREATE TABLE IF NOT EXISTS integration_bindings (
           binding_id TEXT PRIMARY KEY,
@@ -5260,6 +5274,30 @@ export class RuntimeStateStore {
     this.migrateRuntimeNotificationPriority(db);
     this.migrateCronjobInstructions(db);
     this.migrateAppBuildRestartAttempts(db);
+    this.migrateIntegrationConnectionsWorkspace(db);
+  }
+
+  private migrateIntegrationConnectionsWorkspace(db: Database.Database): void {
+    const columns = new Set<string>(
+      (db.prepare("PRAGMA table_info(integration_connections)").all() as Array<{ name: string }>).map((row) => row.name)
+    );
+    if (!columns.has("workspace_id")) {
+      db.exec("ALTER TABLE integration_connections ADD COLUMN workspace_id TEXT;");
+    }
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_integration_connections_workspace_provider
+          ON integration_connections (workspace_id, provider_id, updated_at DESC, created_at DESC);
+    `);
+    db.exec(`
+      UPDATE integration_connections
+      SET workspace_id = (
+        SELECT b.workspace_id FROM integration_bindings b
+        WHERE b.connection_id = integration_connections.connection_id
+        ORDER BY b.is_default DESC, datetime(b.created_at) ASC
+        LIMIT 1
+      )
+      WHERE workspace_id IS NULL;
+    `);
   }
 
   private ensureSessionRuntimeStateTableSchema(db: Database.Database): void {
@@ -6446,6 +6484,7 @@ export class RuntimeStateStore {
       connectionId: String(row.connection_id),
       providerId: String(row.provider_id),
       ownerUserId: String(row.owner_user_id),
+      workspaceId: row.workspace_id == null ? null : String(row.workspace_id),
       accountLabel: String(row.account_label),
       accountExternalId: row.account_external_id == null ? null : String(row.account_external_id),
       authMode: String(row.auth_mode),
