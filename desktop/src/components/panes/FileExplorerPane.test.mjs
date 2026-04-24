@@ -500,16 +500,21 @@ test("file explorer supports keyboard and context-menu copy, cut, and paste for 
   assert.match(source, /const copyExplorerEntryToClipboard = useCallback\(/);
   assert.match(
     source,
+    /setExplorerAttachmentClipboardEntry\(\{\s*text: normalizedSourcePath,\s*payload: \{/,
+  );
+  assert.match(source, /window\.electronAPI\.clipboard\s*\.writeText\(normalizedSourcePath\)/);
+  assert.match(
+    source,
     /if \(mode === "cut"\) \{[\s\S]*protectedWorkspacePathMessage\(\s*workspaceRootPath,\s*normalizedSourcePath,\s*\);/,
   );
   assert.match(
     source,
-    /explorerClipboardEntry = \{\s*mode,\s*sourcePath: normalizedSourcePath,\s*name: entry\.name\.trim\(\) \|\| getFolderName\(normalizedSourcePath\),\s*isDirectory: entry\.isDirectory,\s*workspaceId: normalizedWorkspaceId,\s*\};/,
+    /const clipboardName =\s*entry\.name\.trim\(\) \|\| getFolderName\(normalizedSourcePath\);[\s\S]*explorerClipboardEntry = \{\s*mode,\s*sourcePath: normalizedSourcePath,\s*name: clipboardName,\s*isDirectory: entry\.isDirectory,\s*workspaceId: normalizedWorkspaceId,\s*\};/,
   );
   assert.match(source, /const pasteExplorerClipboardIntoDirectory = useCallback\(/);
   assert.match(
     source,
-    /if \(clipboardEntry\.workspaceId !== normalizedWorkspaceId\) \{\s*setError\("Copy, cut, and paste only work within the current workspace\."\);\s*return;\s*\}/,
+    /if \(clipboardEntry\.workspaceId !== normalizedWorkspaceId\) \{\s*setError\(\s*"Copy, cut, and paste only work within the current workspace\.",\s*\);\s*return;\s*\}/,
   );
   assert.match(
     source,
@@ -523,9 +528,12 @@ test("file explorer supports keyboard and context-menu copy, cut, and paste for 
     source,
     /window\.addEventListener\("keydown", handleKeyDown\);[\s\S]*window\.removeEventListener\("keydown", handleKeyDown\);/,
   );
+  assert.match(source, /window\.addEventListener\("copy", handleCopy\);/);
+  assert.match(source, /window\.addEventListener\("cut", handleCut\);/);
+  assert.match(source, /window\.addEventListener\("paste", handleClipboardPaste\);/);
   assert.match(
     source,
-    /if \(isEditableKeyboardTarget\(focusTarget\)\) \{\s*return;\s*\}/,
+    /if \(isEditableKeyboardTarget\(focusTarget\)\) \{\s*return false;\s*\}/,
   );
   assert.match(
     source,

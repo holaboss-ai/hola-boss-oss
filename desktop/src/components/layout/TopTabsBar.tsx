@@ -247,18 +247,18 @@ export function TopTabsBar({
 
   const headerClassName = integratedTitleBar
     ? isWindowsIntegratedTitleBar
-      ? "window-drag relative h-[42px] px-2 pt-0.5 sm:px-3"
-      : "window-drag relative h-[42px] px-2 sm:px-3"
+      ? "window-drag relative h-[32px] px-2 pt-0.5 sm:px-3"
+      : "window-drag relative h-[32px] px-2 sm:px-3"
     : "rounded-xl border border-border bg-card px-2.5 py-0.5 shadow-subtle-xs backdrop-blur-sm sm:px-4";
-  const headerGridClassName = `relative z-10 grid min-w-0 items-center gap-1 sm:gap-1.5 lg:h-full lg:grid-cols-[auto_minmax(0,1fr)_auto] ${
+  const headerGridClassName = `relative z-10 grid min-w-0 items-center gap-1 sm:gap-1.5 lg:h-full lg:grid-cols-[minmax(0,1fr)_auto] ${
     isMacIntegratedTitleBar ? "pl-24" : ""
   }`;
 
   const windowControlButtonClassName =
     "window-no-drag flex h-5 w-5 items-center justify-center rounded-[7px] border border-transparent text-muted-foreground transition-colors duration-150 hover:bg-foreground/6 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
-  const workspaceSwitcherContainerClassName = `${integratedTitleBar ? "window-no-drag " : ""}relative max-w-[240px]`;
+  const workspaceSwitcherContainerClassName = `${integratedTitleBar ? "window-no-drag " : ""}relative w-[190px] shrink-0`;
   const workspaceSwitcherButtonClassName =
-    "h-8 max-w-full justify-start gap-1.5 px-2.5 rounded-lg text-xs";
+    "h-6 w-full justify-start gap-1 rounded-md px-1.5 text-[11px]";
 
   return (
     <header
@@ -266,43 +266,10 @@ export function TopTabsBar({
       className={headerClassName}
     >
       <div className={headerGridClassName}>
-        <div
-          ref={workspaceSwitcherRef}
-          className={workspaceSwitcherContainerClassName}
-        >
-          <Button
-            ref={workspaceSwitcherButtonRef}
-            variant={workspaceSwitcherOpen ? "secondary" : "bordered"}
-            size="default"
-            onClick={() => {
-              setWorkspaceSwitcherOpen((open) => {
-                const nextOpen = !open;
-                if (!nextOpen) {
-                  setWorkspaceQuery("");
-                } else {
-                  requestAnimationFrame(() => {
-                    updateWorkspaceSwitcherPosition();
-                  });
-                }
-                return nextOpen;
-              });
-            }}
-            className={workspaceSwitcherButtonClassName}
-          >
-            <FolderKanban className="size-3.5 shrink-0 text-primary" />
-            <span className="min-w-0 truncate text-left font-medium">
-              {selectedWorkspace?.name || "Select workspace"}
-            </span>
-            <ChevronDown
-              className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${workspaceSwitcherOpen ? "rotate-180" : ""}`}
-            />
-          </Button>
-        </div>
-
         <div className="hidden lg:block" />
 
         <div
-          className={`${integratedTitleBar ? "window-no-drag " : ""}flex items-center justify-self-end gap-1.5`}
+          className={`${integratedTitleBar ? "window-no-drag " : ""}flex min-w-0 items-center justify-self-end gap-1.5`}
         >
           {isBillingAvailable ? (
             <CreditsPill
@@ -312,6 +279,38 @@ export function TopTabsBar({
               onClick={() => onOpenBilling?.()}
             />
           ) : null}
+          <div
+            ref={workspaceSwitcherRef}
+            className={workspaceSwitcherContainerClassName}
+          >
+            <Button
+              ref={workspaceSwitcherButtonRef}
+              variant={workspaceSwitcherOpen ? "secondary" : "bordered"}
+              size="xs"
+              onClick={() => {
+                setWorkspaceSwitcherOpen((open) => {
+                  const nextOpen = !open;
+                  if (!nextOpen) {
+                    setWorkspaceQuery("");
+                  } else {
+                    requestAnimationFrame(() => {
+                      updateWorkspaceSwitcherPosition();
+                    });
+                  }
+                  return nextOpen;
+                });
+              }}
+              className={workspaceSwitcherButtonClassName}
+            >
+              <FolderKanban className="size-3 shrink-0 text-primary" />
+              <span className="min-w-0 truncate text-left font-medium">
+                {selectedWorkspace?.name || "Select workspace"}
+              </span>
+              <ChevronDown
+                className={`ml-auto size-3 shrink-0 text-muted-foreground transition-transform ${workspaceSwitcherOpen ? "rotate-180" : ""}`}
+              />
+            </Button>
+          </div>
           <RuntimeStatusIndicator status={runtimeStatus} />
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -319,7 +318,7 @@ export function TopTabsBar({
               render={
                 <Button
                   variant="bordered"
-                  size="icon-sm"
+                  size="icon-xs"
                   aria-label="Open account menu"
                   className="overflow-hidden rounded-full p-0"
                 />

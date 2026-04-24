@@ -31,7 +31,9 @@ test("browser pane exposes screenshot copy and comment-to-chat actions", async (
   assert.match(source, /captureCommentsForChat\(\)/);
   assert.match(source, /screenshotCapturePending \? \(\s*<Loader2 size=\{13\} className="animate-spin" \/>\s*\) : \(\s*<Camera size=\{13\} \/>\s*\)/);
   assert.match(source, /commentCapturePending \? \(\s*<Loader2 size=\{13\} className="animate-spin" \/>\s*\) : \(\s*<MessageSquarePlus size=\{13\} \/>\s*\)/);
-  assert.match(source, /actionStatus \? \(/);
+  assert.match(source, /BrowserCaptureStatusToast/);
+  assert.match(source, /<BrowserCaptureStatusToast message=\{actionStatus\} \/>/);
+  assert.doesNotMatch(source, /px-1\.5 pb-1 text-\[11px\] text-muted-foreground/);
 });
 
 test("browser pane exposes a single inline browser-space switcher", async () => {

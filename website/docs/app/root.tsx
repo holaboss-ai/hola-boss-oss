@@ -23,27 +23,27 @@ export const links: Route.LinksFunction = () => [
 ];
 
 export const meta: Route.MetaFunction = () => [
-  { title: 'Holaboss Docs' },
+  { title: 'holaOS Docs' },
   {
     name: 'description',
     content:
-      'Guides, references, and platform internals for building and running long-horizon agents on Holaboss.',
+      'Guides, references, and platform internals for building and running long-horizon agents on holaOS.',
   },
-  { property: 'og:title', content: 'Holaboss Docs' },
+  { property: 'og:title', content: 'holaOS Docs' },
   {
     property: 'og:description',
     content:
-      'Guides, references, and platform internals for building and running long-horizon agents on Holaboss.',
+      'Guides, references, and platform internals for building and running long-horizon agents on holaOS.',
   },
   { property: 'og:type', content: 'website' },
-  { property: 'og:site_name', content: 'Holaboss' },
+  { property: 'og:site_name', content: 'holaOS' },
   { property: 'og:image', content: '/docs/logo.svg' },
   { name: 'twitter:card', content: 'summary_large_image' },
-  { name: 'twitter:title', content: 'Holaboss Docs' },
+  { name: 'twitter:title', content: 'holaOS Docs' },
   {
     name: 'twitter:description',
     content:
-      'Guides, references, and platform internals for building and running long-horizon agents on Holaboss.',
+      'Guides, references, and platform internals for building and running long-horizon agents on holaOS.',
   },
   { name: 'twitter:image', content: '/docs/logo.svg' },
   { name: 'theme-color', content: '#F58419' },

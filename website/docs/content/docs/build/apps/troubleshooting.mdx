@@ -5,7 +5,7 @@ description: Diagnose and fix failures in the local runtime, desktop, or workspa
 
 Use this page when `desktop:dev`, the embedded runtime, or a packaged runtime is not behaving the way the code says it should.
 
-If you hit something that is not covered here, we always welcome issues. Real setup failures, unclear docs, and runtime edge cases are all useful signals for improving `holaOS` and Holaboss Desktop.
+If you hit something that is not covered here, we always welcome issues. Real setup failures, unclear docs, and runtime edge cases are all useful signals for improving `holaOS` and holaOS Desktop.
 
 ## First triage commands
 
@@ -75,7 +75,7 @@ Check the provider path first:
 
 The runtime config parser merges values from `runtime`, `providers.holaboss_model_proxy`, `integrations.holaboss`, and `capabilities.desktop_browser`. The executable examples for this are in `runtime/api-server/src/runtime-config.test.ts`.
 
-If you are using direct provider fallback instead of the Holaboss model proxy path, verify the corresponding direct-provider env vars such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENROUTER_API_KEY`.
+If you are using direct provider fallback instead of the holaOS model proxy path, verify the corresponding direct-provider env vars such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENROUTER_API_KEY`.
 
 From the Electron `userData` directory, a quick shape check looks like this:
 

@@ -73,6 +73,7 @@ import {
   parseExplorerAttachmentDragPayload,
   resolveExplorerAttachmentKind,
 } from "@/lib/attachmentDrag";
+import { getExplorerAttachmentClipboardEntry } from "@/lib/appClipboard";
 import {
   DEFAULT_RUNTIME_MODEL,
   useDesktopAuthSession,
@@ -1177,6 +1178,53 @@ function clipboardFilesFromDataTransfer(
   );
 }
 
+function base64ToArrayBuffer(value: string): ArrayBuffer {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes.buffer;
+}
+
+function fileFromClipboardImagePayload(
+  payload: ClipboardImagePayload | null,
+): File | null {
+  const contentBase64 = payload?.content_base64?.trim() ?? "";
+  if (!payload || !contentBase64) {
+    return null;
+  }
+
+  try {
+    return new File([base64ToArrayBuffer(contentBase64)], payload.name, {
+      type: payload.mime_type || "image/png",
+      lastModified: Date.now(),
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function clipboardImageFileFromElectronClipboard(): Promise<File | null> {
+  const payload = await window.electronAPI.clipboard.readImage();
+  return fileFromClipboardImagePayload(payload);
+}
+
+function explorerAttachmentFilesFromClipboardText(
+  clipboardText: string,
+): ExplorerAttachmentDragPayload[] {
+  const entry = getExplorerAttachmentClipboardEntry();
+  if (!entry) {
+    return [];
+  }
+
+  if (clipboardText.trim() !== entry.text) {
+    return [];
+  }
+
+  return [entry.payload];
+}
+
 function pendingAttachmentId(seed: string) {
   return `${seed}-${crypto.randomUUID()}`;
 }
@@ -1390,6 +1438,46 @@ function turnInputIdsFromHistoryMessages(
     inputIds.push(inputId);
   }
   return inputIds;
+}
+
+function assistantInputIdsFromChatMessages(messages: ChatMessage[]) {
+  const inputIds = new Set<string>();
+  for (const message of messages) {
+    if (message.role !== "assistant") {
+      continue;
+    }
+    const inputId = inputIdFromMessageId(message.id, "assistant");
+    if (inputId) {
+      inputIds.add(inputId);
+    }
+  }
+  return inputIds;
+}
+
+function uniqueChatMessagesInDisplayOrder(messages: ChatMessage[]) {
+  const seen = new Set<string>();
+  return messages.filter((message) => {
+    if (seen.has(message.id)) {
+      return false;
+    }
+    seen.add(message.id);
+    return true;
+  });
+}
+
+function prependUniqueChatMessages(
+  prependedMessages: ChatMessage[],
+  currentMessages: ChatMessage[],
+) {
+  const seen = new Set(currentMessages.map((message) => message.id));
+  const uniquePrependedMessages = prependedMessages.filter((message) => {
+    if (seen.has(message.id)) {
+      return false;
+    }
+    seen.add(message.id);
+    return true;
+  });
+  return [...uniquePrependedMessages, ...currentMessages];
 }
 
 function reconcileQueuedSessionInputs(
@@ -3135,6 +3223,7 @@ export function ChatPane({
     outputEvents: SessionOutputEventPayload[],
     outputs: WorkspaceOutputRecordPayload[],
     memoryProposals: MemoryUpdateProposalRecordPayload[],
+    knownAssistantInputIds: Set<string> = new Set(),
   ): ChatMessage[] {
     const outputEventsByInputId = new Map<
       string,
@@ -3182,12 +3271,16 @@ export function ChatPane({
       }
     }
 
-    const assistantHistoryInputIds = new Set(
-      historyMessages
-        .filter((message) => message.role === "assistant")
-        .map((message) => inputIdFromMessageId(message.id, "assistant"))
-        .filter(Boolean),
-    );
+    const assistantHistoryInputIds = new Set(knownAssistantInputIds);
+    for (const message of historyMessages) {
+      if (message.role !== "assistant") {
+        continue;
+      }
+      const inputId = inputIdFromMessageId(message.id, "assistant");
+      if (inputId) {
+        assistantHistoryInputIds.add(inputId);
+      }
+    }
 
     return historyMessages
       .flatMap((message) => {
@@ -3311,6 +3404,7 @@ export function ChatPane({
     },
     options?: {
       cancelled?: () => boolean;
+      knownAssistantInputIds?: Set<string>;
     },
   ) {
     const cancelled = options?.cancelled ?? (() => false);
@@ -3343,6 +3437,7 @@ export function ChatPane({
           [],
           [],
           [],
+          options?.knownAssistantInputIds,
         ),
       };
     }
@@ -3438,6 +3533,7 @@ export function ChatPane({
         outputEvents,
         outputs,
         memoryProposals,
+        options?.knownAssistantInputIds,
       ),
     };
   }
@@ -3481,7 +3577,7 @@ export function ChatPane({
 
     loadedHistoryOutputEventsRef.current = page.outputEvents;
     setSessionOutputs(page.outputs);
-    setMessages(page.renderedMessages);
+    setMessages(uniqueChatMessagesInDisplayOrder(page.renderedMessages));
     setLoadedHistoryMessageCount(page.history.count);
     setTotalHistoryMessageCount(page.history.total);
     setIsLoadingOlderHistoryState(false);
@@ -3614,13 +3710,18 @@ export function ChatPane({
     setIsLoadingOlderHistoryState(true);
 
     try {
-      const page = await loadSessionHistoryPage({
-        sessionId,
-        workspaceId,
-        limit: CHAT_HISTORY_PAGE_SIZE,
-        offset: loadedHistoryMessageCount,
-        order: "desc",
-      });
+      const page = await loadSessionHistoryPage(
+        {
+          sessionId,
+          workspaceId,
+          limit: CHAT_HISTORY_PAGE_SIZE,
+          offset: loadedHistoryMessageCount,
+          order: "desc",
+        },
+        {
+          knownAssistantInputIds: assistantInputIdsFromChatMessages(messages),
+        },
+      );
       if (!page || !isSessionHistoryTargetActive(sessionId, workspaceId)) {
         pendingHistoryPrependRestoreRef.current = null;
         return;
@@ -3639,7 +3740,9 @@ export function ChatPane({
         pendingHistoryPrependRestoreRef.current = null;
         return;
       }
-      setMessages((prev) => [...page.renderedMessages, ...prev]);
+      setMessages((prev) =>
+        prependUniqueChatMessages(page.renderedMessages, prev),
+      );
     } catch (error) {
       if (isSessionHistoryTargetActive(sessionId, workspaceId)) {
         pendingHistoryPrependRestoreRef.current = null;
@@ -7602,6 +7705,7 @@ function UserTurn({
     () => parseSerializedQuotedSkillPrompt(text),
     [text],
   );
+  const userBubbleText = parsedQuotedSkills.body || text.trim();
 
   const bubbleContentRef = useRef<HTMLDivElement>(null);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -7614,7 +7718,7 @@ function UserTurn({
     }
     // 180px ~= 6–7 lines of chat-user-markdown at 0.875rem / 1.6 leading.
     setShowExpandButton(node.scrollHeight > 188);
-  }, [parsedQuotedSkills.body]);
+  }, [userBubbleText]);
 
   useEffect(() => {
     return () => {
@@ -7660,7 +7764,7 @@ function UserTurn({
             ))}
           </div>
         ) : null}
-        {parsedQuotedSkills.body ? (
+        {userBubbleText ? (
           <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full flex-col items-stretch rounded-2xl px-[18px] py-2.5 text-foreground">
             <div
               ref={bubbleContentRef}
@@ -7673,7 +7777,7 @@ function UserTurn({
                 className="chat-markdown chat-user-markdown max-w-full"
                 onLinkClick={onLinkClick}
               >
-                {parsedQuotedSkills.body}
+                {userBubbleText}
               </SimpleMarkdown>
               {showExpandButton && !isExpanded ? (
                 <div
@@ -9820,6 +9924,35 @@ function Composer({
   const handleTextareaPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
     const pastedFiles = clipboardFilesFromDataTransfer(event.clipboardData);
     if (pastedFiles.length === 0) {
+      const clipboardText =
+        event.clipboardData?.getData("text/plain")?.trim() ?? "";
+      const explorerFiles =
+        explorerAttachmentFilesFromClipboardText(clipboardText);
+      if (explorerFiles.length > 0) {
+        event.preventDefault();
+        onAddExplorerAttachments(explorerFiles);
+        return;
+      }
+
+      const clipboardTypes = Array.from(event.clipboardData?.types ?? []);
+      const hasClipboardImageType = clipboardTypes.some(
+        (type) => type === "Files" || type.startsWith("image/"),
+      );
+      if (
+        clipboardText ||
+        (clipboardTypes.includes("text/html") && !hasClipboardImageType)
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      void clipboardImageFileFromElectronClipboard()
+        .then((file) => {
+          if (file) {
+            onAddDroppedFiles([file]);
+          }
+        })
+        .catch(() => undefined);
       return;
     }
 

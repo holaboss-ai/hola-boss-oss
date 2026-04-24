@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { createElement, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export interface BrowserChatCommentDraftItem {
   id: string;
@@ -376,4 +377,23 @@ export function useBrowserCaptureActions(
     screenshotCapturePending: busyAction === "clipboard",
     commentCapturePending: busyAction === "comments",
   };
+}
+
+export function BrowserCaptureStatusToast({ message }: { message: string }) {
+  if (!message || typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
+    createElement(
+      "div",
+      {
+        "aria-live": "polite",
+        className:
+          "pointer-events-none fixed left-1/2 top-4 z-[100] -translate-x-1/2 rounded-full border border-border bg-popover/95 px-3.5 py-2 text-xs font-medium text-popover-foreground shadow-xl ring-1 ring-border/60 backdrop-blur-xl",
+      },
+      message,
+    ),
+    document.body,
+  );
 }

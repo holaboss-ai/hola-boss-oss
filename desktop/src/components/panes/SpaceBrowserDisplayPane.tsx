@@ -20,6 +20,7 @@ import {
 } from "react";
 import { browserSurfaceStatusSummary } from "@/components/panes/browserSessionUi";
 import {
+  BrowserCaptureStatusToast,
   type BrowserChatCommentDraftPayload,
   useBrowserCaptureActions,
 } from "@/components/panes/useBrowserCaptureActions";
@@ -487,11 +488,7 @@ export function SpaceBrowserDisplayPane({
             )}
           </Button>
         </div>
-        {actionStatus ? (
-          <div className="px-1.5 pt-1 text-[11px] text-muted-foreground">
-            {actionStatus}
-          </div>
-        ) : null}
+        <BrowserCaptureStatusToast message={actionStatus} />
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden p-3">

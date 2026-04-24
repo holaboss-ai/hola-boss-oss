@@ -3045,6 +3045,51 @@ test("buildPiPromptPayload frames persisted todo state as advisory continuity wh
   }
 });
 
+test("buildPiPromptPayload falls back to persisted session file when requested id is stale", async () => {
+  const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-stale-requested-session-"));
+  const stateDir = path.join(workspaceDir, ".holaboss", "pi-agent");
+  fs.mkdirSync(path.join(workspaceDir, ".holaboss", "pi-sessions"), { recursive: true });
+  const persistedSessionPath = path.join(workspaceDir, ".holaboss", "pi-sessions", "session-1.jsonl");
+  fs.writeFileSync(persistedSessionPath, "", "utf8");
+
+  const [, todoWrite] = createPiTodoToolDefinitions({
+    stateDir,
+    sessionId: "session-1",
+  });
+  await todoWrite.execute(
+    "call-seed",
+    {
+      ops: [
+        {
+          op: "replace",
+          phases: [
+            {
+              name: "Implementation",
+              tasks: [{ content: "Resume the existing work" }],
+            },
+          ],
+        },
+      ],
+    },
+    undefined,
+    undefined,
+    {} as never
+  );
+
+  try {
+    const prompt = await buildPiPromptPayload({
+      ...baseRequest(),
+      workspace_dir: workspaceDir,
+      harness_session_id: "session-1",
+      persisted_harness_session_id: persistedSessionPath,
+    });
+
+    assert.match(prompt.text, /Resumed session note:/);
+  } finally {
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+  }
+});
+
 test("buildPiPromptPayload expands leading slash skill references into quoted skill blocks", async () => {
   const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-slash-skills-"));
   const skillsDir = path.join(workspaceDir, "skills");
