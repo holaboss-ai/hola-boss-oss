@@ -1300,6 +1300,7 @@ function AppShellContent() {
   } | null>(null);
   const [chatSessionOpenRequest, setChatSessionOpenRequest] =
     useState<ChatSessionOpenRequest | null>(null);
+  const [chatImagePreviewOpen, setChatImagePreviewOpen] = useState(false);
   const [
     chatBrowserJumpRequestKeysBySessionId,
     setChatBrowserJumpRequestKeysBySessionId,
@@ -3761,6 +3762,7 @@ function AppShellContent() {
     workspaceSwitcherOpen ||
     settingsDialogOpen ||
     taskProposalDetailsDialogOpen ||
+    chatImagePreviewOpen ||
     workspaceAppsDialogOpen ||
     createWorkspacePanelOpen ||
     publishOpen;
@@ -3924,6 +3926,7 @@ function AppShellContent() {
           onSyncFileDisplayFromAgentOperation={
             handleSyncAgentOperationFileDisplay
           }
+          onImageAttachmentPreviewOpenChange={setChatImagePreviewOpen}
           focusRequestKey={chatFocusRequestKey}
         />
       ) : (
@@ -3932,6 +3935,7 @@ function AppShellContent() {
           onSyncFileDisplayFromAgentOperation={
             handleSyncAgentOperationFileDisplay
           }
+          onImageAttachmentPreviewOpenChange={setChatImagePreviewOpen}
           focusRequestKey={chatFocusRequestKey}
           onOpenLinkInBrowser={handleOpenLinkInAppBrowser}
           sessionJumpSessionId={chatSessionJumpRequest?.sessionId ?? null}
@@ -3995,6 +3999,7 @@ function AppShellContent() {
     agentView,
     chatFocusRequestKey,
     activeChatBrowserJumpRequest,
+    chatImagePreviewOpen,
     chatComposerDraftTextByWorkspace,
     chatSessionJumpRequest,
     chatSessionOpenRequest,

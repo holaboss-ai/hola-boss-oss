@@ -14,7 +14,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { flushSync } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -258,6 +258,23 @@ interface PendingExplorerAttachmentFile {
 type PendingAttachment =
   | PendingLocalAttachmentFile
   | PendingExplorerAttachmentFile;
+
+interface AttachmentListItem {
+  id: string;
+  kind: "image" | "file" | "folder";
+  name: string;
+  size_bytes: number;
+  workspace_path?: string;
+  file?: File;
+}
+
+interface ImageAttachmentPreviewState {
+  attachment: AttachmentListItem;
+  browserSnapshot: BrowserVisibleSnapshotPayload | null;
+  dataUrl: string;
+  isLoading: boolean;
+  errorMessage: string;
+}
 
 function attachmentLooksLikeImage(
   name: string,
@@ -3106,6 +3123,7 @@ interface ChatPaneBrowserJumpRequest {
 interface ChatPaneProps {
   onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
   onSyncFileDisplayFromAgentOperation?: (path: string) => void;
+  onImageAttachmentPreviewOpenChange?: (open: boolean) => void;
   focusRequestKey?: number;
   variant?: ChatPaneVariant;
   onOpenLinkInBrowser?: (url: string) => void;
@@ -3135,6 +3153,7 @@ interface ChatPaneProps {
 export function ChatPane({
   onOpenOutput,
   onSyncFileDisplayFromAgentOperation,
+  onImageAttachmentPreviewOpenChange,
   focusRequestKey = 0,
   variant = "default",
   onOpenLinkInBrowser,
@@ -3232,6 +3251,8 @@ export function ChatPane({
   const [artifactBrowserOpen, setArtifactBrowserOpen] = useState(false);
   const [artifactBrowserFilter, setArtifactBrowserFilter] =
     useState<ArtifactBrowserFilter>("all");
+  const [imageAttachmentPreview, setImageAttachmentPreview] =
+    useState<ImageAttachmentPreviewState | null>(null);
   const [memoryProposalAction, setMemoryProposalAction] = useState<{
     proposalId: string;
     action: "accept" | "dismiss";
@@ -3275,6 +3296,8 @@ export function ChatPane({
   const chatScrollbarBodyCursorRef = useRef<string | null>(null);
   const activeSessionIdRef = useRef<string | null>(null);
   const activeStreamIdRef = useRef<string | null>(null);
+  const imageAttachmentPreviewObjectUrlRef = useRef<string | null>(null);
+  const imageAttachmentPreviewRequestIdRef = useRef(0);
   const terminalEventTypeByInputIdRef = useRef<
     Map<string, "run_completed" | "run_failed">
   >(new Map());
@@ -6496,7 +6519,10 @@ export function ChatPane({
         id: attachment.id,
         kind:
           attachment.source === "local-file"
-            ? attachment.file.type.startsWith("image/")
+            ? attachmentLooksLikeImage(
+                  attachment.file.name,
+                  attachment.file.type,
+                )
               ? ("image" as const)
               : ("file" as const)
             : attachment.kind,
@@ -6508,9 +6534,134 @@ export function ChatPane({
           attachment.source === "local-file"
             ? attachment.file.size
             : attachment.size_bytes,
+        ...(attachment.source === "local-file"
+          ? { file: attachment.file }
+          : { workspace_path: attachment.absolutePath }),
       })),
     [pendingAttachments],
   );
+
+  const clearImageAttachmentPreviewObjectUrl = () => {
+    if (!imageAttachmentPreviewObjectUrlRef.current) {
+      return;
+    }
+    URL.revokeObjectURL(imageAttachmentPreviewObjectUrlRef.current);
+    imageAttachmentPreviewObjectUrlRef.current = null;
+  };
+
+  const closeImageAttachmentPreview = () => {
+    imageAttachmentPreviewRequestIdRef.current += 1;
+    clearImageAttachmentPreviewObjectUrl();
+    setImageAttachmentPreview(null);
+  };
+
+  useEffect(() => {
+    return () => {
+      clearImageAttachmentPreviewObjectUrl();
+    };
+  }, []);
+
+  useEffect(() => {
+    onImageAttachmentPreviewOpenChange?.(Boolean(imageAttachmentPreview));
+  }, [imageAttachmentPreview, onImageAttachmentPreviewOpenChange]);
+
+  useEffect(() => {
+    return () => {
+      onImageAttachmentPreviewOpenChange?.(false);
+    };
+  }, [onImageAttachmentPreviewOpenChange]);
+
+  const openImageAttachmentPreview = async (attachment: AttachmentListItem) => {
+    if (attachment.kind !== "image") {
+      return;
+    }
+
+    const attachmentPath = attachment.workspace_path?.trim() || "";
+    if (!attachment.file && !attachmentPath) {
+      return;
+    }
+
+    imageAttachmentPreviewRequestIdRef.current += 1;
+    const requestId = imageAttachmentPreviewRequestIdRef.current;
+    clearImageAttachmentPreviewObjectUrl();
+    let localObjectUrl = "";
+    const browserSnapshotPromise =
+      window.electronAPI.browser.captureVisibleSnapshot().catch(() => null);
+    const imageDataResultPromise = (async () => {
+      try {
+        if (attachment.file) {
+          localObjectUrl = URL.createObjectURL(attachment.file);
+          return { status: "fulfilled" as const, dataUrl: localObjectUrl };
+        }
+
+        const preview = await window.electronAPI.fs.readFilePreview(
+          attachmentPath,
+          selectedWorkspaceId,
+        );
+        if (preview.kind !== "image" || !preview.dataUrl) {
+          throw new Error(
+            preview.unsupportedReason ||
+              "Image preview is not available for this attachment.",
+          );
+        }
+        return { status: "fulfilled" as const, dataUrl: preview.dataUrl };
+      } catch (error) {
+        return { status: "rejected" as const, error };
+      }
+    })();
+
+    const browserSnapshot = await browserSnapshotPromise;
+    if (imageAttachmentPreviewRequestIdRef.current !== requestId) {
+      if (localObjectUrl) {
+        URL.revokeObjectURL(localObjectUrl);
+      }
+      return;
+    }
+
+    setImageAttachmentPreview({
+      attachment,
+      browserSnapshot,
+      dataUrl: "",
+      isLoading: true,
+      errorMessage: "",
+    });
+
+    const imageDataResult = await imageDataResultPromise;
+    if (imageAttachmentPreviewRequestIdRef.current !== requestId) {
+      if (localObjectUrl) {
+        URL.revokeObjectURL(localObjectUrl);
+      }
+      return;
+    }
+
+    if (imageDataResult.status === "rejected") {
+      clearImageAttachmentPreviewObjectUrl();
+      setImageAttachmentPreview({
+        attachment,
+        browserSnapshot,
+        dataUrl: "",
+        isLoading: false,
+        errorMessage:
+          imageDataResult.error instanceof Error &&
+          imageDataResult.error.message.trim()
+            ? imageDataResult.error.message
+            : "Failed to load image preview.",
+      });
+      return;
+    }
+
+    if (localObjectUrl) {
+      imageAttachmentPreviewObjectUrlRef.current = localObjectUrl;
+    }
+
+    setImageAttachmentPreview({
+      attachment,
+      browserSnapshot,
+      dataUrl: imageDataResult.dataUrl,
+      isLoading: false,
+      errorMessage: "",
+    });
+  };
 
   useEffect(() => {
     if (
@@ -7393,6 +7544,7 @@ export function ChatPane({
                         text={message.text}
                         createdAt={message.createdAt}
                         attachments={message.attachments ?? []}
+                        onPreviewAttachment={openImageAttachmentPreview}
                         onLinkClick={onOpenLinkInBrowser}
                       />
                     ) : (
@@ -7572,6 +7724,7 @@ export function ChatPane({
                           }}
                           onRemoveQuotedSkill={removeQuotedSkill}
                           onRemoveAttachment={removePendingAttachment}
+                          onPreviewAttachment={openImageAttachmentPreview}
                         />
                       </QueuedSessionInputRail>
                     </div>
@@ -7696,6 +7849,7 @@ export function ChatPane({
                       }}
                       onRemoveQuotedSkill={removeQuotedSkill}
                       onRemoveAttachment={removePendingAttachment}
+                      onPreviewAttachment={openImageAttachmentPreview}
                     />
                   </QueuedSessionInputRail>
                 </div>
@@ -7712,6 +7866,11 @@ export function ChatPane({
             onClose={() => setArtifactBrowserOpen(false)}
             onFilterChange={setArtifactBrowserFilter}
             onOpenOutput={onOpenOutput}
+          />
+          <ImageAttachmentPreviewModal
+            open={Boolean(imageAttachmentPreview)}
+            preview={imageAttachmentPreview}
+            onClose={closeImageAttachmentPreview}
           />
         </div>
       </div>
@@ -7958,12 +8117,7 @@ interface ComposerProps {
   input: string;
   quotedSkills: ChatComposerQuotedSkillItem[];
   slashCommands: ChatComposerSlashCommandOption[];
-  attachments: Array<{
-    id: string;
-    kind: "image" | "file" | "folder";
-    name: string;
-    size_bytes: number;
-  }>;
+  attachments: AttachmentListItem[];
   isResponding: boolean;
   pausePending: boolean;
   pauseDisabled: boolean;
@@ -7998,17 +8152,20 @@ interface ComposerProps {
   onSelectSlashCommand: (command: ChatComposerSlashCommandOption) => void;
   onRemoveQuotedSkill: (skillId: string) => void;
   onRemoveAttachment: (attachmentId: string) => void;
+  onPreviewAttachment: (attachment: AttachmentListItem) => void;
 }
 
 function UserTurn({
   text,
   createdAt,
   attachments,
+  onPreviewAttachment,
   onLinkClick,
 }: {
   text: string;
   createdAt?: string;
   attachments: ChatAttachment[];
+  onPreviewAttachment?: (attachment: AttachmentListItem) => void;
   onLinkClick?: (url: string) => void;
 }) {
   const [copyFeedbackVisible, setCopyFeedbackVisible] = useState(false);
@@ -8115,7 +8272,11 @@ function UserTurn({
           </div>
         ) : null}
         {attachments.length > 0 ? (
-          <AttachmentList attachments={attachments} className="justify-end" />
+          <AttachmentList
+            attachments={attachments}
+            className="justify-end"
+            onPreview={onPreviewAttachment}
+          />
         ) : null}
         {canCopy || timeLabel ? (
           <div className="flex items-center justify-end gap-2 pr-1 text-xs text-muted-foreground opacity-0 pointer-events-none transition duration-150 group-hover/user-turn:opacity-100 group-hover/user-turn:pointer-events-auto group-focus-within/user-turn:opacity-100 group-focus-within/user-turn:pointer-events-auto">
@@ -9477,46 +9638,183 @@ function TraceStepGroup({
 function AttachmentList({
   attachments,
   onRemove,
+  onPreview,
   className = "",
 }: {
-  attachments: Array<{
-    id: string;
-    kind: "image" | "file" | "folder";
-    name: string;
-    size_bytes: number;
-  }>;
+  attachments: AttachmentListItem[];
   onRemove?: (attachmentId: string) => void;
+  onPreview?: (attachment: AttachmentListItem) => void;
   className?: string;
 }) {
   return (
     <div className={`flex flex-wrap gap-2 ${className}`.trim()}>
-      {attachments.map((attachment) => (
-        <div
-          key={attachment.id}
-          className="bg-muted inline-flex max-w-full items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs text-foreground"
-        >
-          {attachment.kind === "image" ? (
-            <ImageIcon className="size-3 shrink-0 text-primary" />
-          ) : attachment.kind === "folder" ? (
-            <Folder className="size-3 shrink-0 text-primary" />
-          ) : (
-            <FileText className="size-3 shrink-0 text-primary" />
-          )}
-          <span className="truncate">{attachmentButtonLabel(attachment)}</span>
-          {onRemove ? (
-            <button
-              type="button"
-              onClick={() => onRemove(attachment.id)}
-              className="grid h-4 w-4 place-items-center rounded-full text-muted-foreground transition hover:text-foreground"
-              aria-label={`Remove ${attachment.name}`}
-            >
-              <X className="size-3" />
-            </button>
-          ) : null}
-        </div>
-      ))}
+      {attachments.map((attachment) => {
+        const isImagePreviewable =
+          attachment.kind === "image" &&
+          Boolean(onPreview) &&
+          Boolean(
+            attachment.file ||
+              (typeof attachment.workspace_path === "string" &&
+                attachment.workspace_path.trim()),
+          );
+
+        const content = (
+          <>
+            {attachment.kind === "image" ? (
+              <ImageIcon className="size-3 shrink-0 text-primary" />
+            ) : attachment.kind === "folder" ? (
+              <Folder className="size-3 shrink-0 text-primary" />
+            ) : (
+              <FileText className="size-3 shrink-0 text-primary" />
+            )}
+            <span className="truncate">{attachmentButtonLabel(attachment)}</span>
+          </>
+        );
+
+        return (
+          <div
+            key={attachment.id}
+            className="bg-muted inline-flex max-w-full items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs text-foreground"
+          >
+            {isImagePreviewable ? (
+              <button
+                type="button"
+                onClick={() => onPreview?.(attachment)}
+                className="-my-1 -ml-1 flex min-w-0 items-center gap-2 rounded-full px-1 py-1 text-left transition hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                aria-label={`Preview ${attachment.name}`}
+                title={`Preview ${attachment.name}`}
+              >
+                {content}
+              </button>
+            ) : (
+              content
+            )}
+            {onRemove ? (
+              <button
+                type="button"
+                onClick={() => onRemove(attachment.id)}
+                className="grid h-4 w-4 place-items-center rounded-full text-muted-foreground transition hover:text-foreground"
+                aria-label={`Remove ${attachment.name}`}
+              >
+                <X className="size-3" />
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
+}
+
+function ImageAttachmentPreviewModal({
+  open,
+  preview,
+  onClose,
+}: {
+  open: boolean;
+  preview: ImageAttachmentPreviewState | null;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      event.preventDefault();
+      onClose();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open, onClose]);
+
+  if (!open || !preview) {
+    return null;
+  }
+
+  const sizeLabel = formatAttachmentSize(preview.attachment.size_bytes);
+  const modalContent = (
+    <div
+      className="fixed inset-0 z-[90] flex items-center justify-center px-6 py-8"
+      onClick={onClose}
+    >
+      {preview.browserSnapshot ? (
+        <img
+          aria-hidden="true"
+          src={preview.browserSnapshot.dataUrl}
+          alt=""
+          className="pointer-events-none absolute object-fill"
+          style={{
+            left: `${preview.browserSnapshot.bounds.x}px`,
+            top: `${preview.browserSnapshot.bounds.y}px`,
+            width: `${preview.browserSnapshot.bounds.width}px`,
+            height: `${preview.browserSnapshot.bounds.height}px`,
+          }}
+        />
+      ) : null}
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 bg-black/70 backdrop-blur-[2px]"
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Preview ${preview.attachment.name}`}
+        className="relative z-10 flex max-h-full w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-background shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold text-foreground">
+              {preview.attachment.name}
+            </div>
+            <div className="truncate text-xs text-muted-foreground">
+              {sizeLabel || "Image attachment"}
+            </div>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            onClick={onClose}
+            aria-label="Close image preview"
+          >
+            <X className="size-3.5" />
+          </Button>
+        </div>
+
+        <div className="min-h-[320px] flex-1 overflow-auto bg-black/90 px-4 py-4">
+          {preview.isLoading ? (
+            <div className="flex h-full min-h-[280px] items-center justify-center gap-2 text-sm text-white/80">
+              <Loader2 className="size-4 animate-spin" />
+              <span>Loading preview...</span>
+            </div>
+          ) : preview.errorMessage ? (
+            <div className="flex h-full min-h-[280px] flex-col items-center justify-center gap-3 px-6 text-center">
+              <AlertTriangle className="size-5 text-warning" />
+              <p className="max-w-md text-sm text-white/80">
+                {preview.errorMessage}
+              </p>
+            </div>
+          ) : (
+            <img
+              src={preview.dataUrl}
+              alt={preview.attachment.name}
+              className="mx-auto block max-h-[72vh] max-w-full object-contain"
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  return createPortal(modalContent, document.body);
 }
 
 function ModelCombobox({
@@ -9872,6 +10170,7 @@ function Composer({
   onSelectSlashCommand,
   onRemoveQuotedSkill,
   onRemoveAttachment,
+  onPreviewAttachment,
 }: ComposerProps) {
   const [isDragActive, setIsDragActive] = useState(false);
   const [composerActionsMenuOpen, setComposerActionsMenuOpen] = useState(false);
@@ -10344,6 +10643,7 @@ function Composer({
           <div className="border-b border-border px-4 py-3">
             <AttachmentList
               attachments={attachments}
+              onPreview={onPreviewAttachment}
               onRemove={onRemoveAttachment}
             />
           </div>
