@@ -94,7 +94,7 @@ $HB_SANDBOX_ROOT/
 | `SANDBOX_AGENT_BIND_PORT` | Bind the runtime to a specific port |
 | `SANDBOX_AGENT_HARNESS` | Select the harness path, currently `pi` in OSS |
 | `HOLABOSS_RUNTIME_DB_PATH` | Override the SQLite runtime DB path used by `runtime/state-store` |
-| `HOLABOSS_SANDBOX_AUTH_TOKEN` | Provide product auth when you are running against the Holaboss-backed model proxy path |
+| `HOLABOSS_SANDBOX_AUTH_TOKEN` | Provide product auth when you are running against the holaOS-backed model proxy path |
 | `HOLABOSS_USER_ID` | Provide the runtime user identity for auth-backed flows |
 | `HOLABOSS_MODEL_PROXY_BASE_URL` | Override the model-proxy base URL instead of relying on the default |
 | `HOLABOSS_DEFAULT_MODEL` | Change the default selected model |
@@ -170,8 +170,8 @@ holaboss-runtime
 Windows:
 
 ```powershell
-New-Item -ItemType Directory -Force C:\Holaboss | Out-Null
-Expand-Archive -Path .\holaboss-runtime-windows.zip -DestinationPath C:\Holaboss -Force
+New-Item -ItemType Directory -Force C:\holaOS | Out-Null
+Expand-Archive -Path .\holaboss-runtime-windows.zip -DestinationPath C:\holaOS -Force
 
 $env:HB_SANDBOX_ROOT="$env:LOCALAPPDATA\holaboss"
 $env:SANDBOX_AGENT_BIND_HOST="127.0.0.1"
@@ -182,7 +182,7 @@ $env:HOLABOSS_RUNTIME_DB_PATH="$env:LOCALAPPDATA\holaboss\state\runtime.db"
 $env:PROACTIVE_ENABLE_REMOTE_BRIDGE="1"
 $env:PROACTIVE_BRIDGE_BASE_URL="https://your-bridge.example"
 
-C:\Holaboss\runtime-windows\bin\sandbox-runtime.cmd
+C:\holaOS\runtime-windows\bin\sandbox-runtime.cmd
 ```
 
 ## Smoke test a packaged runtime
