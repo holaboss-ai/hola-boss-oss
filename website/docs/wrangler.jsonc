@@ -15,7 +15,6 @@
   },
 
   "routes": [
-    { "pattern": "www.holaboss.ai/docs", "zone_name": "holaboss.ai" },
     { "pattern": "www.holaboss.ai/docs/*", "zone_name": "holaboss.ai" },
   ],
 
@@ -32,7 +31,6 @@
         "not_found_handling": "none",
       },
       "routes": [
-        { "pattern": "preview.imerchstaging.com/docs", "zone_name": "imerchstaging.com" },
         { "pattern": "preview.imerchstaging.com/docs/*", "zone_name": "imerchstaging.com" },
       ],
     },
@@ -49,7 +47,6 @@
         "not_found_handling": "none",
       },
       "routes": [
-        { "pattern": "www.imerchstaging.com/docs", "zone_name": "imerchstaging.com" },
         { "pattern": "www.imerchstaging.com/docs/*", "zone_name": "imerchstaging.com" },
       ],
     },
@@ -66,7 +63,6 @@
         "not_found_handling": "none",
       },
       "routes": [
-        { "pattern": "www.holaboss.ai/docs", "zone_name": "holaboss.ai" },
         { "pattern": "www.holaboss.ai/docs/*", "zone_name": "holaboss.ai" },
       ],
     },
