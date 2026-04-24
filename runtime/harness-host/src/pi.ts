@@ -178,6 +178,10 @@ const PI_AGENT_STATE_DIR = ".holaboss/pi-agent";
 const PI_SESSION_DIR = ".holaboss/pi-sessions";
 const PI_HARNESS_CLIENT_NAME = "holaboss-pi-harness";
 const PI_HARNESS_CLIENT_VERSION = "0.1.0";
+const PI_REQUEST_TOOL_NAME_ALIASES: Record<string, string> = {
+  find: "glob",
+  ls: "list",
+};
 const PI_MCP_DISCOVERY_RETRY_INTERVAL_MS = 250;
 const PI_FALLBACK_CONTEXT_WINDOW = 65_536;
 const PI_FALLBACK_MAX_TOKENS = 8_192;
@@ -1355,6 +1359,29 @@ export function buildPiProviderConfig(request: HarnessHostPiRequest) {
   };
 }
 
+export function toolEnabledForPiRequest(
+  request: Pick<HarnessHostPiRequest, "tools">,
+  toolName: string,
+): boolean {
+  const requestedTools = request.tools ?? {};
+  if (Object.keys(requestedTools).length === 0) {
+    return true;
+  }
+  const normalizedToolName = toolName.trim().toLowerCase();
+  if (requestedTools[normalizedToolName] === true) {
+    return true;
+  }
+  const alias = PI_REQUEST_TOOL_NAME_ALIASES[normalizedToolName];
+  return alias ? requestedTools[alias] === true : false;
+}
+
+export function filterPiToolDefinitionsForRequest<TTool extends { name: string }>(
+  request: Pick<HarnessHostPiRequest, "tools">,
+  tools: readonly TTool[],
+): TTool[] {
+  return tools.filter((tool) => toolEnabledForPiRequest(request, tool.name));
+}
+
 async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSessionHandle> {
   const stateDir = resolvePiStateDir(request.workspace_dir);
   const sessionDir = resolvePiSessionDir(request.workspace_dir);
@@ -1384,18 +1411,21 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
   const skillDirs = resolvePiSkillDirs(request);
   const loadedSkills = loadPiSkills(skillDirs);
   const skillMetadataByAlias = buildPiSkillMetadataByAlias(loadedSkills.skills);
-  const todoTools = createPiTodoToolDefinitions({
+  const todoTools = filterPiToolDefinitionsForRequest(request, createPiTodoToolDefinitions({
     stateDir,
     sessionId: request.session_id,
-  });
+  }));
   const browserTools = request.browser_tools_enabled
-    ? await resolveHarnessDesktopBrowserToolDefinitions({
-        runtimeApiBaseUrl: request.runtime_api_base_url,
-        workspaceId: request.workspace_id,
-        sessionId: request.session_id,
-        inputId: request.input_id,
-        space: request.browser_space ?? undefined,
-      })
+    ? filterPiToolDefinitionsForRequest(
+        request,
+        await resolveHarnessDesktopBrowserToolDefinitions({
+          runtimeApiBaseUrl: request.runtime_api_base_url,
+          workspaceId: request.workspace_id,
+          sessionId: request.session_id,
+          inputId: request.input_id,
+          space: request.browser_space ?? undefined,
+        })
+      )
     : [];
   const resourceLoader = new DefaultResourceLoader({
     cwd: request.workspace_dir,
@@ -1416,26 +1446,31 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     ? SessionManager.open(persistedSessionFile)
     : SessionManager.create(request.workspace_dir, sessionDir);
   const mcpToolset = await createPiMcpToolset(request);
-  const runtimeTools = await resolveHarnessRuntimeToolDefinitions({
-    runtimeApiBaseUrl: request.runtime_api_base_url,
-    workspaceId: request.workspace_id,
-    sessionId: request.session_id,
-    inputId: request.input_id,
-    selectedModel: `${request.provider_id}/${request.model_id}`,
-  });
-  const webSearchTools = await resolvePiWebSearchToolDefinitions();
-  const baseTools = [
+  const runtimeTools = filterPiToolDefinitionsForRequest(
+    request,
+    await resolveHarnessRuntimeToolDefinitions({
+      runtimeApiBaseUrl: request.runtime_api_base_url,
+      workspaceId: request.workspace_id,
+      sessionId: request.session_id,
+      inputId: request.input_id,
+      selectedModel: `${request.provider_id}/${request.model_id}`,
+    })
+  );
+  const webSearchTools = toolEnabledForPiRequest(request, "web_search")
+    ? await resolvePiWebSearchToolDefinitions()
+    : [];
+  const baseTools = filterPiToolDefinitionsForRequest(request, [
     ...createCodingTools(request.workspace_dir),
     createGrepTool(request.workspace_dir),
     createFindTool(request.workspace_dir),
     createLsTool(request.workspace_dir),
-  ];
+  ]);
   const nonSkillCustomTools: ToolDefinition[] = [
     ...todoTools,
     ...(browserTools as unknown as ToolDefinition[]),
     ...(runtimeTools as unknown as ToolDefinition[]),
     ...webSearchTools,
-    ...mcpToolset.customTools,
+    ...filterPiToolDefinitionsForRequest(request, mcpToolset.customTools),
   ];
   const availableToolNames = [...baseTools, ...nonSkillCustomTools].map((tool) => tool.name);
   const availableCommandIds = workspaceCommandIdsFromRunStartedPayload(request.run_started_payload);
@@ -1449,7 +1484,7 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     availableCommandIds
   );
   const skillTools =
-    skillMetadataByAlias.size > 0
+    skillMetadataByAlias.size > 0 && toolEnabledForPiRequest(request, "skill")
       ? [createPiSkillToolDefinition(skillMetadataByAlias, skillWideningState, workspaceBoundaryPolicy)]
       : [];
   const tools = baseTools.map((tool) =>

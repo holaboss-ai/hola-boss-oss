@@ -54,6 +54,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PaneCard } from "@/components/ui/PaneCard";
+import { BackgroundTasksPane } from "@/components/panes/BackgroundTasksPane";
 import {
   Popover,
   PopoverContent,
@@ -81,7 +82,6 @@ import {
   pushRendererSentryActivity,
   useRendererSentrySection,
 } from "@/lib/rendererSentry";
-import { preferredSessionId } from "@/lib/sessionRouting";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import * as modelCatalog from "../../../shared/model-catalog.js";
@@ -132,11 +132,6 @@ interface QueuedSessionInputPreviewDescriptor {
   status: QueuedSessionInputStatus;
 }
 
-interface TodoPlanPreviewState {
-  plan: ChatTodoPlan;
-  expanded: boolean;
-}
-
 declare global {
   interface Window {
     __holabossQueuedMessagesPreviewState?: QueuedSessionInputPreviewDescriptor[];
@@ -150,15 +145,6 @@ declare global {
           | Array<string | Partial<QueuedSessionInputPreviewDescriptor>>,
       ) => void;
       get: () => QueuedSessionInputPreviewDescriptor[];
-    };
-    __holabossTodoPreviewState?: TodoPlanPreviewState | null;
-    __holabossDevTodoPreview?: {
-      sample: () => void;
-      expanded: () => void;
-      collapsed: () => void;
-      clear: () => void;
-      set: (plan: ChatTodoPlan, options?: { expanded?: boolean }) => void;
-      get: () => TodoPlanPreviewState | null;
     };
   }
 }
@@ -208,33 +194,6 @@ type ChatExecutionTimelineItem =
       step: ChatTraceStep;
       order: number;
     };
-
-type ChatTodoStatus =
-  | "pending"
-  | "in_progress"
-  | "blocked"
-  | "completed"
-  | "abandoned";
-
-interface ChatTodoTask {
-  id: string;
-  content: string;
-  status: ChatTodoStatus;
-  notes?: string;
-  details?: string;
-}
-
-interface ChatTodoPhase {
-  id: string;
-  name: string;
-  tasks: ChatTodoTask[];
-}
-
-interface ChatTodoPlan {
-  sessionId: string;
-  updatedAt: string | null;
-  phases: ChatTodoPhase[];
-}
 
 interface ChatScrollbarDragState {
   pointerId: number;
@@ -339,15 +298,6 @@ interface ChatModelOptionGroup {
   options: ChatModelOption[];
 }
 
-interface ChatSessionOption {
-  sessionId: string;
-  title: string;
-  statusLabel: string;
-  updatedAt: string;
-  updatedLabel: string;
-  searchText: string;
-}
-
 interface ChatComposerSlashCommandOption {
   key: string;
   kind: "skill";
@@ -403,7 +353,6 @@ const CHAT_THINKING_STORAGE_KEY = "holaboss-chat-thinking-v1";
 const CHAT_MODEL_USE_RUNTIME_DEFAULT = "__runtime_default__";
 const CHAT_SERIALIZED_SKILL_COMMAND_PATTERN = /^\/([A-Za-z0-9_-]+)$/;
 const QUEUED_MESSAGES_PREVIEW_EVENT = "holaboss:queued-messages-preview-change";
-const TODO_PREVIEW_EVENT = "holaboss:todo-preview-change";
 const LEGACY_UNAVAILABLE_CHAT_MODELS = new Set(["openai/gpt-5.2-mini"]);
 const DEPRECATED_CHAT_MODELS = new Set([
   "openai/gpt-5.1",
@@ -1242,10 +1191,6 @@ function runtimeStateEffectiveStatus(
   );
 }
 
-function normalizeSessionTurnStatus(value: string | null | undefined): string {
-  return (value || "").trim().toLowerCase();
-}
-
 function defaultWorkspaceSessionTitle(
   kind: string | null | undefined,
   sessionId: string,
@@ -1254,123 +1199,13 @@ function defaultWorkspaceSessionTitle(
   if (normalizedKind === "cronjob") {
     return "Cronjob run";
   }
+  if (normalizedKind === "subagent") {
+    return "Subagent run";
+  }
   if (normalizedKind === "task_proposal") {
     return "Task proposal run";
   }
   return `Session ${sessionId.slice(0, 8)}`;
-}
-
-function chatSessionStatusLabel(
-  runtimeState:
-    | Pick<
-        SessionRuntimeRecordPayload,
-        "status" | "effective_state" | "last_turn_status"
-      >
-    | null
-    | undefined,
-): string {
-  const status = runtimeStateEffectiveStatus(runtimeState);
-  if (status === "BUSY") {
-    return "Running";
-  }
-  if (status === "QUEUED") {
-    return "Queued";
-  }
-  if (status === "WAITING_USER") {
-    return "Waiting";
-  }
-  if (status === "PAUSED") {
-    return "Paused";
-  }
-  if (status === "ERROR") {
-    return "Error";
-  }
-
-  const turnStatus = normalizeSessionTurnStatus(runtimeState?.last_turn_status);
-  if (turnStatus === "completed") {
-    return "Completed";
-  }
-  if (turnStatus === "waiting_user") {
-    return "Waiting";
-  }
-  if (turnStatus === "error" || turnStatus === "failed") {
-    return "Error";
-  }
-  return "Idle";
-}
-
-function formatSessionUpdatedLabel(value: string | null | undefined): string {
-  if (!value) {
-    return "Updated recently";
-  }
-  const timestamp = new Date(value);
-  if (Number.isNaN(timestamp.getTime())) {
-    return "Updated recently";
-  }
-  return timestamp.toLocaleString();
-}
-
-function compareChatSessionOptions(
-  left: ChatSessionOption,
-  right: ChatSessionOption,
-): number {
-  const leftUpdatedAt = Date.parse(left.updatedAt);
-  const rightUpdatedAt = Date.parse(right.updatedAt);
-  if (!Number.isNaN(leftUpdatedAt) || !Number.isNaN(rightUpdatedAt)) {
-    const normalizedLeft = Number.isNaN(leftUpdatedAt) ? 0 : leftUpdatedAt;
-    const normalizedRight = Number.isNaN(rightUpdatedAt) ? 0 : rightUpdatedAt;
-    if (normalizedLeft !== normalizedRight) {
-      return normalizedRight - normalizedLeft;
-    }
-  }
-  return (
-    right.updatedAt.localeCompare(left.updatedAt) ||
-    left.title.localeCompare(right.title)
-  );
-}
-
-function sessionStatusIndicator(statusLabel: string) {
-  const normalized = statusLabel.trim().toLowerCase();
-  if (normalized === "running") {
-    return {
-      className: "text-primary",
-      icon: <Loader2 className="size-3 animate-spin" />,
-    };
-  }
-  if (normalized === "queued") {
-    return {
-      className: "text-info",
-      icon: <Clock3 className="size-3" />,
-    };
-  }
-  if (normalized === "waiting") {
-    return {
-      className: "text-warning",
-      icon: <Clock3 className="size-3" />,
-    };
-  }
-  if (normalized === "paused") {
-    return {
-      className: "text-warning",
-      icon: <Square className="size-2.5 fill-current" />,
-    };
-  }
-  if (normalized === "error") {
-    return {
-      className: "text-destructive",
-      icon: <AlertTriangle className="size-3" />,
-    };
-  }
-  if (normalized === "completed") {
-    return {
-      className: "text-success",
-      icon: <Check className="size-3" />,
-    };
-  }
-  return {
-    className: "text-muted-foreground",
-    icon: <Clock3 className="size-3" />,
-  };
 }
 
 function runtimeStateErrorDetail(value: unknown): string {
@@ -1461,315 +1296,6 @@ function summarizeUnknown(value: unknown, maxLength = 140): string {
     return "";
   }
   return String(value);
-}
-
-function normalizeChatTodoStatus(value: unknown): ChatTodoStatus | null {
-  const normalized =
-    typeof value === "string"
-      ? value
-          .trim()
-          .toLowerCase()
-          .replace(/[\s-]+/g, "_")
-      : "";
-  switch (normalized) {
-    case "pending":
-    case "in_progress":
-    case "blocked":
-    case "completed":
-    case "abandoned":
-      return normalized;
-    default:
-      return null;
-  }
-}
-
-function normalizeChatTodoTask(value: unknown): ChatTodoTask | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-  const id = typeof value.id === "string" ? value.id.trim() : "";
-  const content = typeof value.content === "string" ? value.content.trim() : "";
-  const status = normalizeChatTodoStatus(value.status);
-  if (!id || !content || !status) {
-    return null;
-  }
-  const notes = typeof value.notes === "string" ? value.notes.trim() : "";
-  const details = typeof value.details === "string" ? value.details.trim() : "";
-  return {
-    id,
-    content,
-    status,
-    ...(notes ? { notes } : {}),
-    ...(details ? { details } : {}),
-  };
-}
-
-function normalizeChatTodoPhase(value: unknown): ChatTodoPhase | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-  const id = typeof value.id === "string" ? value.id.trim() : "";
-  const name = typeof value.name === "string" ? value.name.trim() : "";
-  const tasks = Array.isArray(value.tasks)
-    ? value.tasks
-        .map((task) => normalizeChatTodoTask(task))
-        .filter((task): task is ChatTodoTask => Boolean(task))
-    : [];
-  if (!id || !name) {
-    return null;
-  }
-  return { id, name, tasks };
-}
-
-function todoTaskCount(phases: ChatTodoPhase[]) {
-  return phases.reduce((total, phase) => total + phase.tasks.length, 0);
-}
-
-function todoRemainingTaskCount(phases: ChatTodoPhase[]) {
-  return phases.reduce(
-    (total, phase) =>
-      total +
-      phase.tasks.filter(
-        (task) =>
-          task.status === "pending" ||
-          task.status === "in_progress" ||
-          task.status === "blocked",
-      ).length,
-    0,
-  );
-}
-
-function currentTodoEntry(phases: ChatTodoPhase[]) {
-  for (const phase of phases) {
-    const inProgressTask = phase.tasks.find(
-      (task) => task.status === "in_progress",
-    );
-    if (inProgressTask) {
-      return { phase, task: inProgressTask };
-    }
-  }
-  for (const phase of phases) {
-    const blockedTask = phase.tasks.find((task) => task.status === "blocked");
-    if (blockedTask) {
-      return { phase, task: blockedTask };
-    }
-  }
-  for (const phase of phases) {
-    const pendingTask = phase.tasks.find((task) => task.status === "pending");
-    if (pendingTask) {
-      return { phase, task: pendingTask };
-    }
-  }
-  return null;
-}
-
-function currentTodoPosition(phases: ChatTodoPhase[]) {
-  let position = 0;
-
-  for (const phase of phases) {
-    for (const task of phase.tasks) {
-      position += 1;
-      if (
-        task.status === "in_progress" ||
-        task.status === "blocked" ||
-        task.status === "pending"
-      ) {
-        return position;
-      }
-    }
-  }
-
-  return position;
-}
-
-function latestCompletedTodoEntry(phases: ChatTodoPhase[]) {
-  for (let phaseIndex = phases.length - 1; phaseIndex >= 0; phaseIndex -= 1) {
-    const phase = phases[phaseIndex];
-    for (
-      let taskIndex = phase.tasks.length - 1;
-      taskIndex >= 0;
-      taskIndex -= 1
-    ) {
-      const task = phase.tasks[taskIndex];
-      if (task.status === "completed") {
-        return { phase, task };
-      }
-    }
-  }
-
-  for (let phaseIndex = phases.length - 1; phaseIndex >= 0; phaseIndex -= 1) {
-    const phase = phases[phaseIndex];
-    for (
-      let taskIndex = phase.tasks.length - 1;
-      taskIndex >= 0;
-      taskIndex -= 1
-    ) {
-      const task = phase.tasks[taskIndex];
-      if (task.status === "abandoned") {
-        return { phase, task };
-      }
-    }
-  }
-
-  return null;
-}
-
-function phaseHasRemainingTodoTasks(phase: ChatTodoPhase) {
-  return phase.tasks.some(
-    (task) =>
-      task.status === "pending" ||
-      task.status === "in_progress" ||
-      task.status === "blocked",
-  );
-}
-
-function visibleTodoPhases(phases: ChatTodoPhase[]) {
-  const activePhases = phases.filter((phase) =>
-    phaseHasRemainingTodoTasks(phase),
-  );
-  if (activePhases.length > 0) {
-    return activePhases;
-  }
-
-  const latestCompletedEntry = latestCompletedTodoEntry(phases);
-  if (!latestCompletedEntry) {
-    return phases;
-  }
-
-  const latestCompletedPhaseIndex = phases.findIndex(
-    (phase) => phase.id === latestCompletedEntry.phase.id,
-  );
-  return latestCompletedPhaseIndex < 0
-    ? phases
-    : phases.slice(latestCompletedPhaseIndex, latestCompletedPhaseIndex + 1);
-}
-
-function todoPlanFromToolResult(
-  result: unknown,
-): ChatTodoPlan | null | undefined {
-  if (!isRecord(result)) {
-    return undefined;
-  }
-  const details = isRecord(result.details) ? result.details : null;
-  if (!details || !Array.isArray(details.phases)) {
-    return undefined;
-  }
-
-  const sessionId =
-    typeof details.session_id === "string" ? details.session_id.trim() : "";
-  const updatedAt =
-    typeof details.updated_at === "string" && details.updated_at.trim()
-      ? details.updated_at.trim()
-      : null;
-  const phases = details.phases
-    .map((phase) => normalizeChatTodoPhase(phase))
-    .filter((phase): phase is ChatTodoPhase => Boolean(phase));
-
-  return todoTaskCount(phases) > 0
-    ? {
-        sessionId,
-        updatedAt,
-        phases,
-      }
-    : null;
-}
-
-function todoPlanFromToolPayload(
-  payload: Record<string, unknown>,
-): ChatTodoPlan | null | undefined {
-  const toolName =
-    typeof payload.tool_name === "string"
-      ? payload.tool_name.trim().toLowerCase()
-      : "";
-  const phase =
-    typeof payload.phase === "string" ? payload.phase.trim().toLowerCase() : "";
-  if (
-    (toolName !== "todoread" && toolName !== "todowrite") ||
-    phase !== "completed" ||
-    payload.error === true
-  ) {
-    return undefined;
-  }
-  return todoPlanFromToolResult(payload.result);
-}
-
-function todoPlanFromOutputEvents(outputEvents: SessionOutputEventPayload[]) {
-  const orderedEvents = [...outputEvents].sort(
-    (left, right) =>
-      Date.parse(left.created_at || "") - Date.parse(right.created_at || "") ||
-      left.id - right.id,
-  );
-  let latestTodoPlan: ChatTodoPlan | null = null;
-
-  for (const event of orderedEvents) {
-    if (event.event_type !== "tool_call" || !isRecord(event.payload)) {
-      continue;
-    }
-    const nextTodoPlan = todoPlanFromToolPayload(event.payload);
-    if (nextTodoPlan !== undefined) {
-      latestTodoPlan = nextTodoPlan;
-    }
-  }
-
-  return latestTodoPlan;
-}
-
-function todoStatusLabel(status: ChatTodoStatus) {
-  switch (status) {
-    case "in_progress":
-      return "In progress";
-    case "blocked":
-      return "Blocked";
-    case "completed":
-      return "Completed";
-    case "abandoned":
-      return "Abandoned";
-    default:
-      return "Pending";
-  }
-}
-
-function todoStatusTone(status: ChatTodoStatus) {
-  switch (status) {
-    case "in_progress":
-      return "text-primary";
-    case "blocked":
-      return "text-warning";
-    case "completed":
-      return "text-success";
-    case "abandoned":
-      return "text-muted-foreground";
-    default:
-      return "text-muted-foreground";
-  }
-}
-
-function TodoStatusIcon({ status }: { status: ChatTodoStatus }) {
-  const label = todoStatusLabel(status);
-  const icon =
-    status === "in_progress" ? (
-      <Loader2 className="size-3 animate-spin" />
-    ) : status === "blocked" ? (
-      <AlertTriangle className="size-3" />
-    ) : status === "completed" ? (
-      <Check className="size-3" />
-    ) : status === "abandoned" ? (
-      <X className="size-3" />
-    ) : (
-      <Clock3 className="size-3" />
-    );
-
-  return (
-    <span
-      aria-label={label}
-      title={label}
-      className={`inline-flex size-5 shrink-0 items-center justify-center ${todoStatusTone(
-        status,
-      )}`}
-    >
-      {icon}
-    </span>
-  );
 }
 
 function runFailedContextLabel(payload: Record<string, unknown>): string {
@@ -1999,54 +1525,6 @@ function setQueuedSessionInputPreviewState(entries: unknown) {
   window.dispatchEvent(new CustomEvent(QUEUED_MESSAGES_PREVIEW_EVENT));
 }
 
-function defaultTodoPlanPreview(): ChatTodoPlan {
-  return {
-    sessionId: "preview-session",
-    updatedAt: new Date().toISOString(),
-    phases: [
-      {
-        id: "phase-research",
-        name: "Research",
-        tasks: [
-          {
-            id: "task-research-1",
-            content: "Review the previous response for open threads",
-            status: "completed",
-          },
-          {
-            id: "task-research-2",
-            content: "Pull the latest account context before replying",
-            status: "in_progress",
-            details:
-              "Waiting on the current run to finish before the follow-up can start.",
-          },
-        ],
-      },
-      {
-        id: "phase-reply",
-        name: "Reply",
-        tasks: [
-          {
-            id: "task-reply-1",
-            content: "Draft the queued follow-up",
-            status: "pending",
-          },
-          {
-            id: "task-reply-2",
-            content: "Tighten the closing CTA",
-            status: "pending",
-          },
-        ],
-      },
-    ],
-  };
-}
-
-function setTodoPlanPreviewState(next: TodoPlanPreviewState | null) {
-  window.__holabossTodoPreviewState = next;
-  window.dispatchEvent(new CustomEvent(TODO_PREVIEW_EVENT));
-}
-
 function useQueuedSessionInputPreview(params: {
   workspaceId?: string | null;
   sessionId?: string | null;
@@ -2114,66 +1592,6 @@ function useQueuedSessionInputPreview(params: {
   }, [sessionId, workspaceId]);
 
   return previewItems;
-}
-
-function useTodoPlanPreview() {
-  const [preview, setPreview] = useState<TodoPlanPreviewState | null>(
-    () => window.__holabossTodoPreviewState ?? null,
-  );
-
-  useEffect(() => {
-    if (!import.meta.env.DEV) {
-      return;
-    }
-
-    const applyCurrentState = () => {
-      setPreview(window.__holabossTodoPreviewState ?? null);
-    };
-
-    const handlePreviewChange = () => {
-      applyCurrentState();
-    };
-
-    applyCurrentState();
-    window.addEventListener(
-      TODO_PREVIEW_EVENT,
-      handlePreviewChange as EventListener,
-    );
-    window.__holabossDevTodoPreview = {
-      sample: () =>
-        setTodoPlanPreviewState({
-          plan: defaultTodoPlanPreview(),
-          expanded: false,
-        }),
-      expanded: () =>
-        setTodoPlanPreviewState({
-          plan: defaultTodoPlanPreview(),
-          expanded: true,
-        }),
-      collapsed: () =>
-        setTodoPlanPreviewState({
-          plan: defaultTodoPlanPreview(),
-          expanded: false,
-        }),
-      clear: () => setTodoPlanPreviewState(null),
-      set: (plan, options) =>
-        setTodoPlanPreviewState({
-          plan,
-          expanded: options?.expanded === true,
-        }),
-      get: () => window.__holabossTodoPreviewState ?? null,
-    };
-
-    return () => {
-      window.removeEventListener(
-        TODO_PREVIEW_EVENT,
-        handlePreviewChange as EventListener,
-      );
-      delete window.__holabossDevTodoPreview;
-    };
-  }, []);
-
-  return preview;
 }
 
 function mergeUniqueByKey<T>(
@@ -3155,6 +2573,7 @@ interface ChatPaneSessionOpenRequest {
   requestKey: number;
   mode?: "session" | "draft";
   parentSessionId?: string | null;
+  readOnly?: boolean;
 }
 
 interface PendingSessionTarget {
@@ -3216,7 +2635,6 @@ interface ChatPaneProps {
   onOpenInbox?: () => void;
   inboxUnreadCount?: number;
   onOpenAutomations?: () => void;
-  onRequestCreateSession?: (request: ChatPaneSessionOpenRequest) => void;
   composerDraftText?: string;
   onComposerDraftTextChange?: (text: string) => void;
 }
@@ -3245,7 +2663,6 @@ export function ChatPane({
   onOpenInbox,
   inboxUnreadCount = 0,
   onOpenAutomations,
-  onRequestCreateSession,
   composerDraftText = "",
   onComposerDraftTextChange,
 }: ChatPaneProps) {
@@ -3335,22 +2752,18 @@ export function ChatPane({
   const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     QueuedSessionInput[]
   >([]);
-  const [currentTodoPlan, setCurrentTodoPlan] = useState<ChatTodoPlan | null>(
-    null,
-  );
-  const [todoPanelExpanded, setTodoPanelExpanded] = useState(false);
   const [editingMemoryProposalId, setEditingMemoryProposalId] = useState<
     string | null
   >(null);
   const [memoryProposalDrafts, setMemoryProposalDrafts] = useState<
     Record<string, string>
   >({});
-  const [availableSessions, setAvailableSessions] = useState<
-    ChatSessionOption[]
-  >([]);
-  const [isLoadingAvailableSessions, setIsLoadingAvailableSessions] =
-    useState(false);
-  const [availableSessionsError, setAvailableSessionsError] = useState("");
+  const [desktopMainSession, setDesktopMainSession] =
+    useState<AgentSessionRecordPayload | null>(null);
+  const [sessionRecordOverrides, setSessionRecordOverrides] = useState<
+    Record<string, AgentSessionRecordPayload>
+  >({});
+  const [activeSessionReadOnly, setActiveSessionReadOnly] = useState(false);
   const [localSessionOpenRequest, setLocalSessionOpenRequest] =
     useState<ChatPaneSessionOpenRequest | null>(null);
   const [visibleBrowserState, setVisibleBrowserState] =
@@ -3380,7 +2793,6 @@ export function ChatPane({
   const lastSyncedAgentOperationFileKeyRef = useRef("");
   const pendingInputIdRef = useRef<string | null>(null);
   const loadedHistoryOutputEventsRef = useRef<SessionOutputEventPayload[]>([]);
-  const liveTodoPlanOverrideRef = useRef<ChatTodoPlan | null>(null);
   const pendingHistoryPrependRestoreRef = useRef<{
     scrollHeight: number;
     scrollTop: number;
@@ -3580,7 +2992,6 @@ export function ChatPane({
   function clearSessionView() {
     setMessages([]);
     setSessionOutputs([]);
-    setCurrentTodoPlan(null);
     setLoadedHistoryMessageCount(0);
     setTotalHistoryMessageCount(0);
     setIsLoadingOlderHistoryState(false);
@@ -3590,12 +3001,22 @@ export function ChatPane({
     setEditingMemoryProposalId(null);
     setMemoryProposalDrafts({});
     loadedHistoryOutputEventsRef.current = [];
-    liveTodoPlanOverrideRef.current = null;
     pendingHistoryPrependRestoreRef.current = null;
     resetLiveTurn();
     setCollapsedTraceByStepId({});
     terminalEventTypeByInputIdRef.current.clear();
     shouldAutoScrollRef.current = true;
+  }
+
+  function upsertSessionRecordOverride(record: AgentSessionRecordPayload) {
+    const sessionId = record.session_id.trim();
+    if (!sessionId) {
+      return;
+    }
+    setSessionRecordOverrides((current) => ({
+      ...current,
+      [sessionId]: record,
+    }));
   }
 
   function isSessionHistoryTargetActive(
@@ -3952,9 +3373,13 @@ export function ChatPane({
     runtimeStates: SessionRuntimeRecordPayload[],
     options?: {
       cancelled?: () => boolean;
+      readOnly?: boolean;
     },
   ) {
     const cancelled = options?.cancelled ?? (() => false);
+    if (typeof options?.readOnly === "boolean") {
+      setActiveSessionReadOnly(options.readOnly);
+    }
 
     if (activeSessionIdRef.current !== nextSessionId) {
       clearSessionView();
@@ -3980,9 +3405,7 @@ export function ChatPane({
     }
 
     loadedHistoryOutputEventsRef.current = page.outputEvents;
-    liveTodoPlanOverrideRef.current = null;
     setSessionOutputs(page.outputs);
-    setCurrentTodoPlan(todoPlanFromOutputEvents(page.outputEvents));
     setMessages(page.renderedMessages);
     setLoadedHistoryMessageCount(page.history.count);
     setTotalHistoryMessageCount(page.history.total);
@@ -4133,10 +3556,6 @@ export function ChatPane({
         page.outputEvents,
       );
       setSessionOutputs((prev) => mergeSessionOutputs(prev, page.outputs));
-      setCurrentTodoPlan(
-        liveTodoPlanOverrideRef.current ??
-          todoPlanFromOutputEvents(loadedHistoryOutputEventsRef.current),
-      );
       setLoadedHistoryMessageCount((current) =>
         Math.max(current, page.history.offset + page.history.count),
       );
@@ -4671,6 +4090,11 @@ export function ChatPane({
     selectedWorkspaceRef.current = selectedWorkspace;
   }, [selectedWorkspace]);
 
+  useEffect(() => {
+    setSessionRecordOverrides({});
+    setActiveSessionReadOnly(false);
+  }, [selectedWorkspaceId]);
+
   useEffect(
     () => () => {
       clearChatScrollbarDragState();
@@ -4893,6 +4317,9 @@ export function ChatPane({
       clearSessionView();
       setPendingAttachments([]);
       setActiveSession(null);
+      setActiveSessionReadOnly(false);
+      setDesktopMainSession(null);
+      setSessionRecordOverrides({});
       pendingInputIdRef.current = null;
       lastHandledSessionJumpRequestKeyRef.current = 0;
       lastHandledExternalSessionOpenRequestKeyRef.current = 0;
@@ -4932,23 +4359,21 @@ export function ChatPane({
           }
         }
 
-        const [runtimeStates, sessionsResponse] = await Promise.all([
+        const [runtimeStates, mainSessionResponse] = await Promise.all([
           window.electronAPI.workspace.listRuntimeStates(selectedWorkspaceId),
-          window.electronAPI.workspace.listAgentSessions(selectedWorkspaceId),
+          window.electronAPI.workspace.ensureMainSession(selectedWorkspaceId),
         ]);
         if (cancelled) {
           return;
         }
+        setDesktopMainSession(mainSessionResponse.session ?? null);
 
         const nextSessionId =
           (hasSessionJumpRequest && requestedSessionId
             ? requestedSessionId
             : null) ||
-          preferredSessionId(
-            selectedWorkspaceRef.current,
-            runtimeStates.items,
-            sessionsResponse.items,
-          );
+          mainSessionResponse.session?.session_id?.trim() ||
+          null;
         const resolvedSessionId = nextSessionId || null;
         draftParentSessionIdRef.current = null;
         await loadSessionConversation(
@@ -4957,6 +4382,7 @@ export function ChatPane({
           runtimeStates.items,
           {
             cancelled: () => cancelled,
+            readOnly: false,
           },
         );
         historyLoaded = true;
@@ -4995,6 +4421,7 @@ export function ChatPane({
     const requestMode = effectiveSessionOpenRequest?.mode ?? "session";
     const requestedParentSessionId =
       effectiveSessionOpenRequest?.parentSessionId?.trim() || null;
+    const requestedReadOnly = effectiveSessionOpenRequest?.readOnly === true;
     const lastHandledSessionOpenRequestKeyRef = isExternalSessionOpenRequest
       ? lastHandledExternalSessionOpenRequestKeyRef
       : lastHandledLocalSessionOpenRequestKeyRef;
@@ -5038,6 +4465,7 @@ export function ChatPane({
         }
 
         if (requestMode === "draft") {
+          setActiveSessionReadOnly(false);
           draftParentSessionIdRef.current = requestedParentSessionId;
           clearSessionView();
           setActiveSession(null);
@@ -5052,6 +4480,7 @@ export function ChatPane({
         }
 
         draftParentSessionIdRef.current = null;
+        setActiveSessionReadOnly(requestedReadOnly);
         if (activeSessionIdRef.current === requestedSessionId) {
           requestHistoryViewportRestore();
           historyLoaded = true;
@@ -5072,6 +4501,7 @@ export function ChatPane({
           runtimeStates.items,
           {
             cancelled: () => cancelled,
+            readOnly: requestedReadOnly,
           },
         );
         historyLoaded = true;
@@ -5102,114 +4532,9 @@ export function ChatPane({
     effectiveSessionOpenRequest?.sessionId,
     effectiveSessionOpenRequest?.mode,
     effectiveSessionOpenRequest?.parentSessionId,
+    effectiveSessionOpenRequest?.readOnly,
     sessionOpenRequest?.requestKey,
   ]);
-
-  useEffect(() => {
-    setTodoPanelExpanded(false);
-  }, [activeSessionId]);
-
-  useEffect(() => {
-    if (isOnboardingVariant) {
-      setAvailableSessions([]);
-      setAvailableSessionsError("");
-      setIsLoadingAvailableSessions(false);
-      return;
-    }
-    if (!selectedWorkspaceId) {
-      setAvailableSessions([]);
-      setAvailableSessionsError("");
-      setIsLoadingAvailableSessions(false);
-      return;
-    }
-
-    let cancelled = false;
-    let requestInFlight = false;
-
-    const loadAvailableSessions = async (options?: {
-      showLoading?: boolean;
-    }) => {
-      if (requestInFlight) {
-        return;
-      }
-      requestInFlight = true;
-      if (options?.showLoading) {
-        setIsLoadingAvailableSessions(true);
-      }
-
-      try {
-        const [runtimeStates, sessionsResponse] = await Promise.all([
-          window.electronAPI.workspace.listRuntimeStates(selectedWorkspaceId),
-          window.electronAPI.workspace.listAgentSessions(selectedWorkspaceId),
-        ]);
-        if (cancelled) {
-          return;
-        }
-
-        const runtimeStateBySessionId = new Map(
-          runtimeStates.items.map((item) => [item.session_id, item]),
-        );
-        const nextOptions = sessionsResponse.items
-          .map((session) => {
-            const sessionId = session.session_id.trim();
-            if (!sessionId) {
-              return null;
-            }
-            const runtimeState = runtimeStateBySessionId.get(sessionId);
-            const title =
-              session.title?.trim() ||
-              defaultWorkspaceSessionTitle(session.kind, sessionId);
-            const updatedAt =
-              runtimeState?.updated_at?.trim() ||
-              session.updated_at?.trim() ||
-              "";
-            return {
-              sessionId,
-              title,
-              statusLabel: chatSessionStatusLabel(runtimeState),
-              updatedAt,
-              updatedLabel: formatSessionUpdatedLabel(updatedAt),
-              searchText: `${title} ${session.kind || ""} ${sessionId}`.trim(),
-            } satisfies ChatSessionOption;
-          })
-          .filter((item): item is ChatSessionOption => Boolean(item))
-          .sort(compareChatSessionOptions);
-
-        setAvailableSessions(nextOptions);
-        setAvailableSessionsError("");
-      } catch (error) {
-        if (!cancelled) {
-          setAvailableSessionsError(normalizeErrorMessage(error));
-        }
-      } finally {
-        requestInFlight = false;
-        if (!cancelled && options?.showLoading) {
-          setIsLoadingAvailableSessions(false);
-        }
-      }
-    };
-
-    const refreshVisibleSessions = () => {
-      if (document.visibilityState !== "visible") {
-        return;
-      }
-      void loadAvailableSessions();
-    };
-
-    void loadAvailableSessions({ showLoading: true });
-    const intervalId = window.setInterval(() => {
-      refreshVisibleSessions();
-    }, 4000);
-    window.addEventListener("focus", refreshVisibleSessions);
-    document.addEventListener("visibilitychange", refreshVisibleSessions);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-      window.removeEventListener("focus", refreshVisibleSessions);
-      document.removeEventListener("visibilitychange", refreshVisibleSessions);
-    };
-  }, [activeSessionId, isOnboardingVariant, selectedWorkspaceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -5556,12 +4881,6 @@ export function ChatPane({
         );
         if (toolStep) {
           upsertLiveTraceStep(toolStep);
-        }
-
-        const nextTodoPlan = todoPlanFromToolPayload(eventPayload);
-        if (nextTodoPlan !== undefined) {
-          liveTodoPlanOverrideRef.current = nextTodoPlan;
-          setCurrentTodoPlan(nextTodoPlan);
         }
 
         if (eventType === "tool_call") {
@@ -6551,6 +5870,42 @@ export function ChatPane({
     );
   };
 
+  const openMainSession = () => {
+    const mainSessionId = (desktopMainSession?.session_id || "").trim();
+    if (!mainSessionId) {
+      return;
+    }
+    setLocalSessionOpenRequestState({
+      sessionId: mainSessionId,
+      requestKey: Date.now(),
+      readOnly: false,
+    });
+  };
+
+  const handleOpenBackgroundTaskSession = (task: BackgroundTaskRecordPayload) => {
+    const childSessionId = task.child_session_id.trim();
+    if (!childSessionId) {
+      return;
+    }
+    upsertSessionRecordOverride({
+      workspace_id: task.workspace_id,
+      session_id: childSessionId,
+      kind: "subagent",
+      title: task.title?.trim() || null,
+      parent_session_id: task.parent_session_id?.trim() || null,
+      source_proposal_id: task.proposal_id?.trim() || null,
+      created_by: null,
+      created_at: task.created_at,
+      updated_at: task.updated_at,
+      archived_at: null,
+    });
+    setLocalSessionOpenRequestState({
+      sessionId: childSessionId,
+      requestKey: Date.now(),
+      readOnly: true,
+    });
+  };
+
   const onComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     const nativeEvent =
       event.nativeEvent as KeyboardEvent<HTMLTextAreaElement>["nativeEvent"] & {
@@ -6639,7 +5994,6 @@ export function ChatPane({
     workspaceId: selectedWorkspaceId,
     sessionId: activeSessionId,
   });
-  const todoPlanPreview = useTodoPlanPreview();
   const activeQueuedSessionInputs = useMemo(
     () =>
       queuedSessionInputs.filter(
@@ -6653,9 +6007,6 @@ export function ChatPane({
     queuedSessionInputPreview.length > 0
       ? queuedSessionInputPreview
       : activeQueuedSessionInputs;
-  const displayedTodoPlan = todoPlanPreview?.plan ?? currentTodoPlan;
-  const displayedTodoPanelExpanded =
-    todoPlanPreview?.expanded ?? todoPanelExpanded;
   const hasMessages = messages.length > 0 || showLiveAssistantTurn;
   const streamTelemetryTail = useMemo(
     () => streamTelemetry.slice(-80).reverse(),
@@ -6859,23 +6210,43 @@ export function ChatPane({
     () => buildComposerSlashCommandOptions(availableWorkspaceSkills),
     [availableWorkspaceSkills],
   );
-  const activeSessionOption = useMemo(
-    () =>
-      availableSessions.find(
-        (session) => session.sessionId === activeSessionId,
-      ) ?? null,
-    [activeSessionId, availableSessions],
-  );
-  const activeSessionTitle =
-    activeSessionOption?.title ||
-    (activeSessionId
-      ? defaultWorkspaceSessionTitle("workspace_session", activeSessionId)
-      : "New session");
-  const activeSessionDetail = activeSessionOption
-    ? `${activeSessionOption.statusLabel} · ${activeSessionOption.updatedLabel}`
-    : activeSessionId
-      ? "Current session"
-      : "Draft conversation";
+  const activeSessionRecord = useMemo(() => {
+    const normalizedActiveSessionId = activeSessionId.trim();
+    if (!normalizedActiveSessionId) {
+      return desktopMainSession;
+    }
+    if (
+      normalizedActiveSessionId ===
+      (desktopMainSession?.session_id?.trim() || "")
+    ) {
+      return desktopMainSession;
+    }
+    return sessionRecordOverrides[normalizedActiveSessionId] ?? null;
+  }, [activeSessionId, desktopMainSession, sessionRecordOverrides]);
+  const activeSessionKind = (activeSessionRecord?.kind || "")
+    .trim()
+    .toLowerCase();
+  const isViewingBoundMainSession =
+    !activeSessionId ||
+    activeSessionId === (desktopMainSession?.session_id || "").trim();
+  const isReadOnlyInspectionSession =
+    !isViewingBoundMainSession &&
+    (activeSessionReadOnly ||
+      activeSessionKind === "subagent" ||
+      activeSessionKind === "task_proposal");
+  const activeSessionTitle = isViewingBoundMainSession
+    ? (desktopMainSession?.title?.trim() ||
+        selectedWorkspace?.name?.trim() ||
+        "Main session")
+    : (activeSessionRecord?.title?.trim() ||
+        defaultWorkspaceSessionTitle(activeSessionRecord?.kind, activeSessionId));
+  const activeSessionDetail = isViewingBoundMainSession
+    ? "Main session"
+    : isReadOnlyInspectionSession
+      ? activeSessionKind === "task_proposal"
+        ? "Task proposal run · Read-only inspection"
+        : "Subagent run · Read-only inspection"
+      : "Session view";
   const readinessMessage =
     !selectedWorkspace || isOnboardingVariant || workspaceAppsReady
       ? ""
@@ -7101,6 +6472,9 @@ export function ChatPane({
         ? "Managed models are finishing setup. Refresh runtime binding or use another provider."
         : "No models available. Configure a provider to start chatting.";
   const composerBaseDisabledReason =
+    (isReadOnlyInspectionSession
+      ? "Subagent runs are read-only. Return to the main session to continue the conversation."
+      : "") ||
     baseComposerDisabledReason ||
     (usesHostedManagedCredits && isOutOfCredits
       ? "You're out of credits for managed usage."
@@ -7135,13 +6509,12 @@ export function ChatPane({
       workspace_blocking_reason: workspaceBlockingReason || null,
       runtime_default_model: runtimeConfig?.defaultModel ?? null,
       session_metrics: {
-        available_session_count: availableSessions.length,
+        available_session_count: desktopMainSession ? 1 : 0,
         active_queued_input_count: activeQueuedSessionInputs.length,
         message_count: messages.length,
         session_output_count: sessionOutputs.length,
         live_segment_count: liveAssistantSegments.length,
         live_execution_item_count: liveExecutionItems.length,
-        todo_phase_count: displayedTodoPlan?.phases.length ?? 0,
       },
       composer: {
         input_length: input.length,
@@ -7165,7 +6538,6 @@ export function ChatPane({
         live_agent_status: liveAgentStatus || null,
         chat_error_message: chatErrorMessage || null,
         artifact_browser_open: artifactBrowserOpen,
-        todo_panel_expanded: displayedTodoPanelExpanded,
       },
       model_selection: {
         selected_model: effectiveChatModelPreference || null,
@@ -7197,12 +6569,10 @@ export function ChatPane({
       activeSessionId,
       artifactBrowserOpen,
       attachmentGateMessage,
-      availableSessions.length,
       chatErrorMessage,
       composerDisabled,
       composerDisabledReason,
-      displayedTodoPanelExpanded,
-      displayedTodoPlan,
+      desktopMainSession,
       effectiveChatModelPreference,
       effectiveThinkingValue,
       input.length,
@@ -7448,42 +6818,6 @@ export function ChatPane({
     };
   }, [hasMessages]);
 
-  const openSessionFromPicker = (sessionId: string) => {
-    const normalizedSessionId = sessionId.trim();
-    if (
-      !normalizedSessionId ||
-      normalizedSessionId === activeSessionIdRef.current
-    ) {
-      return;
-    }
-    setLocalSessionOpenRequestState({
-      sessionId: normalizedSessionId,
-      requestKey: Date.now(),
-    });
-  };
-
-  const requestDraftSessionFromPicker = () => {
-    const draftRequest: ChatPaneSessionOpenRequest = {
-      sessionId: "",
-      mode: "draft",
-      parentSessionId: null,
-      requestKey: Date.now(),
-    };
-    setLocalSessionOpenRequestState(draftRequest);
-    onRequestCreateSession?.(draftRequest);
-  };
-
-  const toggleTodoPanel = () => {
-    if (todoPlanPreview) {
-      setTodoPlanPreviewState({
-        ...todoPlanPreview,
-        expanded: !todoPlanPreview.expanded,
-      });
-      return;
-    }
-    setTodoPanelExpanded((value) => !value);
-  };
-
   return (
     <PaneCard
       className={
@@ -7524,18 +6858,12 @@ export function ChatPane({
 
         {!isOnboardingVariant ? (
           <div className="shrink-0 border-b border-border px-4 py-2.5 sm:px-5">
-            <SessionSelector
-              activeSessionId={activeSessionId}
-              activeTitle={activeSessionTitle}
-              activeDetail={activeSessionDetail}
-              sessions={availableSessions}
-              isLoading={isLoadingAvailableSessions}
-              errorMessage={availableSessionsError}
-              onSelectSession={openSessionFromPicker}
+            <ChatHeader
+              title={activeSessionTitle}
+              detail={activeSessionDetail}
               onOpenInbox={onOpenInbox}
               inboxUnreadCount={inboxUnreadCount}
               onOpenAutomations={onOpenAutomations}
-              onCreateSession={requestDraftSessionFromPicker}
             />
           </div>
         ) : null}
@@ -7582,12 +6910,37 @@ export function ChatPane({
         ) : null}
 
         {chatErrorMessage ||
+        isReadOnlyInspectionSession ||
         attachmentGateMessage ||
         pendingImageInputUnsupportedMessage ||
         verboseTelemetryEnabled ? (
           <div className="shrink-0 px-4 pt-3 sm:px-5">
-            {chatErrorMessage ? (
+            {isReadOnlyInspectionSession ? (
               <div className="theme-chat-system-bubble rounded-xl border px-3 py-2 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <span>
+                    Read-only subagent run. Inspect the execution transcript
+                    here, then return to the main session to continue the
+                    conversation.
+                  </span>
+                  {!isViewingBoundMainSession &&
+                  (desktopMainSession?.session_id || "").trim() ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      onClick={openMainSession}
+                      className="shrink-0 rounded-full"
+                    >
+                      Return to main session
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+
+            {chatErrorMessage ? (
+              <div className="theme-chat-system-bubble mt-3 rounded-xl border px-3 py-2 text-xs">
                 {chatErrorMessage}
               </div>
             ) : null}
@@ -7641,18 +6994,15 @@ export function ChatPane({
           </div>
         ) : null}
 
+        {!isOnboardingVariant ? (
+          <BackgroundTasksPane
+            workspaceId={selectedWorkspaceId}
+            variant="inline"
+            onOpenTaskSession={handleOpenBackgroundTaskSession}
+          />
+        ) : null}
+
         <div className="relative flex min-h-0 flex-1 flex-col">
-          {displayedTodoPlan ? (
-            <div className="pointer-events-none absolute inset-x-4 top-3 z-20">
-              <div className="pointer-events-auto">
-                <CurrentTodoPanel
-                  todoPlan={displayedTodoPlan}
-                  expanded={displayedTodoPanelExpanded}
-                  onToggle={toggleTodoPanel}
-                />
-              </div>
-            </div>
-          ) : null}
           <div className="min-h-0 flex-1 overflow-hidden">
             <div
               ref={messagesRef}
@@ -7680,9 +7030,9 @@ export function ChatPane({
               {hasMessages ? (
                 <div
                   ref={messagesContentRef}
-                  className={`flex min-w-0 w-full flex-col gap-4 px-4 pb-3 ${
-                    displayedTodoPlan ? "pt-14" : "pt-5"
-                  } ${showHistoryRestoreScreen ? "invisible" : ""}`}
+                  className={`flex min-w-0 w-full flex-col gap-4 px-4 pb-3 pt-5 ${
+                    showHistoryRestoreScreen ? "invisible" : ""
+                  }`}
                 >
                   {isLoadingOlderHistory ||
                   loadedHistoryMessageCount < totalHistoryMessageCount ? (
@@ -7817,10 +7167,14 @@ export function ChatPane({
                   </div>
                   <form onSubmit={onSubmit} className="w-full">
                     <div className="space-y-3">
-                      <QueuedSessionInputRail
-                        items={displayedQueuedSessionInputs}
-                        onEditItem={updateQueuedSessionInputText}
-                      >
+                    <QueuedSessionInputRail
+                      items={displayedQueuedSessionInputs}
+                      onEditItem={
+                        isReadOnlyInspectionSession
+                          ? undefined
+                          : updateQueuedSessionInputText
+                      }
+                    >
                         <Composer
                           input={input}
                           quotedSkills={quotedSkills}
@@ -7948,7 +7302,11 @@ export function ChatPane({
                 <div className="space-y-3">
                   <QueuedSessionInputRail
                     items={displayedQueuedSessionInputs}
-                    onEditItem={updateQueuedSessionInputText}
+                    onEditItem={
+                      isReadOnlyInspectionSession
+                        ? undefined
+                        : updateQueuedSessionInputText
+                    }
                   >
                     <Composer
                       input={input}
@@ -8039,156 +7397,33 @@ export function ChatPane({
   );
 }
 
-interface SessionSelectorProps {
-  activeSessionId: string;
-  activeTitle: string;
-  activeDetail: string;
-  sessions: ChatSessionOption[];
-  isLoading: boolean;
-  errorMessage: string;
-  onSelectSession: (sessionId: string) => void;
+interface ChatHeaderProps {
+  title: string;
+  detail: string;
   onOpenInbox?: () => void;
   inboxUnreadCount: number;
   onOpenAutomations?: () => void;
-  onCreateSession: () => void;
 }
 
-function SessionSelector({
-  activeSessionId,
-  activeTitle,
-  activeDetail,
-  sessions,
-  isLoading,
-  errorMessage,
-  onSelectSession,
+function ChatHeader({
+  title,
+  detail,
   onOpenInbox,
   inboxUnreadCount,
   onOpenAutomations,
-  onCreateSession,
-}: SessionSelectorProps) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const activeSession =
-    sessions.find((session) => session.sessionId === activeSessionId) ?? null;
-  const activeIndicator = activeSession
-    ? sessionStatusIndicator(activeSession.statusLabel)
-    : {
-        className: "text-muted-foreground",
-        icon: <PencilLine className="size-3" />,
-      };
-  const filteredSessions = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    if (!normalizedQuery) {
-      return sessions;
-    }
-    return sessions.filter((session) =>
-      session.searchText.toLowerCase().includes(normalizedQuery),
-    );
-  }, [query, sessions]);
-
+}: ChatHeaderProps) {
   return (
     <div className="flex items-center justify-between gap-2">
-      <Popover
-        open={open}
-        onOpenChange={(nextOpen) => {
-          setOpen(nextOpen);
-          if (!nextOpen) {
-            setQuery("");
-          }
-        }}
-      >
-        <div className="min-w-0 flex-1">
-          <PopoverTrigger
-            render={
-              <Button
-                variant="outline"
-                className="w-full min-w-0 justify-start"
-                aria-label="Select agent session"
-              />
-            }
-          >
-            <span
-              className={`grid size-3 shrink-0 place-items-center mr-1 ${activeIndicator.className}`}
-            >
-              {activeIndicator.icon}
-            </span>
-            <span className="min-w-0 flex-1 truncate text-xs text-start font-medium text-foreground">
-              {activeTitle}
-            </span>
-            <ChevronDown
-              className={`size-3 shrink-0 text-muted-foreground transition-transform ${
-                open ? "rotate-180" : ""
-              }`}
-            />
-          </PopoverTrigger>
+      <div className="min-w-0 flex-1">
+        <div className="min-w-0">
+          <div className="truncate text-xs font-medium text-foreground">
+            {title}
+          </div>
+          <div className="truncate text-[11px] text-muted-foreground">
+            {detail}
+          </div>
         </div>
-        <PopoverContent
-          align="start"
-          className="w-[300px] gap-0 rounded-lg p-0 shadow-subtle-sm ring-0"
-        >
-          <div className="border-b border-border p-2">
-            <div className="relative flex h-8 items-center rounded-md border border-border bg-background px-2.5 transition-colors focus-within:border-muted-foreground">
-              <Search className="size-3.5 shrink-0 text-muted-foreground" />
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search sessions..."
-                className="embedded-input h-full w-full bg-transparent pl-2 text-xs text-foreground outline-none placeholder:text-muted-foreground"
-                autoFocus
-              />
-            </div>
-          </div>
-
-          <div className="max-h-[320px] overflow-y-auto p-1.5">
-            {isLoading ? (
-              <div className="px-3 py-3 text-xs text-muted-foreground">
-                Loading sessions...
-              </div>
-            ) : errorMessage ? (
-              <div className="px-3 py-3 text-xs text-destructive">
-                {errorMessage}
-              </div>
-            ) : filteredSessions.length === 0 ? (
-              <div className="px-3 py-3 text-xs text-muted-foreground">
-                {query.trim()
-                  ? "No matching sessions."
-                  : "No saved sessions yet."}
-              </div>
-            ) : (
-              filteredSessions.map((session) => {
-                const isActive = session.sessionId === activeSessionId;
-                const indicator = sessionStatusIndicator(session.statusLabel);
-                return (
-                  <button
-                    key={session.sessionId}
-                    type="button"
-                    onClick={() => {
-                      onSelectSession(session.sessionId);
-                      setOpen(false);
-                      setQuery("");
-                    }}
-                    aria-current={isActive ? "true" : undefined}
-                    className={`flex w-full items-start gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors ${
-                      isActive
-                        ? "bg-accent text-foreground"
-                        : "text-foreground hover:bg-accent"
-                    }`}
-                  >
-                    <span
-                      className={`mt-0.5 grid size-4 shrink-0 place-items-center ${indicator.className}`}
-                    >
-                      {indicator.icon}
-                    </span>
-                    <span className="min-w-0 flex-1 whitespace-normal text-xs leading-snug line-clamp-2">
-                      {session.title}
-                    </span>
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </PopoverContent>
-      </Popover>
+      </div>
 
       <div className="flex shrink-0 items-center gap-1">
         {onOpenInbox ? (
@@ -8199,11 +7434,7 @@ function SessionSelector({
                   type="button"
                   variant="ghost"
                   size="icon-sm"
-                  onClick={() => {
-                    setOpen(false);
-                    setQuery("");
-                    onOpenInbox();
-                  }}
+                  onClick={() => onOpenInbox()}
                   aria-label="Show inbox"
                   className="relative rounded-lg text-muted-foreground hover:text-foreground"
                 />
@@ -8228,11 +7459,7 @@ function SessionSelector({
                   type="button"
                   variant="ghost"
                   size="icon-sm"
-                  onClick={() => {
-                    setOpen(false);
-                    setQuery("");
-                    onOpenAutomations();
-                  }}
+                  onClick={() => onOpenAutomations()}
                   aria-label="Show automations"
                   className="rounded-lg text-muted-foreground hover:text-foreground"
                 />
@@ -8246,29 +7473,6 @@ function SessionSelector({
           </Tooltip>
         ) : null}
 
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                onClick={() => {
-                  setOpen(false);
-                  setQuery("");
-                  onCreateSession();
-                }}
-                aria-label="Create new session"
-                className="rounded-lg text-muted-foreground hover:text-foreground"
-              />
-            }
-          >
-            <Plus className="size-4" />
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="py-1">
-            New session
-          </TooltipContent>
-        </Tooltip>
       </div>
     </div>
   );
@@ -9139,114 +8343,6 @@ function AssistantTurnOutputs({
             View all artifacts ({sessionOutputs.length})
           </span>
         </button>
-      ) : null}
-    </div>
-  );
-}
-
-function CurrentTodoPanel({
-  todoPlan,
-  expanded,
-  onToggle,
-}: {
-  todoPlan: ChatTodoPlan;
-  expanded: boolean;
-  onToggle: () => void;
-}) {
-  const visiblePhases = visibleTodoPhases(todoPlan.phases);
-  const totalTaskCount = todoTaskCount(visiblePhases);
-  const remainingTaskCount = todoRemainingTaskCount(todoPlan.phases);
-  const activeEntry = currentTodoEntry(todoPlan.phases);
-  const latestCompletedEntry = latestCompletedTodoEntry(todoPlan.phases);
-  const currentTaskPosition = currentTodoPosition(visiblePhases);
-  const summaryLabel = activeEntry
-    ? activeEntry.task.content
-    : latestCompletedEntry?.task.content ||
-      "All tracked todo items are complete.";
-  const progressLabel =
-    totalTaskCount > 0 ? `${currentTaskPosition}/${totalTaskCount}` : "0/0";
-
-  return (
-    <div className="overflow-hidden rounded-lg border border-border bg-background/80 shadow-subtle-sm backdrop-blur-xl">
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={expanded}
-        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition hover:bg-muted/60"
-      >
-        <div
-          className={`inline-flex size-4 shrink-0 items-center justify-center ${
-            remainingTaskCount > 0 ? "text-muted-foreground" : "text-success"
-          }`}
-        >
-          {remainingTaskCount > 0 ? (
-            <Clock3 className="size-3.5 shrink-0" />
-          ) : (
-            <Check className="size-3.5 shrink-0" />
-          )}
-        </div>
-        <div className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
-          {summaryLabel}
-        </div>
-        <div className="shrink-0 text-[10px] font-medium tabular-nums text-muted-foreground">
-          {progressLabel}
-        </div>
-        <ChevronDown
-          className={`size-3.5 shrink-0 text-muted-foreground transition ${expanded ? "rotate-0" : "-rotate-90"}`}
-        />
-      </button>
-
-      {expanded ? (
-        <div className="max-h-[320px] overflow-y-auto border-t border-border px-3 py-3">
-          <div className="space-y-3">
-            {visiblePhases.map((phase) => {
-              const phaseCompletedCount = phase.tasks.filter(
-                (task) =>
-                  task.status === "completed" || task.status === "abandoned",
-              ).length;
-              return (
-                <div
-                  key={phase.id}
-                  className="rounded-xl border border-border bg-muted px-3 py-3"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-xs font-medium text-foreground">
-                      {phase.name}
-                    </div>
-                    <div className="text-[10px] uppercase text-muted-foreground">
-                      {phaseCompletedCount}/{phase.tasks.length} complete
-                    </div>
-                  </div>
-                  <div className="mt-3 space-y-2">
-                    {phase.tasks.map((task) => {
-                      const isActiveTask = activeEntry?.task.id === task.id;
-                      const hasVisibleDetails =
-                        isActiveTask && Boolean(task.details);
-                      return (
-                        <div
-                          key={task.id}
-                          className={`flex gap-3 text-xs leading-5 ${hasVisibleDetails ? "items-start" : "items-center"}`}
-                        >
-                          <TodoStatusIcon status={task.status} />
-                          <div className="min-w-0 flex-1">
-                            <div className="text-foreground">
-                              {task.content}
-                            </div>
-                            {hasVisibleDetails ? (
-                              <div className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">
-                                {task.details}
-                              </div>
-                            ) : null}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
       ) : null}
     </div>
   );

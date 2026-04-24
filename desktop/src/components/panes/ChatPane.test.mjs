@@ -1199,34 +1199,20 @@ test("chat pane can jump to a requested sub-session run", async () => {
   );
 });
 
-test("chat pane restores the current todo plan from session output events and keeps it live from tool calls", async () => {
+test("chat pane no longer carries a session-local todo plan rail", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(
+  assert.doesNotMatch(
     source,
     /const \[currentTodoPlan, setCurrentTodoPlan\] = useState<ChatTodoPlan \| null>\(\s*null,\s*\);/,
   );
+  assert.doesNotMatch(source, /const \[todoPanelExpanded, setTodoPanelExpanded\] = useState\(false\);/);
+  assert.doesNotMatch(source, /setCurrentTodoPlan\(/);
+  assert.doesNotMatch(source, /liveTodoPlanOverrideRef/);
   assert.match(
     source,
-    /function todoPlanFromOutputEvents\(outputEvents: SessionOutputEventPayload\[\]\)/,
+    /<BackgroundTasksPane[\s\S]*workspaceId=\{selectedWorkspaceId\}[\s\S]*variant="inline"/,
   );
-  assert.match(
-    source,
-    /setCurrentTodoPlan\(todoPlanFromOutputEvents\(outputEventHistory\.items\)\);/,
-  );
-  assert.match(
-    source,
-    /const nextTodoPlan = todoPlanFromToolPayload\(eventPayload\);[\s\S]*if \(nextTodoPlan !== undefined\) \{\s*setCurrentTodoPlan\(nextTodoPlan\);\s*\}/,
-  );
-  assert.match(source, /case "blocked":\s*return "Blocked";/);
-  assert.match(
-    source,
-    /case "blocked":\s*return "text-amber-700";/,
-  );
-  assert.match(source, /function TodoStatusIcon\(\{ status \}: \{ status: ChatTodoStatus \}\)/);
-  assert.match(source, /aria-label=\{label\}/);
-  assert.match(source, /<TodoStatusIcon status=\{task\.status\} \/>/);
-  assert.match(source, /clearSessionView\(\) \{[\s\S]*setCurrentTodoPlan\(null\);/);
 });
 
 test("chat composer exposes a pause action for in-flight runs and calls the runtime pause API", async () => {
@@ -1336,82 +1322,27 @@ test("chat pane exposes a queued message preview hook for dev console inspection
   );
 });
 
-test("chat pane exposes a todo preview hook for combined todo and queue design inspection", async () => {
+test("chat pane no longer exposes a separate todo preview rail", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /const TODO_PREVIEW_EVENT = "holaboss:todo-preview-change";/);
-  assert.match(source, /__holabossTodoPreviewState\?: TodoPlanPreviewState \| null;/);
-  assert.match(source, /__holabossDevTodoPreview\?: \{/);
-  assert.match(source, /function defaultTodoPlanPreview\(\): ChatTodoPlan/);
-  assert.match(source, /window\.__holabossDevTodoPreview = \{/);
-  assert.match(source, /sample: \(\) =>/);
-  assert.match(source, /expanded: \(\) =>/);
-  assert.match(source, /collapsed: \(\) =>/);
-  assert.match(source, /clear: \(\) => setTodoPlanPreviewState\(null\)/);
-  assert.match(source, /set: \(plan, options\) =>/);
-  assert.match(source, /const todoPlanPreview = useTodoPlanPreview\(\);/);
-  assert.match(
-    source,
-    /const displayedTodoPlan = todoPlanPreview\?\.plan \?\? currentTodoPlan;/,
-  );
-  assert.match(
-    source,
-    /const displayedTodoPanelExpanded =\s*todoPlanPreview\?\.expanded \?\? todoPanelExpanded;/,
-  );
-  assert.match(source, /const toggleTodoPanel = \(\) => \{/);
-  assert.match(source, /if \(todoPlanPreview\) \{/);
-  assert.match(source, /setTodoPlanPreviewState\(\{\s*\.\.\.todoPlanPreview,/);
-  assert.match(source, /todoPlan=\{displayedTodoPlan\}/);
-  assert.match(source, /expanded=\{displayedTodoPanelExpanded\}/);
-  assert.match(source, /onToggle=\{toggleTodoPanel\}/);
+  assert.doesNotMatch(source, /const todoPlanPreview = useTodoPlanPreview\(\);/);
+  assert.doesNotMatch(source, /const displayedTodoPlan =/);
+  assert.doesNotMatch(source, /const displayedTodoPanelExpanded =/);
+  assert.doesNotMatch(source, /const toggleTodoPanel = \(\) => \{/);
 });
 
-test("chat pane renders a collapsed current todo panel near the top of the pane", async () => {
+test("chat pane renders inline background tasks near the top of the pane", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /function CurrentTodoPanel\(/);
-  assert.match(source, /function currentTodoPosition\(phases: ChatTodoPhase\[\]\)/);
-  assert.match(source, /function latestCompletedTodoEntry\(phases: ChatTodoPhase\[\]\)/);
-  assert.match(source, /function phaseHasRemainingTodoTasks\(phase: ChatTodoPhase\)/);
-  assert.match(source, /function visibleTodoPhases\(phases: ChatTodoPhase\[\]\)/);
-  assert.match(source, /const summaryLabel = activeEntry/);
-  assert.match(source, /: latestCompletedEntry\?\.task\.content \|\|/);
-  assert.match(source, /const visiblePhases = visibleTodoPhases\(todoPlan\.phases\);/);
-  assert.match(source, /const totalTaskCount = todoTaskCount\(visiblePhases\);/);
-  assert.match(source, /const currentTaskPosition = currentTodoPosition\(visiblePhases\);/);
   assert.match(
     source,
-    /const activePhases = phases\.filter\(\(phase\) => phaseHasRemainingTodoTasks\(phase\)\);[\s\S]*if \(activePhases\.length > 0\) \{\s*return activePhases;\s*\}/,
+    /!isOnboardingVariant \? \(\s*<BackgroundTasksPane[\s\S]*workspaceId=\{selectedWorkspaceId\}[\s\S]*variant="inline"[\s\S]*\) : null/,
   );
   assert.match(
     source,
-    /return latestCompletedPhaseIndex < 0\s*\? phases\s*: phases\.slice\(latestCompletedPhaseIndex, latestCompletedPhaseIndex \+ 1\);/,
+    /className=\{`flex min-w-0 w-full flex-col gap-4 px-4 pb-3 pt-5 \$\{\s*showHistoryRestoreScreen \? "invisible" : ""\s*\}`\}/,
   );
-  assert.match(
-    source,
-    /return phase\.tasks\.some\(\s*\(task\) =>\s*task\.status === "pending" \|\|\s*task\.status === "in_progress" \|\|\s*task\.status === "blocked",/,
-  );
-  assert.match(source, /const progressLabel =\s*totalTaskCount > 0 \? `\$\{currentTaskPosition\}\/\$\{totalTaskCount\}` : "0\/0";/);
-  assert.match(source, /\{visiblePhases\.map\(\(phase\) => \{/);
-  assert.match(
-    source,
-    /const todoPanelSlotHeightPx = 58;[\s\S]*\{displayedTodoPlan \? \(\s*<div[\s\S]*className="relative z-20 shrink-0 px-6 pt-3"[\s\S]*style=\{\{\s*height: `\$\{todoPanelSlotHeightPx\}px`\s*\}\}[\s\S]*<div className="absolute inset-x-6 top-3">[\s\S]*<CurrentTodoPanel[\s\S]*todoPlan=\{displayedTodoPlan\}[\s\S]*expanded=\{displayedTodoPanelExpanded\}[\s\S]*onToggle=\{toggleTodoPanel\}[\s\S]*<\/div>[\s\S]*<\/div>\s*\) : null\}[\s\S]*<div className="relative flex min-h-0 flex-1 flex-col">/,
-  );
-  assert.match(source, /aria-expanded=\{expanded\}/);
-  assert.match(source, /className="max-h-\[320px\] overflow-y-auto border-t border-border\/20 px-3 py-3"/);
-  assert.match(
-    source,
-    /className=\{`shrink-0 text-muted-foreground transition \$\{expanded \? "rotate-0" : "-rotate-90"\}`\}/,
-  );
-  assert.match(source, /All tracked todo items are complete\./);
-  assert.match(
-    source,
-    /task\.status === "pending" \|\|\s*task\.status === "in_progress" \|\|\s*task\.status === "blocked"/,
-  );
-  assert.match(
-    source,
-    /completedStatus === "paused" \|\| completedStatus === "waiting_user"/,
-  );
+  assert.doesNotMatch(source, /<CurrentTodoPanel/);
 });
 
 test("chat pane stops auto-follow while the user is actively selecting chat text", async () => {

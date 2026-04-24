@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildAgentCapabilityManifest } from "./agent-capability-registry.js";
-import { composeBaseAgentPrompt } from "./agent-runtime-prompt.js";
+import { composeAgentPrompt, composeBaseAgentPrompt } from "./agent-runtime-prompt.js";
 
 test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   const capabilityManifest = buildAgentCapabilityManifest({
@@ -159,7 +159,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     /do not create skills for one-off state\./i
   );
   assert.match(prompt.systemPrompt, /Session policy:/);
-  assert.match(prompt.systemPrompt, /This is a workspace session/i);
+  assert.match(prompt.systemPrompt, /front-of-house workspace session/i);
   assert.match(prompt.systemPrompt, /Capability policy for this run:/);
   assert.match(prompt.systemPrompt, /Workspace instructions from AGENTS\.md:/);
   assert.doesNotMatch(prompt.systemPrompt, /OpenCode MCP tool naming:/);
@@ -199,6 +199,121 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   ]);
   assert.match(prompt.promptCacheProfile.cacheable_fingerprint, /^[a-f0-9]{64}$/);
   assert.match(prompt.promptCacheProfile.full_system_prompt_fingerprint, /^[a-f0-9]{64}$/);
+});
+
+test("composeAgentPrompt uses a conversational main-session prompt for workspace sessions", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read", "edit"],
+    extraTools: ["holaboss_delegate_task", "holaboss_wait_subagents"],
+    runtimeToolIds: ["holaboss_delegate_task", "holaboss_wait_subagents"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    toolServerIdMap: {},
+  });
+
+  const prompt = composeAgentPrompt("You are concise.", {
+    defaultTools: ["read", "edit"],
+    extraTools: ["holaboss_delegate_task", "holaboss_wait_subagents"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    harnessId: "pi",
+    capabilityManifest,
+  });
+
+  assert.match(prompt.systemPrompt, /Conversation and orchestration doctrine:/);
+  assert.match(prompt.systemPrompt, /single front-of-house counterpart/);
+  assert.match(prompt.systemPrompt, /Prefer delegating long-running, tool-heavy, interruptible, or execution-heavy work to hidden subagents\./);
+  assert.doesNotMatch(prompt.systemPrompt, /Execution doctrine:/);
+  assert.doesNotMatch(prompt.systemPrompt, /Todo continuity policy:/);
+  assert.doesNotMatch(prompt.systemPrompt, /Use `write_report` for long, structured, evidence-heavy, or referenceable outputs/);
+});
+
+test("composeAgentPrompt keeps main sessions free of todo doctrine even if todo tools are present", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read", "todoread", "todowrite", "holaboss_scratchpad_read", "holaboss_scratchpad_write"],
+    extraTools: ["holaboss_delegate_task"],
+    runtimeToolIds: ["holaboss_delegate_task", "holaboss_scratchpad_read", "holaboss_scratchpad_write"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    toolServerIdMap: {},
+  });
+
+  const prompt = composeAgentPrompt("", {
+    defaultTools: ["read", "todoread", "todowrite", "holaboss_scratchpad_read", "holaboss_scratchpad_write"],
+    extraTools: ["holaboss_delegate_task"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    harnessId: "pi",
+    capabilityManifest,
+  });
+
+  assert.doesNotMatch(prompt.systemPrompt, /Todo continuity policy:/);
+  assert.doesNotMatch(
+    prompt.systemPrompt,
+    /When you need the current phase ids, task ids, or recorded state from an existing todo before continuing or updating it, use `todoread` first instead of guessing\./
+  );
+  assert.doesNotMatch(
+    prompt.systemPrompt,
+    /Use `todowrite` for task structure and status only; use the scratchpad/
+  );
+  assert.doesNotMatch(
+    prompt.contextMessages.join("\n"),
+    /Do not use `todowrite` as a substitute for scratchpad notes/
+  );
+  assert.equal(
+    prompt.promptSections.some((section) => section.id === "scratchpad_context"),
+    false,
+  );
+  assert.equal(
+    prompt.promptCacheProfile.context_message_ids.includes("scratchpad_context"),
+    false,
+  );
+});
+
+test("composeAgentPrompt tells main sessions how to inspect legacy session exports", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read", "glob", "list"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    toolServerIdMap: {},
+  });
+
+  const prompt = composeAgentPrompt("", {
+    defaultTools: ["read", "glob", "list"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    harnessId: "pi",
+    legacySessionHistoryContext: {
+      manifest_path: ".holaboss/legacy-session-histories/index.json",
+      legacy_session_count: 2,
+      entries: [
+        {
+          session_id: "session-older",
+          title: "Earlier planning chat",
+          kind: "workspace_session",
+          archived_at: "2026-04-24T06:52:27.419Z",
+          message_count: 14,
+          output_count: 1,
+          json_path: ".holaboss/legacy-session-histories/session-older.json",
+          markdown_path: ".holaboss/legacy-session-histories/session-older.md",
+        },
+      ],
+    },
+    capabilityManifest,
+  });
+
+  assert.match(prompt.contextMessages.join("\n"), /Legacy session history exports:/);
+  assert.match(prompt.contextMessages.join("\n"), /consult the manifest or a directly relevant export before saying that prior session context is unavailable/i);
+  assert.match(prompt.contextMessages.join("\n"), /Manifest path: `\.holaboss\/legacy-session-histories\/index\.json`\./);
+  assert.match(prompt.contextMessages.join("\n"), /Earlier planning chat:/);
 });
 
 test("composeBaseAgentPrompt includes shared todo continuity policy when todo tools are available", () => {

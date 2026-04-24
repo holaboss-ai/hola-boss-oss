@@ -77,6 +77,8 @@ const OPERATIONS_DRAWER_TAB_STORAGE_KEY = "holaboss-operations-drawer-tab-v1";
 const TASK_PROPOSAL_SEEN_STORAGE_KEY = "holaboss-task-proposal-seen-v1";
 const BROWSER_PANE_WIDTH_STORAGE_KEY = "holaboss-browser-pane-width-v1";
 const SPACE_VISIBILITY_STORAGE_KEY = "holaboss-space-visibility-v1";
+const SPACE_WORKSPACE_PANEL_COLLAPSED_STORAGE_KEY =
+  "holaboss-space-workspace-panel-collapsed-v1";
 const THEMES = [
   "amber-minimal-dark",
   "amber-minimal-light",
@@ -725,6 +727,24 @@ function loadBrowserPaneWidth(): number {
   return DEFAULT_BROWSER_PANE_WIDTH;
 }
 
+function loadSpaceWorkspacePanelCollapsed(): boolean {
+  try {
+    const raw = localStorage.getItem(
+      SPACE_WORKSPACE_PANEL_COLLAPSED_STORAGE_KEY,
+    );
+    if (raw === "1" || raw === "true") {
+      return true;
+    }
+    if (raw === "0" || raw === "false") {
+      return false;
+    }
+  } catch {
+    // ignore invalid persisted layout state
+  }
+
+  return false;
+}
+
 function loadOperationsDrawerOpen(): boolean {
   try {
     const raw = localStorage.getItem(OPERATIONS_DRAWER_OPEN_STORAGE_KEY);
@@ -1336,6 +1356,8 @@ function AppShellContent() {
   // Animate the content swap when the Space explorer mode changes. Every mode
   // enters from the right so all three tabs share one consistent idiom.
   const spaceExplorerSlideInClass = "slide-in-from-right-3";
+  const [spaceWorkspacePanelCollapsed, setSpaceWorkspacePanelCollapsed] =
+    useState(loadSpaceWorkspacePanelCollapsed);
   const [spaceBrowserSpace, setSpaceBrowserSpace] =
     useState<BrowserSpaceId>("user");
   const [spaceDisplayView, setSpaceDisplayView] = useState<SpaceDisplayView>({
@@ -1452,6 +1474,7 @@ function AppShellContent() {
   filesPaneWidthRef.current = filesPaneWidth;
   browserPaneWidthRef.current = browserPaneWidth;
   spaceVisibilityRef.current = spaceVisibility;
+  const effectiveSpaceWorkspacePanelCollapsed = false;
 
   const proactiveHeartbeatWorkspaceSyncKey = useMemo(
     () =>
@@ -2272,6 +2295,7 @@ function AppShellContent() {
 
   const revealBrowserPane = useCallback((space: BrowserSpaceId = "user") => {
     setActiveShellView("space");
+    setSpaceWorkspacePanelCollapsed(false);
     setSpaceExplorerMode("browser");
     setSpaceBrowserSpace(space);
     setSpaceDisplayView({ type: "browser" });
@@ -2445,6 +2469,20 @@ function AppShellContent() {
       String(browserPaneWidth),
     );
   }, [browserPaneWidth]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      SPACE_WORKSPACE_PANEL_COLLAPSED_STORAGE_KEY,
+      spaceWorkspacePanelCollapsed ? "1" : "0",
+    );
+  }, [spaceWorkspacePanelCollapsed]);
+
+  useEffect(() => {
+    if (!spaceWorkspacePanelCollapsed) {
+      return;
+    }
+    setSpaceWorkspacePanelCollapsed(false);
+  }, [spaceWorkspacePanelCollapsed]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -2974,6 +3012,7 @@ function AppShellContent() {
       },
     ) => {
       setActiveShellView("space");
+      setSpaceWorkspacePanelCollapsed(false);
       setSpaceExplorerMode("applications");
       setSpaceVisibility((previous) => ({
         ...previous,
@@ -3449,6 +3488,7 @@ function AppShellContent() {
         explorer_mode: spaceExplorerMode,
         browser_space: spaceBrowserSpace,
         visibility: spaceVisibility,
+        workspace_panel_collapsed: effectiveSpaceWorkspacePanelCollapsed,
       },
       workspace: {
         count: workspaces.length,
@@ -3522,6 +3562,7 @@ function AppShellContent() {
       spaceBrowserSpace,
       spaceDisplayView,
       spaceExplorerMode,
+      effectiveSpaceWorkspacePanelCollapsed,
       spaceVisibility,
       taskProposalDetailsDialogOpen,
       taskProposals.length,
@@ -3549,6 +3590,7 @@ function AppShellContent() {
       space_display_type: spaceDisplayView.type,
       space_explorer_mode: spaceExplorerMode,
       space_browser_space: spaceBrowserSpace,
+      space_workspace_panel_collapsed: effectiveSpaceWorkspacePanelCollapsed,
     });
   }, [
     activeShellView,
@@ -3556,6 +3598,7 @@ function AppShellContent() {
     spaceBrowserSpace,
     spaceDisplayView.type,
     spaceExplorerMode,
+    effectiveSpaceWorkspacePanelCollapsed,
   ]);
 
   useEffect(() => {
@@ -3700,6 +3743,7 @@ function AppShellContent() {
     }
 
     setActiveShellView("space");
+    setSpaceWorkspacePanelCollapsed(false);
     setSpaceExplorerMode("files");
     setSpaceVisibility((previous) => ({
       ...previous,
@@ -3737,6 +3781,7 @@ function AppShellContent() {
           target.resourceId?.trim()
         ) {
           setActiveShellView("space");
+          setSpaceWorkspacePanelCollapsed(false);
           setSpaceExplorerMode("files");
           setSpaceVisibility((previous) => ({
             ...previous,
@@ -3757,6 +3802,7 @@ function AppShellContent() {
         }
 
         setActiveShellView("space");
+        setSpaceWorkspacePanelCollapsed(false);
         setSpaceVisibility((previous) => ({
           ...previous,
           agent: true,
@@ -4014,9 +4060,6 @@ function AppShellContent() {
           onOpenInbox={handleOpenInboxPane}
           inboxUnreadCount={unreadTaskProposalCount}
           onOpenAutomations={handleOpenAutomationsPane}
-          onRequestCreateSession={(request) =>
-            void handleCreateSession(request)
-          }
           composerDraftText={
             selectedWorkspaceId
               ? (chatComposerDraftTextByWorkspace[selectedWorkspaceId] ?? "")
@@ -4620,7 +4663,10 @@ function AppShellContent() {
                     ref={utilityPaneHostRef}
                     className="flex min-h-0 min-w-0 flex-1 items-stretch p-0.5"
                   >
-                    <section className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-card shadow-subtle-xs backdrop-blur-sm">
+                    <section
+                      id="space-workspace-panel"
+                      className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-card shadow-subtle-xs backdrop-blur-sm"
+                    >
                       <div
                         className="shrink-0 overflow-hidden border-r border-border bg-card"
                         style={{
@@ -4713,7 +4759,8 @@ function AppShellContent() {
                         </div>
                         <div
                           id="space-explorer-panel"
-                          className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-r border-border bg-card">
+                          className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-r border-border bg-card"
+                        >
                           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                             <div
                               key={spaceExplorerMode}

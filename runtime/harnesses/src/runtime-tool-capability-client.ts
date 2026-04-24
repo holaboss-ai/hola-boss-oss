@@ -13,6 +13,8 @@ const RUNTIME_TOOLS_CAPABILITY_STATUS_PATH = "/api/v1/capabilities/runtime-tools
 const RUNTIME_TOOLS_ONBOARDING_STATUS_PATH = "/api/v1/capabilities/runtime-tools/onboarding/status";
 const RUNTIME_TOOLS_ONBOARDING_COMPLETE_PATH = "/api/v1/capabilities/runtime-tools/onboarding/complete";
 const RUNTIME_TOOLS_CRONJOBS_PATH = "/api/v1/capabilities/runtime-tools/cronjobs";
+const RUNTIME_TOOLS_SUBAGENTS_PATH = "/api/v1/capabilities/runtime-tools/subagents";
+const RUNTIME_TOOLS_SUBAGENTS_WAIT_PATH = "/api/v1/capabilities/runtime-tools/subagents/wait";
 const RUNTIME_TOOLS_IMAGE_GENERATE_PATH = "/api/v1/capabilities/runtime-tools/images/generate";
 const RUNTIME_TOOLS_DOWNLOADS_PATH = "/api/v1/capabilities/runtime-tools/downloads";
 const RUNTIME_TOOLS_REPORTS_PATH = "/api/v1/capabilities/runtime-tools/reports";
@@ -25,6 +27,7 @@ const DEFAULT_RUNTIME_TOOL_TIMEOUT_MS = 30000;
 const IMAGE_GENERATE_RUNTIME_TOOL_TIMEOUT_MS = 180000;
 const DOWNLOAD_URL_RUNTIME_TOOL_TIMEOUT_MS = 120000;
 const TERMINAL_WAIT_RUNTIME_TOOL_TIMEOUT_MS = 65000;
+const SUBAGENT_WAIT_RUNTIME_TOOL_TIMEOUT_MS = 65000;
 
 export interface RuntimeToolCapabilityClientOptions {
   runtimeApiBaseUrl: string;
@@ -56,6 +59,17 @@ function parseOptionalJsonObject(raw: unknown, fieldName: string): Record<string
   return parsed;
 }
 
+function optionalStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const items = value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  return items.length > 0 ? items : undefined;
+}
+
 function buildDeliveryPayload(toolParams: unknown): Record<string, unknown> | undefined {
   const params = isRecord(toolParams) ? toolParams : {};
   const channel = optionalString(params.delivery_channel);
@@ -69,6 +83,14 @@ function buildDeliveryPayload(toolParams: unknown): Record<string, unknown> | un
     ...(mode ? { mode } : {}),
     ...(to !== undefined ? { to } : {}),
   };
+}
+
+function subagentPath(subagentId: unknown): string {
+  const value = optionalString(subagentId);
+  if (!value) {
+    throw new Error("subagent_id is required");
+  }
+  return `${RUNTIME_TOOLS_SUBAGENTS_PATH}/${encodeURIComponent(value)}`;
 }
 
 function cronjobPath(jobId: unknown): string {
@@ -126,6 +148,47 @@ function createImageGenerationBody(toolParams: unknown): Record<string, unknown>
     prompt: String(params.prompt ?? ""),
     ...(optionalString(params.filename) ? { filename: optionalString(params.filename) } : {}),
     ...(optionalString(params.size) ? { size: optionalString(params.size) } : {}),
+  };
+}
+
+function normalizeDelegateTask(taskParams: unknown): Record<string, unknown> {
+  const params = isRecord(taskParams) ? taskParams : {};
+  const goal = optionalString(params.goal);
+  return {
+    ...(optionalString(params.title) ? { title: optionalString(params.title) } : {}),
+    ...(goal ? { goal } : {}),
+    ...(optionalString(params.context) ? { context: optionalString(params.context) } : {}),
+    ...(optionalStringArray(params.tools) ? { tools: optionalStringArray(params.tools) } : {}),
+    ...(optionalString(params.model) ? { model: optionalString(params.model) } : {}),
+    ...(typeof params.timeout_ms === "number" ? { timeout_ms: params.timeout_ms } : {}),
+  };
+}
+
+function createDelegateTaskBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  const normalizedTasks = Array.isArray(params.tasks)
+    ? params.tasks.map((task) => normalizeDelegateTask(task)).filter((task) => typeof task.goal === "string")
+    : [];
+  if (normalizedTasks.length > 0) {
+    return { tasks: normalizedTasks };
+  }
+  return { tasks: [normalizeDelegateTask(params)] };
+}
+
+function createWaitSubagentsBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    subagent_ids: optionalStringArray(params.subagent_ids) ?? [],
+    ...(optionalString(params.return_when) ? { return_when: optionalString(params.return_when) } : {}),
+    ...(typeof params.timeout_ms === "number" ? { timeout_ms: params.timeout_ms } : {}),
+  };
+}
+
+function createResumeSubagentBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    answer: String(params.answer ?? ""),
+    ...(optionalString(params.model) ? { model: optionalString(params.model) } : {}),
   };
 }
 
@@ -302,6 +365,9 @@ function runtimeToolTimeoutMs(toolId: RuntimeAgentToolId): number {
   if (toolId === "terminal_session_wait") {
     return TERMINAL_WAIT_RUNTIME_TOOL_TIMEOUT_MS;
   }
+  if (toolId === "holaboss_wait_subagents") {
+    return SUBAGENT_WAIT_RUNTIME_TOOL_TIMEOUT_MS;
+  }
   return DEFAULT_RUNTIME_TOOL_TIMEOUT_MS;
 }
 
@@ -346,6 +412,30 @@ function requestPlan(
       return {
         method: "DELETE",
         requestPath: cronjobPath(isRecord(toolParams) ? toolParams.job_id : undefined),
+      };
+    case "holaboss_delegate_task":
+      return {
+        method: "POST",
+        requestPath: RUNTIME_TOOLS_SUBAGENTS_PATH,
+        body: createDelegateTaskBody(toolParams),
+      };
+    case "holaboss_wait_subagents":
+      return {
+        method: "POST",
+        requestPath: RUNTIME_TOOLS_SUBAGENTS_WAIT_PATH,
+        body: createWaitSubagentsBody(toolParams),
+      };
+    case "holaboss_cancel_subagent":
+      return {
+        method: "POST",
+        requestPath: `${subagentPath(isRecord(toolParams) ? toolParams.subagent_id : undefined)}/cancel`,
+        body: {},
+      };
+    case "holaboss_resume_subagent":
+      return {
+        method: "POST",
+        requestPath: `${subagentPath(isRecord(toolParams) ? toolParams.subagent_id : undefined)}/resume`,
+        body: createResumeSubagentBody(toolParams),
       };
     case "image_generate":
       return { method: "POST", requestPath: RUNTIME_TOOLS_IMAGE_GENERATE_PATH, body: createImageGenerationBody(toolParams) };

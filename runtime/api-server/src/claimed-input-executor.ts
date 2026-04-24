@@ -2,8 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type {
+  OutputRecord,
   RuntimeStateStore,
   SessionInputRecord,
+  SubagentRunRecord,
   TurnResultRecord,
   WorkspaceRecord,
 } from "@holaboss/runtime-state-store";
@@ -63,6 +65,8 @@ const CLAIMED_INPUT_SENTRY_OBJECT_LIMIT = 20;
 const CLAIMED_INPUT_SENTRY_RECENT_EVENT_LIMIT = 8;
 const CLAIMED_INPUT_SENTRY_PERMISSION_DENIAL_LIMIT = 10;
 const BACKEND_OUTPUT_DELTA_RELAY_FLUSH_CHARS = 1200;
+const SUBAGENT_EVENT_COALESCE_WINDOW_MS = 5_000;
+const SUBAGENT_EVENT_IDLE_TIMEOUT_MS = 60_000;
 
 interface SessionInputAttachment {
   id: string;
@@ -615,6 +619,45 @@ function buildOnboardingInstruction(params: {
     "[/ONBOARD.md]",
     "",
     trimmed,
+  ]
+    .join("\n")
+    .trim();
+}
+
+function queuedMainSessionEventsFromContext(
+  context: Record<string, unknown> | null | undefined,
+): Array<Record<string, unknown>> {
+  if (!Array.isArray(context?.queued_events)) {
+    return [];
+  }
+  return context.queued_events.filter(
+    (value): value is Record<string, unknown> => isRecord(value),
+  );
+}
+
+function instructionWithInlineBackgroundUpdates(params: {
+  baseInstruction: string;
+  context: Record<string, unknown> | null | undefined;
+}): string {
+  const deliveryBucket = optionalString(params.context?.delivery_bucket)?.toLowerCase();
+  if (deliveryBucket !== "background_update") {
+    return params.baseInstruction;
+  }
+  const events = queuedMainSessionEventsFromContext(params.context);
+  if (events.length === 0) {
+    return params.baseInstruction;
+  }
+
+  return [
+    params.baseInstruction,
+    "",
+    "[Pending Background Updates]",
+    "These background task updates belong to the same main session.",
+    "Answer the user's latest message first.",
+    "If these updates fit naturally, fold them into the same reply.",
+    "If they are not directly relevant, append a brief natural follow-up paragraph at the end instead of sounding like a system notification.",
+    JSON.stringify(events, null, 2),
+    "[/Pending Background Updates]",
   ]
     .join("\n")
     .trim();
@@ -1312,6 +1355,489 @@ function summarizeToolCalls(
   return summary;
 }
 
+function plusMillisecondsIso(
+  value: string | null | undefined,
+  milliseconds: number,
+): string {
+  const parsed = value ? Date.parse(value) : Number.NaN;
+  const base = Number.isFinite(parsed) ? parsed : Date.now();
+  return new Date(base + milliseconds).toISOString();
+}
+
+function subagentForwardableDeliverables(
+  outputs: OutputRecord[],
+): Array<Record<string, unknown>> {
+  return outputs.map((output) => {
+    const metadata = isRecord(output.metadata) ? output.metadata : {};
+    const artifactType = optionalString(metadata.artifact_type);
+    return {
+      output_id: output.id,
+      type: artifactType ?? output.outputType,
+      output_type: output.outputType,
+      title: output.title,
+      status: output.status,
+      file_path: output.filePath,
+      artifact_id: output.artifactId,
+      platform: output.platform,
+      safe_to_forward: true,
+      metadata,
+    };
+  });
+}
+
+function subagentLifecycleStatusFromTurnResult(params: {
+  run: SubagentRunRecord;
+  turnResult: TurnResultRecord;
+}): "completed" | "failed" | "waiting_on_user" | "cancelled" | null {
+  if (params.run.cancelledAt || params.run.status === "cancelled") {
+    return "cancelled";
+  }
+  if (params.turnResult.status === "waiting_user") {
+    return "waiting_on_user";
+  }
+  if (params.turnResult.status === "failed") {
+    return "failed";
+  }
+  if (params.turnResult.status === "completed") {
+    return "completed";
+  }
+  if (params.turnResult.status === "paused") {
+    return "cancelled";
+  }
+  return null;
+}
+
+function subagentLifecycleSummary(params: {
+  run: SubagentRunRecord;
+  turnResult: TurnResultRecord;
+  status: "completed" | "failed" | "waiting_on_user" | "cancelled";
+}): string {
+  const compactSummary = compactTurnSummary(params.turnResult);
+  if (params.status === "cancelled") {
+    return optionalString(params.run.summary) ?? compactSummary ?? "Cancelled.";
+  }
+  if (params.status === "waiting_on_user") {
+    return compactSummary ?? "Waiting on user input.";
+  }
+  if (params.status === "failed") {
+    return compactSummary ?? "Task failed.";
+  }
+  return compactSummary ?? "Task completed.";
+}
+
+function subagentLifecyclePayload(params: {
+  run: SubagentRunRecord;
+  turnResult: TurnResultRecord;
+  status: "completed" | "failed" | "waiting_on_user" | "cancelled";
+  summary: string;
+  outputs: OutputRecord[];
+  record: SessionInputRecord;
+}): Record<string, unknown> {
+  const forwardableDeliverables = subagentForwardableDeliverables(params.outputs);
+  const assistantText = optionalString(params.turnResult.assistantText);
+  const payload: Record<string, unknown> = {
+    subagent_id: params.run.subagentId,
+    child_session_id: params.run.childSessionId,
+    child_input_id: params.record.inputId,
+    origin_main_session_id: params.run.originMainSessionId,
+    owner_main_session_id: params.run.ownerMainSessionId,
+    title: params.run.title,
+    goal: params.run.goal,
+    status: params.status,
+    summary: params.summary,
+    turn_status: params.turnResult.status,
+    stop_reason: params.turnResult.stopReason,
+  };
+  if (params.run.context) {
+    payload.context = params.run.context;
+  }
+  if (assistantText) {
+    payload.assistant_text = assistantText;
+  }
+  if (forwardableDeliverables.length > 0) {
+    payload.forwardable_deliverables = forwardableDeliverables;
+  }
+  if (params.status === "waiting_on_user") {
+    payload.blocking_question = assistantText ?? params.summary;
+    if (forwardableDeliverables.length > 0) {
+      payload.partial_deliverables = forwardableDeliverables;
+    }
+  } else if (
+    params.status === "failed" ||
+    params.status === "cancelled"
+  ) {
+    payload.partial_summary = params.summary;
+    if (forwardableDeliverables.length > 0) {
+      payload.partial_deliverables = forwardableDeliverables;
+    }
+  }
+  return payload;
+}
+
+const LOW_SIGNAL_SUBAGENT_PROGRESS_TOOLS = new Set([
+  "read",
+  "edit",
+  "grep",
+  "glob",
+  "list",
+  "question",
+  "todoread",
+  "todowrite",
+  "skill",
+]);
+
+function subagentProgressPayloadFromRunnerEvent(params: {
+  run: SubagentRunRecord;
+  eventType: string;
+  payload: Record<string, unknown>;
+}): Record<string, unknown> | null {
+  if (params.run.cancelledAt || params.run.status === "cancelled") {
+    return null;
+  }
+
+  if (params.eventType === "run_started") {
+    return {
+      subagent_id: params.run.subagentId,
+      title: params.run.title,
+      goal: params.run.goal,
+      status: "running",
+      progress_type: "started",
+      summary: optionalString(params.run.summary) ??
+        `Started ${optionalString(params.run.title) ?? "working on the task"}.`,
+    };
+  }
+
+  if (
+    params.eventType === "skill_invocation" &&
+    params.payload.phase === "completed" &&
+    params.payload.error !== true
+  ) {
+    const skillName =
+      optionalString(params.payload.skill_name) ??
+      optionalString(params.payload.requested_name) ??
+      "the skill step";
+    return {
+      subagent_id: params.run.subagentId,
+      title: params.run.title,
+      goal: params.run.goal,
+      status: "running",
+      progress_type: "milestone",
+      summary: `Finished ${skillName}.`,
+      skill_name: skillName,
+    };
+  }
+
+  if (
+    params.eventType === "tool_call" &&
+    params.payload.phase === "completed" &&
+    params.payload.error !== true
+  ) {
+    const toolName = optionalString(params.payload.tool_name)?.toLowerCase();
+    const toolId = optionalString(params.payload.tool_id)?.toLowerCase();
+    if (!toolName || LOW_SIGNAL_SUBAGENT_PROGRESS_TOOLS.has(toolName)) {
+      return null;
+    }
+    let summary = `Completed ${toolName}.`;
+    if (toolName === "bash") {
+      summary = "Finished a terminal step.";
+    } else if (toolName === "web_search") {
+      summary = "Finished a web research step.";
+    } else if (
+      toolName.startsWith("browser_") ||
+      (toolId && toolId.includes("browser"))
+    ) {
+      summary = "Finished a browser step.";
+    }
+    return {
+      subagent_id: params.run.subagentId,
+      title: params.run.title,
+      goal: params.run.goal,
+      status: "running",
+      progress_type: "milestone",
+      summary,
+      tool_name: toolName,
+      tool_id: toolId ?? null,
+    };
+  }
+
+  return null;
+}
+
+function supersedePendingSubagentProgressEvents(params: {
+  store: RuntimeStateStore;
+  run: SubagentRunRecord;
+}): void {
+  const pending = params.store
+    .listPendingMainSessionEvents({
+      ownerMainSessionId: params.run.ownerMainSessionId,
+      deliveryBucket: "background_update",
+      limit: 500,
+    })
+    .filter(
+      (event) =>
+        event.subagentId === params.run.subagentId && event.eventType === "progress",
+    );
+  if (pending.length === 0) {
+    return;
+  }
+  params.store.markMainSessionEventsSuperseded({
+    eventIds: pending.map((event) => event.eventId),
+  });
+}
+
+function recordSubagentProgressFromRunnerEvent(params: {
+  store: RuntimeStateStore;
+  record: SessionInputRecord;
+  eventType: string;
+  eventPayload: Record<string, unknown>;
+  eventTimestamp: string;
+}): void {
+  const run = params.store.getSubagentRunByChildSession({
+    workspaceId: params.record.workspaceId,
+    childSessionId: params.record.sessionId,
+  });
+  if (!run) {
+    return;
+  }
+
+  const payload = subagentProgressPayloadFromRunnerEvent({
+    run,
+    eventType: params.eventType,
+    payload: params.eventPayload,
+  });
+  if (!payload) {
+    return;
+  }
+
+  if (
+    optionalString(run.latestProgressPayload?.summary) ===
+      optionalString(payload.summary) &&
+    optionalString(run.latestProgressPayload?.progress_type) ===
+      optionalString(payload.progress_type)
+  ) {
+    return;
+  }
+
+  const updated =
+    params.store.updateSubagentRun({
+      subagentId: run.subagentId,
+      fields: {
+        status: run.status === "queued" ? "running" : run.status,
+        startedAt: run.startedAt ?? params.eventTimestamp,
+        summary:
+          optionalString(payload.summary) ?? run.summary ?? "Background task in progress.",
+        latestProgressPayload: payload,
+        lastEventAt: params.eventTimestamp,
+      },
+    }) ?? run;
+  supersedePendingSubagentProgressEvents({
+    store: params.store,
+    run: updated,
+  });
+  params.store.enqueueMainSessionEvent({
+    workspaceId: updated.workspaceId,
+    ownerMainSessionId: updated.ownerMainSessionId,
+    originMainSessionId: updated.originMainSessionId,
+    subagentId: updated.subagentId,
+    eventType: "progress",
+    deliveryBucket: "background_update",
+    coalesceKey: `${updated.ownerMainSessionId}:background_update`,
+    earliestDeliverAt: plusMillisecondsIso(
+      params.eventTimestamp,
+      SUBAGENT_EVENT_COALESCE_WINDOW_MS,
+    ),
+    latestDeliverAt: plusMillisecondsIso(
+      params.eventTimestamp,
+      SUBAGENT_EVENT_IDLE_TIMEOUT_MS,
+    ),
+    payload,
+  });
+}
+
+function supersedePendingSubagentEvents(params: {
+  store: RuntimeStateStore;
+  run: SubagentRunRecord;
+}): void {
+  const pending = params.store
+    .listPendingMainSessionEvents({
+      ownerMainSessionId: params.run.ownerMainSessionId,
+      limit: 500,
+    })
+    .filter((event) => event.subagentId === params.run.subagentId);
+  if (pending.length === 0) {
+    return;
+  }
+  params.store.markMainSessionEventsSuperseded({
+    eventIds: pending.map((event) => event.eventId),
+  });
+}
+
+function updateSubagentRunFromTurnResult(params: {
+  store: RuntimeStateStore;
+  record: SessionInputRecord;
+  turnResult: TurnResultRecord;
+}): SubagentRunRecord | null {
+  const run = params.store.getSubagentRunByChildSession({
+    workspaceId: params.record.workspaceId,
+    childSessionId: params.record.sessionId,
+  });
+  if (!run) {
+    return null;
+  }
+
+  const status = subagentLifecycleStatusFromTurnResult({
+    run,
+    turnResult: params.turnResult,
+  });
+  const outputs = params.store.listOutputs({
+    workspaceId: params.record.workspaceId,
+    sessionId: params.record.sessionId,
+    inputId: params.record.inputId,
+    limit: 200,
+    offset: 0,
+  });
+  const lastEventAt =
+    params.turnResult.completedAt ??
+    params.turnResult.updatedAt ??
+    new Date().toISOString();
+  const fields: Parameters<RuntimeStateStore["updateSubagentRun"]>[0]["fields"] =
+    {
+      latestChildInputId: params.record.inputId,
+      startedAt: run.startedAt ?? params.turnResult.startedAt,
+      lastEventAt,
+    };
+
+  if (!status) {
+    return (
+      params.store.updateSubagentRun({
+        subagentId: run.subagentId,
+        fields,
+      }) ?? run
+    );
+  }
+
+  const summary = subagentLifecycleSummary({
+    run,
+    turnResult: params.turnResult,
+    status,
+  });
+  const payload = subagentLifecyclePayload({
+    run,
+    turnResult: params.turnResult,
+    status,
+    summary,
+    outputs,
+    record: params.record,
+  });
+  fields.status = status;
+  fields.summary = summary;
+
+  if (status === "waiting_on_user") {
+    fields.currentChildInputId = params.record.inputId;
+    fields.completedAt = null;
+    fields.blockingPayload = payload;
+    fields.resultPayload = null;
+    fields.errorPayload = null;
+  } else if (status === "completed") {
+    fields.currentChildInputId = null;
+    fields.completedAt = lastEventAt;
+    fields.blockingPayload = null;
+    fields.resultPayload = payload;
+    fields.errorPayload = null;
+  } else {
+    fields.currentChildInputId = null;
+    fields.completedAt = lastEventAt;
+    fields.blockingPayload = null;
+    fields.resultPayload = null;
+    fields.errorPayload = payload;
+    if (status === "cancelled") {
+      fields.cancelledAt = run.cancelledAt ?? lastEventAt;
+    }
+  }
+
+  const updated =
+    params.store.updateSubagentRun({
+      subagentId: run.subagentId,
+      fields,
+    }) ?? run;
+
+  supersedePendingSubagentEvents({
+    store: params.store,
+    run: updated,
+  });
+  const deliveryBucket =
+    status === "waiting_on_user" ? "waiting_on_user" : "background_update";
+  params.store.enqueueMainSessionEvent({
+    workspaceId: updated.workspaceId,
+    ownerMainSessionId: updated.ownerMainSessionId,
+    originMainSessionId: updated.originMainSessionId,
+    subagentId: updated.subagentId,
+    eventType: status,
+    deliveryBucket,
+    coalesceKey: `${updated.ownerMainSessionId}:${deliveryBucket}`,
+    earliestDeliverAt: plusMillisecondsIso(
+      lastEventAt,
+      SUBAGENT_EVENT_COALESCE_WINDOW_MS,
+    ),
+    latestDeliverAt:
+      status === "waiting_on_user"
+        ? null
+        : plusMillisecondsIso(lastEventAt, SUBAGENT_EVENT_IDLE_TIMEOUT_MS),
+    payload,
+  });
+  return updated;
+}
+
+function mainSessionEventIdsFromContext(
+  context: Record<string, unknown> | null | undefined,
+): string[] {
+  const ids = Array.isArray(context?.main_session_event_ids)
+    ? context?.main_session_event_ids
+    : [];
+  return ids
+    .map((value) => optionalString(value))
+    .filter((value): value is string => Boolean(value));
+}
+
+function maybeFinalizeMainSessionEvents(params: {
+  store: RuntimeStateStore;
+  record: SessionInputRecord;
+  turnResult: TurnResultRecord;
+}): void {
+  const context = isRecord(params.record.payload.context)
+    ? params.record.payload.context
+    : null;
+  const eventIds = mainSessionEventIdsFromContext(context);
+  if (eventIds.length === 0) {
+    return;
+  }
+  const now =
+    params.turnResult.completedAt ??
+    params.turnResult.updatedAt ??
+    new Date().toISOString();
+  if (params.turnResult.status !== "failed") {
+    params.store.markMainSessionEventsDelivered({
+      eventIds,
+      deliveredAt: now,
+    });
+    return;
+  }
+  for (const eventId of eventIds) {
+    params.store.updateMainSessionEvent({
+      eventId,
+      fields: {
+        status: "pending",
+        materializedInputId: null,
+        deliveredAt: null,
+        earliestDeliverAt: plusMillisecondsIso(
+          now,
+          SUBAGENT_EVENT_COALESCE_WINDOW_MS,
+        ),
+      },
+    });
+  }
+}
+
 function persistTurnResult(params: {
   store: RuntimeStateStore;
   record: SessionInputRecord;
@@ -1668,23 +2194,32 @@ export async function processClaimedInput(params: {
       return;
     }
     const attachments = sessionInputAttachments(record.payload.attachments);
+    const inputContext = isRecord(record.payload.context)
+      ? record.payload.context
+      : null;
+    const inputSource = optionalString(inputContext?.source)?.toLowerCase();
 
-    const instruction = buildOnboardingInstruction({
-      workspaceRoot: store.workspaceRoot,
-      workspaceId: record.workspaceId,
-      sessionId: record.sessionId,
-      text: String(record.payload.text ?? ""),
-      attachments,
-      workspace,
+    const instruction = instructionWithInlineBackgroundUpdates({
+      baseInstruction: buildOnboardingInstruction({
+        workspaceRoot: store.workspaceRoot,
+        workspaceId: record.workspaceId,
+        sessionId: record.sessionId,
+        text: String(record.payload.text ?? ""),
+        attachments,
+        workspace,
+      }),
+      context: inputContext,
     });
-    store.insertSessionMessage({
-      workspaceId: record.workspaceId,
-      sessionId: record.sessionId,
-      role: "user",
-      text: String(record.payload.text ?? ""),
-      messageId: `user-${record.inputId}`,
-      createdAt: turnStartedAt,
-    });
+    if (inputSource !== "main_session_event_batch") {
+      store.insertSessionMessage({
+        workspaceId: record.workspaceId,
+        sessionId: record.sessionId,
+        role: "user",
+        text: String(record.payload.text ?? ""),
+        messageId: `user-${record.inputId}`,
+        createdAt: turnStartedAt,
+      });
+    }
 
     store.updateRuntimeState({
       workspaceId: record.workspaceId,
@@ -2029,6 +2564,13 @@ export async function processClaimedInput(params: {
             harness,
             eventType,
             payload: eventPayload,
+          });
+          recordSubagentProgressFromRunnerEvent({
+            store,
+            record,
+            eventType,
+            eventPayload,
+            eventTimestamp,
           });
           if (
             event.event_type === "output_delta" &&
@@ -2618,6 +3160,16 @@ export async function processClaimedInput(params: {
         contextBudgetDecisions,
         tokenUsage,
       });
+      updateSubagentRunFromTurnResult({
+        store,
+        record,
+        turnResult,
+      });
+      maybeFinalizeMainSessionEvents({
+        store,
+        record,
+        turnResult,
+      });
       try {
         await maybePromoteAcceptedEvolveSkillCandidate({
           store,
@@ -2751,6 +3303,16 @@ export async function processClaimedInput(params: {
           checkpointQueued: false,
         }),
         tokenUsage: null,
+      });
+      updateSubagentRunFromTurnResult({
+        store,
+        record,
+        turnResult,
+      });
+      maybeFinalizeMainSessionEvents({
+        store,
+        record,
+        turnResult,
       });
       await (params.runEvolveTasksFn ?? runEvolveTasks)({
         store,

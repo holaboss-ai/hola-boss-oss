@@ -32,6 +32,7 @@ import {
 import type {
   AgentCurrentUserContext,
   AgentEvolveCandidateContext,
+  AgentLegacySessionHistoryContext,
   AgentOperatorSurfaceMutability,
   AgentOperatorSurfaceOwner,
   AgentOperatorSurfaceContext,
@@ -97,18 +98,48 @@ const DEFAULT_SESSION_MODE = "code";
 const DEFAULT_PROVIDER_ID = "openai";
 const WORKSPACE_MCP_READY_TIMEOUT_S = 10;
 const RECALL_SCOPE_ENTRY_LIMIT = 200;
-const DEFAULT_TOOLS = [
+const MAIN_SESSION_DEFAULT_TOOLS = [
+  "read",
+  "edit",
+  "grep",
+  "glob",
+  "list",
+  "question",
+  "skill",
+];
+const SUBAGENT_DEFAULT_TOOLS = [
   "read",
   "edit",
   "bash",
   "grep",
   "glob",
   "list",
-  "question",
   "todowrite",
   "todoread",
   "skill",
 ];
+const SUBAGENT_ORCHESTRATION_RUNTIME_TOOL_IDS = new Set([
+  "holaboss_delegate_task",
+  "holaboss_wait_subagents",
+  "holaboss_cancel_subagent",
+  "holaboss_resume_subagent",
+]);
+const MAIN_SESSION_RUNTIME_TOOL_IDS = new Set([
+  "holaboss_delegate_task",
+  "holaboss_wait_subagents",
+  "holaboss_cancel_subagent",
+  "holaboss_resume_subagent",
+  "holaboss_cronjobs_list",
+  "holaboss_cronjobs_create",
+  "holaboss_cronjobs_get",
+  "holaboss_cronjobs_update",
+  "holaboss_cronjobs_delete",
+]);
+const ONBOARDING_SESSION_RUNTIME_TOOL_IDS = new Set([
+  ...MAIN_SESSION_RUNTIME_TOOL_IDS,
+  "holaboss_onboarding_status",
+  "holaboss_onboarding_complete",
+]);
 
 type BootstrapStageTimingMap = Record<string, number>;
 
@@ -686,6 +717,92 @@ function loadPendingUserMemoryContext(params: {
   }
 }
 
+function workspaceRelativePath(params: {
+  workspaceDir: string;
+  filePath: string | null | undefined;
+}): string | null {
+  const filePath = firstNonEmptyString(params.filePath);
+  if (!filePath) {
+    return null;
+  }
+  const resolvedPath = path.isAbsolute(filePath)
+    ? path.resolve(filePath)
+    : path.resolve(params.workspaceDir, filePath);
+  const relativePath = path.relative(params.workspaceDir, resolvedPath);
+  if (!relativePath || relativePath.startsWith("..")) {
+    return filePath.replace(/\\/g, "/");
+  }
+  return relativePath.replace(/\\/g, "/");
+}
+
+async function loadLegacySessionHistoryContext(params: {
+  workspaceDir: string;
+  logger?: LoggerLike;
+}): Promise<AgentLegacySessionHistoryContext | null> {
+  const manifestPath = path.join(
+    params.workspaceDir,
+    ".holaboss",
+    "legacy-session-histories",
+    "index.json",
+  );
+  try {
+    const raw = await fs.promises.readFile(manifestPath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return null;
+    }
+    const entries = parsed
+      .filter((item): item is Record<string, unknown> => isRecord(item))
+      .flatMap((item) => {
+        const sessionId = firstNonEmptyString(item.session_id);
+        if (!sessionId) {
+          return [];
+        }
+        return [{
+          session_id: sessionId,
+          title: firstNonEmptyString(item.title) ?? null,
+          kind: firstNonEmptyString(item.kind) ?? null,
+          archived_at: firstNonEmptyString(item.archived_at) ?? null,
+          message_count:
+            typeof item.message_count === "number" && Number.isFinite(item.message_count)
+              ? Math.max(0, Math.trunc(item.message_count))
+              : null,
+          output_count:
+            typeof item.output_count === "number" && Number.isFinite(item.output_count)
+              ? Math.max(0, Math.trunc(item.output_count))
+              : null,
+          json_path: workspaceRelativePath({
+            workspaceDir: params.workspaceDir,
+            filePath: firstNonEmptyString(item.json_path) ?? null,
+          }),
+          markdown_path: workspaceRelativePath({
+            workspaceDir: params.workspaceDir,
+            filePath: firstNonEmptyString(item.markdown_path) ?? null,
+          }),
+        }];
+      });
+    if (entries.length === 0) {
+      return null;
+    }
+    return {
+      manifest_path:
+        workspaceRelativePath({
+          workspaceDir: params.workspaceDir,
+          filePath: manifestPath,
+        }) ?? ".holaboss/legacy-session-histories/index.json",
+      legacy_session_count: entries.length,
+      entries: entries.slice(0, 25),
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null)?.code !== "ENOENT") {
+      params.logger?.warn?.(
+        `Failed to load legacy session history context from ${manifestPath}: ${errorMessage(error)}`,
+      );
+    }
+    return null;
+  }
+}
+
 function normalizeRuntimeApiHost(value: string): string {
   const trimmed = value.trim();
   if (!trimmed || trimmed === "0.0.0.0" || trimmed === "::") {
@@ -816,6 +933,71 @@ function defaultExtraTools(harnessId?: string | null): string[] {
     return [...NATIVE_WEB_SEARCH_TOOL_IDS, ...configured];
   }
   return configured;
+}
+
+function normalizedSessionKindValue(value: string | null | undefined): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function isFrontSessionKind(value: string | null | undefined): boolean {
+  const normalized = normalizedSessionKindValue(value);
+  return (
+    normalized === "" ||
+    normalized === "workspace_session" ||
+    normalized === "main" ||
+    normalized === "onboarding"
+  );
+}
+
+function allowedRuntimeToolIdsForFrontSession(
+  sessionKind: string | null | undefined,
+): Set<string> {
+  return normalizedSessionKindValue(sessionKind) === "onboarding"
+    ? ONBOARDING_SESSION_RUNTIME_TOOL_IDS
+    : MAIN_SESSION_RUNTIME_TOOL_IDS;
+}
+
+function projectBrowserToolIdsForSession(params: {
+  sessionKind: string | null | undefined;
+  browserToolIds: string[];
+}): string[] {
+  const normalized = normalizedSessionKindValue(params.sessionKind);
+  if (normalized === "subagent" || normalized === "task_proposal") {
+    return [...params.browserToolIds];
+  }
+  return [];
+}
+
+function projectRuntimeToolIdsForSession(params: {
+  sessionKind: string | null | undefined;
+  runtimeToolIds: string[];
+}): string[] {
+  if (isFrontSessionKind(params.sessionKind)) {
+    const allowed = allowedRuntimeToolIdsForFrontSession(params.sessionKind);
+    return params.runtimeToolIds.filter((toolId) => allowed.has(toolId));
+  }
+  return params.runtimeToolIds.filter(
+    (toolId) => !SUBAGENT_ORCHESTRATION_RUNTIME_TOOL_IDS.has(toolId),
+  );
+}
+
+function projectExtraToolIdsForSession(params: {
+  harnessId: string | null | undefined;
+  sessionKind: string | null | undefined;
+  extraToolIds: string[];
+}): string[] {
+  if (isFrontSessionKind(params.sessionKind)) {
+    const allowed = allowedRuntimeToolIdsForFrontSession(params.sessionKind);
+    return params.extraToolIds.filter((toolId) => allowed.has(toolId));
+  }
+  return Array.from(
+    new Set([
+      ...defaultExtraTools(params.harnessId),
+      ...params.extraToolIds.filter(
+        (toolId) => !SUBAGENT_ORCHESTRATION_RUNTIME_TOOL_IDS.has(toolId),
+      ),
+    ]),
+  );
 }
 
 function explicitHolabossUserId(request: TsRunnerRequest): string | undefined {
@@ -1033,21 +1215,36 @@ function buildAgentRuntimeConfigRequest(params: {
   currentUserContext?: AgentCurrentUserContext | null;
   operatorSurfaceContext?: AgentOperatorSurfaceContext | null;
   pendingUserMemoryContext?: AgentPendingUserMemoryContext | null;
+  legacySessionHistoryContext?: AgentLegacySessionHistoryContext | null;
   sessionScratchpadContext?: AgentScratchpadContext | null;
   evolveCandidateContext?: AgentEvolveCandidateContext | null;
 }): AgentRuntimeConfigCliRequest {
-  const extraTools = Array.from(
-    new Set([...defaultExtraTools(params.harnessId), ...params.extraToolIds]),
+  const normalizedSessionKind = normalizedSessionKindValue(
+    params.request.session_kind,
   );
+  const frontSession = isFrontSessionKind(normalizedSessionKind);
+  const extraTools = projectExtraToolIdsForSession({
+    harnessId: params.harnessId,
+    sessionKind: normalizedSessionKind,
+    extraToolIds: params.extraToolIds,
+  });
+  const runtimeToolIds = projectRuntimeToolIdsForSession({
+    sessionKind: normalizedSessionKind,
+    runtimeToolIds: params.runtimeToolIds,
+  });
+  const browserToolIds = projectBrowserToolIdsForSession({
+    sessionKind: normalizedSessionKind,
+    browserToolIds: params.browserToolIds,
+  });
   const common = {
     session_id: params.request.session_id,
     workspace_id: params.request.workspace_id,
     input_id: params.request.input_id,
     session_kind: params.request.session_kind ?? null,
     harness_id: params.harnessId,
-    browser_tools_available: params.browserToolsAvailable,
-    browser_tool_ids: [...params.browserToolIds],
-    runtime_tool_ids: [...params.runtimeToolIds],
+    browser_tools_available: params.browserToolsAvailable && browserToolIds.length > 0,
+    browser_tool_ids: browserToolIds,
+    runtime_tool_ids: runtimeToolIds,
     runtime_exec_model_proxy_api_key:
       runtimeExecContextString(params.request, "model_proxy_api_key") ??
       undefined,
@@ -1059,7 +1256,7 @@ function buildAgentRuntimeConfigRequest(params: {
     current_user_context: params.currentUserContext ?? undefined,
     operator_surface_context: params.operatorSurfaceContext ?? undefined,
     pending_user_memory_context: params.pendingUserMemoryContext ?? undefined,
-    session_scratchpad_context: params.sessionScratchpadContext ?? undefined,
+    legacy_session_history_context: params.legacySessionHistoryContext ?? undefined,
     evolve_candidate_context: params.evolveCandidateContext ?? undefined,
     selected_model: firstNonEmptyString(params.request.model) ?? undefined,
     default_provider_id: defaultProviderId(),
@@ -1067,8 +1264,16 @@ function buildAgentRuntimeConfigRequest(params: {
     workspace_config_checksum: params.compiledPlan.config_checksum,
     workspace_skill_ids: [...params.workspaceSkillIds],
     workspace_command_ids: [...params.workspaceCommandIds],
-    default_tools: [...DEFAULT_TOOLS],
+    default_tools: frontSession
+      ? [...MAIN_SESSION_DEFAULT_TOOLS]
+      : [...SUBAGENT_DEFAULT_TOOLS],
     extra_tools: extraTools,
+    ...(frontSession
+      ? {}
+      : {
+          session_scratchpad_context:
+            params.sessionScratchpadContext ?? undefined,
+        }),
     tool_server_id_map: { ...params.toolServerIdMap },
     resolved_mcp_tool_refs: params.resolvedMcpToolRefs.map((toolRef) => ({
       tool_id: toolRef.tool_id,
@@ -1674,17 +1879,19 @@ export async function executeTsRunnerRequest(
       );
     }
 
-    const sessionScratchpadContext = await measureBootstrapStageAsync(
-      bootstrapStageTimingsMs,
-      "load_session_scratchpad_context",
-      async () =>
-        await loadSessionScratchpadContext({
-          workspaceRoot: bootstrap.workspaceRoot,
-          workspaceId: request.workspace_id,
-          sessionId: request.session_id,
-          logger,
-        }),
-    );
+    const sessionScratchpadContext = isFrontSessionKind(request.session_kind)
+      ? null
+      : await measureBootstrapStageAsync(
+          bootstrapStageTimingsMs,
+          "load_session_scratchpad_context",
+          async () =>
+            await loadSessionScratchpadContext({
+              workspaceRoot: bootstrap.workspaceRoot,
+              workspaceId: request.workspace_id,
+              sessionId: request.session_id,
+              logger,
+            }),
+        );
     const recalledMemoryContext = await measureBootstrapStageAsync(
       bootstrapStageTimingsMs,
       "load_recalled_memory_context",
@@ -1724,6 +1931,17 @@ export async function executeTsRunnerRequest(
           logger,
         }),
     );
+    const legacySessionHistoryContext = await measureBootstrapStageAsync(
+      bootstrapStageTimingsMs,
+      "load_legacy_session_history_context",
+      async () =>
+        isFrontSessionKind(request.session_kind)
+          ? await loadLegacySessionHistoryContext({
+              workspaceDir: bootstrap.workspaceDir,
+              logger,
+            })
+          : null,
+    );
 
     const runtimeConfig = measureBootstrapStage(
       bootstrapStageTimingsMs,
@@ -1752,6 +1970,7 @@ export async function executeTsRunnerRequest(
             currentUserContext,
             operatorSurfaceContext,
             pendingUserMemoryContext,
+            legacySessionHistoryContext,
             sessionScratchpadContext,
             evolveCandidateContext: evolveCandidateContext(request),
           }),

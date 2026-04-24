@@ -474,6 +474,84 @@ declare global {
     count: number;
   }
 
+  interface BackgroundTaskLiveStatePayload {
+    runtime_status: string | null;
+    current_input_id: string | null;
+    current_input_status: string | null;
+    latest_input_id: string | null;
+    latest_input_status: string | null;
+    latest_turn_status: string | null;
+    latest_turn_stop_reason: string | null;
+  }
+
+  interface BackgroundTaskRecordPayload {
+    subagent_id: string;
+    workspace_id: string;
+    parent_session_id: string | null;
+    parent_input_id: string | null;
+    origin_main_session_id: string;
+    owner_main_session_id: string;
+    child_session_id: string;
+    initial_child_input_id: string | null;
+    current_child_input_id: string | null;
+    latest_child_input_id: string | null;
+    title: string;
+    goal: string;
+    context: string | null;
+    source_type: string | null;
+    source_id: string | null;
+    proposal_id: string | null;
+    cronjob_id: string | null;
+    retry_of_subagent_id: string | null;
+    tool_profile: Record<string, unknown>;
+    requested_model: string | null;
+    effective_model: string | null;
+    status: string;
+    summary: string | null;
+    latest_progress_payload: Record<string, unknown> | null;
+    blocking_payload: Record<string, unknown> | null;
+    result_payload: Record<string, unknown> | null;
+    error_payload: Record<string, unknown> | null;
+    last_event_at: string | null;
+    owner_transferred_at: string | null;
+    created_at: string;
+    started_at: string | null;
+    completed_at: string | null;
+    cancelled_at: string | null;
+    updated_at: string;
+    live_state: BackgroundTaskLiveStatePayload;
+  }
+
+  interface BackgroundTaskListRequestPayload {
+    workspaceId: string;
+    ownerMainSessionId?: string | null;
+    statuses?: string[];
+    limit?: number;
+  }
+
+  interface BackgroundTaskListResponsePayload {
+    tasks: BackgroundTaskRecordPayload[];
+    count: number;
+  }
+
+  interface MainSessionLegacyExportPayload {
+    session_id: string;
+    title: string | null;
+    kind: string;
+    archived_at: string;
+    exported_at: string;
+    message_count: number;
+    output_count: number;
+    json_path: string;
+    markdown_path: string;
+  }
+
+  interface EnsureWorkspaceMainSessionResponsePayload {
+    session: AgentSessionRecordPayload;
+    migrated_legacy_sessions: MainSessionLegacyExportPayload[];
+    migrated_legacy_session_count: number;
+  }
+
   interface ProactiveStatusSnapshotPayload {
     state: string;
     detail: string | null;
@@ -1489,6 +1567,9 @@ declare global {
         payload: RuntimeNotificationUpdatePayload
       ) => Promise<RuntimeNotificationRecordPayload>;
       listTaskProposals: (workspaceId: string) => Promise<TaskProposalListResponsePayload>;
+      listBackgroundTasks: (
+        payload: BackgroundTaskListRequestPayload
+      ) => Promise<BackgroundTaskListResponsePayload>;
       acceptTaskProposal: (payload: TaskProposalAcceptPayload) => Promise<TaskProposalAcceptResponsePayload>;
       listMemoryUpdateProposals: (
         payload: MemoryUpdateProposalListRequestPayload
@@ -1513,6 +1594,7 @@ declare global {
       requestRemoteTaskProposalGeneration: (
         payload: RemoteTaskProposalGenerationRequestPayload
       ) => Promise<RemoteTaskProposalGenerationResponsePayload>;
+      ensureMainSession: (workspaceId: string) => Promise<EnsureWorkspaceMainSessionResponsePayload>;
       listAgentSessions: (workspaceId: string) => Promise<AgentSessionListResponsePayload>;
       createAgentSession: (payload: CreateAgentSessionPayload) => Promise<CreateAgentSessionResponsePayload>;
       listRuntimeStates: (workspaceId: string) => Promise<SessionRuntimeStateListResponsePayload>;

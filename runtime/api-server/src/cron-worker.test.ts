@@ -60,7 +60,7 @@ test("cronjob helpers preserve legacy scheduling behavior", () => {
   }
 });
 
-test("runtime cron worker queues due session_run cronjobs and updates bookkeeping", async () => {
+test("runtime cron worker queues due session_run cronjobs as hidden subagents and updates bookkeeping", async () => {
   const root = makeTempDir("hb-runtime-cron-worker-");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
@@ -72,6 +72,18 @@ test("runtime cron worker queues due session_run cronjobs and updates bookkeepin
     harness: "pi",
     status: "active",
   });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    kind: "workspace_session",
+  });
+  store.upsertConversationBinding({
+    workspaceId: workspace.id,
+    channel: "desktop",
+    conversationKey: "workspace-main",
+    sessionId: "session-main",
+    role: "main",
+  });
   const job = store.createCronjob({
     workspaceId: workspace.id,
     initiatedBy: "workspace_agent",
@@ -81,7 +93,7 @@ test("runtime cron worker queues due session_run cronjobs and updates bookkeepin
     instruction: "Say hello",
     delivery: { channel: "session_run" },
     metadata: {
-      session_id: "session-cron",
+      session_id: "session-main",
       model: "gpt-5",
       priority: 3,
       idempotency_key: "cron-idempotency",
@@ -103,9 +115,18 @@ test("runtime cron worker queues due session_run cronjobs and updates bookkeepin
 
   const processed = await worker.processDueCronjobsOnce(new Date("2025-01-01T09:30:00Z"));
   const updated = store.getCronjob(job.id);
-  const runtimeState = store.getRuntimeState({ workspaceId: workspace.id, sessionId: "session-cron" });
+  const runs = store.listSubagentRunsByWorkspace({ workspaceId: workspace.id });
+  const run = runs[0];
+  const runtimeState = run
+    ? store.getRuntimeState({
+        workspaceId: workspace.id,
+        sessionId: run.childSessionId,
+      })
+    : null;
   const queued = store.claimInputs({ limit: 10, claimedBy: "test", leaseSeconds: 300 });
-  const history = store.listSessionMessages({ workspaceId: workspace.id, sessionId: "session-cron" });
+  const childSession = run
+    ? store.getSession({ workspaceId: workspace.id, sessionId: run.childSessionId })
+    : null;
   const notifications = store.listRuntimeNotifications({ workspaceId: workspace.id });
 
   assert.equal(processed, 1);
@@ -115,16 +136,38 @@ test("runtime cron worker queues due session_run cronjobs and updates bookkeepin
   assert.equal(updated.runCount, 1);
   assert.ok(updated.lastRunAt);
   assert.ok(updated.nextRunAt);
+  assert.equal(runs.length, 1);
+  assert.ok(run);
+  assert.equal(run?.originMainSessionId, "session-main");
+  assert.equal(run?.ownerMainSessionId, "session-main");
+  assert.equal(run?.parentSessionId, "session-main");
+  assert.equal(run?.sourceType, "cronjob");
+  assert.equal(run?.cronjobId, job.id);
+  assert.equal(run?.status, "queued");
+  assert.ok(childSession);
+  assert.equal(childSession?.kind, "subagent");
   assert.ok(runtimeState);
   assert.equal(runtimeState.status, "QUEUED");
-  assert.equal(history.length, 1);
-  assert.match(history[0].id, /^cronjob-/);
   assert.equal(queued.length, 1);
   assert.equal(queued[0].payload.model, "gpt-5");
-  assert.deepEqual(queued[0].payload.context, { source: "cronjob", cronjob_id: job.id });
+  assert.equal(
+    (queued[0].payload.context as Record<string, unknown>).source,
+    "subagent",
+  );
+  assert.equal(
+    (queued[0].payload.context as Record<string, unknown>).source_type,
+    "cronjob",
+  );
+  assert.equal(
+    (queued[0].payload.context as Record<string, unknown>).cronjob_id,
+    job.id,
+  );
+  assert.equal(
+    (queued[0].payload.context as Record<string, unknown>).subagent_id,
+    run?.subagentId,
+  );
   assert.match(String(queued[0].payload.text), /^Say hello/);
   assert.match(String(queued[0].payload.text), /\[Cronjob Metadata\]/);
-  assert.match(String(history[0].text), /^Say hello/);
   assert.equal(notifications.length, 0);
 
   store.close();
@@ -141,6 +184,18 @@ test("runtime cron worker inherits the main-session model when cronjob metadata 
     name: "Workspace 1",
     harness: "pi",
     status: "active",
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    kind: "workspace_session",
+  });
+  store.upsertConversationBinding({
+    workspaceId: workspace.id,
+    channel: "desktop",
+    conversationKey: "workspace-main",
+    sessionId: "session-main",
+    role: "main",
   });
   store.upsertTurnRequestSnapshot({
     workspaceId: workspace.id,
@@ -177,10 +232,13 @@ test("runtime cron worker inherits the main-session model when cronjob metadata 
 
   const processed = await worker.processDueCronjobsOnce(new Date("2025-01-01T09:30:00Z"));
   const queued = store.claimInputs({ limit: 10, claimedBy: "test", leaseSeconds: 300 });
+  const runs = store.listSubagentRunsByWorkspace({ workspaceId: workspace.id });
 
   assert.equal(processed, 1);
   assert.equal(queued.length, 1);
   assert.equal(queued[0]?.payload.model, "openai/gpt-5.4");
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0]?.ownerMainSessionId, "session-main");
 
   store.close();
 });
@@ -215,6 +273,19 @@ test("runtime cron worker persists system_notification cronjobs as unread notifi
   const processed = await worker.processDueCronjobsOnce(new Date("2025-01-01T09:30:00Z"));
   const notifications = store.listRuntimeNotifications({ workspaceId: workspace.id });
   const updated = store.getCronjob(job.id);
+  const mainBinding = store.getConversationBindingByConversation({
+    workspaceId: workspace.id,
+    channel: "desktop",
+    conversationKey: "workspace-main",
+    role: "main",
+  });
+  const messages =
+    mainBinding == null
+      ? []
+      : store.listSessionMessages({
+          workspaceId: workspace.id,
+          sessionId: mainBinding.sessionId,
+        });
 
   assert.equal(processed, 1);
   assert.equal(notifications.length, 1);
@@ -224,6 +295,10 @@ test("runtime cron worker persists system_notification cronjobs as unread notifi
   assert.equal(notifications[0]?.priority, "critical");
   assert.equal(notifications[0]?.state, "unread");
   assert.equal(notifications[0]?.cronjobId, job.id);
+  assert.ok(mainBinding);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]?.role, "assistant");
+  assert.equal(messages[0]?.text, "Time to drink water.");
   assert.ok(updated);
   assert.equal(updated.lastStatus, "success");
   assert.equal(updated.runCount, 1);

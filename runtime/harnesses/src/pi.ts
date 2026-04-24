@@ -32,6 +32,7 @@ export const piHarnessDefinition: HarnessDefinition = {
         input_id: params.request.input_id,
         instruction: params.request.instruction,
         context_messages: params.runtimeConfig.context_messages ?? [],
+        tools: { ...params.runtimeConfig.tools },
         attachments: params.request.attachments ?? [],
         thinking_value: params.request.thinking_value ?? null,
         debug: Boolean(params.request.debug),

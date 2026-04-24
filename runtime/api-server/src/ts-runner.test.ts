@@ -1016,10 +1016,10 @@ test("runTsRunnerCli only advertises structured output when the selected harness
     "build_harness_host_request",
     "compile_runtime_plan",
     "load_current_user_context",
+    "load_legacy_session_history_context",
     "load_operator_surface_context",
     "load_pending_user_memory_context",
     "load_recalled_memory_context",
-    "load_session_scratchpad_context",
     "persist_turn_request_snapshot",
     "prepare_harness_run",
     "project_runtime_config",
@@ -1119,7 +1119,7 @@ test("runTsRunnerCli loads current user context from the runtime profile", async
   );
 });
 
-test("runTsRunnerCli includes staged runtime tool ids in the projected extra tool set", async () => {
+test("runTsRunnerCli strips staged execution tools from front-of-house workspace sessions", async () => {
   setTempSandboxRoot("hb-ts-runner-runtime-tools-");
   let capturedProjectRequest: Record<string, unknown> | null = null;
 
@@ -1135,7 +1135,7 @@ test("runTsRunnerCli includes staged runtime tool ids in the projected extra too
             }),
             stageRuntimeTools: () => ({
               changed: false,
-              toolIds: ["holaboss_onboarding_complete"],
+              toolIds: ["holaboss_onboarding_complete", "write_report"],
             }),
           },
         }),
@@ -1184,19 +1184,35 @@ test("runTsRunnerCli includes staged runtime tool ids in the projected extra too
   assert.equal(
     (capturedProjectRequest as { browser_tools_available: boolean })
       .browser_tools_available,
-    true,
+    false,
   );
   assert.deepEqual(
     (capturedProjectRequest as { browser_tool_ids: string[] }).browser_tool_ids,
-    ["browser_get_state"],
+    [],
   );
   assert.deepEqual(
     (capturedProjectRequest as { runtime_tool_ids: string[] }).runtime_tool_ids,
-    ["holaboss_onboarding_complete"],
+    [],
+  );
+  assert.deepEqual(
+    (capturedProjectRequest as { default_tools: string[] }).default_tools,
+    [
+      "read",
+      "edit",
+      "grep",
+      "glob",
+      "list",
+      "question",
+      "skill",
+    ],
+  );
+  assert.equal(
+    "session_scratchpad_context" in (capturedProjectRequest as Record<string, unknown>),
+    false,
   );
   assert.deepEqual(
     (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
-    ["web_search", "browser_get_state", "holaboss_onboarding_complete"],
+    [],
   );
 });
 
@@ -1969,6 +1985,105 @@ test("runTsRunnerCli loads pending user memory proposals into prompt context for
   );
 });
 
+test("runTsRunnerCli loads legacy session history exports into main-session prompt context", async () => {
+  const sandboxRoot = setTempSandboxRoot("hb-ts-runner-legacy-session-history-");
+  const workspaceDir = path.join(sandboxRoot, "workspace", "workspace-1");
+  const legacyDir = path.join(
+    workspaceDir,
+    ".holaboss",
+    "legacy-session-histories",
+  );
+  fs.mkdirSync(legacyDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(legacyDir, "index.json"),
+    JSON.stringify(
+      [
+        {
+          session_id: "session-older",
+          title: "Earlier planning chat",
+          kind: "workspace_session",
+          archived_at: "2026-04-24T06:52:27.419Z",
+          message_count: 14,
+          output_count: 1,
+          json_path: path.join(legacyDir, "session-older.json"),
+          markdown_path: path.join(legacyDir, "session-older.md"),
+        },
+      ],
+      null,
+      2,
+    ),
+    "utf8",
+  );
+
+  let capturedProjectRequest: Record<string, unknown> | null = null;
+  const exitCode = await runTsRunnerCli(
+    ["--request-base64", encodeRequest(baseRequest())],
+    {
+      deps: {
+        ...testDeps(),
+        projectAgentRuntimeConfig: (request) => {
+          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          return {
+            provider_id: "openai",
+            model_id: "gpt-5.4",
+            mode: "code",
+            system_prompt: "You are concise.",
+            model_client: {
+              model_proxy_provider: "openai_compatible",
+              api_key: "token",
+              base_url: "http://127.0.0.1:4000/openai/v1",
+              default_headers: { "X-Test": "1" },
+            },
+            tools: { read: true },
+            workspace_tool_ids: [],
+            workspace_skill_ids: [],
+            output_schema_member_id: null,
+            output_format: null,
+            workspace_config_checksum: "checksum-1",
+          };
+        },
+      },
+      io: {
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.ok(capturedProjectRequest);
+  const legacyContext = (
+    capturedProjectRequest as {
+      legacy_session_history_context: Record<string, unknown>;
+    }
+  ).legacy_session_history_context;
+  assert.equal(
+    legacyContext.manifest_path,
+    ".holaboss/legacy-session-histories/index.json",
+  );
+  assert.equal(legacyContext.legacy_session_count, 1);
+  assert.deepEqual(legacyContext.entries, [
+    {
+      session_id: "session-older",
+      title: "Earlier planning chat",
+      kind: "workspace_session",
+      archived_at: "2026-04-24T06:52:27.419Z",
+      message_count: 14,
+      output_count: 1,
+      json_path: ".holaboss/legacy-session-histories/session-older.json",
+      markdown_path: ".holaboss/legacy-session-histories/session-older.md",
+    },
+  ]);
+});
+
 test("runTsRunnerCli loads operator surface context into prompt context for the same run", async () => {
   setTempSandboxRoot("hb-ts-runner-operator-surface-");
 
@@ -2604,7 +2719,7 @@ test(
   },
 );
 
-test("runTsRunnerCli only stages browser tools for workspace sessions", async () => {
+test("runTsRunnerCli stages browser tools for subagent executor sessions and strips orchestration runtime tools", async () => {
   setTempSandboxRoot("hb-ts-runner-browser-scope-");
   const seenSessionKinds: Array<string | null | undefined> = [];
   let capturedProjectRequest: Record<string, unknown> | null = null;
@@ -2614,7 +2729,7 @@ test("runTsRunnerCli only stages browser tools for workspace sessions", async ()
       "--request-base64",
       encodeRequest({
         ...baseRequest(),
-        session_kind: "task_proposal",
+        session_kind: "subagent",
       }),
     ],
     {
@@ -2626,14 +2741,17 @@ test("runTsRunnerCli only stages browser tools for workspace sessions", async ()
               return {
                 changed: false,
                 toolIds:
-                  sessionKind === "workspace_session"
+                  sessionKind === "subagent"
                     ? ["browser_get_state"]
                     : [],
               };
             },
             stageRuntimeTools: () => ({
               changed: false,
-              toolIds: ["holaboss_onboarding_complete"],
+              toolIds: [
+                "holaboss_onboarding_complete",
+                "holaboss_delegate_task",
+              ],
             }),
           },
         }),
@@ -2678,28 +2796,42 @@ test("runTsRunnerCli only stages browser tools for workspace sessions", async ()
   );
 
   assert.equal(exitCode, 0);
-  assert.deepEqual(seenSessionKinds, ["task_proposal"]);
+  assert.deepEqual(seenSessionKinds, ["subagent"]);
   assert.ok(capturedProjectRequest);
   assert.equal(
     (capturedProjectRequest as { browser_tools_available: boolean })
       .browser_tools_available,
-    false,
+    true,
   );
   assert.equal(
     (capturedProjectRequest as { session_kind: string | null }).session_kind,
-    "task_proposal",
+    "subagent",
   );
   assert.deepEqual(
     (capturedProjectRequest as { browser_tool_ids: string[] }).browser_tool_ids,
-    [],
+    ["browser_get_state"],
   );
   assert.deepEqual(
     (capturedProjectRequest as { runtime_tool_ids: string[] }).runtime_tool_ids,
     ["holaboss_onboarding_complete"],
   );
   assert.deepEqual(
+    (capturedProjectRequest as { default_tools: string[] }).default_tools,
+    [
+      "read",
+      "edit",
+      "bash",
+      "grep",
+      "glob",
+      "list",
+      "todowrite",
+      "todoread",
+      "skill",
+    ],
+  );
+  assert.deepEqual(
     (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
-    ["web_search", "holaboss_onboarding_complete"],
+    ["web_search", "browser_get_state", "holaboss_onboarding_complete"],
   );
 });
 

@@ -12,6 +12,8 @@ import {
 const CRONJOB_DELIVERY_CHANNELS = ["system_notification", "session_run"] as const;
 const CRONJOB_DELIVERY_MODES = ["announce", "none"] as const;
 const SCRATCHPAD_WRITE_OPS = ["append", "replace", "clear"] as const;
+const SUBAGENT_TOOL_BUCKETS = ["web", "browser", "terminal", "file"] as const;
+const SUBAGENT_WAIT_RETURN_WHEN = ["any", "all"] as const;
 const TODO_STATUSES = ["pending", "in_progress", "blocked", "completed", "abandoned"] as const;
 const TODO_WRITE_OPS_TEXT = "`replace`, `add_phase`, `add_task`, `update`, and `remove_task`";
 const TODO_WRITE_ALIAS_WARNING =
@@ -66,6 +68,13 @@ function scratchpadWriteOpSchema(): Record<string, unknown> {
 
 function todoStatusSchema(): Record<string, unknown> {
   return literalStringUnion(TODO_STATUSES, "Todo task status.");
+}
+
+function subagentToolBucketSchema(): Record<string, unknown> {
+  return literalStringUnion(
+    SUBAGENT_TOOL_BUCKETS,
+    "Delegated capability bucket. Use `web`, `browser`, `terminal`, or `file`.",
+  );
 }
 
 function runtimeToolLabel(toolId: RuntimeAgentToolId): string {
@@ -155,6 +164,95 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
           },
         },
         required: ["job_id"],
+        additionalProperties: false,
+      };
+    case "holaboss_delegate_task":
+      return {
+        type: "object",
+        properties: {
+          tasks: {
+            type: "array",
+            description:
+              "Background tasks to delegate. Prefer this canonical batched form when delegating multiple tasks at once.",
+            items: {
+              type: "object",
+              properties: {
+                title: { type: "string", description: "Optional short task title." },
+                goal: { type: "string", description: "Required task goal or instruction." },
+                context: { type: "string", description: "Optional supporting context for this task." },
+                tools: {
+                  type: "array",
+                  description: "Optional task-scoped capability buckets for the delegated worker.",
+                  items: subagentToolBucketSchema(),
+                },
+                model: { type: "string", description: "Optional model override for this delegated task." },
+                timeout_ms: {
+                  type: "integer",
+                  description: "Optional timeout hint for this delegated task in milliseconds.",
+                  minimum: 1,
+                },
+              },
+              required: ["goal"],
+              additionalProperties: false,
+            },
+          },
+          title: { type: "string", description: "Singleton alias: optional short task title." },
+          goal: { type: "string", description: "Singleton alias: task goal or instruction." },
+          context: { type: "string", description: "Singleton alias: supporting context for the task." },
+          tools: {
+            type: "array",
+            description: "Singleton alias: task-scoped capability buckets for the delegated worker.",
+            items: subagentToolBucketSchema(),
+          },
+          model: { type: "string", description: "Singleton alias: model override for the delegated task." },
+          timeout_ms: {
+            type: "integer",
+            description: "Singleton alias: timeout hint for the delegated task in milliseconds.",
+            minimum: 1,
+          },
+        },
+        additionalProperties: false,
+      };
+    case "holaboss_wait_subagents":
+      return {
+        type: "object",
+        properties: {
+          subagent_ids: {
+            type: "array",
+            description: "Delegated background task ids to wait on.",
+            items: { type: "string" },
+          },
+          return_when: literalStringUnion(
+            SUBAGENT_WAIT_RETURN_WHEN,
+            "Whether to return when any subagent changes or only when all requested subagents reach a terminal state.",
+          ),
+          timeout_ms: {
+            type: "integer",
+            description: "Maximum time to wait in milliseconds before returning the latest known state.",
+            minimum: 1,
+          },
+        },
+        required: ["subagent_ids"],
+        additionalProperties: false,
+      };
+    case "holaboss_cancel_subagent":
+      return {
+        type: "object",
+        properties: {
+          subagent_id: { type: "string", description: "Delegated background task id to cancel." },
+        },
+        required: ["subagent_id"],
+        additionalProperties: false,
+      };
+    case "holaboss_resume_subagent":
+      return {
+        type: "object",
+        properties: {
+          subagent_id: { type: "string", description: "Delegated background task id to resume." },
+          answer: { type: "string", description: "The user's answer that should resume the paused task." },
+          model: { type: "string", description: "Optional model override for the resumed task turn." },
+        },
+        required: ["subagent_id", "answer"],
         additionalProperties: false,
       };
     case "image_generate":
@@ -534,6 +632,34 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "Use `skill` when a workspace or embedded skill is relevant and you need its canonical guidance block.",
       "Pass the specific skill id or name in `name` instead of paraphrasing the skill body yourself.",
       "Use `args` only for short follow-up instructions that should accompany the skill block.",
+    ];
+  }
+  if (toolId === "holaboss_delegate_task") {
+    return [
+      "Use `holaboss_delegate_task` for longer-running, multi-step, or interruptible work that should continue while the main conversation remains free.",
+      "Keep each delegated task narrowly scoped and self-contained. Use the canonical `tasks` array for batched delegation and the singleton top-level fields only for one task.",
+      "Use `tools` as coarse capability buckets such as `web`, `browser`, `terminal`, or `file`; do not treat them as raw low-level tool ids.",
+      "Delegate execution-heavy work instead of narrating that you will do it later without actually spawning the background task.",
+    ];
+  }
+  if (toolId === "holaboss_wait_subagents") {
+    return [
+      "Use `holaboss_wait_subagents` when you need to check whether delegated background work has progressed, completed, failed, or is waiting on user input.",
+      "Pass the specific `subagent_ids` you care about instead of polling every task implicitly.",
+      "Use `return_when: \"any\"` for opportunistic progress checks and `return_when: \"all\"` only when you truly need every requested subagent to settle first.",
+    ];
+  }
+  if (toolId === "holaboss_cancel_subagent") {
+    return [
+      "Use `holaboss_cancel_subagent` only when the user clearly wants to stop a specific delegated task.",
+      "Resolve which delegated task the user means before calling this tool; do not guess if multiple background tasks are plausible matches.",
+    ];
+  }
+  if (toolId === "holaboss_resume_subagent") {
+    return [
+      "Use `holaboss_resume_subagent` when a delegated task is waiting on user input and the user has provided that answer.",
+      "Resume the same paused subagent run instead of delegating a brand-new task when the user is answering an explicit blocker question.",
+      "Pass only the answer needed to continue the task; do not restate the entire conversation unless it materially changes the task.",
     ];
   }
   if (toolId === "todoread") {

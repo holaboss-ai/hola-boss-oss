@@ -7,9 +7,10 @@ import {
   type AgentCapabilityManifest,
 } from "./agent-capability-registry.js";
 import {
-  composeBaseAgentPrompt,
+  composeAgentPrompt,
   type AgentCurrentUserContext,
   type AgentEvolveCandidateContext,
+  type AgentLegacySessionHistoryContext,
   type AgentOperatorSurfaceContext,
   type AgentPendingUserMemoryContext,
   type AgentRecalledMemoryContext,
@@ -48,6 +49,7 @@ export interface AgentRuntimeConfigCliRequest {
   current_user_context?: AgentCurrentUserContext | null;
   operator_surface_context?: AgentOperatorSurfaceContext | null;
   pending_user_memory_context?: AgentPendingUserMemoryContext | null;
+  legacy_session_history_context?: AgentLegacySessionHistoryContext | null;
   session_scratchpad_context?: AgentScratchpadContext | null;
   evolve_candidate_context?: AgentEvolveCandidateContext | null;
   selected_model?: string | null;
@@ -1489,7 +1491,7 @@ export function projectAgentRuntimeConfig(
     resolvedMcpServerIds: request.resolved_mcp_server_ids ?? null,
     toolServerIdMap: request.tool_server_id_map ?? null,
   });
-  const promptComposition = composeBaseAgentPrompt(request.agent.prompt, {
+  const promptComposition = composeAgentPrompt(request.agent.prompt, {
     defaultTools: request.default_tools,
     extraTools: request.extra_tools,
     workspaceSkillIds: request.workspace_skill_ids ?? [],
@@ -1502,6 +1504,7 @@ export function projectAgentRuntimeConfig(
     currentUserContext: request.current_user_context ?? null,
     operatorSurfaceContext: request.operator_surface_context ?? null,
     pendingUserMemoryContext: request.pending_user_memory_context ?? null,
+    legacySessionHistoryContext: request.legacy_session_history_context ?? null,
     scratchpadContext: request.session_scratchpad_context ?? null,
     evolveCandidateContext: request.evolve_candidate_context ?? null,
     capabilityManifest,

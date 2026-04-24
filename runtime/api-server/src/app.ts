@@ -57,6 +57,10 @@ import {
   cronjobNextRunAt
 } from "./cron-worker.js";
 import {
+  type MainSessionEventWorkerLike,
+  RuntimeMainSessionEventWorker,
+} from "./main-session-event-worker.js";
+import {
   type BridgeWorkerLike,
   RuntimeRemoteBridgeWorker,
   tsBridgeWorkerEnabled
@@ -158,6 +162,7 @@ export interface BuildRuntimeApiServerOptions {
   dbPath?: string;
   workspaceRoot?: string;
   queueWorker?: QueueWorkerLike | null;
+  mainSessionEventWorker?: MainSessionEventWorkerLike | null;
   durableMemoryWorker?: DurableMemoryWorkerLike | null;
   cronWorker?: CronWorkerLike | null;
   bridgeWorker?: BridgeWorkerLike | null;
@@ -231,6 +236,22 @@ function resolveCronWorker(
     return options.cronWorker;
   }
   return new RuntimeCronWorker({ store, logger: app.log, queueWorker });
+}
+
+function resolveMainSessionEventWorker(
+  options: BuildRuntimeApiServerOptions,
+  app: FastifyInstance,
+  store: RuntimeStateStore,
+  queueWorker: QueueWorkerLike | null
+): MainSessionEventWorkerLike | null {
+  if (options.mainSessionEventWorker !== undefined) {
+    return options.mainSessionEventWorker;
+  }
+  return new RuntimeMainSessionEventWorker({
+    store,
+    logger: app.log,
+    queueWorker,
+  });
 }
 
 function resolveBridgeWorker(
@@ -568,6 +589,57 @@ function optionalCronjobDeliveryInput(value: unknown): {
     return undefined;
   }
   return requiredCronjobDeliveryInput(value);
+}
+
+function parseDelegateTaskInput(value: unknown): {
+  title?: string | null;
+  goal: string;
+  context?: string | null;
+  tools?: string[] | null;
+  model?: string | null;
+  timeoutMs?: number | null;
+} | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const goal = nullableString(value.goal);
+  if (!goal) {
+    return null;
+  }
+  return {
+    title: nullableString(value.title) ?? null,
+    goal,
+    context: nullableString(value.context) ?? null,
+    tools: optionalStringList(value.tools),
+    model: nullableString(value.model) ?? null,
+    timeoutMs:
+      typeof value.timeout_ms === "number" && Number.isFinite(value.timeout_ms)
+        ? Math.max(1, Math.trunc(value.timeout_ms))
+        : null,
+  };
+}
+
+function requiredDelegateTaskInputs(body: Record<string, unknown>): Array<{
+  title?: string | null;
+  goal: string;
+  context?: string | null;
+  tools?: string[] | null;
+  model?: string | null;
+  timeoutMs?: number | null;
+}> {
+  if (Array.isArray(body.tasks)) {
+    const tasks = body.tasks
+      .map((task) => parseDelegateTaskInput(task))
+      .filter((task): task is NonNullable<typeof task> => task !== null);
+    if (tasks.length > 0) {
+      return tasks;
+    }
+  }
+  const singleton = parseDelegateTaskInput(body);
+  if (singleton) {
+    return [singleton];
+  }
+  throw new Error("at least one delegated task goal is required");
 }
 
 function optionalStringList(value: unknown): string[] {
@@ -1091,13 +1163,68 @@ function inferredSessionKind(workspace: WorkspaceRecord, sessionId: string): str
 
 function isPrimaryChatSessionKind(kind: string | null | undefined): boolean {
   const normalized = (kind ?? "").trim().toLowerCase();
-  return !normalized || normalized === "workspace_session";
+  return (
+    !normalized ||
+    normalized === "workspace_session" ||
+    normalized === "main" ||
+    normalized === "onboarding"
+  );
+}
+
+function canInlineBackgroundUpdatesIntoSessionKind(
+  kind: string | null | undefined,
+): boolean {
+  const normalized = (kind ?? "").trim().toLowerCase();
+  return (
+    !normalized ||
+    normalized === "workspace_session" ||
+    normalized === "main" ||
+    normalized === "onboarding"
+  );
+}
+
+function groupedMainSessionEventsPayload(
+  events: Array<{
+    eventId: string;
+    eventType: string;
+    deliveryBucket: string;
+    status: string;
+    subagentId: string | null;
+    payload: Record<string, unknown>;
+    createdAt: string;
+  }>,
+): Record<string, unknown>[] {
+  return events.map((event) => ({
+    event_id: event.eventId,
+    event_type: event.eventType,
+    delivery_bucket: event.deliveryBucket,
+    status: event.status,
+    subagent_id: event.subagentId,
+    payload: event.payload,
+    created_at: event.createdAt,
+  }));
 }
 
 function preferredWorkspaceSessionId(params: {
   store: RuntimeStateStore;
   workspace: WorkspaceRecord;
 }): string | null {
+  const desktopBinding = params.store.getConversationBindingByConversation({
+    workspaceId: params.workspace.id,
+    channel: "desktop",
+    conversationKey: "workspace-main",
+    role: "main",
+  });
+  if (desktopBinding) {
+    const boundSession = params.store.getSession({
+      workspaceId: params.workspace.id,
+      sessionId: desktopBinding.sessionId,
+    });
+    if (boundSession && !boundSession.archivedAt && isPrimaryChatSessionKind(boundSession.kind)) {
+      return boundSession.sessionId;
+    }
+  }
+
   if (sessionSelectionUsesOnboarding(params.workspace)) {
     return (params.workspace.onboardingSessionId ?? "").trim() || null;
   }
@@ -1121,6 +1248,301 @@ function preferredWorkspaceSessionId(params: {
 
   const fallback = sessions.find((session) => session.sessionId !== onboardingSessionId) ?? sessions[0] ?? null;
   return fallback?.sessionId ?? null;
+}
+
+function sanitizeLegacyHistoryFileSegment(value: string): string {
+  return value
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 96) || "session";
+}
+
+function workspaceLegacySessionHistoryDir(
+  store: RuntimeStateStore,
+  workspaceId: string,
+): string | null {
+  try {
+    const workspaceDir = store.assertWorkspaceFolderHealthy(workspaceId);
+    return path.join(workspaceDir, ".holaboss", "legacy-session-histories");
+  } catch {
+    return null;
+  }
+}
+
+function renderLegacySessionHistoryMarkdown(params: {
+  workspace: WorkspaceRecord;
+  session: AgentSessionRecord;
+  messages: Array<Record<string, unknown>>;
+  outputs: Array<Record<string, unknown>>;
+  exportedAt: string;
+  archivedAt: string;
+}): string {
+  const title = (params.session.title ?? "").trim() || params.session.sessionId;
+  const lines = [
+    `# ${title}`,
+    "",
+    `- Workspace: ${params.workspace.name.trim() || params.workspace.id}`,
+    `- Session ID: ${params.session.sessionId}`,
+    `- Kind: ${(params.session.kind || "workspace_session").trim() || "workspace_session"}`,
+    `- Exported At: ${params.exportedAt}`,
+    `- Archived At: ${params.archivedAt}`,
+  ];
+  if (params.outputs.length > 0) {
+    lines.push("", "## Outputs", "");
+    for (const output of params.outputs) {
+      const outputTitle =
+        (typeof output.title === "string" && output.title.trim()) ||
+        (typeof output.output_type === "string" && output.output_type.trim()) ||
+        "Untitled output";
+      lines.push(
+        `- ${outputTitle}`,
+        `  - Output ID: ${String(output.id ?? "")}`,
+        `  - Type: ${String(output.output_type ?? "")}`,
+        `  - Status: ${String(output.status ?? "")}`,
+      );
+    }
+  }
+  lines.push("", "## Transcript", "");
+  for (const message of params.messages) {
+    const role = String(message.role ?? "assistant");
+    const createdAt = String(message.created_at ?? "");
+    lines.push(`### ${role}${createdAt ? ` · ${createdAt}` : ""}`, "");
+    const text = String(message.text ?? "");
+    lines.push(text || "_(empty)_", "");
+  }
+  return `${lines.join("\n").trim()}\n`;
+}
+
+function upsertLegacySessionHistoryManifest(params: {
+  store: RuntimeStateStore;
+  workspace: WorkspaceRecord;
+  items: Array<Record<string, unknown>>;
+}): void {
+  const historyDir = workspaceLegacySessionHistoryDir(params.store, params.workspace.id);
+  if (!historyDir) {
+    return;
+  }
+  fs.mkdirSync(historyDir, { recursive: true });
+  const manifestPath = path.join(historyDir, "index.json");
+  let existing: Array<Record<string, unknown>> = [];
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+      if (Array.isArray(parsed)) {
+        existing = parsed.filter((item): item is Record<string, unknown> => isRecord(item));
+      }
+    } catch {
+      existing = [];
+    }
+  }
+
+  const bySessionId = new Map<string, Record<string, unknown>>();
+  for (const item of existing) {
+    const sessionId = optionalString(item.session_id);
+    if (sessionId) {
+      bySessionId.set(sessionId, item);
+    }
+  }
+  for (const item of params.items) {
+    const sessionId = optionalString(item.session_id);
+    if (sessionId) {
+      bySessionId.set(sessionId, item);
+    }
+  }
+
+  fs.writeFileSync(
+    manifestPath,
+    JSON.stringify(
+      Array.from(bySessionId.values()).sort((left, right) => {
+        const leftTime = Date.parse(optionalString(left.archived_at) ?? "") || 0;
+        const rightTime = Date.parse(optionalString(right.archived_at) ?? "") || 0;
+        return rightTime - leftTime;
+      }),
+      null,
+      2,
+    ),
+    "utf8",
+  );
+}
+
+function exportLegacySessionHistory(params: {
+  store: RuntimeStateStore;
+  workspace: WorkspaceRecord;
+  session: AgentSessionRecord;
+  archivedAt: string;
+}): Record<string, unknown> | null {
+  const historyDir = workspaceLegacySessionHistoryDir(params.store, params.workspace.id);
+  if (!historyDir) {
+    return null;
+  }
+  fs.mkdirSync(historyDir, { recursive: true });
+  const baseName = sanitizeLegacyHistoryFileSegment(params.session.sessionId);
+  const jsonFileName = `${baseName}.json`;
+  const markdownFileName = `${baseName}.md`;
+  const jsonPath = path.join(historyDir, jsonFileName);
+  const markdownPath = path.join(historyDir, markdownFileName);
+  const exportedAt = utcNowIso();
+  const messages = params.store
+    .listSessionMessages({
+      workspaceId: params.workspace.id,
+      sessionId: params.session.sessionId,
+      order: "asc",
+      limit: 10_000,
+      offset: 0,
+    })
+    .map((message) => {
+      const inputId = message.role === "user" && message.id.startsWith("user-") ? message.id.slice(5) : "";
+      const attachments = inputId
+        ? attachmentsFromInputPayload(params.store.getInput(inputId)?.payload.attachments)
+        : [];
+      return {
+        id: message.id,
+        role: message.role,
+        text: message.text,
+        created_at: message.createdAt,
+        metadata: attachments.length > 0 ? { attachments } : {},
+      };
+    });
+  const outputs = params.store
+    .listOutputs({
+      workspaceId: params.workspace.id,
+      sessionId: params.session.sessionId,
+      limit: 10_000,
+      offset: 0,
+    })
+    .filter((item) => item.sessionId === params.session.sessionId)
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.createdAt ?? "") || 0;
+      const rightTime = Date.parse(right.createdAt ?? "") || 0;
+      return leftTime - rightTime;
+    })
+    .map((output) => ({
+      id: output.id,
+      title: output.title,
+      output_type: output.outputType,
+      status: output.status,
+      created_at: output.createdAt,
+      updated_at: output.updatedAt,
+      metadata: output.metadata,
+    }));
+
+  const payload = {
+    version: 1,
+    exported_at: exportedAt,
+    archived_at: params.archivedAt,
+    workspace: {
+      id: params.workspace.id,
+      name: params.workspace.name,
+    },
+    session: agentSessionPayload(params.session),
+    messages,
+    outputs,
+  };
+  fs.writeFileSync(jsonPath, JSON.stringify(payload, null, 2), "utf8");
+  fs.writeFileSync(
+    markdownPath,
+    renderLegacySessionHistoryMarkdown({
+      workspace: params.workspace,
+      session: params.session,
+      messages,
+      outputs,
+      exportedAt,
+      archivedAt: params.archivedAt,
+    }),
+    "utf8",
+  );
+
+  return {
+    session_id: params.session.sessionId,
+    title: params.session.title,
+    kind: params.session.kind,
+    archived_at: params.archivedAt,
+    exported_at: exportedAt,
+    message_count: messages.length,
+    output_count: outputs.length,
+    json_path: jsonPath,
+    markdown_path: markdownPath,
+  };
+}
+
+function resolveOrCreateWorkspaceMainSession(params: {
+  store: RuntimeStateStore;
+  workspace: WorkspaceRecord;
+}): {
+  session: AgentSessionRecord;
+  migratedLegacySessions: Array<Record<string, unknown>>;
+} {
+  const preferredSessionId = preferredWorkspaceSessionId(params);
+  const session =
+    (preferredSessionId
+      ? params.store.getSession({
+          workspaceId: params.workspace.id,
+          sessionId: preferredSessionId,
+        })
+      : null) ??
+    params.store.ensureSession({
+      workspaceId: params.workspace.id,
+      sessionId: `main-${randomUUID()}`,
+      kind: "main",
+      title: params.workspace.name.trim() || "Main Session",
+      createdBy: "system",
+    });
+
+  params.store.upsertConversationBinding({
+    workspaceId: params.workspace.id,
+    channel: "desktop",
+    conversationKey: "workspace-main",
+    sessionId: session.sessionId,
+    role: "main",
+    isActive: true,
+    metadata: {},
+    lastActiveAt: utcNowIso(),
+  });
+
+  const legacySessions = params.store
+    .listSessions({
+      workspaceId: params.workspace.id,
+      includeArchived: false,
+      limit: 500,
+      offset: 0,
+    })
+    .filter(
+      (candidate) =>
+        candidate.sessionId !== session.sessionId &&
+        isPrimaryChatSessionKind(candidate.kind),
+    );
+
+  const archivedAt = utcNowIso();
+  const migratedLegacySessions = legacySessions
+    .map((legacySession) => {
+      const exported = exportLegacySessionHistory({
+        store: params.store,
+        workspace: params.workspace,
+        session: legacySession,
+        archivedAt,
+      });
+      params.store.ensureSession({
+        workspaceId: params.workspace.id,
+        sessionId: legacySession.sessionId,
+        archivedAt,
+      });
+      return exported;
+    })
+    .filter((item): item is Record<string, unknown> => Boolean(item));
+
+  if (migratedLegacySessions.length > 0) {
+    upsertLegacySessionHistoryManifest({
+      store: params.store,
+      workspace: params.workspace,
+      items: migratedLegacySessions,
+    });
+  }
+
+  return {
+    session,
+    migratedLegacySessions,
+  };
 }
 
 function outputTypeForArtifact(artifactType: string): string {
@@ -2176,9 +2598,22 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     : null;
   const brokerService = new IntegrationBrokerService(store, composioService);
   const oauthService = new OAuthService(store);
+  const runnerExecutor = options.runnerExecutor ?? new NativeRunnerExecutor();
+  const durableMemoryWorker = resolveDurableMemoryWorker(options, app, store, memoryService);
+  const queueWorker = resolveQueueWorker(options, app, store, memoryService, durableMemoryWorker);
+  const cronWorker = resolveCronWorker(options, app, store, queueWorker);
+  const mainSessionEventWorker = resolveMainSessionEventWorker(
+    options,
+    app,
+    store,
+    queueWorker,
+  );
+  const bridgeWorker = resolveBridgeWorker(options, app, store, memoryService);
+  const recallEmbeddingBackfillWorker = resolveRecallEmbeddingBackfillWorker(options, app, store, memoryService);
   const runtimeAgentToolsService = new RuntimeAgentToolsService(store, {
     workspaceRoot: store.workspaceRoot,
     terminalSessionManager,
+    queueWorker,
   });
   async function maybeShapeCapabilityToolResult(params: {
     headers: Record<string, unknown>;
@@ -2196,12 +2631,6 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       sessionId: params.sessionId,
     });
   }
-  const runnerExecutor = options.runnerExecutor ?? new NativeRunnerExecutor();
-  const durableMemoryWorker = resolveDurableMemoryWorker(options, app, store, memoryService);
-  const queueWorker = resolveQueueWorker(options, app, store, memoryService, durableMemoryWorker);
-  const cronWorker = resolveCronWorker(options, app, store, queueWorker);
-  const bridgeWorker = resolveBridgeWorker(options, app, store, memoryService);
-  const recallEmbeddingBackfillWorker = resolveRecallEmbeddingBackfillWorker(options, app, store, memoryService);
 
   app.setErrorHandler((error: FastifyError, request, reply) => {
     const statusCode =
@@ -2843,6 +3272,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     await terminalSessionManager?.close();
     await recallEmbeddingBackfillWorker?.close();
     await bridgeWorker?.close();
+    await mainSessionEventWorker?.close();
     await cronWorker?.close();
     await queueWorker?.close();
     await durableMemoryWorker?.close();
@@ -2856,6 +3286,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     await durableMemoryWorker?.start();
     await queueWorker?.start();
     await cronWorker?.start();
+    await mainSessionEventWorker?.start();
     await bridgeWorker?.start();
     await recallEmbeddingBackfillWorker?.start();
     if (options.enableAppHealthMonitor !== false) {
@@ -3715,6 +4146,138 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
+  app.post("/api/v1/capabilities/runtime-tools/subagents", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      const workspaceId = requiredCapabilityWorkspaceId({
+        headers: request.headers as Record<string, unknown>,
+        body: request.body,
+      });
+      const sessionId = capabilitySessionId({
+        headers: request.headers as Record<string, unknown>,
+        body: request.body,
+      });
+      if (!sessionId) {
+        return sendError(reply, 400, "session_id is required");
+      }
+      const payload = runtimeAgentToolsService.delegateTask({
+        workspaceId,
+        sessionId,
+        inputId: capabilityInputId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        selectedModel: capabilitySelectedModel({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        tasks: requiredDelegateTaskInputs(request.body),
+      });
+      return payload;
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime delegate task failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/subagents/wait", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      const workspaceId = requiredCapabilityWorkspaceId({
+        headers: request.headers as Record<string, unknown>,
+        body: request.body,
+      });
+      const sessionId = capabilitySessionId({
+        headers: request.headers as Record<string, unknown>,
+        body: request.body,
+      });
+      if (!sessionId) {
+        return sendError(reply, 400, "session_id is required");
+      }
+      return await runtimeAgentToolsService.waitSubagents({
+        workspaceId,
+        sessionId,
+        subagentIds: optionalStringList(request.body.subagent_ids),
+        returnWhen: nullableString(request.body.return_when) ?? undefined,
+        timeoutMs: hasOwn(request.body, "timeout_ms") ? optionalInteger(request.body.timeout_ms, 0) || null : undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime wait subagents failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/subagents/:subagentId/cancel", async (request, reply) => {
+    const params = request.params as { subagentId: string };
+    try {
+      const workspaceId = requiredCapabilityWorkspaceId({
+        headers: request.headers as Record<string, unknown>,
+        body: isRecord(request.body) ? request.body : null,
+      });
+      const sessionId = capabilitySessionId({
+        headers: request.headers as Record<string, unknown>,
+        body: isRecord(request.body) ? request.body : null,
+      });
+      if (!sessionId) {
+        return sendError(reply, 400, "session_id is required");
+      }
+      return await runtimeAgentToolsService.cancelSubagent({
+        workspaceId,
+        sessionId,
+        subagentId: requiredString(params.subagentId, "subagentId"),
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime cancel subagent failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/subagents/:subagentId/resume", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { subagentId: string };
+    try {
+      const workspaceId = requiredCapabilityWorkspaceId({
+        headers: request.headers as Record<string, unknown>,
+        body: request.body,
+      });
+      const sessionId = capabilitySessionId({
+        headers: request.headers as Record<string, unknown>,
+        body: request.body,
+      });
+      if (!sessionId) {
+        return sendError(reply, 400, "session_id is required");
+      }
+      return runtimeAgentToolsService.resumeSubagent({
+        workspaceId,
+        sessionId,
+        inputId: capabilityInputId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        subagentId: requiredString(params.subagentId, "subagentId"),
+        answer: requiredString(request.body.answer, "answer"),
+        model: nullableString(request.body.model) ?? undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime resume subagent failed");
+    }
+  });
+
   app.post("/api/v1/capabilities/runtime-tools/images/generate", async (request, reply) => {
     if (!isRecord(request.body)) {
       return sendError(reply, 400, "request body must be an object");
@@ -4259,6 +4822,40 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
+  app.get("/api/v1/background-tasks", async (request, reply) => {
+    const query = isRecord(request.query) ? request.query : {};
+    try {
+      return runtimeAgentToolsService.listBackgroundTasks({
+        workspaceId: requiredString(query.workspace_id, "workspace_id"),
+        ownerMainSessionId: nullableString(query.owner_main_session_id) ?? undefined,
+        statuses: optionalStringList(query.statuses),
+        limit: hasOwn(query, "limit") ? optionalInteger(query.limit, 200) : undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "background task list failed");
+    }
+  });
+
+  app.get("/api/v1/background-tasks/:subagentId", async (request, reply) => {
+    const params = request.params as { subagentId: string };
+    const query = isRecord(request.query) ? request.query : {};
+    try {
+      return runtimeAgentToolsService.getBackgroundTask({
+        workspaceId: requiredString(query.workspace_id, "workspace_id"),
+        subagentId: requiredString(params.subagentId, "subagentId"),
+        ownerMainSessionId: nullableString(query.owner_main_session_id) ?? undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "background task fetch failed");
+    }
+  });
+
   app.post("/api/v1/lifecycle/shutdown", async (request, reply) => {
     void request;
     try {
@@ -4564,6 +5161,24 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         resolveWorkspacePathForPayload(store, workspace.id),
         resolveWorkspaceFolderStateForPayload(store, workspace.id)
       )
+    };
+  });
+
+  app.post("/api/v1/workspaces/:workspaceId/ensure-main-session", async (request, reply) => {
+    const params = request.params as { workspaceId: string };
+    const workspace = store.getWorkspace(params.workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+
+    const result = resolveOrCreateWorkspaceMainSession({
+      store,
+      workspace,
+    });
+    return {
+      session: agentSessionPayload(result.session),
+      migrated_legacy_sessions: result.migratedLegacySessions,
+      migrated_legacy_session_count: result.migratedLegacySessions.length,
     };
   });
 
@@ -5974,6 +6589,20 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         sessionId: resolvedSessionId,
         status: "IDLE"
       });
+    const pendingBackgroundUpdateEvents =
+      canInlineBackgroundUpdatesIntoSessionKind(
+        existingSession?.kind ?? inferredKind,
+      )
+        ? store.listPendingMainSessionEvents({
+            ownerMainSessionId: resolvedSessionId,
+            deliveryBucket: "background_update",
+            before: utcNowIso(),
+            limit: 200,
+          })
+        : [];
+    const inlineBackgroundUpdateIds = pendingBackgroundUpdateEvents.map(
+      (event) => event.eventId,
+    );
     const record = store.enqueueInput({
       workspaceId,
       sessionId: resolvedSessionId,
@@ -5985,9 +6614,26 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         image_urls: Array.isArray(request.body.image_urls) ? request.body.image_urls : [],
         model: nullableString(request.body.model) ?? null,
         thinking_value: nullableString(request.body.thinking_value) ?? null,
-        context: {}
+        context:
+          inlineBackgroundUpdateIds.length > 0
+            ? {
+                main_session_event_ids: inlineBackgroundUpdateIds,
+                delivery_bucket: "background_update",
+                main_session_event_mode: "inline_user_reply",
+                queued_events: groupedMainSessionEventsPayload(
+                  pendingBackgroundUpdateEvents,
+                ),
+                attached_at: utcNowIso(),
+              }
+            : {}
       }
     });
+    if (inlineBackgroundUpdateIds.length > 0) {
+      store.markMainSessionEventsMaterialized({
+        eventIds: inlineBackgroundUpdateIds,
+        materializedInputId: record.inputId,
+      });
+    }
     createInputMemoryUpdateProposals({
       store,
       workspaceId,
@@ -7062,14 +7708,27 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
     const taskName = requiredString(request.body.task_name ?? proposal.taskName, "task_name");
     const taskPrompt = requiredString(request.body.task_prompt ?? proposal.taskPrompt, "task_prompt");
-    const sessionId = optionalString(request.body.session_id) ?? `proposal-${randomUUID()}`;
-    const parentSessionId = nullableString(request.body.parent_session_id) ?? null;
+    const sessionId = optionalString(request.body.session_id) ?? `subagent-${randomUUID()}`;
+    const parentSessionId =
+      nullableString(request.body.parent_session_id) ??
+      preferredWorkspaceSessionId({ store, workspace }) ??
+      null;
     const priority = optionalInteger(request.body.priority, 0);
     const model = nullableString(request.body.model) ?? null;
     const createdBy = nullableString(request.body.created_by) ?? "workspace_user";
+    const subagentId = randomUUID();
 
     if (store.getSession({ workspaceId: proposal.workspaceId, sessionId })) {
       return sendError(reply, 409, "session_id is already in use");
+    }
+    if (
+      parentSessionId &&
+      !store.getSession({
+        workspaceId: proposal.workspaceId,
+        sessionId: parentSessionId,
+      })
+    ) {
+      return sendError(reply, 404, "parent session not found");
     }
 
     const evolveCandidate =
@@ -7090,7 +7749,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const session = store.ensureSession({
       workspaceId: proposal.workspaceId,
       sessionId,
-      kind: "task_proposal",
+      kind: "subagent",
       title: taskName,
       parentSessionId,
       sourceProposalId: proposal.proposalId,
@@ -7121,9 +7780,15 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         model,
         context: {
           source: "task_proposal",
+          source_type: "task_proposal",
           proposal_id: proposal.proposalId,
           proposal_source: proposal.proposalSource,
+          subagent_id: subagentId,
           parent_session_id: parentSessionId,
+          origin_main_session_id: parentSessionId,
+          owner_main_session_id: parentSessionId,
+          task_title: taskName,
+          goal: taskPrompt,
           evolve_candidate: evolveCandidate
             ? {
                 candidate_id: evolveCandidate.candidateId,
@@ -7139,6 +7804,31 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
             : null,
         }
       }
+    });
+    store.createSubagentRun({
+      subagentId,
+      workspaceId: proposal.workspaceId,
+      parentSessionId,
+      parentInputId: null,
+      originMainSessionId: parentSessionId ?? sessionId,
+      ownerMainSessionId: parentSessionId ?? sessionId,
+      childSessionId: sessionId,
+      initialChildInputId: record.inputId,
+      currentChildInputId: record.inputId,
+      latestChildInputId: record.inputId,
+      title: taskName,
+      goal: taskPrompt,
+      context: null,
+      sourceType: "task_proposal",
+      sourceId: proposal.proposalId,
+      proposalId: proposal.proposalId,
+      toolProfile: {
+        requested_tools: ["terminal", "file", "browser", "web"],
+      },
+      requestedModel: model,
+      effectiveModel: model,
+      status: "queued",
+      lastEventAt: utcNowIso(),
     });
     store.updateRuntimeState({
       workspaceId: proposal.workspaceId,

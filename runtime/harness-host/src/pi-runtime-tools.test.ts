@@ -227,6 +227,120 @@ test("Pi runtime cronjob tools expose only allowed delivery enum values", async 
   assert.deepEqual(updateDeliveryChannelValues, ["system_notification", "session_run"]);
 });
 
+test("Pi runtime subagent tools normalize delegated task bodies and control routes", async () => {
+  const requests: Array<{
+    method: string;
+    url: string;
+    workspaceId: string;
+    sessionId: string;
+    body: string;
+  }> = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/api/v1/capabilities/runtime-tools")) {
+      return new Response(JSON.stringify({ available: true }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+
+    requests.push({
+      method: String(init?.method ?? "GET"),
+      url,
+      workspaceId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-workspace-id"] ?? ""),
+      sessionId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-session-id"] ?? ""),
+      body: init?.body ? String(init.body) : "",
+    });
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    });
+  };
+
+  const tools = await resolvePiRuntimeToolDefinitions({
+    runtimeApiBaseUrl: "http://127.0.0.1:5060",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    fetchImpl,
+  });
+
+  const delegateTool = tools.find((tool) => tool.name === "holaboss_delegate_task");
+  const waitTool = tools.find((tool) => tool.name === "holaboss_wait_subagents");
+  const cancelTool = tools.find((tool) => tool.name === "holaboss_cancel_subagent");
+  assert.ok(delegateTool);
+  assert.ok(waitTool);
+  assert.ok(cancelTool);
+
+  await delegateTool.execute(
+    "call-1",
+    {
+      goal: "Research topic A",
+      context: "Focus on recent changes.",
+      tools: ["web", "browser"],
+    },
+    undefined,
+    undefined,
+    {} as never,
+  );
+  await waitTool.execute(
+    "call-2",
+    {
+      subagent_ids: ["subagent-1", "subagent-2"],
+      return_when: "all",
+      timeout_ms: 2500,
+    },
+    undefined,
+    undefined,
+    {} as never,
+  );
+  await cancelTool.execute(
+    "call-3",
+    {
+      subagent_id: "subagent-1",
+    },
+    undefined,
+    undefined,
+    {} as never,
+  );
+
+  assert.deepEqual(requests, [
+    {
+      method: "POST",
+      url: "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/subagents",
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      body: JSON.stringify({
+        tasks: [
+          {
+            goal: "Research topic A",
+            context: "Focus on recent changes.",
+            tools: ["web", "browser"],
+          },
+        ],
+      }),
+    },
+    {
+      method: "POST",
+      url: "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/subagents/wait",
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      body: JSON.stringify({
+        subagent_ids: ["subagent-1", "subagent-2"],
+        return_when: "all",
+        timeout_ms: 2500,
+      }),
+    },
+    {
+      method: "POST",
+      url: "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/subagents/subagent-1/cancel",
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      body: JSON.stringify({}),
+    },
+  ]);
+});
+
 test("Pi runtime image generation tool forwards prompt and optional output settings", async () => {
   const requests: Array<{
     method: string;

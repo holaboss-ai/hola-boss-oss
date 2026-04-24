@@ -15,6 +15,7 @@ test("app shell routes file outputs into the explorer and universal display whil
     source,
     /if \(\s*\(target\.surface === "document" \|\|\s*target\.surface === "file"\) &&\s*target\.resourceId\?\.trim\(\)\s*\) \{/
   );
+  assert.match(source, /setSpaceWorkspacePanelCollapsed\(false\);/);
   assert.match(
     source,
     /setSpaceVisibility\(\(previous\) => \(\{\s*\.\.\.previous,\s*agent: true,\s*files: true,\s*\}\)\);/
@@ -35,6 +36,7 @@ test("app shell routes app outputs into the applications explorer and app surfac
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(source, /const handleOpenSpaceApp = useCallback\(/);
+  assert.match(source, /setSpaceWorkspacePanelCollapsed\(false\);/);
   assert.match(source, /setSpaceExplorerMode\("applications"\);/);
   assert.match(
     source,
@@ -150,6 +152,7 @@ test("app shell syncs file-oriented agent operations into the explorer and displ
     /const handleSyncAgentOperationFileDisplay = useCallback\(\s*\(path: string\) => \{/,
   );
   assert.match(source, /const targetPath = path\.trim\(\);/);
+  assert.match(source, /setSpaceWorkspacePanelCollapsed\(false\);/);
   assert.match(source, /setSpaceExplorerMode\("files"\);/);
   assert.match(
     source,
@@ -577,6 +580,11 @@ test("app shell renders a persistent explorer rail and universal display in spac
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(source, /function loadSpaceVisibility\(\): SpaceVisibilityState \{/);
+  assert.match(
+    source,
+    /const SPACE_WORKSPACE_PANEL_COLLAPSED_STORAGE_KEY =\s*"holaboss-space-workspace-panel-collapsed-v1";/,
+  );
+  assert.match(source, /function loadSpaceWorkspacePanelCollapsed\(\): boolean \{/);
   assert.match(source, /localStorage\.getItem\(SPACE_VISIBILITY_STORAGE_KEY\)/);
   assert.match(
     source,
@@ -588,9 +596,21 @@ test("app shell renders a persistent explorer rail and universal display in spac
   assert.doesNotMatch(source, /aria-label="Toggle browser pane"/);
   assert.match(source, /type SpaceExplorerMode = "files" \| "browser" \| "applications";/);
   assert.match(source, /const \[spaceExplorerMode, setSpaceExplorerMode\] =\s*useState<SpaceExplorerMode>\("files"\);/);
+  assert.match(
+    source,
+    /const \[spaceWorkspacePanelCollapsed, setSpaceWorkspacePanelCollapsed\] =\s*useState\(loadSpaceWorkspacePanelCollapsed\);/,
+  );
   assert.doesNotMatch(source, /spaceExplorerCollapsed/);
   assert.doesNotMatch(source, /setSpaceExplorerCollapsed/);
   assert.match(source, /const \[spaceDisplayView, setSpaceDisplayView\] = useState<SpaceDisplayView>\(\{\s*type: "browser",\s*\}\);/);
+  assert.match(
+    source,
+    /localStorage\.setItem\(\s*SPACE_WORKSPACE_PANEL_COLLAPSED_STORAGE_KEY,\s*spaceWorkspacePanelCollapsed \? "1" : "0",\s*\);/,
+  );
+  assert.match(
+    source,
+    /if \(!spaceWorkspacePanelCollapsed\) \{\s*return;\s*\}\s*setSpaceWorkspacePanelCollapsed\(false\);/,
+  );
   assert.match(source, /<FileExplorerPane[\s\S]*focusRequest=\{fileExplorerFocusRequest\}/);
   assert.match(source, /<FileExplorerPane[\s\S]*onOpenLinkInBrowser=\{handleOpenLinkInNewAppBrowserTab\}/);
   assert.match(source, /<FileExplorerPane[\s\S]*previewInPane=\{false\}/);
@@ -610,8 +630,11 @@ test("app shell renders a persistent explorer rail and universal display in spac
   );
   assert.match(source, /aria-label="Resize display pane"/);
   assert.match(source, /aria-label="Resize explorer panel"/);
-  assert.doesNotMatch(source, /aria-label="Collapse explorer"/);
-  assert.doesNotMatch(source, /aria-label="Expand explorer"/);
+  assert.match(source, /id="space-workspace-panel"/);
+  assert.doesNotMatch(source, /aria-controls="space-workspace-panel"/);
+  assert.doesNotMatch(source, /aria-label=\{spaceWorkspacePanelToggleLabel\}/);
+  assert.doesNotMatch(source, /Expand explorer and display/);
+  assert.doesNotMatch(source, /Collapse explorer and display/);
   assert.doesNotMatch(source, /inline-flex h-8 items-center gap-2 rounded-full border px-3/);
   assert.doesNotMatch(source, /spaceDrawerToggleLabel/);
   assert.doesNotMatch(source, /utilityPaneRenderWidth/);
@@ -620,6 +643,10 @@ test("app shell renders a persistent explorer rail and universal display in spac
 test("app shell routes agent-originated browser opens into the agent browser space", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
+  assert.match(
+    source,
+    /const revealBrowserPane = useCallback\(\(space: BrowserSpaceId = "user"\) => \{\s*setActiveShellView\("space"\);\s*setSpaceWorkspacePanelCollapsed\(false\);\s*setSpaceExplorerMode\("browser"\);/,
+  );
   assert.match(source, /const targetBrowserSpace =\s*payload\.space === "agent" \? "agent" : "user";/);
   assert.match(source, /\.setActiveWorkspace\(\s*payload\.workspaceId \?\? selectedWorkspaceId \?\? null,\s*targetBrowserSpace,\s*payload\.sessionId \?\? null,\s*\)/);
   assert.match(source, /\.setActiveWorkspace\(targetWorkspaceId, "user"\)/);

@@ -35,6 +35,29 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS = [
     policy: "mutate"
   },
   {
+    id: "holaboss_delegate_task",
+    description:
+      "Delegate one or more background tasks to hidden subagents for the current workspace session while keeping the main conversation free.",
+    policy: "coordinate"
+  },
+  {
+    id: "holaboss_wait_subagents",
+    description:
+      "Wait briefly for one or more delegated subagents to change status or finish, then return their latest background-task state.",
+    policy: "coordinate"
+  },
+  {
+    id: "holaboss_cancel_subagent",
+    description: "Cancel one delegated background task by subagent id when it is still queued or waiting on user input.",
+    policy: "mutate"
+  },
+  {
+    id: "holaboss_resume_subagent",
+    description:
+      "Resume a delegated background task that is waiting on user input by sending the user's answer back into the paused subagent run.",
+    policy: "mutate"
+  },
+  {
     id: "image_generate",
     description: "Generate an image file in the current workspace using the configured image generation provider and model.",
     policy: "mutate"

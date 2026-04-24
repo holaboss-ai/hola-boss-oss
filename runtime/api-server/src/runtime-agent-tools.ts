@@ -3,6 +3,11 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 
 import {
+  type AgentSessionRecord,
+  type SessionInputRecord,
+  type SessionRuntimeStateRecord,
+  type SubagentRunRecord,
+  type TurnResultRecord,
   utcNowIso,
   type CronjobRecord,
   type RuntimeStateStore,
@@ -33,6 +38,7 @@ import {
   writeSessionTodo,
 } from "./session-todo.js";
 import type { TerminalSessionManagerLike } from "./terminal-session-manager.js";
+import type { QueueWorkerLike } from "./queue-worker.js";
 import { invokeWorkspaceSkill, resolveWorkspaceSkills } from "./workspace-skills.js";
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
@@ -86,6 +92,68 @@ export interface RuntimeAgentToolsUpdateCronjobParams {
       }
     | null;
   metadata?: Record<string, unknown> | null;
+}
+
+export interface RuntimeAgentToolsDelegateTaskItem {
+  title?: string | null;
+  goal: string;
+  context?: string | null;
+  tools?: string[] | null;
+  model?: string | null;
+  timeoutMs?: number | null;
+}
+
+export interface RuntimeAgentToolsDelegateTaskParams {
+  workspaceId: string;
+  sessionId: string;
+  inputId?: string | null;
+  selectedModel?: string | null;
+  tasks: RuntimeAgentToolsDelegateTaskItem[];
+  createdBy?: string | null;
+}
+
+export interface RuntimeAgentToolsWaitSubagentsParams {
+  workspaceId: string;
+  sessionId: string;
+  subagentIds: string[];
+  returnWhen?: string | null;
+  timeoutMs?: number | null;
+}
+
+export interface RuntimeAgentToolsCancelSubagentParams {
+  workspaceId: string;
+  sessionId: string;
+  subagentId: string;
+}
+
+export interface RuntimeAgentToolsResumeSubagentParams {
+  workspaceId: string;
+  sessionId: string;
+  inputId?: string | null;
+  subagentId: string;
+  answer: string;
+  model?: string | null;
+}
+
+export interface RuntimeAgentToolsListBackgroundTasksParams {
+  workspaceId: string;
+  ownerMainSessionId?: string | null;
+  statuses?: string[] | null;
+  limit?: number | null;
+}
+
+export interface RuntimeAgentToolsGetBackgroundTaskParams {
+  workspaceId: string;
+  subagentId: string;
+  ownerMainSessionId?: string | null;
+}
+
+interface SyncedSubagentRunState {
+  run: SubagentRunRecord;
+  runtimeState: SessionRuntimeStateRecord | null;
+  currentInput: SessionInputRecord | null;
+  latestInput: SessionInputRecord | null;
+  latestTurnResult: TurnResultRecord | null;
 }
 
 export interface RuntimeAgentToolsGenerateImageParams {
@@ -215,7 +283,10 @@ export interface RuntimeAgentToolsCloseTerminalSessionParams {
 
 export const ALLOWED_DELIVERY_MODES = new Set(["none", "announce"]);
 export const ALLOWED_DELIVERY_CHANNELS = new Set(["system_notification", "session_run"]);
+const ALLOWED_SUBAGENT_WAIT_RETURN_WHEN = new Set(["any", "all"]);
 const DEFAULT_DOWNLOAD_TIMEOUT_MS = 120_000;
+const DEFAULT_SUBAGENT_WAIT_TIMEOUT_MS = 15_000;
+const DEFAULT_SUBAGENT_WAIT_POLL_MS = 250;
 const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
 
 function runtimeToolBaseDefinition(id: string) {
@@ -268,6 +339,30 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
     method: "DELETE",
     path: "/api/v1/capabilities/runtime-tools/cronjobs/:jobId",
     description: runtimeToolBaseDefinition("holaboss_cronjobs_delete").description
+  },
+  {
+    id: runtimeToolBaseDefinition("holaboss_delegate_task").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/subagents",
+    description: runtimeToolBaseDefinition("holaboss_delegate_task").description
+  },
+  {
+    id: runtimeToolBaseDefinition("holaboss_wait_subagents").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/subagents/wait",
+    description: runtimeToolBaseDefinition("holaboss_wait_subagents").description
+  },
+  {
+    id: runtimeToolBaseDefinition("holaboss_cancel_subagent").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/subagents/:subagentId/cancel",
+    description: runtimeToolBaseDefinition("holaboss_cancel_subagent").description
+  },
+  {
+    id: runtimeToolBaseDefinition("holaboss_resume_subagent").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/subagents/:subagentId/resume",
+    description: runtimeToolBaseDefinition("holaboss_resume_subagent").description
   },
   {
     id: runtimeToolBaseDefinition("image_generate").id,
@@ -385,6 +480,15 @@ export class RuntimeAgentToolsServiceError extends Error {
   }
 }
 
+interface SessionInputAttachmentPayload {
+  id: string;
+  kind: "image" | "file" | "folder";
+  name: string;
+  mime_type: string;
+  size_bytes: number;
+  workspace_path: string;
+}
+
 function normalizedString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -399,6 +503,142 @@ function normalizedInteger(
     return defaultValue;
   }
   return Math.max(minimum, Math.min(maximum, Math.trunc(value)));
+}
+
+function normalizedStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function parseSessionInputAttachment(value: unknown): SessionInputAttachmentPayload | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const attachment = value as Record<string, unknown>;
+  const id = normalizedString(attachment.id);
+  const kindValue = normalizedString(attachment.kind);
+  const name = normalizedString(attachment.name);
+  const mimeType = normalizedString(attachment.mime_type);
+  const workspacePath = normalizedString(attachment.workspace_path);
+  const sizeBytes =
+    typeof attachment.size_bytes === "number" && Number.isFinite(attachment.size_bytes)
+      ? Math.max(0, Math.trunc(attachment.size_bytes))
+      : 0;
+  const kind =
+    kindValue === "image" || kindValue === "file" || kindValue === "folder"
+      ? kindValue
+      : null;
+  if (!id || !kind || !name || !mimeType || !workspacePath) {
+    return null;
+  }
+  return {
+    id,
+    kind,
+    name,
+    mime_type: mimeType,
+    size_bytes: sizeBytes,
+    workspace_path: workspacePath,
+  };
+}
+
+function attachmentsFromInputPayload(value: unknown): SessionInputAttachmentPayload[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => parseSessionInputAttachment(item))
+    .filter((item): item is SessionInputAttachmentPayload => Boolean(item));
+}
+
+function quotedSkillIdsFromInstruction(value: unknown): string[] {
+  if (typeof value !== "string") {
+    return [];
+  }
+  const normalized = value.replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
+  const skillIds: string[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index]?.trim() ?? "";
+    if (!line) {
+      break;
+    }
+    const match = /^\/([A-Za-z0-9_-]+)$/.exec(line);
+    if (!match) {
+      return [];
+    }
+    skillIds.push(match[1] ?? "");
+    index += 1;
+  }
+
+  if (skillIds.length === 0) {
+    return [];
+  }
+
+  if (index < lines.length && (lines[index]?.trim() ?? "") !== "") {
+    return [];
+  }
+
+  return [...new Set(skillIds.filter((skillId) => skillId.length > 0))];
+}
+
+function serializeQuotedSkillPrompt(input: string, quotedSkillIds: string[]): string {
+  const normalizedBody = input.trim();
+  if (quotedSkillIds.length === 0) {
+    return normalizedBody;
+  }
+  const lines = quotedSkillIds.map((skillId) => `/${skillId}`);
+  if (!normalizedBody) {
+    return lines.join("\n");
+  }
+  return [...lines, "", normalizedBody].join("\n");
+}
+
+function normalizedSubagentTaskTitle(value: string | null | undefined, goal: string): string {
+  const explicit = normalizedString(value);
+  if (explicit) {
+    return explicit;
+  }
+  const firstLine = goal
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  return (firstLine ?? goal).slice(0, 120);
+}
+
+function subagentInstruction(params: {
+  goal: string;
+  context?: string | null;
+}): string {
+  const goal = normalizedString(params.goal);
+  const context = normalizedString(params.context);
+  if (!context) {
+    return goal;
+  }
+  return `${goal}\n\nContext:\n${context}`;
+}
+
+function normalizeSubagentToolProfile(params: {
+  tools?: string[] | null;
+  timeoutMs?: number | null;
+}): JsonObject {
+  const tools = [...new Set((params.tools ?? []).map((tool) => normalizedString(tool)).filter((tool) => tool.length > 0))];
+  return {
+    requested_tools: tools,
+    ...(typeof params.timeoutMs === "number" && Number.isFinite(params.timeoutMs)
+      ? { timeout_ms: Math.max(1, Math.trunc(params.timeoutMs)) }
+      : {}),
+  };
+}
+
+function resolvedWorkspaceHarness(workspace: WorkspaceRecord): string {
+  return normalizedString(workspace.harness) || "pi";
 }
 
 function sanitizeReportFilenameStem(value: string): string {
@@ -790,6 +1030,58 @@ export function cronjobPayload(record: CronjobRecord): JsonObject {
   };
 }
 
+function subagentLiveStatePayload(state: SyncedSubagentRunState): JsonObject {
+  return {
+    runtime_status: state.runtimeState?.status ?? null,
+    current_input_id: state.currentInput?.inputId ?? state.run.currentChildInputId,
+    current_input_status: state.currentInput?.status ?? null,
+    latest_input_id: state.latestInput?.inputId ?? state.run.latestChildInputId,
+    latest_input_status: state.latestInput?.status ?? null,
+    latest_turn_status: state.latestTurnResult?.status ?? null,
+    latest_turn_stop_reason: state.latestTurnResult?.stopReason ?? null,
+  };
+}
+
+function subagentRunPayload(state: SyncedSubagentRunState): JsonObject {
+  return {
+    subagent_id: state.run.subagentId,
+    workspace_id: state.run.workspaceId,
+    parent_session_id: state.run.parentSessionId,
+    parent_input_id: state.run.parentInputId,
+    origin_main_session_id: state.run.originMainSessionId,
+    owner_main_session_id: state.run.ownerMainSessionId,
+    child_session_id: state.run.childSessionId,
+    initial_child_input_id: state.run.initialChildInputId,
+    current_child_input_id: state.run.currentChildInputId,
+    latest_child_input_id: state.run.latestChildInputId,
+    title: state.run.title,
+    goal: state.run.goal,
+    context: state.run.context,
+    source_type: state.run.sourceType,
+    source_id: state.run.sourceId,
+    proposal_id: state.run.proposalId,
+    cronjob_id: state.run.cronjobId,
+    retry_of_subagent_id: state.run.retryOfSubagentId,
+    tool_profile: state.run.toolProfile as JsonValue,
+    requested_model: state.run.requestedModel,
+    effective_model: state.run.effectiveModel,
+    status: state.run.status,
+    summary: state.run.summary,
+    latest_progress_payload: state.run.latestProgressPayload as JsonValue,
+    blocking_payload: state.run.blockingPayload as JsonValue,
+    result_payload: state.run.resultPayload as JsonValue,
+    error_payload: state.run.errorPayload as JsonValue,
+    last_event_at: state.run.lastEventAt,
+    owner_transferred_at: state.run.ownerTransferredAt,
+    created_at: state.run.createdAt,
+    started_at: state.run.startedAt,
+    completed_at: state.run.completedAt,
+    cancelled_at: state.run.cancelledAt,
+    updated_at: state.run.updatedAt,
+    live_state: subagentLiveStatePayload(state),
+  };
+}
+
 function terminalSessionPayload(record: TerminalSessionRecord): JsonObject {
   return {
     terminal_id: record.terminalId,
@@ -938,6 +1230,7 @@ export class RuntimeAgentToolsService {
     private readonly options: {
       workspaceRoot: string;
       terminalSessionManager?: TerminalSessionManagerLike | null;
+      queueWorker?: QueueWorkerLike | null;
     },
   ) {}
 
@@ -1078,6 +1371,357 @@ export class RuntimeAgentToolsService {
     }
     this.assertCronjobBelongsToWorkspace(existing, params.workspaceId);
     return { success: this.store.deleteCronjob(params.jobId) };
+  }
+
+  delegateTask(params: RuntimeAgentToolsDelegateTaskParams): JsonObject {
+    const workspace = this.requireWorkspace(params.workspaceId);
+    const controllerSession = this.requireSubagentControllerSession(params.workspaceId, params.sessionId);
+    const parentInputId = normalizedString(params.inputId) || null;
+    const requestedTasks = params.tasks
+      .map((task) => ({
+        title: normalizedString(task.title),
+        goal: normalizedString(task.goal),
+        context: normalizedString(task.context),
+        tools: normalizedStringList(task.tools),
+        model: normalizedString(task.model),
+        timeoutMs:
+          typeof task.timeoutMs === "number" && Number.isFinite(task.timeoutMs)
+            ? Math.max(1, Math.trunc(task.timeoutMs))
+            : null,
+      }))
+      .filter((task) => task.goal.length > 0);
+    if (requestedTasks.length === 0) {
+      throw new RuntimeAgentToolsServiceError(
+        400,
+        "subagent_goal_required",
+        "at least one delegated task with a non-empty goal is required",
+      );
+    }
+
+    const createdRuns: SyncedSubagentRunState[] = [];
+    for (const task of requestedTasks) {
+      const childSessionId = `subagent-${randomUUID()}`;
+      const title = normalizedSubagentTaskTitle(task.title, task.goal);
+      const requestedModel = task.model || null;
+      const effectiveModel = requestedModel || normalizedString(params.selectedModel) || null;
+      const toolProfile = normalizeSubagentToolProfile({
+        tools: task.tools,
+        timeoutMs: task.timeoutMs,
+      });
+      const parentInput = parentInputId ? this.store.getInput(parentInputId) : null;
+      const forwardedAttachments = attachmentsFromInputPayload(parentInput?.payload.attachments);
+      const forwardedImageUrls = normalizedStringList(parentInput?.payload.image_urls);
+      const forwardedQuotedSkillIds = quotedSkillIdsFromInstruction(parentInput?.payload.text);
+      const delegatedInstruction = serializeQuotedSkillPrompt(
+        subagentInstruction({ goal: task.goal, context: task.context || null }),
+        forwardedQuotedSkillIds,
+      );
+      const createdRun = this.store.createSubagentRun({
+        workspaceId: params.workspaceId,
+        parentSessionId: controllerSession.sessionId,
+        parentInputId,
+        originMainSessionId: controllerSession.sessionId,
+        ownerMainSessionId: controllerSession.sessionId,
+        childSessionId,
+        title,
+        goal: task.goal,
+        context: task.context || null,
+        sourceType: "delegate_task",
+        toolProfile,
+        requestedModel,
+        effectiveModel,
+        status: "queued",
+      });
+      if (!this.store.getBinding({ workspaceId: params.workspaceId, sessionId: childSessionId })) {
+        this.store.upsertBinding({
+          workspaceId: params.workspaceId,
+          sessionId: childSessionId,
+          harness: resolvedWorkspaceHarness(workspace),
+          harnessSessionId: childSessionId,
+        });
+      }
+      this.store.ensureRuntimeState({
+        workspaceId: params.workspaceId,
+        sessionId: childSessionId,
+        status: "QUEUED",
+      });
+      const input = this.store.enqueueInput({
+        workspaceId: params.workspaceId,
+        sessionId: childSessionId,
+        payload: {
+          text: delegatedInstruction,
+          attachments: forwardedAttachments,
+          image_urls: forwardedImageUrls,
+          model: effectiveModel,
+          context: {
+            source: "subagent",
+            subagent_id: createdRun.subagentId,
+            parent_session_id: controllerSession.sessionId,
+            parent_input_id: parentInputId,
+            origin_main_session_id: controllerSession.sessionId,
+            owner_main_session_id: controllerSession.sessionId,
+            goal: task.goal,
+            task_title: title,
+            task_context: task.context || null,
+            tool_profile: toolProfile,
+            requested_model: requestedModel,
+            effective_model: effectiveModel,
+            forwarded_attachment_count: forwardedAttachments.length,
+            forwarded_quoted_skill_ids: forwardedQuotedSkillIds,
+          },
+        },
+      });
+      this.store.updateRuntimeState({
+        workspaceId: params.workspaceId,
+        sessionId: childSessionId,
+        status: "QUEUED",
+        currentInputId: input.inputId,
+        currentWorkerId: null,
+        leaseUntil: null,
+        heartbeatAt: null,
+        lastError: null,
+      });
+      const updatedRun =
+        this.store.updateSubagentRun({
+          subagentId: createdRun.subagentId,
+          fields: {
+            initialChildInputId: input.inputId,
+            currentChildInputId: input.inputId,
+            latestChildInputId: input.inputId,
+            status: "queued",
+          },
+        }) ?? createdRun;
+      createdRuns.push(this.syncSubagentRunState(updatedRun));
+    }
+
+    this.options.queueWorker?.wake();
+    return {
+      tasks: createdRuns.map((run) => subagentRunPayload(run)),
+      count: createdRuns.length,
+    };
+  }
+
+  async waitSubagents(params: RuntimeAgentToolsWaitSubagentsParams): Promise<JsonObject> {
+    this.requireWorkspace(params.workspaceId);
+    const controllerSession = this.requireSubagentControllerSession(params.workspaceId, params.sessionId);
+    const subagentIds = [...new Set(params.subagentIds.map((id) => normalizedString(id)).filter((id) => id.length > 0))];
+    if (subagentIds.length === 0) {
+      throw new RuntimeAgentToolsServiceError(400, "subagent_ids_required", "subagent_ids are required");
+    }
+    const returnWhen = normalizedString(params.returnWhen) || "any";
+    if (!ALLOWED_SUBAGENT_WAIT_RETURN_WHEN.has(returnWhen)) {
+      throw new RuntimeAgentToolsServiceError(
+        400,
+        "subagent_wait_return_when_invalid",
+        `return_when must be one of ${JSON.stringify([...ALLOWED_SUBAGENT_WAIT_RETURN_WHEN].sort())}`,
+      );
+    }
+    const timeoutMs = normalizedInteger(params.timeoutMs, DEFAULT_SUBAGENT_WAIT_TIMEOUT_MS, 1, 60_000);
+    const deadline = Date.now() + timeoutMs;
+
+    let states = subagentIds.map((subagentId) =>
+      this.syncSubagentRunForOwner({
+        workspaceId: params.workspaceId,
+        subagentId,
+        ownerMainSessionId: controllerSession.sessionId,
+      }),
+    );
+    let timedOut = false;
+    while (!this.subagentWaitSatisfied(states, returnWhen)) {
+      if (Date.now() >= deadline) {
+        timedOut = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, DEFAULT_SUBAGENT_WAIT_POLL_MS));
+      states = subagentIds.map((subagentId) =>
+        this.syncSubagentRunForOwner({
+          workspaceId: params.workspaceId,
+          subagentId,
+          ownerMainSessionId: controllerSession.sessionId,
+        }),
+      );
+    }
+
+    const readyCount = states.filter((state) => this.isSubagentWaitReady(state.run.status)).length;
+    return {
+      tasks: states.map((state) => subagentRunPayload(state)),
+      count: states.length,
+      ready_count: readyCount,
+      return_when: returnWhen,
+      timed_out: timedOut,
+    };
+  }
+
+  async cancelSubagent(params: RuntimeAgentToolsCancelSubagentParams): Promise<JsonObject> {
+    this.requireWorkspace(params.workspaceId);
+    const controllerSession = this.requireSubagentControllerSession(params.workspaceId, params.sessionId);
+    const state = this.syncSubagentRunForOwner({
+      workspaceId: params.workspaceId,
+      subagentId: params.subagentId,
+      ownerMainSessionId: controllerSession.sessionId,
+    });
+    if (state.run.status === "cancelled") {
+      return subagentRunPayload(state);
+    }
+    const now = utcNowIso();
+    if (state.currentInput?.status === "QUEUED") {
+      this.store.updateInput(state.currentInput.inputId, {
+        status: "DONE",
+        claimedBy: null,
+        claimedUntil: null,
+      });
+      this.store.updateRuntimeState({
+        workspaceId: params.workspaceId,
+        sessionId: state.run.childSessionId,
+        status: "IDLE",
+        currentInputId: null,
+        currentWorkerId: null,
+        leaseUntil: null,
+        heartbeatAt: null,
+        lastError: null,
+      });
+    } else if (state.currentInput?.status === "CLAIMED") {
+      const paused = await this.options.queueWorker?.pauseSessionRun?.({
+        workspaceId: params.workspaceId,
+        sessionId: state.run.childSessionId,
+      });
+      if (!paused) {
+        throw new RuntimeAgentToolsServiceError(
+          409,
+          "subagent_cancel_unavailable",
+          "subagent is currently running and could not be cancelled",
+        );
+      }
+    } else if (!["waiting_on_user", "queued", "running"].includes(state.run.status)) {
+      return subagentRunPayload(state);
+    } else {
+      this.store.updateRuntimeState({
+        workspaceId: params.workspaceId,
+        sessionId: state.run.childSessionId,
+        status: "IDLE",
+        currentInputId: null,
+        currentWorkerId: null,
+        leaseUntil: null,
+        heartbeatAt: null,
+        lastError: null,
+      });
+    }
+    const updated =
+      this.store.updateSubagentRun({
+        subagentId: state.run.subagentId,
+        fields: {
+          status: "cancelled",
+          cancelledAt: now,
+          summary: normalizedString(state.run.summary) || "Cancelled by user.",
+        },
+      }) ?? state.run;
+    return subagentRunPayload(this.syncSubagentRunState(updated));
+  }
+
+  resumeSubagent(params: RuntimeAgentToolsResumeSubagentParams): JsonObject {
+    this.requireWorkspace(params.workspaceId);
+    const controllerSession = this.requireSubagentControllerSession(params.workspaceId, params.sessionId);
+    const answer = normalizedString(params.answer);
+    if (!answer) {
+      throw new RuntimeAgentToolsServiceError(400, "subagent_answer_required", "answer is required");
+    }
+    const state = this.syncSubagentRunForOwner({
+      workspaceId: params.workspaceId,
+      subagentId: params.subagentId,
+      ownerMainSessionId: controllerSession.sessionId,
+    });
+    if (state.run.status !== "waiting_on_user") {
+      throw new RuntimeAgentToolsServiceError(
+        409,
+        "subagent_not_waiting_on_user",
+        "subagent is not currently waiting on user input",
+      );
+    }
+    const effectiveModel = normalizedString(params.model) || state.run.effectiveModel || null;
+    const resumedInput = this.store.enqueueInput({
+      workspaceId: params.workspaceId,
+      sessionId: state.run.childSessionId,
+      payload: {
+        text: answer,
+        attachments: [],
+        image_urls: [],
+        model: effectiveModel,
+        context: {
+          source: "subagent_resume",
+          subagent_id: state.run.subagentId,
+          origin_main_session_id: state.run.originMainSessionId,
+          owner_main_session_id: controllerSession.sessionId,
+          parent_session_id: controllerSession.sessionId,
+          parent_input_id: normalizedString(params.inputId) || null,
+          resumed_from_input_id: state.run.latestChildInputId,
+          resumed_from_status: state.run.status,
+        },
+      },
+    });
+    this.store.updateRuntimeState({
+      workspaceId: params.workspaceId,
+      sessionId: state.run.childSessionId,
+      status: "QUEUED",
+      currentInputId: resumedInput.inputId,
+      currentWorkerId: null,
+      leaseUntil: null,
+      heartbeatAt: null,
+      lastError: null,
+    });
+    const updated =
+      this.store.updateSubagentRun({
+        subagentId: state.run.subagentId,
+        fields: {
+          ownerMainSessionId: controllerSession.sessionId,
+          currentChildInputId: resumedInput.inputId,
+          latestChildInputId: resumedInput.inputId,
+          status: "queued",
+          blockingPayload: null,
+          effectiveModel,
+        },
+      }) ?? state.run;
+    const staleWaitingEventIds = this.store
+      .listPendingMainSessionEvents({
+        ownerMainSessionId: controllerSession.sessionId,
+        deliveryBucket: "waiting_on_user",
+        limit: 500,
+      })
+      .filter((event) => event.subagentId === state.run.subagentId)
+      .map((event) => event.eventId);
+    if (staleWaitingEventIds.length > 0) {
+      this.store.markMainSessionEventsSuperseded({
+        eventIds: staleWaitingEventIds,
+      });
+    }
+    this.options.queueWorker?.wake();
+    return subagentRunPayload(this.syncSubagentRunState(updated));
+  }
+
+  listBackgroundTasks(params: RuntimeAgentToolsListBackgroundTasksParams): JsonObject {
+    this.requireWorkspace(params.workspaceId);
+    const requestedStatuses = new Set(normalizedStringList(params.statuses).map((status) => status.toLowerCase()));
+    const requestedOwnerMainSessionId = normalizedString(params.ownerMainSessionId);
+    const synced = this.store
+      .listSubagentRunsByWorkspace({ workspaceId: params.workspaceId })
+      .map((run) => this.syncSubagentRunState(run))
+      .filter((state) => (requestedOwnerMainSessionId ? state.run.ownerMainSessionId === requestedOwnerMainSessionId : true))
+      .filter((state) => (requestedStatuses.size > 0 ? requestedStatuses.has(state.run.status.toLowerCase()) : true))
+      .slice(0, normalizedInteger(params.limit, 200, 1, 1000));
+    return {
+      tasks: synced.map((state) => subagentRunPayload(state)),
+      count: synced.length,
+    };
+  }
+
+  getBackgroundTask(params: RuntimeAgentToolsGetBackgroundTaskParams): JsonObject {
+    this.requireWorkspace(params.workspaceId);
+    return subagentRunPayload(
+      this.syncSubagentRunForOwner({
+        workspaceId: params.workspaceId,
+        subagentId: params.subagentId,
+        ownerMainSessionId: normalizedString(params.ownerMainSessionId) || null,
+      }),
+    );
   }
 
   async generateImage(params: RuntimeAgentToolsGenerateImageParams): Promise<JsonObject> {
@@ -1616,6 +2260,182 @@ export class RuntimeAgentToolsService {
       terminalId: normalizedString(params.terminalId),
     });
     return terminalSessionPayload(session);
+  }
+
+  private requireSubagentControllerSession(workspaceId: string, sessionId: string): AgentSessionRecord {
+    const normalizedSessionId = normalizedString(sessionId);
+    if (!normalizedSessionId) {
+      throw new RuntimeAgentToolsServiceError(400, "session_id_required", "session_id is required");
+    }
+    const session = this.store.getSession({ workspaceId, sessionId: normalizedSessionId });
+    if (!session) {
+      throw new RuntimeAgentToolsServiceError(404, "session_not_found", "session not found");
+    }
+    const kind = normalizedString(session.kind);
+    if (kind === "subagent" || kind === "task_proposal" || kind === "cronjob") {
+      throw new RuntimeAgentToolsServiceError(
+        403,
+        "subagent_control_forbidden",
+        "only a main conversational session can delegate or control background tasks",
+      );
+    }
+    return session;
+  }
+
+  private requireSubagentRun(params: {
+    workspaceId: string;
+    subagentId: string;
+  }): SubagentRunRecord {
+    const subagentId = normalizedString(params.subagentId);
+    if (!subagentId) {
+      throw new RuntimeAgentToolsServiceError(400, "subagent_id_required", "subagent_id is required");
+    }
+    const run = this.store.getSubagentRun({ subagentId });
+    if (!run || run.workspaceId !== params.workspaceId) {
+      throw new RuntimeAgentToolsServiceError(404, "subagent_not_found", "subagent not found");
+    }
+    return run;
+  }
+
+  private syncSubagentRunForOwner(params: {
+    workspaceId: string;
+    subagentId: string;
+    ownerMainSessionId?: string | null;
+  }): SyncedSubagentRunState {
+    let run = this.requireSubagentRun({
+      workspaceId: params.workspaceId,
+      subagentId: params.subagentId,
+    });
+    const ownerMainSessionId = normalizedString(params.ownerMainSessionId);
+    if (ownerMainSessionId && run.ownerMainSessionId !== ownerMainSessionId) {
+      run =
+        this.store.transferSubagentOwnership({
+          subagentId: run.subagentId,
+          ownerMainSessionId,
+        }) ?? run;
+    }
+    return this.syncSubagentRunState(run);
+  }
+
+  private syncSubagentRunState(run: SubagentRunRecord): SyncedSubagentRunState {
+    const runtimeState = this.store.getRuntimeState({
+      workspaceId: run.workspaceId,
+      sessionId: run.childSessionId,
+    });
+    const currentInputId =
+      normalizedString(runtimeState?.currentInputId) ||
+      normalizedString(run.currentChildInputId) ||
+      normalizedString(run.latestChildInputId) ||
+      normalizedString(run.initialChildInputId);
+    const latestInputId =
+      normalizedString(run.latestChildInputId) ||
+      currentInputId ||
+      normalizedString(run.initialChildInputId);
+    const currentInput = currentInputId ? this.store.getInput(currentInputId) : null;
+    const latestInput = latestInputId ? this.store.getInput(latestInputId) : null;
+    const latestTurnResult = latestInputId ? this.store.getTurnResult({ inputId: latestInputId }) : null;
+
+    let derivedStatus = run.status;
+    if (run.cancelledAt || normalizedString(run.status) === "cancelled") {
+      derivedStatus = "cancelled";
+    } else if (latestTurnResult?.status === "waiting_user" || runtimeState?.status === "WAITING_USER") {
+      derivedStatus = "waiting_on_user";
+    } else if (latestTurnResult?.status === "failed" || runtimeState?.status === "ERROR") {
+      derivedStatus = "failed";
+    } else if (latestTurnResult?.status === "completed") {
+      derivedStatus = "completed";
+    } else if (currentInput?.status === "CLAIMED" || runtimeState?.status === "BUSY") {
+      derivedStatus = "running";
+    } else if (currentInput?.status === "QUEUED" || runtimeState?.status === "QUEUED") {
+      derivedStatus = "queued";
+    }
+
+    const summaryFromTurn = normalizedString(latestTurnResult?.assistantText);
+    const updates: Parameters<RuntimeStateStore["updateSubagentRun"]>[0]["fields"] = {};
+    if (run.status !== derivedStatus) {
+      updates.status = derivedStatus;
+    }
+    if (currentInputId && run.currentChildInputId !== currentInputId) {
+      updates.currentChildInputId = currentInputId;
+    }
+    if (latestInputId && run.latestChildInputId !== latestInputId) {
+      updates.latestChildInputId = latestInputId;
+    }
+    if (!run.startedAt && currentInput?.createdAt && ["queued", "running"].includes(derivedStatus)) {
+      updates.startedAt = currentInput.createdAt;
+    }
+    if (
+      derivedStatus === "completed" &&
+      latestTurnResult &&
+      (!run.completedAt || !run.resultPayload || !run.summary)
+    ) {
+      updates.completedAt = run.completedAt ?? latestTurnResult.completedAt ?? utcNowIso();
+      updates.summary = run.summary ?? summaryFromTurn ?? "Completed.";
+      updates.resultPayload = run.resultPayload ?? {
+        assistant_text: latestTurnResult.assistantText,
+        turn_status: latestTurnResult.status,
+        stop_reason: latestTurnResult.stopReason,
+      };
+      updates.lastEventAt = latestTurnResult.completedAt ?? latestTurnResult.updatedAt;
+    } else if (
+      derivedStatus === "failed" &&
+      latestTurnResult &&
+      (!run.completedAt || !run.errorPayload || !run.summary)
+    ) {
+      updates.completedAt = run.completedAt ?? latestTurnResult.completedAt ?? utcNowIso();
+      updates.summary = run.summary ?? summaryFromTurn ?? "Failed.";
+      updates.errorPayload = run.errorPayload ?? {
+        assistant_text: latestTurnResult.assistantText,
+        turn_status: latestTurnResult.status,
+        stop_reason: latestTurnResult.stopReason,
+      };
+      updates.lastEventAt = latestTurnResult.completedAt ?? latestTurnResult.updatedAt;
+    } else if (
+      derivedStatus === "waiting_on_user" &&
+      latestTurnResult &&
+      (!run.blockingPayload || !run.summary)
+    ) {
+      updates.summary = run.summary ?? summaryFromTurn ?? "Waiting on user input.";
+      updates.blockingPayload = run.blockingPayload ?? {
+        assistant_text: latestTurnResult.assistantText,
+        turn_status: latestTurnResult.status,
+        stop_reason: latestTurnResult.stopReason,
+      };
+      updates.lastEventAt = latestTurnResult.completedAt ?? latestTurnResult.updatedAt;
+    }
+
+    const syncedRun =
+      Object.keys(updates).length > 0
+        ? (this.store.updateSubagentRun({
+            subagentId: run.subagentId,
+            fields: updates,
+          }) ?? run)
+        : run;
+    return {
+      run: syncedRun,
+      runtimeState,
+      currentInput,
+      latestInput,
+      latestTurnResult,
+    };
+  }
+
+  private isSubagentWaitReady(status: string): boolean {
+    const normalizedStatus = normalizedString(status).toLowerCase();
+    return (
+      normalizedStatus === "waiting_on_user" ||
+      normalizedStatus === "completed" ||
+      normalizedStatus === "failed" ||
+      normalizedStatus === "cancelled"
+    );
+  }
+
+  private subagentWaitSatisfied(states: SyncedSubagentRunState[], returnWhen: string): boolean {
+    const ready = states.filter((state) => this.isSubagentWaitReady(state.run.status));
+    if (returnWhen === "all") {
+      return ready.length === states.length;
+    }
+    return ready.length > 0;
   }
 
   private requireWorkspace(workspaceId: string): WorkspaceRecord {

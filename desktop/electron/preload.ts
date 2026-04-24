@@ -1306,6 +1306,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:updateNotification", notificationId, payload) as Promise<RuntimeNotificationRecordPayload>,
     listTaskProposals: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listTaskProposals", workspaceId) as Promise<TaskProposalListResponsePayload>,
+    listBackgroundTasks: (payload: BackgroundTaskListRequestPayload) =>
+      ipcRenderer.invoke("workspace:listBackgroundTasks", payload) as Promise<BackgroundTaskListResponsePayload>,
     acceptTaskProposal: (payload: TaskProposalAcceptPayload) =>
       ipcRenderer.invoke("workspace:acceptTaskProposal", payload) as Promise<TaskProposalAcceptResponsePayload>,
     listMemoryUpdateProposals: (payload: MemoryUpdateProposalListRequestPayload) =>
@@ -1354,6 +1356,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
         "workspace:requestRemoteTaskProposalGeneration",
         payload,
       ) as Promise<RemoteTaskProposalGenerationResponsePayload>,
+    ensureMainSession: (workspaceId: string) =>
+      ipcRenderer.invoke("workspace:ensureMainSession", workspaceId) as Promise<EnsureWorkspaceMainSessionResponsePayload>,
     listAgentSessions: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listAgentSessions", workspaceId) as Promise<AgentSessionListResponsePayload>,
     createAgentSession: (payload: CreateAgentSessionPayload) =>
