@@ -100,7 +100,11 @@ test("file explorer live-refreshes inline previews from file watch events withou
   );
   assert.match(
     source,
-    /const \{ allowed, targetPath: validatedWatchedPath \} =\s*await validateWorkspaceScopedTargetPath\(watchedPath\);[\s\S]*if \(!allowed \|\| !validatedWatchedPath\) \{\s*return;\s*\}[\s\S]*const nextPreview = await window\.electronAPI\.fs\.readFilePreview\(\s*validatedWatchedPath,\s*selectedWorkspaceId \?\? null,\s*\);[\s\S]*setPreview\(nextPreview\);[\s\S]*setPreviewDraft\(nextPreview\.content \?\? ""\);/,
+    /if \(!allowed \|\| !validatedWatchedPath\) \{\s*resetPreviewState\(\);[\s\S]{0,320}setSelectedPath\(\(current\) =>[\s\S]{0,240}normalizeComparablePath\(watchedPath\)[\s\S]{0,160}\? ""[\s\S]{0,160}: current,[\s\S]{0,120}\);[\s\S]{0,80}return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /const nextPreview = await window\.electronAPI\.fs\.readFilePreview\(\s*validatedWatchedPath,\s*selectedWorkspaceId \?\? null,\s*\);[\s\S]*setPreview\(nextPreview\);[\s\S]*setPreviewDraft\(nextPreview\.content \?\? ""\);/,
   );
   assert.match(source, /function isMissingFilePreviewError\(cause: unknown\)/);
   assert.match(
@@ -109,7 +113,7 @@ test("file explorer live-refreshes inline previews from file watch events withou
   );
   assert.match(
     source,
-    /const \{ allowed, targetPath: validatedWatchedPath \} =\s*await validateWorkspaceScopedTargetPath\(watchedPath\);[\s\S]*if \(!allowed \|\| !validatedWatchedPath\) \{\s*return;\s*\}[\s\S]*window\.electronAPI\.fs\.watchFile\(\s*validatedWatchedPath,\s*selectedWorkspaceId \?\? null,\s*\)/,
+    /window\.electronAPI\.fs\.watchFile\(\s*validatedWatchedPath,\s*selectedWorkspaceId \?\? null,\s*\)/,
   );
   assert.match(source, /void window\.electronAPI\.fs\.unwatchFile\(subscriptionId\);/);
 });

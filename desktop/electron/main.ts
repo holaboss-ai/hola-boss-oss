@@ -18694,15 +18694,19 @@ async function moveExplorerPath(
     throw new Error("Cannot move a folder into itself.");
   }
 
-  const nextAbsolutePath = path.join(
-    destinationAbsolutePath,
-    path.basename(sourceAbsolutePath),
-  );
-  if (path.normalize(nextAbsolutePath) === path.normalize(sourceAbsolutePath)) {
+  if (
+    path.normalize(path.dirname(sourceAbsolutePath)) ===
+    path.normalize(destinationAbsolutePath)
+  ) {
     return {
       absolutePath: sourceAbsolutePath,
     };
   }
+
+  const nextAbsolutePath = await nextAvailableExplorerCreatePath(
+    destinationAbsolutePath,
+    path.basename(sourceAbsolutePath),
+  );
   if (workspaceRoot && !isPathWithinRoot(workspaceRoot, nextAbsolutePath)) {
     throw new Error("Moved path escapes workspace root.");
   }

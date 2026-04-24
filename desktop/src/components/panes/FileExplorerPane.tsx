@@ -1277,17 +1277,23 @@ export function FileExplorerPane({
         };
       }
 
-      let resolvedWorkspaceRoot = workspaceRootPath?.trim() || "";
-      if (!resolvedWorkspaceRoot) {
-        try {
-          resolvedWorkspaceRoot = (
-            await window.electronAPI.workspace.getWorkspaceRoot(
-              normalizedWorkspaceId,
-            )
-          ).trim();
-        } catch {
-          resolvedWorkspaceRoot = "";
-        }
+      let resolvedWorkspaceRoot = "";
+      try {
+        resolvedWorkspaceRoot = (
+          await window.electronAPI.workspace.getWorkspaceRoot(
+            normalizedWorkspaceId,
+          )
+        ).trim();
+      } catch {
+        resolvedWorkspaceRoot = workspaceRootPath?.trim() || "";
+      }
+
+      if (
+        resolvedWorkspaceRoot &&
+        normalizeComparablePath(resolvedWorkspaceRoot) !==
+          normalizeComparablePath(workspaceRootPath ?? "")
+      ) {
+        setWorkspaceRootPath(resolvedWorkspaceRoot);
       }
 
       if (!resolvedWorkspaceRoot) {
@@ -2102,6 +2108,13 @@ export function FileExplorerPane({
         const { allowed, targetPath: validatedWatchedPath } =
           await validateWorkspaceScopedTargetPath(watchedPath);
         if (!allowed || !validatedWatchedPath) {
+          resetPreviewState();
+          setSelectedPath((current) =>
+            normalizeComparablePath(current) ===
+            normalizeComparablePath(watchedPath)
+              ? ""
+              : current,
+          );
           return;
         }
         const nextPreview = await window.electronAPI.fs.readFilePreview(
@@ -2145,6 +2158,13 @@ export function FileExplorerPane({
       const { allowed, targetPath: validatedWatchedPath } =
         await validateWorkspaceScopedTargetPath(watchedPath);
       if (!allowed || !validatedWatchedPath) {
+        resetPreviewState();
+        setSelectedPath((current) =>
+          normalizeComparablePath(current) ===
+          normalizeComparablePath(watchedPath)
+            ? ""
+            : current,
+        );
         return;
       }
       const subscription = await window.electronAPI.fs.watchFile(
@@ -2207,6 +2227,15 @@ export function FileExplorerPane({
       !allowed ||
       !validatedTargetPath
     ) {
+      if (!allowed || !validatedTargetPath) {
+        resetPreviewState();
+        setSelectedPath((current) =>
+          normalizeComparablePath(current) ===
+          normalizeComparablePath(targetPath)
+            ? ""
+            : current,
+        );
+      }
       return;
     }
 
