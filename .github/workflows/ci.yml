@@ -3,13 +3,11 @@ name: CI
 on:
   pull_request:
     paths-ignore:
-      - .github/workflows/deploy-docs.yml
       - website/docs/**
   push:
     branches:
       - main
     paths-ignore:
-      - .github/workflows/deploy-docs.yml
       - website/docs/**
   workflow_dispatch:
     inputs:
