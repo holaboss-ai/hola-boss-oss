@@ -16388,7 +16388,9 @@ async function startEmbeddedRuntime() {
           HOLABOSS_DESKTOP_BROWSER_URL: desktopBrowserServiceUrl,
           HOLABOSS_DESKTOP_BROWSER_AUTH_TOKEN:
             desktopBrowserServiceAuthToken,
-          PROACTIVE_ENABLE_REMOTE_BRIDGE: "1",
+          // Proactive is temporarily disabled product-wide, so keep the
+          // embedded runtime bridge worker off until the backend is re-enabled.
+          PROACTIVE_ENABLE_REMOTE_BRIDGE: "0",
           PROACTIVE_BRIDGE_BASE_URL: runtimeProactiveBridgeBaseUrl(),
           PYTHONDONTWRITEBYTECODE: "1",
           HOLABOSS_AUTH_BASE_URL: AUTH_BASE_URL,
