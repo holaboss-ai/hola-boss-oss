@@ -16,6 +16,7 @@
 
   "routes": [
     { "pattern": "www.holaboss.ai/docs/*", "zone_name": "holaboss.ai" },
+    { "pattern": "www.holaos.ai/docs/*", "zone_name": "holaos.ai" },
   ],
 
   "env": {
@@ -64,6 +65,7 @@
       },
       "routes": [
         { "pattern": "www.holaboss.ai/docs/*", "zone_name": "holaboss.ai" },
+        { "pattern": "www.holaos.ai/docs/*", "zone_name": "holaos.ai" },
       ],
     },
   },
