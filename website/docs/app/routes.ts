@@ -4,11 +4,14 @@ import { route, type RouteConfig } from '@react-router/dev/routes';
 // site. Every route explicitly carries the /docs prefix (no RR basename)
 // so incoming URLs match directly.
 //
-// `/docs` (exact) is intentionally not registered: the docs landing now
-// lives in apps/web (the frontend worker). CF workers routes only claim
-// `/docs/*` for this worker, so a bare `/docs` — whether typed, bookmarked,
-// or arrived at via browser back/forward — falls through to the frontend.
+// `/docs` (exact) is handled by the frontend worker. CF workers routes
+// only claim `/docs/*` for this worker, so a bare `/docs` typed or
+// bookmarked hits the frontend directly. The `docs-escape` route below
+// exists so that in-SPA navigations to `/docs` (popstate from a subpage,
+// or a client-side <Link>) break out of this worker's router and do a
+// full document reload, which CF then routes to the frontend.
 export default [
+  route('docs', 'routes/docs-escape.tsx'),
   route('docs/api/search', 'routes/search.ts'),
   route('docs/og/*', 'routes/og.docs.tsx'),
 
