@@ -2883,7 +2883,7 @@ test("claimed input passes persisted child session kind into the runner payload"
   store.close();
 });
 
-test("claimed input resets harness session binding to the local session after run_failed", async () => {
+test("claimed input persists terminal harness session binding after run_failed", async () => {
   const store = makeStore("hb-claimed-input-harness-session-reset-");
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
@@ -2927,6 +2927,54 @@ test("claimed input resets harness session binding to the local session after ru
   });
 
   assert.ok(binding);
-  assert.equal(binding.harnessSessionId, "session-main");
+  assert.equal(binding.harnessSessionId, "failed-session");
+  store.close();
+});
+
+test("claimed input keeps existing harness session binding when run_failed omits one", async () => {
+  const store = makeStore("hb-claimed-input-harness-session-failed-keep-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.upsertBinding({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    harness: "pi",
+    harnessSessionId: "stale-pi-session",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "hello" },
+  });
+  setNodeRunnerCommand([
+    "const request = process.argv.at(-1) ?? '';",
+    "void request;",
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { status: 'started' } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'run_failed', payload: { type: 'OpenCodeSessionError', message: 'boom' } }) + '\\n');`,
+  ]);
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+  });
+
+  const binding = store.getBinding({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+  });
+
+  assert.ok(binding);
+  assert.equal(binding.harnessSessionId, "stale-pi-session");
   store.close();
 });
