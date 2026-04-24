@@ -65,17 +65,6 @@ For a fresh-machine bootstrap on macOS, Linux, or WSL, use the repository instal
 curl -fsSL https://raw.githubusercontent.com/holaboss-ai/holaboss-ai/main/scripts/install.sh | bash -s -- --launch
 ```
 
-That installer:
-
-- installs `git` if it is missing
-- installs Node.js `24.14.1` plus `npm` if they are missing
-- clones the repository into `~/holaboss-ai` by default
-- creates `desktop/.env` from `desktop/.env.example` if needed
-- runs `npm run desktop:install`
-- runs `npm run desktop:prepare-runtime:local`
-- runs `npm run desktop:typecheck`
-- only runs `npm run desktop:dev` when you pass `--launch`
-
 ## Star the Repository
 
 <p align="center">

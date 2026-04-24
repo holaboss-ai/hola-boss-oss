@@ -1,0 +1,42 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "holaboss-docs",
+  "main": "src/worker.ts",
+  "compatibility_date": "2025-04-04",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "docs/.vitepress/dist",
+    "not_found_handling": "404-page",
+    "run_worker_first": true
+  },
+  "env": {
+    "preview": {
+      "name": "holaboss-docs-preview",
+      "routes": [
+        {
+          "pattern": "preview.imerchstaging.com/docs*",
+          "zone_name": "imerchstaging.com"
+        }
+      ]
+    },
+    "staging": {
+      "name": "holaboss-docs-staging",
+      "routes": [
+        {
+          "pattern": "www.imerchstaging.com/docs*",
+          "zone_name": "imerchstaging.com"
+        }
+      ]
+    },
+    "production": {
+      "name": "holaboss-docs-production",
+      "routes": [
+        {
+          "pattern": "www.holaboss.ai/docs*",
+          "zone_name": "holaboss.ai"
+        }
+      ]
+    }
+  }
+}
