@@ -137,6 +137,7 @@ test("chat pane previews image attachments from both staged paths and local file
     source,
     /<ImageAttachmentPreviewModal[\s\S]*open=\{Boolean\(imageAttachmentPreview\)\}[\s\S]*preview=\{imageAttachmentPreview\}[\s\S]*onClose=\{closeImageAttachmentPreview\}/,
   );
+  assert.match(source, /const showImage = !preview\.isLoading && !preview\.errorMessage;/);
   assert.match(
     source,
     /preview\.browserSnapshot \? \([\s\S]*src=\{preview\.browserSnapshot\.dataUrl\}[\s\S]*left: `\$\{preview\.browserSnapshot\.bounds\.x\}px`[\s\S]*top: `\$\{preview\.browserSnapshot\.bounds\.y\}px`/,
@@ -144,6 +145,23 @@ test("chat pane previews image attachments from both staged paths and local file
   assert.match(
     source,
     /className="absolute inset-0 bg-black\/70 backdrop-blur-\[2px\]"/,
+  );
+  assert.match(
+    source,
+    /className="relative z-10 flex max-h-\[calc\(100vh-64px\)\] flex-col overflow-hidden rounded-2xl border border-white\/10 bg-background shadow-2xl"/,
+  );
+  assert.match(source, /style=\{\{ maxWidth: "92vw" \}\}/);
+  assert.match(
+    source,
+    /className=\{`overflow-auto px-4 py-4 \$\{[\s\S]*showImage \? "bg-transparent" : "min-h-\[240px\] min-w-\[320px\] bg-muted\/20"[\s\S]*`\}/,
+  );
+  assert.match(
+    source,
+    /className="block h-auto w-auto rounded-lg ring-1 ring-black\/8"/,
+  );
+  assert.match(
+    source,
+    /maxWidth: "calc\(92vw - 32px\)",[\s\S]*maxHeight: "calc\(88vh - 128px\)"/,
   );
   assert.match(source, /return createPortal\(modalContent, document\.body\);/);
 });

@@ -9739,6 +9739,7 @@ function ImageAttachmentPreviewModal({
   }
 
   const sizeLabel = formatAttachmentSize(preview.attachment.size_bytes);
+  const showImage = !preview.isLoading && !preview.errorMessage;
   const modalContent = (
     <div
       className="fixed inset-0 z-[90] flex items-center justify-center px-6 py-8"
@@ -9766,7 +9767,8 @@ function ImageAttachmentPreviewModal({
         role="dialog"
         aria-modal="true"
         aria-label={`Preview ${preview.attachment.name}`}
-        className="relative z-10 flex max-h-full w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-background shadow-2xl"
+        className="relative z-10 flex max-h-[calc(100vh-64px)] flex-col overflow-hidden rounded-2xl border border-white/10 bg-background shadow-2xl"
+        style={{ maxWidth: "92vw" }}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
@@ -9789,25 +9791,35 @@ function ImageAttachmentPreviewModal({
           </Button>
         </div>
 
-        <div className="min-h-[320px] flex-1 overflow-auto bg-black/90 px-4 py-4">
+        <div
+          className={`overflow-auto px-4 py-4 ${
+            showImage ? "bg-transparent" : "min-h-[240px] min-w-[320px] bg-muted/20"
+          }`}
+        >
           {preview.isLoading ? (
-            <div className="flex h-full min-h-[280px] items-center justify-center gap-2 text-sm text-white/80">
+            <div className="flex h-full min-h-[208px] items-center justify-center gap-2 text-sm text-foreground/80">
               <Loader2 className="size-4 animate-spin" />
               <span>Loading preview...</span>
             </div>
           ) : preview.errorMessage ? (
-            <div className="flex h-full min-h-[280px] flex-col items-center justify-center gap-3 px-6 text-center">
+            <div className="flex h-full min-h-[208px] flex-col items-center justify-center gap-3 px-6 text-center">
               <AlertTriangle className="size-5 text-warning" />
-              <p className="max-w-md text-sm text-white/80">
+              <p className="max-w-md text-sm text-foreground/80">
                 {preview.errorMessage}
               </p>
             </div>
           ) : (
-            <img
-              src={preview.dataUrl}
-              alt={preview.attachment.name}
-              className="mx-auto block max-h-[72vh] max-w-full object-contain"
-            />
+            <div className="flex items-center justify-center">
+              <img
+                src={preview.dataUrl}
+                alt={preview.attachment.name}
+                className="block h-auto w-auto rounded-lg ring-1 ring-black/8"
+                style={{
+                  maxWidth: "calc(92vw - 32px)",
+                  maxHeight: "calc(88vh - 128px)",
+                }}
+              />
+            </div>
           )}
         </div>
       </div>
