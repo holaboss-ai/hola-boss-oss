@@ -28,7 +28,16 @@ test("chat pane loads the newest history page first and prepends older messages 
     source,
     /currentTarget\.scrollTop <=\s*CHAT_HISTORY_TOP_LOAD_THRESHOLD_PX[\s\S]*void loadOlderSessionHistory\(\);/,
   );
-  assert.match(source, /setMessages\(\(prev\) => \[\.\.\.page\.renderedMessages, \.\.\.prev\]\);/);
+  assert.match(source, /function assistantInputIdsFromChatMessages\(messages: ChatMessage\[]\)/);
+  assert.match(source, /function prependUniqueChatMessages\(/);
+  assert.match(
+    source,
+    /knownAssistantInputIds: assistantInputIdsFromChatMessages\(messages\),/,
+  );
+  assert.match(
+    source,
+    /setMessages\(\(prev\) =>\s*prependUniqueChatMessages\(page\.renderedMessages, prev\),\s*\);/,
+  );
   assert.match(
     source,
     /const scrollHeightDelta =\s*container\.scrollHeight - pendingRestore\.scrollHeight;/,
