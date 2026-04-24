@@ -10,11 +10,28 @@ const sourcePath = path.join(__dirname, "BrowserPane.tsx");
 test("browser pane no longer exposes a dedicated close action in the chrome controls", async () => {
   const source = await readFile(sourcePath, "utf8");
 
+  assert.match(source, /interface BrowserPaneProps \{/);
+  assert.match(source, /onAttachCommentsToChat\?: \(payload: BrowserChatCommentDraftPayload\) => void;/);
   assert.match(
     source,
-    /export function BrowserPane\(\{\s*suspendNativeView = false,\s*layoutSyncKey = "",\s*}: \{\s*suspendNativeView\?: boolean;\s*layoutSyncKey\?: string;\s*}\)/,
+    /export function BrowserPane\(\{\s*suspendNativeView = false,\s*layoutSyncKey = "",\s*onAttachCommentsToChat,\s*\}: BrowserPaneProps\)/,
   );
   assert.doesNotMatch(source, /label="Close browser pane"/);
+});
+
+test("browser pane exposes screenshot copy and comment-to-chat actions", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /useBrowserCaptureActions\(\{\s*onAttachCommentsToChat,\s*\}\)/);
+  assert.match(source, /aria-label="Copy browser screenshot"/);
+  assert.match(source, /title="Copy browser screenshot"/);
+  assert.match(source, /aria-label="Add browser comments to chat"/);
+  assert.match(source, /title="Add browser comments to chat"/);
+  assert.match(source, /captureScreenshotToClipboard\(\)/);
+  assert.match(source, /captureCommentsForChat\(\)/);
+  assert.match(source, /screenshotCapturePending \? \(\s*<Loader2 size=\{13\} className="animate-spin" \/>\s*\) : \(\s*<Camera size=\{13\} \/>\s*\)/);
+  assert.match(source, /commentCapturePending \? \(\s*<Loader2 size=\{13\} className="animate-spin" \/>\s*\) : \(\s*<MessageSquarePlus size=\{13\} \/>\s*\)/);
+  assert.match(source, /actionStatus \? \(/);
 });
 
 test("browser pane exposes a single inline browser-space switcher", async () => {
