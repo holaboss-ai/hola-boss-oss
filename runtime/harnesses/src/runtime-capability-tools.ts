@@ -13,7 +13,6 @@ const CRONJOB_DELIVERY_CHANNELS = ["system_notification", "session_run"] as cons
 const CRONJOB_DELIVERY_MODES = ["announce", "none"] as const;
 const SCRATCHPAD_WRITE_OPS = ["append", "replace", "clear"] as const;
 const SUBAGENT_TOOL_BUCKETS = ["web", "browser", "terminal", "file"] as const;
-const SUBAGENT_WAIT_RETURN_WHEN = ["any", "all"] as const;
 const TODO_STATUSES = ["pending", "in_progress", "blocked", "completed", "abandoned"] as const;
 const TODO_WRITE_OPS_TEXT = "`replace`, `add_phase`, `add_task`, `update`, and `remove_task`";
 const TODO_WRITE_ALIAS_WARNING =
@@ -213,26 +212,40 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         },
         additionalProperties: false,
       };
-    case "holaboss_wait_subagents":
+    case "holaboss_get_subagent":
       return {
         type: "object",
         properties: {
-          subagent_ids: {
-            type: "array",
-            description: "Delegated background task ids to wait on.",
-            items: { type: "string" },
+          subagent_id: {
+            type: "string",
+            description: "Delegated background task id to inspect.",
           },
-          return_when: literalStringUnion(
-            SUBAGENT_WAIT_RETURN_WHEN,
-            "Whether to return when any subagent changes or only when all requested subagents reach a terminal state.",
-          ),
-          timeout_ms: {
+        },
+        required: ["subagent_id"],
+        additionalProperties: false,
+      };
+    case "holaboss_list_background_tasks":
+      return {
+        type: "object",
+        properties: {
+          statuses: {
+            type: "array",
+            description: "Optional delegated background task statuses to include.",
+            items: literalStringUnion(
+              ["queued", "running", "waiting_on_user", "completed", "failed", "cancelled"],
+              "Background task status filter.",
+            ),
+          },
+          owner_main_session_id: {
+            type: "string",
+            description: "Optional owner main session id filter.",
+          },
+          limit: {
             type: "integer",
-            description: "Maximum time to wait in milliseconds before returning the latest known state.",
+            description: "Optional maximum number of background tasks to return.",
             minimum: 1,
           },
         },
-        required: ["subagent_ids"],
         additionalProperties: false,
       };
     case "holaboss_cancel_subagent":
@@ -640,13 +653,22 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "Keep each delegated task narrowly scoped and self-contained. Use the canonical `tasks` array for batched delegation and the singleton top-level fields only for one task.",
       "Use `tools` as coarse capability buckets such as `web`, `browser`, `terminal`, or `file`; do not treat them as raw low-level tool ids.",
       "Delegate execution-heavy work instead of narrating that you will do it later without actually spawning the background task.",
+      "When the user asks for work that needs capability missing from the current main-session run, delegate it instead of replying that the current run lacks those tools.",
+      "For latest-news, source discovery, and similar external research, usually delegate with `tools: [\"web\"]` and escalate to `browser` only when direct interaction or UI verification is needed.",
     ];
   }
-  if (toolId === "holaboss_wait_subagents") {
+  if (toolId === "holaboss_get_subagent") {
     return [
-      "Use `holaboss_wait_subagents` when you need to check whether delegated background work has progressed, completed, failed, or is waiting on user input.",
-      "Pass the specific `subagent_ids` you care about instead of polling every task implicitly.",
-      "Use `return_when: \"any\"` for opportunistic progress checks and `return_when: \"all\"` only when you truly need every requested subagent to settle first.",
+      "Use `holaboss_get_subagent` when you need the latest structured state for one delegated background task.",
+      "Use this for targeted status questions like whether one task is done, failed, or waiting on user input.",
+      "This reads persisted task state only; it does not block waiting for the task to change.",
+    ];
+  }
+  if (toolId === "holaboss_list_background_tasks") {
+    return [
+      "Use `holaboss_list_background_tasks` when you need a compact overview of delegated background work for the current workspace.",
+      "Use optional filters to narrow the list instead of asking every task to report in full.",
+      "This reads persisted task state only; it does not block waiting for any task to change.",
     ];
   }
   if (toolId === "holaboss_cancel_subagent") {

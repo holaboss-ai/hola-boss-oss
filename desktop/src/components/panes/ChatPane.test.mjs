@@ -298,6 +298,20 @@ test("chat pane does not adopt unmatched done or error stream frames and refresh
     source,
     /if \(payload\.type === "error"\) \{[\s\S]*action: "drop_error_unmatched_stream"[\s\S]*return;[\s\S]*setChatErrorMessage\(payload\.error \|\| "The agent stream failed\."\)/,
   );
+  assert.match(source, /const delays = \[150, 500, 1_500, 3_000\];/);
+});
+
+test("chat pane opens a targeted postqueue stream for normal sends", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.doesNotMatch(source, /STREAM_ATTACH_PENDING/);
+  assert.doesNotMatch(source, /eventType: "stream_open_prequeue"/);
+  assert.match(
+    source,
+    /if \(!queueOntoActiveRun\) \{[\s\S]*pendingInputIdRef\.current = queued\.input_id;[\s\S]*openSessionOutputStream\(\{[\s\S]*sessionId: queued\.session_id,[\s\S]*inputId: queued\.input_id,[\s\S]*includeHistory: true,[\s\S]*stopOnTerminal: true,[\s\S]*\}\)/,
+  );
+  assert.match(source, /eventType: "stream_open_postqueue"/);
+  assert.match(source, /pauseDisabled=\{isSubmittingMessage\}/);
 });
 
 test("chat composer switches model and thinking selectors into icon-led compact triggers", async () => {
@@ -1259,13 +1273,47 @@ test("chat composer exposes a pause action for in-flight runs and calls the runt
   );
   assert.match(
     source,
-    /<Composer[\s\S]*pausePending=\{isPausePending\}[\s\S]*pauseDisabled=\{\s*pendingInputIdRef\.current === STREAM_ATTACH_PENDING \|\|\s*isSubmittingMessage\s*\}[\s\S]*onPause=\{pauseCurrentRun\}/,
+    /<Composer[\s\S]*pausePending=\{isPausePending\}[\s\S]*pauseDisabled=\{isSubmittingMessage\}[\s\S]*onPause=\{pauseCurrentRun\}/,
   );
   assert.match(
     source,
     /\{isResponding \? \(\s*<Button[\s\S]*onClick=\{onPause\}[\s\S]*>\s*\{pausePending \? \(\s*<Loader2[\s\S]*\) : \(\s*<Square[\s\S]*\)\}\s*Pause\s*<\/Button>\s*\) : null\}[\s\S]*<Button[\s\S]*aria-label=\{isResponding \? "Queue message" : "Send message"\}[\s\S]*<ArrowUp/,
   );
   assert.match(source, /disabled=\{pausePending \|\| pauseDisabled \|\| disabled\}/);
+});
+
+test("chat composer supports ctrl-c draft cancel and arrow-up recall", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /interface ComposerInputRecallSnapshot \{/);
+  assert.match(
+    source,
+    /const lastSubmittedComposerInputRef =\s*useRef<ComposerInputRecallSnapshot \| null>\(null\);/,
+  );
+  assert.match(
+    source,
+    /const lastCancelledComposerInputRef =\s*useRef<ComposerInputRecallSnapshot \| null>\(null\);/,
+  );
+  assert.match(source, /function rememberSubmittedComposerInput\(text: string, workspaceId: string\)/);
+  assert.match(source, /function cancelComposerDraftFromKeyboard\(\)/);
+  assert.match(
+    source,
+    /setInput\(""\);\s*setQuotedSkillIds\(\[\]\);\s*setPendingAttachments\(\[\]\);\s*setAttachmentGateMessage\(""\);\s*clearPendingBrowserComments\(\);/,
+  );
+  assert.match(source, /function recallLatestComposerInput\(\)/);
+  assert.match(
+    source,
+    /setInput\(recallableInput\.text\);[\s\S]*textarea\.focus\(\);[\s\S]*textarea\.setSelectionRange\(cursorPosition, cursorPosition\);/,
+  );
+  assert.match(source, /rememberSubmittedComposerInput\(text, selectedWorkspace\.id\);/);
+  assert.match(
+    source,
+    /event\.key\.toLowerCase\(\) === "c"[\s\S]*event\.ctrlKey[\s\S]*cancelComposerDraftFromKeyboard\(\)[\s\S]*event\.preventDefault\(\);/,
+  );
+  assert.match(
+    source,
+    /event\.key === "ArrowUp"[\s\S]*quotedSkillIds\.length === 0[\s\S]*pendingAttachments\.length === 0[\s\S]*selectionStart === 0[\s\S]*selectionEnd === 0[\s\S]*recallLatestComposerInput\(\)[\s\S]*event\.preventDefault\(\);/,
+  );
 });
 
 test("chat pane keeps the current stream attached while queueing a follow-up input", async () => {
@@ -1288,9 +1336,10 @@ test("chat pane keeps the current stream attached while queueing a follow-up inp
     source,
     /if \(!queueOntoActiveRun\) \{\s*setMessages\(\(prev\) => \[\.\.\.prev, userMessage\]\);\s*\}/,
   );
+  assert.doesNotMatch(source, /eventType: "stream_open_prequeue"/);
   assert.match(
     source,
-    /if \(!queueOntoActiveRun\) \{[\s\S]*openSessionOutputStream\(\{[\s\S]*eventType: "stream_open_prequeue"/,
+    /if \(!queueOntoActiveRun\) \{[\s\S]*pendingInputIdRef\.current = queued\.input_id;[\s\S]*openSessionOutputStream\(\{[\s\S]*inputId: queued\.input_id,[\s\S]*includeHistory: true,[\s\S]*stopOnTerminal: true,[\s\S]*\}\)[\s\S]*eventType: "stream_open_postqueue"/,
   );
   assert.match(
     source,
@@ -1301,19 +1350,19 @@ test("chat pane keeps the current stream attached while queueing a follow-up inp
   assert.match(source, /async function updateQueuedSessionInputText\(/);
   assert.match(
     source,
-    /window\.electronAPI\.workspace\.updateQueuedSessionInput\(\{\s*workspace_id: item\.workspaceId,\s*session_id: item\.sessionId,\s*input_id: item\.inputId,\s*text: serializedText,\s*\}\)/,
+    /window\.electronAPI\.workspace\.updateQueuedSessionInput\(\s*\{\s*workspace_id: item\.workspaceId,\s*session_id: item\.sessionId,\s*input_id: item\.inputId,\s*text: serializedText,\s*\},?\s*\)/,
   );
   assert.match(source, /function QueuedSessionInputRail\(/);
   assert.match(
     source,
-    /<QueuedSessionInputRail[\s\S]*items=\{displayedQueuedSessionInputs\}[\s\S]*onEditItem=\{updateQueuedSessionInputText\}[\s\S]*<Composer/,
+    /<QueuedSessionInputRail[\s\S]*items=\{displayedQueuedSessionInputs\}[\s\S]*onEditItem=\{[\s\S]*updateQueuedSessionInputText[\s\S]*\}[\s\S]*<Composer/,
   );
   assert.match(source, /children: ReactNode;/);
   assert.match(source, /const panelInsetPx = \d+;/);
   assert.match(source, /const panelHeightPx = \d+;/);
   assert.match(source, /const queueViewportHeightPx = \d+;/);
   assert.match(source, /className="pointer-events-none absolute inset-x-0 top-0"/);
-  assert.match(source, /className="pointer-events-auto absolute inset-x-0 overflow-hidden rounded-\[28px\]/);
+  assert.match(source, /className="pointer-events-auto absolute inset-x-0 overflow-hidden rounded-3xl/);
   assert.match(source, /className="overflow-y-auto pr-1\.5"/);
   assert.match(source, /\{items\.map\(\(item\) => \{/);
   assert.match(source, /<CornerDownLeft[\s\S]*size=\{15\}/);

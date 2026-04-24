@@ -204,8 +204,8 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
 test("composeAgentPrompt uses a conversational main-session prompt for workspace sessions", () => {
   const capabilityManifest = buildAgentCapabilityManifest({
     defaultTools: ["read", "edit"],
-    extraTools: ["holaboss_delegate_task", "holaboss_wait_subagents"],
-    runtimeToolIds: ["holaboss_delegate_task", "holaboss_wait_subagents"],
+    extraTools: ["holaboss_delegate_task", "holaboss_get_subagent", "holaboss_list_background_tasks"],
+    runtimeToolIds: ["holaboss_delegate_task", "holaboss_get_subagent", "holaboss_list_background_tasks"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
     toolServerIdMap: {},
@@ -213,7 +213,7 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
 
   const prompt = composeAgentPrompt("You are concise.", {
     defaultTools: ["read", "edit"],
-    extraTools: ["holaboss_delegate_task", "holaboss_wait_subagents"],
+    extraTools: ["holaboss_delegate_task", "holaboss_get_subagent", "holaboss_list_background_tasks"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
     sessionKind: "workspace_session",
@@ -225,6 +225,8 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
   assert.match(prompt.systemPrompt, /Conversation and orchestration doctrine:/);
   assert.match(prompt.systemPrompt, /single front-of-house counterpart/);
   assert.match(prompt.systemPrompt, /Prefer delegating long-running, tool-heavy, interruptible, or execution-heavy work to hidden subagents\./);
+  assert.match(prompt.systemPrompt, /delegate instead of replying that this run lacks those tools\./);
+  assert.match(prompt.systemPrompt, /missing web, browser, terminal, or other execution-heavy capabilities on the main session as a routing signal to delegate/i);
   assert.doesNotMatch(prompt.systemPrompt, /Execution doctrine:/);
   assert.doesNotMatch(prompt.systemPrompt, /Todo continuity policy:/);
   assert.doesNotMatch(prompt.systemPrompt, /Use `write_report` for long, structured, evidence-heavy, or referenceable outputs/);

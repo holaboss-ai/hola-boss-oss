@@ -1273,6 +1273,12 @@ export function renderCapabilityToolRoutingPromptSection(
     lines.push("When creating or updating cronjobs, put the executable task in `instruction` and keep `description` as a short display summary only.");
     lines.push("Do not repeat schedule wording such as 'every 5 minutes' inside the cronjob `instruction` unless the task itself genuinely requires saying that phrase.");
   }
+  if (manifest.runtime_tools.some((capability) => capability.id === "holaboss_delegate_task")) {
+    ensureHeading();
+    lines.push("Delegation routing: when the user asks for work that needs web, browser, terminal, or other execution-heavy capability not surfaced directly in this run, use `holaboss_delegate_task` instead of replying that the current run lacks those tools.");
+    lines.push("Treat current-run capability limits as a delegation signal when hidden subagents can perform the task.");
+    lines.push("Only surface a hard capability limitation to the user when neither the current run nor delegated subagents can actually carry out the request.");
+  }
   if (manifest.runtime_tools.some((capability) => capability.id === "terminal_session_start")) {
     ensureHeading();
     lines.push("Background terminal routing: prefer `terminal_session_start` for long-running, interactive, or revisitable shell work such as dev servers, watch mode, and background jobs.");

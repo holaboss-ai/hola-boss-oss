@@ -931,6 +931,29 @@ test("runtime subagent capability routes create and cancel hidden background tas
   assert.equal(listed.json().count, 1);
   assert.equal(listed.json().tasks[0].subagent_id, task.subagent_id);
 
+  const listedViaCapability = await app.inject({
+    method: "GET",
+    url: "/api/v1/capabilities/runtime-tools/background-tasks?limit=10",
+    headers: {
+      "x-holaboss-workspace-id": workspace.id,
+      "x-holaboss-session-id": "session-main",
+    },
+  });
+  assert.equal(listedViaCapability.statusCode, 200);
+  assert.equal(listedViaCapability.json().count, 1);
+  assert.equal(listedViaCapability.json().tasks[0].subagent_id, task.subagent_id);
+
+  const fetchedViaCapability = await app.inject({
+    method: "GET",
+    url: `/api/v1/capabilities/runtime-tools/subagents/${encodeURIComponent(task.subagent_id)}`,
+    headers: {
+      "x-holaboss-workspace-id": workspace.id,
+      "x-holaboss-session-id": "session-main",
+    },
+  });
+  assert.equal(fetchedViaCapability.statusCode, 200);
+  assert.equal(fetchedViaCapability.json().subagent_id, task.subagent_id);
+
   const cancelled = await app.inject({
     method: "POST",
     url: `/api/v1/capabilities/runtime-tools/subagents/${encodeURIComponent(task.subagent_id)}/cancel`,

@@ -55,6 +55,9 @@ This interaction model should make the product feel like the user is interacting
 - The main session can answer small requests immediately without creating visible background tasks.
 - The main session is responsible for clarifying intent, handling conversational follow-ups, and responding to new unrelated requests while subagents continue executing older work.
 - When the main session delegates work, it gives a concise status update in the same chat.
+- After delegating normal background work, the main session should not synchronously wait for the child result in the same turn.
+- Fast-path exception: if the delegated task finishes within roughly 1-2 seconds during the same conversational turn, the main session may collapse delegation plus result into one reply instead of forcing a separate acknowledgement and follow-up.
+- When the main session needs task status, it should inspect persisted task state rather than using a blocking wait primitive.
 - When background work finishes, blocks, or fails, the main session posts a compact update in the same chat.
 
 ### Background work behavior
@@ -213,10 +216,16 @@ Behavioral role:
 Recommended runtime surface:
 
 - `delegate_task`
-- `wait_subagents`
+- `get_subagent`
+- `list_background_tasks`
 - `cancel_subagent`
 - `resume_subagent`
-- optional `get_subagent`
+
+Important orchestration rule:
+
+- the main session should never call `wait_subagents`
+- delegation should return control to the conversation promptly
+- status checks should read persisted run state through `get_subagent` or `list_background_tasks`
 
 Recommended `delegate_task` shape:
 
@@ -482,7 +491,8 @@ Required behavior:
 
 - the `main session` should keep a curated front-of-house tool belt:
   - `delegate_task`
-  - `wait_subagents`
+  - `get_subagent`
+  - `list_background_tasks`
   - `cancel_subagent`
   - `resume_subagent`
   - `read`
@@ -506,8 +516,17 @@ Important policy:
 Recommended model precedence:
 
 1. per-task `model`
-2. runtime `subagents` provider/model setting
+2. dedicated subagent provider/model setting in model-provider settings UI
 3. parent selected model fallback
+
+Provider settings decision:
+
+- the product should expose an additional provider/model setting specifically for subagents
+- this setting should be separate from the main session's chat model selection
+- subagent runs should resolve their model/provider from that dedicated subagent setting unless a per-task override is supplied
+- queued main-session follow-up turns should continue to use the owner main session's own model selection path, not the subagent setting
+- queued main-session follow-up turns should use the owner main session's current explicit chat model and thinking selection when available
+- if the owner main session has no explicit selection, queued follow-up turns should fall back to the workspace/runtime default chat model path
 
 ## 7. Parent-Visible Event Routing
 
@@ -555,7 +574,9 @@ Waiting-on-user contract:
 Completion and failure delivery contract:
 
 - completed and failed events for the same owner should be coalesced over a short window
+- by default delegated work should still be treated as asynchronous, but if the child result is already available within roughly 1-2 seconds, the main session may fold that result into the same conversational reply as a fast-path
 - if the user is actively chatting, these updates should wait for a natural pause rather than interrupt
+- queued follow-up turns are strictly forbidden from materializing while the originating main-session turn is still active; they may only materialize after that turn has fully finished and the session has reached a real pause
 - when relevant, the main session should fold queued background updates into its next normal reply
 - if no new user message arrives, the main session should eventually send the queued update on its own after roughly 60 seconds of idle time
 - delayed updates should still sound like a normal conversational follow-up, not a system notification
@@ -563,7 +584,7 @@ Completion and failure delivery contract:
 
 ## 7a. Queued Main-Session Event Records
 
-Do not enqueue synthetic main-session model turns directly from every subagent event. Persist undelivered user-facing events first, then let a coalescer materialize them into main-session inputs when batching, natural-pause, and idle-timeout rules allow.
+Do not enqueue synthetic main-session model turns directly from every subagent event. Persist undelivered user-facing events first, then let a coalescer materialize them into main-session inputs when batching, natural-pause, and idle-timeout rules allow. That coalescer must not materialize a queued follow-up while the originating main-session turn is still active.
 
 Recommended record:
 
@@ -731,7 +752,8 @@ Add main-session orchestration tools to the runtime tool manifest in `runtime/ha
 Recommended tool ids:
 
 - `holaboss_delegate_task`
-- `holaboss_wait_subagents`
+- `holaboss_get_subagent`
+- `holaboss_list_background_tasks`
 - `holaboss_cancel_subagent`
 - `holaboss_resume_subagent`
 
@@ -740,16 +762,45 @@ Why `resume_subagent` is required:
 - the agreed UX is that user answers to a blocker resume the same paused run
 - the main session needs a first-class runtime action for that, not a fresh `delegate_task`
 
-Recommended first-pass non-tool APIs:
+Recommended first-pass inspection APIs:
 
 - keep `listSubagentRuns` and `getSubagentRun` as normal app/server APIs for the desktop `Background Tasks` panel
-- do not expose those as main-session runtime tools unless a later use case actually needs them
+- also expose corresponding main-session runtime inspection tools as `list_background_tasks` and `get_subagent`
+- those inspection tools should read persisted run state only; they should not block waiting for a child run to change
+- `list_background_tasks` should return a compact card-oriented view suitable for quick status checks:
+  - `subagent_id`
+  - `title`
+  - `status`
+  - `summary`
+  - `latest_progress_summary`
+  - `blocking_question`
+  - `updated_at`
+  - `created_at`
+  - `owner_main_session_id`
+  - `source_type`
+  - `deliverable_count`
+  - optional `has_partial_results`
+- `get_subagent` should return a richer structured detail view:
+  - the compact fields above
+  - `goal`
+  - `context`
+  - `result_summary`
+  - `result_payload`
+  - `partial_deliverables`
+  - `final_deliverables`
+  - `error_payload`
+  - `latest_progress_payload`
+  - `proposal_id`
+  - `cronjob_id`
+  - `retry_of_subagent_id`
+  - `child_session_id` for debug/inspection only
+- neither inspection path should return raw child transcript by default; raw transcript remains DB/debug-only
 
 ### Tool schemas and prompt guidance
 
 In `runtime/harnesses/src/runtime-capability-tools.ts`:
 
-- add JSON schemas for the four new runtime tools
+- add JSON schemas for the five new runtime tools
 - keep `delegate_task` canonical on `tasks[]`
 - support singleton sugar at the schema/normalization layer:
   - `goal`
@@ -757,10 +808,12 @@ In `runtime/harnesses/src/runtime-capability-tools.ts`:
   - `context`
   - `tools`
   - `model`
-- make `wait_subagents` accept:
-  - `subagent_ids`
-  - optional `timeout_ms`
-  - optional `return_when` such as `any` or `all`
+- make `get_subagent` require:
+  - `subagent_id`
+- make `list_background_tasks` accept:
+  - optional status filters
+  - optional owner/source filters
+  - optional result limits
 - make `cancel_subagent` require:
   - `subagent_id`
   - optional `reason`
@@ -772,6 +825,8 @@ In `runtime/harnesses/src/runtime-capability-tools.ts`:
   - only the `main session` should use orchestration tools
   - `resume_subagent` is for answering a paused worker, not for retrying from scratch
   - `delegate_task` should be preferred for execution-heavy work, not for trivial inline replies
+  - the main session should never call `wait_subagents`
+  - status questions should use `get_subagent` or `list_background_tasks`, not a blocking wait primitive
 
 ### Capability client
 
@@ -779,12 +834,14 @@ In `runtime/harnesses/src/runtime-tool-capability-client.ts`:
 
 - add path constants for:
   - `POST /api/v1/capabilities/runtime-tools/subagents`
-  - `POST /api/v1/capabilities/runtime-tools/subagents/wait`
+  - `GET /api/v1/capabilities/runtime-tools/subagents/:subagentId`
+  - `GET /api/v1/capabilities/runtime-tools/background-tasks`
   - `POST /api/v1/capabilities/runtime-tools/subagents/:subagentId/cancel`
   - `POST /api/v1/capabilities/runtime-tools/subagents/:subagentId/resume`
 - add body builders for:
   - delegate-task normalization from singleton input to `tasks[]`
-  - wait payload
+  - get-subagent query/path payload
+  - list-background-tasks query payload
   - cancel payload
   - resume payload
 - continue using capability headers for:
@@ -800,13 +857,15 @@ In `runtime/api-server/src/runtime-agent-tools.ts`:
 
 - add parameter interfaces for:
   - `RuntimeAgentToolsDelegateTaskParams`
-  - `RuntimeAgentToolsWaitSubagentsParams`
+  - `RuntimeAgentToolsGetBackgroundTaskParams`
+  - `RuntimeAgentToolsListBackgroundTasksParams`
   - `RuntimeAgentToolsCancelSubagentParams`
   - `RuntimeAgentToolsResumeSubagentParams`
 - add runtime tool definitions and paths to `RUNTIME_AGENT_TOOL_DEFINITIONS`
 - implement service methods:
   - `delegateTask(...)`
-  - `waitSubagents(...)`
+  - `getBackgroundTask(...)`
+  - `listBackgroundTasks(...)`
   - `cancelSubagent(...)`
   - `resumeSubagent(...)`
   - optional `listSubagentRuns(...)` and `getSubagentRun(...)` for desktop/server APIs
@@ -823,11 +882,12 @@ In `runtime/api-server/src/runtime-agent-tools.ts`:
   - `owner_main_session_id = current main session`
 - return compact run metadata suitable for the main session to reference later
 
-`waitSubagents(...)` responsibilities:
+`getBackgroundTask(...)` and `listBackgroundTasks(...)` responsibilities:
 
 - read run state from `subagent_runs`
 - return structured status summaries rather than raw child transcript
-- optionally block briefly until any/all requested runs change state or complete
+- never block waiting for background work to progress
+- optionally validate that the requesting session is a front-of-house session when called through capability routes
 
 `cancelSubagent(...)` responsibilities:
 
@@ -853,9 +913,10 @@ In `runtime/api-server/src/runtime-agent-tools.ts`:
 
 In `runtime/api-server/src/app.ts`:
 
-- add capability routes for the four agent-facing tools:
+- add capability routes for the five agent-facing tools:
   - `POST /api/v1/capabilities/runtime-tools/subagents`
-  - `POST /api/v1/capabilities/runtime-tools/subagents/wait`
+  - `GET /api/v1/capabilities/runtime-tools/subagents/:subagentId`
+  - `GET /api/v1/capabilities/runtime-tools/background-tasks`
   - `POST /api/v1/capabilities/runtime-tools/subagents/:subagentId/cancel`
   - `POST /api/v1/capabilities/runtime-tools/subagents/:subagentId/resume`
 - parse capability headers with the same helpers already used by cronjob and onboarding runtime tools
@@ -1077,7 +1138,7 @@ Primary files:
 
 Deliverables:
 
-- new `delegate_task` / `wait_subagents` / `cancel_subagent` surface
+- new `delegate_task` / `get_subagent` / `list_background_tasks` / `cancel_subagent` surface
 - `resume_subagent` surface for paused-run continuation
 - hidden `subagent` child sessions
 - `subagent_runs` persistence
@@ -1095,7 +1156,7 @@ Recommended implementation order:
    - add `main_session_event_queue`
    - add indexes, row converters, store methods, and `store.test.ts` coverage
 2. Runtime service and route surface
-   - add `holaboss_delegate_task`, `holaboss_wait_subagents`, `holaboss_cancel_subagent`, and `holaboss_resume_subagent`
+   - add `holaboss_delegate_task`, `holaboss_get_subagent`, `holaboss_list_background_tasks`, `holaboss_cancel_subagent`, and `holaboss_resume_subagent`
    - add capability-client normalization and `app.ts` routes
    - add read-only background-task APIs for the desktop panel
 3. Subagent execution writeback
@@ -1118,6 +1179,52 @@ Recommended stop points:
 - after step 1, persistence is ready for runtime wiring
 - after step 3, the hidden-subagent substrate is functionally real even without desktop UX
 - after step 6, the v1 end-to-end experience is usable
+
+## Phase 1 Tracker
+
+Use this as the living checklist for what is already aligned versus what still needs implementation cleanup.
+
+### Runtime substrate and routing
+
+- [x] `conversation_bindings` exist and are used to resolve the desktop main session
+- [x] hidden `subagent` child sessions plus `subagent_runs` exist
+- [x] `main_session_event_queue` exists for queued background delivery
+- [x] accepted task proposals execute through hidden subagents rather than `task_proposal` execution sessions
+- [x] main-session and subagent prompt paths are split
+- [x] main-session and subagent tool surfaces are split
+- [x] child workers can receive browser tools through delegated capability buckets
+- [x] legacy desktop front-chat sessions are exported to `.holaboss/legacy-session-histories` and archived out of the normal UI flow
+- [ ] expose a dedicated provider/model setting for subagents in the model-provider settings UI
+- [x] remove `wait_subagents` from the main-session runtime surface entirely
+- [x] add main-session inspection tools for both `get_subagent` and `list_background_tasks`
+- [x] update prompt/tool guidance so the main session never uses a blocking wait primitive
+
+### Background delivery correctness
+
+- [x] background completion/failure/blocker events are persisted as queued main-session events
+- [x] background updates can be folded into the next user reply path
+- [x] delayed background follow-ups are intended to be phrased by a real main-session model turn, not a template
+- [ ] ensure synthetic queued background-event turns inherit the owner main session's selected model and thinking configuration
+- [ ] ensure natural-pause gating prevents queued background-event turns from materializing while the originating user turn is still active
+- [ ] keep delegated work asynchronous by default instead of `delegate -> wait -> answer`
+- [ ] add the 1-2 second fast-path exception so very fast delegated work may collapse into a single reply without exposing blocking orchestration
+- [ ] tighten folded background-update relevance so the next reply does not blindly absorb every due background event
+
+### Background task UX
+
+- [x] the desktop no longer relies on the old session selector for the main chat path
+- [x] background tasks render inline in chat instead of using the old todo rail
+- [x] the inline background-task surface can open a read-only child session for inspection
+- [x] the inline panel no longer shows the extra explanatory description block
+- [ ] filter low-signal executor milestones like scratchpad writes out of the user-visible background-task summaries
+- [ ] review task-card copy/status shaping so progress text stays human-facing instead of tool-facing
+
+### Remaining verification and follow-through
+
+- [ ] ownership transfer should be exercised and verified across multiple channel-local main sessions
+- [ ] blocker batching and resume routing should be verified end-to-end in the live product
+- [ ] idle-time autonomous follow-up delivery should be verified end-to-end after the queued-event path is fixed
+- [ ] update this checklist as each unchecked item lands
 
 ## Phase 2 — Main Session UX
 

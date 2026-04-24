@@ -365,6 +365,45 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
         inputId: record.inputId
       });
       const hasTerminal = events.some((event) => TERMINAL_EVENT_TYPES.has(event.eventType));
+      const shouldRequeue =
+        !activeRun &&
+        !hasTerminal &&
+        this.#shouldRequeueRecoveredClaim(record, events);
+      if (shouldRequeue) {
+        this.#store.updateInput(record.inputId, {
+          status: "QUEUED",
+          claimedBy: null,
+          claimedUntil: null,
+          availableAt: utcNowIso(),
+          attempt: record.attempt + 1,
+        });
+
+        const runtimeStateAfterRecovery = this.#store.getRuntimeState({
+          workspaceId: record.workspaceId,
+          sessionId: record.sessionId,
+        });
+        if (runtimeStateAfterRecovery?.currentInputId === record.inputId) {
+          this.#store.updateRuntimeState({
+            workspaceId: record.workspaceId,
+            sessionId: record.sessionId,
+            status: "IDLE",
+            currentInputId: null,
+            currentWorkerId: null,
+            leaseUntil: null,
+            heartbeatAt: null,
+            lastError: null,
+          });
+        }
+        recoveredIds.push(record.inputId);
+        this.#logger?.info?.("Requeued stale claimed input before execution started", {
+          inputId: record.inputId,
+          workspaceId: record.workspaceId,
+          sessionId: record.sessionId,
+          failureKind: recovery.failureKind,
+          eventCount: events.length,
+        });
+        continue;
+      }
       if (!hasTerminal) {
         this.#captureRuntimeException({
           error: new Error(recovery.message),
@@ -506,6 +545,17 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
     }
 
     return null;
+  }
+
+  #shouldRequeueRecoveredClaim(
+    record: SessionInputRecord,
+    events: Array<{ eventType: string }>,
+  ): boolean {
+    const turnResult = this.#store.getTurnResult({ inputId: record.inputId });
+    if (turnResult) {
+      return false;
+    }
+    return events.every((event) => event.eventType === "run_claimed");
   }
 
   #persistPausedQueuedInput(record: SessionInputRecord): void {

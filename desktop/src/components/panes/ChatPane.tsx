@@ -132,6 +132,12 @@ interface QueuedSessionInputPreviewDescriptor {
   status: QueuedSessionInputStatus;
 }
 
+interface ComposerInputRecallSnapshot {
+  workspaceId: string;
+  text: string;
+  at: number;
+}
+
 declare global {
   interface Window {
     __holabossQueuedMessagesPreviewState?: QueuedSessionInputPreviewDescriptor[];
@@ -334,7 +340,6 @@ type ArtifactBrowserFilter =
   | "links"
   | "apps";
 
-const STREAM_ATTACH_PENDING = "__stream_attach_pending__";
 const STREAM_TELEMETRY_LIMIT = 240;
 const TOOL_TRACE_TERMINAL_PHASES = new Set(["completed", "failed", "error"]);
 const CHAT_AUTO_SCROLL_THRESHOLD_PX = 72;
@@ -2797,6 +2802,10 @@ export function ChatPane({
     scrollHeight: number;
     scrollTop: number;
   } | null>(null);
+  const lastSubmittedComposerInputRef =
+    useRef<ComposerInputRecallSnapshot | null>(null);
+  const lastCancelledComposerInputRef =
+    useRef<ComposerInputRecallSnapshot | null>(null);
   const isLoadingOlderHistoryRef = useRef(false);
   const seenMainDebugKeysRef = useRef<Set<string>>(new Set());
   const selectedWorkspaceRef = useRef<WorkspaceRecordPayload | null>(null);
@@ -2863,6 +2872,72 @@ export function ChatPane({
       streamId,
       reason,
     );
+  }
+
+  function rememberSubmittedComposerInput(text: string, workspaceId: string) {
+    if (!text.trim() || !workspaceId.trim()) {
+      return;
+    }
+    lastSubmittedComposerInputRef.current = {
+      workspaceId: workspaceId.trim(),
+      text,
+      at: Date.now(),
+    };
+  }
+
+  function cancelComposerDraftFromKeyboard() {
+    const workspaceId = (selectedWorkspaceId || "").trim();
+    const hasDraftState =
+      input.trim().length > 0 ||
+      quotedSkillIds.length > 0 ||
+      pendingAttachments.length > 0 ||
+      (pendingBrowserCommentDraft?.comments.length ?? 0) > 0;
+    if (!hasDraftState) {
+      return false;
+    }
+    if (input.trim().length > 0 && workspaceId) {
+      lastCancelledComposerInputRef.current = {
+        workspaceId,
+        text: input,
+        at: Date.now(),
+      };
+    }
+    setInput("");
+    setQuotedSkillIds([]);
+    setPendingAttachments([]);
+    setAttachmentGateMessage("");
+    clearPendingBrowserComments();
+    return true;
+  }
+
+  function recallLatestComposerInput() {
+    const workspaceId = (selectedWorkspaceId || "").trim();
+    if (!workspaceId) {
+      return false;
+    }
+    const recallableInput = [
+      lastSubmittedComposerInputRef.current,
+      lastCancelledComposerInputRef.current,
+    ]
+      .filter(
+        (entry): entry is ComposerInputRecallSnapshot =>
+          Boolean(entry && entry.workspaceId === workspaceId && entry.text.trim()),
+      )
+      .sort((left, right) => right.at - left.at)[0];
+    if (!recallableInput) {
+      return false;
+    }
+    setInput(recallableInput.text);
+    window.requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) {
+        return;
+      }
+      textarea.focus();
+      const cursorPosition = textarea.value.length;
+      textarea.setSelectionRange(cursorPosition, cursorPosition);
+    });
+    return true;
   }
 
   function setActiveSession(sessionId: string | null) {
@@ -3704,7 +3779,7 @@ export function ChatPane({
       return;
     }
 
-    const delays = [150, 500];
+    const delays = [150, 500, 1_500, 3_000];
     for (const delayMs of delays) {
       window.setTimeout(() => {
         if (
@@ -5329,26 +5404,6 @@ export function ChatPane({
         setIsResponding(true);
         setLiveAgentStatus("Thinking");
         activeAssistantMessageIdRef.current = null;
-        pendingInputIdRef.current = STREAM_ATTACH_PENDING;
-
-        const preOpenedStream =
-          await window.electronAPI.workspace.openSessionOutputStream({
-            sessionId: targetSessionId,
-            workspaceId: selectedWorkspace.id,
-            includeHistory: false,
-            stopOnTerminal: true,
-          });
-        activeStreamIdRef.current = preOpenedStream.streamId;
-        appendStreamTelemetry({
-          streamId: preOpenedStream.streamId,
-          transportType: "client",
-          eventName: "openSessionOutputStream",
-          eventType: "stream_open_prequeue",
-          inputId: "",
-          sessionId: targetSessionId,
-          action: "stream_requested_prequeue",
-          detail: "session tail stream opened before queue",
-        });
       }
 
       const queued = await window.electronAPI.workspace.queueSessionInput({
@@ -5361,6 +5416,7 @@ export function ChatPane({
         model: resolvedChatModel || null,
         thinking_value: effectiveThinkingValue,
       });
+      rememberSubmittedComposerInput(text, selectedWorkspace.id);
       setActiveSession(queued.session_id);
       appendStreamTelemetry({
         streamId: "-",
@@ -5376,6 +5432,30 @@ export function ChatPane({
       });
       if (!queueOntoActiveRun) {
         pendingInputIdRef.current = queued.input_id;
+        const opened = await window.electronAPI.workspace
+          .openSessionOutputStream({
+            sessionId: queued.session_id,
+            workspaceId: selectedWorkspace.id,
+            inputId: queued.input_id,
+            includeHistory: true,
+            stopOnTerminal: true,
+          })
+          .catch((error) => {
+            pendingInputIdRef.current = null;
+            setIsResponding(false);
+            throw error;
+          });
+        activeStreamIdRef.current = opened.streamId;
+        appendStreamTelemetry({
+          streamId: opened.streamId,
+          transportType: "client",
+          eventName: "openSessionOutputStream",
+          eventType: "stream_open_postqueue",
+          inputId: queued.input_id,
+          sessionId: queued.session_id,
+          action: "stream_requested_postqueue",
+          detail: "opened input-specific stream after queue response",
+        });
       } else {
         setQueuedSessionInputs((current) => [
           ...current,
@@ -5870,6 +5950,39 @@ export function ChatPane({
       nativeEvent.keyCode === 229
     ) {
       return;
+    }
+    if (
+      event.key.toLowerCase() === "c" &&
+      event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey &&
+      !event.shiftKey &&
+      cancelComposerDraftFromKeyboard()
+    ) {
+      event.preventDefault();
+      return;
+    }
+    if (
+      event.key === "ArrowUp" &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey &&
+      !event.shiftKey
+    ) {
+      const selectionStart = event.currentTarget.selectionStart ?? 0;
+      const selectionEnd = event.currentTarget.selectionEnd ?? selectionStart;
+      if (
+        event.currentTarget.value.trim().length === 0 &&
+        quotedSkillIds.length === 0 &&
+        pendingAttachments.length === 0 &&
+        (pendingBrowserCommentDraft?.comments.length ?? 0) === 0 &&
+        selectionStart === 0 &&
+        selectionEnd === 0 &&
+        recallLatestComposerInput()
+      ) {
+        event.preventDefault();
+        return;
+      }
     }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -7135,10 +7248,7 @@ export function ChatPane({
                           browserComments={pendingBrowserCommentDraft}
                           isResponding={isResponding}
                           pausePending={isPausePending}
-                          pauseDisabled={
-                            pendingInputIdRef.current ===
-                              STREAM_ATTACH_PENDING || isSubmittingMessage
-                          }
+                          pauseDisabled={isSubmittingMessage}
                           disabled={composerDisabled}
                           disabledReason={composerDisabledReason}
                           selectedModel={effectiveChatModelPreference}
@@ -7268,10 +7378,7 @@ export function ChatPane({
                       browserComments={pendingBrowserCommentDraft}
                       isResponding={isResponding}
                       pausePending={isPausePending}
-                      pauseDisabled={
-                        pendingInputIdRef.current === STREAM_ATTACH_PENDING ||
-                        isSubmittingMessage
-                      }
+                      pauseDisabled={isSubmittingMessage}
                       disabled={composerDisabled}
                       disabledReason={composerDisabledReason}
                       selectedModel={effectiveChatModelPreference}

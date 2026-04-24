@@ -4184,34 +4184,55 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
-  app.post("/api/v1/capabilities/runtime-tools/subagents/wait", async (request, reply) => {
-    if (!isRecord(request.body)) {
-      return sendError(reply, 400, "request body must be an object");
-    }
+  app.get("/api/v1/capabilities/runtime-tools/background-tasks", async (request, reply) => {
+    const query = isRecord(request.query) ? request.query : {};
     try {
       const workspaceId = requiredCapabilityWorkspaceId({
         headers: request.headers as Record<string, unknown>,
-        body: request.body,
+        body: query,
       });
       const sessionId = capabilitySessionId({
         headers: request.headers as Record<string, unknown>,
-        body: request.body,
+        body: query,
       });
-      if (!sessionId) {
-        return sendError(reply, 400, "session_id is required");
-      }
-      return await runtimeAgentToolsService.waitSubagents({
+      return runtimeAgentToolsService.listBackgroundTasks({
         workspaceId,
-        sessionId,
-        subagentIds: optionalStringList(request.body.subagent_ids),
-        returnWhen: nullableString(request.body.return_when) ?? undefined,
-        timeoutMs: hasOwn(request.body, "timeout_ms") ? optionalInteger(request.body.timeout_ms, 0) || null : undefined,
+        sessionId: sessionId ?? undefined,
+        ownerMainSessionId: nullableString(query.owner_main_session_id) ?? undefined,
+        statuses: optionalStringList(query.statuses),
+        limit: hasOwn(query, "limit") ? optionalInteger(query.limit, 200) : undefined,
       });
     } catch (error) {
       if (error instanceof RuntimeAgentToolsServiceError) {
         return sendError(reply, error.statusCode, error.message);
       }
-      return sendError(reply, 400, error instanceof Error ? error.message : "runtime wait subagents failed");
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime list background tasks failed");
+    }
+  });
+
+  app.get("/api/v1/capabilities/runtime-tools/subagents/:subagentId", async (request, reply) => {
+    const params = request.params as { subagentId: string };
+    const query = isRecord(request.query) ? request.query : {};
+    try {
+      const workspaceId = requiredCapabilityWorkspaceId({
+        headers: request.headers as Record<string, unknown>,
+        body: query,
+      });
+      const sessionId = capabilitySessionId({
+        headers: request.headers as Record<string, unknown>,
+        body: query,
+      });
+      return runtimeAgentToolsService.getBackgroundTask({
+        workspaceId,
+        sessionId: sessionId ?? undefined,
+        subagentId: requiredString(params.subagentId, "subagentId"),
+        ownerMainSessionId: nullableString(query.owner_main_session_id) ?? undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime get subagent failed");
     }
   });
 

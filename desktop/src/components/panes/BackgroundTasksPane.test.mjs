@@ -20,7 +20,10 @@ test("background tasks pane polls workspace background tasks and supports inline
   assert.match(source, /document\.addEventListener\("visibilitychange", refreshVisibleTasks\);/);
   assert.match(source, /if \(variant === "inline"\) \{/);
   assert.match(source, /onClick=\{\(\) => setInlineExpanded\(\(value\) => !value\)\}/);
-  assert.match(source, /Click a task to inspect its run transcript/);
+  assert.doesNotMatch(
+    source,
+    /Read-only view for workspace background work\. Click a task to inspect its run transcript, then use the main session to cancel, retry, or answer blockers\./,
+  );
   assert.match(source, /onClick=\{\(\) => onOpenTaskSession\(task\)\}/);
   assert.match(source, /Inspect run/);
 });

@@ -266,10 +266,12 @@ test("Pi runtime subagent tools normalize delegated task bodies and control rout
   });
 
   const delegateTool = tools.find((tool) => tool.name === "holaboss_delegate_task");
-  const waitTool = tools.find((tool) => tool.name === "holaboss_wait_subagents");
+  const getTool = tools.find((tool) => tool.name === "holaboss_get_subagent");
+  const listTool = tools.find((tool) => tool.name === "holaboss_list_background_tasks");
   const cancelTool = tools.find((tool) => tool.name === "holaboss_cancel_subagent");
   assert.ok(delegateTool);
-  assert.ok(waitTool);
+  assert.ok(getTool);
+  assert.ok(listTool);
   assert.ok(cancelTool);
 
   await delegateTool.execute(
@@ -283,19 +285,28 @@ test("Pi runtime subagent tools normalize delegated task bodies and control rout
     undefined,
     {} as never,
   );
-  await waitTool.execute(
+  await getTool.execute(
     "call-2",
     {
-      subagent_ids: ["subagent-1", "subagent-2"],
-      return_when: "all",
-      timeout_ms: 2500,
+      subagent_id: "subagent-1",
+    },
+    undefined,
+    undefined,
+    {} as never,
+  );
+  await listTool.execute(
+    "call-3",
+    {
+      statuses: ["running", "waiting_on_user"],
+      owner_main_session_id: "session-main",
+      limit: 25,
     },
     undefined,
     undefined,
     {} as never,
   );
   await cancelTool.execute(
-    "call-3",
+    "call-4",
     {
       subagent_id: "subagent-1",
     },
@@ -321,15 +332,18 @@ test("Pi runtime subagent tools normalize delegated task bodies and control rout
       }),
     },
     {
-      method: "POST",
-      url: "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/subagents/wait",
+      method: "GET",
+      url: "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/subagents/subagent-1",
       workspaceId: "workspace-1",
       sessionId: "session-main",
-      body: JSON.stringify({
-        subagent_ids: ["subagent-1", "subagent-2"],
-        return_when: "all",
-        timeout_ms: 2500,
-      }),
+      body: "",
+    },
+    {
+      method: "GET",
+      url: "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/background-tasks?status=running&status=waiting_on_user&owner_main_session_id=session-main&limit=25",
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      body: "",
     },
     {
       method: "POST",

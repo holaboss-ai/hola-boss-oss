@@ -112,14 +112,6 @@ export interface RuntimeAgentToolsDelegateTaskParams {
   createdBy?: string | null;
 }
 
-export interface RuntimeAgentToolsWaitSubagentsParams {
-  workspaceId: string;
-  sessionId: string;
-  subagentIds: string[];
-  returnWhen?: string | null;
-  timeoutMs?: number | null;
-}
-
 export interface RuntimeAgentToolsCancelSubagentParams {
   workspaceId: string;
   sessionId: string;
@@ -137,6 +129,7 @@ export interface RuntimeAgentToolsResumeSubagentParams {
 
 export interface RuntimeAgentToolsListBackgroundTasksParams {
   workspaceId: string;
+  sessionId?: string | null;
   ownerMainSessionId?: string | null;
   statuses?: string[] | null;
   limit?: number | null;
@@ -144,6 +137,7 @@ export interface RuntimeAgentToolsListBackgroundTasksParams {
 
 export interface RuntimeAgentToolsGetBackgroundTaskParams {
   workspaceId: string;
+  sessionId?: string | null;
   subagentId: string;
   ownerMainSessionId?: string | null;
 }
@@ -283,10 +277,7 @@ export interface RuntimeAgentToolsCloseTerminalSessionParams {
 
 export const ALLOWED_DELIVERY_MODES = new Set(["none", "announce"]);
 export const ALLOWED_DELIVERY_CHANNELS = new Set(["system_notification", "session_run"]);
-const ALLOWED_SUBAGENT_WAIT_RETURN_WHEN = new Set(["any", "all"]);
 const DEFAULT_DOWNLOAD_TIMEOUT_MS = 120_000;
-const DEFAULT_SUBAGENT_WAIT_TIMEOUT_MS = 15_000;
-const DEFAULT_SUBAGENT_WAIT_POLL_MS = 250;
 const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
 
 function runtimeToolBaseDefinition(id: string) {
@@ -347,10 +338,16 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
     description: runtimeToolBaseDefinition("holaboss_delegate_task").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_wait_subagents").id,
-    method: "POST",
-    path: "/api/v1/capabilities/runtime-tools/subagents/wait",
-    description: runtimeToolBaseDefinition("holaboss_wait_subagents").description
+    id: runtimeToolBaseDefinition("holaboss_get_subagent").id,
+    method: "GET",
+    path: "/api/v1/capabilities/runtime-tools/subagents/:subagentId",
+    description: runtimeToolBaseDefinition("holaboss_get_subagent").description
+  },
+  {
+    id: runtimeToolBaseDefinition("holaboss_list_background_tasks").id,
+    method: "GET",
+    path: "/api/v1/capabilities/runtime-tools/background-tasks",
+    description: runtimeToolBaseDefinition("holaboss_list_background_tasks").description
   },
   {
     id: runtimeToolBaseDefinition("holaboss_cancel_subagent").id,
@@ -1501,57 +1498,6 @@ export class RuntimeAgentToolsService {
     };
   }
 
-  async waitSubagents(params: RuntimeAgentToolsWaitSubagentsParams): Promise<JsonObject> {
-    this.requireWorkspace(params.workspaceId);
-    const controllerSession = this.requireSubagentControllerSession(params.workspaceId, params.sessionId);
-    const subagentIds = [...new Set(params.subagentIds.map((id) => normalizedString(id)).filter((id) => id.length > 0))];
-    if (subagentIds.length === 0) {
-      throw new RuntimeAgentToolsServiceError(400, "subagent_ids_required", "subagent_ids are required");
-    }
-    const returnWhen = normalizedString(params.returnWhen) || "any";
-    if (!ALLOWED_SUBAGENT_WAIT_RETURN_WHEN.has(returnWhen)) {
-      throw new RuntimeAgentToolsServiceError(
-        400,
-        "subagent_wait_return_when_invalid",
-        `return_when must be one of ${JSON.stringify([...ALLOWED_SUBAGENT_WAIT_RETURN_WHEN].sort())}`,
-      );
-    }
-    const timeoutMs = normalizedInteger(params.timeoutMs, DEFAULT_SUBAGENT_WAIT_TIMEOUT_MS, 1, 60_000);
-    const deadline = Date.now() + timeoutMs;
-
-    let states = subagentIds.map((subagentId) =>
-      this.syncSubagentRunForOwner({
-        workspaceId: params.workspaceId,
-        subagentId,
-        ownerMainSessionId: controllerSession.sessionId,
-      }),
-    );
-    let timedOut = false;
-    while (!this.subagentWaitSatisfied(states, returnWhen)) {
-      if (Date.now() >= deadline) {
-        timedOut = true;
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, DEFAULT_SUBAGENT_WAIT_POLL_MS));
-      states = subagentIds.map((subagentId) =>
-        this.syncSubagentRunForOwner({
-          workspaceId: params.workspaceId,
-          subagentId,
-          ownerMainSessionId: controllerSession.sessionId,
-        }),
-      );
-    }
-
-    const readyCount = states.filter((state) => this.isSubagentWaitReady(state.run.status)).length;
-    return {
-      tasks: states.map((state) => subagentRunPayload(state)),
-      count: states.length,
-      ready_count: readyCount,
-      return_when: returnWhen,
-      timed_out: timedOut,
-    };
-  }
-
   async cancelSubagent(params: RuntimeAgentToolsCancelSubagentParams): Promise<JsonObject> {
     this.requireWorkspace(params.workspaceId);
     const controllerSession = this.requireSubagentControllerSession(params.workspaceId, params.sessionId);
@@ -1699,6 +1645,9 @@ export class RuntimeAgentToolsService {
 
   listBackgroundTasks(params: RuntimeAgentToolsListBackgroundTasksParams): JsonObject {
     this.requireWorkspace(params.workspaceId);
+    if (normalizedString(params.sessionId)) {
+      this.requireSubagentControllerSession(params.workspaceId, normalizedString(params.sessionId));
+    }
     const requestedStatuses = new Set(normalizedStringList(params.statuses).map((status) => status.toLowerCase()));
     const requestedOwnerMainSessionId = normalizedString(params.ownerMainSessionId);
     const synced = this.store
@@ -1715,11 +1664,15 @@ export class RuntimeAgentToolsService {
 
   getBackgroundTask(params: RuntimeAgentToolsGetBackgroundTaskParams): JsonObject {
     this.requireWorkspace(params.workspaceId);
+    const requestedSessionId = normalizedString(params.sessionId);
+    if (requestedSessionId) {
+      this.requireSubagentControllerSession(params.workspaceId, requestedSessionId);
+    }
     return subagentRunPayload(
       this.syncSubagentRunForOwner({
         workspaceId: params.workspaceId,
         subagentId: params.subagentId,
-        ownerMainSessionId: normalizedString(params.ownerMainSessionId) || null,
+        ownerMainSessionId: normalizedString(params.ownerMainSessionId) || requestedSessionId || null,
       }),
     );
   }
@@ -2418,24 +2371,6 @@ export class RuntimeAgentToolsService {
       latestInput,
       latestTurnResult,
     };
-  }
-
-  private isSubagentWaitReady(status: string): boolean {
-    const normalizedStatus = normalizedString(status).toLowerCase();
-    return (
-      normalizedStatus === "waiting_on_user" ||
-      normalizedStatus === "completed" ||
-      normalizedStatus === "failed" ||
-      normalizedStatus === "cancelled"
-    );
-  }
-
-  private subagentWaitSatisfied(states: SyncedSubagentRunState[], returnWhen: string): boolean {
-    const ready = states.filter((state) => this.isSubagentWaitReady(state.run.status));
-    if (returnWhen === "all") {
-      return ready.length === states.length;
-    }
-    return ready.length > 0;
   }
 
   private requireWorkspace(workspaceId: string): WorkspaceRecord {

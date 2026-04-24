@@ -351,18 +351,13 @@ export function BackgroundTasksPane({
 
           {inlineExpanded ? (
             <div className="max-h-[320px] overflow-y-auto border-t border-border px-3 py-3">
-              <div className="rounded-xl border border-border/60 bg-muted/35 px-3 py-2 text-xs text-muted-foreground">
-                {onOpenTaskSession
-                  ? "Read-only view for workspace background work. Click a task to inspect its run transcript, then use the main session to cancel, retry, or answer blockers."
-                  : "Read-only view for workspace background work. Use the main session to cancel, retry, or answer blockers."}
-              </div>
               {errorMessage ? (
-                <div className="mt-3 flex items-center gap-2 rounded-xl border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                <div className="flex items-center gap-2 rounded-xl border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">
                   <AlertTriangle size={14} />
                   <span>{errorMessage}</span>
                 </div>
               ) : null}
-              <div className="mt-3 space-y-2">
+              <div className={`${errorMessage ? "mt-3 " : ""}space-y-2`}>
                 {sortedTasks.map((task) => {
                   const taskIndicator = backgroundTaskStatusIndicator(
                     task.status,

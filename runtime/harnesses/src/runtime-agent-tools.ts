@@ -41,10 +41,16 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS = [
     policy: "coordinate"
   },
   {
-    id: "holaboss_wait_subagents",
+    id: "holaboss_get_subagent",
     description:
-      "Wait briefly for one or more delegated subagents to change status or finish, then return their latest background-task state.",
-    policy: "coordinate"
+      "Read one delegated background task by subagent id and return its latest structured state.",
+    policy: "inspect"
+  },
+  {
+    id: "holaboss_list_background_tasks",
+    description:
+      "List delegated background tasks for the current workspace session using persisted task state instead of a blocking wait.",
+    policy: "inspect"
   },
   {
     id: "holaboss_cancel_subagent",

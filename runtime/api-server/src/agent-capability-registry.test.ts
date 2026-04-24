@@ -5,6 +5,7 @@ import {
   buildAgentCapabilityManifest,
   buildEnabledToolMapFromManifest,
   evaluateAgentCapabilities,
+  renderCapabilityToolRoutingPromptSection,
   renderCapabilityPolicyPromptSection,
 } from "./agent-capability-registry.js";
 
@@ -180,6 +181,25 @@ test("buildAgentCapabilityManifest includes native web search as a runtime tool"
   assert.match(capability.description, /exact live values, platform-native rankings or filters, UI-only state/i);
   assert.match(capability.description, /escalate to browser tools or another more direct capability/i);
   assert.equal(buildEnabledToolMapFromManifest(manifest).web_search, true);
+});
+
+test("renderCapabilityToolRoutingPromptSection tells main sessions to delegate when direct capability is missing", () => {
+  const manifest = buildAgentCapabilityManifest({
+    harnessId: "pi",
+    sessionKind: "workspace_session",
+    browserToolsAvailable: false,
+    browserToolIds: [],
+    runtimeToolIds: ["holaboss_delegate_task"],
+    defaultTools: ["read", "edit"],
+    extraTools: ["holaboss_delegate_task"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  const section = renderCapabilityToolRoutingPromptSection(manifest);
+  assert.match(section, /Delegation routing:/);
+  assert.match(section, /use `holaboss_delegate_task` instead of replying that the current run lacks those tools/i);
+  assert.match(section, /Only surface a hard capability limitation to the user when neither the current run nor delegated subagents can actually carry out the request/i);
 });
 
 test("buildAgentCapabilityManifest marks connected MCP servers as available without pre-enumerated tool refs", () => {

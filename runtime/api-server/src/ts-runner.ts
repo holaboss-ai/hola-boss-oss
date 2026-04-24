@@ -120,13 +120,15 @@ const SUBAGENT_DEFAULT_TOOLS = [
 ];
 const SUBAGENT_ORCHESTRATION_RUNTIME_TOOL_IDS = new Set([
   "holaboss_delegate_task",
-  "holaboss_wait_subagents",
+  "holaboss_get_subagent",
+  "holaboss_list_background_tasks",
   "holaboss_cancel_subagent",
   "holaboss_resume_subagent",
 ]);
 const MAIN_SESSION_RUNTIME_TOOL_IDS = new Set([
   "holaboss_delegate_task",
-  "holaboss_wait_subagents",
+  "holaboss_get_subagent",
+  "holaboss_list_background_tasks",
   "holaboss_cancel_subagent",
   "holaboss_resume_subagent",
   "holaboss_cronjobs_list",
