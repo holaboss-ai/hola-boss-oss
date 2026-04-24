@@ -367,6 +367,63 @@ test("resolveTsRunnerBootstrapState loads requested and persisted harness sessio
   assert.equal(bootstrap.persistedHarnessSessionId, "persisted-session-1");
 });
 
+test("resolveTsRunnerBootstrapState uses the registered custom workspace path", () => {
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-custom-bootstrap-"),
+  );
+  process.env.HB_SANDBOX_ROOT = sandboxRoot;
+  const workspaceRoot = path.join(sandboxRoot, "workspace");
+  const customRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-custom-workspace-"),
+  );
+  const customWorkspaceDir = path.join(customRoot, "workspace");
+  const store = new RuntimeStateStore({
+    workspaceRoot,
+    sandboxRoot,
+  });
+  try {
+    store.createWorkspace({
+      workspaceId: "workspace-1",
+      name: "Custom Workspace",
+      harness: "pi",
+      workspacePath: customWorkspaceDir,
+    });
+  } finally {
+    store.close();
+  }
+  fs.mkdirSync(path.join(customWorkspaceDir, ".holaboss"), { recursive: true });
+  fs.writeFileSync(
+    path.join(customWorkspaceDir, ".holaboss", "harness-session-state.json"),
+    JSON.stringify({
+      version: 1,
+      harness: "pi",
+      main_session_id: "persisted-custom-session",
+    }),
+    "utf8",
+  );
+
+  const bootstrap = resolveTsRunnerBootstrapState({
+    workspace_id: "workspace-1",
+    session_id: "session-1",
+    input_id: "input-1",
+    instruction: "hello",
+    context: {
+      _sandbox_runtime_exec_v1: {
+        harness: "pi",
+        harness_session_id: "requested-custom-session",
+      },
+    },
+    model: null,
+    debug: false,
+  });
+
+  assert.equal(bootstrap.workspaceRoot, workspaceRoot);
+  assert.equal(bootstrap.workspaceDir, customWorkspaceDir);
+  assert.equal(bootstrap.harness, "pi");
+  assert.equal(bootstrap.requestedHarnessSessionId, "requested-custom-session");
+  assert.equal(bootstrap.persistedHarnessSessionId, "persisted-custom-session");
+});
+
 test("relayTsRunnerEvent persists harness_session_id from terminal events", async () => {
   const workspaceDir = fs.mkdtempSync(
     path.join(os.tmpdir(), "hb-ts-runner-relay-"),

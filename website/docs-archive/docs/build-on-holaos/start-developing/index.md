@@ -1,0 +1,113 @@
+# Start Developing
+
+Use this page after [Quick Start / Manual Install](/getting-started/#manual-install) is already working. This is the developer view of the repo: which local loops exist, which scripts own them, and how to verify that the desktop and runtime are actually running the code you just changed.
+
+<DiagramLocalStack />
+
+For local development, think in three layers: desktop operator UI, a runtime bundle that includes the harness path, and workspace apps loaded by that runtime.
+
+## Pick the right development loop
+
+| Goal | Command | What the repo actually does |
+| --- | --- | --- |
+| Run the full desktop stack against a staged runtime bundle | `npm run desktop:dev` | Runs the desktop `predev` hook, then starts the Vite renderer, the Electron main/preload watcher, the runtime-bundle watcher, and the Electron app |
+| Rebuild the staged runtime bundle from your local `runtime/` source tree | `npm run desktop:prepare-runtime:local` | Calls `desktop/scripts/prepare-runtime-local.mjs`, which runs the platform packager under `runtime/deploy/` and stages the result into `desktop/out/runtime-<platform>` |
+| Stage the latest published runtime bundle instead of local source | `npm run desktop:prepare-runtime` | Calls `desktop/scripts/stage-runtime-bundle.mjs`, which downloads or copies a packaged runtime bundle and validates its required files |
+| Work on runtime packages without launching Electron | `npm run runtime:api-server:test`, `npm run runtime:harness-host:test`, `npm run runtime:state-store:test`, or `npm run runtime:test` | Exercises the runtime packages directly from `runtime/` without the desktop shell |
+
+## What `desktop:dev` does before Electron starts
+
+The root wrapper runs `npm --prefix desktop run dev`. Inside `desktop/package.json`, `predev` does the heavy lifting:
+
+```bash
+npm run desktop:dev
+# root wrapper -> npm --prefix desktop run dev
+# desktop predev validates env, rebuilds native modules, and refreshes the staged runtime bundle first
+```
+
+- `node scripts/ensure-app-sdk.mjs`: makes sure the local app SDK is built before the renderer compiles against it
+- `node scripts/validate-dev-env.mjs`: fails early unless `desktop/.env` provides a control-plane URL such as `HOLABOSS_BACKEND_BASE_URL` or `HOLABOSS_PROACTIVE_URL`
+- `kill-port 5173`: clears a stale Vite port
+- `npm run rebuild:native`: rebuilds native modules such as `better-sqlite3`
+- `node scripts/ensure-runtime-bundle.mjs`: checks that `desktop/out/runtime-<platform>` exists and is fresh enough for the current `runtime/` source tree
+- `node scripts/patch-electron-plist.mjs`: applies macOS-specific Electron startup fixes when needed
+
+If the runtime bundle is missing, or if it is older than the runtime source inputs tracked by `desktop/scripts/runtime-bundle-state.mjs`, `ensure-runtime-bundle.mjs` rebuilds or restages it automatically.
+
+## What counts as a runtime source change
+
+The runtime watcher is not guessing. `desktop/scripts/watch-runtime-bundle.mjs` polls the source paths listed in `desktop/scripts/runtime-bundle-state.mjs`, including:
+
+- `runtime/api-server/src`
+- `runtime/state-store/src`
+- `runtime/harness-host/src`
+- `runtime/harnesses/src`
+- `runtime/deploy/bootstrap`
+- the package, lockfile, TypeScript, and tsup config files for those packages
+- the active platform packager under `runtime/deploy/package_<platform>_runtime.*`
+
+When any of those inputs changes, the watcher rebuilds the staged runtime bundle and touches `desktop/out/dist-electron/main.cjs` so Electron restarts against the new runtime bits.
+
+Representative watcher inputs from `desktop/scripts/runtime-bundle-state.mjs`:
+
+```js
+runtimeSourceInputs: [
+  path.join(repoRoot, "runtime", "api-server", "src"),
+  path.join(repoRoot, "runtime", "state-store", "src"),
+  path.join(repoRoot, "runtime", "harness-host", "src"),
+  path.join(repoRoot, "runtime", "harnesses", "src"),
+  path.join(repoRoot, "runtime", "deploy", "bootstrap"),
+]
+```
+
+## Runtime-only verification
+
+On a fresh clone, install and build the runtime packages once before running their tests:
+
+```bash
+npm run runtime:state-store:install
+npm run runtime:state-store:build
+npm run runtime:harness-host:install
+npm run runtime:harness-host:build
+npm run runtime:api-server:install
+npm run runtime:api-server:build
+npm run runtime:state-store:typecheck
+npm run runtime:harness-host:typecheck
+npm run runtime:api-server:typecheck
+npm run runtime:test
+```
+
+Use the package-specific test commands when you are only touching one slice. Use `npm run runtime:test` before you hand off a runtime or harness change for review.
+
+## Fast local checks
+
+- The embedded desktop runtime binds to `http://127.0.0.1:5160`. That is the right health endpoint for `npm run desktop:dev`.
+- The desktop main process deliberately uses `5160` instead of `5060` because Node's fetch stack treats `5060` as a blocked port.
+- A packaged standalone runtime usually binds to `8080` unless you override `SANDBOX_AGENT_BIND_PORT`.
+- Running `runtime/api-server/dist/index.mjs` directly defaults to `3060` unless `SANDBOX_RUNTIME_API_PORT`, `SANDBOX_AGENT_BIND_PORT`, or `PORT` is set.
+- The staged runtime bundle should exist under `desktop/out/runtime-<platform>` and include `package-metadata.json`, `runtime/metadata.json`, and `runtime/api-server/dist/index.mjs`.
+- The Electron user-data directory controls the embedded sandbox root and `runtime.log`. In dev, `desktop:dev` sets `HOLABOSS_DESKTOP_USER_DATA_DIR=holaboss-local-dev` unless `HOLABOSS_DESKTOP_USER_DATA_PATH` overrides it.
+
+```bash
+curl http://127.0.0.1:5160/healthz
+bash desktop/scripts/check-runtime-status.sh
+```
+
+## Main source-of-truth files
+
+- `desktop/package.json`: the actual desktop dev, build, dist, and runtime-staging commands
+- `desktop/scripts/validate-dev-env.mjs`: required desktop env validation
+- `desktop/scripts/ensure-runtime-bundle.mjs`: stale or missing runtime-bundle detection
+- `desktop/scripts/watch-runtime-bundle.mjs`: runtime source watcher used during `desktop:dev`
+- `desktop/scripts/prepare-runtime-local.mjs`: local runtime packaging and staging
+- `desktop/scripts/runtime-bundle-state.mjs`: source-of-truth list of files that make a runtime bundle stale
+- `runtime/deploy/package_<platform>_runtime.*`: per-platform packagers used by local runtime staging
+- `desktop/electron/main.ts`: where the desktop eventually launches the embedded runtime and waits for health checks
+
+::: warning
+The normal dev loop is GUI-dependent. If Electron cannot start in your environment, stop after runtime validation instead of trying to debug renderer behavior in a headless shell.
+:::
+
+## Next
+
+If you are changing the Electron shell, continue to [Desktop Internals](/build-on-holaos/desktop/internals). If you are changing the runtime HTTP surface, continue to [Runtime APIs](/build-on-holaos/runtime/apis). If you are changing the harness path or executor boundary, continue to [Agent Harness Internals](/build-on-holaos/agent-harness/internals). For validation and PR expectations, continue to [Contributing](/build-on-holaos/start-developing/contributing).

@@ -84,6 +84,11 @@ interface BrowserBoundsPayload {
   height: number;
 }
 
+interface BrowserVisibleSnapshotPayload {
+  bounds: BrowserBoundsPayload;
+  dataUrl: string;
+}
+
 interface BrowserAnchorBoundsPayload {
   x: number;
   y: number;
@@ -177,6 +182,35 @@ interface BrowserHistoryEntryPayload {
   visitCount: number;
   createdAt: string;
   lastVisitedAt: string;
+}
+
+interface BrowserClipboardScreenshotPayload {
+  tabId: string;
+  pageTitle: string;
+  url: string;
+  width: number;
+  height: number;
+  copied: boolean;
+}
+
+interface BrowserCommentCaptureAttachmentPayload {
+  id: string;
+  text: string;
+  elementLabel: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  mimeType: string;
+  base64: string;
+}
+
+interface BrowserCommentCapturePayload {
+  tabId: string;
+  pageTitle: string;
+  url: string;
+  comments: BrowserCommentCaptureAttachmentPayload[];
+  canceled: boolean;
 }
 
 interface AddressSuggestionPayload {
@@ -1447,11 +1481,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("browser:setActiveWorkspace", workspaceId, space, sessionId) as Promise<BrowserTabListPayload>,
     getState: () => ipcRenderer.invoke("browser:getState") as Promise<BrowserTabListPayload>,
     setBounds: (bounds: BrowserBoundsPayload) => ipcRenderer.invoke("browser:setBounds", bounds) as Promise<BrowserTabListPayload>,
+    captureVisibleSnapshot: () =>
+      ipcRenderer.invoke("browser:captureVisibleSnapshot") as Promise<BrowserVisibleSnapshotPayload | null>,
     navigate: (targetUrl: string) => ipcRenderer.invoke("browser:navigate", targetUrl) as Promise<BrowserTabListPayload>,
     back: () => ipcRenderer.invoke("browser:back") as Promise<BrowserTabListPayload>,
     forward: () => ipcRenderer.invoke("browser:forward") as Promise<BrowserTabListPayload>,
     reload: () => ipcRenderer.invoke("browser:reload") as Promise<BrowserTabListPayload>,
     stopLoading: () => ipcRenderer.invoke("browser:stopLoading") as Promise<BrowserTabListPayload>,
+    captureScreenshotToClipboard: () =>
+      ipcRenderer.invoke("browser:captureScreenshotToClipboard") as Promise<BrowserClipboardScreenshotPayload>,
+    captureCommentsForChat: () =>
+      ipcRenderer.invoke("browser:captureCommentsForChat") as Promise<BrowserCommentCapturePayload>,
     newTab: (targetUrl?: string) => ipcRenderer.invoke("browser:newTab", targetUrl) as Promise<BrowserTabListPayload>,
     setActiveTab: (tabId: string) => ipcRenderer.invoke("browser:setActiveTab", tabId) as Promise<BrowserTabListPayload>,
     closeTab: (tabId: string) => ipcRenderer.invoke("browser:closeTab", tabId) as Promise<BrowserTabListPayload>,

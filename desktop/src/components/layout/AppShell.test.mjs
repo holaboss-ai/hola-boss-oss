@@ -86,6 +86,10 @@ test("app shell opens the centered add apps dialog from the applications explore
   );
   assert.match(
     source,
+    /const \[chatImagePreviewOpen, setChatImagePreviewOpen\] =\s*useState\(false\);/,
+  );
+  assert.match(
+    source,
     /const handleAddApp = \(\) => \{\s*setWorkspaceAppsDialogOpen\(true\);\s*\};/,
   );
   assert.match(
@@ -102,7 +106,7 @@ test("app shell opens the centered add apps dialog from the applications explore
   );
   assert.match(
     source,
-    /const shouldSuspendBrowserNativeView =\s*[\s\S]*taskProposalDetailsDialogOpen[\s\S]*workspaceAppsDialogOpen[\s\S]*createWorkspacePanelOpen[\s\S]*publishOpen;/,
+    /const shouldSuspendBrowserNativeView =\s*[\s\S]*taskProposalDetailsDialogOpen[\s\S]*chatImagePreviewOpen[\s\S]*workspaceAppsDialogOpen[\s\S]*createWorkspacePanelOpen[\s\S]*publishOpen;/,
   );
   assert.doesNotMatch(
     source,
@@ -161,7 +165,15 @@ test("app shell syncs file-oriented agent operations into the explorer and displ
   );
   assert.match(
     source,
+    /<OnboardingPane[\s\S]*onImageAttachmentPreviewOpenChange=\{setChatImagePreviewOpen\}/,
+  );
+  assert.match(
+    source,
     /<ChatPane[\s\S]*onSyncFileDisplayFromAgentOperation=\{\s*handleSyncAgentOperationFileDisplay\s*\}/,
+  );
+  assert.match(
+    source,
+    /<ChatPane[\s\S]*onImageAttachmentPreviewOpenChange=\{setChatImagePreviewOpen\}/,
   );
 });
 
@@ -344,7 +356,7 @@ test("app shell no longer reserves a separate safe pane region for update toasts
   assert.doesNotMatch(source, /anchoredToastStackStyle/);
   assert.match(
     source,
-    /const shouldSuspendBrowserNativeView =\s*workspaceSwitcherOpen \|\|[\s\S]*settingsDialogOpen \|\|[\s\S]*taskProposalDetailsDialogOpen \|\|[\s\S]*createWorkspacePanelOpen \|\|[\s\S]*publishOpen;/,
+    /const shouldSuspendBrowserNativeView =\s*workspaceSwitcherOpen \|\|[\s\S]*settingsDialogOpen \|\|[\s\S]*taskProposalDetailsDialogOpen \|\|[\s\S]*chatImagePreviewOpen \|\|[\s\S]*createWorkspacePanelOpen \|\|[\s\S]*publishOpen;/,
   );
   assert.doesNotMatch(
     source,
@@ -750,6 +762,55 @@ test("app shell can route explorer references into chat attachments or text pref
   assert.match(source, /<FileExplorerPane[\s\S]*onReferenceInChat=\{handleReferenceWorkspacePathInChat\}/);
 });
 
+test("app shell can route browser comment captures into chat attachments", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(
+    source,
+    /type ChatBrowserCommentRequest = \{\s*tabId: string;\s*pageTitle: string;\s*url: string;\s*comments: BrowserChatCommentDraftItem\[];\s*requestKey: number;\s*mode\?: "replace" \| "append";\s*\};/,
+  );
+  assert.match(
+    source,
+    /const \[chatBrowserCommentRequest, setChatBrowserCommentRequest\] =\s*useState<ChatBrowserCommentRequest \| null>\(null\);/,
+  );
+  assert.match(source, /const chatBrowserAttachmentRequestKeyRef = useRef\(0\);/);
+  assert.match(
+    source,
+    /const nextChatBrowserAttachmentRequestKey = useCallback\(\(\) => \{\s*chatBrowserAttachmentRequestKeyRef\.current \+= 1;\s*return chatBrowserAttachmentRequestKeyRef\.current;\s*\}, \[\]\);/,
+  );
+  assert.match(
+    source,
+    /const handleAttachBrowserCommentsToChat = useCallback\(\s*\(payload: BrowserChatCommentDraftPayload\) => \{/,
+  );
+  assert.match(
+    source,
+    /if \(payload\.comments\.length === 0\) \{\s*return;\s*\}/,
+  );
+  assert.match(source, /setActiveShellView\("space"\);/);
+  assert.match(source, /setSpaceVisibility\(\(previous\) => \(\{\s*\.\.\.previous,\s*agent: true,\s*\}\)\);/);
+  assert.match(source, /setAgentView\(\{ type: "chat" \}\);/);
+  assert.match(
+    source,
+    /setChatBrowserCommentRequest\(\{\s*tabId: payload\.tabId,\s*pageTitle: payload\.pageTitle,\s*url: payload\.url,\s*comments: payload\.comments,\s*requestKey: nextChatBrowserAttachmentRequestKey\(\),\s*mode: payload\.mode \?\? "replace",\s*\}\);/,
+  );
+  assert.match(
+    source,
+    /browserCommentRequest=\{chatBrowserCommentRequest\}/,
+  );
+  assert.match(
+    source,
+    /onBrowserCommentRequestConsumed=\{\s*handleChatBrowserCommentRequestConsumed\s*\}/,
+  );
+  assert.match(
+    source,
+    /<SpaceBrowserDisplayPane[\s\S]*onAttachCommentsToChat=\{handleAttachBrowserCommentsToChat\}/,
+  );
+  assert.match(
+    source,
+    /<BrowserPane[\s\S]*onAttachCommentsToChat=\{handleAttachBrowserCommentsToChat\}/,
+  );
+});
+
 test("app shell clears missing internal file surfaces after explorer deletion or preview invalidation", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
@@ -833,5 +894,9 @@ test("app shell passes workspace-scoped chat composer drafts into the chat pane"
   assert.match(
     source,
     /<ChatPane[\s\S]*composerDraftText=\{[\s\S]*chatComposerDraftTextByWorkspace\[selectedWorkspaceId\] \?\? ""[\s\S]*\}[\s\S]*onComposerDraftTextChange=\{handleChatComposerDraftTextChange\}/,
+  );
+  assert.match(
+    source,
+    /<ChatPane[\s\S]*onImageAttachmentPreviewOpenChange=\{setChatImagePreviewOpen\}[\s\S]*composerDraftText=\{/,
   );
 });

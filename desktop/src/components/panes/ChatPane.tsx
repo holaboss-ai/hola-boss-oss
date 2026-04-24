@@ -14,7 +14,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { flushSync } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -40,6 +40,7 @@ import {
   Lightbulb,
   Link2,
   Loader2,
+  MessageSquare,
   Paperclip,
   PencilLine,
   Plus,
@@ -58,6 +59,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { type BrowserChatCommentDraftItem } from "@/components/panes/useBrowserCaptureActions";
 import {
   Tooltip,
   TooltipContent,
@@ -258,6 +260,30 @@ interface PendingExplorerAttachmentFile {
 type PendingAttachment =
   | PendingLocalAttachmentFile
   | PendingExplorerAttachmentFile;
+
+interface AttachmentListItem {
+  id: string;
+  kind: "image" | "file" | "folder";
+  name: string;
+  size_bytes: number;
+  workspace_path?: string;
+  file?: File;
+}
+
+interface ImageAttachmentPreviewState {
+  attachment: AttachmentListItem;
+  browserSnapshot: BrowserVisibleSnapshotPayload | null;
+  dataUrl: string;
+  isLoading: boolean;
+  errorMessage: string;
+}
+
+interface PendingBrowserCommentDraft {
+  tabId: string;
+  pageTitle: string;
+  url: string;
+  comments: BrowserChatCommentDraftItem[];
+}
 
 function attachmentLooksLikeImage(
   name: string,
@@ -3149,6 +3175,15 @@ interface ChatPaneExplorerAttachmentRequest {
   requestKey: number;
 }
 
+interface ChatPaneBrowserCommentRequest {
+  tabId: string;
+  pageTitle: string;
+  url: string;
+  comments: BrowserChatCommentDraftItem[];
+  requestKey: number;
+  mode?: "replace" | "append";
+}
+
 interface ChatPaneBrowserJumpRequest {
   sessionId: string;
   requestKey: number;
@@ -3157,6 +3192,7 @@ interface ChatPaneBrowserJumpRequest {
 interface ChatPaneProps {
   onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
   onSyncFileDisplayFromAgentOperation?: (path: string) => void;
+  onImageAttachmentPreviewOpenChange?: (open: boolean) => void;
   focusRequestKey?: number;
   variant?: ChatPaneVariant;
   onOpenLinkInBrowser?: (url: string) => void;
@@ -3168,6 +3204,8 @@ interface ChatPaneProps {
   onComposerPrefillConsumed?: (requestKey: number) => void;
   explorerAttachmentRequest?: ChatPaneExplorerAttachmentRequest | null;
   onExplorerAttachmentRequestConsumed?: (requestKey: number) => void;
+  browserCommentRequest?: ChatPaneBrowserCommentRequest | null;
+  onBrowserCommentRequestConsumed?: (requestKey: number) => void;
   onActiveSessionIdChange?: (sessionId: string | null) => void;
   browserJumpRequest?: ChatPaneBrowserJumpRequest | null;
   onBrowserJumpRequestConsumed?: (
@@ -3186,6 +3224,7 @@ interface ChatPaneProps {
 export function ChatPane({
   onOpenOutput,
   onSyncFileDisplayFromAgentOperation,
+  onImageAttachmentPreviewOpenChange,
   focusRequestKey = 0,
   variant = "default",
   onOpenLinkInBrowser,
@@ -3197,6 +3236,8 @@ export function ChatPane({
   onComposerPrefillConsumed,
   explorerAttachmentRequest = null,
   onExplorerAttachmentRequestConsumed,
+  browserCommentRequest = null,
+  onBrowserCommentRequestConsumed,
   onActiveSessionIdChange,
   browserJumpRequest = null,
   onBrowserJumpRequestConsumed,
@@ -3246,6 +3287,8 @@ export function ChatPane({
   const [pendingAttachments, setPendingAttachments] = useState<
     PendingAttachment[]
   >([]);
+  const [pendingBrowserCommentDraft, setPendingBrowserCommentDraft] =
+    useState<PendingBrowserCommentDraft | null>(null);
   const [availableWorkspaceSkills, setAvailableWorkspaceSkills] = useState<
     WorkspaceSkillRecordPayload[]
   >([]);
@@ -3283,6 +3326,8 @@ export function ChatPane({
   const [artifactBrowserOpen, setArtifactBrowserOpen] = useState(false);
   const [artifactBrowserFilter, setArtifactBrowserFilter] =
     useState<ArtifactBrowserFilter>("all");
+  const [imageAttachmentPreview, setImageAttachmentPreview] =
+    useState<ImageAttachmentPreviewState | null>(null);
   const [memoryProposalAction, setMemoryProposalAction] = useState<{
     proposalId: string;
     action: "accept" | "dismiss";
@@ -3326,6 +3371,8 @@ export function ChatPane({
   const chatScrollbarBodyCursorRef = useRef<string | null>(null);
   const activeSessionIdRef = useRef<string | null>(null);
   const activeStreamIdRef = useRef<string | null>(null);
+  const imageAttachmentPreviewObjectUrlRef = useRef<string | null>(null);
+  const imageAttachmentPreviewRequestIdRef = useRef(0);
   const terminalEventTypeByInputIdRef = useRef<
     Map<string, "run_completed" | "run_failed">
   >(new Map());
@@ -3348,6 +3395,7 @@ export function ChatPane({
   const lastHandledLocalSessionOpenRequestKeyRef = useRef(0);
   const lastHandledComposerPrefillRequestKeyRef = useRef(0);
   const lastHandledExplorerAttachmentRequestKeyRef = useRef(0);
+  const lastHandledBrowserCommentRequestKeyRef = useRef(0);
   const consumedSessionOpenRequestKeysRef = useRef<Set<number>>(new Set());
   const localSessionOpenRequestRef = useRef<ChatPaneSessionOpenRequest | null>(
     null,
@@ -4639,6 +4687,7 @@ export function ChatPane({
 
   useEffect(() => {
     setPendingAttachments([]);
+    setPendingBrowserCommentDraft(null);
     setQuotedSkillIds([]);
   }, [selectedWorkspaceId]);
 
@@ -4749,6 +4798,7 @@ export function ChatPane({
       setInput(parsedPrefill.body);
       setQuotedSkillIds(parsedPrefill.skillIds);
       setPendingAttachments([]);
+      setPendingBrowserCommentDraft(null);
     }
     onComposerPrefillConsumed?.(requestKey);
   }, [
@@ -5794,9 +5844,12 @@ export function ChatPane({
 
   async function sendMessage(text: string) {
     const trimmed = text.trim();
+    const browserCommentAttachmentEntries =
+      pendingBrowserCommentAttachmentEntries();
     if (
       (!trimmed &&
         pendingAttachments.length === 0 &&
+        browserCommentAttachmentEntries.length === 0 &&
         quotedSkillIds.length === 0) ||
       isSubmittingMessage
     ) {
@@ -5899,7 +5952,10 @@ export function ChatPane({
         );
       }
 
-      const attachmentEntries = [...pendingAttachments];
+      const attachmentEntries = [
+        ...pendingAttachments,
+        ...browserCommentAttachmentEntries,
+      ];
       const localFiles = attachmentEntries.filter(
         (entry): entry is PendingLocalAttachmentFile =>
           entry.source === "local-file",
@@ -5976,6 +6032,7 @@ export function ChatPane({
       setInput("");
       setQuotedSkillIds([]);
       setPendingAttachments([]);
+      clearPendingBrowserComments();
       setChatErrorMessage("");
       if (!queueOntoActiveRun) {
         const currentStreamId = activeStreamIdRef.current;
@@ -6351,6 +6408,22 @@ export function ChatPane({
     ]);
   }
 
+  function pendingBrowserCommentAttachmentEntries() {
+    return (pendingBrowserCommentDraft?.comments ?? []).map(
+      (comment): PendingLocalAttachmentFile => ({
+        id: pendingAttachmentId(
+          `browser-comment-${comment.id}-${comment.file.name}-${comment.file.size}`,
+        ),
+        source: "local-file",
+        file: comment.file,
+      }),
+    );
+  }
+
+  function clearPendingBrowserComments() {
+    setPendingBrowserCommentDraft(null);
+  }
+
   useEffect(() => {
     const requestKey = explorerAttachmentRequest?.requestKey ?? 0;
     if (
@@ -6367,6 +6440,53 @@ export function ChatPane({
     explorerAttachmentRequest?.files,
     explorerAttachmentRequest?.requestKey,
     onExplorerAttachmentRequestConsumed,
+  ]);
+
+  useEffect(() => {
+    const requestKey = browserCommentRequest?.requestKey ?? 0;
+    if (
+      requestKey <= 0 ||
+      requestKey === lastHandledBrowserCommentRequestKeyRef.current
+    ) {
+      return;
+    }
+
+    lastHandledBrowserCommentRequestKeyRef.current = requestKey;
+    const browserCommentMode = browserCommentRequest?.mode ?? "replace";
+    if ((browserCommentRequest?.comments.length ?? 0) === 0) {
+      setPendingBrowserCommentDraft(null);
+      onBrowserCommentRequestConsumed?.(requestKey);
+      return;
+    }
+
+    if (browserCommentMode === "append") {
+      setPendingBrowserCommentDraft((current) => ({
+        tabId: browserCommentRequest?.tabId ?? current?.tabId ?? "",
+        pageTitle:
+          browserCommentRequest?.pageTitle ?? current?.pageTitle ?? "",
+        url: browserCommentRequest?.url ?? current?.url ?? "",
+        comments: [
+          ...(current?.comments ?? []),
+          ...(browserCommentRequest?.comments ?? []),
+        ],
+      }));
+    } else {
+      setPendingBrowserCommentDraft({
+        tabId: browserCommentRequest?.tabId ?? "",
+        pageTitle: browserCommentRequest?.pageTitle ?? "",
+        url: browserCommentRequest?.url ?? "",
+        comments: browserCommentRequest?.comments ?? [],
+      });
+    }
+    onBrowserCommentRequestConsumed?.(requestKey);
+  }, [
+    browserCommentRequest?.comments,
+    browserCommentRequest?.mode,
+    browserCommentRequest?.pageTitle,
+    browserCommentRequest?.requestKey,
+    browserCommentRequest?.tabId,
+    browserCommentRequest?.url,
+    onBrowserCommentRequestConsumed,
   ]);
 
   useEffect(() => {
@@ -6547,7 +6667,10 @@ export function ChatPane({
         id: attachment.id,
         kind:
           attachment.source === "local-file"
-            ? attachment.file.type.startsWith("image/")
+            ? attachmentLooksLikeImage(
+                  attachment.file.name,
+                  attachment.file.type,
+                )
               ? ("image" as const)
               : ("file" as const)
             : attachment.kind,
@@ -6559,9 +6682,134 @@ export function ChatPane({
           attachment.source === "local-file"
             ? attachment.file.size
             : attachment.size_bytes,
+        ...(attachment.source === "local-file"
+          ? { file: attachment.file }
+          : { workspace_path: attachment.absolutePath }),
       })),
     [pendingAttachments],
   );
+
+  const clearImageAttachmentPreviewObjectUrl = () => {
+    if (!imageAttachmentPreviewObjectUrlRef.current) {
+      return;
+    }
+    URL.revokeObjectURL(imageAttachmentPreviewObjectUrlRef.current);
+    imageAttachmentPreviewObjectUrlRef.current = null;
+  };
+
+  const closeImageAttachmentPreview = () => {
+    imageAttachmentPreviewRequestIdRef.current += 1;
+    clearImageAttachmentPreviewObjectUrl();
+    setImageAttachmentPreview(null);
+  };
+
+  useEffect(() => {
+    return () => {
+      clearImageAttachmentPreviewObjectUrl();
+    };
+  }, []);
+
+  useEffect(() => {
+    onImageAttachmentPreviewOpenChange?.(Boolean(imageAttachmentPreview));
+  }, [imageAttachmentPreview, onImageAttachmentPreviewOpenChange]);
+
+  useEffect(() => {
+    return () => {
+      onImageAttachmentPreviewOpenChange?.(false);
+    };
+  }, [onImageAttachmentPreviewOpenChange]);
+
+  const openImageAttachmentPreview = async (attachment: AttachmentListItem) => {
+    if (attachment.kind !== "image") {
+      return;
+    }
+
+    const attachmentPath = attachment.workspace_path?.trim() || "";
+    if (!attachment.file && !attachmentPath) {
+      return;
+    }
+
+    imageAttachmentPreviewRequestIdRef.current += 1;
+    const requestId = imageAttachmentPreviewRequestIdRef.current;
+    clearImageAttachmentPreviewObjectUrl();
+    let localObjectUrl = "";
+    const browserSnapshotPromise =
+      window.electronAPI.browser.captureVisibleSnapshot().catch(() => null);
+    const imageDataResultPromise = (async () => {
+      try {
+        if (attachment.file) {
+          localObjectUrl = URL.createObjectURL(attachment.file);
+          return { status: "fulfilled" as const, dataUrl: localObjectUrl };
+        }
+
+        const preview = await window.electronAPI.fs.readFilePreview(
+          attachmentPath,
+          selectedWorkspaceId,
+        );
+        if (preview.kind !== "image" || !preview.dataUrl) {
+          throw new Error(
+            preview.unsupportedReason ||
+              "Image preview is not available for this attachment.",
+          );
+        }
+        return { status: "fulfilled" as const, dataUrl: preview.dataUrl };
+      } catch (error) {
+        return { status: "rejected" as const, error };
+      }
+    })();
+
+    const browserSnapshot = await browserSnapshotPromise;
+    if (imageAttachmentPreviewRequestIdRef.current !== requestId) {
+      if (localObjectUrl) {
+        URL.revokeObjectURL(localObjectUrl);
+      }
+      return;
+    }
+
+    setImageAttachmentPreview({
+      attachment,
+      browserSnapshot,
+      dataUrl: "",
+      isLoading: true,
+      errorMessage: "",
+    });
+
+    const imageDataResult = await imageDataResultPromise;
+    if (imageAttachmentPreviewRequestIdRef.current !== requestId) {
+      if (localObjectUrl) {
+        URL.revokeObjectURL(localObjectUrl);
+      }
+      return;
+    }
+
+    if (imageDataResult.status === "rejected") {
+      clearImageAttachmentPreviewObjectUrl();
+      setImageAttachmentPreview({
+        attachment,
+        browserSnapshot,
+        dataUrl: "",
+        isLoading: false,
+        errorMessage:
+          imageDataResult.error instanceof Error &&
+          imageDataResult.error.message.trim()
+            ? imageDataResult.error.message
+            : "Failed to load image preview.",
+      });
+      return;
+    }
+
+    if (localObjectUrl) {
+      imageAttachmentPreviewObjectUrlRef.current = localObjectUrl;
+    }
+
+    setImageAttachmentPreview({
+      attachment,
+      browserSnapshot,
+      dataUrl: imageDataResult.dataUrl,
+      isLoading: false,
+      errorMessage: "",
+    });
+  };
 
   useEffect(() => {
     if (
@@ -6864,10 +7112,14 @@ export function ChatPane({
     composerBaseDisabledReason ||
     (isSubmittingMessage ? "Submitting message..." : "");
   const composerDisabled = Boolean(composerDisabledReason);
+  const hasPendingBrowserCommentImages =
+    (pendingBrowserCommentDraft?.comments.length ?? 0) > 0;
   const pendingImageInputUnsupportedMessage =
-    pendingAttachments.some((attachment) =>
+    (pendingAttachments.some((attachment) =>
       pendingAttachmentIsImage(attachment),
-    ) && !selectedModelSupportsImageInput
+    ) ||
+      hasPendingBrowserCommentImages) &&
+    !selectedModelSupportsImageInput
       ? `${imageInputUnsupportedMessage(selectedModelDisplayLabel)} Remove the attached image or switch models.`
       : "";
   const showLowBalanceWarning =
@@ -6894,7 +7146,9 @@ export function ChatPane({
       composer: {
         input_length: input.length,
         quoted_skill_count: quotedSkillIds.length,
-        pending_attachment_count: pendingAttachments.length,
+        pending_attachment_count:
+          pendingAttachments.length +
+          (pendingBrowserCommentDraft?.comments.length ?? 0),
         disabled: composerDisabled,
         disabled_reason: composerDisabledReason || null,
         attachment_gate_message: attachmentGateMessage || null,
@@ -6964,6 +7218,7 @@ export function ChatPane({
       liveExecutionItems.length,
       messages.length,
       pendingAttachments.length,
+      pendingBrowserCommentDraft?.comments.length,
       pendingImageInputUnsupportedMessage,
       quotedSkillIds.length,
       resolvedChatModel,
@@ -7084,7 +7339,9 @@ export function ChatPane({
 
   const textareaPlaceholder = isOnboardingVariant
     ? "Answer the onboarding prompt or share setup details"
-    : "Ask anything";
+    : hasPendingBrowserCommentImages
+      ? "Ask for follow-up changes"
+      : "Ask anything";
   const showHistoryRestoreScreen = isLoadingHistory || isHistoryViewportPending;
   const chatScrollRange = Math.max(
     0,
@@ -7444,6 +7701,7 @@ export function ChatPane({
                         text={message.text}
                         createdAt={message.createdAt}
                         attachments={message.attachments ?? []}
+                        onPreviewAttachment={openImageAttachmentPreview}
                         onLinkClick={onOpenLinkInBrowser}
                       />
                     ) : (
@@ -7568,6 +7826,7 @@ export function ChatPane({
                           quotedSkills={quotedSkills}
                           slashCommands={slashCommandOptions}
                           attachments={pendingAttachmentItems}
+                          browserComments={pendingBrowserCommentDraft}
                           isResponding={isResponding}
                           pausePending={isPausePending}
                           pauseDisabled={
@@ -7622,7 +7881,9 @@ export function ChatPane({
                             }
                           }}
                           onRemoveQuotedSkill={removeQuotedSkill}
+                          onClearBrowserComments={clearPendingBrowserComments}
                           onRemoveAttachment={removePendingAttachment}
+                          onPreviewAttachment={openImageAttachmentPreview}
                         />
                       </QueuedSessionInputRail>
                     </div>
@@ -7694,6 +7955,7 @@ export function ChatPane({
                       quotedSkills={quotedSkills}
                       slashCommands={slashCommandOptions}
                       attachments={pendingAttachmentItems}
+                      browserComments={pendingBrowserCommentDraft}
                       isResponding={isResponding}
                       pausePending={isPausePending}
                       pauseDisabled={
@@ -7746,7 +8008,9 @@ export function ChatPane({
                         }
                       }}
                       onRemoveQuotedSkill={removeQuotedSkill}
+                      onClearBrowserComments={clearPendingBrowserComments}
                       onRemoveAttachment={removePendingAttachment}
+                      onPreviewAttachment={openImageAttachmentPreview}
                     />
                   </QueuedSessionInputRail>
                 </div>
@@ -7763,6 +8027,11 @@ export function ChatPane({
             onClose={() => setArtifactBrowserOpen(false)}
             onFilterChange={setArtifactBrowserFilter}
             onOpenOutput={onOpenOutput}
+          />
+          <ImageAttachmentPreviewModal
+            open={Boolean(imageAttachmentPreview)}
+            preview={imageAttachmentPreview}
+            onClose={closeImageAttachmentPreview}
           />
         </div>
       </div>
@@ -8009,12 +8278,8 @@ interface ComposerProps {
   input: string;
   quotedSkills: ChatComposerQuotedSkillItem[];
   slashCommands: ChatComposerSlashCommandOption[];
-  attachments: Array<{
-    id: string;
-    kind: "image" | "file" | "folder";
-    name: string;
-    size_bytes: number;
-  }>;
+  attachments: AttachmentListItem[];
+  browserComments: PendingBrowserCommentDraft | null;
   isResponding: boolean;
   pausePending: boolean;
   pauseDisabled: boolean;
@@ -8048,18 +8313,22 @@ interface ComposerProps {
   onAddExplorerAttachments: (files: ExplorerAttachmentDragPayload[]) => void;
   onSelectSlashCommand: (command: ChatComposerSlashCommandOption) => void;
   onRemoveQuotedSkill: (skillId: string) => void;
+  onClearBrowserComments: () => void;
   onRemoveAttachment: (attachmentId: string) => void;
+  onPreviewAttachment: (attachment: AttachmentListItem) => void;
 }
 
 function UserTurn({
   text,
   createdAt,
   attachments,
+  onPreviewAttachment,
   onLinkClick,
 }: {
   text: string;
   createdAt?: string;
   attachments: ChatAttachment[];
+  onPreviewAttachment?: (attachment: AttachmentListItem) => void;
   onLinkClick?: (url: string) => void;
 }) {
   const [copyFeedbackVisible, setCopyFeedbackVisible] = useState(false);
@@ -8166,7 +8435,11 @@ function UserTurn({
           </div>
         ) : null}
         {attachments.length > 0 ? (
-          <AttachmentList attachments={attachments} className="justify-end" />
+          <AttachmentList
+            attachments={attachments}
+            className="justify-end"
+            onPreview={onPreviewAttachment}
+          />
         ) : null}
         {canCopy || timeLabel ? (
           <div className="flex items-center justify-end gap-2 pr-1 text-xs text-muted-foreground opacity-0 pointer-events-none transition duration-150 group-hover/user-turn:opacity-100 group-hover/user-turn:pointer-events-auto group-focus-within/user-turn:opacity-100 group-focus-within/user-turn:pointer-events-auto">
@@ -9528,46 +9801,195 @@ function TraceStepGroup({
 function AttachmentList({
   attachments,
   onRemove,
+  onPreview,
   className = "",
 }: {
-  attachments: Array<{
-    id: string;
-    kind: "image" | "file" | "folder";
-    name: string;
-    size_bytes: number;
-  }>;
+  attachments: AttachmentListItem[];
   onRemove?: (attachmentId: string) => void;
+  onPreview?: (attachment: AttachmentListItem) => void;
   className?: string;
 }) {
   return (
     <div className={`flex flex-wrap gap-2 ${className}`.trim()}>
-      {attachments.map((attachment) => (
-        <div
-          key={attachment.id}
-          className="bg-muted inline-flex max-w-full items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs text-foreground"
-        >
-          {attachment.kind === "image" ? (
-            <ImageIcon className="size-3 shrink-0 text-primary" />
-          ) : attachment.kind === "folder" ? (
-            <Folder className="size-3 shrink-0 text-primary" />
-          ) : (
-            <FileText className="size-3 shrink-0 text-primary" />
-          )}
-          <span className="truncate">{attachmentButtonLabel(attachment)}</span>
-          {onRemove ? (
-            <button
-              type="button"
-              onClick={() => onRemove(attachment.id)}
-              className="grid h-4 w-4 place-items-center rounded-full text-muted-foreground transition hover:text-foreground"
-              aria-label={`Remove ${attachment.name}`}
-            >
-              <X className="size-3" />
-            </button>
-          ) : null}
-        </div>
-      ))}
+      {attachments.map((attachment) => {
+        const isImagePreviewable =
+          attachment.kind === "image" &&
+          Boolean(onPreview) &&
+          Boolean(
+            attachment.file ||
+              (typeof attachment.workspace_path === "string" &&
+                attachment.workspace_path.trim()),
+          );
+
+        const content = (
+          <>
+            {attachment.kind === "image" ? (
+              <ImageIcon className="size-3 shrink-0 text-primary" />
+            ) : attachment.kind === "folder" ? (
+              <Folder className="size-3 shrink-0 text-primary" />
+            ) : (
+              <FileText className="size-3 shrink-0 text-primary" />
+            )}
+            <span className="truncate">{attachmentButtonLabel(attachment)}</span>
+          </>
+        );
+
+        return (
+          <div
+            key={attachment.id}
+            className="bg-muted inline-flex max-w-full items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs text-foreground"
+          >
+            {isImagePreviewable ? (
+              <button
+                type="button"
+                onClick={() => onPreview?.(attachment)}
+                className="-my-1 -ml-1 flex min-w-0 items-center gap-2 rounded-full px-1 py-1 text-left transition hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                aria-label={`Preview ${attachment.name}`}
+                title={`Preview ${attachment.name}`}
+              >
+                {content}
+              </button>
+            ) : (
+              content
+            )}
+            {onRemove ? (
+              <button
+                type="button"
+                onClick={() => onRemove(attachment.id)}
+                className="grid h-4 w-4 place-items-center rounded-full text-muted-foreground transition hover:text-foreground"
+                aria-label={`Remove ${attachment.name}`}
+              >
+                <X className="size-3" />
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
+}
+
+function ImageAttachmentPreviewModal({
+  open,
+  preview,
+  onClose,
+}: {
+  open: boolean;
+  preview: ImageAttachmentPreviewState | null;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      event.preventDefault();
+      onClose();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open, onClose]);
+
+  if (!open || !preview) {
+    return null;
+  }
+
+  const sizeLabel = formatAttachmentSize(preview.attachment.size_bytes);
+  const showImage = !preview.isLoading && !preview.errorMessage;
+  const modalContent = (
+    <div
+      className="fixed inset-0 z-[90] flex items-center justify-center px-6 py-8"
+      onClick={onClose}
+    >
+      {preview.browserSnapshot ? (
+        <img
+          aria-hidden="true"
+          src={preview.browserSnapshot.dataUrl}
+          alt=""
+          className="pointer-events-none absolute object-fill"
+          style={{
+            left: `${preview.browserSnapshot.bounds.x}px`,
+            top: `${preview.browserSnapshot.bounds.y}px`,
+            width: `${preview.browserSnapshot.bounds.width}px`,
+            height: `${preview.browserSnapshot.bounds.height}px`,
+          }}
+        />
+      ) : null}
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 bg-black/70 backdrop-blur-[2px]"
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Preview ${preview.attachment.name}`}
+        className="relative z-10 flex max-h-[calc(100vh-64px)] flex-col overflow-hidden rounded-2xl border border-white/10 bg-background shadow-2xl"
+        style={{ maxWidth: "92vw" }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold text-foreground">
+              {preview.attachment.name}
+            </div>
+            <div className="truncate text-xs text-muted-foreground">
+              {sizeLabel || "Image attachment"}
+            </div>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            onClick={onClose}
+            aria-label="Close image preview"
+          >
+            <X className="size-3.5" />
+          </Button>
+        </div>
+
+        <div
+          className={`overflow-auto px-4 py-4 ${
+            showImage ? "bg-transparent" : "min-h-[240px] min-w-[320px] bg-muted/20"
+          }`}
+        >
+          {preview.isLoading ? (
+            <div className="flex h-full min-h-[208px] items-center justify-center gap-2 text-sm text-foreground/80">
+              <Loader2 className="size-4 animate-spin" />
+              <span>Loading preview...</span>
+            </div>
+          ) : preview.errorMessage ? (
+            <div className="flex h-full min-h-[208px] flex-col items-center justify-center gap-3 px-6 text-center">
+              <AlertTriangle className="size-5 text-warning" />
+              <p className="max-w-md text-sm text-foreground/80">
+                {preview.errorMessage}
+              </p>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center">
+              <img
+                src={preview.dataUrl}
+                alt={preview.attachment.name}
+                className="block h-auto w-auto rounded-lg ring-1 ring-black/8"
+                style={{
+                  maxWidth: "calc(92vw - 32px)",
+                  maxHeight: "calc(88vh - 128px)",
+                }}
+              />
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  return createPortal(modalContent, document.body);
 }
 
 function ModelCombobox({
@@ -9889,6 +10311,7 @@ function Composer({
   quotedSkills,
   slashCommands,
   attachments,
+  browserComments,
   isResponding,
   pausePending,
   pauseDisabled,
@@ -9922,7 +10345,9 @@ function Composer({
   onAddExplorerAttachments,
   onSelectSlashCommand,
   onRemoveQuotedSkill,
+  onClearBrowserComments,
   onRemoveAttachment,
+  onPreviewAttachment,
 }: ComposerProps) {
   const [isDragActive, setIsDragActive] = useState(false);
   const [composerActionsMenuOpen, setComposerActionsMenuOpen] = useState(false);
@@ -9998,6 +10423,11 @@ function Composer({
       ?.selectedLabel ??
     modelOptions.find((option) => option.value === selectedModel)?.label ??
     resolvedModelLabel;
+  const browserCommentCount = browserComments?.comments.length ?? 0;
+  const browserCommentPageLabel =
+    browserComments?.pageTitle.trim() ||
+    browserComments?.url.trim() ||
+    "Browser page";
   const cancelComposerFooterLayoutSync = () => {
     if (composerFooterLayoutSyncFrameRef.current === null) {
       return;
@@ -10391,10 +10821,35 @@ function Composer({
           className="hidden"
           onChange={onAttachmentInputChange}
         />
+        {browserCommentCount > 0 ? (
+          <div className="border-b border-border px-4 py-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="inline-flex shrink-0 items-center gap-2 rounded-full border border-primary/20 bg-primary/8 px-3 py-1.5 text-xs font-medium text-foreground">
+                <MessageSquare className="size-3.5 text-primary" />
+                <span>
+                  {browserCommentCount} comment
+                  {browserCommentCount === 1 ? "" : "s"}
+                </span>
+              </div>
+              <div className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                {browserCommentPageLabel}
+              </div>
+              <button
+                type="button"
+                onClick={onClearBrowserComments}
+                className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-muted-foreground transition hover:bg-accent hover:text-foreground"
+                aria-label="Clear browser comments"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+          </div>
+        ) : null}
         {attachments.length > 0 ? (
           <div className="border-b border-border px-4 py-3">
             <AttachmentList
               attachments={attachments}
+              onPreview={onPreviewAttachment}
               onRemove={onRemoveAttachment}
             />
           </div>

@@ -1,0 +1,73 @@
+---
+title: Runtime Continuity
+description: How run artifacts, persisted harness state, and session-memory snapshots let the next run resume cleanly.
+---
+
+Runtime continuity is the part of the system that lets the next run resume cheaply and coherently without replaying the full transcript.
+
+It is runtime-owned state, not durable markdown memory.
+
+## Run package and continuity artifacts
+
+Before the harness starts, the runtime compiles the workspace, projects the capability surface, assembles prompt sections and prompt layers, computes a `prompt_cache_profile`, and persists a sanitized request snapshot.
+
+The most important continuity artifacts are:
+
+- `turn_results`
+  - normalized run records with status, stop reason, token usage, prompt metadata, request fingerprint, and assistant output
+- request snapshots
+  - sanitized request-state artifacts used for replay, debugging, and cache diagnostics
+- `prompt_cache_profile`
+  - the runtime split between cacheable and volatile prompt sections for a run
+- capability manifest
+  - the reduced visible and callable surface passed to the harness for that run
+- runtime projections under `memory/workspace/<workspace-id>/runtime/`
+  - latest-turn summaries, session snapshots, blocker snapshots, recent-turn history, and permission-blocker artifacts
+- session-memory snapshots under `memory/workspace/<workspace-id>/runtime/session-memory/`
+  - compact continuity views used to restore the next run without replaying the full transcript
+- user-memory proposals in `state/runtime.db`
+  - staged strong-signal user-memory candidates that the current run can use ephemerally before acceptance
+
+## Continuity writeback
+
+The continuity path after a run is:
+
+1. The runtime persists `turn_results`.
+2. An immediate continuity writeback runs in the same post-turn flow.
+3. That writeback refreshes runtime projections under `memory/workspace/<workspace-id>/runtime/`, including `session-memory/`.
+4. The same flow then queues a background evolve job for heavier durable-memory and skill-review work.
+
+The point of this split is to keep the next run cheap to restore without waiting for heavier background extraction.
+
+## Restoration story
+
+Imagine a deploy run pauses because the agent needs approval before continuing.
+
+On the next run, `holaOS` restores continuity in a deliberate order:
+
+1. it reopens the persisted harness session state so native session continuity is available again
+2. it restores the latest session-memory snapshot so the next run can see the latest blocker, recent intent, and resume state
+3. it surfaces scratchpad metadata, with explicit scratchpad reads when the agent needs the note contents
+4. it then adds only the bounded durable memories that are relevant to the new request, such as a recurring deploy blocker or a reusable release procedure
+
+What it intentionally does not restore:
+
+- the full raw transcript
+- every prior turn in full detail
+- every durable memory file in the workspace
+- stale references as unquestioned truth
+
+That is the point of runtime continuity: resume the important state cheaply, not replay everything indiscriminately.
+
+## What lives where for continuity
+
+Use these rules of thumb when reasoning about resume state:
+
+- `state/runtime.db`
+  - execution truth, session continuity, canonical runtime profile, user-memory proposals, and memory catalog metadata
+- `memory/workspace/<workspace-id>/runtime/`
+  - volatile runtime projections for inspection and debugging
+- `memory/workspace/<workspace-id>/runtime/session-memory/`
+  - session-scoped continuity snapshots used during resume restoration
+
+At restore time, the runtime uses persisted harness session state plus the latest `session-memory` excerpt if it exists. It no longer restores from a separate compaction-boundary artifact. If a piece of information is only needed to resume the latest session, it belongs in runtime continuity rather than durable memory. Repeated blockers can begin in runtime projections first and only later be promoted into durable `knowledge/blockers/` during queued evolve.

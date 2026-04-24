@@ -1,0 +1,265 @@
+# Workspace Model
+
+Workspaces live under the runtime OS root. In desktop mode that root comes from the local host data directory. In standalone runtime deployments it defaults to `/holaboss`.
+
+<DiagramFileTree :root="{
+  name: 'os-root/',
+  accent: 'brand',
+  children: [
+    {
+      name: 'state/',
+      accent: 'brand',
+      children: [
+        { name: 'runtime-config.json', meta: 'Model providers' },
+        { name: 'runtime.db', meta: 'Sessions · turns · integrations · notifications' },
+      ],
+    },
+    {
+      name: 'workspace/',
+      accent: 'engine',
+      children: [
+        {
+          name: '.holaboss/',
+          meta: 'Shared MCP sidecar state',
+          children: [
+            { name: 'workspace-mcp-sidecar-state.json', meta: 'Sidecar registry' },
+            { name: '<server>.workspace-mcp-sidecar.stdout.log', meta: 'Sidecar stdout' },
+            { name: '<server>.workspace-mcp-sidecar.stderr.log', meta: 'Sidecar stderr' },
+          ],
+        },
+        {
+          name: '<workspace-id>/',
+          accent: 'engine',
+          children: [
+            { name: '.git/', meta: 'Local agent checkpoints' },
+            { name: 'AGENTS.md', meta: 'Standing workspace policy' },
+            { name: 'workspace.yaml', meta: 'Agent · commands · skills · apps' },
+            { name: 'ONBOARD.md', meta: 'Onboarding instruction surface' },
+            {
+              name: 'skills/',
+              meta: 'Workspace-local skills',
+              children: [
+                {
+                  name: '<skill-id>/',
+                  children: [{ name: 'SKILL.md', meta: 'Skill instructions' }],
+                },
+              ],
+            },
+            {
+              name: 'apps/',
+              meta: 'Workspace-local apps',
+              children: [
+                {
+                  name: '<app-id>/',
+                  children: [{ name: 'app.runtime.yaml', meta: 'Lifecycle + integrations' }],
+                },
+              ],
+            },
+            {
+              name: '.holaboss/',
+              meta: 'Workspace runtime state',
+              children: [
+                { name: 'workspace_id', meta: 'Identity marker' },
+                { name: 'harness-session-state.json', meta: 'Harness session mapping' },
+                {
+                  name: 'input-attachments/',
+                  meta: 'Staged input payloads',
+                  children: [{ name: '<batch-id>/*', meta: 'Attachment batch files' }],
+                },
+                {
+                  name: 'pi-agent/',
+                  meta: 'Pi harness config',
+                  children: [
+                    { name: 'auth.json', meta: 'Harness auth state' },
+                    { name: 'models.json', meta: 'Harness model config' },
+                  ],
+                },
+                { name: 'pi-sessions/...', meta: 'Persisted Pi session state' },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    {
+      name: 'memory/',
+      accent: 'context',
+      children: [
+        { name: 'MEMORY.md', meta: 'Memory system root' },
+        {
+          name: 'workspace/',
+          meta: 'Workspace-scoped memory',
+          children: [
+            {
+              name: '<workspace-id>/',
+              accent: 'context',
+              children: [
+                { name: 'MEMORY.md', meta: 'Workspace memory index' },
+                {
+                  name: 'runtime/',
+                  meta: 'Resume-only continuity',
+                  children: [
+                    { name: 'latest-turn.md', meta: 'Last-turn projection' },
+                    { name: 'session-state/', meta: 'Session state projections' },
+                    { name: 'session-memory/', meta: 'Resume-friendly snapshots' },
+                    { name: 'recent-turns/', meta: 'Recent turn snapshots' },
+                    { name: 'blockers/', meta: 'Operational blockers' },
+                    { name: 'permission-blockers/', meta: 'Permission-gated blockers' },
+                  ],
+                },
+                {
+                  name: 'knowledge/',
+                  meta: 'Durable recalled memory',
+                  children: [
+                    { name: 'facts/', meta: 'Stable workspace facts' },
+                    { name: 'procedures/', meta: 'Reusable workflows' },
+                    { name: 'blockers/', meta: 'Longer-lived blockers' },
+                    { name: 'reference/', meta: 'Reference material' },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          name: 'preference/',
+          meta: 'Durable user preferences',
+          children: [
+            { name: 'MEMORY.md', meta: 'Preference memory index' },
+            { name: '*.md', meta: 'Preference documents' },
+          ],
+        },
+        {
+          name: 'identity/',
+          meta: 'Durable user identity',
+          children: [
+            { name: 'MEMORY.md', meta: 'Identity memory index' },
+            { name: '*.md', meta: 'Identity documents' },
+          ],
+        },
+      ],
+    },
+  ],
+}" />
+
+The workspace model is split deliberately: human-authored policy, runtime contracts, execution truth, and durable memory do not live in the same place.
+
+This page explains what the workspace surfaces mean. It is not the page for runner bootstrap order, compile-stage validation, or reduced harness-request payloads. For those implementation details, continue into [Run Compilation](/build-on-holaos/runtime/run-compilation).
+
+The diagram above is the canonical filesystem layout. The sections below explain what each surface is for.
+
+## What each part means
+
+### `workspace.yaml`
+
+`workspace.yaml` is the root runtime plan for the workspace. It describes the active agent, skill ordering, workspace commands, MCP registry, and the apps installed into the workspace.
+
+For app development, two fields matter immediately:
+
+- `applications[].app_id`
+- `applications[].config_path`
+
+For workspace-level MCP, the main authored surface is `mcp_registry`:
+
+- `mcp_registry.servers.<server-id>` declares local or remote MCP servers
+- `mcp_registry.allowlist.tool_ids` optionally provides explicit `server.tool` refs for servers that should be constrained to a known subset
+- when `mcp_registry.allowlist.tool_ids` is omitted or empty, the runtime exposes all discovered tools from the enabled configured MCP servers for that run
+- when some servers have explicit tool ids and others do not, the runtime keeps the explicit subset for the referenced servers and still allows discovery for the other enabled configured servers
+- remote MCP headers and environment values may use `{env:ENV_VAR_NAME}` placeholders, but the contents must be an environment variable name, not a literal secret
+
+For remote MCP servers, `workspace.yaml` usually declares the server and policy boundary, not the full raw tool catalog. The concrete remote tool list may still be discovered at run time.
+
+For example, this is valid:
+
+```yaml
+headers:
+  CONTEXT7_API_KEY: "{env:CONTEXT7_API_KEY}"
+```
+
+and this is also valid:
+
+```yaml
+headers:
+  CONTEXT7_API_KEY: "ctx7sk-..."
+```
+
+This is invalid:
+
+```yaml
+headers:
+  CONTEXT7_API_KEY: "{env:ctx7sk-...}"
+```
+
+Those entries are how the runtime finds each app manifest under `apps/`.
+
+### `.git/`
+
+Desktop-created workspaces are initialized as local git repositories after their scaffold or template is materialized. That repository is intended for agent-owned local version control checkpoints rather than remote sync. Lower-level workspace creation does not make local git initialization a universal runtime invariant by itself.
+
+### `AGENTS.md`
+
+`AGENTS.md` is the human-authored instruction surface. Put standing workspace policy here instead of trying to encode it in runtime state.
+
+### `ONBOARD.md`
+
+`ONBOARD.md` is the onboarding instruction surface for first-run or onboarding-mode workspaces. The file lives with the workspace, while onboarding status and onboarding session state are tracked separately in runtime state.
+
+### `skills/`
+
+Workspace skills live under `skills/`. The runtime loads them from the workspace directory, and each skill directory must contain a `SKILL.md` file.
+
+### `apps/`
+
+Workspace-local apps live under `apps/<app-id>/`. Each app must provide `app.runtime.yaml`, which is the runtime contract for lifecycle and integration behavior.
+
+If you are changing app behavior, continue into [App Anatomy](/app-development/applications/app-anatomy) rather than treating this page as the full contract reference.
+
+### `.holaboss/`
+
+`<workspace-id>/.holaboss/` stores runtime-managed workspace state such as the identity marker, persisted harness session mapping, staged input attachments, and Pi harness state.
+
+`workspace/.holaboss/` is separate from the per-workspace `.holaboss/` directory. It stores shared workspace-root state for MCP sidecars and their logs.
+
+### `state/runtime.db`
+
+`state/runtime.db` is the durable runtime registry for workspaces, onboarding status/session state, sessions, bindings, queue state, turn results, compaction boundaries, request snapshots, durable memory catalog metadata, integration connections, integration bindings, output folders, app port allocation, runtime notifications, task proposals, evolve skill candidates, and memory update proposals. The `workspace_id` file exists mainly as an on-disk identity marker for workspace discovery and migration.
+
+### `memory/`
+
+`memory/` is OS-global, not part of a single workspace directory. It holds the markdown memory surfaces used by the runtime memory service.
+
+
+## What the runtime compiles per run
+
+The workspace tree is only the authored input. For each run, the runtime compiles a reduced execution package from:
+
+- `workspace.yaml`
+- `AGENTS.md`
+- workspace commands
+- installed app manifests
+- workspace-local skills
+
+Before the harness starts, the runtime then:
+
+1. projects the visible and callable capability surface for that run, including workspace commands where configured
+2. assembles prompt sections and prompt layers
+3. computes a `prompt_cache_profile`
+4. persists a sanitized request snapshot for replay and debugging
+5. passes a reduced execution package to the harness with the selected model target, composed prompt, capability manifest, and workspace checksum
+
+That split is why the filesystem contract and the runtime continuity contract need to stay separate. The workspace holds authored intent; the runtime compiles per-run execution state from it.
+
+## App manifests
+
+`app.runtime.yaml` is the app-level runtime contract. It tells the runtime how to:
+
+- install or set up the app
+- start and stop it
+- discover its MCP server
+- check its health
+- resolve app-specific ports
+- resolve integration requirements (which external services the app needs access to)
+
+The runtime does not care what framework the app uses internally. It only needs the declared contract. See the [app.runtime.yaml reference](/app-development/applications/app-runtime-yaml) for the full field guide including integration declarations.
+
+If you are changing workspace creation or reusable scaffolds instead of an installed app, continue into [Template Materialization](/templates/materialization).
