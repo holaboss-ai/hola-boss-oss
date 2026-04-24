@@ -3005,6 +3005,72 @@ export async function processClaimedInput(params: {
         });
       }
 
+      let terminalEventToRelay = persistedTerminalEvent
+        ? {
+            eventType: persistedTerminalEvent.eventType,
+            sequence: persistedTerminalEvent.sequence,
+            payload: persistedTerminalEvent.payload,
+            createdAt: persistedTerminalEvent.createdAt,
+          }
+        : deferredTerminalEvent
+          ? {
+              eventType: deferredTerminalEvent.eventType,
+              sequence: lastSequence + 1,
+              payload: deferredTerminalEvent.payload,
+              createdAt: deferredTerminalEvent.createdAt,
+            }
+          : null;
+      const assistantText = assistantParts.join("").trim();
+      const toolUsageSummary = summarizeToolCalls(
+        toolCallsById,
+        skillInvocationsById,
+        wideningAudit,
+      );
+      const checkpointHarness =
+        store.getWorkspace(record.workspaceId)?.harness ??
+        normalizeHarnessId(priorExecContext.harness) ??
+        "pi";
+      const checkpointJob = enqueueCheckpointJob({
+        store,
+        workspaceId: record.workspaceId,
+        sessionId: record.sessionId,
+        inputId: record.inputId,
+        harness: checkpointHarness,
+        harnessSessionId:
+          checkpointHarnessSessionId ||
+          (store.getBinding({
+            workspaceId: record.workspaceId,
+            sessionId: record.sessionId,
+          })?.harnessSessionId ??
+            null),
+        contextUsage,
+        wakeWorker: params.wakeDurableMemoryWorker ?? null,
+      });
+      const contextBudgetDecisions = buildContextBudgetDecisions({
+        promptCacheProfile,
+        toolReplayTrimmed,
+        checkpointQueued: Boolean(checkpointJob),
+      });
+      if (deferredTerminalEvent) {
+        deferredTerminalEvent.payload.context_budget_decisions =
+          contextBudgetDecisions;
+        lastSequence = appendNextOutputEvent({
+          store,
+          record,
+          lastSequence,
+          eventType: deferredTerminalEvent.eventType,
+          payload: deferredTerminalEvent.payload,
+          createdAt: deferredTerminalEvent.createdAt,
+        });
+        terminalEventToRelay = {
+          eventType: deferredTerminalEvent.eventType,
+          sequence: lastSequence,
+          payload: deferredTerminalEvent.payload,
+          createdAt: deferredTerminalEvent.createdAt,
+        };
+        deferredTerminalEvent = null;
+      }
+
       store.updateInput(record.inputId, {
         status:
           terminalStatus === "ERROR"
@@ -3068,52 +3134,6 @@ export async function processClaimedInput(params: {
         }
       }
 
-      const assistantText = assistantParts.join("").trim();
-      const toolUsageSummary = summarizeToolCalls(
-        toolCallsById,
-        skillInvocationsById,
-        wideningAudit,
-      );
-      const checkpointHarness =
-        store.getWorkspace(record.workspaceId)?.harness ??
-        normalizeHarnessId(priorExecContext.harness) ??
-        "pi";
-      const checkpointJob = enqueueCheckpointJob({
-        store,
-        workspaceId: record.workspaceId,
-        sessionId: record.sessionId,
-        inputId: record.inputId,
-        harness: checkpointHarness,
-        harnessSessionId:
-          checkpointHarnessSessionId ||
-          (store.getBinding({
-            workspaceId: record.workspaceId,
-            sessionId: record.sessionId,
-          })?.harnessSessionId ??
-            null),
-        contextUsage,
-        wakeWorker: params.wakeDurableMemoryWorker ?? null,
-      });
-      const contextBudgetDecisions = buildContextBudgetDecisions({
-        promptCacheProfile,
-        toolReplayTrimmed,
-        checkpointQueued: Boolean(checkpointJob),
-      });
-      const terminalEventToRelay = persistedTerminalEvent
-        ? {
-            eventType: persistedTerminalEvent.eventType,
-            sequence: persistedTerminalEvent.sequence,
-            payload: persistedTerminalEvent.payload,
-            createdAt: persistedTerminalEvent.createdAt,
-          }
-        : deferredTerminalEvent
-          ? {
-              eventType: deferredTerminalEvent.eventType,
-              sequence: lastSequence + 1,
-              payload: deferredTerminalEvent.payload,
-              createdAt: deferredTerminalEvent.createdAt,
-            }
-          : null;
       const hasPersistedOutputs =
         store.listOutputs({
           workspaceId: record.workspaceId,
@@ -3216,19 +3236,6 @@ export async function processClaimedInput(params: {
           preferredSequence:
             Math.max(terminalEventToRelay.sequence, 1) + (runStatePayload ? 1 : 0),
         });
-      }
-      if (deferredTerminalEvent) {
-        deferredTerminalEvent.payload.context_budget_decisions =
-          contextBudgetDecisions;
-        lastSequence = appendNextOutputEvent({
-          store,
-          record,
-          lastSequence,
-          eventType: deferredTerminalEvent.eventType,
-          payload: deferredTerminalEvent.payload,
-          createdAt: deferredTerminalEvent.createdAt,
-        });
-        deferredTerminalEvent = null;
       }
       await (params.runEvolveTasksFn ?? runEvolveTasks)({
         store,

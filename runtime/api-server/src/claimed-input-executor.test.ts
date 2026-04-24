@@ -265,6 +265,22 @@ test("claimed input persists runner events, assistant text, and idle state on su
     claimedBy: "sandbox-agent-ts-worker",
     leaseSeconds: 300,
   });
+  let terminalPersistedBeforeDone = false;
+  const originalUpdateInput = store.updateInput.bind(store);
+  store.updateInput = ((
+    ...args: Parameters<typeof store.updateInput>
+  ): ReturnType<typeof store.updateInput> => {
+    const [inputId, fields] = args;
+    if (inputId === queued.inputId && fields.status === "DONE") {
+      terminalPersistedBeforeDone = store
+        .listOutputEvents({
+          sessionId: "session-main",
+          inputId: queued.inputId,
+        })
+        .some((event) => event.eventType === "run_completed");
+    }
+    return originalUpdateInput(...args);
+  }) as typeof store.updateInput;
 
   await processClaimedInput({
     store,
@@ -304,6 +320,7 @@ test("claimed input persists runner events, assistant text, and idle state on su
   assert.equal(runtimeState.currentInputId, null);
   assert.equal(runtimeState.currentWorkerId, null);
   assert.equal(runtimeState.lastError, null);
+  assert.equal(terminalPersistedBeforeDone, true);
   assert.deepEqual(
     events.map((event) => event.eventType),
     [

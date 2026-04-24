@@ -5090,11 +5090,6 @@ export function ChatPane({
         if (cancelled) {
           return;
         }
-        if (activeStreamIdRef.current || pendingInputIdRef.current) {
-          // Stream remains the source of truth while an output stream is open.
-          // Polling is only a fallback when the stream is unavailable and no stream attach is pending.
-          return;
-        }
         const currentSessionId = activeSessionIdRef.current;
         const currentState = response.items.find(
           (item) => item.session_id === currentSessionId,
@@ -5131,9 +5126,16 @@ export function ChatPane({
             committedFailureMessage && shouldPersistFailureText ? "" : detail,
           );
         } else {
-          resetLiveTurn();
+          finalizeLiveTraceSteps(
+            status === "WAITING_USER" || status === "PAUSED"
+              ? "waiting"
+              : "completed",
+          );
+          commitLiveAssistantMessage();
         }
+        activeAssistantMessageIdRef.current = null;
         pendingInputIdRef.current = null;
+        scheduleConversationRefresh(currentSessionId, selectedWorkspaceId);
       } catch {
         // Ignore poll failures; stream events remain the primary signal.
       } finally {

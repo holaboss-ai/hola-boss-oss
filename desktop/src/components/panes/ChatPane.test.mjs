@@ -482,6 +482,24 @@ test("chat pane keeps a persistent working line visible once the live run has st
   );
 });
 
+test("chat pane polling can clear a stale stream after runtime reaches terminal state", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /"runtime_poll_terminal_state"/);
+  assert.match(
+    source,
+    /const activeStreamId = activeStreamIdRef\.current;[\s\S]*closeStreamWithReason\([\s\S]*activeStreamId,[\s\S]*"runtime_poll_terminal_state"/,
+  );
+  assert.match(
+    source,
+    /status === "WAITING_USER" \|\| status === "PAUSED"[\s\S]*commitLiveAssistantMessage\(\);[\s\S]*scheduleConversationRefresh\(currentSessionId, selectedWorkspaceId\);/,
+  );
+  assert.doesNotMatch(
+    source,
+    /if \(activeStreamIdRef\.current \|\| pendingInputIdRef\.current\) \{[\s\S]*Stream remains the source of truth while an output stream is open/,
+  );
+});
+
 test("chat pane renders an execution timeline that interleaves thinking segments with trace entries", async () => {
   const source = await readFile(sourcePath, "utf8");
 
