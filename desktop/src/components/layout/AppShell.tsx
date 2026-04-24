@@ -42,6 +42,10 @@ import { OnboardingPane } from "@/components/panes/OnboardingPane";
 import { SpaceApplicationsExplorerPane } from "@/components/panes/SpaceApplicationsExplorerPane";
 import { SpaceBrowserDisplayPane } from "@/components/panes/SpaceBrowserDisplayPane";
 import { SpaceBrowserExplorerPane } from "@/components/panes/SpaceBrowserExplorerPane";
+import {
+  type BrowserChatCommentDraftItem,
+  type BrowserChatCommentDraftPayload,
+} from "@/components/panes/useBrowserCaptureActions";
 import { PublishDialog } from "@/components/publish/PublishDialog";
 import { Button } from "@/components/ui/button";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
@@ -254,6 +258,15 @@ type ChatComposerPrefillRequest = {
 type ChatExplorerAttachmentRequest = {
   files: ExplorerAttachmentDragPayload[];
   requestKey: number;
+};
+
+type ChatBrowserCommentRequest = {
+  tabId: string;
+  pageTitle: string;
+  url: string;
+  comments: BrowserChatCommentDraftItem[];
+  requestKey: number;
+  mode?: "replace" | "append";
 };
 
 type WorkspaceOutputNavigationTarget =
@@ -1314,6 +1327,8 @@ function AppShellContent() {
     useState<ChatComposerPrefillRequest | null>(null);
   const [chatExplorerAttachmentRequest, setChatExplorerAttachmentRequest] =
     useState<ChatExplorerAttachmentRequest | null>(null);
+  const [chatBrowserCommentRequest, setChatBrowserCommentRequest] =
+    useState<ChatBrowserCommentRequest | null>(null);
   const [fileExplorerFocusRequest, setFileExplorerFocusRequest] =
     useState<FileExplorerFocusRequest | null>(null);
   const [spaceExplorerMode, setSpaceExplorerMode] =
@@ -1372,6 +1387,7 @@ function AppShellContent() {
   const chatSessionOpenRequestKeyRef = useRef(0);
   const chatComposerPrefillRequestKeyRef = useRef(0);
   const chatExplorerAttachmentRequestKeyRef = useRef(0);
+  const chatBrowserAttachmentRequestKeyRef = useRef(0);
   const [
     isUpdatingProactiveTaskProposalsEnabled,
     setIsUpdatingProactiveTaskProposalsEnabled,
@@ -2399,6 +2415,7 @@ function AppShellContent() {
 
   useEffect(() => {
     setChatSessionJumpRequest(null);
+    setChatBrowserCommentRequest(null);
   }, [selectedWorkspaceId]);
 
   useEffect(() => {
@@ -3023,6 +3040,11 @@ function AppShellContent() {
     return chatExplorerAttachmentRequestKeyRef.current;
   }, []);
 
+  const nextChatBrowserAttachmentRequestKey = useCallback(() => {
+    chatBrowserAttachmentRequestKeyRef.current += 1;
+    return chatBrowserAttachmentRequestKeyRef.current;
+  }, []);
+
   const handleCreateScheduleInChat = useCallback(
     (workspaceId?: string | null) => {
       const normalizedWorkspaceId =
@@ -3232,6 +3254,39 @@ function AppShellContent() {
       );
     },
     [],
+  );
+
+  const handleChatBrowserCommentRequestConsumed = useCallback(
+    (requestKey: number) => {
+      setChatBrowserCommentRequest((current) =>
+        current?.requestKey === requestKey ? null : current,
+      );
+    },
+    [],
+  );
+
+  const handleAttachBrowserCommentsToChat = useCallback(
+    (payload: BrowserChatCommentDraftPayload) => {
+      if (payload.comments.length === 0) {
+        return;
+      }
+      setActiveShellView("space");
+      setSpaceVisibility((previous) => ({
+        ...previous,
+        agent: true,
+      }));
+      setAgentView({ type: "chat" });
+      setChatBrowserCommentRequest({
+        tabId: payload.tabId,
+        pageTitle: payload.pageTitle,
+        url: payload.url,
+        comments: payload.comments,
+        requestKey: nextChatBrowserAttachmentRequestKey(),
+        mode: payload.mode ?? "replace",
+      });
+      setChatFocusRequestKey((current) => current + 1);
+    },
+    [nextChatBrowserAttachmentRequestKey],
   );
 
   const handleChatSessionOpenRequestConsumed = useCallback(
@@ -3948,6 +4003,10 @@ function AppShellContent() {
           onExplorerAttachmentRequestConsumed={
             handleChatExplorerAttachmentRequestConsumed
           }
+          browserCommentRequest={chatBrowserCommentRequest}
+          onBrowserCommentRequestConsumed={
+            handleChatBrowserCommentRequestConsumed
+          }
           onActiveSessionIdChange={setActiveChatSessionId}
           browserJumpRequest={activeChatBrowserJumpRequest}
           onBrowserJumpRequestConsumed={consumeChatBrowserJumpRequest}
@@ -4065,6 +4124,7 @@ function AppShellContent() {
           suspendNativeView={shouldSuspendBrowserNativeView}
           layoutSyncKey={spaceDisplayLayoutSyncKey}
           jumpPulseKey={browserDisplayFlashNonce}
+          onAttachCommentsToChat={handleAttachBrowserCommentsToChat}
           embedded
         />
       );
@@ -4118,6 +4178,7 @@ function AppShellContent() {
     activeApp,
     activeAppId,
     browserDisplayFlashNonce,
+    handleAttachBrowserCommentsToChat,
     handleMissingInternalResource,
     handleOpenLinkInNewAppBrowserTab,
     hasSelectedWorkspace,
@@ -4160,6 +4221,7 @@ function AppShellContent() {
             <BrowserPane
               suspendNativeView={shouldSuspendBrowserNativeView}
               layoutSyncKey={`${visibleSpacePaneIds.join("|")}:${filesPaneWidth}:${browserPaneWidth}`}
+              onAttachCommentsToChat={handleAttachBrowserCommentsToChat}
             />
           ),
       })),
@@ -4169,6 +4231,7 @@ function AppShellContent() {
       fileExplorerFocusRequest,
       filesPaneWidth,
       flexSpacePaneId,
+      handleAttachBrowserCommentsToChat,
       handleDeleteWorkspaceEntry,
       handleReferenceWorkspacePathInChat,
       handleOpenLinkInNewAppBrowserTab,

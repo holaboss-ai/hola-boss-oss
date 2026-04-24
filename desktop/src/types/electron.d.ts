@@ -189,6 +189,35 @@ declare global {
     lastVisitedAt: string;
   }
 
+  interface BrowserClipboardScreenshotPayload {
+    tabId: string;
+    pageTitle: string;
+    url: string;
+    width: number;
+    height: number;
+    copied: boolean;
+  }
+
+  interface BrowserCommentCaptureAttachmentPayload {
+    id: string;
+    text: string;
+    elementLabel: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    mimeType: string;
+    base64: string;
+  }
+
+  interface BrowserCommentCapturePayload {
+    tabId: string;
+    pageTitle: string;
+    url: string;
+    comments: BrowserCommentCaptureAttachmentPayload[];
+    canceled: boolean;
+  }
+
   interface AddressSuggestionPayload {
     id: string;
     url: string;
@@ -1567,6 +1596,8 @@ declare global {
       forward: () => Promise<BrowserTabListPayload>;
       reload: () => Promise<BrowserTabListPayload>;
       stopLoading: () => Promise<BrowserTabListPayload>;
+      captureScreenshotToClipboard: () => Promise<BrowserClipboardScreenshotPayload>;
+      captureCommentsForChat: () => Promise<BrowserCommentCapturePayload>;
       newTab: (targetUrl?: string) => Promise<BrowserTabListPayload>;
       setActiveTab: (tabId: string) => Promise<BrowserTabListPayload>;
       closeTab: (tabId: string) => Promise<BrowserTabListPayload>;
