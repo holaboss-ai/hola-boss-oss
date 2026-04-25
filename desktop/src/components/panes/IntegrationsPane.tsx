@@ -183,7 +183,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
   const [connectingProviderId, setConnectingProviderId] = useState<
     string | null
   >(null);
-  const [disconnectingProviderId, setDisconnectingProviderId] = useState<
+  const [disconnectingConnectionId, setDisconnectingConnectionId] = useState<
     string | null
   >(null);
   const [statusMessage, setStatusMessage] = useState("");
@@ -216,20 +216,29 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     void loadData();
   }, [isSignedIn, loadData]);
 
-  // Map providerId → connection for disconnect support
-  const connectionByProvider = useMemo(() => {
-    const map = new Map<string, IntegrationConnectionPayload>();
+  // Map providerId → all active connections. A user can have multiple accounts
+  // per provider (e.g., personal + work Twitter); each connection is its own
+  // row in the Connected section, each with its own delete button.
+  const connectionsByProviderId = useMemo(() => {
+    const map = new Map<string, IntegrationConnectionPayload[]>();
     for (const conn of connections) {
-      if (normalizedText(conn.status).toLowerCase() === "active") {
-        map.set(normalizedText(conn.provider_id).toLowerCase(), conn);
+      if (normalizedText(conn.status).toLowerCase() !== "active") {
+        continue;
+      }
+      const key = normalizedText(conn.provider_id).toLowerCase();
+      const list = map.get(key);
+      if (list) {
+        list.push(conn);
+      } else {
+        map.set(key, [conn]);
       }
     }
     return map;
   }, [connections]);
 
   const connectedProviderIds = useMemo(
-    () => new Set(connectionByProvider.keys()),
-    [connectionByProvider],
+    () => new Set(connectionsByProviderId.keys()),
+    [connectionsByProviderId],
   );
 
   const categories = useMemo(() => {
@@ -342,21 +351,18 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     }
   }
 
-  async function handleDisconnect(integration: IntegrationCard) {
-    const conn = connectionByProvider.get(integration.providerId);
-    if (!conn) return;
-
-    setDisconnectingProviderId(integration.providerId);
+  async function handleDisconnect(connectionId: string) {
+    setDisconnectingConnectionId(connectionId);
     setStatusMessage("");
     try {
       await window.electronAPI.workspace.deleteIntegrationConnection(
-        conn.connection_id,
+        connectionId,
       );
       void loadData();
     } catch (error) {
       setStatusMessage(normalizeErrorMessage(error));
     } finally {
-      setDisconnectingProviderId(null);
+      setDisconnectingConnectionId(null);
     }
   }
 
@@ -508,27 +514,33 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
         </select>
       </div>
 
-      {/* Connected */}
+      {/* Connected — one card per provider, multiple account rows inside */}
       {connectedIntegrations.length > 0 ? (
         <div className="mt-6">
           <h2 className="text-xs font-medium uppercase text-muted-foreground">
             Connected
           </h2>
-          <div className="mt-3 grid grid-cols-2 gap-2">
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             {connectedIntegrations.map((integration) => (
-              <IntegrationRow
-                key={integration.slug}
-                integration={integration}
-                connected
-                canConnect={false}
-                connectDisabledReason=""
-                onConnect={() => void handleConnect(integration)}
-                onDisconnect={() => void handleDisconnect(integration)}
-                connecting={connectingProviderId === integration.providerId}
-                disconnecting={
-                  disconnectingProviderId === integration.providerId
+              <ConnectedProviderCard
+                canConnect={isSignedIn && integration.supportsManaged}
+                compact={false}
+                connectDisabledReason={
+                  integration.supportsManaged
+                    ? "Sign in first to connect another account."
+                    : "Managed sign-in is not supported for this provider."
                 }
-                actionMode="connected"
+                connecting={connectingProviderId === integration.providerId}
+                connections={
+                  connectionsByProviderId.get(integration.providerId) ?? []
+                }
+                disconnectingConnectionId={disconnectingConnectionId}
+                integration={integration}
+                key={integration.slug}
+                onConnect={() => void handleConnect(integration)}
+                onDisconnect={(connectionId) =>
+                  void handleDisconnect(connectionId)
+                }
               />
             ))}
           </div>
@@ -677,7 +689,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
           <p className="-mt-4 text-sm text-muted-foreground">{statusMessage}</p>
         ) : null}
 
-        {/* Connected section */}
+        {/* Connected section — one card per provider, multiple account rows */}
         {connectedIntegrations.length > 0 ? (
           <section>
             <div className="text-base font-medium text-foreground">
@@ -685,19 +697,27 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
             </div>
             <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
               {connectedIntegrations.map((integration) => (
-                <IntegrationEmbeddedCard
-                  key={integration.slug}
-                  integration={integration}
-                  connected
-                  canConnect={false}
-                  connectDisabledReason=""
-                  onConnect={() => void handleConnect(integration)}
-                  onDisconnect={() => void handleDisconnect(integration)}
-                  connecting={connectingProviderId === integration.providerId}
-                  disconnecting={
-                    disconnectingProviderId === integration.providerId
+                <ConnectedProviderCard
+                  canConnect={isSignedIn && integration.supportsManaged}
+                  compact
+                  connectDisabledReason={
+                    integration.supportsManaged
+                      ? "Sign in first to connect another account."
+                      : "Managed sign-in is not supported for this provider."
                   }
-                  actionMode="connected"
+                  connecting={
+                    connectingProviderId === integration.providerId
+                  }
+                  connections={
+                    connectionsByProviderId.get(integration.providerId) ?? []
+                  }
+                  disconnectingConnectionId={disconnectingConnectionId}
+                  integration={integration}
+                  key={integration.slug}
+                  onConnect={() => void handleConnect(integration)}
+                  onDisconnect={(connectionId) =>
+                    void handleDisconnect(connectionId)
+                  }
                 />
               ))}
             </div>
@@ -978,6 +998,131 @@ function IntegrationEmbeddedCard({
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function ConnectedProviderCard({
+  integration,
+  connections,
+  canConnect,
+  connectDisabledReason,
+  onConnect,
+  onDisconnect,
+  connecting,
+  disconnectingConnectionId,
+  compact,
+}: {
+  integration: IntegrationCard;
+  connections: IntegrationConnectionPayload[];
+  canConnect: boolean;
+  connectDisabledReason: string;
+  onConnect: () => void;
+  onDisconnect: (connectionId: string) => void;
+  connecting: boolean;
+  disconnectingConnectionId: string | null;
+  compact: boolean;
+}) {
+  const containerClass = compact
+    ? "flex flex-col gap-2.5 rounded-xl bg-card p-3 ring-1 ring-border"
+    : "flex flex-col gap-2.5 rounded-xl border border-border p-3";
+  const accountCount = connections.length;
+
+  return (
+    <div className={containerClass}>
+      <div className="flex items-center gap-3">
+        <div className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-background">
+          {integration.logo ? (
+            <img
+              alt=""
+              className="size-full object-cover"
+              src={integration.logo}
+            />
+          ) : (
+            <span className="text-sm font-semibold text-muted-foreground">
+              {integration.name.charAt(0)}
+            </span>
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium text-foreground">
+            {integration.name}
+          </div>
+          <div className="truncate text-xs text-muted-foreground">
+            {accountCount === 1 ? "1 account" : `${accountCount} accounts`}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-1">
+        {connections.map((conn) => {
+          const primaryLabel =
+            normalizedText(conn.account_label) ||
+            normalizedText(conn.account_external_id) ||
+            conn.connection_id;
+          const subLabel =
+            normalizedText(conn.account_label) &&
+            normalizedText(conn.account_external_id) &&
+            normalizedText(conn.account_external_id) !==
+              normalizedText(conn.account_label)
+              ? conn.account_external_id
+              : null;
+          const disconnecting =
+            disconnectingConnectionId === conn.connection_id;
+          return (
+            <div
+              className="flex items-center gap-2 rounded-md border border-border/60 bg-muted px-2.5 py-1.5"
+              key={conn.connection_id}
+            >
+              <span className="size-1.5 shrink-0 rounded-full bg-success" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-xs font-medium text-foreground">
+                  {primaryLabel}
+                </div>
+                {subLabel ? (
+                  <div className="truncate text-[10px] text-muted-foreground">
+                    {subLabel}
+                  </div>
+                ) : null}
+              </div>
+              <Button
+                aria-label={`Disconnect ${primaryLabel}`}
+                className="text-muted-foreground hover:text-destructive"
+                disabled={disconnecting}
+                onClick={() => onDisconnect(conn.connection_id)}
+                size="icon-xs"
+                variant="ghost"
+                type="button"
+              >
+                {disconnecting ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <Unplug className="size-3" />
+                )}
+              </Button>
+            </div>
+          );
+        })}
+      </div>
+
+      <Button
+        className="w-full justify-center"
+        disabled={connecting || !canConnect}
+        onClick={onConnect}
+        size="sm"
+        title={canConnect ? `Connect another ${integration.name}` : connectDisabledReason}
+        type="button"
+        variant="outline"
+      >
+        {connecting ? (
+          <Loader2 className="size-3.5 animate-spin" />
+        ) : (
+          <Plus className="size-3.5" />
+        )}
+        {accountCount === 0
+          ? `Connect ${integration.name}`
+          : `Connect another ${integration.name} account`}
+      </Button>
     </div>
   );
 }
