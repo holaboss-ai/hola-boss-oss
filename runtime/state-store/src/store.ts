@@ -5260,6 +5260,7 @@ export class RuntimeStateStore {
     this.migrateRuntimeNotificationPriority(db);
     this.migrateCronjobInstructions(db);
     this.migrateAppBuildRestartAttempts(db);
+    this.migrateRevertIntegrationConnectionsWorkspace(db);
   }
 
   private ensureSessionRuntimeStateTableSchema(db: Database.Database): void {
@@ -5354,6 +5355,39 @@ export class RuntimeStateStore {
     if (!columns.has("restart_attempts")) {
       db.exec("ALTER TABLE app_builds ADD COLUMN restart_attempts INTEGER NOT NULL DEFAULT 0;");
     }
+  }
+
+  // Connections are user-global; per-workspace scoping lives in
+  // integration_bindings. The short-lived feat/composio-workspace-scoped-accounts
+  // branch added a workspace_id column to integration_connections that conflicts
+  // with the "one account → many workspaces" model. This migration removes it
+  // for any DB that still has the column, materializing each row's prior intent
+  // as a default workspace binding so we don't lose the user's setup.
+  private migrateRevertIntegrationConnectionsWorkspace(db: Database.Database): void {
+    const columns = new Set<string>(
+      (db.prepare("PRAGMA table_info(integration_connections)").all() as Array<{ name: string }>).map((row) => row.name)
+    );
+    if (!columns.has("workspace_id")) {
+      return;
+    }
+
+    const rows = db
+      .prepare(
+        "SELECT connection_id, provider_id, workspace_id FROM integration_connections WHERE workspace_id IS NOT NULL AND trim(workspace_id) != ''"
+      )
+      .all() as Array<{ connection_id: string; provider_id: string; workspace_id: string }>;
+    if (rows.length > 0) {
+      const insertBinding = db.prepare(
+        "INSERT OR IGNORE INTO integration_bindings (binding_id, workspace_id, target_type, target_id, integration_key, connection_id, is_default, created_at, updated_at) VALUES (?, ?, 'workspace', 'default', ?, ?, 1, ?, ?)"
+      );
+      const now = utcNowIso();
+      for (const row of rows) {
+        insertBinding.run(randomUUID(), row.workspace_id, row.provider_id, row.connection_id, now, now);
+      }
+    }
+
+    db.exec("DROP INDEX IF EXISTS idx_integration_connections_workspace_provider;");
+    db.exec("ALTER TABLE integration_connections DROP COLUMN workspace_id;");
   }
 
   private migrateLegacySessionArtifactsToOutputs(db: Database.Database): void {

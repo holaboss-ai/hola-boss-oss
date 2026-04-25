@@ -2436,3 +2436,116 @@ test("app_catalog composite PK allows same appId in both sources", () => {
 
   store.close();
 });
+
+test("migrateRevertIntegrationConnectionsWorkspace materializes legacy workspace_id rows into bindings then drops the column", () => {
+  const root = makeTempDir("hb-state-store-revert-conn-ws-");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceRoot = path.join(root, "workspace");
+
+  // Reproduce the on-disk shape from the feat/composio-workspace-scoped-accounts
+  // branch: integration_connections has a workspace_id column with data, and
+  // the leftover index pointing at it.
+  const legacy = new Database(dbPath);
+  legacy.exec(`
+    CREATE TABLE integration_connections (
+      connection_id TEXT PRIMARY KEY,
+      provider_id TEXT NOT NULL,
+      owner_user_id TEXT NOT NULL,
+      workspace_id TEXT,
+      account_label TEXT NOT NULL,
+      account_external_id TEXT,
+      auth_mode TEXT NOT NULL,
+      granted_scopes TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL,
+      secret_ref TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_integration_connections_workspace_provider
+      ON integration_connections (workspace_id, provider_id, updated_at DESC, created_at DESC);
+    CREATE TABLE integration_bindings (
+      binding_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      target_type TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      integration_key TEXT NOT NULL,
+      connection_id TEXT NOT NULL,
+      is_default INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (workspace_id, target_type, target_id, integration_key),
+      FOREIGN KEY (connection_id) REFERENCES integration_connections(connection_id) ON DELETE RESTRICT
+    );
+  `);
+  const insertConn = legacy.prepare(
+    "INSERT INTO integration_connections (connection_id, provider_id, owner_user_id, workspace_id, account_label, account_external_id, auth_mode, granted_scopes, status, secret_ref, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  );
+  // (a) bound to ws-A, no pre-existing binding → migration creates one
+  insertConn.run("conn-needs-binding", "google", "user-1", "ws-A", "josh@personal.com", null, "oauth_app", "[]", "active", null, "2024-01-01T00:00:00.000Z", "2024-01-01T00:00:00.000Z");
+  // (b) bound to ws-B, but a workspace-default binding already exists → migration must not duplicate
+  insertConn.run("conn-already-bound", "github", "user-1", "ws-B", "joshwork", null, "oauth_app", "[]", "active", null, "2024-01-01T00:00:00.000Z", "2024-01-01T00:00:00.000Z");
+  legacy
+    .prepare(
+      "INSERT INTO integration_bindings (binding_id, workspace_id, target_type, target_id, integration_key, connection_id, is_default, created_at, updated_at) VALUES (?, 'ws-B', 'workspace', 'default', 'github', 'conn-already-bound', 1, '2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.000Z')"
+    )
+    .run("pre-existing-binding");
+  // (c) workspace_id is NULL → migration leaves it alone (no binding needed)
+  insertConn.run("conn-already-global", "reddit", "user-1", null, "rd-acct", null, "manual_token", "[]", "active", null, "2024-01-01T00:00:00.000Z", "2024-01-01T00:00:00.000Z");
+  legacy.close();
+
+  const reopened = new RuntimeStateStore({ dbPath, workspaceRoot });
+
+  // Column gone
+  const remaining = reopened.listIntegrationConnections().map((r) => r.connectionId).sort();
+  assert.deepEqual(remaining, ["conn-already-bound", "conn-already-global", "conn-needs-binding"]);
+  for (const id of remaining) {
+    const conn = reopened.getIntegrationConnection(id);
+    assert.equal(conn !== null, true);
+    // workspaceId is no longer on the record type
+    assert.equal((conn as unknown as { workspaceId?: string }).workspaceId, undefined);
+  }
+
+  // (a) got a fresh default binding for ws-A
+  const bindingsA = reopened.listIntegrationBindings({ workspaceId: "ws-A" });
+  assert.equal(bindingsA.length, 1);
+  assert.equal(bindingsA[0].connectionId, "conn-needs-binding");
+  assert.equal(bindingsA[0].integrationKey, "google");
+  assert.equal(bindingsA[0].isDefault, true);
+
+  // (b) pre-existing binding preserved, no duplicate
+  const bindingsB = reopened.listIntegrationBindings({ workspaceId: "ws-B" });
+  assert.equal(bindingsB.length, 1);
+  assert.equal(bindingsB[0].bindingId, "pre-existing-binding");
+
+  // Verify the column really is gone at the SQL level
+  reopened.close();
+  const peek = new Database(dbPath, { readonly: true });
+  const cols = (peek.prepare("PRAGMA table_info(integration_connections)").all() as Array<{ name: string }>).map(
+    (r) => r.name
+  );
+  assert.equal(cols.includes("workspace_id"), false, "workspace_id column should be dropped");
+  peek.close();
+});
+
+test("migrateRevertIntegrationConnectionsWorkspace is a no-op on a fresh DB", () => {
+  const root = makeTempDir("hb-state-store-revert-conn-fresh-");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceRoot = path.join(root, "workspace");
+
+  // Fresh boot — schema starts without workspace_id, migration must not error.
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+  void store.supportsVectorIndex();
+  store.close();
+
+  // Reopen — migration runs again on the existing schema, must still no-op.
+  const reopened = new RuntimeStateStore({ dbPath, workspaceRoot });
+  void reopened.supportsVectorIndex();
+  reopened.close();
+
+  const peek = new Database(dbPath, { readonly: true });
+  const cols = (peek.prepare("PRAGMA table_info(integration_connections)").all() as Array<{ name: string }>).map(
+    (r) => r.name
+  );
+  assert.equal(cols.includes("workspace_id"), false);
+  peek.close();
+});
