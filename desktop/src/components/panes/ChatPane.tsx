@@ -4337,7 +4337,7 @@ export function ChatPane({
       return;
     }
 
-    const delays = [150, 500];
+    const delays = [150, 500, 1_500, 3_000];
     for (const delayMs of delays) {
       window.setTimeout(() => {
         if (
@@ -5459,33 +5459,6 @@ export function ChatPane({
 
         if (payload.type === "done") {
           if (!currentStreamId || payload.streamId !== currentStreamId) {
-            if (hasPendingStreamAttach) {
-              activeStreamIdRef.current = payload.streamId;
-              appendStreamTelemetry({
-                streamId: payload.streamId,
-                transportType: payload.type,
-                eventName,
-                eventType,
-                inputId: eventInputId,
-                sessionId: eventSessionId,
-                action: "adopt_stream_for_done",
-                detail: "pending_attach=true",
-              });
-            } else {
-              appendStreamTelemetry({
-                streamId: payload.streamId,
-                transportType: payload.type,
-                eventName,
-                eventType,
-                inputId: eventInputId,
-                sessionId: eventSessionId,
-                action: "drop_done_unmatched_stream",
-                detail: "no pending attach",
-              });
-              return;
-            }
-          }
-          if (activeStreamIdRef.current !== payload.streamId) {
             appendStreamTelemetry({
               streamId: payload.streamId,
               transportType: payload.type,
@@ -5493,11 +5466,12 @@ export function ChatPane({
               eventType,
               inputId: eventInputId,
               sessionId: eventSessionId,
-              action: "drop_done_stream_mismatch",
-              detail: `active_now=${activeStreamIdRef.current || "-"}`,
+              action: "drop_done_unmatched_stream",
+              detail: `active=${currentStreamId || "-"} pending=${pendingInputId || "-"}`,
             });
             return;
           }
+          const refreshSessionId = activeSessionIdRef.current;
           setIsResponding(false);
           activeAssistantMessageIdRef.current = null;
           activeStreamIdRef.current = null;
@@ -5512,6 +5486,9 @@ export function ChatPane({
             action: "applied_done",
             detail: "stream done",
           });
+          if (refreshSessionId && selectedWorkspaceId) {
+            scheduleConversationRefresh(refreshSessionId, selectedWorkspaceId);
+          }
           return;
         }
 
@@ -6112,26 +6089,6 @@ export function ChatPane({
         setIsResponding(true);
         setLiveAgentStatus("Thinking");
         activeAssistantMessageIdRef.current = null;
-        pendingInputIdRef.current = STREAM_ATTACH_PENDING;
-
-        const preOpenedStream =
-          await window.electronAPI.workspace.openSessionOutputStream({
-            sessionId: targetSessionId,
-            workspaceId: selectedWorkspace.id,
-            includeHistory: false,
-            stopOnTerminal: true,
-          });
-        activeStreamIdRef.current = preOpenedStream.streamId;
-        appendStreamTelemetry({
-          streamId: preOpenedStream.streamId,
-          transportType: "client",
-          eventName: "openSessionOutputStream",
-          eventType: "stream_open_prequeue",
-          inputId: "",
-          sessionId: targetSessionId,
-          action: "stream_requested_prequeue",
-          detail: "session tail stream opened before queue",
-        });
       }
 
       const queued = await window.electronAPI.workspace.queueSessionInput({
@@ -6159,6 +6116,30 @@ export function ChatPane({
       });
       if (!queueOntoActiveRun) {
         pendingInputIdRef.current = queued.input_id;
+        const opened = await window.electronAPI.workspace
+          .openSessionOutputStream({
+            sessionId: queued.session_id,
+            workspaceId: selectedWorkspace.id,
+            inputId: queued.input_id,
+            includeHistory: true,
+            stopOnTerminal: true,
+          })
+          .catch((error) => {
+            pendingInputIdRef.current = null;
+            setIsResponding(false);
+            throw error;
+          });
+        activeStreamIdRef.current = opened.streamId;
+        appendStreamTelemetry({
+          streamId: opened.streamId,
+          transportType: "client",
+          eventName: "openSessionOutputStream",
+          eventType: "stream_open_postqueue",
+          inputId: queued.input_id,
+          sessionId: queued.session_id,
+          action: "stream_requested_postqueue",
+          detail: "opened input-specific stream after queue response",
+        });
       } else {
         setQueuedSessionInputs((current) => [
           ...current,
