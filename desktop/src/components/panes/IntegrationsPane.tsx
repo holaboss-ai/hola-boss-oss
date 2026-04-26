@@ -1054,7 +1054,8 @@ function IntegrationEmbeddedCard({
 
 function accountDisplayLabel(
   conn: IntegrationConnectionPayload,
-  meta: ComposioAccountStatus | undefined
+  meta: ComposioAccountStatus | undefined,
+  index: number
 ): string {
   const handle = meta?.handle?.trim();
   if (handle) {
@@ -1069,14 +1070,13 @@ function accountDisplayLabel(
     return displayName;
   }
   const label = normalizedText(conn.account_label);
-  if (label && !/\(managed\)/i.test(label)) {
+  // Skip the auto-generated "<provider> (Managed)" label and any raw
+  // Composio connected_account_id (always prefixed with "ca_") — those
+  // tell the user nothing useful. Fall through to a stable index label.
+  if (label && !/\(managed\)/i.test(label) && !label.startsWith("ca_")) {
     return label;
   }
-  const externalId = normalizedText(conn.account_external_id);
-  if (externalId) {
-    return externalId;
-  }
-  return conn.connection_id;
+  return `Account ${index + 1}`;
 }
 
 function ConnectedProviderCard({
@@ -1148,10 +1148,9 @@ function ConnectedProviderCard({
       </div>
 
       <div className="flex flex-col">
-        {connections.map((conn) => {
+        {connections.map((conn, index) => {
           const meta = metadata.get(conn.connection_id);
-          const label = accountDisplayLabel(conn, meta);
-          const avatarUrl = meta?.avatarUrl?.trim();
+          const label = accountDisplayLabel(conn, meta, index);
           const disconnecting =
             disconnectingConnectionId === conn.connection_id;
           return (
@@ -1159,15 +1158,6 @@ function ConnectedProviderCard({
               className="flex items-center gap-2 py-1"
               key={conn.connection_id}
             >
-              {avatarUrl ? (
-                <img
-                  alt=""
-                  className="size-3.5 shrink-0 rounded-full object-cover"
-                  src={avatarUrl}
-                />
-              ) : (
-                <span className="size-3.5 shrink-0 rounded-full bg-muted-foreground/20" />
-              )}
               <span className="min-w-0 flex-1 truncate text-xs text-foreground">
                 {label}
               </span>
