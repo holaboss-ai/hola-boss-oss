@@ -94,6 +94,19 @@ function preferredToolkitForProvider(
     : current;
 }
 
+// Composio publishes a stable logo CDN keyed by toolkit slug — usable as
+// a fallback when our local toolkit lookup misses (e.g., the toolkit got
+// filtered by `composio_managed_auth_schemes` requirements, or the
+// catalog uses a slug that doesn't show up in toolkitByProvider after
+// the gmail/sheets→google remap collapse).
+function composioFallbackLogo(slug: string): string | null {
+  const cleaned = slug.trim().toLowerCase();
+  if (!cleaned) {
+    return null;
+  }
+  return `https://logos.composio.dev/api/${cleaned}`;
+}
+
 function mergeIntegrationCards(
   catalogProviders: IntegrationCatalogProviderPayload[],
   toolkits: ComposioToolkit[],
@@ -135,7 +148,7 @@ function mergeIntegrationCards(
         normalizedText(provider.description) ||
         normalizedText(provider.display_name) ||
         providerId,
-      logo: toolkit?.logo ?? null,
+      logo: toolkit?.logo ?? composioFallbackLogo(providerId),
       authSchemes: uniqueStrings([
         ...(toolkit?.auth_schemes || []),
         ...(provider.auth_modes || []),
@@ -1110,15 +1123,19 @@ function ConnectedProviderCard({
   // flaky (Twitter rate limits, LinkedIn auth requirements) so this is
   // worth the small bookkeeping.
   const [failedAvatars, setFailedAvatars] = useState<Set<string>>(new Set());
+  const [logoFailed, setLogoFailed] = useState(false);
+  const showLogo = Boolean(integration.logo) && !logoFailed;
 
   return (
     <div className={containerClass}>
       <div className="flex items-center gap-2">
         <div className="flex size-5 shrink-0 items-center justify-center overflow-hidden rounded-sm bg-background">
-          {integration.logo ? (
+          {showLogo && integration.logo ? (
             <img
               alt=""
               className="size-full object-contain"
+              onError={() => setLogoFailed(true)}
+              referrerPolicy="no-referrer"
               src={integration.logo}
             />
           ) : (
