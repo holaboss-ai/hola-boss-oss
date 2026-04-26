@@ -72,8 +72,12 @@ export function TopTabsBar({
     integratedTitleBar && desktopPlatform === "darwin";
   const isWindowsIntegratedTitleBar =
     integratedTitleBar && desktopPlatform === "win32";
-  const { isAvailable: isBillingAvailable, overview, isLoading: isBillingLoading, isLowBalance } =
-    useDesktopBilling();
+  const {
+    isAvailable: isBillingAvailable,
+    overview,
+    isLoading: isBillingLoading,
+    isLowBalance,
+  } = useDesktopBilling();
   const { data: authSession } = useDesktopAuthSession();
   const currentUser = authSession?.user ?? null;
   const userButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -330,20 +334,20 @@ export function TopTabsBar({
             <DropdownMenuContent align="end" sideOffset={8} className="w-52">
               <DropdownMenuGroup>
                 <DropdownMenuItem onClick={() => onOpenAccount?.()}>
-                  <User2 />
+                  <User2 className="opacity-60 size-3.5" />
                   Account
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => onOpenSettings?.()}>
-                  <Settings />
+                  <Settings className="opacity-60 size-3.5" />
                   Settings
                 </DropdownMenuItem>
               </DropdownMenuGroup>
               <DropdownMenuSeparator />
               <DropdownMenuGroup>
                 <DropdownMenuItem
-                  onClick={() => onOpenExternalUrl?.("https://www.holaboss.ai")}
+                  onClick={() => onOpenExternalUrl?.("https://www.holaos.ai")}
                 >
-                  <Home />
+                  <Home className="opacity-60 size-3.5" />
                   Homepage
                 </DropdownMenuItem>
                 <DropdownMenuItem
@@ -351,7 +355,7 @@ export function TopTabsBar({
                     onOpenExternalUrl?.("https://www.holaboss.ai/docs")
                   }
                 >
-                  <BookOpen />
+                  <BookOpen className="opacity-60 size-3.5" />
                   Docs
                 </DropdownMenuItem>
               </DropdownMenuGroup>
@@ -425,9 +429,7 @@ export function TopTabsBar({
               }}
             >
               <div className="relative mb-2">
-                <Search
-                  className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
-                />
+                <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={workspaceQuery}
                   onChange={(event) => setWorkspaceQuery(event.target.value)}
@@ -442,7 +444,8 @@ export function TopTabsBar({
                     {filteredWorkspaces.map((workspace) => {
                       const isActive = workspace.id === selectedWorkspaceId;
                       const isDeleting = deletingWorkspaceId === workspace.id;
-                      const folderMissing = workspace.folder_state === "missing";
+                      const folderMissing =
+                        workspace.folder_state === "missing";
                       return (
                         <div
                           key={workspace.id}
@@ -469,7 +472,7 @@ export function TopTabsBar({
                               title={
                                 folderMissing
                                   ? `Folder missing at ${workspace.workspace_path ?? "unknown"}`
-                                  : workspace.workspace_path ?? undefined
+                                  : (workspace.workspace_path ?? undefined)
                               }
                             />
                             <span className="truncate">{workspace.name}</span>
