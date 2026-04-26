@@ -1,0 +1,71 @@
+---
+title: Environment Variables
+description: All environment variables consumed by holaOS components across desktop, runtime, and workspace apps.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+holaOS uses environment variables at several layers:
+
+- desktop and standalone runtime startup
+- workspace app startup inside workspaces
+- bridge and integration helpers inside workspace apps
+
+The tables below focus on the names that are already used in the current repo and runtime contracts.
+
+## Desktop and runtime
+
+| Variable | Purpose |
+| --- | --- |
+| `HB_SANDBOX_ROOT` | Root directory for runtime workspace and state data. |
+| `SANDBOX_AGENT_BIND_HOST` | Host interface the runtime binds to. |
+| `SANDBOX_AGENT_BIND_PORT` | Runtime API port. |
+| `SANDBOX_AGENT_HARNESS` | Harness selector, typically `pi`. |
+| `HOLABOSS_RUNTIME_WORKFLOW_BACKEND` | Workflow backend selector used by the runtime. |
+| `HOLABOSS_RUNTIME_DB_PATH` | Path to the SQLite runtime database. |
+| `HOLABOSS_RUNTIME_CONFIG_PATH` | Optional override for `runtime-config.json`. |
+| `HOLABOSS_DEFAULT_MODEL` | Default model id used when one is not selected explicitly. |
+| `HOLABOSS_MODEL_PROXY_BASE_URL` | Proxy base URL for model routing. |
+| `HOLABOSS_SANDBOX_AUTH_TOKEN` | Auth token used when talking to the proxy path. |
+| `PROACTIVE_ENABLE_REMOTE_BRIDGE` | Enables the remote bridge path when set to `1`. |
+| `PROACTIVE_BRIDGE_BASE_URL` | Base URL for the proactive bridge. |
+| `SANDBOX_AGENT_DEFAULT_MODEL` | Fallback default model when `HOLABOSS_DEFAULT_MODEL` is not set. |
+
+## Module app bridge and workspace integration
+
+| Variable | Purpose |
+| --- | --- |
+| `HOLABOSS_APP_GRANT` | Grant token used by the bridge SDK to proxy provider requests. |
+| `HOLABOSS_WORKSPACE_ID` | Current workspace id for output writes and workspace-scoped actions. |
+| `HOLABOSS_INTEGRATION_BROKER_URL` | Explicit broker URL override for integration proxy calls. |
+| `WORKSPACE_API_URL` | Base URL for publishing workspace outputs. |
+| `WORKSPACE_<PROVIDER>_INTEGRATION_ID` | Runtime-injected connection id for a resolved integration binding, for example `WORKSPACE_GOOGLE_INTEGRATION_ID`. |
+| `SANDBOX_RUNTIME_API_PORT` | Runtime API port used to resolve local integration URLs. |
+| `SANDBOX_AGENT_BIND_PORT` | Fallback port used when the runtime port is not available. |
+| `HOLABOSS_USER_ID` | User id passed into workspace apps that need a holaOS identity. |
+
+## Legacy compatibility
+
+| Variable | Purpose |
+| --- | --- |
+| `PLATFORM_INTEGRATION_TOKEN` | Legacy compatibility variable. It is not part of the current runtime injection path for workspace apps. |
+
+## How the bridge resolves URLs
+
+The bridge helper used by workspace apps follows a simple resolution order:
+
+1. use `HOLABOSS_INTEGRATION_BROKER_URL` if it is set
+2. otherwise derive the integration broker from the runtime port
+3. derive the workspace API URL from the broker URL when needed
+
+If those variables are missing, the bridge helpers fall back to a no-op path rather than crashing the app.
+
+## Where to set them
+
+- desktop values usually live in the desktop env file or the runtime config file
+- runtime startup values are often injected by the launcher or packaged bundle
+- workspace app values are injected by the runtime when the app starts, or declared as expected inputs in `app.runtime.yaml`
+
+<Callout type="warn">
+Not every environment variable is required in every mode. Only set the ones that match the execution target you are actually running.
+</Callout>

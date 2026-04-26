@@ -86,6 +86,10 @@ test("app shell opens the centered add apps dialog from the applications explore
   );
   assert.match(
     source,
+    /const \[chatImagePreviewOpen, setChatImagePreviewOpen\] =\s*useState\(false\);/,
+  );
+  assert.match(
+    source,
     /const handleAddApp = \(\) => \{\s*setWorkspaceAppsDialogOpen\(true\);\s*\};/,
   );
   assert.match(
@@ -102,7 +106,7 @@ test("app shell opens the centered add apps dialog from the applications explore
   );
   assert.match(
     source,
-    /const shouldSuspendBrowserNativeView =\s*[\s\S]*taskProposalDetailsDialogOpen[\s\S]*workspaceAppsDialogOpen[\s\S]*createWorkspacePanelOpen[\s\S]*publishOpen;/,
+    /const shouldSuspendBrowserNativeView =\s*[\s\S]*taskProposalDetailsDialogOpen[\s\S]*chatImagePreviewOpen[\s\S]*workspaceAppsDialogOpen[\s\S]*createWorkspacePanelOpen[\s\S]*publishOpen;/,
   );
   assert.doesNotMatch(
     source,
@@ -161,7 +165,15 @@ test("app shell syncs file-oriented agent operations into the explorer and displ
   );
   assert.match(
     source,
+    /<OnboardingPane[\s\S]*onImageAttachmentPreviewOpenChange=\{setChatImagePreviewOpen\}/,
+  );
+  assert.match(
+    source,
     /<ChatPane[\s\S]*onSyncFileDisplayFromAgentOperation=\{\s*handleSyncAgentOperationFileDisplay\s*\}/,
+  );
+  assert.match(
+    source,
+    /<ChatPane[\s\S]*onImageAttachmentPreviewOpenChange=\{setChatImagePreviewOpen\}/,
   );
 });
 
@@ -344,7 +356,7 @@ test("app shell no longer reserves a separate safe pane region for update toasts
   assert.doesNotMatch(source, /anchoredToastStackStyle/);
   assert.match(
     source,
-    /const shouldSuspendBrowserNativeView =\s*workspaceSwitcherOpen \|\|[\s\S]*settingsDialogOpen \|\|[\s\S]*taskProposalDetailsDialogOpen \|\|[\s\S]*createWorkspacePanelOpen \|\|[\s\S]*publishOpen;/,
+    /const shouldSuspendBrowserNativeView =\s*workspaceSwitcherOpen \|\|[\s\S]*settingsDialogOpen \|\|[\s\S]*taskProposalDetailsDialogOpen \|\|[\s\S]*chatImagePreviewOpen \|\|[\s\S]*createWorkspacePanelOpen \|\|[\s\S]*publishOpen;/,
   );
   assert.doesNotMatch(
     source,
@@ -435,19 +447,19 @@ test("app shell uses the top toolbar for shell navigation and removes the left r
 
   assert.match(source, /type ShellView = "space";/);
   assert.match(source, /const \[activeShellView, setActiveShellView\] = useState<ShellView>\("space"\);/);
-  assert.match(source, /<SettingsDialog[\s\S]*onOpenAutomationRunSession=\{\(workspaceId, sessionId\) => \{/);
-  assert.match(source, /<SettingsDialog[\s\S]*onCreateAutomationSchedule=\{\(workspaceId\) => \{/);
-  assert.match(source, /<SettingsDialog[\s\S]*onEditAutomationSchedule=\{\(workspaceId, job\) => \{/);
-  assert.match(source, /setSettingsDialogOpen\(false\);[\s\S]*handleOpenAutomationRunSession\(sessionId, workspaceId\);/);
-  assert.match(source, /setSettingsDialogOpen\(false\);[\s\S]*handleCreateScheduleInChat\(workspaceId\);/);
-  assert.match(source, /setSettingsDialogOpen\(false\);[\s\S]*handleEditScheduleInChat\(job, workspaceId\);/);
+  assert.match(source, /handleOpenAutomationsPane = useCallback/);
+  assert.match(source, /setAgentView\(\{ type: "automations" \}\)/);
+  assert.match(source, /onOpenAutomations=\{handleOpenAutomationsPane\}/);
+  assert.match(source, /<AutomationsPane[\s\S]*onCreateSchedule=\{\(\) =>\s*handleCreateScheduleInChat\(selectedWorkspaceId\)/);
+  assert.doesNotMatch(source, /<SettingsDialog[\s\S]*onCreateAutomationSchedule/);
+  assert.doesNotMatch(source, /<SettingsDialog[\s\S]*onEditAutomationSchedule/);
+  assert.doesNotMatch(source, /<SettingsDialog[\s\S]*onOpenAutomationRunSession/);
   assert.doesNotMatch(source, /handleOpenMarketplace/);
   assert.doesNotMatch(source, /MarketplacePane/);
   assert.doesNotMatch(source, /activeShellView === "marketplace"/);
   assert.doesNotMatch(source, /handleOpenSpace = useCallback/);
   assert.doesNotMatch(source, /onOpenSpace=\{handleOpenSpace\}/);
   assert.doesNotMatch(source, /isSpaceActive=\{spaceMode\}/);
-  assert.doesNotMatch(source, /handleOpenAutomations/);
   assert.doesNotMatch(source, /activeShellView === "automations"/);
   assert.doesNotMatch(source, /LeftNavigationRail/);
 });
@@ -684,7 +696,7 @@ test("app shell can route new schedule creation into a prefilled workspace chat"
   assert.match(source, /const chatComposerPrefillRequestKeyRef = useRef\(0\);/);
   assert.match(source, /const nextChatSessionOpenRequestKey = useCallback\(\(\) => \{\s*chatSessionOpenRequestKeyRef\.current \+= 1;\s*return chatSessionOpenRequestKeyRef\.current;\s*\}, \[\]\);/);
   assert.match(source, /const nextChatComposerPrefillRequestKey = useCallback\(\(\) => \{\s*chatComposerPrefillRequestKeyRef\.current \+= 1;\s*return chatComposerPrefillRequestKeyRef\.current;\s*\}, \[\]\);/);
-  assert.match(source, /const handleCreateScheduleInChat = useCallback\(\(\s*workspaceId\?: string \| null\) => \{/);
+  assert.match(source, /const handleCreateScheduleInChat = useCallback\(\s*\(workspaceId\?: string \| null\) => \{/);
   assert.match(source, /const normalizedWorkspaceId =\s*workspaceId\?\.trim\(\) \|\| selectedWorkspaceId\?\.trim\(\) \|\| "";/);
   assert.match(source, /if \(normalizedWorkspaceId !== \(selectedWorkspaceId\?\.trim\(\) \|\| ""\)\) \{\s*setSelectedWorkspaceId\(normalizedWorkspaceId\);\s*\}/);
   assert.match(source, /setActiveShellView\("space"\);/);
@@ -695,21 +707,19 @@ test("app shell can route new schedule creation into a prefilled workspace chat"
   assert.match(source, /setChatComposerPrefillRequest\(\{\s*text: "Create a cronjob for ",\s*requestKey: nextChatComposerPrefillRequestKey\(\),\s*mode: "replace",\s*\}\);/);
   assert.match(source, /composerPrefillRequest=\{chatComposerPrefillRequest\}/);
   assert.match(source, /onComposerPrefillConsumed=\{handleChatComposerPrefillConsumed\}/);
-  assert.match(source, /onCreateAutomationSchedule=\{\(workspaceId\) => \{/);
-  assert.match(source, /handleCreateScheduleInChat\(workspaceId\);/);
+  assert.match(source, /<AutomationsPane[\s\S]*onCreateSchedule=\{\(\) =>\s*handleCreateScheduleInChat\(selectedWorkspaceId\)/);
 });
 
 test("app shell can route schedule edits into a prefilled workspace chat", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /const handleEditScheduleInChat = useCallback\(\(\s*job: CronjobRecordPayload,\s*workspaceId\?: string \| null,\s*\) => \{/);
+  assert.match(source, /const handleEditScheduleInChat = useCallback\(\s*\(\s*job: CronjobRecordPayload,\s*workspaceId\?: string \| null,?\s*\) => \{/);
   assert.match(source, /const jobName =\s*job\.name\?\.trim\(\) \|\| job\.description\?\.trim\(\) \|\| "Untitled schedule";/);
-  assert.match(source, /const instruction = job\.instruction\?\.trim\(\) \|\| job\.description\?\.trim\(\) \|\| "";/);
+  assert.match(source, /const instruction =\s*job\.instruction\?\.trim\(\) \|\| job\.description\?\.trim\(\) \|\| "";/);
   assert.match(source, /Edit cronjob "\$\{jobName\}" \(id: \$\{job\.id\}\)\. Current cron: \$\{job\.cron\}\./);
   assert.match(source, /Current instruction: \$\{instruction\}\\n\\nUpdate it to:/);
   assert.match(source, /mode: "replace"/);
-  assert.match(source, /onEditAutomationSchedule=\{\(workspaceId, job\) => \{/);
-  assert.match(source, /handleEditScheduleInChat\(job, workspaceId\);/);
+  assert.match(source, /<AutomationsPane[\s\S]*onEditSchedule=\{\(job\) =>\s*handleEditScheduleInChat\(job, selectedWorkspaceId\)/);
 });
 
 test("app shell can route explorer references into chat attachments or text prefills", async () => {
@@ -750,6 +760,55 @@ test("app shell can route explorer references into chat attachments or text pref
     /onExplorerAttachmentRequestConsumed=\{\s*handleChatExplorerAttachmentRequestConsumed\s*\}/,
   );
   assert.match(source, /<FileExplorerPane[\s\S]*onReferenceInChat=\{handleReferenceWorkspacePathInChat\}/);
+});
+
+test("app shell can route browser comment captures into chat attachments", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(
+    source,
+    /type ChatBrowserCommentRequest = \{\s*tabId: string;\s*pageTitle: string;\s*url: string;\s*comments: BrowserChatCommentDraftItem\[];\s*requestKey: number;\s*mode\?: "replace" \| "append";\s*\};/,
+  );
+  assert.match(
+    source,
+    /const \[chatBrowserCommentRequest, setChatBrowserCommentRequest\] =\s*useState<ChatBrowserCommentRequest \| null>\(null\);/,
+  );
+  assert.match(source, /const chatBrowserAttachmentRequestKeyRef = useRef\(0\);/);
+  assert.match(
+    source,
+    /const nextChatBrowserAttachmentRequestKey = useCallback\(\(\) => \{\s*chatBrowserAttachmentRequestKeyRef\.current \+= 1;\s*return chatBrowserAttachmentRequestKeyRef\.current;\s*\}, \[\]\);/,
+  );
+  assert.match(
+    source,
+    /const handleAttachBrowserCommentsToChat = useCallback\(\s*\(payload: BrowserChatCommentDraftPayload\) => \{/,
+  );
+  assert.match(
+    source,
+    /if \(payload\.comments\.length === 0\) \{\s*return;\s*\}/,
+  );
+  assert.match(source, /setActiveShellView\("space"\);/);
+  assert.match(source, /setSpaceVisibility\(\(previous\) => \(\{\s*\.\.\.previous,\s*agent: true,\s*\}\)\);/);
+  assert.match(source, /setAgentView\(\{ type: "chat" \}\);/);
+  assert.match(
+    source,
+    /setChatBrowserCommentRequest\(\{\s*tabId: payload\.tabId,\s*pageTitle: payload\.pageTitle,\s*url: payload\.url,\s*comments: payload\.comments,\s*requestKey: nextChatBrowserAttachmentRequestKey\(\),\s*mode: payload\.mode \?\? "replace",\s*\}\);/,
+  );
+  assert.match(
+    source,
+    /browserCommentRequest=\{chatBrowserCommentRequest\}/,
+  );
+  assert.match(
+    source,
+    /onBrowserCommentRequestConsumed=\{\s*handleChatBrowserCommentRequestConsumed\s*\}/,
+  );
+  assert.match(
+    source,
+    /<SpaceBrowserDisplayPane[\s\S]*onAttachCommentsToChat=\{handleAttachBrowserCommentsToChat\}/,
+  );
+  assert.match(
+    source,
+    /<BrowserPane[\s\S]*onAttachCommentsToChat=\{handleAttachBrowserCommentsToChat\}/,
+  );
 });
 
 test("app shell clears missing internal file surfaces after explorer deletion or preview invalidation", async () => {
@@ -835,5 +894,9 @@ test("app shell passes workspace-scoped chat composer drafts into the chat pane"
   assert.match(
     source,
     /<ChatPane[\s\S]*composerDraftText=\{[\s\S]*chatComposerDraftTextByWorkspace\[selectedWorkspaceId\] \?\? ""[\s\S]*\}[\s\S]*onComposerDraftTextChange=\{handleChatComposerDraftTextChange\}/,
+  );
+  assert.match(
+    source,
+    /<ChatPane[\s\S]*onImageAttachmentPreviewOpenChange=\{setChatImagePreviewOpen\}[\s\S]*composerDraftText=\{/,
   );
 });

@@ -50,10 +50,19 @@ function resolveReleaseChannel() {
 }
 
 const releaseChannel = resolveReleaseChannel();
+const macIdentity = (process.env.HOLABOSS_MAC_IDENTITY || "").trim();
 const extraResources = [
   {
     from: "resources/icon.png",
     to: "icon.png"
+  },
+  {
+    from: "resources/holaStatusTemplate.png",
+    to: "holaStatusTemplate.png"
+  },
+  {
+    from: "resources/holaStatusTemplate@2x.png",
+    to: "holaStatusTemplate@2x.png"
   },
   {
     from: "out/holaboss-config.json",
@@ -101,7 +110,9 @@ module.exports = {
     hardenedRuntime: true,
     gatekeeperAssess: false,
     entitlements: "resources/entitlements.mac.plist",
-    entitlementsInherit: "resources/entitlements.mac.plist"
+    entitlementsInherit: "resources/entitlements.mac.plist",
+    // identity:null in electron-builder means "skip signing" — only set the key when an explicit value is provided.
+    ...(macIdentity ? { identity: macIdentity } : {})
   },
   publish: [
     {

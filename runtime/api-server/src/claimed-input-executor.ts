@@ -1387,24 +1387,15 @@ function maybePersistHarnessSessionId(params: {
   if (!["run_completed", "run_failed"].includes(params.eventType)) {
     return;
   }
-  if (params.eventType === "run_failed") {
-    params.store.upsertBinding({
-      workspaceId: params.workspaceId,
-      sessionId: params.sessionId,
-      harness: params.harness,
-      harnessSessionId: params.sessionId,
-    });
-    return;
-  }
-  const harnessSessionId = params.payload.harness_session_id;
-  if (typeof harnessSessionId !== "string" || !harnessSessionId.trim()) {
+  const harnessSessionId = nonEmptyString(params.payload.harness_session_id);
+  if (!harnessSessionId) {
     return;
   }
   params.store.upsertBinding({
     workspaceId: params.workspaceId,
     sessionId: params.sessionId,
     harness: params.harness,
-    harnessSessionId: harnessSessionId.trim(),
+    harnessSessionId,
   });
 }
 
@@ -2403,6 +2394,39 @@ export async function processClaimedInput(params: {
         });
       }
 
+      let terminalEventToRelay = persistedTerminalEvent
+        ? {
+            eventType: persistedTerminalEvent.eventType,
+            sequence: persistedTerminalEvent.sequence,
+            payload: persistedTerminalEvent.payload,
+            createdAt: persistedTerminalEvent.createdAt,
+          }
+        : deferredTerminalEvent
+          ? {
+              eventType: deferredTerminalEvent.eventType,
+              sequence: lastSequence + 1,
+              payload: deferredTerminalEvent.payload,
+              createdAt: deferredTerminalEvent.createdAt,
+            }
+          : null;
+      if (deferredTerminalEvent) {
+        lastSequence = appendNextOutputEvent({
+          store,
+          record,
+          lastSequence,
+          eventType: deferredTerminalEvent.eventType,
+          payload: deferredTerminalEvent.payload,
+          createdAt: deferredTerminalEvent.createdAt,
+        });
+        terminalEventToRelay = {
+          eventType: deferredTerminalEvent.eventType,
+          sequence: lastSequence,
+          payload: deferredTerminalEvent.payload,
+          createdAt: deferredTerminalEvent.createdAt,
+        };
+        deferredTerminalEvent = null;
+      }
+
       store.updateInput(record.inputId, {
         status:
           terminalStatus === "ERROR"
@@ -2467,21 +2491,6 @@ export async function processClaimedInput(params: {
       }
 
       const assistantText = assistantParts.join("").trim();
-      const terminalEventToRelay = persistedTerminalEvent
-        ? {
-            eventType: persistedTerminalEvent.eventType,
-            sequence: persistedTerminalEvent.sequence,
-            payload: persistedTerminalEvent.payload,
-            createdAt: persistedTerminalEvent.createdAt,
-          }
-        : deferredTerminalEvent
-          ? {
-              eventType: deferredTerminalEvent.eventType,
-              sequence: lastSequence + 1,
-              payload: deferredTerminalEvent.payload,
-              createdAt: deferredTerminalEvent.createdAt,
-            }
-          : null;
       const hasPersistedOutputs =
         store.listOutputs({
           workspaceId: record.workspaceId,
@@ -2576,17 +2585,6 @@ export async function processClaimedInput(params: {
           preferredSequence:
             Math.max(terminalEventToRelay.sequence, 1) + (runStatePayload ? 1 : 0),
         });
-      }
-      if (deferredTerminalEvent) {
-        lastSequence = appendNextOutputEvent({
-          store,
-          record,
-          lastSequence,
-          eventType: deferredTerminalEvent.eventType,
-          payload: deferredTerminalEvent.payload,
-          createdAt: deferredTerminalEvent.createdAt,
-        });
-        deferredTerminalEvent = null;
       }
       await (params.runEvolveTasksFn ?? runEvolveTasks)({
         store,

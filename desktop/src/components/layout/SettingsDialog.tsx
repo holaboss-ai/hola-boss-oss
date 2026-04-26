@@ -5,7 +5,6 @@ import {
   Copy,
   CreditCard,
   ExternalLink,
-  FolderKanban,
   FolderOpen,
   Globe,
   Info,
@@ -18,13 +17,11 @@ import {
   Settings2,
   User2,
   Waypoints,
-  Workflow,
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AuthPanel } from "@/components/auth/AuthPanel";
 import { BillingSettingsPanel } from "@/components/billing/BillingSettingsPanel";
-import { AutomationsPane } from "@/components/panes/AutomationsPane";
 import { IntegrationsPane } from "@/components/panes/IntegrationsPane";
 import { SubmissionsPanel } from "@/components/settings/SubmissionsPanel";
 import { Badge } from "@/components/ui/badge";
@@ -37,7 +34,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 
 const THEME_SWATCHES: Record<string, [string, string, string]> = {
   "amber-minimal-dark": ["#1a1814", "#e8853a", "#2e2920"],
@@ -70,12 +66,6 @@ interface SettingsDialogProps {
   themeVariants: readonly ThemeVariant[];
   onThemeVariantChange: (variant: ThemeVariant) => void;
   onOpenExternalUrl: (url: string) => void;
-  onOpenAutomationRunSession: (workspaceId: string, sessionId: string) => void;
-  onCreateAutomationSchedule: (workspaceId: string) => void;
-  onEditAutomationSchedule: (
-    workspaceId: string,
-    job: CronjobRecordPayload,
-  ) => void;
 }
 
 const THEME_VARIANT_LABELS: Record<ThemeVariant, string> = {
@@ -103,7 +93,6 @@ const SETTINGS_SECTIONS: Array<{
   { id: "settings", label: "Settings", icon: Settings2 },
   { id: "billing", label: "Billing", icon: CreditCard },
   { id: "providers", label: "Model Providers", icon: Waypoints },
-  { id: "automations", label: "Automations", icon: Workflow },
   { id: "integrations", label: "Integrations", icon: Plug },
   { id: "submissions", label: "Submissions", icon: Send },
   { id: "about", label: "About", icon: Info },
@@ -154,8 +143,6 @@ function titleForSection(section: UiSettingsPaneSection): string {
       return "Account";
     case "billing":
       return "Billing";
-    case "automations":
-      return "Automations";
     case "providers":
       return "Model Providers";
     case "integrations":
@@ -266,13 +253,8 @@ export function SettingsDialog({
   themeVariants,
   onThemeVariantChange,
   onOpenExternalUrl,
-  onOpenAutomationRunSession,
-  onCreateAutomationSchedule,
-  onEditAutomationSchedule,
 }: SettingsDialogProps) {
-  const { workspaces, selectedWorkspace } = useWorkspaceDesktop();
   const displayAppVersion = appVersion.trim() || "Unavailable";
-  const [automationsWorkspaceId, setAutomationsWorkspaceId] = useState("");
   const [diagnosticsExportState, setDiagnosticsExportState] = useState<{
     status: "idle" | "exporting" | "success" | "error";
     message: string;
@@ -333,14 +315,6 @@ export function SettingsDialog({
       unsubscribe();
     };
   }, [open]);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    setAutomationsWorkspaceId(selectedWorkspace?.id ?? workspaces[0]?.id ?? "");
-  }, [open, selectedWorkspace?.id, workspaces]);
 
   useEffect(() => {
     if (!appUpdateStatus?.downloaded) {
@@ -752,67 +726,6 @@ export function SettingsDialog({
                     </div>
                   </div>
                 </section>
-              </div>
-            ) : null}
-
-            {activeSection === "automations" ? (
-              <div>
-                <AutomationsPane
-                  workspaceId={automationsWorkspaceId || null}
-                  showHeader={false}
-                  emptyWorkspaceMessage="Choose a workspace to view and manage automations."
-                  toolbarLeading={
-                    <Select
-                      value={automationsWorkspaceId || undefined}
-                      onValueChange={(value) =>
-                        setAutomationsWorkspaceId(value ?? "")
-                      }
-                      disabled={workspaces.length === 0}
-                    >
-                      <SelectTrigger className="w-56">
-                        <FolderKanban
-                          size={14}
-                          className="text-muted-foreground"
-                        />
-                        <SelectValue
-                          placeholder={
-                            workspaces.length === 0
-                              ? "No workspaces available"
-                              : "Select workspace"
-                          }
-                        />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {workspaces.map((workspace) => (
-                          <SelectItem key={workspace.id} value={workspace.id}>
-                            {workspace.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  }
-                  onOpenRunSession={(sessionId) => {
-                    if (!automationsWorkspaceId) {
-                      return;
-                    }
-                    onOpenAutomationRunSession(
-                      automationsWorkspaceId,
-                      sessionId,
-                    );
-                  }}
-                  onCreateSchedule={() => {
-                    if (!automationsWorkspaceId) {
-                      return;
-                    }
-                    onCreateAutomationSchedule(automationsWorkspaceId);
-                  }}
-                  onEditSchedule={(job) => {
-                    if (!automationsWorkspaceId) {
-                      return;
-                    }
-                    onEditAutomationSchedule(automationsWorkspaceId, job);
-                  }}
-                />
               </div>
             ) : null}
 

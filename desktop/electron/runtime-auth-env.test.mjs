@@ -29,6 +29,10 @@ test("embedded runtime bridge uses the same proactive base URL resolution as int
   );
   assert.match(
     source,
+    /PROACTIVE_ENABLE_REMOTE_BRIDGE:\s*"0"/,
+  );
+  assert.match(
+    source,
     /PROACTIVE_BRIDGE_BASE_URL:\s*runtimeProactiveBridgeBaseUrl\(\)/,
   );
 });

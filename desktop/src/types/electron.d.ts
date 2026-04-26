@@ -96,6 +96,11 @@ declare global {
     height: number;
   }
 
+  interface BrowserVisibleSnapshotPayload {
+    bounds: BrowserBoundsPayload;
+    dataUrl: string;
+  }
+
   interface BrowserAnchorBoundsPayload {
     x: number;
     y: number;
@@ -103,7 +108,7 @@ declare global {
     height: number;
   }
 
-  type UiSettingsPaneSection = "account" | "billing" | "providers" | "integrations" | "submissions" | "settings" | "automations" | "about";
+  type UiSettingsPaneSection = "account" | "billing" | "providers" | "integrations" | "submissions" | "settings" | "about";
 
   interface BrowserStatePayload {
     id: string;
@@ -182,6 +187,43 @@ declare global {
     visitCount: number;
     createdAt: string;
     lastVisitedAt: string;
+  }
+
+  interface BrowserClipboardScreenshotPayload {
+    tabId: string;
+    pageTitle: string;
+    url: string;
+    width: number;
+    height: number;
+    copied: boolean;
+  }
+
+  interface ClipboardImagePayload {
+    name: string;
+    mime_type: string;
+    content_base64: string;
+    width: number;
+    height: number;
+  }
+
+  interface BrowserCommentCaptureAttachmentPayload {
+    id: string;
+    text: string;
+    elementLabel: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    mimeType: string;
+    base64: string;
+  }
+
+  interface BrowserCommentCapturePayload {
+    tabId: string;
+    pageTitle: string;
+    url: string;
+    comments: BrowserCommentCaptureAttachmentPayload[];
+    canceled: boolean;
   }
 
   interface AddressSuggestionPayload {
@@ -1392,6 +1434,10 @@ declare global {
       onThemeChange: (listener: (theme: string) => void) => () => void;
       onOpenSettingsPane: (listener: (section: UiSettingsPaneSection) => void) => () => void;
     };
+    clipboard: {
+      readImage: () => Promise<ClipboardImagePayload | null>;
+      writeText: (text: string) => Promise<void>;
+    };
     billing: {
       getOverview: () => Promise<DesktopBillingOverviewPayload>;
       getUsage: (limit?: number) => Promise<DesktopBillingUsagePayload>;
@@ -1561,11 +1607,14 @@ declare global {
       ) => Promise<BrowserTabListPayload>;
       getState: () => Promise<BrowserTabListPayload>;
       setBounds: (bounds: BrowserBoundsPayload) => Promise<BrowserTabListPayload>;
+      captureVisibleSnapshot: () => Promise<BrowserVisibleSnapshotPayload | null>;
       navigate: (targetUrl: string) => Promise<BrowserTabListPayload>;
       back: () => Promise<BrowserTabListPayload>;
       forward: () => Promise<BrowserTabListPayload>;
       reload: () => Promise<BrowserTabListPayload>;
       stopLoading: () => Promise<BrowserTabListPayload>;
+      captureScreenshotToClipboard: () => Promise<BrowserClipboardScreenshotPayload>;
+      captureCommentsForChat: () => Promise<BrowserCommentCapturePayload>;
       newTab: (targetUrl?: string) => Promise<BrowserTabListPayload>;
       setActiveTab: (tabId: string) => Promise<BrowserTabListPayload>;
       closeTab: (tabId: string) => Promise<BrowserTabListPayload>;

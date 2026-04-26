@@ -1076,12 +1076,22 @@ function wrapToolWithWorkspaceBoundary<TTool extends { name: string; execute: (.
 }
 
 function resolveRequestedSessionFile(request: HarnessHostPiRequest): string | null {
-  const candidate = firstNonEmptyString(request.harness_session_id, request.persisted_harness_session_id);
-  if (!candidate) {
-    return null;
+  const candidates = [
+    firstNonEmptyString(request.harness_session_id),
+    firstNonEmptyString(request.persisted_harness_session_id),
+  ];
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    if (!candidate || seen.has(candidate)) {
+      continue;
+    }
+    seen.add(candidate);
+    const resolved = path.resolve(candidate);
+    if (fs.existsSync(resolved)) {
+      return resolved;
+    }
   }
-  const resolved = path.resolve(candidate);
-  return fs.existsSync(resolved) ? resolved : null;
+  return null;
 }
 
 export function buildPiMcpToolName(serverId: string, toolName: string): string {

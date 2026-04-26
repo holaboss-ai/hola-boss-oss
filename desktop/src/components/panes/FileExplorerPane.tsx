@@ -61,6 +61,10 @@ import {
   inferDraggedAttachmentKind,
   serializeExplorerAttachmentDragPayload,
 } from "@/lib/attachmentDrag";
+import {
+  clearExplorerAttachmentClipboardEntry,
+  setExplorerAttachmentClipboardEntry,
+} from "@/lib/appClipboard";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 export type FileExplorerFocusRequest = {
@@ -1273,17 +1277,23 @@ export function FileExplorerPane({
         };
       }
 
-      let resolvedWorkspaceRoot = workspaceRootPath?.trim() || "";
-      if (!resolvedWorkspaceRoot) {
-        try {
-          resolvedWorkspaceRoot = (
-            await window.electronAPI.workspace.getWorkspaceRoot(
-              normalizedWorkspaceId,
-            )
-          ).trim();
-        } catch {
-          resolvedWorkspaceRoot = "";
-        }
+      let resolvedWorkspaceRoot = "";
+      try {
+        resolvedWorkspaceRoot = (
+          await window.electronAPI.workspace.getWorkspaceRoot(
+            normalizedWorkspaceId,
+          )
+        ).trim();
+      } catch {
+        resolvedWorkspaceRoot = workspaceRootPath?.trim() || "";
+      }
+
+      if (
+        resolvedWorkspaceRoot &&
+        normalizeComparablePath(resolvedWorkspaceRoot) !==
+          normalizeComparablePath(workspaceRootPath ?? "")
+      ) {
+        setWorkspaceRootPath(resolvedWorkspaceRoot);
       }
 
       if (!resolvedWorkspaceRoot) {
@@ -2038,13 +2048,34 @@ export function FileExplorerPane({
         }
       }
 
+      const clipboardName =
+        entry.name.trim() || getFolderName(normalizedSourcePath);
       explorerClipboardEntry = {
         mode,
         sourcePath: normalizedSourcePath,
-        name: entry.name.trim() || getFolderName(normalizedSourcePath),
+        name: clipboardName,
         isDirectory: entry.isDirectory,
         workspaceId: normalizedWorkspaceId,
       };
+      if (mode === "copy") {
+        setExplorerAttachmentClipboardEntry({
+          text: normalizedSourcePath,
+          payload: {
+            absolutePath: normalizedSourcePath,
+            name: clipboardName,
+            size: Number.isFinite(entry.size) ? Math.max(0, entry.size) : 0,
+            mimeType: entry.isDirectory ? "inode/directory" : null,
+            kind: entry.isDirectory
+              ? "folder"
+              : inferDraggedAttachmentKind(clipboardName),
+          },
+        });
+      } else {
+        clearExplorerAttachmentClipboardEntry();
+      }
+      void window.electronAPI.clipboard
+        .writeText(normalizedSourcePath)
+        .catch(() => undefined);
       closeContextMenu();
       setError("");
       return true;
@@ -2077,6 +2108,13 @@ export function FileExplorerPane({
         const { allowed, targetPath: validatedWatchedPath } =
           await validateWorkspaceScopedTargetPath(watchedPath);
         if (!allowed || !validatedWatchedPath) {
+          resetPreviewState();
+          setSelectedPath((current) =>
+            normalizeComparablePath(current) ===
+            normalizeComparablePath(watchedPath)
+              ? ""
+              : current,
+          );
           return;
         }
         const nextPreview = await window.electronAPI.fs.readFilePreview(
@@ -2120,6 +2158,13 @@ export function FileExplorerPane({
       const { allowed, targetPath: validatedWatchedPath } =
         await validateWorkspaceScopedTargetPath(watchedPath);
       if (!allowed || !validatedWatchedPath) {
+        resetPreviewState();
+        setSelectedPath((current) =>
+          normalizeComparablePath(current) ===
+          normalizeComparablePath(watchedPath)
+            ? ""
+            : current,
+        );
         return;
       }
       const subscription = await window.electronAPI.fs.watchFile(
@@ -2182,6 +2227,15 @@ export function FileExplorerPane({
       !allowed ||
       !validatedTargetPath
     ) {
+      if (!allowed || !validatedTargetPath) {
+        resetPreviewState();
+        setSelectedPath((current) =>
+          normalizeComparablePath(current) ===
+          normalizeComparablePath(targetPath)
+            ? ""
+            : current,
+        );
+      }
       return;
     }
 
@@ -3044,18 +3098,61 @@ export function FileExplorerPane({
   );
 
   useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || renamingPath) {
-        return;
+    const isExplorerShortcutTarget = (target: EventTarget | null) => {
+      if (renamingPath) {
+        return false;
       }
 
       const container = containerRef.current;
       const focusTarget =
-        event.target instanceof Node ? event.target : document.activeElement;
+        target instanceof Node ? target : document.activeElement;
       if (!(focusTarget instanceof Node) || !container?.contains(focusTarget)) {
-        return;
+        return false;
       }
       if (isEditableKeyboardTarget(focusTarget)) {
+        return false;
+      }
+
+      return true;
+    };
+
+    const handleClipboardCopy = (
+      event: ClipboardEvent,
+      mode: ExplorerClipboardMode,
+    ) => {
+      if (event.defaultPrevented || !isExplorerShortcutTarget(event.target)) {
+        return;
+      }
+      if (!selectedEntry) {
+        return;
+      }
+
+      if (!copyExplorerEntryToClipboard(selectedEntry, mode)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.clipboardData?.setData("text/plain", selectedEntry.absolutePath);
+    };
+    const handleCopy = (event: ClipboardEvent) =>
+      handleClipboardCopy(event, "copy");
+    const handleCut = (event: ClipboardEvent) =>
+      handleClipboardCopy(event, "cut");
+
+    const handleClipboardPaste = (event: ClipboardEvent) => {
+      if (event.defaultPrevented || !isExplorerShortcutTarget(event.target)) {
+        return;
+      }
+      if (!creationTargetDirectoryPath) {
+        return;
+      }
+
+      event.preventDefault();
+      void pasteExplorerClipboardIntoDirectory(creationTargetDirectoryPath);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || !isExplorerShortcutTarget(event.target)) {
         return;
       }
 
@@ -3091,7 +3188,15 @@ export function FileExplorerPane({
     };
 
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("copy", handleCopy);
+    window.addEventListener("cut", handleCut);
+    window.addEventListener("paste", handleClipboardPaste);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("copy", handleCopy);
+      window.removeEventListener("cut", handleCut);
+      window.removeEventListener("paste", handleClipboardPaste);
+    };
   }, [
     copyExplorerEntryToClipboard,
     creationTargetDirectoryPath,
