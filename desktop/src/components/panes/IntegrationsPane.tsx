@@ -1165,6 +1165,9 @@ function ConnectedProviderCard({
                 <img
                   alt=""
                   className="size-3.5 shrink-0 rounded-full bg-muted object-cover"
+                  // Google's lh3.googleusercontent.com CDN rejects requests
+                  // with a localhost / app referrer; this header strips it.
+                  referrerPolicy="no-referrer"
                   src={avatarUrl}
                 />
               ) : (
