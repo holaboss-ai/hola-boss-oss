@@ -98,6 +98,74 @@ test("chat pane falls back to provider setup instead of holaboss pending state w
   );
 });
 
+test("chat pane previews image attachments from both staged paths and local files", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /import \{ createPortal, flushSync \} from "react-dom";/);
+  assert.match(
+    source,
+    /const \[imageAttachmentPreview, setImageAttachmentPreview\] =\s*useState<ImageAttachmentPreviewState \| null>\(null\);/,
+  );
+  assert.match(
+    source,
+    /onImageAttachmentPreviewOpenChange\?: \(open: boolean\) => void;/,
+  );
+  assert.match(source, /function ImageAttachmentPreviewModal\(/);
+  assert.match(
+    source,
+    /attachment\.kind === "image" &&[\s\S]*Boolean\(onPreview\)[\s\S]*attachment\.file[\s\S]*attachment\.workspace_path/,
+  );
+  assert.match(source, /aria-label=\{`Preview \$\{attachment\.name\}`\}/);
+  assert.match(
+    source,
+    /window\.electronAPI\.browser\.captureVisibleSnapshot\(\)\.catch\(\(\) => null\)/,
+  );
+  assert.match(source, /URL\.createObjectURL\(attachment\.file\)/);
+  assert.match(
+    source,
+    /window\.electronAPI\.fs\.readFilePreview\(\s*attachmentPath,\s*selectedWorkspaceId,\s*\)/,
+  );
+  assert.match(
+    source,
+    /onImageAttachmentPreviewOpenChange\?\.\(Boolean\(imageAttachmentPreview\)\);/,
+  );
+  assert.match(
+    source,
+    /browserSnapshot: BrowserVisibleSnapshotPayload \| null;/,
+  );
+  assert.match(
+    source,
+    /<ImageAttachmentPreviewModal[\s\S]*open=\{Boolean\(imageAttachmentPreview\)\}[\s\S]*preview=\{imageAttachmentPreview\}[\s\S]*onClose=\{closeImageAttachmentPreview\}/,
+  );
+  assert.match(source, /const showImage = !preview\.isLoading && !preview\.errorMessage;/);
+  assert.match(
+    source,
+    /preview\.browserSnapshot \? \([\s\S]*src=\{preview\.browserSnapshot\.dataUrl\}[\s\S]*left: `\$\{preview\.browserSnapshot\.bounds\.x\}px`[\s\S]*top: `\$\{preview\.browserSnapshot\.bounds\.y\}px`/,
+  );
+  assert.match(
+    source,
+    /className="absolute inset-0 bg-black\/70 backdrop-blur-\[2px\]"/,
+  );
+  assert.match(
+    source,
+    /className="relative z-10 flex max-h-\[calc\(100vh-64px\)\] flex-col overflow-hidden rounded-2xl border border-white\/10 bg-background shadow-2xl"/,
+  );
+  assert.match(source, /style=\{\{ maxWidth: "92vw" \}\}/);
+  assert.match(
+    source,
+    /className=\{`overflow-auto px-4 py-4 \$\{[\s\S]*showImage \? "bg-transparent" : "min-h-\[240px\] min-w-\[320px\] bg-muted\/20"[\s\S]*`\}/,
+  );
+  assert.match(
+    source,
+    /className="block h-auto w-auto rounded-lg ring-1 ring-black\/8"/,
+  );
+  assert.match(
+    source,
+    /maxWidth: "calc\(92vw - 32px\)",[\s\S]*maxHeight: "calc\(88vh - 128px\)"/,
+  );
+  assert.match(source, /return createPortal\(modalContent, document\.body\);/);
+});
+
 test("chat composer footer wraps controls based on available pane width instead of viewport breakpoints", async () => {
   const source = await readFile(sourcePath, "utf8");
 
@@ -414,6 +482,24 @@ test("chat pane keeps a persistent working line visible once the live run has st
   );
 });
 
+test("chat pane polling can clear a stale stream after runtime reaches terminal state", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /"runtime_poll_terminal_state"/);
+  assert.match(
+    source,
+    /const activeStreamId = activeStreamIdRef\.current;[\s\S]*closeStreamWithReason\([\s\S]*activeStreamId,[\s\S]*"runtime_poll_terminal_state"/,
+  );
+  assert.match(
+    source,
+    /status === "WAITING_USER" \|\| status === "PAUSED"[\s\S]*commitLiveAssistantMessage\(\);[\s\S]*scheduleConversationRefresh\(currentSessionId, selectedWorkspaceId\);/,
+  );
+  assert.doesNotMatch(
+    source,
+    /if \(activeStreamIdRef\.current \|\| pendingInputIdRef\.current\) \{[\s\S]*Stream remains the source of truth while an output stream is open/,
+  );
+});
+
 test("chat pane renders an execution timeline that interleaves thinking segments with trace entries", async () => {
   const source = await readFile(sourcePath, "utf8");
 
@@ -568,8 +654,12 @@ test("chat composer can paste clipboard file and image attachments into the pend
   );
   assert.match(
     source,
-    /function clipboardFilesFromDataTransfer\(dataTransfer: DataTransfer \| null\): File\[\]/,
+    /function clipboardFilesFromDataTransfer\(\s*dataTransfer: DataTransfer \| null,\s*\): File\[\]/,
   );
+  assert.match(source, /function fileFromClipboardImagePayload\(\s*payload: ClipboardImagePayload \| null,\s*\): File \| null/);
+  assert.match(source, /window\.electronAPI\.clipboard\.readImage\(\)/);
+  assert.match(source, /function explorerAttachmentFilesFromClipboardText\(\s*clipboardText: string,\s*\): ExplorerAttachmentDragPayload\[\]/);
+  assert.match(source, /getExplorerAttachmentClipboardEntry\(\)/);
   assert.match(
     source,
     /dataTransfer\.files\.length > 0\s*\?\s*Array\.from\(dataTransfer\.files\)/,
@@ -582,6 +672,11 @@ test("chat composer can paste clipboard file and image attachments into the pend
     source,
     /const pastedFiles = clipboardFilesFromDataTransfer\(event\.clipboardData\);/,
   );
+  assert.match(source, /const explorerFiles =\s*explorerAttachmentFilesFromClipboardText\(clipboardText\);/);
+  assert.match(source, /onAddExplorerAttachments\(explorerFiles\);/);
+  assert.match(source, /const hasClipboardImageType = clipboardTypes\.some\(/);
+  assert.match(source, /clipboardImageFileFromElectronClipboard\(\)/);
+  assert.match(source, /onAddDroppedFiles\(\[file\]\);/);
   assert.match(source, /event\.preventDefault\(\);/);
   assert.match(source, /onAddDroppedFiles\(pastedFiles\);/);
   assert.match(source, /onPaste=\{handleTextareaPaste\}/);

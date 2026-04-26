@@ -57,6 +57,14 @@ const extraResources = [
     to: "icon.png"
   },
   {
+    from: "resources/holaStatusTemplate.png",
+    to: "holaStatusTemplate.png"
+  },
+  {
+    from: "resources/holaStatusTemplate@2x.png",
+    to: "holaStatusTemplate@2x.png"
+  },
+  {
     from: "out/holaboss-config.json",
     to: "holaboss-config.json"
   },

@@ -92,3 +92,60 @@ test("chat pane can consume a one-shot explorer attachment request", async () =>
     /onExplorerAttachmentRequestConsumed\?\.\(requestKey\);/,
   );
 });
+
+test("chat pane can consume browser comment drafts without polluting the composer text", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /interface ChatPaneBrowserCommentRequest \{\s*tabId: string;\s*pageTitle: string;\s*url: string;\s*comments: BrowserChatCommentDraftItem\[];\s*requestKey: number;\s*mode\?: "replace" \| "append";\s*\}/,
+  );
+  assert.match(
+    source,
+    /browserCommentRequest\?: ChatPaneBrowserCommentRequest \| null;/,
+  );
+  assert.match(
+    source,
+    /onBrowserCommentRequestConsumed\?: \(requestKey: number\) => void;/,
+  );
+  assert.match(
+    source,
+    /const lastHandledBrowserCommentRequestKeyRef = useRef\(0\);/,
+  );
+  assert.match(
+    source,
+    /const \[pendingBrowserCommentDraft, setPendingBrowserCommentDraft\] =\s*useState<PendingBrowserCommentDraft \| null>\(null\);/,
+  );
+  assert.match(
+    source,
+    /const requestKey = browserCommentRequest\?\.requestKey \?\? 0;/,
+  );
+  assert.match(
+    source,
+    /requestKey === lastHandledBrowserCommentRequestKeyRef\.current/,
+  );
+  assert.match(
+    source,
+    /setPendingBrowserCommentDraft\(\{\s*tabId: browserCommentRequest\?\.tabId \?\? "",\s*pageTitle: browserCommentRequest\?\.pageTitle \?\? "",\s*url: browserCommentRequest\?\.url \?\? "",\s*comments: browserCommentRequest\?\.comments \?\? \[\],\s*\}\);/,
+  );
+  assert.match(
+    source,
+    /const browserCommentMode = browserCommentRequest\?\.mode \?\? "replace";/,
+  );
+  assert.match(
+    source,
+    /const textareaPlaceholder = isOnboardingVariant[\s\S]*\?\s*"Ask for follow-up changes"[\s\S]*:\s*"Ask anything";/,
+  );
+  assert.match(
+    source,
+    /browserComments=\{pendingBrowserCommentDraft\}/,
+  );
+  assert.match(
+    source,
+    /onClearBrowserComments=\{clearPendingBrowserComments\}/,
+  );
+  assert.match(
+    source,
+    /onBrowserCommentRequestConsumed\?\.\(requestKey\);/,
+  );
+});

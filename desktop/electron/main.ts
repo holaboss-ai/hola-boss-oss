@@ -35,6 +35,7 @@ import {
   BrowserView,
   BrowserWindow,
   Menu,
+  Tray,
   clipboard,
   dialog,
   DownloadItem,
@@ -107,6 +108,7 @@ import { buildAppSdkClient } from "./appSdkClient.js";
 import { ensureWorkspaceGitRepo } from "./workspace-git.js";
 
 const APP_DISPLAY_NAME = "Holaboss";
+const MAC_APP_MENU_PRODUCT_LABEL = "holaOS";
 const AUTH_CALLBACK_PROTOCOL = "ai.holaboss.app";
 const DESKTOP_LAUNCH_ID = randomUUID();
 Sentry.setTags({
@@ -453,6 +455,11 @@ interface BrowserBoundsPayload {
   height: number;
 }
 
+interface BrowserVisibleSnapshotPayload {
+  bounds: BrowserBoundsPayload;
+  dataUrl: string;
+}
+
 interface BrowserStatePayload {
   id: string;
   url: string;
@@ -620,6 +627,43 @@ interface BrowserHistoryEntryPayload {
   visitCount: number;
   createdAt: string;
   lastVisitedAt: string;
+}
+
+interface BrowserClipboardScreenshotPayload {
+  tabId: string;
+  pageTitle: string;
+  url: string;
+  width: number;
+  height: number;
+  copied: boolean;
+}
+
+interface ClipboardImagePayload {
+  name: string;
+  mime_type: string;
+  content_base64: string;
+  width: number;
+  height: number;
+}
+
+interface BrowserCommentCaptureAttachmentPayload {
+  id: string;
+  text: string;
+  elementLabel: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  mimeType: string;
+  base64: string;
+}
+
+interface BrowserCommentCapturePayload {
+  tabId: string;
+  pageTitle: string;
+  url: string;
+  comments: BrowserCommentCaptureAttachmentPayload[];
+  canceled: boolean;
 }
 
 type BrowserImportSource = "chrome" | "chromium" | "arc" | "safari";
@@ -845,6 +889,7 @@ let downloadsPopupWindow: BrowserWindow | null = null;
 let historyPopupWindow: BrowserWindow | null = null;
 let overflowPopupWindow: BrowserWindow | null = null;
 let addressSuggestionsPopupWindow: BrowserWindow | null = null;
+let statusItemTray: Tray | null = null;
 const unresponsiveDesktopWindows = new WeakSet<BrowserWindow>();
 let attachedBrowserTabView: BrowserView | null = null;
 let attachedAppSurfaceView: BrowserView | null = null;
@@ -18653,15 +18698,19 @@ async function moveExplorerPath(
     throw new Error("Cannot move a folder into itself.");
   }
 
-  const nextAbsolutePath = path.join(
-    destinationAbsolutePath,
-    path.basename(sourceAbsolutePath),
-  );
-  if (path.normalize(nextAbsolutePath) === path.normalize(sourceAbsolutePath)) {
+  if (
+    path.normalize(path.dirname(sourceAbsolutePath)) ===
+    path.normalize(destinationAbsolutePath)
+  ) {
     return {
       absolutePath: sourceAbsolutePath,
     };
   }
+
+  const nextAbsolutePath = await nextAvailableExplorerCreatePath(
+    destinationAbsolutePath,
+    path.basename(sourceAbsolutePath),
+  );
   if (workspaceRoot && !isPathWithinRoot(workspaceRoot, nextAbsolutePath)) {
     throw new Error("Moved path escapes workspace root.");
   }
@@ -19608,6 +19657,791 @@ function getActiveBrowserTab(
     return null;
   }
   return tabSpace.tabs.get(tabSpace.activeTabId) ?? null;
+}
+
+function browserRoundedCaptureValue(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  return Math.round(value);
+}
+
+function normalizeBrowserCommentCaptureResult(value: unknown): {
+  canceled: boolean;
+  comments: Array<{
+    id: string;
+    text: string;
+    elementLabel: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }>;
+} {
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as { canceled?: unknown; comments?: unknown[] })
+      : {};
+  const comments = Array.isArray(record.comments)
+    ? record.comments.flatMap((entry, index) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+          return [];
+        }
+        const item = entry as Record<string, unknown>;
+        const text =
+          typeof item.text === "string" ? item.text.trim() : "";
+        const x = browserRoundedCaptureValue(item.x);
+        const y = browserRoundedCaptureValue(item.y);
+        const width = browserRoundedCaptureValue(item.width);
+        const height = browserRoundedCaptureValue(item.height);
+        if (
+          !text ||
+          x === null ||
+          y === null ||
+          width === null ||
+          height === null ||
+          width <= 0 ||
+          height <= 0
+        ) {
+          return [];
+        }
+        return [
+          {
+            id:
+              typeof item.id === "string" && item.id.trim()
+                ? item.id.trim()
+                : `browser-comment-${index + 1}`,
+            text,
+            elementLabel:
+              typeof item.elementLabel === "string"
+                ? item.elementLabel.trim()
+                : "",
+            x,
+            y,
+            width,
+            height,
+          },
+        ];
+      })
+    : [];
+  return {
+    canceled: record.canceled === true,
+    comments,
+  };
+}
+
+function clampBrowserCaptureRect(
+  rect: { x: number; y: number; width: number; height: number },
+  bounds: { width: number; height: number },
+): { x: number; y: number; width: number; height: number } | null {
+  const startX = Math.max(0, rect.x);
+  const startY = Math.max(0, rect.y);
+  const maxWidth = Math.max(0, bounds.width - startX);
+  const maxHeight = Math.max(0, bounds.height - startY);
+  const width = Math.min(rect.width, maxWidth);
+  const height = Math.min(rect.height, maxHeight);
+  if (width <= 0 || height <= 0) {
+    return null;
+  }
+  return {
+    x: startX,
+    y: startY,
+    width,
+    height,
+  };
+}
+
+function activeVisibleBrowserTarget(): {
+  workspaceId: string;
+  space: BrowserSpaceId;
+  sessionId: string | null;
+} {
+  return {
+    workspaceId: activeBrowserWorkspaceId,
+    space: activeBrowserSpaceId,
+    sessionId: activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+  };
+}
+
+function currentBrowserTabPageTitle(tab: BrowserTabRecord): string {
+  return tab.view.webContents.getTitle() || tab.state.title || "";
+}
+
+function currentBrowserTabUrl(tab: BrowserTabRecord): string {
+  return tab.view.webContents.getURL() || tab.state.url || "";
+}
+
+function browserCommentCaptureScript(): string {
+  return String.raw`(() => {
+  const sessionKey = '__holabossBrowserCommentCaptureSession';
+  const persistentKey = '__holabossBrowserCommentPersistentOverlay';
+  const activeSession = window[sessionKey];
+  if (activeSession && typeof activeSession.cleanup === 'function') {
+    try {
+      activeSession.cleanup({ canceled: true, comments: [] });
+    } catch {}
+  }
+
+  const existingPersistentOverlay = window[persistentKey];
+  const initialAnnotations =
+    existingPersistentOverlay &&
+    typeof existingPersistentOverlay.getAnnotations === 'function'
+      ? existingPersistentOverlay.getAnnotations()
+      : [];
+  if (
+    existingPersistentOverlay &&
+    typeof existingPersistentOverlay.dispose === 'function'
+  ) {
+    try {
+      existingPersistentOverlay.dispose();
+    } catch {}
+  }
+
+  return new Promise((resolve) => {
+    const annotations = Array.isArray(initialAnnotations)
+      ? initialAnnotations.flatMap((entry, index) => {
+          if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+            return [];
+          }
+          const annotation = entry;
+          const normalizedText =
+            typeof annotation.text === 'string' ? annotation.text.trim() : '';
+          if (!normalizedText) {
+            return [];
+          }
+          return [
+            {
+              id:
+                typeof annotation.id === 'string' && annotation.id.trim()
+                  ? annotation.id.trim()
+                  : 'browser-comment-' + String(index + 1),
+              text: normalizedText,
+              elementLabel:
+                typeof annotation.elementLabel === 'string'
+                  ? annotation.elementLabel.trim()
+                  : '',
+              element:
+                annotation.element instanceof HTMLElement ? annotation.element : null,
+              x:
+                typeof annotation.x === 'number' && Number.isFinite(annotation.x)
+                  ? Math.round(annotation.x)
+                  : 0,
+              y:
+                typeof annotation.y === 'number' && Number.isFinite(annotation.y)
+                  ? Math.round(annotation.y)
+                  : 0,
+              width:
+                typeof annotation.width === 'number' &&
+                Number.isFinite(annotation.width)
+                  ? Math.round(annotation.width)
+                  : 0,
+              height:
+                typeof annotation.height === 'number' &&
+                Number.isFinite(annotation.height)
+                  ? Math.round(annotation.height)
+                  : 0,
+            },
+          ];
+        })
+      : [];
+    const html = document.documentElement;
+    const body = document.body;
+    const previousHtmlOverflow = html ? html.style.overflow : '';
+    const previousBodyOverflow = body ? body.style.overflow : '';
+    const previousHtmlUserSelect = html ? html.style.userSelect : '';
+    const previousBodyUserSelect = body ? body.style.userSelect : '';
+    const previousHtmlCursor = html ? html.style.cursor : '';
+    const previousBodyCursor = body ? body.style.cursor : '';
+
+    if (html) {
+      html.style.overflow = 'hidden';
+      html.style.userSelect = 'none';
+      html.style.cursor = 'crosshair';
+    }
+    if (body) {
+      body.style.overflow = 'hidden';
+      body.style.userSelect = 'none';
+      body.style.cursor = 'crosshair';
+    }
+
+    const root = document.createElement('div');
+    root.setAttribute('data-holaboss-browser-comment-mode', 'true');
+    Object.assign(root.style, {
+      position: 'fixed',
+      inset: '0',
+      zIndex: '2147483647',
+      pointerEvents: 'none',
+      fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      color: '#111827',
+    });
+
+    const highlight = document.createElement('div');
+    Object.assign(highlight.style, {
+      position: 'fixed',
+      display: 'none',
+      border: '2px solid #3b82f6',
+      background: 'rgba(59, 130, 246, 0.12)',
+      boxShadow: '0 0 0 1px rgba(59, 130, 246, 0.18)',
+      borderRadius: '10px',
+      pointerEvents: 'none',
+    });
+    root.appendChild(highlight);
+
+    const markerLayer = document.createElement('div');
+    Object.assign(markerLayer.style, {
+      position: 'fixed',
+      inset: '0',
+      pointerEvents: 'none',
+    });
+    root.appendChild(markerLayer);
+
+    const toolbar = document.createElement('div');
+    Object.assign(toolbar.style, {
+      position: 'fixed',
+      top: '20px',
+      right: '20px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '10px',
+      padding: '10px 12px',
+      borderRadius: '16px',
+      border: '1px solid rgba(15, 23, 42, 0.08)',
+      background: 'rgba(255, 255, 255, 0.96)',
+      boxShadow: '0 16px 40px rgba(15, 23, 42, 0.18)',
+      pointerEvents: 'auto',
+    });
+    root.appendChild(toolbar);
+
+    const title = document.createElement('div');
+    title.textContent = 'Comment mode';
+    Object.assign(title.style, {
+      fontSize: '13px',
+      fontWeight: '600',
+      color: '#111827',
+    });
+    toolbar.appendChild(title);
+
+    const count = document.createElement('div');
+    count.textContent = '0 comments';
+    Object.assign(count.style, {
+      fontSize: '12px',
+      color: '#4b5563',
+      marginRight: '6px',
+    });
+    toolbar.appendChild(count);
+
+    function toolbarButton(label, emphasis) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = label;
+      Object.assign(button.style, {
+        appearance: 'none',
+        border: emphasis ? '0' : '1px solid rgba(148, 163, 184, 0.4)',
+        background: emphasis ? '#2563eb' : '#ffffff',
+        color: emphasis ? '#ffffff' : '#0f172a',
+        borderRadius: '999px',
+        padding: '8px 12px',
+        fontSize: '12px',
+        fontWeight: '600',
+        cursor: 'pointer',
+      });
+      return button;
+    }
+
+    const attachButton = toolbarButton('Attach to chat', true);
+    const cancelButton = toolbarButton('Cancel', false);
+    toolbar.appendChild(attachButton);
+    toolbar.appendChild(cancelButton);
+
+    const editor = document.createElement('div');
+    Object.assign(editor.style, {
+      position: 'fixed',
+      minWidth: '320px',
+      maxWidth: '420px',
+      display: 'none',
+      flexDirection: 'column',
+      gap: '10px',
+      padding: '14px',
+      borderRadius: '20px',
+      border: '1px solid rgba(15, 23, 42, 0.08)',
+      background: 'rgba(255, 255, 255, 0.98)',
+      boxShadow: '0 18px 48px rgba(15, 23, 42, 0.2)',
+      pointerEvents: 'auto',
+    });
+    root.appendChild(editor);
+
+    const editorLabel = document.createElement('div');
+    Object.assign(editorLabel.style, {
+      fontSize: '12px',
+      fontWeight: '600',
+      color: '#0f172a',
+    });
+    editor.appendChild(editorLabel);
+
+    const textarea = document.createElement('textarea');
+    textarea.rows = 3;
+    textarea.placeholder = 'Add a comment…';
+    Object.assign(textarea.style, {
+      width: '100%',
+      resize: 'none',
+      borderRadius: '14px',
+      border: '1px solid rgba(148, 163, 184, 0.38)',
+      padding: '12px 14px',
+      fontSize: '14px',
+      lineHeight: '1.45',
+      outline: 'none',
+      color: '#111827',
+      background: '#ffffff',
+      boxSizing: 'border-box',
+    });
+    editor.appendChild(textarea);
+
+    const editorActions = document.createElement('div');
+    Object.assign(editorActions.style, {
+      display: 'flex',
+      justifyContent: 'flex-end',
+      gap: '8px',
+    });
+    editor.appendChild(editorActions);
+
+    const discardButton = toolbarButton('Discard', false);
+    const addButton = toolbarButton('Add comment', true);
+    editorActions.appendChild(discardButton);
+    editorActions.appendChild(addButton);
+
+    let hoveredElement = null;
+    let selectedRect = null;
+    let selectedLabel = '';
+    let selectedElement = null;
+
+    function clampRect(rect) {
+      if (!rect) {
+        return null;
+      }
+      const x = Math.max(0, Math.round(rect.left));
+      const y = Math.max(0, Math.round(rect.top));
+      const width = Math.min(
+        Math.max(0, Math.round(rect.width)),
+        Math.max(0, window.innerWidth - x),
+      );
+      const height = Math.min(
+        Math.max(0, Math.round(rect.height)),
+        Math.max(0, window.innerHeight - y),
+      );
+      if (width < 8 || height < 8) {
+        return null;
+      }
+      return { x, y, width, height };
+    }
+
+    function annotationRect(annotation) {
+      if (annotation && annotation.element instanceof HTMLElement) {
+        const liveRect = clampRect(annotation.element.getBoundingClientRect());
+        if (liveRect) {
+          annotation.x = liveRect.x;
+          annotation.y = liveRect.y;
+          annotation.width = liveRect.width;
+          annotation.height = liveRect.height;
+          return liveRect;
+        }
+      }
+      return clampRect(annotation);
+    }
+
+    function serializeAnnotations(items) {
+      return items.flatMap((annotation, index) => {
+        const rect = annotationRect(annotation);
+        const normalizedText =
+          typeof annotation.text === 'string' ? annotation.text.trim() : '';
+        if (!rect || !normalizedText) {
+          return [];
+        }
+        return [
+          {
+            id:
+              typeof annotation.id === 'string' && annotation.id.trim()
+                ? annotation.id.trim()
+                : 'browser-comment-' + String(index + 1),
+            text: normalizedText,
+            elementLabel:
+              typeof annotation.elementLabel === 'string'
+                ? annotation.elementLabel.trim()
+                : '',
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+            element:
+              annotation.element instanceof HTMLElement ? annotation.element : null,
+          },
+        ];
+      });
+    }
+
+    function captureResultComments(items) {
+      return serializeAnnotations(items).map((annotation) => ({
+        id: annotation.id,
+        text: annotation.text,
+        elementLabel: annotation.elementLabel,
+        x: annotation.x,
+        y: annotation.y,
+        width: annotation.width,
+        height: annotation.height,
+      }));
+    }
+
+    function createPersistentOverlay(items) {
+      const persistentRoot = document.createElement('div');
+      Object.assign(persistentRoot.style, {
+        position: 'fixed',
+        inset: '0',
+        zIndex: '2147483646',
+        pointerEvents: 'none',
+      });
+      const persistentMarkerLayer = document.createElement('div');
+      Object.assign(persistentMarkerLayer.style, {
+        position: 'fixed',
+        inset: '0',
+        pointerEvents: 'none',
+      });
+      persistentRoot.appendChild(persistentMarkerLayer);
+
+      function renderPersistentMarkers() {
+        persistentMarkerLayer.replaceChildren();
+        serializeAnnotations(items).forEach((annotation, index) => {
+          const badge = document.createElement('div');
+          badge.textContent = String(index + 1);
+          Object.assign(badge.style, {
+            position: 'fixed',
+            left: String(annotation.x + annotation.width - 12) + 'px',
+            top: String(Math.max(8, annotation.y - 12)) + 'px',
+            width: '28px',
+            height: '28px',
+            borderRadius: '999px',
+            background: '#2563eb',
+            color: '#ffffff',
+            display: 'grid',
+            placeItems: 'center',
+            fontSize: '12px',
+            fontWeight: '700',
+            boxShadow: '0 10px 24px rgba(37, 99, 235, 0.35)',
+          });
+          persistentMarkerLayer.appendChild(badge);
+        });
+      }
+
+      function handleViewportChange() {
+        renderPersistentMarkers();
+      }
+
+      function dispose() {
+        window.removeEventListener('resize', handleViewportChange, true);
+        window.removeEventListener('scroll', handleViewportChange, true);
+        if (window[persistentKey] && window[persistentKey].dispose === dispose) {
+          delete window[persistentKey];
+        }
+        persistentRoot.remove();
+      }
+
+      window[persistentKey] = {
+        dispose,
+        getAnnotations: () => serializeAnnotations(items),
+      };
+      window.addEventListener('resize', handleViewportChange, true);
+      window.addEventListener('scroll', handleViewportChange, true);
+      renderPersistentMarkers();
+      document.documentElement.appendChild(persistentRoot);
+    }
+
+    function updateAttachButtonState() {
+      const disabled = annotations.length === 0;
+      attachButton.disabled = disabled;
+      attachButton.style.opacity = disabled ? '0.55' : '1';
+      attachButton.style.cursor = disabled ? 'default' : 'pointer';
+      count.textContent =
+        annotations.length === 1
+          ? '1 comment'
+          : String(annotations.length) + ' comments';
+    }
+
+    function describeElement(element) {
+      if (!element) {
+        return '';
+      }
+      const directText = (element.innerText || '').replace(/\s+/g, ' ').trim();
+      const candidates = [
+        element.getAttribute('aria-label') || '',
+        element.getAttribute('title') || '',
+        element.getAttribute('alt') || '',
+        element.getAttribute('placeholder') || '',
+        directText,
+      ].map((value) => value.trim()).filter(Boolean);
+      if (candidates.length > 0) {
+        return candidates[0].slice(0, 120);
+      }
+      const tagName = (element.tagName || 'element').toLowerCase();
+      const id = (element.id || '').trim();
+      return id ? tagName + '#' + id : tagName;
+    }
+
+    function targetFromPoint(clientX, clientY) {
+      const previousPointerEvents = root.style.pointerEvents;
+      root.style.pointerEvents = 'none';
+      const elements = document.elementsFromPoint(clientX, clientY);
+      root.style.pointerEvents = previousPointerEvents;
+      return elements.find((candidate) => {
+        return (
+          candidate instanceof HTMLElement &&
+          !root.contains(candidate) &&
+          candidate !== document.documentElement &&
+          candidate !== document.body &&
+          clampRect(candidate.getBoundingClientRect())
+        );
+      }) || null;
+    }
+
+    function renderHighlight(rect) {
+      if (!rect) {
+        highlight.style.display = 'none';
+        return;
+      }
+      highlight.style.display = 'block';
+      highlight.style.left = String(rect.x) + 'px';
+      highlight.style.top = String(rect.y) + 'px';
+      highlight.style.width = String(rect.width) + 'px';
+      highlight.style.height = String(rect.height) + 'px';
+    }
+
+    function renderMarkers() {
+      markerLayer.replaceChildren();
+      serializeAnnotations(annotations).forEach((annotation, index) => {
+        const box = document.createElement('div');
+        Object.assign(box.style, {
+          position: 'fixed',
+          left: String(annotation.x) + 'px',
+          top: String(annotation.y) + 'px',
+          width: String(annotation.width) + 'px',
+          height: String(annotation.height) + 'px',
+          border: '2px solid #3b82f6',
+          background: 'rgba(59, 130, 246, 0.08)',
+          borderRadius: '10px',
+          pointerEvents: 'none',
+        });
+
+        const badge = document.createElement('div');
+        badge.textContent = String(index + 1);
+        Object.assign(badge.style, {
+          position: 'absolute',
+          top: '-12px',
+          right: '-12px',
+          width: '26px',
+          height: '26px',
+          borderRadius: '999px',
+          background: '#2563eb',
+          color: '#ffffff',
+          display: 'grid',
+          placeItems: 'center',
+          fontSize: '12px',
+          fontWeight: '700',
+          boxShadow: '0 10px 24px rgba(37, 99, 235, 0.35)',
+        });
+        box.appendChild(badge);
+        markerLayer.appendChild(box);
+      });
+    }
+
+    function closeEditor() {
+      editor.style.display = 'none';
+      textarea.value = '';
+      selectedRect = null;
+      selectedLabel = '';
+      selectedElement = null;
+      if (hoveredElement) {
+        renderHighlight(clampRect(hoveredElement.getBoundingClientRect()));
+      } else {
+        renderHighlight(null);
+      }
+    }
+
+    function positionEditor(rect) {
+      const gap = 14;
+      const measuredWidth = Math.min(420, Math.max(320, Math.round(window.innerWidth * 0.32)));
+      const preferredLeft = rect.x + rect.width / 2 - measuredWidth / 2;
+      const left = Math.max(
+        16,
+        Math.min(window.innerWidth - measuredWidth - 16, preferredLeft),
+      );
+      const preferredTop = rect.y - 154;
+      const top =
+        preferredTop >= 20
+          ? preferredTop
+          : Math.min(window.innerHeight - 190, rect.y + rect.height + gap);
+      editor.style.left = String(Math.round(left)) + 'px';
+      editor.style.top = String(Math.round(top)) + 'px';
+      editor.style.width = String(measuredWidth) + 'px';
+    }
+
+    function openEditor(rect, label, element) {
+      selectedRect = rect;
+      selectedLabel = label;
+      selectedElement = element instanceof HTMLElement ? element : null;
+      editorLabel.textContent = label || 'Selected element';
+      positionEditor(rect);
+      editor.style.display = 'flex';
+      renderHighlight(rect);
+      textarea.focus();
+    }
+
+    function preventOutsideInteraction(event) {
+      const target = event.target;
+      if (target instanceof Node && root.contains(target)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (typeof event.stopImmediatePropagation === 'function') {
+        event.stopImmediatePropagation();
+      }
+    }
+
+    function handleMouseMove(event) {
+      if (editor.style.display === 'flex') {
+        return;
+      }
+      const candidate = targetFromPoint(event.clientX, event.clientY);
+      hoveredElement = candidate instanceof HTMLElement ? candidate : null;
+      renderHighlight(
+        hoveredElement ? clampRect(hoveredElement.getBoundingClientRect()) : null,
+      );
+    }
+
+    function handleDocumentClick(event) {
+      const target = event.target;
+      if (target instanceof Node && root.contains(target)) {
+        return;
+      }
+      preventOutsideInteraction(event);
+      const candidate = targetFromPoint(event.clientX, event.clientY);
+      if (!(candidate instanceof HTMLElement)) {
+        return;
+      }
+      const rect = clampRect(candidate.getBoundingClientRect());
+      if (!rect) {
+        return;
+      }
+      hoveredElement = candidate;
+      openEditor(rect, describeElement(candidate), candidate);
+    }
+
+    function handleViewportChange() {
+      renderMarkers();
+      if (selectedRect) {
+        positionEditor(selectedRect);
+      }
+      if (hoveredElement instanceof HTMLElement) {
+        renderHighlight(clampRect(hoveredElement.getBoundingClientRect()));
+      }
+    }
+
+    function handleKeyDown(event) {
+      const target = event.target;
+      const insideOverlay = target instanceof Node && root.contains(target);
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        if (editor.style.display === 'flex') {
+          closeEditor();
+          return;
+        }
+        cleanup({ canceled: true, comments: [] });
+        return;
+      }
+      if (!insideOverlay) {
+        event.stopPropagation();
+      }
+    }
+
+    function cleanup(result) {
+      document.removeEventListener('mousemove', handleMouseMove, true);
+      document.removeEventListener('mousedown', preventOutsideInteraction, true);
+      document.removeEventListener('click', handleDocumentClick, true);
+      document.removeEventListener('wheel', preventOutsideInteraction, true);
+      document.removeEventListener('touchmove', preventOutsideInteraction, true);
+      document.removeEventListener('keydown', handleKeyDown, true);
+      window.removeEventListener('resize', handleViewportChange, true);
+      window.removeEventListener('scroll', handleViewportChange, true);
+      delete window[sessionKey];
+      root.remove();
+      if (html) {
+        html.style.overflow = previousHtmlOverflow;
+        html.style.userSelect = previousHtmlUserSelect;
+        html.style.cursor = previousHtmlCursor;
+      }
+      if (body) {
+        body.style.overflow = previousBodyOverflow;
+        body.style.userSelect = previousBodyUserSelect;
+        body.style.cursor = previousBodyCursor;
+      }
+      const persistentAnnotations = serializeAnnotations(
+        result.canceled ? initialAnnotations : annotations,
+      );
+      if (persistentAnnotations.length > 0) {
+        createPersistentOverlay(persistentAnnotations);
+      }
+      resolve(result);
+    }
+
+    window[sessionKey] = { cleanup };
+
+    discardButton.addEventListener('click', () => {
+      closeEditor();
+    });
+    cancelButton.addEventListener('click', () => {
+      cleanup({ canceled: true, comments: [] });
+    });
+    addButton.addEventListener('click', () => {
+      const text = textarea.value.trim();
+      if (!selectedRect || !text) {
+        return;
+      }
+      annotations.push({
+        id: 'browser-comment-' + String(Date.now()) + '-' + String(Math.random()).slice(2, 8),
+        text,
+        elementLabel: selectedLabel,
+        element: selectedElement,
+        x: selectedRect.x,
+        y: selectedRect.y,
+        width: selectedRect.width,
+        height: selectedRect.height,
+      });
+      closeEditor();
+      renderMarkers();
+      updateAttachButtonState();
+    });
+    attachButton.addEventListener('click', () => {
+      if (annotations.length === 0) {
+        return;
+      }
+      cleanup({ canceled: false, comments: captureResultComments(annotations) });
+    });
+    textarea.addEventListener('keydown', (event) => {
+      event.stopPropagation();
+    });
+
+    document.addEventListener('mousemove', handleMouseMove, true);
+    document.addEventListener('mousedown', preventOutsideInteraction, true);
+    document.addEventListener('click', handleDocumentClick, true);
+    document.addEventListener('wheel', preventOutsideInteraction, { capture: true, passive: false });
+    document.addEventListener('touchmove', preventOutsideInteraction, { capture: true, passive: false });
+    document.addEventListener('keydown', handleKeyDown, true);
+    window.addEventListener('resize', handleViewportChange, true);
+    window.addEventListener('scroll', handleViewportChange, true);
+
+    updateAttachButtonState();
+    renderMarkers();
+    document.documentElement.appendChild(root);
+  });
+})()`;
 }
 
 function reserveMainWindowClosedListenerBudget(additionalClosedListeners = 0) {
@@ -21006,6 +21840,24 @@ function setBrowserBounds(bounds: BrowserBoundsPayload) {
   updateAttachedBrowserView();
 }
 
+async function captureVisibleBrowserSnapshot(): Promise<BrowserVisibleSnapshotPayload | null> {
+  const activeTab = getActiveBrowserTab(
+    activeBrowserWorkspaceId,
+    activeBrowserSpaceId,
+    activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+    { useVisibleAgentSession: true },
+  );
+  if (!activeTab || !hasVisibleBrowserBounds()) {
+    return null;
+  }
+
+  const image = await activeTab.view.webContents.capturePage();
+  return {
+    bounds: { ...browserBounds },
+    dataUrl: `data:image/png;base64,${image.toPNG().toString("base64")}`,
+  };
+}
+
 function createDownloadsPopupHtml() {
   return `<!doctype html>
 <html lang="en">
@@ -22063,7 +22915,7 @@ function createMainWindow() {
     process.platform === "darwin"
       ? {
           titleBarStyle: "hiddenInset" as const,
-          trafficLightPosition: { x: 14, y: 23 },
+          trafficLightPosition: { x: 14, y: 16 },
         }
       : process.platform === "win32"
         ? {
@@ -22071,11 +22923,7 @@ function createMainWindow() {
           }
         : {};
 
-  const appIcon = nativeImage.createFromPath(
-    app.isPackaged
-      ? path.join(process.resourcesPath, "icon.png")
-      : path.join(__dirname, "..", "..", "resources", "icon.png"),
-  );
+  const appIcon = nativeImage.createFromPath(desktopAppIconPath());
 
   const win = new BrowserWindow({
     width: 1600,
@@ -22208,10 +23056,130 @@ function createMainWindow() {
   });
 }
 
+function focusOrCreateMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createMainWindow();
+    return;
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  if (!mainWindow.isVisible()) {
+    mainWindow.show();
+  }
+  mainWindow.focus();
+}
+
+function desktopAppIconPath(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "icon.png")
+    : path.join(__dirname, "..", "..", "resources", "icon.png");
+}
+
+function desktopStatusItemIconPath(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "holaStatusTemplate.png")
+    : path.join(__dirname, "..", "..", "resources", "holaStatusTemplate.png");
+}
+
+function installMacStatusItem() {
+  if (process.platform !== "darwin" || statusItemTray) {
+    return;
+  }
+
+  const icon = nativeImage.createFromPath(desktopStatusItemIconPath());
+  if (icon.isEmpty()) {
+    return;
+  }
+  icon.setTemplateImage(true);
+
+  statusItemTray = new Tray(icon);
+  statusItemTray.setToolTip(MAC_APP_MENU_PRODUCT_LABEL);
+  statusItemTray.setContextMenu(
+    Menu.buildFromTemplate([
+      {
+        label: `Open ${MAC_APP_MENU_PRODUCT_LABEL}`,
+        click: () => {
+          focusOrCreateMainWindow();
+        },
+      },
+      {
+        label: `Quit ${MAC_APP_MENU_PRODUCT_LABEL}`,
+        role: "quit",
+      },
+    ]),
+  );
+}
+
+function installMacApplicationMenu() {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
+  const template: MenuItemConstructorOptions[] = [
+    {
+      label: app.getName(),
+      submenu: [
+        {
+          label: `Open ${MAC_APP_MENU_PRODUCT_LABEL}`,
+          click: () => {
+            focusOrCreateMainWindow();
+          },
+        },
+        {
+          label: `Quit ${MAC_APP_MENU_PRODUCT_LABEL}`,
+          role: "quit",
+        },
+      ],
+    },
+    {
+      label: "Edit",
+      submenu: [
+        { label: "Undo", role: "undo" },
+        { label: "Redo", role: "redo" },
+        { type: "separator" },
+        { label: "Cut", role: "cut" },
+        { label: "Copy", role: "copy" },
+        { label: "Paste", role: "paste" },
+        { label: "Select All", role: "selectAll" },
+      ],
+    },
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+function readClipboardImagePayload(): ClipboardImagePayload | null {
+  const image = clipboard.readImage();
+  if (image.isEmpty()) {
+    return null;
+  }
+
+  const png = image.toPNG();
+  if (png.length === 0) {
+    return null;
+  }
+
+  const size = image.getSize();
+  return {
+    name: "pasted-image.png",
+    mime_type: "image/png",
+    content_base64: png.toString("base64"),
+    width: size.width,
+    height: size.height,
+  };
+}
+
 const singleInstanceLock =
   process.env.HOLABOSS_DISABLE_SINGLE_INSTANCE_LOCK?.trim() === "1"
     ? true
     : app.requestSingleInstanceLock();
+app.setName(
+  process.platform === "darwin" && isDev
+    ? MAC_APP_MENU_PRODUCT_LABEL
+    : APP_DISPLAY_NAME,
+);
 if (!singleInstanceLock) {
   app.quit();
 } else {
@@ -22359,16 +23327,14 @@ app.on("child-process-gone", (_event, details) => {
 
 app.whenReady().then(async () => {
   if (process.platform === "darwin" && app.dock) {
-    const dockIcon = nativeImage.createFromPath(
-      app.isPackaged
-        ? path.join(process.resourcesPath, "icon.png")
-        : path.join(__dirname, "..", "..", "resources", "icon.png"),
-    );
+    const dockIcon = nativeImage.createFromPath(desktopAppIconPath());
     if (!dockIcon.isEmpty()) {
       app.dock.setIcon(dockIcon);
     }
   }
 
+  installMacStatusItem();
+  installMacApplicationMenu();
   applyMainShellContentSecurityPolicy(session.defaultSession);
 
   await loadBrowserPersistence();
@@ -22678,6 +23644,18 @@ app.whenReady().then(async () => {
     ["main", "auth-popup"],
     async (_event, rawUrl: string) => {
       await openExternalUrl(rawUrl);
+    },
+  );
+  handleTrustedIpc(
+    "clipboard:readImage",
+    ["main"],
+    async () => readClipboardImagePayload(),
+  );
+  handleTrustedIpc(
+    "clipboard:writeText",
+    ["main"],
+    async (_event, text: string) => {
+      clipboard.writeText(typeof text === "string" ? text : "");
     },
   );
   handleTrustedIpc("ui:getWindowState", ["main"], async (event) => {
@@ -23470,6 +24448,9 @@ app.whenReady().then(async () => {
       );
     },
   );
+  ipcMain.handle("browser:captureVisibleSnapshot", async () => {
+    return captureVisibleBrowserSnapshot();
+  });
   ipcMain.handle("browser:navigate", async (_event, targetUrl: string) => {
     if (!activeBrowserWorkspaceId) {
       return emptyBrowserTabListPayload(activeBrowserSpaceId);
@@ -23639,6 +24620,138 @@ app.whenReady().then(async () => {
       activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
       { useVisibleAgentSession: true },
     );
+  });
+  ipcMain.handle("browser:captureScreenshotToClipboard", async () => {
+    const target = activeVisibleBrowserTarget();
+    if (!target.workspaceId) {
+      throw new Error("No active browser tab is available.");
+    }
+    const interrupted = maybePromptBrowserInterrupt(
+      target.workspaceId,
+      target.space,
+      target.sessionId,
+    );
+    await ensureBrowserWorkspace(
+      undefined,
+      target.space,
+      target.sessionId,
+    );
+    const activeTab = getActiveBrowserTab(
+      undefined,
+      target.space,
+      target.sessionId,
+      { useVisibleAgentSession: true },
+    );
+    if (!activeTab) {
+      throw new Error("No active browser tab is available.");
+    }
+    if (interrupted) {
+      return {
+        tabId: activeTab.state.id,
+        pageTitle: currentBrowserTabPageTitle(activeTab),
+        url: currentBrowserTabUrl(activeTab),
+        width: 0,
+        height: 0,
+        copied: false,
+      } satisfies BrowserClipboardScreenshotPayload;
+    }
+
+    const image = await activeTab.view.webContents.capturePage();
+    clipboard.writeImage(image);
+    const size = image.getSize();
+    return {
+      tabId: activeTab.state.id,
+      pageTitle: currentBrowserTabPageTitle(activeTab),
+      url: currentBrowserTabUrl(activeTab),
+      width: size.width,
+      height: size.height,
+      copied: true,
+    } satisfies BrowserClipboardScreenshotPayload;
+  });
+  ipcMain.handle("browser:captureCommentsForChat", async () => {
+    const target = activeVisibleBrowserTarget();
+    if (!target.workspaceId) {
+      throw new Error("No active browser tab is available.");
+    }
+    const interrupted = maybePromptBrowserInterrupt(
+      target.workspaceId,
+      target.space,
+      target.sessionId,
+    );
+    await ensureBrowserWorkspace(
+      undefined,
+      target.space,
+      target.sessionId,
+    );
+    const activeTab = getActiveBrowserTab(
+      undefined,
+      target.space,
+      target.sessionId,
+      { useVisibleAgentSession: true },
+    );
+    if (!activeTab) {
+      throw new Error("No active browser tab is available.");
+    }
+    const pageTitle = currentBrowserTabPageTitle(activeTab);
+    const url = currentBrowserTabUrl(activeTab);
+    if (interrupted) {
+      return {
+        tabId: activeTab.state.id,
+        pageTitle,
+        url,
+        comments: [],
+        canceled: true,
+      } satisfies BrowserCommentCapturePayload;
+    }
+    if (!activeTab.state.initialized || activeTab.view.webContents.isLoadingMainFrame()) {
+      throw new Error("Wait for the page to finish loading before adding comments.");
+    }
+
+    const rawCaptureResult = await activeTab.view.webContents.executeJavaScript(
+      browserCommentCaptureScript(),
+    );
+    const captureResult = normalizeBrowserCommentCaptureResult(rawCaptureResult);
+    if (captureResult.canceled || captureResult.comments.length === 0) {
+      return {
+        tabId: activeTab.state.id,
+        pageTitle,
+        url,
+        comments: [],
+        canceled: true,
+      } satisfies BrowserCommentCapturePayload;
+    }
+
+    const fullImage = await activeTab.view.webContents.capturePage();
+    const fullImageSize = fullImage.getSize();
+    const comments = captureResult.comments.flatMap((comment) => {
+      const rect = clampBrowserCaptureRect(comment, fullImageSize);
+      if (!rect) {
+        return [];
+      }
+      const image = fullImage.crop(rect);
+      const size = image.getSize();
+      return [
+        {
+          id: comment.id,
+          text: comment.text,
+          elementLabel: comment.elementLabel,
+          x: rect.x,
+          y: rect.y,
+          width: size.width,
+          height: size.height,
+          mimeType: "image/png",
+          base64: image.toPNG().toString("base64"),
+        },
+      ];
+    });
+
+    return {
+      tabId: activeTab.state.id,
+      pageTitle,
+      url,
+      comments,
+      canceled: comments.length === 0,
+    } satisfies BrowserCommentCapturePayload;
   });
   ipcMain.handle("browser:newTab", async (_event, targetUrl?: string) => {
     if (

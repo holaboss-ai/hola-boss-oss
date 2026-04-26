@@ -136,6 +136,7 @@ export interface TsRunnerHarnessRelayResult {
 export interface TsRunnerExecutionDeps {
   bootstrapApplications: (params: {
     request: TsRunnerRequest;
+    workspaceRoot: string;
     workspaceDir: string;
     resolvedApplications: unknown[];
   }) => Promise<PreparedMcpServerPayload[]>;
@@ -1183,8 +1184,40 @@ function harnessHostEntryPath(): { entryPath: string; argsPrefix: string[] } {
   };
 }
 
+function managedWorkspaceRoot(): string {
+  return path.dirname(workspaceDirForId("workspace-root"));
+}
+
+function resolveRegisteredWorkspaceDir(
+  workspaceId: string,
+  options: { logger?: LoggerLike } = {},
+): string {
+  const workspaceRoot = managedWorkspaceRoot();
+  const sandboxRoot = path.dirname(workspaceRoot);
+  const dbPath = path.join(sandboxRoot, "state", "runtime.db");
+  if (!fs.existsSync(dbPath)) {
+    return workspaceDirForId(workspaceId);
+  }
+  const store = new RuntimeStateStore({
+    workspaceRoot,
+    sandboxRoot,
+    dbPath,
+  });
+  try {
+    return store.workspaceDir(workspaceId);
+  } catch (error) {
+    options.logger?.warn?.(
+      `Falling back to managed workspace path for workspace_id=${workspaceId}: ${errorMessage(error)}`,
+    );
+    return workspaceDirForId(workspaceId);
+  } finally {
+    store.close();
+  }
+}
+
 async function defaultBootstrapApplications(params: {
   request: TsRunnerRequest;
+  workspaceRoot: string;
   workspaceDir: string;
   resolvedApplications: unknown[];
 }): Promise<PreparedMcpServerPayload[]> {
@@ -1194,7 +1227,8 @@ async function defaultBootstrapApplications(params: {
   const appLifecycleExecutor: AppLifecycleExecutorLike =
     new RuntimeAppLifecycleExecutor();
   const store = new RuntimeStateStore({
-    workspaceRoot: path.dirname(path.resolve(params.workspaceDir)),
+    workspaceRoot: params.workspaceRoot,
+    sandboxRoot: path.dirname(params.workspaceRoot),
   });
   try {
     const result = await bootstrapResolvedApplications({
@@ -1414,7 +1448,10 @@ export function resolveTsRunnerBootstrapState(
   );
   const harness = selectedHarness(request);
   requireRuntimeHarnessAdapter(harness);
-  const workspaceDir = workspaceDirForId(request.workspace_id);
+  const workspaceRoot = managedWorkspaceRoot();
+  const workspaceDir = resolveRegisteredWorkspaceDir(request.workspace_id, {
+    logger,
+  });
   const persistedHarnessSessionId = readWorkspaceHarnessSessionId({
     workspaceDir,
     harness,
@@ -1423,7 +1460,7 @@ export function resolveTsRunnerBootstrapState(
 
   return {
     harness,
-    workspaceRoot: path.dirname(workspaceDir),
+    workspaceRoot,
     workspaceDir,
     runtimeExecContext: resolvedExecContext,
     requestedHarnessSessionId,
@@ -1629,6 +1666,7 @@ export async function executeTsRunnerRequest(
           async () =>
             await deps.bootstrapApplications({
               request,
+              workspaceRoot: bootstrap.workspaceRoot,
               workspaceDir: bootstrap.workspaceDir,
               resolvedApplications: compiledPlan.resolved_applications,
             }),

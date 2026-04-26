@@ -37,33 +37,36 @@ function run(args) {
   }
 }
 
-// Patch app identity — show "Holaboss" instead of "Electron" in macOS
-const APP_NAME = "Holaboss";
+// Patch app identity so dev launches present as holaOS in macOS chrome.
+const APP_NAME = "holaOS";
 const BUNDLE_ID = "com.holaboss.workspace";
 
 run(`Set :CFBundleName ${APP_NAME}`);
 run(`Set :CFBundleDisplayName ${APP_NAME}`);
 run(`Set :CFBundleIdentifier ${BUNDLE_ID}`);
 
-// Check if URL scheme already patched
+let urlSchemeAlreadyPatched = false;
 try {
-  const out = execFileSync(PLIST_BUDDY, ["-c", "Print :CFBundleURLTypes:0:CFBundleURLSchemes:0", plistPath], {
-    stdio: "pipe",
-    encoding: "utf8",
-  }).trim();
-  if (out === SCHEME) {
-    console.log(`[patch-electron-plist] Already patched (${APP_NAME}, ${SCHEME})`);
-    process.exit(0);
-  }
+  const out = execFileSync(
+    PLIST_BUDDY,
+    ["-c", "Print :CFBundleURLTypes:0:CFBundleURLSchemes:0", plistPath],
+    {
+      stdio: "pipe",
+      encoding: "utf8",
+    }
+  ).trim();
+  urlSchemeAlreadyPatched = out === SCHEME;
 } catch {
-  // Not patched yet — continue
+  urlSchemeAlreadyPatched = false;
 }
 
-run("Add :CFBundleURLTypes array");
-run("Add :CFBundleURLTypes:0 dict");
-run(`Add :CFBundleURLTypes:0:CFBundleURLName string 'Holaboss Auth Callback'`);
-run("Add :CFBundleURLTypes:0:CFBundleURLSchemes array");
-run(`Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string ${SCHEME}`);
+if (!urlSchemeAlreadyPatched) {
+  run("Add :CFBundleURLTypes array");
+  run("Add :CFBundleURLTypes:0 dict");
+  run("Add :CFBundleURLTypes:0:CFBundleURLSchemes array");
+  run(`Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string ${SCHEME}`);
+}
+run(`Set :CFBundleURLTypes:0:CFBundleURLName 'holaOS Auth Callback'`);
 
 // Re-register with LaunchServices
 const electronApp = path.resolve(__dirname, "../node_modules/electron/dist/Electron.app");
@@ -77,4 +80,8 @@ try {
   // lsregister failure is non-fatal
 }
 
-console.log(`[patch-electron-plist] Patched ${SCHEME} URL scheme into Electron.app`);
+console.log(
+  urlSchemeAlreadyPatched
+    ? `[patch-electron-plist] Refreshed ${APP_NAME} metadata for Electron.app`
+    : `[patch-electron-plist] Patched ${SCHEME} URL scheme into Electron.app`,
+);

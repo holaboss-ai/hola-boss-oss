@@ -4,7 +4,7 @@ export function DiagramSystemOverview() {
       <div className="hb-diagram-system__shell">
         <section className="hb-diagram-system__surface">
           <div className="hb-diagram-system__eyebrow">Product Surface</div>
-          <div className="hb-diagram-system__title">Holaboss Desktop</div>
+          <div className="hb-diagram-system__title">holaOS Desktop</div>
           <p className="hb-diagram-system__copy">
             Operator shell for opening workspaces, configuring models, inspecting
             state, and launching the runtime.
