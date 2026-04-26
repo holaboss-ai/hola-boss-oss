@@ -1151,6 +1151,9 @@ function ConnectedProviderCard({
         {connections.map((conn, index) => {
           const meta = metadata.get(conn.connection_id);
           const label = accountDisplayLabel(conn, meta, index);
+          const avatarUrl = meta?.avatarUrl?.trim();
+          const fallbackChar =
+            label.replace(/^@/, "").charAt(0).toUpperCase() || "?";
           const disconnecting =
             disconnectingConnectionId === conn.connection_id;
           return (
@@ -1158,6 +1161,17 @@ function ConnectedProviderCard({
               className="flex items-center gap-2 py-1"
               key={conn.connection_id}
             >
+              {avatarUrl ? (
+                <img
+                  alt=""
+                  className="size-3.5 shrink-0 rounded-full bg-muted object-cover"
+                  src={avatarUrl}
+                />
+              ) : (
+                <span className="flex size-3.5 shrink-0 items-center justify-center rounded-full bg-muted text-[8px] font-semibold text-muted-foreground">
+                  {fallbackChar}
+                </span>
+              )}
               <span className="min-w-0 flex-1 truncate text-xs text-foreground">
                 {label}
               </span>
