@@ -1105,6 +1105,11 @@ function ConnectedProviderCard({
   const containerClass = compact
     ? "flex flex-col gap-1 rounded-xl bg-card px-3 py-2.5 ring-1 ring-border"
     : "flex flex-col gap-1 rounded-xl border border-border px-3 py-2.5";
+  // Track avatars that 404 / refuse to load so we degrade to the lettered
+  // placeholder instead of the broken-image icon. Provider CDNs can be
+  // flaky (Twitter rate limits, LinkedIn auth requirements) so this is
+  // worth the small bookkeeping.
+  const [failedAvatars, setFailedAvatars] = useState<Set<string>>(new Set());
 
   return (
     <div className={containerClass}>
@@ -1154,6 +1159,8 @@ function ConnectedProviderCard({
           const avatarUrl = meta?.avatarUrl?.trim();
           const fallbackChar =
             label.replace(/^@/, "").charAt(0).toUpperCase() || "?";
+          const failedAvatar = failedAvatars.has(conn.connection_id);
+          const showAvatar = Boolean(avatarUrl) && !failedAvatar;
           const disconnecting =
             disconnectingConnectionId === conn.connection_id;
           return (
@@ -1161,10 +1168,20 @@ function ConnectedProviderCard({
               className="flex items-center gap-2 py-1"
               key={conn.connection_id}
             >
-              {avatarUrl ? (
+              {showAvatar ? (
                 <img
                   alt=""
                   className="size-3.5 shrink-0 rounded-full bg-muted object-cover"
+                  onError={() =>
+                    setFailedAvatars((prev) => {
+                      if (prev.has(conn.connection_id)) {
+                        return prev;
+                      }
+                      const next = new Set(prev);
+                      next.add(conn.connection_id);
+                      return next;
+                    })
+                  }
                   // Google's lh3.googleusercontent.com CDN rejects requests
                   // with a localhost / app referrer; this header strips it.
                   referrerPolicy="no-referrer"
