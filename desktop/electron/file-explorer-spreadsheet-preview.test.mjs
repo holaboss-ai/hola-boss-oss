@@ -56,7 +56,7 @@ test("desktop file explorer enforces the selected workspace root as a filesystem
   assert.match(source, /async function renameExplorerPath\(/);
   assert.match(source, /async function moveExplorerPath\(/);
   assert.match(source, /async function deleteExplorerPath\(/);
-  assert.match(source, /await workspaceDirectoryPath\(normalizedWorkspaceId\)/);
+  assert.match(source, /await resolveWorkspaceDir\(normalizedWorkspaceId\)/);
   assert.match(source, /const relativePath = path\.relative\(rootPath, targetPath\);/);
   assert.match(source, /throw new Error\(`Target path escapes workspace root: \$\{trimmedTargetPath\}`\);/);
   assert.match(source, /throw new Error\("Created path escapes workspace root\."\);/);
@@ -146,6 +146,14 @@ test("desktop file explorer enforces the selected workspace root as a filesystem
     /"fs:renamePath"[\s\S]*targetPath: string,[\s\S]*nextName: string,[\s\S]*renameExplorerPath\(targetPath, nextName, workspaceId\)/,
   );
   assert.match(source, /async function copyExplorerPath\(/);
+  assert.match(
+    source,
+    /async function moveExplorerPath\([\s\S]*path\.normalize\(path\.dirname\(sourceAbsolutePath\)\) ===[\s\S]*path\.normalize\(destinationAbsolutePath\)[\s\S]*return \{\s*absolutePath: sourceAbsolutePath,\s*\};/,
+  );
+  assert.match(
+    source,
+    /async function moveExplorerPath\([\s\S]*const nextAbsolutePath = await nextAvailableExplorerCreatePath\(\s*destinationAbsolutePath,\s*path\.basename\(sourceAbsolutePath\),\s*\);[\s\S]*await fs\.rename\(sourceAbsolutePath, nextAbsolutePath\);/,
+  );
   assert.match(
     source,
     /assertWorkspaceExplorerPathModifiable\(workspaceRoot, destinationAbsolutePath\);/,
