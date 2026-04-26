@@ -1,4 +1,8 @@
 import "dotenv/config";
+import { app as electronApp } from "electron";
+
+electronApp.setName("Holaboss");
+
 import * as Sentry from "@sentry/electron/main";
 
 Sentry.init({
