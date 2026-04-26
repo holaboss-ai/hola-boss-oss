@@ -1,4 +1,8 @@
 import "dotenv/config";
+import { app as electronApp } from "electron";
+
+electronApp.setName("Holaboss");
+
 import * as Sentry from "@sentry/electron/main";
 
 Sentry.init({
@@ -22208,7 +22212,6 @@ const singleInstanceLock =
   process.env.HOLABOSS_DISABLE_SINGLE_INSTANCE_LOCK?.trim() === "1"
     ? true
     : app.requestSingleInstanceLock();
-app.setName(APP_DISPLAY_NAME);
 if (!singleInstanceLock) {
   app.quit();
 } else {
