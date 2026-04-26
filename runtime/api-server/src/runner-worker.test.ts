@@ -189,6 +189,65 @@ test("native runner executor synthesizes failed stream terminal event", async ()
   assert.match(body, /runner stream ended before terminal event/);
 });
 
+test("executeRunnerRequest parses a final terminal event without a trailing newline", async () => {
+  setNodeRunnerTemplate([
+    "const request = process.argv.at(-1) ?? '';",
+    "void request;",
+    "process.stdout.write(JSON.stringify({ session_id: 'session-1', input_id: 'input-1', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello' } }) + '\\n');",
+    "process.stdout.write(JSON.stringify({ session_id: 'session-1', input_id: 'input-1', sequence: 2, event_type: 'run_completed', payload: { status: 'success' } }));"
+  ]);
+
+  const execution = await executeRunnerRequest(payload());
+
+  assert.equal(execution.sawTerminal, true);
+  assert.deepEqual(execution.skippedLines, []);
+  assert.deepEqual(
+    execution.events.map((event) => event.event_type),
+    ["run_started", "run_completed"]
+  );
+});
+
+test("native runner executor stream parses a final terminal event without a trailing newline", async () => {
+  setNodeRunnerTemplate([
+    "const request = process.argv.at(-1) ?? '';",
+    "void request;",
+    "process.stdout.write(JSON.stringify({ session_id: 'session-1', input_id: 'input-1', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello' } }) + '\\n');",
+    "process.stdout.write(JSON.stringify({ session_id: 'session-1', input_id: 'input-1', sequence: 2, event_type: 'run_completed', payload: { status: 'success' } }));"
+  ]);
+
+  const executor = new NativeRunnerExecutor();
+  const stream = await executor.stream(payload());
+  let body = "";
+  for await (const chunk of stream) {
+    body += typeof chunk === "string" ? chunk : chunk.toString("utf-8");
+  }
+
+  assert.match(body, /event: run_started/);
+  assert.match(body, /event: run_completed/);
+  assert.doesNotMatch(body, /event: run_failed/);
+});
+
+test("executeRunnerRequest surfaces onEvent failures for valid terminal events instead of classifying them as skipped output", async () => {
+  setNodeRunnerTemplate([
+    "const request = process.argv.at(-1) ?? '';",
+    "void request;",
+    "process.stdout.write(JSON.stringify({ session_id: 'session-1', input_id: 'input-1', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello' } }) + '\\n');",
+    "process.stdout.write(JSON.stringify({ session_id: 'session-1', input_id: 'input-1', sequence: 2, event_type: 'run_completed', payload: { status: 'success' } }));"
+  ]);
+
+  await assert.rejects(
+    () =>
+      executeRunnerRequest(payload(), {
+        onEvent: async (event) => {
+          if (event.event_type === "run_completed") {
+            throw new Error("terminal handler failed");
+          }
+        },
+      }),
+    /terminal handler failed/
+  );
+});
+
 test("executeRunnerRequest aborts an in-flight runner immediately", async () => {
   setNodeRunnerTemplate([
     "const request = process.argv.at(-1) ?? '';",

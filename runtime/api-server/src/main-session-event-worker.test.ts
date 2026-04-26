@@ -224,6 +224,117 @@ test("main-session event worker defers its first startup scan until after the in
   }
 });
 
+test("main-session event worker inherits the owner main session model and thinking for synthetic follow-ups", async () => {
+  const store = makeStore("hb-main-session-event-worker-model-");
+  const workspace = seedMainSession(store);
+  const latestUserInput = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: {
+      text: "hello",
+      model: "openai_codex/gpt-5.4",
+      thinking_value: "medium",
+      context: {},
+    },
+  });
+  store.updateInput(latestUserInput.inputId, {
+    status: "DONE",
+    claimedBy: null,
+    claimedUntil: null,
+  });
+  const event = store.enqueueMainSessionEvent({
+    workspaceId: workspace.id,
+    ownerMainSessionId: "session-main",
+    originMainSessionId: "session-main",
+    subagentId: "subagent-1",
+    eventType: "completed",
+    deliveryBucket: "background_update",
+    payload: { summary: "Done." },
+  });
+
+  const worker = new RuntimeMainSessionEventWorker({ store });
+  const processed = await worker.processAvailableEventsOnce();
+  const updatedEvent = store.getMainSessionEvent({ eventId: event.eventId });
+  const batchInput = updatedEvent?.materializedInputId
+    ? store.getInput(updatedEvent.materializedInputId)
+    : null;
+
+  assert.equal(processed, 1);
+  assert.equal(batchInput?.payload.model, "openai_codex/gpt-5.4");
+  assert.equal(batchInput?.payload.thinking_value, "medium");
+
+  store.close();
+});
+
+test("main-session event worker recovers failed materialized events and retries them with a fresh synthetic input", async () => {
+  const store = makeStore("hb-main-session-event-worker-recover-");
+  const workspace = seedMainSession(store);
+  const latestUserInput = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: {
+      text: "hello",
+      model: "openai_codex/gpt-5.4",
+      thinking_value: "medium",
+      context: {},
+    },
+  });
+  store.updateInput(latestUserInput.inputId, {
+    status: "DONE",
+    claimedBy: null,
+    claimedUntil: null,
+  });
+  const event = store.enqueueMainSessionEvent({
+    workspaceId: workspace.id,
+    ownerMainSessionId: "session-main",
+    originMainSessionId: "session-main",
+    subagentId: "subagent-1",
+    eventType: "completed",
+    deliveryBucket: "background_update",
+    payload: { summary: "Done." },
+  });
+  const failedBatchInput = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: {
+      text: "[Holaboss Main Session Event Batch v1]\nSummarize the queued event.",
+      attachments: [],
+      image_urls: [],
+      context: {
+        source: "main_session_event_batch",
+        main_session_event_ids: [event.eventId],
+        delivery_bucket: "background_update",
+      },
+    },
+    idempotencyKey: `main-session-event-batch:${event.eventId}@${event.updatedAt}`,
+  });
+  store.updateInput(failedBatchInput.inputId, {
+    status: "FAILED",
+    claimedBy: null,
+    claimedUntil: null,
+  });
+  store.markMainSessionEventsMaterialized({
+    eventIds: [event.eventId],
+    materializedInputId: failedBatchInput.inputId,
+  });
+
+  const worker = new RuntimeMainSessionEventWorker({ store });
+  const processed = await worker.processAvailableEventsOnce();
+  const updatedEvent = store.getMainSessionEvent({ eventId: event.eventId });
+  const retriedInput = updatedEvent?.materializedInputId
+    ? store.getInput(updatedEvent.materializedInputId)
+    : null;
+
+  assert.equal(processed, 1);
+  assert.ok(updatedEvent);
+  assert.equal(updatedEvent?.status, "materialized");
+  assert.notEqual(updatedEvent?.materializedInputId, failedBatchInput.inputId);
+  assert.equal(retriedInput?.payload.model, "openai_codex/gpt-5.4");
+  assert.equal(retriedInput?.payload.thinking_value, "medium");
+
+  store.close();
+});
+
 test("main-session event worker ignores already materialized events", async () => {
   const store = makeStore("hb-main-session-event-worker-materialized-");
   const workspace = seedMainSession(store);

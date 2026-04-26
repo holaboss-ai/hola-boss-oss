@@ -283,6 +283,14 @@ export interface MainSessionEventQueueRecord {
   updatedAt: string;
 }
 
+export interface LatestSessionInputOptions {
+  workspaceId: string;
+  sessionId: string;
+  excludeContextSources?: string[];
+  preferConfiguredModel?: boolean;
+  limit?: number;
+}
+
 const SESSION_RUNTIME_STATE_STATUSES = [
   "IDLE",
   "BUSY",
@@ -2634,6 +2642,68 @@ export class RuntimeStateStore {
     return rows.map((row) => this.rowToMainSessionEventQueue(row));
   }
 
+  recoverFailedMaterializedMainSessionEvents(params: {
+    workspaceId: string;
+    nowIso?: string;
+  }): MainSessionEventQueueRecord[] {
+    const rows = this.db()
+      .prepare<[string], Record<string, unknown>>(
+        `
+          SELECT q.*
+          FROM main_session_event_queue AS q
+          INNER JOIN agent_session_inputs AS i
+            ON i.input_id = q.materialized_input_id
+          WHERE q.workspace_id = ?
+            AND q.status = 'materialized'
+            AND q.delivered_at IS NULL
+            AND q.superseded_at IS NULL
+            AND i.status = 'FAILED'
+          ORDER BY datetime(q.created_at) ASC, q.event_id ASC
+        `
+      )
+      .all(params.workspaceId);
+    const events = rows.map((row) => this.rowToMainSessionEventQueue(row));
+    if (events.length === 0) {
+      return [];
+    }
+    const now = params.nowIso ?? utcNowIso();
+    const resetEventStatement = this.db().prepare(`
+      UPDATE main_session_event_queue
+      SET status = 'pending',
+          materialized_input_id = NULL,
+          delivered_at = NULL,
+          earliest_deliver_at = ?,
+          updated_at = ?
+      WHERE event_id = ?
+    `);
+    const clearFailedInputIdempotencyStatement = this.db().prepare(`
+      UPDATE agent_session_inputs
+      SET idempotency_key = NULL,
+          updated_at = ?
+      WHERE input_id = ?
+        AND status = 'FAILED'
+    `);
+    const transaction = this.db().transaction(
+      (records: Array<{ eventId: string; materializedInputId: string | null }>) => {
+        for (const record of records) {
+          resetEventStatement.run(now, now, record.eventId);
+          if (record.materializedInputId) {
+            clearFailedInputIdempotencyStatement.run(now, record.materializedInputId);
+          }
+        }
+      }
+    );
+    transaction(
+      events.map((event) => ({
+        eventId: event.eventId,
+        materializedInputId: event.materializedInputId,
+      }))
+    );
+    return events
+      .map((event) => this.getMainSessionEvent({ eventId: event.eventId }))
+      .filter((event): event is MainSessionEventQueueRecord => event !== null);
+  }
+
   upsertIntegrationConnection(params: {
     connectionId: string;
     providerId: string;
@@ -2959,6 +3029,57 @@ export class RuntimeStateStore {
       )
       .get(idempotencyKey);
     return this.rowToInput(row);
+  }
+
+  getLatestInputForSession(params: LatestSessionInputOptions): SessionInputRecord | null {
+    const limit =
+      typeof params.limit === "number" && Number.isFinite(params.limit) && params.limit > 0
+        ? Math.floor(params.limit)
+        : 200;
+    const rows = this.db()
+      .prepare<[string, string, number], Record<string, unknown>>(
+        `
+          SELECT *
+          FROM agent_session_inputs
+          WHERE workspace_id = ? AND session_id = ?
+          ORDER BY datetime(created_at) DESC, input_id DESC
+          LIMIT ?
+        `
+      )
+      .all(params.workspaceId, params.sessionId, limit);
+    const records = rows
+      .map((row) => this.rowToInput(row))
+      .filter((record): record is SessionInputRecord => record !== null);
+    const excludedSources = new Set(
+      (params.excludeContextSources ?? []).map((value) => value.trim()).filter(Boolean)
+    );
+    const filtered = records.filter((record) => {
+      const context =
+        record.payload.context &&
+        typeof record.payload.context === "object" &&
+        !Array.isArray(record.payload.context)
+          ? (record.payload.context as Record<string, unknown>)
+          : null;
+      const source =
+        context && typeof context.source === "string" ? context.source.trim() : "";
+      return !excludedSources.has(source);
+    });
+    if (filtered.length === 0) {
+      return null;
+    }
+    if (!params.preferConfiguredModel) {
+      return filtered[0] ?? null;
+    }
+    const configured = filtered.find((record) => {
+      const model =
+        typeof record.payload.model === "string" ? record.payload.model.trim() : "";
+      const thinkingValue =
+        typeof record.payload.thinking_value === "string"
+          ? record.payload.thinking_value.trim()
+          : "";
+      return Boolean(model || thinkingValue);
+    });
+    return configured ?? filtered[0] ?? null;
   }
 
   updateInput(inputId: string, fields: InputUpdateFields): SessionInputRecord | null {

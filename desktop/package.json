@@ -13,7 +13,7 @@
     "predev": "node scripts/ensure-app-sdk.mjs && node scripts/validate-dev-env.mjs && kill-port 5173 && npm run rebuild:native && node scripts/ensure-runtime-bundle.mjs && node scripts/patch-electron-plist.mjs",
     "prebuild": "node scripts/ensure-app-sdk.mjs",
     "pretypecheck": "node scripts/ensure-app-sdk.mjs",
-    "dev": "cross-env HOLABOSS_DESKTOP_USER_DATA_DIR=holaboss-local-dev concurrently -k \"npm:dev:renderer\" \"npm:dev:electron:build\" \"npm:dev:runtime:watch\" \"npm:dev:electron:run\"",
+    "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron:build\" \"npm:dev:runtime:watch\" \"npm:dev:electron:run\"",
     "dev:cp:local": "cross-env HOLABOSS_INTERNAL_DEV=1 npm run dev",
     "dev:cp:local:verbose": "cross-env HOLABOSS_INTERNAL_DEV=1 HOLABOSS_VERBOSE_TELEMETRY=1 npm run dev",
     "dev:cp:dev": "cross-env HOLABOSS_INTERNAL_DEV=1 npm run dev",

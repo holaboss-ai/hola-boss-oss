@@ -46,6 +46,38 @@ function groupedEventPayload(events: MainSessionEventQueueRecord[]) {
   }));
 }
 
+function mainSessionEventBatchIdempotencyKey(
+  events: MainSessionEventQueueRecord[],
+): string {
+  return `main-session-event-batch:${events
+    .map((event) => `${event.eventId}@${event.updatedAt}`)
+    .join(",")}`;
+}
+
+function ownerMainSessionDeliveryConfig(params: {
+  store: RuntimeStateStore;
+  workspaceId: string;
+  sessionId: string;
+}): { model: string | null; thinkingValue: string | null } {
+  const latestInput = params.store.getLatestInputForSession({
+    workspaceId: params.workspaceId,
+    sessionId: params.sessionId,
+    excludeContextSources: ["main_session_event_batch"],
+    preferConfiguredModel: true,
+  });
+  const model =
+    typeof latestInput?.payload.model === "string" &&
+    latestInput.payload.model.trim()
+      ? latestInput.payload.model.trim()
+      : null;
+  const thinkingValue =
+    typeof latestInput?.payload.thinking_value === "string" &&
+    latestInput.payload.thinking_value.trim()
+      ? latestInput.payload.thinking_value.trim()
+      : null;
+  return { model, thinkingValue };
+}
+
 function buildMainSessionEventBatchInstruction(
   events: MainSessionEventQueueRecord[],
 ): string {
@@ -155,6 +187,10 @@ export class RuntimeMainSessionEventWorker
     let materialized = 0;
 
     for (const workspace of this.#store.listWorkspaces()) {
+      this.#store.recoverFailedMaterializedMainSessionEvents({
+        workspaceId: workspace.id,
+        nowIso: now,
+      });
       const dueEvents = this.#store.listPendingMainSessionEventsByWorkspace({
         workspaceId: workspace.id,
         before: now,
@@ -187,15 +223,22 @@ export class RuntimeMainSessionEventWorker
           continue;
         }
         const eventIds = batch.map((event) => event.eventId);
+        const deliveryConfig = ownerMainSessionDeliveryConfig({
+          store: this.#store,
+          workspaceId: workspace.id,
+          sessionId: ownerMainSessionId,
+        });
         const input = this.#store.enqueueInput({
           workspaceId: workspace.id,
           sessionId: ownerMainSessionId,
           priority: MAIN_SESSION_EVENT_INPUT_PRIORITY,
-          idempotencyKey: `main-session-event-batch:${eventIds.join(",")}`,
+          idempotencyKey: mainSessionEventBatchIdempotencyKey(batch),
           payload: {
             text: buildMainSessionEventBatchInstruction(batch),
             attachments: [],
             image_urls: [],
+            model: deliveryConfig.model,
+            thinking_value: deliveryConfig.thinkingValue,
             context: {
               source: "main_session_event_batch",
               owner_main_session_id: ownerMainSessionId,
