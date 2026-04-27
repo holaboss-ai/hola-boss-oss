@@ -14,16 +14,10 @@
         height: 100%;
         width: 100%;
       }
-      body {
-        background: #0a0a0a;
-        color: #f5f5f5;
-        font-family: -apple-system, "Inter Variable", system-ui, sans-serif;
-        overflow: hidden;
-        -webkit-font-smoothing: antialiased;
-      }
-      @media (prefers-color-scheme: light) {
-        body { background: #fafafa; color: #111; }
-      }
+      /* Colours scoped to the splash element — never on body, or
+         system prefers-color-scheme would override the app theme and
+         text inheriting from body would render white-on-white when
+         system + app schemes disagree. */
       #boot-splash {
         position: fixed;
         inset: 0;
@@ -32,6 +26,13 @@
         justify-content: center;
         z-index: 0;
         pointer-events: none;
+        font-family: -apple-system, "Inter Variable", system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        background: #0a0a0a;
+        color: #f5f5f5;
+      }
+      @media (prefers-color-scheme: light) {
+        #boot-splash { background: #fafafa; color: #111; }
       }
       #boot-splash[hidden] { display: none; }
       .boot-splash-glow {
