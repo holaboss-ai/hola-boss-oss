@@ -6430,10 +6430,14 @@ function openAiCodexErrorMessage(
   payload: Record<string, unknown>,
   fallbackMessage: string,
 ): string {
+  const errorPayload = runtimeConfigObject(payload.error);
   return runtimeFirstNonEmptyString(
-    payload.error_description as string | undefined,
-    payload.message as string | undefined,
-    payload.error as string | undefined,
+    payload.error_description,
+    payload.message,
+    payload.detail,
+    errorPayload.message,
+    errorPayload.error_description,
+    payload.error,
     fallbackMessage,
   );
 }
@@ -7558,10 +7562,13 @@ function runtimeConfigObject(value: unknown): Record<string, unknown> {
 }
 
 function runtimeFirstNonEmptyString(
-  ...values: Array<string | null | undefined>
+  ...values: unknown[]
 ): string {
   for (const value of values) {
-    const normalized = (value ?? "").trim();
+    if (typeof value !== "string") {
+      continue;
+    }
+    const normalized = value.trim();
     if (normalized) {
       return normalized;
     }
