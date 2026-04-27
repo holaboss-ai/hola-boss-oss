@@ -1160,6 +1160,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
     revealBundle: (bundlePath: string) =>
       ipcRenderer.invoke("diagnostics:revealBundle", bundlePath) as Promise<boolean>,
   },
+  boot: {
+    mark: (label: string) =>
+      ipcRenderer.invoke("boot:mark", label) as Promise<void>,
+    getTimings: () =>
+      ipcRenderer.invoke("boot:getTimings") as Promise<{
+        started: boolean;
+        completed: boolean;
+        marks: Array<{ label: string; offsetMs: number }>;
+      }>,
+  },
   runtime: {
     getStatus: () => ipcRenderer.invoke("runtime:getStatus") as Promise<RuntimeStatusPayload>,
     restart: () => ipcRenderer.invoke("runtime:restart") as Promise<RuntimeStatusPayload>,

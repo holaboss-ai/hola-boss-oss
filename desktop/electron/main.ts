@@ -105,6 +105,12 @@ import {
 } from "../shared/model-catalog.js";
 import * as modelCatalog from "../shared/model-catalog.js";
 import { buildAppSdkClient } from "./appSdkClient.js";
+import {
+  bootTimer,
+  bootTimerComplete,
+  bootTimerMark,
+  bootTimerSnapshot,
+} from "./bootTimer.js";
 import { ensureWorkspaceGitRepo } from "./workspace-git.js";
 
 const APP_DISPLAY_NAME = "Holaboss";
@@ -13993,7 +13999,9 @@ function getWorkspaceRecord(
 
 async function listWorkspaces(): Promise<WorkspaceListResponsePayload> {
   // Desktop always uses local runtime for workspace CRUD.
-  return listWorkspacesViaRuntime();
+  const response = await listWorkspacesViaRuntime();
+  bootTimer.mark("first-list-workspaces");
+  return response;
 }
 
 async function listWorkspacesViaRuntime(): Promise<WorkspaceListResponsePayload> {
@@ -16696,6 +16704,7 @@ async function startEmbeddedRuntime() {
 
       const healthy = await waitForRuntimeHealth(url);
       if (healthy) {
+        bootTimer.mark("runtime-healthy");
         runtimeStatus = await refreshRuntimeStatus();
       } else {
         runtimeStatus = withDesktopBrowserStatus({
@@ -23251,6 +23260,7 @@ function createMainWindow() {
   });
 
   win.once("ready-to-show", () => {
+    bootTimer.mark("main-window-ready-to-show");
     if (process.platform === "win32") {
       win.maximize();
       win.show();
@@ -23566,6 +23576,7 @@ app.on("child-process-gone", (_event, details) => {
 });
 
 app.whenReady().then(async () => {
+  bootTimer.start();
   if (process.platform === "darwin" && app.dock) {
     const dockIcon = nativeImage.createFromPath(desktopAppIconPath());
     if (!dockIcon.isEmpty()) {
@@ -23579,6 +23590,7 @@ app.whenReady().then(async () => {
 
   await loadBrowserPersistence();
   await bootstrapRuntimeDatabase();
+  bootTimer.mark("db-bootstrap-done");
   ensureOpenAiCodexRefreshLoop();
   void refreshOpenAiCodexProviderCredentials().catch(() => undefined);
 
@@ -23752,6 +23764,17 @@ app.whenReady().then(async () => {
   handleTrustedIpc("runtime:getStatus", ["main", "auth-popup"], () =>
     refreshRuntimeStatus(),
   );
+  // Renderer-driven boot timing. The "renderer-hydrated" mark also
+  // triggers the summary print + JSON write — see bootTimer.complete.
+  handleTrustedIpc("boot:mark", ["main"], async (_event, label: string) => {
+    if (typeof label !== "string" || label.length === 0) return;
+    if (label === "renderer-hydrated") {
+      bootTimerComplete(label);
+    } else {
+      bootTimerMark(label);
+    }
+  });
+  handleTrustedIpc("boot:getTimings", ["main"], async () => bootTimerSnapshot());
   handleTrustedIpc("runtime:restart", ["main"], async () => {
     await restartEmbeddedRuntimeSafely("manual_restart");
     return refreshRuntimeStatus();
@@ -25416,12 +25439,15 @@ app.whenReady().then(async () => {
     return shell.openPath(download.targetPath);
   });
 
+  bootTimer.mark("ipc-handlers-registered");
   createMainWindow();
+  bootTimer.mark("main-window-created");
   configureAutoUpdater();
   scheduleAppUpdateChecks();
   void checkForAppUpdates();
   try {
     await startDesktopBrowserService();
+    bootTimer.mark("browser-service-ready");
   } catch (error) {
     void appendRuntimeLog(
       `[desktop-browser-service] failed to start: ${error instanceof Error ? error.message : String(error)}\n`,
@@ -25436,6 +25462,7 @@ app.whenReady().then(async () => {
     lastError: "",
   });
   emitRuntimeState();
+  bootTimer.mark("runtime-spawn-start");
   void startEmbeddedRuntime();
   startupAuthSyncPromise = syncPersistedAuthSessionOnStartup()
     .catch(() => undefined)

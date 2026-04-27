@@ -1091,6 +1091,11 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
         if (!cancelled) {
           setIsRefreshing(false);
           setHasHydratedWorkspaceList(true);
+          // Final boot-timing milestone — splash unmounts now. Sends to
+          // main, which prints the BootTimer summary + writes JSON.
+          void window.electronAPI.boot
+            ?.mark("renderer-hydrated")
+            .catch(() => undefined);
         }
       }
     }
