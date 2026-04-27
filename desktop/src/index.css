@@ -557,9 +557,9 @@ html[data-platform="win32"] body {
 /* Dark mode: dial the tint floor down hard. The dark-mode background
  * is intrinsically near-black (e.g. amber-minimal-dark = oklch(0.15)),
  * so even a small alpha layer on top reads as a dark veil that swallows
- * the OS vibrancy material underneath. 22% lets ~78% of the material
- * through — enough to see the desaturated frosted glass clearly while
- * keeping a subtle theme tint for graceful degradation.
+ * the OS vibrancy material underneath. 15% lets ~85% of the material
+ * through — gives the frosted glass real visual presence while keeping
+ * a faint theme tint for graceful degradation.
  *
  * (Light-mode keeps a higher 60% floor — light vibrancy is brighter
  * so a heavier tint still reads as glass, and the higher floor protects
@@ -568,7 +568,18 @@ html[data-platform="darwin"][data-theme$="-dark"],
 html[data-platform="darwin"][data-theme$="-dark"] body,
 html[data-platform="win32"][data-theme$="-dark"],
 html[data-platform="win32"][data-theme$="-dark"] body {
-  background: color-mix(in oklch, var(--background) 22%, transparent);
+  background: color-mix(in oklch, var(--background) 15%, transparent);
+}
+
+/* Dark-mode pane surfaces: take advantage of the backdrop-blur PaneCard
+ * already applies. With bg-card solid the pane swallows vibrancy in its
+ * area; mixing it with transparent at 78% lets the OS material bleed
+ * through subtly behind the panel + composite with backdrop-blur into
+ * a real frosted-glass surface (not just a solid card). Keeping the
+ * majority solid (78%) so text contrast stays comfortable. */
+html[data-platform="darwin"][data-theme$="-dark"] [data-pane-card="true"],
+html[data-platform="win32"][data-theme$="-dark"] [data-pane-card="true"] {
+  background: color-mix(in oklch, var(--card) 78%, transparent);
 }
 
 /* When the loading shells render before the main grid, keep them mostly

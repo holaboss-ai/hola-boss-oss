@@ -23134,9 +23134,12 @@ function createMainWindow() {
     ? {
         titleBarStyle: "hiddenInset",
         trafficLightPosition: { x: 14, y: 16 },
-        // 'under-window' is the most universally-engaged full-window
-        // material on Big Sur+ — it adapts to light/dark automatically.
-        vibrancy: "under-window",
+        // 'sidebar' renders the Finder-style frosted glass — significantly
+        // more visible than 'under-window' in dark mode, where Apple's
+        // 'under-window' intentionally leans quiet/moody and is hard to
+        // perceive as glass. Both materials adapt automatically to
+        // light/dark; 'sidebar' just has more presence.
+        vibrancy: "sidebar",
         visualEffectState: "active",
       }
     : isWindows

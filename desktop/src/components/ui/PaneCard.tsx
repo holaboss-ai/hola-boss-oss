@@ -12,6 +12,7 @@ export function PaneCard({ title, actions, children, className = "" }: PaneCardP
 
   return (
     <section
+      data-pane-card="true"
       className={`relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-card shadow-md backdrop-blur-sm ${className}`}
     >
       {hasHeader ? (
