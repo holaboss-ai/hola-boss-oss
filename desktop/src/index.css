@@ -534,6 +534,47 @@ body {
   background: var(--card);
 }
 
+/* ---- Window-level vibrancy ----
+ * The BrowserWindow opts into the OS-native translucent material:
+ * `vibrancy: 'under-window'` on macOS, mica/acrylic on Windows 10+/11.
+ * For that material to show through we need the renderer's background
+ * stack to be translucent so the panel grid's gutters and rounded-
+ * corner edges reveal it.
+ *
+ * IMPORTANT: we mix our token against transparent rather than going
+ * fully transparent — that way if the OS material ever fails to engage
+ * (older macOS, light-mode quirk, missing vibrancy support) the user
+ * still sees a softly-tinted theme-coloured surface instead of the bare
+ * desktop wallpaper.
+ */
+html[data-platform="darwin"],
+html[data-platform="darwin"] body,
+html[data-platform="win32"],
+html[data-platform="win32"] body {
+  background: color-mix(in oklch, var(--background) 60%, transparent);
+}
+
+/* Dark mode: dial the tint down further so the OS material reads more
+ * clearly. Light mode benefits from the higher tint floor (60%) since
+ * vibrancy in light mode is brighter; dark vibrancy already sits low-key,
+ * so we let more of it through. Themes encode the scheme as a `-dark`
+ * suffix on data-theme, e.g. `catppuccin-dark`. */
+html[data-platform="darwin"][data-theme$="-dark"],
+html[data-platform="darwin"][data-theme$="-dark"] body,
+html[data-platform="win32"][data-theme$="-dark"],
+html[data-platform="win32"][data-theme$="-dark"] body {
+  background: color-mix(in oklch, var(--background) 38%, transparent);
+}
+
+/* When the loading shells render before the main grid, keep them mostly
+ * solid so pre-roll messages stay legible — but allow a hint of the OS
+ * material to breathe through.
+ */
+html[data-platform="darwin"] .theme-shell,
+html[data-platform="win32"] .theme-shell {
+  background: color-mix(in oklch, var(--card) 88%, transparent);
+}
+
 .theme-header-surface {
   background: color-mix(in oklch, var(--card) 80%, transparent);
 }
@@ -1110,8 +1151,10 @@ webview {
   background: color-mix(in oklch, var(--input) 84%, var(--card) 16%);
   color: color-mix(in oklch, var(--foreground) 92%, transparent);
   border: 0.8px solid color-mix(in oklch, var(--border) 76%, transparent);
-  border-radius: 9px;
-  padding: 0.18em 0.48em;
+  border-radius: 7px;
+  /* Tight Y padding so inline `code` chips don't push line height around;
+     X stays roomy enough for the chip shape. */
+  padding: 0.04em 0.4em;
   font-size: 0.875em;
   font-family: var(--font-mono);
   font-weight: var(--font-weight-medium);

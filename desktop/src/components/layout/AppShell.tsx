@@ -1016,8 +1016,12 @@ function EmptyWorkspacePane() {
 }
 
 function WorkspaceBootstrapPane() {
+  // Pin to the viewport so the bootstrap surface fills edge-to-edge
+  // independent of the AppShell grid's outer padding/gutters. Otherwise
+  // the body (which is translucent on macOS for vibrancy) would show as
+  // a thin frame around this pane.
   return (
-    <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden bg-background px-6">
+    <section className="fixed inset-0 z-20 flex items-center justify-center overflow-hidden bg-background px-6">
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0"

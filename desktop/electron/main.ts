@@ -23110,18 +23110,43 @@ function toggleOverflowPopup(anchorBounds: BrowserAnchorBoundsPayload) {
   popup.focus();
 }
 
+function resolveWindowsBackgroundMaterial():
+  | "mica"
+  | "acrylic"
+  | undefined {
+  if (process.platform !== "win32") return undefined;
+  const buildNumber = Number.parseInt(
+    os.release().split(".")[2] ?? "0",
+    10,
+  );
+  // Win 11 22000+ supports Mica; Win 10 1809 (17763)+ supports Acrylic.
+  if (buildNumber >= 22000) return "mica";
+  if (buildNumber >= 17763) return "acrylic";
+  return undefined;
+}
+
 function createMainWindow() {
-  const titleBarOptions =
-    process.platform === "darwin"
+  const isMac = process.platform === "darwin";
+  const isWindows = process.platform === "win32";
+  const winBackgroundMaterial = resolveWindowsBackgroundMaterial();
+
+  const platformOptions: Electron.BrowserWindowConstructorOptions = isMac
+    ? {
+        titleBarStyle: "hiddenInset",
+        trafficLightPosition: { x: 14, y: 16 },
+        // 'under-window' is the most universally-engaged full-window
+        // material on Big Sur+ — it adapts to light/dark automatically.
+        vibrancy: "under-window",
+        visualEffectState: "active",
+      }
+    : isWindows
       ? {
-          titleBarStyle: "hiddenInset" as const,
-          trafficLightPosition: { x: 14, y: 16 },
+          frame: false,
+          ...(winBackgroundMaterial && {
+            backgroundMaterial: winBackgroundMaterial,
+          }),
         }
-      : process.platform === "win32"
-        ? {
-            frame: false,
-          }
-        : {};
+      : {};
 
   const appIcon = nativeImage.createFromPath(desktopAppIconPath());
 
@@ -23132,10 +23157,15 @@ function createMainWindow() {
     minHeight: 720,
     show: false,
     center: true,
-    backgroundColor: "#050907",
+    // On macOS we omit backgroundColor so the NSVisualEffectView (vibrancy)
+    // paints the window backdrop — setting it to a transparent value would
+    // mark the window itself as transparent and prevent vibrancy from
+    // engaging. Other platforms keep the dark fill for a flicker-free first
+    // paint.
+    ...(isMac ? {} : { backgroundColor: "#050907" }),
     autoHideMenuBar: true,
     icon: appIcon,
-    ...titleBarOptions,
+    ...platformOptions,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,

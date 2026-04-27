@@ -46,6 +46,7 @@ import {
   Plus,
   Search,
   Sparkles,
+  Zap,
   Square,
   Waypoints,
   X,
@@ -73,6 +74,8 @@ import {
   resolveExplorerAttachmentKind,
 } from "@/lib/attachmentDrag";
 import { getExplorerAttachmentClipboardEntry } from "@/lib/appClipboard";
+import { CHAT_LAYOUT, chatScrollMaskImage } from "@/lib/chatLayout";
+import { ProviderBrandIcon } from "@/lib/providerBrandIcon";
 import {
   DEFAULT_RUNTIME_MODEL,
   useDesktopAuthSession,
@@ -7423,8 +7426,10 @@ export function ChatPane({
     hasMessages &&
     chatScrollMetrics.clientHeight > 0 &&
     chatScrollRange > 1;
-  const chatScrollbarRailInset =
-    composerBlockHeight > 0 ? composerBlockHeight / 2 : 0;
+  // The rail now lives inside the messages-scroll wrapper, so it doesn't
+  // need to compensate for the composer height — its bounding box is
+  // already exactly the scroll viewport.
+  const chatScrollbarRailInset = 0;
   const chatScrollbarRailHeight = chatScrollMetrics.clientHeight;
   const chatScrollbarThumbHeight = showCustomChatScrollbar
     ? Math.max(
@@ -7558,9 +7563,7 @@ export function ChatPane({
   return (
     <PaneCard
       className={
-        isOnboardingVariant
-          ? "w-full shadow-subtle-xs border-primary/20"
-          : "w-full shadow-subtle-xs"
+        isOnboardingVariant ? "w-full border-primary/20" : "w-full"
       }
     >
       <div className="relative flex h-full min-h-0 min-w-0 flex-col">
@@ -7724,7 +7727,13 @@ export function ChatPane({
               </div>
             </div>
           ) : null}
-          <div className="min-h-0 flex-1 overflow-hidden">
+          <div
+            className="relative min-h-0 flex-1 overflow-hidden"
+            style={{
+              maskImage: chatScrollMaskImage(),
+              WebkitMaskImage: chatScrollMaskImage(),
+            }}
+          >
             <div
               ref={messagesRef}
               onWheelCapture={(event) => {
@@ -7751,8 +7760,10 @@ export function ChatPane({
               {hasMessages ? (
                 <div
                   ref={messagesContentRef}
-                  className={`flex min-w-0 w-full flex-col gap-4 px-4 pb-3 ${
-                    displayedTodoPlan ? "pt-14" : "pt-5"
+                  className={`mx-auto flex min-w-0 w-full flex-col ${CHAT_LAYOUT.contentMaxWidth} ${CHAT_LAYOUT.contentPaddingX} ${CHAT_LAYOUT.messageGap} ${
+                    displayedTodoPlan
+                      ? `${CHAT_LAYOUT.contentPaddingTopWithTodo} pb-6`
+                      : CHAT_LAYOUT.contentPaddingY
                   } ${showHistoryRestoreScreen ? "invisible" : ""}`}
                 >
                   {isLoadingOlderHistory ||
@@ -7962,56 +7973,56 @@ export function ChatPane({
                 </div>
               )}
             </div>
-          </div>
 
-          {showCustomChatScrollbar ? (
-            <div className="pointer-events-none absolute inset-y-0 right-1 z-20 w-4">
-              <div
-                className="pointer-events-auto absolute inset-x-0 touch-none"
-                style={{
-                  top: `${chatScrollbarRailInset}px`,
-                  height: `${chatScrollbarRailHeight}px`,
-                }}
-                onPointerDown={handleChatScrollbarPointerDown}
-                onPointerMove={handleChatScrollbarPointerMove}
-                onPointerUp={handleChatScrollbarPointerUp}
-                onPointerCancel={handleChatScrollbarPointerUp}
-                onLostPointerCapture={() => {
-                  clearChatScrollbarDragState();
-                }}
-              >
+            {showCustomChatScrollbar ? (
+              <div className="pointer-events-none absolute inset-y-0 right-1 z-20 w-4">
                 <div
-                  className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 rounded-full"
+                  className="pointer-events-auto absolute inset-x-0 touch-none"
                   style={{
-                    background:
-                      "color-mix(in oklch, var(--foreground) 5%, transparent)",
+                    top: `${chatScrollbarRailInset}px`,
+                    height: `${chatScrollbarRailHeight}px`,
                   }}
-                />
-                <div
-                  ref={chatScrollbarThumbRef}
-                  data-chat-scrollbar-thumb="true"
-                  className="absolute left-1/2 w-4 -translate-x-1/2 rounded-full cursor-grab active:cursor-grabbing"
-                  style={{
-                    top: `${chatScrollbarThumbOffset}px`,
-                    height: `${chatScrollbarThumbHeight}px`,
+                  onPointerDown={handleChatScrollbarPointerDown}
+                  onPointerMove={handleChatScrollbarPointerMove}
+                  onPointerUp={handleChatScrollbarPointerUp}
+                  onPointerCancel={handleChatScrollbarPointerUp}
+                  onLostPointerCapture={() => {
+                    clearChatScrollbarDragState();
                   }}
                 >
                   <div
-                    className="absolute left-1/2 top-0 h-full w-[3px] -translate-x-1/2 rounded-full"
+                    className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 rounded-full"
                     style={{
                       background:
-                        "color-mix(in oklch, var(--muted-foreground) 25%, transparent)",
+                        "color-mix(in oklch, var(--foreground) 5%, transparent)",
                     }}
                   />
+                  <div
+                    ref={chatScrollbarThumbRef}
+                    data-chat-scrollbar-thumb="true"
+                    className="absolute left-1/2 w-4 -translate-x-1/2 rounded-full cursor-grab active:cursor-grabbing"
+                    style={{
+                      top: `${chatScrollbarThumbOffset}px`,
+                      height: `${chatScrollbarThumbHeight}px`,
+                    }}
+                  >
+                    <div
+                      className="absolute left-1/2 top-0 h-full w-[3px] -translate-x-1/2 rounded-full"
+                      style={{
+                        background:
+                          "color-mix(in oklch, var(--muted-foreground) 25%, transparent)",
+                      }}
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
-          ) : null}
+            ) : null}
+          </div>
 
           {hasMessages ? (
             <div
               ref={composerBlockRef}
-              className={`shrink-0 px-4 pb-5 pt-3 ${
+              className={`mx-auto w-full shrink-0 ${CHAT_LAYOUT.contentMaxWidth} ${CHAT_LAYOUT.contentPaddingX} pb-6 pt-3 ${
                 showHistoryRestoreScreen ? "invisible" : ""
               }`}
             >
@@ -10154,6 +10165,10 @@ function ModelCombobox({
   const renderOption = (option: ChatModelOption) => {
     const active = option.value === selectedModel;
     const optionDisabled = Boolean(option.disabled);
+    // Auto/runtime-default doesn't represent a single model — keep its
+    // icon empty rather than guessing (the chosen runtime default still
+    // ends up rendering with its real brand mark in the trigger).
+    const isRuntimeDefault = option.value === CHAT_MODEL_USE_RUNTIME_DEFAULT;
     return (
       <button
         key={option.value}
@@ -10176,7 +10191,17 @@ function ModelCombobox({
               : "text-foreground hover:bg-accent"
         }`}
       >
-        <span className="truncate">{option.label}</span>
+        <span className="flex min-w-0 items-center gap-2">
+          {isRuntimeDefault ? (
+            <span className="size-3.5 shrink-0" aria-hidden="true" />
+          ) : (
+            <ProviderBrandIcon
+              modelToken={option.value}
+              className="size-3.5 shrink-0"
+            />
+          )}
+          <span className="truncate">{option.label}</span>
+        </span>
         {!active && option.statusLabel ? (
           <span className="shrink-0 text-[10px] font-medium uppercase text-muted-foreground">
             {option.statusLabel}
@@ -10198,21 +10223,33 @@ function ModelCombobox({
         disabled={disabled}
         render={
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
-            className={`w-full justify-between rounded-md bg-card text-xs font-medium ${
-              compact ? "px-2.5" : ""
+            className={`gap-1.5 rounded-md text-xs font-medium ${
+              compact ? "w-full justify-between px-2.5" : "px-2"
             }`}
           >
             {compact ? (
-              <span className="flex min-w-0 items-center gap-1.5">
-                <Waypoints className="size-3.5 shrink-0 text-muted-foreground" />
-                <span className="truncate">{compactLabel}</span>
-              </span>
+              <>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <ProviderBrandIcon
+                    modelToken={selectedModel}
+                    className="size-3.5 shrink-0"
+                  />
+                  <span className="truncate">{compactLabel}</span>
+                </span>
+                <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+              </>
             ) : (
-              <span className="truncate">{displayLabel}</span>
+              <>
+                <ProviderBrandIcon
+                  modelToken={selectedModel}
+                  className="size-3.5 shrink-0"
+                />
+                <span className="whitespace-nowrap">{displayLabel}</span>
+                <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+              </>
             )}
-            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
           </Button>
         }
       />
@@ -10326,17 +10363,17 @@ function ThinkingValueSelect({
         disabled={disabled}
         render={
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
             aria-label={
               compact ? `Reasoning effort: ${selectedThinkingLabel}` : undefined
             }
-            className={`w-full rounded-md bg-card text-xs font-medium ${
+            className={`gap-1.5 rounded-md text-xs font-medium ${
               compact
                 ? showCompactLabel
-                  ? "min-w-0 justify-between px-2.5"
-                  : "min-w-0 justify-start gap-1.5 px-2.5"
-                : "justify-between"
+                  ? "w-full min-w-0 justify-between px-2.5"
+                  : "w-full min-w-0 justify-start px-2.5"
+                : "px-2"
             }`}
           >
             {compact ? (
@@ -10356,7 +10393,7 @@ function ThinkingValueSelect({
               )
             ) : (
               <>
-                <span className="truncate">{selectedThinkingLabel}</span>
+                <span className="whitespace-nowrap">{selectedThinkingLabel}</span>
                 <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
               </>
             )}
@@ -10911,8 +10948,10 @@ function Composer({
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
-        className={`overflow-hidden rounded-xl border border-border bg-background ${
-          isDragActive ? "border-primary bg-primary/[0.04]" : ""
+        className={`overflow-hidden rounded-2xl bg-background shadow-md ${
+          isDragActive
+            ? "ring-1 ring-primary/40 bg-primary/[0.04]"
+            : ""
         }`}
       >
         <input
@@ -10978,7 +11017,7 @@ function Composer({
             </div>
           </div>
         ) : null}
-        <div className="px-4 pb-2 pt-3">
+        <div className="px-5 pb-3 pt-4">
           <textarea
             ref={textareaRef}
             value={input}
@@ -11002,7 +11041,7 @@ function Composer({
 
         <div
           ref={composerFooterRef}
-          className={`border-t border-border px-2.5 py-2 text-muted-foreground ${
+          className={`px-3 pb-3 text-muted-foreground ${
             compactComposerControls
               ? "flex items-center gap-1.5 overflow-hidden"
               : "flex flex-wrap items-center gap-1.5"
@@ -11015,7 +11054,7 @@ function Composer({
                   ? "min-w-0 shrink-0"
                   : noAvailableModels
                     ? "min-w-0 flex flex-1 basis-full flex-wrap items-center gap-2"
-                    : "min-w-0 flex-1 basis-[160px] max-w-[168px]"
+                    : "min-w-0 shrink-0"
               }
               style={
                 compactComposerControls
@@ -11076,9 +11115,7 @@ function Composer({
           {showThinkingValueSelector ? (
             <div
               className={
-                compactComposerControls
-                  ? "shrink-0"
-                  : "min-w-[88px] shrink-0 sm:w-[88px]"
+                compactComposerControls ? "shrink-0" : "shrink-0"
               }
               style={
                 compactComposerControls
@@ -11122,7 +11159,7 @@ function Composer({
                     variant="outline"
                     size="icon-sm"
                     aria-label="Open composer actions"
-                    className="rounded-full"
+                    className="rounded-lg"
                   />
                 }
               >
@@ -11239,7 +11276,7 @@ function Composer({
                       onClick={openSkillPickerFromComposerMenu}
                       className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-accent"
                     >
-                      <Sparkles className="size-3.5 shrink-0 text-muted-foreground" />
+                      <Zap className="size-3.5 shrink-0 text-muted-foreground" />
                       <span className="min-w-0 flex-1 truncate">
                         Use Skills
                       </span>
@@ -11282,7 +11319,7 @@ function Composer({
                 submitDisabled
               }
               render={<button type="submit" />}
-              className="rounded-full"
+              className="rounded-lg"
             >
               <ArrowUp className="size-3.5" />
             </Button>

@@ -258,20 +258,20 @@ export function TopTabsBar({
 
   const headerClassName = integratedTitleBar
     ? isWindowsIntegratedTitleBar
-      ? "window-drag relative h-[32px] px-2 pt-0.5 sm:px-3"
-      : "window-drag relative h-[32px] px-2 sm:px-3"
-    : "rounded-xl border border-border bg-card px-2.5 py-0.5 shadow-subtle-xs backdrop-blur-sm sm:px-4";
+      ? "window-drag relative h-[30px] px-2 pt-0.5"
+      : "window-drag relative h-[30px] px-2"
+    : "rounded-xl border border-border bg-card px-2.5 py-1 shadow-subtle-xs backdrop-blur-sm sm:px-4";
   const headerGridClassName =
-    "relative z-10 grid min-w-0 items-center gap-1 sm:gap-1.5 lg:h-full lg:grid-cols-[minmax(0,1fr)_auto]";
+    "relative z-10 grid min-w-0 items-center gap-1.5 sm:gap-2 lg:h-full lg:grid-cols-[minmax(0,1fr)_auto]";
   const headerGridStyle = compensateForStoplight
     ? { paddingLeft: STOPLIGHT_PAD_PX }
     : undefined;
 
   const windowControlButtonClassName =
-    "window-no-drag flex h-5 w-5 items-center justify-center rounded-[7px] border border-transparent text-muted-foreground transition-colors duration-150 hover:bg-foreground/6 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
-  const workspaceSwitcherContainerClassName = `${integratedTitleBar ? "window-no-drag " : ""}relative w-[190px] shrink-0`;
+    "window-no-drag flex h-6 w-6 items-center justify-center rounded-[7px] border border-transparent text-muted-foreground transition-colors duration-150 hover:bg-foreground/6 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
+  const workspaceSwitcherContainerClassName = `${integratedTitleBar ? "window-no-drag " : ""}relative w-40 shrink-0`;
   const workspaceSwitcherButtonClassName =
-    "h-6 w-full justify-start gap-1 rounded-md px-1.5 text-[11px]";
+    "h-7 w-full shrink-0 justify-start gap-1.5 rounded-md border border-border/55 bg-foreground/6 px-2 text-xs";
 
   return (
     <header
@@ -298,8 +298,9 @@ export function TopTabsBar({
           >
             <Button
               ref={workspaceSwitcherButtonRef}
-              variant={workspaceSwitcherOpen ? "secondary" : "bordered"}
-              size="xs"
+              variant="outline"
+              size="sm"
+              aria-expanded={workspaceSwitcherOpen}
               onClick={() => {
                 setWorkspaceSwitcherOpen((open) => {
                   const nextOpen = !open;
@@ -315,12 +316,12 @@ export function TopTabsBar({
               }}
               className={workspaceSwitcherButtonClassName}
             >
-              <FolderKanban className="size-3 shrink-0 text-primary" />
+              <FolderKanban className="size-3.5 shrink-0 text-primary" />
               <span className="min-w-0 truncate text-left font-medium">
                 {selectedWorkspace?.name || "Select workspace"}
               </span>
               <ChevronDown
-                className={`ml-auto size-3 shrink-0 text-muted-foreground transition-transform ${workspaceSwitcherOpen ? "rotate-180" : ""}`}
+                className={`ml-auto size-3.5 shrink-0 text-muted-foreground transition-transform ${workspaceSwitcherOpen ? "rotate-180" : ""}`}
               />
             </Button>
           </div>
@@ -330,10 +331,10 @@ export function TopTabsBar({
               ref={userButtonRef}
               render={
                 <Button
-                  variant="bordered"
-                  size="icon-xs"
+                  variant="outline"
+                  size="icon-sm"
                   aria-label="Open account menu"
-                  className="overflow-hidden rounded-full p-0"
+                  className="size-7 shrink-0 overflow-hidden rounded-full border border-border/55 bg-foreground/6 p-0"
                 />
               }
             >
@@ -370,7 +371,7 @@ export function TopTabsBar({
             </DropdownMenuContent>
           </DropdownMenu>
           {isWindowsIntegratedTitleBar ? (
-            <div className="window-no-drag ml-1 mr-[-6px] flex items-center gap-0.5 sm:mr-[-8px]">
+            <div className="window-no-drag ml-1 -mr-1.5 flex items-center gap-0.5 sm:-mr-2">
               <button
                 type="button"
                 aria-label="Minimize window"

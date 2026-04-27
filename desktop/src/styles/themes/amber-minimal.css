@@ -63,9 +63,9 @@
 [data-theme="amber-minimal-dark"] {
   --background: oklch(0.15 0.003 75);
   --foreground: oklch(0.985 0.002 75);
-  --card: oklch(0.185 0.004 75);
+  --card: oklch(0.215 0.004 75);
   --card-foreground: oklch(0.985 0.002 75);
-  --popover: oklch(0.185 0.004 75);
+  --popover: oklch(0.215 0.004 75);
   --popover-foreground: oklch(0.985 0.002 75);
   --primary: oklch(0.624 0.229 32);
   --primary-foreground: oklch(0.98 0.01 32);

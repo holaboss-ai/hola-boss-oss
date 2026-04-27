@@ -3293,8 +3293,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         }}
       >
         <DialogPrimitive.Portal>
-          <DialogPrimitive.Backdrop className="fixed inset-0 z-[600] bg-background/70 backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 duration-200" />
-          <DialogPrimitive.Popup className="fixed top-1/2 left-1/2 z-[600] flex w-[min(680px,calc(100vw-32px))] max-h-[min(720px,calc(100vh-32px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl bg-background shadow-xl outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-[0.97] data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-[0.98] duration-200 ease-out">
+          <DialogPrimitive.Backdrop className="fixed inset-0 z-[600] bg-background/60 backdrop-blur-md data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 duration-200" />
+          <DialogPrimitive.Popup className="fixed top-1/2 left-1/2 z-[600] flex w-[min(680px,calc(100vw-32px))] max-h-[min(720px,calc(100vh-32px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl bg-background/85 backdrop-blur-2xl backdrop-saturate-150 shadow-xl outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-[0.97] data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-[0.98] duration-200 ease-out">
             <header className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
               <div className="min-w-0">
                 <DialogPrimitive.Title className="text-base font-medium text-foreground">
@@ -3634,8 +3634,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         }}
       >
         <DialogPrimitive.Portal>
-          <DialogPrimitive.Backdrop className="fixed inset-0 z-[600] bg-background/70 backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 duration-200" />
-          <DialogPrimitive.Popup className="fixed top-1/2 left-1/2 z-[600] flex w-[min(560px,calc(100vw-32px))] max-h-[min(720px,calc(100vh-32px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl bg-background shadow-xl outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-[0.97] data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-[0.98] duration-200 ease-out">
+          <DialogPrimitive.Backdrop className="fixed inset-0 z-[600] bg-background/60 backdrop-blur-md data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 duration-200" />
+          <DialogPrimitive.Popup className="fixed top-1/2 left-1/2 z-[600] flex w-[min(560px,calc(100vw-32px))] max-h-[min(720px,calc(100vh-32px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl bg-background/85 backdrop-blur-2xl backdrop-saturate-150 shadow-xl outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-[0.97] data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-[0.98] duration-200 ease-out">
             <header className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
               <DialogPrimitive.Title className="text-base font-medium text-foreground">
                 {expandedProviderId

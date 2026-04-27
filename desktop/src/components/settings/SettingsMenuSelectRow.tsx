@@ -66,7 +66,17 @@ export function SettingsMenuSelectRow({
         disabled={disabled}
       >
         <SelectTrigger className={triggerWidth}>
-          <SelectValue placeholder={placeholder} />
+          <SelectValue placeholder={placeholder}>
+            {(currentValue) => {
+              // Base UI's auto text-extraction falls back to the raw
+              // `value` string when the option label is JSX (e.g. swatch +
+              // text). Resolve the label ourselves so the trigger matches
+              // what's shown in the menu.
+              const match = options.find((o) => o.value === currentValue);
+              if (match) return match.label;
+              return placeholder ?? currentValue;
+            }}
+          </SelectValue>
         </SelectTrigger>
         <SelectContent>
           {options.map((option) => (

@@ -68,7 +68,7 @@ interface SettingsDialogProps {
 }
 
 const THEME_VARIANT_LABELS: Record<ThemeVariant, string> = {
-  "amber-minimal": "Default",
+  "amber-minimal": "Holaos",
   "cosmic-night": "Cosmic Night",
   sepia: "Sepia",
   "clean-slate": "Clean Slate",
@@ -401,11 +401,11 @@ export function SettingsDialog({
     >
       <DialogPrimitive.Portal>
         <DialogPrimitive.Backdrop
-          className="fixed inset-0 z-50 bg-background/70 backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 duration-200"
+          className="fixed inset-0 z-50 bg-background/60 backdrop-blur-md data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 duration-200"
         />
         <DialogPrimitive.Popup
           aria-label="Settings"
-          className="fixed top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2 grid h-[min(780px,calc(100vh-32px))] w-[min(980px,calc(100vw-24px))] min-w-0 overflow-hidden rounded-2xl bg-background shadow-xl grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[220px_minmax(0,1fr)] lg:grid-rows-1 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-[0.97] data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-[0.98] duration-200 ease-out"
+          className="fixed top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2 grid h-[min(780px,calc(100vh-32px))] w-[min(980px,calc(100vw-24px))] min-w-0 overflow-hidden rounded-2xl bg-background/85 backdrop-blur-2xl backdrop-saturate-150 shadow-xl grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[220px_minmax(0,1fr)] lg:grid-rows-1 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-[0.97] data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-[0.98] duration-200 ease-out"
         >
         <aside className="border-b border-sidebar-border bg-sidebar p-4 text-sidebar-foreground lg:border-b-0 lg:border-r">
           <nav className="mt-4 grid gap-1">
