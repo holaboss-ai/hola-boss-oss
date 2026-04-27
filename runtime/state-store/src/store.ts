@@ -196,6 +196,7 @@ export interface TurnResultRecord {
   promptCacheProfile: Record<string, unknown> | null;
   compactedSummary: string | null;
   tokenUsage: Record<string, unknown> | null;
+  contextBudgetDecisions: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -2768,6 +2769,7 @@ export class RuntimeStateStore {
     promptCacheProfile?: Record<string, unknown> | null;
     compactedSummary?: string | null;
     tokenUsage?: Record<string, unknown> | null;
+    contextBudgetDecisions?: Record<string, unknown> | null;
     createdAt?: string;
     updatedAt?: string;
   }): TurnResultRecord {
@@ -2801,9 +2803,10 @@ export class RuntimeStateStore {
             prompt_cache_profile,
             compacted_summary,
             token_usage,
+            context_budget_decisions,
             created_at,
             updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(input_id) DO UPDATE SET
             workspace_id = excluded.workspace_id,
             session_id = excluded.session_id,
@@ -2820,6 +2823,7 @@ export class RuntimeStateStore {
             prompt_cache_profile = excluded.prompt_cache_profile,
             compacted_summary = excluded.compacted_summary,
             token_usage = excluded.token_usage,
+            context_budget_decisions = excluded.context_budget_decisions,
             updated_at = excluded.updated_at
       `)
       .run(
@@ -2839,6 +2843,7 @@ export class RuntimeStateStore {
         params.promptCacheProfile ? JSON.stringify(params.promptCacheProfile) : null,
         params.compactedSummary ?? null,
         params.tokenUsage ? JSON.stringify(params.tokenUsage) : null,
+        params.contextBudgetDecisions ? JSON.stringify(params.contextBudgetDecisions) : null,
         createdAt,
         now
       );
@@ -2855,6 +2860,28 @@ export class RuntimeStateStore {
       .prepare<[string], Record<string, unknown>>("SELECT * FROM turn_results WHERE input_id = ? LIMIT 1")
       .get(params.inputId);
     return row ? this.rowToTurnResult(row) : null;
+  }
+
+  updateTurnResultContextBudgetDecisions(params: {
+    inputId: string;
+    contextBudgetDecisions: Record<string, unknown> | null;
+    updatedAt?: string;
+  }): TurnResultRecord | null {
+    const now = params.updatedAt ?? utcNowIso();
+    const result = this.db()
+      .prepare<[string | null, string, string]>(
+        `
+          UPDATE turn_results
+          SET context_budget_decisions = ?,
+              updated_at = ?
+          WHERE input_id = ?
+        `
+      )
+      .run(params.contextBudgetDecisions ? JSON.stringify(params.contextBudgetDecisions) : null, now, params.inputId);
+    if (result.changes === 0) {
+      return null;
+    }
+    return this.getTurnResult({ inputId: params.inputId });
   }
 
   countTurnResults(params: { sessionId: string; workspaceId?: string; inputId?: string; status?: string }): number {
@@ -5021,6 +5048,7 @@ export class RuntimeStateStore {
           prompt_cache_profile TEXT,
           compacted_summary TEXT,
           token_usage TEXT,
+          context_budget_decisions TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
       );
@@ -5757,6 +5785,7 @@ export class RuntimeStateStore {
           prompt_cache_profile TEXT,
           compacted_summary TEXT,
           token_usage TEXT,
+          context_budget_decisions TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
       );
@@ -5778,6 +5807,7 @@ export class RuntimeStateStore {
           prompt_cache_profile,
           compacted_summary,
           token_usage,
+          context_budget_decisions,
           created_at,
           updated_at
       )
@@ -5798,6 +5828,7 @@ export class RuntimeStateStore {
           prompt_cache_profile,
           compacted_summary,
           token_usage,
+          context_budget_decisions,
           created_at,
           updated_at
       FROM turn_results_legacy_with_compaction_boundary;
@@ -5828,6 +5859,9 @@ export class RuntimeStateStore {
       }
       if (!columns.has("prompt_cache_profile")) {
         db.exec("ALTER TABLE turn_results ADD COLUMN prompt_cache_profile TEXT;");
+      }
+      if (!columns.has("context_budget_decisions")) {
+        db.exec("ALTER TABLE turn_results ADD COLUMN context_budget_decisions TEXT;");
       }
       if (columns.has("compaction_boundary_id")) {
         this.rebuildTurnResultsWithoutCompactionBoundary(db);
@@ -6414,6 +6448,8 @@ export class RuntimeStateStore {
       promptCacheProfile: row.prompt_cache_profile == null ? null : this.parseJsonObjectOrMessage(row.prompt_cache_profile),
       compactedSummary: row.compacted_summary == null ? null : String(row.compacted_summary),
       tokenUsage: row.token_usage == null ? null : this.parseJsonObjectOrMessage(row.token_usage),
+      contextBudgetDecisions:
+        row.context_budget_decisions == null ? null : this.parseJsonObjectOrMessage(row.context_budget_decisions),
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
     };

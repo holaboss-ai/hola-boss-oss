@@ -1,3 +1,7 @@
+import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
+
 import {
   DESKTOP_BROWSER_TOOL_DEFINITIONS,
   DESKTOP_BROWSER_TOOL_IDS,
@@ -16,6 +20,7 @@ export {
 export interface DesktopBrowserToolExecutionContext {
   workspaceId?: string | null;
   sessionId?: string | null;
+  inputId?: string | null;
   space?: "agent" | "user" | null;
 }
 
@@ -31,6 +36,27 @@ export interface DesktopBrowserToolServiceLike {
 export interface DesktopBrowserToolServiceOptions {
   fetchImpl?: typeof fetch;
   resolveConfig?: () => ProductRuntimeConfig;
+  artifactStore?: BrowserScreenshotArtifactStore | null;
+}
+
+interface BrowserScreenshotArtifactStore {
+  workspaceRoot: string;
+  createOutput(params: {
+    workspaceId: string;
+    outputType: string;
+    title?: string;
+    status?: string;
+    filePath?: string | null;
+    sessionId?: string | null;
+    inputId?: string | null;
+    artifactId?: string | null;
+    platform?: string | null;
+    metadata?: Record<string, unknown> | null;
+  }): {
+    id: string;
+    artifactId: string | null;
+    filePath: string | null;
+  };
 }
 
 type BrowserFetchOptions = {
@@ -43,6 +69,17 @@ type BrowserFetchOptions = {
 };
 
 type BrowserTargetKind = "element" | "media";
+type BrowserGetStateMode = "state" | "text" | "structured" | "visual";
+type BrowserGetStateScope = "main" | "viewport" | "focused" | "dialog";
+
+type BrowserGetStateOptions = {
+  includePageText: boolean;
+  includeScreenshot: boolean;
+  mode: BrowserGetStateMode;
+  scope: BrowserGetStateScope;
+  maxNodes: number | null;
+  includeMetadata: boolean;
+};
 
 const INTERACTIVE_ELEMENTS_SELECTOR = [
   "a[href]",
@@ -67,6 +104,7 @@ const BROWSER_GET_STATE_ELEMENT_TEXT_MAX_CHARS = 120;
 const BROWSER_GET_STATE_MEDIA_TEXT_MAX_CHARS = 240;
 const BROWSER_GET_STATE_MAX_ATTEMPTS = 4;
 const BROWSER_GET_STATE_RETRY_DELAY_MS = 350;
+const BROWSER_SCREENSHOT_ARTIFACT_DIR = "outputs/browser-screenshots";
 
 
 export class DesktopBrowserToolServiceError extends Error {
@@ -95,6 +133,24 @@ function optionalInteger(value: unknown): number | null {
   return null;
 }
 
+function optionalPositiveIntegerArg(
+  value: unknown,
+  fieldName: string,
+): number | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const parsed = optionalInteger(value);
+  if (!parsed || parsed <= 0) {
+    throw new DesktopBrowserToolServiceError(
+      400,
+      "browser_tool_invalid_args",
+      `${fieldName} must be a positive integer`
+    );
+  }
+  return parsed;
+}
+
 function requiredString(value: unknown, fieldName: string): string {
   if (typeof value !== "string" || !value.trim()) {
     throw new DesktopBrowserToolServiceError(400, "browser_tool_invalid_args", `${fieldName} is required`);
@@ -112,6 +168,54 @@ function requiredPositiveInteger(value: unknown, fieldName: string): number {
     );
   }
   return parsed;
+}
+
+function browserGetStateMode(value: unknown): BrowserGetStateMode {
+  if (value === undefined || value === null) {
+    return "state";
+  }
+  if (value === "state" || value === "text" || value === "structured" || value === "visual") {
+    return value;
+  }
+  throw new DesktopBrowserToolServiceError(
+    400,
+    "browser_tool_invalid_args",
+    "mode must be `state`, `text`, `structured`, or `visual`"
+  );
+}
+
+function browserGetStateScope(value: unknown): BrowserGetStateScope {
+  if (value === undefined || value === null) {
+    return "main";
+  }
+  if (value === "main" || value === "viewport" || value === "focused" || value === "dialog") {
+    return value;
+  }
+  throw new DesktopBrowserToolServiceError(
+    400,
+    "browser_tool_invalid_args",
+    "scope must be `main`, `viewport`, `focused`, or `dialog`"
+  );
+}
+
+function browserGetStateOptions(args: Record<string, unknown>): BrowserGetStateOptions {
+  const mode = browserGetStateMode(args.mode);
+  const scope = browserGetStateScope(args.scope);
+  const maxNodes = optionalPositiveIntegerArg(args.max_nodes ?? args.maxNodes, "max_nodes");
+  const includePageText = mode === "text" || optionalBoolean(args.include_page_text, false);
+  const includeScreenshot = mode === "visual" || optionalBoolean(args.include_screenshot, false);
+  return {
+    includePageText,
+    includeScreenshot,
+    mode,
+    scope,
+    maxNodes,
+    includeMetadata:
+      args.mode !== undefined ||
+      args.scope !== undefined ||
+      args.max_nodes !== undefined ||
+      args.maxNodes !== undefined,
+  };
 }
 
 function browserToolDefinition(toolId: string): DesktopBrowserToolDefinition | null {
@@ -164,11 +268,15 @@ function serializedValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function interactiveElementsExpression(includePageText: boolean): string {
+function interactiveElementsExpression(options: BrowserGetStateOptions): string {
   return `(() => {
     const selector = ${serializedValue(INTERACTIVE_ELEMENTS_SELECTOR)};
     const mediaSelector = ${serializedValue(VISIBLE_MEDIA_SELECTOR)};
-    const includePageText = ${includePageText ? "true" : "false"};
+    const includePageText = ${options.includePageText ? "true" : "false"};
+    const includeMetadata = ${options.includeMetadata ? "true" : "false"};
+    const mode = ${serializedValue(options.mode)};
+    const scope = ${serializedValue(options.scope)};
+    const maxNodes = ${options.maxNodes === null ? "null" : String(options.maxNodes)};
     const textLimit = ${BROWSER_GET_STATE_ELEMENT_TEXT_MAX_CHARS};
     const mediaTextLimit = ${BROWSER_GET_STATE_MEDIA_TEXT_MAX_CHARS};
     const isVisible = (element) => {
@@ -176,6 +284,22 @@ function interactiveElementsExpression(includePageText: boolean): string {
       const rect = element.getBoundingClientRect();
       const style = window.getComputedStyle(element);
       return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+    };
+    const intersectsViewport = (element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth;
+    };
+    const dialogRoots = Array.from(document.querySelectorAll("dialog[open], [role='dialog'], [aria-modal='true']"))
+      .filter((element) => element instanceof HTMLElement && isVisible(element));
+    const focusedRoot = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const inScope = (element) => {
+      if (scope === "main") return true;
+      if (scope === "viewport") return intersectsViewport(element);
+      if (scope === "dialog") return dialogRoots.some((root) => root === element || root.contains(element));
+      if (scope === "focused") {
+        return focusedRoot ? element === focusedRoot || focusedRoot.contains(element) || element.contains(focusedRoot) : false;
+      }
+      return true;
     };
     const describe = (element, index) => {
       const rect = element.getBoundingClientRect();
@@ -250,21 +374,85 @@ function interactiveElementsExpression(includePageText: boolean): string {
     };
     const nodes = Array.from(document.querySelectorAll(selector))
       .filter((element) => isVisible(element))
-      .filter((element, index, all) => all.indexOf(element) === index);
+      .filter((element, index, all) => all.indexOf(element) === index)
+      .map((element, index) => ({ element, index: index + 1 }));
     const mediaNodes = Array.from(document.querySelectorAll(mediaSelector))
       .filter((element) => isVisible(element))
-      .filter((element, index, all) => all.indexOf(element) === index);
-    return {
+      .filter((element, index, all) => all.indexOf(element) === index)
+      .map((element, index) => ({ element, index: index + 1 }));
+    const scopedNodes = nodes.filter((entry) => inScope(entry.element));
+    const scopedMediaNodes = mediaNodes.filter((entry) => inScope(entry.element));
+    const includeNodeLists = mode !== "text";
+    let remainingNodes = typeof maxNodes === "number" && maxNodes > 0 ? maxNodes : null;
+    const takeNodes = (entries) => {
+      if (!includeNodeLists) return [];
+      if (remainingNodes === null) return entries;
+      const selected = entries.slice(0, remainingNodes);
+      remainingNodes = Math.max(0, remainingNodes - selected.length);
+      return selected;
+    };
+    const returnedNodes = takeNodes(scopedNodes);
+    const returnedMediaNodes = takeNodes(scopedMediaNodes);
+    const scopedText = () => {
+      if (scope === "main") {
+        return (document.body?.innerText || "").replace(/\\s+/g, " ").trim().slice(0, ${BROWSER_GET_STATE_TEXT_MAX_CHARS});
+      }
+      if (scope === "viewport") {
+        const body = document.body;
+        if (!body) return "";
+        return Array.from(body.querySelectorAll("*"))
+          .filter((element) => element instanceof HTMLElement && isVisible(element) && intersectsViewport(element))
+          .map((element) => (element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim())
+          .filter((text) => Boolean(text))
+          .join(" ")
+          .replace(/\\s+/g, " ")
+          .trim()
+          .slice(0, ${BROWSER_GET_STATE_TEXT_MAX_CHARS});
+      }
+      const roots = scope === "dialog" ? dialogRoots : focusedRoot ? [focusedRoot] : [];
+      return roots
+        .map((element) => (element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim())
+        .filter((text) => Boolean(text))
+        .join(" ")
+        .replace(/\\s+/g, " ")
+        .trim()
+        .slice(0, ${BROWSER_GET_STATE_TEXT_MAX_CHARS});
+    };
+    const truncated = includeNodeLists && (returnedNodes.length < scopedNodes.length || returnedMediaNodes.length < scopedMediaNodes.length);
+    const result = {
       url: location.href,
       title: document.title,
-      ...(includePageText
-        ? { text: (document.body?.innerText || "").replace(/\\s+/g, " ").trim().slice(0, ${BROWSER_GET_STATE_TEXT_MAX_CHARS}) }
-        : {}),
+      ...(includePageText ? { text: scopedText() } : {}),
       viewport: { width: window.innerWidth, height: window.innerHeight },
       scroll: { x: Math.round(window.scrollX), y: Math.round(window.scrollY) },
-      elements: nodes.map((element, idx) => describe(element, idx + 1)),
-      media: mediaNodes.map((element, idx) => describeMedia(element, idx + 1))
+      elements: returnedNodes.map((entry) => describe(entry.element, entry.index)),
+      media: returnedMediaNodes.map((entry) => describeMedia(entry.element, entry.index))
     };
+    if (includeMetadata) {
+      result.metadata = {
+        schema_version: 1,
+        mode,
+        scope,
+        max_nodes: maxNodes,
+        include_page_text: includePageText,
+        include_screenshot: ${options.includeScreenshot ? "true" : "false"},
+        lists_included: includeNodeLists,
+        returned: {
+          elements: returnedNodes.length,
+          media: returnedMediaNodes.length
+        },
+        totals: {
+          elements: scopedNodes.length,
+          media: scopedMediaNodes.length
+        },
+        full_page_totals: scope === "main" ? null : {
+          elements: nodes.length,
+          media: mediaNodes.length
+        },
+        truncated
+      };
+    }
+    return result;
   })()`;
 }
 
@@ -374,6 +562,44 @@ function positiveNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value > 0
     ? value
     : null;
+}
+
+function normalizedScreenshotMimeType(value: unknown): string {
+  const raw =
+    typeof value === "string" && value.trim()
+      ? value.trim().toLowerCase()
+      : "";
+  if (raw === "image/jpeg" || raw === "image/jpg") {
+    return "image/jpeg";
+  }
+  if (raw === "image/webp") {
+    return "image/webp";
+  }
+  return "image/png";
+}
+
+function screenshotExtension(mimeType: string): string {
+  if (mimeType === "image/jpeg") {
+    return ".jpg";
+  }
+  if (mimeType === "image/webp") {
+    return ".webp";
+  }
+  return ".png";
+}
+
+function safePathSegment(value: string, fallback: string): string {
+  const sanitized = value.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return sanitized || fallback;
+}
+
+function timestampPathSegment(date = new Date()): string {
+  return date.toISOString().replace(/[^0-9A-Za-z]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function screenshotBase64(value: Record<string, unknown>): string | null {
+  const raw = value.base64;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
 }
 
 function browserGetStateWarnings(params: {
@@ -515,9 +741,11 @@ function reloadExpression(): string {
 export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike {
   readonly #fetch: typeof fetch;
   readonly #resolveConfig: () => ProductRuntimeConfig;
+  readonly #artifactStore: BrowserScreenshotArtifactStore | null;
 
   constructor(options: DesktopBrowserToolServiceOptions = {}) {
     this.#fetch = options.fetchImpl ?? fetch;
+    this.#artifactStore = options.artifactStore ?? null;
     this.#resolveConfig =
       options.resolveConfig ??
       (() =>
@@ -599,28 +827,36 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
         return { ok: true, tabs: result };
       }
       case "browser_get_state": {
-        const includePageText = optionalBoolean(args.include_page_text, false);
-        const includeScreenshot = optionalBoolean(args.include_screenshot, false);
+        const options = browserGetStateOptions(args);
         const snapshot = await this.#readBrowserGetStateSnapshot(
           config,
           context,
-          includePageText,
-          includeScreenshot,
+          options,
         );
         const payload: Record<string, unknown> = {
           ok: true,
           page: snapshot.page,
           state: snapshot.state,
         };
-        if (snapshot.screenshot) {
-          payload.screenshot = snapshot.screenshot;
-        }
         const warnings = browserGetStateWarnings({
           page: snapshot.page,
           state: snapshot.state,
           screenshot: snapshot.screenshot,
-          includeScreenshot,
+          includeScreenshot: options.includeScreenshot,
         });
+        if (snapshot.screenshot) {
+          const screenshot = await this.#screenshotForToolResult({
+            screenshot: snapshot.screenshot,
+            context,
+            sourceToolId: "browser_get_state",
+            page: snapshot.page,
+            state: snapshot.state,
+          });
+          payload.screenshot = screenshot.result;
+          if (screenshot.warning) {
+            warnings.push(screenshot.warning);
+          }
+        }
         if (warnings.length > 0) {
           payload.warnings = warnings;
         }
@@ -718,19 +954,26 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
       case "browser_screenshot": {
         const format = args.format === "jpeg" ? "jpeg" : "png";
         const quality = optionalInteger(args.quality);
+        const screenshot = await this.#browserFetch(config, {
+          method: "POST",
+          path: "/screenshot",
+          body: {
+            format,
+            ...(quality !== null ? { quality } : {})
+          },
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        });
+        const artifactScreenshot = await this.#screenshotForToolResult({
+          screenshot,
+          context,
+          sourceToolId: "browser_screenshot",
+        });
         return {
           ok: true,
-          screenshot: await this.#browserFetch(config, {
-            method: "POST",
-            path: "/screenshot",
-            body: {
-              format,
-              ...(quality !== null ? { quality } : {})
-            },
-            workspaceId: context.workspaceId,
-            sessionId: context.sessionId,
-            space: context.space,
-          })
+          screenshot: artifactScreenshot.result,
+          ...(artifactScreenshot.warning ? { warnings: [artifactScreenshot.warning] } : {})
         };
       }
       case "browser_list_tabs": {
@@ -765,11 +1008,103 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
     return asRecord(payload?.result) ?? {};
   }
 
+  async #screenshotForToolResult(params: {
+    screenshot: Record<string, unknown>;
+    context: DesktopBrowserToolExecutionContext;
+    sourceToolId: string;
+    page?: Record<string, unknown>;
+    state?: Record<string, unknown>;
+  }): Promise<{ result: Record<string, unknown>; warning: string | null }> {
+    const workspaceId = typeof params.context.workspaceId === "string" ? params.context.workspaceId.trim() : "";
+    if (!this.#artifactStore || !workspaceId) {
+      return { result: params.screenshot, warning: null };
+    }
+
+    const base64 = screenshotBase64(params.screenshot);
+    if (!base64) {
+      return { result: params.screenshot, warning: null };
+    }
+
+    const mimeType = normalizedScreenshotMimeType(
+      params.screenshot.mimeType ?? params.screenshot.mime_type,
+    );
+    const extension = screenshotExtension(mimeType);
+    const sessionId = typeof params.context.sessionId === "string" ? params.context.sessionId.trim() : "";
+    const inputId = typeof params.context.inputId === "string" ? params.context.inputId.trim() : "";
+    const artifactId = randomUUID();
+    const timestamp = timestampPathSegment();
+    const relativePath = path.posix.join(
+      BROWSER_SCREENSHOT_ARTIFACT_DIR,
+      safePathSegment(sessionId, "session"),
+      `${timestamp}-${artifactId}${extension}`,
+    );
+    const absolutePath = path.join(this.#artifactStore.workspaceRoot, workspaceId, ...relativePath.split("/"));
+    const bytes = Buffer.from(base64, "base64");
+
+    try {
+      await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+      await fs.writeFile(absolutePath, bytes);
+      const width = positiveNumber(params.screenshot.width);
+      const height = positiveNumber(params.screenshot.height);
+      const output = this.#artifactStore.createOutput({
+        workspaceId,
+        outputType: "file",
+        title: `Browser screenshot ${new Date().toISOString()}`,
+        status: "completed",
+        filePath: relativePath,
+        sessionId: sessionId || null,
+        inputId: inputId || null,
+        artifactId,
+        platform: "browser",
+        metadata: {
+          origin_type: "browser_tool",
+          change_type: "created",
+          artifact_type: "browser_screenshot",
+          category: "image",
+          mime_type: mimeType,
+          size_bytes: bytes.byteLength,
+          tool_id: params.sourceToolId,
+          inline_base64: false,
+          ...(width !== null ? { width } : {}),
+          ...(height !== null ? { height } : {}),
+          ...(sessionId ? { source_session_id: sessionId } : {}),
+          ...(inputId ? { source_input_id: inputId } : {}),
+          ...(typeof params.page?.url === "string" ? { page_url: params.page.url } : {}),
+          ...(typeof params.page?.title === "string" ? { page_title: params.page.title } : {}),
+          ...(typeof params.state?.url === "string" && typeof params.page?.url !== "string"
+            ? { page_url: params.state.url }
+            : {}),
+          ...(typeof params.state?.title === "string" && typeof params.page?.title !== "string"
+            ? { page_title: params.state.title }
+            : {}),
+        },
+      });
+      return {
+        result: {
+          artifact_id: output.artifactId ?? artifactId,
+          output_id: output.id,
+          file_path: output.filePath ?? relativePath,
+          mime_type: mimeType,
+          size_bytes: bytes.byteLength,
+          ...(width !== null ? { width } : {}),
+          ...(height !== null ? { height } : {}),
+          storage: "workspace_output",
+          inline_base64: false,
+        },
+        warning: null,
+      };
+    } catch {
+      return {
+        result: params.screenshot,
+        warning: "Browser screenshot artifact persistence failed; screenshot is inlined.",
+      };
+    }
+  }
+
   async #readBrowserGetStateSnapshot(
     config: ProductRuntimeConfig,
     context: DesktopBrowserToolExecutionContext,
-    includePageText: boolean,
-    includeScreenshot: boolean,
+    options: BrowserGetStateOptions,
   ): Promise<{
     page: Record<string, unknown>;
     state: Record<string, unknown>;
@@ -793,10 +1128,10 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
       });
       const state = await this.#evaluate(
         config,
-        interactiveElementsExpression(includePageText),
+        interactiveElementsExpression(options),
         context,
       );
-      const screenshot = includeScreenshot
+      const screenshot = options.includeScreenshot
         ? await this.#browserFetch(config, {
             method: "POST",
             path: "/screenshot",
@@ -812,7 +1147,7 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
           page,
           state,
           screenshot,
-          includeScreenshot,
+          includeScreenshot: options.includeScreenshot,
         })
       ) {
         return snapshot;

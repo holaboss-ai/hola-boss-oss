@@ -76,6 +76,32 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
       return {
         type: "object",
         properties: {
+          mode: {
+            anyOf: [
+              { type: "string", const: "state" },
+              { type: "string", const: "text" },
+              { type: "string", const: "structured" },
+              { type: "string", const: "visual" },
+            ],
+            description:
+              "State mode to return. Use `state` by default, `text` for scoped visible text, `structured` for schema-like extraction state, and `visual` only when a screenshot is needed.",
+          },
+          scope: {
+            anyOf: [
+              { type: "string", const: "main" },
+              { type: "string", const: "viewport" },
+              { type: "string", const: "focused" },
+              { type: "string", const: "dialog" },
+            ],
+            description:
+              "Limit browser state to the main document, viewport, focused element subtree, or active dialog.",
+          },
+          max_nodes: {
+            type: "integer",
+            description:
+              "Maximum combined element/media nodes to return. Returned indexes still reference the original page order for follow-up click/type tools.",
+            minimum: 1,
+          },
           include_page_text: {
             type: "boolean",
             description:
@@ -84,7 +110,7 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
           include_screenshot: {
             type: "boolean",
             description:
-              "Include a page screenshot when visual appearance, layout, overlays, charts, PDFs, or user-visible confirmation matter, or when DOM signals are ambiguous.",
+              "Include a page screenshot artifact handle when visual appearance, layout, overlays, charts, PDFs, or user-visible confirmation matter, or when DOM signals are ambiguous.",
           },
         },
         additionalProperties: false,

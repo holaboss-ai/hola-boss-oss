@@ -59,13 +59,16 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   {
     id: "browser_get_state",
     description:
-      "Read the current desktop browser page, visible interactive elements, visible media such as images, and optional screenshot. Prefer this as the DOM-first browser inspection tool for actions and structured extraction. By default it returns a compact state snapshot; set include_page_text=true only when you need the current page text, and set include_screenshot=true when visual appearance, layout, prominence, overlays, canvas/chart/PDF content, or user-visible confirmation matters, or when DOM signals are ambiguous or unreliable.",
+      "Read the current desktop browser page, visible interactive elements, visible media such as images, and optional screenshot artifact. Prefer this as the DOM-first browser inspection tool for actions and structured extraction. By default it returns a compact state snapshot; use mode/scope/max_nodes to narrow large pages, set include_page_text=true only when you need the current page text, and set include_screenshot=true when visual appearance, layout, prominence, overlays, canvas/chart/PDF content, or user-visible confirmation matters, or when DOM signals are ambiguous or unreliable. Screenshots are returned as artifact handles when workspace storage is available, not inline base64.",
     policy: "inspect",
     session_scope: "workspace_session_only",
     input_schema: {
       type: "object",
       additionalProperties: false,
       properties: {
+        mode: { type: "string", enum: ["state", "text", "structured", "visual"] },
+        scope: { type: "string", enum: ["main", "viewport", "focused", "dialog"] },
+        max_nodes: { type: "integer", minimum: 1 },
         include_page_text: { type: "boolean" },
         include_screenshot: { type: "boolean" },
       },
@@ -187,7 +190,7 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   {
     id: "browser_screenshot",
     description:
-      "Capture a screenshot of the active browser tab when visual verification or interpretation is needed. Do not use it by default for routine navigation or straightforward structured extraction when DOM and text state already suffice.",
+      "Capture a screenshot artifact of the active browser tab when visual verification or interpretation is needed. Do not use it by default for routine navigation or straightforward structured extraction when DOM and text state already suffice. Screenshots are returned as artifact handles when workspace storage is available, not inline base64.",
     policy: "inspect",
     session_scope: "workspace_session_only",
     input_schema: {

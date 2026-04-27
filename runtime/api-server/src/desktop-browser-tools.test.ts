@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { once } from "node:events";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
+
+import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
 import {
   DesktopBrowserToolService,
@@ -186,6 +191,131 @@ test("desktop browser tool service forwards workspace and session context to the
     );
   } finally {
     await browserServer.close();
+  }
+});
+
+test("desktop browser tool service stores screenshots as output artifacts when available", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hb-browser-screenshot-artifacts-"));
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+
+  const browserServer = await startBrowserServer(async (request, response) => {
+    response.setHeader("content-type", "application/json; charset=utf-8");
+    if (request.url === "/api/v1/browser/page") {
+      response.end(JSON.stringify({ tabId: "tab-1", url: "https://example.com", title: "Example" }));
+      return;
+    }
+    if (request.url === "/api/v1/browser/evaluate") {
+      response.end(
+        JSON.stringify({
+          tabId: "tab-1",
+          result: {
+            url: "https://example.com",
+            title: "Example",
+            viewport: { width: 1280, height: 720 },
+            scroll: { x: 0, y: 0 },
+            elements: [],
+            media: [],
+          },
+        })
+      );
+      return;
+    }
+    if (request.url === "/api/v1/browser/screenshot") {
+      response.end(
+        JSON.stringify({
+          tabId: "tab-1",
+          mimeType: "image/png",
+          width: 1280,
+          height: 720,
+          base64: "cG5n",
+        })
+      );
+      return;
+    }
+    response.statusCode = 404;
+    response.end(JSON.stringify({ error: "not found" }));
+  });
+
+  try {
+    const service = new DesktopBrowserToolService({
+      artifactStore: store,
+      resolveConfig: () => ({
+        authToken: "",
+        userId: "",
+        sandboxId: "",
+        modelProxyBaseUrl: "",
+        defaultModel: "openai/gpt-5.4",
+        runtimeMode: "oss",
+        defaultProvider: "",
+        holabossEnabled: false,
+        desktopBrowserEnabled: true,
+        desktopBrowserUrl: browserServer.url,
+        desktopBrowserAuthToken: "browser-token",
+        configPath: "/tmp/runtime-config.json",
+        loadedFromFile: true
+      })
+    });
+
+    const result = await service.execute(
+      "browser_get_state",
+      { include_screenshot: true },
+      { workspaceId: "workspace-1", sessionId: "session-1", inputId: "input-1" }
+    );
+    const screenshot = result.screenshot as {
+      artifact_id?: string;
+      output_id?: string;
+      file_path?: string;
+      mime_type?: string;
+      size_bytes?: number;
+      width?: number;
+      height?: number;
+      inline_base64?: boolean;
+      base64?: string;
+    };
+
+    assert.equal(screenshot.base64, undefined);
+    assert.equal(screenshot.inline_base64, false);
+    assert.equal(screenshot.mime_type, "image/png");
+    assert.equal(screenshot.size_bytes, 3);
+    assert.equal(screenshot.width, 1280);
+    assert.equal(screenshot.height, 720);
+    assert.ok(typeof screenshot.artifact_id === "string" && screenshot.artifact_id.length > 0);
+    assert.ok(typeof screenshot.output_id === "string" && screenshot.output_id.length > 0);
+    assert.match(String(screenshot.file_path ?? ""), /^outputs\/browser-screenshots\/session-1\//);
+    assert.equal(
+      fs.readFileSync(path.join(workspaceRoot, "workspace-1", screenshot.file_path ?? ""), "utf8"),
+      "png",
+    );
+
+    const outputs = store.listOutputs({
+      workspaceId: "workspace-1",
+      sessionId: "session-1",
+      inputId: "input-1",
+      limit: 20,
+      offset: 0,
+    });
+    assert.equal(outputs.length, 1);
+    assert.equal(outputs[0].id, screenshot.output_id);
+    assert.equal(outputs[0].artifactId, screenshot.artifact_id);
+    assert.equal(outputs[0].filePath, screenshot.file_path);
+    assert.equal(outputs[0].metadata.artifact_type, "browser_screenshot");
+    assert.equal(outputs[0].metadata.origin_type, "browser_tool");
+    assert.equal(outputs[0].metadata.tool_id, "browser_get_state");
+    assert.equal(outputs[0].metadata.inline_base64, false);
+  } finally {
+    await browserServer.close();
+    store.close();
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -495,6 +625,108 @@ test("desktop browser tool service includes page text only when explicitly reque
     );
 
     assert.equal((result.state as { text?: string }).text, "Example Domain");
+  } finally {
+    await browserServer.close();
+  }
+});
+
+test("desktop browser tool service accepts scoped browser_get_state controls", async () => {
+  const evaluateBodies: string[] = [];
+  const browserServer = await startBrowserServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    response.setHeader("content-type", "application/json; charset=utf-8");
+    if (request.url === "/api/v1/browser/page") {
+      response.end(JSON.stringify({ tabId: "tab-1", url: "https://example.com", title: "Example" }));
+      return;
+    }
+    if (request.url === "/api/v1/browser/evaluate") {
+      evaluateBodies.push(Buffer.concat(chunks).toString("utf8"));
+      response.end(
+        JSON.stringify({
+          tabId: "tab-1",
+          result: {
+            url: "https://example.com",
+            title: "Example",
+            text: "Visible viewport text",
+            viewport: { width: 1280, height: 720 },
+            scroll: { x: 0, y: 0 },
+            elements: [],
+            media: [],
+            metadata: {
+              schema_version: 1,
+              mode: "text",
+              scope: "viewport",
+              max_nodes: 2,
+              include_page_text: true,
+              include_screenshot: false,
+              lists_included: false,
+              returned: { elements: 0, media: 0 },
+              totals: { elements: 4, media: 1 },
+              full_page_totals: { elements: 10, media: 2 },
+              truncated: false,
+            },
+          },
+        })
+      );
+      return;
+    }
+    if (request.url === "/api/v1/browser/screenshot") {
+      response.statusCode = 500;
+      response.end(JSON.stringify({ error: "screenshot should not be requested" }));
+      return;
+    }
+    response.statusCode = 404;
+    response.end(JSON.stringify({ error: "not found" }));
+  });
+
+  try {
+    const service = new DesktopBrowserToolService({
+      resolveConfig: () => ({
+        authToken: "",
+        userId: "",
+        sandboxId: "",
+        modelProxyBaseUrl: "",
+        defaultModel: "openai/gpt-5.4",
+        runtimeMode: "oss",
+        defaultProvider: "",
+        holabossEnabled: false,
+        desktopBrowserEnabled: true,
+        desktopBrowserUrl: browserServer.url,
+        desktopBrowserAuthToken: "browser-token",
+        configPath: "/tmp/runtime-config.json",
+        loadedFromFile: true
+      })
+    });
+
+    const result = await service.execute(
+      "browser_get_state",
+      { mode: "text", scope: "viewport", max_nodes: 2 },
+      { workspaceId: "workspace-1", sessionId: "session-1" }
+    );
+
+    assert.equal((result.state as { text?: string }).text, "Visible viewport text");
+    assert.deepEqual((result.state as { metadata?: unknown }).metadata, {
+      schema_version: 1,
+      mode: "text",
+      scope: "viewport",
+      max_nodes: 2,
+      include_page_text: true,
+      include_screenshot: false,
+      lists_included: false,
+      returned: { elements: 0, media: 0 },
+      totals: { elements: 4, media: 1 },
+      full_page_totals: { elements: 10, media: 2 },
+      truncated: false,
+    });
+    assert.equal("screenshot" in result, false);
+    assert.equal(evaluateBodies.length, 1);
+    assert.match(evaluateBodies[0] ?? "", /const mode = \\"text\\";/);
+    assert.match(evaluateBodies[0] ?? "", /const scope = \\"viewport\\";/);
+    assert.match(evaluateBodies[0] ?? "", /const maxNodes = 2;/);
+    assert.match(evaluateBodies[0] ?? "", /const includeMetadata = true;/);
   } finally {
     await browserServer.close();
   }
