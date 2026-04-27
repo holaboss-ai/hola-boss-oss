@@ -3001,6 +3001,81 @@ test("history endpoint paginates in requested order without hydrating the full r
   store.close();
 });
 
+test("history endpoint returns stored messages even after runtime harness ownership transfers to another session", async () => {
+  const root = makeTempDir("hb-runtime-api-history-transfer-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi"
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-old",
+    kind: "workspace_session"
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-new",
+    kind: "workspace_session"
+  });
+  store.insertSessionMessage({
+    workspaceId: workspace.id,
+    sessionId: "session-old",
+    role: "user",
+    text: "first question",
+    messageId: "user-old-1",
+    createdAt: "2026-01-01T00:00:00.000Z"
+  });
+  store.insertSessionMessage({
+    workspaceId: workspace.id,
+    sessionId: "session-old",
+    role: "assistant",
+    text: "first answer",
+    messageId: "assistant-old-1",
+    createdAt: "2026-01-01T00:00:01.000Z"
+  });
+  store.upsertBinding({
+    workspaceId: workspace.id,
+    sessionId: "session-old",
+    harness: "pi",
+    harnessSessionId: "shared-harness-session"
+  });
+  store.upsertBinding({
+    workspaceId: workspace.id,
+    sessionId: "session-new",
+    harness: "pi",
+    harnessSessionId: "shared-harness-session"
+  });
+
+  const history = await app.inject({
+    method: "GET",
+    url: `/api/v1/agent-sessions/session-old/history?workspace_id=${workspace.id}`
+  });
+
+  assert.equal(history.statusCode, 200);
+  assert.equal(history.json().harness, "pi");
+  assert.equal(history.json().harness_session_id, "");
+  assert.deepEqual(
+    history.json().messages.map((item: { id: string; role: string }) => ({
+      id: item.id,
+      role: item.role,
+    })),
+    [
+      { id: "user-old-1", role: "user" },
+      { id: "assistant-old-1", role: "assistant" },
+    ]
+  );
+
+  await app.close();
+  store.close();
+});
+
 test("output events endpoint supports incremental fetches and tail mode", async () => {
   const root = makeTempDir("hb-runtime-api-");
   const store = new RuntimeStateStore({
