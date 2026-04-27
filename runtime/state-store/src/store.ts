@@ -1354,24 +1354,52 @@ export class RuntimeStateStore {
       { touchExisting: false }
     );
     const now = utcNowIso();
-    this.db()
-      .prepare(`
-        INSERT INTO agent_runtime_sessions (
-            workspace_id, session_id, harness, harness_session_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(workspace_id, session_id) DO UPDATE SET
-            harness = excluded.harness,
-            harness_session_id = excluded.harness_session_id,
-            updated_at = excluded.updated_at
-      `)
-      .run(
-        params.workspaceId,
-        params.sessionId,
-        params.harness,
-        params.harnessSessionId,
-        now,
-        now
-      );
+    const existingSessionBinding = this.getBinding({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+    });
+    const existingHarnessBinding = this.getBindingByHarnessSessionId({
+      workspaceId: params.workspaceId,
+      harness: params.harness,
+      harnessSessionId: params.harnessSessionId,
+    });
+    const createdAt =
+      existingHarnessBinding?.createdAt ??
+      existingSessionBinding?.createdAt ??
+      now;
+    const transaction = this.db().transaction(() => {
+      this.db()
+        .prepare(
+          `
+            DELETE FROM agent_runtime_sessions
+            WHERE workspace_id = ? AND session_id = ?
+          `,
+        )
+        .run(params.workspaceId, params.sessionId);
+      this.db()
+        .prepare(
+          `
+            DELETE FROM agent_runtime_sessions
+            WHERE workspace_id = ? AND harness = ? AND harness_session_id = ?
+          `,
+        )
+        .run(params.workspaceId, params.harness, params.harnessSessionId);
+      this.db()
+        .prepare(`
+          INSERT INTO agent_runtime_sessions (
+              workspace_id, session_id, harness, harness_session_id, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          params.workspaceId,
+          params.sessionId,
+          params.harness,
+          params.harnessSessionId,
+          createdAt,
+          now
+        );
+    });
+    transaction();
 
     const record = this.getBinding({
       workspaceId: params.workspaceId,
@@ -1409,6 +1437,42 @@ export class RuntimeStateStore {
       harnessSessionId: row.harness_session_id,
       createdAt: row.created_at,
       updatedAt: row.updated_at
+    };
+  }
+
+  getBindingByHarnessSessionId(params: {
+    workspaceId: string;
+    harness: string;
+    harnessSessionId: string;
+  }): SessionBindingRecord | null {
+    const row = this.db()
+      .prepare<
+        [string, string, string],
+        {
+          workspace_id: string;
+          session_id: string;
+          harness: string;
+          harness_session_id: string;
+          created_at: string;
+          updated_at: string;
+        }
+      >(`
+        SELECT workspace_id, session_id, harness, harness_session_id, created_at, updated_at
+        FROM agent_runtime_sessions
+        WHERE workspace_id = ? AND harness = ? AND harness_session_id = ?
+        LIMIT 1
+      `)
+      .get(params.workspaceId, params.harness, params.harnessSessionId);
+    if (!row) {
+      return null;
+    }
+    return {
+      workspaceId: row.workspace_id,
+      sessionId: row.session_id,
+      harness: row.harness,
+      harnessSessionId: row.harness_session_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
     };
   }
 
