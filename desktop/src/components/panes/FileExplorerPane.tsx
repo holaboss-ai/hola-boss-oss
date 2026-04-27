@@ -3431,7 +3431,7 @@ export function FileExplorerPane({
   const content = showInlinePreview ? (
     <div className="flex h-full min-h-0 flex-col bg-background">
       {/* File identity header */}
-      <div className="flex shrink-0 items-center gap-3 px-4 py-2.5">
+      <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2.5">
         <span className="grid size-7 shrink-0 place-items-center rounded-lg border border-border bg-muted">
           <IconifyIcon
             icon={`catppuccin:${previewFileIcon.name}`}
