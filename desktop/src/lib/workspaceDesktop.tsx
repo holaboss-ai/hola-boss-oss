@@ -484,36 +484,13 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     };
   }, []);
 
-  useEffect(() => {
-    if (
-      hasHydratedWorkspaceList ||
-      isLoadingBootstrap ||
-      runtimeStatus?.status !== "starting"
-    ) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const refreshStartingRuntimeStatus = () => {
-      void window.electronAPI.runtime
-        .getStatus()
-        .then((status) => {
-          if (!cancelled) {
-            setRuntimeStatus(status);
-          }
-        })
-        .catch(() => undefined);
-    };
-
-    refreshStartingRuntimeStatus();
-    const timer = window.setInterval(refreshStartingRuntimeStatus, 1000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [hasHydratedWorkspaceList, isLoadingBootstrap, runtimeStatus?.status]);
+  // (Removed) — there used to be a 1s polling loop here that re-queried
+  // runtime:getStatus while the sidecar was "starting". The push event
+  // `runtime:state` (fired from emitRuntimeState() on every transition,
+  // including the starting → running flip) covers the same state with
+  // zero latency, and the redundant poll could only *delay* observed
+  // ready by up to a full tick (caller waits for next 1s boundary).
+  // Boot timing measured ~1s recovery on the splash by removing this.
 
   useEffect(() => {
     let mounted = true;

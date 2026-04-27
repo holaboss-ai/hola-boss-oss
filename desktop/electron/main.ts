@@ -23761,8 +23761,15 @@ app.whenReady().then(async () => {
       return fileBookmarks;
     },
   );
+  // Returns the *cached* runtime status. The full refreshRuntimeStatus()
+  // path probes /healthz, which during boot — when the sidecar isn't up
+  // yet — eats a 1500ms HTTP timeout per call. Push events
+  // (`runtime:state`) already keep the cached value current; renderer
+  // gets a real-time stream + can poll this IPC for the same state in
+  // microseconds. (Boot timing: shaved ~1s off the splash by removing
+  // the redundant probe round-trip from this hot path.)
   handleTrustedIpc("runtime:getStatus", ["main", "auth-popup"], () =>
-    refreshRuntimeStatus(),
+    Promise.resolve(runtimeStatus),
   );
   // Renderer-driven boot timing. The "renderer-hydrated" mark also
   // triggers the summary print + JSON write — see bootTimer.complete.
