@@ -258,8 +258,8 @@ export function TopTabsBar({
 
   const headerClassName = integratedTitleBar
     ? isWindowsIntegratedTitleBar
-      ? "window-drag relative h-[30px] px-2 pt-0.5"
-      : "window-drag relative h-[30px] px-2"
+      ? "window-drag relative h-[32px] px-2 pt-0.5"
+      : "window-drag relative h-[32px] px-2"
     : "rounded-xl border border-border bg-card px-2.5 py-1 shadow-subtle-xs backdrop-blur-sm sm:px-4";
   const headerGridClassName =
     "relative z-10 grid min-w-0 items-center gap-1.5 sm:gap-2 lg:h-full lg:grid-cols-[minmax(0,1fr)_auto]";
