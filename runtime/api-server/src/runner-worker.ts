@@ -315,6 +315,21 @@ function isRunnerEvent(value: unknown): value is Record<string, unknown> {
   );
 }
 
+function parseRunnerEventLine(line: string): RunnerEvent | null {
+  try {
+    const parsed = JSON.parse(line) as unknown;
+    return isRunnerEvent(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function appendSkippedLine(skippedLines: string[], line: string): void {
+  if (line && skippedLines.length < 20) {
+    skippedLines.push(line);
+  }
+}
+
 function eventSequence(event: Record<string, unknown>): number {
   return typeof event.sequence === "number" ? event.sequence : 0;
 }
@@ -531,45 +546,64 @@ export async function executeRunnerRequest(
         if (!line) {
           continue;
         }
-        try {
-          const parsed = JSON.parse(line) as unknown;
-          if (!isRunnerEvent(parsed)) {
-            if (skippedLines.length < 20) {
-              skippedLines.push(line);
-            }
-            continue;
-          }
-          resetIdleTimeout();
-          events.push(parsed);
-          if (
-            parsed.event_type === "run_started" &&
-            !postStartDeadlineApplied &&
-            postStartHarnessTimeoutSeconds !== null
-          ) {
-            postStartDeadlineApplied = true;
-            scheduleHardTimeoutAt(
-              Math.max(
-                hardDeadlineAtMs,
-                Date.now() + postStartHarnessTimeoutSeconds * 1000 + postStartTimeoutGraceMs
-              )
-            );
-          }
-          if (options.onEvent) {
-            await options.onEvent(parsed);
-          }
-          if (TERMINAL_EVENT_TYPES.has(parsed.event_type as string)) {
-            sawTerminal = true;
-            killChildProcess(child, "SIGTERM");
-          }
-        } catch {
-          if (skippedLines.length < 20) {
-            skippedLines.push(line);
-          }
+        const parsed = parseRunnerEventLine(line);
+        if (!parsed) {
+          appendSkippedLine(skippedLines, line);
+          continue;
+        }
+        resetIdleTimeout();
+        events.push(parsed);
+        if (
+          parsed.event_type === "run_started" &&
+          !postStartDeadlineApplied &&
+          postStartHarnessTimeoutSeconds !== null
+        ) {
+          postStartDeadlineApplied = true;
+          scheduleHardTimeoutAt(
+            Math.max(
+              hardDeadlineAtMs,
+              Date.now() + postStartHarnessTimeoutSeconds * 1000 + postStartTimeoutGraceMs
+            )
+          );
+        }
+        if (options.onEvent) {
+          await options.onEvent(parsed);
+        }
+        if (TERMINAL_EVENT_TYPES.has(parsed.event_type as string)) {
+          sawTerminal = true;
+          killChildProcess(child, "SIGTERM");
         }
       }
     }
-    if (stdoutBuffer.trim().length > 0 && skippedLines.length < 20) {
-      skippedLines.push(stdoutBuffer.trim());
+    const trailingLine = stdoutBuffer.trim();
+    if (trailingLine) {
+      const parsed = parseRunnerEventLine(trailingLine);
+      if (parsed) {
+        resetIdleTimeout();
+        events.push(parsed);
+        if (
+          parsed.event_type === "run_started" &&
+          !postStartDeadlineApplied &&
+          postStartHarnessTimeoutSeconds !== null
+        ) {
+          postStartDeadlineApplied = true;
+          scheduleHardTimeoutAt(
+            Math.max(
+              hardDeadlineAtMs,
+              Date.now() + postStartHarnessTimeoutSeconds * 1000 + postStartTimeoutGraceMs
+            )
+          );
+        }
+        if (options.onEvent) {
+          await options.onEvent(parsed);
+        }
+        if (TERMINAL_EVENT_TYPES.has(parsed.event_type as string)) {
+          sawTerminal = true;
+          killChildProcess(child, "SIGTERM");
+        }
+      } else {
+        appendSkippedLine(skippedLines, trailingLine);
+      }
     }
   } finally {
     if (timeout) {
@@ -676,30 +710,22 @@ export class NativeRunnerExecutor implements RunnerExecutorLike {
         if (!line) {
           continue;
         }
-        try {
-          const parsed = JSON.parse(line) as unknown;
-          if (!isRunnerEvent(parsed)) {
-            if (skippedLines.length < 20) {
-              skippedLines.push(line);
-            }
-            continue;
+        const parsed = parseRunnerEventLine(line);
+        if (!parsed) {
+          appendSkippedLine(skippedLines, line);
+          continue;
+        }
+        lastSequence = Math.max(lastSequence, eventSequence(parsed));
+        if (TERMINAL_EVENT_TYPES.has(parsed.event_type as string)) {
+          sawTerminal = true;
+        }
+        stream.push(sseEvent(parsed));
+        resetHeartbeat();
+        if (sawTerminal) {
+          if (heartbeat) {
+            clearTimeout(heartbeat);
           }
-          lastSequence = Math.max(lastSequence, eventSequence(parsed));
-          if (TERMINAL_EVENT_TYPES.has(parsed.event_type as string)) {
-            sawTerminal = true;
-          }
-          stream.push(sseEvent(parsed));
-          resetHeartbeat();
-          if (sawTerminal) {
-            if (heartbeat) {
-              clearTimeout(heartbeat);
-            }
-            killChildProcess(child, "SIGTERM");
-          }
-        } catch {
-          if (skippedLines.length < 20) {
-            skippedLines.push(line);
-          }
+          killChildProcess(child, "SIGTERM");
         }
       }
     });
@@ -708,8 +734,18 @@ export class NativeRunnerExecutor implements RunnerExecutorLike {
       if (heartbeat) {
         clearTimeout(heartbeat);
       }
-      if (stdoutBuffer.trim().length > 0 && skippedLines.length < 20) {
-        skippedLines.push(stdoutBuffer.trim());
+      const trailingLine = stdoutBuffer.trim();
+      if (trailingLine) {
+        const parsed = parseRunnerEventLine(trailingLine);
+        if (parsed) {
+          lastSequence = Math.max(lastSequence, eventSequence(parsed));
+          if (TERMINAL_EVENT_TYPES.has(parsed.event_type as string)) {
+            sawTerminal = true;
+          }
+          stream.push(sseEvent(parsed));
+        } else {
+          appendSkippedLine(skippedLines, trailingLine);
+        }
       }
       if (!sawTerminal) {
         const stderrText = Buffer.concat(stderrChunks).toString("utf-8").trim();
