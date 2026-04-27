@@ -554,16 +554,21 @@ html[data-platform="win32"] body {
   background: color-mix(in oklch, var(--background) 60%, transparent);
 }
 
-/* Dark mode: dial the tint down further so the OS material reads more
- * clearly. Light mode benefits from the higher tint floor (60%) since
- * vibrancy in light mode is brighter; dark vibrancy already sits low-key,
- * so we let more of it through. Themes encode the scheme as a `-dark`
- * suffix on data-theme, e.g. `catppuccin-dark`. */
+/* Dark mode: dial the tint floor down hard. The dark-mode background
+ * is intrinsically near-black (e.g. amber-minimal-dark = oklch(0.15)),
+ * so even a small alpha layer on top reads as a dark veil that swallows
+ * the OS vibrancy material underneath. 22% lets ~78% of the material
+ * through — enough to see the desaturated frosted glass clearly while
+ * keeping a subtle theme tint for graceful degradation.
+ *
+ * (Light-mode keeps a higher 60% floor — light vibrancy is brighter
+ * so a heavier tint still reads as glass, and the higher floor protects
+ * against see-through-to-desktop if vibrancy fails.) */
 html[data-platform="darwin"][data-theme$="-dark"],
 html[data-platform="darwin"][data-theme$="-dark"] body,
 html[data-platform="win32"][data-theme$="-dark"],
 html[data-platform="win32"][data-theme$="-dark"] body {
-  background: color-mix(in oklch, var(--background) 38%, transparent);
+  background: color-mix(in oklch, var(--background) 22%, transparent);
 }
 
 /* When the loading shells render before the main grid, keep them mostly
