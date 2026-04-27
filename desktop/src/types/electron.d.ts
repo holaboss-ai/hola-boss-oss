@@ -1367,6 +1367,11 @@ declare global {
     authConfigId: string | null;
     toolkitSlug: string | null;
     userId: string | null;
+    handle?: string | null;
+    displayName?: string | null;
+    avatarUrl?: string | null;
+    email?: string | null;
+    data?: Record<string, unknown> | null;
   }
 
   interface TemplateIntegrationRequirement {

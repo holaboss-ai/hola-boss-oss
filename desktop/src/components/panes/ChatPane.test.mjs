@@ -1553,3 +1553,91 @@ test("chat pane offers an explicit jump-to-browser CTA instead of auto-switching
     /const lastCompletedAssistantMessageId = useMemo\(/,
   );
 });
+
+test("chat pane preserves the status placeholder while a queued stream attachment is still pending", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const showStatusPlaceholder =\s*live && Boolean\(normalizedStatus\) && renderedSegments\.length === 0;/,
+  );
+  assert.match(
+    source,
+    /pendingInputIdRef\.current = STREAM_ATTACH_PENDING;/,
+  );
+  assert.match(
+    source,
+    /const shouldPreservePendingPlaceholder =\s*pendingInputIdRef\.current === STREAM_ATTACH_PENDING;/,
+  );
+  assert.match(
+    source,
+    /if \(!shouldPreservePendingPlaceholder\) \{\s*resetLiveTurn\(\);\s*\}/,
+  );
+  assert.match(
+    source,
+    /const pendingInputId = pendingInputIdRef\.current \|\| "";/,
+  );
+  assert.match(
+    source,
+    /const attachPendingWithoutStream = Boolean\(\s*pendingInputId && !activeStreamId,\s*\);/,
+  );
+  assert.match(source, /if \(attachPendingWithoutStream\) \{\s*return;\s*\}/);
+  assert.match(
+    source,
+    /\{showStatusPlaceholder \? renderStatusLine\(normalizedStatus\) : null\}/,
+  );
+});
+
+test("chat pane preserves optimistic user messages across history refresh until the persisted message arrives", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /interface PendingOptimisticUserMessage \{/);
+  assert.match(source, /localMessageId: string;/);
+  assert.match(
+    source,
+    /function reconcilePendingOptimisticUserMessages\([\s\S]*return pendingMessages\.filter\(/,
+  );
+  assert.match(
+    source,
+    /const inputId = \(item\.inputId \|\| ""\)\.trim\(\);[\s\S]*if \(!inputId\) \{\s*return true;\s*\}/,
+  );
+  assert.match(
+    source,
+    /function mergePendingOptimisticUserMessages\([\s\S]*return uniqueChatMessagesInDisplayOrder\(\[[\s\S]*\.\.\.renderedMessages,[\s\S]*\.\.\.matchingPendingMessages,[\s\S]*\]\);/,
+  );
+  assert.match(
+    source,
+    /const \[pendingOptimisticUserMessages, setPendingOptimisticUserMessages\] =\s*useState<PendingOptimisticUserMessage\[\]>\(\[]\);/,
+  );
+  assert.match(
+    source,
+    /const pendingOptimisticUserMessagesRef = useRef<[\s\S]*PendingOptimisticUserMessage\[\][\s\S]*>\(\[]\);/,
+  );
+  assert.match(
+    source,
+    /function updatePendingOptimisticUserMessagesState\([\s\S]*pendingOptimisticUserMessagesRef\.current = next;[\s\S]*setPendingOptimisticUserMessages\(next\);/,
+  );
+  assert.match(source, /let optimisticUserMessageId = "";/);
+  assert.match(source, /optimisticUserMessageId = `user-\$\{Date\.now\(\)\}`;/);
+  assert.match(source, /const persistedUserMessageId = `user-\$\{queued\.input_id\}`;/);
+  assert.match(
+    source,
+    /updatePendingOptimisticUserMessagesState\(\(current\) => \[[\s\S]*localMessageId: optimisticUserMessageId,[\s\S]*inputId: null,[\s\S]*sessionId: targetSessionId,[\s\S]*workspaceId: selectedWorkspace\.id,[\s\S]*message: userMessage,/,
+  );
+  assert.match(
+    source,
+    /updatePendingOptimisticUserMessagesState\(\(current\) =>[\s\S]*item\.localMessageId === optimisticUserMessageId[\s\S]*inputId: queued\.input_id,[\s\S]*sessionId: queued\.session_id,[\s\S]*message: persistedUserMessage,/,
+  );
+  assert.match(
+    source,
+    /const reconciledPendingOptimisticUserMessages =[\s\S]*reconcilePendingOptimisticUserMessages\(\s*pendingOptimisticUserMessagesRef\.current,[\s\S]*persistedInputIds,[\s\S]*\);/,
+  );
+  assert.match(
+    source,
+    /setMessages\(\s*mergePendingOptimisticUserMessages\([\s\S]*page\.renderedMessages,[\s\S]*reconciledPendingOptimisticUserMessages,[\s\S]*sessionId: nextSessionId,[\s\S]*\)\s*\);/,
+  );
+  assert.match(
+    source,
+    /if \(!queueOntoActiveRun && optimisticUserMessageId\) \{[\s\S]*prev\.filter\(\(message\) => message\.id !== optimisticUserMessageId\)[\s\S]*item\.localMessageId !== optimisticUserMessageId/,
+  );
+});

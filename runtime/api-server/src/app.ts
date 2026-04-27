@@ -342,6 +342,26 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+// When the runtime is bound to a specific user via HOLABOSS_USER_ID
+// (managed/sandbox mode), reject mismatching owner_user_id values from
+// request bodies so a caller can't write integrations under another user's
+// identity. In OSS local mode (env unset) accept whatever the caller
+// provides for backwards compatibility with single-user installs.
+function resolveOwnerUserId(provided: unknown): { ok: true; userId: string } | { ok: false; error: string } {
+  const expected = (process.env.HOLABOSS_USER_ID ?? "").trim() || null;
+  const trimmed = typeof provided === "string" ? provided.trim() : "";
+  if (expected) {
+    if (!trimmed || trimmed === "local") {
+      return { ok: true, userId: expected };
+    }
+    if (trimmed !== expected) {
+      return { ok: false, error: "owner_user_id does not match this runtime's bound user" };
+    }
+    return { ok: true, userId: expected };
+  }
+  return { ok: true, userId: trimmed || "local" };
+}
+
 function nullableString(value: unknown): string | null | undefined {
   if (value === undefined) {
     return undefined;
@@ -3696,10 +3716,14 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!isRecord(request.body)) {
       return sendError(reply, 400, "request body must be an object");
     }
+    const ownerCheck = resolveOwnerUserId(request.body.owner_user_id);
+    if (!ownerCheck.ok) {
+      return sendError(reply, 403, ownerCheck.error);
+    }
     try {
       return integrationService.createConnection({
         providerId: typeof request.body.provider_id === "string" ? request.body.provider_id : "",
-        ownerUserId: typeof request.body.owner_user_id === "string" ? request.body.owner_user_id : "",
+        ownerUserId: ownerCheck.userId,
         accountLabel: typeof request.body.account_label === "string" ? request.body.account_label : "",
         authMode: typeof request.body.auth_mode === "string" ? request.body.auth_mode : "manual_token",
         grantedScopes: Array.isArray(request.body.granted_scopes) ? request.body.granted_scopes : [],
@@ -3955,8 +3979,21 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
     const connectedAccountId = typeof request.body.connected_account_id === "string" ? request.body.connected_account_id : "";
     const provider = typeof request.body.provider === "string" ? request.body.provider : "";
-    const ownerUserId = typeof request.body.owner_user_id === "string" ? request.body.owner_user_id : "local";
+    const ownerCheck = resolveOwnerUserId(request.body.owner_user_id);
+    if (!ownerCheck.ok) {
+      return sendError(reply, 403, ownerCheck.error);
+    }
+    const ownerUserId = ownerCheck.userId;
     const accountLabel = typeof request.body.account_label === "string" ? request.body.account_label : "";
+    // Optional: when the caller is in a workspace context (desktop's Settings →
+    // Integrations is global, but the per-app binding selector or the older
+    // workspace-scoped flow may want to atomically bind this fresh account to
+    // a workspace), accept workspace_id and create a default workspace binding
+    // alongside the connection. The connection itself is always user-global.
+    const workspaceId =
+      typeof request.body.workspace_id === "string" && request.body.workspace_id.trim().length > 0
+        ? request.body.workspace_id.trim()
+        : null;
     if (!connectedAccountId || !provider) {
       return sendError(reply, 400, "connected_account_id and provider are required");
     }
@@ -3970,6 +4007,16 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         grantedScopes: [],
         accountExternalId: connectedAccountId
       });
+      if (workspaceId) {
+        integrationService.upsertBinding({
+          workspaceId,
+          targetType: "workspace",
+          targetId: "default",
+          integrationKey: provider,
+          connectionId: connection.connection_id,
+          isDefault: true
+        });
+      }
       return connection;
     } catch (error) {
       if (error instanceof IntegrationServiceError) {

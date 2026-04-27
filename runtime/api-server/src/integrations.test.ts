@@ -304,7 +304,7 @@ test("updates connection status and secret_ref", () => {
   store.close();
 });
 
-test("deletes a connection and rejects deletion when bindings exist", () => {
+test("deleting a connection cascades through every workspace binding", () => {
   const root = makeTempDir("hb-integrations-");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
@@ -317,6 +317,12 @@ test("deletes a connection and rejects deletion when bindings exist", () => {
     harness: "pi",
     status: "active"
   });
+  store.createWorkspace({
+    workspaceId: "workspace-2",
+    name: "Workspace 2",
+    harness: "pi",
+    status: "active"
+  });
   const connection = service.createConnection({
     providerId: "google",
     ownerUserId: "user-1",
@@ -326,6 +332,8 @@ test("deletes a connection and rejects deletion when bindings exist", () => {
     secretRef: "gya_token"
   });
 
+  // Bind the same connection to two different workspaces (the
+  // user-global model: one account → many workspaces).
   service.upsertBinding({
     workspaceId: "workspace-1",
     targetType: "workspace",
@@ -334,23 +342,23 @@ test("deletes a connection and rejects deletion when bindings exist", () => {
     connectionId: connection.connection_id,
     isDefault: true
   });
+  service.upsertBinding({
+    workspaceId: "workspace-2",
+    targetType: "workspace",
+    targetId: "default",
+    integrationKey: "google",
+    connectionId: connection.connection_id,
+    isDefault: true
+  });
 
-  assert.throws(
-    () => service.deleteConnection(connection.connection_id),
-    (error: unknown) =>
-      error instanceof IntegrationServiceError &&
-      error.statusCode === 409 &&
-      error.message.includes("bound")
-  );
-
-  service.deleteBinding(
-    service.listBindings({ workspaceId: "workspace-1" }).bindings[0]!.binding_id,
-    "workspace-1"
-  );
-
+  // Deleting the connection should remove every binding pointing at it
+  // and report how many were swept.
   const result = service.deleteConnection(connection.connection_id);
   assert.equal(result.deleted, true);
+  assert.equal(result.removed_bindings, 2);
   assert.equal(service.listConnections({ providerId: "google" }).connections.length, 0);
+  assert.equal(service.listBindings({ workspaceId: "workspace-1" }).bindings.length, 0);
+  assert.equal(service.listBindings({ workspaceId: "workspace-2" }).bindings.length, 0);
 
   store.close();
 });

@@ -1492,24 +1492,52 @@ export class RuntimeStateStore {
       { touchExisting: false }
     );
     const now = utcNowIso();
-    this.db()
-      .prepare(`
-        INSERT INTO agent_runtime_sessions (
-            workspace_id, session_id, harness, harness_session_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(workspace_id, session_id) DO UPDATE SET
-            harness = excluded.harness,
-            harness_session_id = excluded.harness_session_id,
-            updated_at = excluded.updated_at
-      `)
-      .run(
-        params.workspaceId,
-        params.sessionId,
-        params.harness,
-        params.harnessSessionId,
-        now,
-        now
-      );
+    const existingSessionBinding = this.getBinding({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+    });
+    const existingHarnessBinding = this.getBindingByHarnessSessionId({
+      workspaceId: params.workspaceId,
+      harness: params.harness,
+      harnessSessionId: params.harnessSessionId,
+    });
+    const createdAt =
+      existingHarnessBinding?.createdAt ??
+      existingSessionBinding?.createdAt ??
+      now;
+    const transaction = this.db().transaction(() => {
+      this.db()
+        .prepare(
+          `
+            DELETE FROM agent_runtime_sessions
+            WHERE workspace_id = ? AND session_id = ?
+          `,
+        )
+        .run(params.workspaceId, params.sessionId);
+      this.db()
+        .prepare(
+          `
+            DELETE FROM agent_runtime_sessions
+            WHERE workspace_id = ? AND harness = ? AND harness_session_id = ?
+          `,
+        )
+        .run(params.workspaceId, params.harness, params.harnessSessionId);
+      this.db()
+        .prepare(`
+          INSERT INTO agent_runtime_sessions (
+              workspace_id, session_id, harness, harness_session_id, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          params.workspaceId,
+          params.sessionId,
+          params.harness,
+          params.harnessSessionId,
+          createdAt,
+          now
+        );
+    });
+    transaction();
 
     const record = this.getBinding({
       workspaceId: params.workspaceId,
@@ -1547,6 +1575,42 @@ export class RuntimeStateStore {
       harnessSessionId: row.harness_session_id,
       createdAt: row.created_at,
       updatedAt: row.updated_at
+    };
+  }
+
+  getBindingByHarnessSessionId(params: {
+    workspaceId: string;
+    harness: string;
+    harnessSessionId: string;
+  }): SessionBindingRecord | null {
+    const row = this.db()
+      .prepare<
+        [string, string, string],
+        {
+          workspace_id: string;
+          session_id: string;
+          harness: string;
+          harness_session_id: string;
+          created_at: string;
+          updated_at: string;
+        }
+      >(`
+        SELECT workspace_id, session_id, harness, harness_session_id, created_at, updated_at
+        FROM agent_runtime_sessions
+        WHERE workspace_id = ? AND harness = ? AND harness_session_id = ?
+        LIMIT 1
+      `)
+      .get(params.workspaceId, params.harness, params.harnessSessionId);
+    if (!row) {
+      return null;
+    }
+    return {
+      workspaceId: row.workspace_id,
+      sessionId: row.session_id,
+      harness: row.harness,
+      harnessSessionId: row.harness_session_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
     };
   }
 
@@ -6713,6 +6777,7 @@ export class RuntimeStateStore {
     this.migrateRuntimeNotificationPriority(db);
     this.migrateCronjobInstructions(db);
     this.migrateAppBuildRestartAttempts(db);
+    this.migrateRevertIntegrationConnectionsWorkspace(db);
   }
 
   private ensureConversationBindingsTableSchema(db: Database.Database): void {
@@ -6931,6 +6996,39 @@ export class RuntimeStateStore {
     if (!columns.has("restart_attempts")) {
       db.exec("ALTER TABLE app_builds ADD COLUMN restart_attempts INTEGER NOT NULL DEFAULT 0;");
     }
+  }
+
+  // Connections are user-global; per-workspace scoping lives in
+  // integration_bindings. The short-lived feat/composio-workspace-scoped-accounts
+  // branch added a workspace_id column to integration_connections that conflicts
+  // with the "one account → many workspaces" model. This migration removes it
+  // for any DB that still has the column, materializing each row's prior intent
+  // as a default workspace binding so we don't lose the user's setup.
+  private migrateRevertIntegrationConnectionsWorkspace(db: Database.Database): void {
+    const columns = new Set<string>(
+      (db.prepare("PRAGMA table_info(integration_connections)").all() as Array<{ name: string }>).map((row) => row.name)
+    );
+    if (!columns.has("workspace_id")) {
+      return;
+    }
+
+    const rows = db
+      .prepare(
+        "SELECT connection_id, provider_id, workspace_id FROM integration_connections WHERE workspace_id IS NOT NULL AND trim(workspace_id) != ''"
+      )
+      .all() as Array<{ connection_id: string; provider_id: string; workspace_id: string }>;
+    if (rows.length > 0) {
+      const insertBinding = db.prepare(
+        "INSERT OR IGNORE INTO integration_bindings (binding_id, workspace_id, target_type, target_id, integration_key, connection_id, is_default, created_at, updated_at) VALUES (?, ?, 'workspace', 'default', ?, ?, 1, ?, ?)"
+      );
+      const now = utcNowIso();
+      for (const row of rows) {
+        insertBinding.run(randomUUID(), row.workspace_id, row.provider_id, row.connection_id, now, now);
+      }
+    }
+
+    db.exec("DROP INDEX IF EXISTS idx_integration_connections_workspace_provider;");
+    db.exec("ALTER TABLE integration_connections DROP COLUMN workspace_id;");
   }
 
   private migrateLegacySessionArtifactsToOutputs(db: Database.Database): void {
