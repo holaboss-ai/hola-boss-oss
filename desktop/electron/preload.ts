@@ -1416,6 +1416,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:updateIntegrationConnection", connectionId, payload) as Promise<IntegrationConnectionPayload>,
     deleteIntegrationConnection: (connectionId: string) =>
       ipcRenderer.invoke("workspace:deleteIntegrationConnection", connectionId) as Promise<{ deleted: boolean }>,
+    mergeIntegrationConnections: (keepConnectionId: string, removeConnectionIds: string[]) =>
+      ipcRenderer.invoke(
+        "workspace:mergeIntegrationConnections",
+        keepConnectionId,
+        removeConnectionIds,
+      ) as Promise<IntegrationMergeConnectionsResult>,
     deleteIntegrationBinding: (bindingId: string, workspaceId: string) =>
       ipcRenderer.invoke("workspace:deleteIntegrationBinding", bindingId, workspaceId) as Promise<{ deleted: boolean }>,
     listOAuthConfigs: () =>
@@ -1434,7 +1440,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:composioConnect", payload) as Promise<ComposioConnectResult>,
     composioAccountStatus: (connectedAccountId: string) =>
       ipcRenderer.invoke("workspace:composioAccountStatus", connectedAccountId) as Promise<ComposioAccountStatus>,
-    composioFinalize: (payload: { connected_account_id: string; provider: string; owner_user_id: string; account_label?: string }) =>
+    composioFinalize: (payload: {
+      connected_account_id: string;
+      provider: string;
+      owner_user_id: string;
+      account_label?: string;
+      account_handle?: string | null;
+      account_email?: string | null;
+    }) =>
       ipcRenderer.invoke("workspace:composioFinalize", payload) as Promise<IntegrationConnectionPayload>,
     resolveTemplateIntegrations: (payload: HolabossCreateWorkspacePayload) =>
       ipcRenderer.invoke("workspace:resolveTemplateIntegrations", payload) as Promise<ResolveTemplateIntegrationsResult>,

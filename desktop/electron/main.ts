@@ -2729,12 +2729,20 @@ interface IntegrationConnectionPayload {
   owner_user_id: string;
   account_label: string;
   account_external_id: string | null;
+  account_handle: string | null;
+  account_email: string | null;
   auth_mode: string;
   granted_scopes: string[];
   status: string;
   secret_ref: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface IntegrationMergeConnectionsResult {
+  kept_connection_id: string;
+  removed_count: number;
+  repointed_bindings: number;
 }
 
 interface IntegrationConnectionListResponsePayload {
@@ -2775,6 +2783,9 @@ interface IntegrationUpdateConnectionPayload {
   status?: string;
   secret_ref?: string;
   account_label?: string;
+  /** Backfill provider-side identity. `null` clears, omit to leave alone. */
+  account_handle?: string | null;
+  account_email?: string | null;
 }
 
 interface OAuthAppConfigPayload {
@@ -11581,6 +11592,17 @@ async function deleteIntegrationConnection(
   });
 }
 
+async function mergeIntegrationConnections(
+  keepConnectionId: string,
+  removeConnectionIds: string[],
+): Promise<IntegrationMergeConnectionsResult> {
+  return requestRuntimeJson<IntegrationMergeConnectionsResult>({
+    method: "POST",
+    path: `/api/v1/integrations/connections/${encodeURIComponent(keepConnectionId)}/merge`,
+    payload: { remove_connection_ids: removeConnectionIds },
+  });
+}
+
 async function listOAuthConfigs(): Promise<OAuthAppConfigListResponsePayload> {
   return requestRuntimeJson<OAuthAppConfigListResponsePayload>({
     method: "GET",
@@ -11730,11 +11752,121 @@ async function composioFinalize(payload: {
   provider: string;
   owner_user_id: string;
   account_label?: string;
+  account_handle?: string | null;
+  account_email?: string | null;
 }): Promise<IntegrationConnectionPayload> {
+  // Resolve the provider-side identity (handle / email / display name) from
+  // Composio whoami before posting to /composio/finalize. The runtime uses
+  // this identity to dedupe re-auth flows: each Composio re-auth mints a
+  // new connected_account_id even for the same real account, but handle /
+  // email stay stable, so the integration service updates the existing
+  // connection row in place rather than spawning a duplicate.
+  //
+  // Whoami can fail (Composio side error, account not yet propagated, etc.).
+  // When it does, we fall back to the legacy behaviour — store the row
+  // without identity, no dedupe — instead of blocking the connect flow.
+  let enrichedHandle = payload.account_handle ?? null;
+  let enrichedEmail = payload.account_email ?? null;
+  let resolvedLabel = payload.account_label;
+  if (!enrichedHandle && !enrichedEmail) {
+    try {
+      const status = await composioAccountStatus(payload.connected_account_id);
+      enrichedHandle =
+        typeof status.handle === "string" && status.handle.trim().length > 0
+          ? status.handle.trim()
+          : null;
+      enrichedEmail =
+        typeof status.email === "string" && status.email.trim().length > 0
+          ? status.email.trim()
+          : null;
+      const preferredDisplayName =
+        typeof status.displayName === "string" &&
+        status.displayName.trim().length > 0
+          ? status.displayName.trim()
+          : enrichedHandle ?? enrichedEmail ?? null;
+      if (preferredDisplayName && (!resolvedLabel || resolvedLabel.trim().length === 0)) {
+        resolvedLabel = preferredDisplayName;
+      }
+    } catch {
+      // Whoami failed — proceed without identity. Future reconnects of
+      // this same external account will still create a new row until
+      // whoami succeeds at least once.
+    }
+  }
+
+  // Backfill identity on legacy NULL-identity rows for the same
+  // (provider, owner). Connections created before identity columns
+  // existed have account_handle / account_email = NULL, so the runtime's
+  // dedupe-on-finalize finder can't see them as duplicates of the new
+  // re-auth — and a fresh row is inserted, leaving the user with two
+  // entries for the same real account. We pre-resolve their identity by
+  // probing Composio whoami on each legacy row's external_id and PATCH
+  // the result back to the runtime. After this loop, the dedupe finder
+  // can match the legacy row by handle/email and merge in place.
+  if (enrichedHandle || enrichedEmail) {
+    try {
+      const { connections } = await listIntegrationConnections({
+        providerId: payload.provider,
+        ownerUserId: payload.owner_user_id,
+      });
+      const legacyTargets = connections.filter(
+        (c) =>
+          c.status === "active" &&
+          // Skip rows that already happen to point at the new Composio
+          // account (could be a same-id re-finalize). Comparing on the
+          // *external* id, not the internal connection_id.
+          c.account_external_id !== payload.connected_account_id &&
+          !c.account_handle &&
+          !c.account_email &&
+          typeof c.account_external_id === "string" &&
+          c.account_external_id.trim().length > 0,
+      );
+      // Cap concurrent whoami probes — even a power user has a small
+      // number of legacy rows, so 4 in-flight is plenty.
+      const legacyConcurrency = 4;
+      for (let i = 0; i < legacyTargets.length; i += legacyConcurrency) {
+        const slice = legacyTargets.slice(i, i + legacyConcurrency);
+        await Promise.all(
+          slice.map(async (legacy) => {
+            try {
+              const probe = await composioAccountStatus(
+                legacy.account_external_id as string,
+              );
+              const probeHandle =
+                typeof probe.handle === "string" && probe.handle.trim().length > 0
+                  ? probe.handle.trim()
+                  : null;
+              const probeEmail =
+                typeof probe.email === "string" && probe.email.trim().length > 0
+                  ? probe.email.trim()
+                  : null;
+              if (!probeHandle && !probeEmail) return;
+              await updateIntegrationConnection(legacy.connection_id, {
+                account_handle: probeHandle,
+                account_email: probeEmail,
+              });
+            } catch {
+              // Per-row failure is fine — that row simply won't dedupe
+              // this round; we'll try again next time the user connects.
+            }
+          }),
+        );
+      }
+    } catch {
+      // listConnections failure shouldn't block the connect — just skip
+      // the backfill pass entirely.
+    }
+  }
+
   return requestRuntimeJson<IntegrationConnectionPayload>({
     method: "POST",
     path: "/api/v1/integrations/composio/finalize",
-    payload,
+    payload: {
+      ...payload,
+      ...(resolvedLabel ? { account_label: resolvedLabel } : {}),
+      account_handle: enrichedHandle,
+      account_email: enrichedEmail,
+    },
   });
 }
 
@@ -24574,6 +24706,16 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, connectionId: string) =>
       deleteIntegrationConnection(connectionId),
+  );
+  handleTrustedIpc(
+    "workspace:mergeIntegrationConnections",
+    ["main"],
+    async (
+      _event,
+      keepConnectionId: string,
+      removeConnectionIds: string[],
+    ) =>
+      mergeIntegrationConnections(keepConnectionId, removeConnectionIds),
   );
   handleTrustedIpc("workspace:listOAuthConfigs", ["main"], async () =>
     listOAuthConfigs(),

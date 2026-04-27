@@ -1198,6 +1198,10 @@ declare global {
     owner_user_id: string;
     account_label: string;
     account_external_id: string | null;
+    /** Provider-side handle from whoami (e.g. Twitter @joshua) — used for re-auth dedupe. */
+    account_handle: string | null;
+    /** Provider-side email from whoami (e.g. josh@example.com) — used for re-auth dedupe. */
+    account_email: string | null;
     auth_mode: string;
     granted_scopes: string[];
     status: string;
@@ -1244,6 +1248,15 @@ declare global {
     status?: string;
     secret_ref?: string;
     account_label?: string;
+    /** Backfill provider-side identity. `null` clears, omit to leave alone. */
+    account_handle?: string | null;
+    account_email?: string | null;
+  }
+
+  interface IntegrationMergeConnectionsResult {
+    kept_connection_id: string;
+    removed_count: number;
+    repointed_bindings: number;
   }
 
   interface OAuthAppConfigPayload {
@@ -1559,6 +1572,10 @@ declare global {
       createIntegrationConnection: (payload: IntegrationCreateConnectionPayload) => Promise<IntegrationConnectionPayload>;
       updateIntegrationConnection: (connectionId: string, payload: IntegrationUpdateConnectionPayload) => Promise<IntegrationConnectionPayload>;
       deleteIntegrationConnection: (connectionId: string) => Promise<{ deleted: boolean }>;
+      mergeIntegrationConnections: (
+        keepConnectionId: string,
+        removeConnectionIds: string[]
+      ) => Promise<IntegrationMergeConnectionsResult>;
       deleteIntegrationBinding: (bindingId: string, workspaceId: string) => Promise<{ deleted: boolean }>;
       listOAuthConfigs: () => Promise<OAuthAppConfigListResponsePayload>;
       upsertOAuthConfig: (providerId: string, payload: OAuthAppConfigUpsertPayload) => Promise<OAuthAppConfigPayload>;
@@ -1568,7 +1585,14 @@ declare global {
       composioListConnections: () => Promise<{ connections: Array<{ id: string; toolkitSlug: string; toolkitName: string; toolkitLogo: string | null; userId: string; createdAt: string }> }>;
       composioConnect: (payload: { provider: string; owner_user_id: string; callback_url?: string }) => Promise<ComposioConnectResult>;
       composioAccountStatus: (connectedAccountId: string) => Promise<ComposioAccountStatus>;
-      composioFinalize: (payload: { connected_account_id: string; provider: string; owner_user_id: string; account_label?: string }) => Promise<IntegrationConnectionPayload>;
+      composioFinalize: (payload: {
+        connected_account_id: string;
+        provider: string;
+        owner_user_id: string;
+        account_label?: string;
+        account_handle?: string | null;
+        account_email?: string | null;
+      }) => Promise<IntegrationConnectionPayload>;
       resolveTemplateIntegrations: (payload: HolabossCreateWorkspacePayload) => Promise<ResolveTemplateIntegrationsResult>;
       generateTemplateContent(params: {
         contentType: "onboarding" | "readme";
