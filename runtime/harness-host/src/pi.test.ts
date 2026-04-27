@@ -21,6 +21,7 @@ import {
   createPiEventMapperState,
   createPiMcpCustomTools,
   mapPiSessionEvent,
+  piCompactionReserveTokens,
   requestedPiThinkingBudgets,
   requestedPiThinkingConfig,
   requestedPiThinkingLevel,
@@ -1490,6 +1491,13 @@ test("buildPiProviderConfig uses OpenAI Responses API for managed Holaboss GPT-5
   });
   assert.equal(providerConfig.models[0]?.contextWindow, 1_050_000);
   assert.equal(providerConfig.models[0]?.maxTokens, 128_000);
+});
+
+test("pi compaction reserves 50 percent of the model context window", () => {
+  assert.equal(piCompactionReserveTokens(1_050_000), 525_000);
+  assert.equal(piCompactionReserveTokens(65_536), 32_768);
+  assert.equal(piCompactionReserveTokens(65_535), 32_768);
+  assert.equal(piCompactionReserveTokens(0), 0);
 });
 
 test("buildPiProviderConfig preserves catalog pricing after runtime provider registration", () => {
