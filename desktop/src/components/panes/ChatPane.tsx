@@ -8601,7 +8601,7 @@ function QueuedSessionInputRail({
     <div className="relative" style={{ paddingTop: `${reservedTopPx}px` }}>
       <div className="pointer-events-none absolute inset-x-0 top-0">
         <div
-          className="pointer-events-auto absolute inset-x-0 overflow-hidden rounded-3xl border border-border bg-background shadow-subtle-xs"
+          className="pointer-events-auto absolute inset-x-0 overflow-hidden rounded-3xl bg-background shadow-md"
           style={{
             left: `${panelInsetPx}px`,
             right: `${panelInsetPx}px`,

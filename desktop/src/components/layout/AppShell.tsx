@@ -49,6 +49,7 @@ import {
 import { PublishDialog } from "@/components/publish/PublishDialog";
 import { Button } from "@/components/ui/button";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
+import { StoplightProvider } from "@/lib/StoplightContext";
 import { holabossLogoUrl } from "@/lib/assetPaths";
 import { type ExplorerAttachmentDragPayload } from "@/lib/attachmentDrag";
 import { DesktopBillingProvider } from "@/lib/billing/useDesktopBilling";
@@ -3858,7 +3859,7 @@ function AppShellContent() {
 
     if (agentView.type === "automations") {
       return (
-        <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-subtle-xs backdrop-blur-sm">
+        <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-card shadow-md backdrop-blur-sm">
           <div className="shrink-0 border-b border-border px-4 py-2.5 sm:px-5">
             <div className="flex items-center justify-between gap-3">
               <div className="inline-flex min-w-0 items-center gap-2 text-base font-semibold text-foreground">
@@ -3896,7 +3897,7 @@ function AppShellContent() {
 
     if (agentView.type === "inbox") {
       return (
-        <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-subtle-xs backdrop-blur-sm">
+        <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-card shadow-md backdrop-blur-sm">
           <div className="shrink-0 border-b border-border px-4 py-2.5 sm:px-5">
             <div className="flex items-center justify-between gap-3">
               <div className="inline-flex min-w-0 items-center gap-2 text-base font-semibold text-foreground">
@@ -4544,7 +4545,11 @@ function AppShellContent() {
   }, [clampPairedUtilityPaneWidths, clampUtilityPaneWidth]);
 
   return (
-    <main className="fixed inset-0 h-screen overflow-hidden text-foreground">
+    <StoplightProvider value={hasIntegratedTitleBar}>
+      <main
+        data-container="shell"
+        className="fixed inset-0 h-screen overflow-hidden text-foreground"
+      >
       <div className="theme-grid pointer-events-none absolute inset-0 bg-noise-grid bg-[size:22px_22px]" />
       <div className="theme-orb-primary pointer-events-none absolute -left-32 -top-32 h-80 w-80 rounded-full blur-3xl" />
       <div className="theme-orb-secondary pointer-events-none absolute -bottom-40 right-12 h-96 w-96 rounded-full blur-3xl" />
@@ -4620,7 +4625,7 @@ function AppShellContent() {
                     ref={utilityPaneHostRef}
                     className="flex min-h-0 min-w-0 flex-1 items-stretch p-0.5"
                   >
-                    <section className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-card shadow-subtle-xs backdrop-blur-sm">
+                    <section className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl bg-card shadow-md backdrop-blur-sm">
                       <div
                         className="shrink-0 overflow-hidden border-r border-border bg-card"
                         style={{
@@ -4845,7 +4850,8 @@ function AppShellContent() {
           workspaceId={selectedWorkspaceId}
         />
       )}
-    </main>
+      </main>
+    </StoplightProvider>
   );
 }
 

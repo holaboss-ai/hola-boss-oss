@@ -8,9 +8,15 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground [a]:hover:bg-primary/80",
+        // Default (primary CTA) gets brand-tinted hairline depth from
+        // shadow-tinted-brand (uses --primary via rgb(from ...) relative
+        // color syntax — auto-tracks the active tweakcn theme).
+        default:
+          "bg-primary text-primary-foreground shadow-tinted-brand [a]:hover:bg-primary/80",
+        // Bordered: upgrade legacy shadow-subtle-xs to the unified
+        // shadow-sm token (hairline ring driven by --hairline-alpha).
         bordered:
-          "bg-background text-foreground shadow-subtle-xs hover:bg-muted aria-expanded:bg-muted dark:border-border",
+          "bg-background text-foreground shadow-sm hover:bg-muted aria-expanded:bg-muted dark:border-border",
         outline:
           "border-border bg-background hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
         secondary:
