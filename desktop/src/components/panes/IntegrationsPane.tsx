@@ -379,6 +379,21 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
         authSessionState.data?.user?.id?.trim() ||
         "local";
 
+      // Snapshot existing connection ids BEFORE initiating connect. The
+      // id Composio returns from /link is, in practice, not queryable
+      // via /connected_accounts/{id} until well after OAuth completes
+      // — so instead of polling that id, we poll the user's connections
+      // list and look for any *new* id that wasn't there before.
+      let beforeIds = new Set<string>();
+      try {
+        const before =
+          await window.electronAPI.workspace.composioListConnections();
+        beforeIds = new Set(before.connections.map((c) => c.id));
+      } catch {
+        // If snapshot fails, continue with empty set; any new id matching
+        // the toolkit is still detectable.
+      }
+
       const link = await window.electronAPI.workspace.composioConnect({
         provider: integration.providerId,
         owner_user_id: userId,
@@ -386,14 +401,32 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
 
       await window.electronAPI.ui.openExternalUrl(link.redirect_url);
 
+      let consecutiveErrors = 0;
+      const MAX_CONSECUTIVE_ERRORS = 20;
       for (let attempt = 0; attempt < 100; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 3000));
-        const status = await window.electronAPI.workspace.composioAccountStatus(
-          link.connected_account_id,
+        let current;
+        try {
+          current =
+            await window.electronAPI.workspace.composioListConnections();
+          consecutiveErrors = 0;
+        } catch (pollError) {
+          consecutiveErrors += 1;
+          if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+            throw pollError;
+          }
+          continue;
+        }
+
+        const newConnection = current.connections.find(
+          (c) =>
+            !beforeIds.has(c.id) &&
+            c.toolkitSlug.toLowerCase() ===
+              integration.providerId.toLowerCase(),
         );
-        if (status.status === "ACTIVE") {
+        if (newConnection) {
           await window.electronAPI.workspace.composioFinalize({
-            connected_account_id: link.connected_account_id,
+            connected_account_id: newConnection.id,
             provider: integration.providerId,
             owner_user_id: userId,
             account_label: `${integration.name} (Managed)`,
@@ -1241,6 +1274,12 @@ const PROVIDER_CATEGORY_GROUPS: Record<string, string[]> = {
   reddit: ["community"],
   twitter: ["social"],
   linkedin: ["social"],
+  hubspot: ["crm"],
+  attio: ["crm"],
+  calcom: ["productivity"],
+  apollo: ["sales"],
+  instantly: ["sales"],
+  zoominfo: ["sales"],
 };
 
 const PROVIDER_TOOLKIT_PREFERENCE: Record<string, string[]> = {
@@ -1249,6 +1288,12 @@ const PROVIDER_TOOLKIT_PREFERENCE: Record<string, string[]> = {
   reddit: ["reddit"],
   twitter: ["twitter"],
   linkedin: ["linkedin"],
+  hubspot: ["hubspot"],
+  attio: ["attio"],
+  calcom: ["calcom"],
+  apollo: ["apollo"],
+  instantly: ["instantly"],
+  zoominfo: ["zoominfo"],
 };
 
 const TOOLKIT_SLUG_TO_PROVIDER: Record<string, string> = {

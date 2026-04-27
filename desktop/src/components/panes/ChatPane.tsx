@@ -2638,6 +2638,42 @@ function phaseTraceStepFromEvent(
     };
   }
 
+  if (eventType === "mcp_server_unavailable") {
+    const serverId =
+      typeof payload.server_id === "string" ? payload.server_id.trim() : "";
+    const reason =
+      typeof payload.reason === "string" ? payload.reason.trim() : "";
+    const missingToolIds = Array.isArray(payload.missing_tool_ids)
+      ? payload.missing_tool_ids.filter(
+          (item): item is string => typeof item === "string" && item.length > 0,
+        )
+      : [];
+    if (reason) {
+      details.push(reason);
+    }
+    if (missingToolIds.length > 0) {
+      const preview = missingToolIds.slice(0, 5).join(", ");
+      const suffix =
+        missingToolIds.length > 5
+          ? ` (+${missingToolIds.length - 5} more)`
+          : "";
+      details.push(`Skipped tools: ${preview}${suffix}`);
+    }
+    return {
+      id: `phase:mcp-unavailable:${serverId || `seq-${order}`}`,
+      kind: "phase",
+      title: serverId
+        ? `MCP server unavailable: ${serverId}`
+        : "MCP server unavailable",
+      status: "error",
+      details:
+        details.length > 0
+          ? details
+          : ["The agent will continue without this server's tools."],
+      order,
+    };
+  }
+
   if (eventType === "auto_compaction_end") {
     const result = isRecord(payload.result) ? payload.result : null;
     const summary =
@@ -8193,7 +8229,7 @@ function SessionSelector({
             </div>
           </div>
 
-          <div className="max-h-[320px] overflow-y-auto p-1.5">
+          <div className="max-h-[320px] overflow-y-auto p-1.5 space-y-0.5">
             {isLoading ? (
               <div className="px-3 py-3 text-xs text-muted-foreground">
                 Loading sessions...
