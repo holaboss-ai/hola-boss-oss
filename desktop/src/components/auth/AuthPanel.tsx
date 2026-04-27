@@ -1,12 +1,20 @@
+import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { useEffect, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
   Loader2,
   LogOut,
+  MoreHorizontal,
+  Pencil,
+  Plug,
+  Plus,
   RefreshCw,
   ShieldCheck,
+  Terminal,
+  Unplug,
   X,
 } from "lucide-react";
 import { UserAvatar } from "@/components/ui/UserAvatar";
@@ -20,6 +28,12 @@ import openrouterLogoMarkup from "@/assets/providers/openrouter.svg?raw";
 import * as modelCatalog from "../../../shared/model-catalog.js";
 import { BillingSummaryCard } from "@/components/billing/BillingSummaryCard";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -33,6 +47,14 @@ import { useDesktopAuthSession, type AuthSession } from "@/lib/auth/authClient";
 import { holabossLogoUrl } from "@/lib/assetPaths";
 import { useDesktopBilling } from "@/lib/billing/useDesktopBilling";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
+import {
+  SettingsCard,
+  SettingsMenuSelectRow,
+  SettingsRow,
+  SettingsSection,
+  type SettingsMenuOption,
+  type SettingsStatusTone,
+} from "@/components/settings";
 
 type AuthPanelView = "full" | "account" | "runtime";
 
@@ -56,9 +78,6 @@ const KNOWN_PROVIDER_ORDER = [
 type KnownProviderId = (typeof KNOWN_PROVIDER_ORDER)[number];
 const AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME =
   "auth-settings-control theme-control-surface relative isolate h-9 w-full overflow-hidden rounded-[10px] border border-border bg-muted px-2.5 text-sm text-foreground shadow-none transition-colors hover:border-border focus-visible:border-border focus-visible:ring-0 focus-visible:ring-transparent aria-invalid:border-border aria-invalid:ring-0";
-const PROVIDER_ROW_ACTIONS_CLASS_NAME =
-  "flex min-w-[224px] shrink-0 items-center justify-end gap-2";
-const PROVIDER_ROW_ACTION_ITEM_CLASS_NAME = "min-w-[104px] justify-center";
 const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<
   string,
   Record<string, string>
@@ -486,6 +505,46 @@ function holabossSupportedModels(
       modelId: model.modelId,
       label: model.label?.trim() || model.modelId,
     }));
+}
+
+/**
+ * Build the option list for the "Default chat model" selector.
+ *
+ * Aggregates chat-capable models across every provider group in the
+ * runtime catalog. Each option is identified by its full provider-
+ * prefixed token (e.g. "openai/gpt-5.4"), which is exactly what
+ * `runtimeConfig.defaultModel` stores — so persistence is a one-line
+ * `runtime.setConfig({ defaultModel: token })`.
+ *
+ * Groups for unconfigured providers don't appear in providerModelGroups
+ * at all, so the option list naturally filters to "stuff the user can
+ * actually pick"; an empty result means "connect a provider first".
+ */
+function buildDefaultChatModelOptions(
+  runtimeConfig: RuntimeConfigPayload | null,
+): SettingsMenuOption[] {
+  if (!runtimeConfig?.providerModelGroups?.length) {
+    return [];
+  }
+  const options: SettingsMenuOption[] = [];
+  for (const group of runtimeConfig.providerModelGroups) {
+    for (const model of group.models) {
+      if (!runtimeCatalogModelSupportsCapability(model, "chat")) {
+        continue;
+      }
+      const token = (model.token || "").trim();
+      if (!token) {
+        continue;
+      }
+      const modelLabel = model.label?.trim() || model.modelId;
+      options.push({
+        value: token,
+        label: modelLabel,
+        description: group.providerLabel,
+      });
+    }
+  }
+  return options;
 }
 
 function normalizeConfiguredProviderModelId(
@@ -1112,13 +1171,36 @@ function deriveLegacyImageGenerationDraft(
   return matches[0] ?? createDefaultImageGenerationDraft();
 }
 
-function ProviderBrandIcon({ providerId }: { providerId: KnownProviderId }) {
+function ProviderBrandIcon({
+  providerId,
+  className,
+}: {
+  providerId: KnownProviderId;
+  /**
+   * Override the default size. Pass any size-* / h-* w-* class. Defaults
+   * to "size-4" (16px) which works well in dropdown menu items.
+   */
+  className?: string;
+}) {
+  const sizeClass = className ?? "size-4";
+  if (providerId === "openai_codex") {
+    // Codex is OpenAI-branded but the official mark is the same as
+    // openai_direct, which makes the row visually identical. Use a
+    // terminal glyph instead so users can scan the list at a glance —
+    // Codex is the "code in your terminal" SKU, the metaphor is right.
+    return (
+      <Terminal
+        className={`${sizeClass} text-foreground`}
+        aria-hidden="true"
+      />
+    );
+  }
   if (providerId === "holaboss") {
     return (
       <img
         src={holabossLogoUrl}
         alt=""
-        className="h-4 w-4 object-contain"
+        className={`${sizeClass} object-contain`}
         aria-hidden="true"
       />
     );
@@ -1128,7 +1210,7 @@ function ProviderBrandIcon({ providerId }: { providerId: KnownProviderId }) {
     return (
       <span
         aria-hidden="true"
-        className="block h-4 w-4 text-foreground [&_svg]:h-full [&_svg]:w-full"
+        className={`block ${sizeClass} text-foreground [&_svg]:h-full [&_svg]:w-full`}
         dangerouslySetInnerHTML={{ __html: iconMarkup }}
       />
     );
@@ -1389,6 +1471,21 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     useState<KnownProviderId | null>(null);
   const [disconnectingProviderId, setDisconnectingProviderId] =
     useState<KnownProviderId | null>(null);
+  // Per-provider validation state for the "Validate" affordance.
+  // - "idle"       — no validate has run, or last result has been cleared
+  // - "validating" — request in flight
+  // - "valid"      — last probe returned ok; latencyMs measures how long the
+  //                  full IPC + HTTP roundtrip took (signal of provider speed,
+  //                  not just liveness)
+  // - "invalid"    — last probe failed; detail carries the human-readable reason
+  type ValidationState =
+    | { state: "idle" }
+    | { state: "validating" }
+    | { state: "valid"; detail: string; latencyMs: number }
+    | { state: "invalid"; detail: string; latencyMs: number };
+  const [validationByProvider, setValidationByProvider] = useState<
+    Record<string, ValidationState>
+  >({});
   const [isProviderDraftDirty, setIsProviderDraftDirty] = useState(false);
   const [providerSaveStatus, setProviderSaveStatus] = useState<
     "idle" | "saving" | "saved" | "error"
@@ -1552,6 +1649,39 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   ]);
 
   const isSignedIn = Boolean(sessionUserId(session));
+
+  // Auto-pick a sensible default chat model the first time a signed-in
+  // user lands on this panel. Holaboss-managed gpt-5.4 is the house
+  // recommendation — it's available the moment the runtime binding
+  // resolves, no API key setup required. If the catalog doesn't have
+  // gpt-5.4 (renamed, deprecated, region-gated), fall back to the first
+  // chat-capable model the holaboss proxy exposes. We never overwrite an
+  // existing defaultModel — that's the user's choice.
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    if (!isSignedIn) return;
+    if (!runtimeConfig) return;
+    if ((runtimeConfig.defaultModel ?? "").trim()) return;
+
+    const holabossGroup = runtimeConfig.providerModelGroups.find(
+      (group) => group.providerId === "holaboss_model_proxy",
+    );
+    if (!holabossGroup) return;
+
+    const chatModels = holabossGroup.models.filter((model) =>
+      runtimeCatalogModelSupportsCapability(model, "chat"),
+    );
+    const preferred =
+      chatModels.find((model) => model.modelId === "gpt-5.4") ?? chatModels[0];
+    if (!preferred?.token) return;
+
+    void window.electronAPI.runtime
+      .setConfig({ defaultModel: preferred.token })
+      .catch(() => {
+        // Non-fatal — user can pick manually from the Defaults selector.
+      });
+  }, [isSignedIn, runtimeConfig]);
+
   const persistedProviderDrafts = deriveProviderDraftsFromDocument(
     parseRuntimeConfigDocument(runtimeConfigDocument),
     effectiveRuntimeConfig,
@@ -2385,6 +2515,53 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     );
   }
 
+  // Dispatch the right "start connect" path per provider type. Pulled out
+  // so the "+ Add provider" picker doesn't need to reimplement the if/else
+  // tree from renderProviderRow.
+  function handleAddProvider(providerId: KnownProviderId) {
+    if (providerId === "holaboss") {
+      void handleStartSignIn();
+      return;
+    }
+    if (providerId === "openai_codex") {
+      void handleConnectCodexProvider(providerId);
+      return;
+    }
+    updateProviderDraft(providerId, { enabled: true });
+    setExpandedProviderId(providerId);
+  }
+
+  async function handleValidateProvider(providerId: KnownProviderId) {
+    if (!window.electronAPI) return;
+    setValidationByProvider((prev) => ({
+      ...prev,
+      [providerId]: { state: "validating" },
+    }));
+    const startedAt = performance.now();
+    try {
+      const result =
+        await window.electronAPI.runtime.validateProvider(providerId);
+      const latencyMs = Math.round(performance.now() - startedAt);
+      setValidationByProvider((prev) => ({
+        ...prev,
+        [providerId]: result.ok
+          ? { state: "valid", detail: result.detail, latencyMs }
+          : { state: "invalid", detail: result.detail, latencyMs },
+      }));
+    } catch (error) {
+      const latencyMs = Math.round(performance.now() - startedAt);
+      setValidationByProvider((prev) => ({
+        ...prev,
+        [providerId]: {
+          state: "invalid",
+          detail:
+            error instanceof Error ? error.message : "Validation failed",
+          latencyMs,
+        },
+      }));
+    }
+  }
+
   async function handleDisconnectRuntimeProvider(providerId: KnownProviderId) {
     if (!window.electronAPI || providerId === "holaboss") {
       return;
@@ -2818,176 +2995,156 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         : draftEnabled || isConnected;
     const isExpanded = isExpandable && expandedProviderId === providerId;
 
+    // Status badge derivation. Live validation state takes priority —
+    // when the user has just clicked Validate, we want them to see the
+    // probe outcome, not the static "Connected" tag. Fall through to
+    // the connection-derived status otherwise.
+    //
+    // We don't badge "Default" anymore: the user already picks the
+    // default chat model in the Defaults section above, so re-stating
+    // it on the provider row is just visual noise.
+    const validation: ValidationState = validationByProvider[providerId] ?? {
+      state: "idle",
+    };
+    let statusTone: SettingsStatusTone | null = null;
+    let statusLabel = "";
+    if (validation.state === "validating") {
+      statusTone = "warning";
+      statusLabel = "Validating…";
+    } else if (validation.state === "valid") {
+      statusTone = "success";
+      statusLabel = `Valid · ${validation.latencyMs}ms`;
+    } else if (validation.state === "invalid") {
+      statusTone = "destructive";
+      statusLabel = `Invalid · ${validation.latencyMs}ms`;
+    } else if (isConnected) {
+      statusTone = "success";
+      statusLabel = "Connected";
+    } else if (hasPendingConnection) {
+      statusTone = "warning";
+      statusLabel = "Configuring";
+    }
+    // Badge styling — use shadcn Badge with tone-specific className.
+    // Stays consistent with every other Badge in the dialog (account
+    // status, runtime status) and avoids a parallel custom component.
+    const badgeClass =
+      statusTone === "success"
+        ? "border-success/40 bg-success/10 text-success"
+        : statusTone === "destructive"
+          ? "border-destructive/30 bg-destructive/10 text-destructive"
+          : statusTone === "warning"
+            ? "border-warning/40 bg-warning/10 text-warning"
+            : "border-border bg-muted/40 text-muted-foreground";
+
     return (
       <div key={providerId} className={isLast ? "" : "border-b border-border"}>
-        <div className="flex items-center gap-3 py-3">
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-border bg-background text-foreground">
-            <ProviderBrandIcon providerId={providerId} />
-          </span>
+        <div className="flex items-center gap-3 px-3 py-2">
+          <ProviderBrandIcon
+            providerId={providerId}
+            className="size-5 shrink-0"
+          />
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium text-foreground">
-              {template.label}
+            <div className="flex items-center gap-2">
+              <div className="text-sm font-medium text-foreground">
+                {template.label}
+              </div>
+              {statusTone ? (
+                <Badge
+                  variant="outline"
+                  className={`${badgeClass} text-[11px]`}
+                >
+                  {statusLabel}
+                </Badge>
+              ) : null}
             </div>
           </div>
 
-          <div className={PROVIDER_ROW_ACTIONS_CLASS_NAME}>
-            {isHolabossProvider ? (
-              isConnected ? (
-                <>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
-                    onClick={() =>
-                      setExpandedProviderId((current) =>
-                        current === providerId ? null : providerId,
-                      )
-                    }
-                    disabled={isSavingRuntimeConfigDocument}
-                  >
-                    {isExpanded ? "Hide" : "Show"}
-                  </Button>
-                  <Badge
-                    variant="outline"
-                    className={`border-primary bg-primary/10 text-primary ${PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}`}
-                  >
-                    Enabled
-                  </Badge>
-                </>
-              ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
-                  onClick={() => void handleStartSignIn()}
-                  disabled={isStartingSignIn}
-                >
-                  {isStartingSignIn ? "Opening..." : "Sign in"}
-                </Button>
-              )
-            ) : isCodexProvider ? (
-              isConnected ? (
-                <>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
-                    onClick={() =>
-                      setExpandedProviderId((current) =>
-                        current === providerId ? null : providerId,
-                      )
-                    }
-                    disabled={isSavingRuntimeConfigDocument}
-                  >
-                    {isExpanded ? "Hide" : "Edit"}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
-                    onClick={() =>
-                      void handleDisconnectRuntimeProvider(providerId)
-                    }
-                    disabled={isSavingRuntimeConfigDocument || isConnecting}
-                  >
-                    {isDisconnecting ? "Disconnecting..." : "Disconnect"}
-                  </Button>
-                </>
-              ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
-                  onClick={() => void handleConnectCodexProvider(providerId)}
-                  disabled={isSavingRuntimeConfigDocument || isConnecting}
-                >
-                  {isConnecting ? "Connecting..." : "Connect"}
-                </Button>
-              )
-            ) : isConnected ? (
-              <>
+          {/* Connected providers get a single kebab trigger that opens
+              all per-provider actions in a dropdown. Three side-by-side
+              buttons (Edit / Validate / Disconnect) made the row read like
+              a toolbar instead of a list item; this matches craft-agents-
+              oss and feels native to the surrounding settings.
+              Non-connected branches are unreachable here — the parent
+              renders only `connectedProviderIds`. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
                 <Button
                   variant="ghost"
-                  size="sm"
-                  className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
-                  onClick={() =>
-                    setExpandedProviderId((current) =>
-                      current === providerId ? null : providerId,
-                    )
-                  }
+                  size="icon-sm"
+                  aria-label={`${template.label} actions`}
                   disabled={isSavingRuntimeConfigDocument}
                 >
-                  {isExpanded ? "Hide" : "Edit"}
+                  <MoreHorizontal className="size-4 text-muted-foreground" />
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
+              }
+            />
+            <DropdownMenuContent align="end" className="min-w-[180px]">
+              <DropdownMenuItem
+                onClick={() => setExpandedProviderId(providerId)}
+              >
+                <Pencil className="size-3.5" />
+                {isHolabossProvider ? "Configure" : "Edit"}
+              </DropdownMenuItem>
+              {!isHolabossProvider ? (
+                <DropdownMenuItem
+                  onClick={() => void handleValidateProvider(providerId)}
+                  disabled={validation.state === "validating"}
+                >
+                  <Plug className="size-3.5" />
+                  {validation.state === "validating"
+                    ? "Validating…"
+                    : "Validate connection"}
+                </DropdownMenuItem>
+              ) : null}
+              {!isHolabossProvider ? (
+                <DropdownMenuItem
+                  variant="destructive"
                   onClick={() =>
                     void handleDisconnectRuntimeProvider(providerId)
                   }
-                  disabled={isSavingRuntimeConfigDocument}
+                  disabled={isSavingRuntimeConfigDocument || isConnecting}
                 >
-                  {isDisconnecting ? "Disconnecting..." : "Disconnect"}
-                </Button>
-              </>
-            ) : hasPendingConnection ? (
-              <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
-                  onClick={() =>
-                    setExpandedProviderId((current) =>
-                      current === providerId ? null : providerId,
-                    )
-                  }
-                  disabled={isSavingRuntimeConfigDocument}
-                >
-                  {isExpanded ? "Hide" : "Edit"}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
-                  onClick={() => {
-                    updateProviderDraft(providerId, { enabled: false });
-                    setExpandedProviderId((current) =>
-                      current === providerId ? null : current,
-                    );
-                  }}
-                  disabled={isSavingRuntimeConfigDocument}
-                >
-                  Cancel
-                </Button>
-              </>
-            ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                className={PROVIDER_ROW_ACTION_ITEM_CLASS_NAME}
-                onClick={() => {
-                  updateProviderDraft(providerId, { enabled: true });
-                  setExpandedProviderId(providerId);
-                }}
-                disabled={isSavingRuntimeConfigDocument}
-              >
-                Connect
-              </Button>
-            )}
-          </div>
+                  <Unplug className="size-3.5" />
+                  {isDisconnecting ? "Disconnecting…" : "Disconnect"}
+                </DropdownMenuItem>
+              ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
-        {isExpanded && isExpandable && (
-          <div className="pb-3 pl-11">
-            {renderProviderDrawerContent(providerId)}
-          </div>
-        )}
+        {/* Provider drawer used to render inline here. It now opens in a
+            modal Dialog (see ProviderEditDialog at the bottom of
+            runtimeProviderSettings) so the row stays compact and the
+            edit flow gets focused vertical space. */}
       </div>
     );
   }
 
-  const allProviderIds = [...connectedProviderIds, ...availableProviderIds];
+  // ── Defaults section data ─────────────────────────────────────
+  // The default chat model is the single thing the user actually picks
+  // in this panel every day. It belongs ABOVE the provider list (you
+  // care which model you're talking to before you care which provider
+  // serves it), so we surface it as its own section.
+  const defaultChatModelOptions = buildDefaultChatModelOptions(runtimeConfig);
+  const defaultChatModelToken = (runtimeConfig?.defaultModel ?? "").trim();
+  const defaultChatModelMatched = defaultChatModelOptions.some(
+    (option) => option.value === defaultChatModelToken,
+  );
+  const handleDefaultChatModelChange = async (token: string) => {
+    if (!window.electronAPI || !token) return;
+    try {
+      await window.electronAPI.runtime.setConfig({ defaultModel: token });
+      // The runtime emits onConfigChange, which already updates state;
+      // no manual setRuntimeConfig needed.
+    } catch (error) {
+      setAuthError(
+        error instanceof Error
+          ? error.message
+          : "Failed to update default model.",
+      );
+    }
+  };
 
   const runtimeProviderSettings = (
     <div className="grid gap-6">
@@ -3007,48 +3164,157 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         </div>
       ) : null}
 
-      <section>
-        <div className="text-base font-medium text-foreground">
-          Model providers
-        </div>
-        <div className="mt-3 overflow-hidden rounded-xl bg-card ring-1 ring-border p-4">
-          {allProviderIds.map((providerId, index) =>
-            renderProviderRow(providerId, index === allProviderIds.length - 1),
-          )}
-        </div>
-      </section>
-
-      <section>
-        <div className="text-base font-medium text-foreground">
-          Advanced settings
-        </div>
-        <div className="mt-3 overflow-hidden rounded-xl bg-card ring-1 ring-border">
-          <button
-            type="button"
-            className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left transition-colors hover:bg-accent"
-            onClick={() =>
-              setShowAdvancedRuntimeSettings((current) => !current)
-            }
-          >
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-foreground">
-                Provider routing
-              </div>
-              <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                Pick providers for background tasks, recall embeddings, and
-                image generation
-              </div>
-            </div>
-            <ChevronDown
-              className={`size-4 shrink-0 text-muted-foreground transition-transform ${showAdvancedRuntimeSettings ? "rotate-180" : ""}`}
+      <SettingsSection
+        title="Defaults"
+        description="What the agent uses out of the box. Workspaces can override these later."
+      >
+        <SettingsCard>
+          {defaultChatModelOptions.length > 0 ? (
+            <SettingsMenuSelectRow
+              label="Default chat model"
+              description="Used for new sessions unless a workspace overrides it."
+              value={defaultChatModelMatched ? defaultChatModelToken : ""}
+              onValueChange={handleDefaultChatModelChange}
+              options={defaultChatModelOptions}
+              placeholder="Pick a model"
+              triggerWidth="w-[260px]"
             />
-          </button>
+          ) : (
+            <SettingsRow
+              label="Default chat model"
+              description="Connect a provider below to choose your default model."
+            />
+          )}
+        </SettingsCard>
+      </SettingsSection>
 
-          {showAdvancedRuntimeSettings ? (
-            <>
-              <div className="h-px bg-border" />
-              <div className="px-4 py-4">
-                <div className="grid gap-4">
+      <SettingsSection
+        title="Model providers"
+        description="Connect the providers you want the agent to be able to use."
+      >
+        {connectedProviderIds.length > 0 ? (
+          <div className="overflow-hidden rounded-xl bg-card shadow-md">
+            {connectedProviderIds.map((providerId, index) =>
+              renderProviderRow(
+                providerId,
+                index === connectedProviderIds.length - 1,
+              ),
+            )}
+          </div>
+        ) : (
+          // Empty state: card-shaped CTA. Cleaner than a full provider list
+          // that's mostly disconnected; mirrors craft-agents-oss's connections
+          // empty state.
+          <div className="flex flex-col items-center justify-center gap-2 rounded-xl bg-card shadow-md px-6 py-8 text-center">
+            <div className="text-sm font-medium text-foreground">
+              No providers connected
+            </div>
+            <div className="max-w-sm text-xs leading-5 text-muted-foreground">
+              Pick one to give the agent access to a model. You can add more
+              later.
+            </div>
+          </div>
+        )}
+
+        {/* Add-provider row — sits below the list and previews available
+            providers as a stacked-logo group. The whole row is one click
+            target that opens the picker dropdown. Hidden when every
+            provider is already connected. */}
+        {availableProviderIds.length > 0 ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <button
+                  type="button"
+                  className="group flex w-full items-center justify-between gap-3 rounded-xl bg-card px-3 py-2 shadow-md transition-colors hover:bg-accent"
+                >
+                  <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+                    <Plus className="size-4 text-muted-foreground" />
+                    Add provider
+                  </span>
+                  <span className="flex items-center -space-x-1.5">
+                    {availableProviderIds.slice(0, 4).map((providerId) => (
+                      <span
+                        key={providerId}
+                        className="grid size-6 shrink-0 place-items-center rounded-full bg-background ring-2 ring-card"
+                      >
+                        <ProviderBrandIcon providerId={providerId} />
+                      </span>
+                    ))}
+                    {availableProviderIds.length > 4 ? (
+                      <span className="grid size-6 shrink-0 place-items-center rounded-full bg-muted text-[10px] font-medium text-muted-foreground ring-2 ring-card">
+                        +{availableProviderIds.length - 4}
+                      </span>
+                    ) : null}
+                  </span>
+                </button>
+              }
+            />
+            <DropdownMenuContent align="end" className="min-w-[220px]">
+              {availableProviderIds.map((providerId) => {
+                const template = KNOWN_PROVIDER_TEMPLATES[providerId];
+                return (
+                  <DropdownMenuItem
+                    key={providerId}
+                    onClick={() => handleAddProvider(providerId)}
+                  >
+                    <span className="grid size-5 shrink-0 place-items-center rounded-md border border-border bg-background">
+                      <ProviderBrandIcon providerId={providerId} />
+                    </span>
+                    <span>{template.label}</span>
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
+      </SettingsSection>
+
+      <SettingsSection title="Advanced settings">
+        <SettingsCard>
+          <SettingsRow
+            label="Provider routing"
+            description="Pick providers for background tasks, recall embeddings, and image generation"
+            interactive
+            onClick={() => setShowAdvancedRuntimeSettings(true)}
+          >
+            <ChevronRight className="size-4 text-muted-foreground" />
+          </SettingsRow>
+        </SettingsCard>
+      </SettingsSection>
+
+      {/* Provider routing — opens in a centered dialog so the routing
+          widgets get focused vertical space without taking over the whole
+          window. Same fade-zoom motion as SettingsDialog. */}
+      <DialogPrimitive.Root
+        open={showAdvancedRuntimeSettings}
+        onOpenChange={(next) => {
+          if (!next) setShowAdvancedRuntimeSettings(false);
+        }}
+      >
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Backdrop className="fixed inset-0 z-[600] bg-background/70 backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 duration-200" />
+          <DialogPrimitive.Popup className="fixed top-1/2 left-1/2 z-[600] flex w-[min(680px,calc(100vw-32px))] max-h-[min(720px,calc(100vh-32px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl bg-background shadow-xl outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-[0.97] data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-[0.98] duration-200 ease-out">
+            <header className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
+              <div className="min-w-0">
+                <DialogPrimitive.Title className="text-base font-medium text-foreground">
+                  Provider routing
+                </DialogPrimitive.Title>
+                <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                  Pick providers for background tasks, recall embeddings, and
+                  image generation.
+                </div>
+              </div>
+              <DialogPrimitive.Close
+                render={
+                  <Button variant="ghost" size="icon-sm" aria-label="Close">
+                    <X size={14} />
+                  </Button>
+                }
+              />
+            </header>
+            <div className="flex-1 overflow-y-auto p-5">
+              <div className="grid gap-4">
                   <div className="rounded-xl bg-card ring-1 ring-border p-3">
                     <div className="text-sm font-medium text-foreground">
                       Background tasks
@@ -3354,10 +3620,44 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   </div>
                 </div>
               </div>
-            </>
-          ) : null}
-        </div>
-      </section>
+          </DialogPrimitive.Popup>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
+
+      {/* Provider edit — same dialog pattern, gated by expandedProviderId.
+          renderProviderDrawerContent stays untouched; it just renders into
+          a focused popup instead of expanding inside the row. */}
+      <DialogPrimitive.Root
+        open={Boolean(expandedProviderId)}
+        onOpenChange={(next) => {
+          if (!next) setExpandedProviderId(null);
+        }}
+      >
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Backdrop className="fixed inset-0 z-[600] bg-background/70 backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 duration-200" />
+          <DialogPrimitive.Popup className="fixed top-1/2 left-1/2 z-[600] flex w-[min(560px,calc(100vw-32px))] max-h-[min(720px,calc(100vh-32px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl bg-background shadow-xl outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-[0.97] data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-[0.98] duration-200 ease-out">
+            <header className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
+              <DialogPrimitive.Title className="text-base font-medium text-foreground">
+                {expandedProviderId
+                  ? KNOWN_PROVIDER_TEMPLATES[expandedProviderId].label
+                  : "Configure provider"}
+              </DialogPrimitive.Title>
+              <DialogPrimitive.Close
+                render={
+                  <Button variant="ghost" size="icon-sm" aria-label="Close">
+                    <X size={14} />
+                  </Button>
+                }
+              />
+            </header>
+            <div className="flex-1 overflow-y-auto p-5">
+              {expandedProviderId
+                ? renderProviderDrawerContent(expandedProviderId)
+                : null}
+            </div>
+          </DialogPrimitive.Popup>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
     </div>
   );
 
@@ -3372,10 +3672,12 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
     return (
       <section className="grid w-full gap-6">
-        <section>
-          <div className="text-base font-medium text-foreground">Session</div>
-
-          <div className="mt-3 overflow-hidden rounded-xl bg-card ring-1 ring-border">
+        <SettingsSection title="Session">
+          <SettingsCard>
+            {/* Header row stays a custom layout — avatar + multi-line label
+                + multi-button trailing actions doesn't compress into the
+                generic SettingsRow shape. Padding (px-4 py-3) matches the
+                primitive so it lines up with the rows below. */}
             <div className="flex items-center justify-between gap-4 px-4 py-3">
               <div className="flex min-w-0 flex-1 items-center gap-3">
                 <div className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-full bg-muted text-muted-foreground ring-1 ring-border">
@@ -3437,10 +3739,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               </div>
             </div>
 
-            <div className="h-px bg-border" />
-
-            <div className="flex items-center justify-between gap-4 px-4 py-3">
-              <div className="text-sm font-medium text-foreground">Status</div>
+            <SettingsRow label="Status">
               <Badge
                 variant="outline"
                 className={
@@ -3456,12 +3755,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 <ShieldCheck size={12} />
                 <span>{statusBadgeLabel}</span>
               </Badge>
-            </div>
+            </SettingsRow>
 
-            <div className="h-px bg-border" />
-
-            <div className="flex items-center justify-between gap-4 px-4 py-3">
-              <div className="text-sm font-medium text-foreground">Runtime</div>
+            <SettingsRow label="Runtime">
               <Badge
                 variant="outline"
                 className="border-border bg-background/60 text-[11px] text-muted-foreground"
@@ -3477,27 +3773,24 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                       : "Unavailable"}
                 </span>
               </Badge>
-            </div>
+            </SettingsRow>
 
             {(authMessage || authError) && (
-              <>
-                <div className="h-px bg-border" />
-                <div className="flex items-start gap-2 px-4 py-3 text-xs leading-5">
-                  {authError ? (
-                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
-                  ) : (
-                    <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-success" />
-                  )}
-                  <div
-                    className={`min-w-0 flex-1 ${authError ? "text-destructive" : "text-foreground"}`}
-                  >
-                    {authError || authMessage}
-                  </div>
+              <div className="flex items-start gap-2 px-4 py-3 text-xs leading-5">
+                {authError ? (
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+                ) : (
+                  <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-success" />
+                )}
+                <div
+                  className={`min-w-0 flex-1 ${authError ? "text-destructive" : "text-foreground"}`}
+                >
+                  {authError || authMessage}
                 </div>
-              </>
+              </div>
             )}
-          </div>
-        </section>
+          </SettingsCard>
+        </SettingsSection>
 
         <BillingSummaryCard
           overview={billingState.overview}

@@ -19,7 +19,7 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   linkedin: "LinkedIn",
   hubspot: "HubSpot",
   attio: "Attio",
-  calcom: "Cal.com",
+  calcom: "Cal",
   apollo: "Apollo.io",
   instantly: "Instantly",
   zoominfo: "ZoomInfo",

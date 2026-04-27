@@ -43,7 +43,7 @@ const PROVIDER_DISPLAY: Record<string, string> = {
   github: "GitHub",
   hubspot: "HubSpot",
   attio: "Attio",
-  calcom: "Cal.com",
+  calcom: "Cal",
   apollo: "Apollo.io",
   instantly: "Instantly",
   zoominfo: "ZoomInfo",

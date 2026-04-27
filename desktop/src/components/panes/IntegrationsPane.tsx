@@ -8,6 +8,10 @@ import {
   ShieldAlert,
   Unplug,
 } from "lucide-react";
+import {
+  SettingsCard,
+  SettingsSection,
+} from "@/components/settings";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -699,31 +703,29 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
 
         {/* Auth gate */}
         {!authSessionState.isPending && !isSignedIn ? (
-          <section>
-            <div className="overflow-hidden rounded-xl bg-card ring-1 ring-border">
-              <div className="flex items-center justify-between gap-4 px-4 py-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                    <ShieldAlert size={13} className="text-destructive" />
-                    <span>Sign-in required</span>
-                  </div>
-                  <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                    Managed integrations are unavailable until you sign in. You
-                    can browse the catalog below, but connecting requires an
-                    authenticated session.
-                  </div>
+          <SettingsCard>
+            <div className="flex items-center justify-between gap-4 px-4 py-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <ShieldAlert size={13} className="text-destructive" />
+                  <span>Sign-in required</span>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void authSessionState.requestAuth()}
-                >
-                  <LogIn size={14} />
-                  Sign in
-                </Button>
+                <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                  Managed integrations are unavailable until you sign in. You
+                  can browse the catalog below, but connecting requires an
+                  authenticated session.
+                </div>
               </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void authSessionState.requestAuth()}
+              >
+                <LogIn size={14} />
+                Sign in
+              </Button>
             </div>
-          </section>
+          </SettingsCard>
         ) : null}
 
         {/* Search + filter toolbar */}
@@ -786,11 +788,8 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
 
         {/* Connected section — one card per provider, multiple account rows */}
         {connectedIntegrations.length > 0 ? (
-          <section>
-            <div className="text-base font-medium text-foreground">
-              Connected
-            </div>
-            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <SettingsSection title="Connected">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {connectedIntegrations.map((integration) => (
                 <ConnectedProviderCard
                   canConnect={isSignedIn && integration.supportsManaged}
@@ -817,16 +816,16 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
                 />
               ))}
             </div>
-          </section>
+          </SettingsSection>
         ) : null}
 
         {/* Available — grouped by category */}
         {groupedIntegrations.map(([category, items]) => (
-          <section key={category}>
-            <div className="text-base font-medium text-foreground">
-              {category.charAt(0).toUpperCase() + category.slice(1)}
-            </div>
-            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <SettingsSection
+            key={category}
+            title={category.charAt(0).toUpperCase() + category.slice(1)}
+          >
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {items.map((integration) => (
                 <IntegrationEmbeddedCard
                   key={integration.slug}
@@ -852,7 +851,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
                 />
               ))}
             </div>
-          </section>
+          </SettingsSection>
         ))}
 
         {filteredIntegrations.length === 0 &&

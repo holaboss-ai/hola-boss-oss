@@ -6138,6 +6138,103 @@ async function readRuntimeConfigDocument(): Promise<Record<string, unknown>> {
   }
 }
 
+// ============================================================
+// Provider validation — cheap probe per provider to confirm the
+// stored credentials still work. Hit one read-only endpoint with
+// a short timeout. We don't try to parse model lists or authn
+// scopes; a 2xx is enough signal for "your key is alive".
+// ============================================================
+
+interface ValidateProviderResult {
+  ok: boolean;
+  detail: string;
+}
+
+const PROVIDER_DEFAULT_BASE_URL: Record<string, string> = {
+  openai_direct: "https://api.openai.com",
+  openai_codex: "https://api.openai.com",
+  anthropic_direct: "https://api.anthropic.com",
+  openrouter_direct: "https://openrouter.ai/api",
+  gemini_direct: "https://generativelanguage.googleapis.com/v1beta/openai",
+  minimax: "https://api.minimaxi.chat",
+  ollama_local: "http://localhost:11434",
+};
+
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, "");
+}
+
+async function validateRuntimeProvider(
+  providerId: string,
+): Promise<ValidateProviderResult> {
+  // Holaboss = managed proxy, gated by Better Auth session cookie.
+  if (providerId === "holaboss") {
+    const cookie = authCookieHeader();
+    if (!cookie) {
+      return { ok: false, detail: "Not signed in" };
+    }
+    return { ok: true, detail: "Signed in" };
+  }
+
+  const document = await readRuntimeConfigDocument();
+  const providers = (document.providers as Record<string, unknown>) ?? {};
+  const storageId =
+    providerId === "holaboss" ? "holaboss_model_proxy" : providerId;
+  const provider = providers[storageId] as Record<string, unknown> | undefined;
+  if (!provider) {
+    return { ok: false, detail: "Not configured" };
+  }
+
+  const apiKey = String(provider.api_key ?? "").trim();
+  const configuredBase = String(provider.base_url ?? "").trim();
+  const baseUrl = trimTrailingSlash(
+    configuredBase || PROVIDER_DEFAULT_BASE_URL[providerId] || "",
+  );
+  if (!baseUrl) {
+    return { ok: false, detail: "No base URL configured" };
+  }
+  if (!apiKey && providerId !== "ollama_local" && providerId !== "openai_codex") {
+    return { ok: false, detail: "API key missing" };
+  }
+
+  let url = `${baseUrl}/v1/models`;
+  const headers: Record<string, string> = {};
+  if (providerId === "anthropic_direct") {
+    headers["x-api-key"] = apiKey;
+    headers["anthropic-version"] = "2023-06-01";
+  } else if (providerId === "ollama_local") {
+    url = `${baseUrl}/api/tags`;
+  } else if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+
+  // 6s upper bound — anything slower is effectively "down" from the
+  // user's perspective.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6_000);
+  try {
+    const response = await fetchWithNetworkRetry(url, {
+      method: "GET",
+      headers,
+      signal: controller.signal,
+    });
+    if (response.ok) {
+      return { ok: true, detail: `${response.status} ${response.statusText || "OK"}` };
+    }
+    return { ok: false, detail: `HTTP ${response.status}` };
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      return { ok: false, detail: "Timed out" };
+    }
+    return {
+      ok: false,
+      detail: error instanceof Error ? error.message : "Network error",
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function writeRuntimeConfigTextAtomically(
   nextText: string,
 ): Promise<void> {
@@ -23723,6 +23820,11 @@ app.whenReady().then(async () => {
     "runtime:connectCodexOAuth",
     ["main", "auth-popup"],
     async () => connectOpenAiCodexProvider(),
+  );
+  handleTrustedIpc(
+    "runtime:validateProvider",
+    ["main", "auth-popup"],
+    async (_event, providerId: string) => validateRuntimeProvider(providerId),
   );
   handleTrustedIpc(
     "ui:getTheme",
