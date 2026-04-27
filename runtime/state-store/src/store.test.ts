@@ -561,6 +561,43 @@ test("binding round trip upserts and reloads persisted session binding", () => {
   store.close();
 });
 
+test("binding transfer reassigns an existing harness session to a different session in the same workspace", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  store.upsertBinding({
+    workspaceId: "workspace-1",
+    sessionId: "session-old",
+    harness: "pi",
+    harnessSessionId: "harness-shared"
+  });
+  const transferred = store.upsertBinding({
+    workspaceId: "workspace-1",
+    sessionId: "session-new",
+    harness: "pi",
+    harnessSessionId: "harness-shared"
+  });
+
+  assert.equal(transferred.sessionId, "session-new");
+  assert.equal(transferred.harnessSessionId, "harness-shared");
+  assert.equal(
+    store.getBinding({ workspaceId: "workspace-1", sessionId: "session-old" }),
+    null
+  );
+  assert.deepEqual(
+    store.getBindingByHarnessSessionId({
+      workspaceId: "workspace-1",
+      harness: "pi",
+      harnessSessionId: "harness-shared"
+    }),
+    transferred
+  );
+  store.close();
+});
+
 test("runtime user profile round trip preserves manual value and auth fallback only fills when empty", () => {
   const root = makeTempDir("hb-state-store-profile-");
   const store = new RuntimeStateStore({
