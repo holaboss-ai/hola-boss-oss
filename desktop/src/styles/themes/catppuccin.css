@@ -4,22 +4,32 @@
 [data-theme="catppuccin-light"] {
   --background: oklch(0.96 0.01 264.53);
   --foreground: oklch(0.44 0.04 279.33);
-  --card: oklch(1 0 0);
+  /* Card lifted just barely above base, slight lavender tint instead of pure
+     white. Pure white on the warm-tinted Latte base reads as a hard edge. */
+  --card: oklch(0.985 0.005 270);
   --card-foreground: oklch(0.44 0.04 279.33);
-  --popover: oklch(0.86 0.01 268.48);
+  /* Popover/secondary/input were tweakcn-mapped to Surface 0 (L=0.86),
+     0.10 below background. shadcn semantics expect popover ≥ background;
+     remap to Latte's Mantle (subtle 0.03 dip — Catppuccin's "next surface"
+     without the sunken feel). */
+  --popover: oklch(0.93 0.008 270);
   --popover-foreground: oklch(0.44 0.04 279.33);
   --primary: oklch(0.55 0.25 297.02);
   --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.86 0.01 268.48);
+  --secondary: oklch(0.91 0.010 270);
   --secondary-foreground: oklch(0.44 0.04 279.33);
-  --muted: oklch(0.91 0.01 264.51);
+  --muted: oklch(0.93 0.008 270);
   --muted-foreground: oklch(0.55 0.03 279.08);
-  --accent: oklch(0.68 0.14 235.38);
-  --accent-foreground: oklch(1 0 0);
+  /* Accent in shadcn semantics is a SUBTLE highlight (hover/select bg),
+     not a brand color. tweakcn auto-export gave Catppuccin a saturated
+     sky-blue here, which leaks through hover states everywhere. Replace
+     with the proper Catppuccin "Surface 1" mauve-tinted neutral. */
+  --accent: oklch(0.84 0.012 270);
+  --accent-foreground: oklch(0.44 0.04 279.33);
   --destructive: oklch(0.55 0.22 19.81);
   --destructive-foreground: oklch(1 0 0);
-  --border: oklch(0.81 0.02 271.2);
-  --input: oklch(0.86 0.01 268.48);
+  --border: oklch(0.86 0.012 271);
+  --input: oklch(0.93 0.008 270);
   --ring: oklch(0.55 0.25 297.02);
   --chart-1: oklch(0.55 0.25 297.02);
   --chart-2: oklch(0.68 0.14 235.38);
@@ -31,8 +41,8 @@
   --sidebar-foreground: oklch(0.44 0.04 279.33);
   --sidebar-primary: oklch(0.55 0.25 297.02);
   --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.68 0.14 235.38);
-  --sidebar-accent-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.84 0.012 270);
+  --sidebar-accent-foreground: oklch(0.44 0.04 279.33);
   --sidebar-border: oklch(0.81 0.02 271.2);
   --sidebar-ring: oklch(0.55 0.25 297.02);
   --font-sans: Montserrat, sans-serif;
@@ -81,8 +91,10 @@
   --secondary-foreground: oklch(0.88 0.04 272.28);
   --muted: oklch(0.3 0.03 276.21);
   --muted-foreground: oklch(0.75 0.04 273.93);
-  --accent: oklch(0.85 0.08 210.25);
-  --accent-foreground: oklch(0.24 0.03 283.91);
+  /* See light-mode comment — same fix in dark Mocha. Use "Surface 1"
+     dark mauve-neutral, not the auto-exported saturated sapphire. */
+  --accent: oklch(0.36 0.018 280);
+  --accent-foreground: oklch(0.88 0.04 272.28);
   --destructive: oklch(0.76 0.13 2.76);
   --destructive-foreground: oklch(0.24 0.03 283.91);
   --border: oklch(0.32 0.03 281.98);
@@ -98,8 +110,8 @@
   --sidebar-foreground: oklch(0.88 0.04 272.28);
   --sidebar-primary: oklch(0.79 0.12 304.77);
   --sidebar-primary-foreground: oklch(0.24 0.03 283.91);
-  --sidebar-accent: oklch(0.85 0.08 210.25);
-  --sidebar-accent-foreground: oklch(0.24 0.03 283.91);
+  --sidebar-accent: oklch(0.36 0.018 280);
+  --sidebar-accent-foreground: oklch(0.88 0.04 272.28);
   --sidebar-border: oklch(0.4 0.03 280.15);
   --sidebar-ring: oklch(0.79 0.12 304.77);
   --font-sans: Montserrat, sans-serif;
