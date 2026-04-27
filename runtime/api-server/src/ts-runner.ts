@@ -138,7 +138,9 @@ const MAIN_SESSION_RUNTIME_TOOL_IDS = new Set([
   "holaboss_cronjobs_delete",
 ]);
 const ONBOARDING_SESSION_RUNTIME_TOOL_IDS = new Set([
-  ...MAIN_SESSION_RUNTIME_TOOL_IDS,
+  ...Array.from(MAIN_SESSION_RUNTIME_TOOL_IDS).filter(
+    (toolId) => !SUBAGENT_ORCHESTRATION_RUNTIME_TOOL_IDS.has(toolId),
+  ),
   "holaboss_onboarding_status",
   "holaboss_onboarding_complete",
 ]);

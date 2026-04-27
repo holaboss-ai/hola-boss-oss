@@ -11048,6 +11048,25 @@ async function listBackgroundTasks(
   });
 }
 
+async function archiveBackgroundTask(
+  payload: ArchiveBackgroundTaskPayload,
+): Promise<ArchiveBackgroundTaskResponsePayload> {
+  if (!payload.workspaceId.trim()) {
+    throw new Error("workspaceId is required");
+  }
+  if (!payload.subagentId.trim()) {
+    throw new Error("subagentId is required");
+  }
+  return requestRuntimeJson<ArchiveBackgroundTaskResponsePayload>({
+    method: "POST",
+    path: `/api/v1/background-tasks/${encodeURIComponent(payload.subagentId)}/archive`,
+    payload: {
+      workspace_id: payload.workspaceId,
+      owner_main_session_id: payload.ownerMainSessionId ?? undefined,
+    },
+  });
+}
+
 async function listMemoryUpdateProposals(
   payload: MemoryUpdateProposalListRequestPayload,
 ): Promise<MemoryUpdateProposalListResponsePayload> {
@@ -24139,6 +24158,12 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, payload: BackgroundTaskListRequestPayload) =>
       listBackgroundTasks(payload),
+  );
+  handleTrustedIpc(
+    "workspace:archiveBackgroundTask",
+    ["main"],
+    async (_event, payload: ArchiveBackgroundTaskPayload) =>
+      archiveBackgroundTask(payload),
   );
   handleTrustedIpc(
     "workspace:acceptTaskProposal",

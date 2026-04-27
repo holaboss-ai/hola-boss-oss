@@ -7,6 +7,7 @@ import {
 } from "@holaboss/runtime-state-store";
 
 import type { QueueWorkerLike } from "./queue-worker.js";
+import { queuedMainSessionEventPromptEntry } from "./main-session-event-prompt.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
 const MAIN_SESSION_EVENT_INPUT_PRIORITY = -100;
@@ -35,15 +36,7 @@ export interface RuntimeMainSessionEventWorkerOptions {
 const DEFAULT_INITIAL_DELAY_MS = 1_000;
 
 function groupedEventPayload(events: MainSessionEventQueueRecord[]) {
-  return events.map((event) => ({
-    event_id: event.eventId,
-    event_type: event.eventType,
-    delivery_bucket: event.deliveryBucket,
-    status: event.status,
-    subagent_id: event.subagentId,
-    payload: event.payload,
-    created_at: event.createdAt,
-  }));
+  return events.map((event) => queuedMainSessionEventPromptEntry(event));
 }
 
 function mainSessionEventBatchIdempotencyKey(
@@ -85,7 +78,7 @@ function buildMainSessionEventBatchInstruction(
   const lines = [
     MAIN_SESSION_EVENT_BATCH_HEADER,
     "You are the workspace's main session.",
-    "Write exactly one assistant reply to the user in your normal conversational voice based on the queued background task events below.",
+    "Write exactly one follow-up assistant message in your normal conversational voice based on the queued background task events below.",
     "Do not mention internal event ids, queueing, hidden workers, or implementation details.",
   ];
   if (deliveryBucket === "waiting_on_user") {
@@ -94,7 +87,12 @@ function buildMainSessionEventBatchInstruction(
     );
   } else {
     lines.push(
-      "These events are background updates. Summarize them naturally, mention useful deliverables when relevant, and keep the reply concise.",
+      "This is a supplemental follow-up only, not a fresh answer to the user's last conversational question.",
+      "Do not repeat, paraphrase, or re-answer any direct reply the main session already gave. Only add the newly completed background results.",
+      "These events are background updates. Keep the reply concise, but put the updates in a clearly separated `Background updates` section.",
+      "If there are multiple updates, use numbered items and keep each task distinct instead of blending them into one paragraph.",
+      "Mention useful deliverables by title and treat them as attached artifacts or reports rather than raw file paths when possible.",
+      "Do not paste long artifact bodies such as HTML, markdown, or full report content into chat. Keep those as attached deliverables and only summarize them briefly.",
     );
   }
   lines.push("");

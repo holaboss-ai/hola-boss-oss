@@ -484,6 +484,12 @@ test("chat pane renders live placeholder status as faint text with animated trai
     /className=\{`inline-flex items-baseline gap-0\.5 text-\[12px\] leading-6 text-muted-foreground\/72 \$\{className\}`\.trim\(\)\}/,
   );
   assert.match(source, /function LiveStatusEllipsis\(\)/);
+  assert.match(source, /function TypingStatusLine\(/);
+  assert.match(source, /aria-label="Assistant is typing"/);
+  assert.match(
+    source,
+    /className=\{`inline-flex items-center text-\[18px\] leading-none tracking-\[0\.18em\] text-muted-foreground\/78 \$\{className\}`\.trim\(\)\}/,
+  );
   assert.match(source, /@keyframes status-dot-wave/);
   assert.match(source, /30% \{ transform: translateY\(-3px\); \}/);
   assert.match(source, /animation: "status-dot-wave 1200ms ease-in-out infinite"/);
@@ -494,12 +500,12 @@ test("chat pane renders live placeholder status as faint text with animated trai
   assert.doesNotMatch(source, /Checking workspace context\.\.\./);
 });
 
-test("chat pane keeps a persistent working line visible once the live run has streamed content", async () => {
+test("chat pane keeps a persistent working line only for trace-visible live turns after content starts", async () => {
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(
     source,
-    /const showWorkingStatusLine =\s*live &&\s*renderedSegments\.length > 0;/,
+    /const showWorkingStatusLine =\s*live &&\s*showExecutionInternals &&\s*renderedSegments\.length > 0;/,
   );
   assert.match(
     source,
@@ -507,7 +513,7 @@ test("chat pane keeps a persistent working line visible once the live run has st
   );
   assert.match(
     source,
-    /{showWorkingStatusLine \? \(\s*<LiveStatusLine[\s\S]*label="Working"[\s\S]*renderedSegments\.some\(\(segment\) => segment\.kind === "execution"\)/,
+    /{showWorkingStatusLine[\s\S]*renderStatusLine\(\s*"Working",[\s\S]*renderedSegments\.some\(\(segment\) => segment\.kind === "execution"\)/,
   );
 });
 
@@ -545,7 +551,7 @@ test("chat pane renders an execution timeline that interleaves thinking segments
   assert.match(source, /function upsertExecutionTimelineTraceItem\(/);
   assert.match(
     source,
-    /function mergeTraceStep\([\s\S]*const incomingIsNewer =[\s\S]*incoming\.order > existing\.order[\s\S]*traceStepStatusRank\(incoming\.status\) >= traceStepStatusRank\(existing\.status\)/,
+    /function mergeTraceStep\([\s\S]*const incomingIsNewer =[\s\S]*incoming\.order > existing\.order[\s\S]*incoming\.order === existing\.order[\s\S]*traceStepStatusRank\(incoming\.status\)[\s\S]*traceStepStatusRank\(existing\.status\)/,
   );
   assert.match(
     source,
@@ -563,11 +569,11 @@ test("chat pane renders an execution timeline that interleaves thinking segments
   assert.match(source, /function finalizeLiveTraceSteps\([\s\S]*setLiveAssistantSegmentsState\(\s*finalizeAssistantExecutionSegments\(\s*liveAssistantSegmentsRef\.current,\s*status,\s*\),\s*\);/);
   assert.match(
     source,
-    /function ExecutionTimelineThinkingEntry[\s\S]*className="py-1"[\s\S]*className="-ml-2\.5 w-\[calc\(100%\+0\.625rem\)\] rounded-\[16px\] border border-border\/25 bg-muted\/30 px-3\.5 py-3"/,
+    /function ExecutionTimelineThinkingEntry[\s\S]*className="py-1"[\s\S]*className="-ml-2\.5 w-\[calc\(100%\+0\.625rem\)\] rounded-xl border border-border bg-muted px-3\.5 py-3"/,
   );
   assert.match(
     source,
-    /function ExecutionTimelineThinkingEntry[\s\S]*className="chat-markdown chat-thinking-markdown max-w-full text-foreground\/82"/,
+    /function ExecutionTimelineThinkingEntry[\s\S]*className="chat-markdown chat-thinking-markdown max-w-full text-foreground"/,
   );
   assert.match(source, /<AssistantTurn[\s\S]*segments=\{message\.segments \?\? \[\]\}/);
   assert.match(source, /<AssistantTurn[\s\S]*segments=\{renderedLiveAssistantSegments\}/);
@@ -578,6 +584,41 @@ test("chat pane renders an execution timeline that interleaves thinking segments
   assert.doesNotMatch(source, /<ThinkingPanel/);
   assert.doesNotMatch(source, /thinkingCollapsed/);
   assert.doesNotMatch(source, /onToggleThinking/);
+});
+
+test("main-session assistant turns suppress trace and thinking while onboarding and read-only inspection sessions keep internals", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const showSessionExecutionInternals =\s*isReadOnlyInspectionSession \|\| isOnboardingVariant;/,
+  );
+  assert.match(
+    source,
+    /<AssistantTurn[\s\S]*showExecutionInternals=\{\s*showSessionExecutionInternals\s*\}[\s\S]*text=\{message\.text\}/,
+  );
+  assert.match(
+    source,
+    /<AssistantTurn[\s\S]*showExecutionInternals=\{showSessionExecutionInternals\}[\s\S]*text=\{liveAssistantText\}/,
+  );
+  assert.match(source, /showExecutionInternals = true,/);
+  assert.match(source, /showExecutionInternals\?: boolean;/);
+  assert.match(
+    source,
+    /const normalizedStatus = \(\s*showExecutionInternals \? status : status \? "Working" : ""\s*\)/,
+  );
+  assert.match(
+    source,
+    /if \(!showExecutionInternals\) \{\s*return \(\s*<TypingStatusLine[\s\S]*statusAccessory=\{statusAccessory\}/,
+  );
+  assert.match(
+    source,
+    /const visibleSegments = showExecutionInternals[\s\S]*segments\.filter\([\s\S]*segment\.kind === "output"/,
+  );
+  assert.match(
+    source,
+    /const visibleExecutionItems = showExecutionInternals \? executionItems : \[\];/,
+  );
 });
 
 test("chat trace tool errors surface stderr text instead of a generic error label", async () => {
@@ -1129,17 +1170,28 @@ test("chat pane surfaces context-budget diagnostics from terminal event payloads
 test("view all artifacts modal sorts artifacts newest first", async () => {
   const source = await readFile(sourcePath, "utf8");
 
+  assert.match(source, /function dedupeOutputsForDisplay\(outputs: WorkspaceOutputRecordPayload\[\]\)/);
+  assert.match(source, /function outputDisplayDedupeKey\(output: WorkspaceOutputRecordPayload\)/);
+  assert.match(source, /function outputDisplayPriority\(output: WorkspaceOutputRecordPayload\)/);
   assert.match(
     source,
     /function sortOutputsLatestFirst\(outputs: WorkspaceOutputRecordPayload\[\]\)/,
   );
   assert.match(
     source,
-    /const filteredOutputs = sortOutputsLatestFirst\(\s*filter === "all"\s*\?\s*outputs\s*:\s*outputs\.filter\(/,
+    /const allDisplayOutputs =\s*outputs\.length > 1 \? dedupeOutputsForDisplay\(outputs\) : outputs;/,
+  );
+  assert.match(
+    source,
+    /const filteredOutputs = sortOutputsLatestFirst\(\s*filter === "all"\s*\?\s*allDisplayOutputs\s*:\s*allDisplayOutputs\.filter\(/,
   );
   assert.match(
     source,
     /if \(leftTime !== rightTime\) \{\s*return rightTime - leftTime;\s*\}/,
+  );
+  assert.match(
+    source,
+    /\{allDisplayOutputs\.length\} item[\s\S]*\{allDisplayOutputs\.length === 1 \? "" : "s"\} in this session/,
   );
 });
 
@@ -1153,12 +1205,18 @@ test("artifact rows include timestamp metadata in both inline and modal lists", 
   );
   assert.match(
     source,
-    /<div className="text-\[11px\] text-muted-foreground">\s*\{outputSecondaryLabel\(output\)\}\s*<\/div>/,
+    /<div className="truncate text-xs text-muted-foreground">\s*\{outputSecondaryLabel\(output\)\}\s*<\/div>/,
   );
   assert.match(
     source,
-    /<div className="truncate text-\[12px\] text-muted-foreground">\s*\{outputSecondaryLabel\(output\)\}\s*<\/div>/,
+    /<div className="truncate text-xs text-muted-foreground">\s*\{outputSecondaryLabel\(output\)\}\s*<\/div>/,
   );
+  assert.match(
+    source,
+    /const displayOutputs =\s*outputs\.length > 1 \? dedupeOutputsForDisplay\(outputs\) : outputs;/,
+  );
+  assert.match(source, /\{displayOutputs\.map\(\(output\) => \(/);
+  assert.match(source, /View all artifacts \(\{displayOutputs\.length\}\)/);
 });
 
 test("tool trace steps are collapsed by default and first toggle expands them", async () => {
@@ -1325,6 +1383,19 @@ test("chat composer supports ctrl-c draft cancel and arrow-up recall", async () 
   );
 });
 
+test("live assistant turn keeps a plain status placeholder before any trace or output arrives", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const showStatusPlaceholder =\s*live && Boolean\(normalizedStatus\) && renderedSegments\.length === 0;/,
+  );
+  assert.match(
+    source,
+    /\{showStatusPlaceholder \? renderStatusLine\(normalizedStatus\) : null\}/,
+  );
+});
+
 test("chat pane keeps the current stream attached while queueing a follow-up input", async () => {
   const source = await readFile(sourcePath, "utf8");
 
@@ -1427,7 +1498,7 @@ test("chat pane renders inline background tasks near the top of the pane", async
 
   assert.match(
     source,
-    /!isOnboardingVariant \? \(\s*<BackgroundTasksPane[\s\S]*workspaceId=\{selectedWorkspaceId\}[\s\S]*variant="inline"[\s\S]*\) : null/,
+    /!isOnboardingVariant && !isReadOnlyInspectionSession \? \(\s*<BackgroundTasksPane[\s\S]*workspaceId=\{selectedWorkspaceId\}[\s\S]*variant="inline"[\s\S]*\) : null/,
   );
   assert.match(
     source,
@@ -1585,6 +1656,36 @@ test("chat pane preserves the status placeholder while a queued stream attachmen
   assert.match(
     source,
     /\{showStatusPlaceholder \? renderStatusLine\(normalizedStatus\) : null\}/,
+  );
+});
+
+test("chat pane idly refreshes the active main session to surface autonomous background follow-ups", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /function latestVisibleChatMessageId\(messages: ChatMessage\[\]\): string \{/);
+  assert.match(
+    source,
+    /if \(\s*!workspaceId \|\|\s*!mainSessionId \|\|\s*currentSessionId !== mainSessionId \|\|\s*activeSessionReadOnly \|\|\s*isLoadingHistory \|\|\s*isResponding\s*\) \{\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /if \(currentContainer && !isNearChatBottom\(currentContainer\)\) \{\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /window\.electronAPI\.workspace\.getSessionHistory\(\s*\{\s*sessionId: mainSessionId,\s*workspaceId,\s*limit: 1,\s*offset: 0,\s*order: "desc",\s*\},?\s*\)/,
+  );
+  assert.match(
+    source,
+    /const latestHistoryMessageId =\s*historyMessagesInDisplayOrder\(latestHistory\.messages, "desc"\)\[0\]\?\.id\?\.trim\(\) \|\|/,
+  );
+  assert.match(
+    source,
+    /if \(\s*!latestHistoryMessageId \|\|\s*latestHistoryMessageId === latestDisplayedMessageId\s*\) \{\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /await loadSessionConversation\(mainSessionId, workspaceId, runtimeStates\.items, \{/,
   );
 });
 

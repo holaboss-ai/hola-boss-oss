@@ -1322,6 +1322,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:listTaskProposals", workspaceId) as Promise<TaskProposalListResponsePayload>,
     listBackgroundTasks: (payload: BackgroundTaskListRequestPayload) =>
       ipcRenderer.invoke("workspace:listBackgroundTasks", payload) as Promise<BackgroundTaskListResponsePayload>,
+    archiveBackgroundTask: (payload: ArchiveBackgroundTaskPayload) =>
+      ipcRenderer.invoke("workspace:archiveBackgroundTask", payload) as Promise<ArchiveBackgroundTaskResponsePayload>,
     acceptTaskProposal: (payload: TaskProposalAcceptPayload) =>
       ipcRenderer.invoke("workspace:acceptTaskProposal", payload) as Promise<TaskProposalAcceptResponsePayload>,
     listMemoryUpdateProposals: (payload: MemoryUpdateProposalListRequestPayload) =>

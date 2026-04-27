@@ -542,6 +542,19 @@ declare global {
     count: number;
   }
 
+  interface ArchiveBackgroundTaskPayload {
+    workspaceId: string;
+    subagentId: string;
+    ownerMainSessionId?: string | null;
+  }
+
+  interface ArchiveBackgroundTaskResponsePayload {
+    subagent_id: string;
+    child_session_id: string;
+    archived: boolean;
+    archived_at: string | null;
+  }
+
   interface MainSessionLegacyExportPayload {
     session_id: string;
     title: string | null;
@@ -1587,6 +1600,9 @@ declare global {
       listBackgroundTasks: (
         payload: BackgroundTaskListRequestPayload
       ) => Promise<BackgroundTaskListResponsePayload>;
+      archiveBackgroundTask: (
+        payload: ArchiveBackgroundTaskPayload
+      ) => Promise<ArchiveBackgroundTaskResponsePayload>;
       acceptTaskProposal: (payload: TaskProposalAcceptPayload) => Promise<TaskProposalAcceptResponsePayload>;
       listMemoryUpdateProposals: (
         payload: MemoryUpdateProposalListRequestPayload

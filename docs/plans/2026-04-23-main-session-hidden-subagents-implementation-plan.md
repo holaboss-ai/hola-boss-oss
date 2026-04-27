@@ -574,12 +574,15 @@ Waiting-on-user contract:
 Completion and failure delivery contract:
 
 - completed and failed events for the same owner should be coalesced over a short window
-- by default delegated work should still be treated as asynchronous, but if the child result is already available within roughly 1-2 seconds, the main session may fold that result into the same conversational reply as a fast-path
+- if the child result is already available by the time the main session is about to send a normal conversational reply, that result should be folded directly into that same reply
+- by default delegated work should still be treated as asynchronous, but if the child result becomes available within roughly 1-2 seconds during the same conversational turn, the main session may still collapse delegation plus result into one reply as a fast-path
 - if the user is actively chatting, these updates should wait for a natural pause rather than interrupt
 - queued follow-up turns are strictly forbidden from materializing while the originating main-session turn is still active; they may only materialize after that turn has fully finished and the session has reached a real pause
-- when relevant, the main session should fold queued background updates into its next normal reply
-- if no new user message arrives, the main session should eventually send the queued update on its own after roughly 60 seconds of idle time
+- after a background result completes, it should first wait through a short merge window so the next normal main-session reply can absorb it naturally
+- when relevant, the main session should fold queued background updates into its next normal reply, including replies to unrelated conversational questions
+- if no new user message arrives before that short merge window expires, the main session should send the queued update on its own after roughly 5 seconds of idle time
 - delayed updates should still sound like a normal conversational follow-up, not a system notification
+- merged or autonomous background updates are supplement-only: they should never repeat or re-answer a direct conversational reply the main session already gave
 - failed or cancelled runs may still surface partial summaries or partial deliverables if useful
 
 ## 7a. Queued Main-Session Event Records
@@ -1204,9 +1207,9 @@ Use this as the living checklist for what is already aligned versus what still n
 - [x] background completion/failure/blocker events are persisted as queued main-session events
 - [x] background updates can be folded into the next user reply path
 - [x] delayed background follow-ups are intended to be phrased by a real main-session model turn, not a template
-- [ ] ensure synthetic queued background-event turns inherit the owner main session's selected model and thinking configuration
-- [ ] ensure natural-pause gating prevents queued background-event turns from materializing while the originating user turn is still active
-- [ ] keep delegated work asynchronous by default instead of `delegate -> wait -> answer`
+- [x] ensure synthetic queued background-event turns inherit the owner main session's selected model and thinking configuration
+- [x] ensure natural-pause gating prevents queued background-event turns from materializing while the originating user turn is still active
+- [x] keep delegated work asynchronous by default instead of `delegate -> wait -> answer`
 - [ ] add the 1-2 second fast-path exception so very fast delegated work may collapse into a single reply without exposing blocking orchestration
 - [ ] tighten folded background-update relevance so the next reply does not blindly absorb every due background event
 
@@ -1216,8 +1219,7 @@ Use this as the living checklist for what is already aligned versus what still n
 - [x] background tasks render inline in chat instead of using the old todo rail
 - [x] the inline background-task surface can open a read-only child session for inspection
 - [x] the inline panel no longer shows the extra explanatory description block
-- [ ] filter low-signal executor milestones like scratchpad writes out of the user-visible background-task summaries
-- [ ] review task-card copy/status shaping so progress text stays human-facing instead of tool-facing
+- [x] progress updates are not surfaced in main-session delivery or background-task cards
 
 ### Remaining verification and follow-through
 

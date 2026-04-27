@@ -144,6 +144,12 @@ export interface RuntimeAgentToolsGetBackgroundTaskParams {
   ownerMainSessionId?: string | null;
 }
 
+export interface RuntimeAgentToolsArchiveBackgroundTaskParams {
+  workspaceId: string;
+  subagentId: string;
+  ownerMainSessionId?: string | null;
+}
+
 interface SyncedSubagentRunState {
   run: SubagentRunRecord;
   runtimeState: SessionRuntimeStateRecord | null;
@@ -1561,6 +1567,7 @@ export class RuntimeAgentToolsService {
           status: "cancelled",
           cancelledAt: now,
           summary: normalizedString(state.run.summary) || "Cancelled by user.",
+          latestProgressPayload: null,
         },
       }) ?? state.run;
     return subagentRunPayload(this.syncSubagentRunState(updated));
@@ -1626,6 +1633,7 @@ export class RuntimeAgentToolsService {
           status: "queued",
           blockingPayload: null,
           effectiveModel,
+          latestProgressPayload: null,
         },
       }) ?? state.run;
     const staleWaitingEventIds = this.store
@@ -1656,6 +1664,7 @@ export class RuntimeAgentToolsService {
     const synced = this.store
       .listSubagentRunsByWorkspace({ workspaceId: params.workspaceId })
       .map((run) => this.syncSubagentRunState(run))
+      .filter((state) => this.isVisibleBackgroundTask(state.run))
       .filter((state) => (requestedOwnerMainSessionId ? state.run.ownerMainSessionId === requestedOwnerMainSessionId : true))
       .filter((state) => (requestedStatuses.size > 0 ? requestedStatuses.has(state.run.status.toLowerCase()) : true))
       .slice(0, normalizedInteger(params.limit, 200, 1, 1000));
@@ -1690,7 +1699,44 @@ export class RuntimeAgentToolsService {
       states: [state],
       toolId: "holaboss_get_subagent",
     });
+    if (!this.isVisibleBackgroundTask(state.run)) {
+      throw new RuntimeAgentToolsServiceError(404, "subagent_not_found", "subagent not found");
+    }
     return subagentRunPayload(state);
+  }
+
+  archiveBackgroundTask(
+    params: RuntimeAgentToolsArchiveBackgroundTaskParams,
+  ): JsonObject {
+    this.requireWorkspace(params.workspaceId);
+    const state = this.syncSubagentRunForOwner({
+      workspaceId: params.workspaceId,
+      subagentId: params.subagentId,
+      ownerMainSessionId: normalizedString(params.ownerMainSessionId) || null,
+    });
+    const existingSession = this.store.getSession({
+      workspaceId: state.run.workspaceId,
+      sessionId: state.run.childSessionId,
+    });
+    if (!existingSession) {
+      throw new RuntimeAgentToolsServiceError(
+        404,
+        "subagent_session_not_found",
+        "subagent session not found",
+      );
+    }
+    const archivedAt = existingSession.archivedAt || utcNowIso();
+    const archivedSession = this.store.ensureSession({
+      workspaceId: existingSession.workspaceId,
+      sessionId: existingSession.sessionId,
+      archivedAt,
+    });
+    return {
+      subagent_id: state.run.subagentId,
+      child_session_id: archivedSession.sessionId,
+      archived: true,
+      archived_at: archivedSession.archivedAt,
+    };
   }
 
   async generateImage(params: RuntimeAgentToolsGenerateImageParams): Promise<JsonObject> {
@@ -2333,6 +2379,9 @@ export class RuntimeAgentToolsService {
     if (!run.startedAt && currentInput?.createdAt && ["queued", "running"].includes(derivedStatus)) {
       updates.startedAt = currentInput.createdAt;
     }
+    if (run.latestProgressPayload) {
+      updates.latestProgressPayload = null;
+    }
     if (
       derivedStatus === "completed" &&
       latestTurnResult &&
@@ -2415,6 +2464,14 @@ export class RuntimeAgentToolsService {
       "same_turn_subagent_poll_forbidden",
       `do not use ${params.toolId} to poll a freshly delegated task in the same turn while it is still running; return control to the user and let the background task continue`,
     );
+  }
+
+  private isVisibleBackgroundTask(run: SubagentRunRecord): boolean {
+    const childSession = this.store.getSession({
+      workspaceId: run.workspaceId,
+      sessionId: run.childSessionId,
+    });
+    return !childSession?.archivedAt;
   }
 
   private requireWorkspace(workspaceId: string): WorkspaceRecord {

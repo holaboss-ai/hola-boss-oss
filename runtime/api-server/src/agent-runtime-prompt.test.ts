@@ -224,9 +224,14 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
 
   assert.match(prompt.systemPrompt, /Conversation and orchestration doctrine:/);
   assert.match(prompt.systemPrompt, /single front-of-house counterpart/);
+  assert.match(prompt.systemPrompt, /thoughtful human collaborator/);
+  assert.match(prompt.systemPrompt, /brief warmth, curiosity, and point of view/);
+  assert.match(prompt.systemPrompt, /Acknowledge what matters in the user's message before diving into execution or results\./);
+  assert.match(prompt.systemPrompt, /Avoid repetitive canned phrasing or stiff assistant boilerplate/);
   assert.match(prompt.systemPrompt, /Prefer delegating long-running, tool-heavy, interruptible, or execution-heavy work to hidden subagents\./);
   assert.match(prompt.systemPrompt, /delegate instead of replying that this run lacks those tools\./);
   assert.match(prompt.systemPrompt, /missing web, browser, terminal, or other execution-heavy capabilities on the main session as a routing signal to delegate/i);
+  assert.match(prompt.systemPrompt, /Do not paste long document, HTML, markdown, or report bodies into chat\./);
   assert.doesNotMatch(prompt.systemPrompt, /Execution doctrine:/);
   assert.doesNotMatch(prompt.systemPrompt, /Todo continuity policy:/);
   assert.doesNotMatch(prompt.systemPrompt, /Use `write_report` for long, structured, evidence-heavy, or referenceable outputs/);
@@ -274,6 +279,40 @@ test("composeAgentPrompt keeps main sessions free of todo doctrine even if todo 
     prompt.promptCacheProfile.context_message_ids.includes("scratchpad_context"),
     false,
   );
+});
+
+test("composeAgentPrompt keeps onboarding sessions free of subagent delegation doctrine", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read", "edit"],
+    extraTools: ["holaboss_onboarding_status", "holaboss_onboarding_complete"],
+    runtimeToolIds: ["holaboss_onboarding_status", "holaboss_onboarding_complete"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    toolServerIdMap: {},
+  });
+
+  const prompt = composeAgentPrompt("You are concise.", {
+    defaultTools: ["read", "edit"],
+    extraTools: ["holaboss_onboarding_status", "holaboss_onboarding_complete"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "onboarding",
+    sessionMode: "code",
+    harnessId: "pi",
+    capabilityManifest,
+  });
+
+  assert.match(prompt.systemPrompt, /This is an onboarding session\./);
+  assert.match(prompt.systemPrompt, /Keep onboarding work in this session\./);
+  assert.doesNotMatch(
+    prompt.systemPrompt,
+    /Prefer delegating long-running, tool-heavy, interruptible, or execution-heavy work to hidden subagents\./,
+  );
+  assert.doesNotMatch(
+    prompt.systemPrompt,
+    /delegate instead of replying that this run lacks those tools\./,
+  );
+  assert.doesNotMatch(prompt.systemPrompt, /Subagents are backstage executors\./);
 });
 
 test("composeAgentPrompt tells main sessions how to inspect legacy session exports", () => {

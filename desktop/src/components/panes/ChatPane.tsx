@@ -1069,7 +1069,7 @@ function outputSecondaryLabel(output: WorkspaceOutputRecordPayload) {
 }
 
 function sortOutputs(outputs: WorkspaceOutputRecordPayload[]) {
-  return [...outputs].sort((left, right) => {
+  return [...dedupeOutputsForDisplay(outputs)].sort((left, right) => {
     const leftTime = Date.parse(left.created_at || "") || 0;
     const rightTime = Date.parse(right.created_at || "") || 0;
     if (leftTime !== rightTime) {
@@ -1080,7 +1080,7 @@ function sortOutputs(outputs: WorkspaceOutputRecordPayload[]) {
 }
 
 function sortOutputsLatestFirst(outputs: WorkspaceOutputRecordPayload[]) {
-  return [...outputs].sort((left, right) => {
+  return [...dedupeOutputsForDisplay(outputs)].sort((left, right) => {
     const leftTime = Date.parse(left.created_at || "") || 0;
     const rightTime = Date.parse(right.created_at || "") || 0;
     if (leftTime !== rightTime) {
@@ -1088,6 +1088,71 @@ function sortOutputsLatestFirst(outputs: WorkspaceOutputRecordPayload[]) {
     }
     return left.title.localeCompare(right.title);
   });
+}
+
+function outputDisplayDedupeKey(output: WorkspaceOutputRecordPayload) {
+  const filePath = output.file_path?.trim() ?? "";
+  if (filePath) {
+    return `path:${filePath}`;
+  }
+  const artifactId = output.artifact_id?.trim() ?? "";
+  if (artifactId) {
+    return `artifact:${artifactId}`;
+  }
+  const title = output.title?.trim().toLowerCase() ?? "";
+  if (title) {
+    return `title:${title}`;
+  }
+  return `id:${output.id}`;
+}
+
+function outputDisplayPriority(output: WorkspaceOutputRecordPayload) {
+  let score = 0;
+  const originType = outputMetadataString(output, "origin_type");
+  if (originType === "forwarded_subagent") {
+    score += 40;
+  } else if (originType === "runtime_tool") {
+    score += 35;
+  } else if (originType === "app") {
+    score += 30;
+  }
+
+  if (outputMetadataString(output, "artifact_type") === "report") {
+    score += 20;
+  }
+  if (!/\.[A-Za-z0-9]+$/.test(output.title?.trim() ?? "")) {
+    score += 5;
+  }
+  return score;
+}
+
+function shouldPreferOutputForDisplay(
+  candidate: WorkspaceOutputRecordPayload,
+  current: WorkspaceOutputRecordPayload,
+) {
+  const candidatePriority = outputDisplayPriority(candidate);
+  const currentPriority = outputDisplayPriority(current);
+  if (candidatePriority !== currentPriority) {
+    return candidatePriority > currentPriority;
+  }
+  const candidateCreatedAt = Date.parse(candidate.created_at || "") || 0;
+  const currentCreatedAt = Date.parse(current.created_at || "") || 0;
+  if (candidateCreatedAt !== currentCreatedAt) {
+    return candidateCreatedAt > currentCreatedAt;
+  }
+  return candidate.title.localeCompare(current.title) < 0;
+}
+
+function dedupeOutputsForDisplay(outputs: WorkspaceOutputRecordPayload[]) {
+  const preferredByKey = new Map<string, WorkspaceOutputRecordPayload>();
+  for (const output of outputs) {
+    const key = outputDisplayDedupeKey(output);
+    const current = preferredByKey.get(key);
+    if (!current || shouldPreferOutputForDisplay(output, current)) {
+      preferredByKey.set(key, output);
+    }
+  }
+  return [...preferredByKey.values()];
 }
 
 function sortMemoryUpdateProposals(
@@ -2659,6 +2724,16 @@ function isNearChatBottom(container: HTMLDivElement) {
   return remaining <= CHAT_AUTO_SCROLL_THRESHOLD_PX;
 }
 
+function latestVisibleChatMessageId(messages: ChatMessage[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const messageId = messages[index]?.id?.trim() || "";
+    if (messageId) {
+      return messageId;
+    }
+  }
+  return "";
+}
+
 function chatMessageTimeLabel(value: string | null | undefined): string {
   const timestamp = Date.parse(value || "");
   if (Number.isNaN(timestamp)) {
@@ -2889,6 +2964,8 @@ export function ChatPane({
   const [artifactBrowserOpen, setArtifactBrowserOpen] = useState(false);
   const [artifactBrowserFilter, setArtifactBrowserFilter] =
     useState<ArtifactBrowserFilter>("all");
+  const [artifactBrowserScopedOutputs, setArtifactBrowserScopedOutputs] =
+    useState<WorkspaceOutputRecordPayload[] | null>(null);
   const [imageAttachmentPreview, setImageAttachmentPreview] =
     useState<ImageAttachmentPreviewState | null>(null);
   const [memoryProposalAction, setMemoryProposalAction] = useState<{
@@ -3233,6 +3310,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     setIsLoadingOlderHistoryState(false);
     setArtifactBrowserOpen(false);
     setArtifactBrowserFilter("all");
+    setArtifactBrowserScopedOutputs(null);
     setMemoryProposalAction(null);
     setEditingMemoryProposalId(null);
     setMemoryProposalDrafts({});
@@ -5388,6 +5466,108 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   }, [isResponding, selectedWorkspaceId, activeSessionId]);
 
   useEffect(() => {
+    const workspaceId = (selectedWorkspaceId || "").trim();
+    const mainSessionId = (desktopMainSession?.session_id || "").trim();
+    const currentSessionId =
+      (activeSessionIdRef.current || activeSessionId || "").trim();
+    if (
+      !workspaceId ||
+      !mainSessionId ||
+      currentSessionId !== mainSessionId ||
+      activeSessionReadOnly ||
+      isLoadingHistory ||
+      isResponding
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    let inFlight = false;
+
+    const pollForAutonomousMainSessionReply = async () => {
+      if (cancelled || inFlight || document.visibilityState !== "visible") {
+        return;
+      }
+      const currentContainer = messagesRef.current;
+      if (currentContainer && !isNearChatBottom(currentContainer)) {
+        return;
+      }
+      if ((activeSessionIdRef.current || "").trim() !== mainSessionId) {
+        return;
+      }
+
+      inFlight = true;
+      try {
+        const latestHistory = await window.electronAPI.workspace.getSessionHistory(
+          {
+            sessionId: mainSessionId,
+            workspaceId,
+            limit: 1,
+            offset: 0,
+            order: "desc",
+          },
+        );
+        if (cancelled || (activeSessionIdRef.current || "").trim() !== mainSessionId) {
+          return;
+        }
+        const latestHistoryMessageId =
+          historyMessagesInDisplayOrder(latestHistory.messages, "desc")[0]?.id?.trim() ||
+          "";
+        const latestDisplayedMessageId = latestVisibleChatMessageId(messages);
+        if (
+          !latestHistoryMessageId ||
+          latestHistoryMessageId === latestDisplayedMessageId
+        ) {
+          return;
+        }
+
+        const runtimeStates =
+          await window.electronAPI.workspace.listRuntimeStates(workspaceId);
+        if (cancelled || (activeSessionIdRef.current || "").trim() !== mainSessionId) {
+          return;
+        }
+        await loadSessionConversation(mainSessionId, workspaceId, runtimeStates.items, {
+          cancelled: () =>
+            cancelled || (activeSessionIdRef.current || "").trim() !== mainSessionId,
+          readOnly: false,
+        });
+      } catch {
+        // Ignore passive refresh failures; manual interaction or background polling will retry.
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    void pollForAutonomousMainSessionReply();
+    const intervalId = window.setInterval(() => {
+      void pollForAutonomousMainSessionReply();
+    }, 2500);
+    const refreshVisibleMainSession = () => {
+      void pollForAutonomousMainSessionReply();
+    };
+    window.addEventListener("focus", refreshVisibleMainSession);
+    document.addEventListener("visibilitychange", refreshVisibleMainSession);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshVisibleMainSession);
+      document.removeEventListener(
+        "visibilitychange",
+        refreshVisibleMainSession,
+      );
+    };
+  }, [
+    activeSessionId,
+    activeSessionReadOnly,
+    desktopMainSession?.session_id,
+    isLoadingHistory,
+    isResponding,
+    messages,
+    selectedWorkspaceId,
+  ]);
+
+  useEffect(() => {
     return () => {
       const activeStreamId = activeStreamIdRef.current;
       if (activeStreamId) {
@@ -6573,6 +6753,8 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
         ? "Task proposal run · Read-only inspection"
         : "Subagent run · Read-only inspection"
       : "Session view";
+  const showSessionExecutionInternals =
+    isReadOnlyInspectionSession || isOnboardingVariant;
   const readinessMessage =
     !selectedWorkspace || isOnboardingVariant || workspaceAppsReady
       ? ""
@@ -7320,7 +7502,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
           </div>
         ) : null}
 
-        {!isOnboardingVariant ? (
+        {!isOnboardingVariant && !isReadOnlyInspectionSession ? (
           <BackgroundTasksPane
             workspaceId={selectedWorkspaceId}
             variant="inline"
@@ -7385,13 +7567,15 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                         key={message.id}
                         label={assistantLabel}
                         mode={assistantMode}
+                        showExecutionInternals={
+                          showSessionExecutionInternals
+                        }
                         text={message.text}
                         tone={message.tone ?? "default"}
                         segments={message.segments ?? []}
                         executionItems={message.executionItems ?? []}
                         memoryProposals={message.memoryProposals ?? []}
                         outputs={message.outputs ?? []}
-                        sessionOutputs={sessionOutputs}
                         memoryProposalAction={memoryProposalAction}
                         editingMemoryProposalId={editingMemoryProposalId}
                         memoryProposalDrafts={memoryProposalDrafts}
@@ -7418,8 +7602,9 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                         onAcceptMemoryProposal={handleAcceptMemoryProposal}
                         onDismissMemoryProposal={handleDismissMemoryProposal}
                         onOpenOutput={onOpenOutput}
-                        onOpenAllArtifacts={() => {
+                        onOpenAllArtifacts={(outputs) => {
                           setArtifactBrowserFilter("all");
+                          setArtifactBrowserScopedOutputs(outputs);
                           setArtifactBrowserOpen(true);
                         }}
                         collapsedTraceByStepId={collapsedTraceByStepId}
@@ -7438,13 +7623,13 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                     <AssistantTurn
                       label={assistantLabel}
                       mode={assistantMode}
+                      showExecutionInternals={showSessionExecutionInternals}
                       text={liveAssistantText}
                       tone="default"
                       segments={renderedLiveAssistantSegments}
                       executionItems={liveExecutionItems}
                       memoryProposals={[]}
                       outputs={[]}
-                      sessionOutputs={sessionOutputs}
                       memoryProposalAction={memoryProposalAction}
                       editingMemoryProposalId={editingMemoryProposalId}
                       memoryProposalDrafts={memoryProposalDrafts}
@@ -7453,8 +7638,9 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                       onAcceptMemoryProposal={handleAcceptMemoryProposal}
                       onDismissMemoryProposal={handleDismissMemoryProposal}
                       onOpenOutput={onOpenOutput}
-                      onOpenAllArtifacts={() => {
+                      onOpenAllArtifacts={(outputs) => {
                         setArtifactBrowserFilter("all");
+                        setArtifactBrowserScopedOutputs(outputs);
                         setArtifactBrowserOpen(true);
                       }}
                       collapsedTraceByStepId={collapsedTraceByStepId}
@@ -7701,8 +7887,11 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
           <ArtifactBrowserModal
             open={artifactBrowserOpen}
             filter={artifactBrowserFilter}
-            outputs={sessionOutputs}
-            onClose={() => setArtifactBrowserOpen(false)}
+            outputs={artifactBrowserScopedOutputs ?? sessionOutputs}
+            onClose={() => {
+              setArtifactBrowserOpen(false);
+              setArtifactBrowserScopedOutputs(null);
+            }}
             onFilterChange={setArtifactBrowserFilter}
             onOpenOutput={onOpenOutput}
           />
@@ -8195,13 +8384,13 @@ function QueuedSessionInputRail({
 function AssistantTurn({
   label,
   mode,
+  showExecutionInternals = true,
   text,
   tone = "default",
   segments,
   executionItems,
   memoryProposals,
   outputs,
-  sessionOutputs,
   memoryProposalAction,
   editingMemoryProposalId,
   memoryProposalDrafts,
@@ -8221,13 +8410,13 @@ function AssistantTurn({
 }: {
   label: string;
   mode: string;
+  showExecutionInternals?: boolean;
   text: string;
   tone?: ChatMessage["tone"];
   segments: ChatAssistantSegment[];
   executionItems: ChatExecutionTimelineItem[];
   memoryProposals: MemoryUpdateProposalRecordPayload[];
   outputs: WorkspaceOutputRecordPayload[];
-  sessionOutputs: WorkspaceOutputRecordPayload[];
   memoryProposalAction: {
     proposalId: string;
     action: "accept" | "dismiss";
@@ -8241,7 +8430,7 @@ function AssistantTurn({
     proposal: MemoryUpdateProposalRecordPayload,
   ) => void;
   onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
-  onOpenAllArtifacts: () => void;
+  onOpenAllArtifacts: (outputs: WorkspaceOutputRecordPayload[]) => void;
   collapsedTraceByStepId: Record<string, boolean>;
   onToggleTraceStep: (stepId: string) => void;
   onLinkClick?: (url: string) => void;
@@ -8250,17 +8439,28 @@ function AssistantTurn({
   statusAccessory?: ReactNode;
   footerAccessory?: ReactNode;
 }) {
-  const normalizedStatus = status.replace(/\.+$/, "").trim();
+  const normalizedStatus = (
+    showExecutionInternals ? status : status ? "Working" : ""
+  )
+    .replace(/\.+$/, "")
+    .trim();
+  const visibleSegments = showExecutionInternals
+    ? segments
+    : segments.filter(
+        (segment): segment is Extract<ChatAssistantSegment, { kind: "output" }> =>
+          segment.kind === "output",
+      );
+  const visibleExecutionItems = showExecutionInternals ? executionItems : [];
   const renderedSegments =
-    segments.length > 0
-      ? segments
-      : executionItems.length > 0 || Boolean(text)
+    visibleSegments.length > 0
+      ? visibleSegments
+      : visibleExecutionItems.length > 0 || Boolean(text)
         ? [
-            ...(executionItems.length > 0
+            ...(visibleExecutionItems.length > 0
               ? ([
                   {
                     kind: "execution",
-                    items: executionItems,
+                    items: visibleExecutionItems,
                   },
                 ] as ChatAssistantSegment[])
               : []),
@@ -8277,8 +8477,17 @@ function AssistantTurn({
         : [];
   const showStatusPlaceholder =
     live && Boolean(normalizedStatus) && renderedSegments.length === 0;
-  const showWorkingStatusLine = live && renderedSegments.length > 0;
+  const showWorkingStatusLine =
+    live && showExecutionInternals && renderedSegments.length > 0;
   const renderStatusLine = (nextLabel: string, className = "") => {
+    if (!showExecutionInternals) {
+      return (
+        <TypingStatusLine
+          className={className}
+          statusAccessory={statusAccessory}
+        />
+      );
+    }
     if (!statusAccessory) {
       return <LiveStatusLine label={nextLabel} className={className} />;
     }
@@ -8368,7 +8577,6 @@ function AssistantTurn({
         {outputs.length > 0 ? (
           <AssistantTurnOutputs
             outputs={outputs}
-            sessionOutputs={sessionOutputs}
             onOpenOutput={onOpenOutput}
             onOpenAllArtifacts={onOpenAllArtifacts}
           />
@@ -8619,18 +8827,18 @@ function HistoryRestoreSkeleton() {
 
 function AssistantTurnOutputs({
   outputs,
-  sessionOutputs,
   onOpenOutput,
   onOpenAllArtifacts,
 }: {
   outputs: WorkspaceOutputRecordPayload[];
-  sessionOutputs: WorkspaceOutputRecordPayload[];
   onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
-  onOpenAllArtifacts: () => void;
+  onOpenAllArtifacts: (outputs: WorkspaceOutputRecordPayload[]) => void;
 }) {
+  const displayOutputs =
+    outputs.length > 1 ? dedupeOutputsForDisplay(outputs) : outputs;
   return (
     <div className="mt-3 flex flex-col gap-2">
-      {outputs.map((output) => (
+      {displayOutputs.map((output) => (
         <button
           key={output.id}
           type="button"
@@ -8651,17 +8859,17 @@ function AssistantTurnOutputs({
         </button>
       ))}
 
-      {sessionOutputs.length > 1 ? (
+      {displayOutputs.length > 1 ? (
         <button
           type="button"
-          onClick={onOpenAllArtifacts}
+          onClick={() => onOpenAllArtifacts(displayOutputs)}
           className="flex max-w-[380px] items-center gap-3 rounded-xl border border-dashed border-border px-3 py-2 text-left text-muted-foreground transition-colors hover:border-border hover:bg-accent/40 hover:text-foreground"
         >
           <div className="grid size-7 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
             <Folder className="size-3.5" />
           </div>
           <span className="text-xs">
-            View all artifacts ({sessionOutputs.length})
+            View all artifacts ({displayOutputs.length})
           </span>
         </button>
       ) : null}
@@ -8825,10 +9033,12 @@ function ArtifactBrowserModal({
     { id: "links", label: "Links" },
     { id: "apps", label: "Apps" },
   ];
+  const allDisplayOutputs =
+    outputs.length > 1 ? dedupeOutputsForDisplay(outputs) : outputs;
   const filteredOutputs = sortOutputsLatestFirst(
     filter === "all"
-      ? outputs
-      : outputs.filter(
+      ? allDisplayOutputs
+      : allDisplayOutputs.filter(
           (output) => outputBrowserFilterForOutput(output) === filter,
         ),
   );
@@ -8842,8 +9052,8 @@ function ArtifactBrowserModal({
               Artifacts
             </div>
             <div className="text-xs text-muted-foreground">
-              {outputs.length} item{outputs.length === 1 ? "" : "s"} in this
-              session
+              {allDisplayOutputs.length} item
+              {allDisplayOutputs.length === 1 ? "" : "s"} in this session
             </div>
           </div>
           <Button
@@ -8993,6 +9203,35 @@ function LiveStatusLine({
     >
       <span>{normalizedLabel}</span>
       <LiveStatusEllipsis />
+    </div>
+  );
+}
+
+function TypingStatusLine({
+  className = "",
+  statusAccessory = null,
+}: {
+  className?: string;
+  statusAccessory?: ReactNode;
+}) {
+  const indicator = (
+    <div
+      aria-live="polite"
+      aria-label="Assistant is typing"
+      className={`inline-flex items-center text-[18px] leading-none tracking-[0.18em] text-muted-foreground/78 ${className}`.trim()}
+    >
+      <LiveStatusEllipsis />
+    </div>
+  );
+  if (!statusAccessory) {
+    return indicator;
+  }
+  return (
+    <div
+      className={`flex min-w-0 items-center justify-between gap-3 ${className}`.trim()}
+    >
+      <div className="min-w-0">{indicator}</div>
+      <div className="shrink-0">{statusAccessory}</div>
     </div>
   );
 }

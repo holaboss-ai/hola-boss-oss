@@ -1001,6 +1001,29 @@ test("runtime subagent capability routes create and cancel hidden background tas
   const cancelledInput = run?.currentChildInputId ? store.getInput(run.currentChildInputId) : null;
   assert.equal(cancelledInput?.status, "DONE");
 
+  const archived = await app.inject({
+    method: "POST",
+    url: `/api/v1/background-tasks/${encodeURIComponent(task.subagent_id)}/archive`,
+    payload: {
+      workspace_id: workspace.id,
+    },
+  });
+  assert.equal(archived.statusCode, 200);
+  assert.equal(archived.json().archived, true);
+
+  const archivedChildSession = store.getSession({
+    workspaceId: workspace.id,
+    sessionId: String(task.child_session_id),
+  });
+  assert.ok(archivedChildSession?.archivedAt);
+
+  const listedAfterArchive = await app.inject({
+    method: "GET",
+    url: `/api/v1/background-tasks?workspace_id=${encodeURIComponent(workspace.id)}`,
+  });
+  assert.equal(listedAfterArchive.statusCode, 200);
+  assert.equal(listedAfterArchive.json().count, 0);
+
   await app.close();
   store.close();
 });
@@ -3657,6 +3680,81 @@ test("history endpoint paginates in requested order without hydrating the full r
   store.close();
 });
 
+test("history endpoint returns stored messages even after runtime harness ownership transfers to another session", async () => {
+  const root = makeTempDir("hb-runtime-api-history-transfer-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi"
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-old",
+    kind: "workspace_session"
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-new",
+    kind: "workspace_session"
+  });
+  store.insertSessionMessage({
+    workspaceId: workspace.id,
+    sessionId: "session-old",
+    role: "user",
+    text: "first question",
+    messageId: "user-old-1",
+    createdAt: "2026-01-01T00:00:00.000Z"
+  });
+  store.insertSessionMessage({
+    workspaceId: workspace.id,
+    sessionId: "session-old",
+    role: "assistant",
+    text: "first answer",
+    messageId: "assistant-old-1",
+    createdAt: "2026-01-01T00:00:01.000Z"
+  });
+  store.upsertBinding({
+    workspaceId: workspace.id,
+    sessionId: "session-old",
+    harness: "pi",
+    harnessSessionId: "shared-harness-session"
+  });
+  store.upsertBinding({
+    workspaceId: workspace.id,
+    sessionId: "session-new",
+    harness: "pi",
+    harnessSessionId: "shared-harness-session"
+  });
+
+  const history = await app.inject({
+    method: "GET",
+    url: `/api/v1/agent-sessions/session-old/history?workspace_id=${workspace.id}`
+  });
+
+  assert.equal(history.statusCode, 200);
+  assert.equal(history.json().harness, "pi");
+  assert.equal(history.json().harness_session_id, "");
+  assert.deepEqual(
+    history.json().messages.map((item: { id: string; role: string }) => ({
+      id: item.id,
+      role: item.role,
+    })),
+    [
+      { id: "user-old-1", role: "user" },
+      { id: "assistant-old-1", role: "assistant" },
+    ]
+  );
+
+  await app.close();
+  store.close();
+});
+
 test("output events endpoint supports incremental fetches and tail mode", async () => {
   const root = makeTempDir("hb-runtime-api-");
   const store = new RuntimeStateStore({
@@ -5899,7 +5997,7 @@ test("queue route preserves the active claimed input while adding later queued w
   store.close();
 });
 
-test("queue route folds due background updates into the next main-session input", async () => {
+test("queue route folds pending background updates into the next main-session input even before the merge window expires", async () => {
   const root = makeTempDir("hb-runtime-api-queue-inline-background-updates-");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
@@ -5931,10 +6029,26 @@ test("queue route folds due background updates into the next main-session input"
     subagentId: "subagent-1",
     eventType: "completed",
     deliveryBucket: "background_update",
-    earliestDeliverAt: "2026-04-17T12:00:00.000Z",
+    earliestDeliverAt: "2099-04-17T12:00:00.000Z",
     payload: {
       status: "completed",
       summary: "Repo scan finished.",
+      assistant_text:
+        "<html><body><h1>Full report body</h1><p>This should stay out of the main-session prompt.</p></body></html>",
+      forwardable_deliverables: [
+        {
+          output_id: "output-1",
+          artifact_id: "artifact-1",
+          type: "report",
+          output_type: "document",
+          title: "repo-scan-report.md",
+          status: "completed",
+          file_path: "outputs/reports/repo-scan-report.md",
+          metadata: {
+            artifact_type: "report",
+          },
+        },
+      ],
     },
   });
 
@@ -5958,6 +6072,14 @@ test("queue route folds due background updates into the next main-session input"
   assert.equal(context.delivery_bucket, "background_update");
   assert.equal(context.main_session_event_mode, "inline_user_reply");
   assert.ok(Array.isArray(context.queued_events));
+  const queuedEventPayload = ((context.queued_events as Array<Record<string, unknown>>)[0]
+    ?.payload ?? {}) as Record<string, unknown>;
+  assert.equal(queuedEventPayload.assistant_text, undefined);
+  assert.equal(
+    ((queuedEventPayload.forwardable_deliverables as Array<Record<string, unknown>>)[0]
+      ?.title as string),
+    "repo-scan-report.md",
+  );
   assert.equal(updatedEvent?.status, "materialized");
   assert.equal(updatedEvent?.materializedInputId, queued?.inputId);
 

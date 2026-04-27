@@ -249,7 +249,25 @@ test("main-session event worker inherits the owner main session model and thinki
     subagentId: "subagent-1",
     eventType: "completed",
     deliveryBucket: "background_update",
-    payload: { summary: "Done." },
+    payload: {
+      summary: "Done.",
+      assistant_text:
+        "<html><body><h1>Full report body</h1><p>This should stay out of the main-session prompt.</p></body></html>",
+      forwardable_deliverables: [
+        {
+          output_id: "output-1",
+          artifact_id: "artifact-1",
+          type: "report",
+          output_type: "document",
+          title: "done-report.md",
+          status: "completed",
+          file_path: "outputs/reports/done-report.md",
+          metadata: {
+            artifact_type: "report",
+          },
+        },
+      ],
+    },
   });
 
   const worker = new RuntimeMainSessionEventWorker({ store });
@@ -262,6 +280,18 @@ test("main-session event worker inherits the owner main session model and thinki
   assert.equal(processed, 1);
   assert.equal(batchInput?.payload.model, "openai_codex/gpt-5.4");
   assert.equal(batchInput?.payload.thinking_value, "medium");
+  assert.match(String(batchInput?.payload.text), /Background updates/i);
+  assert.match(String(batchInput?.payload.text), /numbered items/i);
+  assert.match(
+    String(batchInput?.payload.text),
+    /supplemental follow-up only/i,
+  );
+  assert.match(
+    String(batchInput?.payload.text),
+    /Do not repeat, paraphrase, or re-answer/i,
+  );
+  assert.match(String(batchInput?.payload.text), /done-report\.md/i);
+  assert.doesNotMatch(String(batchInput?.payload.text), /<html>/i);
 
   store.close();
 });

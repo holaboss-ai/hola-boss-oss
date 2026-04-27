@@ -6,6 +6,7 @@ import {
   Clock3,
   Loader2,
   Pause,
+  Trash2,
   X,
 } from "lucide-react";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
@@ -21,58 +22,6 @@ interface BackgroundTasksPaneProps {
 
 function normalizeErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Request failed.";
-}
-
-function formatRelativeTimestamp(value: string | null): string {
-  if (!value) {
-    return "—";
-  }
-  const parsed = Date.parse(value);
-  if (Number.isNaN(parsed)) {
-    return value;
-  }
-  const diffMs = Date.now() - parsed;
-  const diffMin = Math.round(diffMs / 60_000);
-  if (Math.abs(diffMin) < 1) {
-    return "just now";
-  }
-  if (Math.abs(diffMin) < 60) {
-    return `${diffMin > 0 ? `${diffMin}m ago` : `in ${-diffMin}m`}`;
-  }
-  const diffHr = Math.round(diffMin / 60);
-  if (Math.abs(diffHr) < 24) {
-    return `${diffHr > 0 ? `${diffHr}h ago` : `in ${-diffHr}h`}`;
-  }
-  const date = new Date(parsed);
-  const datePart = date.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-  });
-  const timePart = date.toLocaleTimeString(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-  return `${datePart}, ${timePart}`;
-}
-
-function backgroundTaskStatusLabel(status: string): string {
-  switch (status.trim().toLowerCase()) {
-    case "queued":
-      return "Queued";
-    case "running":
-      return "Running";
-    case "waiting_on_user":
-      return "Waiting on you";
-    case "completed":
-      return "Completed";
-    case "failed":
-      return "Failed";
-    case "cancelled":
-      return "Cancelled";
-    default:
-      return "Background task";
-  }
 }
 
 function backgroundTaskStatusIndicator(status: string): {
@@ -118,14 +67,8 @@ function backgroundTaskStatusIndicator(status: string): {
   }
 }
 
-function backgroundTaskSourceLabel(task: BackgroundTaskRecordPayload): string {
-  if ((task.source_type ?? "").trim().toLowerCase() === "cronjob") {
-    return "Automation";
-  }
-  return "Delegated";
-}
-
 function backgroundTaskDetail(task: BackgroundTaskRecordPayload): string {
+  const status = task.status.trim().toLowerCase();
   const blockingQuestion =
     typeof task.blocking_payload?.blocking_question === "string" &&
     task.blocking_payload.blocking_question.trim()
@@ -134,11 +77,22 @@ function backgroundTaskDetail(task: BackgroundTaskRecordPayload): string {
   if (blockingQuestion) {
     return blockingQuestion;
   }
+  const goal = task.goal.trim();
   const summary = task.summary?.trim() ?? "";
-  if (summary) {
-    return summary;
+  switch (status) {
+    case "completed":
+    case "failed":
+    case "cancelled":
+      return summary || goal || "No summary yet.";
+    case "waiting_on_user":
+      return goal || "Waiting on user input.";
+    case "running":
+      return goal || "Working in the background.";
+    case "queued":
+      return goal || "Queued to run.";
+    default:
+      return summary || goal || "No summary yet.";
   }
-  return task.goal.trim() || "No summary yet.";
 }
 
 function backgroundTaskPriority(status: string): number {
@@ -223,6 +177,7 @@ export function BackgroundTasksPane({
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [inlineExpanded, setInlineExpanded] = useState(false);
+  const [removingTaskId, setRemovingTaskId] = useState<string | null>(null);
 
   const refreshTasks = useCallback(
     async (options?: { showLoading?: boolean }) => {
@@ -297,7 +252,41 @@ export function BackgroundTasksPane({
     };
   }, [activeWorkspaceId, refreshTasks]);
 
+  const handleRemoveTask = useCallback(
+    async (task: BackgroundTaskRecordPayload) => {
+      if (!activeWorkspaceId || removingTaskId === task.subagent_id) {
+        return;
+      }
+      setRemovingTaskId(task.subagent_id);
+      try {
+        await window.electronAPI.workspace.archiveBackgroundTask({
+          workspaceId: activeWorkspaceId,
+          subagentId: task.subagent_id,
+          ownerMainSessionId: task.owner_main_session_id,
+        });
+        setTasks((current) =>
+          current.filter((item) => item.subagent_id !== task.subagent_id),
+        );
+        setErrorMessage("");
+      } catch (error) {
+        setErrorMessage(normalizeErrorMessage(error));
+      } finally {
+        setRemovingTaskId((current) =>
+          current === task.subagent_id ? null : current,
+        );
+      }
+    },
+    [activeWorkspaceId, removingTaskId],
+  );
+
   const sortedTasks = sortBackgroundTasks(tasks);
+
+  function canRemoveTask(task: BackgroundTaskRecordPayload) {
+    const status = task.status.trim().toLowerCase();
+    return (
+      status === "completed" || status === "failed" || status === "cancelled"
+    );
+  }
 
   if (variant === "inline") {
     if (!activeWorkspaceId) {
@@ -365,60 +354,52 @@ export function BackgroundTasksPane({
                   const canOpenTaskSession =
                     typeof onOpenTaskSession === "function" &&
                     Boolean(task.child_session_id.trim());
+                  const showRemoveAction = canRemoveTask(task);
                   const taskBody = (
-                    <>
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`grid size-4 shrink-0 place-items-center ${taskIndicator.className}`}
-                            >
-                              {taskIndicator.icon}
-                            </span>
-                            <div className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
-                              {task.title.trim() ||
-                                "Untitled background task"}
-                            </div>
-                          </div>
-                          <div className="mt-2 line-clamp-3 text-xs leading-5 text-muted-foreground">
-                            {backgroundTaskDetail(task)}
-                          </div>
-                        </div>
-                        <div className="shrink-0 rounded-full border border-border/70 bg-background px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                          {backgroundTaskStatusLabel(task.status)}
-                        </div>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span
+                        className={`grid size-4 shrink-0 place-items-center ${taskIndicator.className}`}
+                      >
+                        {taskIndicator.icon}
+                      </span>
+                      <div className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
+                        {task.title.trim() || "Untitled background task"}
                       </div>
-                      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-                        <span>{backgroundTaskSourceLabel(task)}</span>
-                        <span>
-                          Updated {formatRelativeTimestamp(task.updated_at)}
-                        </span>
-                        {task.effective_model?.trim() ? (
-                          <span>{task.effective_model.trim()}</span>
-                        ) : null}
-                        {canOpenTaskSession ? (
-                          <span className="font-medium text-primary">
-                            Inspect run
-                          </span>
-                        ) : null}
-                      </div>
-                    </>
+                    </div>
                   );
-                  return canOpenTaskSession ? (
-                    <button
-                      key={task.subagent_id}
-                      type="button"
-                      onClick={() => onOpenTaskSession(task)}
-                      className="w-full rounded-xl border border-border bg-muted px-3 py-3 text-left transition hover:border-primary/40 hover:bg-primary/[0.04]"
-                    >
-                      {taskBody}
-                    </button>
-                  ) : (
+                  return (
                     <div
                       key={task.subagent_id}
-                      className="rounded-xl border border-border bg-muted px-3 py-3"
+                      className="flex items-center gap-2 rounded-xl border border-border bg-muted px-3 py-2.5"
                     >
-                      {taskBody}
+                      {canOpenTaskSession ? (
+                        <button
+                          type="button"
+                          onClick={() => onOpenTaskSession(task)}
+                          className="min-w-0 flex-1 text-left transition hover:text-primary"
+                        >
+                          {taskBody}
+                        </button>
+                      ) : (
+                        <div className="min-w-0 flex-1">{taskBody}</div>
+                      )}
+                      {showRemoveAction ? (
+                        <button
+                          type="button"
+                          aria-label={`Remove background task ${task.title.trim() || task.subagent_id}`}
+                          disabled={removingTaskId === task.subagent_id}
+                          onClick={() => {
+                            void handleRemoveTask(task);
+                          }}
+                          className="shrink-0 rounded-full p-1 text-muted-foreground transition hover:bg-muted-foreground/10 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {removingTaskId === task.subagent_id ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <Trash2 size={12} />
+                          )}
+                        </button>
+                      ) : null}
                     </div>
                   );
                 })}
@@ -474,60 +455,54 @@ export function BackgroundTasksPane({
               const canOpenTaskSession =
                 typeof onOpenTaskSession === "function" &&
                 Boolean(task.child_session_id.trim());
+              const showRemoveAction = canRemoveTask(task);
               const taskBody = (
-                <>
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`grid size-4 shrink-0 place-items-center ${indicator.className}`}
-                        >
-                          {indicator.icon}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm font-medium text-foreground">
-                            {task.title.trim() || "Untitled background task"}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="mt-2 line-clamp-3 text-sm leading-6 text-muted-foreground">
-                        {backgroundTaskDetail(task)}
-                      </div>
-                    </div>
-                    <div className="shrink-0 rounded-full border border-border/70 bg-muted/35 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                      {backgroundTaskSourceLabel(task)}
+                <div className="flex min-w-0 items-center gap-2">
+                  <span
+                    className={`grid size-4 shrink-0 place-items-center ${indicator.className}`}
+                  >
+                    {indicator.icon}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium text-foreground">
+                      {task.title.trim() || "Untitled background task"}
                     </div>
                   </div>
-
-                  <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                    <span>{backgroundTaskStatusLabel(task.status)}</span>
-                    <span>Updated {formatRelativeTimestamp(task.updated_at)}</span>
-                    {task.effective_model?.trim() ? (
-                      <span>{task.effective_model.trim()}</span>
-                    ) : null}
-                    {canOpenTaskSession ? (
-                      <span className="font-medium text-primary">
-                        Inspect run
-                      </span>
-                    ) : null}
-                  </div>
-                </>
+                </div>
               );
-              return canOpenTaskSession ? (
-                <button
-                  key={task.subagent_id}
-                  type="button"
-                  onClick={() => onOpenTaskSession(task)}
-                  className="w-full rounded-2xl border border-border/70 bg-card/95 px-4 py-3 text-left shadow-subtle-xs transition hover:border-primary/40 hover:bg-primary/[0.03]"
-                >
-                  {taskBody}
-                </button>
-              ) : (
+              return (
                 <div
                   key={task.subagent_id}
-                  className="rounded-2xl border border-border/70 bg-card/95 px-4 py-3 shadow-subtle-xs"
+                  className="flex items-center gap-2 rounded-2xl border border-border/70 bg-card/95 px-4 py-3 shadow-subtle-xs"
                 >
-                  {taskBody}
+                  {canOpenTaskSession ? (
+                    <button
+                      type="button"
+                      onClick={() => onOpenTaskSession(task)}
+                      className="min-w-0 flex-1 text-left transition hover:text-primary"
+                    >
+                      {taskBody}
+                    </button>
+                  ) : (
+                    <div className="min-w-0 flex-1">{taskBody}</div>
+                  )}
+                  {showRemoveAction ? (
+                    <button
+                      type="button"
+                      aria-label={`Remove background task ${task.title.trim() || task.subagent_id}`}
+                      disabled={removingTaskId === task.subagent_id}
+                      onClick={() => {
+                        void handleRemoveTask(task);
+                      }}
+                      className="shrink-0 rounded-full p-1 text-muted-foreground transition hover:bg-muted-foreground/10 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {removingTaskId === task.subagent_id ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : (
+                        <Trash2 size={12} />
+                      )}
+                    </button>
+                  ) : null}
                 </div>
               );
             })}

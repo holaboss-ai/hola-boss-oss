@@ -1018,13 +1018,16 @@ test("claimed input writes completed subagent results and queues a background up
   assert.equal(updatedRun?.latestChildInputId, queued.inputId);
   assert.equal(updatedRun?.currentChildInputId, null);
   assert.equal(updatedRun?.summary, "Research complete with a report attached.");
-  assert.equal(updatedRun?.latestProgressPayload?.progress_type, "milestone");
-  assert.equal(
-    updatedRun?.latestProgressPayload?.summary,
-    "Finished a web research step.",
-  );
+  assert.equal(updatedRun?.latestProgressPayload, null);
   assert.equal(updatedRun?.resultPayload?.status, "completed");
   assert.equal(updatedRun?.resultPayload?.goal, "Find recent proactive agent products");
+  assert.equal(
+    store.getSession({
+      workspaceId: workspace.id,
+      sessionId: run.childSessionId,
+    })?.archivedAt,
+    updatedRun?.completedAt,
+  );
   assert.equal(
     Array.isArray(updatedRun?.resultPayload?.forwardable_deliverables)
       ? updatedRun?.resultPayload?.forwardable_deliverables.length
@@ -1372,6 +1375,20 @@ test("claimed input folds attached background updates into a normal user turn", 
     payload: {
       status: "completed",
       summary: "Build fix is done.",
+      forwardable_deliverables: [
+        {
+          output_id: "output-1",
+          artifact_id: "artifact-1",
+          type: "report",
+          output_type: "document",
+          title: "build-fix-report.md",
+          status: "completed",
+          file_path: "outputs/reports/build-fix-report.md",
+          metadata: {
+            artifact_type: "report",
+          },
+        },
+      ],
     },
   });
   const queued = store.enqueueInput({
@@ -1390,6 +1407,22 @@ test("claimed input folds attached background updates into a normal user turn", 
             payload: {
               status: "completed",
               summary: "Build fix is done.",
+              assistant_text:
+                "<html><body><h1>Build Fix Report</h1><p>Long HTML body that should not be pasted back into the main-session prompt.</p></body></html>",
+              forwardable_deliverables: [
+                {
+                  output_id: "output-1",
+                  artifact_id: "artifact-1",
+                  type: "report",
+                  output_type: "document",
+                  title: "build-fix-report.md",
+                  status: "completed",
+                  file_path: "outputs/reports/build-fix-report.md",
+                  metadata: {
+                    artifact_type: "report",
+                  },
+                },
+              ],
             },
             created_at: event.createdAt,
           },
@@ -1446,13 +1479,28 @@ test("claimed input folds attached background updates into a normal user turn", 
     sessionId: "session-main",
   });
   const updatedEvent = store.getMainSessionEvent({ eventId: event.eventId });
+  const outputs = store.listOutputs({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: queued.inputId,
+    limit: 20,
+    offset: 0,
+  });
 
   assert.match(capturedInstruction, /Pending Background Updates/);
   assert.match(capturedInstruction, /Answer the user's latest message first\./);
+  assert.match(capturedInstruction, /Background updates:/i);
+  assert.match(capturedInstruction, /numbered items/i);
+  assert.doesNotMatch(capturedInstruction, /<html>/i);
+  assert.match(capturedInstruction, /build-fix-report\.md/i);
   assert.equal(messages.length, 2);
   assert.equal(messages[0]?.role, "user");
   assert.equal(messages[0]?.text, "What changed?");
   assert.equal(messages[1]?.role, "assistant");
+  assert.equal(outputs.length, 1);
+  assert.equal(outputs[0]?.title, "build-fix-report.md");
+  assert.equal(outputs[0]?.filePath, "outputs/reports/build-fix-report.md");
+  assert.equal(outputs[0]?.metadata.origin_type, "forwarded_subagent");
   assert.equal(updatedEvent?.status, "delivered");
 
   store.close();
@@ -1808,6 +1856,86 @@ test("claimed input does not duplicate a file output already persisted earlier i
   assert.equal(outputs.length, 1);
   assert.equal(outputs[0].filePath, "outputs/reports/report.md");
   assert.equal(outputs[0].metadata.origin_type, "runtime_tool");
+
+  store.close();
+});
+
+test("claimed input does not attach a workspace file output that was already recorded on another turn", async () => {
+  const store = makeStore(
+    "hb-claimed-input-cross-turn-file-output-dedupe-",
+  );
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "open google" },
+  });
+
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      const workspaceDir = store.workspaceDir(workspace.id);
+      fs.mkdirSync(path.join(workspaceDir, "outputs", "reports"), {
+        recursive: true,
+      });
+      fs.writeFileSync(
+        path.join(workspaceDir, "outputs", "reports", "report.md"),
+        "# Report\n",
+      );
+      store.createOutput({
+        workspaceId: workspace.id,
+        outputType: "document",
+        title: "Report",
+        status: "completed",
+        filePath: "outputs/reports/report.md",
+        sessionId: "subagent-1",
+        inputId: "subagent-input-1",
+        metadata: {
+          origin_type: "runtime_tool",
+          change_type: "created",
+          category: "document",
+          artifact_type: "report",
+        },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "run_completed",
+        payload: { status: "ok" },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  const outputs = store.listOutputs({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: queued.inputId,
+    limit: 20,
+    offset: 0,
+  });
+
+  assert.equal(outputs.length, 0);
 
   store.close();
 });

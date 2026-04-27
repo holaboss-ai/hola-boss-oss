@@ -60,6 +60,7 @@ import {
   type MainSessionEventWorkerLike,
   RuntimeMainSessionEventWorker,
 } from "./main-session-event-worker.js";
+import { queuedMainSessionEventPromptEntry } from "./main-session-event-prompt.js";
 import {
   type BridgeWorkerLike,
   RuntimeRemoteBridgeWorker,
@@ -1214,15 +1215,7 @@ function groupedMainSessionEventsPayload(
     createdAt: string;
   }>,
 ): Record<string, unknown>[] {
-  return events.map((event) => ({
-    event_id: event.eventId,
-    event_type: event.eventType,
-    delivery_bucket: event.deliveryBucket,
-    status: event.status,
-    subagent_id: event.subagentId,
-    payload: event.payload,
-    created_at: event.createdAt,
-  }));
+  return events.map((event) => queuedMainSessionEventPromptEntry(event));
 }
 
 function preferredWorkspaceSessionId(params: {
@@ -4932,6 +4925,25 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
+  app.post("/api/v1/background-tasks/:subagentId/archive", async (request, reply) => {
+    const params = request.params as { subagentId: string };
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return runtimeAgentToolsService.archiveBackgroundTask({
+        workspaceId: requiredString(request.body.workspace_id, "workspace_id"),
+        subagentId: requiredString(params.subagentId, "subagentId"),
+        ownerMainSessionId: nullableString(request.body.owner_main_session_id) ?? undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "background task archive failed");
+    }
+  });
+
   app.post("/api/v1/lifecycle/shutdown", async (request, reply) => {
     void request;
     try {
@@ -6672,7 +6684,6 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         ? store.listPendingMainSessionEvents({
             ownerMainSessionId: resolvedSessionId,
             deliveryBucket: "background_update",
-            before: utcNowIso(),
             limit: 200,
           })
         : [];
@@ -6924,10 +6935,14 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 404, "workspace not found");
     }
 
-    const binding = store.getBinding({ workspaceId, sessionId: params.sessionId });
-    if (!binding) {
-      return sendError(reply, 404, "session binding not found");
+    const session = store.getSession({
+      workspaceId,
+      sessionId: params.sessionId,
+    });
+    if (!session) {
+      return sendError(reply, 404, "session not found");
     }
+    const binding = store.getBinding({ workspaceId, sessionId: params.sessionId });
 
     const limit = Math.max(1, Math.min(1000, optionalInteger(query.limit, 200)));
     const offset = Math.max(0, optionalInteger(query.offset, 0));
@@ -6950,8 +6965,8 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     return {
       workspace_id: workspaceId,
       session_id: params.sessionId,
-      harness: binding.harness,
-      harness_session_id: binding.harnessSessionId,
+      harness: binding?.harness ?? resolvedWorkspaceHarness(workspace),
+      harness_session_id: binding?.harnessSessionId ?? "",
       source: "sandbox_local_storage",
       messages,
       count: messages.length,
