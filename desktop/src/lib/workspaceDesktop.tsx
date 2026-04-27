@@ -411,12 +411,58 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     setWorkspaceBlockingReasonState("");
   }, [selectedWorkspaceId]);
 
+  // Optimistic splash hydration — read the workspaces table directly
+  // from runtime.db on the desktop side, without waiting for the
+  // sidecar to spawn or run schema-ensure. Sidecar takes 2-4s on cold
+  // launch; this synchronous local read is 5-15ms. If we get any
+  // rows, we hydrate the splash immediately; the sidecar's later
+  // listWorkspaces (via the regular workspace-load effect) reconciles.
+  // First-launch / fresh-install case has no rows → falls through to
+  // the sidecar-gated path, no behaviour change.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const cached =
+          await window.electronAPI.workspace.listWorkspacesCached();
+        if (cancelled) return;
+        if (cached.items.length === 0) return;
+        void window.electronAPI.boot
+          ?.mark("cached-workspaces-hit")
+          .catch(() => undefined);
+        setWorkspaces(cached.items);
+        setSelectedWorkspaceId((current) => {
+          if (current && cached.items.some((w) => w.id === current)) {
+            return current;
+          }
+          return cached.items[0]?.id ?? "";
+        });
+        setHasHydratedWorkspaceList(true);
+        setIsRefreshing(false);
+        // Splash unmounts now — sidecar can finish booting in the
+        // background; the regular workspace-load effect will reconcile
+        // when it finally resolves.
+        void window.electronAPI.boot
+          ?.mark("renderer-hydrated")
+          .catch(() => undefined);
+      } catch {
+        // Silent fallback — let the regular sidecar-gated path run.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
     async function loadBootstrap() {
       setIsLoadingBootstrap(true);
       setWorkspaceErrorMessage("");
+      void window.electronAPI.boot
+        ?.mark("renderer-bootstrap-start")
+        .catch(() => undefined);
 
       try {
         const [runtimeConfigResult, runtimeStatusResult, clientConfigResult] = await Promise.allSettled([
@@ -424,6 +470,9 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
           withBootstrapTimeout(window.electronAPI.runtime.getStatus(), "runtime status"),
           withBootstrapTimeout(window.electronAPI.workspace.getClientConfig(), "desktop client configuration")
         ]);
+        void window.electronAPI.boot
+          ?.mark("renderer-bootstrap-done")
+          .catch(() => undefined);
         if (cancelled) {
           return;
         }
@@ -1038,12 +1087,14 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   useEffect(() => {
     let cancelled = false;
 
-    if (isLoadingBootstrap) {
-      return () => {
-        cancelled = true;
-      };
-    }
-
+    // Workspace load no longer waits for `isLoadingBootstrap`. The
+    // bootstrap effect fetches runtimeConfig / clientConfig — neither
+    // is needed to render the workspace list, and on cold launch they
+    // can spend 1.5s+ retrying against a not-yet-healthy sidecar. We
+    // only gate on `runtimeReadyForWorkspaceData` (status === "running"),
+    // which is exactly what listWorkspaces actually depends on; the
+    // bootstrap APIs populate state in the background after the splash
+    // is gone.
     if (!runtimeReadyForWorkspaceData) {
       setIsRefreshing(false);
       setHasHydratedWorkspaceList((current) => current || workspaces.length > 0);
@@ -1058,6 +1109,9 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     async function refresh() {
       setIsRefreshing(true);
       setWorkspaceErrorMessage("");
+      void window.electronAPI.boot
+        ?.mark("renderer-workspace-load-start")
+        .catch(() => undefined);
       try {
         await loadWorkspaceData({ preserveSelection: true });
       } catch (error) {
@@ -1081,7 +1135,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     return () => {
       cancelled = true;
     };
-  }, [isLoadingBootstrap, resolvedUserId, runtimeReadyForWorkspaceData, runtimeStatus?.lastError, runtimeStatus?.status, workspaces.length]);
+  }, [resolvedUserId, runtimeReadyForWorkspaceData, runtimeStatus?.lastError, runtimeStatus?.status, workspaces.length]);
 
   useEffect(() => {
     let cancelled = false;

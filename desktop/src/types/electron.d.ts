@@ -1491,6 +1491,7 @@ declare global {
         payload: BrowserCopyWorkspaceProfilePayload
       ) => Promise<BrowserImportSummaryPayload>;
       listWorkspaces: () => Promise<WorkspaceListResponsePayload>;
+      listWorkspacesCached: () => Promise<WorkspaceListResponsePayload>;
       getWorkspaceLifecycle: (workspaceId: string) => Promise<WorkspaceLifecyclePayload>;
       activateWorkspace: (workspaceId: string) => Promise<WorkspaceLifecyclePayload>;
       listInstalledApps: (workspaceId: string) => Promise<InstalledWorkspaceAppListResponsePayload>;

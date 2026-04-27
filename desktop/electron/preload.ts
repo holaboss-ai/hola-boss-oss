@@ -1296,6 +1296,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     copyBrowserWorkspaceProfile: (payload: BrowserCopyWorkspaceProfilePayload) =>
       ipcRenderer.invoke("workspace:copyBrowserWorkspaceProfile", payload) as Promise<BrowserImportSummaryPayload>,
     listWorkspaces: () => ipcRenderer.invoke("workspace:listWorkspaces") as Promise<WorkspaceListResponsePayload>,
+    listWorkspacesCached: () =>
+      ipcRenderer.invoke("workspace:listWorkspacesCached") as Promise<WorkspaceListResponsePayload>,
     getWorkspaceLifecycle: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:getWorkspaceLifecycle", workspaceId) as Promise<WorkspaceLifecyclePayload>,
     activateWorkspace: (workspaceId: string) =>

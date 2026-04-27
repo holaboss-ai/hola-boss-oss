@@ -14004,6 +14004,116 @@ async function listWorkspaces(): Promise<WorkspaceListResponsePayload> {
   return response;
 }
 
+/**
+ * Read the workspaces table directly from runtime.db without going
+ * through the sidecar. Used to hydrate the splash before the sidecar
+ * finishes spawning + schema-ensure. The desktop and runtime share
+ * runtime.db; the schema converges after the sidecar runs once on a
+ * given machine, but we tolerate a missing `workspace_path` column on
+ * the very first launch by reading PRAGMA table_info first.
+ *
+ * Synchronous + fast (5-15ms) — better-sqlite3 with WAL allows this
+ * read while the sidecar is still booting in another process.
+ *
+ * Returns an empty list (not an error) on any failure so the renderer
+ * silently falls back to the sidecar path.
+ */
+function listWorkspacesFromLocalDb(): WorkspaceListResponsePayload {
+  const empty: WorkspaceListResponsePayload = {
+    items: [],
+    total: 0,
+    limit: 100,
+    offset: 0,
+  };
+  let database: Database.Database | null = null;
+  try {
+    database = new Database(runtimeDatabasePath(), { readonly: true });
+    const tableExists = database
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'workspaces' LIMIT 1",
+      )
+      .get();
+    if (!tableExists) {
+      return empty;
+    }
+    const columns = new Set<string>(
+      (
+        database.prepare("PRAGMA table_info(workspaces)").all() as Array<{
+          name: string;
+        }>
+      ).map((row) => row.name),
+    );
+    const hasWorkspacePath = columns.has("workspace_path");
+    const select = hasWorkspacePath
+      ? `SELECT id, name, status, harness, error_message,
+                onboarding_status, onboarding_session_id,
+                onboarding_completed_at, onboarding_completion_summary,
+                onboarding_requested_at, onboarding_requested_by,
+                created_at, updated_at, deleted_at_utc, workspace_path
+         FROM workspaces
+         WHERE deleted_at_utc IS NULL
+         ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC
+         LIMIT 100`
+      : `SELECT id, name, status, harness, error_message,
+                onboarding_status, onboarding_session_id,
+                onboarding_completed_at, onboarding_completion_summary,
+                onboarding_requested_at, onboarding_requested_by,
+                created_at, updated_at, deleted_at_utc
+         FROM workspaces
+         WHERE deleted_at_utc IS NULL
+         ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC
+         LIMIT 100`;
+    const rows = database.prepare(select).all() as Array<
+      Record<string, unknown>
+    >;
+    const items: WorkspaceRecordPayload[] = rows.map((row) => ({
+      id: String(row.id ?? ""),
+      name: String(row.name ?? ""),
+      status: String(row.status ?? "unknown"),
+      harness: row.harness == null ? null : String(row.harness),
+      error_message: row.error_message == null ? null : String(row.error_message),
+      onboarding_status: String(row.onboarding_status ?? "complete"),
+      onboarding_session_id:
+        row.onboarding_session_id == null
+          ? null
+          : String(row.onboarding_session_id),
+      onboarding_completed_at:
+        row.onboarding_completed_at == null
+          ? null
+          : String(row.onboarding_completed_at),
+      onboarding_completion_summary:
+        row.onboarding_completion_summary == null
+          ? null
+          : String(row.onboarding_completion_summary),
+      onboarding_requested_at:
+        row.onboarding_requested_at == null
+          ? null
+          : String(row.onboarding_requested_at),
+      onboarding_requested_by:
+        row.onboarding_requested_by == null
+          ? null
+          : String(row.onboarding_requested_by),
+      created_at: row.created_at == null ? null : String(row.created_at),
+      updated_at: row.updated_at == null ? null : String(row.updated_at),
+      deleted_at_utc:
+        row.deleted_at_utc == null ? null : String(row.deleted_at_utc),
+      workspace_path:
+        hasWorkspacePath && row.workspace_path != null
+          ? String(row.workspace_path)
+          : null,
+    }));
+    return { items, total: items.length, limit: 100, offset: 0 };
+  } catch {
+    return empty;
+  } finally {
+    try {
+      database?.close();
+    } catch {
+      // ignore
+    }
+  }
+}
+
 async function listWorkspacesViaRuntime(): Promise<WorkspaceListResponsePayload> {
   const response = await requestRuntimeJson<WorkspaceListResponsePayload>({
     method: "GET",
@@ -24107,6 +24217,15 @@ app.whenReady().then(async () => {
     "workspace:listWorkspaces",
     ["main", "auth-popup"],
     async () => listWorkspaces(),
+  );
+  // Cached read straight from runtime.db without going through the
+  // sidecar — used by the splash to hydrate before the sidecar
+  // finishes spawning. Returns empty on any failure so the renderer
+  // can silently fall back to the live sidecar path.
+  handleTrustedIpc(
+    "workspace:listWorkspacesCached",
+    ["main"],
+    async () => listWorkspacesFromLocalDb(),
   );
   handleTrustedIpc(
     "workspace:getWorkspaceLifecycle",
