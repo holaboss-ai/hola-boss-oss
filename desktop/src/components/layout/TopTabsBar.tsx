@@ -40,6 +40,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { useDesktopAuthSession } from "@/lib/auth/authClient";
 import { useDesktopBilling } from "@/lib/billing/useDesktopBilling";
+import {
+  STOPLIGHT_PAD_PX,
+  useStoplightCompensation,
+} from "@/lib/StoplightContext";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
@@ -68,12 +72,19 @@ export function TopTabsBar({
   onOpenExternalUrl,
   onPublish,
 }: TopTabsBarProps) {
-  const isMacIntegratedTitleBar =
-    integratedTitleBar && desktopPlatform === "darwin";
+  // Mac stoplight compensation now flows through StoplightContext (set in
+  // AppShell); the hook returns true only on darwin AND when the provider
+  // says we have an integrated title bar. We still keep the platform prop
+  // for the Windows-only chrome adjustments below.
+  const compensateForStoplight = useStoplightCompensation();
   const isWindowsIntegratedTitleBar =
     integratedTitleBar && desktopPlatform === "win32";
-  const { isAvailable: isBillingAvailable, overview, isLoading: isBillingLoading, isLowBalance } =
-    useDesktopBilling();
+  const {
+    isAvailable: isBillingAvailable,
+    overview,
+    isLoading: isBillingLoading,
+    isLowBalance,
+  } = useDesktopBilling();
   const { data: authSession } = useDesktopAuthSession();
   const currentUser = authSession?.user ?? null;
   const userButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -250,9 +261,11 @@ export function TopTabsBar({
       ? "window-drag relative h-[32px] px-2 pt-0.5 sm:px-3"
       : "window-drag relative h-[32px] px-2 sm:px-3"
     : "rounded-xl border border-border bg-card px-2.5 py-0.5 shadow-subtle-xs backdrop-blur-sm sm:px-4";
-  const headerGridClassName = `relative z-10 grid min-w-0 items-center gap-1 sm:gap-1.5 lg:h-full lg:grid-cols-[minmax(0,1fr)_auto] ${
-    isMacIntegratedTitleBar ? "pl-24" : ""
-  }`;
+  const headerGridClassName =
+    "relative z-10 grid min-w-0 items-center gap-1 sm:gap-1.5 lg:h-full lg:grid-cols-[minmax(0,1fr)_auto]";
+  const headerGridStyle = compensateForStoplight
+    ? { paddingLeft: STOPLIGHT_PAD_PX }
+    : undefined;
 
   const windowControlButtonClassName =
     "window-no-drag flex h-5 w-5 items-center justify-center rounded-[7px] border border-transparent text-muted-foreground transition-colors duration-150 hover:bg-foreground/6 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
@@ -265,7 +278,7 @@ export function TopTabsBar({
       onDoubleClick={handleTitleBarDoubleClick}
       className={headerClassName}
     >
-      <div className={headerGridClassName}>
+      <div className={headerGridClassName} style={headerGridStyle}>
         <div className="hidden lg:block" />
 
         <div
@@ -329,20 +342,20 @@ export function TopTabsBar({
             <DropdownMenuContent align="end" sideOffset={8} className="w-52">
               <DropdownMenuGroup>
                 <DropdownMenuItem onClick={() => onOpenAccount?.()}>
-                  <User2 />
+                  <User2 className="opacity-60 size-3.5" />
                   Account
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => onOpenSettings?.()}>
-                  <Settings />
+                  <Settings className="opacity-60 size-3.5" />
                   Settings
                 </DropdownMenuItem>
               </DropdownMenuGroup>
               <DropdownMenuSeparator />
               <DropdownMenuGroup>
                 <DropdownMenuItem
-                  onClick={() => onOpenExternalUrl?.("https://www.holaboss.ai")}
+                  onClick={() => onOpenExternalUrl?.("https://www.holaos.ai")}
                 >
-                  <Home />
+                  <Home className="opacity-60 size-3.5" />
                   Homepage
                 </DropdownMenuItem>
                 <DropdownMenuItem
@@ -350,7 +363,7 @@ export function TopTabsBar({
                     onOpenExternalUrl?.("https://www.holaboss.ai/docs")
                   }
                 >
-                  <BookOpen />
+                  <BookOpen className="opacity-60 size-3.5" />
                   Docs
                 </DropdownMenuItem>
               </DropdownMenuGroup>
@@ -424,9 +437,7 @@ export function TopTabsBar({
               }}
             >
               <div className="relative mb-2">
-                <Search
-                  className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
-                />
+                <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={workspaceQuery}
                   onChange={(event) => setWorkspaceQuery(event.target.value)}
@@ -441,7 +452,8 @@ export function TopTabsBar({
                     {filteredWorkspaces.map((workspace) => {
                       const isActive = workspace.id === selectedWorkspaceId;
                       const isDeleting = deletingWorkspaceId === workspace.id;
-                      const folderMissing = workspace.folder_state === "missing";
+                      const folderMissing =
+                        workspace.folder_state === "missing";
                       return (
                         <div
                           key={workspace.id}
@@ -468,7 +480,7 @@ export function TopTabsBar({
                               title={
                                 folderMissing
                                   ? `Folder missing at ${workspace.workspace_path ?? "unknown"}`
-                                  : workspace.workspace_path ?? undefined
+                                  : (workspace.workspace_path ?? undefined)
                               }
                             />
                             <span className="truncate">{workspace.name}</span>

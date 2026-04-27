@@ -380,36 +380,27 @@ export class RuntimeIntegrationService {
     return toIntegrationConnectionPayload(record);
   }
 
-  deleteConnection(connectionId: string): { deleted: true } {
+  deleteConnection(connectionId: string): { deleted: true; removed_bindings: number } {
     const normalizedId = requiredString(connectionId, "connection_id");
     const existing = this.store.getIntegrationConnection(normalizedId);
     if (!existing) {
       throw new IntegrationServiceError(404, "connection not found");
     }
 
-    const bindings = this.store.listIntegrationBindings({}).filter(
-      (b) => b.connectionId === normalizedId
-    );
-
-    // Auto-remove orphaned bindings whose workspace no longer exists
-    const liveBindings: typeof bindings = [];
+    // Connections are user-global; deleting one means it should also
+    // disappear from every workspace that binds it. Cascade through all
+    // bindings (orphaned + live) before dropping the connection so the
+    // FK ON DELETE RESTRICT on integration_bindings doesn't block us
+    // and we don't leave dangling references behind.
+    const bindings = this.store
+      .listIntegrationBindings({})
+      .filter((b) => b.connectionId === normalizedId);
     for (const binding of bindings) {
-      if (!this.store.getWorkspace(binding.workspaceId)) {
-        this.store.deleteIntegrationBinding(binding.bindingId);
-      } else {
-        liveBindings.push(binding);
-      }
-    }
-
-    if (liveBindings.length > 0) {
-      throw new IntegrationServiceError(
-        409,
-        `connection is bound to ${liveBindings.length} workspace(s) — remove bindings first`
-      );
+      this.store.deleteIntegrationBinding(binding.bindingId);
     }
 
     this.store.deleteIntegrationConnection(normalizedId);
-    return { deleted: true };
+    return { deleted: true, removed_bindings: bindings.length };
   }
 
   checkReadiness(params: {

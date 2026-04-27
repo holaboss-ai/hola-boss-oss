@@ -12,7 +12,7 @@ export function PaneCard({ title, actions, children, className = "" }: PaneCardP
 
   return (
     <section
-      className={`relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-md backdrop-blur-sm ${className}`}
+      className={`relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-card shadow-md backdrop-blur-sm ${className}`}
     >
       {hasHeader ? (
         <header className="flex shrink-0 items-center justify-between border-b border-border px-4 py-2.5">

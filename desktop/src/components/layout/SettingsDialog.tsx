@@ -1,3 +1,4 @@
+import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import {
   AlertTriangle,
   Check,
@@ -130,7 +131,10 @@ function formatBundleBytes(bytes: number): string {
     value /= 1024;
     unitIndex += 1;
   }
-  const rounded = value >= 10 || unitIndex === 0 ? Math.round(value) : Math.round(value * 10) / 10;
+  const rounded =
+    value >= 10 || unitIndex === 0
+      ? Math.round(value)
+      : Math.round(value * 10) / 10;
   return `${rounded} ${units[unitIndex]}`;
 }
 
@@ -269,22 +273,9 @@ export function SettingsDialog({
   const [appUpdateChannelPending, setAppUpdateChannelPending] = useState(false);
   const [appUpdateInstallPending, setAppUpdateInstallPending] = useState(false);
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [open, onClose]);
+  // ESC key handling moved to Base UI Dialog (built-in).
+  // The previous manual document-level keydown listener fought with
+  // other ESC consumers; Dialog scopes it correctly to the open dialog.
 
   useEffect(() => {
     if (!open) {
@@ -392,10 +383,11 @@ export function SettingsDialog({
     });
   }
 
-  if (!open) {
-    return null;
-  }
-
+  // Mount/exit lifecycle is now owned by Base UI Dialog (Portal renders
+  // the popup only while open, with built-in starting/ending-style hooks
+  // for entrance/exit transitions). Removed the manual three-phase state
+  // machine that was previously needed when the dialog was a hand-rolled
+  // div modal.
   const betaChannelEnabled = appUpdateStatus?.channel === "beta";
   const appUpdateChannelUnavailable = appUpdateStatus
     ? !appUpdateStatus.supported
@@ -403,20 +395,20 @@ export function SettingsDialog({
   const appUpdateState = aboutAppUpdateState(appUpdateStatus);
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-50 grid place-items-center px-4 py-6">
-      <button
-        type="button"
-        aria-label="Close settings"
-        onClick={onClose}
-        className="pointer-events-auto absolute inset-0 bg-background/70 backdrop-blur-sm"
-      />
-
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Settings"
-        className="pointer-events-auto relative z-10 grid h-[min(780px,calc(100vh-32px))] w-[min(980px,calc(100vw-24px))] min-w-0 overflow-hidden rounded-2xl border border-border bg-background shadow-lg grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[220px_minmax(0,1fr)] lg:grid-rows-1"
-      >
+    <DialogPrimitive.Root
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose();
+      }}
+    >
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Backdrop
+          className="fixed inset-0 z-50 bg-background/70 backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 duration-200"
+        />
+        <DialogPrimitive.Popup
+          aria-label="Settings"
+          className="fixed top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2 grid h-[min(780px,calc(100vh-32px))] w-[min(980px,calc(100vw-24px))] min-w-0 overflow-hidden rounded-2xl bg-background shadow-xl grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[220px_minmax(0,1fr)] lg:grid-rows-1 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-[0.97] data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-[0.98] duration-200 ease-out"
+        >
         <aside className="border-b border-sidebar-border bg-sidebar p-4 text-sidebar-foreground lg:border-b-0 lg:border-r">
           <nav className="mt-4 grid gap-1">
             {SETTINGS_SECTIONS.map(({ id, label, icon: Icon }) => {
@@ -635,7 +627,7 @@ export function SettingsDialog({
                       >
                         <SelectTrigger
                           size="sm"
-                          className="w-auto min-w-[96px] justify-end gap-1.5 border-transparent bg-transparent px-2 text-xs font-medium hover:bg-accent dark:bg-transparent dark:hover:bg-accent"
+                          className="w-auto min-w-24 border border-border justify-end gap-1.5 bg-transparent px-2 text-xs font-medium hover:bg-accent dark:bg-transparent dark:hover:bg-accent"
                         >
                           <SelectValue>
                             {(value: string) =>
@@ -646,7 +638,7 @@ export function SettingsDialog({
                         <SelectContent
                           align="end"
                           alignItemWithTrigger={false}
-                          className="min-w-[140px] gap-0 rounded-lg p-1 shadow-subtle-sm ring-0"
+                          className="min-w-35 gap-0 rounded-lg p-1 shadow-subtle-sm ring-0"
                         >
                           {(["system", "light", "dark"] as const).map(
                             (scheme) => (
@@ -682,7 +674,7 @@ export function SettingsDialog({
                       >
                         <SelectTrigger
                           size="sm"
-                          className="w-auto min-w-[128px] justify-end gap-1.5 border-transparent bg-transparent px-2 text-xs font-medium hover:bg-accent dark:bg-transparent dark:hover:bg-accent"
+                          className="w-auto min-w-32 justify-end gap-1.5 bg-transparent px-2 text-xs font-medium hover:bg-accent dark:bg-transparent dark:hover:bg-accent"
                         >
                           <SelectValue>
                             {(value: string) =>
@@ -776,17 +768,14 @@ export function SettingsDialog({
                             </div>
                             <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
                               A zip with logs, a database snapshot, and a
-                              redacted config — useful when reporting an
-                              issue.
+                              redacted config — useful when reporting an issue.
                             </div>
                           </div>
                           <Button
                             type="button"
                             variant="outline"
                             size="sm"
-                            onClick={() =>
-                              void handleExportDiagnosticsBundle()
-                            }
+                            onClick={() => void handleExportDiagnosticsBundle()}
                             disabled={
                               diagnosticsExportState.status === "exporting"
                             }
@@ -836,7 +825,8 @@ export function SettingsDialog({
                     <div className="flex items-center gap-2 border-t border-border bg-muted/40 px-4 py-2.5 text-xs text-muted-foreground">
                       <Lock className="size-3.5 shrink-0" />
                       <span>
-                        Stays on your device — nothing is uploaded automatically.
+                        Stays on your device — nothing is uploaded
+                        automatically.
                       </span>
                     </div>
                     {diagnosticsExportState.status === "success" &&
@@ -860,9 +850,7 @@ export function SettingsDialog({
                             type="button"
                             variant="bordered"
                             size="xs"
-                            onClick={() =>
-                              void handleRevealDiagnosticsBundle()
-                            }
+                            onClick={() => void handleRevealDiagnosticsBundle()}
                           >
                             <FolderOpen className="size-3" />
                             Show in Finder
@@ -897,7 +885,7 @@ export function SettingsDialog({
                             <div className="font-medium">
                               Couldn&apos;t export bundle
                             </div>
-                            <div className="mt-0.5 break-words text-xs text-destructive/80">
+                            <div className="mt-0.5 wrap-break-word text-xs text-destructive/80">
                               {diagnosticsExportState.message}
                             </div>
                           </div>
@@ -910,7 +898,8 @@ export function SettingsDialog({
             ) : null}
           </div>
         </section>
-      </div>
-    </div>
+        </DialogPrimitive.Popup>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }

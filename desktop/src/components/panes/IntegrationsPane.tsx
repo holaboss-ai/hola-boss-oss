@@ -94,6 +94,19 @@ function preferredToolkitForProvider(
     : current;
 }
 
+// Composio publishes a stable logo CDN keyed by toolkit slug — usable as
+// a fallback when our local toolkit lookup misses (e.g., the toolkit got
+// filtered by `composio_managed_auth_schemes` requirements, or the
+// catalog uses a slug that doesn't show up in toolkitByProvider after
+// the gmail/sheets→google remap collapse).
+function composioFallbackLogo(slug: string): string | null {
+  const cleaned = slug.trim().toLowerCase();
+  if (!cleaned) {
+    return null;
+  }
+  return `https://logos.composio.dev/api/${cleaned}`;
+}
+
 function mergeIntegrationCards(
   catalogProviders: IntegrationCatalogProviderPayload[],
   toolkits: ComposioToolkit[],
@@ -135,7 +148,7 @@ function mergeIntegrationCards(
         normalizedText(provider.description) ||
         normalizedText(provider.display_name) ||
         providerId,
-      logo: toolkit?.logo ?? null,
+      logo: toolkit?.logo ?? composioFallbackLogo(providerId),
       authSchemes: uniqueStrings([
         ...(toolkit?.auth_schemes || []),
         ...(provider.auth_modes || []),
@@ -183,10 +196,13 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
   const [connectingProviderId, setConnectingProviderId] = useState<
     string | null
   >(null);
-  const [disconnectingProviderId, setDisconnectingProviderId] = useState<
+  const [disconnectingConnectionId, setDisconnectingConnectionId] = useState<
     string | null
   >(null);
   const [statusMessage, setStatusMessage] = useState("");
+  const [accountMetadata, setAccountMetadata] = useState<
+    Map<string, ComposioAccountStatus>
+  >(new Map());
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -216,20 +232,74 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     void loadData();
   }, [isSignedIn, loadData]);
 
-  // Map providerId → connection for disconnect support
-  const connectionByProvider = useMemo(() => {
-    const map = new Map<string, IntegrationConnectionPayload>();
+  // After connections load, fetch each account's profile metadata (handle,
+  // avatar, etc.) from Composio in parallel. The metadata map is keyed by
+  // connection_id so the card render can decorate accounts as data arrives;
+  // it's append-only across loads so a transient fetch failure doesn't blank
+  // out the avatar already on screen.
+  useEffect(() => {
+    let cancelled = false;
+    const targets = connections
+      .filter((c) => c.account_external_id)
+      .map((c) => ({
+        connectionId: c.connection_id,
+        externalId: c.account_external_id as string,
+      }));
+    if (targets.length === 0) {
+      return;
+    }
+    void Promise.all(
+      targets.map(async (t) => {
+        try {
+          const status =
+            await window.electronAPI.workspace.composioAccountStatus(
+              t.externalId,
+            );
+          return [t.connectionId, status] as const;
+        } catch {
+          return null;
+        }
+      }),
+    ).then((results) => {
+      if (cancelled) return;
+      setAccountMetadata((prev) => {
+        const next = new Map(prev);
+        for (const result of results) {
+          if (result) {
+            next.set(result[0], result[1]);
+          }
+        }
+        return next;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [connections]);
+
+  // Map providerId → all active connections. A user can have multiple accounts
+  // per provider (e.g., personal + work Twitter); each connection is its own
+  // row in the Connected section, each with its own delete button.
+  const connectionsByProviderId = useMemo(() => {
+    const map = new Map<string, IntegrationConnectionPayload[]>();
     for (const conn of connections) {
-      if (normalizedText(conn.status).toLowerCase() === "active") {
-        map.set(normalizedText(conn.provider_id).toLowerCase(), conn);
+      if (normalizedText(conn.status).toLowerCase() !== "active") {
+        continue;
+      }
+      const key = normalizedText(conn.provider_id).toLowerCase();
+      const list = map.get(key);
+      if (list) {
+        list.push(conn);
+      } else {
+        map.set(key, [conn]);
       }
     }
     return map;
   }, [connections]);
 
   const connectedProviderIds = useMemo(
-    () => new Set(connectionByProvider.keys()),
-    [connectionByProvider],
+    () => new Set(connectionsByProviderId.keys()),
+    [connectionsByProviderId],
   );
 
   const categories = useMemo(() => {
@@ -342,21 +412,18 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     }
   }
 
-  async function handleDisconnect(integration: IntegrationCard) {
-    const conn = connectionByProvider.get(integration.providerId);
-    if (!conn) return;
-
-    setDisconnectingProviderId(integration.providerId);
+  async function handleDisconnect(connectionId: string) {
+    setDisconnectingConnectionId(connectionId);
     setStatusMessage("");
     try {
       await window.electronAPI.workspace.deleteIntegrationConnection(
-        conn.connection_id,
+        connectionId,
       );
       void loadData();
     } catch (error) {
       setStatusMessage(normalizeErrorMessage(error));
     } finally {
-      setDisconnectingProviderId(null);
+      setDisconnectingConnectionId(null);
     }
   }
 
@@ -435,7 +502,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     }
 
     return (
-      <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-subtle-xs backdrop-blur-sm">
+      <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-card shadow-md backdrop-blur-sm">
         <div className="relative min-h-0 flex-1 overflow-auto">
           <div className="mx-auto max-w-5xl px-6 py-6">
             <h1 className="text-xl font-semibold tracking-tight text-foreground">
@@ -508,27 +575,34 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
         </select>
       </div>
 
-      {/* Connected */}
+      {/* Connected — one card per provider, multiple account rows inside */}
       {connectedIntegrations.length > 0 ? (
         <div className="mt-6">
           <h2 className="text-xs font-medium uppercase text-muted-foreground">
             Connected
           </h2>
-          <div className="mt-3 grid grid-cols-2 gap-2">
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             {connectedIntegrations.map((integration) => (
-              <IntegrationRow
-                key={integration.slug}
-                integration={integration}
-                connected
-                canConnect={false}
-                connectDisabledReason=""
-                onConnect={() => void handleConnect(integration)}
-                onDisconnect={() => void handleDisconnect(integration)}
-                connecting={connectingProviderId === integration.providerId}
-                disconnecting={
-                  disconnectingProviderId === integration.providerId
+              <ConnectedProviderCard
+                canConnect={isSignedIn && integration.supportsManaged}
+                compact={false}
+                connectDisabledReason={
+                  integration.supportsManaged
+                    ? "Sign in first to connect another account."
+                    : "Managed sign-in is not supported for this provider."
                 }
-                actionMode="connected"
+                connecting={connectingProviderId === integration.providerId}
+                connections={
+                  connectionsByProviderId.get(integration.providerId) ?? []
+                }
+                disconnectingConnectionId={disconnectingConnectionId}
+                integration={integration}
+                key={integration.slug}
+                metadata={accountMetadata}
+                onConnect={() => void handleConnect(integration)}
+                onDisconnect={(connectionId) =>
+                  void handleDisconnect(connectionId)
+                }
               />
             ))}
           </div>
@@ -677,7 +751,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
           <p className="-mt-4 text-sm text-muted-foreground">{statusMessage}</p>
         ) : null}
 
-        {/* Connected section */}
+        {/* Connected section — one card per provider, multiple account rows */}
         {connectedIntegrations.length > 0 ? (
           <section>
             <div className="text-base font-medium text-foreground">
@@ -685,19 +759,28 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
             </div>
             <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
               {connectedIntegrations.map((integration) => (
-                <IntegrationEmbeddedCard
-                  key={integration.slug}
-                  integration={integration}
-                  connected
-                  canConnect={false}
-                  connectDisabledReason=""
-                  onConnect={() => void handleConnect(integration)}
-                  onDisconnect={() => void handleDisconnect(integration)}
-                  connecting={connectingProviderId === integration.providerId}
-                  disconnecting={
-                    disconnectingProviderId === integration.providerId
+                <ConnectedProviderCard
+                  canConnect={isSignedIn && integration.supportsManaged}
+                  compact
+                  connectDisabledReason={
+                    integration.supportsManaged
+                      ? "Sign in first to connect another account."
+                      : "Managed sign-in is not supported for this provider."
                   }
-                  actionMode="connected"
+                  connecting={
+                    connectingProviderId === integration.providerId
+                  }
+                  connections={
+                    connectionsByProviderId.get(integration.providerId) ?? []
+                  }
+                  disconnectingConnectionId={disconnectingConnectionId}
+                  integration={integration}
+                  key={integration.slug}
+                  metadata={accountMetadata}
+                  onConnect={() => void handleConnect(integration)}
+                  onDisconnect={(connectionId) =>
+                    void handleDisconnect(connectionId)
+                  }
                 />
               ))}
             </div>
@@ -750,7 +833,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
   }
 
   return (
-    <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-subtle-xs backdrop-blur-sm">
+    <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-card shadow-md backdrop-blur-sm">
       <div className="relative min-h-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-5xl px-6 py-6">
           <h1 className="text-xl font-semibold tracking-tight text-foreground">
@@ -977,6 +1060,176 @@ function IntegrationEmbeddedCard({
             </Badge>
           </div>
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+function accountDisplayLabel(
+  conn: IntegrationConnectionPayload,
+  meta: ComposioAccountStatus | undefined,
+  index: number
+): string {
+  const handle = meta?.handle?.trim();
+  if (handle) {
+    return handle.startsWith("@") ? handle : `@${handle}`;
+  }
+  const email = meta?.email?.trim();
+  if (email) {
+    return email;
+  }
+  const displayName = meta?.displayName?.trim();
+  if (displayName) {
+    return displayName;
+  }
+  const label = normalizedText(conn.account_label);
+  // Skip the auto-generated "<provider> (Managed)" label and any raw
+  // Composio connected_account_id (always prefixed with "ca_") — those
+  // tell the user nothing useful. Fall through to a stable index label.
+  if (label && !/\(managed\)/i.test(label) && !label.startsWith("ca_")) {
+    return label;
+  }
+  return `Account ${index + 1}`;
+}
+
+function ConnectedProviderCard({
+  integration,
+  connections,
+  canConnect,
+  connectDisabledReason,
+  onConnect,
+  onDisconnect,
+  connecting,
+  disconnectingConnectionId,
+  metadata,
+  compact,
+}: {
+  integration: IntegrationCard;
+  connections: IntegrationConnectionPayload[];
+  canConnect: boolean;
+  connectDisabledReason: string;
+  onConnect: () => void;
+  onDisconnect: (connectionId: string) => void;
+  connecting: boolean;
+  disconnectingConnectionId: string | null;
+  metadata: Map<string, ComposioAccountStatus>;
+  compact: boolean;
+}) {
+  const containerClass = compact
+    ? "flex flex-col gap-1 rounded-xl bg-card px-3 py-2.5 ring-1 ring-border"
+    : "flex flex-col gap-1 rounded-xl border border-border px-3 py-2.5";
+  // Track avatars that 404 / refuse to load so we degrade to the lettered
+  // placeholder instead of the broken-image icon. Provider CDNs can be
+  // flaky (Twitter rate limits, LinkedIn auth requirements) so this is
+  // worth the small bookkeeping.
+  const [failedAvatars, setFailedAvatars] = useState<Set<string>>(new Set());
+  const [logoFailed, setLogoFailed] = useState(false);
+  const showLogo = Boolean(integration.logo) && !logoFailed;
+
+  return (
+    <div className={containerClass}>
+      <div className="flex items-center gap-2">
+        <div className="flex size-5 shrink-0 items-center justify-center overflow-hidden rounded-sm bg-background">
+          {showLogo && integration.logo ? (
+            <img
+              alt=""
+              className="size-full object-contain"
+              onError={() => setLogoFailed(true)}
+              referrerPolicy="no-referrer"
+              src={integration.logo}
+            />
+          ) : (
+            <span className="text-[10px] font-semibold text-muted-foreground">
+              {integration.name.charAt(0)}
+            </span>
+          )}
+        </div>
+        <div className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+          {integration.name}
+        </div>
+        <Button
+          aria-label={`Connect another ${integration.name} account`}
+          className="text-muted-foreground hover:text-foreground"
+          disabled={connecting || !canConnect}
+          onClick={onConnect}
+          size="icon-xs"
+          title={
+            canConnect
+              ? `Connect another ${integration.name} account`
+              : connectDisabledReason
+          }
+          type="button"
+          variant="ghost"
+        >
+          {connecting ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <Plus className="size-3.5" />
+          )}
+        </Button>
+      </div>
+
+      <div className="flex flex-col">
+        {connections.map((conn, index) => {
+          const meta = metadata.get(conn.connection_id);
+          const label = accountDisplayLabel(conn, meta, index);
+          const avatarUrl = meta?.avatarUrl?.trim();
+          const fallbackChar =
+            label.replace(/^@/, "").charAt(0).toUpperCase() || "?";
+          const failedAvatar = failedAvatars.has(conn.connection_id);
+          const showAvatar = Boolean(avatarUrl) && !failedAvatar;
+          const disconnecting =
+            disconnectingConnectionId === conn.connection_id;
+          return (
+            <div
+              className="flex items-center gap-2 py-1"
+              key={conn.connection_id}
+            >
+              {showAvatar ? (
+                <img
+                  alt=""
+                  className="size-3.5 shrink-0 rounded-full bg-muted object-cover"
+                  onError={() =>
+                    setFailedAvatars((prev) => {
+                      if (prev.has(conn.connection_id)) {
+                        return prev;
+                      }
+                      const next = new Set(prev);
+                      next.add(conn.connection_id);
+                      return next;
+                    })
+                  }
+                  // Google's lh3.googleusercontent.com CDN rejects requests
+                  // with a localhost / app referrer; this header strips it.
+                  referrerPolicy="no-referrer"
+                  src={avatarUrl}
+                />
+              ) : (
+                <span className="flex size-3.5 shrink-0 items-center justify-center rounded-full bg-muted text-[8px] font-semibold text-muted-foreground">
+                  {fallbackChar}
+                </span>
+              )}
+              <span className="min-w-0 flex-1 truncate text-xs text-foreground">
+                {label}
+              </span>
+              <Button
+                aria-label={`Disconnect ${label}`}
+                className="text-muted-foreground hover:text-destructive"
+                disabled={disconnecting}
+                onClick={() => onDisconnect(conn.connection_id)}
+                size="icon-xs"
+                type="button"
+                variant="ghost"
+              >
+                {disconnecting ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <Unplug className="size-3" />
+                )}
+              </Button>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
