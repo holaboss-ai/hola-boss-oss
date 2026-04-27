@@ -6211,10 +6211,14 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 404, "workspace not found");
     }
 
-    const binding = store.getBinding({ workspaceId, sessionId: params.sessionId });
-    if (!binding) {
-      return sendError(reply, 404, "session binding not found");
+    const session = store.getSession({
+      workspaceId,
+      sessionId: params.sessionId,
+    });
+    if (!session) {
+      return sendError(reply, 404, "session not found");
     }
+    const binding = store.getBinding({ workspaceId, sessionId: params.sessionId });
 
     const limit = Math.max(1, Math.min(1000, optionalInteger(query.limit, 200)));
     const offset = Math.max(0, optionalInteger(query.offset, 0));
@@ -6237,8 +6241,8 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     return {
       workspace_id: workspaceId,
       session_id: params.sessionId,
-      harness: binding.harness,
-      harness_session_id: binding.harnessSessionId,
+      harness: binding?.harness ?? resolvedWorkspaceHarness(workspace),
+      harness_session_id: binding?.harnessSessionId ?? "",
       source: "sandbox_local_storage",
       messages,
       count: messages.length,

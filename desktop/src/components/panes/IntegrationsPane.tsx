@@ -673,7 +673,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     }
 
     return (
-      <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-subtle-xs backdrop-blur-sm">
+      <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-card shadow-md backdrop-blur-sm">
         <div className="relative min-h-0 flex-1 overflow-auto">
           <div className="mx-auto max-w-5xl px-6 py-6">
             <h1 className="text-xl font-semibold tracking-tight text-foreground">
@@ -1004,7 +1004,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
   }
 
   return (
-    <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-subtle-xs backdrop-blur-sm">
+    <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-card shadow-md backdrop-blur-sm">
       <div className="relative min-h-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-5xl px-6 py-6">
           <h1 className="text-xl font-semibold tracking-tight text-foreground">

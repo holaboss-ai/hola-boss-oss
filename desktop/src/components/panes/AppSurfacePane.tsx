@@ -274,7 +274,7 @@ export function AppSurfacePane({
   if (!ready && !error) {
     return (
       <div className="flex h-full min-h-0 gap-2">
-        <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xs backdrop-blur-sm">
+        <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl bg-card shadow-md backdrop-blur-sm">
           <div className="flex flex-1 items-center justify-center p-4">
             <div className="max-w-[200px] text-center">
               <LoaderCircle
@@ -331,7 +331,7 @@ export function AppSurfacePane({
             ) : null}
           </div>
         </section>
-        <section className="flex min-w-0 flex-1 items-center justify-center rounded-xl border border-border bg-card shadow-xs backdrop-blur-sm">
+        <section className="flex min-w-0 flex-1 items-center justify-center rounded-xl bg-card shadow-md backdrop-blur-sm">
           <div className="text-center">
             <LoaderCircle
               size={16}
@@ -351,19 +351,21 @@ export function AppSurfacePane({
     return (
       <div className="flex h-full min-h-0 gap-2">
         <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card p-4 shadow-xs backdrop-blur-sm">
-          <div className="flex items-center gap-2 text-destructive">
+          <div className="flex shrink-0 items-center gap-2 text-destructive">
             <Activity size={14} />
             <span className="text-[10px] uppercase tracking-widest">
               App error
             </span>
           </div>
-          <div className="mt-3 text-sm font-semibold text-foreground">
+          <div className="mt-3 shrink-0 text-sm font-semibold text-foreground">
             {label}
           </div>
-          <div className="mt-3 rounded-lg border border-destructive/25 bg-destructive/5 p-3">
-            <div className="text-xs leading-5 text-foreground">{error}</div>
+          <div className="mt-3 min-h-0 flex-1 overflow-y-auto rounded-lg border border-destructive/25 bg-destructive/5 p-3">
+            <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-5 text-foreground">
+              {error}
+            </pre>
           </div>
-          <div className="mt-3">
+          <div className="mt-3 shrink-0">
             <Button
               type="button"
               variant="destructive"
@@ -381,12 +383,12 @@ export function AppSurfacePane({
             </Button>
           </div>
           {actionError ? (
-            <div className="mt-2 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+            <div className="mt-2 shrink-0 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">
               {actionError}
             </div>
           ) : null}
         </section>
-        <section className="flex min-w-0 flex-1 items-center justify-center rounded-xl border border-border bg-card shadow-xs backdrop-blur-sm">
+        <section className="flex min-w-0 flex-1 items-center justify-center rounded-xl bg-card shadow-md backdrop-blur-sm">
           <div className="text-center">
             <Activity size={18} className="mx-auto text-destructive" />
             <div className="mt-2 text-xs text-muted-foreground">
@@ -402,7 +404,7 @@ export function AppSurfacePane({
   return (
     <div className="flex h-full min-h-0 gap-2">
       {/* Left: App info card */}
-      <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xs backdrop-blur-sm">
+      <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl bg-card shadow-md backdrop-blur-sm">
         <div className="chat-scrollbar-hidden flex-1 overflow-y-auto p-4">
           <div className="flex items-center gap-3">
             <span className="grid size-10 shrink-0 place-items-center rounded-lg border border-border bg-muted text-xs font-semibold uppercase text-muted-foreground">
@@ -588,7 +590,7 @@ export function AppSurfacePane({
       </section>
 
       {/* Right: App iframe */}
-      <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-xs">
+      <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-background shadow-md">
         <div
           className="relative min-h-0 flex-1"
           style={{ borderRadius: "inherit" }}

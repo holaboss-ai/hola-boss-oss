@@ -133,6 +133,14 @@ interface QueuedSessionInputPreviewDescriptor {
   status: QueuedSessionInputStatus;
 }
 
+interface PendingOptimisticUserMessage {
+  localMessageId: string;
+  inputId?: string | null;
+  sessionId: string;
+  workspaceId: string;
+  message: ChatMessage;
+}
+
 interface TodoPlanPreviewState {
   plan: ChatTodoPlan;
   expanded: boolean;
@@ -1990,6 +1998,50 @@ function reconcileQueuedSessionInputs(
     });
 }
 
+function reconcilePendingOptimisticUserMessages(
+  pendingMessages: PendingOptimisticUserMessage[],
+  params: {
+    workspaceId: string;
+    sessionId: string;
+    persistedInputIds: Set<string>;
+  },
+): PendingOptimisticUserMessage[] {
+  return pendingMessages.filter((item) => {
+    if (
+      item.workspaceId !== params.workspaceId ||
+      item.sessionId !== params.sessionId
+    ) {
+      return true;
+    }
+    const inputId = (item.inputId || "").trim();
+    if (!inputId) {
+      return true;
+    }
+    return !params.persistedInputIds.has(inputId);
+  });
+}
+
+function mergePendingOptimisticUserMessages(
+  renderedMessages: ChatMessage[],
+  pendingMessages: PendingOptimisticUserMessage[],
+  params: {
+    workspaceId: string;
+    sessionId: string;
+  },
+): ChatMessage[] {
+  const matchingPendingMessages = pendingMessages
+    .filter(
+      (item) =>
+        item.workspaceId === params.workspaceId &&
+        item.sessionId === params.sessionId,
+    )
+    .map((item) => item.message);
+  return uniqueChatMessagesInDisplayOrder([
+    ...renderedMessages,
+    ...matchingPendingMessages,
+  ]);
+}
+
 function defaultQueuedSessionInputPreviewEntries(
   mode: "single" | "multiple",
 ): QueuedSessionInputPreviewDescriptor[] {
@@ -3408,6 +3460,8 @@ export function ChatPane({
   const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     QueuedSessionInput[]
   >([]);
+  const [pendingOptimisticUserMessages, setPendingOptimisticUserMessages] =
+    useState<PendingOptimisticUserMessage[]>([]);
   const [currentTodoPlan, setCurrentTodoPlan] = useState<ChatTodoPlan | null>(
     null,
   );
@@ -3436,6 +3490,9 @@ export function ChatPane({
   const composerBlockRef = useRef<HTMLDivElement>(null);
   const composerIsComposingRef = useRef(false);
   const shouldAutoScrollRef = useRef(true);
+  const pendingOptimisticUserMessagesRef = useRef<
+    PendingOptimisticUserMessage[]
+  >([]);
   const lastChatScrollTopRef = useRef(0);
   const chatScrollMetricsSyncFrameRef = useRef<number | null>(null);
   const chatScrollMetricsSyncTargetRef = useRef<HTMLDivElement | null>(null);
@@ -3636,6 +3693,21 @@ export function ChatPane({
   function setIsLoadingOlderHistoryState(nextValue: boolean) {
     isLoadingOlderHistoryRef.current = nextValue;
     setIsLoadingOlderHistory(nextValue);
+  }
+
+  function updatePendingOptimisticUserMessagesState(
+    nextValue:
+      | PendingOptimisticUserMessage[]
+      | ((
+          current: PendingOptimisticUserMessage[],
+        ) => PendingOptimisticUserMessage[]),
+  ) {
+    const next =
+      typeof nextValue === "function"
+        ? nextValue(pendingOptimisticUserMessagesRef.current)
+        : nextValue;
+    pendingOptimisticUserMessagesRef.current = next;
+    setPendingOptimisticUserMessages(next);
   }
 
   function resetLiveTurn() {
@@ -4064,13 +4136,16 @@ export function ChatPane({
     liveTodoPlanOverrideRef.current = null;
     setSessionOutputs(page.outputs);
     setCurrentTodoPlan(todoPlanFromOutputEvents(page.outputEvents));
-    setMessages(uniqueChatMessagesInDisplayOrder(page.renderedMessages));
     setLoadedHistoryMessageCount(page.history.count);
     setTotalHistoryMessageCount(page.history.total);
     setIsLoadingOlderHistoryState(false);
     pendingHistoryPrependRestoreRef.current = null;
     setChatErrorMessage(page.warnings.join(" "));
-    resetLiveTurn();
+    const shouldPreservePendingPlaceholder =
+      pendingInputIdRef.current === STREAM_ATTACH_PENDING;
+    if (!shouldPreservePendingPlaceholder) {
+      resetLiveTurn();
+    }
     requestHistoryViewportRestore();
 
     const onboardingSessionId = (
@@ -4086,6 +4161,28 @@ export function ChatPane({
     ).trim();
     const persistedInputIds = new Set(
       turnInputIdsFromHistoryMessages(page.history.messages),
+    );
+    const reconciledPendingOptimisticUserMessages =
+      reconcilePendingOptimisticUserMessages(
+        pendingOptimisticUserMessagesRef.current,
+        {
+          workspaceId,
+          sessionId: nextSessionId,
+          persistedInputIds,
+        },
+      );
+    updatePendingOptimisticUserMessagesState(
+      reconciledPendingOptimisticUserMessages,
+    );
+    setMessages(
+      mergePendingOptimisticUserMessages(
+        page.renderedMessages,
+        reconciledPendingOptimisticUserMessages,
+        {
+          workspaceId,
+          sessionId: nextSessionId,
+        },
+      ),
     );
     setQueuedSessionInputs((current) =>
       reconcileQueuedSessionInputs(current, {
@@ -5844,11 +5941,18 @@ export function ChatPane({
           return;
         }
         const status = runtimeStateEffectiveStatus(currentState);
+        const activeStreamId = activeStreamIdRef.current;
+        const pendingInputId = pendingInputIdRef.current || "";
+        const attachPendingWithoutStream = Boolean(
+          pendingInputId && !activeStreamId,
+        );
+        if (attachPendingWithoutStream) {
+          return;
+        }
         if (status === "BUSY" || status === "QUEUED") {
           return;
         }
 
-        const activeStreamId = activeStreamIdRef.current;
         if (activeStreamId) {
           await closeStreamWithReason(
             activeStreamId,
@@ -5995,6 +6099,7 @@ export function ChatPane({
       isResponding &&
       !pendingSessionTarget &&
       targetSessionId === activeSessionIdRef.current;
+    let optimisticUserMessageId = "";
 
     setIsSubmittingMessage(true);
 
@@ -6084,8 +6189,9 @@ export function ChatPane({
         quotedSkillIds,
       );
       const queuedMessageCreatedAt = new Date().toISOString();
+      optimisticUserMessageId = `user-${Date.now()}`;
       const userMessage: ChatMessage = {
-        id: `user-${Date.now()}`,
+        id: optimisticUserMessageId,
         role: "user",
         text: serializedPrompt,
         createdAt: queuedMessageCreatedAt,
@@ -6095,6 +6201,23 @@ export function ChatPane({
       shouldAutoScrollRef.current = true;
       if (!queueOntoActiveRun) {
         setMessages((prev) => [...prev, userMessage]);
+        updatePendingOptimisticUserMessagesState((current) => [
+          ...current.filter(
+            (item) =>
+              !(
+                item.localMessageId === optimisticUserMessageId &&
+                item.workspaceId === selectedWorkspace.id &&
+                item.sessionId === targetSessionId
+              ),
+          ),
+          {
+            localMessageId: optimisticUserMessageId,
+            inputId: null,
+            sessionId: targetSessionId,
+            workspaceId: selectedWorkspace.id,
+            message: userMessage,
+          },
+        ]);
       }
       setInput("");
       setQuotedSkillIds([]);
@@ -6125,6 +6248,7 @@ export function ChatPane({
         setIsResponding(true);
         setLiveAgentStatus("Thinking");
         activeAssistantMessageIdRef.current = null;
+        pendingInputIdRef.current = STREAM_ATTACH_PENDING;
       }
 
       const queued = await window.electronAPI.workspace.queueSessionInput({
@@ -6151,6 +6275,29 @@ export function ChatPane({
           : "queue response received",
       });
       if (!queueOntoActiveRun) {
+        const persistedUserMessageId = `user-${queued.input_id}`;
+        const persistedUserMessage: ChatMessage = {
+          ...userMessage,
+          id: persistedUserMessageId,
+        };
+        setMessages((prev) =>
+          prev.map((message) =>
+            message.id === optimisticUserMessageId ? persistedUserMessage : message,
+          ),
+        );
+        updatePendingOptimisticUserMessagesState((current) =>
+          current.map((item) =>
+            item.localMessageId === optimisticUserMessageId
+              ? {
+                  ...item,
+                  inputId: queued.input_id,
+                  sessionId: queued.session_id,
+                  workspaceId: selectedWorkspace.id,
+                  message: persistedUserMessage,
+                }
+              : item,
+          ),
+        );
         pendingInputIdRef.current = queued.input_id;
         const opened = await window.electronAPI.workspace
           .openSessionOutputStream({
@@ -6271,6 +6418,16 @@ export function ChatPane({
         });
       }
     } catch (error) {
+      if (!queueOntoActiveRun && optimisticUserMessageId) {
+        setMessages((prev) =>
+          prev.filter((message) => message.id !== optimisticUserMessageId),
+        );
+        updatePendingOptimisticUserMessagesState((current) =>
+          current.filter(
+            (item) => item.localMessageId !== optimisticUserMessageId,
+          ),
+        );
+      }
       if (!queueOntoActiveRun) {
         const activeStreamId = activeStreamIdRef.current;
         if (activeStreamId) {
@@ -8618,7 +8775,7 @@ function QueuedSessionInputRail({
     <div className="relative" style={{ paddingTop: `${reservedTopPx}px` }}>
       <div className="pointer-events-none absolute inset-x-0 top-0">
         <div
-          className="pointer-events-auto absolute inset-x-0 overflow-hidden rounded-3xl border border-border bg-background shadow-subtle-xs"
+          className="pointer-events-auto absolute inset-x-0 overflow-hidden rounded-3xl bg-background shadow-md"
           style={{
             left: `${panelInsetPx}px`,
             right: `${panelInsetPx}px`,
