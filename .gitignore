@@ -23,6 +23,9 @@ node_modules/
 website/docs/docs/.vitepress/cache/
 website/docs/docs/.vitepress/dist/
 website/docs/.turbo/
+website/docs/.react-router/
+website/docs/.source/
+website/docs/build/
 .superpowers
 .worktrees/
 *.p12

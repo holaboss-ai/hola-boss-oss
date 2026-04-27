@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, LoaderCircle, Plug, RefreshCw, Trash2 } from "lucide-react";
+import { Activity, LoaderCircle, Plug, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { providerIcon } from "@/components/onboarding/constants";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
@@ -52,68 +59,110 @@ export function AppSurfacePane({
     [path, resourceId, view],
   );
 
-  // Integration connection status for this app
-  const [integrationStatus, setIntegrationStatus] = useState<{
-    connected: boolean;
+  // Per-app integration binding: which user-global account this workspace's
+  // copy of the app should use. Connections are user-global; the binding
+  // (target_type="app") is workspace+app scoped.
+  const [integrationContext, setIntegrationContext] = useState<{
+    providerId: string;
     providerName: string;
+    candidates: IntegrationConnectionPayload[];
+    currentBindingId: string | null;
+    currentConnectionId: string | null;
   } | null>(null);
+  const [bindingBusy, setBindingBusy] = useState(false);
 
   const checkIntegration = useCallback(async () => {
     if (!selectedWorkspaceId) return;
     try {
-      const { connections } =
-        await window.electronAPI.workspace.listIntegrationConnections();
-      const { providers } =
-        await window.electronAPI.workspace.listIntegrationCatalog();
-      const bindings =
-        await window.electronAPI.workspace.listIntegrationBindings(
-          selectedWorkspaceId,
-        );
-      const appBinding = bindings.bindings.find(
+      const [{ connections }, { providers }, bindingsResult] =
+        await Promise.all([
+          window.electronAPI.workspace.listIntegrationConnections(),
+          window.electronAPI.workspace.listIntegrationCatalog(),
+          window.electronAPI.workspace.listIntegrationBindings(
+            selectedWorkspaceId,
+          ),
+        ]);
+
+      // Resolve the expected provider for this app: prefer any existing
+      // app-level binding (which encodes the integration_key authoritatively),
+      // otherwise fall back to a static appId → provider mapping.
+      const knownProviders: Record<string, string> = {
+        gmail: "gmail",
+        sheets: "googlesheets",
+        github: "github",
+        reddit: "reddit",
+        twitter: "twitter",
+        linkedin: "linkedin",
+      };
+      const appBinding = bindingsResult.bindings.find(
         (b) => b.target_type === "app" && b.target_id === appId,
       );
-      if (appBinding) {
-        const conn = connections.find(
-          (c) => c.connection_id === appBinding.connection_id,
-        );
-        const provider = providers.find(
-          (p) => p.provider_id === appBinding.integration_key,
-        );
-        setIntegrationStatus({
-          connected: conn?.status === "active",
-          providerName: provider?.display_name ?? appBinding.integration_key,
-        });
-      } else {
-        const knownProviders: Record<string, string> = {
-          gmail: "gmail",
-          sheets: "googlesheets",
-          github: "github",
-          reddit: "reddit",
-          twitter: "twitter",
-          linkedin: "linkedin",
-        };
-        const expectedProvider = knownProviders[appId.toLowerCase()];
-        if (expectedProvider) {
-          const conn = connections.find(
-            (c) => c.provider_id === expectedProvider && c.status === "active",
-          );
-          const provider = providers.find(
-            (p) => p.provider_id === expectedProvider,
-          );
-          setIntegrationStatus({
-            connected: Boolean(conn),
-            providerName: provider?.display_name ?? expectedProvider,
-          });
-        }
+      const providerId =
+        appBinding?.integration_key ?? knownProviders[appId.toLowerCase()];
+      if (!providerId) {
+        setIntegrationContext(null);
+        return;
       }
+
+      const provider = providers.find((p) => p.provider_id === providerId);
+      const candidates = connections.filter(
+        (c) =>
+          c.provider_id === providerId &&
+          (c.status ?? "").toLowerCase() === "active",
+      );
+
+      // Current selection: app-level binding wins; fall back to the
+      // workspace-default binding for this provider.
+      const workspaceDefault = bindingsResult.bindings.find(
+        (b) =>
+          b.target_type === "workspace" &&
+          b.target_id === "default" &&
+          b.integration_key === providerId,
+      );
+      const currentConnectionId =
+        appBinding?.connection_id ?? workspaceDefault?.connection_id ?? null;
+
+      setIntegrationContext({
+        providerId,
+        providerName: provider?.display_name ?? providerId,
+        candidates,
+        currentBindingId: appBinding?.binding_id ?? null,
+        currentConnectionId,
+      });
     } catch {
-      // Non-fatal
+      // Non-fatal — leave the previous context in place.
     }
   }, [appId, selectedWorkspaceId]);
 
   useEffect(() => {
     void checkIntegration();
   }, [checkIntegration]);
+
+  const handleSelectBinding = useCallback(
+    async (connectionId: string) => {
+      if (!selectedWorkspaceId || !integrationContext) return;
+      setBindingBusy(true);
+      try {
+        await window.electronAPI.workspace.upsertIntegrationBinding(
+          selectedWorkspaceId,
+          "app",
+          appId,
+          integrationContext.providerId,
+          { connection_id: connectionId, is_default: false },
+        );
+        await checkIntegration();
+      } catch {
+        // Non-fatal — the dropdown will reflect server state on next refresh.
+      } finally {
+        setBindingBusy(false);
+      }
+    },
+    [appId, checkIntegration, integrationContext, selectedWorkspaceId],
+  );
+
+  const handleConnectAccount = useCallback(() => {
+    void window.electronAPI.ui.openSettingsPane("integrations");
+  }, []);
 
   // Resolve iframe URL when app is ready
   useEffect(() => {
@@ -350,24 +399,75 @@ export function AppSurfacePane({
             </div>
           ) : null}
 
-          {integrationStatus ? (
+          {integrationContext ? (
             <div className="mt-4">
               <div className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
                 Integrations
               </div>
-              <div className="mt-2 flex items-center justify-between rounded-md border border-border bg-muted px-3 py-2">
+              <div className="mt-2 flex items-center gap-2 rounded-md border border-border bg-muted px-3 py-2">
                 <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <Plug size={11} />
-                  {integrationStatus.providerName}
+                  {integrationContext.providerName}
                 </span>
-                <span
-                  className={`flex items-center gap-1.5 text-xs font-medium ${integrationStatus.connected ? "text-success" : "text-destructive"}`}
-                >
-                  <span
-                    className={`size-1.5 rounded-full ${integrationStatus.connected ? "bg-success" : "bg-destructive"}`}
-                  />
-                  {integrationStatus.connected ? "Connected" : "Not connected"}
-                </span>
+                <span className="text-muted-foreground">·</span>
+                {integrationContext.candidates.length === 0 ? (
+                  <Button
+                    className="h-auto px-2 py-1 text-xs"
+                    onClick={handleConnectAccount}
+                    size="sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    <Plus size={12} />
+                    Connect a {integrationContext.providerName} account
+                  </Button>
+                ) : (
+                  <Select
+                    disabled={bindingBusy}
+                    onValueChange={(value) => {
+                      if (!value) return;
+                      if (value === "__connect_new__") {
+                        handleConnectAccount();
+                      } else {
+                        void handleSelectBinding(value);
+                      }
+                    }}
+                    value={integrationContext.currentConnectionId ?? ""}
+                  >
+                    <SelectTrigger
+                      className="ml-auto h-7 min-w-[140px] gap-1.5 border-transparent bg-transparent px-2 text-xs hover:bg-accent"
+                      size="sm"
+                    >
+                      <SelectValue placeholder="Pick an account" />
+                    </SelectTrigger>
+                    <SelectContent
+                      align="end"
+                      className="min-w-[200px] gap-0 rounded-lg p-1 shadow-subtle-sm"
+                    >
+                      {integrationContext.candidates.map((conn) => {
+                        const labelText =
+                          (conn.account_label?.trim() ?? "") ||
+                          (conn.account_external_id?.trim() ?? "") ||
+                          conn.connection_id;
+                        return (
+                          <SelectItem
+                            className="rounded-md px-2.5 py-1.5 text-xs"
+                            key={conn.connection_id}
+                            value={conn.connection_id}
+                          >
+                            {labelText}
+                          </SelectItem>
+                        );
+                      })}
+                      <SelectItem
+                        className="rounded-md px-2.5 py-1.5 text-xs text-muted-foreground"
+                        value="__connect_new__"
+                      >
+                        + Connect new account
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
               </div>
             </div>
           ) : null}

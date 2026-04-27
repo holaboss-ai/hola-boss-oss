@@ -2,7 +2,7 @@ import { Check, Download, LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { providerIcon } from "@/components/onboarding/constants";
+import { AppIcon } from "@/components/marketplace/AppIcon";
 
 type AppCardState = "available" | "installing" | "installed";
 
@@ -16,14 +16,16 @@ interface AppCatalogCardProps {
 export function AppCatalogCard({ entry, state, disabled, onInstall }: AppCatalogCardProps) {
   const label = entry.name || entry.app_id;
   const description = entry.description ?? "";
-  const icon = providerIcon(entry.app_id, 22);
   return (
     <Card size="sm">
       <CardHeader>
         <div className="flex items-center gap-3">
-          <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-border bg-muted/40 text-sm font-semibold uppercase text-muted-foreground">
-            {icon ?? label.slice(0, 1)}
-          </span>
+          <AppIcon
+            iconUrl={entry.icon}
+            appId={entry.app_id}
+            label={label}
+            size="card"
+          />
           <div className="min-w-0 flex-1">
             <CardTitle className="truncate text-sm">{label}</CardTitle>
             {entry.version ? (

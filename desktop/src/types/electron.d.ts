@@ -1289,6 +1289,11 @@ declare global {
     authConfigId: string | null;
     toolkitSlug: string | null;
     userId: string | null;
+    handle?: string | null;
+    displayName?: string | null;
+    avatarUrl?: string | null;
+    email?: string | null;
+    data?: Record<string, unknown> | null;
   }
 
   interface TemplateIntegrationRequirement {
@@ -1556,6 +1561,7 @@ declare global {
       deleteOAuthConfig: (providerId: string) => Promise<{ deleted: boolean }>;
       startOAuthFlow: (provider: string) => Promise<OAuthAuthorizeResponsePayload>;
       composioListToolkits: () => Promise<{ toolkits: Array<{ slug: string; name: string; description: string; logo: string | null; auth_schemes: string[]; categories: string[] }> }>;
+      composioListConnections: () => Promise<{ connections: Array<{ id: string; toolkitSlug: string; toolkitName: string; toolkitLogo: string | null; userId: string; createdAt: string }> }>;
       composioConnect: (payload: { provider: string; owner_user_id: string; callback_url?: string }) => Promise<ComposioConnectResult>;
       composioAccountStatus: (connectedAccountId: string) => Promise<ComposioAccountStatus>;
       composioFinalize: (payload: { connected_account_id: string; provider: string; owner_user_id: string; account_label?: string }) => Promise<IntegrationConnectionPayload>;

@@ -130,7 +130,10 @@ function formatBundleBytes(bytes: number): string {
     value /= 1024;
     unitIndex += 1;
   }
-  const rounded = value >= 10 || unitIndex === 0 ? Math.round(value) : Math.round(value * 10) / 10;
+  const rounded =
+    value >= 10 || unitIndex === 0
+      ? Math.round(value)
+      : Math.round(value * 10) / 10;
   return `${rounded} ${units[unitIndex]}`;
 }
 
@@ -635,7 +638,7 @@ export function SettingsDialog({
                       >
                         <SelectTrigger
                           size="sm"
-                          className="w-auto min-w-[96px] justify-end gap-1.5 border-transparent bg-transparent px-2 text-xs font-medium hover:bg-accent dark:bg-transparent dark:hover:bg-accent"
+                          className="w-auto min-w-24 border border-border justify-end gap-1.5 bg-transparent px-2 text-xs font-medium hover:bg-accent dark:bg-transparent dark:hover:bg-accent"
                         >
                           <SelectValue>
                             {(value: string) =>
@@ -646,7 +649,7 @@ export function SettingsDialog({
                         <SelectContent
                           align="end"
                           alignItemWithTrigger={false}
-                          className="min-w-[140px] gap-0 rounded-lg p-1 shadow-subtle-sm ring-0"
+                          className="min-w-35 gap-0 rounded-lg p-1 shadow-subtle-sm ring-0"
                         >
                           {(["system", "light", "dark"] as const).map(
                             (scheme) => (
@@ -682,7 +685,7 @@ export function SettingsDialog({
                       >
                         <SelectTrigger
                           size="sm"
-                          className="w-auto min-w-[128px] justify-end gap-1.5 border-transparent bg-transparent px-2 text-xs font-medium hover:bg-accent dark:bg-transparent dark:hover:bg-accent"
+                          className="w-auto min-w-32 justify-end gap-1.5 bg-transparent px-2 text-xs font-medium hover:bg-accent dark:bg-transparent dark:hover:bg-accent"
                         >
                           <SelectValue>
                             {(value: string) =>
@@ -776,17 +779,14 @@ export function SettingsDialog({
                             </div>
                             <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
                               A zip with logs, a database snapshot, and a
-                              redacted config — useful when reporting an
-                              issue.
+                              redacted config — useful when reporting an issue.
                             </div>
                           </div>
                           <Button
                             type="button"
                             variant="outline"
                             size="sm"
-                            onClick={() =>
-                              void handleExportDiagnosticsBundle()
-                            }
+                            onClick={() => void handleExportDiagnosticsBundle()}
                             disabled={
                               diagnosticsExportState.status === "exporting"
                             }
@@ -836,7 +836,8 @@ export function SettingsDialog({
                     <div className="flex items-center gap-2 border-t border-border bg-muted/40 px-4 py-2.5 text-xs text-muted-foreground">
                       <Lock className="size-3.5 shrink-0" />
                       <span>
-                        Stays on your device — nothing is uploaded automatically.
+                        Stays on your device — nothing is uploaded
+                        automatically.
                       </span>
                     </div>
                     {diagnosticsExportState.status === "success" &&
@@ -860,9 +861,7 @@ export function SettingsDialog({
                             type="button"
                             variant="bordered"
                             size="xs"
-                            onClick={() =>
-                              void handleRevealDiagnosticsBundle()
-                            }
+                            onClick={() => void handleRevealDiagnosticsBundle()}
                           >
                             <FolderOpen className="size-3" />
                             Show in Finder
@@ -897,7 +896,7 @@ export function SettingsDialog({
                             <div className="font-medium">
                               Couldn&apos;t export bundle
                             </div>
-                            <div className="mt-0.5 break-words text-xs text-destructive/80">
+                            <div className="mt-0.5 wrap-break-word text-xs text-destructive/80">
                               {diagnosticsExportState.message}
                             </div>
                           </div>

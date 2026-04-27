@@ -121,6 +121,7 @@ export interface PiSessionHandle {
   sessionFile: string;
   mcpToolMetadata: Map<string, PiMcpToolMetadata>;
   skillMetadataByAlias: Map<string, PiSkillMetadata>;
+  unavailableMcpServers?: PiMcpServerUnavailableInfo[];
   dispose: () => Promise<void>;
 }
 
@@ -206,10 +207,17 @@ export type PiMcpServerBinding = {
   definition: ServerDefinition;
 };
 
+export type PiMcpServerUnavailableInfo = {
+  serverId: string;
+  reason: string;
+  missingToolIds: string[];
+};
+
 export type PiMcpToolset = {
   runtime: McporterRuntime | null;
   customTools: ToolDefinition[];
   mcpToolMetadata: Map<string, PiMcpToolMetadata>;
+  unavailableServers: PiMcpServerUnavailableInfo[];
 };
 
 export interface PiPromptPayload {
@@ -1189,6 +1197,7 @@ export async function createPiMcpToolset(request: HarnessHostPiRequest): Promise
       runtime: null,
       customTools: [],
       mcpToolMetadata: new Map(),
+      unavailableServers: [],
     };
   }
 
@@ -1206,6 +1215,7 @@ export async function createPiMcpToolset(request: HarnessHostPiRequest): Promise
       runtime,
       customTools: customTools.customTools,
       mcpToolMetadata: customTools.mcpToolMetadata,
+      unavailableServers: customTools.unavailableServers,
     };
   } catch (error) {
     await runtime.close();
@@ -1221,7 +1231,7 @@ export async function createPiMcpCustomTools(
   const customTools: ToolDefinition[] = [];
   const mcpToolMetadata = new Map<string, PiMcpToolMetadata>();
 
-  const discoveredTools = await discoverHarnessMcpTools({
+  const { tools: discoveredTools, failures } = await discoverHarnessMcpTools({
     bindings: buildHarnessMcpServerBindings({
       servers: request.mcp_servers as unknown as HarnessPreparedMcpServerConfig[],
       workspaceDir: request.workspace_dir,
@@ -1262,6 +1272,11 @@ export async function createPiMcpCustomTools(
   return {
     customTools,
     mcpToolMetadata,
+    unavailableServers: failures.map((failure) => ({
+      serverId: failure.serverId,
+      reason: failure.reason,
+      missingToolIds: failure.missingToolIds,
+    })),
   };
 }
 
@@ -1511,6 +1526,7 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     sessionFile,
     mcpToolMetadata: mcpToolset.mcpToolMetadata,
     skillMetadataByAlias,
+    unavailableMcpServers: mcpToolset.unavailableServers,
     dispose: async () => {
       try {
         session.dispose();
@@ -2023,6 +2039,14 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
     ...request.run_started_payload,
     harness_session_id: handle.sessionFile,
   });
+
+  for (const unavailable of handle.unavailableMcpServers ?? []) {
+    emitRunnerEvent(request, nextSequence(), "mcp_server_unavailable", {
+      server_id: unavailable.serverId,
+      reason: unavailable.reason,
+      missing_tool_ids: unavailable.missingToolIds,
+    });
+  }
 
   let timeoutHandle: NodeJS.Timeout | null = null;
   let timedOut = false;
