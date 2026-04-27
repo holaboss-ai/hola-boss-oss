@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   Loader2,
@@ -277,6 +277,144 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     };
   }, [connections]);
 
+  // Auto-reconcile duplicates that pre-date the dedupe-on-finalize fix.
+  // When the same real account got connected twice (each Composio re-auth
+  // mints a new connected_account_id, and pre-fix rows had no handle/
+  // email persisted to match against), users see two rows for one
+  // identity — exactly the screenshot bug.
+  //
+  // After whoami enrichment populates accountMetadata, we group active
+  // connections by (provider, resolved-identity). For any group with ≥ 2
+  // rows, keep the oldest as canonical, backfill identity on rows that
+  // don't have it persisted, then call merge to repoint bindings + drop
+  // the duplicates. The reconcile-in-flight ref guards against re-entry
+  // while loadData() refreshes.
+  const reconcileInFlightRef = useRef(false);
+  useEffect(() => {
+    if (reconcileInFlightRef.current) return;
+    if (connections.length < 2) return;
+    if (accountMetadata.size === 0) return;
+
+    // Defer until enrichment has had a chance to probe every connection
+    // that *could* be probed (i.e. the ones with an external_id). Without
+    // this guard the effect can fire mid-enrichment, miss a still-loading
+    // duplicate, and then re-fire as more probe results stream in. With
+    // the guard we run at most once per fully-populated metadata snapshot.
+    const probeable = connections.filter(
+      (c) => typeof c.account_external_id === "string" && c.account_external_id.length > 0,
+    );
+    const haveAllProbeResultsOrPersistedIdentity = probeable.every(
+      (c) =>
+        accountMetadata.has(c.connection_id) ||
+        Boolean(c.account_handle) ||
+        Boolean(c.account_email),
+    );
+    if (!haveAllProbeResultsOrPersistedIdentity) return;
+
+    type IdentityKey = string;
+    const groupKey = (
+      provider: string,
+      handle: string | null,
+      email: string | null,
+    ): IdentityKey | null => {
+      const provNorm = provider.trim().toLowerCase();
+      if (!provNorm) return null;
+      const handleNorm = (handle ?? "").trim().toLowerCase();
+      const emailNorm = (email ?? "").trim().toLowerCase();
+      if (!handleNorm && !emailNorm) return null;
+      // Prefer handle as the dedupe key — emails can occasionally vary
+      // (gmail+aliases) where handles don't.
+      return handleNorm
+        ? `${provNorm}|h:${handleNorm}`
+        : `${provNorm}|e:${emailNorm}`;
+    };
+
+    const groups = new Map<IdentityKey, IntegrationConnectionPayload[]>();
+    for (const conn of connections) {
+      if (conn.status !== "active") continue;
+      const meta = accountMetadata.get(conn.connection_id) ?? null;
+      const handle = conn.account_handle ?? meta?.handle ?? null;
+      const email = conn.account_email ?? meta?.email ?? null;
+      const key = groupKey(conn.provider_id, handle, email);
+      if (!key) continue;
+      const list = groups.get(key);
+      if (list) list.push(conn);
+      else groups.set(key, [conn]);
+    }
+
+    const duplicateGroups = Array.from(groups.values()).filter(
+      (list) => list.length >= 2,
+    );
+    if (duplicateGroups.length === 0) return;
+
+    reconcileInFlightRef.current = true;
+    let cancelled = false;
+    void (async () => {
+      try {
+        for (const group of duplicateGroups) {
+          if (cancelled) return;
+          // Sort oldest → newest by created_at; oldest wins so existing
+          // bindings on it survive the merge with no repoint churn.
+          const sorted = group
+            .slice()
+            .sort((a, b) =>
+              (a.created_at ?? "").localeCompare(b.created_at ?? ""),
+            );
+          const [keep, ...remove] = sorted;
+          if (!keep || remove.length === 0) continue;
+
+          // Backfill identity on any row that doesn't have it persisted —
+          // including the keep row, so future finalize calls deduplicate
+          // against it cleanly.
+          for (const conn of [keep, ...remove]) {
+            if (cancelled) return;
+            if (conn.account_handle || conn.account_email) continue;
+            const meta = accountMetadata.get(conn.connection_id);
+            const handle = meta?.handle ?? null;
+            const email = meta?.email ?? null;
+            if (!handle && !email) continue;
+            try {
+              await window.electronAPI.workspace.updateIntegrationConnection(
+                conn.connection_id,
+                { account_handle: handle, account_email: email },
+              );
+            } catch {
+              // Tolerate per-row backfill failure — the merge still
+              // works because we pass connection ids explicitly.
+            }
+          }
+
+          if (cancelled) return;
+          try {
+            await window.electronAPI.workspace.mergeIntegrationConnections(
+              keep.connection_id,
+              remove.map((r) => r.connection_id),
+            );
+          } catch {
+            // Surface via reload — listConnections will re-render
+            // current state including any partial merges.
+          }
+        }
+        if (!cancelled) {
+          await loadData();
+        }
+      } finally {
+        reconcileInFlightRef.current = false;
+      }
+    })();
+    return () => {
+      // Component unmount or deps changed mid-flight: stop the async
+      // chain at the next checkpoint so we don't fire setState (via
+      // loadData) on an unmounted tree.
+      cancelled = true;
+    };
+    // We intentionally exclude loadData from deps — it's a stable
+    // useCallback in this component, and including it would re-run the
+    // effect on every successful loadData (which is what we trigger
+    // here, leading to a tight loop).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connections, accountMetadata]);
+
   // Map providerId → all active connections. A user can have multiple accounts
   // per provider (e.g., personal + work Twitter); each connection is its own
   // row in the Connected section, each with its own delete button.
@@ -379,6 +517,21 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
         authSessionState.data?.user?.id?.trim() ||
         "local";
 
+      // Snapshot existing connection ids BEFORE initiating connect. The
+      // id Composio returns from /link is, in practice, not queryable
+      // via /connected_accounts/{id} until well after OAuth completes
+      // — so instead of polling that id, we poll the user's connections
+      // list and look for any *new* id that wasn't there before.
+      let beforeIds = new Set<string>();
+      try {
+        const before =
+          await window.electronAPI.workspace.composioListConnections();
+        beforeIds = new Set(before.connections.map((c) => c.id));
+      } catch {
+        // If snapshot fails, continue with empty set; any new id matching
+        // the toolkit is still detectable.
+      }
+
       const link = await window.electronAPI.workspace.composioConnect({
         provider: integration.providerId,
         owner_user_id: userId,
@@ -386,14 +539,32 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
 
       await window.electronAPI.ui.openExternalUrl(link.redirect_url);
 
+      let consecutiveErrors = 0;
+      const MAX_CONSECUTIVE_ERRORS = 20;
       for (let attempt = 0; attempt < 100; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 3000));
-        const status = await window.electronAPI.workspace.composioAccountStatus(
-          link.connected_account_id,
+        let current;
+        try {
+          current =
+            await window.electronAPI.workspace.composioListConnections();
+          consecutiveErrors = 0;
+        } catch (pollError) {
+          consecutiveErrors += 1;
+          if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+            throw pollError;
+          }
+          continue;
+        }
+
+        const newConnection = current.connections.find(
+          (c) =>
+            !beforeIds.has(c.id) &&
+            c.toolkitSlug.toLowerCase() ===
+              integration.providerId.toLowerCase(),
         );
-        if (status.status === "ACTIVE") {
+        if (newConnection) {
           await window.electronAPI.workspace.composioFinalize({
-            connected_account_id: link.connected_account_id,
+            connected_account_id: newConnection.id,
             provider: integration.providerId,
             owner_user_id: userId,
             account_label: `${integration.name} (Managed)`,
@@ -1241,6 +1412,12 @@ const PROVIDER_CATEGORY_GROUPS: Record<string, string[]> = {
   reddit: ["community"],
   twitter: ["social"],
   linkedin: ["social"],
+  hubspot: ["crm"],
+  attio: ["crm"],
+  calcom: ["productivity"],
+  apollo: ["sales"],
+  instantly: ["sales"],
+  zoominfo: ["sales"],
 };
 
 const PROVIDER_TOOLKIT_PREFERENCE: Record<string, string[]> = {
@@ -1249,6 +1426,12 @@ const PROVIDER_TOOLKIT_PREFERENCE: Record<string, string[]> = {
   reddit: ["reddit"],
   twitter: ["twitter"],
   linkedin: ["linkedin"],
+  hubspot: ["hubspot"],
+  attio: ["attio"],
+  calcom: ["calcom"],
+  apollo: ["apollo"],
+  instantly: ["instantly"],
+  zoominfo: ["zoominfo"],
 };
 
 const TOOLKIT_SLUG_TO_PROVIDER: Record<string, string> = {

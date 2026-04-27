@@ -8,6 +8,12 @@ export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   reddit: "Reddit",
   twitter: "Twitter / X",
   linkedin: "LinkedIn",
+  hubspot: "HubSpot",
+  attio: "Attio",
+  calcom: "Cal.com",
+  apollo: "Apollo.io",
+  instantly: "Instantly",
+  zoominfo: "ZoomInfo",
 };
 
 export function providerDisplayName(provider: string): string {

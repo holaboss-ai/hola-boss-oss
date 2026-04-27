@@ -2729,12 +2729,20 @@ interface IntegrationConnectionPayload {
   owner_user_id: string;
   account_label: string;
   account_external_id: string | null;
+  account_handle: string | null;
+  account_email: string | null;
   auth_mode: string;
   granted_scopes: string[];
   status: string;
   secret_ref: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface IntegrationMergeConnectionsResult {
+  kept_connection_id: string;
+  removed_count: number;
+  repointed_bindings: number;
 }
 
 interface IntegrationConnectionListResponsePayload {
@@ -2775,6 +2783,9 @@ interface IntegrationUpdateConnectionPayload {
   status?: string;
   secret_ref?: string;
   account_label?: string;
+  /** Backfill provider-side identity. `null` clears, omit to leave alone. */
+  account_handle?: string | null;
+  account_email?: string | null;
 }
 
 interface OAuthAppConfigPayload {
@@ -10510,6 +10521,90 @@ function waitForAuthCallback(timeoutMs = 120_000): Promise<void> {
   });
 }
 
+/**
+ * Codes that mean "the connection was disrupted before we got an HTTP
+ * response" — i.e. transient network/TLS layer failures. Worth one
+ * retry; not worth surfacing to the user.
+ *
+ * Common trigger: undici's connection pool reuses a socket that the
+ * staging server has already half-closed (HTTP keep-alive race). Shows
+ * up as `TypeError: fetch failed` with cause.code === 'ECONNRESET'.
+ */
+const TRANSIENT_NETWORK_CODES = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "EAI_AGAIN",
+  "UND_ERR_SOCKET",
+  "UND_ERR_CONNECT_TIMEOUT",
+]);
+
+function isTransientFetchError(err: unknown): boolean {
+  if (!(err instanceof TypeError)) return false;
+  const cause = (err as { cause?: { code?: string; name?: string } }).cause;
+  if (!cause) return false;
+  if (cause.code && TRANSIENT_NETWORK_CODES.has(cause.code)) return true;
+  // undici sometimes reports the socket close as `name` only.
+  return cause.name === "SocketError";
+}
+
+/**
+ * Wraps fetch with a single retry against transient network errors.
+ * Backoff is short (200ms) because keep-alive socket races resolve as
+ * soon as a fresh connection is opened. Auth/HTTP-level failures (4xx,
+ * 5xx) are returned untouched — those go through retryAfterSessionAuth.
+ */
+async function fetchWithNetworkRetry(
+  ...args: Parameters<typeof fetch>
+): Promise<Response> {
+  try {
+    return await fetch(...args);
+  } catch (err) {
+    if (!isTransientFetchError(err)) throw err;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    return fetch(...args);
+  }
+}
+
+/**
+ * Re-auth recovery shared by every main-process fetch that depends on
+ * the Better Auth session cookie. Behaviour:
+ *   1. Take a 401 response that the caller already produced
+ *   2. Single-flight: spawn the sign-in browser + waitForAuthCallback
+ *      once across all concurrent 401s (pendingGatewayAuthRetry)
+ *   3. After the user completes sign-in, ask the caller to re-execute
+ *   4. If sign-in is dismissed/times out, return the original 401 so
+ *      the caller can surface a sensible error
+ *
+ * Use this whenever a path otherwise hard-fails on a missing/expired
+ * cookie. The caller is responsible for providing an `executeRequest`
+ * that re-reads the cookie each call (since auth callback refreshes it).
+ */
+async function retryAfterSessionAuth(
+  unauthorizedResponse: Response,
+  executeRequest: () => Promise<Response>,
+): Promise<Response> {
+  if (unauthorizedResponse.status !== 401 || !desktopAuthClient) {
+    return unauthorizedResponse;
+  }
+  try {
+    if (!pendingGatewayAuthRetry) {
+      const authComplete = waitForAuthCallback();
+      requireAuthClient()
+        .requestAuth()
+        .catch(() => {});
+      pendingGatewayAuthRetry = authComplete.finally(() => {
+        pendingGatewayAuthRetry = null;
+      });
+    }
+    await pendingGatewayAuthRetry;
+    return await executeRequest();
+  } catch {
+    // User dismissed sign-in or auth failed — surface the original 401
+    return unauthorizedResponse;
+  }
+}
+
 async function requestControlPlaneJson<T>({
   service,
   method,
@@ -10532,7 +10627,7 @@ async function requestControlPlaneJson<T>({
   }
 
   const executeRequest = async () => {
-    return fetch(url.toString(), {
+    return fetchWithNetworkRetry(url.toString(), {
       method,
       headers: await controlPlaneHeaders(service),
       body: payload === undefined ? undefined : JSON.stringify(payload),
@@ -10581,26 +10676,13 @@ async function requestControlPlaneJson<T>({
       errorDetail = "";
     }
   }
-  // If gateway returned 401 (session expired/missing), prompt sign-in and retry once.
-  // requestAuth() only opens the browser and resolves immediately — it does NOT
-  // wait for the user to complete sign-in. We wait for the auth callback
-  // (deep link → handleAuthCallbackUrl → emitAuthAuthenticated/emitAuthUserUpdated)
-  // before retrying. On auth failure/dismissal, emitAuthError rejects the wait.
-  if (response.status === 401 && desktopAuthClient) {
-    try {
-      if (!pendingGatewayAuthRetry) {
-        const authComplete = waitForAuthCallback();
-        requireAuthClient().requestAuth().catch(() => {});
-        pendingGatewayAuthRetry = authComplete.finally(() => {
-          pendingGatewayAuthRetry = null;
-        });
-      }
-      await pendingGatewayAuthRetry;
-      // Auth callback received — cookie is now fresh, retry
-      response = await executeRequest();
+  // Session 401 → run shared re-auth retry (extracted to retryAfterSessionAuth).
+  // Composio paths now share the same single-flight, so concurrent control-plane
+  // and Composio 401s won't race two sign-in browser windows.
+  if (response.status === 401) {
+    response = await retryAfterSessionAuth(response, executeRequest);
+    if (response.ok) {
       errorDetail = "";
-    } catch {
-      // User dismissed sign-in or auth failed — fall through to error
     }
   }
   if (!response.ok) {
@@ -11406,6 +11488,17 @@ async function deleteIntegrationConnection(
   });
 }
 
+async function mergeIntegrationConnections(
+  keepConnectionId: string,
+  removeConnectionIds: string[],
+): Promise<IntegrationMergeConnectionsResult> {
+  return requestRuntimeJson<IntegrationMergeConnectionsResult>({
+    method: "POST",
+    path: `/api/v1/integrations/connections/${encodeURIComponent(keepConnectionId)}/merge`,
+    payload: { remove_connection_ids: removeConnectionIds },
+  });
+}
+
 async function listOAuthConfigs(): Promise<OAuthAppConfigListResponsePayload> {
   return requestRuntimeJson<OAuthAppConfigListResponsePayload>({
     method: "GET",
@@ -11459,19 +11552,28 @@ async function composioFetch<T>(
       "Backend is not configured (HOLABOSS_AUTH_BASE_URL missing)",
     );
   }
-  const cookieHeader = authCookieHeader();
-  if (!cookieHeader) {
-    throw new Error("Not authenticated — sign in first");
+  // Cookie is read inside executeRequest so the retry path picks up the
+  // refreshed cookie set by the auth callback. Don't hard-fail on missing
+  // cookie up front — the server's 401 + retryAfterSessionAuth pathway is
+  // the canonical way to recover (matches requestControlPlaneJson).
+  const executeRequest = async () => {
+    const cookieHeader = authCookieHeader();
+    return fetchWithNetworkRetry(`${AUTH_BASE_URL}${path}`, {
+      method,
+      headers: {
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: payload === undefined ? undefined : JSON.stringify(payload),
+    });
+  };
+
+  let response = await executeRequest();
+  if (response.status === 401) {
+    response = await retryAfterSessionAuth(response, executeRequest);
   }
-  const response = await fetch(`${AUTH_BASE_URL}${path}`, {
-    method,
-    headers: {
-      Cookie: cookieHeader,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: payload === undefined ? undefined : JSON.stringify(payload),
-  });
+
   if (!response.ok) {
     const text = await response.text();
     throw new Error(
@@ -11505,11 +11607,29 @@ interface ComposioToolkit {
 async function composioListToolkits(): Promise<{
   toolkits: ComposioToolkit[];
 }> {
-  if (!authCookieHeader()) {
-    return { toolkits: [] };
-  }
+  // No upfront cookie short-circuit — that previously masked an expired
+  // session as "no integrations available". composioFetch now triggers
+  // re-auth on 401, so route through it normally.
   return composioFetch<{ toolkits: ComposioToolkit[] }>(
     "/api/composio/toolkits",
+    "GET",
+  );
+}
+
+interface ComposioConnectionSummary {
+  id: string;
+  toolkitSlug: string;
+  toolkitName: string;
+  toolkitLogo: string | null;
+  userId: string;
+  createdAt: string;
+}
+
+async function composioListConnections(): Promise<{
+  connections: ComposioConnectionSummary[];
+}> {
+  return composioFetch<{ connections: ComposioConnectionSummary[] }>(
+    "/api/composio/connections",
     "GET",
   );
 }
@@ -11528,11 +11648,121 @@ async function composioFinalize(payload: {
   provider: string;
   owner_user_id: string;
   account_label?: string;
+  account_handle?: string | null;
+  account_email?: string | null;
 }): Promise<IntegrationConnectionPayload> {
+  // Resolve the provider-side identity (handle / email / display name) from
+  // Composio whoami before posting to /composio/finalize. The runtime uses
+  // this identity to dedupe re-auth flows: each Composio re-auth mints a
+  // new connected_account_id even for the same real account, but handle /
+  // email stay stable, so the integration service updates the existing
+  // connection row in place rather than spawning a duplicate.
+  //
+  // Whoami can fail (Composio side error, account not yet propagated, etc.).
+  // When it does, we fall back to the legacy behaviour — store the row
+  // without identity, no dedupe — instead of blocking the connect flow.
+  let enrichedHandle = payload.account_handle ?? null;
+  let enrichedEmail = payload.account_email ?? null;
+  let resolvedLabel = payload.account_label;
+  if (!enrichedHandle && !enrichedEmail) {
+    try {
+      const status = await composioAccountStatus(payload.connected_account_id);
+      enrichedHandle =
+        typeof status.handle === "string" && status.handle.trim().length > 0
+          ? status.handle.trim()
+          : null;
+      enrichedEmail =
+        typeof status.email === "string" && status.email.trim().length > 0
+          ? status.email.trim()
+          : null;
+      const preferredDisplayName =
+        typeof status.displayName === "string" &&
+        status.displayName.trim().length > 0
+          ? status.displayName.trim()
+          : enrichedHandle ?? enrichedEmail ?? null;
+      if (preferredDisplayName && (!resolvedLabel || resolvedLabel.trim().length === 0)) {
+        resolvedLabel = preferredDisplayName;
+      }
+    } catch {
+      // Whoami failed — proceed without identity. Future reconnects of
+      // this same external account will still create a new row until
+      // whoami succeeds at least once.
+    }
+  }
+
+  // Backfill identity on legacy NULL-identity rows for the same
+  // (provider, owner). Connections created before identity columns
+  // existed have account_handle / account_email = NULL, so the runtime's
+  // dedupe-on-finalize finder can't see them as duplicates of the new
+  // re-auth — and a fresh row is inserted, leaving the user with two
+  // entries for the same real account. We pre-resolve their identity by
+  // probing Composio whoami on each legacy row's external_id and PATCH
+  // the result back to the runtime. After this loop, the dedupe finder
+  // can match the legacy row by handle/email and merge in place.
+  if (enrichedHandle || enrichedEmail) {
+    try {
+      const { connections } = await listIntegrationConnections({
+        providerId: payload.provider,
+        ownerUserId: payload.owner_user_id,
+      });
+      const legacyTargets = connections.filter(
+        (c) =>
+          c.status === "active" &&
+          // Skip rows that already happen to point at the new Composio
+          // account (could be a same-id re-finalize). Comparing on the
+          // *external* id, not the internal connection_id.
+          c.account_external_id !== payload.connected_account_id &&
+          !c.account_handle &&
+          !c.account_email &&
+          typeof c.account_external_id === "string" &&
+          c.account_external_id.trim().length > 0,
+      );
+      // Cap concurrent whoami probes — even a power user has a small
+      // number of legacy rows, so 4 in-flight is plenty.
+      const legacyConcurrency = 4;
+      for (let i = 0; i < legacyTargets.length; i += legacyConcurrency) {
+        const slice = legacyTargets.slice(i, i + legacyConcurrency);
+        await Promise.all(
+          slice.map(async (legacy) => {
+            try {
+              const probe = await composioAccountStatus(
+                legacy.account_external_id as string,
+              );
+              const probeHandle =
+                typeof probe.handle === "string" && probe.handle.trim().length > 0
+                  ? probe.handle.trim()
+                  : null;
+              const probeEmail =
+                typeof probe.email === "string" && probe.email.trim().length > 0
+                  ? probe.email.trim()
+                  : null;
+              if (!probeHandle && !probeEmail) return;
+              await updateIntegrationConnection(legacy.connection_id, {
+                account_handle: probeHandle,
+                account_email: probeEmail,
+              });
+            } catch {
+              // Per-row failure is fine — that row simply won't dedupe
+              // this round; we'll try again next time the user connects.
+            }
+          }),
+        );
+      }
+    } catch {
+      // listConnections failure shouldn't block the connect — just skip
+      // the backfill pass entirely.
+    }
+  }
+
   return requestRuntimeJson<IntegrationConnectionPayload>({
     method: "POST",
     path: "/api/v1/integrations/composio/finalize",
-    payload,
+    payload: {
+      ...payload,
+      ...(resolvedLabel ? { account_label: resolvedLabel } : {}),
+      account_handle: enrichedHandle,
+      account_email: enrichedEmail,
+    },
   });
 }
 
@@ -24209,6 +24439,16 @@ app.whenReady().then(async () => {
     async (_event, connectionId: string) =>
       deleteIntegrationConnection(connectionId),
   );
+  handleTrustedIpc(
+    "workspace:mergeIntegrationConnections",
+    ["main"],
+    async (
+      _event,
+      keepConnectionId: string,
+      removeConnectionIds: string[],
+    ) =>
+      mergeIntegrationConnections(keepConnectionId, removeConnectionIds),
+  );
   handleTrustedIpc("workspace:listOAuthConfigs", ["main"], async () =>
     listOAuthConfigs(),
   );
@@ -24230,6 +24470,9 @@ app.whenReady().then(async () => {
   );
   handleTrustedIpc("workspace:composioListToolkits", ["main"], async () =>
     composioListToolkits(),
+  );
+  handleTrustedIpc("workspace:composioListConnections", ["main"], async () =>
+    composioListConnections(),
   );
   handleTrustedIpc(
     "workspace:composioConnect",
