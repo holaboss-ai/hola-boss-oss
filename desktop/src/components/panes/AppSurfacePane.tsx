@@ -26,6 +26,43 @@ interface AppSurfacePaneProps {
   view?: string | null;
 }
 
+/**
+ * Pick the most user-recognisable label for a connection. Backend whoami
+ * lookups populate `account_handle` (e.g. "@joshua") and `account_email`;
+ * `account_label` is admin-supplied; `account_external_id` and the UUID
+ * `connection_id` are last-resort fallbacks that should rarely surface
+ * to the user but are kept so the UI never renders empty.
+ */
+function connectionPrimary(
+  conn: IntegrationConnectionPayload | undefined,
+  providerName: string,
+): string {
+  if (!conn) return `Pick an ${providerName} account`;
+  const label = conn.account_label?.trim();
+  const handle = conn.account_handle?.trim();
+  const email = conn.account_email?.trim();
+  const external = conn.account_external_id?.trim();
+  // Prefer human-readable identity over admin-set labels — handles let the
+  // user immediately recognise which account this is.
+  return handle || email || label || external || `${providerName} account`;
+}
+
+/**
+ * Secondary line for the dropdown items — disambiguates when several
+ * connections share the same handle (e.g. work + personal email under
+ * the same account_label). Returns null when secondary would just
+ * duplicate the primary line.
+ */
+function connectionSecondary(conn: IntegrationConnectionPayload): string | null {
+  const primary = conn.account_handle?.trim() || conn.account_email?.trim() || conn.account_label?.trim();
+  const candidates = [
+    conn.account_email?.trim(),
+    conn.account_label?.trim(),
+    conn.account_external_id?.trim(),
+  ].filter((s): s is string => !!s && s !== primary);
+  return candidates[0] ?? null;
+}
+
 export function AppSurfacePane({
   appId,
   app: providedApp,
@@ -404,93 +441,93 @@ export function AppSurfacePane({
               <div className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
                 Integrations
               </div>
-              <div className="mt-2 flex items-center gap-2 rounded-md border border-border bg-muted px-3 py-2">
-                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <Plug size={11} />
-                  {integrationContext.providerName}
-                </span>
-                <span className="text-muted-foreground">·</span>
-                {integrationContext.candidates.length === 0 ? (
+              {integrationContext.candidates.length === 0 ? (
+                <div className="mt-2 rounded-md border border-border bg-muted px-3 py-2">
                   <Button
-                    className="h-auto px-2 py-1 text-xs"
+                    className="h-auto w-full justify-start gap-1.5 px-0 py-0 text-xs"
                     onClick={handleConnectAccount}
                     size="sm"
                     type="button"
                     variant="ghost"
                   >
                     <Plus size={12} />
-                    Connect a {integrationContext.providerName} account
+                    Connect {integrationContext.providerName}
                   </Button>
-                ) : (
-                  <Select
-                    disabled={bindingBusy}
-                    onValueChange={(value) => {
-                      if (!value) return;
-                      if (value === "__connect_new__") {
-                        handleConnectAccount();
-                      } else {
-                        void handleSelectBinding(value);
-                      }
-                    }}
-                    value={integrationContext.currentConnectionId ?? ""}
+                </div>
+              ) : (
+                <Select
+                  disabled={bindingBusy}
+                  onValueChange={(value) => {
+                    if (!value) return;
+                    if (value === "__connect_new__") {
+                      handleConnectAccount();
+                    } else {
+                      void handleSelectBinding(value);
+                    }
+                  }}
+                  value={integrationContext.currentConnectionId ?? ""}
+                >
+                  <SelectTrigger
+                    className="mt-2 h-auto w-full gap-2 rounded-md border border-border bg-muted px-3 py-2 text-left hover:bg-accent [&>svg]:shrink-0"
+                    size="sm"
                   >
-                    <SelectTrigger
-                      className="ml-auto h-7 min-w-[140px] gap-1.5 border-transparent bg-transparent px-2 text-xs hover:bg-accent"
-                      size="sm"
+                    <span className="flex min-w-0 flex-1 items-center gap-2.5">
+                      <span className="grid size-7 shrink-0 place-items-center rounded-md bg-background text-muted-foreground">
+                        {providerIcon(integrationContext.providerId, 16) ?? <Plug size={12} />}
+                      </span>
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span className="truncate text-xs font-medium text-foreground">
+                          {connectionPrimary(
+                            integrationContext.candidates.find(
+                              (c) => c.connection_id === integrationContext.currentConnectionId,
+                            ),
+                            integrationContext.providerName,
+                          )}
+                        </span>
+                        <span className="truncate text-[10px] text-muted-foreground">
+                          {integrationContext.providerName}
+                        </span>
+                      </span>
+                    </span>
+                  </SelectTrigger>
+                  <SelectContent
+                    align="end"
+                    className="min-w-[240px] gap-0 rounded-lg p-1 shadow-subtle-sm"
+                  >
+                    {integrationContext.candidates.map((conn) => {
+                      const primary = connectionPrimary(conn, integrationContext.providerName);
+                      const secondary = connectionSecondary(conn);
+                      return (
+                        <SelectItem
+                          className="rounded-md px-2.5 py-1.5 text-xs"
+                          key={conn.connection_id}
+                          value={conn.connection_id}
+                        >
+                          <span className="flex min-w-0 flex-col">
+                            <span className="truncate font-medium text-foreground">
+                              {primary}
+                            </span>
+                            {secondary ? (
+                              <span className="truncate text-[10px] text-muted-foreground">
+                                {secondary}
+                              </span>
+                            ) : null}
+                          </span>
+                        </SelectItem>
+                      );
+                    })}
+                    <SelectItem
+                      className="rounded-md px-2.5 py-1.5 text-xs text-muted-foreground"
+                      value="__connect_new__"
                     >
-                      <SelectValue placeholder="Pick an account" />
-                    </SelectTrigger>
-                    <SelectContent
-                      align="end"
-                      className="min-w-[200px] gap-0 rounded-lg p-1 shadow-subtle-sm"
-                    >
-                      {integrationContext.candidates.map((conn) => {
-                        const labelText =
-                          (conn.account_label?.trim() ?? "") ||
-                          (conn.account_external_id?.trim() ?? "") ||
-                          conn.connection_id;
-                        return (
-                          <SelectItem
-                            className="rounded-md px-2.5 py-1.5 text-xs"
-                            key={conn.connection_id}
-                            value={conn.connection_id}
-                          >
-                            {labelText}
-                          </SelectItem>
-                        );
-                      })}
-                      <SelectItem
-                        className="rounded-md px-2.5 py-1.5 text-xs text-muted-foreground"
-                        value="__connect_new__"
-                      >
-                        + Connect new account
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                )}
-              </div>
+                      + Connect new account
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
             </div>
           ) : null}
 
-          {app && "tools" in app && app.tools && app.tools.length > 0 ? (
-            <div className="mt-4">
-              <div className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-                Tools ({app.tools.length})
-              </div>
-              <div className="mt-2 space-y-0.5">
-                {app.tools.map((tool) => (
-                  <div key={tool.name} className="rounded-md px-2 py-1.5">
-                    <div className="text-xs font-medium text-foreground">
-                      {tool.name}
-                    </div>
-                    <div className="text-[10px] leading-relaxed text-muted-foreground">
-                      {tool.description}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
         </div>
 
         {/* Actions pinned to bottom */}

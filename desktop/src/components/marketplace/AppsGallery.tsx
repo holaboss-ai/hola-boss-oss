@@ -1,6 +1,6 @@
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ExternalLink, LoaderCircle } from "lucide-react";
-import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
+import { getProviderForApp, useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -77,6 +77,57 @@ export function AppsGallery() {
   );
   const workspaceGated = !selectedWorkspace;
   const anyInstalling = Boolean(installingAppId);
+
+  // Active integration connections, indexed by provider id, used to
+  // surface the multi-account picker on cards that have ≥2 accounts for
+  // the app's expected provider. Refreshed when the gallery mounts and
+  // after any install completes (so a connection added via the
+  // "connect first → install" flow shows up immediately).
+  const [accountsByProvider, setAccountsByProvider] = useState<
+    Record<string, IntegrationConnectionPayload[]>
+  >({});
+  const refreshAccounts = useCallback(async () => {
+    try {
+      const { connections } =
+        await window.electronAPI.workspace.listIntegrationConnections();
+      const grouped: Record<string, IntegrationConnectionPayload[]> = {};
+      for (const conn of connections) {
+        if (conn.status !== "active") continue;
+        const key = conn.provider_id.toLowerCase();
+        const list = grouped[key] ?? [];
+        list.push(conn);
+        grouped[key] = list;
+      }
+      setAccountsByProvider(grouped);
+    } catch {
+      // Non-fatal — without account data, cards just don't show the
+      // picker (auto-bind path still works).
+    }
+  }, []);
+  useEffect(() => {
+    void refreshAccounts();
+  }, [refreshAccounts]);
+  useEffect(() => {
+    if (!installingAppId) {
+      // Refresh once an install has cleared so newly-connected accounts
+      // become available to other cards.
+      void refreshAccounts();
+    }
+  }, [installingAppId, refreshAccounts]);
+
+  // Per-card selected connection. Local-only — not persisted; the user's
+  // pick gets written into integration_bindings when they actually click
+  // Install. Falls back to the most-recently-updated active account if
+  // they never touch the dropdown.
+  const [selectedAccountByApp, setSelectedAccountByApp] = useState<
+    Record<string, string>
+  >({});
+  const handleSelectAccount = useCallback(
+    (appId: string, connectionId: string) => {
+      setSelectedAccountByApp((prev) => ({ ...prev, [appId]: connectionId }));
+    },
+    [],
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -171,6 +222,18 @@ export function AppsGallery() {
               : isInstalling
                 ? "installing"
                 : "available";
+            const provider = getProviderForApp(entry.app_id);
+            const candidates = provider
+              ? accountsByProvider[provider.toLowerCase()] ?? []
+              : [];
+            const sortedCandidates = candidates
+              .slice()
+              .sort((a, b) =>
+                (b.updated_at ?? "").localeCompare(a.updated_at ?? ""),
+              );
+            const selected =
+              selectedAccountByApp[entry.app_id] ??
+              sortedCandidates[0]?.connection_id;
             return (
               <AppCatalogCard
                 key={`${entry.source}:${entry.app_id}`}
@@ -181,7 +244,16 @@ export function AppsGallery() {
                   (anyInstalling && !isInstalling) ||
                   Boolean(pendingAppInstall)
                 }
-                onInstall={() => void installAppFromCatalog(entry.app_id)}
+                availableAccounts={sortedCandidates}
+                selectedConnectionId={selected ?? null}
+                onSelectAccount={(connectionId) =>
+                  handleSelectAccount(entry.app_id, connectionId)
+                }
+                onInstall={() =>
+                  void installAppFromCatalog(entry.app_id, {
+                    connectionId: selected,
+                  })
+                }
               />
             );
           })}
