@@ -5,6 +5,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { Button } from "../ui/button";
 
 interface RuntimeStatusIndicatorProps {
   status: RuntimeStatusPayload | null;
@@ -51,26 +52,25 @@ export function RuntimeStatusIndicator({
   if (typeof status.pid === "number") {
     rows.push(["PID", String(status.pid)]);
   }
-  rows.push([
-    "Browser",
-    status.desktopBrowserReady ? "ready" : "pending",
-  ]);
+  rows.push(["Browser", status.desktopBrowserReady ? "ready" : "pending"]);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         render={
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="icon-sm"
             aria-label={label}
-            className="relative flex size-6 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground shadow-subtle-xs transition-colors hover:bg-muted hover:text-foreground dark:border-border"
+            className="relative inline-flex h-7 shrink-0 tracking-tight items-center gap-1.5 rounded-md border border-border/55 bg-foreground/6 px-2 text-xs transition"
           >
-            <Server className="size-3" strokeWidth={1.8} />
+            <Server className="size-3.5" strokeWidth={1.8} />
             <span
               aria-hidden="true"
               className={`absolute -right-0.5 -top-0.5 size-1.5 rounded-full ring-2 ring-background ${dotClass}`}
             />
-          </button>
+          </Button>
         }
       />
       <PopoverContent

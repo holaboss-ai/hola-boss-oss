@@ -1,5 +1,5 @@
 import { AppWindow, Plus } from "lucide-react";
-import { providerIcon } from "@/components/onboarding/constants";
+import { AppIcon } from "@/components/marketplace/AppIcon";
 import { Button } from "@/components/ui/button";
 import type { WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
 
@@ -8,17 +8,6 @@ interface SpaceApplicationsExplorerPaneProps {
   activeAppId?: string | null;
   onSelectApp: (appId: string) => void;
   onAddApp: () => void;
-}
-
-function appInitials(label: string): string {
-  const parts = label.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) {
-    return "?";
-  }
-  if (parts.length === 1) {
-    return parts[0].slice(0, 1).toUpperCase();
-  }
-  return `${parts[0].slice(0, 1)}${parts[1].slice(0, 1)}`.toUpperCase();
 }
 
 type AppStatusTone = "ready" | "loading" | "error";
@@ -81,7 +70,6 @@ export function SpaceApplicationsExplorerPane({
               const isActive = activeAppId === app.id;
               const tone = appStatusTone(app);
               const showStatus = tone !== "ready";
-              const icon = providerIcon(app.id, 16);
               return (
                 <Button
                   key={app.id}
@@ -98,13 +86,7 @@ export function SpaceApplicationsExplorerPane({
                       : "text-foreground hover:bg-accent"
                   }`}
                 >
-                  <div className="grid size-4 shrink-0 place-items-center">
-                    {icon ?? (
-                      <span className="grid size-4 place-items-center rounded-[4px] bg-muted text-[9px] font-semibold uppercase text-muted-foreground">
-                        {appInitials(app.label)}
-                      </span>
-                    )}
-                  </div>
+                  <AppIcon appId={app.id} label={app.label} size="row" />
                   <span className="min-w-0 flex-1 truncate text-sm">
                     {app.label}
                   </span>

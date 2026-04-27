@@ -743,6 +743,12 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     gmail: "gmail",
     sheets: "googlesheets",
     github: "github",
+    hubspot: "hubspot",
+    attio: "attio",
+    calcom: "calcom",
+    apollo: "apollo",
+    instantly: "instantly",
+    zoominfo: "zoominfo",
   };
 
   async function installAppFromCatalog(appId: string) {
@@ -828,31 +834,55 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       const runtimeConfig = await window.electronAPI.runtime.getConfig();
       const userId = runtimeConfig.userId ?? (resolvedUserId || "local");
 
+      // Snapshot existing connection ids before initiating — see
+      // IntegrationsPane comment: poll the list and look for a new id,
+      // since the id from /link isn't reliably queryable.
+      let beforeIds = new Set<string>();
+      try {
+        const before =
+          await window.electronAPI.workspace.composioListConnections();
+        beforeIds = new Set(before.connections.map((c) => c.id));
+      } catch {
+        // tolerate snapshot failure
+      }
+
       const link = await window.electronAPI.workspace.composioConnect({
         provider,
         owner_user_id: userId,
       });
       await window.electronAPI.ui.openExternalUrl(link.redirect_url);
 
-      // Poll for completion. Window: ~5 minutes (100 ticks × 3s). On
-      // timeout we surface a user-readable error below — silent failures
-      // here used to confuse users into thinking install was in progress.
       const COMPOSIO_POLL_INTERVAL_MS = 3000;
       const COMPOSIO_POLL_MAX_TICKS = 100;
+      const MAX_CONSECUTIVE_ERRORS = 20;
+      let consecutiveErrors = 0;
       let connected = false;
       for (let tick = 0; tick < COMPOSIO_POLL_MAX_TICKS; tick++) {
         await new Promise((r) => setTimeout(r, COMPOSIO_POLL_INTERVAL_MS));
-        const status = await window.electronAPI.workspace.composioAccountStatus(
-          link.connected_account_id,
+        let current;
+        try {
+          current =
+            await window.electronAPI.workspace.composioListConnections();
+          consecutiveErrors = 0;
+        } catch (pollError) {
+          consecutiveErrors += 1;
+          if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+            throw pollError;
+          }
+          continue;
+        }
+        const newConnection = current.connections.find(
+          (c) =>
+            !beforeIds.has(c.id) &&
+            c.toolkitSlug.toLowerCase() === provider.toLowerCase(),
         );
-        if (status.status === "ACTIVE") {
+        if (newConnection) {
           await window.electronAPI.workspace.composioFinalize({
-            connected_account_id: link.connected_account_id,
+            connected_account_id: newConnection.id,
             provider,
             owner_user_id: userId,
             account_label: `${provider} (Managed)`,
           });
-          // Connection done — now install the app
           await doInstallApp(appId);
           connected = true;
           return;

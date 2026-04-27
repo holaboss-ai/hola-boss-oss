@@ -8,6 +8,10 @@ import {
   ShieldAlert,
   Unplug,
 } from "lucide-react";
+import {
+  SettingsCard,
+  SettingsSection,
+} from "@/components/settings";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -379,6 +383,21 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
         authSessionState.data?.user?.id?.trim() ||
         "local";
 
+      // Snapshot existing connection ids BEFORE initiating connect. The
+      // id Composio returns from /link is, in practice, not queryable
+      // via /connected_accounts/{id} until well after OAuth completes
+      // — so instead of polling that id, we poll the user's connections
+      // list and look for any *new* id that wasn't there before.
+      let beforeIds = new Set<string>();
+      try {
+        const before =
+          await window.electronAPI.workspace.composioListConnections();
+        beforeIds = new Set(before.connections.map((c) => c.id));
+      } catch {
+        // If snapshot fails, continue with empty set; any new id matching
+        // the toolkit is still detectable.
+      }
+
       const link = await window.electronAPI.workspace.composioConnect({
         provider: integration.providerId,
         owner_user_id: userId,
@@ -386,14 +405,32 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
 
       await window.electronAPI.ui.openExternalUrl(link.redirect_url);
 
+      let consecutiveErrors = 0;
+      const MAX_CONSECUTIVE_ERRORS = 20;
       for (let attempt = 0; attempt < 100; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 3000));
-        const status = await window.electronAPI.workspace.composioAccountStatus(
-          link.connected_account_id,
+        let current;
+        try {
+          current =
+            await window.electronAPI.workspace.composioListConnections();
+          consecutiveErrors = 0;
+        } catch (pollError) {
+          consecutiveErrors += 1;
+          if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+            throw pollError;
+          }
+          continue;
+        }
+
+        const newConnection = current.connections.find(
+          (c) =>
+            !beforeIds.has(c.id) &&
+            c.toolkitSlug.toLowerCase() ===
+              integration.providerId.toLowerCase(),
         );
-        if (status.status === "ACTIVE") {
+        if (newConnection) {
           await window.electronAPI.workspace.composioFinalize({
-            connected_account_id: link.connected_account_id,
+            connected_account_id: newConnection.id,
             provider: integration.providerId,
             owner_user_id: userId,
             account_label: `${integration.name} (Managed)`,
@@ -666,31 +703,29 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
 
         {/* Auth gate */}
         {!authSessionState.isPending && !isSignedIn ? (
-          <section>
-            <div className="overflow-hidden rounded-xl bg-card ring-1 ring-border">
-              <div className="flex items-center justify-between gap-4 px-4 py-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                    <ShieldAlert size={13} className="text-destructive" />
-                    <span>Sign-in required</span>
-                  </div>
-                  <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                    Managed integrations are unavailable until you sign in. You
-                    can browse the catalog below, but connecting requires an
-                    authenticated session.
-                  </div>
+          <SettingsCard>
+            <div className="flex items-center justify-between gap-4 px-4 py-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <ShieldAlert size={13} className="text-destructive" />
+                  <span>Sign-in required</span>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void authSessionState.requestAuth()}
-                >
-                  <LogIn size={14} />
-                  Sign in
-                </Button>
+                <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                  Managed integrations are unavailable until you sign in. You
+                  can browse the catalog below, but connecting requires an
+                  authenticated session.
+                </div>
               </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void authSessionState.requestAuth()}
+              >
+                <LogIn size={14} />
+                Sign in
+              </Button>
             </div>
-          </section>
+          </SettingsCard>
         ) : null}
 
         {/* Search + filter toolbar */}
@@ -753,11 +788,8 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
 
         {/* Connected section — one card per provider, multiple account rows */}
         {connectedIntegrations.length > 0 ? (
-          <section>
-            <div className="text-base font-medium text-foreground">
-              Connected
-            </div>
-            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <SettingsSection title="Connected">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {connectedIntegrations.map((integration) => (
                 <ConnectedProviderCard
                   canConnect={isSignedIn && integration.supportsManaged}
@@ -784,16 +816,16 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
                 />
               ))}
             </div>
-          </section>
+          </SettingsSection>
         ) : null}
 
         {/* Available — grouped by category */}
         {groupedIntegrations.map(([category, items]) => (
-          <section key={category}>
-            <div className="text-base font-medium text-foreground">
-              {category.charAt(0).toUpperCase() + category.slice(1)}
-            </div>
-            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <SettingsSection
+            key={category}
+            title={category.charAt(0).toUpperCase() + category.slice(1)}
+          >
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {items.map((integration) => (
                 <IntegrationEmbeddedCard
                   key={integration.slug}
@@ -819,7 +851,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
                 />
               ))}
             </div>
-          </section>
+          </SettingsSection>
         ))}
 
         {filteredIntegrations.length === 0 &&
@@ -1241,6 +1273,12 @@ const PROVIDER_CATEGORY_GROUPS: Record<string, string[]> = {
   reddit: ["community"],
   twitter: ["social"],
   linkedin: ["social"],
+  hubspot: ["crm"],
+  attio: ["crm"],
+  calcom: ["productivity"],
+  apollo: ["sales"],
+  instantly: ["sales"],
+  zoominfo: ["sales"],
 };
 
 const PROVIDER_TOOLKIT_PREFERENCE: Record<string, string[]> = {
@@ -1249,6 +1287,12 @@ const PROVIDER_TOOLKIT_PREFERENCE: Record<string, string[]> = {
   reddit: ["reddit"],
   twitter: ["twitter"],
   linkedin: ["linkedin"],
+  hubspot: ["hubspot"],
+  attio: ["attio"],
+  calcom: ["calcom"],
+  apollo: ["apollo"],
+  instantly: ["instantly"],
+  zoominfo: ["zoominfo"],
 };
 
 const TOOLKIT_SLUG_TO_PROVIDER: Record<string, string> = {

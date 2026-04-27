@@ -130,7 +130,7 @@ export function BillingSummaryCard({
   const timelineLabel = billingTimelineLabel(overview);
 
   return (
-    <section className="overflow-hidden rounded-xl bg-card ring-1 ring-border">
+    <section className="overflow-hidden rounded-xl bg-card shadow-md [&>*+*]:border-t [&>*+*]:border-border">
       {/* Header row */}
       <div className="flex items-center justify-between gap-3 px-4 py-3">
         <div className="flex min-w-0 items-center gap-2">
@@ -168,24 +168,16 @@ export function BillingSummaryCard({
       </div>
 
       {error ? (
-        <>
-          <div className="h-px bg-border" />
-          <div className="bg-destructive/5 px-4 py-3 text-sm text-destructive">
-            {error.message}
-          </div>
-        </>
+        <div className="bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          {error.message}
+        </div>
       ) : null}
 
       {!hasOverview && !error ? (
-        <>
-          <div className="h-px bg-border" />
-          <div className="px-4 py-3 text-sm text-muted-foreground">
-            Sign in to view billing details.
-          </div>
-        </>
+        <div className="px-4 py-3 text-sm text-muted-foreground">
+          Sign in to view billing details.
+        </div>
       ) : null}
-
-      <div className="h-px bg-border" />
 
       {/* Credits stat row */}
       <div className="px-4 py-3">
@@ -230,8 +222,6 @@ export function BillingSummaryCard({
           </div>
         </div>
       </div>
-
-      <div className="h-px bg-border" />
 
       {/* List row */}
       <div className="grid gap-1.5 px-4 py-3 text-sm text-muted-foreground">

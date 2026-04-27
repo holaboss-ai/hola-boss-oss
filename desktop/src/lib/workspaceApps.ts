@@ -94,6 +94,12 @@ const APP_CATALOG: Record<string, WorkspaceAppDefinition> = {
     label: "GitHub",
     summary: "Repository activity tracking and PR triage inside the workspace.",
     accentClassName: "bg-neutral-400/80",
+  },
+  calcom: {
+    id: "calcom",
+    label: "Cal",
+    summary: "Cal.com event types and bookings — schedule, reschedule, and cancel through the agent.",
+    accentClassName: "bg-neutral-300/80",
   }
 };
 

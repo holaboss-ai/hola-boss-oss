@@ -1176,6 +1176,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("runtime:exchangeBinding", sandboxId) as Promise<RuntimeConfigPayload>,
     connectCodexOAuth: () =>
       ipcRenderer.invoke("runtime:connectCodexOAuth") as Promise<RuntimeConfigPayload>,
+    validateProvider: (providerId: string) =>
+      ipcRenderer.invoke("runtime:validateProvider", providerId) as Promise<{
+        ok: boolean;
+        detail: string;
+      }>,
     onConfigChange: (listener: (config: RuntimeConfigPayload) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, config: RuntimeConfigPayload) => listener(config);
       ipcRenderer.on("runtime:config", wrapped);
@@ -1421,6 +1426,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:startOAuthFlow", provider) as Promise<OAuthAuthorizeResponsePayload>,
     composioListToolkits: () =>
       ipcRenderer.invoke("workspace:composioListToolkits") as Promise<{ toolkits: Array<{ slug: string; name: string; description: string; logo: string | null; auth_schemes: string[]; categories: string[] }> }>,
+    composioListConnections: () =>
+      ipcRenderer.invoke("workspace:composioListConnections") as Promise<{ connections: Array<{ id: string; toolkitSlug: string; toolkitName: string; toolkitLogo: string | null; userId: string; createdAt: string }> }>,
     composioConnect: (payload: { provider: string; owner_user_id: string; callback_url?: string }) =>
       ipcRenderer.invoke("workspace:composioConnect", payload) as Promise<ComposioConnectResult>,
     composioAccountStatus: (connectedAccountId: string) =>

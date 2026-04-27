@@ -41,6 +41,12 @@ const PROVIDER_DISPLAY: Record<string, string> = {
   gmail: "Google (Gmail)",
   googlesheets: "Google (Sheets)",
   github: "GitHub",
+  hubspot: "HubSpot",
+  attio: "Attio",
+  calcom: "Cal",
+  apollo: "Apollo.io",
+  instantly: "Instantly",
+  zoominfo: "ZoomInfo",
 };
 
 export function AppsGallery() {
@@ -145,7 +151,7 @@ export function AppsGallery() {
       ) : null}
 
       {isLoadingAppCatalog && appCatalog.length === 0 ? (
-        <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+        <div className="mt-4 grid grid-cols-1 gap-2 pb-6 md:grid-cols-2 xl:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: static skeleton count
             <AppCatalogCardSkeleton key={i} />
@@ -156,7 +162,7 @@ export function AppsGallery() {
           No apps available.
         </div>
       ) : (
-        <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+        <div className="mt-4 grid grid-cols-1 gap-2 pb-6 md:grid-cols-2 xl:grid-cols-3">
           {appCatalog.map((entry) => {
             const isInstalled = installedIds.has(entry.app_id);
             const isInstalling = installingAppId === entry.app_id;

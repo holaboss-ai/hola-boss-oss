@@ -17,6 +17,12 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   reddit: "Reddit",
   twitter: "Twitter / X",
   linkedin: "LinkedIn",
+  hubspot: "HubSpot",
+  attio: "Attio",
+  calcom: "Cal",
+  apollo: "Apollo.io",
+  instantly: "Instantly",
+  zoominfo: "ZoomInfo",
 };
 
 function providerDisplayName(provider: string): string {
@@ -85,6 +91,18 @@ export function MarketplacePane({ initialTab = "templates" }: MarketplacePanePro
       const runtimeConfig = await window.electronAPI.runtime.getConfig();
       const userId = runtimeConfig.userId ?? "local";
 
+      // Snapshot existing connection ids before initiating — same
+      // rationale as IntegrationsPane: poll the list, find a new id,
+      // ignore the id returned by /link.
+      let beforeIds = new Set<string>();
+      try {
+        const before =
+          await window.electronAPI.workspace.composioListConnections();
+        beforeIds = new Set(before.connections.map((c) => c.id));
+      } catch {
+        // tolerate snapshot failure
+      }
+
       const link = await window.electronAPI.workspace.composioConnect({
         provider,
         owner_user_id: userId,
@@ -92,14 +110,30 @@ export function MarketplacePane({ initialTab = "templates" }: MarketplacePanePro
 
       await window.electronAPI.ui.openExternalUrl(link.redirect_url);
 
+      let consecutiveErrors = 0;
+      const MAX_CONSECUTIVE_ERRORS = 20;
       for (let i = 0; i < 100; i++) {
         await new Promise((r) => setTimeout(r, 3000));
-        const status = await window.electronAPI.workspace.composioAccountStatus(
-          link.connected_account_id,
+        let current;
+        try {
+          current =
+            await window.electronAPI.workspace.composioListConnections();
+          consecutiveErrors = 0;
+        } catch (pollError) {
+          consecutiveErrors += 1;
+          if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+            throw pollError;
+          }
+          continue;
+        }
+        const newConnection = current.connections.find(
+          (c) =>
+            !beforeIds.has(c.id) &&
+            c.toolkitSlug.toLowerCase() === provider.toLowerCase(),
         );
-        if (status.status === "ACTIVE") {
+        if (newConnection) {
           await window.electronAPI.workspace.composioFinalize({
-            connected_account_id: link.connected_account_id,
+            connected_account_id: newConnection.id,
             provider,
             owner_user_id: userId,
             account_label: `${provider} (Managed)`,
