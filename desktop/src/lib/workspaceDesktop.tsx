@@ -427,9 +427,6 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
           await window.electronAPI.workspace.listWorkspacesCached();
         if (cancelled) return;
         if (cached.items.length === 0) return;
-        void window.electronAPI.boot
-          ?.mark("cached-workspaces-hit")
-          .catch(() => undefined);
         setWorkspaces(cached.items);
         setSelectedWorkspaceId((current) => {
           if (current && cached.items.some((w) => w.id === current)) {
@@ -442,9 +439,6 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
         // Splash unmounts now — sidecar can finish booting in the
         // background; the regular workspace-load effect will reconcile
         // when it finally resolves.
-        void window.electronAPI.boot
-          ?.mark("renderer-hydrated")
-          .catch(() => undefined);
       } catch {
         // Silent fallback — let the regular sidecar-gated path run.
       }
@@ -460,9 +454,6 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     async function loadBootstrap() {
       setIsLoadingBootstrap(true);
       setWorkspaceErrorMessage("");
-      void window.electronAPI.boot
-        ?.mark("renderer-bootstrap-start")
-        .catch(() => undefined);
 
       try {
         const [runtimeConfigResult, runtimeStatusResult, clientConfigResult] = await Promise.allSettled([
@@ -470,9 +461,6 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
           withBootstrapTimeout(window.electronAPI.runtime.getStatus(), "runtime status"),
           withBootstrapTimeout(window.electronAPI.workspace.getClientConfig(), "desktop client configuration")
         ]);
-        void window.electronAPI.boot
-          ?.mark("renderer-bootstrap-done")
-          .catch(() => undefined);
         if (cancelled) {
           return;
         }
@@ -1109,9 +1097,6 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     async function refresh() {
       setIsRefreshing(true);
       setWorkspaceErrorMessage("");
-      void window.electronAPI.boot
-        ?.mark("renderer-workspace-load-start")
-        .catch(() => undefined);
       try {
         await loadWorkspaceData({ preserveSelection: true });
       } catch (error) {
@@ -1122,11 +1107,6 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
         if (!cancelled) {
           setIsRefreshing(false);
           setHasHydratedWorkspaceList(true);
-          // Final boot-timing milestone — splash unmounts now. Sends to
-          // main, which prints the BootTimer summary + writes JSON.
-          void window.electronAPI.boot
-            ?.mark("renderer-hydrated")
-            .catch(() => undefined);
         }
       }
     }

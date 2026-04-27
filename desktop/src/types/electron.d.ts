@@ -1407,14 +1407,6 @@ declare global {
       exportBundle: () => Promise<DiagnosticsExportPayload>;
       revealBundle: (bundlePath: string) => Promise<boolean>;
     };
-    boot: {
-      mark: (label: string) => Promise<void>;
-      getTimings: () => Promise<{
-        started: boolean;
-        completed: boolean;
-        marks: Array<{ label: string; offsetMs: number }>;
-      }>;
-    };
     runtime: {
       getStatus: () => Promise<RuntimeStatusPayload>;
       restart: () => Promise<RuntimeStatusPayload>;
