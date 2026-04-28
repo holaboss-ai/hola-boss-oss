@@ -182,6 +182,7 @@ const PI_HARNESS_CLIENT_VERSION = "0.1.0";
 const PI_MCP_DISCOVERY_RETRY_INTERVAL_MS = 250;
 const PI_FALLBACK_CONTEXT_WINDOW = 65_536;
 const PI_FALLBACK_MAX_TOKENS = 8_192;
+const PI_COMPACTION_CONTEXT_RESERVE_RATIO = 0.5;
 
 const PI_MODEL_CATALOG = MODELS as Record<string, Record<string, HarnessCatalogModelEntry>>;
 const PI_MCP_DISCOVERY_MAX_WAIT_MS = 10000;
@@ -1355,6 +1356,13 @@ export function requestedPiThinkingConfig(
   return requestedHarnessThinkingConfig(request);
 }
 
+export function piCompactionReserveTokens(contextWindow: number): number {
+  if (!Number.isFinite(contextWindow) || contextWindow <= 0) {
+    return 0;
+  }
+  return Math.ceil(contextWindow * PI_COMPACTION_CONTEXT_RESERVE_RATIO);
+}
+
 export function buildPiProviderConfig(request: HarnessHostPiRequest) {
   const profile = resolvePiModelProfile(request);
 
@@ -1396,12 +1404,16 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
   modelRegistry.registerProvider(request.provider_id, buildPiProviderConfig(request));
 
   const model = resolvePiModel(request, modelRegistry);
+  const compactionReserveTokens = piCompactionReserveTokens(model.contextWindow);
   const requestedThinking = requestedPiThinkingLevel(request) ?? "off";
   const requestedThinkingBudgets = requestedPiThinkingBudgets(request);
   const settingsManager = SettingsManager.inMemory({
     defaultProvider: request.provider_id,
     defaultModel: request.model_id,
     defaultThinkingLevel: requestedThinking,
+    compaction: {
+      reserveTokens: compactionReserveTokens,
+    },
     ...(requestedThinkingBudgets
       ? { thinkingBudgets: requestedThinkingBudgets }
       : {}),

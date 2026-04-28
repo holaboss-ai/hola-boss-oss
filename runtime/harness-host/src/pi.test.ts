@@ -21,6 +21,7 @@ import {
   createPiEventMapperState,
   createPiMcpCustomTools,
   mapPiSessionEvent,
+  piCompactionReserveTokens,
   requestedPiThinkingBudgets,
   requestedPiThinkingConfig,
   requestedPiThinkingLevel,
@@ -1492,6 +1493,13 @@ test("buildPiProviderConfig uses OpenAI Responses API for managed Holaboss GPT-5
   assert.equal(providerConfig.models[0]?.maxTokens, 128_000);
 });
 
+test("pi compaction reserves 50 percent of the model context window", () => {
+  assert.equal(piCompactionReserveTokens(1_050_000), 525_000);
+  assert.equal(piCompactionReserveTokens(65_536), 32_768);
+  assert.equal(piCompactionReserveTokens(65_535), 32_768);
+  assert.equal(piCompactionReserveTokens(0), 0);
+});
+
 test("buildPiProviderConfig preserves catalog pricing after runtime provider registration", () => {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-pricing-registry-"));
 
@@ -2908,8 +2916,13 @@ test("buildPiPromptPayload inlines native images, extracts common document forma
     assert.match(prompt.text, /\[Document: notes\.txt\]/);
     assert.match(prompt.text, /alpha\nbeta/);
     assert.match(prompt.text, /\[Document: summary\.pdf\]/);
-    assert.match(prompt.text, /<pdf filename="summary\.pdf">/);
+    assert.match(prompt.text, /<pdf filename="summary\.pdf" pages="1">/);
+    assert.match(prompt.text, /<links total="0" pages="1">/);
+    assert.match(prompt.text, /<text_item_summary items="1"/);
     assert.match(prompt.text, /Hello PDF/);
+    assert.match(prompt.text, /<embedded_images scanned_pages="1" total_pages="1">/);
+    assert.match(prompt.text, /<summary total_images="0" \/>/);
+    assert.match(prompt.text, /<rendered_pages scanned_pages="1" total_pages="1">/);
     assert.match(prompt.text, /\[Document: notes\.docx\]/);
     assert.match(prompt.text, /<docx filename="notes\.docx">/);
     assert.match(prompt.text, /Quarterly plan/);
