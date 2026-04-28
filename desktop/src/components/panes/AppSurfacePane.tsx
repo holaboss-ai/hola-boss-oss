@@ -526,10 +526,7 @@ export function AppSurfacePane({
                 <DropdownMenuItem
                   variant="destructive"
                   className="gap-2 rounded-md px-2.5 py-1.5 text-xs"
-                  onSelect={(event) => {
-                    event.preventDefault();
-                    setConfirmRemove(true);
-                  }}
+                  onClick={() => setConfirmRemove(true)}
                 >
                   <Trash2 size={12} />
                   Remove app
