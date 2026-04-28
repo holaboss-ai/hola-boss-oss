@@ -6,6 +6,7 @@ import {
   SpreadsheetEditor,
 } from "@/components/panes/SpreadsheetEditor";
 import { Button } from "@/components/ui/button";
+import { DashboardRenderer } from "@/components/dashboard/DashboardRenderer";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
@@ -577,6 +578,11 @@ export function InternalSurfacePane({
                 </div>
               </div>
             )
+          ) : preview.extension === ".dashboard" && selectedWorkspaceId ? (
+            <DashboardRenderer
+              workspaceId={selectedWorkspaceId}
+              content={previewDraft}
+            />
           ) : (
             <textarea
               value={previewDraft}
