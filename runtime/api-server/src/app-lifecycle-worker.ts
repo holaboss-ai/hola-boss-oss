@@ -12,6 +12,7 @@ import {
   killChildProcess,
   spawnShellCommand,
 } from "./runtime-shell.js";
+import { workspaceDataDbPath, workspaceDirForId } from "./ts-runner-session-state.js";
 
 export interface AppLifecycleActionResult {
   app_id: string;
@@ -343,6 +344,19 @@ function buildShellLifecycleEnv(
     !env.HOLABOSS_WORKSPACE_ID
   ) {
     env.HOLABOSS_WORKSPACE_ID = params.workspaceId;
+  }
+  if (
+    params.workspaceId &&
+    params.resolvedApp &&
+    params.resolvedApp.envContract.includes("WORKSPACE_DB_PATH") &&
+    !env.WORKSPACE_DB_PATH
+  ) {
+    try {
+      env.WORKSPACE_DB_PATH = workspaceDataDbPath(workspaceDirForId(params.workspaceId));
+    } catch {
+      // sanitizeWorkspaceId throws on invalid ids; the caller will surface
+      // the underlying validation error elsewhere — don't crash env build.
+    }
   }
   return env;
 }
