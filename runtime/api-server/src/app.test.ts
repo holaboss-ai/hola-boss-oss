@@ -239,23 +239,25 @@ test("browser capability routes proxy to the browser tool service", async () => 
     workspaceRoot: path.join(root, "workspace")
   });
   const browserToolService = {
-    async getStatus(context?: { workspaceId?: string | null; sessionId?: string | null }) {
+    async getStatus(context?: { workspaceId?: string | null; sessionId?: string | null; space?: string | null }) {
       return {
         available: true,
         workspace_id: context?.workspaceId ?? null,
         session_id: context?.sessionId ?? null,
+        browser_space: context?.space ?? null,
         tools: [{ id: "browser_get_state" }]
       };
     },
     async execute(
       toolId: string,
       args: Record<string, unknown>,
-      context?: { workspaceId?: string | null; sessionId?: string | null }
+      context?: { workspaceId?: string | null; sessionId?: string | null; space?: string | null }
     ) {
       return {
         tool_id: toolId,
         workspace_id: context?.workspaceId ?? null,
         session_id: context?.sessionId ?? null,
+        browser_space: context?.space ?? null,
         args
       };
     }
@@ -267,7 +269,8 @@ test("browser capability routes proxy to the browser tool service", async () => 
     url: "/api/v1/capabilities/browser",
     headers: {
       "x-holaboss-workspace-id": "workspace-1",
-      "x-holaboss-session-id": "session-1"
+      "x-holaboss-session-id": "session-1",
+      "x-holaboss-browser-space": "user"
     }
   });
   assert.equal(statusResponse.statusCode, 200);
@@ -275,6 +278,7 @@ test("browser capability routes proxy to the browser tool service", async () => 
     available: true,
     workspace_id: "workspace-1",
     session_id: "session-1",
+    browser_space: "user",
     tools: [{ id: "browser_get_state" }]
   });
 
@@ -283,7 +287,8 @@ test("browser capability routes proxy to the browser tool service", async () => 
     url: "/api/v1/capabilities/browser/tools/browser_click",
     headers: {
       "x-holaboss-workspace-id": "workspace-1",
-      "x-holaboss-session-id": "session-1"
+      "x-holaboss-session-id": "session-1",
+      "x-holaboss-browser-space": "agent"
     },
     payload: {
       index: 3
@@ -294,6 +299,7 @@ test("browser capability routes proxy to the browser tool service", async () => 
     tool_id: "browser_click",
     workspace_id: "workspace-1",
     session_id: "session-1",
+    browser_space: "agent",
     args: {
       index: 3
     }

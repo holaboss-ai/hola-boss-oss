@@ -536,6 +536,19 @@ function capabilitySessionId(params: {
   );
 }
 
+function capabilityBrowserSpace(params: {
+  headers: Record<string, unknown>;
+  query?: Record<string, unknown> | null;
+  body?: Record<string, unknown> | null;
+}): "agent" | "user" | null {
+  const value =
+    headerString(params.headers, "x-holaboss-browser-space") ||
+    optionalString(params.query?.browser_space) ||
+    optionalString(params.body?.browser_space) ||
+    "";
+  return value === "agent" || value === "user" ? value : null;
+}
+
 function capabilitySelectedModel(params: {
   headers: Record<string, unknown>;
   query?: Record<string, unknown> | null;
@@ -895,6 +908,7 @@ function turnResultPayload(record: TurnResultRecord): Record<string, unknown> {
     prompt_cache_profile: record.promptCacheProfile,
     compacted_summary: record.compactedSummary,
     token_usage: record.tokenUsage,
+    context_budget_decisions: record.contextBudgetDecisions,
     created_at: record.createdAt,
     updated_at: record.updatedAt,
   };
@@ -2175,7 +2189,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const appLifecycleExecutor = options.appLifecycleExecutor ?? new RuntimeAppLifecycleExecutor({ store });
   const memoryService = options.memoryService ?? new FilesystemMemoryService({ workspaceRoot: store.workspaceRoot });
   const runtimeConfigService = options.runtimeConfigService ?? new FileRuntimeConfigService();
-  const browserToolService = options.browserToolService ?? new DesktopBrowserToolService();
+  const browserToolService = options.browserToolService ?? new DesktopBrowserToolService({ artifactStore: store });
   const terminalSessionManager =
     options.terminalSessionManager === undefined
       ? new TerminalSessionManager({
@@ -2974,8 +2988,12 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       headers: request.headers as Record<string, unknown>,
       query: isRecord(request.query) ? request.query : null,
     });
+    const space = capabilityBrowserSpace({
+      headers: request.headers as Record<string, unknown>,
+      query: isRecord(request.query) ? request.query : null,
+    });
     try {
-      return await browserToolService.getStatus({ workspaceId, sessionId });
+      return await browserToolService.getStatus({ workspaceId, sessionId, space });
     } catch (error) {
       if (error instanceof DesktopBrowserToolServiceError) {
         return sendError(reply, error.statusCode, error.message);
@@ -2994,11 +3012,26 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       headers: request.headers as Record<string, unknown>,
       body: request.body,
     });
+    const space = capabilityBrowserSpace({
+      headers: request.headers as Record<string, unknown>,
+      body: request.body,
+    });
+    const inputId =
+      workspaceId && sessionId
+        ? resolveOutputInputId({
+            store,
+            workspaceId,
+            sessionId,
+            inputId:
+              headerString(request.headers as Record<string, unknown>, "x-holaboss-input-id") ||
+              nullableString(request.body.input_id),
+          })
+        : null;
     try {
       return await browserToolService.execute(
         requiredString(params.toolId, "toolId"),
         request.body,
-        { workspaceId, sessionId },
+        { workspaceId, sessionId, inputId, space },
       );
     } catch (error) {
       if (error instanceof DesktopBrowserToolServiceError) {
