@@ -28,9 +28,14 @@ test("desktop browser protects shared and session-owned browser control with a c
   assert.match(source, /upsertCachedRuntimeStateRecord\(\{\s*workspace_id: payload\.workspace_id,\s*session_id: response\.session_id \|\| payload\.session_id,/s);
   assert.match(source, /browserSessionId\(sessionId\)\s*\|\|\s*browserSessionId\(browserWorkspaceFromMap\(workspaceId\)\?\.activeAgentSessionId\)/);
   assert.match(source, /return status === "BUSY" \|\| status === "QUEUED" \|\| status === "PAUSING";/);
+  assert.match(source, /const programmaticBrowserInputDepth = new WeakMap<WebContents, number>\(\);/);
+  assert.match(source, /function isProgrammaticBrowserInput\(webContents: WebContents\): boolean \{/);
+  assert.match(source, /async function withProgrammaticBrowserInput<T>\(/);
   assert.match(source, /view\.webContents\.on\("before-input-event", \(event, input\) => \{/);
+  assert.match(source, /if \(isProgrammaticBrowserInput\(view\.webContents\)\) \{\s*return;\s*\}/);
   assert.match(source, /view\.webContents\.on\("before-mouse-event", \(event, mouse\) => \{/);
   assert.match(source, /maybePromptBrowserInterrupt\(\s*workspaceId,\s*browserSpace,\s*normalizedSessionId,\s*\)/);
+  assert.match(source, /await withProgrammaticBrowserInput\(activeTab\.view\.webContents, async \(\) => \{/);
   assert.match(source, /const targetSpace = desktopBrowserSpaceFromRequest\(request\);/);
   assert.match(source, /Header 'x-holaboss-session-id' is required when targeting the user browser\./);
   assert.match(source, /code: "user_browser_locked"/);

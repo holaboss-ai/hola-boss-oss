@@ -658,7 +658,7 @@ test("desktop browser tool service accepts scoped browser_get_state controls", a
             metadata: {
               schema_version: 1,
               mode: "text",
-              scope: "viewport",
+              scope: "dialog",
               max_nodes: 2,
               include_page_text: true,
               include_screenshot: false,
@@ -703,7 +703,7 @@ test("desktop browser tool service accepts scoped browser_get_state controls", a
 
     const result = await service.execute(
       "browser_get_state",
-      { mode: "text", scope: "viewport", max_nodes: 2 },
+      { mode: "text", scope: "active_dialog", max_nodes: 2 },
       { workspaceId: "workspace-1", sessionId: "session-1" }
     );
 
@@ -711,7 +711,7 @@ test("desktop browser tool service accepts scoped browser_get_state controls", a
     assert.deepEqual((result.state as { metadata?: unknown }).metadata, {
       schema_version: 1,
       mode: "text",
-      scope: "viewport",
+      scope: "dialog",
       max_nodes: 2,
       include_page_text: true,
       include_screenshot: false,
@@ -724,7 +724,7 @@ test("desktop browser tool service accepts scoped browser_get_state controls", a
     assert.equal("screenshot" in result, false);
     assert.equal(evaluateBodies.length, 1);
     assert.match(evaluateBodies[0] ?? "", /const mode = \\"text\\";/);
-    assert.match(evaluateBodies[0] ?? "", /const scope = \\"viewport\\";/);
+    assert.match(evaluateBodies[0] ?? "", /const scope = \\"dialog\\";/);
     assert.match(evaluateBodies[0] ?? "", /const maxNodes = 2;/);
     assert.match(evaluateBodies[0] ?? "", /const includeMetadata = true;/);
   } finally {
@@ -804,6 +804,36 @@ test("desktop browser tool service exposes general find, act, wait, evaluate, an
               matched: waitPredicateCalls >= 2,
               condition: "element",
               match_count: waitPredicateCalls >= 2 ? 1 : 0,
+            },
+          }),
+        );
+        return;
+      }
+      if (expression.includes('const condition = "dom_change"')) {
+        response.end(
+          JSON.stringify({
+            tabId: "tab-1",
+            result: {
+              ok: true,
+              matched: true,
+              condition: "dom_change",
+              match_count: null,
+            },
+          }),
+        );
+        return;
+      }
+      if (expression.includes("element_count: document.querySelectorAll")) {
+        response.end(
+          JSON.stringify({
+            tabId: "tab-1",
+            result: {
+              url: "https://example.com/app",
+              title: "Example App",
+              ready_state: "complete",
+              text_length: 12,
+              element_count: 4,
+              active_tag: "body",
             },
           }),
         );
@@ -890,6 +920,13 @@ test("desktop browser tool service exposes general find, act, wait, evaluate, an
     });
     assert.equal((waitResult.wait as { matched?: boolean }).matched, true);
     assert.equal((waitResult.wait as { attempts?: number }).attempts, 2);
+
+    const changeWaitResult = await service.execute("browser_wait", {
+      condition: "change",
+      timeout_ms: 1000,
+    });
+    assert.equal((changeWaitResult.wait as { matched?: boolean }).matched, true);
+    assert.equal((changeWaitResult.wait as { condition?: string }).condition, "dom_change");
 
     const evaluateResult = await service.execute("browser_evaluate", {
       expression: "document.title",

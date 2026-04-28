@@ -72,7 +72,10 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
       additionalProperties: false,
       properties: {
         mode: { type: "string", enum: ["state", "text", "structured", "visual"] },
-        scope: { type: "string", enum: ["main", "viewport", "focused", "dialog"] },
+        scope: {
+          type: "string",
+          enum: ["main", "viewport", "focused", "dialog", "active_dialog", "modal"],
+        },
         max_nodes: { type: "integer", minimum: 1 },
         include_page_text: { type: "boolean" },
         include_screenshot: { type: "boolean" },
@@ -97,7 +100,10 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
         xpath: { type: "string" },
         exact: { type: "boolean" },
         include_hidden: { type: "boolean" },
-        scope: { type: "string", enum: ["main", "viewport", "focused", "dialog"] },
+        scope: {
+          type: "string",
+          enum: ["main", "viewport", "focused", "dialog", "active_dialog", "modal"],
+        },
         max_results: { type: "integer", minimum: 1, maximum: 100 },
       },
     },
@@ -125,7 +131,10 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
         selector: { type: "string" },
         xpath: { type: "string" },
         exact: { type: "boolean" },
-        scope: { type: "string", enum: ["main", "viewport", "focused", "dialog"] },
+        scope: {
+          type: "string",
+          enum: ["main", "viewport", "focused", "dialog", "active_dialog", "modal"],
+        },
         value: { type: "string" },
         key: { type: "string" },
         clear: { type: "boolean" },
@@ -143,7 +152,10 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
       type: "object",
       additionalProperties: false,
       properties: {
-        condition: { type: "string", enum: ["load", "url", "text", "element", "hidden", "dom_change", "dom_mutation"] },
+        condition: {
+          type: "string",
+          enum: ["load", "url", "text", "element", "hidden", "dom_change", "dom_mutation", "change", "mutation"],
+        },
         url: { type: "string" },
         text: { type: "string" },
         label: { type: "string" },
@@ -152,7 +164,10 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
         selector: { type: "string" },
         xpath: { type: "string" },
         exact: { type: "boolean" },
-        scope: { type: "string", enum: ["main", "viewport", "focused", "dialog"] },
+        scope: {
+          type: "string",
+          enum: ["main", "viewport", "focused", "dialog", "active_dialog", "modal"],
+        },
         timeout_ms: { type: "integer", minimum: 100, maximum: 30000 },
       },
     },

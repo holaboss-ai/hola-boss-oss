@@ -916,6 +916,7 @@ const agentSessionCache = new Map<
   Map<string, AgentSessionRecordPayload>
 >();
 const userBrowserInterruptPrompts = new Set<string>();
+const programmaticBrowserInputDepth = new WeakMap<WebContents, number>();
 const reportedOperatorSurfaceContexts = new Map<
   string,
   ReportedOperatorSurfaceContextPayload
@@ -7124,25 +7125,27 @@ async function handleDesktopBrowserServiceRequest(
       if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) {
         mainWindow.focus();
       }
-      activeTab.view.webContents.focus();
-      await activeTab.view.webContents.sendInputEvent({
-        type: "mouseMove",
-        x,
-        y,
-      });
-      await activeTab.view.webContents.sendInputEvent({
-        type: "mouseDown",
-        x,
-        y,
-        button: "right",
-        clickCount: 1,
-      });
-      await activeTab.view.webContents.sendInputEvent({
-        type: "mouseUp",
-        x,
-        y,
-        button: "right",
-        clickCount: 1,
+      await withProgrammaticBrowserInput(activeTab.view.webContents, async () => {
+        activeTab.view.webContents.focus();
+        await activeTab.view.webContents.sendInputEvent({
+          type: "mouseMove",
+          x,
+          y,
+        });
+        await activeTab.view.webContents.sendInputEvent({
+          type: "mouseDown",
+          x,
+          y,
+          button: "right",
+          clickCount: 1,
+        });
+        await activeTab.view.webContents.sendInputEvent({
+          type: "mouseUp",
+          x,
+          y,
+          button: "right",
+          clickCount: 1,
+        });
       });
 
       writeBrowserServiceJson(response, 200, {
@@ -7195,45 +7198,47 @@ async function handleDesktopBrowserServiceRequest(
       if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) {
         mainWindow.focus();
       }
-      activeTab.view.webContents.focus();
-      await activeTab.view.webContents.sendInputEvent({
-        type: "mouseMove",
-        x,
-        y,
-      });
+      await withProgrammaticBrowserInput(activeTab.view.webContents, async () => {
+        activeTab.view.webContents.focus();
+        await activeTab.view.webContents.sendInputEvent({
+          type: "mouseMove",
+          x,
+          y,
+        });
 
-      if (action === "click" || action === "double_click") {
-        await activeTab.view.webContents.sendInputEvent({
-          type: "mouseDown",
-          x,
-          y,
-          button: "left",
-          clickCount: 1,
-        });
-        await activeTab.view.webContents.sendInputEvent({
-          type: "mouseUp",
-          x,
-          y,
-          button: "left",
-          clickCount: 1,
-        });
-      }
-      if (action === "double_click") {
-        await activeTab.view.webContents.sendInputEvent({
-          type: "mouseDown",
-          x,
-          y,
-          button: "left",
-          clickCount: 2,
-        });
-        await activeTab.view.webContents.sendInputEvent({
-          type: "mouseUp",
-          x,
-          y,
-          button: "left",
-          clickCount: 2,
-        });
-      }
+        if (action === "click" || action === "double_click") {
+          await activeTab.view.webContents.sendInputEvent({
+            type: "mouseDown",
+            x,
+            y,
+            button: "left",
+            clickCount: 1,
+          });
+          await activeTab.view.webContents.sendInputEvent({
+            type: "mouseUp",
+            x,
+            y,
+            button: "left",
+            clickCount: 1,
+          });
+        }
+        if (action === "double_click") {
+          await activeTab.view.webContents.sendInputEvent({
+            type: "mouseDown",
+            x,
+            y,
+            button: "left",
+            clickCount: 2,
+          });
+          await activeTab.view.webContents.sendInputEvent({
+            type: "mouseUp",
+            x,
+            y,
+            button: "left",
+            clickCount: 2,
+          });
+        }
+      });
 
       writeBrowserServiceJson(response, 200, {
         ok: true,
@@ -17584,6 +17589,30 @@ function maybePromptBrowserInterrupt(
   return true;
 }
 
+function isProgrammaticBrowserInput(webContents: WebContents): boolean {
+  return (programmaticBrowserInputDepth.get(webContents) ?? 0) > 0;
+}
+
+async function withProgrammaticBrowserInput<T>(
+  webContents: WebContents,
+  callback: () => Promise<T>,
+): Promise<T> {
+  programmaticBrowserInputDepth.set(
+    webContents,
+    (programmaticBrowserInputDepth.get(webContents) ?? 0) + 1,
+  );
+  try {
+    return await callback();
+  } finally {
+    const nextDepth = (programmaticBrowserInputDepth.get(webContents) ?? 1) - 1;
+    if (nextDepth > 0) {
+      programmaticBrowserInputDepth.set(webContents, nextDepth);
+    } else {
+      programmaticBrowserInputDepth.delete(webContents);
+    }
+  }
+}
+
 function hydrateAgentSessionBrowserSpace(
   workspaceId: string,
   sessionId?: string | null,
@@ -21424,6 +21453,9 @@ function createBrowserTab(
     )?.tabs.get(tabId);
 
   view.webContents.on("before-input-event", (event, input) => {
+    if (isProgrammaticBrowserInput(view.webContents)) {
+      return;
+    }
     if (
       (input.type === "keyDown" ||
         input.type === "keyUp" ||
@@ -21440,6 +21472,9 @@ function createBrowserTab(
   });
 
   view.webContents.on("before-mouse-event", (event, mouse) => {
+    if (isProgrammaticBrowserInput(view.webContents)) {
+      return;
+    }
     if (
       mouse.type !== "mouseMove" &&
       mouse.type !== "mouseEnter" &&

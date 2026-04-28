@@ -80,9 +80,11 @@ function browserLocatorProperties(): Record<string, unknown> {
         { type: "string", const: "viewport" },
         { type: "string", const: "focused" },
         { type: "string", const: "dialog" },
+        { type: "string", const: "active_dialog" },
+        { type: "string", const: "modal" },
       ],
       description:
-        "Limit matching to the main document, current viewport, focused subtree, or active dialog.",
+        "Limit matching to the main document, current viewport, focused subtree, or active dialog. `active_dialog` and `modal` are accepted aliases for `dialog`.",
     },
   };
 }
@@ -139,9 +141,11 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
               { type: "string", const: "viewport" },
               { type: "string", const: "focused" },
               { type: "string", const: "dialog" },
+              { type: "string", const: "active_dialog" },
+              { type: "string", const: "modal" },
             ],
             description:
-              "Limit browser state to the main document, viewport, focused element subtree, or active dialog.",
+              "Limit browser state to the main document, viewport, focused element subtree, or active dialog. `active_dialog` and `modal` are accepted aliases for `dialog`.",
           },
           max_nodes: {
             type: "integer",
@@ -214,7 +218,7 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
         type: "object",
         properties: {
           condition: literalStringUnion(
-            ["load", "url", "text", "element", "hidden", "dom_change", "dom_mutation"],
+            ["load", "url", "text", "element", "hidden", "dom_change", "dom_mutation", "change", "mutation"],
             "Browser condition to wait for.",
           ),
           url: {

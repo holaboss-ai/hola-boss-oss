@@ -102,7 +102,7 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
       (getStateTool.parameters as { properties?: { scope?: { anyOf?: Array<{ const?: string }> } } })
         .properties?.scope?.anyOf ?? []
     ).map((entry) => entry.const),
-    ["main", "viewport", "focused", "dialog"],
+    ["main", "viewport", "focused", "dialog", "active_dialog", "modal"],
   );
   assert.equal(
     (getStateTool.parameters as { properties?: { max_nodes?: { minimum?: number } } }).properties?.max_nodes?.minimum,
@@ -116,7 +116,7 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
       (findTool.parameters as { properties?: { scope?: { anyOf?: Array<{ const?: string }> } } })
         .properties?.scope?.anyOf ?? []
     ).map((entry) => entry.const),
-    ["main", "viewport", "focused", "dialog"],
+    ["main", "viewport", "focused", "dialog", "active_dialog", "modal"],
   );
   const actTool = tools.find((tool) => tool.name === "browser_act");
   assert.ok(actTool);

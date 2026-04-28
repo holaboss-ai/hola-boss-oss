@@ -333,10 +333,13 @@ function browserWaitCondition(value: unknown, args: Record<string, unknown>): Br
   if (value === "dom_mutation") {
     return "dom_change";
   }
+  if (value === "change" || value === "mutation") {
+    return "dom_change";
+  }
   throw new DesktopBrowserToolServiceError(
     400,
     "browser_tool_invalid_args",
-    "condition must be `load`, `url`, `text`, `element`, `hidden`, `dom_change`, or `dom_mutation`"
+    "condition must be `load`, `url`, `text`, `element`, `hidden`, `dom_change`, `dom_mutation`, `change`, or `mutation`"
   );
 }
 
@@ -361,10 +364,13 @@ function browserGetStateScope(value: unknown): BrowserGetStateScope {
   if (value === "main" || value === "viewport" || value === "focused" || value === "dialog") {
     return value;
   }
+  if (value === "active_dialog" || value === "modal") {
+    return "dialog";
+  }
   throw new DesktopBrowserToolServiceError(
     400,
     "browser_tool_invalid_args",
-    "scope must be `main`, `viewport`, `focused`, or `dialog`"
+    "scope must be `main`, `viewport`, `focused`, `dialog`, `active_dialog`, or `modal`"
   );
 }
 
