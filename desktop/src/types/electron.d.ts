@@ -1584,7 +1584,10 @@ declare global {
       composioListToolkits: () => Promise<{ toolkits: Array<{ slug: string; name: string; description: string; logo: string | null; auth_schemes: string[]; categories: string[] }> }>;
       composioListConnections: () => Promise<{ connections: Array<{ id: string; toolkitSlug: string; toolkitName: string; toolkitLogo: string | null; userId: string; createdAt: string }> }>;
       composioConnect: (payload: { provider: string; owner_user_id: string; callback_url?: string }) => Promise<ComposioConnectResult>;
-      composioAccountStatus: (connectedAccountId: string) => Promise<ComposioAccountStatus>;
+      composioAccountStatus: (
+        connectedAccountId: string,
+        providerId?: string | null,
+      ) => Promise<ComposioAccountStatus>;
       composioFinalize: (payload: {
         connected_account_id: string;
         provider: string;
@@ -1593,6 +1596,11 @@ declare global {
         account_handle?: string | null;
         account_email?: string | null;
       }) => Promise<IntegrationConnectionPayload>;
+      composioRefreshConnection: (connectionId: string) => Promise<{
+        connection: IntegrationConnectionPayload;
+        changed: boolean;
+        reason?: "no_external_id" | "account_missing" | "no_new_identity";
+      }>;
       resolveTemplateIntegrations: (payload: HolabossCreateWorkspacePayload) => Promise<ResolveTemplateIntegrationsResult>;
       generateTemplateContent(params: {
         contentType: "onboarding" | "readme";

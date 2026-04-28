@@ -6285,7 +6285,9 @@ export function ChatPane({
         };
         setMessages((prev) =>
           prev.map((message) =>
-            message.id === optimisticUserMessageId ? persistedUserMessage : message,
+            message.id === optimisticUserMessageId
+              ? persistedUserMessage
+              : message,
           ),
         );
         updatePendingOptimisticUserMessagesState((current) =>
@@ -6693,8 +6695,7 @@ export function ChatPane({
     if (browserCommentMode === "append") {
       setPendingBrowserCommentDraft((current) => ({
         tabId: browserCommentRequest?.tabId ?? current?.tabId ?? "",
-        pageTitle:
-          browserCommentRequest?.pageTitle ?? current?.pageTitle ?? "",
+        pageTitle: browserCommentRequest?.pageTitle ?? current?.pageTitle ?? "",
         url: browserCommentRequest?.url ?? current?.url ?? "",
         comments: [
           ...(current?.comments ?? []),
@@ -6899,9 +6900,9 @@ export function ChatPane({
         kind:
           attachment.source === "local-file"
             ? attachmentLooksLikeImage(
-                  attachment.file.name,
-                  attachment.file.type,
-                )
+                attachment.file.name,
+                attachment.file.type,
+              )
               ? ("image" as const)
               : ("file" as const)
             : attachment.kind,
@@ -6964,8 +6965,9 @@ export function ChatPane({
     const requestId = imageAttachmentPreviewRequestIdRef.current;
     clearImageAttachmentPreviewObjectUrl();
     let localObjectUrl = "";
-    const browserSnapshotPromise =
-      window.electronAPI.browser.captureVisibleSnapshot().catch(() => null);
+    const browserSnapshotPromise = window.electronAPI.browser
+      .captureVisibleSnapshot()
+      .catch(() => null);
     const imageDataResultPromise = (async () => {
       try {
         if (attachment.file) {
@@ -7719,9 +7721,7 @@ export function ChatPane({
 
   return (
     <PaneCard
-      className={
-        isOnboardingVariant ? "w-full border-primary/20" : "w-full"
-      }
+      className={isOnboardingVariant ? "w-full border-primary/20" : "w-full"}
     >
       <div className="relative flex h-full min-h-0 min-w-0 flex-col">
         <div className="theme-chat-composer-glow pointer-events-none absolute inset-x-8 bottom-0 h-44 rounded-full blur-2xl" />
@@ -8341,7 +8341,7 @@ function SessionSelector({
             render={
               <Button
                 variant="outline"
-                className="w-full min-w-0 justify-start"
+                className="w-full min-w-0 justify-start gap-1"
                 aria-label="Select agent session"
               />
             }
@@ -8351,7 +8351,7 @@ function SessionSelector({
             >
               {activeIndicator.icon}
             </span>
-            <span className="min-w-0 flex-1 truncate text-xs text-start font-medium text-foreground">
+            <span className="min-w-0 flex-1 truncate text-sm text-start font-medium text-foreground">
               {activeTitle}
             </span>
             <ChevronDown
@@ -8363,7 +8363,7 @@ function SessionSelector({
         </div>
         <PopoverContent
           align="start"
-          className="w-[300px] gap-0 rounded-lg p-0 shadow-subtle-sm ring-0"
+          className="w-75 gap-0 rounded-lg p-0 shadow-subtle-sm ring-0"
         >
           <div className="border-b border-border p-2">
             <div className="relative flex h-8 items-center rounded-md border border-border bg-background px-2.5 transition-colors focus-within:border-muted-foreground">
@@ -8373,12 +8373,11 @@ function SessionSelector({
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search sessions..."
                 className="embedded-input h-full w-full bg-transparent pl-2 text-xs text-foreground outline-none placeholder:text-muted-foreground"
-                autoFocus
               />
             </div>
           </div>
 
-          <div className="max-h-[320px] overflow-y-auto p-1.5 space-y-0.5">
+          <div className="max-h-80 overflow-y-auto p-1.5 space-y-0.5">
             {isLoading ? (
               <div className="px-3 py-3 text-xs text-muted-foreground">
                 Loading sessions...
@@ -10057,8 +10056,8 @@ function AttachmentList({
           Boolean(onPreview) &&
           Boolean(
             attachment.file ||
-              (typeof attachment.workspace_path === "string" &&
-                attachment.workspace_path.trim()),
+            (typeof attachment.workspace_path === "string" &&
+              attachment.workspace_path.trim()),
           );
 
         const content = (
@@ -10070,7 +10069,9 @@ function AttachmentList({
             ) : (
               <FileText className="size-3 shrink-0 text-primary" />
             )}
-            <span className="truncate">{attachmentButtonLabel(attachment)}</span>
+            <span className="truncate">
+              {attachmentButtonLabel(attachment)}
+            </span>
           </>
         );
 
@@ -10196,7 +10197,9 @@ function ImageAttachmentPreviewModal({
 
         <div
           className={`overflow-auto px-4 py-4 ${
-            showImage ? "bg-transparent" : "min-h-[240px] min-w-[320px] bg-muted/20"
+            showImage
+              ? "bg-transparent"
+              : "min-h-[240px] min-w-[320px] bg-muted/20"
           }`}
         >
           {preview.isLoading ? (
@@ -10550,7 +10553,9 @@ function ThinkingValueSelect({
               )
             ) : (
               <>
-                <span className="whitespace-nowrap">{selectedThinkingLabel}</span>
+                <span className="whitespace-nowrap">
+                  {selectedThinkingLabel}
+                </span>
                 <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
               </>
             )}
@@ -11106,9 +11111,7 @@ function Composer({
         onDragLeave={onDragLeave}
         onDrop={onDrop}
         className={`overflow-hidden rounded-2xl bg-background shadow-md ${
-          isDragActive
-            ? "ring-1 ring-primary/40 bg-primary/[0.04]"
-            : ""
+          isDragActive ? "ring-1 ring-primary/40 bg-primary/[0.04]" : ""
         }`}
       >
         <input
@@ -11271,9 +11274,7 @@ function Composer({
 
           {showThinkingValueSelector ? (
             <div
-              className={
-                compactComposerControls ? "shrink-0" : "shrink-0"
-              }
+              className={compactComposerControls ? "shrink-0" : "shrink-0"}
               style={
                 compactComposerControls
                   ? { width: `${compactThinkingControlWidth}px` }
@@ -11327,9 +11328,7 @@ function Composer({
                 side="top"
                 sideOffset={8}
                 className={`gap-0 rounded-xl border border-border bg-popover p-0 shadow-subtle-sm ring-0 ${
-                  composerActionsView === "skills"
-                    ? "w-[320px]"
-                    : "w-[224px]"
+                  composerActionsView === "skills" ? "w-[320px]" : "w-[224px]"
                 }`}
               >
                 {composerActionsView === "skills" ? (
