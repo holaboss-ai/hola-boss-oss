@@ -25,10 +25,10 @@ const VIEW_META: Record<DataViewSpec["type"], { label: string; icon: LucideIcon 
   board: { label: "Board", icon: Columns3 },
 };
 
-// Wraps a single panel's data with a Notion-style header (title + view
-// switcher as underlined text tabs) and the active view's content.
-// Selected view state is component-local: it survives re-renders within
-// the session but isn't persisted to the .dashboard file.
+// Wraps a single panel's data in a Notion-style card: thin border,
+// solid card surface, header with title + connected segmented view
+// switcher, body with the active view's content. Selected view state
+// is component-local — survives within the session, isn't persisted.
 export function DataViewPanel({ panel, state }: DataViewPanelProps) {
   const [activeViewType, setActiveViewType] = useState<DataViewSpec["type"]>(
     () => resolveInitialView(panel).type,
@@ -36,14 +36,24 @@ export function DataViewPanel({ panel, state }: DataViewPanelProps) {
   const activeView =
     panel.views.find((v) => v.type === activeViewType) ?? panel.views[0];
 
+  const rowCount =
+    state.kind === "data" ? state.rows.length : null;
+
   return (
-    <div>
-      <div className="flex items-center justify-between gap-3 border-b border-border pb-2">
-        <div className="text-sm font-semibold tracking-tight text-foreground">
-          {panel.title}
+    <div className="overflow-hidden rounded-lg border border-border bg-card">
+      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-sm font-semibold tracking-tight text-foreground">
+            {panel.title}
+          </span>
+          {rowCount !== null ? (
+            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+              {rowCount}
+            </span>
+          ) : null}
         </div>
         {panel.views.length > 1 ? (
-          <div className="flex items-center gap-1">
+          <div className="flex shrink-0 items-center rounded-md border border-border bg-muted/40 p-0.5">
             {panel.views.map((view) => {
               const active = view.type === activeViewType;
               const meta = VIEW_META[view.type];
@@ -56,26 +66,26 @@ export function DataViewPanel({ panel, state }: DataViewPanelProps) {
                   title={meta.label}
                   aria-label={`${meta.label} view`}
                   aria-pressed={active}
-                  className={`grid size-7 place-items-center rounded-md transition-colors ${
+                  className={`grid size-6 place-items-center rounded transition-colors ${
                     active
-                      ? "bg-muted text-foreground"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                      ? "bg-background text-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
-                  <Icon size={14} strokeWidth={1.75} />
+                  <Icon size={13} strokeWidth={1.75} />
                 </button>
               );
             })}
           </div>
         ) : null}
       </div>
-      <div className="max-h-[520px] overflow-auto">
+      <div className="max-h-[520px] overflow-auto px-4 pb-3">
         {state.kind === "loading" ? (
-          <div className="grid place-items-center px-1 py-10 text-xs text-muted-foreground">
+          <div className="grid place-items-center py-10 text-xs text-muted-foreground">
             Loading…
           </div>
         ) : state.kind === "error" ? (
-          <div className="px-1 py-4 text-xs text-destructive">{state.message}</div>
+          <div className="py-4 text-xs text-destructive">{state.message}</div>
         ) : activeView.type === "table" ? (
           <TableView view={activeView} columns={state.columns} rows={state.rows} />
         ) : (

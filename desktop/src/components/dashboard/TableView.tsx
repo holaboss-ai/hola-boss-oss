@@ -1,5 +1,7 @@
 import type { TableViewSpec } from "@/lib/dashboardSchema";
 
+import { isStatusColumn, StatusBadge } from "./StatusBadge";
+
 interface TableViewProps {
   view: TableViewSpec;
   columns: string[];
@@ -31,7 +33,15 @@ export function TableView({ view, columns, rows }: TableViewProps) {
 
   return (
     <div className="pt-1">
-      <table className="w-full border-collapse text-sm">
+      <table className="w-full table-fixed border-collapse text-sm">
+        <colgroup>
+          {visible.map((c) => (
+            <col
+              key={c.name}
+              className={c.isStatus ? "w-[140px]" : undefined}
+            />
+          ))}
+        </colgroup>
         <thead>
           <tr>
             {visible.map((c) => (
@@ -52,12 +62,7 @@ export function TableView({ view, columns, rows }: TableViewProps) {
               className="border-b border-border/40 transition-colors hover:bg-muted/70 last:border-b-0"
             >
               {visible.map((c) => (
-                <td
-                  key={c.name}
-                  className="px-3 py-2.5 align-top leading-relaxed text-foreground first:pl-1 last:pr-1"
-                >
-                  {formatCell(row[c.index])}
-                </td>
+                <Cell key={c.name} column={c} value={row[c.index]} />
               ))}
             </tr>
           ))}
@@ -75,22 +80,57 @@ export function TableView({ view, columns, rows }: TableViewProps) {
 interface VisibleColumn {
   name: string;
   index: number;
+  isStatus: boolean;
 }
 
 function pickColumns(view: TableViewSpec, columns: string[]): VisibleColumn[] {
   if (!view.columns || view.columns.length === 0) {
-    return columns.map((name, index) => ({ name, index }));
+    return columns.map((name, index) => ({
+      name,
+      index,
+      isStatus: isStatusColumn(name),
+    }));
   }
   return view.columns
-    .map((name) => ({ name, index: columns.indexOf(name) }))
+    .map((name) => ({ name, index: columns.indexOf(name), isStatus: isStatusColumn(name) }))
     .filter((c) => c.index >= 0);
+}
+
+function Cell({ column, value }: { column: VisibleColumn; value: unknown }) {
+  if (column.isStatus) {
+    return (
+      <td className="px-3 py-2 align-top first:pl-1 last:pr-1">
+        <StatusBadge value={formatCell(value)} />
+      </td>
+    );
+  }
+  const text = formatCell(value);
+  // Long text gets a 2-line clamp + native title tooltip so the table
+  // doesn't blow up vertically. Short text falls through to a single
+  // line of relaxed leading.
+  const isLong = text.length > 80;
+  return (
+    <td
+      className="px-3 py-2.5 align-top text-foreground first:pl-1 last:pr-1"
+    >
+      {isLong ? (
+        <span
+          className="line-clamp-2 leading-snug"
+          title={text}
+        >
+          {text}
+        </span>
+      ) : (
+        <span className="leading-relaxed">{text}</span>
+      )}
+    </td>
+  );
 }
 
 function formatCell(value: unknown): string {
   if (value === null || value === undefined) return "";
   if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean")
-    return String(value);
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
   try {
     return JSON.stringify(value);
   } catch {

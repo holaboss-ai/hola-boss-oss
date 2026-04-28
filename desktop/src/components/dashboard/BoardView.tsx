@@ -1,5 +1,7 @@
 import type { BoardViewSpec } from "@/lib/dashboardSchema";
 
+import { isStatusColumn, StatusBadge } from "./StatusBadge";
+
 interface BoardViewProps {
   view: BoardViewSpec;
   columns: string[];
@@ -41,6 +43,7 @@ export function BoardView({ view, columns, rows }: BoardViewProps) {
     else groups.set(key, [row]);
   }
   const ordered = Array.from(groups.entries());
+  const groupAsStatus = isStatusColumn(view.group_by);
 
   if (ordered.length === 0) {
     return (
@@ -55,9 +58,13 @@ export function BoardView({ view, columns, rows }: BoardViewProps) {
       {ordered.map(([groupValue, groupRows]) => (
         <div key={groupValue} className="flex w-60 shrink-0 flex-col">
           <div className="flex items-center gap-2 px-1 pb-2">
-            <span className="text-xs font-medium text-foreground">
-              {groupValue}
-            </span>
+            {groupAsStatus ? (
+              <StatusBadge value={groupValue} />
+            ) : (
+              <span className="text-xs font-medium text-foreground">
+                {groupValue}
+              </span>
+            )}
             <span className="text-[11px] tabular-nums text-muted-foreground">
               {groupRows.length}
             </span>
