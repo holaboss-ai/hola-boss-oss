@@ -11,6 +11,34 @@ import { type AuthSession, useDesktopAuthSession } from "@/lib/auth/authClient";
 import { hydrateInstalledWorkspaceApps, type WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
+/**
+ * Maps an app id (e.g. `twitter`, `sheets`) to the integration provider id
+ * the runtime expects in `integration_bindings.integration_key`. Apps with
+ * no integration are absent from the table — callers should treat
+ * `undefined` as "no provider needed".
+ *
+ * Exported so renderer-side components (AppsGallery, install cards) can
+ * derive the same provider without each reimplementing the mapping.
+ */
+export const APP_TO_PROVIDER_MAP: Record<string, string> = {
+  twitter: "twitter",
+  linkedin: "linkedin",
+  reddit: "reddit",
+  gmail: "gmail",
+  sheets: "googlesheets",
+  github: "github",
+  hubspot: "hubspot",
+  attio: "attio",
+  calcom: "calcom",
+  apollo: "apollo",
+  instantly: "instantly",
+  zoominfo: "zoominfo",
+};
+
+export function getProviderForApp(appId: string): string | undefined {
+  return APP_TO_PROVIDER_MAP[appId.toLowerCase()];
+}
+
 const ONBOARDING_ACTIVE_STATUSES = new Set(["pending", "awaiting_confirmation", "in_progress"]);
 const LOCAL_OSS_TEMPLATE_USER_ID = "local-oss";
 const DEFAULT_WORKSPACE_HARNESS: WorkspaceHarnessId = "pi";
@@ -67,7 +95,10 @@ interface WorkspaceDesktopContextValue {
   setAppCatalogSource: (source: "marketplace" | "local") => void;
   refreshAppCatalog: () => Promise<void>;
   installingAppId: string | null;
-  installAppFromCatalog: (appId: string) => Promise<void>;
+  installAppFromCatalog: (
+    appId: string,
+    options?: { connectionId?: string },
+  ) => Promise<void>;
   pendingAppInstall: { appId: string; provider: string } | null;
   clearPendingAppInstall: () => void;
   connectAndInstallApp: () => Promise<void>;
@@ -411,6 +442,43 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     setWorkspaceBlockingReasonState("");
   }, [selectedWorkspaceId]);
 
+  // Optimistic splash hydration — read the workspaces table directly
+  // from runtime.db on the desktop side, without waiting for the
+  // sidecar to spawn or run schema-ensure. Sidecar takes 2-4s on cold
+  // launch; this synchronous local read is 5-15ms. If we get any
+  // rows, we hydrate the splash immediately; the sidecar's later
+  // listWorkspaces (via the regular workspace-load effect) reconciles.
+  // First-launch / fresh-install case has no rows → falls through to
+  // the sidecar-gated path, no behaviour change.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const cached =
+          await window.electronAPI.workspace.listWorkspacesCached();
+        if (cancelled) return;
+        if (cached.items.length === 0) return;
+        setWorkspaces(cached.items);
+        setSelectedWorkspaceId((current) => {
+          if (current && cached.items.some((w) => w.id === current)) {
+            return current;
+          }
+          return cached.items[0]?.id ?? "";
+        });
+        setHasHydratedWorkspaceList(true);
+        setIsRefreshing(false);
+        // Splash unmounts now — sidecar can finish booting in the
+        // background; the regular workspace-load effect will reconcile
+        // when it finally resolves.
+      } catch {
+        // Silent fallback — let the regular sidecar-gated path run.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -484,36 +552,13 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     };
   }, []);
 
-  useEffect(() => {
-    if (
-      hasHydratedWorkspaceList ||
-      isLoadingBootstrap ||
-      runtimeStatus?.status !== "starting"
-    ) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const refreshStartingRuntimeStatus = () => {
-      void window.electronAPI.runtime
-        .getStatus()
-        .then((status) => {
-          if (!cancelled) {
-            setRuntimeStatus(status);
-          }
-        })
-        .catch(() => undefined);
-    };
-
-    refreshStartingRuntimeStatus();
-    const timer = window.setInterval(refreshStartingRuntimeStatus, 1000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [hasHydratedWorkspaceList, isLoadingBootstrap, runtimeStatus?.status]);
+  // (Removed) — there used to be a 1s polling loop here that re-queried
+  // runtime:getStatus while the sidecar was "starting". The push event
+  // `runtime:state` (fired from emitRuntimeState() on every transition,
+  // including the starting → running flip) covers the same state with
+  // zero latency, and the redundant poll could only *delay* observed
+  // ready by up to a full tick (caller waits for next 1s boundary).
+  // Boot timing measured ~1s recovery on the splash by removing this.
 
   useEffect(() => {
     let mounted = true;
@@ -736,22 +781,14 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     }
   }
 
-  const APP_TO_PROVIDER: Record<string, string> = {
-    twitter: "twitter",
-    linkedin: "linkedin",
-    reddit: "reddit",
-    gmail: "gmail",
-    sheets: "googlesheets",
-    github: "github",
-    hubspot: "hubspot",
-    attio: "attio",
-    calcom: "calcom",
-    apollo: "apollo",
-    instantly: "instantly",
-    zoominfo: "zoominfo",
-  };
+  // (Same map exported above as APP_TO_PROVIDER_MAP for renderer-side reuse.)
+  // Local alias keeps the rest of the hook readable.
+  const APP_TO_PROVIDER = APP_TO_PROVIDER_MAP;
 
-  async function installAppFromCatalog(appId: string) {
+  async function installAppFromCatalog(
+    appId: string,
+    options?: { connectionId?: string },
+  ) {
     if (!selectedWorkspaceId) {
       setAppCatalogError("Select a workspace first.");
       return;
@@ -778,10 +815,10 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       }
     }
 
-    await doInstallApp(appId);
+    await doInstallApp(appId, options?.connectionId ?? null);
   }
 
-  async function doInstallApp(appId: string) {
+  async function doInstallApp(appId: string, requestedConnectionId: string | null) {
     if (!selectedWorkspaceId) return;
     setInstallingAppId(appId);
     setPendingAppInstall(null);
@@ -792,14 +829,32 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
         appId,
         source: appCatalogSource,
       });
-      // Bind the integration if we have one
+      // Resolve the connection to bind for this app:
+      //   1. caller explicitly chose one (multi-account picker on the
+      //      install card) → use that, validating it still exists +
+      //      matches the expected provider before writing.
+      //   2. otherwise — auto-pick the most-recently-updated active
+      //      connection on the expected provider. This is the silent
+      //      single-account happy path; with the dedupe work in place
+      //      "first match" is now stable.
       const provider = APP_TO_PROVIDER[appId.toLowerCase()];
       if (provider && selectedWorkspaceId) {
         try {
           const { connections } = await window.electronAPI.workspace.listIntegrationConnections();
-          const conn = connections.find(
-            (c) => c.provider_id === provider && c.status === "active",
-          );
+          const requested = requestedConnectionId
+            ? connections.find(
+                (c) =>
+                  c.connection_id === requestedConnectionId &&
+                  c.status === "active" &&
+                  c.provider_id === provider,
+              )
+            : null;
+          const fallback = requested
+            ? null
+            : connections.find(
+                (c) => c.provider_id === provider && c.status === "active",
+              );
+          const conn = requested ?? fallback;
           if (conn) {
             await window.electronAPI.workspace.upsertIntegrationBinding(
               selectedWorkspaceId,
@@ -883,7 +938,10 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
             owner_user_id: userId,
             account_label: `${provider} (Managed)`,
           });
-          await doInstallApp(appId);
+          // First-time connect → no requested connectionId; doInstallApp
+          // falls through to its "auto-pick first active" path which now
+          // sees the freshly-stored connection.
+          await doInstallApp(appId, null);
           connected = true;
           return;
         }
@@ -1061,12 +1119,14 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   useEffect(() => {
     let cancelled = false;
 
-    if (isLoadingBootstrap) {
-      return () => {
-        cancelled = true;
-      };
-    }
-
+    // Workspace load no longer waits for `isLoadingBootstrap`. The
+    // bootstrap effect fetches runtimeConfig / clientConfig — neither
+    // is needed to render the workspace list, and on cold launch they
+    // can spend 1.5s+ retrying against a not-yet-healthy sidecar. We
+    // only gate on `runtimeReadyForWorkspaceData` (status === "running"),
+    // which is exactly what listWorkspaces actually depends on; the
+    // bootstrap APIs populate state in the background after the splash
+    // is gone.
     if (!runtimeReadyForWorkspaceData) {
       setIsRefreshing(false);
       setHasHydratedWorkspaceList((current) => current || workspaces.length > 0);
@@ -1099,7 +1159,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     return () => {
       cancelled = true;
     };
-  }, [isLoadingBootstrap, resolvedUserId, runtimeReadyForWorkspaceData, runtimeStatus?.lastError, runtimeStatus?.status, workspaces.length]);
+  }, [resolvedUserId, runtimeReadyForWorkspaceData, runtimeStatus?.lastError, runtimeStatus?.status, workspaces.length]);
 
   useEffect(() => {
     let cancelled = false;

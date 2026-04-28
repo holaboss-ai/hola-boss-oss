@@ -25,6 +25,8 @@ export interface IntegrationConnectionPayload {
   owner_user_id: string;
   account_label: string;
   account_external_id: string | null;
+  account_handle: string | null;
+  account_email: string | null;
   auth_mode: string;
   granted_scopes: string[];
   status: string;
@@ -179,6 +181,8 @@ function toIntegrationConnectionPayload(record: {
   ownerUserId: string;
   accountLabel: string;
   accountExternalId: string | null;
+  accountHandle?: string | null;
+  accountEmail?: string | null;
   authMode: string;
   grantedScopes: string[];
   status: string;
@@ -192,6 +196,8 @@ function toIntegrationConnectionPayload(record: {
     owner_user_id: record.ownerUserId,
     account_label: record.accountLabel,
     account_external_id: record.accountExternalId,
+    account_handle: record.accountHandle ?? null,
+    account_email: record.accountEmail ?? null,
     auth_mode: record.authMode,
     granted_scopes: record.grantedScopes,
     status: record.status,
@@ -329,6 +335,10 @@ export class RuntimeIntegrationService {
     grantedScopes: string[];
     secretRef?: string;
     accountExternalId?: string;
+    /** Stable provider-side identity from whoami (e.g. Twitter handle). */
+    accountHandle?: string | null;
+    /** Stable provider-side email from whoami (e.g. Gmail address). */
+    accountEmail?: string | null;
   }): IntegrationConnectionPayload {
     const providerId = requiredString(params.providerId, "provider_id");
     const ownerUserId = requiredString(params.ownerUserId, "owner_user_id");
@@ -338,16 +348,34 @@ export class RuntimeIntegrationService {
       rawAccountLabel ||
       (authMode === "manual_token" ? `${lookupProviderDisplayName(providerId)} connection` : requiredString(params.accountLabel, "account_label"));
 
+    // Dedupe-on-reconnect: if the caller has resolved a stable identity
+    // (handle or email) for the new external account, look for an existing
+    // active connection on the same (provider, owner) tuple matching that
+    // identity. If found, treat this as a re-auth — keep the existing
+    // connection_id (so all integration_bindings stay valid) and refresh
+    // the volatile fields (external_id, secret_ref, label, scopes).
+    const existing =
+      params.accountHandle || params.accountEmail
+        ? this.store.findActiveIntegrationConnectionByIdentity({
+            providerId,
+            ownerUserId,
+            accountHandle: params.accountHandle ?? null,
+            accountEmail: params.accountEmail ?? null
+          })
+        : null;
+
     const record = this.store.upsertIntegrationConnection({
-      connectionId: randomUUID(),
+      connectionId: existing?.connectionId ?? randomUUID(),
       providerId,
       ownerUserId,
       accountLabel,
       authMode,
-      grantedScopes: params.grantedScopes ?? [],
+      grantedScopes: params.grantedScopes ?? existing?.grantedScopes ?? [],
       status: "active",
-      secretRef: params.secretRef,
-      accountExternalId: params.accountExternalId
+      secretRef: params.secretRef ?? existing?.secretRef ?? null,
+      accountExternalId: params.accountExternalId ?? existing?.accountExternalId ?? null,
+      accountHandle: params.accountHandle ?? existing?.accountHandle ?? null,
+      accountEmail: params.accountEmail ?? existing?.accountEmail ?? null
     });
 
     return toIntegrationConnectionPayload(record);
@@ -358,6 +386,16 @@ export class RuntimeIntegrationService {
     secretRef?: string;
     accountLabel?: string;
     grantedScopes?: string[];
+    /**
+     * Provider-side identity. Pass `undefined` to leave the existing
+     * value untouched; pass `null` to explicitly clear; pass a string
+     * (or trimmed-to-empty) to backfill / overwrite. Used by the
+     * desktop's whoami enrichment to backfill identity on legacy rows
+     * created before identity columns existed, so the next finalize
+     * dedupe can match them.
+     */
+    accountHandle?: string | null;
+    accountEmail?: string | null;
   }): IntegrationConnectionPayload {
     const normalizedId = requiredString(connectionId, "connection_id");
     const existing = this.store.getIntegrationConnection(normalizedId);
@@ -374,10 +412,133 @@ export class RuntimeIntegrationService {
       grantedScopes: params.grantedScopes ?? existing.grantedScopes,
       status: params.status ?? existing.status,
       secretRef: params.secretRef !== undefined ? params.secretRef : existing.secretRef,
-      accountExternalId: existing.accountExternalId
+      accountExternalId: existing.accountExternalId,
+      accountHandle:
+        params.accountHandle !== undefined ? params.accountHandle : existing.accountHandle,
+      accountEmail:
+        params.accountEmail !== undefined ? params.accountEmail : existing.accountEmail
     });
 
     return toIntegrationConnectionPayload(record);
+  }
+
+  /**
+   * Merge duplicate connections into a single canonical row. Used to
+   * collapse legacy duplicate rows for the same provider-side identity
+   * once whoami enrichment reveals they're the same account.
+   *
+   * - All bindings pointing at any `removeConnectionIds` are repointed
+   *   at `keepConnectionId` (UPSERT, so existing bindings on the keep
+   *   side win on the unique target).
+   * - Removed connections are deleted afterwards.
+   * - The keep connection must exist and share (provider, owner) with
+   *   every removed connection — refuse otherwise so an unrelated
+   *   account can't accidentally absorb someone else's bindings.
+   */
+  mergeConnections(params: {
+    keepConnectionId: string;
+    removeConnectionIds: string[];
+  }): { kept_connection_id: string; removed_count: number; repointed_bindings: number } {
+    const keepId = requiredString(params.keepConnectionId, "keep_connection_id");
+    const keep = this.store.getIntegrationConnection(keepId);
+    if (!keep) {
+      throw new IntegrationServiceError(404, "keep connection not found");
+    }
+    const removeIds = (params.removeConnectionIds ?? [])
+      .map((id) => (typeof id === "string" ? id.trim() : ""))
+      .filter((id) => id.length > 0 && id !== keepId);
+    if (removeIds.length === 0) {
+      return { kept_connection_id: keepId, removed_count: 0, repointed_bindings: 0 };
+    }
+
+    // Validate every remove row up front so a half-completed merge
+    // can't leave the DB in a partial state. The actual binding
+    // repoint + connection delete runs inside a single transaction.
+    const removeRows: Array<{ id: string; row: typeof keep }> = [];
+    for (const removeId of removeIds) {
+      const removeRow = this.store.getIntegrationConnection(removeId);
+      if (!removeRow) {
+        continue;
+      }
+      if (
+        removeRow.providerId !== keep.providerId ||
+        removeRow.ownerUserId !== keep.ownerUserId
+      ) {
+        throw new IntegrationServiceError(
+          400,
+          `cannot merge: connection ${removeId} provider/owner does not match the keep connection`
+        );
+      }
+      removeRows.push({ id: removeId, row: removeRow });
+    }
+    if (removeRows.length === 0) {
+      return { kept_connection_id: keepId, removed_count: 0, repointed_bindings: 0 };
+    }
+
+    let repointed = 0;
+    this.store.transaction(() => {
+    for (const { id: removeId } of removeRows) {
+      const bindings = this.store
+        .listIntegrationBindings({})
+        .filter((b) => b.connectionId === removeId);
+      for (const binding of bindings) {
+        // Look for a *different* binding row that already owns the same
+        // (workspace, target_type, target_id, integration_key) on the
+        // keep id — that's the only real collision. The lookup ignores
+        // connection_id, so we filter by bindingId to make sure we don't
+        // mistake the row we're about to repoint for a collision and
+        // delete it.
+        const existingOnTarget = this.store.getIntegrationBindingByTarget({
+          workspaceId: binding.workspaceId,
+          targetType: binding.targetType,
+          targetId: binding.targetId,
+          integrationKey: binding.integrationKey
+        });
+        const collision =
+          existingOnTarget && existingOnTarget.bindingId !== binding.bindingId
+            ? existingOnTarget
+            : null;
+        if (collision && collision.connectionId === keepId) {
+          // keep already owns this target via a separate binding row —
+          // drop our duplicate.
+          this.store.deleteIntegrationBinding(binding.bindingId);
+        } else if (collision) {
+          // Some other connection owns this target on the keep side
+          // (shouldn't happen given provider+owner guard above, but be
+          // safe): collapse onto keep id, drop the duplicate.
+          this.store.upsertIntegrationBinding({
+            bindingId: collision.bindingId,
+            workspaceId: collision.workspaceId,
+            targetType: collision.targetType,
+            targetId: collision.targetId,
+            integrationKey: collision.integrationKey,
+            connectionId: keepId,
+            isDefault: collision.isDefault || binding.isDefault
+          });
+          this.store.deleteIntegrationBinding(binding.bindingId);
+        } else {
+          // No collision — repoint our row in place.
+          this.store.upsertIntegrationBinding({
+            bindingId: binding.bindingId,
+            workspaceId: binding.workspaceId,
+            targetType: binding.targetType,
+            targetId: binding.targetId,
+            integrationKey: binding.integrationKey,
+            connectionId: keepId,
+            isDefault: binding.isDefault
+          });
+        }
+        repointed += 1;
+      }
+      this.store.deleteIntegrationConnection(removeId);
+    }
+    });
+
+    return {
+      kept_connection_id: keepId,
+      removed_count: removeRows.length,
+      repointed_bindings: repointed
+    };
   }
 
   deleteConnection(connectionId: string): { deleted: true; removed_bindings: number } {

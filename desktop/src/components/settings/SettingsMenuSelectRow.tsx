@@ -65,7 +65,12 @@ export function SettingsMenuSelectRow({
         }}
         disabled={disabled}
       >
-        <SelectTrigger className={triggerWidth}>
+        <SelectTrigger
+          // Force foreground for selected value: Base UI marks the
+          // trigger data-placeholder until the items list is registered
+          // (lazy on first open), which would otherwise mute its colour.
+          className={`${triggerWidth} data-placeholder:text-foreground`}
+        >
           <SelectValue placeholder={placeholder}>
             {(currentValue) => {
               // Base UI's auto text-extraction falls back to the raw
