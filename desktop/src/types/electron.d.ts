@@ -1504,6 +1504,7 @@ declare global {
       listAppCatalog: (params: { source?: "marketplace" | "local" }) => Promise<AppCatalogListResponse>;
       syncAppCatalog: (params: { source: "marketplace" | "local" }) => Promise<AppCatalogSyncResponse>;
       installAppFromCatalog: (params: InstallAppFromCatalogRequest) => Promise<InstallAppFromCatalogResponse>;
+      installAppFromArchiveFile: (params: { workspaceId: string }) => Promise<InstallAppFromCatalogResponse | null>;
       listOutputs: (payload: string | WorkspaceOutputListRequestPayload) => Promise<WorkspaceOutputListResponsePayload>;
       listSkills: (workspaceId: string) => Promise<WorkspaceSkillListResponsePayload>;
       getWorkspaceRoot: (workspaceId: string) => Promise<string>;

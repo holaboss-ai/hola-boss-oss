@@ -14875,6 +14875,180 @@ async function installAppFromCatalog(params: {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// Mirrors the runtime's allowlist (see api-server/src/app.ts
+// `isAllowedArchivePath`). The runtime ultimately re-validates, but
+// checking here lets us decide whether the picked file already lives
+// somewhere the runtime will accept or needs to be staged to
+// ~/.holaboss/downloads first.
+function isAllowedArchivePathForRuntime(p: string): boolean {
+  if (!p) return false;
+  const abs = path.resolve(p);
+  const candidates: string[] = [path.resolve(os.tmpdir())];
+  const envOverride = process.env.HOLABOSS_APP_ARCHIVE_DIR;
+  if (envOverride && envOverride.trim().length > 0) {
+    candidates.push(path.resolve(envOverride.trim()));
+  }
+  const home = process.env.HOME || process.env.USERPROFILE;
+  if (home && home.trim().length > 0) {
+    candidates.push(path.resolve(home.trim(), ".holaboss", "downloads"));
+  }
+  for (const root of candidates) {
+    if (abs === root || abs.startsWith(root + path.sep)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Reads `app.runtime.yaml` from a tarball without extracting the rest, so
+// a user-picked archive's app id can be resolved before we hand the path
+// to the runtime. Uses the system `tar` binary (bundled on macOS, Linux,
+// and Windows 10+) so we don't pull in a Node tar dep just for this dev
+// path.
+async function peekAppArchiveSlug(archivePath: string): Promise<string> {
+  const { spawnSync } = await import("node:child_process");
+  const result = spawnSync(
+    "tar",
+    ["-xzOf", archivePath, "app.runtime.yaml"],
+    { encoding: "utf8", maxBuffer: 1024 * 1024 },
+  );
+  if (result.status !== 0 || !result.stdout) {
+    const tail = (result.stderr ?? "").slice(0, 300).trim();
+    throw new Error(
+      `Could not read app.runtime.yaml from archive (tar exit ${result.status})${tail ? `: ${tail}` : ""}`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(result.stdout);
+  } catch (err) {
+    throw new Error(
+      `app.runtime.yaml is not valid YAML: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  if (!isRecord(parsed)) {
+    throw new Error("app.runtime.yaml must be a mapping");
+  }
+  const record = parsed as Record<string, unknown>;
+  const slugValue = record.slug ?? record.app_id;
+  const slug = typeof slugValue === "string" ? slugValue.trim() : "";
+  if (!slug) {
+    throw new Error(
+      "app.runtime.yaml must declare `slug` (or `app_id`) so the archive can be installed",
+    );
+  }
+  return slug;
+}
+
+// Copies the picked archive into ~/.holaboss/downloads/ when it's outside
+// the runtime's allowlist. Returns the path the runtime should consume
+// plus a cleanup callback that's a no-op when no copy was needed.
+async function stageArchiveForInstall(
+  srcPath: string,
+): Promise<{ stagedPath: string; cleanup: () => Promise<void> }> {
+  const abs = path.resolve(srcPath);
+  if (isAllowedArchivePathForRuntime(abs)) {
+    return { stagedPath: abs, cleanup: async () => {} };
+  }
+  const home = process.env.HOME || process.env.USERPROFILE;
+  if (!home) {
+    throw new Error(
+      "HOME/USERPROFILE is not set; cannot stage archive for install",
+    );
+  }
+  const stagingDir = path.join(home, ".holaboss", "downloads");
+  await fs.mkdir(stagingDir, { recursive: true });
+  const stagedPath = path.join(stagingDir, path.basename(abs));
+  await fs.copyFile(abs, stagedPath);
+  return {
+    stagedPath,
+    cleanup: async () => {
+      try {
+        await fs.rm(stagedPath, { force: true });
+      } catch {
+        /* best effort */
+      }
+    },
+  };
+}
+
+async function installAppFromArchiveFile(params: {
+  workspaceId: string;
+  archivePath: string;
+}): Promise<InstallAppFromCatalogResponse> {
+  const workspaceId = assertSafeWorkspaceId(params.workspaceId);
+  const archivePath = path.resolve(params.archivePath);
+
+  const stat = await fs.stat(archivePath).catch(() => null);
+  if (!stat || !stat.isFile()) {
+    throw new Error(`Archive not found or not a file: ${archivePath}`);
+  }
+  if (!/\.(tar\.gz|tgz)$/i.test(archivePath)) {
+    throw new Error(
+      `Archive must be a .tar.gz or .tgz file: ${path.basename(archivePath)}`,
+    );
+  }
+
+  const slug = await peekAppArchiveSlug(archivePath);
+  const appId = assertSafeAppId(slug);
+
+  const { stagedPath, cleanup } = await stageArchiveForInstall(archivePath);
+
+  mainWindow?.webContents.send("app-install-progress", {
+    appId,
+    phase: "installing",
+    bytes: 0,
+    total: 0,
+  });
+
+  try {
+    return await requestRuntimeJson<InstallAppFromCatalogResponse>({
+      method: "POST",
+      path: "/api/v1/apps/install-archive",
+      payload: {
+        workspace_id: workspaceId,
+        app_id: appId,
+        archive_path: stagedPath,
+      },
+      timeoutMs: 300_000,
+    });
+  } finally {
+    await cleanup();
+  }
+}
+
+// User-driven entry point: opens a file picker, then installs the picked
+// tarball. Returns null when the user cancels so the renderer can
+// distinguish cancel from error.
+async function pickAndInstallAppFromArchiveFile(params: {
+  workspaceId: string;
+}): Promise<InstallAppFromCatalogResponse | null> {
+  const workspaceId = assertSafeWorkspaceId(params.workspaceId);
+  const dialogOptions: Electron.OpenDialogOptions = {
+    title: "Install app from archive",
+    buttonLabel: "Install",
+    properties: ["openFile"],
+    filters: [
+      { name: "App archive", extensions: ["tar.gz", "tgz"] },
+      { name: "All files", extensions: ["*"] },
+    ],
+  };
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, dialogOptions)
+    : await dialog.showOpenDialog(dialogOptions);
+  if (result.canceled || result.filePaths.length === 0) {
+    return null;
+  }
+  return installAppFromArchiveFile({
+    workspaceId,
+    archivePath: result.filePaths[0],
+  });
+}
+
 async function listInstalledApps(
   workspaceId: string,
 ): Promise<InstalledWorkspaceAppListResponsePayload> {
@@ -24806,6 +24980,12 @@ app.whenReady().then(async () => {
         appId: params.appId,
         source: params.source,
       }),
+  );
+  handleTrustedIpc(
+    "workspace:installAppFromArchiveFile",
+    ["main"],
+    async (_event, params: { workspaceId: string }) =>
+      pickAndInstallAppFromArchiveFile({ workspaceId: params.workspaceId }),
   );
   handleTrustedIpc(
     "appSurface:navigate",
