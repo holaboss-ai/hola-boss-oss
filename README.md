@@ -53,17 +53,6 @@ holaOS is an open agent computer for any digital work. It reimagines the compute
 
 ## Quick Start
 
-Quick Start is the shortest path to a working local `holaOS`. Use the one-line repository installer on a fresh machine, or follow the manual path if you want to control each setup step.
-
-### What you need
-
-- `curl`
-- `bash`
-- macOS, Linux, or WSL
-
-The installer bootstraps `git`, Node.js `24.14.1`, and `npm` if they are missing. On Linux it may use `sudo` to install `git`.
-
-
 ### One-Line Install
 
 For a fresh-machine bootstrap on macOS, Linux, or WSL, use the repository installer:
@@ -71,6 +60,8 @@ For a fresh-machine bootstrap on macOS, Linux, or WSL, use the repository instal
 ```bash
 curl -fsSL https://raw.githubusercontent.com/holaboss-ai/holaOS/main/scripts/install.sh | bash -s -- --launch
 ```
+
+You can also follow the manual path if you want to control each setup step.
 
 ## Star the Repository
 
