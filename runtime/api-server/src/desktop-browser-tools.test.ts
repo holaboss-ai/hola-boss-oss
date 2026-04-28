@@ -735,6 +735,7 @@ test("desktop browser tool service accepts scoped browser_get_state controls", a
 test("desktop browser tool service exposes general find, act, wait, evaluate, and debug primitives", async () => {
   const evaluateBodies: string[] = [];
   const mouseBodies: string[] = [];
+  const keyboardBodies: string[] = [];
   let waitPredicateCalls = 0;
   const browserServer = await startBrowserServer(async (request, response) => {
     const chunks: Buffer[] = [];
@@ -750,6 +751,11 @@ test("desktop browser tool service exposes general find, act, wait, evaluate, an
     if (request.url === "/api/v1/browser/mouse") {
       mouseBodies.push(body);
       response.end(JSON.stringify({ ok: true, tabId: "tab-1", action: "click", x: 370, y: 104 }));
+      return;
+    }
+    if (request.url === "/api/v1/browser/keyboard") {
+      keyboardBodies.push(body);
+      response.end(JSON.stringify({ ok: true, tabId: "tab-1", action: "insert_text", text_length: 14, clear: true, submit: false }));
       return;
     }
     if (request.url === "/api/v1/browser/evaluate") {
@@ -789,6 +795,21 @@ test("desktop browser tool service exposes general find, act, wait, evaluate, an
               action: "click",
               target: { ref: "css:#new-button", text: "New" },
               result: { x: 370, y: 104 },
+            },
+          }),
+        );
+        return;
+      }
+      if (expression.includes('const action = "fill"')) {
+        response.end(
+          JSON.stringify({
+            tabId: "tab-1",
+            result: {
+              ok: true,
+              action: "fill",
+              target: { ref: "css:#editor", text: "" },
+              action_target: { ref: "css:#editor", role: "textbox", editable: true },
+              result: { focused: true },
             },
           }),
         );
@@ -913,6 +934,21 @@ test("desktop browser tool service exposes general find, act, wait, evaluate, an
     assert.deepEqual(actResult.page, { tabId: "tab-1", url: "https://example.com/app", title: "Example App" });
     assert.deepEqual(mouseBodies, [JSON.stringify({ action: "click", x: 370, y: 104 })]);
 
+    const fillResult = await service.execute("browser_act", {
+      action: "fill",
+      selector: "#editor",
+      value: "Robotics notes",
+      clear: true,
+    });
+    assert.equal((fillResult.action as { action?: string }).action, "fill");
+    assert.deepEqual(
+      (((fillResult.action as { result?: Record<string, unknown> }).result ?? {}).native_input),
+      { ok: true, tabId: "tab-1", action: "insert_text", text_length: 14, clear: true, submit: false },
+    );
+    assert.deepEqual(keyboardBodies, [
+      JSON.stringify({ action: "insert_text", text: "Robotics notes", clear: true, submit: false }),
+    ]);
+
     const waitResult = await service.execute("browser_wait", {
       condition: "element",
       text: "Created",
@@ -939,10 +975,11 @@ test("desktop browser tool service exposes general find, act, wait, evaluate, an
     assert.equal((debugResult.debug as { ready_state?: string }).ready_state, "complete");
 
     const expressions = evaluateBodies.map((body) => String((JSON.parse(body) as { expression?: string }).expression ?? ""));
-    assert.match(expressions[0] ?? "", /"text":"New"/);
-    assert.match(expressions[0] ?? "", /"role":"button"/);
-    assert.match(expressions[1] ?? "", /const action = "click"/);
-    assert.match(expressions[2] ?? "", /const condition = "element"/);
+    const findExpression = expressions.find((expression) => expression.includes('"text":"New"')) ?? "";
+    assert.match(findExpression, /"role":"button"/);
+    assert.ok(expressions.some((expression) => /const action = "click"/.test(expression)));
+    assert.ok(expressions.some((expression) => /const action = "fill"/.test(expression)));
+    assert.ok(expressions.some((expression) => /const condition = "element"/.test(expression)));
   } finally {
     await browserServer.close();
   }
@@ -950,14 +987,33 @@ test("desktop browser tool service exposes general find, act, wait, evaluate, an
 
 test("desktop browser tool service avoids refetching page summaries for browser_type", async () => {
   const requests: string[] = [];
+  const bodies: string[] = [];
   const browserServer = await startBrowserServer(async (request, response) => {
     requests.push(request.url ?? "");
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    bodies.push(Buffer.concat(chunks).toString("utf8"));
     response.setHeader("content-type", "application/json; charset=utf-8");
     if (request.url === "/api/v1/browser/evaluate") {
       response.end(
         JSON.stringify({
           tabId: "tab-1",
-          result: { ok: true, index: 1, value: "search terms" }
+          result: { ok: true, index: 1, tag_name: "div", role: "textbox", editable: true }
+        })
+      );
+      return;
+    }
+    if (request.url === "/api/v1/browser/keyboard") {
+      response.end(
+        JSON.stringify({
+          ok: true,
+          tabId: "tab-1",
+          action: "insert_text",
+          text_length: 12,
+          clear: true,
+          submit: false,
         })
       );
       return;
@@ -993,9 +1049,27 @@ test("desktop browser tool service avoids refetching page summaries for browser_
 
     assert.deepEqual(result, {
       ok: true,
-      action: { ok: true, index: 1, value: "search terms" }
+      action: {
+        ok: true,
+        index: 1,
+        tag_name: "div",
+        role: "textbox",
+        editable: true,
+        result: {
+          value: "search terms",
+          native_input: {
+            ok: true,
+            tabId: "tab-1",
+            action: "insert_text",
+            text_length: 12,
+            clear: true,
+            submit: false,
+          },
+        },
+      }
     });
-    assert.deepEqual(requests, ["/api/v1/browser/evaluate"]);
+    assert.deepEqual(requests, ["/api/v1/browser/evaluate", "/api/v1/browser/keyboard"]);
+    assert.equal(bodies[1], JSON.stringify({ action: "insert_text", text: "search terms", clear: true, submit: false }));
   } finally {
     await browserServer.close();
   }

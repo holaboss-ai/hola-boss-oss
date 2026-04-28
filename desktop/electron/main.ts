@@ -7250,6 +7250,72 @@ async function handleDesktopBrowserServiceRequest(
       return;
     }
 
+    if (method === "POST" && pathname === "/api/v1/browser/keyboard") {
+      const payload = await readBrowserServiceJsonBody(request);
+      const action = payload.action === "press" ? "press" : "insert_text";
+      const text = typeof payload.text === "string" ? payload.text : "";
+      const key =
+        typeof payload.key === "string" && payload.key.trim()
+          ? payload.key.trim()
+          : "";
+      const clear = payload.clear === true;
+      const submit = payload.submit === true;
+      if (action === "press" && !key) {
+        writeBrowserServiceJson(response, 400, {
+          error: "Field 'key' is required for keyboard press actions.",
+        });
+        return;
+      }
+
+      const workspace = await ensureTargetBrowserSpace("keyboard");
+      if (!workspace) {
+        return;
+      }
+      const activeTab = getActiveBrowserTab(
+        targetWorkspaceId,
+        targetSpace,
+        ensuredSessionId,
+        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
+      );
+      if (!activeTab) {
+        writeBrowserServiceJson(response, 409, {
+          error: "No active browser tab is available.",
+        });
+        return;
+      }
+
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) {
+        mainWindow.focus();
+      }
+      await withProgrammaticBrowserInput(activeTab.view.webContents, async () => {
+        activeTab.view.webContents.focus();
+        if (action === "press") {
+          await sendBrowserKeyPress(activeTab.view.webContents, key);
+          return;
+        }
+        if (clear) {
+          await clearFocusedBrowserTextInput(activeTab.view.webContents);
+        }
+        if (text) {
+          await activeTab.view.webContents.insertText(text);
+        }
+        if (submit) {
+          await sendBrowserKeyPress(activeTab.view.webContents, "Enter");
+        }
+      });
+
+      writeBrowserServiceJson(response, 200, {
+        ok: true,
+        tabId: activeTab.state.id,
+        action,
+        text_length: action === "insert_text" ? text.length : 0,
+        key: action === "press" ? key : "",
+        clear,
+        submit,
+      });
+      return;
+    }
+
     if (method === "POST" && pathname === "/api/v1/browser/screenshot") {
       const payload = await readBrowserServiceJsonBody(request);
       const workspace = await ensureTargetBrowserSpace("screenshot");
@@ -17611,6 +17677,27 @@ async function withProgrammaticBrowserInput<T>(
       programmaticBrowserInputDepth.delete(webContents);
     }
   }
+}
+
+async function sendBrowserKeyPress(
+  webContents: WebContents,
+  keyCode: string,
+  modifiers?: Array<"meta" | "control">,
+): Promise<void> {
+  const event = {
+    keyCode,
+    ...(modifiers && modifiers.length > 0 ? { modifiers } : {}),
+  };
+  await webContents.sendInputEvent({ type: "keyDown", ...event });
+  await webContents.sendInputEvent({ type: "keyUp", ...event });
+}
+
+async function clearFocusedBrowserTextInput(
+  webContents: WebContents,
+): Promise<void> {
+  const selectAllModifier = process.platform === "darwin" ? "meta" : "control";
+  await sendBrowserKeyPress(webContents, "A", [selectAllModifier]);
+  await sendBrowserKeyPress(webContents, "Backspace");
 }
 
 function hydrateAgentSessionBrowserSpace(

@@ -64,3 +64,14 @@ test("desktop browser service exposes a real mouse endpoint for BrowserView inpu
   assert.match(source, /await activeTab\.view\.webContents\.sendInputEvent\(\{\s*type: "mouseUp",[\s\S]*button: "left",/);
   assert.match(source, /clickCount: 2,/);
 });
+
+test("desktop browser service exposes real keyboard input for rich editors", async () => {
+  const source = await readFile(MAIN_PATH, "utf8");
+
+  assert.match(source, /if \(method === "POST" && pathname === "\/api\/v1\/browser\/keyboard"\)/);
+  assert.match(source, /await withProgrammaticBrowserInput\(activeTab\.view\.webContents, async \(\) => \{/);
+  assert.match(source, /await activeTab\.view\.webContents\.insertText\(text\);/);
+  assert.match(source, /async function clearFocusedBrowserTextInput\(/);
+  assert.match(source, /await sendBrowserKeyPress\(webContents, "A", \[selectAllModifier\]\);/);
+  assert.match(source, /await sendBrowserKeyPress\(activeTab\.view\.webContents, "Enter"\);/);
+});

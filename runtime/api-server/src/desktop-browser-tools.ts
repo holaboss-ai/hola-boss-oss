@@ -144,7 +144,7 @@ const INTERACTIVE_ELEMENTS_SELECTOR = [
   "select",
   "[role='button']",
   "[role='link']",
-  "[contenteditable='true']",
+  "[contenteditable]:not([contenteditable='false'])",
   "[tabindex]"
 ].join(",");
 const VISIBLE_MEDIA_SELECTOR = [
@@ -827,6 +827,22 @@ function isNativePointerAction(action: BrowserActionKind): action is "click" | "
   return action === "click" || action === "double_click" || action === "hover";
 }
 
+function isNativeTextAction(action: BrowserActionKind): action is "fill" | "type" {
+  return action === "fill" || action === "type";
+}
+
+function locatorHasTarget(locator: BrowserLocatorOptions): boolean {
+  return Boolean(
+    locator.ref ||
+      locator.text ||
+      locator.label ||
+      locator.placeholder ||
+      locator.role ||
+      locator.selector ||
+      locator.xpath
+  );
+}
+
 function browserPointerTargetExpression(options: BrowserActOptions): string {
   return `(() => {
     ${browserLocatorRuntime(options)}
@@ -864,6 +880,61 @@ function browserPointerTargetExpression(options: BrowserActOptions): string {
   })()`;
 }
 
+function browserKeyboardTargetExpression(
+  options: BrowserActOptions,
+  params: { requireEditable: boolean },
+): string {
+  return `(() => {
+    ${browserLocatorRuntime(options)}
+    const action = ${serializedValue(options.action)};
+    const locatorHasTarget = ${locatorHasTarget(options) ? "true" : "false"};
+    const requireEditable = ${params.requireEditable ? "true" : "false"};
+    const targetFromLocator = () => {
+      if (!locatorHasTarget && document.activeElement instanceof HTMLElement) {
+        return document.activeElement;
+      }
+      const matched = locatorHasTarget ? findMatches()[0] || null : null;
+      if (matched) return matched;
+      if (action === "press" && document.activeElement instanceof HTMLElement) return document.activeElement;
+      return null;
+    };
+    const target = targetFromLocator();
+    if (!(target instanceof HTMLElement)) {
+      throw new Error("No browser element matched the requested keyboard action locator.");
+    }
+    const editableTarget = (element) => {
+      if (
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLTextAreaElement ||
+        element instanceof HTMLSelectElement ||
+        element.isContentEditable
+      ) {
+        return element;
+      }
+      return element.querySelector("input, textarea, select, [contenteditable]:not([contenteditable='false'])");
+    };
+    const actionTarget = requireEditable ? editableTarget(target) : actionableTarget(target) || target;
+    if (!(actionTarget instanceof HTMLElement)) {
+      throw new Error("No editable browser element matched the requested action locator.");
+    }
+    target.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+    if (typeof actionTarget.focus === "function") {
+      try {
+        actionTarget.focus({ preventScroll: true });
+      } catch {
+        actionTarget.focus();
+      }
+    }
+    return {
+      ok: true,
+      action,
+      target: describeElement(target),
+      action_target: describeElement(actionTarget),
+      result: { focused: true }
+    };
+  })()`;
+}
+
 function browserActExpression(options: BrowserActOptions): string {
   return `(() => {
     ${browserLocatorRuntime(options)}
@@ -892,7 +963,7 @@ function browserActExpression(options: BrowserActOptions): string {
       ) {
         return element;
       }
-      return element.querySelector("input, textarea, select, [contenteditable='true']");
+      return element.querySelector("input, textarea, select, [contenteditable]:not([contenteditable='false'])");
     };
     const setNativeValue = (element, nextValue) => {
       if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
@@ -1519,12 +1590,7 @@ function browserGetStateSnapshotReady(params: {
   return browserGetStateWarnings(params).length === 0;
 }
 
-function typeExpression(params: {
-  index: number;
-  text: string;
-  clear: boolean;
-  submit: boolean;
-}): string {
+function indexedKeyboardTargetExpression(index: number): string {
   return `(() => {
     const selector = ${serializedValue(INTERACTIVE_ELEMENTS_SELECTOR)};
     const isVisible = (element) => {
@@ -1533,59 +1599,33 @@ function typeExpression(params: {
       const style = window.getComputedStyle(element);
       return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
     };
-    const target = Array.from(document.querySelectorAll(selector)).filter((element) => isVisible(element))[${params.index - 1}] || null;
-    if (!target) {
-      throw new Error(${serializedValue(`No interactive element found for index ${params.index}.`)});
+    const target = Array.from(document.querySelectorAll(selector)).filter((element) => isVisible(element))[${index - 1}] || null;
+    if (!(target instanceof HTMLElement)) {
+      throw new Error(${serializedValue(`No interactive element found for index ${index}.`)});
     }
-    target.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
-    if (typeof target.focus === "function") target.focus();
-    const nextText = ${serializedValue(params.text)};
-    const clear = ${params.clear ? "true" : "false"};
-    const submit = ${params.submit ? "true" : "false"};
-    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-      const prototype = Object.getPrototypeOf(target);
-      const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
-      const prefix = clear ? "" : String(target.value || "");
-      const value = prefix + nextText;
-      if (descriptor && typeof descriptor.set === "function") {
-        descriptor.set.call(target, value);
-      } else {
-        target.value = value;
+    const editTarget =
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target.isContentEditable
+        ? target
+        : target.querySelector("input, textarea, [contenteditable]:not([contenteditable='false'])");
+    if (!(editTarget instanceof HTMLElement)) {
+      throw new Error(${serializedValue(`Element at index ${index} is not text-editable.`)});
+    }
+    editTarget.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+    if (typeof editTarget.focus === "function") {
+      try {
+        editTarget.focus({ preventScroll: true });
+      } catch {
+        editTarget.focus();
       }
-      target.dispatchEvent(new Event("input", { bubbles: true }));
-      target.dispatchEvent(new Event("change", { bubbles: true }));
-      if (submit && target.form && typeof target.form.requestSubmit === "function") {
-        target.form.requestSubmit();
-      }
-      return { ok: true, index: ${params.index}, value: target.value };
-    }
-    if (target instanceof HTMLElement && target.isContentEditable) {
-      const prefix = clear ? "" : String(target.innerText || "");
-      target.innerText = prefix + nextText;
-      target.dispatchEvent(new Event("input", { bubbles: true }));
-      if (submit) {
-        target.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-      }
-      return { ok: true, index: ${params.index}, value: target.innerText };
-    }
-    throw new Error(${serializedValue(`Element at index ${params.index} is not text-editable.`)});
-  })()`;
-}
-
-function pressExpression(key: string): string {
-  return `(() => {
-    const target = document.activeElement instanceof HTMLElement ? document.activeElement : document.body;
-    const key = ${serializedValue(key)};
-    for (const type of ["keydown", "keypress", "keyup"]) {
-      target.dispatchEvent(new KeyboardEvent(type, { key, bubbles: true }));
-    }
-    if (key === "Enter" && target instanceof HTMLInputElement && target.form && typeof target.form.requestSubmit === "function") {
-      target.form.requestSubmit();
     }
     return {
       ok: true,
-      key,
-      active_tag: target.tagName ? target.tagName.toLowerCase() : "body"
+      index: ${index},
+      tag_name: editTarget.tagName.toLowerCase(),
+      role: editTarget.getAttribute("role") || "",
+      editable: true
     };
   })()`;
 }
@@ -1745,11 +1785,29 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
       }
       case "browser_act": {
         const options = browserActOptions(args);
+        if (isNativeTextAction(options.action) && options.value === null) {
+          throw new DesktopBrowserToolServiceError(
+            400,
+            "browser_tool_invalid_args",
+            "value is required for fill and type actions"
+          );
+        }
+        if (options.action === "press" && !options.key) {
+          throw new DesktopBrowserToolServiceError(
+            400,
+            "browser_tool_invalid_args",
+            "key is required for press actions"
+          );
+        }
         let result = await this.#evaluate(
           config,
           isNativePointerAction(options.action)
             ? browserPointerTargetExpression(options)
-            : browserActExpression(options),
+            : isNativeTextAction(options.action)
+              ? browserKeyboardTargetExpression(options, { requireEditable: true })
+              : options.action === "press"
+                ? browserKeyboardTargetExpression(options, { requireEditable: false })
+                : browserActExpression(options),
           context,
         );
         if (isNativePointerAction(options.action)) {
@@ -1767,6 +1825,45 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
           result = {
             ...result,
             result: { ...(asRecord(result.result) ?? {}), native_input: nativeInput },
+          };
+        } else if (isNativeTextAction(options.action)) {
+          const nativeInput = await this.#browserFetch(config, {
+            method: "POST",
+            path: "/keyboard",
+            body: {
+              action: "insert_text",
+              text: options.value ?? "",
+              clear: options.clear === null ? options.action === "fill" : options.clear,
+              submit: options.submit,
+            },
+            workspaceId: context.workspaceId,
+            sessionId: context.sessionId,
+            space: context.space,
+          });
+          result = {
+            ...result,
+            result: {
+              ...(asRecord(result.result) ?? {}),
+              value: options.value ?? "",
+              native_input: nativeInput,
+            },
+          };
+        } else if (options.action === "press") {
+          const nativeInput = await this.#browserFetch(config, {
+            method: "POST",
+            path: "/keyboard",
+            body: { action: "press", key: options.key ?? "" },
+            workspaceId: context.workspaceId,
+            sessionId: context.sessionId,
+            space: context.space,
+          });
+          result = {
+            ...result,
+            result: {
+              ...(asRecord(result.result) ?? {}),
+              key: options.key ?? "",
+              native_input: nativeInput,
+            },
           };
         }
         const page = await this.#browserFetch(config, {
@@ -1837,22 +1934,40 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
       case "browser_type": {
         const index = requiredPositiveInteger(args.index, "index");
         const text = requiredString(args.text, "text");
-        const result = await this.#evaluate(
-          config,
-          typeExpression({
-            index,
-            text,
-            clear: optionalBoolean(args.clear, true),
-            submit: optionalBoolean(args.submit, false)
-          }),
-          context
-        );
-        return { ok: true, action: result };
+        const clear = optionalBoolean(args.clear, true);
+        const submit = optionalBoolean(args.submit, false);
+        const result = await this.#evaluate(config, indexedKeyboardTargetExpression(index), context);
+        const nativeInput = await this.#browserFetch(config, {
+          method: "POST",
+          path: "/keyboard",
+          body: { action: "insert_text", text, clear, submit },
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        });
+        return {
+          ok: true,
+          action: {
+            ...result,
+            result: {
+              ...(asRecord(result.result) ?? {}),
+              value: text,
+              native_input: nativeInput,
+            },
+          },
+        };
       }
       case "browser_press": {
         const key = requiredString(args.key, "key");
-        const result = await this.#evaluate(config, pressExpression(key), context);
-        return { ok: true, action: result };
+        const nativeInput = await this.#browserFetch(config, {
+          method: "POST",
+          path: "/keyboard",
+          body: { action: "press", key },
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        });
+        return { ok: true, action: { ok: true, key, native_input: nativeInput } };
       }
       case "browser_scroll": {
         const explicitDelta = optionalInteger(args.delta_y);
