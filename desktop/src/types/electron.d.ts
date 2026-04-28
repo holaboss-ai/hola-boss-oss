@@ -992,6 +992,17 @@ declare global {
     error: string | null;
   }
 
+  type DashboardQueryResult =
+    | {
+        ok: true;
+        columns: string[];
+        rows: unknown[][];
+      }
+    | {
+        ok: false;
+        error: string;
+      };
+
   interface AppTemplateMetadataPayload {
     name: string;
     repo: string;
@@ -1505,6 +1516,7 @@ declare global {
       syncAppCatalog: (params: { source: "marketplace" | "local" }) => Promise<AppCatalogSyncResponse>;
       installAppFromCatalog: (params: InstallAppFromCatalogRequest) => Promise<InstallAppFromCatalogResponse>;
       installAppFromArchiveFile: (params: { workspaceId: string }) => Promise<InstallAppFromCatalogResponse | null>;
+      runDashboardQuery: (params: { workspaceId: string; sql: string }) => Promise<DashboardQueryResult>;
       listOutputs: (payload: string | WorkspaceOutputListRequestPayload) => Promise<WorkspaceOutputListResponsePayload>;
       listSkills: (workspaceId: string) => Promise<WorkspaceSkillListResponsePayload>;
       getWorkspaceRoot: (workspaceId: string) => Promise<string>;
