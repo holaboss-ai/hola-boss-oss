@@ -3317,18 +3317,57 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!isRecord(request.body)) {
       return sendError(reply, 400, "request body must be an object");
     }
+    // For identity fields we distinguish "not provided" (preserve) from
+    // "null" (clear) — only forward when the key is explicitly present.
+    const body = request.body as Record<string, unknown>;
+    const accountHandlePresent = Object.prototype.hasOwnProperty.call(body, "account_handle");
+    const accountEmailPresent = Object.prototype.hasOwnProperty.call(body, "account_email");
+    const normalizeIdentity = (value: unknown): string | null => {
+      if (value === null) return null;
+      if (typeof value !== "string") return null;
+      const trimmed = value.trim();
+      return trimmed.length === 0 ? null : trimmed;
+    };
     try {
       return integrationService.updateConnection(params.connectionId, {
-        status: typeof request.body.status === "string" ? request.body.status : undefined,
-        secretRef: typeof request.body.secret_ref === "string" ? request.body.secret_ref : undefined,
-        accountLabel: typeof request.body.account_label === "string" ? request.body.account_label : undefined,
-        grantedScopes: Array.isArray(request.body.granted_scopes) ? request.body.granted_scopes : undefined
+        status: typeof body.status === "string" ? body.status : undefined,
+        secretRef: typeof body.secret_ref === "string" ? body.secret_ref : undefined,
+        accountLabel: typeof body.account_label === "string" ? body.account_label : undefined,
+        grantedScopes: Array.isArray(body.granted_scopes) ? body.granted_scopes : undefined,
+        ...(accountHandlePresent ? { accountHandle: normalizeIdentity(body.account_handle) } : {}),
+        ...(accountEmailPresent ? { accountEmail: normalizeIdentity(body.account_email) } : {})
       });
     } catch (error) {
       if (error instanceof IntegrationServiceError) {
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 500, error instanceof Error ? error.message : "connection update failed");
+    }
+  });
+
+  app.post("/api/v1/integrations/connections/:connectionId/merge", async (request, reply) => {
+    const params = request.params as { connectionId: string };
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const removeIds = Array.isArray(request.body.remove_connection_ids)
+      ? (request.body.remove_connection_ids.filter(
+          (id): id is string => typeof id === "string"
+        ) as string[])
+      : [];
+    if (removeIds.length === 0) {
+      return sendError(reply, 400, "remove_connection_ids is required");
+    }
+    try {
+      return integrationService.mergeConnections({
+        keepConnectionId: params.connectionId,
+        removeConnectionIds: removeIds
+      });
+    } catch (error) {
+      if (error instanceof IntegrationServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "connection merge failed");
     }
   });
 
@@ -3559,6 +3598,21 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
     const ownerUserId = ownerCheck.userId;
     const accountLabel = typeof request.body.account_label === "string" ? request.body.account_label : "";
+    // Provider-side identity from whoami, resolved by the caller before
+    // finalize. Used by createConnection() to dedupe re-auth flows: each
+    // Composio re-auth mints a new connected_account_id, but the underlying
+    // identity (Twitter handle, Gmail address) stays stable, so the service
+    // looks for an existing active connection on this (provider, owner,
+    // identity) tuple and refreshes it in place rather than spawning a
+    // duplicate row.
+    const accountHandle =
+      typeof request.body.account_handle === "string" && request.body.account_handle.trim().length > 0
+        ? request.body.account_handle.trim()
+        : null;
+    const accountEmail =
+      typeof request.body.account_email === "string" && request.body.account_email.trim().length > 0
+        ? request.body.account_email.trim()
+        : null;
     // Optional: when the caller is in a workspace context (desktop's Settings →
     // Integrations is global, but the per-app binding selector or the older
     // workspace-scoped flow may want to atomically bind this fresh account to
@@ -3579,7 +3633,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         accountLabel: label,
         authMode: "composio",
         grantedScopes: [],
-        accountExternalId: connectedAccountId
+        accountExternalId: connectedAccountId,
+        accountHandle,
+        accountEmail
       });
       if (workspaceId) {
         integrationService.upsertBinding({

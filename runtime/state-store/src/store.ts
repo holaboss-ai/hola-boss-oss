@@ -55,6 +55,14 @@ export interface IntegrationConnectionRecord {
   ownerUserId: string;
   accountLabel: string;
   accountExternalId: string | null;
+  /**
+   * Stable provider-side identity (e.g. Twitter handle, Gmail address)
+   * resolved from a whoami probe at connect time. Used to dedupe across
+   * Composio re-auths, which mint a new `account_external_id` per flow
+   * even for the same real account.
+   */
+  accountHandle: string | null;
+  accountEmail: string | null;
   authMode: string;
   grantedScopes: string[];
   status: string;
@@ -667,6 +675,18 @@ export function utcNowIso(): string {
   return new Date().toISOString();
 }
 
+/**
+ * Normalise a provider-side identity string before storing it. Trims
+ * whitespace, returns null on empty/missing — the dedupe finder treats
+ * an empty string and `null` identically (no match), so collapsing the
+ * two early avoids subtle bugs at the call sites.
+ */
+function normalizeIdentityValue(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  const trimmed = String(value).trim();
+  return trimmed.length === 0 ? null : trimmed;
+}
+
 export function sanitizeWorkspaceId(workspaceId: string): string {
   return workspaceId.replace(/[^A-Za-z0-9._-]+/g, "-");
 }
@@ -703,6 +723,16 @@ export class RuntimeStateStore {
   supportsVectorIndex(): boolean {
     void this.db();
     return this.#vectorIndexSupported;
+  }
+
+  /**
+   * Run a synchronous callback inside a SQLite transaction. better-sqlite3
+   * commits when the callback returns and rolls back if it throws — used
+   * by the integration service to make multi-row operations like
+   * connection merges atomic.
+   */
+  transaction<T>(fn: () => T): T {
+    return this.db().transaction(fn)();
   }
 
   workspaceIdentityPath(workspaceId: string): string {
@@ -1483,6 +1513,8 @@ export class RuntimeStateStore {
     ownerUserId: string;
     accountLabel: string;
     accountExternalId?: string | null;
+    accountHandle?: string | null;
+    accountEmail?: string | null;
     authMode: string;
     grantedScopes: string[];
     status: string;
@@ -1493,13 +1525,16 @@ export class RuntimeStateStore {
       .prepare(`
         INSERT INTO integration_connections (
             connection_id, provider_id, owner_user_id, account_label, account_external_id,
+            account_handle, account_email,
             auth_mode, granted_scopes, status, secret_ref, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(connection_id) DO UPDATE SET
             provider_id = excluded.provider_id,
             owner_user_id = excluded.owner_user_id,
             account_label = excluded.account_label,
             account_external_id = excluded.account_external_id,
+            account_handle = excluded.account_handle,
+            account_email = excluded.account_email,
             auth_mode = excluded.auth_mode,
             granted_scopes = excluded.granted_scopes,
             status = excluded.status,
@@ -1512,6 +1547,8 @@ export class RuntimeStateStore {
         params.ownerUserId,
         params.accountLabel,
         params.accountExternalId ?? null,
+        normalizeIdentityValue(params.accountHandle),
+        normalizeIdentityValue(params.accountEmail),
         params.authMode,
         JSON.stringify(params.grantedScopes ?? []),
         params.status,
@@ -1524,6 +1561,48 @@ export class RuntimeStateStore {
       throw new Error("failed to load integration connection");
     }
     return record;
+  }
+
+  /**
+   * Find the most-recently-updated active connection that matches the
+   * given (provider, owner) tuple AND either of the supplied identity
+   * keys (handle or email, case-insensitive). Used by the integration
+   * service to detect re-auth flows so the store doesn't grow a fresh
+   * row every time the user reconnects the same external account.
+   *
+   * Returns null when no identity key is provided, or when no active
+   * connection matches — the caller should fall back to creating a new
+   * connection in that case.
+   */
+  findActiveIntegrationConnectionByIdentity(params: {
+    providerId: string;
+    ownerUserId: string;
+    accountHandle?: string | null;
+    accountEmail?: string | null;
+  }): IntegrationConnectionRecord | null {
+    const handle = normalizeIdentityValue(params.accountHandle);
+    const email = normalizeIdentityValue(params.accountEmail);
+    if (!handle && !email) {
+      return null;
+    }
+    const filters: string[] = ["provider_id = ?", "owner_user_id = ?", "lower(status) = 'active'"];
+    const values: (string | null)[] = [params.providerId, params.ownerUserId];
+    const identityClauses: string[] = [];
+    if (handle) {
+      identityClauses.push("lower(account_handle) = lower(?)");
+      values.push(handle);
+    }
+    if (email) {
+      identityClauses.push("lower(account_email) = lower(?)");
+      values.push(email);
+    }
+    filters.push(`(${identityClauses.join(" OR ")})`);
+    const row = this.db()
+      .prepare<typeof values, Record<string, unknown>>(
+        `SELECT * FROM integration_connections WHERE ${filters.join(" AND ")} ORDER BY datetime(updated_at) DESC LIMIT 1`
+      )
+      .get(...values);
+    return row ? this.rowToIntegrationConnection(row) : null;
   }
 
   getIntegrationConnection(connectionId: string): IntegrationConnectionRecord | null {
@@ -4849,6 +4928,8 @@ export class RuntimeStateStore {
           owner_user_id TEXT NOT NULL,
           account_label TEXT NOT NULL,
           account_external_id TEXT,
+          account_handle TEXT,
+          account_email TEXT,
           auth_mode TEXT NOT NULL,
           granted_scopes TEXT NOT NULL DEFAULT '[]',
           status TEXT NOT NULL,
@@ -4859,6 +4940,12 @@ export class RuntimeStateStore {
 
       CREATE INDEX IF NOT EXISTS idx_integration_connections_provider_owner_updated
           ON integration_connections (provider_id, owner_user_id, updated_at DESC, created_at DESC);
+
+      -- Indexes for account_handle / account_email live in
+      -- migrateIntegrationConnectionIdentityColumns: on an upgrade path the
+      -- columns don't exist when the schema block runs, so creating those
+      -- indexes here would fail. The migration helper runs after the
+      -- ALTER TABLE statements and is idempotent (CREATE INDEX IF NOT EXISTS).
 
       CREATE TABLE IF NOT EXISTS integration_bindings (
           binding_id TEXT PRIMARY KEY,
@@ -5353,6 +5440,7 @@ export class RuntimeStateStore {
     this.migrateCronjobInstructions(db);
     this.migrateAppBuildRestartAttempts(db);
     this.migrateRevertIntegrationConnectionsWorkspace(db);
+    this.migrateIntegrationConnectionIdentityColumns(db);
   }
 
   private ensureSessionRuntimeStateTableSchema(db: Database.Database): void {
@@ -5480,6 +5568,30 @@ export class RuntimeStateStore {
 
     db.exec("DROP INDEX IF EXISTS idx_integration_connections_workspace_provider;");
     db.exec("ALTER TABLE integration_connections DROP COLUMN workspace_id;");
+  }
+
+  // Adds the provider-side identity columns (`account_handle`, `account_email`)
+  // used for dedupe-on-reconnect. Composio re-auth flows produce a new
+  // `account_external_id` every time even for the same real account, so
+  // we resolve the stable identity via whoami at connect time and store it
+  // here. Both columns are nullable: legacy rows without whoami data
+  // simply won't deduplicate until they next reconnect.
+  private migrateIntegrationConnectionIdentityColumns(db: Database.Database): void {
+    const columns = new Set<string>(
+      (db.prepare("PRAGMA table_info(integration_connections)").all() as Array<{ name: string }>).map((row) => row.name)
+    );
+    if (!columns.has("account_handle")) {
+      db.exec("ALTER TABLE integration_connections ADD COLUMN account_handle TEXT;");
+    }
+    if (!columns.has("account_email")) {
+      db.exec("ALTER TABLE integration_connections ADD COLUMN account_email TEXT;");
+    }
+    db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_integration_connections_provider_owner_handle ON integration_connections (provider_id, owner_user_id, account_handle);"
+    );
+    db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_integration_connections_provider_owner_email ON integration_connections (provider_id, owner_user_id, account_email);"
+    );
   }
 
   private migrateLegacySessionArtifactsToOutputs(db: Database.Database): void {
@@ -6582,6 +6694,8 @@ export class RuntimeStateStore {
       ownerUserId: String(row.owner_user_id),
       accountLabel: String(row.account_label),
       accountExternalId: row.account_external_id == null ? null : String(row.account_external_id),
+      accountHandle: row.account_handle == null ? null : String(row.account_handle),
+      accountEmail: row.account_email == null ? null : String(row.account_email),
       authMode: String(row.auth_mode),
       grantedScopes: this.parseJsonList(row.granted_scopes).filter((item): item is string => typeof item === "string"),
       status: String(row.status),

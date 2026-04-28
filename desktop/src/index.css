@@ -714,18 +714,15 @@ html[data-platform="win32"] .theme-shell {
 
 /* ---- Focus ---- */
 
-:where(
-  button,
-  [role="button"],
-  input,
-  select,
-  textarea,
-  a,
-  summary
-):focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-  box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 14%, transparent);
+/* Single 2px ring driven by box-shadow so it doesn't bleed past
+ * overflow boundaries the way outline+offset can. Softer alpha than
+ * the prior 14% so it reads as an accent rather than a chunky brand
+ * stripe. textarea is excluded because full-pane editors (file
+ * preview) would render the ring as a thick brand-coloured line
+ * flush against the surrounding chrome. */
+:where(button, [role="button"], input, select, a, summary):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--ring) 50%, transparent);
 }
 
 /* ---- Chat bubbles ---- */
