@@ -1,24 +1,10 @@
+import Database from "better-sqlite3"
 import { mkdirSync } from "node:fs"
-import { createRequire } from "node:module"
 import { dirname } from "node:path"
 
 import { resolveWorkspaceDbPath } from "./env"
 
-const require = createRequire(import.meta.url)
-
-type BetterSqliteDatabase = {
-  pragma: (statement: string) => unknown
-  exec: (sql: string) => void
-  prepare: (sql: string) => unknown
-  close: () => void
-}
-
-type BetterSqliteConstructor = new (
-  filename: string,
-  options?: Record<string, unknown>,
-) => BetterSqliteDatabase
-
-let cachedDb: BetterSqliteDatabase | null = null
+let cachedDb: Database.Database | null = null
 let cachedPath: string | null = null
 
 /**
@@ -31,12 +17,14 @@ let cachedPath: string | null = null
  * when the app process is spawned. The helper enables WAL mode and
  * foreign keys, and creates the parent directory if absent.
  *
- * Better-sqlite3 is declared as a peer dependency rather than a direct
- * dep so the SDK stays free of native bindings for callers that only
- * use the integration proxy. Apps invoking this helper must have
- * `better-sqlite3` installed themselves.
+ * `better-sqlite3` is declared as a peer dependency so the SDK itself
+ * stays free of native bindings for callers that only use the
+ * integration proxy. Apps invoking this helper must install
+ * `better-sqlite3` themselves — the static import below is resolved by
+ * the consumer's bundler at build time, which marks the native module
+ * as external.
  */
-export function getWorkspaceDb(): BetterSqliteDatabase {
+export function getWorkspaceDb(): Database.Database {
   const dbPath = resolveWorkspaceDbPath()
   if (!dbPath) {
     throw new Error(
@@ -55,7 +43,6 @@ export function getWorkspaceDb(): BetterSqliteDatabase {
 
   mkdirSync(dirname(dbPath), { recursive: true })
 
-  const Database = loadBetterSqliteSync()
   const db = new Database(dbPath)
   db.pragma("journal_mode = WAL")
   db.pragma("foreign_keys = ON")
@@ -77,25 +64,4 @@ export function __resetWorkspaceDbForTesting(): void {
   }
   cachedDb = null
   cachedPath = null
-}
-
-function loadBetterSqliteSync(): BetterSqliteConstructor {
-  let required: unknown
-  try {
-    required = require("better-sqlite3")
-  } catch (cause) {
-    throw new Error(
-      "Failed to load better-sqlite3. Apps invoking getWorkspaceDb() must add better-sqlite3 ^12 as a dependency.",
-      { cause: cause instanceof Error ? cause : undefined },
-    )
-  }
-  if (typeof required === "function") {
-    return required as BetterSqliteConstructor
-  }
-  if (required && typeof required === "object" && "default" in required) {
-    return (required as { default: BetterSqliteConstructor }).default
-  }
-  throw new Error(
-    "better-sqlite3 module shape unexpected: neither function nor default export.",
-  )
 }
