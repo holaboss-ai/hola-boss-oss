@@ -1,6 +1,10 @@
+import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+
+import Database from "better-sqlite3";
+import yaml from "js-yaml";
 
 import {
   utcNowIso,
@@ -129,6 +133,40 @@ export interface RuntimeAgentToolsInvokeSkillParams {
   workspaceId: string;
   requestedName: string;
   args?: string | null;
+}
+
+export interface RuntimeAgentToolsListDataTablesParams {
+  workspaceId: string;
+}
+
+export type DashboardPanelInput =
+  | {
+      type: "kpi";
+      title: string;
+      query: string;
+    }
+  | {
+      type: "data_view";
+      title: string;
+      query: string;
+      views: Array<
+        | { type: "table"; columns?: string[] }
+        | {
+            type: "board";
+            group_by: string;
+            card_title: string;
+            card_subtitle?: string | null;
+          }
+      >;
+      default_view?: "table" | "board" | null;
+    };
+
+export interface RuntimeAgentToolsCreateDashboardParams {
+  workspaceId: string;
+  name: string;
+  title: string;
+  description?: string | null;
+  panels: DashboardPanelInput[];
 }
 
 export interface RuntimeAgentToolsReadScratchpadParams {
@@ -368,6 +406,18 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/terminal-sessions/:terminalId/close",
     description: runtimeToolBaseDefinition("terminal_session_close").description
+  },
+  {
+    id: runtimeToolBaseDefinition("list_data_tables").id,
+    method: "GET",
+    path: "/api/v1/capabilities/runtime-tools/data-tables",
+    description: runtimeToolBaseDefinition("list_data_tables").description
+  },
+  {
+    id: runtimeToolBaseDefinition("create_dashboard").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/dashboards",
+    description: runtimeToolBaseDefinition("create_dashboard").description
   },
 ];
 
@@ -1621,4 +1671,317 @@ export class RuntimeAgentToolsService {
     }
     return terminal;
   }
+
+  // Introspects the workspace's shared SQLite (data.db) and returns the
+  // tables module apps have created. Used by `create_dashboard` (or by
+  // an agent composing one) to know what columns can be selected and
+  // how many rows each table holds. Read-only — opens the file with
+  // PRAGMA query_only and closes it before returning.
+  listDataTables(params: RuntimeAgentToolsListDataTablesParams): JsonObject {
+    this.requireWorkspace(params.workspaceId);
+    const dbPath = path.join(
+      this.options.workspaceRoot,
+      params.workspaceId,
+      ".holaboss",
+      "data.db",
+    );
+    if (!existsSync(dbPath)) {
+      return { tables: [], note: "Workspace data.db does not exist yet — no module apps have written rows." };
+    }
+
+    let db: Database.Database | null = null;
+    try {
+      db = new Database(dbPath, { readonly: true, fileMustExist: true });
+      db.pragma("query_only = ON");
+      const tables = db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        )
+        .all() as Array<{ name: string }>;
+
+      const out: JsonObject[] = [];
+      for (const { name } of tables) {
+        const cols = db
+          .prepare(`PRAGMA table_info("${name.replace(/"/g, '""')}")`)
+          .all() as Array<{ name: string; type: string; notnull: number; pk: number }>;
+        const rowCountRow = db
+          .prepare(`SELECT COUNT(*) AS c FROM "${name.replace(/"/g, '""')}"`)
+          .get() as { c: number };
+        out.push({
+          name,
+          columns: cols.map((c) => ({
+            name: c.name,
+            type: c.type,
+            not_null: Boolean(c.notnull),
+            primary_key: Boolean(c.pk),
+          })),
+          row_count: rowCountRow.c,
+        });
+      }
+      return { tables: out, count: out.length };
+    } catch (error) {
+      throw new RuntimeAgentToolsServiceError(
+        500,
+        "list_data_tables_failed",
+        error instanceof Error ? error.message : "Failed to introspect data.db",
+      );
+    } finally {
+      if (db) {
+        try {
+          db.close();
+        } catch {
+          /* best effort */
+        }
+      }
+    }
+  }
+
+  // Authors a `.dashboard` file under workspace/<id>/files/dashboards/.
+  // Each panel's SQL is dry-run against data.db (LIMIT 0) before the
+  // file is written, so a parse / column / table error surfaces to the
+  // agent immediately instead of leaving a broken file behind.
+  async createDashboard(
+    params: RuntimeAgentToolsCreateDashboardParams,
+  ): Promise<JsonObject> {
+    this.requireWorkspace(params.workspaceId);
+    const name = sanitizeDashboardFileName(params.name);
+    const title = String(params.title ?? "").trim();
+    if (!title) {
+      throw new RuntimeAgentToolsServiceError(
+        400,
+        "dashboard_title_required",
+        "title is required",
+      );
+    }
+    if (!Array.isArray(params.panels) || params.panels.length === 0) {
+      throw new RuntimeAgentToolsServiceError(
+        400,
+        "dashboard_panels_required",
+        "panels must be a non-empty array",
+      );
+    }
+
+    const dbPath = path.join(
+      this.options.workspaceRoot,
+      params.workspaceId,
+      ".holaboss",
+      "data.db",
+    );
+    if (!existsSync(dbPath)) {
+      throw new RuntimeAgentToolsServiceError(
+        409,
+        "dashboard_data_db_missing",
+        "Workspace data.db does not exist yet — install an app and create some data first.",
+      );
+    }
+
+    const yamlPanels: unknown[] = [];
+    let db: Database.Database | null = null;
+    try {
+      db = new Database(dbPath, { readonly: true, fileMustExist: true });
+      db.pragma("query_only = ON");
+      params.panels.forEach((panel, index) => {
+        validatePanelInput(panel, index);
+        try {
+          // LIMIT 0 — verifies the SQL parses and column names resolve
+          // without paying the cost of returning rows.
+          db!.prepare(`SELECT * FROM (${panel.query}) LIMIT 0`).all();
+        } catch (err) {
+          throw new RuntimeAgentToolsServiceError(
+            400,
+            "dashboard_panel_query_invalid",
+            `panel #${index + 1} (${panel.title}): SQL did not validate — ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+        yamlPanels.push(serializePanel(panel));
+      });
+    } finally {
+      if (db) {
+        try {
+          db.close();
+        } catch {
+          /* best effort */
+        }
+      }
+    }
+
+    const yamlDoc: Record<string, unknown> = { title };
+    if (params.description && params.description.trim()) {
+      yamlDoc.description = params.description.trim();
+    }
+    yamlDoc.panels = yamlPanels;
+    const content = yaml.dump(yamlDoc, { lineWidth: 120, noRefs: true });
+
+    const targetDir = path.join(
+      this.options.workspaceRoot,
+      params.workspaceId,
+      "files",
+      "dashboards",
+    );
+    const targetFile = path.join(targetDir, `${name}.dashboard`);
+    await fs.mkdir(targetDir, { recursive: true });
+    await fs.writeFile(targetFile, content, "utf8");
+
+    const relativePath = path.posix.join(
+      "files",
+      "dashboards",
+      `${name}.dashboard`,
+    );
+    return {
+      file_path: relativePath,
+      absolute_path: targetFile,
+      panel_count: params.panels.length,
+      title,
+    };
+  }
+}
+
+const DASHBOARD_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*$/i;
+
+function sanitizeDashboardFileName(raw: string): string {
+  const value = String(raw ?? "").trim();
+  if (!value) {
+    throw new RuntimeAgentToolsServiceError(
+      400,
+      "dashboard_name_required",
+      "name is required",
+    );
+  }
+  // The agent passes the bare slug; we add the `.dashboard` extension.
+  const stripped = value.endsWith(".dashboard")
+    ? value.slice(0, -".dashboard".length)
+    : value;
+  if (!DASHBOARD_NAME_PATTERN.test(stripped) || stripped.length > 80) {
+    throw new RuntimeAgentToolsServiceError(
+      400,
+      "dashboard_name_invalid",
+      "name must be a short slug — letters, digits, dot, underscore, or hyphen.",
+    );
+  }
+  return stripped;
+}
+
+function validatePanelInput(panel: unknown, index: number): asserts panel is DashboardPanelInput {
+  if (!panel || typeof panel !== "object") {
+    throw new RuntimeAgentToolsServiceError(
+      400,
+      "dashboard_panel_invalid",
+      `panel #${index + 1}: must be an object`,
+    );
+  }
+  const p = panel as Record<string, unknown>;
+  const type = typeof p.type === "string" ? p.type : "";
+  const title = typeof p.title === "string" ? p.title.trim() : "";
+  const query = typeof p.query === "string" ? p.query.trim() : "";
+  if (!title) {
+    throw new RuntimeAgentToolsServiceError(
+      400,
+      "dashboard_panel_title_required",
+      `panel #${index + 1}: title is required`,
+    );
+  }
+  if (!query) {
+    throw new RuntimeAgentToolsServiceError(
+      400,
+      "dashboard_panel_query_required",
+      `panel #${index + 1}: query is required`,
+    );
+  }
+  if (type === "kpi") {
+    return;
+  }
+  if (type === "data_view") {
+    const views = Array.isArray(p.views) ? p.views : [];
+    if (views.length === 0) {
+      throw new RuntimeAgentToolsServiceError(
+        400,
+        "dashboard_panel_views_required",
+        `panel #${index + 1}: data_view requires at least one entry in \`views\``,
+      );
+    }
+    views.forEach((rawView, vIdx) => {
+      if (!rawView || typeof rawView !== "object") {
+        throw new RuntimeAgentToolsServiceError(
+          400,
+          "dashboard_panel_view_invalid",
+          `panel #${index + 1}, view #${vIdx + 1}: must be an object`,
+        );
+      }
+      const v = rawView as Record<string, unknown>;
+      if (v.type === "table") {
+        if (
+          v.columns !== undefined &&
+          (!Array.isArray(v.columns) ||
+            v.columns.some((c) => typeof c !== "string"))
+        ) {
+          throw new RuntimeAgentToolsServiceError(
+            400,
+            "dashboard_panel_view_invalid",
+            `panel #${index + 1}, view #${vIdx + 1}: \`columns\` must be a list of strings`,
+          );
+        }
+        return;
+      }
+      if (v.type === "board") {
+        if (typeof v.group_by !== "string" || !v.group_by.trim()) {
+          throw new RuntimeAgentToolsServiceError(
+            400,
+            "dashboard_panel_view_invalid",
+            `panel #${index + 1}, view #${vIdx + 1}: board view requires \`group_by\``,
+          );
+        }
+        if (typeof v.card_title !== "string" || !v.card_title.trim()) {
+          throw new RuntimeAgentToolsServiceError(
+            400,
+            "dashboard_panel_view_invalid",
+            `panel #${index + 1}, view #${vIdx + 1}: board view requires \`card_title\``,
+          );
+        }
+        return;
+      }
+      throw new RuntimeAgentToolsServiceError(
+        400,
+        "dashboard_panel_view_invalid",
+        `panel #${index + 1}, view #${vIdx + 1}: unknown \`type\` "${String(v.type)}". Expected "table" or "board".`,
+      );
+    });
+    return;
+  }
+  throw new RuntimeAgentToolsServiceError(
+    400,
+    "dashboard_panel_type_invalid",
+    `panel #${index + 1}: unknown \`type\` "${type}". Expected "kpi" or "data_view".`,
+  );
+}
+
+function serializePanel(panel: DashboardPanelInput): Record<string, unknown> {
+  if (panel.type === "kpi") {
+    return { type: "kpi", title: panel.title.trim(), query: panel.query };
+  }
+  const views: Record<string, unknown>[] = panel.views.map((view) => {
+    if (view.type === "table") {
+      const out: Record<string, unknown> = { type: "table" };
+      if (view.columns && view.columns.length > 0) out.columns = view.columns;
+      return out;
+    }
+    const out: Record<string, unknown> = {
+      type: "board",
+      group_by: view.group_by,
+      card_title: view.card_title,
+    };
+    if (view.card_subtitle && String(view.card_subtitle).trim()) {
+      out.card_subtitle = String(view.card_subtitle).trim();
+    }
+    return out;
+  });
+  const out: Record<string, unknown> = {
+    type: "data_view",
+    title: panel.title.trim(),
+    query: panel.query,
+    views,
+  };
+  if (panel.default_view) out.default_view = panel.default_view;
+  return out;
 }

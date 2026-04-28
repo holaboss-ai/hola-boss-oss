@@ -37,7 +37,7 @@ export function TableView({ view, columns, rows }: TableViewProps) {
             {visible.map((c) => (
               <th
                 key={c.name}
-                className="border-b border-border/70 px-3 py-2.5 text-left text-[11px] font-medium uppercase tracking-wide text-muted-foreground first:pl-1 last:pr-1"
+                className="border-b border-border/70 px-3 py-2.5 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground first:pl-1 last:pr-1"
               >
                 {c.name}
               </th>
@@ -64,7 +64,7 @@ export function TableView({ view, columns, rows }: TableViewProps) {
         </tbody>
       </table>
       {rows.length > displayRows.length ? (
-        <div className="pt-3 text-[11px] text-muted-foreground">
+        <div className="pt-3 text-xs text-muted-foreground">
           Showing {displayRows.length} of {rows.length} rows.
         </div>
       ) : null}
@@ -89,7 +89,8 @@ function pickColumns(view: TableViewSpec, columns: string[]): VisibleColumn[] {
 function formatCell(value: unknown): string {
   if (value === null || value === undefined) return "";
   if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "number" || typeof value === "boolean")
+    return String(value);
   try {
     return JSON.stringify(value);
   } catch {

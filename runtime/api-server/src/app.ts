@@ -97,6 +97,7 @@ import { BrokerError, IntegrationBrokerService } from "./integration-broker.js";
 import { OAuthService } from "./oauth-service.js";
 import { ComposioService } from "./composio-service.js";
 import {
+  type RuntimeAgentToolsCreateDashboardParams,
   RuntimeAgentToolsService,
   RuntimeAgentToolsServiceError,
 } from "./runtime-agent-tools.js";
@@ -4265,6 +4266,48 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 400, error instanceof Error ? error.message : "runtime terminal session close failed");
+    }
+  });
+
+  app.get("/api/v1/capabilities/runtime-tools/data-tables", async (request, reply) => {
+    try {
+      return runtimeAgentToolsService.listDataTables({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          query: isRecord(request.query) ? request.query : null,
+        }),
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "list_data_tables failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/dashboards", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      const body = request.body;
+      return await runtimeAgentToolsService.createDashboard({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body,
+        }),
+        name: requiredString(body.name, "name"),
+        title: requiredString(body.title, "title"),
+        description: nullableString(body.description) ?? undefined,
+        panels: Array.isArray(body.panels)
+          ? (body.panels as unknown[] as RuntimeAgentToolsCreateDashboardParams["panels"])
+          : [],
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "create_dashboard failed");
     }
   });
 

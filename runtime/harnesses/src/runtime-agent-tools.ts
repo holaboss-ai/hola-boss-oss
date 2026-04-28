@@ -129,6 +129,18 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS = [
     id: "terminal_session_close",
     description: "Close a background terminal session.",
     policy: "mutate"
+  },
+  {
+    id: "list_data_tables",
+    description:
+      "List the tables and columns in the workspace's shared SQLite (data.db) so you can compose SQL for `create_dashboard`. Each row reports a table's name, its columns with types, and approximate row count. Module apps write app-namespaced tables here (e.g. twitter_posts, linkedin_posts) — read across them freely; never write here yourself.",
+    policy: "inspect"
+  },
+  {
+    id: "create_dashboard",
+    description:
+      "Author a `.dashboard` file for the current workspace from a structured spec (title, optional description, list of panels). Panels are either `kpi` (single-value SELECT, prefer aliasing the answer as `value`) or `data_view` (one SELECT shared across one or more views — `table` or read-only `board`; for board, set `group_by` to a low-cardinality enum-like column like status/category). Each query is validated against data.db before the file is written. Use `list_data_tables` first to discover what's queryable.",
+    policy: "mutate"
   }
 ] as const;
 

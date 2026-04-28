@@ -19,6 +19,8 @@ const RUNTIME_TOOLS_TODO_PATH = "/api/v1/capabilities/runtime-tools/todo";
 const RUNTIME_TOOLS_SCRATCHPAD_PATH = "/api/v1/capabilities/runtime-tools/scratchpad";
 const RUNTIME_TOOLS_SKILL_PATH = "/api/v1/capabilities/runtime-tools/skill";
 const RUNTIME_TOOLS_TERMINAL_SESSIONS_PATH = "/api/v1/capabilities/runtime-tools/terminal-sessions";
+const RUNTIME_TOOLS_DATA_TABLES_PATH = "/api/v1/capabilities/runtime-tools/data-tables";
+const RUNTIME_TOOLS_DASHBOARDS_PATH = "/api/v1/capabilities/runtime-tools/dashboards";
 const DEFAULT_RUNTIME_TOOL_TIMEOUT_MS = 30000;
 const IMAGE_GENERATE_RUNTIME_TOOL_TIMEOUT_MS = 180000;
 const DOWNLOAD_URL_RUNTIME_TOOL_TIMEOUT_MS = 120000;
@@ -404,6 +406,23 @@ function requestPlan(
         requestPath: `${terminalSessionPath(isRecord(toolParams) ? toolParams.terminal_id : undefined)}/close`,
         body: {},
       };
+    case "list_data_tables":
+      return { method: "GET", requestPath: RUNTIME_TOOLS_DATA_TABLES_PATH };
+    case "create_dashboard": {
+      const params = isRecord(toolParams) ? toolParams : {};
+      return {
+        method: "POST",
+        requestPath: RUNTIME_TOOLS_DASHBOARDS_PATH,
+        body: {
+          name: String(params.name ?? ""),
+          title: String(params.title ?? ""),
+          ...(optionalString(params.description)
+            ? { description: optionalString(params.description) }
+            : {}),
+          panels: Array.isArray(params.panels) ? params.panels : [],
+        },
+      };
+    }
   }
 }
 
