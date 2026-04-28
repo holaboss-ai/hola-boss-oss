@@ -23,17 +23,17 @@ export function deriveKpiLabel(columns: string[], rows: unknown[][]): string {
 
 export function KpiCard({ title, state }: KpiCardProps) {
   return (
-    <div className="rounded-xl border border-border bg-card px-5 py-4 shadow-xs">
+    <div className="px-1 py-1">
       <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         {title}
       </div>
-      <div className="mt-1.5 min-h-[2rem]">
+      <div className="mt-1.5 min-h-[1.75rem]">
         {state.kind === "loading" ? (
-          <div className="h-6 w-24 animate-pulse rounded bg-muted-foreground/15" />
+          <div className="h-7 w-20 animate-pulse rounded bg-muted" />
         ) : state.kind === "error" ? (
           <div className="text-xs text-destructive">{state.message}</div>
         ) : (
-          <div className="text-2xl font-semibold tabular-nums tracking-tight text-foreground">
+          <div className="text-3xl font-medium tabular-nums tracking-tight text-foreground">
             {state.label}
           </div>
         )}

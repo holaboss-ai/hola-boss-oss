@@ -24,10 +24,10 @@ const VIEW_LABELS: Record<DataViewSpec["type"], string> = {
   board: "Board",
 };
 
-// Wraps a single panel's data in a tab-bar header + active-view body.
+// Wraps a single panel's data with a Notion-style header (title + view
+// switcher as underlined text tabs) and the active view's content.
 // Selected view state is component-local: it survives re-renders within
-// the session but isn't persisted to the .dashboard file. The tab bar
-// only renders when the panel declares ≥ 2 views.
+// the session but isn't persisted to the .dashboard file.
 export function DataViewPanel({ panel, state }: DataViewPanelProps) {
   const [activeViewType, setActiveViewType] = useState<DataViewSpec["type"]>(
     () => resolveInitialView(panel).type,
@@ -36,13 +36,13 @@ export function DataViewPanel({ panel, state }: DataViewPanelProps) {
     panel.views.find((v) => v.type === activeViewType) ?? panel.views[0];
 
   return (
-    <div className="rounded-xl border border-border bg-card shadow-xs">
-      <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
-        <div className="text-xs font-semibold tracking-wide text-foreground">
+    <div>
+      <div className="flex items-end justify-between gap-3 border-b border-border pb-1.5">
+        <div className="text-sm font-semibold tracking-tight text-foreground">
           {panel.title}
         </div>
         {panel.views.length > 1 ? (
-          <div className="flex items-center gap-1 rounded-md border border-border bg-muted p-0.5">
+          <div className="flex items-center gap-3">
             {panel.views.map((view) => {
               const active = view.type === activeViewType;
               return (
@@ -50,10 +50,10 @@ export function DataViewPanel({ panel, state }: DataViewPanelProps) {
                   type="button"
                   key={view.type}
                   onClick={() => setActiveViewType(view.type)}
-                  className={`rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                  className={`-mb-px border-b-2 pb-1.5 text-xs transition-colors ${
                     active
-                      ? "bg-card text-foreground shadow-xs"
-                      : "text-muted-foreground hover:text-foreground"
+                      ? "border-foreground text-foreground"
+                      : "border-transparent text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   {VIEW_LABELS[view.type]}
@@ -63,13 +63,13 @@ export function DataViewPanel({ panel, state }: DataViewPanelProps) {
           </div>
         ) : null}
       </div>
-      <div className="max-h-[480px] overflow-auto">
+      <div className="max-h-[520px] overflow-auto">
         {state.kind === "loading" ? (
-          <div className="grid place-items-center px-5 py-12 text-xs text-muted-foreground">
-            Running query…
+          <div className="grid place-items-center px-1 py-10 text-xs text-muted-foreground">
+            Loading…
           </div>
         ) : state.kind === "error" ? (
-          <div className="px-5 py-6 text-xs text-destructive">{state.message}</div>
+          <div className="px-1 py-4 text-xs text-destructive">{state.message}</div>
         ) : activeView.type === "table" ? (
           <TableView view={activeView} columns={state.columns} rows={state.rows} />
         ) : (

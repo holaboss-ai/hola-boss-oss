@@ -20,8 +20,10 @@ type PanelState = KpiCardState | DataViewState;
 
 // Reads a `.dashboard` YAML doc, runs each panel's query against the
 // workspace's shared data.db (read-only IPC), and renders panels in
-// document order. Each panel reports its own loading/error state so a
-// bad SQL in one panel doesn't blank the rest of the dashboard.
+// document order. Notion-styled: no surrounding card chrome on the
+// page, generous whitespace, and consecutive KPI panels grouped into
+// a single horizontal row so a Total/Published pair reads as a stat
+// strip instead of two stacked blocks.
 export function DashboardRenderer({
   workspaceId,
   content,
@@ -88,18 +90,20 @@ function DashboardBody({
 
   const onRefresh = useCallback(() => setRefreshKey((k) => k + 1), []);
 
+  const groups = useMemo(() => groupPanels(dashboard.panels), [dashboard.panels]);
+
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-muted/30">
-      <div className="shrink-0 border-b border-border bg-background/60 px-6 py-3">
+    <div className="h-full overflow-auto bg-background">
+      <div className="mx-auto max-w-3xl px-10 pt-10 pb-16">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-sm font-semibold tracking-tight text-foreground">
+            <h1 className="text-2xl font-semibold tracking-tight text-foreground">
               {dashboard.title}
-            </div>
+            </h1>
             {dashboard.description ? (
-              <div className="mt-0.5 truncate text-xs text-muted-foreground">
+              <p className="mt-1 text-sm text-muted-foreground">
                 {dashboard.description}
-              </div>
+              </p>
             ) : null}
           </div>
           <Button
@@ -108,33 +112,82 @@ function DashboardBody({
             size="sm"
             onClick={onRefresh}
             title="Re-run all queries"
+            className="-mr-2 shrink-0 gap-1.5 text-muted-foreground hover:text-foreground"
           >
             <RefreshCw size={13} />
             Refresh
           </Button>
         </div>
-      </div>
-      <div className="flex-1 overflow-auto px-6 py-5">
-        <div className="mx-auto flex max-w-5xl flex-col gap-3">
-          {dashboard.panels.map((panel, index) => (
-            <PanelSlot
-              // biome-ignore lint/suspicious/noArrayIndexKey: panel order is canonical
-              key={index}
-              panel={panel}
-              state={panelStates[index]}
-            />
-          ))}
+
+        <div className="mt-8 flex flex-col gap-10">
+          {groups.map((group, gIdx) => {
+            if (group.kind === "kpi-row") {
+              return (
+                <div
+                  // biome-ignore lint/suspicious/noArrayIndexKey: panel order is canonical
+                  key={`g-${gIdx}`}
+                  className="grid gap-x-8 gap-y-4"
+                  style={{
+                    gridTemplateColumns: `repeat(${Math.min(group.indices.length, 4)}, minmax(0, 1fr))`,
+                  }}
+                >
+                  {group.indices.map((panelIdx) => {
+                    const panel = dashboard.panels[panelIdx] as Extract<
+                      DashboardPanel,
+                      { type: "kpi" }
+                    >;
+                    return (
+                      <KpiCard
+                        key={panelIdx}
+                        title={panel.title}
+                        state={panelStates[panelIdx] as KpiCardState}
+                      />
+                    );
+                  })}
+                </div>
+              );
+            }
+            const panel = dashboard.panels[group.index];
+            const state = panelStates[group.index];
+            return (
+              <DataViewPanel
+                key={group.index}
+                panel={panel as Extract<DashboardPanel, { type: "data_view" }>}
+                state={state as DataViewState}
+              />
+            );
+          })}
         </div>
       </div>
     </div>
   );
 }
 
-function PanelSlot({ panel, state }: { panel: DashboardPanel; state: PanelState }) {
-  if (panel.type === "kpi") {
-    return <KpiCard title={panel.title} state={state as KpiCardState} />;
-  }
-  return <DataViewPanel panel={panel} state={state as DataViewState} />;
+type PanelGroup =
+  | { kind: "kpi-row"; indices: number[] }
+  | { kind: "panel"; index: number };
+
+// Folds consecutive kpi panels into a single row group so two or more
+// KPIs render side-by-side rather than as stacked blocks. Any panel
+// that isn't a kpi gets its own slot.
+function groupPanels(panels: DashboardPanel[]): PanelGroup[] {
+  const out: PanelGroup[] = [];
+  let runStart = -1;
+  panels.forEach((panel, i) => {
+    if (panel.type === "kpi") {
+      if (runStart < 0) runStart = i;
+      const next = panels[i + 1];
+      if (!next || next.type !== "kpi") {
+        const indices: number[] = [];
+        for (let j = runStart; j <= i; j += 1) indices.push(j);
+        out.push({ kind: "kpi-row", indices });
+        runStart = -1;
+      }
+    } else {
+      out.push({ kind: "panel", index: i });
+    }
+  });
+  return out;
 }
 
 function panelStateFromResult(
