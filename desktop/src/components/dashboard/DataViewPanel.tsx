@@ -1,3 +1,4 @@
+import { Columns3, type LucideIcon, Table2 } from "lucide-react";
 import { useState } from "react";
 
 import {
@@ -19,9 +20,9 @@ export type DataViewState =
   | { kind: "error"; message: string }
   | { kind: "data"; columns: string[]; rows: unknown[][] };
 
-const VIEW_LABELS: Record<DataViewSpec["type"], string> = {
-  table: "Table",
-  board: "Board",
+const VIEW_META: Record<DataViewSpec["type"], { label: string; icon: LucideIcon }> = {
+  table: { label: "Table", icon: Table2 },
+  board: { label: "Board", icon: Columns3 },
 };
 
 // Wraps a single panel's data with a Notion-style header (title + view
@@ -37,26 +38,31 @@ export function DataViewPanel({ panel, state }: DataViewPanelProps) {
 
   return (
     <div>
-      <div className="flex items-end justify-between gap-3 border-b border-border pb-1.5">
+      <div className="flex items-center justify-between gap-3 border-b border-border pb-2">
         <div className="text-sm font-semibold tracking-tight text-foreground">
           {panel.title}
         </div>
         {panel.views.length > 1 ? (
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1">
             {panel.views.map((view) => {
               const active = view.type === activeViewType;
+              const meta = VIEW_META[view.type];
+              const Icon = meta.icon;
               return (
                 <button
                   type="button"
                   key={view.type}
                   onClick={() => setActiveViewType(view.type)}
-                  className={`-mb-px border-b-2 pb-1.5 text-xs transition-colors ${
+                  title={meta.label}
+                  aria-label={`${meta.label} view`}
+                  aria-pressed={active}
+                  className={`grid size-7 place-items-center rounded-md transition-colors ${
                     active
-                      ? "border-foreground text-foreground"
-                      : "border-transparent text-muted-foreground hover:text-foreground"
+                      ? "bg-muted text-foreground"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
                   }`}
                 >
-                  {VIEW_LABELS[view.type]}
+                  <Icon size={14} strokeWidth={1.75} />
                 </button>
               );
             })}

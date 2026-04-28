@@ -6,38 +6,38 @@ interface TableViewProps {
   rows: unknown[][];
 }
 
-// Renders a panel's rows as a flat Notion-style table: light hairline
-// borders between rows, no zebra stripe, hover row highlight. The
-// view's `columns` field, if set, scopes which columns are shown and
-// in what order — missing columns are silently dropped.
+// Renders a panel's rows as a comfortable Notion-style table: roomy
+// padding, larger row text, hairline borders, soft hover. The view's
+// `columns` field, if set, scopes which columns are shown and in what
+// order — missing columns are silently dropped.
 export function TableView({ view, columns, rows }: TableViewProps) {
   const visible = pickColumns(view, columns);
   const displayRows = rows.slice(0, 500);
 
   if (visible.length === 0) {
     return (
-      <div className="py-8 text-center text-xs text-muted-foreground">
+      <div className="py-10 text-center text-xs text-muted-foreground">
         No columns to display.
       </div>
     );
   }
   if (rows.length === 0) {
     return (
-      <div className="py-8 text-center text-xs text-muted-foreground">
+      <div className="py-10 text-center text-xs text-muted-foreground">
         No rows.
       </div>
     );
   }
 
   return (
-    <div>
-      <table className="w-full border-collapse text-xs">
+    <div className="pt-1">
+      <table className="w-full border-collapse text-sm">
         <thead>
           <tr>
             {visible.map((c) => (
               <th
                 key={c.name}
-                className="border-b border-border py-2 pr-4 text-left text-[11px] font-medium uppercase tracking-wide text-muted-foreground first:pl-0"
+                className="border-b border-border/70 px-3 py-2.5 text-left text-[11px] font-medium uppercase tracking-wide text-muted-foreground first:pl-1 last:pr-1"
               >
                 {c.name}
               </th>
@@ -47,11 +47,14 @@ export function TableView({ view, columns, rows }: TableViewProps) {
         <tbody>
           {displayRows.map((row, rIdx) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: SQL row order is the natural key
-            <tr key={rIdx} className="hover:bg-muted">
+            <tr
+              key={rIdx}
+              className="border-b border-border/40 transition-colors hover:bg-muted/70 last:border-b-0"
+            >
               {visible.map((c) => (
                 <td
                   key={c.name}
-                  className="border-b border-border/60 py-2 pr-4 align-top text-foreground first:pl-0"
+                  className="px-3 py-2.5 align-top leading-relaxed text-foreground first:pl-1 last:pr-1"
                 >
                   {formatCell(row[c.index])}
                 </td>
@@ -61,7 +64,7 @@ export function TableView({ view, columns, rows }: TableViewProps) {
         </tbody>
       </table>
       {rows.length > displayRows.length ? (
-        <div className="pt-2 text-[11px] text-muted-foreground">
+        <div className="pt-3 text-[11px] text-muted-foreground">
           Showing {displayRows.length} of {rows.length} rows.
         </div>
       ) : null}
