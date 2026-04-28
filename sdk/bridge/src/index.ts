@@ -9,11 +9,14 @@ export {
 export {
   createAppOutput,
   publishSessionArtifact,
+  syncAppResourceOutput,
   updateAppOutput,
 } from "./workspace-outputs"
 
 export type {
   AppOutputPresentationInput,
+  AppResourceOutputInput,
+  AppResourceOutputResult,
   CreateAppOutputRequest,
   HolabossTurnContext,
   IntegrationClient,
