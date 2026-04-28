@@ -732,6 +732,172 @@ test("desktop browser tool service accepts scoped browser_get_state controls", a
   }
 });
 
+test("desktop browser tool service exposes general find, act, wait, evaluate, and debug primitives", async () => {
+  const evaluateBodies: string[] = [];
+  let waitPredicateCalls = 0;
+  const browserServer = await startBrowserServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    const body = Buffer.concat(chunks).toString("utf8");
+    response.setHeader("content-type", "application/json; charset=utf-8");
+    if (request.url === "/api/v1/browser/page") {
+      response.end(JSON.stringify({ tabId: "tab-1", url: "https://example.com/app", title: "Example App" }));
+      return;
+    }
+    if (request.url === "/api/v1/browser/evaluate") {
+      evaluateBodies.push(body);
+      const expression = String((JSON.parse(body) as { expression?: string }).expression ?? "");
+      if (expression.includes("const maxResults = 10")) {
+        response.end(
+          JSON.stringify({
+            tabId: "tab-1",
+            result: {
+              ok: true,
+              count: 1,
+              truncated: false,
+              matches: [
+                {
+                  ref: "css:#new-button",
+                  action_ref: "css:#new-button",
+                  tag_name: "div",
+                  role: "button",
+                  text: "New",
+                  label: "New",
+                  visible: true,
+                  bounding_box: { x: 292, y: 72, width: 156, height: 64 },
+                },
+              ],
+            },
+          }),
+        );
+        return;
+      }
+      if (expression.includes('const action = "click"')) {
+        response.end(
+          JSON.stringify({
+            tabId: "tab-1",
+            result: {
+              ok: true,
+              action: "click",
+              target: { ref: "css:#new-button", text: "New" },
+              result: { x: 370, y: 104 },
+            },
+          }),
+        );
+        return;
+      }
+      if (expression.includes('const condition = "element"')) {
+        waitPredicateCalls += 1;
+        response.end(
+          JSON.stringify({
+            tabId: "tab-1",
+            result: {
+              ok: true,
+              matched: waitPredicateCalls >= 2,
+              condition: "element",
+              match_count: waitPredicateCalls >= 2 ? 1 : 0,
+            },
+          }),
+        );
+        return;
+      }
+      if (expression.includes("elementFromPoint")) {
+        response.end(
+          JSON.stringify({
+            tabId: "tab-1",
+            result: {
+              ok: true,
+              url: "https://example.com/app",
+              title: "Example App",
+              ready_state: "complete",
+              hit_test: { x: 20, y: 30, element: { tag_name: "button", text: "New" } },
+            },
+          }),
+        );
+        return;
+      }
+      if (expression.includes("document.title")) {
+        response.end(JSON.stringify({ tabId: "tab-1", result: { ok: true, result: "Example App" } }));
+        return;
+      }
+      response.statusCode = 500;
+      response.end(JSON.stringify({ error: "unexpected expression" }));
+      return;
+    }
+    response.statusCode = 404;
+    response.end(JSON.stringify({ error: "not found" }));
+  });
+
+  try {
+    const service = new DesktopBrowserToolService({
+      resolveConfig: () => ({
+        authToken: "",
+        userId: "",
+        sandboxId: "",
+        modelProxyBaseUrl: "",
+        defaultModel: "openai/gpt-5.4",
+        runtimeMode: "oss",
+        defaultProvider: "",
+        holabossEnabled: false,
+        desktopBrowserEnabled: true,
+        desktopBrowserUrl: browserServer.url,
+        desktopBrowserAuthToken: "browser-token",
+        configPath: "/tmp/runtime-config.json",
+        loadedFromFile: true
+      })
+    });
+
+    const findResult = await service.execute("browser_find", {
+      text: "New",
+      role: "button",
+      scope: "viewport",
+      max_results: 10,
+    });
+    assert.equal((findResult.find as { count?: number }).count, 1);
+    assert.equal(
+      (((findResult.find as { matches?: Array<{ ref?: string }> }).matches ?? [])[0]?.ref),
+      "css:#new-button",
+    );
+
+    const actResult = await service.execute("browser_act", {
+      action: "click",
+      text: "New",
+      role: "button",
+      exact: true,
+    });
+    assert.equal((actResult.action as { action?: string }).action, "click");
+    assert.deepEqual(actResult.page, { tabId: "tab-1", url: "https://example.com/app", title: "Example App" });
+
+    const waitResult = await service.execute("browser_wait", {
+      condition: "element",
+      text: "Created",
+      timeout_ms: 1000,
+    });
+    assert.equal((waitResult.wait as { matched?: boolean }).matched, true);
+    assert.equal((waitResult.wait as { attempts?: number }).attempts, 2);
+
+    const evaluateResult = await service.execute("browser_evaluate", {
+      expression: "document.title",
+      timeout_ms: 1000,
+    });
+    assert.equal((evaluateResult.evaluation as { result?: string }).result, "Example App");
+
+    const debugResult = await service.execute("browser_debug", { x: 20, y: 30 });
+    assert.deepEqual(debugResult.page, { tabId: "tab-1", url: "https://example.com/app", title: "Example App" });
+    assert.equal((debugResult.debug as { ready_state?: string }).ready_state, "complete");
+
+    const expressions = evaluateBodies.map((body) => String((JSON.parse(body) as { expression?: string }).expression ?? ""));
+    assert.match(expressions[0] ?? "", /"text":"New"/);
+    assert.match(expressions[0] ?? "", /"role":"button"/);
+    assert.match(expressions[1] ?? "", /const action = "click"/);
+    assert.match(expressions[2] ?? "", /const condition = "element"/);
+  } finally {
+    await browserServer.close();
+  }
+});
+
 test("desktop browser tool service avoids refetching page summaries for browser_type", async () => {
   const requests: string[] = [];
   const browserServer = await startBrowserServer(async (request, response) => {

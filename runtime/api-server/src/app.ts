@@ -536,6 +536,19 @@ function capabilitySessionId(params: {
   );
 }
 
+function capabilityBrowserSpace(params: {
+  headers: Record<string, unknown>;
+  query?: Record<string, unknown> | null;
+  body?: Record<string, unknown> | null;
+}): "agent" | "user" | null {
+  const value =
+    headerString(params.headers, "x-holaboss-browser-space") ||
+    optionalString(params.query?.browser_space) ||
+    optionalString(params.body?.browser_space) ||
+    "";
+  return value === "agent" || value === "user" ? value : null;
+}
+
 function capabilitySelectedModel(params: {
   headers: Record<string, unknown>;
   query?: Record<string, unknown> | null;
@@ -2975,8 +2988,12 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       headers: request.headers as Record<string, unknown>,
       query: isRecord(request.query) ? request.query : null,
     });
+    const space = capabilityBrowserSpace({
+      headers: request.headers as Record<string, unknown>,
+      query: isRecord(request.query) ? request.query : null,
+    });
     try {
-      return await browserToolService.getStatus({ workspaceId, sessionId });
+      return await browserToolService.getStatus({ workspaceId, sessionId, space });
     } catch (error) {
       if (error instanceof DesktopBrowserToolServiceError) {
         return sendError(reply, error.statusCode, error.message);
@@ -2995,6 +3012,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       headers: request.headers as Record<string, unknown>,
       body: request.body,
     });
+    const space = capabilityBrowserSpace({
+      headers: request.headers as Record<string, unknown>,
+      body: request.body,
+    });
     const inputId =
       workspaceId && sessionId
         ? resolveOutputInputId({
@@ -3010,7 +3031,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return await browserToolService.execute(
         requiredString(params.toolId, "toolId"),
         request.body,
-        { workspaceId, sessionId, inputId },
+        { workspaceId, sessionId, inputId, space },
       );
     } catch (error) {
       if (error instanceof DesktopBrowserToolServiceError) {

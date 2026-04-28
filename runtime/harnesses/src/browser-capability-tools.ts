@@ -40,6 +40,53 @@ function literalStringUnion(values: string[], description: string): Record<strin
   };
 }
 
+function browserLocatorProperties(): Record<string, unknown> {
+  return {
+    ref: {
+      type: "string",
+      description: "Stable ref returned by browser_find.",
+    },
+    text: {
+      type: "string",
+      description: "Visible text to find. Matches case-insensitively unless exact=true.",
+    },
+    label: {
+      type: "string",
+      description: "Accessible label, title, aria-label, value, or nearby label text to find.",
+    },
+    placeholder: {
+      type: "string",
+      description: "Input placeholder text to find.",
+    },
+    role: {
+      type: "string",
+      description: "ARIA or inferred element role, such as button, link, textbox, combobox, option, dialog, or menuitem.",
+    },
+    selector: {
+      type: "string",
+      description: "CSS selector to locate the target.",
+    },
+    xpath: {
+      type: "string",
+      description: "XPath expression to locate the target.",
+    },
+    exact: {
+      type: "boolean",
+      description: "Require an exact normalized text/label/placeholder match.",
+    },
+    scope: {
+      anyOf: [
+        { type: "string", const: "main" },
+        { type: "string", const: "viewport" },
+        { type: "string", const: "focused" },
+        { type: "string", const: "dialog" },
+      ],
+      description:
+        "Limit matching to the main document, current viewport, focused subtree, or active dialog.",
+    },
+  };
+}
+
 function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unknown> {
   switch (toolId) {
     case "browser_navigate":
@@ -111,6 +158,118 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
             type: "boolean",
             description:
               "Include a page screenshot artifact handle when visual appearance, layout, overlays, charts, PDFs, or user-visible confirmation matter, or when DOM signals are ambiguous.",
+          },
+        },
+        additionalProperties: false,
+      };
+    case "browser_find":
+      return {
+        type: "object",
+        properties: {
+          ...browserLocatorProperties(),
+          include_hidden: {
+            type: "boolean",
+            description: "Include hidden/offscreen elements. Leave false for ordinary browser interaction.",
+          },
+          max_results: {
+            type: "integer",
+            description: "Maximum matches to return.",
+            minimum: 1,
+            maximum: 100,
+          },
+        },
+        additionalProperties: false,
+      };
+    case "browser_act":
+      return {
+        type: "object",
+        properties: {
+          action: literalStringUnion(
+            ["click", "double_click", "hover", "focus", "fill", "type", "press", "select", "scroll_into_view"],
+            "Browser action to perform.",
+          ),
+          ...browserLocatorProperties(),
+          value: {
+            type: "string",
+            description: "Text/value for fill, type, or select actions.",
+          },
+          key: {
+            type: "string",
+            description: "Keyboard key for press actions.",
+          },
+          clear: {
+            type: "boolean",
+            description: "Clear editable content before fill/type. Defaults true for fill and false for type.",
+          },
+          submit: {
+            type: "boolean",
+            description: "Submit after fill/type, usually by pressing Enter or requestSubmit.",
+          },
+        },
+        required: ["action"],
+        additionalProperties: false,
+      };
+    case "browser_wait":
+      return {
+        type: "object",
+        properties: {
+          condition: literalStringUnion(
+            ["load", "url", "text", "element", "hidden", "dom_change"],
+            "Browser condition to wait for.",
+          ),
+          url: {
+            type: "string",
+            description: "URL substring or regular expression body to wait for when condition=url.",
+          },
+          ...browserLocatorProperties(),
+          timeout_ms: {
+            type: "integer",
+            description: "Maximum wait time in milliseconds.",
+            minimum: 100,
+            maximum: 30000,
+          },
+        },
+        additionalProperties: false,
+      };
+    case "browser_evaluate":
+      return {
+        type: "object",
+        properties: {
+          expression: {
+            type: "string",
+            description: "JavaScript expression or IIFE to evaluate in the active page.",
+            minLength: 1,
+          },
+          allow_mutation: {
+            type: "boolean",
+            description:
+              "Set true when the expression intentionally mutates page state. Leave false for read-only inspection.",
+          },
+          timeout_ms: {
+            type: "integer",
+            description: "Maximum evaluation time in milliseconds.",
+            minimum: 100,
+            maximum: 30000,
+          },
+        },
+        required: ["expression"],
+        additionalProperties: false,
+      };
+    case "browser_debug":
+      return {
+        type: "object",
+        properties: {
+          x: {
+            type: "number",
+            description: "Viewport x coordinate for elementFromPoint hit testing.",
+          },
+          y: {
+            type: "number",
+            description: "Viewport y coordinate for elementFromPoint hit testing.",
+          },
+          include_dom_sample: {
+            type: "boolean",
+            description: "Include a compact sample of visible DOM text and element tags.",
           },
         },
         additionalProperties: false,

@@ -108,6 +108,25 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
     (getStateTool.parameters as { properties?: { max_nodes?: { minimum?: number } } }).properties?.max_nodes?.minimum,
     1,
   );
+  const findTool = tools.find((tool) => tool.name === "browser_find");
+  assert.ok(findTool);
+  assert.match(findTool.description ?? "", /Search is independent of browser_get_state max_nodes/i);
+  assert.deepEqual(
+    (
+      (findTool.parameters as { properties?: { scope?: { anyOf?: Array<{ const?: string }> } } })
+        .properties?.scope?.anyOf ?? []
+    ).map((entry) => entry.const),
+    ["main", "viewport", "focused", "dialog"],
+  );
+  const actTool = tools.find((tool) => tool.name === "browser_act");
+  assert.ok(actTool);
+  assert.deepEqual(
+    (
+      (actTool.parameters as { properties?: { action?: { anyOf?: Array<{ const?: string }> } } })
+        .properties?.action?.anyOf ?? []
+    ).map((entry) => entry.const),
+    ["click", "double_click", "hover", "focus", "fill", "type", "press", "select", "scroll_into_view"],
+  );
   const result = await getStateTool.execute("call-1", { include_screenshot: true }, undefined, undefined, {} as never);
 
   assert.deepEqual(requests, [
