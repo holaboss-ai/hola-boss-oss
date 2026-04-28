@@ -1195,6 +1195,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
     toggleWindowSize: () => ipcRenderer.invoke("ui:toggleWindowSize") as Promise<void>,
     closeWindow: () => ipcRenderer.invoke("ui:closeWindow") as Promise<void>,
     setTheme: (theme: string) => ipcRenderer.invoke("ui:setTheme", theme) as Promise<void>,
+    showNativeNotification: (payload: {
+      title: string;
+      body: string;
+      workspaceId?: string | null;
+      sessionId?: string | null;
+      force?: boolean;
+    }) =>
+      ipcRenderer.invoke("ui:showNativeNotification", payload) as Promise<boolean>,
     openSettingsPane: (section?: UiSettingsPaneSection) => ipcRenderer.invoke("ui:openSettingsPane", section) as Promise<void>,
     openExternalUrl: (url: string) => ipcRenderer.invoke("ui:openExternalUrl", url) as Promise<void>,
     onWindowStateChange: (listener: (state: DesktopWindowStatePayload) => void) => {
@@ -1314,8 +1322,20 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:updateCronjob", jobId, payload) as Promise<CronjobRecordPayload>,
     deleteCronjob: (jobId: string) =>
       ipcRenderer.invoke("workspace:deleteCronjob", jobId) as Promise<{ success: boolean }>,
-    listNotifications: (workspaceId?: string | null, includeDismissed?: boolean) =>
-      ipcRenderer.invoke("workspace:listNotifications", workspaceId, includeDismissed) as Promise<RuntimeNotificationListResponsePayload>,
+    listNotifications: (
+      workspaceId?: string | null,
+      includeDismissed?: boolean,
+      options?: {
+        includeCronjobSource?: boolean;
+        sourceType?: string | null;
+      },
+    ) =>
+      ipcRenderer.invoke(
+        "workspace:listNotifications",
+        workspaceId,
+        includeDismissed,
+        options,
+      ) as Promise<RuntimeNotificationListResponsePayload>,
     updateNotification: (notificationId: string, payload: RuntimeNotificationUpdatePayload) =>
       ipcRenderer.invoke("workspace:updateNotification", notificationId, payload) as Promise<RuntimeNotificationRecordPayload>,
     listTaskProposals: (workspaceId: string) =>

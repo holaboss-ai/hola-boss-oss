@@ -300,6 +300,31 @@ test("app shell opens cronjob session-run notifications in the sub-session chat"
   assert.match(source, /setChatFocusRequestKey\(\(current\) => current \+ 1\);/);
 });
 
+test("app shell maps system-notification cronjobs to native desktop alerts instead of toast inbox items", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /function notificationDeliveryChannel\(/);
+  assert.match(source, /function notificationCreatedAtMs\(/);
+  assert.match(source, /const nativeCronjobNotificationsStartedAtRef = useRef\(Date\.now\(\)\);/);
+  assert.match(source, /const nativeCronjobNotificationAttemptedAtRef = useRef\(\s*new Map<string, number>\(\),\s*\);/);
+  assert.match(source, /window\.electronAPI\.workspace\.listNotifications\(\s*null,\s*false,/);
+  assert.match(source, /includeCronjobSource: true/);
+  assert.match(source, /sourceType: "cronjob"/);
+  assert.match(source, /notificationDeliveryChannel\(item\) === "system_notification"/);
+  assert.match(source, /const startupAtMs = nativeCronjobNotificationsStartedAtRef\.current;/);
+  assert.match(source, /const createdAtMs = notificationCreatedAtMs\(item\);/);
+  assert.match(source, /createdAtMs !== null && createdAtMs > startupAtMs/);
+  assert.match(source, /const shown = await window\.electronAPI\.ui\.showNativeNotification\(\{/);
+  assert.match(source, /if \(!shown\) \{\s*continue;\s*\}/);
+  assert.match(source, /Date\.now\(\) - lastAttemptAt < 15_000/);
+  assert.match(source, /window\.electronAPI\.ui\.showNativeNotification\(\{/);
+  assert.match(source, /force: true/);
+  assert.match(
+    source,
+    /await window\.electronAPI\.workspace\.updateNotification\(item\.id,\s*\{\s*state: "dismissed",\s*\}\);/,
+  );
+});
+
 test("app shell exposes a dev-only app update preview hook", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
@@ -453,6 +478,7 @@ test("app shell uses the top toolbar for shell navigation and removes the left r
   assert.match(source, /handleOpenAutomationsPane = useCallback/);
   assert.match(source, /setAgentView\(\{ type: "automations" \}\)/);
   assert.match(source, /onOpenAutomations=\{handleOpenAutomationsPane\}/);
+  assert.match(source, /<AutomationsPane[\s\S]*onRunNow=\{handleReturnToChatPane\}/);
   assert.match(source, /<AutomationsPane[\s\S]*onCreateSchedule=\{\(\) =>\s*handleCreateScheduleInChat\(selectedWorkspaceId\)/);
   assert.doesNotMatch(source, /<SettingsDialog[\s\S]*onCreateAutomationSchedule/);
   assert.doesNotMatch(source, /<SettingsDialog[\s\S]*onEditAutomationSchedule/);
@@ -483,6 +509,16 @@ test("app shell requests remote task proposal generation without a separate succ
   assert.match(source, /Suggestions are unavailable right now\./);
   assert.doesNotMatch(source, /Remote heartbeat accepted/);
   assert.doesNotMatch(source, /Pending cloud jobs/);
+});
+
+test("accepting a task proposal starts background work without surfacing a hidden session id", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /async function acceptTaskProposal\(proposal: TaskProposalRecordPayload\)/);
+  assert.match(source, /Started background task "\$\{proposal\.task_name\}"\./);
+  assert.doesNotMatch(source, /const proposalSessionId = `proposal-\$\{crypto\.randomUUID\(\)\}`;/);
+  assert.doesNotMatch(source, /Queued "\$\{proposal\.task_name\}" into session \$\{targetSessionId\}\./);
+  assert.doesNotMatch(source, /session_id: proposalSessionId/);
 });
 
 test("app shell raises a local toast when fresh task proposals arrive and opens the inbox from it", async () => {

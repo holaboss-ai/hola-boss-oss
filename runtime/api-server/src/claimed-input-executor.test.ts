@@ -571,6 +571,13 @@ test("claimed input creates a completion notification for successful cronjob ses
     harness: "pi",
     status: "active",
   });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    kind: "workspace_session",
+    title: "Main Session",
+    createdBy: "workspace_user",
+  });
   const job = store.createCronjob({
     workspaceId: workspace.id,
     initiatedBy: "workspace_agent",
@@ -582,6 +589,7 @@ test("claimed input creates a completion notification for successful cronjob ses
     metadata: {
       notification_title: "Daily Run",
       notification_priority: "high",
+      source_session_id: "session-main",
     },
   });
   store.ensureSession({
@@ -625,6 +633,9 @@ test("claimed input creates a completion notification for successful cronjob ses
   const notifications = store.listRuntimeNotifications({
     workspaceId: workspace.id,
   });
+  const queuedEvents = store.listPendingMainSessionEvents({
+    ownerMainSessionId: "session-main",
+  });
 
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0]?.title, "Daily Run Completed");
@@ -636,6 +647,20 @@ test("claimed input creates a completion notification for successful cronjob ses
   assert.equal(notifications[0]?.metadata.input_id, queued.inputId);
   assert.equal(notifications[0]?.metadata.turn_status, "completed");
   assert.equal(notifications[0]?.metadata.stop_reason, "ok");
+  assert.equal(queuedEvents.length, 1);
+  assert.equal(queuedEvents[0]?.eventType, "completed");
+  assert.equal(queuedEvents[0]?.deliveryBucket, "background_update");
+  assert.equal(queuedEvents[0]?.payload.cronjob_id, job.id);
+  assert.equal(queuedEvents[0]?.payload.source_type, "cronjob");
+  assert.equal(queuedEvents[0]?.payload.cronjob_name, "daily-sync");
+  assert.equal(queuedEvents[0]?.payload.title, "Daily Sync");
+  assert.equal(queuedEvents[0]?.payload.goal, "Daily sync");
+  assert.equal(queuedEvents[0]?.payload.context, "Sync the workspace.");
+  assert.equal(queuedEvents[0]?.payload.summary, "Hello from cron");
+  assert.equal(queuedEvents[0]?.payload.cronjob_schedule, "0 9 * * *");
+  assert.equal(queuedEvents[0]?.payload.cronjob_first_run, true);
+  assert.equal(queuedEvents[0]?.payload.cronjob_delivery_channel, "session_run");
+  assert.equal(queuedEvents[0]?.payload.cronjob_delivery_mode, "announce");
 
   store.close();
 });
@@ -1489,7 +1514,8 @@ test("claimed input folds attached background updates into a normal user turn", 
 
   assert.match(capturedInstruction, /Pending Background Updates/);
   assert.match(capturedInstruction, /Answer the user's latest message first\./);
-  assert.match(capturedInstruction, /Background updates:/i);
+  assert.match(capturedInstruction, /only one relevant update, weave it in without a `Background updates` heading/i);
+  assert.match(capturedInstruction, /Only use a separate `Background updates` section when there are multiple distinct updates/i);
   assert.match(capturedInstruction, /numbered items/i);
   assert.doesNotMatch(capturedInstruction, /<html>/i);
   assert.match(capturedInstruction, /build-fix-report\.md/i);
@@ -1501,6 +1527,9 @@ test("claimed input folds attached background updates into a normal user turn", 
   assert.equal(outputs[0]?.title, "build-fix-report.md");
   assert.equal(outputs[0]?.filePath, "outputs/reports/build-fix-report.md");
   assert.equal(outputs[0]?.metadata.origin_type, "forwarded_subagent");
+  assert.equal(outputs[0]?.metadata.owner_container_type, "background_update");
+  assert.equal(outputs[0]?.metadata.owner_container_input_id, queued.inputId);
+  assert.equal(outputs[0]?.metadata.owner_container_session_id, "session-main");
   assert.equal(updatedEvent?.status, "delivered");
 
   store.close();

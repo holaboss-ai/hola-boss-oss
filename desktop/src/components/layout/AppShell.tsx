@@ -674,6 +674,29 @@ function notificationTargetSessionId(
   return notificationMetadataString(notification, "session_id");
 }
 
+function notificationDeliveryChannel(
+  notification: RuntimeNotificationRecordPayload,
+): string | null {
+  const delivery = notification.metadata.delivery;
+  if (
+    delivery &&
+    typeof delivery === "object" &&
+    !Array.isArray(delivery) &&
+    typeof (delivery as { channel?: unknown }).channel === "string"
+  ) {
+    const channel = (delivery as { channel: string }).channel.trim();
+    return channel || null;
+  }
+  return null;
+}
+
+function notificationCreatedAtMs(
+  notification: RuntimeNotificationRecordPayload,
+): number | null {
+  const parsed = Date.parse(notification.created_at);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function notificationActivationState(
   notification: RuntimeNotificationRecordPayload,
 ): RuntimeNotificationState {
@@ -1454,6 +1477,12 @@ function AppShellContent() {
   const spaceVisibilityRef = useRef(spaceVisibility);
   const notificationsHydratedRef = useRef(false);
   const seenNotificationIdsRef = useRef(new Set<string>());
+  const nativeCronjobNotificationsHydratedRef = useRef(false);
+  const nativeCronjobNotificationsStartedAtRef = useRef(Date.now());
+  const seenNativeCronjobNotificationIdsRef = useRef(new Set<string>());
+  const nativeCronjobNotificationAttemptedAtRef = useRef(
+    new Map<string, number>(),
+  );
   const knownTaskProposalIdsByWorkspaceRef = useRef<Record<string, string[]>>(
     {},
   );
@@ -2133,6 +2162,74 @@ function AppShellContent() {
     }
   }, []);
 
+  const refreshCronjobNativeNotifications = useCallback(async () => {
+    if (!window.electronAPI) {
+      return;
+    }
+
+    try {
+      const response = await window.electronAPI.workspace.listNotifications(
+        null,
+        false,
+        {
+          includeCronjobSource: true,
+          sourceType: "cronjob",
+        },
+      );
+      const systemCronjobNotifications = response.items.filter(
+        (item) =>
+          item.state === "unread" &&
+          item.source_type === "cronjob" &&
+          notificationDeliveryChannel(item) === "system_notification",
+      );
+
+      if (!nativeCronjobNotificationsHydratedRef.current) {
+        nativeCronjobNotificationsHydratedRef.current = true;
+        const startupAtMs = nativeCronjobNotificationsStartedAtRef.current;
+        for (const item of systemCronjobNotifications) {
+          const createdAtMs = notificationCreatedAtMs(item);
+          if (createdAtMs !== null && createdAtMs > startupAtMs) {
+            continue;
+          }
+          seenNativeCronjobNotificationIdsRef.current.add(item.id);
+        }
+      }
+
+      for (const item of systemCronjobNotifications) {
+        if (seenNativeCronjobNotificationIdsRef.current.has(item.id)) {
+          continue;
+        }
+        const lastAttemptAt =
+          nativeCronjobNotificationAttemptedAtRef.current.get(item.id) ?? 0;
+        if (Date.now() - lastAttemptAt < 15_000) {
+          continue;
+        }
+        nativeCronjobNotificationAttemptedAtRef.current.set(item.id, Date.now());
+        const shown = await window.electronAPI.ui.showNativeNotification({
+          title: item.title,
+          body: item.message,
+          workspaceId: item.workspace_id,
+          sessionId: notificationTargetSessionId(item),
+          force: true,
+        });
+        if (!shown) {
+          continue;
+        }
+        seenNativeCronjobNotificationIdsRef.current.add(item.id);
+        nativeCronjobNotificationAttemptedAtRef.current.delete(item.id);
+        try {
+          await window.electronAPI.workspace.updateNotification(item.id, {
+            state: "dismissed",
+          });
+        } catch {
+          // Ignore transient dismissal failures; the seen set prevents duplicate local alerts.
+        }
+      }
+    } catch {
+      // Native cronjob reminders should stay silent when the runtime is restarting.
+    }
+  }, []);
+
   useEffect(() => {
     const activeNotificationIds = new Set(
       notifications.map((notification) => notification.id),
@@ -2142,6 +2239,16 @@ function AppShellContent() {
       return next.length === current.length ? current : next;
     });
   }, [notifications]);
+
+  useEffect(() => {
+    void refreshCronjobNativeNotifications();
+    const intervalId = window.setInterval(() => {
+      void refreshCronjobNativeNotifications();
+    }, 5000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [refreshCronjobNativeNotifications]);
 
   const handleActivateNotification = useCallback(
     async (notificationId: string) => {
@@ -2758,19 +2865,18 @@ function AppShellContent() {
     setProposalAction({ proposalId: proposal.proposal_id, action: "accept" });
     setTaskProposalStatusMessage("");
     try {
-      const proposalSessionId = `proposal-${crypto.randomUUID()}`;
       const accepted = await window.electronAPI.workspace.acceptTaskProposal({
         proposal_id: proposal.proposal_id,
         task_name: proposal.task_name,
         task_prompt: proposal.task_prompt,
-        session_id: proposalSessionId,
         parent_session_id: activeChatSessionId?.trim() || null,
         priority: 0,
         model: runtimeConfig?.defaultModel ?? null,
       });
-      const targetSessionId = accepted.session.session_id;
-
-      const detail = `Queued "${proposal.task_name}" into session ${targetSessionId}.`;
+      const detail =
+        accepted.input.status === "QUEUED"
+          ? `Started background task "${proposal.task_name}".`
+          : `Accepted "${proposal.task_name}" as background work.`;
       setTaskProposalStatusMessage(detail);
       await refreshTaskProposals();
     } catch (error) {
@@ -3929,6 +4035,7 @@ function AppShellContent() {
               onOpenRunSession={(sessionId) =>
                 handleOpenAutomationRunSession(sessionId, selectedWorkspaceId)
               }
+              onRunNow={handleReturnToChatPane}
               onCreateSchedule={() =>
                 handleCreateScheduleInChat(selectedWorkspaceId)
               }

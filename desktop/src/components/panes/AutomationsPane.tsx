@@ -34,6 +34,7 @@ interface AutomationsPaneProps {
   workspaceId?: string | null;
   emptyWorkspaceMessage?: string;
   onOpenRunSession?: (sessionId: string) => void;
+  onRunNow?: (job: CronjobRecordPayload) => void;
   onCreateSchedule?: () => void;
   onEditSchedule?: (job: CronjobRecordPayload) => void;
 }
@@ -168,6 +169,7 @@ export function AutomationsPane({
   workspaceId,
   emptyWorkspaceMessage = "Choose a workspace from the top bar to view and manage automations.",
   onOpenRunSession,
+  onRunNow,
   onCreateSchedule,
   onEditSchedule,
 }: AutomationsPaneProps) {
@@ -345,6 +347,10 @@ export function AutomationsPane({
       );
       setStatusTone("success");
       setStatusMessage(`Running "${jobTitle(response.cronjob)}" now.`);
+      if (onRunNow) {
+        onRunNow(response.cronjob);
+        return;
+      }
       void refreshData({
         preserveStatusMessage: true,
         suppressErrors: true,

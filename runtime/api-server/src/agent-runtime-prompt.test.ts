@@ -226,7 +226,11 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
   assert.match(prompt.systemPrompt, /single front-of-house counterpart/);
   assert.match(prompt.systemPrompt, /thoughtful human collaborator/);
   assert.match(prompt.systemPrompt, /brief warmth, curiosity, and point of view/);
+  assert.match(prompt.systemPrompt, /capable person texting the user back/);
   assert.match(prompt.systemPrompt, /Acknowledge what matters in the user's message before diving into execution or results\./);
+  assert.match(prompt.systemPrompt, /Lead with the answer, reaction, or next useful step instead of process narration/);
+  assert.match(prompt.systemPrompt, /Prefer short paragraphs and plain language; use headings or numbered lists only when structure genuinely helps\./);
+  assert.match(prompt.systemPrompt, /Use contractions and natural transitions when they fit\./);
   assert.match(prompt.systemPrompt, /Avoid repetitive canned phrasing or stiff assistant boilerplate/);
   assert.match(prompt.systemPrompt, /Prefer delegating long-running, tool-heavy, interruptible, or execution-heavy work to hidden subagents\./);
   assert.match(prompt.systemPrompt, /delegate instead of replying that this run lacks those tools\./);

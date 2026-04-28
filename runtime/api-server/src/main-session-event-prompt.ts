@@ -80,14 +80,21 @@ function sanitizeBackgroundEventPayloadForPrompt(
 ): Record<string, unknown> {
   const sanitized: Record<string, unknown> = {};
   for (const key of [
+    "source_type",
     "status",
     "summary",
     "partial_summary",
     "blocking_question",
     "title",
     "goal",
+    "context",
     "turn_status",
     "stop_reason",
+    "cronjob_name",
+    "cronjob_schedule",
+    "cronjob_first_run",
+    "cronjob_delivery_channel",
+    "cronjob_delivery_mode",
   ]) {
     if (payload[key] !== undefined) {
       sanitized[key] = payload[key];

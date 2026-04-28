@@ -330,11 +330,24 @@ declare global {
     preferredChannel: AppUpdateChannel | null;
   }
 
-  interface DesktopWindowStatePayload {
-    isFullScreen: boolean;
-    isMaximized: boolean;
-    isMinimized: boolean;
-  }
+interface DesktopWindowStatePayload {
+  isFullScreen: boolean;
+  isMaximized: boolean;
+  isMinimized: boolean;
+}
+
+interface DesktopNativeNotificationPayload {
+  title: string;
+  body: string;
+  workspaceId?: string | null;
+  sessionId?: string | null;
+  force?: boolean;
+}
+
+interface RuntimeNotificationListOptionsPayload {
+  includeCronjobSource?: boolean;
+  sourceType?: string | null;
+}
 
   interface WorkbenchOpenBrowserPayload {
     workspaceId?: string | null;
@@ -1519,6 +1532,9 @@ declare global {
       toggleWindowSize: () => Promise<void>;
       closeWindow: () => Promise<void>;
       setTheme: (theme: string) => Promise<void>;
+      showNativeNotification: (
+        payload: DesktopNativeNotificationPayload
+      ) => Promise<boolean>;
       openSettingsPane: (section?: UiSettingsPaneSection) => Promise<void>;
       openExternalUrl: (url: string) => Promise<void>;
       onWindowStateChange: (listener: (state: DesktopWindowStatePayload) => void) => () => void;
@@ -1590,7 +1606,8 @@ declare global {
       deleteCronjob: (jobId: string) => Promise<{ success: boolean }>;
       listNotifications: (
         workspaceId?: string | null,
-        includeDismissed?: boolean
+        includeDismissed?: boolean,
+        options?: RuntimeNotificationListOptionsPayload
       ) => Promise<RuntimeNotificationListResponsePayload>;
       updateNotification: (
         notificationId: string,

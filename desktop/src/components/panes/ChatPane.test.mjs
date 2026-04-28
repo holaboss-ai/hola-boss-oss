@@ -621,6 +621,23 @@ test("main-session assistant turns suppress trace and thinking while onboarding 
   );
 });
 
+test("chat pane sends a native desktop notification when the bound main session finishes while the app is minimized", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /const notifiedMainSessionCompletionInputIdsRef = useRef<Set<string>>\(\s*new Set\(\),\s*\);/);
+  assert.match(source, /const desktopMainSessionIdRef = useRef\(""\);/);
+  assert.match(source, /function assistantSegmentsPreviewText\(segments: ChatAssistantSegment\[]\)/);
+  assert.match(source, /function maybeRememberMainSessionCompletionNotification\(inputId: string\)/);
+  assert.match(source, /function maybeShowMainSessionCompletionNotification\(params: \{/);
+  assert.match(source, /normalizedSessionId !== desktopMainSessionIdRef\.current/);
+  assert.match(source, /void window\.electronAPI\.ui\.showNativeNotification\(\{/);
+  assert.match(source, /const workspaceTitle = workspace\?\.name\?\.trim\(\) \|\| "Holaboss";/);
+  assert.match(source, /title: `\$\{workspaceTitle\} — Reply ready`/);
+  assert.match(source, /body: previewText/);
+  assert.match(source, /maybeShowMainSessionCompletionNotification\(\{\s*inputId: eventInputId,\s*sessionId: eventSessionId,\s*previewText: completionPreviewText,/s);
+  assert.match(source, /maybeShowMainSessionCompletionNotification\(\{\s*inputId: currentRuntimeInputId,\s*sessionId: normalizedCurrentSessionId,\s*previewText: completionPreviewText,/s);
+});
+
 test("chat trace tool errors surface stderr text instead of a generic error label", async () => {
   const source = await readFile(sourcePath, "utf8");
 
@@ -1191,7 +1208,12 @@ test("view all artifacts modal sorts artifacts newest first", async () => {
   );
   assert.match(
     source,
-    /\{allDisplayOutputs\.length\} item[\s\S]*\{allDisplayOutputs\.length === 1 \? "" : "s"\} in this session/,
+    /const \[artifactBrowserScope, setArtifactBrowserScope\] =\s*useState<\s*"session" \| "reply"\s*>\("session"\);/,
+  );
+  assert.match(source, /scope=\{artifactBrowserScope\}/);
+  assert.match(
+    source,
+    /\{allDisplayOutputs\.length === 1 \? "" : "s"\}\{" "\}\s*\{scope === "reply"[\s\S]*"attached to this reply"[\s\S]*: "in this session"\}/,
   );
 });
 
@@ -1216,7 +1238,7 @@ test("artifact rows include timestamp metadata in both inline and modal lists", 
     /const displayOutputs =\s*outputs\.length > 1 \? dedupeOutputsForDisplay\(outputs\) : outputs;/,
   );
   assert.match(source, /\{displayOutputs\.map\(\(output\) => \(/);
-  assert.match(source, /View all artifacts \(\{displayOutputs\.length\}\)/);
+  assert.match(source, /View artifacts in this reply \(\{displayOutputs\.length\}\)/);
 });
 
 test("tool trace steps are collapsed by default and first toggle expands them", async () => {
@@ -1393,6 +1415,24 @@ test("live assistant turn keeps a plain status placeholder before any trace or o
   assert.match(
     source,
     /\{showStatusPlaceholder \? renderStatusLine\(normalizedStatus\) : null\}/,
+  );
+});
+
+test("assistant turns can use a soft structural band without adding bubble chrome", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /messages\.map\(\(message, index\) =>/);
+  assert.match(source, /showSeparator=\{index > 0\}/);
+  assert.match(source, /showSeparator=\{messages\.length > 0\}/);
+  assert.match(source, /showSeparator = false,/);
+  assert.match(source, /showSeparator\?: boolean;/);
+  assert.match(
+    source,
+    /className=\{`flex min-w-0 justify-start \$\{showSeparator \? "mt-2" : ""\}`\.trim\(\)\}/,
+  );
+  assert.match(
+    source,
+    /className=\{`min-w-0 w-full max-w-4xl \$\{\s*showSeparator \? "rounded-\[1\.75rem\] bg-muted\/35 px-5 py-4" : ""\s*\}`\.trim\(\)\}/,
   );
 });
 

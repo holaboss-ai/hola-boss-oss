@@ -4078,7 +4078,7 @@ test("cronjobs, task proposals, and session state routes preserve local payload 
   assert.equal(updatedJob.json().description, "Updated check");
   assert.equal(updatedJob.json().instruction, "Say hello louder");
 
-  const createdNotification = store.createRuntimeNotification({
+  const hiddenCronjobNotification = store.createRuntimeNotification({
     workspaceId: workspace.id,
     cronjobId: jobId,
     sourceType: "cronjob",
@@ -4087,13 +4087,25 @@ test("cronjobs, task proposals, and session state routes preserve local payload 
     message: "Time to drink water.",
     level: "info"
   });
+  const visibleNotification = store.createRuntimeNotification({
+    workspaceId: workspace.id,
+    sourceType: "task_proposal",
+    sourceLabel: workspace.name,
+    title: "Review proposal",
+    message: "A new proposal is ready.",
+    level: "info"
+  });
   const listedNotifications = await app.inject({
     method: "GET",
     url: `/api/v1/notifications?workspace_id=${workspace.id}`
   });
+  const listedCronjobNotifications = await app.inject({
+    method: "GET",
+    url: `/api/v1/notifications?workspace_id=${workspace.id}&include_cronjob_source=true&source_type=cronjob`
+  });
   const updatedNotification = await app.inject({
     method: "PATCH",
-    url: `/api/v1/notifications/${createdNotification.id}`,
+    url: `/api/v1/notifications/${visibleNotification.id}`,
     payload: { state: "read" }
   });
   assert.equal(listedNotifications.statusCode, 200);
@@ -4101,8 +4113,16 @@ test("cronjobs, task proposals, and session state routes preserve local payload 
   assert.ok(
     listedNotifications
       .json()
-      .items.some((item: { id: string; title: string }) => item.id === createdNotification.id && item.title === "Drink Water")
+      .items.some((item: { id: string; title: string }) => item.id === visibleNotification.id && item.title === "Review proposal")
   );
+  assert.ok(
+    listedNotifications
+      .json()
+      .items.every((item: { id: string }) => item.id !== hiddenCronjobNotification.id)
+  );
+  assert.equal(listedCronjobNotifications.statusCode, 200);
+  assert.equal(listedCronjobNotifications.json().count, 1);
+  assert.equal(listedCronjobNotifications.json().items[0]?.id, hiddenCronjobNotification.id);
   assert.equal(updatedNotification.statusCode, 200);
   assert.equal(updatedNotification.json().state, "read");
   assert.ok(updatedNotification.json().read_at);

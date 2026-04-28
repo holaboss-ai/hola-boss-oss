@@ -5598,6 +5598,8 @@ export class RuntimeStateStore {
     workspaceId?: string | null;
     includeDismissed?: boolean;
     limit?: number | null;
+    sourceType?: string | null;
+    excludeSourceTypes?: string[] | null;
   }): RuntimeNotificationRecord[] {
     let query = "SELECT * FROM runtime_notifications";
     const filters: string[] = [];
@@ -5606,8 +5608,25 @@ export class RuntimeStateStore {
       filters.push("workspace_id = ?");
       values.push(params.workspaceId);
     }
+    const normalizedSourceType = this.normalizedNullableText(params.sourceType);
+    if (normalizedSourceType) {
+      filters.push("source_type = ?");
+      values.push(normalizedSourceType);
+    }
     if (!params.includeDismissed) {
       filters.push("state != 'dismissed'");
+    }
+    const excludedSourceTypes =
+      params.excludeSourceTypes
+        ?.map((value) => this.normalizedNullableText(value))
+        .filter((value): value is string => Boolean(value)) ?? [];
+    if (excludedSourceTypes.length > 0) {
+      filters.push(
+        `coalesce(source_type, '') NOT IN (${excludedSourceTypes
+          .map(() => "?")
+          .join(", ")})`,
+      );
+      values.push(...excludedSourceTypes);
     }
     if (filters.length > 0) {
       query += ` WHERE ${filters.join(" AND ")}`;

@@ -961,6 +961,18 @@ function assistantSegmentsIncludeOutput(segments: ChatAssistantSegment[]) {
   );
 }
 
+function assistantSegmentsPreviewText(segments: ChatAssistantSegment[]) {
+  return segments
+    .filter(
+      (segment): segment is Extract<ChatAssistantSegment, { kind: "output" }> =>
+        segment.kind === "output" && Boolean(segment.text.trim()),
+    )
+    .map((segment) => segment.text.trim())
+    .join("\n\n")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function formatAttachmentSize(sizeBytes: number) {
   if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
     return "";
@@ -2966,6 +2978,9 @@ export function ChatPane({
     useState<ArtifactBrowserFilter>("all");
   const [artifactBrowserScopedOutputs, setArtifactBrowserScopedOutputs] =
     useState<WorkspaceOutputRecordPayload[] | null>(null);
+  const [artifactBrowserScope, setArtifactBrowserScope] = useState<
+    "session" | "reply"
+  >("session");
   const [imageAttachmentPreview, setImageAttachmentPreview] =
     useState<ImageAttachmentPreviewState | null>(null);
   const [memoryProposalAction, setMemoryProposalAction] = useState<{
@@ -3017,6 +3032,9 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   const terminalEventTypeByInputIdRef = useRef<
     Map<string, "run_completed" | "run_failed">
   >(new Map());
+  const notifiedMainSessionCompletionInputIdsRef = useRef<Set<string>>(
+    new Set(),
+  );
   const activeAssistantMessageIdRef = useRef<string | null>(null);
   const lastSyncedAgentOperationFileKeyRef = useRef("");
   const pendingInputIdRef = useRef<string | null>(null);
@@ -3032,6 +3050,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   const isLoadingOlderHistoryRef = useRef(false);
   const seenMainDebugKeysRef = useRef<Set<string>>(new Set());
   const selectedWorkspaceRef = useRef<WorkspaceRecordPayload | null>(null);
+  const desktopMainSessionIdRef = useRef("");
   const isOnboardingVariant = variant === "onboarding";
   const pendingFocusRequestKeyRef = useRef<number | null>(focusRequestKey);
   const lastHandledSessionJumpRequestKeyRef = useRef(0);
@@ -3311,6 +3330,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     setArtifactBrowserOpen(false);
     setArtifactBrowserFilter("all");
     setArtifactBrowserScopedOutputs(null);
+    setArtifactBrowserScope("session");
     setMemoryProposalAction(null);
     setEditingMemoryProposalId(null);
     setMemoryProposalDrafts({});
@@ -4048,6 +4068,53 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     return true;
   }
 
+  function maybeRememberMainSessionCompletionNotification(inputId: string) {
+    const normalizedInputId = inputId.trim();
+    if (!normalizedInputId) {
+      return false;
+    }
+    const seen = notifiedMainSessionCompletionInputIdsRef.current;
+    if (seen.has(normalizedInputId)) {
+      return false;
+    }
+    seen.add(normalizedInputId);
+    while (seen.size > 64) {
+      const oldestInputId = seen.values().next().value;
+      if (typeof oldestInputId !== "string") {
+        break;
+      }
+      seen.delete(oldestInputId);
+    }
+    return true;
+  }
+
+  function maybeShowMainSessionCompletionNotification(params: {
+    inputId: string;
+    sessionId: string;
+    previewText: string;
+  }) {
+    const normalizedInputId = params.inputId.trim();
+    const normalizedSessionId = params.sessionId.trim();
+    const previewText = params.previewText.trim() || "Your latest reply is ready.";
+    if (
+      !normalizedInputId ||
+      !normalizedSessionId ||
+      normalizedSessionId !== desktopMainSessionIdRef.current ||
+      !maybeRememberMainSessionCompletionNotification(normalizedInputId)
+    ) {
+      return;
+    }
+
+    const workspace = selectedWorkspaceRef.current;
+    const workspaceTitle = workspace?.name?.trim() || "Holaboss";
+    void window.electronAPI.ui.showNativeNotification({
+      title: `${workspaceTitle} — Reply ready`,
+      body: previewText,
+      workspaceId: workspace?.id ?? null,
+      sessionId: normalizedSessionId,
+    });
+  }
+
   function scheduleConversationRefresh(
     sessionId: string | null,
     workspaceId: string | null | undefined,
@@ -4443,6 +4510,11 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   useEffect(() => {
     selectedWorkspaceRef.current = selectedWorkspace;
   }, [selectedWorkspace]);
+
+  useEffect(() => {
+    desktopMainSessionIdRef.current = (desktopMainSession?.session_id || "")
+      .trim();
+  }, [desktopMainSession?.session_id]);
 
   useEffect(() => {
     setSessionRecordOverrides({});
@@ -5341,6 +5413,13 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
             typeof eventPayload.status === "string"
               ? eventPayload.status.trim().toLowerCase()
               : "";
+          const completionPreviewText = assistantSegmentsPreviewText(
+            liveAssistantSegmentsForRender(
+              liveAssistantSegmentsRef.current,
+              liveExecutionItemsRef.current,
+              liveAssistantTextRef.current,
+            ),
+          );
           finalizeLiveTraceSteps(
             completedStatus === "paused" ? "waiting" : "completed",
           );
@@ -5358,6 +5437,13 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
             action: "applied_run_completed",
             detail: "run completed",
           });
+          if (completedStatus !== "paused") {
+            maybeShowMainSessionCompletionNotification({
+              inputId: eventInputId,
+              sessionId: eventSessionId,
+              previewText: completionPreviewText,
+            });
+          }
           scheduleConversationRefresh(eventSessionId, selectedWorkspaceId);
           void refreshWorkspaceData().catch(() => undefined);
         }
@@ -5401,7 +5487,14 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
         if (!currentState) {
           return;
         }
+        const normalizedCurrentSessionId = (currentSessionId || "").trim();
+        if (!normalizedCurrentSessionId) {
+          return;
+        }
         const status = runtimeStateEffectiveStatus(currentState);
+        const currentRuntimeInputId = (
+          currentState.current_input_id || ""
+        ).trim();
         const activeStreamId = activeStreamIdRef.current;
         const pendingInputId = pendingInputIdRef.current || "";
         const attachPendingWithoutStream = Boolean(
@@ -5437,16 +5530,30 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
             committedFailureMessage && shouldPersistFailureText ? "" : detail,
           );
         } else {
+          const completionPreviewText = assistantSegmentsPreviewText(
+            liveAssistantSegmentsForRender(
+              liveAssistantSegmentsRef.current,
+              liveExecutionItemsRef.current,
+              liveAssistantTextRef.current,
+            ),
+          );
           finalizeLiveTraceSteps(
             status === "WAITING_USER" || status === "PAUSED"
               ? "waiting"
               : "completed",
           );
           commitLiveAssistantMessage();
+          if (status !== "WAITING_USER" && status !== "PAUSED") {
+            maybeShowMainSessionCompletionNotification({
+              inputId: currentRuntimeInputId,
+              sessionId: normalizedCurrentSessionId,
+              previewText: completionPreviewText,
+            });
+          }
         }
         activeAssistantMessageIdRef.current = null;
         pendingInputIdRef.current = null;
-        scheduleConversationRefresh(currentSessionId, selectedWorkspaceId);
+        scheduleConversationRefresh(normalizedCurrentSessionId, selectedWorkspaceId);
       } catch {
         // Ignore poll failures; stream events remain the primary signal.
       } finally {
@@ -7552,7 +7659,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                       </div>
                     </div>
                   ) : null}
-                  {messages.map((message) =>
+                  {messages.map((message, index) =>
                     message.role === "user" ? (
                       <UserTurn
                         key={message.id}
@@ -7567,6 +7674,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                         key={message.id}
                         label={assistantLabel}
                         mode={assistantMode}
+                        showSeparator={index > 0}
                         showExecutionInternals={
                           showSessionExecutionInternals
                         }
@@ -7605,6 +7713,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                         onOpenAllArtifacts={(outputs) => {
                           setArtifactBrowserFilter("all");
                           setArtifactBrowserScopedOutputs(outputs);
+                          setArtifactBrowserScope("reply");
                           setArtifactBrowserOpen(true);
                         }}
                         collapsedTraceByStepId={collapsedTraceByStepId}
@@ -7623,6 +7732,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                     <AssistantTurn
                       label={assistantLabel}
                       mode={assistantMode}
+                      showSeparator={messages.length > 0}
                       showExecutionInternals={showSessionExecutionInternals}
                       text={liveAssistantText}
                       tone="default"
@@ -7641,6 +7751,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                       onOpenAllArtifacts={(outputs) => {
                         setArtifactBrowserFilter("all");
                         setArtifactBrowserScopedOutputs(outputs);
+                        setArtifactBrowserScope("reply");
                         setArtifactBrowserOpen(true);
                       }}
                       collapsedTraceByStepId={collapsedTraceByStepId}
@@ -7888,9 +7999,11 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
             open={artifactBrowserOpen}
             filter={artifactBrowserFilter}
             outputs={artifactBrowserScopedOutputs ?? sessionOutputs}
+            scope={artifactBrowserScope}
             onClose={() => {
               setArtifactBrowserOpen(false);
               setArtifactBrowserScopedOutputs(null);
+              setArtifactBrowserScope("session");
             }}
             onFilterChange={setArtifactBrowserFilter}
             onOpenOutput={onOpenOutput}
@@ -8384,6 +8497,7 @@ function QueuedSessionInputRail({
 function AssistantTurn({
   label,
   mode,
+  showSeparator = false,
   showExecutionInternals = true,
   text,
   tone = "default",
@@ -8410,6 +8524,7 @@ function AssistantTurn({
 }: {
   label: string;
   mode: string;
+  showSeparator?: boolean;
   showExecutionInternals?: boolean;
   text: string;
   tone?: ChatMessage["tone"];
@@ -8502,8 +8617,14 @@ function AssistantTurn({
   };
 
   return (
-    <div className="flex min-w-0 justify-start">
-      <article className="min-w-0 flex-1">
+    <div
+      className={`flex min-w-0 justify-start ${showSeparator ? "mt-2" : ""}`.trim()}
+    >
+      <article
+        className={`min-w-0 w-full max-w-4xl ${
+          showSeparator ? "rounded-[1.75rem] bg-muted/35 px-5 py-4" : ""
+        }`.trim()}
+      >
         {showStatusPlaceholder ? renderStatusLine(normalizedStatus) : null}
 
         {renderedSegments.map((segment, index) =>
@@ -8869,7 +8990,7 @@ function AssistantTurnOutputs({
             <Folder className="size-3.5" />
           </div>
           <span className="text-xs">
-            View all artifacts ({displayOutputs.length})
+            View artifacts in this reply ({displayOutputs.length})
           </span>
         </button>
       ) : null}
@@ -9010,6 +9131,7 @@ function ArtifactBrowserModal({
   open,
   filter,
   outputs,
+  scope,
   onClose,
   onFilterChange,
   onOpenOutput,
@@ -9017,6 +9139,7 @@ function ArtifactBrowserModal({
   open: boolean;
   filter: ArtifactBrowserFilter;
   outputs: WorkspaceOutputRecordPayload[];
+  scope: "session" | "reply";
   onClose: () => void;
   onFilterChange: (nextFilter: ArtifactBrowserFilter) => void;
   onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
@@ -9053,7 +9176,10 @@ function ArtifactBrowserModal({
             </div>
             <div className="text-xs text-muted-foreground">
               {allDisplayOutputs.length} item
-              {allDisplayOutputs.length === 1 ? "" : "s"} in this session
+              {allDisplayOutputs.length === 1 ? "" : "s"}{" "}
+              {scope === "reply"
+                ? "attached to this reply"
+                : "in this session"}
             </div>
           </div>
           <Button

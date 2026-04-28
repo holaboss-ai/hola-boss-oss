@@ -13,6 +13,7 @@ import {
 } from "@holaboss/runtime-state-store";
 
 import type { QueueWorkerLike } from "./queue-worker.js";
+import { normalizeSubagentToolProfile } from "./runtime-agent-tools.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
 
@@ -260,6 +261,13 @@ export function cronjobIsDue(job: CronjobRecord, now: Date): boolean {
   if (!job.enabled) {
     return false;
   }
+  const nextRunAtRaw = normalizedString(job.nextRunAt);
+  if (nextRunAtRaw) {
+    const nextRunAt = new Date(nextRunAtRaw);
+    if (!Number.isNaN(nextRunAt.getTime())) {
+      return now >= nextRunAt;
+    }
+  }
   let lastScheduled: Date;
   try {
     lastScheduled = CronExpressionParser.parse(job.cron, { currentDate: now }).prev().toDate();
@@ -323,6 +331,9 @@ export function queueLocalCronjobRun(
     normalizedString(job.name) ||
     normalizedString(job.description) ||
     "Scheduled task";
+  const toolProfile = normalizeSubagentToolProfile({
+    tools: ["terminal", "file", "browser", "web"],
+  });
 
   store.ensureSession({
     workspaceId: job.workspaceId,
@@ -367,6 +378,7 @@ export function queueLocalCronjobRun(
         parent_session_id: mainSessionId,
         parent_input_id: null,
         task_title: subagentTitle,
+        tool_profile: toolProfile,
         goal:
           normalizedString(job.description) ||
           normalizedString(job.instruction) ||
@@ -394,7 +406,7 @@ export function queueLocalCronjobRun(
     sourceType: "cronjob",
     sourceId: job.id,
     cronjobId: job.id,
-    toolProfile: { tools: ["terminal", "file", "browser", "web"] },
+    toolProfile,
     requestedModel: typeof metadata.model === "string" ? metadata.model : null,
     effectiveModel: model,
     status: "queued",
@@ -451,13 +463,6 @@ export function deliverLocalCronjobNotification(
       delivery: job.delivery,
       cronjob_metadata: metadata
     }
-  });
-  store.insertSessionMessage({
-    workspaceId: job.workspaceId,
-    sessionId,
-    role: "assistant",
-    text: cronjobNotificationMessage(job, metadata),
-    messageId: `cronjob-notification-${job.id}-${notification.id}`,
   });
   return { id: notification.id };
 }

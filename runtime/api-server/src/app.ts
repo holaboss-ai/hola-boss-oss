@@ -7389,12 +7389,19 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   app.get("/api/v1/notifications", async (request, reply) => {
     const query = isRecord(request.query) ? request.query : {};
     const workspaceId = optionalString(query.workspace_id);
+    const sourceType = optionalString(query.source_type);
     const limit = optionalInteger(query.limit, 50);
+    const includeCronjobSource = optionalBoolean(
+      query.include_cronjob_source,
+      false,
+    );
     const items = store
       .listRuntimeNotifications({
         workspaceId: workspaceId ?? null,
+        sourceType,
         includeDismissed: optionalBoolean(query.include_dismissed, false),
-        limit
+        limit,
+        excludeSourceTypes: includeCronjobSource ? [] : ["cronjob"],
       })
       .map((item) => runtimeNotificationPayload(item));
     return { items, count: items.length };

@@ -549,9 +549,8 @@ Delivery contract:
 
 Progress contract:
 
-- progress updates should be milestone-only, not heartbeat-style
-- the main session may always ignore progress updates and say nothing
-- progress packets are advisory; they should only surface when the main session decides they are useful
+- phase 1 now suppresses user-facing progress updates entirely
+- subagent progress may still exist internally for debugging or future use, but it should not generate conversational updates or task-card copy in the main session UX
 
 Important UX rule:
 
@@ -1187,6 +1186,11 @@ Recommended stop points:
 
 Use this as the living checklist for what is already aligned versus what still needs implementation cleanup.
 
+Phase 1 exit decision:
+
+- the hidden-subagent substrate is now functionally complete enough to move into Phase 2
+- the remaining unchecked items below are now treated as good-to-have hardening, polish, or verification work rather than blockers for Phase 2
+
 ### Runtime substrate and routing
 
 - [x] `conversation_bindings` exist and are used to resolve the desktop main session
@@ -1210,8 +1214,7 @@ Use this as the living checklist for what is already aligned versus what still n
 - [x] ensure synthetic queued background-event turns inherit the owner main session's selected model and thinking configuration
 - [x] ensure natural-pause gating prevents queued background-event turns from materializing while the originating user turn is still active
 - [x] keep delegated work asynchronous by default instead of `delegate -> wait -> answer`
-- [ ] add the 1-2 second fast-path exception so very fast delegated work may collapse into a single reply without exposing blocking orchestration
-- [ ] tighten folded background-update relevance so the next reply does not blindly absorb every due background event
+- [ ] tighten folded background-update relevance so the next reply only absorbs queued background updates that are meaningfully relevant or still fresh enough to mention; unrelated queued updates should keep waiting for their own later follow-up instead of being appended automatically
 
 ### Background task UX
 
@@ -1221,30 +1224,32 @@ Use this as the living checklist for what is already aligned versus what still n
 - [x] the inline panel no longer shows the extra explanatory description block
 - [x] progress updates are not surfaced in main-session delivery or background-task cards
 
-### Remaining verification and follow-through
+### Good-to-have hardening and follow-through
 
-- [ ] ownership transfer should be exercised and verified across multiple channel-local main sessions
-- [ ] blocker batching and resume routing should be verified end-to-end in the live product
-- [ ] idle-time autonomous follow-up delivery should be verified end-to-end after the queued-event path is fixed
-- [ ] update this checklist as each unchecked item lands
+- [ ] ownership transfer should be exercised and verified across multiple channel-local main sessions so incomplete subagent runs and queued background events follow the current owner cleanly without disappearing, duplicating, or attaching to the wrong chat
+- [ ] blocker batching and resume routing should be verified end-to-end in the live product so multiple `waiting_on_user` tasks can be grouped clearly, mapped back to the right paused run, and resumed on the same child session when the user answers
+- [ ] idle-time autonomous follow-up delivery should be verified end-to-end so completed background containers wait through the short merge window, merge naturally into a nearby reply when possible, and otherwise speak up on their own after timeout without re-answering the earlier conversational turn
+- [ ] update this checklist as any of these good-to-have items land
 
-## Phase 2 — Main Session UX
+## Phase 2 — Main Session UX Polish
 
-Reshape the desktop around one visible conversation plus background task cards.
+The one-main-session shell already exists. Phase 2 is about making that shell feel clean, readable, and naturally conversational under real mixed foreground-plus-background usage.
 
 Primary files:
 
 - `desktop/src/components/panes/ChatPane.tsx`
 - `desktop/src/components/layout/AppShell.tsx`
+- `desktop/src/components/panes/BackgroundTasksPane.tsx`
 - any supporting desktop IPC/type files needed for background-task data
 
 Deliverables:
 
-- one visible workspace chat surface
-- hidden child sessions in the normal picker flow
-- read-only inline `Background Tasks` section for observability in the main chat
-- main-chat rendering of task lifecycle updates
-- accepted task proposals mapped into background-work items rather than separate chat sessions
+- clearer separation between direct foreground replies and delayed background-update containers
+- stronger per-message artifact ownership so files, reports, and attachments stay attached to the right reply or background-update container
+- more readable merged replies when foreground conversation and background completions land near each other
+- smoother continuity when the user asks follow-up questions about recently completed background work
+- front-of-house tone and presentation polish so the main session feels human and conversational rather than mechanical
+- accepted task proposals continuing to behave like normal background work instead of separate user-facing chats
 
 ## Phase 3 — Inline vs Background Escalation Policy
 

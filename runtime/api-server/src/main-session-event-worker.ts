@@ -89,7 +89,12 @@ function buildMainSessionEventBatchInstruction(
     lines.push(
       "This is a supplemental follow-up only, not a fresh answer to the user's last conversational question.",
       "Do not repeat, paraphrase, or re-answer any direct reply the main session already gave. Only add the newly completed background results.",
-      "These events are background updates. Keep the reply concise, but put the updates in a clearly separated `Background updates` section.",
+      "These events are background updates. Keep the reply concise and natural.",
+      "If an event comes from an automation or cronjob, treat it like a specific automation update rather than a generic status bulletin.",
+      "Use the event title, goal, context, and deliverables to explain what ran and what changed in concrete terms.",
+      "If an automation update is marked as the first run, you may mention that naturally when it helps orient the user.",
+      "If there is only one update, phrase it as a normal conversational follow-up without a `Background updates` heading.",
+      "Only use a clearly separated `Background updates` section when there are multiple distinct updates or the separation is needed for clarity.",
       "If there are multiple updates, use numbered items and keep each task distinct instead of blending them into one paragraph.",
       "Mention useful deliverables by title and treat them as attached artifacts or reports rather than raw file paths when possible.",
       "Do not paste long artifact bodies such as HTML, markdown, or full report content into chat. Keep those as attached deliverables and only summarize them briefly.",

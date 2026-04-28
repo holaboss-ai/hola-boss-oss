@@ -35,6 +35,7 @@ import {
   BrowserView,
   BrowserWindow,
   Menu,
+  Notification,
   Tray,
   clipboard,
   dialog,
@@ -238,6 +239,14 @@ const RUNTIME_LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<
 interface DevLaunchContext {
   devServerUrl: string;
   userDataPath: string;
+}
+
+interface DesktopNativeNotificationPayload {
+  title: string;
+  body: string;
+  workspaceId?: string | null;
+  sessionId?: string | null;
+  force?: boolean;
 }
 
 function maybeAuthCallbackUrl(argument: string | undefined): string | null {
@@ -11379,10 +11388,16 @@ const runtimeNotificationListCache = new Map<
 function runtimeNotificationListCacheKey(
   workspaceId?: string | null,
   includeDismissed = false,
+  options?: {
+    includeCronjobSource?: boolean;
+    sourceType?: string | null;
+  },
 ): string {
   return JSON.stringify({
     workspaceId: workspaceId?.trim() || null,
     includeDismissed,
+    includeCronjobSource: options?.includeCronjobSource === true,
+    sourceType: options?.sourceType?.trim() || null,
   });
 }
 
@@ -11396,10 +11411,15 @@ function emptyRuntimeNotificationListResponse(): RuntimeNotificationListResponse
 async function listNotifications(
   workspaceId?: string | null,
   includeDismissed = false,
+  options?: {
+    includeCronjobSource?: boolean;
+    sourceType?: string | null;
+  },
 ): Promise<RuntimeNotificationListResponsePayload> {
   const cacheKey = runtimeNotificationListCacheKey(
     workspaceId,
     includeDismissed,
+    options,
   );
   try {
     const response =
@@ -11409,6 +11429,9 @@ async function listNotifications(
         params: {
           workspace_id: workspaceId ?? undefined,
           include_dismissed: includeDismissed,
+          include_cronjob_source:
+            options?.includeCronjobSource === true ? true : undefined,
+          source_type: options?.sourceType ?? undefined,
           limit: 50,
         },
       });
@@ -23239,6 +23262,213 @@ function desktopStatusItemIconPath(): string {
     : path.join(__dirname, "..", "..", "resources", "holaStatusTemplate.png");
 }
 
+function shouldShowNativeDesktopNotification(): boolean {
+  return Boolean(
+    mainWindow &&
+      !mainWindow.isDestroyed() &&
+      (mainWindow.isMinimized() || !mainWindow.isVisible()),
+  );
+}
+
+function normalizedNativeNotificationText(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "";
+  }
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function shouldUseMacDevelopmentNotificationFallback(): boolean {
+  return process.platform === "darwin" && !app.isPackaged;
+}
+
+function appleScriptStringLiteral(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function logNativeDesktopNotificationEvent(
+  event: string,
+  payload: {
+    title?: string | null;
+    body?: string | null;
+    force?: boolean;
+    detail?: string | null;
+  },
+): void {
+  const title = normalizedNativeNotificationText(payload.title ?? "", 80);
+  const body = normalizedNativeNotificationText(payload.body ?? "", 120);
+  const detail = normalizedNativeNotificationText(payload.detail ?? "", 160);
+  const line = [
+    `[desktop-notification] event=${event}`,
+    `force=${payload.force === true ? "true" : "false"}`,
+    `title=${JSON.stringify(title)}`,
+    `body=${JSON.stringify(body)}`,
+    detail ? `detail=${JSON.stringify(detail)}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  void appendRuntimeLog(`${line}\n`);
+}
+
+function showMacDevelopmentNotificationFallback(payload: {
+  title: string;
+  body: string;
+  force?: boolean;
+}): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const script = `display notification ${appleScriptStringLiteral(payload.body)} with title ${appleScriptStringLiteral(payload.title)}`;
+    logNativeDesktopNotificationEvent("dev_fallback_requested", payload);
+    const child = spawn("osascript", ["-e", script], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.once("error", (error) => {
+      logNativeDesktopNotificationEvent("dev_fallback_failed", {
+        ...payload,
+        detail: error instanceof Error ? error.message : String(error),
+      });
+      resolve(false);
+    });
+    child.once("exit", (code) => {
+      if (code === 0) {
+        logNativeDesktopNotificationEvent("dev_fallback_shown", payload);
+        resolve(true);
+        return;
+      }
+      logNativeDesktopNotificationEvent("dev_fallback_failed", {
+        ...payload,
+        detail: stderr.trim() || `osascript exit code ${code ?? "null"}`,
+      });
+      resolve(false);
+    });
+  });
+}
+
+function showNativeDesktopNotification(
+  payload: DesktopNativeNotificationPayload,
+): Promise<boolean> {
+  const title = normalizedNativeNotificationText(payload.title, 80);
+  const body = normalizedNativeNotificationText(payload.body, 240);
+  const supported = Notification.isSupported();
+  if (!supported) {
+    logNativeDesktopNotificationEvent("skipped", {
+      title,
+      body,
+      force: payload.force,
+      detail: "Notification.isSupported() returned false.",
+    });
+    return Promise.resolve(false);
+  }
+  if (!payload.force && !shouldShowNativeDesktopNotification()) {
+    logNativeDesktopNotificationEvent("skipped", {
+      title,
+      body,
+      force: payload.force,
+      detail: "Main window is visible and not minimized.",
+    });
+    return Promise.resolve(false);
+  }
+  if (!title || !body) {
+    logNativeDesktopNotificationEvent("skipped", {
+      title,
+      body,
+      force: payload.force,
+      detail: "Missing title or body after normalization.",
+    });
+    return Promise.resolve(false);
+  }
+  if (shouldUseMacDevelopmentNotificationFallback()) {
+    return showMacDevelopmentNotificationFallback({
+      title,
+      body,
+      force: payload.force,
+    });
+  }
+
+  return new Promise<boolean>((resolve) => {
+    logNativeDesktopNotificationEvent("show_requested", {
+      title,
+      body,
+      force: payload.force,
+    });
+    const notification = new Notification({
+      title,
+      body,
+      icon: desktopAppIconPath(),
+      silent: false,
+    });
+    let settled = false;
+    const settle = (value: boolean) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(value);
+    };
+    const showTimeout = setTimeout(() => {
+      logNativeDesktopNotificationEvent("show_timeout", {
+        title,
+        body,
+        force: payload.force,
+        detail: "Notification did not emit show within 1500ms.",
+      });
+      settle(false);
+    }, 1500);
+    notification.on("show", () => {
+      clearTimeout(showTimeout);
+      logNativeDesktopNotificationEvent("shown", {
+        title,
+        body,
+        force: payload.force,
+      });
+      settle(true);
+    });
+    notification.on("failed", (_event, error) => {
+      clearTimeout(showTimeout);
+      logNativeDesktopNotificationEvent("failed", {
+        title,
+        body,
+        force: payload.force,
+        detail:
+          typeof error === "string"
+            ? error
+            : error && typeof error === "object" && "message" in error
+              ? String((error as { message?: unknown }).message ?? "unknown")
+              : String(error ?? "unknown"),
+      });
+      settle(false);
+    });
+    notification.on("click", () => {
+      logNativeDesktopNotificationEvent("clicked", {
+        title,
+        body,
+        force: payload.force,
+      });
+      if (process.platform === "darwin") {
+        app.dock?.show();
+        app.focus({ steal: true });
+      } else {
+        app.focus();
+      }
+      focusOrCreateMainWindow();
+    });
+    notification.on("close", () => {
+      logNativeDesktopNotificationEvent("closed", {
+        title,
+        body,
+        force: payload.force,
+      });
+    });
+    notification.show();
+  });
+}
+
 function installMacStatusItem() {
   if (process.platform !== "darwin" || statusItemTray) {
     return;
@@ -23876,6 +24106,13 @@ app.whenReady().then(async () => {
     },
   );
   handleTrustedIpc(
+    "ui:showNativeNotification",
+    ["main"],
+    async (_event, payload: DesktopNativeNotificationPayload) => {
+      return await showNativeDesktopNotification(payload);
+    },
+  );
+  handleTrustedIpc(
     "appUpdate:getStatus",
     ["main"],
     async () => appUpdateStatus,
@@ -24136,8 +24373,15 @@ app.whenReady().then(async () => {
   handleTrustedIpc(
     "workspace:listNotifications",
     ["main"],
-    async (_event, workspaceId?: string | null, includeDismissed?: boolean) =>
-      listNotifications(workspaceId, includeDismissed),
+    async (
+      _event,
+      workspaceId?: string | null,
+      includeDismissed?: boolean,
+      options?: {
+        includeCronjobSource?: boolean;
+        sourceType?: string | null;
+      },
+    ) => listNotifications(workspaceId, includeDismissed, options),
   );
   handleTrustedIpc(
     "workspace:updateNotification",

@@ -250,6 +250,14 @@ test("main-session event worker inherits the owner main session model and thinki
     eventType: "completed",
     deliveryBucket: "background_update",
     payload: {
+      source_type: "cronjob",
+      title: "Hourly Us News",
+      goal: "Fetch latest US news",
+      context:
+        "Research the latest US news headlines and provide a concise hourly summary with the most important developments.",
+      cronjob_name: "hourly-us-news",
+      cronjob_schedule: "0 * * * *",
+      cronjob_first_run: true,
       summary: "Done.",
       assistant_text:
         "<html><body><h1>Full report body</h1><p>This should stay out of the main-session prompt.</p></body></html>",
@@ -280,7 +288,14 @@ test("main-session event worker inherits the owner main session model and thinki
   assert.equal(processed, 1);
   assert.equal(batchInput?.payload.model, "openai_codex/gpt-5.4");
   assert.equal(batchInput?.payload.thinking_value, "medium");
-  assert.match(String(batchInput?.payload.text), /Background updates/i);
+  assert.match(
+    String(batchInput?.payload.text),
+    /only one update, phrase it as a normal conversational follow-up/i,
+  );
+  assert.match(
+    String(batchInput?.payload.text),
+    /Only use a clearly separated `Background updates` section when there are multiple distinct updates/i,
+  );
   assert.match(String(batchInput?.payload.text), /numbered items/i);
   assert.match(
     String(batchInput?.payload.text),
@@ -290,6 +305,10 @@ test("main-session event worker inherits the owner main session model and thinki
     String(batchInput?.payload.text),
     /Do not repeat, paraphrase, or re-answer/i,
   );
+  assert.match(String(batchInput?.payload.text), /specific automation update/i);
+  assert.match(String(batchInput?.payload.text), /hourly-us-news/i);
+  assert.match(String(batchInput?.payload.text), /Fetch latest US news/i);
+  assert.match(String(batchInput?.payload.text), /first run/i);
   assert.match(String(batchInput?.payload.text), /done-report\.md/i);
   assert.doesNotMatch(String(batchInput?.payload.text), /<html>/i);
 

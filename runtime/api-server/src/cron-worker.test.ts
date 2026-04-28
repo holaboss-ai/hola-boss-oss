@@ -29,13 +29,23 @@ function makeTempDir(prefix: string): string {
   return dir;
 }
 
-test("cronjob helpers preserve legacy scheduling behavior", () => {
-  const dueJob = {
+test("cronjob helpers honor next_run_at and preserve legacy scheduling fallback", () => {
+  const scheduledJob = {
     enabled: true,
     cron: "0 9 * * *",
-    lastRunAt: null
+    lastRunAt: null,
+    nextRunAt: "2025-01-01T10:00:00Z"
   };
-  assert.equal(cronjobIsDue(dueJob as never, new Date("2025-01-01T09:30:00Z")), true);
+  assert.equal(cronjobIsDue(scheduledJob as never, new Date("2025-01-01T09:30:00Z")), false);
+  assert.equal(cronjobIsDue(scheduledJob as never, new Date("2025-01-01T10:00:00Z")), true);
+
+  const legacyDueJob = {
+    enabled: true,
+    cron: "0 9 * * *",
+    lastRunAt: null,
+    nextRunAt: null
+  };
+  assert.equal(cronjobIsDue(legacyDueJob as never, new Date("2025-01-01T09:30:00Z")), true);
   assert.ok(cronjobNextRunAt("0 9 * * *", new Date("2025-01-01T09:30:00Z")));
   assert.equal(cronjobNextRunAt("not a cron", new Date("2025-01-01T09:30:00Z")), null);
   assert.equal(
@@ -98,7 +108,8 @@ test("runtime cron worker queues due session_run cronjobs as hidden subagents an
       priority: 3,
       idempotency_key: "cron-idempotency",
       team: "growth"
-    }
+    },
+    nextRunAt: "2025-01-01T09:00:00Z",
   });
 
   let wakeCalls = 0;
@@ -144,6 +155,9 @@ test("runtime cron worker queues due session_run cronjobs as hidden subagents an
   assert.equal(run?.sourceType, "cronjob");
   assert.equal(run?.cronjobId, job.id);
   assert.equal(run?.status, "queued");
+  assert.deepEqual(run?.toolProfile, {
+    requested_tools: ["terminal", "file", "browser", "web"],
+  });
   assert.ok(childSession);
   assert.equal(childSession?.kind, "subagent");
   assert.ok(runtimeState);
@@ -165,6 +179,12 @@ test("runtime cron worker queues due session_run cronjobs as hidden subagents an
   assert.equal(
     (queued[0].payload.context as Record<string, unknown>).subagent_id,
     run?.subagentId,
+  );
+  assert.deepEqual(
+    (queued[0].payload.context as Record<string, unknown>).tool_profile,
+    {
+      requested_tools: ["terminal", "file", "browser", "web"],
+    },
   );
   assert.match(String(queued[0].payload.text), /^Say hello/);
   assert.match(String(queued[0].payload.text), /\[Cronjob Metadata\]/);
@@ -218,7 +238,8 @@ test("runtime cron worker inherits the main-session model when cronjob metadata 
     description: "Say hello every day.",
     instruction: "Say hello.",
     delivery: { channel: "session_run" },
-    metadata: {}
+    metadata: {},
+    nextRunAt: "2025-01-01T09:00:00Z",
   });
 
   const worker = new RuntimeCronWorker({
@@ -266,26 +287,14 @@ test("runtime cron worker persists system_notification cronjobs as unread notifi
       notification_title: "Drink Water",
       notification_level: "warning",
       notification_priority: "critical"
-    }
+    },
+    nextRunAt: "2025-01-01T09:00:00Z",
   });
 
   const worker = new RuntimeCronWorker({ store });
   const processed = await worker.processDueCronjobsOnce(new Date("2025-01-01T09:30:00Z"));
   const notifications = store.listRuntimeNotifications({ workspaceId: workspace.id });
   const updated = store.getCronjob(job.id);
-  const mainBinding = store.getConversationBindingByConversation({
-    workspaceId: workspace.id,
-    channel: "desktop",
-    conversationKey: "workspace-main",
-    role: "main",
-  });
-  const messages =
-    mainBinding == null
-      ? []
-      : store.listSessionMessages({
-          workspaceId: workspace.id,
-          sessionId: mainBinding.sessionId,
-        });
 
   assert.equal(processed, 1);
   assert.equal(notifications.length, 1);
@@ -295,10 +304,6 @@ test("runtime cron worker persists system_notification cronjobs as unread notifi
   assert.equal(notifications[0]?.priority, "critical");
   assert.equal(notifications[0]?.state, "unread");
   assert.equal(notifications[0]?.cronjobId, job.id);
-  assert.ok(mainBinding);
-  assert.equal(messages.length, 1);
-  assert.equal(messages[0]?.role, "assistant");
-  assert.equal(messages[0]?.text, "Time to drink water.");
   assert.ok(updated);
   assert.equal(updated.lastStatus, "success");
   assert.equal(updated.runCount, 1);
@@ -324,7 +329,8 @@ test("runtime cron worker records failures for unsupported delivery channels", a
     name: "Broken",
     cron: "0 9 * * *",
     description: "Broken",
-    delivery: { channel: "email" }
+    delivery: { channel: "email" },
+    nextRunAt: "2025-01-01T09:00:00Z",
   });
 
   const worker = new RuntimeCronWorker({ store });
@@ -397,5 +403,73 @@ test("cronjob routes compute next_run_at and cron worker lifecycle hooks run", a
 
   await app.close();
   assert.equal(closeCalls, 1);
+  store.close();
+});
+
+test("runtime cron worker does not execute a newly created cronjob before next_run_at", async () => {
+  const root = makeTempDir("hb-runtime-cron-worker-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    kind: "workspace_session",
+  });
+  store.upsertConversationBinding({
+    workspaceId: workspace.id,
+    channel: "desktop",
+    conversationKey: "workspace-main",
+    sessionId: "session-main",
+    role: "main",
+  });
+  const job = store.createCronjob({
+    workspaceId: workspace.id,
+    initiatedBy: "workspace_agent",
+    name: "Hourly US News",
+    cron: "0 * * * *",
+    description: "Fetch latest US news",
+    instruction: "Research the latest US news headlines and provide a concise hourly summary.",
+    delivery: { channel: "session_run" },
+    metadata: {
+      source_session_id: "session-main",
+      model: "openai_codex/gpt-5.4",
+    },
+    nextRunAt: "2025-01-01T10:00:00Z",
+  });
+
+  let wakeCalls = 0;
+  const worker = new RuntimeCronWorker({
+    store,
+    queueWorker: {
+      async start() {},
+      wake() {
+        wakeCalls += 1;
+      },
+      async close() {}
+    }
+  });
+
+  const processed = await worker.processDueCronjobsOnce(new Date("2025-01-01T09:30:00Z"));
+  const updated = store.getCronjob(job.id);
+  const runs = store.listSubagentRunsByWorkspace({ workspaceId: workspace.id });
+  const notifications = store.listRuntimeNotifications({ workspaceId: workspace.id });
+
+  assert.equal(processed, 0);
+  assert.equal(wakeCalls, 0);
+  assert.ok(updated);
+  assert.equal(updated.lastRunAt, null);
+  assert.equal(updated.runCount, 0);
+  assert.equal(updated.nextRunAt, "2025-01-01T10:00:00Z");
+  assert.equal(runs.length, 0);
+  assert.equal(notifications.length, 0);
+
   store.close();
 });

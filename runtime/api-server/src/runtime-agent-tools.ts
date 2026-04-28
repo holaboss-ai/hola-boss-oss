@@ -629,7 +629,7 @@ function subagentInstruction(params: {
   return `${goal}\n\nContext:\n${context}`;
 }
 
-function normalizeSubagentToolProfile(params: {
+export function normalizeSubagentToolProfile(params: {
   tools?: string[] | null;
   timeoutMs?: number | null;
 }): JsonObject {

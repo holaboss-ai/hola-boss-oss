@@ -9,6 +9,7 @@ import type {
   TurnResultRecord,
   WorkspaceRecord,
 } from "@holaboss/runtime-state-store";
+import { utcNowIso } from "@holaboss/runtime-state-store";
 
 import {
   buildRunCompletedEvent,
@@ -655,7 +656,9 @@ function instructionWithInlineBackgroundUpdates(params: {
     "[Pending Background Updates]",
     "These background task updates belong to the same main session.",
     "Answer the user's latest message first.",
-    "If any of these updates are relevant, put them after your direct answer under a separate `Background updates:` section.",
+    "If any of these updates are relevant, add them after your direct answer in a natural follow-up voice.",
+    "If there is only one relevant update, weave it in without a `Background updates` heading.",
+    "Only use a separate `Background updates` section when there are multiple distinct updates or the separation is needed for clarity.",
     "If there are multiple updates, use numbered items and keep each task distinct instead of blending them into one paragraph.",
     "When a queued update includes deliverables, refer to them by title and treat them as attached artifacts or reports rather than raw file paths when possible.",
     "Do not paste long artifact bodies such as HTML, markdown, or full report content into chat. Keep those as attached deliverables and only summarize them briefly.",
@@ -805,6 +808,9 @@ function materializeQueuedBackgroundDeliverablesForTurn(params: {
       metadata: {
         ...metadata,
         origin_type: "forwarded_subagent",
+        owner_container_type: "background_update",
+        owner_container_input_id: params.record.inputId,
+        owner_container_session_id: params.record.sessionId,
         change_type: optionalString(metadata.change_type) ?? "created",
         artifact_type:
           optionalString(entry.deliverable.type) ??
@@ -1265,6 +1271,228 @@ function cronjobCompletionNotificationMessage(
     return "Cronjob run was paused.";
   }
   return "Cronjob run completed.";
+}
+
+function cronjobContainerTitle(job: {
+  name: string;
+  description: string;
+  metadata: Record<string, unknown>;
+}): string {
+  const name = optionalString(job.name);
+  if (name) {
+    return titleCaseWords(name.replace(/[_-]+/g, " ").replace(/\s+/g, " "));
+  }
+  const description = optionalString(job.description);
+  if (description) {
+    return description;
+  }
+  return cronjobNotificationBaseTitle({
+    name: job.name,
+    metadata: job.metadata,
+  });
+}
+
+function isCronjobMainSessionKind(kind: string | null | undefined): boolean {
+  const normalized = optionalString(kind)?.toLowerCase() ?? "";
+  return (
+    normalized === "" ||
+    normalized === "workspace_session" ||
+    normalized === "main" ||
+    normalized === "onboarding"
+  );
+}
+
+function preferredCronjobOwnerMainSessionId(params: {
+  store: RuntimeStateStore;
+  workspace: WorkspaceRecord;
+  metadata: Record<string, unknown>;
+}): string | null {
+  const preferredIds = [
+    optionalString(params.metadata.source_session_id),
+    optionalString(params.metadata.session_id),
+  ].filter((value): value is string => Boolean(value));
+  for (const sessionId of preferredIds) {
+    const session = params.store.getSession({
+      workspaceId: params.workspace.id,
+      sessionId,
+    });
+    if (session && isCronjobMainSessionKind(session.kind)) {
+      return session.sessionId;
+    }
+  }
+
+  const desktopBinding = params.store.getConversationBindingByConversation({
+    workspaceId: params.workspace.id,
+    channel: "desktop",
+    conversationKey: "workspace-main",
+    role: "main",
+  });
+  if (desktopBinding) {
+    return desktopBinding.sessionId;
+  }
+
+  const onboardingSessionId = optionalString(params.workspace.onboardingSessionId);
+  const sessions = params.store.listSessions({
+    workspaceId: params.workspace.id,
+    includeArchived: false,
+    limit: 200,
+    offset: 0,
+  });
+  const preferred = sessions.find((session) => {
+    if (session.sessionId === onboardingSessionId) {
+      return false;
+    }
+    return isCronjobMainSessionKind(session.kind);
+  });
+  if (preferred) {
+    return preferred.sessionId;
+  }
+  return (
+    sessions.find(
+      (session) =>
+        session.sessionId !== onboardingSessionId &&
+        isCronjobMainSessionKind(session.kind),
+    )?.sessionId ?? null
+  );
+}
+
+function cronjobLifecycleEventType(
+  turnResult: TurnResultRecord,
+): "completed" | "failed" | "waiting_on_user" | "cancelled" {
+  if (turnResult.status === "failed") {
+    return "failed";
+  }
+  if (turnResult.status === "waiting_user") {
+    return "waiting_on_user";
+  }
+  if (turnResult.status === "paused") {
+    return "cancelled";
+  }
+  return "completed";
+}
+
+function maybeQueueCronjobCompletionFollowup(params: {
+  store: RuntimeStateStore;
+  record: SessionInputRecord;
+  turnResult: TurnResultRecord;
+}): void {
+  const context = isRecord(params.record.payload.context)
+    ? params.record.payload.context
+    : null;
+  const source = optionalString(context?.source)?.toLowerCase();
+  const cronjobId = optionalString(context?.cronjob_id);
+  if (source !== "cronjob" || !cronjobId) {
+    return;
+  }
+
+  const session = params.store.getSession({
+    workspaceId: params.record.workspaceId,
+    sessionId: params.record.sessionId,
+  });
+  if (optionalString(session?.kind)?.toLowerCase() !== "cronjob") {
+    return;
+  }
+
+  const job = params.store.getCronjob(cronjobId);
+  const workspace = params.store.getWorkspace(params.record.workspaceId);
+  if (!job || !workspace) {
+    return;
+  }
+
+  const delivery = isRecord(job.delivery) ? job.delivery : {};
+  const deliveryMode = optionalString(delivery.mode)?.toLowerCase() ?? "announce";
+  if (deliveryMode === "none") {
+    return;
+  }
+
+  const metadata = isRecord(job.metadata) ? job.metadata : {};
+  const ownerMainSessionId = preferredCronjobOwnerMainSessionId({
+    store: params.store,
+    workspace,
+    metadata,
+  });
+  if (!ownerMainSessionId) {
+    return;
+  }
+
+  const outputs = params.store.listOutputs({
+    workspaceId: params.record.workspaceId,
+    sessionId: params.record.sessionId,
+    inputId: params.record.inputId,
+    limit: 200,
+    offset: 0,
+  });
+  const eventType = cronjobLifecycleEventType(params.turnResult);
+  const summary = cronjobCompletionNotificationMessage(params.turnResult);
+  const assistantText = optionalString(params.turnResult.assistantText);
+  const forwardableDeliverables = subagentForwardableDeliverables(outputs);
+  const deliveryChannel = optionalString(delivery.channel)?.toLowerCase() ?? null;
+  const payloadTitle = cronjobContainerTitle({
+    name: job.name,
+    description: job.description,
+    metadata,
+  });
+  const payload: Record<string, unknown> = {
+    cronjob_id: job.id,
+    source_type: "cronjob",
+    cronjob_name: optionalString(job.name),
+    title: payloadTitle,
+    goal: optionalString(job.description) ?? payloadTitle,
+    summary,
+    status: eventType,
+    turn_status: params.turnResult.status,
+    stop_reason: params.turnResult.stopReason,
+    child_session_id: params.record.sessionId,
+    child_input_id: params.record.inputId,
+    cronjob_schedule: optionalString(job.cron),
+    cronjob_first_run: job.runCount <= 1,
+    cronjob_delivery_channel: deliveryChannel,
+    cronjob_delivery_mode: deliveryMode,
+  };
+  const instruction = optionalString(job.instruction);
+  if (instruction) {
+    payload.context = instruction;
+  }
+  if (assistantText) {
+    payload.assistant_text = assistantText;
+  }
+  if (forwardableDeliverables.length > 0) {
+    payload.forwardable_deliverables = forwardableDeliverables;
+  }
+  if (eventType === "waiting_on_user") {
+    payload.blocking_question = assistantText ?? summary;
+    if (forwardableDeliverables.length > 0) {
+      payload.partial_deliverables = forwardableDeliverables;
+    }
+  } else if (eventType === "failed" || eventType === "cancelled") {
+    payload.partial_summary = summary;
+    if (forwardableDeliverables.length > 0) {
+      payload.partial_deliverables = forwardableDeliverables;
+    }
+  }
+
+  const completedAt =
+    params.turnResult.completedAt ?? params.turnResult.updatedAt ?? utcNowIso();
+  const deliveryBucket =
+    eventType === "waiting_on_user" ? "waiting_on_user" : "background_update";
+  params.store.enqueueMainSessionEvent({
+    workspaceId: params.record.workspaceId,
+    ownerMainSessionId,
+    originMainSessionId: ownerMainSessionId,
+    subagentId: null,
+    eventType,
+    deliveryBucket,
+    coalesceKey: `${ownerMainSessionId}:${deliveryBucket}`,
+    earliestDeliverAt: plusMillisecondsIso(
+      completedAt,
+      SUBAGENT_EVENT_COALESCE_WINDOW_MS,
+    ),
+    latestDeliverAt:
+      eventType === "waiting_on_user"
+        ? null
+        : plusMillisecondsIso(completedAt, SUBAGENT_EVENT_IDLE_TIMEOUT_MS),
+    payload,
+  });
 }
 
 function maybeCreateCronjobCompletionNotification(params: {
@@ -3226,6 +3454,11 @@ export async function processClaimedInput(params: {
         record,
         turnResult,
       });
+      maybeQueueCronjobCompletionFollowup({
+        store,
+        record,
+        turnResult,
+      });
     } catch (error) {
       if (
         claimOwnershipLost ||
@@ -3306,6 +3539,11 @@ export async function processClaimedInput(params: {
         onTaskError: params.onEvolveTaskError,
       });
       maybeCreateCronjobCompletionNotification({
+        store,
+        record,
+        turnResult,
+      });
+      maybeQueueCronjobCompletionFollowup({
         store,
         record,
         turnResult,
