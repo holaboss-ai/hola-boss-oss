@@ -262,6 +262,18 @@ function requiredPositiveInteger(value: unknown, fieldName: string): number {
   return parsed;
 }
 
+function requiredNonNegativeInteger(value: unknown, fieldName: string): number {
+  const parsed = optionalInteger(value);
+  if (parsed === null || parsed < 0) {
+    throw new DesktopBrowserToolServiceError(
+      400,
+      "browser_tool_invalid_args",
+      `${fieldName} must be a non-negative integer`
+    );
+  }
+  return parsed;
+}
+
 function browserActionKind(value: unknown): BrowserActionKind {
   if (
     value === "click" ||
@@ -318,10 +330,13 @@ function browserWaitCondition(value: unknown, args: Record<string, unknown>): Br
   ) {
     return value;
   }
+  if (value === "dom_mutation") {
+    return "dom_change";
+  }
   throw new DesktopBrowserToolServiceError(
     400,
     "browser_tool_invalid_args",
-    "condition must be `load`, `url`, `text`, `element`, `hidden`, or `dom_change`"
+    "condition must be `load`, `url`, `text`, `element`, `hidden`, `dom_change`, or `dom_mutation`"
   );
 }
 
@@ -592,6 +607,35 @@ function browserLocatorRuntime(locator: BrowserLocatorOptions): string {
       }
       return document.querySelector(ref);
     };
+    const hasFrameworkClickHandler = (element) => {
+      for (const key of Object.keys(element)) {
+        if (!key.startsWith("__reactProps$") && !key.startsWith("__reactEventHandlers$")) continue;
+        const value = element[key];
+        if (!value || typeof value !== "object") continue;
+        if (
+          typeof value.onClick === "function" ||
+          typeof value.onMouseDown === "function" ||
+          typeof value.onPointerDown === "function" ||
+          typeof value.onKeyDown === "function"
+        ) {
+          return true;
+        }
+      }
+      return false;
+    };
+    const isLikelyClickable = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const explicitRole = String(element.getAttribute("role") || "").toLowerCase();
+      if (element.matches(interactiveSelector) || element.hasAttribute("onclick") || typeof element.onclick === "function") return true;
+      if (["button", "link", "menuitem", "tab", "checkbox", "radio", "switch"].includes(explicitRole)) return true;
+      if (hasFrameworkClickHandler(element)) return true;
+      try {
+        if (window.getComputedStyle(element).cursor === "pointer") return true;
+      } catch {
+        return false;
+      }
+      return false;
+    };
     const implicitRole = (element) => {
       const tagName = element.tagName.toLowerCase();
       if (element.getAttribute("role")) return String(element.getAttribute("role") || "").toLowerCase();
@@ -609,6 +653,7 @@ function browserLocatorRuntime(locator: BrowserLocatorOptions): string {
         return "textbox";
       }
       if (element.isContentEditable) return "textbox";
+      if (isLikelyClickable(element)) return "button";
       return "";
     };
     const labelText = (element) => {
@@ -668,17 +713,32 @@ function browserLocatorRuntime(locator: BrowserLocatorOptions): string {
     };
     const actionableTarget = (element) => {
       if (!(element instanceof HTMLElement)) return null;
+      let current = element;
+      let depth = 0;
+      while (current instanceof HTMLElement && current !== document.body && depth < 8) {
+        if (isLikelyClickable(current) || current.hasAttribute("role") || current.hasAttribute("aria-label")) return current;
+        current = current.parentElement;
+        depth += 1;
+      }
       return element.closest(interactiveSelector + ", [onclick], [role], [aria-label]") || element;
     };
     const scoreElement = (element) => {
       let score = 0;
       if (locator.text && normalize(visibleText(element)) === normalize(locator.text)) score += 120;
-      else if (locator.text && stringMatches(visibleText(element), locator.text)) score += 70;
+      else if (locator.text && stringMatches(visibleText(element), locator.text)) {
+        score += 70;
+        const haystackLength = normalize(visibleText(element)).length;
+        const needleLength = Math.max(normalize(locator.text).length, 1);
+        const textRatio = haystackLength / needleLength;
+        if (haystackLength > 240 || textRatio > 40) score -= 65;
+        else if (textRatio > 10) score -= 35;
+        else if (textRatio > 3) score -= 15;
+      }
       if (locator.label && normalize(labelText(element)) === normalize(locator.label)) score += 90;
       else if (locator.label && stringMatches(labelText(element), locator.label)) score += 50;
       if (locator.placeholder && stringMatches(placeholderText(element), locator.placeholder)) score += 40;
       if (locator.role && normalize(implicitRole(element)) === normalize(locator.role)) score += 30;
-      if (element.matches(interactiveSelector) || element.hasAttribute("onclick")) score += 25;
+      if (isLikelyClickable(element)) score += 25;
       if (intersectsViewport(element)) score += 10;
       return score;
     };
@@ -753,6 +813,47 @@ function browserFindExpression(options: BrowserFindOptions): string {
       count: allMatches.length,
       truncated: allMatches.length > matches.length,
       matches
+    };
+  })()`;
+}
+
+function isNativePointerAction(action: BrowserActionKind): action is "click" | "double_click" | "hover" {
+  return action === "click" || action === "double_click" || action === "hover";
+}
+
+function browserPointerTargetExpression(options: BrowserActOptions): string {
+  return `(() => {
+    ${browserLocatorRuntime(options)}
+    const action = ${serializedValue(options.action)};
+    const targetFromLocator = () => {
+      const matched = findMatches()[0] || null;
+      return matched || null;
+    };
+    const target = targetFromLocator();
+    if (!(target instanceof HTMLElement)) {
+      throw new Error("No browser element matched the requested action locator.");
+    }
+    const actionTarget = actionableTarget(target) || target;
+    target.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+    if (typeof actionTarget.focus === "function") {
+      try {
+        actionTarget.focus({ preventScroll: true });
+      } catch {
+        actionTarget.focus();
+      }
+    }
+    const rect = actionTarget.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      throw new Error("Matched browser element has no clickable area.");
+    }
+    const x = Math.round(Math.max(0, Math.min(window.innerWidth - 1, rect.left + rect.width / 2)));
+    const y = Math.round(Math.max(0, Math.min(window.innerHeight - 1, rect.top + rect.height / 2)));
+    return {
+      ok: true,
+      action,
+      target: describeElement(target),
+      action_target: describeElement(actionTarget),
+      result: { x, y }
     };
   })()`;
 }
@@ -1638,7 +1739,30 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
       }
       case "browser_act": {
         const options = browserActOptions(args);
-        const result = await this.#evaluate(config, browserActExpression(options), context);
+        let result = await this.#evaluate(
+          config,
+          isNativePointerAction(options.action)
+            ? browserPointerTargetExpression(options)
+            : browserActExpression(options),
+          context,
+        );
+        if (isNativePointerAction(options.action)) {
+          const point = asRecord(result.result);
+          const x = requiredNonNegativeInteger(point?.x, "x");
+          const y = requiredNonNegativeInteger(point?.y, "y");
+          const nativeInput = await this.#browserFetch(config, {
+            method: "POST",
+            path: "/mouse",
+            body: { action: options.action, x, y },
+            workspaceId: context.workspaceId,
+            sessionId: context.sessionId,
+            space: context.space,
+          });
+          result = {
+            ...result,
+            result: { ...(asRecord(result.result) ?? {}), native_input: nativeInput },
+          };
+        }
         const page = await this.#browserFetch(config, {
           method: "GET",
           path: "/page",

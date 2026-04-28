@@ -7154,6 +7154,97 @@ async function handleDesktopBrowserServiceRequest(
       return;
     }
 
+    if (method === "POST" && pathname === "/api/v1/browser/mouse") {
+      const payload = await readBrowserServiceJsonBody(request);
+      const x =
+        typeof payload.x === "number" && Number.isFinite(payload.x)
+          ? Math.round(payload.x)
+          : NaN;
+      const y =
+        typeof payload.y === "number" && Number.isFinite(payload.y)
+          ? Math.round(payload.y)
+          : NaN;
+      const action =
+        payload.action === "double_click" || payload.action === "hover"
+          ? payload.action
+          : "click";
+      if (!Number.isFinite(x) || x < 0 || !Number.isFinite(y) || y < 0) {
+        writeBrowserServiceJson(response, 400, {
+          error: "Fields 'x' and 'y' must be non-negative numbers.",
+        });
+        return;
+      }
+
+      const workspace = await ensureTargetBrowserSpace("mouse");
+      if (!workspace) {
+        return;
+      }
+      const activeTab = getActiveBrowserTab(
+        targetWorkspaceId,
+        targetSpace,
+        ensuredSessionId,
+        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
+      );
+      if (!activeTab) {
+        writeBrowserServiceJson(response, 409, {
+          error: "No active browser tab is available.",
+        });
+        return;
+      }
+
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) {
+        mainWindow.focus();
+      }
+      activeTab.view.webContents.focus();
+      await activeTab.view.webContents.sendInputEvent({
+        type: "mouseMove",
+        x,
+        y,
+      });
+
+      if (action === "click" || action === "double_click") {
+        await activeTab.view.webContents.sendInputEvent({
+          type: "mouseDown",
+          x,
+          y,
+          button: "left",
+          clickCount: 1,
+        });
+        await activeTab.view.webContents.sendInputEvent({
+          type: "mouseUp",
+          x,
+          y,
+          button: "left",
+          clickCount: 1,
+        });
+      }
+      if (action === "double_click") {
+        await activeTab.view.webContents.sendInputEvent({
+          type: "mouseDown",
+          x,
+          y,
+          button: "left",
+          clickCount: 2,
+        });
+        await activeTab.view.webContents.sendInputEvent({
+          type: "mouseUp",
+          x,
+          y,
+          button: "left",
+          clickCount: 2,
+        });
+      }
+
+      writeBrowserServiceJson(response, 200, {
+        ok: true,
+        tabId: activeTab.state.id,
+        action,
+        x,
+        y,
+      });
+      return;
+    }
+
     if (method === "POST" && pathname === "/api/v1/browser/screenshot") {
       const payload = await readBrowserServiceJsonBody(request);
       const workspace = await ensureTargetBrowserSpace("screenshot");

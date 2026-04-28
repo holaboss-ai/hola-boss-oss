@@ -105,7 +105,7 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   {
     id: "browser_act",
     description:
-      "Perform a general browser action on a ref returned by browser_find, a CSS/XPath selector, or a locator described by text/label/placeholder/role. Supports click, double_click, hover, focus, fill, type, press, select, and scroll_into_view. Prefer this over brittle index-based clicks when the target may be outside browser_get_state or represented by nested generic DOM nodes.",
+      "Perform a general browser action on a ref returned by browser_find, a CSS/XPath selector, or a locator described by text/label/placeholder/role. Supports click, double_click, hover, focus, fill, type, press, select, and scroll_into_view. Pointer actions use real browser input when available. Prefer this over brittle index-based clicks when the target may be outside browser_get_state or represented by nested generic DOM nodes.",
     policy: "mutate",
     session_scope: "workspace_session_only",
     input_schema: {
@@ -136,14 +136,14 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   {
     id: "browser_wait",
     description:
-      "Wait for browser state to settle: page load, URL match, visible/hidden element, text presence, or DOM mutation. Use after navigation, clicks, form submits, menu opens, and SPA transitions before inspecting or acting again.",
+      "Wait for browser state to settle: page load, URL match, visible/hidden element, text presence, or DOM mutation/change. Use after navigation, clicks, form submits, menu opens, and SPA transitions before inspecting or acting again.",
     policy: "inspect",
     session_scope: "workspace_session_only",
     input_schema: {
       type: "object",
       additionalProperties: false,
       properties: {
-        condition: { type: "string", enum: ["load", "url", "text", "element", "hidden", "dom_change"] },
+        condition: { type: "string", enum: ["load", "url", "text", "element", "hidden", "dom_change", "dom_mutation"] },
         url: { type: "string" },
         text: { type: "string" },
         label: { type: "string" },

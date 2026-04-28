@@ -214,7 +214,7 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
         type: "object",
         properties: {
           condition: literalStringUnion(
-            ["load", "url", "text", "element", "hidden", "dom_change"],
+            ["load", "url", "text", "element", "hidden", "dom_change", "dom_mutation"],
             "Browser condition to wait for.",
           ),
           url: {

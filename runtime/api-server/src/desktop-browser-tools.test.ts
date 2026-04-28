@@ -734,6 +734,7 @@ test("desktop browser tool service accepts scoped browser_get_state controls", a
 
 test("desktop browser tool service exposes general find, act, wait, evaluate, and debug primitives", async () => {
   const evaluateBodies: string[] = [];
+  const mouseBodies: string[] = [];
   let waitPredicateCalls = 0;
   const browserServer = await startBrowserServer(async (request, response) => {
     const chunks: Buffer[] = [];
@@ -744,6 +745,11 @@ test("desktop browser tool service exposes general find, act, wait, evaluate, an
     response.setHeader("content-type", "application/json; charset=utf-8");
     if (request.url === "/api/v1/browser/page") {
       response.end(JSON.stringify({ tabId: "tab-1", url: "https://example.com/app", title: "Example App" }));
+      return;
+    }
+    if (request.url === "/api/v1/browser/mouse") {
+      mouseBodies.push(body);
+      response.end(JSON.stringify({ ok: true, tabId: "tab-1", action: "click", x: 370, y: 104 }));
       return;
     }
     if (request.url === "/api/v1/browser/evaluate") {
@@ -868,7 +874,14 @@ test("desktop browser tool service exposes general find, act, wait, evaluate, an
       exact: true,
     });
     assert.equal((actResult.action as { action?: string }).action, "click");
+    const nativeInput =
+      ((actResult.action as { result?: Record<string, unknown> }).result ?? {}).native_input;
+    assert.deepEqual(
+      nativeInput,
+      { ok: true, tabId: "tab-1", action: "click", x: 370, y: 104 },
+    );
     assert.deepEqual(actResult.page, { tabId: "tab-1", url: "https://example.com/app", title: "Example App" });
+    assert.deepEqual(mouseBodies, [JSON.stringify({ action: "click", x: 370, y: 104 })]);
 
     const waitResult = await service.execute("browser_wait", {
       condition: "element",
