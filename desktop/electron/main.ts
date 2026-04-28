@@ -1954,6 +1954,49 @@ async function openExternalUrl(rawUrl: string): Promise<void> {
   await shell.openExternal(parsed.toString());
 }
 
+function isHttpOrHttpsUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl.trim());
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isBrowserPopupNavigationUrl(rawUrl: string): boolean {
+  const normalizedUrl = rawUrl.trim();
+  return normalizedUrl === "about:blank" || isHttpOrHttpsUrl(normalizedUrl);
+}
+
+function shouldAllowBrowserPopupWindow(
+  normalizedUrl: string,
+  frameName?: string | null,
+  features?: string | null,
+): boolean {
+  return (
+    isBrowserPopupNavigationUrl(normalizedUrl) &&
+    (normalizedUrl === "about:blank" ||
+      isBrowserPopupWindowRequest(frameName, features))
+  );
+}
+
+function openExternalUrlFromMain(rawUrl: string, source: string): void {
+  const normalizedUrl = rawUrl.trim();
+  if (!normalizedUrl || normalizedUrl === "about:blank") {
+    return;
+  }
+
+  try {
+    new URL(normalizedUrl);
+  } catch {
+    return;
+  }
+
+  shell.openExternal(normalizedUrl).catch((error) => {
+    console.warn(`[desktop] Failed to open external URL from ${source}:`, error);
+  });
+}
+
 function emitOpenSettingsPane(section: UiSettingsPaneSection = "settings") {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
@@ -17311,7 +17354,7 @@ function getOrCreateAppSurfaceView(appId: string): BrowserView {
     vertical: false,
   });
   view.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    openExternalUrlFromMain(url, "app surface window open");
     return { action: "deny" };
   });
   appSurfaceViews.set(appId, view);
@@ -21370,7 +21413,7 @@ function handleBrowserWindowOpenAsTab(
   try {
     const parsed = new URL(normalizedUrl);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      void shell.openExternal(normalizedUrl);
+      openExternalUrlFromMain(normalizedUrl, "browser tab creation");
       return;
     }
   } catch {
@@ -21543,7 +21586,7 @@ function showBrowserViewContextMenu(params: {
       {
         label: "Open Link Externally",
         click: () => {
-          void shell.openExternal(linkUrl);
+          openExternalUrlFromMain(linkUrl, "browser context menu");
         },
       },
       {
@@ -21721,54 +21764,55 @@ function createBrowserTab(
   });
   view.webContents.setWindowOpenHandler(
     ({ url, disposition, frameName, features }) => {
-    const normalizedUrl = url.trim();
-    if (!normalizedUrl) {
-      return { action: "deny" };
-    }
-
-    try {
-      const parsed = new URL(normalizedUrl);
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-        void shell.openExternal(normalizedUrl);
+      const normalizedUrl = url.trim();
+      if (!normalizedUrl) {
         return { action: "deny" };
       }
-    } catch {
-      return { action: "deny" };
-    }
 
-    if (isBrowserPopupWindowRequest(frameName, features)) {
-      return {
-        action: "allow",
-        overrideBrowserWindowOptions: {
-          parent: mainWindow ?? undefined,
-          autoHideMenuBar: true,
-          backgroundColor: "#050907",
-          width: 520,
-          height: 760,
-          minWidth: 420,
-          minHeight: 620,
-          webPreferences: {
-            preload: path.join(__dirname, "browserPopupPreload.cjs"),
+      if (shouldAllowBrowserPopupWindow(normalizedUrl, frameName, features)) {
+        return {
+          action: "allow",
+          overrideBrowserWindowOptions: {
+            parent: mainWindow ?? undefined,
+            autoHideMenuBar: true,
+            backgroundColor: "#050907",
+            width: 520,
+            height: 760,
+            minWidth: 420,
+            minHeight: 620,
+            webPreferences: {
+              session: workspace.session,
+              preload: path.join(__dirname, "browserPopupPreload.cjs"),
+            },
           },
-        },
-      };
-    }
+        };
+      }
 
-    const shouldOpenAsTab =
-      disposition === "foreground-tab" ||
-      disposition === "background-tab" ||
-      disposition === "new-window";
-    if (shouldOpenAsTab) {
-      handleBrowserWindowOpenAsTab(
-        workspaceId,
-        normalizedUrl,
-        disposition,
-        frameName,
-        browserSpace,
-        normalizedSessionId,
-      );
-    }
-    return { action: "deny" };
+      try {
+        const parsed = new URL(normalizedUrl);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+          openExternalUrlFromMain(normalizedUrl, "browser window open");
+          return { action: "deny" };
+        }
+      } catch {
+        return { action: "deny" };
+      }
+
+      const shouldOpenAsTab =
+        disposition === "foreground-tab" ||
+        disposition === "background-tab" ||
+        disposition === "new-window";
+      if (shouldOpenAsTab) {
+        handleBrowserWindowOpenAsTab(
+          workspaceId,
+          normalizedUrl,
+          disposition,
+          frameName,
+          browserSpace,
+          normalizedSessionId,
+        );
+      }
+      return { action: "deny" };
     },
   );
   view.webContents.setZoomFactor(1);
