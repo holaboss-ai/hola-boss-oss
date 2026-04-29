@@ -11114,11 +11114,6 @@ function Composer({
                     ? "min-w-0 flex flex-1 basis-full flex-wrap items-center gap-2"
                     : "min-w-0 shrink-0"
               }
-              style={
-                compactComposerControls
-                  ? { width: `${compactModelControlWidth}px` }
-                  : undefined
-              }
             >
               {noAvailableModels ? (
                 <>
@@ -11171,14 +11166,7 @@ function Composer({
           )}
 
           {showThinkingValueSelector ? (
-            <div
-              className={compactComposerControls ? "shrink-0" : "shrink-0"}
-              style={
-                compactComposerControls
-                  ? { width: `${compactThinkingControlWidth}px` }
-                  : undefined
-              }
-            >
+            <div className="shrink-0">
               <ThinkingValueSelect
                 selectedThinkingValue={selectedThinkingValue}
                 thinkingValues={thinkingValues}
