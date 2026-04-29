@@ -138,8 +138,10 @@ export function AppSurfacePane({
       // otherwise fall back to a static appId → provider mapping.
       // Fallback when there's no app-level binding yet — used to render
       // the "Connect <provider>" button on the app surface so users can
-      // bootstrap the binding from the app view itself. Keep in sync
-      // with the provider slugs the marketplace ships.
+      // bootstrap the binding from the app view itself. Keys are the
+      // app id; values are the Composio toolkit slug (NOT always the
+      // app id — Cal.com's app id is "calcom" but its Composio slug is
+      // "cal", and the same shape applies to Google sub-toolkits).
       const knownProviders: Record<string, string> = {
         gmail: "gmail",
         sheets: "googlesheets",
@@ -147,7 +149,7 @@ export function AppSurfacePane({
         reddit: "reddit",
         twitter: "twitter",
         linkedin: "linkedin",
-        calcom: "calcom",
+        calcom: "cal",
         attio: "attio",
         hubspot: "hubspot",
         apollo: "apollo",
