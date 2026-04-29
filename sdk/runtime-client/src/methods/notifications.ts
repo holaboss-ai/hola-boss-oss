@@ -27,6 +27,10 @@ export type RuntimeNotificationListResponse = {
   count: number;
 };
 
+export type RuntimeNotificationUpdatePayload = {
+  state?: RuntimeNotificationState;
+};
+
 export type ListNotificationsParams = {
   workspaceId?: string | null;
   includeDismissed?: boolean;
@@ -35,6 +39,10 @@ export type ListNotificationsParams = {
 
 export type NotificationsMethods = {
   list(params?: ListNotificationsParams): Promise<RuntimeNotificationListResponse>;
+  update(
+    notificationId: string,
+    payload: RuntimeNotificationUpdatePayload
+  ): Promise<RuntimeNotificationRecord>;
 };
 
 export function makeNotificationsMethods(
@@ -50,6 +58,13 @@ export function makeNotificationsMethods(
           include_dismissed: includeDismissed,
           limit,
         },
+      });
+    },
+    update(notificationId, payload) {
+      return request<RuntimeNotificationRecord>({
+        method: "PATCH",
+        path: `/api/v1/notifications/${encodeURIComponent(notificationId)}`,
+        payload,
       });
     },
   };

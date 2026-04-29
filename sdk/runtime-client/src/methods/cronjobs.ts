@@ -31,8 +31,41 @@ export type CronjobListResponse = {
   count: number;
 };
 
+export type CronjobRunResponse = {
+  success: boolean;
+  cronjob: CronjobRecord;
+  session_id: string | null;
+  notification_id: string | null;
+};
+
+export type CronjobCreatePayload = {
+  workspace_id: string;
+  initiated_by: string;
+  name?: string;
+  cron: string;
+  description: string;
+  instruction?: string;
+  enabled?: boolean;
+  delivery: CronjobDelivery;
+  metadata?: Record<string, unknown>;
+};
+
+export type CronjobUpdatePayload = {
+  name?: string;
+  cron?: string;
+  description?: string;
+  instruction?: string;
+  enabled?: boolean;
+  delivery?: CronjobDelivery;
+  metadata?: Record<string, unknown>;
+};
+
 export type CronjobsMethods = {
   list(workspaceId: string, enabledOnly?: boolean): Promise<CronjobListResponse>;
+  runNow(jobId: string): Promise<CronjobRunResponse>;
+  create(payload: CronjobCreatePayload): Promise<CronjobRecord>;
+  update(jobId: string, payload: CronjobUpdatePayload): Promise<CronjobRecord>;
+  delete(jobId: string): Promise<{ success: boolean }>;
 };
 
 export function makeCronjobsMethods(request: RequestFn): CronjobsMethods {
@@ -45,6 +78,32 @@ export function makeCronjobsMethods(request: RequestFn): CronjobsMethods {
           workspace_id: workspaceId,
           enabled_only: enabledOnly,
         },
+      });
+    },
+    runNow(jobId) {
+      return request<CronjobRunResponse>({
+        method: "POST",
+        path: `/api/v1/cronjobs/${encodeURIComponent(jobId)}/run`,
+      });
+    },
+    create(payload) {
+      return request<CronjobRecord>({
+        method: "POST",
+        path: "/api/v1/cronjobs",
+        payload,
+      });
+    },
+    update(jobId, payload) {
+      return request<CronjobRecord>({
+        method: "PATCH",
+        path: `/api/v1/cronjobs/${encodeURIComponent(jobId)}`,
+        payload,
+      });
+    },
+    delete(jobId) {
+      return request<{ success: boolean }>({
+        method: "DELETE",
+        path: `/api/v1/cronjobs/${encodeURIComponent(jobId)}`,
       });
     },
   };
