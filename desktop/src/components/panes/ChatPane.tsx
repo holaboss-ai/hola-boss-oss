@@ -37,6 +37,7 @@ import {
   Globe,
   Image as ImageIcon,
   Inbox,
+  LayoutDashboard,
   Lightbulb,
   Link2,
   Loader2,
@@ -1061,6 +1062,12 @@ function outputBrowserFilterForOutput(
 }
 
 function outputKindLabel(output: WorkspaceOutputRecordPayload) {
+  // .dashboard files outrank generic origin/category labels — they're
+  // a first-class artifact type with their own renderer.
+  const ext = outputFileExtensionFromTitle(output);
+  if (ext === "dashboard") {
+    return "Dashboard";
+  }
   if (
     outputMetadataString(output, "origin_type") === "app" ||
     output.module_id
@@ -1088,6 +1095,25 @@ function outputKindLabel(output: WorkspaceOutputRecordPayload) {
     return "Document";
   }
   return output.output_type === "document" ? "Document" : "File";
+}
+
+// Lightweight extension lookup that doesn't depend on the metadata
+// envelope (which agent-authored files often skip). Reads the title
+// suffix only — used inside outputKindLabel before metadata parsing.
+function outputFileExtensionFromTitle(
+  output: WorkspaceOutputRecordPayload,
+): string {
+  const fromTitle = output.title?.trim() ?? "";
+  const dotIndex = fromTitle.lastIndexOf(".");
+  if (dotIndex > 0 && dotIndex < fromTitle.length - 1) {
+    return fromTitle.slice(dotIndex + 1).toLowerCase();
+  }
+  const path = outputMetadataString(output, "file_path") ?? output.file_path ?? "";
+  const pathDot = path.lastIndexOf(".");
+  if (pathDot > 0 && pathDot < path.length - 1) {
+    return path.slice(pathDot + 1).toLowerCase();
+  }
+  return "";
 }
 
 function outputChangeLabel(output: WorkspaceOutputRecordPayload) {
@@ -9100,7 +9126,10 @@ type OutputVisualKind =
   | "image"
   | "link"
   | "app"
+  | "dashboard"
   | "file";
+
+const DASHBOARD_EXTENSIONS = new Set(["dashboard"]);
 
 const SPREADSHEET_EXTENSIONS = new Set([
   "xlsx",
@@ -9181,6 +9210,9 @@ function outputVisualKind(
 
   const extension = outputFileExtension(output);
   if (extension) {
+    if (DASHBOARD_EXTENSIONS.has(extension)) {
+      return "dashboard";
+    }
     if (SPREADSHEET_EXTENSIONS.has(extension)) {
       return "spreadsheet";
     }
@@ -9253,6 +9285,12 @@ function outputVisualTheme(kind: OutputVisualKind): {
     case "app":
       return {
         Icon: Waypoints,
+        tileClass: "bg-primary/12 ring-1 ring-inset ring-primary/20",
+        iconClass: "text-primary",
+      };
+    case "dashboard":
+      return {
+        Icon: LayoutDashboard,
         tileClass: "bg-primary/12 ring-1 ring-inset ring-primary/20",
         iconClass: "text-primary",
       };
