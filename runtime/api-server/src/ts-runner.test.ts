@@ -330,7 +330,7 @@ test("validateTsRunnerRequest rejects missing required fields", () => {
   );
 });
 
-test("resolveTsRunnerBootstrapState loads requested and persisted harness session ids", () => {
+test("resolveTsRunnerBootstrapState ignores workspace persisted harness session when explicit session id is requested", () => {
   const sandboxRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "hb-ts-runner-bootstrap-"),
   );
@@ -365,10 +365,10 @@ test("resolveTsRunnerBootstrapState loads requested and persisted harness sessio
   assert.equal(bootstrap.workspaceDir, workspaceDir);
   assert.equal(bootstrap.harness, "pi");
   assert.equal(bootstrap.requestedHarnessSessionId, "requested-session-1");
-  assert.equal(bootstrap.persistedHarnessSessionId, "persisted-session-1");
+  assert.equal(bootstrap.persistedHarnessSessionId, null);
 });
 
-test("resolveTsRunnerBootstrapState uses the registered custom workspace path", () => {
+test("resolveTsRunnerBootstrapState uses the registered custom workspace path without cross-session persisted fallback", () => {
   const sandboxRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "hb-ts-runner-custom-bootstrap-"),
   );
@@ -422,7 +422,44 @@ test("resolveTsRunnerBootstrapState uses the registered custom workspace path", 
   assert.equal(bootstrap.workspaceDir, customWorkspaceDir);
   assert.equal(bootstrap.harness, "pi");
   assert.equal(bootstrap.requestedHarnessSessionId, "requested-custom-session");
-  assert.equal(bootstrap.persistedHarnessSessionId, "persisted-custom-session");
+  assert.equal(bootstrap.persistedHarnessSessionId, null);
+});
+
+test("resolveTsRunnerBootstrapState loads workspace persisted harness session only without an explicit session id", () => {
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-persisted-bootstrap-"),
+  );
+  process.env.HB_SANDBOX_ROOT = sandboxRoot;
+  const workspaceDir = path.join(sandboxRoot, "workspace", "workspace-1");
+  fs.mkdirSync(path.join(workspaceDir, ".holaboss"), { recursive: true });
+  fs.writeFileSync(
+    path.join(workspaceDir, ".holaboss", "harness-session-state.json"),
+    JSON.stringify({
+      version: 1,
+      harness: "pi",
+      main_session_id: "persisted-session-1",
+    }),
+    "utf8",
+  );
+
+  const bootstrap = resolveTsRunnerBootstrapState({
+    workspace_id: "workspace-1",
+    session_id: "session-1",
+    input_id: "input-1",
+    instruction: "hello",
+    context: {
+      _sandbox_runtime_exec_v1: {
+        harness: "pi",
+      },
+    },
+    model: null,
+    debug: false,
+  });
+
+  assert.equal(bootstrap.workspaceDir, workspaceDir);
+  assert.equal(bootstrap.harness, "pi");
+  assert.equal(bootstrap.requestedHarnessSessionId, null);
+  assert.equal(bootstrap.persistedHarnessSessionId, "persisted-session-1");
 });
 
 test("relayTsRunnerEvent persists harness_session_id from terminal events", async () => {

@@ -10,6 +10,8 @@ export interface DiagnosticsBundleExportParams {
   runtimeLogPath: string;
   runtimeDbPath: string;
   runtimeConfigPath: string;
+  workspaceId?: string | null;
+  workspaceSummary?: Record<string, unknown> | null;
   summary: Record<string, unknown>;
 }
 
@@ -32,6 +34,17 @@ const SENSITIVE_KEY_PATTERNS = [
   /refresh[_-]?token/i,
   /access[_-]?token/i,
 ];
+
+interface SqliteMasterObject {
+  type: "table" | "index" | "trigger" | "view";
+  name: string;
+  tbl_name: string;
+  sql: string | null;
+}
+
+interface SqliteColumnInfo {
+  name: string;
+}
 
 function shouldRedactKey(key: string): boolean {
   const normalized = key.trim();
@@ -76,9 +89,193 @@ async function copyIfPresent(sourcePath: string, targetPath: string) {
   return true;
 }
 
-async function backupRuntimeDatabase(sourcePath: string, targetPath: string) {
+function quoteSqlIdentifier(identifier: string): string {
+  return `"${identifier.replace(/"/g, "\"\"")}"`;
+}
+
+function tableColumns(
+  database: Database.Database,
+  tableName: string,
+): string[] {
+  return (
+    database
+      .prepare(`PRAGMA table_info(${quoteSqlIdentifier(tableName)})`)
+      .all() as SqliteColumnInfo[]
+  ).map((column) => column.name);
+}
+
+function workspaceFilterForTable(
+  tableName: string,
+  columnNames: Set<string>,
+): string | null {
+  if (tableName === "workspaces" && columnNames.has("id")) {
+    return "id";
+  }
+  if (columnNames.has("workspace_id")) {
+    return "workspace_id";
+  }
+  return null;
+}
+
+function copyWorkspaceTableRows(
+  source: Database.Database,
+  target: Database.Database,
+  tableName: string,
+  workspaceId: string,
+) {
+  const columns = tableColumns(source, tableName);
+  if (columns.length === 0) {
+    return;
+  }
+  const columnNames = new Set(columns);
+  const filterColumn = workspaceFilterForTable(tableName, columnNames);
+  if (!filterColumn) {
+    return;
+  }
+
+  const quotedColumns = columns.map(quoteSqlIdentifier).join(", ");
+  const placeholders = columns.map(() => "?").join(", ");
+  const quotedTable = quoteSqlIdentifier(tableName);
+  const select = source.prepare(
+    `SELECT ${quotedColumns} FROM ${quotedTable} WHERE ${quoteSqlIdentifier(
+      filterColumn,
+    )} = ?`,
+  );
+  const insert = target.prepare(
+    `INSERT INTO ${quotedTable} (${quotedColumns}) VALUES (${placeholders})`,
+  );
+
+  for (const row of select.iterate(workspaceId) as Iterable<
+    Record<string, unknown>
+  >) {
+    insert.run(...columns.map((column) => row[column]));
+  }
+}
+
+function isVirtualTableObject(object: SqliteMasterObject): boolean {
+  return /^CREATE\s+VIRTUAL\s+TABLE\b/i.test(object.sql ?? "");
+}
+
+function isVirtualTableShadowObject(
+  name: string,
+  virtualTableNames: Set<string>,
+): boolean {
+  for (const virtualTableName of virtualTableNames) {
+    if (name === virtualTableName || name.startsWith(`${virtualTableName}_`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function copyWorkspaceScopedRuntimeDatabase(
+  sourcePath: string,
+  targetPath: string,
+  workspaceId: string,
+) {
+  const source = new Database(sourcePath, {
+    fileMustExist: true,
+    readonly: true,
+  });
+  let target: Database.Database | null = null;
+  try {
+    const tableObjects = source
+      .prepare(
+        `
+        SELECT type, name, tbl_name, sql
+        FROM sqlite_master
+        WHERE type = 'table'
+          AND name NOT LIKE 'sqlite_%'
+          AND sql IS NOT NULL
+        ORDER BY name ASC
+      `,
+      )
+      .all() as SqliteMasterObject[];
+    const virtualTableNames = new Set(
+      tableObjects
+        .filter(isVirtualTableObject)
+        .map((object) => object.name),
+    );
+    const copiedTableNames = new Set<string>();
+
+    target = new Database(targetPath);
+    target.pragma("foreign_keys = OFF");
+    target.exec("BEGIN");
+    try {
+      for (const table of tableObjects) {
+        if (isVirtualTableShadowObject(table.name, virtualTableNames)) {
+          continue;
+        }
+        target.exec(table.sql ?? "");
+        copiedTableNames.add(table.name);
+      }
+
+      for (const tableName of copiedTableNames) {
+        copyWorkspaceTableRows(source, target, tableName, workspaceId);
+      }
+      target.exec("COMMIT");
+    } catch (error) {
+      target.exec("ROLLBACK");
+      throw error;
+    }
+
+    const postTableObjects = source
+      .prepare(
+        `
+        SELECT type, name, tbl_name, sql
+        FROM sqlite_master
+        WHERE type IN ('index', 'trigger', 'view')
+          AND name NOT LIKE 'sqlite_%'
+          AND sql IS NOT NULL
+        ORDER BY CASE type
+          WHEN 'index' THEN 0
+          WHEN 'trigger' THEN 1
+          ELSE 2
+        END, name ASC
+      `,
+      )
+      .all() as SqliteMasterObject[];
+    for (const object of postTableObjects) {
+      if (
+        object.tbl_name &&
+        !copiedTableNames.has(object.tbl_name) &&
+        object.type !== "view"
+      ) {
+        continue;
+      }
+      try {
+        target.exec(object.sql ?? "");
+      } catch {
+        // Keep the workspace data snapshot even if an auxiliary index/view
+        // cannot be recreated in a support bundle environment.
+      }
+    }
+    target.pragma("optimize");
+  } finally {
+    target?.close();
+    source.close();
+  }
+}
+
+async function backupRuntimeDatabase(
+  sourcePath: string,
+  targetPath: string,
+  workspaceId?: string | null,
+) {
   if (!existsSync(sourcePath)) {
     return false;
+  }
+
+  const normalizedWorkspaceId = workspaceId?.trim() || "";
+  if (normalizedWorkspaceId) {
+    await fs.rm(targetPath, { force: true });
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    copyWorkspaceScopedRuntimeDatabase(
+      sourcePath,
+      targetPath,
+      normalizedWorkspaceId,
+    );
+    return true;
   }
 
   const database = new Database(sourcePath, { fileMustExist: true });
@@ -164,6 +361,24 @@ export async function exportDiagnosticsBundle(
     });
     includedFiles.push("diagnostics-summary.json");
 
+    if (params.workspaceSummary) {
+      const workspaceSummaryPath = path.join(stagingRoot, "workspace.json");
+      await fs.writeFile(
+        workspaceSummaryPath,
+        `${JSON.stringify(
+          redactDiagnosticsValue(params.workspaceSummary),
+          null,
+          2,
+        )}\n`,
+        "utf8",
+      );
+      entries.push({
+        sourcePath: workspaceSummaryPath,
+        archivePath: "workspace.json",
+      });
+      includedFiles.push("workspace.json");
+    }
+
     const runtimeLogSnapshotPath = path.join(stagingRoot, "runtime.log");
     if (
       await copyIfPresent(params.runtimeLogPath, runtimeLogSnapshotPath)
@@ -177,7 +392,11 @@ export async function exportDiagnosticsBundle(
 
     const runtimeDbSnapshotPath = path.join(stagingRoot, "runtime.db");
     if (
-      await backupRuntimeDatabase(params.runtimeDbPath, runtimeDbSnapshotPath)
+      await backupRuntimeDatabase(
+        params.runtimeDbPath,
+        runtimeDbSnapshotPath,
+        params.workspaceId,
+      )
     ) {
       entries.push({
         sourcePath: runtimeDbSnapshotPath,

@@ -19,7 +19,7 @@ import {
   Waypoints,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AuthPanel } from "@/components/auth/AuthPanel";
 import { BillingSettingsPanel } from "@/components/billing/BillingSettingsPanel";
 import { IntegrationsPane } from "@/components/panes/IntegrationsPane";
@@ -33,6 +33,7 @@ import {
 } from "@/components/settings";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 
 const THEME_SWATCHES: Record<string, [string, string, string]> = {
   "amber-minimal-dark": ["#1a1814", "#e8853a", "#2e2920"],
@@ -254,17 +255,22 @@ export function SettingsDialog({
   onOpenExternalUrl,
 }: SettingsDialogProps) {
   const displayAppVersion = appVersion.trim() || "Unavailable";
+  const { hasHydratedWorkspaceList, selectedWorkspace, workspaces } =
+    useWorkspaceDesktop();
   const [diagnosticsExportState, setDiagnosticsExportState] = useState<{
     status: "idle" | "exporting" | "success" | "error";
     message: string;
     bundlePath: string;
     sizeBytes: number;
+    workspaceName: string;
   }>({
     status: "idle",
     message: "",
     bundlePath: "",
     sizeBytes: 0,
+    workspaceName: "",
   });
+  const [diagnosticsWorkspaceId, setDiagnosticsWorkspaceId] = useState("");
   const [diagnosticsPathCopied, setDiagnosticsPathCopied] = useState(false);
   const [appUpdateStatus, setAppUpdateStatus] =
     useState<AppUpdateStatusPayload | null>(null);
@@ -274,6 +280,47 @@ export function SettingsDialog({
   // ESC key handling moved to Base UI Dialog (built-in).
   // The previous manual document-level keydown listener fought with
   // other ESC consumers; Dialog scopes it correctly to the open dialog.
+
+  const diagnosticsWorkspaceOptions = useMemo(() => {
+    const byId = new Map<string, WorkspaceRecordPayload>();
+    if (selectedWorkspace) {
+      byId.set(selectedWorkspace.id, selectedWorkspace);
+    }
+    for (const workspace of workspaces) {
+      byId.set(workspace.id, workspace);
+    }
+    return Array.from(byId.values()).map((workspace) => ({
+      value: workspace.id,
+      label: workspace.name.trim() || "Untitled workspace",
+      description: workspace.id,
+    }));
+  }, [selectedWorkspace, workspaces]);
+
+  const diagnosticsSelectedWorkspace = useMemo(
+    () =>
+      workspaces.find((workspace) => workspace.id === diagnosticsWorkspaceId) ??
+      (selectedWorkspace?.id === diagnosticsWorkspaceId
+        ? selectedWorkspace
+        : null),
+    [diagnosticsWorkspaceId, selectedWorkspace, workspaces],
+  );
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const selectedId = selectedWorkspace?.id ?? "";
+    const fallbackId = selectedId || diagnosticsWorkspaceOptions[0]?.value || "";
+    setDiagnosticsWorkspaceId((current) => {
+      if (
+        current &&
+        diagnosticsWorkspaceOptions.some((option) => option.value === current)
+      ) {
+        return current;
+      }
+      return fallbackId;
+    });
+  }, [diagnosticsWorkspaceOptions, open, selectedWorkspace?.id]);
 
   useEffect(() => {
     if (!open) {
@@ -309,6 +356,16 @@ export function SettingsDialog({
   }, [appUpdateStatus?.downloaded]);
 
   async function handleExportDiagnosticsBundle() {
+    const workspaceId = diagnosticsWorkspaceId.trim();
+    if (!workspaceId) {
+      setDiagnosticsExportState((prev) => ({
+        ...prev,
+        status: "error",
+        message: "Choose a workspace before exporting diagnostics.",
+      }));
+      return;
+    }
+
     setDiagnosticsPathCopied(false);
     setDiagnosticsExportState((prev) => ({
       ...prev,
@@ -316,12 +373,16 @@ export function SettingsDialog({
       message: "",
     }));
     try {
-      const result = await window.electronAPI.diagnostics.exportBundle();
+      const result = await window.electronAPI.diagnostics.exportBundle({
+        workspaceId,
+      });
       setDiagnosticsExportState({
         status: "success",
         message: "",
         bundlePath: result.bundlePath,
         sizeBytes: result.archiveSizeBytes,
+        workspaceName:
+          result.workspaceName ?? diagnosticsSelectedWorkspace?.name ?? "",
       });
     } catch (error) {
       setDiagnosticsExportState((prev) => ({
@@ -657,9 +718,33 @@ export function SettingsDialog({
 
                 <SettingsSection title="Diagnostics">
                   <SettingsCard>
+                    <SettingsMenuSelectRow
+                      label="Workspace"
+                      description={
+                        diagnosticsWorkspaceOptions.length > 0
+                          ? "Choose the workspace to include in the diagnostics bundle."
+                          : hasHydratedWorkspaceList
+                            ? "No workspace is available to export."
+                            : "Loading workspaces."
+                      }
+                      leading={
+                        <FolderOpen className="size-4 text-muted-foreground" />
+                      }
+                      value={diagnosticsWorkspaceId}
+                      onValueChange={setDiagnosticsWorkspaceId}
+                      options={diagnosticsWorkspaceOptions}
+                      triggerWidth="w-[240px]"
+                      disabled={
+                        diagnosticsExportState.status === "exporting" ||
+                        diagnosticsWorkspaceOptions.length === 0
+                      }
+                      placeholder={
+                        hasHydratedWorkspaceList ? "No workspace" : "Loading"
+                      }
+                    />
                     <SettingsRow
                       label="Diagnostics bundle"
-                      description="Logs, a database snapshot, and a redacted config. Stays on your device."
+                      description="Logs, a workspace-scoped database snapshot, and a redacted config. Stays on your device."
                       leading={
                         <Package className="size-4 text-muted-foreground" />
                       }
@@ -670,7 +755,8 @@ export function SettingsDialog({
                         size="sm"
                         onClick={() => void handleExportDiagnosticsBundle()}
                         disabled={
-                          diagnosticsExportState.status === "exporting"
+                          diagnosticsExportState.status === "exporting" ||
+                          !diagnosticsWorkspaceId
                         }
                       >
                         {diagnosticsExportState.status === "exporting" ? (
@@ -698,6 +784,11 @@ export function SettingsDialog({
                             diagnosticsExportState.sizeBytes,
                           )}
                         </span>
+                        {diagnosticsExportState.workspaceName ? (
+                          <span className="max-w-[160px] shrink truncate text-muted-foreground">
+                            · {diagnosticsExportState.workspaceName}
+                          </span>
+                        ) : null}
                         <div className="ml-auto flex shrink-0 items-center gap-1">
                           <Button
                             type="button"

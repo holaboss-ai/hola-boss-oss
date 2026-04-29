@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sourcePath = path.join(__dirname, "ChatPane.tsx");
 
-test("chat composer compact reasoning control can expand past icon-only width", async () => {
+test("chat composer compact reasoning control minimizes to icon-only", async () => {
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(
@@ -20,7 +20,7 @@ test("chat composer compact reasoning control can expand past icon-only width", 
   );
   assert.match(
     source,
-    /const showCompactLabel =\s*!compact \|\|\s*typeof compactWidth !== "number" \|\|\s*compactWidth >= compactLabelMinWidth;/,
+    /const showCompactLabel = !compact \|\| typeof compactWidth !== "number";/,
   );
   assert.match(
     source,

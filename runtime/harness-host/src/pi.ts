@@ -1089,20 +1089,16 @@ function wrapToolWithWorkspaceBoundary<TTool extends { name: string; execute: (.
 }
 
 function resolveRequestedSessionFile(request: HarnessHostPiRequest): string | null {
-  const candidates = [
-    firstNonEmptyString(request.harness_session_id),
-    firstNonEmptyString(request.persisted_harness_session_id),
-  ];
-  const seen = new Set<string>();
-  for (const candidate of candidates) {
-    if (!candidate || seen.has(candidate)) {
-      continue;
-    }
-    seen.add(candidate);
-    const resolved = path.resolve(candidate);
-    if (fs.existsSync(resolved)) {
-      return resolved;
-    }
+  const requestedSessionId = firstNonEmptyString(request.harness_session_id);
+  if (requestedSessionId) {
+    const resolved = path.resolve(requestedSessionId);
+    return fs.existsSync(resolved) ? resolved : null;
+  }
+
+  const persistedSessionId = firstNonEmptyString(request.persisted_harness_session_id);
+  if (persistedSessionId) {
+    const resolved = path.resolve(persistedSessionId);
+    return fs.existsSync(resolved) ? resolved : null;
   }
   return null;
 }

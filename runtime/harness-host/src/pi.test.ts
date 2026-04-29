@@ -3058,7 +3058,7 @@ test("buildPiPromptPayload frames persisted todo state as advisory continuity wh
   }
 });
 
-test("buildPiPromptPayload falls back to persisted session file when requested id is stale", async () => {
+test("buildPiPromptPayload does not fall back to persisted session file when requested id is stale", async () => {
   const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-stale-requested-session-"));
   const stateDir = path.join(workspaceDir, ".holaboss", "pi-agent");
   fs.mkdirSync(path.join(workspaceDir, ".holaboss", "pi-sessions"), { recursive: true });
@@ -3097,7 +3097,7 @@ test("buildPiPromptPayload falls back to persisted session file when requested i
       persisted_harness_session_id: persistedSessionPath,
     });
 
-    assert.match(prompt.text, /Resumed session note:/);
+    assert.doesNotMatch(prompt.text, /Resumed session note:/);
   } finally {
     fs.rmSync(workspaceDir, { recursive: true, force: true });
   }

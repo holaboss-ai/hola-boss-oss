@@ -41,7 +41,6 @@ import {
   Lightbulb,
   Link2,
   Loader2,
-  MessageSquare,
   Paperclip,
   PencilLine,
   Plus,
@@ -62,7 +61,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { type BrowserChatCommentDraftItem } from "@/components/panes/useBrowserCaptureActions";
 import {
   Tooltip,
   TooltipContent,
@@ -256,13 +254,6 @@ interface ImageAttachmentPreviewState {
   errorMessage: string;
 }
 
-interface PendingBrowserCommentDraft {
-  tabId: string;
-  pageTitle: string;
-  url: string;
-  comments: BrowserChatCommentDraftItem[];
-}
-
 function attachmentLooksLikeImage(
   name: string,
   mimeType?: string | null,
@@ -361,7 +352,7 @@ const CHAT_HISTORY_PAGE_SIZE = 10;
 const CHAT_HISTORY_TOP_LOAD_THRESHOLD_PX = 96;
 const CHAT_SCROLLBAR_MIN_THUMB_HEIGHT_PX = 40;
 const COMPOSER_FOOTER_GAP_PX = 8;
-const COMPOSER_FULL_MODEL_CONTROL_WIDTH_PX = 168;
+const COMPOSER_FULL_MODEL_CONTROL_WIDTH_PX = 240;
 const COMPOSER_FULL_THINKING_CONTROL_WIDTH_PX = 88;
 const COMPOSER_FULL_PROVIDER_SETUP_WIDTH_PX = 320;
 const COMPOSER_COMPACT_MODEL_CONTROL_MAX_WIDTH_PX = 168;
@@ -2951,15 +2942,6 @@ interface ChatPaneExplorerAttachmentRequest {
   requestKey: number;
 }
 
-interface ChatPaneBrowserCommentRequest {
-  tabId: string;
-  pageTitle: string;
-  url: string;
-  comments: BrowserChatCommentDraftItem[];
-  requestKey: number;
-  mode?: "replace" | "append";
-}
-
 interface ChatPaneBrowserJumpRequest {
   sessionId: string;
   requestKey: number;
@@ -2980,8 +2962,6 @@ interface ChatPaneProps {
   onComposerPrefillConsumed?: (requestKey: number) => void;
   explorerAttachmentRequest?: ChatPaneExplorerAttachmentRequest | null;
   onExplorerAttachmentRequestConsumed?: (requestKey: number) => void;
-  browserCommentRequest?: ChatPaneBrowserCommentRequest | null;
-  onBrowserCommentRequestConsumed?: (requestKey: number) => void;
   onActiveSessionIdChange?: (sessionId: string | null) => void;
   browserJumpRequest?: ChatPaneBrowserJumpRequest | null;
   onBrowserJumpRequestConsumed?: (
@@ -3012,8 +2992,6 @@ export function ChatPane({
   onComposerPrefillConsumed,
   explorerAttachmentRequest = null,
   onExplorerAttachmentRequestConsumed,
-  browserCommentRequest = null,
-  onBrowserCommentRequestConsumed,
   onActiveSessionIdChange,
   browserJumpRequest = null,
   onBrowserJumpRequestConsumed,
@@ -3063,8 +3041,6 @@ export function ChatPane({
   const [pendingAttachments, setPendingAttachments] = useState<
     PendingAttachment[]
   >([]);
-  const [pendingBrowserCommentDraft, setPendingBrowserCommentDraft] =
-    useState<PendingBrowserCommentDraft | null>(null);
   const [availableWorkspaceSkills, setAvailableWorkspaceSkills] = useState<
     WorkspaceSkillRecordPayload[]
   >([]);
@@ -3181,7 +3157,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   const lastHandledLocalSessionOpenRequestKeyRef = useRef(0);
   const lastHandledComposerPrefillRequestKeyRef = useRef(0);
   const lastHandledExplorerAttachmentRequestKeyRef = useRef(0);
-  const lastHandledBrowserCommentRequestKeyRef = useRef(0);
   const consumedSessionOpenRequestKeysRef = useRef<Set<number>>(new Set());
   const localSessionOpenRequestRef = useRef<ChatPaneSessionOpenRequest | null>(
     null,
@@ -3255,8 +3230,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     const hasDraftState =
       input.trim().length > 0 ||
       quotedSkillIds.length > 0 ||
-      pendingAttachments.length > 0 ||
-      (pendingBrowserCommentDraft?.comments.length ?? 0) > 0;
+      pendingAttachments.length > 0;
     if (!hasDraftState) {
       return false;
     }
@@ -3271,7 +3245,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     setQuotedSkillIds([]);
     setPendingAttachments([]);
     setAttachmentGateMessage("");
-    clearPendingBrowserComments();
     return true;
   }
 
@@ -4720,7 +4693,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
 
   useEffect(() => {
     setPendingAttachments([]);
-    setPendingBrowserCommentDraft(null);
     setQuotedSkillIds([]);
   }, [selectedWorkspaceId]);
 
@@ -4831,7 +4803,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
       setInput(parsedPrefill.body);
       setQuotedSkillIds(parsedPrefill.skillIds);
       setPendingAttachments([]);
-      setPendingBrowserCommentDraft(null);
     }
     onComposerPrefillConsumed?.(requestKey);
   }, [
@@ -5814,12 +5785,9 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
 
   async function sendMessage(text: string) {
     const trimmed = text.trim();
-    const browserCommentAttachmentEntries =
-      pendingBrowserCommentAttachmentEntries();
     if (
       (!trimmed &&
         pendingAttachments.length === 0 &&
-        browserCommentAttachmentEntries.length === 0 &&
         quotedSkillIds.length === 0) ||
       isSubmittingMessage
     ) {
@@ -5940,10 +5908,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
         );
       }
 
-      const attachmentEntries = [
-        ...pendingAttachments,
-        ...browserCommentAttachmentEntries,
-      ];
+      const attachmentEntries = pendingAttachments;
       const localFiles = attachmentEntries.filter(
         (entry): entry is PendingLocalAttachmentFile =>
           entry.source === "local-file",
@@ -6038,7 +6003,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
       setInput("");
       setQuotedSkillIds([]);
       setPendingAttachments([]);
-      clearPendingBrowserComments();
       setChatErrorMessage("");
       if (!queueOntoActiveRun) {
         const currentStreamId = activeStreamIdRef.current;
@@ -6453,22 +6417,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     ]);
   }
 
-  function pendingBrowserCommentAttachmentEntries() {
-    return (pendingBrowserCommentDraft?.comments ?? []).map(
-      (comment): PendingLocalAttachmentFile => ({
-        id: pendingAttachmentId(
-          `browser-comment-${comment.id}-${comment.file.name}-${comment.file.size}`,
-        ),
-        source: "local-file",
-        file: comment.file,
-      }),
-    );
-  }
-
-  function clearPendingBrowserComments() {
-    setPendingBrowserCommentDraft(null);
-  }
-
   useEffect(() => {
     const requestKey = explorerAttachmentRequest?.requestKey ?? 0;
     if (
@@ -6485,53 +6433,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     explorerAttachmentRequest?.files,
     explorerAttachmentRequest?.requestKey,
     onExplorerAttachmentRequestConsumed,
-  ]);
-
-  useEffect(() => {
-    const requestKey = browserCommentRequest?.requestKey ?? 0;
-    if (
-      requestKey <= 0 ||
-      requestKey === lastHandledBrowserCommentRequestKeyRef.current
-    ) {
-      return;
-    }
-
-    lastHandledBrowserCommentRequestKeyRef.current = requestKey;
-    const browserCommentMode = browserCommentRequest?.mode ?? "replace";
-    if ((browserCommentRequest?.comments.length ?? 0) === 0) {
-      setPendingBrowserCommentDraft(null);
-      onBrowserCommentRequestConsumed?.(requestKey);
-      return;
-    }
-
-    if (browserCommentMode === "append") {
-      setPendingBrowserCommentDraft((current) => ({
-        tabId: browserCommentRequest?.tabId ?? current?.tabId ?? "",
-        pageTitle:
-          browserCommentRequest?.pageTitle ?? current?.pageTitle ?? "",
-        url: browserCommentRequest?.url ?? current?.url ?? "",
-        comments: [
-          ...(current?.comments ?? []),
-          ...(browserCommentRequest?.comments ?? []),
-        ],
-      }));
-    } else {
-      setPendingBrowserCommentDraft({
-        tabId: browserCommentRequest?.tabId ?? "",
-        pageTitle: browserCommentRequest?.pageTitle ?? "",
-        url: browserCommentRequest?.url ?? "",
-        comments: browserCommentRequest?.comments ?? [],
-      });
-    }
-    onBrowserCommentRequestConsumed?.(requestKey);
-  }, [
-    browserCommentRequest?.comments,
-    browserCommentRequest?.mode,
-    browserCommentRequest?.pageTitle,
-    browserCommentRequest?.requestKey,
-    browserCommentRequest?.tabId,
-    browserCommentRequest?.url,
-    onBrowserCommentRequestConsumed,
   ]);
 
   useEffect(() => {
@@ -6693,7 +6594,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
         event.currentTarget.value.trim().length === 0 &&
         quotedSkillIds.length === 0 &&
         pendingAttachments.length === 0 &&
-        (pendingBrowserCommentDraft?.comments.length ?? 0) === 0 &&
         selectionStart === 0 &&
         selectionEnd === 0 &&
         recallLatestComposerInput()
@@ -7288,13 +7188,10 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     composerBaseDisabledReason ||
     (isSubmittingMessage ? "Submitting message..." : "");
   const composerDisabled = Boolean(composerDisabledReason);
-  const hasPendingBrowserCommentImages =
-    (pendingBrowserCommentDraft?.comments.length ?? 0) > 0;
   const pendingImageInputUnsupportedMessage =
-    (pendingAttachments.some((attachment) =>
+    pendingAttachments.some((attachment) =>
       pendingAttachmentIsImage(attachment),
-    ) ||
-      hasPendingBrowserCommentImages) &&
+    ) &&
     !selectedModelSupportsImageInput
       ? `${imageInputUnsupportedMessage(selectedModelDisplayLabel)} Remove the attached image or switch models.`
       : "";
@@ -7321,9 +7218,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
       composer: {
         input_length: input.length,
         quoted_skill_count: quotedSkillIds.length,
-        pending_attachment_count:
-          pendingAttachments.length +
-          (pendingBrowserCommentDraft?.comments.length ?? 0),
+        pending_attachment_count: pendingAttachments.length,
         disabled: composerDisabled,
         disabled_reason: composerDisabledReason || null,
         attachment_gate_message: attachmentGateMessage || null,
@@ -7390,7 +7285,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
       liveExecutionItems.length,
       messages.length,
       pendingAttachments.length,
-      pendingBrowserCommentDraft?.comments.length,
       pendingImageInputUnsupportedMessage,
       quotedSkillIds.length,
       resolvedChatModel,
@@ -7511,9 +7405,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
 
   const textareaPlaceholder = isOnboardingVariant
     ? "Answer the onboarding prompt or share setup details"
-    : hasPendingBrowserCommentImages
-      ? "Ask for follow-up changes"
-      : "Ask anything";
+    : "Ask anything";
   const showHistoryRestoreScreen = isLoadingHistory || isHistoryViewportPending;
   const chatScrollRange = Math.max(
     0,
@@ -7979,7 +7871,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                           quotedSkills={quotedSkills}
                           slashCommands={slashCommandOptions}
                           attachments={pendingAttachmentItems}
-                          browserComments={pendingBrowserCommentDraft}
                           isResponding={isResponding}
                           pausePending={isPausePending}
                           pauseDisabled={isSubmittingMessage}
@@ -8031,7 +7922,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                             }
                           }}
                           onRemoveQuotedSkill={removeQuotedSkill}
-                          onClearBrowserComments={clearPendingBrowserComments}
                           onRemoveAttachment={removePendingAttachment}
                           onPreviewAttachment={openImageAttachmentPreview}
                         />
@@ -8109,7 +7999,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                       quotedSkills={quotedSkills}
                       slashCommands={slashCommandOptions}
                       attachments={pendingAttachmentItems}
-                      browserComments={pendingBrowserCommentDraft}
                       isResponding={isResponding}
                       pausePending={isPausePending}
                       pauseDisabled={isSubmittingMessage}
@@ -8159,7 +8048,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                         }
                       }}
                       onRemoveQuotedSkill={removeQuotedSkill}
-                      onClearBrowserComments={clearPendingBrowserComments}
                       onRemoveAttachment={removePendingAttachment}
                       onPreviewAttachment={openImageAttachmentPreview}
                     />
@@ -8321,7 +8209,6 @@ interface ComposerProps {
   quotedSkills: ChatComposerQuotedSkillItem[];
   slashCommands: ChatComposerSlashCommandOption[];
   attachments: AttachmentListItem[];
-  browserComments: PendingBrowserCommentDraft | null;
   isResponding: boolean;
   pausePending: boolean;
   pauseDisabled: boolean;
@@ -8355,7 +8242,6 @@ interface ComposerProps {
   onAddExplorerAttachments: (files: ExplorerAttachmentDragPayload[]) => void;
   onSelectSlashCommand: (command: ChatComposerSlashCommandOption) => void;
   onRemoveQuotedSkill: (skillId: string) => void;
-  onClearBrowserComments: () => void;
   onRemoveAttachment: (attachmentId: string) => void;
   onPreviewAttachment: (attachment: AttachmentListItem) => void;
 }
@@ -10239,11 +10125,7 @@ function ThinkingValueSelect({
   const selectedThinkingLabel = displayThinkingValueLabel(
     selectedThinkingValue,
   );
-  const compactLabelMinWidth = 52 + selectedThinkingLabel.length * 7;
-  const showCompactLabel =
-    !compact ||
-    typeof compactWidth !== "number" ||
-    compactWidth >= compactLabelMinWidth;
+  const showCompactLabel = !compact || typeof compactWidth !== "number";
 
   const renderOption = (value: string) => {
     const active = value === selectedThinkingValue;
@@ -10287,7 +10169,7 @@ function ThinkingValueSelect({
               compact
                 ? showCompactLabel
                   ? "w-full min-w-0 justify-between px-2.5"
-                  : "w-full min-w-0 justify-start px-2.5"
+                  : "w-full min-w-0 justify-center px-2.5"
                 : "px-2"
             }`}
           >
@@ -10335,7 +10217,6 @@ function Composer({
   quotedSkills,
   slashCommands,
   attachments,
-  browserComments,
   isResponding,
   pausePending,
   pauseDisabled,
@@ -10369,7 +10250,6 @@ function Composer({
   onAddExplorerAttachments,
   onSelectSlashCommand,
   onRemoveQuotedSkill,
-  onClearBrowserComments,
   onRemoveAttachment,
   onPreviewAttachment,
 }: ComposerProps) {
@@ -10447,11 +10327,6 @@ function Composer({
       ?.selectedLabel ??
     modelOptions.find((option) => option.value === selectedModel)?.label ??
     resolvedModelLabel;
-  const browserCommentCount = browserComments?.comments.length ?? 0;
-  const browserCommentPageLabel =
-    browserComments?.pageTitle.trim() ||
-    browserComments?.url.trim() ||
-    "Browser page";
   const cancelComposerFooterLayoutSync = () => {
     if (composerFooterLayoutSyncFrameRef.current === null) {
       return;
@@ -10876,30 +10751,6 @@ function Composer({
           className="hidden"
           onChange={onAttachmentInputChange}
         />
-        {browserCommentCount > 0 ? (
-          <div className="border-b border-border px-4 py-3">
-            <div className="flex min-w-0 items-center gap-2">
-              <div className="inline-flex shrink-0 items-center gap-2 rounded-full border border-primary/20 bg-primary/8 px-3 py-1.5 text-xs font-medium text-foreground">
-                <MessageSquare className="size-3.5 text-primary" />
-                <span>
-                  {browserCommentCount} comment
-                  {browserCommentCount === 1 ? "" : "s"}
-                </span>
-              </div>
-              <div className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                {browserCommentPageLabel}
-              </div>
-              <button
-                type="button"
-                onClick={onClearBrowserComments}
-                className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-muted-foreground transition hover:bg-accent hover:text-foreground"
-                aria-label="Clear browser comments"
-              >
-                <X className="size-3.5" />
-              </button>
-            </div>
-          </div>
-        ) : null}
         {attachments.length > 0 ? (
           <div className="border-b border-border px-4 py-3">
             <AttachmentList
