@@ -1458,6 +1458,19 @@ test("assistant turns can use a soft structural band without adding bubble chrom
   );
 });
 
+test("main-session assistant turns are labeled as Hola", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const assistantLabel = isViewingBoundMainSession \? "Hola" : activeSessionTitle;/,
+  );
+  assert.doesNotMatch(
+    source,
+    /const assistantLabel = selectedWorkspace\?\.name \|\| "Assistant";/,
+  );
+});
+
 test("chat pane keeps the current stream attached while queueing a follow-up input", async () => {
   const source = await readFile(sourcePath, "utf8");
 

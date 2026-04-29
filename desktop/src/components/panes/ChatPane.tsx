@@ -6640,7 +6640,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     composerIsComposingRef.current = false;
   };
 
-  const assistantLabel = selectedWorkspace?.name || "Assistant";
   const assistantMode = isOnboardingVariant
     ? "workspace setup"
     : assistantMetaLabel(
@@ -6935,6 +6934,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
         "Main session")
     : (activeSessionRecord?.title?.trim() ||
         defaultWorkspaceSessionTitle(activeSessionRecord?.kind, activeSessionId));
+  const assistantLabel = isViewingBoundMainSession ? "Hola" : activeSessionTitle;
   const activeSessionDetail = isViewingBoundMainSession
     ? "Main session"
     : isReadOnlyInspectionSession

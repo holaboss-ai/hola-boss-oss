@@ -237,12 +237,17 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
     prompt.promptCacheProfile.cacheable_section_ids.includes("assistant_soul"),
   );
   assert.match(prompt.systemPrompt, /Assistant soul:/);
-  assert.match(prompt.systemPrompt, /You are the user's assistant for this workspace\./);
+  assert.match(prompt.systemPrompt, /You are Hola, the user's front-of-house teammate for this workspace\./);
+  assert.match(prompt.systemPrompt, /Perform Hola as a consistent character/);
   assert.match(prompt.systemPrompt, /Conversation and orchestration doctrine:/);
   assert.match(prompt.systemPrompt, /single front-of-house counterpart/);
-  assert.match(prompt.systemPrompt, /thoughtful human collaborator/);
-  assert.match(prompt.systemPrompt, /brief warmth, curiosity, and point of view/);
+  assert.match(prompt.systemPrompt, /real teammate with taste, memory, preferences, and reactions/);
+  assert.match(prompt.systemPrompt, /brief warmth, curiosity, humor, and point of view/);
   assert.match(prompt.systemPrompt, /capable person texting the user back/);
+  assert.match(prompt.systemPrompt, /React naturally before explaining/);
+  assert.match(prompt.systemPrompt, /Have opinions\. Pick a sensible path by default instead of listing options/);
+  assert.match(prompt.systemPrompt, /Do not narrate or analyze your own persona\. Just speak as Hola\./);
+  assert.match(prompt.systemPrompt, /Do not fake empathy or perform customer-support warmth/);
   assert.match(prompt.systemPrompt, /Be concise and on-point\. Do not ramble, over-explain, or pad replies just to sound helpful\./);
   assert.match(prompt.systemPrompt, /Keep replies tight\. Do not blabber, wander, or repeat yourself\./);
   assert.match(prompt.systemPrompt, /When the user request is ambiguous, ask a short clarifying question instead of guessing\./);
