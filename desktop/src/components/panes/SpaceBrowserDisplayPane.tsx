@@ -4,7 +4,6 @@ import {
   ChevronRight,
   Globe,
   Loader2,
-  MessageSquarePlus,
   RefreshCcw,
   Star,
   X,
@@ -21,7 +20,6 @@ import {
 import { browserSurfaceStatusSummary } from "@/components/panes/browserSessionUi";
 import {
   BrowserCaptureStatusToast,
-  type BrowserChatCommentDraftPayload,
   useBrowserCaptureActions,
 } from "@/components/panes/useBrowserCaptureActions";
 import { useBrowserGlowPreview } from "@/components/panes/useBrowserGlowPreview";
@@ -65,7 +63,6 @@ interface SpaceBrowserDisplayPaneProps {
   layoutSyncKey?: string;
   embedded?: boolean;
   jumpPulseKey?: number;
-  onAttachCommentsToChat?: (payload: BrowserChatCommentDraftPayload) => void;
 }
 
 export function SpaceBrowserDisplayPane({
@@ -74,7 +71,6 @@ export function SpaceBrowserDisplayPane({
   layoutSyncKey = "",
   embedded = false,
   jumpPulseKey = 0,
-  onAttachCommentsToChat,
 }: SpaceBrowserDisplayPaneProps) {
   const [inputValue, setInputValue] = useState("");
   const [addressFocused, setAddressFocused] = useState(false);
@@ -118,12 +114,8 @@ export function SpaceBrowserDisplayPane({
   const {
     actionStatus,
     captureScreenshotToClipboard,
-    captureCommentsForChat,
     screenshotCapturePending,
-    commentCapturePending,
-  } = useBrowserCaptureActions({
-    onAttachCommentsToChat,
-  });
+  } = useBrowserCaptureActions();
 
   const [jumpFlashActive, setJumpFlashActive] = useState(false);
   useEffect(() => {
@@ -464,27 +456,12 @@ export function SpaceBrowserDisplayPane({
             aria-label="Copy browser screenshot"
             title="Copy browser screenshot"
             onClick={() => void captureScreenshotToClipboard()}
-            disabled={!activeTab.initialized || commentCapturePending}
+            disabled={!activeTab.initialized}
           >
             {screenshotCapturePending ? (
               <Loader2 size={13} className="animate-spin" />
             ) : (
               <Camera size={13} />
-            )}
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Add browser comments to chat"
-            title="Add browser comments to chat"
-            onClick={() => void captureCommentsForChat()}
-            disabled={!activeTab.initialized || screenshotCapturePending}
-          >
-            {commentCapturePending ? (
-              <Loader2 size={13} className="animate-spin" />
-            ) : (
-              <MessageSquarePlus size={13} />
             )}
           </Button>
         </div>
