@@ -109,6 +109,64 @@ test("Pi runtime tools execute through the local runtime capability API", async 
   assert.deepEqual(result.details, { tool_id: "holaboss_onboarding_complete" });
 });
 
+test("Pi runtime tools compact large capability results and preserve raw details", async () => {
+  const largeBody = "search-result ".repeat(4000);
+  const payload = { ok: true, results: [{ title: "Large result", body: largeBody }] };
+  const fetchImpl: typeof fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/api/v1/capabilities/runtime-tools")) {
+      return new Response(JSON.stringify({ available: true }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+
+    if (url.endsWith("/api/v1/capabilities/runtime-tools/web-search")) {
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+    throw new Error(`unexpected request: ${url}`);
+  };
+
+  const tools = await resolvePiRuntimeToolDefinitions({
+    runtimeApiBaseUrl: "http://127.0.0.1:5060",
+    fetchImpl,
+  });
+  const searchTool = tools.find((tool) => tool.name === "web_search");
+  assert.ok(searchTool);
+
+  const result = await searchTool.execute("call-1", { query: "large" }, undefined, undefined, {} as never);
+  assert.equal(result.content[0]?.type, "text");
+  assert.ok((result.content[0]?.text.length ?? 0) < largeBody.length);
+
+  const envelope = JSON.parse(String(result.content[0]?.text ?? "")) as {
+    tool_result_format?: string;
+    status?: string;
+    ok?: boolean;
+    serialized_bytes?: number;
+    raw_result?: { stored_in?: string };
+  };
+  assert.equal(envelope.tool_result_format, "compact_envelope");
+  assert.equal(envelope.status, "truncated");
+  assert.equal(envelope.ok, true);
+  assert.equal(envelope.raw_result?.stored_in, "tool_result.details.raw");
+  assert.equal(typeof envelope.serialized_bytes, "number");
+  assert.ok((envelope.serialized_bytes ?? 0) > 32768);
+
+  const details = result.details as {
+    tool_id?: string;
+    raw?: unknown;
+    raw_result_bytes?: number;
+    model_result_bytes?: number;
+  };
+  assert.equal(details.tool_id, "web_search");
+  assert.deepEqual(details.raw, payload);
+  assert.equal(details.raw_result_bytes, envelope.serialized_bytes);
+  assert.equal(details.model_result_bytes, new TextEncoder().encode(result.content[0]?.text ?? "").length);
+});
+
 test("Pi runtime cronjob tools send instruction separately from description", async () => {
   const requests: Array<{
     method: string;

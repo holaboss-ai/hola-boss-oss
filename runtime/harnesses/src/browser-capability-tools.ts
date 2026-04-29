@@ -13,7 +13,6 @@ export interface HarnessDesktopBrowserToolOptions {
   runtimeApiBaseUrl: string;
   workspaceId?: string | null;
   sessionId?: string | null;
-  inputId?: string | null;
   space?: "agent" | "user" | null;
   fetchImpl?: typeof fetch;
 }
@@ -41,6 +40,55 @@ function literalStringUnion(values: string[], description: string): Record<strin
   };
 }
 
+function browserLocatorProperties(): Record<string, unknown> {
+  return {
+    ref: {
+      type: "string",
+      description: "Stable ref returned by browser_find.",
+    },
+    text: {
+      type: "string",
+      description: "Visible text to find. Matches case-insensitively unless exact=true.",
+    },
+    label: {
+      type: "string",
+      description: "Accessible label, title, aria-label, value, or nearby label text to find.",
+    },
+    placeholder: {
+      type: "string",
+      description: "Input placeholder text to find.",
+    },
+    role: {
+      type: "string",
+      description: "ARIA or inferred element role, such as button, link, textbox, combobox, option, dialog, or menuitem.",
+    },
+    selector: {
+      type: "string",
+      description: "CSS selector to locate the target.",
+    },
+    xpath: {
+      type: "string",
+      description: "XPath expression to locate the target.",
+    },
+    exact: {
+      type: "boolean",
+      description: "Require an exact normalized text/label/placeholder match.",
+    },
+    scope: {
+      anyOf: [
+        { type: "string", const: "main" },
+        { type: "string", const: "viewport" },
+        { type: "string", const: "focused" },
+        { type: "string", const: "dialog" },
+        { type: "string", const: "active_dialog" },
+        { type: "string", const: "modal" },
+      ],
+      description:
+        "Limit matching to the main document, current viewport, focused subtree, or active dialog. `active_dialog` and `modal` are accepted aliases for `dialog`.",
+    },
+  };
+}
+
 function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unknown> {
   switch (toolId) {
     case "browser_navigate":
@@ -51,11 +99,6 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
             type: "string",
             description: "The URL to open in the in-app browser.",
             minLength: 1,
-          },
-          confirm: {
-            type: "boolean",
-            description:
-              "Set true when the runtime browser safety policy requires explicit confirmation for this action category.",
           },
         },
         required: ["url"],
@@ -74,94 +117,42 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
             type: "boolean",
             description: "Open the tab without switching focus.",
           },
-          confirm: {
-            type: "boolean",
-            description:
-              "Set true when the runtime browser safety policy requires explicit confirmation for this action category.",
-          },
         },
         required: ["url"],
-        additionalProperties: false,
-      };
-    case "browser_wait_for_selector":
-      return {
-        type: "object",
-        properties: {
-          selector: {
-            type: "string",
-            description: "CSS selector to wait for.",
-            minLength: 1,
-          },
-          state: literalStringUnion(
-            ["present", "visible", "hidden"],
-            "Selector wait mode.",
-          ),
-          timeout_ms: {
-            type: "integer",
-            description: "Maximum wait time in milliseconds.",
-            minimum: 1,
-          },
-          interval_ms: {
-            type: "integer",
-            description: "Polling interval in milliseconds.",
-            minimum: 1,
-          },
-        },
-        required: ["selector"],
-        additionalProperties: false,
-      };
-    case "browser_wait_for_url":
-      return {
-        type: "object",
-        properties: {
-          url: {
-            type: "string",
-            description: "Expected URL token or pattern.",
-            minLength: 1,
-          },
-          mode: literalStringUnion(
-            ["exact", "contains", "regex"],
-            "URL matching mode.",
-          ),
-          timeout_ms: {
-            type: "integer",
-            description: "Maximum wait time in milliseconds.",
-            minimum: 1,
-          },
-          interval_ms: {
-            type: "integer",
-            description: "Polling interval in milliseconds.",
-            minimum: 1,
-          },
-        },
-        required: ["url"],
-        additionalProperties: false,
-      };
-    case "browser_wait_for_load_state":
-      return {
-        type: "object",
-        properties: {
-          state: literalStringUnion(
-            ["domcontentloaded", "load", "networkidle"],
-            "Load state to wait for.",
-          ),
-          timeout_ms: {
-            type: "integer",
-            description: "Maximum wait time in milliseconds.",
-            minimum: 1,
-          },
-          interval_ms: {
-            type: "integer",
-            description: "Polling interval in milliseconds.",
-            minimum: 1,
-          },
-        },
         additionalProperties: false,
       };
     case "browser_get_state":
       return {
         type: "object",
         properties: {
+          mode: {
+            anyOf: [
+              { type: "string", const: "state" },
+              { type: "string", const: "text" },
+              { type: "string", const: "structured" },
+              { type: "string", const: "visual" },
+            ],
+            description:
+              "State mode to return. Use `state` by default, `text` for scoped visible text, `structured` for schema-like extraction state, and `visual` only when a screenshot is needed.",
+          },
+          scope: {
+            anyOf: [
+              { type: "string", const: "main" },
+              { type: "string", const: "viewport" },
+              { type: "string", const: "focused" },
+              { type: "string", const: "dialog" },
+              { type: "string", const: "active_dialog" },
+              { type: "string", const: "modal" },
+            ],
+            description:
+              "Limit browser state to the main document, viewport, focused element subtree, or active dialog. `active_dialog` and `modal` are accepted aliases for `dialog`.",
+          },
+          max_nodes: {
+            type: "integer",
+            description:
+              "Maximum combined element/media nodes to return. Returned indexes still reference the original page order for follow-up click/type tools.",
+            minimum: 1,
+          },
           include_page_text: {
             type: "boolean",
             description:
@@ -170,50 +161,119 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
           include_screenshot: {
             type: "boolean",
             description:
-              "Include a page screenshot when visual appearance, layout, overlays, charts, PDFs, or user-visible confirmation matter, or when DOM signals are ambiguous.",
-          },
-          scope_selector: {
-            type: "string",
-            description:
-              "Optional CSS selector to scope extraction to a page subtree. Useful for dense pages where only one region is relevant.",
-            minLength: 1,
-          },
-          element_offset: {
-            type: "integer",
-            description:
-              "Zero-based offset into the full interactive-element list for paged browsing.",
-            minimum: 0,
-          },
-          element_limit: {
-            type: "integer",
-            description:
-              "Maximum interactive elements to return for this call. Use with element_offset for continuation.",
-            minimum: 1,
-          },
-          media_offset: {
-            type: "integer",
-            description:
-              "Zero-based offset into the full visible-media list for paged browsing.",
-            minimum: 0,
-          },
-          media_limit: {
-            type: "integer",
-            description:
-              "Maximum media entries to return for this call. Use with media_offset for continuation.",
-            minimum: 1,
+              "Include a page screenshot artifact handle when visual appearance, layout, overlays, charts, PDFs, or user-visible confirmation matter, or when DOM signals are ambiguous.",
           },
         },
         additionalProperties: false,
       };
-    case "browser_extract_facts":
+    case "browser_find":
       return {
         type: "object",
         properties: {
-          scope_selector: {
+          ...browserLocatorProperties(),
+          include_hidden: {
+            type: "boolean",
+            description: "Include hidden/offscreen elements. Leave false for ordinary browser interaction.",
+          },
+          max_results: {
+            type: "integer",
+            description: "Maximum matches to return.",
+            minimum: 1,
+            maximum: 100,
+          },
+        },
+        additionalProperties: false,
+      };
+    case "browser_act":
+      return {
+        type: "object",
+        properties: {
+          action: literalStringUnion(
+            ["click", "double_click", "hover", "focus", "fill", "type", "press", "select", "scroll_into_view"],
+            "Browser action to perform.",
+          ),
+          ...browserLocatorProperties(),
+          value: {
             type: "string",
-            description:
-              "Optional CSS selector to scope fact extraction to a relevant page subtree before extracting headings, claims, links, and numeric facts.",
+            description: "Text/value for fill, type, or select actions.",
+          },
+          key: {
+            type: "string",
+            description: "Keyboard key for press actions.",
+          },
+          clear: {
+            type: "boolean",
+            description: "Clear editable content before fill/type. Defaults true for fill and false for type.",
+          },
+          submit: {
+            type: "boolean",
+            description: "Submit after fill/type, usually by pressing Enter or requestSubmit.",
+          },
+        },
+        required: ["action"],
+        additionalProperties: false,
+      };
+    case "browser_wait":
+      return {
+        type: "object",
+        properties: {
+          condition: literalStringUnion(
+            ["load", "url", "text", "element", "hidden", "dom_change", "dom_mutation", "change", "mutation"],
+            "Browser condition to wait for.",
+          ),
+          url: {
+            type: "string",
+            description: "URL substring or regular expression body to wait for when condition=url.",
+          },
+          ...browserLocatorProperties(),
+          timeout_ms: {
+            type: "integer",
+            description: "Maximum wait time in milliseconds.",
+            minimum: 100,
+            maximum: 30000,
+          },
+        },
+        additionalProperties: false,
+      };
+    case "browser_evaluate":
+      return {
+        type: "object",
+        properties: {
+          expression: {
+            type: "string",
+            description: "JavaScript expression or IIFE to evaluate in the active page.",
             minLength: 1,
+          },
+          allow_mutation: {
+            type: "boolean",
+            description:
+              "Set true when the expression intentionally mutates page state. Leave false for read-only inspection.",
+          },
+          timeout_ms: {
+            type: "integer",
+            description: "Maximum evaluation time in milliseconds.",
+            minimum: 100,
+            maximum: 30000,
+          },
+        },
+        required: ["expression"],
+        additionalProperties: false,
+      };
+    case "browser_debug":
+      return {
+        type: "object",
+        properties: {
+          x: {
+            type: "number",
+            description: "Viewport x coordinate for elementFromPoint hit testing.",
+          },
+          y: {
+            type: "number",
+            description: "Viewport y coordinate for elementFromPoint hit testing.",
+          },
+          include_dom_sample: {
+            type: "boolean",
+            description: "Include a compact sample of visible DOM text and element tags.",
           },
         },
         additionalProperties: false,
@@ -226,11 +286,6 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
             type: "integer",
             description: "Interactive element index from browser_get_state.",
             minimum: 1,
-          },
-          confirm: {
-            type: "boolean",
-            description:
-              "Set true when the runtime browser safety policy requires explicit confirmation for this action category.",
           },
         },
         required: ["index"],
@@ -249,11 +304,6 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
             ["element", "media"],
             "Target list to use for the index. Use `media` for visible images or other media items.",
           ),
-          confirm: {
-            type: "boolean",
-            description:
-              "Set true when the runtime browser safety policy requires explicit confirmation for this action category.",
-          },
         },
         required: ["index"],
         additionalProperties: false,
@@ -279,11 +329,6 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
             type: "boolean",
             description: "Submit after typing, typically by pressing Enter.",
           },
-          confirm: {
-            type: "boolean",
-            description:
-              "Set true when the runtime browser safety policy requires explicit confirmation for this action category.",
-          },
         },
         required: ["index", "text"],
         additionalProperties: false,
@@ -296,11 +341,6 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
             type: "string",
             description: "Keyboard key to press.",
             minLength: 1,
-          },
-          confirm: {
-            type: "boolean",
-            description:
-              "Set true when the runtime browser safety policy requires explicit confirmation for this action category.",
           },
         },
         required: ["key"],
@@ -319,11 +359,6 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
           delta_y: {
             type: "integer",
             description: "Raw vertical scroll delta.",
-          },
-          confirm: {
-            type: "boolean",
-            description:
-              "Set true when the runtime browser safety policy requires explicit confirmation for this action category.",
           },
         },
         additionalProperties: false,
@@ -348,16 +383,7 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
     case "browser_list_tabs":
       return {
         type: "object",
-        properties:
-          toolId === "browser_list_tabs"
-            ? {}
-            : {
-                confirm: {
-                  type: "boolean",
-                  description:
-                    "Set true when the runtime browser safety policy requires explicit confirmation for this action category.",
-                },
-              },
+        properties: {},
         additionalProperties: false,
       };
   }
@@ -380,7 +406,6 @@ export function createHarnessDesktopBrowserToolDefinition(
         runtimeApiBaseUrl: options.runtimeApiBaseUrl,
         workspaceId: options.workspaceId,
         sessionId: options.sessionId,
-        inputId: options.inputId,
         space: options.space,
         fetchImpl: options.fetchImpl,
         signal,
@@ -401,7 +426,6 @@ export async function resolveHarnessDesktopBrowserToolDefinitions(
     runtimeApiBaseUrl?: string | null;
     workspaceId?: string | null;
     sessionId?: string | null;
-    inputId?: string | null;
     space?: "agent" | "user" | null;
     fetchImpl?: typeof fetch;
   } = {},
@@ -428,7 +452,6 @@ export async function resolveHarnessDesktopBrowserToolDefinitions(
     runtimeApiBaseUrl,
     workspaceId: options.workspaceId,
     sessionId: options.sessionId,
-    inputId: options.inputId,
     space: options.space,
     fetchImpl: options.fetchImpl,
   });

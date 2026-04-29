@@ -1176,6 +1176,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("runtime:exchangeBinding", sandboxId) as Promise<RuntimeConfigPayload>,
     connectCodexOAuth: () =>
       ipcRenderer.invoke("runtime:connectCodexOAuth") as Promise<RuntimeConfigPayload>,
+    validateProvider: (providerId: string) =>
+      ipcRenderer.invoke("runtime:validateProvider", providerId) as Promise<{
+        ok: boolean;
+        detail: string;
+      }>,
     onConfigChange: (listener: (config: RuntimeConfigPayload) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, config: RuntimeConfigPayload) => listener(config);
       ipcRenderer.on("runtime:config", wrapped);
@@ -1289,6 +1294,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     copyBrowserWorkspaceProfile: (payload: BrowserCopyWorkspaceProfilePayload) =>
       ipcRenderer.invoke("workspace:copyBrowserWorkspaceProfile", payload) as Promise<BrowserImportSummaryPayload>,
     listWorkspaces: () => ipcRenderer.invoke("workspace:listWorkspaces") as Promise<WorkspaceListResponsePayload>,
+    listWorkspacesCached: () =>
+      ipcRenderer.invoke("workspace:listWorkspacesCached") as Promise<WorkspaceListResponsePayload>,
     getWorkspaceLifecycle: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:getWorkspaceLifecycle", workspaceId) as Promise<WorkspaceLifecyclePayload>,
     activateWorkspace: (workspaceId: string) =>
@@ -1394,8 +1401,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ) as Promise<RemoteTaskProposalGenerationResponsePayload>,
     ensureMainSession: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:ensureMainSession", workspaceId) as Promise<EnsureWorkspaceMainSessionResponsePayload>,
-    listAgentSessions: (workspaceId: string) =>
-      ipcRenderer.invoke("workspace:listAgentSessions", workspaceId) as Promise<AgentSessionListResponsePayload>,
+    listAgentSessions: (payload: string | ListAgentSessionsRequestPayload) =>
+      ipcRenderer.invoke("workspace:listAgentSessions", payload) as Promise<AgentSessionListResponsePayload>,
     createAgentSession: (payload: CreateAgentSessionPayload) =>
       ipcRenderer.invoke("workspace:createAgentSession", payload) as Promise<CreateAgentSessionResponsePayload>,
     listRuntimeStates: (workspaceId: string) =>
@@ -1435,6 +1442,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:updateIntegrationConnection", connectionId, payload) as Promise<IntegrationConnectionPayload>,
     deleteIntegrationConnection: (connectionId: string) =>
       ipcRenderer.invoke("workspace:deleteIntegrationConnection", connectionId) as Promise<{ deleted: boolean }>,
+    mergeIntegrationConnections: (keepConnectionId: string, removeConnectionIds: string[]) =>
+      ipcRenderer.invoke(
+        "workspace:mergeIntegrationConnections",
+        keepConnectionId,
+        removeConnectionIds,
+      ) as Promise<IntegrationMergeConnectionsResult>,
     deleteIntegrationBinding: (bindingId: string, workspaceId: string) =>
       ipcRenderer.invoke("workspace:deleteIntegrationBinding", bindingId, workspaceId) as Promise<{ deleted: boolean }>,
     listOAuthConfigs: () =>
@@ -1447,11 +1460,20 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:startOAuthFlow", provider) as Promise<OAuthAuthorizeResponsePayload>,
     composioListToolkits: () =>
       ipcRenderer.invoke("workspace:composioListToolkits") as Promise<{ toolkits: Array<{ slug: string; name: string; description: string; logo: string | null; auth_schemes: string[]; categories: string[] }> }>,
+    composioListConnections: () =>
+      ipcRenderer.invoke("workspace:composioListConnections") as Promise<{ connections: Array<{ id: string; toolkitSlug: string; toolkitName: string; toolkitLogo: string | null; userId: string; createdAt: string }> }>,
     composioConnect: (payload: { provider: string; owner_user_id: string; callback_url?: string }) =>
       ipcRenderer.invoke("workspace:composioConnect", payload) as Promise<ComposioConnectResult>,
     composioAccountStatus: (connectedAccountId: string) =>
       ipcRenderer.invoke("workspace:composioAccountStatus", connectedAccountId) as Promise<ComposioAccountStatus>,
-    composioFinalize: (payload: { connected_account_id: string; provider: string; owner_user_id: string; account_label?: string }) =>
+    composioFinalize: (payload: {
+      connected_account_id: string;
+      provider: string;
+      owner_user_id: string;
+      account_label?: string;
+      account_handle?: string | null;
+      account_email?: string | null;
+    }) =>
       ipcRenderer.invoke("workspace:composioFinalize", payload) as Promise<IntegrationConnectionPayload>,
     resolveTemplateIntegrations: (payload: HolabossCreateWorkspacePayload) =>
       ipcRenderer.invoke("workspace:resolveTemplateIntegrations", payload) as Promise<ResolveTemplateIntegrationsResult>,

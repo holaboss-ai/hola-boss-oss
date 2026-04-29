@@ -925,6 +925,7 @@ const agentSessionCache = new Map<
   Map<string, AgentSessionRecordPayload>
 >();
 const userBrowserInterruptPrompts = new Set<string>();
+const programmaticBrowserInputDepth = new WeakMap<WebContents, number>();
 const reportedOperatorSurfaceContexts = new Map<
   string,
   ReportedOperatorSurfaceContextPayload
@@ -1962,6 +1963,49 @@ async function openExternalUrl(rawUrl: string): Promise<void> {
   await shell.openExternal(parsed.toString());
 }
 
+function isHttpOrHttpsUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl.trim());
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isBrowserPopupNavigationUrl(rawUrl: string): boolean {
+  const normalizedUrl = rawUrl.trim();
+  return normalizedUrl === "about:blank" || isHttpOrHttpsUrl(normalizedUrl);
+}
+
+function shouldAllowBrowserPopupWindow(
+  normalizedUrl: string,
+  frameName?: string | null,
+  features?: string | null,
+): boolean {
+  return (
+    isBrowserPopupNavigationUrl(normalizedUrl) &&
+    (normalizedUrl === "about:blank" ||
+      isBrowserPopupWindowRequest(frameName, features))
+  );
+}
+
+function openExternalUrlFromMain(rawUrl: string, source: string): void {
+  const normalizedUrl = rawUrl.trim();
+  if (!normalizedUrl || normalizedUrl === "about:blank") {
+    return;
+  }
+
+  try {
+    new URL(normalizedUrl);
+  } catch {
+    return;
+  }
+
+  shell.openExternal(normalizedUrl).catch((error) => {
+    console.warn(`[desktop] Failed to open external URL from ${source}:`, error);
+  });
+}
+
 function emitOpenSettingsPane(section: UiSettingsPaneSection = "settings") {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
@@ -2816,12 +2860,20 @@ interface IntegrationConnectionPayload {
   owner_user_id: string;
   account_label: string;
   account_external_id: string | null;
+  account_handle: string | null;
+  account_email: string | null;
   auth_mode: string;
   granted_scopes: string[];
   status: string;
   secret_ref: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface IntegrationMergeConnectionsResult {
+  kept_connection_id: string;
+  removed_count: number;
+  repointed_bindings: number;
 }
 
 interface IntegrationConnectionListResponsePayload {
@@ -2862,6 +2914,9 @@ interface IntegrationUpdateConnectionPayload {
   status?: string;
   secret_ref?: string;
   account_label?: string;
+  /** Backfill provider-side identity. `null` clears, omit to leave alone. */
+  account_handle?: string | null;
+  account_email?: string | null;
 }
 
 interface OAuthAppConfigPayload {
@@ -6225,6 +6280,103 @@ async function readRuntimeConfigDocument(): Promise<Record<string, unknown>> {
   }
 }
 
+// ============================================================
+// Provider validation — cheap probe per provider to confirm the
+// stored credentials still work. Hit one read-only endpoint with
+// a short timeout. We don't try to parse model lists or authn
+// scopes; a 2xx is enough signal for "your key is alive".
+// ============================================================
+
+interface ValidateProviderResult {
+  ok: boolean;
+  detail: string;
+}
+
+const PROVIDER_DEFAULT_BASE_URL: Record<string, string> = {
+  openai_direct: "https://api.openai.com",
+  openai_codex: "https://api.openai.com",
+  anthropic_direct: "https://api.anthropic.com",
+  openrouter_direct: "https://openrouter.ai/api",
+  gemini_direct: "https://generativelanguage.googleapis.com/v1beta/openai",
+  minimax: "https://api.minimaxi.chat",
+  ollama_local: "http://localhost:11434",
+};
+
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, "");
+}
+
+async function validateRuntimeProvider(
+  providerId: string,
+): Promise<ValidateProviderResult> {
+  // Holaboss = managed proxy, gated by Better Auth session cookie.
+  if (providerId === "holaboss") {
+    const cookie = authCookieHeader();
+    if (!cookie) {
+      return { ok: false, detail: "Not signed in" };
+    }
+    return { ok: true, detail: "Signed in" };
+  }
+
+  const document = await readRuntimeConfigDocument();
+  const providers = (document.providers as Record<string, unknown>) ?? {};
+  const storageId =
+    providerId === "holaboss" ? "holaboss_model_proxy" : providerId;
+  const provider = providers[storageId] as Record<string, unknown> | undefined;
+  if (!provider) {
+    return { ok: false, detail: "Not configured" };
+  }
+
+  const apiKey = String(provider.api_key ?? "").trim();
+  const configuredBase = String(provider.base_url ?? "").trim();
+  const baseUrl = trimTrailingSlash(
+    configuredBase || PROVIDER_DEFAULT_BASE_URL[providerId] || "",
+  );
+  if (!baseUrl) {
+    return { ok: false, detail: "No base URL configured" };
+  }
+  if (!apiKey && providerId !== "ollama_local" && providerId !== "openai_codex") {
+    return { ok: false, detail: "API key missing" };
+  }
+
+  let url = `${baseUrl}/v1/models`;
+  const headers: Record<string, string> = {};
+  if (providerId === "anthropic_direct") {
+    headers["x-api-key"] = apiKey;
+    headers["anthropic-version"] = "2023-06-01";
+  } else if (providerId === "ollama_local") {
+    url = `${baseUrl}/api/tags`;
+  } else if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+
+  // 6s upper bound — anything slower is effectively "down" from the
+  // user's perspective.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6_000);
+  try {
+    const response = await fetchWithNetworkRetry(url, {
+      method: "GET",
+      headers,
+      signal: controller.signal,
+    });
+    if (response.ok) {
+      return { ok: true, detail: `${response.status} ${response.statusText || "OK"}` };
+    }
+    return { ok: false, detail: `HTTP ${response.status}` };
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      return { ok: false, detail: "Timed out" };
+    }
+    return {
+      ok: false,
+      detail: error instanceof Error ? error.message : "Network error",
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function writeRuntimeConfigTextAtomically(
   nextText: string,
 ): Promise<void> {
@@ -6420,10 +6572,14 @@ function openAiCodexErrorMessage(
   payload: Record<string, unknown>,
   fallbackMessage: string,
 ): string {
+  const errorPayload = runtimeConfigObject(payload.error);
   return runtimeFirstNonEmptyString(
-    payload.error_description as string | undefined,
-    payload.message as string | undefined,
-    payload.error as string | undefined,
+    payload.error_description,
+    payload.message,
+    payload.detail,
+    errorPayload.message,
+    errorPayload.error_description,
+    payload.error,
     fallbackMessage,
   );
 }
@@ -7110,25 +7266,27 @@ async function handleDesktopBrowserServiceRequest(
       if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) {
         mainWindow.focus();
       }
-      activeTab.view.webContents.focus();
-      await activeTab.view.webContents.sendInputEvent({
-        type: "mouseMove",
-        x,
-        y,
-      });
-      await activeTab.view.webContents.sendInputEvent({
-        type: "mouseDown",
-        x,
-        y,
-        button: "right",
-        clickCount: 1,
-      });
-      await activeTab.view.webContents.sendInputEvent({
-        type: "mouseUp",
-        x,
-        y,
-        button: "right",
-        clickCount: 1,
+      await withProgrammaticBrowserInput(activeTab.view.webContents, async () => {
+        activeTab.view.webContents.focus();
+        await activeTab.view.webContents.sendInputEvent({
+          type: "mouseMove",
+          x,
+          y,
+        });
+        await activeTab.view.webContents.sendInputEvent({
+          type: "mouseDown",
+          x,
+          y,
+          button: "right",
+          clickCount: 1,
+        });
+        await activeTab.view.webContents.sendInputEvent({
+          type: "mouseUp",
+          x,
+          y,
+          button: "right",
+          clickCount: 1,
+        });
       });
 
       writeBrowserServiceJson(response, 200, {
@@ -7136,6 +7294,165 @@ async function handleDesktopBrowserServiceRequest(
         tabId: activeTab.state.id,
         x,
         y,
+      });
+      return;
+    }
+
+    if (method === "POST" && pathname === "/api/v1/browser/mouse") {
+      const payload = await readBrowserServiceJsonBody(request);
+      const x =
+        typeof payload.x === "number" && Number.isFinite(payload.x)
+          ? Math.round(payload.x)
+          : NaN;
+      const y =
+        typeof payload.y === "number" && Number.isFinite(payload.y)
+          ? Math.round(payload.y)
+          : NaN;
+      const action =
+        payload.action === "double_click" || payload.action === "hover"
+          ? payload.action
+          : "click";
+      if (!Number.isFinite(x) || x < 0 || !Number.isFinite(y) || y < 0) {
+        writeBrowserServiceJson(response, 400, {
+          error: "Fields 'x' and 'y' must be non-negative numbers.",
+        });
+        return;
+      }
+
+      const workspace = await ensureTargetBrowserSpace("mouse");
+      if (!workspace) {
+        return;
+      }
+      const activeTab = getActiveBrowserTab(
+        targetWorkspaceId,
+        targetSpace,
+        ensuredSessionId,
+        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
+      );
+      if (!activeTab) {
+        writeBrowserServiceJson(response, 409, {
+          error: "No active browser tab is available.",
+        });
+        return;
+      }
+
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) {
+        mainWindow.focus();
+      }
+      await withProgrammaticBrowserInput(activeTab.view.webContents, async () => {
+        activeTab.view.webContents.focus();
+        await activeTab.view.webContents.sendInputEvent({
+          type: "mouseMove",
+          x,
+          y,
+        });
+
+        if (action === "click" || action === "double_click") {
+          await activeTab.view.webContents.sendInputEvent({
+            type: "mouseDown",
+            x,
+            y,
+            button: "left",
+            clickCount: 1,
+          });
+          await activeTab.view.webContents.sendInputEvent({
+            type: "mouseUp",
+            x,
+            y,
+            button: "left",
+            clickCount: 1,
+          });
+        }
+        if (action === "double_click") {
+          await activeTab.view.webContents.sendInputEvent({
+            type: "mouseDown",
+            x,
+            y,
+            button: "left",
+            clickCount: 2,
+          });
+          await activeTab.view.webContents.sendInputEvent({
+            type: "mouseUp",
+            x,
+            y,
+            button: "left",
+            clickCount: 2,
+          });
+        }
+      });
+
+      writeBrowserServiceJson(response, 200, {
+        ok: true,
+        tabId: activeTab.state.id,
+        action,
+        x,
+        y,
+      });
+      return;
+    }
+
+    if (method === "POST" && pathname === "/api/v1/browser/keyboard") {
+      const payload = await readBrowserServiceJsonBody(request);
+      const action = payload.action === "press" ? "press" : "insert_text";
+      const text = typeof payload.text === "string" ? payload.text : "";
+      const key =
+        typeof payload.key === "string" && payload.key.trim()
+          ? payload.key.trim()
+          : "";
+      const clear = payload.clear === true;
+      const submit = payload.submit === true;
+      if (action === "press" && !key) {
+        writeBrowserServiceJson(response, 400, {
+          error: "Field 'key' is required for keyboard press actions.",
+        });
+        return;
+      }
+
+      const workspace = await ensureTargetBrowserSpace("keyboard");
+      if (!workspace) {
+        return;
+      }
+      const activeTab = getActiveBrowserTab(
+        targetWorkspaceId,
+        targetSpace,
+        ensuredSessionId,
+        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
+      );
+      if (!activeTab) {
+        writeBrowserServiceJson(response, 409, {
+          error: "No active browser tab is available.",
+        });
+        return;
+      }
+
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) {
+        mainWindow.focus();
+      }
+      await withProgrammaticBrowserInput(activeTab.view.webContents, async () => {
+        activeTab.view.webContents.focus();
+        if (action === "press") {
+          await sendBrowserKeyPress(activeTab.view.webContents, key);
+          return;
+        }
+        if (clear) {
+          await clearFocusedBrowserTextInput(activeTab.view.webContents);
+        }
+        if (text) {
+          await activeTab.view.webContents.insertText(text);
+        }
+        if (submit) {
+          await sendBrowserKeyPress(activeTab.view.webContents, "Enter");
+        }
+      });
+
+      writeBrowserServiceJson(response, 200, {
+        ok: true,
+        tabId: activeTab.state.id,
+        action,
+        text_length: action === "insert_text" ? text.length : 0,
+        key: action === "press" ? key : "",
+        clear,
+        submit,
       });
       return;
     }
@@ -7548,10 +7865,13 @@ function runtimeConfigObject(value: unknown): Record<string, unknown> {
 }
 
 function runtimeFirstNonEmptyString(
-  ...values: Array<string | null | undefined>
+  ...values: unknown[]
 ): string {
   for (const value of values) {
-    const normalized = (value ?? "").trim();
+    if (typeof value !== "string") {
+      continue;
+    }
+    const normalized = value.trim();
     if (normalized) {
       return normalized;
     }
@@ -10597,6 +10917,90 @@ function waitForAuthCallback(timeoutMs = 120_000): Promise<void> {
   });
 }
 
+/**
+ * Codes that mean "the connection was disrupted before we got an HTTP
+ * response" — i.e. transient network/TLS layer failures. Worth one
+ * retry; not worth surfacing to the user.
+ *
+ * Common trigger: undici's connection pool reuses a socket that the
+ * staging server has already half-closed (HTTP keep-alive race). Shows
+ * up as `TypeError: fetch failed` with cause.code === 'ECONNRESET'.
+ */
+const TRANSIENT_NETWORK_CODES = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "EAI_AGAIN",
+  "UND_ERR_SOCKET",
+  "UND_ERR_CONNECT_TIMEOUT",
+]);
+
+function isTransientFetchError(err: unknown): boolean {
+  if (!(err instanceof TypeError)) return false;
+  const cause = (err as { cause?: { code?: string; name?: string } }).cause;
+  if (!cause) return false;
+  if (cause.code && TRANSIENT_NETWORK_CODES.has(cause.code)) return true;
+  // undici sometimes reports the socket close as `name` only.
+  return cause.name === "SocketError";
+}
+
+/**
+ * Wraps fetch with a single retry against transient network errors.
+ * Backoff is short (200ms) because keep-alive socket races resolve as
+ * soon as a fresh connection is opened. Auth/HTTP-level failures (4xx,
+ * 5xx) are returned untouched — those go through retryAfterSessionAuth.
+ */
+async function fetchWithNetworkRetry(
+  ...args: Parameters<typeof fetch>
+): Promise<Response> {
+  try {
+    return await fetch(...args);
+  } catch (err) {
+    if (!isTransientFetchError(err)) throw err;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    return fetch(...args);
+  }
+}
+
+/**
+ * Re-auth recovery shared by every main-process fetch that depends on
+ * the Better Auth session cookie. Behaviour:
+ *   1. Take a 401 response that the caller already produced
+ *   2. Single-flight: spawn the sign-in browser + waitForAuthCallback
+ *      once across all concurrent 401s (pendingGatewayAuthRetry)
+ *   3. After the user completes sign-in, ask the caller to re-execute
+ *   4. If sign-in is dismissed/times out, return the original 401 so
+ *      the caller can surface a sensible error
+ *
+ * Use this whenever a path otherwise hard-fails on a missing/expired
+ * cookie. The caller is responsible for providing an `executeRequest`
+ * that re-reads the cookie each call (since auth callback refreshes it).
+ */
+async function retryAfterSessionAuth(
+  unauthorizedResponse: Response,
+  executeRequest: () => Promise<Response>,
+): Promise<Response> {
+  if (unauthorizedResponse.status !== 401 || !desktopAuthClient) {
+    return unauthorizedResponse;
+  }
+  try {
+    if (!pendingGatewayAuthRetry) {
+      const authComplete = waitForAuthCallback();
+      requireAuthClient()
+        .requestAuth()
+        .catch(() => {});
+      pendingGatewayAuthRetry = authComplete.finally(() => {
+        pendingGatewayAuthRetry = null;
+      });
+    }
+    await pendingGatewayAuthRetry;
+    return await executeRequest();
+  } catch {
+    // User dismissed sign-in or auth failed — surface the original 401
+    return unauthorizedResponse;
+  }
+}
+
 async function requestControlPlaneJson<T>({
   service,
   method,
@@ -10619,7 +11023,7 @@ async function requestControlPlaneJson<T>({
   }
 
   const executeRequest = async () => {
-    return fetch(url.toString(), {
+    return fetchWithNetworkRetry(url.toString(), {
       method,
       headers: await controlPlaneHeaders(service),
       body: payload === undefined ? undefined : JSON.stringify(payload),
@@ -10668,26 +11072,13 @@ async function requestControlPlaneJson<T>({
       errorDetail = "";
     }
   }
-  // If gateway returned 401 (session expired/missing), prompt sign-in and retry once.
-  // requestAuth() only opens the browser and resolves immediately — it does NOT
-  // wait for the user to complete sign-in. We wait for the auth callback
-  // (deep link → handleAuthCallbackUrl → emitAuthAuthenticated/emitAuthUserUpdated)
-  // before retrying. On auth failure/dismissal, emitAuthError rejects the wait.
-  if (response.status === 401 && desktopAuthClient) {
-    try {
-      if (!pendingGatewayAuthRetry) {
-        const authComplete = waitForAuthCallback();
-        requireAuthClient().requestAuth().catch(() => {});
-        pendingGatewayAuthRetry = authComplete.finally(() => {
-          pendingGatewayAuthRetry = null;
-        });
-      }
-      await pendingGatewayAuthRetry;
-      // Auth callback received — cookie is now fresh, retry
-      response = await executeRequest();
+  // Session 401 → run shared re-auth retry (extracted to retryAfterSessionAuth).
+  // Composio paths now share the same single-flight, so concurrent control-plane
+  // and Composio 401s won't race two sign-in browser windows.
+  if (response.status === 401) {
+    response = await retryAfterSessionAuth(response, executeRequest);
+    if (response.ok) {
       errorDetail = "";
-    } catch {
-      // User dismissed sign-in or auth failed — fall through to error
     }
   }
   if (!response.ok) {
@@ -11547,6 +11938,17 @@ async function deleteIntegrationConnection(
   });
 }
 
+async function mergeIntegrationConnections(
+  keepConnectionId: string,
+  removeConnectionIds: string[],
+): Promise<IntegrationMergeConnectionsResult> {
+  return requestRuntimeJson<IntegrationMergeConnectionsResult>({
+    method: "POST",
+    path: `/api/v1/integrations/connections/${encodeURIComponent(keepConnectionId)}/merge`,
+    payload: { remove_connection_ids: removeConnectionIds },
+  });
+}
+
 async function listOAuthConfigs(): Promise<OAuthAppConfigListResponsePayload> {
   return requestRuntimeJson<OAuthAppConfigListResponsePayload>({
     method: "GET",
@@ -11600,19 +12002,28 @@ async function composioFetch<T>(
       "Backend is not configured (HOLABOSS_AUTH_BASE_URL missing)",
     );
   }
-  const cookieHeader = authCookieHeader();
-  if (!cookieHeader) {
-    throw new Error("Not authenticated — sign in first");
+  // Cookie is read inside executeRequest so the retry path picks up the
+  // refreshed cookie set by the auth callback. Don't hard-fail on missing
+  // cookie up front — the server's 401 + retryAfterSessionAuth pathway is
+  // the canonical way to recover (matches requestControlPlaneJson).
+  const executeRequest = async () => {
+    const cookieHeader = authCookieHeader();
+    return fetchWithNetworkRetry(`${AUTH_BASE_URL}${path}`, {
+      method,
+      headers: {
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: payload === undefined ? undefined : JSON.stringify(payload),
+    });
+  };
+
+  let response = await executeRequest();
+  if (response.status === 401) {
+    response = await retryAfterSessionAuth(response, executeRequest);
   }
-  const response = await fetch(`${AUTH_BASE_URL}${path}`, {
-    method,
-    headers: {
-      Cookie: cookieHeader,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: payload === undefined ? undefined : JSON.stringify(payload),
-  });
+
   if (!response.ok) {
     const text = await response.text();
     throw new Error(
@@ -11646,11 +12057,29 @@ interface ComposioToolkit {
 async function composioListToolkits(): Promise<{
   toolkits: ComposioToolkit[];
 }> {
-  if (!authCookieHeader()) {
-    return { toolkits: [] };
-  }
+  // No upfront cookie short-circuit — that previously masked an expired
+  // session as "no integrations available". composioFetch now triggers
+  // re-auth on 401, so route through it normally.
   return composioFetch<{ toolkits: ComposioToolkit[] }>(
     "/api/composio/toolkits",
+    "GET",
+  );
+}
+
+interface ComposioConnectionSummary {
+  id: string;
+  toolkitSlug: string;
+  toolkitName: string;
+  toolkitLogo: string | null;
+  userId: string;
+  createdAt: string;
+}
+
+async function composioListConnections(): Promise<{
+  connections: ComposioConnectionSummary[];
+}> {
+  return composioFetch<{ connections: ComposioConnectionSummary[] }>(
+    "/api/composio/connections",
     "GET",
   );
 }
@@ -11669,11 +12098,121 @@ async function composioFinalize(payload: {
   provider: string;
   owner_user_id: string;
   account_label?: string;
+  account_handle?: string | null;
+  account_email?: string | null;
 }): Promise<IntegrationConnectionPayload> {
+  // Resolve the provider-side identity (handle / email / display name) from
+  // Composio whoami before posting to /composio/finalize. The runtime uses
+  // this identity to dedupe re-auth flows: each Composio re-auth mints a
+  // new connected_account_id even for the same real account, but handle /
+  // email stay stable, so the integration service updates the existing
+  // connection row in place rather than spawning a duplicate.
+  //
+  // Whoami can fail (Composio side error, account not yet propagated, etc.).
+  // When it does, we fall back to the legacy behaviour — store the row
+  // without identity, no dedupe — instead of blocking the connect flow.
+  let enrichedHandle = payload.account_handle ?? null;
+  let enrichedEmail = payload.account_email ?? null;
+  let resolvedLabel = payload.account_label;
+  if (!enrichedHandle && !enrichedEmail) {
+    try {
+      const status = await composioAccountStatus(payload.connected_account_id);
+      enrichedHandle =
+        typeof status.handle === "string" && status.handle.trim().length > 0
+          ? status.handle.trim()
+          : null;
+      enrichedEmail =
+        typeof status.email === "string" && status.email.trim().length > 0
+          ? status.email.trim()
+          : null;
+      const preferredDisplayName =
+        typeof status.displayName === "string" &&
+        status.displayName.trim().length > 0
+          ? status.displayName.trim()
+          : enrichedHandle ?? enrichedEmail ?? null;
+      if (preferredDisplayName && (!resolvedLabel || resolvedLabel.trim().length === 0)) {
+        resolvedLabel = preferredDisplayName;
+      }
+    } catch {
+      // Whoami failed — proceed without identity. Future reconnects of
+      // this same external account will still create a new row until
+      // whoami succeeds at least once.
+    }
+  }
+
+  // Backfill identity on legacy NULL-identity rows for the same
+  // (provider, owner). Connections created before identity columns
+  // existed have account_handle / account_email = NULL, so the runtime's
+  // dedupe-on-finalize finder can't see them as duplicates of the new
+  // re-auth — and a fresh row is inserted, leaving the user with two
+  // entries for the same real account. We pre-resolve their identity by
+  // probing Composio whoami on each legacy row's external_id and PATCH
+  // the result back to the runtime. After this loop, the dedupe finder
+  // can match the legacy row by handle/email and merge in place.
+  if (enrichedHandle || enrichedEmail) {
+    try {
+      const { connections } = await listIntegrationConnections({
+        providerId: payload.provider,
+        ownerUserId: payload.owner_user_id,
+      });
+      const legacyTargets = connections.filter(
+        (c) =>
+          c.status === "active" &&
+          // Skip rows that already happen to point at the new Composio
+          // account (could be a same-id re-finalize). Comparing on the
+          // *external* id, not the internal connection_id.
+          c.account_external_id !== payload.connected_account_id &&
+          !c.account_handle &&
+          !c.account_email &&
+          typeof c.account_external_id === "string" &&
+          c.account_external_id.trim().length > 0,
+      );
+      // Cap concurrent whoami probes — even a power user has a small
+      // number of legacy rows, so 4 in-flight is plenty.
+      const legacyConcurrency = 4;
+      for (let i = 0; i < legacyTargets.length; i += legacyConcurrency) {
+        const slice = legacyTargets.slice(i, i + legacyConcurrency);
+        await Promise.all(
+          slice.map(async (legacy) => {
+            try {
+              const probe = await composioAccountStatus(
+                legacy.account_external_id as string,
+              );
+              const probeHandle =
+                typeof probe.handle === "string" && probe.handle.trim().length > 0
+                  ? probe.handle.trim()
+                  : null;
+              const probeEmail =
+                typeof probe.email === "string" && probe.email.trim().length > 0
+                  ? probe.email.trim()
+                  : null;
+              if (!probeHandle && !probeEmail) return;
+              await updateIntegrationConnection(legacy.connection_id, {
+                account_handle: probeHandle,
+                account_email: probeEmail,
+              });
+            } catch {
+              // Per-row failure is fine — that row simply won't dedupe
+              // this round; we'll try again next time the user connects.
+            }
+          }),
+        );
+      }
+    } catch {
+      // listConnections failure shouldn't block the connect — just skip
+      // the backfill pass entirely.
+    }
+  }
+
   return requestRuntimeJson<IntegrationConnectionPayload>({
     method: "POST",
     path: "/api/v1/integrations/composio/finalize",
-    payload,
+    payload: {
+      ...payload,
+      ...(resolvedLabel ? { account_label: resolvedLabel } : {}),
+      account_handle: enrichedHandle,
+      account_email: enrichedEmail,
+    },
   });
 }
 
@@ -13793,6 +14332,9 @@ function normalizeAgentSessionRecord(
     parent_session_id: record.parent_session_id?.trim() || null,
     source_proposal_id: record.source_proposal_id?.trim() || null,
     created_by: record.created_by?.trim() || null,
+    source_type: record.source_type?.trim() || null,
+    cronjob_id: record.cronjob_id?.trim() || null,
+    proposal_id: record.proposal_id?.trim() || null,
     created_at: record.created_at || now,
     updated_at: record.updated_at || record.created_at || now,
     archived_at: record.archived_at?.trim() || null,
@@ -13953,6 +14495,116 @@ function getWorkspaceRecord(
 async function listWorkspaces(): Promise<WorkspaceListResponsePayload> {
   // Desktop always uses local runtime for workspace CRUD.
   return listWorkspacesViaRuntime();
+}
+
+/**
+ * Read the workspaces table directly from runtime.db without going
+ * through the sidecar. Used to hydrate the splash before the sidecar
+ * finishes spawning + schema-ensure. The desktop and runtime share
+ * runtime.db; the schema converges after the sidecar runs once on a
+ * given machine, but we tolerate a missing `workspace_path` column on
+ * the very first launch by reading PRAGMA table_info first.
+ *
+ * Synchronous + fast (5-15ms) — better-sqlite3 with WAL allows this
+ * read while the sidecar is still booting in another process.
+ *
+ * Returns an empty list (not an error) on any failure so the renderer
+ * silently falls back to the sidecar path.
+ */
+function listWorkspacesFromLocalDb(): WorkspaceListResponsePayload {
+  const empty: WorkspaceListResponsePayload = {
+    items: [],
+    total: 0,
+    limit: 100,
+    offset: 0,
+  };
+  let database: Database.Database | null = null;
+  try {
+    database = new Database(runtimeDatabasePath(), { readonly: true });
+    const tableExists = database
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'workspaces' LIMIT 1",
+      )
+      .get();
+    if (!tableExists) {
+      return empty;
+    }
+    const columns = new Set<string>(
+      (
+        database.prepare("PRAGMA table_info(workspaces)").all() as Array<{
+          name: string;
+        }>
+      ).map((row) => row.name),
+    );
+    const hasWorkspacePath = columns.has("workspace_path");
+    const select = hasWorkspacePath
+      ? `SELECT id, name, status, harness, error_message,
+                onboarding_status, onboarding_session_id,
+                onboarding_completed_at, onboarding_completion_summary,
+                onboarding_requested_at, onboarding_requested_by,
+                created_at, updated_at, deleted_at_utc, workspace_path
+         FROM workspaces
+         WHERE deleted_at_utc IS NULL
+         ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC
+         LIMIT 100`
+      : `SELECT id, name, status, harness, error_message,
+                onboarding_status, onboarding_session_id,
+                onboarding_completed_at, onboarding_completion_summary,
+                onboarding_requested_at, onboarding_requested_by,
+                created_at, updated_at, deleted_at_utc
+         FROM workspaces
+         WHERE deleted_at_utc IS NULL
+         ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC
+         LIMIT 100`;
+    const rows = database.prepare(select).all() as Array<
+      Record<string, unknown>
+    >;
+    const items: WorkspaceRecordPayload[] = rows.map((row) => ({
+      id: String(row.id ?? ""),
+      name: String(row.name ?? ""),
+      status: String(row.status ?? "unknown"),
+      harness: row.harness == null ? null : String(row.harness),
+      error_message: row.error_message == null ? null : String(row.error_message),
+      onboarding_status: String(row.onboarding_status ?? "complete"),
+      onboarding_session_id:
+        row.onboarding_session_id == null
+          ? null
+          : String(row.onboarding_session_id),
+      onboarding_completed_at:
+        row.onboarding_completed_at == null
+          ? null
+          : String(row.onboarding_completed_at),
+      onboarding_completion_summary:
+        row.onboarding_completion_summary == null
+          ? null
+          : String(row.onboarding_completion_summary),
+      onboarding_requested_at:
+        row.onboarding_requested_at == null
+          ? null
+          : String(row.onboarding_requested_at),
+      onboarding_requested_by:
+        row.onboarding_requested_by == null
+          ? null
+          : String(row.onboarding_requested_by),
+      created_at: row.created_at == null ? null : String(row.created_at),
+      updated_at: row.updated_at == null ? null : String(row.updated_at),
+      deleted_at_utc:
+        row.deleted_at_utc == null ? null : String(row.deleted_at_utc),
+      workspace_path:
+        hasWorkspacePath && row.workspace_path != null
+          ? String(row.workspace_path)
+          : null,
+    }));
+    return { items, total: items.length, limit: 100, offset: 0 };
+  } catch {
+    return empty;
+  } finally {
+    try {
+      database?.close();
+    } catch {
+      // ignore
+    }
+  }
 }
 
 async function listWorkspacesViaRuntime(): Promise<WorkspaceListResponsePayload> {
@@ -15146,10 +15798,41 @@ async function listRuntimeStates(
   }
 }
 
+function normalizeListAgentSessionsRequest(
+  payload: string | ListAgentSessionsRequestPayload,
+): {
+  workspaceId: string;
+  includeArchived: boolean;
+  limit: number;
+  offset: number;
+} {
+  if (typeof payload === "string") {
+    return {
+      workspaceId: payload.trim(),
+      includeArchived: false,
+      limit: 100,
+      offset: 0,
+    };
+  }
+  return {
+    workspaceId: payload.workspaceId.trim(),
+    includeArchived: payload.includeArchived === true,
+    limit:
+      typeof payload.limit === "number" && Number.isFinite(payload.limit)
+        ? Math.max(1, Math.min(500, Math.trunc(payload.limit)))
+        : 100,
+    offset:
+      typeof payload.offset === "number" && Number.isFinite(payload.offset)
+        ? Math.max(0, Math.trunc(payload.offset))
+        : 0,
+  };
+}
+
 async function listAgentSessions(
-  workspaceId: string,
+  payload: string | ListAgentSessionsRequestPayload,
 ): Promise<AgentSessionListResponsePayload> {
-  if (!workspaceId.trim()) {
+  const requestPayload = normalizeListAgentSessionsRequest(payload);
+  if (!requestPayload.workspaceId) {
     return { items: [], count: 0 };
   }
   try {
@@ -15157,13 +15840,16 @@ async function listAgentSessions(
       method: "GET",
       path: "/api/v1/agent-sessions",
       params: {
-        workspace_id: workspaceId,
-        include_archived: false,
-        limit: 100,
-        offset: 0,
+        workspace_id: requestPayload.workspaceId,
+        include_archived: requestPayload.includeArchived,
+        limit: requestPayload.limit,
+        offset: requestPayload.offset,
       },
     });
-    const items = cacheAgentSessionRecords(workspaceId, response.items ?? []);
+    const items = cacheAgentSessionRecords(
+      requestPayload.workspaceId,
+      response.items ?? [],
+    );
     return {
       ...response,
       items,
@@ -15171,7 +15857,11 @@ async function listAgentSessions(
     };
   } catch (error) {
     if (isTransientRuntimeError(error)) {
-      const items = cachedAgentSessionRecords(workspaceId);
+      const items = cachedAgentSessionRecords(requestPayload.workspaceId).filter(
+        (item) =>
+          requestPayload.includeArchived ||
+          !(item.archived_at || "").trim(),
+      );
       if (items.length > 0) {
         return { items, count: items.length };
       }
@@ -16879,7 +17569,7 @@ function getOrCreateAppSurfaceView(appId: string): BrowserView {
     vertical: false,
   });
   view.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    openExternalUrlFromMain(url, "app surface window open");
     return { action: "deny" };
   });
   appSurfaceViews.set(appId, view);
@@ -17463,6 +18153,51 @@ function maybePromptBrowserInterrupt(
   }
   void confirmBrowserInterrupt(workspaceId, controllingSessionId);
   return true;
+}
+
+function isProgrammaticBrowserInput(webContents: WebContents): boolean {
+  return (programmaticBrowserInputDepth.get(webContents) ?? 0) > 0;
+}
+
+async function withProgrammaticBrowserInput<T>(
+  webContents: WebContents,
+  callback: () => Promise<T>,
+): Promise<T> {
+  programmaticBrowserInputDepth.set(
+    webContents,
+    (programmaticBrowserInputDepth.get(webContents) ?? 0) + 1,
+  );
+  try {
+    return await callback();
+  } finally {
+    const nextDepth = (programmaticBrowserInputDepth.get(webContents) ?? 1) - 1;
+    if (nextDepth > 0) {
+      programmaticBrowserInputDepth.set(webContents, nextDepth);
+    } else {
+      programmaticBrowserInputDepth.delete(webContents);
+    }
+  }
+}
+
+async function sendBrowserKeyPress(
+  webContents: WebContents,
+  keyCode: string,
+  modifiers?: Array<"meta" | "control">,
+): Promise<void> {
+  const event = {
+    keyCode,
+    ...(modifiers && modifiers.length > 0 ? { modifiers } : {}),
+  };
+  await webContents.sendInputEvent({ type: "keyDown", ...event });
+  await webContents.sendInputEvent({ type: "keyUp", ...event });
+}
+
+async function clearFocusedBrowserTextInput(
+  webContents: WebContents,
+): Promise<void> {
+  const selectAllModifier = process.platform === "darwin" ? "meta" : "control";
+  await sendBrowserKeyPress(webContents, "A", [selectAllModifier]);
+  await sendBrowserKeyPress(webContents, "Backspace");
 }
 
 function hydrateAgentSessionBrowserSpace(
@@ -20893,7 +21628,7 @@ function handleBrowserWindowOpenAsTab(
   try {
     const parsed = new URL(normalizedUrl);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      void shell.openExternal(normalizedUrl);
+      openExternalUrlFromMain(normalizedUrl, "browser tab creation");
       return;
     }
   } catch {
@@ -21066,7 +21801,7 @@ function showBrowserViewContextMenu(params: {
       {
         label: "Open Link Externally",
         click: () => {
-          void shell.openExternal(linkUrl);
+          openExternalUrlFromMain(linkUrl, "browser context menu");
         },
       },
       {
@@ -21244,54 +21979,55 @@ function createBrowserTab(
   });
   view.webContents.setWindowOpenHandler(
     ({ url, disposition, frameName, features }) => {
-    const normalizedUrl = url.trim();
-    if (!normalizedUrl) {
-      return { action: "deny" };
-    }
-
-    try {
-      const parsed = new URL(normalizedUrl);
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-        void shell.openExternal(normalizedUrl);
+      const normalizedUrl = url.trim();
+      if (!normalizedUrl) {
         return { action: "deny" };
       }
-    } catch {
-      return { action: "deny" };
-    }
 
-    if (isBrowserPopupWindowRequest(frameName, features)) {
-      return {
-        action: "allow",
-        overrideBrowserWindowOptions: {
-          parent: mainWindow ?? undefined,
-          autoHideMenuBar: true,
-          backgroundColor: "#050907",
-          width: 520,
-          height: 760,
-          minWidth: 420,
-          minHeight: 620,
-          webPreferences: {
-            preload: path.join(__dirname, "browserPopupPreload.cjs"),
+      if (shouldAllowBrowserPopupWindow(normalizedUrl, frameName, features)) {
+        return {
+          action: "allow",
+          overrideBrowserWindowOptions: {
+            parent: mainWindow ?? undefined,
+            autoHideMenuBar: true,
+            backgroundColor: "#050907",
+            width: 520,
+            height: 760,
+            minWidth: 420,
+            minHeight: 620,
+            webPreferences: {
+              session: workspace.session,
+              preload: path.join(__dirname, "browserPopupPreload.cjs"),
+            },
           },
-        },
-      };
-    }
+        };
+      }
 
-    const shouldOpenAsTab =
-      disposition === "foreground-tab" ||
-      disposition === "background-tab" ||
-      disposition === "new-window";
-    if (shouldOpenAsTab) {
-      handleBrowserWindowOpenAsTab(
-        workspaceId,
-        normalizedUrl,
-        disposition,
-        frameName,
-        browserSpace,
-        normalizedSessionId,
-      );
-    }
-    return { action: "deny" };
+      try {
+        const parsed = new URL(normalizedUrl);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+          openExternalUrlFromMain(normalizedUrl, "browser window open");
+          return { action: "deny" };
+        }
+      } catch {
+        return { action: "deny" };
+      }
+
+      const shouldOpenAsTab =
+        disposition === "foreground-tab" ||
+        disposition === "background-tab" ||
+        disposition === "new-window";
+      if (shouldOpenAsTab) {
+        handleBrowserWindowOpenAsTab(
+          workspaceId,
+          normalizedUrl,
+          disposition,
+          frameName,
+          browserSpace,
+          normalizedSessionId,
+        );
+      }
+      return { action: "deny" };
     },
   );
   view.webContents.setZoomFactor(1);
@@ -21305,6 +22041,9 @@ function createBrowserTab(
     )?.tabs.get(tabId);
 
   view.webContents.on("before-input-event", (event, input) => {
+    if (isProgrammaticBrowserInput(view.webContents)) {
+      return;
+    }
     if (
       (input.type === "keyDown" ||
         input.type === "keyUp" ||
@@ -21321,6 +22060,9 @@ function createBrowserTab(
   });
 
   view.webContents.on("before-mouse-event", (event, mouse) => {
+    if (isProgrammaticBrowserInput(view.webContents)) {
+      return;
+    }
     if (
       mouse.type !== "mouseMove" &&
       mouse.type !== "mouseEnter" &&
@@ -23089,18 +23831,46 @@ function toggleOverflowPopup(anchorBounds: BrowserAnchorBoundsPayload) {
   popup.focus();
 }
 
+function resolveWindowsBackgroundMaterial():
+  | "mica"
+  | "acrylic"
+  | undefined {
+  if (process.platform !== "win32") return undefined;
+  const buildNumber = Number.parseInt(
+    os.release().split(".")[2] ?? "0",
+    10,
+  );
+  // Win 11 22000+ supports Mica; Win 10 1809 (17763)+ supports Acrylic.
+  if (buildNumber >= 22000) return "mica";
+  if (buildNumber >= 17763) return "acrylic";
+  return undefined;
+}
+
 function createMainWindow() {
-  const titleBarOptions =
-    process.platform === "darwin"
+  const isMac = process.platform === "darwin";
+  const isWindows = process.platform === "win32";
+  const winBackgroundMaterial = resolveWindowsBackgroundMaterial();
+
+  const platformOptions: Electron.BrowserWindowConstructorOptions = isMac
+    ? {
+        titleBarStyle: "hiddenInset",
+        trafficLightPosition: { x: 14, y: 16 },
+        // 'sidebar' renders the Finder-style frosted glass — significantly
+        // more visible than 'under-window' in dark mode, where Apple's
+        // 'under-window' intentionally leans quiet/moody and is hard to
+        // perceive as glass. Both materials adapt automatically to
+        // light/dark; 'sidebar' just has more presence.
+        vibrancy: "sidebar",
+        visualEffectState: "active",
+      }
+    : isWindows
       ? {
-          titleBarStyle: "hiddenInset" as const,
-          trafficLightPosition: { x: 14, y: 16 },
+          frame: false,
+          ...(winBackgroundMaterial && {
+            backgroundMaterial: winBackgroundMaterial,
+          }),
         }
-      : process.platform === "win32"
-        ? {
-            frame: false,
-          }
-        : {};
+      : {};
 
   const appIcon = nativeImage.createFromPath(desktopAppIconPath());
 
@@ -23111,10 +23881,15 @@ function createMainWindow() {
     minHeight: 720,
     show: false,
     center: true,
-    backgroundColor: "#050907",
+    // On macOS we omit backgroundColor so the NSVisualEffectView (vibrancy)
+    // paints the window backdrop — setting it to a transparent value would
+    // mark the window itself as transparent and prevent vibrancy from
+    // engaging. Other platforms keep the dark fill for a flicker-free first
+    // paint.
+    ...(isMac ? {} : { backgroundColor: "#050907" }),
     autoHideMenuBar: true,
     icon: appIcon,
-    ...titleBarOptions,
+    ...platformOptions,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -23895,8 +24670,15 @@ app.whenReady().then(async () => {
       return fileBookmarks;
     },
   );
+  // Returns the *cached* runtime status. The full refreshRuntimeStatus()
+  // path probes /healthz, which during boot — when the sidecar isn't up
+  // yet — eats a 1500ms HTTP timeout per call. Push events
+  // (`runtime:state`) already keep the cached value current; renderer
+  // gets a real-time stream + can poll this IPC for the same state in
+  // microseconds. (Boot timing: shaved ~1s off the splash by removing
+  // the redundant probe round-trip from this hot path.)
   handleTrustedIpc("runtime:getStatus", ["main", "auth-popup"], () =>
-    refreshRuntimeStatus(),
+    Promise.resolve(runtimeStatus),
   );
   handleTrustedIpc("runtime:restart", ["main"], async () => {
     await restartEmbeddedRuntimeSafely("manual_restart");
@@ -24006,6 +24788,11 @@ app.whenReady().then(async () => {
     "runtime:connectCodexOAuth",
     ["main", "auth-popup"],
     async () => connectOpenAiCodexProvider(),
+  );
+  handleTrustedIpc(
+    "runtime:validateProvider",
+    ["main", "auth-popup"],
+    async (_event, providerId: string) => validateRuntimeProvider(providerId),
   );
   handleTrustedIpc(
     "ui:getTheme",
@@ -24225,6 +25012,15 @@ app.whenReady().then(async () => {
     "workspace:listWorkspaces",
     ["main", "auth-popup"],
     async () => listWorkspaces(),
+  );
+  // Cached read straight from runtime.db without going through the
+  // sidecar — used by the splash to hydrate before the sidecar
+  // finishes spawning. Returns empty on any failure so the renderer
+  // can silently fall back to the live sidecar path.
+  handleTrustedIpc(
+    "workspace:listWorkspacesCached",
+    ["main"],
+    async () => listWorkspacesFromLocalDb(),
   );
   handleTrustedIpc(
     "workspace:getWorkspaceLifecycle",
@@ -24621,6 +25417,16 @@ app.whenReady().then(async () => {
     async (_event, connectionId: string) =>
       deleteIntegrationConnection(connectionId),
   );
+  handleTrustedIpc(
+    "workspace:mergeIntegrationConnections",
+    ["main"],
+    async (
+      _event,
+      keepConnectionId: string,
+      removeConnectionIds: string[],
+    ) =>
+      mergeIntegrationConnections(keepConnectionId, removeConnectionIds),
+  );
   handleTrustedIpc("workspace:listOAuthConfigs", ["main"], async () =>
     listOAuthConfigs(),
   );
@@ -24642,6 +25448,9 @@ app.whenReady().then(async () => {
   );
   handleTrustedIpc("workspace:composioListToolkits", ["main"], async () =>
     composioListToolkits(),
+  );
+  handleTrustedIpc("workspace:composioListConnections", ["main"], async () =>
+    composioListConnections(),
   );
   handleTrustedIpc(
     "workspace:composioConnect",

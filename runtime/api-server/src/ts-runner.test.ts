@@ -7,6 +7,7 @@ import { afterEach, test } from "node:test";
 import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
 import { buildAgentCapabilityManifest } from "./agent-capability-registry.js";
+import type { AgentRuntimeConfigCliRequest } from "./agent-runtime-config.js";
 import {
   decodeTsRunnerRequest,
   validateTsRunnerRequest,
@@ -1020,6 +1021,7 @@ test("runTsRunnerCli only advertises structured output when the selected harness
     "load_operator_surface_context",
     "load_pending_user_memory_context",
     "load_recalled_memory_context",
+    "load_recent_runtime_context",
     "persist_turn_request_snapshot",
     "prepare_harness_run",
     "project_runtime_config",
@@ -1051,7 +1053,7 @@ test("runTsRunnerCli loads current user context from the runtime profile", async
   });
   store.close();
 
-  let capturedProjectRequest: Record<string, unknown> | null = null;
+  let capturedProjectRequest: AgentRuntimeConfigCliRequest | null = null;
   const exitCode = await runTsRunnerCli(
     [
       "--request-base64",
@@ -1062,12 +1064,16 @@ test("runTsRunnerCli loads current user context from the runtime profile", async
     ],
     {
       deps: {
-        ...testDeps(),
+        ...testDeps({
+          pluginOverrides: {
+            stageRuntimeTools: () => ({
+              changed: false,
+              toolIds: ["holaboss_delegate_task"],
+            }),
+          },
+        }),
         projectAgentRuntimeConfig: (request) => {
-          capturedProjectRequest = request as unknown as Record<
-            string,
-            unknown
-          >;
+          capturedProjectRequest = request;
           return {
             provider_id: "openai",
             model_id: "gpt-5.4",
@@ -1121,7 +1127,7 @@ test("runTsRunnerCli loads current user context from the runtime profile", async
 
 test("runTsRunnerCli strips subagent orchestration tools from onboarding sessions", async () => {
   setTempSandboxRoot("hb-ts-runner-onboarding-tools-");
-  let capturedProjectRequest: Record<string, unknown> | null = null;
+  let capturedProjectRequest: AgentRuntimeConfigCliRequest | null = null;
 
   const exitCode = await runTsRunnerCli(
     [
@@ -1153,10 +1159,7 @@ test("runTsRunnerCli strips subagent orchestration tools from onboarding session
           },
         }),
         projectAgentRuntimeConfig: (request) => {
-          capturedProjectRequest = request as unknown as Record<
-            string,
-            unknown
-          >;
+          capturedProjectRequest = request;
           return {
             provider_id: "openai",
             model_id: "gpt-5.4",
@@ -1214,7 +1217,7 @@ test("runTsRunnerCli strips subagent orchestration tools from onboarding session
 
 test("runTsRunnerCli strips staged execution tools from front-of-house workspace sessions", async () => {
   setTempSandboxRoot("hb-ts-runner-runtime-tools-");
-  let capturedProjectRequest: Record<string, unknown> | null = null;
+  let capturedProjectRequest: AgentRuntimeConfigCliRequest | null = null;
 
   const exitCode = await runTsRunnerCli(
     ["--request-base64", encodeRequest(baseRequest())],
@@ -1233,10 +1236,7 @@ test("runTsRunnerCli strips staged execution tools from front-of-house workspace
           },
         }),
         projectAgentRuntimeConfig: (request) => {
-          capturedProjectRequest = request as unknown as Record<
-            string,
-            unknown
-          >;
+          capturedProjectRequest = request;
           return {
             provider_id: "openai",
             model_id: "gpt-5.4",
@@ -1291,7 +1291,6 @@ test("runTsRunnerCli strips staged execution tools from front-of-house workspace
     (capturedProjectRequest as { default_tools: string[] }).default_tools,
     [
       "read",
-      "edit",
       "grep",
       "glob",
       "list",
@@ -1306,6 +1305,98 @@ test("runTsRunnerCli strips staged execution tools from front-of-house workspace
   assert.deepEqual(
     (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
     [],
+  );
+});
+
+test("runTsRunnerCli filters mutating MCP tools out of front-session requests", async () => {
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-front-mcp-filter-"),
+  );
+  process.env.HB_SANDBOX_ROOT = sandboxRoot;
+  let capturedProjectRequest: AgentRuntimeConfigCliRequest | null = null;
+
+  const exitCode = await runTsRunnerCli(
+    [
+      "--request-base64",
+      encodeRequest({
+        ...baseRequest(),
+        context: {
+          _sandbox_runtime_exec_v1: {
+            harness: "pi",
+          },
+        },
+      }),
+    ],
+    {
+      deps: {
+        ...testDeps(),
+        compilePlan: () =>
+          ({
+            ...baseCompiledPlan(),
+            resolved_mcp_tool_refs: [
+              {
+                tool_id: "docs.lookup",
+                server_id: "docs",
+                tool_name: "lookup",
+              },
+              {
+                tool_id: "workspace.write_report",
+                server_id: "workspace",
+                tool_name: "write_report",
+              },
+            ],
+          }) as never,
+        projectAgentRuntimeConfig: (request) => {
+          capturedProjectRequest = request;
+          return {
+            provider_id: "openai",
+            model_id: "gpt-5.4",
+            mode: "code",
+            system_prompt: "You are concise.",
+            model_client: {
+              model_proxy_provider: "openai_compatible",
+              api_key: "token",
+              base_url: "http://127.0.0.1:4000/openai/v1",
+            },
+            tools: { read: true },
+            workspace_tool_ids: [],
+            workspace_skill_ids: [],
+            output_schema_member_id: null,
+            output_format: null,
+            workspace_config_checksum: "checksum-1",
+          };
+        },
+      },
+      io: {
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.ok(capturedProjectRequest);
+  assert.deepEqual(
+    (
+      capturedProjectRequest as {
+        resolved_mcp_tool_refs: Array<Record<string, string>>;
+      }
+    ).resolved_mcp_tool_refs,
+    [
+      {
+        tool_id: "docs.lookup",
+        server_id: "docs",
+        tool_name: "lookup",
+      },
+    ],
   );
 });
 
@@ -1361,17 +1452,14 @@ test("runTsRunnerCli does not derive prompt continuity from the latest prior tur
   });
   store.close();
 
-  let capturedProjectRequest: Record<string, unknown> | null = null;
+  let capturedProjectRequest: AgentRuntimeConfigCliRequest | null = null;
   const exitCode = await runTsRunnerCli(
     ["--request-base64", encodeRequest(baseRequest())],
     {
       deps: {
         ...testDeps(),
         projectAgentRuntimeConfig: (request) => {
-          capturedProjectRequest = request as unknown as Record<
-            string,
-            unknown
-          >;
+          capturedProjectRequest = request;
           return {
             provider_id: "openai",
             model_id: "gpt-5.4",
@@ -1409,9 +1497,14 @@ test("runTsRunnerCli does not derive prompt continuity from the latest prior tur
 
   assert.equal(exitCode, 0);
   assert.ok(capturedProjectRequest);
-  assert.equal("recent_runtime_context" in capturedProjectRequest, false);
+  if (!capturedProjectRequest) {
+    throw new Error("expected project runtime config request");
+  }
+  const runtimeConfigRequest =
+    capturedProjectRequest as AgentRuntimeConfigCliRequest;
+  assert.equal(runtimeConfigRequest.recent_runtime_context, undefined);
   assert.equal(
-    (capturedProjectRequest as { session_resume_context?: Record<string, unknown> })
+    (runtimeConfigRequest as { session_resume_context?: Record<string, unknown> })
       .session_resume_context,
     undefined,
   );
@@ -1442,17 +1535,14 @@ test("runTsRunnerCli does not project session memory into runtime prompt config"
       "Resume from compacted deploy attempt. Draft report path: outputs/reports/deploy.md.",
   });
 
-  let capturedProjectRequest: Record<string, unknown> | null = null;
+  let capturedProjectRequest: AgentRuntimeConfigCliRequest | null = null;
   const exitCode = await runTsRunnerCli(
     ["--request-base64", encodeRequest(baseRequest())],
     {
       deps: {
         ...testDeps(),
         projectAgentRuntimeConfig: (request) => {
-          capturedProjectRequest = request as unknown as Record<
-            string,
-            unknown
-          >;
+          capturedProjectRequest = request;
           return {
             provider_id: "openai",
             model_id: "gpt-5.4",
@@ -1490,12 +1580,108 @@ test("runTsRunnerCli does not project session memory into runtime prompt config"
 
   assert.equal(exitCode, 0);
   assert.ok(capturedProjectRequest);
-  assert.equal("recent_runtime_context" in capturedProjectRequest, false);
+  if (!capturedProjectRequest) {
+    throw new Error("expected project runtime config request");
+  }
+  const runtimeConfigRequest =
+    capturedProjectRequest as AgentRuntimeConfigCliRequest;
+  assert.equal(runtimeConfigRequest.recent_runtime_context, undefined);
   assert.equal(
-    (capturedProjectRequest as { session_resume_context?: Record<string, unknown> })
+    (runtimeConfigRequest as { session_resume_context?: Record<string, unknown> })
       .session_resume_context,
     undefined,
   );
+});
+
+test("runTsRunnerCli injects report-routing recovery context for report-style main-session requests", async () => {
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-report-routing-"),
+  );
+  process.env.HB_SANDBOX_ROOT = sandboxRoot;
+  const workspaceRoot = path.join(sandboxRoot, "workspace");
+  const store = new RuntimeStateStore({
+    workspaceRoot,
+    sandboxRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.close();
+
+  let capturedProjectRequest: AgentRuntimeConfigCliRequest | null = null;
+  const exitCode = await runTsRunnerCli(
+    [
+      "--request-base64",
+      encodeRequest({
+        ...baseRequest(),
+        instruction: "write me a report on what we did so far",
+      }),
+    ],
+    {
+      deps: {
+        ...testDeps({
+          pluginOverrides: {
+            stageRuntimeTools: () => ({
+              changed: false,
+              toolIds: ["holaboss_delegate_task"],
+            }),
+          },
+        }),
+        projectAgentRuntimeConfig: (request) => {
+          capturedProjectRequest = request;
+          return {
+            provider_id: "openai",
+            model_id: "gpt-5.4",
+            mode: "code",
+            system_prompt: "You are concise.",
+            model_client: {
+              model_proxy_provider: "openai_compatible",
+              api_key: "token",
+              base_url: "http://127.0.0.1:4000/openai/v1",
+              default_headers: { "X-Test": "1" },
+            },
+            tools: { read: true },
+            workspace_tool_ids: [],
+            workspace_skill_ids: [],
+            output_schema_member_id: null,
+            output_format: null,
+            workspace_config_checksum: "checksum-1",
+          };
+        },
+      },
+      io: {
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.ok(capturedProjectRequest);
+  if (!capturedProjectRequest) {
+    throw new Error("expected project runtime config request");
+  }
+  const runtimeConfigRequest = capturedProjectRequest as AgentRuntimeConfigCliRequest;
+  assert.deepEqual(runtimeConfigRequest.runtime_tool_ids, [
+    "holaboss_delegate_task",
+  ]);
+  assert.deepEqual(runtimeConfigRequest.recent_runtime_context?.lines, [
+    "The user is asking for a report-style deliverable. Keep chat as the coordination surface, not the deliverable surface.",
+    "Do not paste a long report, memo, brief, recap, or document body into the conversation.",
+    "Use `holaboss_delegate_task` to produce the report artifact, then keep the main-session reply to a brief acknowledgement or short handoff.",
+    "Only provide the full content inline if the user explicitly asks for it in chat and it will remain short.",
+  ]);
 });
 
 test("runTsRunnerCli does not emit a synthetic resume event before harness run events", async () => {

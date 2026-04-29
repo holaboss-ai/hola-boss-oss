@@ -60,6 +60,17 @@ export interface HarnessDiscoveredMcpTool {
   timeoutMs: number;
 }
 
+export interface HarnessMcpDiscoveryFailure {
+  serverId: string;
+  reason: string;
+  missingToolIds: string[];
+}
+
+export interface HarnessMcpDiscoveryResult {
+  tools: HarnessDiscoveredMcpTool[];
+  failures: HarnessMcpDiscoveryFailure[];
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -210,17 +221,28 @@ function mcpToolAllowlist(
   return allowlist;
 }
 
+function describeDiscoveryError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message || error.name || "unknown error";
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  return "unknown error";
+}
+
 export async function discoverHarnessMcpTools(params: {
   bindings: HarnessMcpServerBinding[];
   runtime: HarnessMcpRuntimeLike;
   toolRefs: HarnessMcpToolRef[];
   retryIntervalMs?: number;
   maxWaitMs?: number;
-}): Promise<HarnessDiscoveredMcpTool[]> {
+}): Promise<HarnessMcpDiscoveryResult> {
   const retryIntervalMs = Math.max(1, params.retryIntervalMs ?? 250);
   const maxWaitMs = Math.max(retryIntervalMs, params.maxWaitMs ?? 10000);
   const allowlist = mcpToolAllowlist(params.toolRefs);
   const discovered: HarnessDiscoveredMcpTool[] = [];
+  const failures: HarnessMcpDiscoveryFailure[] = [];
   const usedNames = new Set<string>();
 
   for (const binding of params.bindings) {
@@ -228,14 +250,17 @@ export async function discoverHarnessMcpTools(params: {
     const discoveryDeadline = Date.now() + Math.min(binding.timeoutMs, maxWaitMs);
     let discoveredTools: HarnessMcpRuntimeToolInfo[] = [];
     let lastDiscoveryError: unknown = null;
+    let serverReachable = false;
 
     while (true) {
       try {
         discoveredTools = await params.runtime.listTools(binding.serverId, { includeSchema: true });
         lastDiscoveryError = null;
+        serverReachable = true;
       } catch (error) {
         lastDiscoveryError = error;
         discoveredTools = [];
+        serverReachable = false;
       }
 
       const missingAllowedTools = allowedTools
@@ -245,27 +270,32 @@ export async function discoverHarnessMcpTools(params: {
         break;
       }
       if (Date.now() >= discoveryDeadline) {
-        if (lastDiscoveryError) {
-          throw lastDiscoveryError;
-        }
-        throw new Error(
-          `Pi MCP tool ${binding.serverId}.${missingAllowedTools[0]} for tool_id=${allowedTools?.get(missingAllowedTools[0])?.tool_id ?? `${binding.serverId}.${missingAllowedTools[0]}`} was not discovered`,
-        );
+        const missingToolIds = allowedTools
+          ? missingAllowedTools.map(
+              (toolName) =>
+                allowedTools.get(toolName)?.tool_id ?? `${binding.serverId}.${toolName}`,
+            )
+          : [];
+        const reason = serverReachable
+          ? `Tools not discovered: ${missingAllowedTools.join(", ")}`
+          : `Server unreachable: ${describeDiscoveryError(lastDiscoveryError)}`;
+        failures.push({
+          serverId: binding.serverId,
+          reason,
+          missingToolIds,
+        });
+        break;
       }
       await sleep(retryIntervalMs);
+    }
+
+    if (failures.some((failure) => failure.serverId === binding.serverId)) {
+      continue;
     }
 
     const filteredTools = allowedTools
       ? discoveredTools.filter((tool) => allowedTools.has(tool.name))
       : discoveredTools;
-
-    if (allowedTools) {
-      for (const [toolName, toolRef] of allowedTools.entries()) {
-        if (!discoveredTools.some((tool) => tool.name === toolName)) {
-          throw new Error(`Pi MCP tool ${binding.serverId}.${toolName} for tool_id=${toolRef.tool_id} was not discovered`);
-        }
-      }
-    }
 
     for (const tool of filteredTools) {
       const toolRef = allowedTools?.get(tool.name);
@@ -285,5 +315,5 @@ export async function discoverHarnessMcpTools(params: {
     }
   }
 
-  return discovered;
+  return { tools: discovered, failures };
 }

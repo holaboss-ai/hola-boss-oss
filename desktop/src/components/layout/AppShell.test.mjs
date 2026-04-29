@@ -476,8 +476,12 @@ test("app shell uses the top toolbar for shell navigation and removes the left r
   assert.match(source, /type ShellView = "space";/);
   assert.match(source, /const \[activeShellView, setActiveShellView\] = useState<ShellView>\("space"\);/);
   assert.match(source, /handleOpenAutomationsPane = useCallback/);
+  assert.match(source, /const handleOpenSessionsPane = useCallback\(\(\) => \{/);
+  assert.match(source, /setAgentView\(\{ type: "sessions" \}\)/);
   assert.match(source, /setAgentView\(\{ type: "automations" \}\)/);
+  assert.match(source, /onOpenSessions=\{handleOpenSessionsPane\}/);
   assert.match(source, /onOpenAutomations=\{handleOpenAutomationsPane\}/);
+  assert.match(source, /<SubagentSessionsPane[\s\S]*variant="full"/);
   assert.match(source, /<AutomationsPane[\s\S]*onRunNow=\{handleReturnToChatPane\}/);
   assert.match(source, /<AutomationsPane[\s\S]*onCreateSchedule=\{\(\) =>\s*handleCreateScheduleInChat\(selectedWorkspaceId\)/);
   assert.doesNotMatch(source, /<SettingsDialog[\s\S]*onCreateAutomationSchedule/);

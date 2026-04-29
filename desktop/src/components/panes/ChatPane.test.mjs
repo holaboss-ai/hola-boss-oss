@@ -369,6 +369,15 @@ test("chat trace summary only surfaces terminal run failures in the summary labe
   );
 });
 
+test("chat history reconstructs claimed and started phase steps for inspection sessions", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /if \(eventType === "run_claimed"\) \{/);
+  assert.match(source, /title: "Checking workspace context"/);
+  assert.match(source, /if \(eventType === "run_started"\) \{/);
+  assert.match(source, /title: "Running"/);
+});
+
 test("chat trace summary keeps a live run in progress when no active step label is available", async () => {
   const source = await readFile(sourcePath, "utf8");
 
@@ -1349,6 +1358,7 @@ test("chat pane no longer carries a session-local todo plan rail", async () => {
     source,
     /<BackgroundTasksPane[\s\S]*workspaceId=\{selectedWorkspaceId\}[\s\S]*variant="inline"/,
   );
+  assert.doesNotMatch(source, /<SubagentSessionsPane[\s\S]*variant="inline"/);
 });
 
 test("chat composer exposes a pause action for in-flight runs and calls the runtime pause API", async () => {
@@ -1408,6 +1418,14 @@ test("chat composer supports ctrl-c draft cancel and arrow-up recall", async () 
 test("live assistant turn keeps a plain status placeholder before any trace or output arrives", async () => {
   const source = await readFile(sourcePath, "utf8");
 
+  assert.match(
+    source,
+    /const hasVisibleLiveAssistantContent = showSessionExecutionInternals[\s\S]*renderedLiveAssistantSegments\.some\([\s\S]*segment\.kind === "output" && Boolean\(segment\.text\.trim\(\)\)/,
+  );
+  assert.match(
+    source,
+    /const showLiveAssistantTurn =\s*isResponding \|\|\s*hasVisibleLiveAssistantContent;/,
+  );
   assert.match(
     source,
     /const showStatusPlaceholder =\s*live && Boolean\(normalizedStatus\) && renderedSegments\.length === 0;/,
@@ -1540,6 +1558,12 @@ test("chat pane renders inline background tasks near the top of the pane", async
     source,
     /!isOnboardingVariant && !isReadOnlyInspectionSession \? \(\s*<BackgroundTasksPane[\s\S]*workspaceId=\{selectedWorkspaceId\}[\s\S]*variant="inline"[\s\S]*\) : null/,
   );
+  assert.doesNotMatch(
+    source,
+    /!isOnboardingVariant && !isReadOnlyInspectionSession \? \(\s*<SubagentSessionsPane[\s\S]*variant="inline"[\s\S]*\) : null/,
+  );
+  assert.match(source, /const handleOpenReadOnlyAgentSession = \(/);
+  assert.match(source, /aria-label="Show sessions"/);
   assert.match(
     source,
     /className=\{`flex min-w-0 w-full flex-col gap-4 px-4 pb-3 pt-5 \$\{\s*showHistoryRestoreScreen \? "invisible" : ""\s*\}`\}/,
@@ -1705,6 +1729,10 @@ test("chat pane idly refreshes the active main session to surface autonomous bac
   assert.match(source, /function latestVisibleChatMessageId\(messages: ChatMessage\[\]\): string \{/);
   assert.match(
     source,
+    /async function reconcileAutonomousMainSessionActivity\(params: \{\s*workspaceId: string;\s*mainSessionId: string;\s*currentMessages: ChatMessage\[\];/,
+  );
+  assert.match(
+    source,
     /if \(\s*!workspaceId \|\|\s*!mainSessionId \|\|\s*currentSessionId !== mainSessionId \|\|\s*activeSessionReadOnly \|\|\s*isLoadingHistory \|\|\s*isResponding\s*\) \{\s*return;\s*\}/,
   );
   assert.match(
@@ -1713,19 +1741,32 @@ test("chat pane idly refreshes the active main session to surface autonomous bac
   );
   assert.match(
     source,
-    /window\.electronAPI\.workspace\.getSessionHistory\(\s*\{\s*sessionId: mainSessionId,\s*workspaceId,\s*limit: 1,\s*offset: 0,\s*order: "desc",\s*\},?\s*\)/,
+    /const shouldAttachAutonomousRun =[\s\S]*\["BUSY", "QUEUED"\]\.includes\(currentRuntimeStatus\);/,
   );
   assert.match(
     source,
-    /const latestHistoryMessageId =\s*historyMessagesInDisplayOrder\(latestHistory\.messages, "desc"\)\[0\]\?\.id\?\.trim\(\) \|\|/,
+    /if \(shouldAttachAutonomousRun\) \{[\s\S]*await loadSessionConversation\(mainSessionId, workspaceId, runtimeStates\.items, \{[\s\S]*readOnly: false,[\s\S]*\}\);[\s\S]*return true;\s*\}/,
   );
   assert.match(
     source,
-    /if \(\s*!latestHistoryMessageId \|\|\s*latestHistoryMessageId === latestDisplayedMessageId\s*\) \{\s*return;\s*\}/,
+    /window\.electronAPI\.workspace\.getSessionHistory\(\{\s*sessionId: mainSessionId,\s*workspaceId,\s*limit: 1,\s*offset: 0,\s*order: "desc",\s*\}\)/,
   );
   assert.match(
     source,
-    /await loadSessionConversation\(mainSessionId, workspaceId, runtimeStates\.items, \{/,
+    /await reconcileAutonomousMainSessionActivity\(\{\s*workspaceId,\s*mainSessionId,\s*currentMessages: messages,/,
+  );
+});
+
+test("chat pane reconciles missed autonomous main-session follow-ups before appending a new user turn", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /if \(\s*!pendingSessionTarget &&\s*selectedWorkspace &&\s*targetSessionId === mainSessionIdForWorkspace &&[\s\S]*await reconcileAutonomousMainSessionActivity\(\{\s*workspaceId: selectedWorkspace\.id,\s*mainSessionId: mainSessionIdForWorkspace,\s*currentMessages: messages,\s*\}\);/,
+  );
+  assert.match(
+    source,
+    /const queueOntoActiveRun =\s*\(\s*isResponding \|\|\s*Boolean\(activeStreamIdRef\.current\)\s*\|\|\s*Boolean\(pendingInputIdRef\.current\)\s*\)\s*&&/,
   );
 });
 

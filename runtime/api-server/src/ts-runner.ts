@@ -38,6 +38,7 @@ import type {
   AgentOperatorSurfaceContext,
   AgentOperatorSurfaceType,
   AgentPendingUserMemoryContext,
+  AgentRecentRuntimeContext,
   AgentRecalledMemoryContext,
   AgentScratchpadContext,
 } from "./agent-runtime-prompt.js";
@@ -100,7 +101,6 @@ const WORKSPACE_MCP_READY_TIMEOUT_S = 10;
 const RECALL_SCOPE_ENTRY_LIMIT = 200;
 const MAIN_SESSION_DEFAULT_TOOLS = [
   "read",
-  "edit",
   "grep",
   "glob",
   "list",
@@ -144,6 +144,13 @@ const ONBOARDING_SESSION_RUNTIME_TOOL_IDS = new Set([
   "holaboss_onboarding_status",
   "holaboss_onboarding_complete",
 ]);
+const BROWSER_RETRY_REQUEST_PATTERN = /\b(?:try again|retry|do it again|again)\b/i;
+const BROWSER_ACTION_REQUEST_PATTERN =
+  /\b(?:browser|tab|page|site|url|open|go to|navigate|visit|click|scroll|type)\b/i;
+const STALE_BROWSER_REFUSAL_PATTERN =
+  /(?:browser(?:-control)?(?: capability)? (?:isn't|is not|wasn't|not) exposed|can't directly (?:operate|control) the browser|can't actually click or navigate|couldn't actually drive the browser|nothing on your tab was changed)/i;
+const REPORT_STYLE_REQUEST_PATTERN =
+  /\b(?:report|brief|memo|write-?up|digest|recap|meeting notes|notes doc|document)\b/i;
 
 type BootstrapStageTimingMap = Record<string, number>;
 
@@ -721,6 +728,118 @@ function loadPendingUserMemoryContext(params: {
   }
 }
 
+function hasActiveUserBrowserSurface(
+  context: AgentOperatorSurfaceContext | null | undefined,
+): boolean {
+  for (const surface of context?.surfaces ?? []) {
+    if (surface.surface_type !== "browser") {
+      continue;
+    }
+    if (surface.owner !== "user") {
+      continue;
+    }
+    if (surface.active === false) {
+      continue;
+    }
+    const mutability = surface.mutability ?? null;
+    if (mutability === "takeover_allowed" || mutability === "agent_owned") {
+      return true;
+    }
+  }
+  return false;
+}
+
+function loadRecentRuntimeContext(params: {
+  workspaceRoot: string;
+  workspaceId: string;
+  sessionId: string;
+  sessionKind: string | null | undefined;
+  instruction: string;
+  runtimeToolIds: string[];
+  browserToolIds: string[];
+  operatorSurfaceContext?: AgentOperatorSurfaceContext | null;
+  logger?: LoggerLike;
+}): AgentRecentRuntimeContext | null {
+  if (!isFrontSessionKind(params.sessionKind)) {
+    return null;
+  }
+  if (!params.runtimeToolIds.includes("holaboss_delegate_task")) {
+    return null;
+  }
+
+  const instruction = params.instruction.trim();
+  const reportLike = REPORT_STYLE_REQUEST_PATTERN.test(instruction);
+  const retryLike = BROWSER_RETRY_REQUEST_PATTERN.test(instruction);
+  const browserIntentLike = BROWSER_ACTION_REQUEST_PATTERN.test(instruction);
+  const browserRecoveryEligible =
+    params.browserToolIds.length === 0 &&
+    hasActiveUserBrowserSurface(params.operatorSurfaceContext);
+  if (reportLike) {
+    return {
+      lines: [
+        "The user is asking for a report-style deliverable. Keep chat as the coordination surface, not the deliverable surface.",
+        "Do not paste a long report, memo, brief, recap, or document body into the conversation.",
+        "Use `holaboss_delegate_task` to produce the report artifact, then keep the main-session reply to a brief acknowledgement or short handoff.",
+        "Only provide the full content inline if the user explicitly asks for it in chat and it will remain short.",
+      ],
+    };
+  }
+  if (!browserRecoveryEligible) {
+    return null;
+  }
+  const sandboxRoot = path.dirname(params.workspaceRoot);
+  const dbPath = path.join(sandboxRoot, "state", "runtime.db");
+  let staleBrowserRefusal = false;
+
+  if (fs.existsSync(dbPath)) {
+    const store = new RuntimeStateStore({
+      workspaceRoot: params.workspaceRoot,
+      sandboxRoot,
+      dbPath,
+    });
+    try {
+      const recentAssistantMessages = store.listSessionMessages({
+        workspaceId: params.workspaceId,
+        sessionId: params.sessionId,
+        role: "assistant",
+        order: "desc",
+        limit: 6,
+        offset: 0,
+      });
+      staleBrowserRefusal = recentAssistantMessages.some((message) =>
+        STALE_BROWSER_REFUSAL_PATTERN.test(message.text),
+      );
+    } catch (error) {
+      params.logger?.warn?.(
+        `Failed to load recent runtime context workspace_id=${params.workspaceId} session_id=${params.sessionId}: ${errorMessage(error)}`,
+      );
+    } finally {
+      store.close();
+    }
+  }
+
+  if (!(browserIntentLike || (retryLike && staleBrowserRefusal))) {
+    return null;
+  }
+
+  const lines = [
+    "This main-session run is a coordinator pass for browser work, not the place to repeat a browser-control limitation.",
+    "If the user's request is to operate the current browser/tab/page and direct browser tools are unavailable here, route it through `holaboss_delegate_task` instead of answering with a manual browser workaround.",
+    "Only surface a browser limitation if delegated subagents also cannot perform the requested browser action.",
+  ];
+  if (staleBrowserRefusal) {
+    lines.unshift(
+      "Recent turns in this session contain stale browser-capability refusals. Treat them as prior-run history, not as the answer for this run.",
+    );
+  }
+  if (retryLike) {
+    lines.unshift(
+      "The user is explicitly retrying the browser request. Do not simply restate the earlier limitation.",
+    );
+  }
+  return { lines };
+}
+
 function workspaceRelativePath(params: {
   workspaceDir: string;
   filePath: string | null | undefined;
@@ -1004,6 +1123,36 @@ function projectExtraToolIdsForSession(params: {
   );
 }
 
+function inferMcpToolPolicy(toolRef: {
+  tool_id: string;
+  tool_name: string;
+}): "inspect" | "mutate" | "coordinate" {
+  const haystack = `${toolRef.tool_id} ${toolRef.tool_name}`.toLowerCase();
+  if (
+    /(create|update|delete|remove|write|edit|patch|post|send|run|execute|trigger|start|stop)/.test(
+      haystack,
+    )
+  ) {
+    return "mutate";
+  }
+  if (/(ask|question|plan|todo|approve|confirm)/.test(haystack)) {
+    return "coordinate";
+  }
+  return "inspect";
+}
+
+function projectResolvedMcpToolRefsForSession(params: {
+  sessionKind: string | null | undefined;
+  resolvedMcpToolRefs: CompiledWorkspaceRuntimePlan["resolved_mcp_tool_refs"];
+}): CompiledWorkspaceRuntimePlan["resolved_mcp_tool_refs"] {
+  if (!isFrontSessionKind(params.sessionKind)) {
+    return params.resolvedMcpToolRefs;
+  }
+  return params.resolvedMcpToolRefs.filter(
+    (toolRef) => inferMcpToolPolicy(toolRef) !== "mutate",
+  );
+}
+
 function explicitHolabossUserId(request: TsRunnerRequest): string | undefined {
   return (
     firstNonEmptyString(
@@ -1219,6 +1368,7 @@ function buildAgentRuntimeConfigRequest(params: {
   currentUserContext?: AgentCurrentUserContext | null;
   operatorSurfaceContext?: AgentOperatorSurfaceContext | null;
   pendingUserMemoryContext?: AgentPendingUserMemoryContext | null;
+  recentRuntimeContext?: AgentRecentRuntimeContext | null;
   legacySessionHistoryContext?: AgentLegacySessionHistoryContext | null;
   sessionScratchpadContext?: AgentScratchpadContext | null;
   evolveCandidateContext?: AgentEvolveCandidateContext | null;
@@ -1240,6 +1390,10 @@ function buildAgentRuntimeConfigRequest(params: {
     sessionKind: normalizedSessionKind,
     browserToolIds: params.browserToolIds,
   });
+  const resolvedMcpToolRefs = projectResolvedMcpToolRefsForSession({
+    sessionKind: normalizedSessionKind,
+    resolvedMcpToolRefs: params.resolvedMcpToolRefs,
+  });
   const common = {
     session_id: params.request.session_id,
     workspace_id: params.request.workspace_id,
@@ -1260,6 +1414,7 @@ function buildAgentRuntimeConfigRequest(params: {
     current_user_context: params.currentUserContext ?? undefined,
     operator_surface_context: params.operatorSurfaceContext ?? undefined,
     pending_user_memory_context: params.pendingUserMemoryContext ?? undefined,
+    recent_runtime_context: params.recentRuntimeContext ?? undefined,
     legacy_session_history_context: params.legacySessionHistoryContext ?? undefined,
     evolve_candidate_context: params.evolveCandidateContext ?? undefined,
     selected_model: firstNonEmptyString(params.request.model) ?? undefined,
@@ -1279,7 +1434,7 @@ function buildAgentRuntimeConfigRequest(params: {
             params.sessionScratchpadContext ?? undefined,
         }),
     tool_server_id_map: { ...params.toolServerIdMap },
-    resolved_mcp_tool_refs: params.resolvedMcpToolRefs.map((toolRef) => ({
+    resolved_mcp_tool_refs: resolvedMcpToolRefs.map((toolRef) => ({
       tool_id: toolRef.tool_id,
       server_id: toolRef.server_id,
       tool_name: toolRef.tool_name,
@@ -1935,6 +2090,22 @@ export async function executeTsRunnerRequest(
           logger,
         }),
     );
+    const recentRuntimeContext = measureBootstrapStage(
+      bootstrapStageTimingsMs,
+      "load_recent_runtime_context",
+      () =>
+        loadRecentRuntimeContext({
+          workspaceRoot: bootstrap.workspaceRoot,
+          workspaceId: request.workspace_id,
+          sessionId: request.session_id,
+          sessionKind: request.session_kind,
+          instruction: request.instruction,
+          runtimeToolIds: [...stagedRuntimeTools.toolIds],
+          browserToolIds: [...stagedBrowserTools.toolIds],
+          operatorSurfaceContext,
+          logger,
+        }),
+    );
     const legacySessionHistoryContext = await measureBootstrapStageAsync(
       bootstrapStageTimingsMs,
       "load_legacy_session_history_context",
@@ -1974,6 +2145,7 @@ export async function executeTsRunnerRequest(
             currentUserContext,
             operatorSurfaceContext,
             pendingUserMemoryContext,
+            recentRuntimeContext,
             legacySessionHistoryContext,
             sessionScratchpadContext,
             evolveCandidateContext: evolveCandidateContext(request),

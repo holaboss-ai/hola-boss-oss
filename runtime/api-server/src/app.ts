@@ -562,6 +562,19 @@ function capabilitySessionId(params: {
   );
 }
 
+function capabilityBrowserSpace(params: {
+  headers: Record<string, unknown>;
+  query?: Record<string, unknown> | null;
+  body?: Record<string, unknown> | null;
+}): "agent" | "user" | null {
+  const value =
+    headerString(params.headers, "x-holaboss-browser-space") ||
+    optionalString(params.query?.browser_space) ||
+    optionalString(params.body?.browser_space) ||
+    "";
+  return value === "agent" || value === "user" ? value : null;
+}
+
 function capabilitySelectedModel(params: {
   headers: Record<string, unknown>;
   query?: Record<string, unknown> | null;
@@ -885,7 +898,17 @@ function requireHealthyWorkspaceFolder(
   }
 }
 
-function agentSessionPayload(record: AgentSessionRecord): Record<string, unknown> {
+function agentSessionPayload(
+  record: AgentSessionRecord,
+  runtimeStore?: Pick<RuntimeStateStore, "getSubagentRunByChildSession"> | null,
+): Record<string, unknown> {
+  const linkedSubagentRun = runtimeStore?.getSubagentRunByChildSession({
+    workspaceId: record.workspaceId,
+    childSessionId: record.sessionId,
+  });
+  const sourceType =
+    linkedSubagentRun?.sourceType ??
+    (record.kind === "task_proposal" || record.sourceProposalId ? "task_proposal" : null);
   return {
     workspace_id: record.workspaceId,
     session_id: record.sessionId,
@@ -894,6 +917,9 @@ function agentSessionPayload(record: AgentSessionRecord): Record<string, unknown
     parent_session_id: record.parentSessionId,
     source_proposal_id: record.sourceProposalId,
     created_by: record.createdBy,
+    source_type: sourceType,
+    cronjob_id: linkedSubagentRun?.cronjobId ?? null,
+    proposal_id: linkedSubagentRun?.proposalId ?? record.sourceProposalId,
     created_at: record.createdAt,
     updated_at: record.updatedAt,
     archived_at: record.archivedAt
@@ -1448,7 +1474,7 @@ function exportLegacySessionHistory(params: {
       id: params.workspace.id,
       name: params.workspace.name,
     },
-    session: agentSessionPayload(params.session),
+    session: agentSessionPayload(params.session, params.store),
     messages,
     outputs,
   };
@@ -2594,7 +2620,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const appLifecycleExecutor = options.appLifecycleExecutor ?? new RuntimeAppLifecycleExecutor({ store });
   const memoryService = options.memoryService ?? new FilesystemMemoryService({ workspaceRoot: store.workspaceRoot });
   const runtimeConfigService = options.runtimeConfigService ?? new FileRuntimeConfigService();
-  const browserToolService = options.browserToolService ?? new DesktopBrowserToolService();
+  const browserToolService = options.browserToolService ?? new DesktopBrowserToolService({ artifactStore: store });
   const terminalSessionManager =
     options.terminalSessionManager === undefined
       ? new TerminalSessionManager({
@@ -3418,8 +3444,12 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       headers: request.headers as Record<string, unknown>,
       query: isRecord(request.query) ? request.query : null,
     });
+    const space = capabilityBrowserSpace({
+      headers: request.headers as Record<string, unknown>,
+      query: isRecord(request.query) ? request.query : null,
+    });
     try {
-      return await browserToolService.getStatus({ workspaceId, sessionId });
+      return await browserToolService.getStatus({ workspaceId, sessionId, space });
     } catch (error) {
       if (error instanceof DesktopBrowserToolServiceError) {
         return sendError(reply, error.statusCode, error.message);
@@ -3439,11 +3469,26 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       headers: request.headers as Record<string, unknown>,
       body: request.body,
     });
+    const space = capabilityBrowserSpace({
+      headers: request.headers as Record<string, unknown>,
+      body: request.body,
+    });
+    const inputId =
+      workspaceId && sessionId
+        ? resolveOutputInputId({
+            store,
+            workspaceId,
+            sessionId,
+            inputId:
+              headerString(request.headers as Record<string, unknown>, "x-holaboss-input-id") ||
+              nullableString(request.body.input_id),
+          })
+        : null;
     try {
       const result = await browserToolService.execute(
         toolId,
         request.body,
-        { workspaceId, sessionId },
+        { workspaceId, sessionId, inputId, space },
       );
       return await maybeShapeCapabilityToolResult({
         headers: request.headers as Record<string, unknown>,
@@ -3736,18 +3781,57 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!isRecord(request.body)) {
       return sendError(reply, 400, "request body must be an object");
     }
+    // For identity fields we distinguish "not provided" (preserve) from
+    // "null" (clear) — only forward when the key is explicitly present.
+    const body = request.body as Record<string, unknown>;
+    const accountHandlePresent = Object.prototype.hasOwnProperty.call(body, "account_handle");
+    const accountEmailPresent = Object.prototype.hasOwnProperty.call(body, "account_email");
+    const normalizeIdentity = (value: unknown): string | null => {
+      if (value === null) return null;
+      if (typeof value !== "string") return null;
+      const trimmed = value.trim();
+      return trimmed.length === 0 ? null : trimmed;
+    };
     try {
       return integrationService.updateConnection(params.connectionId, {
-        status: typeof request.body.status === "string" ? request.body.status : undefined,
-        secretRef: typeof request.body.secret_ref === "string" ? request.body.secret_ref : undefined,
-        accountLabel: typeof request.body.account_label === "string" ? request.body.account_label : undefined,
-        grantedScopes: Array.isArray(request.body.granted_scopes) ? request.body.granted_scopes : undefined
+        status: typeof body.status === "string" ? body.status : undefined,
+        secretRef: typeof body.secret_ref === "string" ? body.secret_ref : undefined,
+        accountLabel: typeof body.account_label === "string" ? body.account_label : undefined,
+        grantedScopes: Array.isArray(body.granted_scopes) ? body.granted_scopes : undefined,
+        ...(accountHandlePresent ? { accountHandle: normalizeIdentity(body.account_handle) } : {}),
+        ...(accountEmailPresent ? { accountEmail: normalizeIdentity(body.account_email) } : {})
       });
     } catch (error) {
       if (error instanceof IntegrationServiceError) {
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 500, error instanceof Error ? error.message : "connection update failed");
+    }
+  });
+
+  app.post("/api/v1/integrations/connections/:connectionId/merge", async (request, reply) => {
+    const params = request.params as { connectionId: string };
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const removeIds = Array.isArray(request.body.remove_connection_ids)
+      ? (request.body.remove_connection_ids.filter(
+          (id): id is string => typeof id === "string"
+        ) as string[])
+      : [];
+    if (removeIds.length === 0) {
+      return sendError(reply, 400, "remove_connection_ids is required");
+    }
+    try {
+      return integrationService.mergeConnections({
+        keepConnectionId: params.connectionId,
+        removeConnectionIds: removeIds
+      });
+    } catch (error) {
+      if (error instanceof IntegrationServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "connection merge failed");
     }
   });
 
@@ -3978,6 +4062,21 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
     const ownerUserId = ownerCheck.userId;
     const accountLabel = typeof request.body.account_label === "string" ? request.body.account_label : "";
+    // Provider-side identity from whoami, resolved by the caller before
+    // finalize. Used by createConnection() to dedupe re-auth flows: each
+    // Composio re-auth mints a new connected_account_id, but the underlying
+    // identity (Twitter handle, Gmail address) stays stable, so the service
+    // looks for an existing active connection on this (provider, owner,
+    // identity) tuple and refreshes it in place rather than spawning a
+    // duplicate row.
+    const accountHandle =
+      typeof request.body.account_handle === "string" && request.body.account_handle.trim().length > 0
+        ? request.body.account_handle.trim()
+        : null;
+    const accountEmail =
+      typeof request.body.account_email === "string" && request.body.account_email.trim().length > 0
+        ? request.body.account_email.trim()
+        : null;
     // Optional: when the caller is in a workspace context (desktop's Settings →
     // Integrations is global, but the per-app binding selector or the older
     // workspace-scoped flow may want to atomically bind this fresh account to
@@ -3998,7 +4097,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         accountLabel: label,
         authMode: "composio",
         grantedScopes: [],
-        accountExternalId: connectedAccountId
+        accountExternalId: connectedAccountId,
+        accountHandle,
+        accountEmail
       });
       if (workspaceId) {
         integrationService.upsertBinding({
@@ -5264,7 +5365,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       workspace,
     });
     return {
-      session: agentSessionPayload(result.session),
+      session: agentSessionPayload(result.session, store),
       migrated_legacy_sessions: result.migratedLegacySessions,
       migrated_legacy_session_count: result.migratedLegacySessions.length,
     };
@@ -6606,7 +6707,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     });
 
     return {
-      session: agentSessionPayload(session),
+      session: agentSessionPayload(session, store),
     };
   });
 
@@ -6874,7 +6975,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         limit: Math.max(1, Math.min(200, optionalInteger(query.limit, 100))),
         offset: Math.max(0, optionalInteger(query.offset, 0))
       })
-      .map((item: AgentSessionRecord) => agentSessionPayload(item));
+      .map((item: AgentSessionRecord) => agentSessionPayload(item, store));
     return { items, count: items.length };
   });
 
@@ -7963,7 +8064,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
     return reply.send({
       proposal: taskProposalPayload(updatedProposal ?? proposal),
-      session: agentSessionPayload(session),
+      session: agentSessionPayload(session, store),
       input: {
         input_id: record.inputId,
         session_id: record.sessionId,

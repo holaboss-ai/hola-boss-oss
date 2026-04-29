@@ -290,7 +290,7 @@ test("main-session event worker inherits the owner main session model and thinki
   assert.equal(batchInput?.payload.thinking_value, "medium");
   assert.match(
     String(batchInput?.payload.text),
-    /only one update, phrase it as a normal conversational follow-up/i,
+    /only one update, phrase it as a normal conversational continuation/i,
   );
   assert.match(
     String(batchInput?.payload.text),
@@ -299,11 +299,15 @@ test("main-session event worker inherits the owner main session model and thinki
   assert.match(String(batchInput?.payload.text), /numbered items/i);
   assert.match(
     String(batchInput?.payload.text),
-    /supplemental follow-up only/i,
+    /supplemental continuation only/i,
   );
   assert.match(
     String(batchInput?.payload.text),
     /Do not repeat, paraphrase, or re-answer/i,
+  );
+  assert.match(
+    String(batchInput?.payload.text),
+    /Do not start with stock phrases like `Quick follow-up`/i,
   );
   assert.match(String(batchInput?.payload.text), /specific automation update/i);
   assert.match(String(batchInput?.payload.text), /hourly-us-news/i);

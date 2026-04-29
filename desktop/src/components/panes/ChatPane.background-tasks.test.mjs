@@ -19,8 +19,9 @@ test("chat pane renders background tasks inline and removes the separate quick a
     source,
     /<BackgroundTasksPane[\s\S]*onOpenTaskSession=\{handleOpenBackgroundTaskSession\}/,
   );
+  assert.doesNotMatch(source, /<SubagentSessionsPane[\s\S]*variant="inline"/);
   assert.match(source, /readOnly: true,/);
-  assert.match(source, /Read-only subagent run\./);
-  assert.match(source, /Return to main session/);
+  assert.match(source, /onOpenSessions\?: \(\) => void;/);
+  assert.match(source, /aria-label="Show sessions"/);
   assert.doesNotMatch(source, /aria-label="Select agent session"/);
 });

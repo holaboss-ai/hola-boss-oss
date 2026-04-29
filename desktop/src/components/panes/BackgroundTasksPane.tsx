@@ -293,7 +293,7 @@ export function BackgroundTasksPane({
       return null;
     }
 
-    if (!isLoading && tasks.length === 0 && !errorMessage) {
+    if (tasks.length === 0 && !errorMessage) {
       return null;
     }
 

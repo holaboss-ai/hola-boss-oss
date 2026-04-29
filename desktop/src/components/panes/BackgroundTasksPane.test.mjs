@@ -20,6 +20,7 @@ test("background tasks pane polls workspace background tasks and supports inline
   assert.match(source, /window\.addEventListener\("focus", refreshVisibleTasks\);/);
   assert.match(source, /document\.addEventListener\("visibilitychange", refreshVisibleTasks\);/);
   assert.match(source, /if \(variant === "inline"\) \{/);
+  assert.match(source, /if \(tasks\.length === 0 && !errorMessage\) \{\s*return null;\s*\}/);
   assert.match(source, /case "running":\s*return goal \|\| "Working in the background\.";?/);
   assert.match(source, /case "queued":\s*return goal \|\| "Queued to run\.";?/);
   assert.match(source, /case "completed":/);

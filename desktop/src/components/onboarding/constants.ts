@@ -8,6 +8,12 @@ export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   reddit: "Reddit",
   twitter: "Twitter / X",
   linkedin: "LinkedIn",
+  hubspot: "HubSpot",
+  attio: "Attio",
+  calcom: "Cal.com",
+  apollo: "Apollo.io",
+  instantly: "Instantly",
+  zoominfo: "ZoomInfo",
 };
 
 export function providerDisplayName(provider: string): string {
@@ -94,6 +100,28 @@ export function providerIcon(provider: string, size = 20): ReactElement | null {
         createElement("rect", { x: "2", y: "2", width: "16", height: "16", rx: "3", fill: "#0A66C2" }),
         createElement("path", { d: "M6.5 8.5v5M6.5 6v.5", stroke: "#fff", strokeWidth: "1.5", strokeLinecap: "round" }),
         createElement("path", { d: "M9.5 13.5v-3c0-1.1.9-2 2-2s2 .9 2 2v3", stroke: "#fff", strokeWidth: "1.5", strokeLinecap: "round", fill: "none" }),
+      );
+
+    case "calcom":
+      // Cal.com — black rounded tile with white "Cal" wordmark.
+      return createElement(
+        "svg",
+        { width: s, height: s, viewBox: "0 0 20 20", fill: "none", "aria-hidden": "true" },
+        createElement("rect", { x: "1.5", y: "1.5", width: "17", height: "17", rx: "4", fill: "#000" }),
+        createElement(
+          "text",
+          {
+            x: "10",
+            y: "13.5",
+            textAnchor: "middle",
+            fontFamily: "ui-sans-serif, system-ui, sans-serif",
+            fontSize: "8",
+            fontWeight: "700",
+            fill: "#fff",
+            letterSpacing: "-0.5",
+          },
+          "Cal",
+        ),
       );
 
     default:

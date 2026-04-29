@@ -121,6 +121,7 @@ export interface PiSessionHandle {
   sessionFile: string;
   mcpToolMetadata: Map<string, PiMcpToolMetadata>;
   skillMetadataByAlias: Map<string, PiSkillMetadata>;
+  unavailableMcpServers?: PiMcpServerUnavailableInfo[];
   dispose: () => Promise<void>;
 }
 
@@ -185,6 +186,7 @@ const PI_REQUEST_TOOL_NAME_ALIASES: Record<string, string> = {
 const PI_MCP_DISCOVERY_RETRY_INTERVAL_MS = 250;
 const PI_FALLBACK_CONTEXT_WINDOW = 65_536;
 const PI_FALLBACK_MAX_TOKENS = 8_192;
+const PI_COMPACTION_CONTEXT_RESERVE_RATIO = 0.5;
 
 const PI_MODEL_CATALOG = MODELS as Record<string, Record<string, HarnessCatalogModelEntry>>;
 const PI_MCP_DISCOVERY_MAX_WAIT_MS = 10000;
@@ -210,10 +212,17 @@ export type PiMcpServerBinding = {
   definition: ServerDefinition;
 };
 
+export type PiMcpServerUnavailableInfo = {
+  serverId: string;
+  reason: string;
+  missingToolIds: string[];
+};
+
 export type PiMcpToolset = {
   runtime: McporterRuntime | null;
   customTools: ToolDefinition[];
   mcpToolMetadata: Map<string, PiMcpToolMetadata>;
+  unavailableServers: PiMcpServerUnavailableInfo[];
 };
 
 export interface PiPromptPayload {
@@ -1193,6 +1202,7 @@ export async function createPiMcpToolset(request: HarnessHostPiRequest): Promise
       runtime: null,
       customTools: [],
       mcpToolMetadata: new Map(),
+      unavailableServers: [],
     };
   }
 
@@ -1210,6 +1220,7 @@ export async function createPiMcpToolset(request: HarnessHostPiRequest): Promise
       runtime,
       customTools: customTools.customTools,
       mcpToolMetadata: customTools.mcpToolMetadata,
+      unavailableServers: customTools.unavailableServers,
     };
   } catch (error) {
     await runtime.close();
@@ -1225,7 +1236,7 @@ export async function createPiMcpCustomTools(
   const customTools: ToolDefinition[] = [];
   const mcpToolMetadata = new Map<string, PiMcpToolMetadata>();
 
-  const discoveredTools = await discoverHarnessMcpTools({
+  const { tools: discoveredTools, failures } = await discoverHarnessMcpTools({
     bindings: buildHarnessMcpServerBindings({
       servers: request.mcp_servers as unknown as HarnessPreparedMcpServerConfig[],
       workspaceDir: request.workspace_dir,
@@ -1266,6 +1277,11 @@ export async function createPiMcpCustomTools(
   return {
     customTools,
     mcpToolMetadata,
+    unavailableServers: failures.map((failure) => ({
+      serverId: failure.serverId,
+      reason: failure.reason,
+      missingToolIds: failure.missingToolIds,
+    })),
   };
 }
 
@@ -1344,6 +1360,13 @@ export function requestedPiThinkingConfig(
   return requestedHarnessThinkingConfig(request);
 }
 
+export function piCompactionReserveTokens(contextWindow: number): number {
+  if (!Number.isFinite(contextWindow) || contextWindow <= 0) {
+    return 0;
+  }
+  return Math.ceil(contextWindow * PI_COMPACTION_CONTEXT_RESERVE_RATIO);
+}
+
 export function buildPiProviderConfig(request: HarnessHostPiRequest) {
   const profile = resolvePiModelProfile(request);
 
@@ -1408,12 +1431,16 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
   modelRegistry.registerProvider(request.provider_id, buildPiProviderConfig(request));
 
   const model = resolvePiModel(request, modelRegistry);
+  const compactionReserveTokens = piCompactionReserveTokens(model.contextWindow);
   const requestedThinking = requestedPiThinkingLevel(request) ?? "off";
   const requestedThinkingBudgets = requestedPiThinkingBudgets(request);
   const settingsManager = SettingsManager.inMemory({
     defaultProvider: request.provider_id,
     defaultModel: request.model_id,
     defaultThinkingLevel: requestedThinking,
+    compaction: {
+      reserveTokens: compactionReserveTokens,
+    },
     ...(requestedThinkingBudgets
       ? { thinkingBudgets: requestedThinkingBudgets }
       : {}),
@@ -1547,6 +1574,7 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     sessionFile,
     mcpToolMetadata: mcpToolset.mcpToolMetadata,
     skillMetadataByAlias,
+    unavailableMcpServers: mcpToolset.unavailableServers,
     dispose: async () => {
       try {
         session.dispose();
@@ -2059,6 +2087,14 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
     ...request.run_started_payload,
     harness_session_id: handle.sessionFile,
   });
+
+  for (const unavailable of handle.unavailableMcpServers ?? []) {
+    emitRunnerEvent(request, nextSequence(), "mcp_server_unavailable", {
+      server_id: unavailable.serverId,
+      reason: unavailable.reason,
+      missing_tool_ids: unavailable.missingToolIds,
+    });
+  }
 
   let timeoutHandle: NodeJS.Timeout | null = null;
   let timedOut = false;

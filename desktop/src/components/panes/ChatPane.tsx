@@ -37,6 +37,7 @@ import {
   Globe,
   Image as ImageIcon,
   Inbox,
+  Bot,
   Lightbulb,
   Link2,
   Loader2,
@@ -46,6 +47,7 @@ import {
   Plus,
   Search,
   Sparkles,
+  Zap,
   Square,
   Waypoints,
   X,
@@ -74,6 +76,8 @@ import {
   resolveExplorerAttachmentKind,
 } from "@/lib/attachmentDrag";
 import { getExplorerAttachmentClipboardEntry } from "@/lib/appClipboard";
+import { CHAT_LAYOUT, chatScrollMaskImage } from "@/lib/chatLayout";
+import { ProviderBrandIcon } from "@/lib/providerBrandIcon";
 import {
   DEFAULT_RUNTIME_MODEL,
   useDesktopAuthSession,
@@ -1347,6 +1351,70 @@ function defaultWorkspaceSessionTitle(
   return `Session ${sessionId.slice(0, 8)}`;
 }
 
+type InspectableSessionCategory =
+  | "subagent"
+  | "cronjob"
+  | "task_proposal"
+  | "session";
+
+function inspectableSessionCategory(
+  session:
+    | Pick<
+        AgentSessionRecordPayload,
+        | "kind"
+        | "source_type"
+        | "cronjob_id"
+        | "proposal_id"
+        | "source_proposal_id"
+      >
+    | null
+    | undefined,
+): InspectableSessionCategory {
+  const sourceType = (session?.source_type ?? "").trim().toLowerCase();
+  const kind = (session?.kind ?? "").trim().toLowerCase();
+  if (sourceType === "cronjob" || Boolean((session?.cronjob_id ?? "").trim())) {
+    return "cronjob";
+  }
+  if (
+    kind === "task_proposal" ||
+    sourceType === "task_proposal" ||
+    Boolean((session?.proposal_id ?? "").trim()) ||
+    Boolean((session?.source_proposal_id ?? "").trim())
+  ) {
+    return "task_proposal";
+  }
+  if (kind === "subagent") {
+    return "subagent";
+  }
+  return "session";
+}
+
+function inspectableSessionLabel(
+  session:
+    | Pick<
+        AgentSessionRecordPayload,
+        | "kind"
+        | "source_type"
+        | "cronjob_id"
+        | "proposal_id"
+        | "source_proposal_id"
+      >
+    | null
+    | undefined,
+): string {
+  const category = inspectableSessionCategory(session);
+  if (category === "cronjob") {
+    return "Cronjob run";
+  }
+  if (category === "task_proposal") {
+    return "Task proposal run";
+  }
+  if (category === "subagent") {
+    return "Subagent run";
+  }
+  return "Session";
+}
+
 function runtimeStateErrorDetail(value: unknown): string {
   if (typeof value === "string") {
     return value;
@@ -2204,6 +2272,28 @@ function phaseTraceStepFromEvent(
       : "";
   const details: string[] = [];
 
+  if (eventType === "run_claimed") {
+    return {
+      id: "phase:run-claimed",
+      kind: "phase",
+      title: "Checking workspace context",
+      status: "running",
+      details: ["The run was picked up and is preparing the active workspace context."],
+      order,
+    };
+  }
+
+  if (eventType === "run_started") {
+    return {
+      id: "phase:run-started",
+      kind: "phase",
+      title: "Running",
+      status: "running",
+      details: ["The agent started the turn and is working on the request."],
+      order,
+    };
+  }
+
   if (eventType === "auto_compaction_start") {
     const reason =
       typeof payload.reason === "string" ? payload.reason.trim() : "";
@@ -2219,6 +2309,42 @@ function phaseTraceStepFromEvent(
         details.length > 0
           ? details
           : ["The agent is compacting older context to continue the run."],
+      order,
+    };
+  }
+
+  if (eventType === "mcp_server_unavailable") {
+    const serverId =
+      typeof payload.server_id === "string" ? payload.server_id.trim() : "";
+    const reason =
+      typeof payload.reason === "string" ? payload.reason.trim() : "";
+    const missingToolIds = Array.isArray(payload.missing_tool_ids)
+      ? payload.missing_tool_ids.filter(
+          (item): item is string => typeof item === "string" && item.length > 0,
+        )
+      : [];
+    if (reason) {
+      details.push(reason);
+    }
+    if (missingToolIds.length > 0) {
+      const preview = missingToolIds.slice(0, 5).join(", ");
+      const suffix =
+        missingToolIds.length > 5
+          ? ` (+${missingToolIds.length - 5} more)`
+          : "";
+      details.push(`Skipped tools: ${preview}${suffix}`);
+    }
+    return {
+      id: `phase:mcp-unavailable:${serverId || `seq-${order}`}`,
+      kind: "phase",
+      title: serverId
+        ? `MCP server unavailable: ${serverId}`
+        : "MCP server unavailable",
+      status: "error",
+      details:
+        details.length > 0
+          ? details
+          : ["The agent will continue without this server's tools."],
       order,
     };
   }
@@ -2865,6 +2991,7 @@ interface ChatPaneProps {
     requestKey: number,
   ) => void;
   onJumpToSessionBrowser?: (sessionId: string, requestKey: number) => void;
+  onOpenSessions?: () => void;
   onOpenInbox?: () => void;
   inboxUnreadCount?: number;
   onOpenAutomations?: () => void;
@@ -2893,6 +3020,7 @@ export function ChatPane({
   browserJumpRequest = null,
   onBrowserJumpRequestConsumed,
   onJumpToSessionBrowser,
+  onOpenSessions,
   onOpenInbox,
   inboxUnreadCount = 0,
   onOpenAutomations,
@@ -4151,6 +4279,82 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
           .catch(() => undefined);
       }, delayMs);
     }
+  }
+
+  async function reconcileAutonomousMainSessionActivity(params: {
+    workspaceId: string;
+    mainSessionId: string;
+    currentMessages: ChatMessage[];
+    cancelled?: () => boolean;
+  }) {
+    const workspaceId = params.workspaceId.trim();
+    const mainSessionId = params.mainSessionId.trim();
+    const cancelled = params.cancelled ?? (() => false);
+    if (
+      !workspaceId ||
+      !mainSessionId ||
+      cancelled() ||
+      (activeSessionIdRef.current || "").trim() !== mainSessionId
+    ) {
+      return false;
+    }
+
+    const runtimeStates =
+      await window.electronAPI.workspace.listRuntimeStates(workspaceId);
+    if (cancelled() || (activeSessionIdRef.current || "").trim() !== mainSessionId) {
+      return false;
+    }
+
+    const currentRuntimeState = runtimeStates.items.find(
+      (item) => item.session_id === mainSessionId,
+    );
+    const currentRuntimeStatus =
+      runtimeStateEffectiveStatus(currentRuntimeState);
+    const currentRuntimeInputId = (
+      currentRuntimeState?.current_input_id || ""
+    ).trim();
+    const shouldAttachAutonomousRun =
+      !activeStreamIdRef.current &&
+      !pendingInputIdRef.current &&
+      Boolean(currentRuntimeInputId) &&
+      ["BUSY", "QUEUED"].includes(currentRuntimeStatus);
+    if (shouldAttachAutonomousRun) {
+      await loadSessionConversation(mainSessionId, workspaceId, runtimeStates.items, {
+        cancelled,
+        readOnly: false,
+      });
+      return true;
+    }
+
+    const latestHistory = await window.electronAPI.workspace.getSessionHistory({
+      sessionId: mainSessionId,
+      workspaceId,
+      limit: 1,
+      offset: 0,
+      order: "desc",
+    });
+    if (cancelled() || (activeSessionIdRef.current || "").trim() !== mainSessionId) {
+      return false;
+    }
+
+    const latestHistoryMessageId =
+      historyMessagesInDisplayOrder(latestHistory.messages, "desc")[0]?.id?.trim() ||
+      "";
+    const latestDisplayedMessageId = latestVisibleChatMessageId(
+      params.currentMessages,
+    );
+    if (
+      !latestHistoryMessageId ||
+      latestHistoryMessageId === latestDisplayedMessageId
+    ) {
+      return false;
+    }
+
+    await loadSessionConversation(mainSessionId, workspaceId, runtimeStates.items, {
+      cancelled,
+      readOnly: false,
+    });
+    return true;
   }
 
   function updateMemoryProposalDraft(proposalId: string, value: string) {
@@ -5605,38 +5809,12 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
 
       inFlight = true;
       try {
-        const latestHistory = await window.electronAPI.workspace.getSessionHistory(
-          {
-            sessionId: mainSessionId,
-            workspaceId,
-            limit: 1,
-            offset: 0,
-            order: "desc",
-          },
-        );
-        if (cancelled || (activeSessionIdRef.current || "").trim() !== mainSessionId) {
-          return;
-        }
-        const latestHistoryMessageId =
-          historyMessagesInDisplayOrder(latestHistory.messages, "desc")[0]?.id?.trim() ||
-          "";
-        const latestDisplayedMessageId = latestVisibleChatMessageId(messages);
-        if (
-          !latestHistoryMessageId ||
-          latestHistoryMessageId === latestDisplayedMessageId
-        ) {
-          return;
-        }
-
-        const runtimeStates =
-          await window.electronAPI.workspace.listRuntimeStates(workspaceId);
-        if (cancelled || (activeSessionIdRef.current || "").trim() !== mainSessionId) {
-          return;
-        }
-        await loadSessionConversation(mainSessionId, workspaceId, runtimeStates.items, {
+        await reconcileAutonomousMainSessionActivity({
+          workspaceId,
+          mainSessionId,
+          currentMessages: messages,
           cancelled: () =>
             cancelled || (activeSessionIdRef.current || "").trim() !== mainSessionId,
-          readOnly: false,
         });
       } catch {
         // Ignore passive refresh failures; manual interaction or background polling will retry.
@@ -5765,8 +5943,25 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
       setChatErrorMessage("No active session found for this workspace.");
       return;
     }
+    const mainSessionIdForWorkspace = (
+      desktopMainSessionIdRef.current || desktopMainSession?.session_id || ""
+    ).trim();
+    if (
+      !pendingSessionTarget &&
+      selectedWorkspace &&
+      targetSessionId === mainSessionIdForWorkspace &&
+      (activeSessionIdRef.current || "").trim() === mainSessionIdForWorkspace
+    ) {
+      await reconcileAutonomousMainSessionActivity({
+        workspaceId: selectedWorkspace.id,
+        mainSessionId: mainSessionIdForWorkspace,
+        currentMessages: messages,
+      });
+    }
     const queueOntoActiveRun =
-      isResponding &&
+      (isResponding ||
+        Boolean(activeStreamIdRef.current) ||
+        Boolean(pendingInputIdRef.current)) &&
       !pendingSessionTarget &&
       targetSessionId === activeSessionIdRef.current;
     let optimisticUserMessageId = "";
@@ -6450,8 +6645,22 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     );
   };
 
-  const openMainSession = () => {
-    const mainSessionId = (desktopMainSession?.session_id || "").trim();
+  const openMainSession = async () => {
+    let mainSessionId = (desktopMainSession?.session_id || "").trim();
+    if (!mainSessionId && selectedWorkspaceId?.trim()) {
+      try {
+        const ensured = await window.electronAPI.workspace.ensureMainSession(
+          selectedWorkspaceId,
+        );
+        if (ensured.session) {
+          setDesktopMainSession(ensured.session);
+          mainSessionId = ensured.session.session_id.trim();
+        }
+      } catch (error) {
+        setChatErrorMessage(normalizeErrorMessage(error));
+        return;
+      }
+    }
     if (!mainSessionId) {
       return;
     }
@@ -6462,12 +6671,27 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     });
   };
 
+  const handleOpenReadOnlyAgentSession = (
+    session: AgentSessionRecordPayload,
+  ) => {
+    const sessionId = session.session_id.trim();
+    if (!sessionId) {
+      return;
+    }
+    upsertSessionRecordOverride(session);
+    setLocalSessionOpenRequestState({
+      sessionId,
+      requestKey: Date.now(),
+      readOnly: true,
+    });
+  };
+
   const handleOpenBackgroundTaskSession = (task: BackgroundTaskRecordPayload) => {
     const childSessionId = task.child_session_id.trim();
     if (!childSessionId) {
       return;
     }
-    upsertSessionRecordOverride({
+    handleOpenReadOnlyAgentSession({
       workspace_id: task.workspace_id,
       session_id: childSessionId,
       kind: "subagent",
@@ -6478,11 +6702,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
       created_at: task.created_at,
       updated_at: task.updated_at,
       archived_at: null,
-    });
-    setLocalSessionOpenRequestState({
-      sessionId: childSessionId,
-      requestKey: Date.now(),
-      readOnly: true,
     });
   };
 
@@ -6586,11 +6805,19 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     liveExecutionItems,
     liveAssistantText,
   );
+  const hasVisibleLiveAssistantContent =
+    ((!activeSessionId ||
+      activeSessionId === (desktopMainSession?.session_id || "").trim())
+      ? false
+      : !isOnboardingVariant)
+      || isOnboardingVariant
+    ? renderedLiveAssistantSegments.length > 0
+    : renderedLiveAssistantSegments.some(
+        (segment) => segment.kind === "output" && Boolean(segment.text.trim()),
+      );
   const showLiveAssistantTurn =
     isResponding ||
-    liveAssistantSegments.length > 0 ||
-    Boolean(liveAssistantText) ||
-    liveExecutionItems.length > 0;
+    hasVisibleLiveAssistantContent;
   const lastCompletedAssistantMessageId = useMemo(() => {
     if (showLiveAssistantTurn) {
       return null;
@@ -6843,10 +7070,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     !activeSessionId ||
     activeSessionId === (desktopMainSession?.session_id || "").trim();
   const isReadOnlyInspectionSession =
-    !isViewingBoundMainSession &&
-    (activeSessionReadOnly ||
-      activeSessionKind === "subagent" ||
-      activeSessionKind === "task_proposal");
+    !isViewingBoundMainSession && !isOnboardingVariant;
   const activeSessionTitle = isViewingBoundMainSession
     ? (desktopMainSession?.title?.trim() ||
         selectedWorkspace?.name?.trim() ||
@@ -6856,9 +7080,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   const activeSessionDetail = isViewingBoundMainSession
     ? "Main session"
     : isReadOnlyInspectionSession
-      ? activeSessionKind === "task_proposal"
-        ? "Task proposal run · Read-only inspection"
-        : "Subagent run · Read-only inspection"
+      ? `${inspectableSessionLabel(activeSessionRecord)} · Read-only inspection`
       : "Session view";
   const showSessionExecutionInternals =
     isReadOnlyInspectionSession || isOnboardingVariant;
@@ -7088,7 +7310,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
         : "No models available. Configure a provider to start chatting.";
   const composerBaseDisabledReason =
     (isReadOnlyInspectionSession
-      ? "Subagent runs are read-only. Return to the main session to continue the conversation."
+      ? "Inspection sessions are read-only. Return to the main session to continue the conversation."
       : "") ||
     baseComposerDisabledReason ||
     (usesHostedManagedCredits && isOutOfCredits
@@ -7337,8 +7559,10 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     hasMessages &&
     chatScrollMetrics.clientHeight > 0 &&
     chatScrollRange > 1;
-  const chatScrollbarRailInset =
-    composerBlockHeight > 0 ? composerBlockHeight / 2 : 0;
+  // The rail now lives inside the messages-scroll wrapper, so it doesn't
+  // need to compensate for the composer height — its bounding box is
+  // already exactly the scroll viewport.
+  const chatScrollbarRailInset = 0;
   const chatScrollbarRailHeight = chatScrollMetrics.clientHeight;
   const chatScrollbarThumbHeight = showCustomChatScrollbar
     ? Math.max(
@@ -7436,9 +7660,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   return (
     <PaneCard
       className={
-        isOnboardingVariant
-          ? "w-full shadow-subtle-xs border-primary/20"
-          : "w-full shadow-subtle-xs"
+        isOnboardingVariant ? "w-full border-primary/20" : "w-full"
       }
     >
       <div className="relative flex h-full min-h-0 min-w-0 flex-col">
@@ -7476,8 +7698,16 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
             <ChatHeader
               title={activeSessionTitle}
               detail={activeSessionDetail}
+              onReturnToMainSession={
+                isReadOnlyInspectionSession
+                  ? () => {
+                      void openMainSession();
+                    }
+                  : undefined
+              }
               onOpenInbox={onOpenInbox}
               inboxUnreadCount={inboxUnreadCount}
+              onOpenSessions={onOpenSessions}
               onOpenAutomations={onOpenAutomations}
             />
           </div>
@@ -7525,37 +7755,12 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
         ) : null}
 
         {chatErrorMessage ||
-        isReadOnlyInspectionSession ||
         attachmentGateMessage ||
         pendingImageInputUnsupportedMessage ||
         verboseTelemetryEnabled ? (
           <div className="shrink-0 px-4 pt-3 sm:px-5">
-            {isReadOnlyInspectionSession ? (
-              <div className="theme-chat-system-bubble rounded-xl border px-3 py-2 text-xs">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <span>
-                    Read-only subagent run. Inspect the execution transcript
-                    here, then return to the main session to continue the
-                    conversation.
-                  </span>
-                  {!isViewingBoundMainSession &&
-                  (desktopMainSession?.session_id || "").trim() ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="xs"
-                      onClick={openMainSession}
-                      className="shrink-0 rounded-full"
-                    >
-                      Return to main session
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
-
             {chatErrorMessage ? (
-              <div className="theme-chat-system-bubble mt-3 rounded-xl border px-3 py-2 text-xs">
+              <div className="theme-chat-system-bubble rounded-xl border px-3 py-2 text-xs">
                 {chatErrorMessage}
               </div>
             ) : null}
@@ -7618,7 +7823,13 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
         ) : null}
 
         <div className="relative flex min-h-0 flex-1 flex-col">
-          <div className="min-h-0 flex-1 overflow-hidden">
+          <div
+            className="relative min-h-0 flex-1 overflow-hidden"
+            style={{
+              maskImage: chatScrollMaskImage(),
+              WebkitMaskImage: chatScrollMaskImage(),
+            }}
+          >
             <div
               ref={messagesRef}
               onWheelCapture={(event) => {
@@ -7865,56 +8076,56 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                 </div>
               )}
             </div>
-          </div>
 
-          {showCustomChatScrollbar ? (
-            <div className="pointer-events-none absolute inset-y-0 right-1 z-20 w-4">
-              <div
-                className="pointer-events-auto absolute inset-x-0 touch-none"
-                style={{
-                  top: `${chatScrollbarRailInset}px`,
-                  height: `${chatScrollbarRailHeight}px`,
-                }}
-                onPointerDown={handleChatScrollbarPointerDown}
-                onPointerMove={handleChatScrollbarPointerMove}
-                onPointerUp={handleChatScrollbarPointerUp}
-                onPointerCancel={handleChatScrollbarPointerUp}
-                onLostPointerCapture={() => {
-                  clearChatScrollbarDragState();
-                }}
-              >
+            {showCustomChatScrollbar ? (
+              <div className="pointer-events-none absolute inset-y-0 right-1 z-20 w-4">
                 <div
-                  className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 rounded-full"
+                  className="pointer-events-auto absolute inset-x-0 touch-none"
                   style={{
-                    background:
-                      "color-mix(in oklch, var(--foreground) 5%, transparent)",
+                    top: `${chatScrollbarRailInset}px`,
+                    height: `${chatScrollbarRailHeight}px`,
                   }}
-                />
-                <div
-                  ref={chatScrollbarThumbRef}
-                  data-chat-scrollbar-thumb="true"
-                  className="absolute left-1/2 w-4 -translate-x-1/2 rounded-full cursor-grab active:cursor-grabbing"
-                  style={{
-                    top: `${chatScrollbarThumbOffset}px`,
-                    height: `${chatScrollbarThumbHeight}px`,
+                  onPointerDown={handleChatScrollbarPointerDown}
+                  onPointerMove={handleChatScrollbarPointerMove}
+                  onPointerUp={handleChatScrollbarPointerUp}
+                  onPointerCancel={handleChatScrollbarPointerUp}
+                  onLostPointerCapture={() => {
+                    clearChatScrollbarDragState();
                   }}
                 >
                   <div
-                    className="absolute left-1/2 top-0 h-full w-[3px] -translate-x-1/2 rounded-full"
+                    className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 rounded-full"
                     style={{
                       background:
-                        "color-mix(in oklch, var(--muted-foreground) 25%, transparent)",
+                        "color-mix(in oklch, var(--foreground) 5%, transparent)",
                     }}
                   />
+                  <div
+                    ref={chatScrollbarThumbRef}
+                    data-chat-scrollbar-thumb="true"
+                    className="absolute left-1/2 w-4 -translate-x-1/2 rounded-full cursor-grab active:cursor-grabbing"
+                    style={{
+                      top: `${chatScrollbarThumbOffset}px`,
+                      height: `${chatScrollbarThumbHeight}px`,
+                    }}
+                  >
+                    <div
+                      className="absolute left-1/2 top-0 h-full w-[3px] -translate-x-1/2 rounded-full"
+                      style={{
+                        background:
+                          "color-mix(in oklch, var(--muted-foreground) 25%, transparent)",
+                      }}
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
-          ) : null}
+            ) : null}
+          </div>
 
           {hasMessages ? (
             <div
               ref={composerBlockRef}
-              className={`shrink-0 px-4 pb-5 pt-3 ${
+              className={`mx-auto w-full shrink-0 ${CHAT_LAYOUT.contentMaxWidth} ${CHAT_LAYOUT.contentPaddingX} pb-6 pt-3 ${
                 showHistoryRestoreScreen ? "invisible" : ""
               }`}
             >
@@ -8022,6 +8233,8 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
 interface ChatHeaderProps {
   title: string;
   detail: string;
+  onReturnToMainSession?: () => void;
+  onOpenSessions?: () => void;
   onOpenInbox?: () => void;
   inboxUnreadCount: number;
   onOpenAutomations?: () => void;
@@ -8030,6 +8243,8 @@ interface ChatHeaderProps {
 function ChatHeader({
   title,
   detail,
+  onReturnToMainSession,
+  onOpenSessions,
   onOpenInbox,
   inboxUnreadCount,
   onOpenAutomations,
@@ -8048,6 +8263,42 @@ function ChatHeader({
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
+        {onReturnToMainSession ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="xs"
+            onClick={() => onReturnToMainSession()}
+            aria-label="Return to main session"
+            className="h-7 rounded-full px-2.5 text-[11px]"
+          >
+            <ArrowLeft className="mr-1 size-3.5" />
+            Main
+          </Button>
+        ) : null}
+
+        {onOpenSessions ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => onOpenSessions()}
+                  aria-label="Show sessions"
+                  className="rounded-lg text-muted-foreground hover:text-foreground"
+                />
+              }
+            >
+              <Bot className="size-4" />
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="py-1">
+              Sessions
+            </TooltipContent>
+          </Tooltip>
+        ) : null}
+
         {onOpenInbox ? (
           <Tooltip>
             <TooltipTrigger
@@ -9864,6 +10115,10 @@ function ModelCombobox({
   const renderOption = (option: ChatModelOption) => {
     const active = option.value === selectedModel;
     const optionDisabled = Boolean(option.disabled);
+    // Auto/runtime-default doesn't represent a single model — keep its
+    // icon empty rather than guessing (the chosen runtime default still
+    // ends up rendering with its real brand mark in the trigger).
+    const isRuntimeDefault = option.value === CHAT_MODEL_USE_RUNTIME_DEFAULT;
     return (
       <button
         key={option.value}
@@ -9886,7 +10141,17 @@ function ModelCombobox({
               : "text-foreground hover:bg-accent"
         }`}
       >
-        <span className="truncate">{option.label}</span>
+        <span className="flex min-w-0 items-center gap-2">
+          {isRuntimeDefault ? (
+            <span className="size-3.5 shrink-0" aria-hidden="true" />
+          ) : (
+            <ProviderBrandIcon
+              modelToken={option.value}
+              className="size-3.5 shrink-0"
+            />
+          )}
+          <span className="truncate">{option.label}</span>
+        </span>
         {!active && option.statusLabel ? (
           <span className="shrink-0 text-[10px] font-medium uppercase text-muted-foreground">
             {option.statusLabel}
@@ -9908,21 +10173,33 @@ function ModelCombobox({
         disabled={disabled}
         render={
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
-            className={`w-full justify-between rounded-md bg-card text-xs font-medium ${
-              compact ? "px-2.5" : ""
+            className={`gap-1.5 rounded-md text-xs font-medium ${
+              compact ? "w-full justify-between px-2.5" : "px-2"
             }`}
           >
             {compact ? (
-              <span className="flex min-w-0 items-center gap-1.5">
-                <Waypoints className="size-3.5 shrink-0 text-muted-foreground" />
-                <span className="truncate">{compactLabel}</span>
-              </span>
+              <>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <ProviderBrandIcon
+                    modelToken={selectedModel}
+                    className="size-3.5 shrink-0"
+                  />
+                  <span className="truncate">{compactLabel}</span>
+                </span>
+                <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+              </>
             ) : (
-              <span className="truncate">{displayLabel}</span>
+              <>
+                <ProviderBrandIcon
+                  modelToken={selectedModel}
+                  className="size-3.5 shrink-0"
+                />
+                <span className="whitespace-nowrap">{displayLabel}</span>
+                <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+              </>
             )}
-            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
           </Button>
         }
       />
@@ -10036,17 +10313,17 @@ function ThinkingValueSelect({
         disabled={disabled}
         render={
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
             aria-label={
               compact ? `Reasoning effort: ${selectedThinkingLabel}` : undefined
             }
-            className={`w-full rounded-md bg-card text-xs font-medium ${
+            className={`gap-1.5 rounded-md text-xs font-medium ${
               compact
                 ? showCompactLabel
-                  ? "min-w-0 justify-between px-2.5"
-                  : "min-w-0 justify-start gap-1.5 px-2.5"
-                : "justify-between"
+                  ? "w-full min-w-0 justify-between px-2.5"
+                  : "w-full min-w-0 justify-start px-2.5"
+                : "px-2"
             }`}
           >
             {compact ? (
@@ -10066,7 +10343,7 @@ function ThinkingValueSelect({
               )
             ) : (
               <>
-                <span className="truncate">{selectedThinkingLabel}</span>
+                <span className="whitespace-nowrap">{selectedThinkingLabel}</span>
                 <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
               </>
             )}
@@ -10621,8 +10898,10 @@ function Composer({
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
-        className={`overflow-hidden rounded-xl border border-border bg-background ${
-          isDragActive ? "border-primary bg-primary/[0.04]" : ""
+        className={`overflow-hidden rounded-2xl bg-background shadow-md ${
+          isDragActive
+            ? "ring-1 ring-primary/40 bg-primary/[0.04]"
+            : ""
         }`}
       >
         <input
@@ -10688,7 +10967,7 @@ function Composer({
             </div>
           </div>
         ) : null}
-        <div className="px-4 pb-2 pt-3">
+        <div className="px-5 pb-3 pt-4">
           <textarea
             ref={textareaRef}
             value={input}
@@ -10712,7 +10991,7 @@ function Composer({
 
         <div
           ref={composerFooterRef}
-          className={`border-t border-border px-2.5 py-2 text-muted-foreground ${
+          className={`px-3 pb-3 text-muted-foreground ${
             compactComposerControls
               ? "flex items-center gap-1.5 overflow-hidden"
               : "flex flex-wrap items-center gap-1.5"
@@ -10725,7 +11004,7 @@ function Composer({
                   ? "min-w-0 shrink-0"
                   : noAvailableModels
                     ? "min-w-0 flex flex-1 basis-full flex-wrap items-center gap-2"
-                    : "min-w-0 flex-1 basis-[160px] max-w-[168px]"
+                    : "min-w-0 shrink-0"
               }
               style={
                 compactComposerControls
@@ -10786,9 +11065,7 @@ function Composer({
           {showThinkingValueSelector ? (
             <div
               className={
-                compactComposerControls
-                  ? "shrink-0"
-                  : "min-w-[88px] shrink-0 sm:w-[88px]"
+                compactComposerControls ? "shrink-0" : "shrink-0"
               }
               style={
                 compactComposerControls
@@ -10832,7 +11109,7 @@ function Composer({
                     variant="outline"
                     size="icon-sm"
                     aria-label="Open composer actions"
-                    className="rounded-full"
+                    className="rounded-lg"
                   />
                 }
               >
@@ -10949,7 +11226,7 @@ function Composer({
                       onClick={openSkillPickerFromComposerMenu}
                       className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-accent"
                     >
-                      <Sparkles className="size-3.5 shrink-0 text-muted-foreground" />
+                      <Zap className="size-3.5 shrink-0 text-muted-foreground" />
                       <span className="min-w-0 flex-1 truncate">
                         Use Skills
                       </span>
@@ -10992,7 +11269,7 @@ function Composer({
                 submitDisabled
               }
               render={<button type="submit" />}
-              className="rounded-full"
+              className="rounded-lg"
             >
               <ArrowUp className="size-3.5" />
             </Button>

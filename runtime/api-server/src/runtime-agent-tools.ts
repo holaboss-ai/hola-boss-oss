@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import {
   type AgentSessionRecord,
@@ -43,6 +44,9 @@ import { invokeWorkspaceSkill, resolveWorkspaceSkills } from "./workspace-skills
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 type JsonObject = { [key: string]: JsonValue };
+
+const SUBAGENT_CANCEL_SETTLE_TIMEOUT_MS = 8_000;
+const SUBAGENT_CANCEL_SETTLE_POLL_INTERVAL_MS = 50;
 
 export interface RuntimeAgentToolDefinition {
   id: string;
@@ -1509,7 +1513,7 @@ export class RuntimeAgentToolsService {
   async cancelSubagent(params: RuntimeAgentToolsCancelSubagentParams): Promise<JsonObject> {
     this.requireWorkspace(params.workspaceId);
     const controllerSession = this.requireSubagentControllerSession(params.workspaceId, params.sessionId);
-    const state = this.syncSubagentRunForOwner({
+    let state = this.syncSubagentRunForOwner({
       workspaceId: params.workspaceId,
       subagentId: params.subagentId,
       ownerMainSessionId: controllerSession.sessionId,
@@ -1546,6 +1550,11 @@ export class RuntimeAgentToolsService {
           "subagent is currently running and could not be cancelled",
         );
       }
+      state = await this.waitForSubagentCancellationSettlement({
+        workspaceId: params.workspaceId,
+        subagentId: params.subagentId,
+        ownerMainSessionId: controllerSession.sessionId,
+      });
     } else if (!["waiting_on_user", "queued", "running"].includes(state.run.status)) {
       return subagentRunPayload(state);
     } else {
@@ -1559,13 +1568,24 @@ export class RuntimeAgentToolsService {
         heartbeatAt: null,
         lastError: null,
       });
+      state = this.syncSubagentRunForOwner({
+        workspaceId: params.workspaceId,
+        subagentId: params.subagentId,
+        ownerMainSessionId: controllerSession.sessionId,
+      });
     }
+    const completedAt =
+      state.run.completedAt ??
+      state.latestTurnResult?.completedAt ??
+      state.latestTurnResult?.updatedAt ??
+      null;
     const updated =
       this.store.updateSubagentRun({
         subagentId: state.run.subagentId,
         fields: {
           status: "cancelled",
           cancelledAt: now,
+          completedAt,
           summary: normalizedString(state.run.summary) || "Cancelled by user.",
           latestProgressPayload: null,
         },
@@ -2436,6 +2456,40 @@ export class RuntimeAgentToolsService {
       latestInput,
       latestTurnResult,
     };
+  }
+
+  private isSubagentCancellationSettled(state: SyncedSubagentRunState): boolean {
+    const runtimeStatus = normalizedString(state.runtimeState?.status)?.toUpperCase() ?? "";
+    const currentInputStatus = normalizedString(state.currentInput?.status)?.toUpperCase() ?? "";
+    if (runtimeStatus === "BUSY" || runtimeStatus === "QUEUED") {
+      return false;
+    }
+    if (currentInputStatus === "CLAIMED" || currentInputStatus === "QUEUED") {
+      return false;
+    }
+    return true;
+  }
+
+  private async waitForSubagentCancellationSettlement(params: {
+    workspaceId: string;
+    subagentId: string;
+    ownerMainSessionId: string;
+  }): Promise<SyncedSubagentRunState> {
+    const deadline = Date.now() + SUBAGENT_CANCEL_SETTLE_TIMEOUT_MS;
+    while (true) {
+      const state = this.syncSubagentRunForOwner(params);
+      if (this.isSubagentCancellationSettled(state)) {
+        return state;
+      }
+      if (Date.now() >= deadline) {
+        throw new RuntimeAgentToolsServiceError(
+          409,
+          "subagent_cancel_settling",
+          "subagent cancellation is still settling; try again shortly",
+        );
+      }
+      await sleep(SUBAGENT_CANCEL_SETTLE_POLL_INTERVAL_MS);
+    }
   }
 
   private assertSameTurnDelegationPollingAllowed(params: {

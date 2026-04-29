@@ -1,5 +1,6 @@
 import {
   ArrowLeft,
+  Bot,
   CircleCheck,
   Clock3,
   Folder,
@@ -39,6 +40,7 @@ import {
 import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
 import { MissingWorkspacePane } from "@/components/panes/MissingWorkspacePane";
 import { OnboardingPane } from "@/components/panes/OnboardingPane";
+import { SubagentSessionsPane } from "@/components/panes/SubagentSessionsPane";
 import { SpaceApplicationsExplorerPane } from "@/components/panes/SpaceApplicationsExplorerPane";
 import { SpaceBrowserDisplayPane } from "@/components/panes/SpaceBrowserDisplayPane";
 import { SpaceBrowserExplorerPane } from "@/components/panes/SpaceBrowserExplorerPane";
@@ -206,6 +208,7 @@ function isSettingsPaneSection(value: string): value is UiSettingsPaneSection {
 
 type AgentView =
   | { type: "chat" }
+  | { type: "sessions" }
   | { type: "inbox" }
   | { type: "automations" }
   | {
@@ -1059,8 +1062,12 @@ function EmptyWorkspacePane() {
 }
 
 function WorkspaceBootstrapPane() {
+  // Pin to the viewport so the bootstrap surface fills edge-to-edge
+  // independent of the AppShell grid's outer padding/gutters. Otherwise
+  // the body (which is translucent on macOS for vibrancy) would show as
+  // a thin frame around this pane.
   return (
-    <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden bg-background px-6">
+    <section className="fixed inset-0 z-20 flex items-center justify-center overflow-hidden bg-background px-6">
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0"
@@ -3312,6 +3319,15 @@ function AppShellContent() {
     openTaskProposalInbox(selectedWorkspaceId);
   }, [openTaskProposalInbox, selectedWorkspaceId]);
 
+  const handleOpenSessionsPane = useCallback(() => {
+    setActiveShellView("space");
+    setSpaceVisibility((previous) => ({
+      ...previous,
+      agent: true,
+    }));
+    setAgentView({ type: "sessions" });
+  }, []);
+
   const handleOpenAutomationsPane = useCallback(() => {
     setActiveShellView("space");
     setSpaceVisibility((previous) => ({
@@ -4114,6 +4130,38 @@ function AppShellContent() {
       );
     }
 
+    if (agentView.type === "sessions") {
+      return (
+        <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-card shadow-md backdrop-blur-sm">
+          <div className="shrink-0 border-b border-border px-4 py-2.5 sm:px-5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="inline-flex min-w-0 items-center gap-2 text-base font-semibold text-foreground">
+                <Bot size={14} className="shrink-0 text-muted-foreground" />
+                <span className="truncate">Sessions</span>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={handleReturnToChatPane}
+                aria-label="Return to chat"
+              >
+                <ArrowLeft size={15} />
+              </Button>
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <SubagentSessionsPane
+              workspaceId={selectedWorkspaceId}
+              variant="full"
+              onOpenSession={(session) =>
+                handleOpenRunningSession(session.session_id)
+              }
+            />
+          </div>
+        </section>
+      );
+    }
+
     if (agentView.type === "chat") {
       if (selectedWorkspace && selectedWorkspace.folder_state === "missing") {
         return (
@@ -4165,6 +4213,7 @@ function AppShellContent() {
           browserJumpRequest={activeChatBrowserJumpRequest}
           onBrowserJumpRequestConsumed={consumeChatBrowserJumpRequest}
           onJumpToSessionBrowser={handleJumpToSessionBrowser}
+          onOpenSessions={handleOpenSessionsPane}
           onOpenInbox={handleOpenInboxPane}
           inboxUnreadCount={unreadTaskProposalCount}
           onOpenAutomations={handleOpenAutomationsPane}
@@ -4220,6 +4269,7 @@ function AppShellContent() {
     handleJumpToSessionBrowser,
     handleMissingInternalResource,
     handleOpenInboxPane,
+    handleOpenSessionsPane,
     handleOpenAutomationsPane,
     handleOpenAutomationRunSession,
     handleCreateScheduleInChat,

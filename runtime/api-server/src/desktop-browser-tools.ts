@@ -1,10 +1,13 @@
+import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
+
 import {
   DESKTOP_BROWSER_TOOL_DEFINITIONS,
   DESKTOP_BROWSER_TOOL_IDS,
   type DesktopBrowserToolDefinition,
   type DesktopBrowserToolId,
 } from "../../harnesses/src/desktop-browser-tools.js";
-import { createHash, randomUUID } from "node:crypto";
 import { resolveProductRuntimeConfig, type ProductRuntimeConfig } from "./runtime-config.js";
 
 export {
@@ -17,6 +20,7 @@ export {
 export interface DesktopBrowserToolExecutionContext {
   workspaceId?: string | null;
   sessionId?: string | null;
+  inputId?: string | null;
   space?: "agent" | "user" | null;
 }
 
@@ -32,6 +36,27 @@ export interface DesktopBrowserToolServiceLike {
 export interface DesktopBrowserToolServiceOptions {
   fetchImpl?: typeof fetch;
   resolveConfig?: () => ProductRuntimeConfig;
+  artifactStore?: BrowserScreenshotArtifactStore | null;
+}
+
+interface BrowserScreenshotArtifactStore {
+  workspaceRoot: string;
+  createOutput(params: {
+    workspaceId: string;
+    outputType: string;
+    title?: string;
+    status?: string;
+    filePath?: string | null;
+    sessionId?: string | null;
+    inputId?: string | null;
+    artifactId?: string | null;
+    platform?: string | null;
+    metadata?: Record<string, unknown> | null;
+  }): {
+    id: string;
+    artifactId: string | null;
+    filePath: string | null;
+  };
 }
 
 type BrowserFetchOptions = {
@@ -41,13 +66,75 @@ type BrowserFetchOptions = {
   workspaceId?: string | null;
   sessionId?: string | null;
   space?: "agent" | "user" | null;
+  signal?: AbortSignal;
 };
 
 type BrowserTargetKind = "element" | "media";
-type BrowserWaitSelectorState = "present" | "visible" | "hidden";
-type BrowserWaitUrlMode = "exact" | "contains" | "regex";
-type BrowserWaitLoadState = "domcontentloaded" | "load" | "networkidle";
-type BrowserActionCategory = "navigate" | "history" | "interaction" | "keyboard" | "scroll";
+type BrowserGetStateMode = "state" | "text" | "structured" | "visual";
+type BrowserGetStateScope = "main" | "viewport" | "focused" | "dialog";
+type BrowserActionKind =
+  | "click"
+  | "double_click"
+  | "hover"
+  | "focus"
+  | "fill"
+  | "type"
+  | "press"
+  | "select"
+  | "scroll_into_view";
+type BrowserWaitCondition = "load" | "url" | "text" | "element" | "hidden" | "dom_change";
+
+type BrowserGetStateOptions = {
+  includePageText: boolean;
+  includeScreenshot: boolean;
+  mode: BrowserGetStateMode;
+  scope: BrowserGetStateScope;
+  maxNodes: number | null;
+  includeMetadata: boolean;
+};
+
+type BrowserLocatorOptions = {
+  ref: string | null;
+  text: string | null;
+  label: string | null;
+  placeholder: string | null;
+  role: string | null;
+  selector: string | null;
+  xpath: string | null;
+  exact: boolean;
+  includeHidden: boolean;
+  scope: BrowserGetStateScope;
+};
+
+type BrowserFindOptions = BrowserLocatorOptions & {
+  maxResults: number;
+};
+
+type BrowserActOptions = BrowserLocatorOptions & {
+  action: BrowserActionKind;
+  value: string | null;
+  key: string | null;
+  clear: boolean | null;
+  submit: boolean;
+};
+
+type BrowserWaitOptions = BrowserLocatorOptions & {
+  condition: BrowserWaitCondition;
+  url: string | null;
+  timeoutMs: number;
+};
+
+type BrowserEvaluateOptions = {
+  expression: string;
+  allowMutation: boolean;
+  timeoutMs: number;
+};
+
+type BrowserDebugOptions = {
+  x: number | null;
+  y: number | null;
+  includeDomSample: boolean;
+};
 
 const INTERACTIVE_ELEMENTS_SELECTOR = [
   "a[href]",
@@ -57,7 +144,7 @@ const INTERACTIVE_ELEMENTS_SELECTOR = [
   "select",
   "[role='button']",
   "[role='link']",
-  "[contenteditable='true']",
+  "[contenteditable]:not([contenteditable='false'])",
   "[tabindex]"
 ].join(",");
 const VISIBLE_MEDIA_SELECTOR = [
@@ -72,23 +159,12 @@ const BROWSER_GET_STATE_ELEMENT_TEXT_MAX_CHARS = 120;
 const BROWSER_GET_STATE_MEDIA_TEXT_MAX_CHARS = 240;
 const BROWSER_GET_STATE_MAX_ATTEMPTS = 4;
 const BROWSER_GET_STATE_RETRY_DELAY_MS = 350;
-const DEFAULT_BROWSER_GET_STATE_ELEMENT_LIMIT = 40;
-const MAX_BROWSER_GET_STATE_ELEMENT_LIMIT = 200;
-const DEFAULT_BROWSER_GET_STATE_MEDIA_LIMIT = 20;
-const MAX_BROWSER_GET_STATE_MEDIA_LIMIT = 120;
-const BROWSER_PAGE_FACT_HEADING_LIMIT = 6;
-const BROWSER_PAGE_FACT_CLAIM_LIMIT = 6;
-const BROWSER_PAGE_FACT_LINK_LIMIT = 8;
-const BROWSER_PAGE_FACT_NUMERIC_LIMIT = 8;
-const BROWSER_PAGE_FACT_QUOTE_LIMIT = 4;
-const BROWSER_PAGE_FACT_TEXT_MAX_CHARS = 280;
-const BROWSER_PAGE_FACT_CLAIM_MAX_CHARS = 320;
-const BROWSER_PAGE_FACT_CONTEXT_MAX_CHARS = 220;
-const DEFAULT_BROWSER_WAIT_TIMEOUT_MS = 10_000;
-const MAX_BROWSER_WAIT_TIMEOUT_MS = 120_000;
-const DEFAULT_BROWSER_WAIT_INTERVAL_MS = 250;
-const MAX_BROWSER_WAIT_INTERVAL_MS = 5_000;
-const DEFAULT_BROWSER_BOUNDARY_LABEL = "HOLABOSS_UNTRUSTED_PAGE_CONTENT";
+const BROWSER_SCREENSHOT_ARTIFACT_DIR = "outputs/browser-screenshots";
+const BROWSER_FIND_DEFAULT_MAX_RESULTS = 25;
+const BROWSER_FIND_MAX_RESULTS = 100;
+const BROWSER_WAIT_DEFAULT_TIMEOUT_MS = 5000;
+const BROWSER_TOOL_MAX_TIMEOUT_MS = 30000;
+const BROWSER_WAIT_POLL_INTERVAL_MS = 250;
 
 
 export class DesktopBrowserToolServiceError extends Error {
@@ -110,14 +186,6 @@ function optionalBoolean(value: unknown, defaultValue = false): boolean {
   return typeof value === "boolean" ? value : defaultValue;
 }
 
-function optionalTrimmedString(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const normalized = value.trim();
-  return normalized ? normalized : null;
-}
-
 function optionalInteger(value: unknown): number | null {
   if (typeof value === "number" && Number.isInteger(value)) {
     return value;
@@ -125,138 +193,34 @@ function optionalInteger(value: unknown): number | null {
   return null;
 }
 
-function normalizedLowercaseSet(values: string[] | null | undefined): Set<string> {
-  const normalized = new Set<string>();
-  for (const value of values ?? []) {
-    const token = value.trim().toLowerCase();
-    if (token) {
-      normalized.add(token);
-    }
+function optionalNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function optionalStringArg(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
   }
-  return normalized;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }
 
-function boundedPositiveInteger(params: {
-  value: unknown;
-  fieldName: string;
-  defaultValue: number;
-  minValue: number;
-  maxValue: number;
-}): number {
-  const parsed = optionalInteger(params.value);
-  if (parsed === null) {
-    return params.defaultValue;
+function optionalPositiveIntegerArg(
+  value: unknown,
+  fieldName: string,
+): number | null {
+  if (value === undefined || value === null) {
+    return null;
   }
-  if (parsed < params.minValue) {
-    throw new DesktopBrowserToolServiceError(
-      400,
-      "browser_tool_invalid_args",
-      `${params.fieldName} must be at least ${params.minValue}`,
-    );
-  }
-  return Math.min(parsed, params.maxValue);
-}
-
-function actionRequiresConfirmation(args: Record<string, unknown>): boolean {
-  return optionalBoolean(args.confirm, false);
-}
-
-function browserActionCategory(toolId: DesktopBrowserToolId): BrowserActionCategory | null {
-  switch (toolId) {
-    case "browser_navigate":
-    case "browser_open_tab":
-      return "navigate";
-    case "browser_back":
-    case "browser_forward":
-    case "browser_reload":
-      return "history";
-    case "browser_click":
-    case "browser_context_click":
-    case "browser_type":
-      return "interaction";
-    case "browser_press":
-      return "keyboard";
-    case "browser_scroll":
-      return "scroll";
-    default:
-      return null;
-  }
-}
-
-function browserWaitSelectorState(value: unknown): BrowserWaitSelectorState {
-  if (value === "present" || value === "visible" || value === "hidden") {
-    return value;
-  }
-  return "visible";
-}
-
-function browserWaitUrlMode(value: unknown): BrowserWaitUrlMode {
-  if (value === "exact" || value === "contains" || value === "regex") {
-    return value;
-  }
-  return "contains";
-}
-
-function browserWaitLoadState(value: unknown): BrowserWaitLoadState {
-  if (value === "domcontentloaded" || value === "load" || value === "networkidle") {
-    return value;
-  }
-  return "load";
-}
-
-function browserWaitTimeoutMs(value: unknown): number {
-  return boundedPositiveInteger({
-    value,
-    fieldName: "timeout_ms",
-    defaultValue: DEFAULT_BROWSER_WAIT_TIMEOUT_MS,
-    minValue: 1,
-    maxValue: MAX_BROWSER_WAIT_TIMEOUT_MS,
-  });
-}
-
-function browserWaitIntervalMs(value: unknown): number {
-  return boundedPositiveInteger({
-    value,
-    fieldName: "interval_ms",
-    defaultValue: DEFAULT_BROWSER_WAIT_INTERVAL_MS,
-    minValue: 1,
-    maxValue: MAX_BROWSER_WAIT_INTERVAL_MS,
-  });
-}
-
-function browserGetStateOffset(value: unknown, fieldName: string): number {
   const parsed = optionalInteger(value);
-  if (parsed === null) {
-    return 0;
-  }
-  if (parsed < 0) {
+  if (!parsed || parsed <= 0) {
     throw new DesktopBrowserToolServiceError(
       400,
       "browser_tool_invalid_args",
-      `${fieldName} must be a non-negative integer`
+      `${fieldName} must be a positive integer`
     );
   }
   return parsed;
-}
-
-function browserGetStateLimit(params: {
-  value: unknown;
-  fieldName: string;
-  defaultValue: number;
-  maxValue: number;
-}): number {
-  const parsed = optionalInteger(params.value);
-  if (parsed === null) {
-    return params.defaultValue;
-  }
-  if (parsed <= 0) {
-    throw new DesktopBrowserToolServiceError(
-      400,
-      "browser_tool_invalid_args",
-      `${params.fieldName} must be a positive integer`
-    );
-  }
-  return Math.min(parsed, params.maxValue);
 }
 
 function requiredString(value: unknown, fieldName: string): string {
@@ -264,6 +228,26 @@ function requiredString(value: unknown, fieldName: string): string {
     throw new DesktopBrowserToolServiceError(400, "browser_tool_invalid_args", `${fieldName} is required`);
   }
   return value.trim();
+}
+
+function boundedTimeoutMs(value: unknown, defaultValue: number): number {
+  const parsed = optionalInteger(value);
+  if (parsed === null) {
+    return defaultValue;
+  }
+  if (parsed < 100 || parsed > BROWSER_TOOL_MAX_TIMEOUT_MS) {
+    throw new DesktopBrowserToolServiceError(
+      400,
+      "browser_tool_invalid_args",
+      `timeout_ms must be between 100 and ${BROWSER_TOOL_MAX_TIMEOUT_MS}`
+    );
+  }
+  return parsed;
+}
+
+function boundedMaxResults(value: unknown): number {
+  const parsed = optionalPositiveIntegerArg(value, "max_results") ?? BROWSER_FIND_DEFAULT_MAX_RESULTS;
+  return Math.min(parsed, BROWSER_FIND_MAX_RESULTS);
 }
 
 function requiredPositiveInteger(value: unknown, fieldName: string): number {
@@ -276,6 +260,223 @@ function requiredPositiveInteger(value: unknown, fieldName: string): number {
     );
   }
   return parsed;
+}
+
+function requiredNonNegativeInteger(value: unknown, fieldName: string): number {
+  const parsed = optionalInteger(value);
+  if (parsed === null || parsed < 0) {
+    throw new DesktopBrowserToolServiceError(
+      400,
+      "browser_tool_invalid_args",
+      `${fieldName} must be a non-negative integer`
+    );
+  }
+  return parsed;
+}
+
+function browserActionKind(value: unknown): BrowserActionKind {
+  if (
+    value === "click" ||
+    value === "double_click" ||
+    value === "hover" ||
+    value === "focus" ||
+    value === "fill" ||
+    value === "type" ||
+    value === "press" ||
+    value === "select" ||
+    value === "scroll_into_view"
+  ) {
+    return value;
+  }
+  throw new DesktopBrowserToolServiceError(
+    400,
+    "browser_tool_invalid_args",
+    "action must be one of `click`, `double_click`, `hover`, `focus`, `fill`, `type`, `press`, `select`, or `scroll_into_view`"
+  );
+}
+
+function hasLocator(args: Record<string, unknown>): boolean {
+  return Boolean(
+    optionalStringArg(args.ref) ||
+      optionalStringArg(args.text) ||
+      optionalStringArg(args.label) ||
+      optionalStringArg(args.placeholder) ||
+      optionalStringArg(args.role) ||
+      optionalStringArg(args.selector) ||
+      optionalStringArg(args.xpath)
+  );
+}
+
+function browserWaitCondition(value: unknown, args: Record<string, unknown>): BrowserWaitCondition {
+  if (value === undefined || value === null) {
+    if (optionalStringArg(args.url)) {
+      return "url";
+    }
+    if (optionalStringArg(args.text)) {
+      return "text";
+    }
+    if (hasLocator(args)) {
+      return "element";
+    }
+    return "load";
+  }
+  if (
+    value === "load" ||
+    value === "url" ||
+    value === "text" ||
+    value === "element" ||
+    value === "hidden" ||
+    value === "dom_change"
+  ) {
+    return value;
+  }
+  if (value === "dom_mutation") {
+    return "dom_change";
+  }
+  if (value === "change" || value === "mutation") {
+    return "dom_change";
+  }
+  throw new DesktopBrowserToolServiceError(
+    400,
+    "browser_tool_invalid_args",
+    "condition must be `load`, `url`, `text`, `element`, `hidden`, `dom_change`, `dom_mutation`, `change`, or `mutation`"
+  );
+}
+
+function browserGetStateMode(value: unknown): BrowserGetStateMode {
+  if (value === undefined || value === null) {
+    return "state";
+  }
+  if (value === "state" || value === "text" || value === "structured" || value === "visual") {
+    return value;
+  }
+  throw new DesktopBrowserToolServiceError(
+    400,
+    "browser_tool_invalid_args",
+    "mode must be `state`, `text`, `structured`, or `visual`"
+  );
+}
+
+function browserGetStateScope(value: unknown): BrowserGetStateScope {
+  if (value === undefined || value === null) {
+    return "main";
+  }
+  if (value === "main" || value === "viewport" || value === "focused" || value === "dialog") {
+    return value;
+  }
+  if (value === "active_dialog" || value === "modal") {
+    return "dialog";
+  }
+  throw new DesktopBrowserToolServiceError(
+    400,
+    "browser_tool_invalid_args",
+    "scope must be `main`, `viewport`, `focused`, `dialog`, `active_dialog`, or `modal`"
+  );
+}
+
+function browserLocatorOptions(args: Record<string, unknown>, options: { requireLocator: boolean }): BrowserLocatorOptions {
+  const locator = {
+    ref: optionalStringArg(args.ref),
+    text: optionalStringArg(args.text),
+    label: optionalStringArg(args.label),
+    placeholder: optionalStringArg(args.placeholder),
+    role: optionalStringArg(args.role),
+    selector: optionalStringArg(args.selector),
+    xpath: optionalStringArg(args.xpath),
+    exact: optionalBoolean(args.exact, false),
+    includeHidden: optionalBoolean(args.include_hidden ?? args.includeHidden, false),
+    scope: browserGetStateScope(args.scope),
+  };
+  if (
+    options.requireLocator &&
+    !locator.ref &&
+    !locator.text &&
+    !locator.label &&
+    !locator.placeholder &&
+    !locator.role &&
+    !locator.selector &&
+    !locator.xpath
+  ) {
+    throw new DesktopBrowserToolServiceError(
+      400,
+      "browser_tool_invalid_args",
+      "at least one locator is required: ref, text, label, placeholder, role, selector, or xpath"
+    );
+  }
+  return locator;
+}
+
+function browserFindOptions(args: Record<string, unknown>): BrowserFindOptions {
+  return {
+    ...browserLocatorOptions(args, { requireLocator: true }),
+    maxResults: boundedMaxResults(args.max_results ?? args.maxResults),
+  };
+}
+
+function browserActOptions(args: Record<string, unknown>): BrowserActOptions {
+  const action = browserActionKind(args.action);
+  return {
+    ...browserLocatorOptions(args, { requireLocator: action !== "press" }),
+    action,
+    value: optionalStringArg(args.value ?? args.text_value),
+    key: optionalStringArg(args.key),
+    clear: typeof args.clear === "boolean" ? args.clear : null,
+    submit: optionalBoolean(args.submit, false),
+  };
+}
+
+function browserWaitOptions(args: Record<string, unknown>): BrowserWaitOptions {
+  const condition = browserWaitCondition(args.condition, args);
+  const url = optionalStringArg(args.url);
+  const text = optionalStringArg(args.text);
+  if (condition === "url" && !url) {
+    throw new DesktopBrowserToolServiceError(400, "browser_tool_invalid_args", "url is required for url waits");
+  }
+  if (condition === "text" && !text) {
+    throw new DesktopBrowserToolServiceError(400, "browser_tool_invalid_args", "text is required for text waits");
+  }
+  return {
+    ...browserLocatorOptions(args, { requireLocator: condition === "element" || condition === "hidden" }),
+    condition,
+    url,
+    timeoutMs: boundedTimeoutMs(args.timeout_ms ?? args.timeoutMs, BROWSER_WAIT_DEFAULT_TIMEOUT_MS),
+  };
+}
+
+function browserEvaluateOptions(args: Record<string, unknown>): BrowserEvaluateOptions {
+  return {
+    expression: requiredString(args.expression, "expression"),
+    allowMutation: optionalBoolean(args.allow_mutation ?? args.allowMutation, false),
+    timeoutMs: boundedTimeoutMs(args.timeout_ms ?? args.timeoutMs, BROWSER_WAIT_DEFAULT_TIMEOUT_MS),
+  };
+}
+
+function browserDebugOptions(args: Record<string, unknown>): BrowserDebugOptions {
+  return {
+    x: optionalNumber(args.x),
+    y: optionalNumber(args.y),
+    includeDomSample: optionalBoolean(args.include_dom_sample ?? args.includeDomSample, false),
+  };
+}
+
+function browserGetStateOptions(args: Record<string, unknown>): BrowserGetStateOptions {
+  const mode = browserGetStateMode(args.mode);
+  const scope = browserGetStateScope(args.scope);
+  const maxNodes = optionalPositiveIntegerArg(args.max_nodes ?? args.maxNodes, "max_nodes");
+  const includePageText = mode === "text" || optionalBoolean(args.include_page_text, false);
+  const includeScreenshot = mode === "visual" || optionalBoolean(args.include_screenshot, false);
+  return {
+    includePageText,
+    includeScreenshot,
+    mode,
+    scope,
+    maxNodes,
+    includeMetadata:
+      args.mode !== undefined ||
+      args.scope !== undefined ||
+      args.max_nodes !== undefined ||
+      args.maxNodes !== undefined,
+  };
 }
 
 function browserToolDefinition(toolId: string): DesktopBrowserToolDefinition | null {
@@ -320,77 +521,6 @@ function ensureDesktopBrowserConfig(config: ProductRuntimeConfig): void {
   }
 }
 
-function hostFromUrl(value: string): string | null {
-  try {
-    return new URL(value).hostname.trim().toLowerCase();
-  } catch {
-    return null;
-  }
-}
-
-function domainPatternMatches(host: string, pattern: string): boolean {
-  const normalizedHost = host.trim().toLowerCase();
-  const normalizedPattern = pattern.trim().toLowerCase();
-  if (!normalizedHost || !normalizedPattern) {
-    return false;
-  }
-  if (normalizedPattern === "*") {
-    return true;
-  }
-  const patternHost = normalizedPattern.includes("://")
-    ? hostFromUrl(normalizedPattern)
-    : normalizedPattern;
-  if (!patternHost) {
-    return false;
-  }
-  if (patternHost.startsWith("*.")) {
-    const suffix = patternHost.slice(2);
-    return normalizedHost === suffix || normalizedHost.endsWith(`.${suffix}`);
-  }
-  return normalizedHost === patternHost;
-}
-
-function browserDomainAllowed(params: {
-  url: string;
-  allowedDomains: string[];
-}): boolean {
-  const host = hostFromUrl(params.url);
-  if (!host) {
-    return false;
-  }
-  if (params.allowedDomains.length === 0) {
-    return true;
-  }
-  return params.allowedDomains.some((pattern) =>
-    domainPatternMatches(host, pattern),
-  );
-}
-
-function wrapUntrustedBoundaryText(params: {
-  text: string;
-  origin: string | null;
-  enabled: boolean;
-}): { wrappedText: string; boundary: Record<string, unknown> | null } {
-  if (!params.enabled || !params.text.trim()) {
-    return { wrappedText: params.text, boundary: null };
-  }
-  const nonce = randomUUID().replace(/-/g, "").slice(0, 24);
-  const origin = params.origin || "unknown";
-  const wrappedText = [
-    `--- ${DEFAULT_BROWSER_BOUNDARY_LABEL} nonce=${nonce} origin=${origin} ---`,
-    params.text,
-    `--- END_${DEFAULT_BROWSER_BOUNDARY_LABEL} nonce=${nonce} ---`,
-  ].join("\n");
-  return {
-    wrappedText,
-    boundary: {
-      marker: DEFAULT_BROWSER_BOUNDARY_LABEL,
-      nonce,
-      origin,
-    },
-  };
-}
-
 function evaluateExpressionPayload(expression: string): Record<string, unknown> {
   return { expression };
 }
@@ -399,145 +529,725 @@ function serializedValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function frameAwareBrowserQueryHelpersExpression(): string {
+function browserLocatorRuntime(locator: BrowserLocatorOptions): string {
   return `
-    const sameOriginFrameDocument = (frameElement) => {
-      if (!(frameElement instanceof HTMLIFrameElement)) return null;
-      try {
-        return (
-          frameElement.contentDocument ||
-          (frameElement.contentWindow && frameElement.contentWindow.document) ||
-          null
-        );
-      } catch {
-        return null;
-      }
-    };
-    const frameUrlForDocument = (doc) => {
-      try {
-        return String(doc.location?.href || "");
-      } catch {
-        return "";
-      }
-    };
-    const collectDocumentEntries = (rootDocument) => {
-      const entries = [
-        {
-          doc: rootDocument,
-          frame_path: "main",
-          frame_url: frameUrlForDocument(rootDocument),
-        },
-      ];
-      let inaccessibleFrameCount = 0;
-      const queue = [{ doc: rootDocument, frame_path: "main" }];
-      while (queue.length > 0) {
-        const current = queue.shift();
-        if (!current || !(current.doc instanceof Document)) {
-          continue;
-        }
-        const iframes = Array.from(current.doc.querySelectorAll("iframe"));
-        for (let index = 0; index < iframes.length; index += 1) {
-          const frameElement = iframes[index];
-          const framePath = \`\${current.frame_path}/iframe[\${index + 1}]\`;
-          const childDoc = sameOriginFrameDocument(frameElement);
-          if (!(childDoc instanceof Document)) {
-            inaccessibleFrameCount += 1;
-            continue;
-          }
-          const frameUrl = frameUrlForDocument(childDoc);
-          const entry = {
-            doc: childDoc,
-            frame_path: framePath,
-            frame_url: frameUrl,
-          };
-          entries.push(entry);
-          queue.push(entry);
-        }
-      }
-      return { entries, inaccessible_frame_count: inaccessibleFrameCount };
-    };
+    const interactiveSelector = ${serializedValue(INTERACTIVE_ELEMENTS_SELECTOR)};
+    const locator = ${serializedValue({
+      ref: locator.ref,
+      text: locator.text,
+      label: locator.label,
+      placeholder: locator.placeholder,
+      role: locator.role,
+      selector: locator.selector,
+      xpath: locator.xpath,
+      exact: locator.exact,
+      includeHidden: locator.includeHidden,
+      scope: locator.scope,
+    })};
+    const textLimit = ${BROWSER_GET_STATE_ELEMENT_TEXT_MAX_CHARS};
+    const normalize = (value) => String(value || "").replace(/\\s+/g, " ").trim().toLowerCase();
+    const visibleText = (element) => String(element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim();
     const isVisible = (element) => {
       if (!(element instanceof HTMLElement)) return false;
       const rect = element.getBoundingClientRect();
       const style = window.getComputedStyle(element);
-      return (
-        rect.width > 0 &&
-        rect.height > 0 &&
-        style.visibility !== "hidden" &&
-        style.display !== "none"
-      );
+      return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
     };
-    const resolveScope = (entries, scopeSelector) => {
-      if (!scopeSelector) {
-        return null;
+    const intersectsViewport = (element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth;
+    };
+    const dialogRoots = Array.from(document.querySelectorAll("dialog[open], [role='dialog'], [aria-modal='true']"))
+      .filter((element) => element instanceof HTMLElement && isVisible(element));
+    const focusedRoot = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const inScope = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      if (locator.scope === "main") return true;
+      if (locator.scope === "viewport") return intersectsViewport(element);
+      if (locator.scope === "dialog") return dialogRoots.some((root) => root === element || root.contains(element));
+      if (locator.scope === "focused") {
+        return focusedRoot ? element === focusedRoot || focusedRoot.contains(element) || element.contains(focusedRoot) : false;
       }
-      for (const entry of entries) {
-        const candidate = entry.doc.querySelector(scopeSelector);
-        if (!(candidate instanceof Element)) {
-          continue;
+      return true;
+    };
+    const xpathElements = (xpath) => {
+      const result = document.evaluate(xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+      const elements = [];
+      for (let index = 0; index < result.snapshotLength; index += 1) {
+        const node = result.snapshotItem(index);
+        if (node instanceof HTMLElement) elements.push(node);
+      }
+      return elements;
+    };
+    const cssEscape = (value) => {
+      if (window.CSS && typeof window.CSS.escape === "function") {
+        return window.CSS.escape(value);
+      }
+      return String(value).replace(/[^A-Za-z0-9_-]/g, "\\\\$&");
+    };
+    const cssPath = (element) => {
+      if (!(element instanceof HTMLElement)) return "";
+      if (element.id && document.querySelectorAll("#" + cssEscape(element.id)).length === 1) {
+        return "css:#" + cssEscape(element.id);
+      }
+      const parts = [];
+      let current = element;
+      while (current instanceof HTMLElement && current !== document.documentElement) {
+        const parent = current.parentElement;
+        if (!parent) break;
+        const tag = current.tagName.toLowerCase();
+        const siblings = Array.from(parent.children).filter((sibling) => sibling.tagName === current.tagName);
+        const nth = siblings.indexOf(current) + 1;
+        parts.unshift(tag + ":nth-of-type(" + nth + ")");
+        current = parent;
+      }
+      return "css:html > " + parts.join(" > ");
+    };
+    const resolveRef = (ref) => {
+      if (!ref) return null;
+      if (ref.startsWith("css:")) {
+        return document.querySelector(ref.slice(4));
+      }
+      if (ref.startsWith("xpath:")) {
+        return xpathElements(ref.slice(6))[0] || null;
+      }
+      return document.querySelector(ref);
+    };
+    const hasFrameworkClickHandler = (element) => {
+      for (const key of Object.keys(element)) {
+        if (!key.startsWith("__reactProps$") && !key.startsWith("__reactEventHandlers$")) continue;
+        const value = element[key];
+        if (!value || typeof value !== "object") continue;
+        if (
+          typeof value.onClick === "function" ||
+          typeof value.onMouseDown === "function" ||
+          typeof value.onPointerDown === "function" ||
+          typeof value.onKeyDown === "function"
+        ) {
+          return true;
         }
-        return {
-          root_element: candidate,
-          frame_path: entry.frame_path,
-          frame_url: entry.frame_url,
-          doc: entry.doc,
-        };
       }
-      return null;
+      return false;
     };
-    const collectVisibleCandidates = (entries, selector, scope) => {
-      const result = [];
+    const isLikelyClickable = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const explicitRole = String(element.getAttribute("role") || "").toLowerCase();
+      if (element.matches(interactiveSelector) || element.hasAttribute("onclick") || typeof element.onclick === "function") return true;
+      if (["button", "link", "menuitem", "tab", "checkbox", "radio", "switch"].includes(explicitRole)) return true;
+      if (hasFrameworkClickHandler(element)) return true;
+      try {
+        if (window.getComputedStyle(element).cursor === "pointer") return true;
+      } catch {
+        return false;
+      }
+      return false;
+    };
+    const implicitRole = (element) => {
+      const tagName = element.tagName.toLowerCase();
+      if (element.getAttribute("role")) return String(element.getAttribute("role") || "").toLowerCase();
+      if (tagName === "button") return "button";
+      if (tagName === "a" && element.hasAttribute("href")) return "link";
+      if (tagName === "textarea") return "textbox";
+      if (tagName === "select") return "combobox";
+      if (tagName === "option") return "option";
+      if (tagName === "input") {
+        const type = String(element.getAttribute("type") || "text").toLowerCase();
+        if (type === "button" || type === "submit" || type === "reset") return "button";
+        if (type === "checkbox") return "checkbox";
+        if (type === "radio") return "radio";
+        if (type === "search") return "searchbox";
+        return "textbox";
+      }
+      if (element.isContentEditable) return "textbox";
+      if (isLikelyClickable(element)) return "button";
+      return "";
+    };
+    const labelText = (element) => {
+      const labelledBy = String(element.getAttribute("aria-labelledby") || "")
+        .split(/\\s+/g)
+        .map((id) => document.getElementById(id)?.innerText || document.getElementById(id)?.textContent || "")
+        .join(" ");
+      const formLabels = "labels" in element && element.labels
+        ? Array.from(element.labels).map((label) => label.innerText || label.textContent || "").join(" ")
+        : "";
+      return [
+        element.getAttribute("aria-label") || "",
+        labelledBy,
+        element.getAttribute("title") || "",
+        "placeholder" in element ? String(element.placeholder || "") : "",
+        "value" in element ? String(element.value || "") : "",
+        formLabels,
+        visibleText(element)
+      ].filter(Boolean).join(" ").replace(/\\s+/g, " ").trim();
+    };
+    const placeholderText = (element) => "placeholder" in element ? String(element.placeholder || "") : "";
+    const stringMatches = (value, expected) => {
+      if (!expected) return true;
+      const haystack = normalize(value);
+      const needle = normalize(expected);
+      return locator.exact ? haystack === needle : haystack.includes(needle);
+    };
+    const matchesLocator = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      if (!locator.includeHidden && !isVisible(element)) return false;
+      if (!inScope(element)) return false;
+      if (locator.role) {
+        const actionElement = actionableTarget(element);
+        const roles = [
+          implicitRole(element),
+          actionElement instanceof HTMLElement ? implicitRole(actionElement) : ""
+        ].map((role) => normalize(role));
+        if (!roles.includes(normalize(locator.role))) return false;
+      }
+      if (!stringMatches(visibleText(element), locator.text)) return false;
+      if (!stringMatches(labelText(element), locator.label)) return false;
+      if (!stringMatches(placeholderText(element), locator.placeholder)) return false;
+      return true;
+    };
+    const sourceElements = () => {
+      if (locator.ref) {
+        const resolved = resolveRef(locator.ref);
+        return resolved instanceof HTMLElement ? [resolved] : [];
+      }
+      if (locator.selector) {
+        return Array.from(document.querySelectorAll(locator.selector)).filter((element) => element instanceof HTMLElement);
+      }
+      if (locator.xpath) {
+        return xpathElements(locator.xpath);
+      }
+      return Array.from(document.querySelectorAll("body *")).filter((element) => element instanceof HTMLElement);
+    };
+    const actionableTarget = (element) => {
+      if (!(element instanceof HTMLElement)) return null;
+      let current = element;
+      let depth = 0;
+      while (current instanceof HTMLElement && current !== document.body && depth < 8) {
+        if (isLikelyClickable(current) || current.hasAttribute("role") || current.hasAttribute("aria-label")) return current;
+        current = current.parentElement;
+        depth += 1;
+      }
+      return element.closest(interactiveSelector + ", [onclick], [role], [aria-label]") || element;
+    };
+    const scoreElement = (element) => {
+      let score = 0;
+      if (locator.text && normalize(visibleText(element)) === normalize(locator.text)) score += 120;
+      else if (locator.text && stringMatches(visibleText(element), locator.text)) {
+        score += 70;
+        const haystackLength = normalize(visibleText(element)).length;
+        const needleLength = Math.max(normalize(locator.text).length, 1);
+        const textRatio = haystackLength / needleLength;
+        if (haystackLength > 240 || textRatio > 40) score -= 65;
+        else if (textRatio > 10) score -= 35;
+        else if (textRatio > 3) score -= 15;
+      }
+      if (locator.label && normalize(labelText(element)) === normalize(locator.label)) score += 90;
+      else if (locator.label && stringMatches(labelText(element), locator.label)) score += 50;
+      if (locator.placeholder && stringMatches(placeholderText(element), locator.placeholder)) score += 40;
+      if (locator.role && normalize(implicitRole(element)) === normalize(locator.role)) score += 30;
+      if (isLikelyClickable(element)) score += 25;
+      if (intersectsViewport(element)) score += 10;
+      return score;
+    };
+    const describeElement = (element) => {
+      const rect = element.getBoundingClientRect();
+      const actionElement = actionableTarget(element);
+      return {
+        ref: cssPath(element),
+        action_ref: actionElement instanceof HTMLElement ? cssPath(actionElement) : cssPath(element),
+        tag_name: element.tagName.toLowerCase(),
+        role: implicitRole(element),
+        text: visibleText(element).slice(0, textLimit),
+        label: labelText(element).slice(0, textLimit),
+        placeholder: placeholderText(element).slice(0, textLimit),
+        disabled: "disabled" in element ? Boolean(element.disabled) : false,
+        editable:
+          element instanceof HTMLInputElement ||
+          element instanceof HTMLTextAreaElement ||
+          element.isContentEditable,
+        href: "href" in element ? String(element.href || "") : "",
+        visible: isVisible(element),
+        bounding_box: {
+          x: Math.round(rect.left),
+          y: Math.round(rect.top),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height)
+        },
+        score: scoreElement(element)
+      };
+    };
+    const findMatches = () => {
       const seen = new Set();
-      const targetEntries =
-        scope && scope.doc instanceof Document
-          ? entries.filter((entry) => entry.doc === scope.doc)
-          : entries;
-      for (const entry of targetEntries) {
-        const root = scope?.root_element instanceof Element ? scope.root_element : entry.doc;
-        const nodes = Array.from(root.querySelectorAll(selector));
-        for (const node of nodes) {
-          if (!(node instanceof Element) || !isVisible(node) || seen.has(node)) {
-            continue;
-          }
-          seen.add(node);
-          result.push({
-            element: node,
-            frame_path: entry.frame_path,
-            frame_url: entry.frame_url,
-          });
-        }
-      }
-      return result;
+      return sourceElements()
+        .filter((element) => matchesLocator(element))
+        .filter((element) => {
+          const ref = cssPath(element);
+          if (!ref || seen.has(ref)) return false;
+          seen.add(ref);
+          return true;
+        })
+        .sort((left, right) => {
+          const scoreDiff = scoreElement(right) - scoreElement(left);
+          if (scoreDiff !== 0) return scoreDiff;
+          const leftRect = left.getBoundingClientRect();
+          const rightRect = right.getBoundingClientRect();
+          return leftRect.top - rightRect.top || leftRect.left - rightRect.left;
+        });
     };
   `;
 }
 
-function interactiveElementsExpression(params: {
-  includePageText: boolean;
-  scopeSelector: string | null;
-  elementOffset: number;
-  elementLimit: number;
-  mediaOffset: number;
-  mediaLimit: number;
-}): string {
+function browserFindExpression(options: BrowserFindOptions): string {
+  return `(() => {
+    ${browserLocatorRuntime(options)}
+    const maxResults = ${options.maxResults};
+    const allMatches = findMatches();
+    const matches = allMatches.slice(0, maxResults).map((element) => describeElement(element));
+    return {
+      ok: true,
+      query: {
+        text: locator.text,
+        label: locator.label,
+        placeholder: locator.placeholder,
+        role: locator.role,
+        selector: locator.selector,
+        xpath: locator.xpath,
+        exact: locator.exact,
+        include_hidden: locator.includeHidden,
+        scope: locator.scope,
+        max_results: maxResults
+      },
+      count: allMatches.length,
+      truncated: allMatches.length > matches.length,
+      matches
+    };
+  })()`;
+}
+
+function isNativePointerAction(action: BrowserActionKind): action is "click" | "double_click" | "hover" {
+  return action === "click" || action === "double_click" || action === "hover";
+}
+
+function isNativeTextAction(action: BrowserActionKind): action is "fill" | "type" {
+  return action === "fill" || action === "type";
+}
+
+function locatorHasTarget(locator: BrowserLocatorOptions): boolean {
+  return Boolean(
+    locator.ref ||
+      locator.text ||
+      locator.label ||
+      locator.placeholder ||
+      locator.role ||
+      locator.selector ||
+      locator.xpath
+  );
+}
+
+function browserPointerTargetExpression(options: BrowserActOptions): string {
+  return `(() => {
+    ${browserLocatorRuntime(options)}
+    const action = ${serializedValue(options.action)};
+    const targetFromLocator = () => {
+      const matched = findMatches()[0] || null;
+      return matched || null;
+    };
+    const target = targetFromLocator();
+    if (!(target instanceof HTMLElement)) {
+      throw new Error("No browser element matched the requested action locator.");
+    }
+    const actionTarget = actionableTarget(target) || target;
+    target.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+    if (typeof actionTarget.focus === "function") {
+      try {
+        actionTarget.focus({ preventScroll: true });
+      } catch {
+        actionTarget.focus();
+      }
+    }
+    const rect = actionTarget.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      throw new Error("Matched browser element has no clickable area.");
+    }
+    const x = Math.round(Math.max(0, Math.min(window.innerWidth - 1, rect.left + rect.width / 2)));
+    const y = Math.round(Math.max(0, Math.min(window.innerHeight - 1, rect.top + rect.height / 2)));
+    return {
+      ok: true,
+      action,
+      target: describeElement(target),
+      action_target: describeElement(actionTarget),
+      result: { x, y }
+    };
+  })()`;
+}
+
+function browserKeyboardTargetExpression(
+  options: BrowserActOptions,
+  params: { requireEditable: boolean },
+): string {
+  return `(() => {
+    ${browserLocatorRuntime(options)}
+    const action = ${serializedValue(options.action)};
+    const locatorHasTarget = ${locatorHasTarget(options) ? "true" : "false"};
+    const requireEditable = ${params.requireEditable ? "true" : "false"};
+    const targetFromLocator = () => {
+      if (!locatorHasTarget && document.activeElement instanceof HTMLElement) {
+        return document.activeElement;
+      }
+      const matched = locatorHasTarget ? findMatches()[0] || null : null;
+      if (matched) return matched;
+      if (action === "press" && document.activeElement instanceof HTMLElement) return document.activeElement;
+      return null;
+    };
+    const target = targetFromLocator();
+    if (!(target instanceof HTMLElement)) {
+      throw new Error("No browser element matched the requested keyboard action locator.");
+    }
+    const editableTarget = (element) => {
+      if (
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLTextAreaElement ||
+        element instanceof HTMLSelectElement ||
+        element.isContentEditable
+      ) {
+        return element;
+      }
+      return element.querySelector("input, textarea, select, [contenteditable]:not([contenteditable='false'])");
+    };
+    const actionTarget = requireEditable ? editableTarget(target) : actionableTarget(target) || target;
+    if (!(actionTarget instanceof HTMLElement)) {
+      throw new Error("No editable browser element matched the requested action locator.");
+    }
+    target.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+    if (typeof actionTarget.focus === "function") {
+      try {
+        actionTarget.focus({ preventScroll: true });
+      } catch {
+        actionTarget.focus();
+      }
+    }
+    return {
+      ok: true,
+      action,
+      target: describeElement(target),
+      action_target: describeElement(actionTarget),
+      result: { focused: true }
+    };
+  })()`;
+}
+
+function browserActExpression(options: BrowserActOptions): string {
+  return `(() => {
+    ${browserLocatorRuntime(options)}
+    const action = ${serializedValue(options.action)};
+    const value = ${serializedValue(options.value)};
+    const key = ${serializedValue(options.key)};
+    const submit = ${options.submit ? "true" : "false"};
+    const clearArg = ${options.clear === null ? "null" : options.clear ? "true" : "false"};
+    const targetFromLocator = () => {
+      const matched = findMatches()[0] || null;
+      if (matched) return matched;
+      if (action === "press" && document.activeElement instanceof HTMLElement) return document.activeElement;
+      return null;
+    };
+    const target = targetFromLocator();
+    if (!(target instanceof HTMLElement)) {
+      throw new Error("No browser element matched the requested action locator.");
+    }
+    const actionTarget = actionableTarget(target) || target;
+    const editableTarget = (element) => {
+      if (
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLTextAreaElement ||
+        element instanceof HTMLSelectElement ||
+        element.isContentEditable
+      ) {
+        return element;
+      }
+      return element.querySelector("input, textarea, select, [contenteditable]:not([contenteditable='false'])");
+    };
+    const setNativeValue = (element, nextValue) => {
+      if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+        const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), "value");
+        if (descriptor && typeof descriptor.set === "function") {
+          descriptor.set.call(element, nextValue);
+        } else {
+          element.value = nextValue;
+        }
+        element.dispatchEvent(new Event("input", { bubbles: true }));
+        element.dispatchEvent(new Event("change", { bubbles: true }));
+        return String(element.value || "");
+      }
+      if (element instanceof HTMLElement && element.isContentEditable) {
+        element.innerText = nextValue;
+        element.dispatchEvent(new Event("input", { bubbles: true }));
+        element.dispatchEvent(new Event("change", { bubbles: true }));
+        return String(element.innerText || "");
+      }
+      throw new Error("Target element is not text-editable.");
+    };
+    const dispatchMouse = (element, type, detail = 1) => {
+      const rect = element.getBoundingClientRect();
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+      element.dispatchEvent(new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: x,
+        clientY: y,
+        detail
+      }));
+      return { x, y };
+    };
+    const pressKey = (element, nextKey) => {
+      if (!nextKey) throw new Error("key is required for press actions.");
+      for (const type of ["keydown", "keypress", "keyup"]) {
+        element.dispatchEvent(new KeyboardEvent(type, { key: nextKey, bubbles: true, cancelable: true }));
+      }
+      if (nextKey === "Enter" && element instanceof HTMLInputElement && element.form && typeof element.form.requestSubmit === "function") {
+        element.form.requestSubmit();
+      }
+    };
+    target.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+    if (typeof target.focus === "function") target.focus();
+    let actionResult = {};
+    if (action === "click" || action === "double_click") {
+      if (typeof actionTarget.focus === "function") actionTarget.focus();
+      const point = dispatchMouse(actionTarget, "mousemove");
+      dispatchMouse(actionTarget, "mousedown");
+      dispatchMouse(actionTarget, "mouseup");
+      if (typeof actionTarget.click === "function") actionTarget.click();
+      if (action === "double_click") {
+        dispatchMouse(actionTarget, "mousedown", 2);
+        dispatchMouse(actionTarget, "mouseup", 2);
+        dispatchMouse(actionTarget, "dblclick", 2);
+      }
+      actionResult = point;
+    } else if (action === "hover") {
+      actionResult = dispatchMouse(actionTarget, "mouseover");
+      dispatchMouse(actionTarget, "mousemove");
+    } else if (action === "focus") {
+      if (typeof actionTarget.focus === "function") actionTarget.focus();
+    } else if (action === "fill" || action === "type") {
+      if (value === null) throw new Error("value is required for fill and type actions.");
+      const editTarget = editableTarget(target);
+      if (!(editTarget instanceof HTMLElement)) throw new Error("No editable element matched the requested action locator.");
+      if (typeof editTarget.focus === "function") editTarget.focus();
+      const clear = clearArg === null ? action === "fill" : clearArg;
+      const currentValue = "value" in editTarget ? String(editTarget.value || "") : String(editTarget.innerText || "");
+      const nextValue = clear ? value : currentValue + value;
+      const storedValue = setNativeValue(editTarget, nextValue);
+      if (submit) pressKey(editTarget, "Enter");
+      actionResult = { value: storedValue };
+    } else if (action === "press") {
+      pressKey(target, key);
+      actionResult = { key };
+    } else if (action === "select") {
+      if (value === null) throw new Error("value is required for select actions.");
+      const selectTarget = editableTarget(target);
+      if (!(selectTarget instanceof HTMLSelectElement)) throw new Error("Target element is not a select.");
+      const option = Array.from(selectTarget.options).find((entry) => entry.value === value || normalize(entry.textContent) === normalize(value));
+      if (!option) throw new Error("No select option matched the requested value.");
+      selectTarget.value = option.value;
+      selectTarget.dispatchEvent(new Event("input", { bubbles: true }));
+      selectTarget.dispatchEvent(new Event("change", { bubbles: true }));
+      actionResult = { value: selectTarget.value, selected_text: option.textContent || "" };
+    } else if (action === "scroll_into_view") {
+      target.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+    }
+    return {
+      ok: true,
+      action,
+      target: describeElement(target),
+      action_target: describeElement(actionTarget),
+      result: actionResult
+    };
+  })()`;
+}
+
+function browserDomSignatureExpression(): string {
+  return `(() => {
+    const body = document.body;
+    return {
+      url: location.href,
+      title: document.title,
+      ready_state: document.readyState,
+      text_length: String(body?.innerText || "").length,
+      element_count: document.querySelectorAll("body *").length,
+      active_tag: document.activeElement instanceof HTMLElement ? document.activeElement.tagName.toLowerCase() : ""
+    };
+  })()`;
+}
+
+function browserWaitPredicateExpression(options: BrowserWaitOptions, baseline: Record<string, unknown> | null): string {
+  const locatorForWait: BrowserLocatorOptions = {
+    ...options,
+    includeHidden: options.condition === "hidden" ? false : options.includeHidden,
+  };
+  return `(() => {
+    ${browserLocatorRuntime(locatorForWait)}
+    const condition = ${serializedValue(options.condition)};
+    const expectedUrl = ${serializedValue(options.url)};
+    const baseline = ${serializedValue(baseline)};
+    const textNeedle = ${serializedValue(options.text)};
+    const matchesUrl = (value, expected) => {
+      if (!expected) return false;
+      if (expected.startsWith("/") && expected.endsWith("/") && expected.length > 2) {
+        try {
+          return new RegExp(expected.slice(1, -1)).test(value);
+        } catch {
+          return value.includes(expected);
+        }
+      }
+      return value.includes(expected);
+    };
+    const bodyText = String(document.body?.innerText || "").replace(/\\s+/g, " ").trim();
+    const currentSignature = {
+      url: location.href,
+      title: document.title,
+      ready_state: document.readyState,
+      text_length: bodyText.length,
+      element_count: document.querySelectorAll("body *").length,
+      active_tag: document.activeElement instanceof HTMLElement ? document.activeElement.tagName.toLowerCase() : ""
+    };
+    const matches = condition === "load"
+      ? document.readyState === "complete"
+      : condition === "url"
+        ? matchesUrl(location.href, expectedUrl || "")
+        : condition === "text"
+          ? stringMatches(bodyText, textNeedle)
+          : condition === "element"
+            ? findMatches().length > 0
+            : condition === "hidden"
+              ? findMatches().length === 0
+              : JSON.stringify(currentSignature) !== JSON.stringify(baseline || {});
+    return {
+      ok: true,
+      matched: matches,
+      condition,
+      match_count: condition === "element" || condition === "hidden" ? findMatches().length : null,
+      current: currentSignature
+    };
+  })()`;
+}
+
+function browserEvaluateExpression(options: BrowserEvaluateOptions): string {
+  return `(async () => {
+    const result = await (${options.expression});
+    return {
+      ok: true,
+      allow_mutation: ${options.allowMutation ? "true" : "false"},
+      result: result === undefined ? null : result
+    };
+  })()`;
+}
+
+function browserDebugExpression(options: BrowserDebugOptions): string {
+  return `(() => {
+    const includeDomSample = ${options.includeDomSample ? "true" : "false"};
+    const pointX = ${options.x === null ? "Math.round(window.innerWidth / 2)" : String(options.x)};
+    const pointY = ${options.y === null ? "Math.round(window.innerHeight / 2)" : String(options.y)};
+    const describe = (element) => {
+      if (!(element instanceof HTMLElement)) return null;
+      const rect = element.getBoundingClientRect();
+      return {
+        tag_name: element.tagName.toLowerCase(),
+        id: element.id || "",
+        class_name: String(element.className || "").slice(0, 120),
+        role: element.getAttribute("role") || "",
+        aria_label: element.getAttribute("aria-label") || "",
+        text: String(element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 160),
+        bounding_box: {
+          x: Math.round(rect.left),
+          y: Math.round(rect.top),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height)
+        }
+      };
+    };
+    const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const hitElement = document.elementFromPoint(pointX, pointY);
+    const dialogs = Array.from(document.querySelectorAll("dialog[open], [role='dialog'], [aria-modal='true']"))
+      .map((element) => describe(element))
+      .filter(Boolean);
+    const iframes = Array.from(document.querySelectorAll("iframe"))
+      .map((frame) => ({
+        title: frame.getAttribute("title") || "",
+        src: frame.getAttribute("src") || "",
+        ...(() => {
+          const rect = frame.getBoundingClientRect();
+          return {
+            bounding_box: {
+              x: Math.round(rect.left),
+              y: Math.round(rect.top),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height)
+            }
+          };
+        })()
+      }));
+    const domSample = includeDomSample
+      ? Array.from(document.querySelectorAll("body *"))
+          .filter((element) => element instanceof HTMLElement)
+          .slice(0, 40)
+          .map((element) => describe(element))
+          .filter(Boolean)
+      : undefined;
+    return {
+      ok: true,
+      url: location.href,
+      title: document.title,
+      ready_state: document.readyState,
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      scroll: { x: Math.round(window.scrollX), y: Math.round(window.scrollY) },
+      active_element: describe(activeElement),
+      hit_test: {
+        x: pointX,
+        y: pointY,
+        element: describe(hitElement)
+      },
+      dialogs,
+      iframes,
+      console_logs_available: false,
+      network_log_available: false,
+      ...(domSample ? { dom_sample: domSample } : {})
+    };
+  })()`;
+}
+
+function interactiveElementsExpression(options: BrowserGetStateOptions): string {
   return `(() => {
     const selector = ${serializedValue(INTERACTIVE_ELEMENTS_SELECTOR)};
     const mediaSelector = ${serializedValue(VISIBLE_MEDIA_SELECTOR)};
-    const includePageText = ${params.includePageText ? "true" : "false"};
-    const scopeSelector = ${serializedValue(params.scopeSelector)};
-    const elementOffset = ${params.elementOffset};
-    const elementLimit = ${params.elementLimit};
-    const mediaOffset = ${params.mediaOffset};
-    const mediaLimit = ${params.mediaLimit};
+    const includePageText = ${options.includePageText ? "true" : "false"};
+    const includeMetadata = ${options.includeMetadata ? "true" : "false"};
+    const mode = ${serializedValue(options.mode)};
+    const scope = ${serializedValue(options.scope)};
+    const maxNodes = ${options.maxNodes === null ? "null" : String(options.maxNodes)};
     const textLimit = ${BROWSER_GET_STATE_ELEMENT_TEXT_MAX_CHARS};
     const mediaTextLimit = ${BROWSER_GET_STATE_MEDIA_TEXT_MAX_CHARS};
-    ${frameAwareBrowserQueryHelpersExpression()}
-    const documentCollection = collectDocumentEntries(document);
-    const documentEntries = documentCollection.entries;
-    const scope = resolveScope(documentEntries, scopeSelector);
-    if (scopeSelector && !scope) {
-      throw new Error("No element found for scope_selector.");
-    }
+    const isVisible = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+    };
+    const intersectsViewport = (element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth;
+    };
+    const dialogRoots = Array.from(document.querySelectorAll("dialog[open], [role='dialog'], [aria-modal='true']"))
+      .filter((element) => element instanceof HTMLElement && isVisible(element));
+    const focusedRoot = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const inScope = (element) => {
+      if (scope === "main") return true;
+      if (scope === "viewport") return intersectsViewport(element);
+      if (scope === "dialog") return dialogRoots.some((root) => root === element || root.contains(element));
+      if (scope === "focused") {
+        return focusedRoot ? element === focusedRoot || focusedRoot.contains(element) || element.contains(focusedRoot) : false;
+      }
+      return true;
+    };
     const describe = (element, index) => {
       const rect = element.getBoundingClientRect();
       const tagName = element.tagName.toLowerCase();
@@ -609,264 +1319,87 @@ function interactiveElementsExpression(params: {
         }
       };
     };
-    const nodes = collectVisibleCandidates(documentEntries, selector, scope);
-    const mediaNodes = collectVisibleCandidates(documentEntries, mediaSelector, scope);
-    const boundedElementOffset = Math.min(Math.max(0, elementOffset), nodes.length);
-    const boundedMediaOffset = Math.min(Math.max(0, mediaOffset), mediaNodes.length);
-    const pagedElements = nodes.slice(boundedElementOffset, boundedElementOffset + elementLimit);
-    const pagedMedia = mediaNodes.slice(boundedMediaOffset, boundedMediaOffset + mediaLimit);
-    const nextElementsOffset = boundedElementOffset + pagedElements.length;
-    const nextMediaOffset = boundedMediaOffset + pagedMedia.length;
-    const contentRoot = scope?.root_element instanceof Element ? scope.root_element : document.body;
-    const contentText = (contentRoot?.textContent || "").replace(/\\s+/g, " ").trim();
-    const factsTextLimit = ${BROWSER_PAGE_FACT_TEXT_MAX_CHARS};
-    const factsClaimLimit = ${BROWSER_PAGE_FACT_CLAIM_MAX_CHARS};
-    const factsContextLimit = ${BROWSER_PAGE_FACT_CONTEXT_MAX_CHARS};
-    const normalizeFactText = (value, limit = factsTextLimit) =>
-      String(value || "").replace(/\\s+/g, " ").trim().slice(0, limit);
-    const absoluteUrl = (value) => {
-      const normalized = normalizeFactText(value, 1024);
-      if (!normalized) {
-        return "";
-      }
-      try {
-        return String(new URL(normalized, location.href).href || "");
-      } catch {
-        return normalized;
-      }
+    const nodes = Array.from(document.querySelectorAll(selector))
+      .filter((element) => isVisible(element))
+      .filter((element, index, all) => all.indexOf(element) === index)
+      .map((element, index) => ({ element, index: index + 1 }));
+    const mediaNodes = Array.from(document.querySelectorAll(mediaSelector))
+      .filter((element) => isVisible(element))
+      .filter((element, index, all) => all.indexOf(element) === index)
+      .map((element, index) => ({ element, index: index + 1 }));
+    const scopedNodes = nodes.filter((entry) => inScope(entry.element));
+    const scopedMediaNodes = mediaNodes.filter((entry) => inScope(entry.element));
+    const includeNodeLists = mode !== "text";
+    let remainingNodes = typeof maxNodes === "number" && maxNodes > 0 ? maxNodes : null;
+    const takeNodes = (entries) => {
+      if (!includeNodeLists) return [];
+      if (remainingNodes === null) return entries;
+      const selected = entries.slice(0, remainingNodes);
+      remainingNodes = Math.max(0, remainingNodes - selected.length);
+      return selected;
     };
-    const firstFactText = (...values) => {
-      for (const value of values) {
-        const normalized = normalizeFactText(value, factsClaimLimit);
-        if (normalized) {
-          return normalized;
-        }
+    const returnedNodes = takeNodes(scopedNodes);
+    const returnedMediaNodes = takeNodes(scopedMediaNodes);
+    const scopedText = () => {
+      if (scope === "main") {
+        return (document.body?.innerText || "").replace(/\\s+/g, " ").trim().slice(0, ${BROWSER_GET_STATE_TEXT_MAX_CHARS});
       }
-      return "";
+      if (scope === "viewport") {
+        const body = document.body;
+        if (!body) return "";
+        return Array.from(body.querySelectorAll("*"))
+          .filter((element) => element instanceof HTMLElement && isVisible(element) && intersectsViewport(element))
+          .map((element) => (element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim())
+          .filter((text) => Boolean(text))
+          .join(" ")
+          .replace(/\\s+/g, " ")
+          .trim()
+          .slice(0, ${BROWSER_GET_STATE_TEXT_MAX_CHARS});
+      }
+      const roots = scope === "dialog" ? dialogRoots : focusedRoot ? [focusedRoot] : [];
+      return roots
+        .map((element) => (element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim())
+        .filter((text) => Boolean(text))
+        .join(" ")
+        .replace(/\\s+/g, " ")
+        .trim()
+        .slice(0, ${BROWSER_GET_STATE_TEXT_MAX_CHARS});
     };
-    const metaContent = (selectors, attribute = "content") => {
-      for (const selector of selectors) {
-        const element = document.querySelector(selector);
-        if (!(element instanceof Element)) {
-          continue;
-        }
-        const raw = attribute === "href" ? element.getAttribute("href") : element.getAttribute(attribute);
-        const normalized = normalizeFactText(raw, factsClaimLimit);
-        if (normalized) {
-          return normalized;
-        }
-      }
-      return "";
-    };
-    const collectFactItems = (selector, limit, formatter) => {
-      const items = [];
-      const seen = new Set();
-      const targetEntries =
-        scope && scope.doc instanceof Document
-          ? documentEntries.filter((entry) => entry.doc === scope.doc)
-          : documentEntries;
-      for (const entry of targetEntries) {
-        const root = scope?.root_element instanceof Element ? scope.root_element : entry.doc.body;
-        const nodes = Array.from(root.querySelectorAll(selector));
-        for (const node of nodes) {
-          if (!(node instanceof Element) || !isVisible(node)) {
-            continue;
-          }
-          const item = formatter(node);
-          if (!item) {
-            continue;
-          }
-          const key = String(item.text || item.label || item.href || JSON.stringify(item)).toLowerCase();
-          if (seen.has(key)) {
-            continue;
-          }
-          seen.add(key);
-          items.push(item);
-          if (items.length >= limit) {
-            return items;
-          }
-        }
-      }
-      return items;
-    };
-    const headings = collectFactItems(
-      "h1,h2,h3,[role='heading']",
-      ${BROWSER_PAGE_FACT_HEADING_LIMIT},
-      (node) => {
-        const text = normalizeFactText(node.innerText || node.textContent || "");
-        if (text.length < 2) {
-          return null;
-        }
-        const tagName = node.tagName.toLowerCase();
-        const ariaLevel = Number.parseInt(String(node.getAttribute("aria-level") || ""), 10);
-        const level =
-          /^h[1-6]$/.test(tagName) ? Number.parseInt(tagName.slice(1), 10) : Number.isFinite(ariaLevel) ? ariaLevel : null;
-        return {
-          level,
-          text,
-          tag_name: tagName,
-        };
-      },
-    );
-    const visibleClaims = collectFactItems(
-      "article,[role='article'],p,li",
-      ${BROWSER_PAGE_FACT_CLAIM_LIMIT},
-      (node) => {
-        const text = normalizeFactText(node.innerText || node.textContent || "", factsClaimLimit);
-        if (text.length < 40) {
-          return null;
-        }
-        return {
-          text,
-          tag_name: node.tagName.toLowerCase(),
-        };
-      },
-    );
-    const quotedText = collectFactItems(
-      "blockquote,q",
-      ${BROWSER_PAGE_FACT_QUOTE_LIMIT},
-      (node) => {
-        const text = normalizeFactText(node.innerText || node.textContent || "", factsClaimLimit);
-        if (text.length < 8) {
-          return null;
-        }
-        return {
-          text,
-          tag_name: node.tagName.toLowerCase(),
-        };
-      },
-    );
-    const visibleLinks = [];
-    const seenLinks = new Set();
-    for (const entry of collectVisibleCandidates(documentEntries, "a[href]", scope)) {
-      const anchor = entry.element;
-      if (!(anchor instanceof HTMLAnchorElement)) {
-        continue;
-      }
-      const href = absoluteUrl(anchor.href || anchor.getAttribute("href") || "");
-      const text = normalizeFactText(anchor.innerText || anchor.textContent || "");
-      const label = firstFactText(anchor.getAttribute("aria-label"), anchor.getAttribute("title"), text);
-      if (!href && !label && !text) {
-        continue;
-      }
-      const item = {
-        href,
-        label,
-        text,
-      };
-      const key = JSON.stringify(item).toLowerCase();
-      if (seenLinks.has(key)) {
-        continue;
-      }
-      seenLinks.add(key);
-      visibleLinks.push(item);
-      if (visibleLinks.length >= ${BROWSER_PAGE_FACT_LINK_LIMIT}) {
-        break;
-      }
-    }
-    const numericCandidates = [
-      firstFactText(metaContent(["meta[property='og:title']", "meta[name='twitter:title']"]), document.title),
-      ...headings.map((entry) => entry.text),
-      ...visibleClaims.map((entry) => entry.text),
-      ...quotedText.map((entry) => entry.text),
-      ...visibleLinks.map((entry) => firstFactText(entry.label, entry.text)),
-    ].filter(Boolean);
-    const numericFacts = [];
-    const numericSeen = new Set();
-    const numericPattern = /(?:[$€£¥])?\d[\d,.]*(?:\.\d+)?\s?(?:[KMBTkmbt]|%|views?|likes?|reposts?|replies?|comments?|followers?|following|stars?|downloads?|users?|mins?|minutes?|hours?|days?|years?)?/g;
-    for (const candidate of numericCandidates) {
-      const matches = String(candidate).match(numericPattern) || [];
-      for (const match of matches) {
-        const valueText = normalizeFactText(match, 48);
-        if (!valueText || !/\d/.test(valueText)) {
-          continue;
-        }
-        const contextText = normalizeFactText(candidate, factsContextLimit);
-        const key = valueText.toLowerCase() + "|" + contextText.toLowerCase();
-        if (numericSeen.has(key)) {
-          continue;
-        }
-        numericSeen.add(key);
-        numericFacts.push({
-          value_text: valueText,
-          context_text: contextText,
-        });
-        if (numericFacts.length >= ${BROWSER_PAGE_FACT_NUMERIC_LIMIT}) {
-          break;
-        }
-      }
-      if (numericFacts.length >= ${BROWSER_PAGE_FACT_NUMERIC_LIMIT}) {
-        break;
-      }
-    }
-    const canonicalUrl = absoluteUrl(
-      metaContent(["link[rel='canonical']"], "href") ||
-      metaContent(["meta[property='og:url']", "meta[name='og:url']"]) ||
-      location.href
-    );
-    const pageTitle = firstFactText(
-      metaContent(["meta[property='og:title']", "meta[name='twitter:title']"]),
-      document.title,
-      headings[0]?.text
-    );
-    const pageFacts = {
-      canonical_url: canonicalUrl,
-      page_title: pageTitle,
-      site_name: firstFactText(
-        metaContent(["meta[property='og:site_name']", "meta[name='application-name']"]),
-        location.hostname.replace(/^www\\./, "")
-      ) || null,
-      meta_description: firstFactText(
-        metaContent(["meta[name='description']", "meta[property='og:description']", "meta[name='twitter:description']"])
-      ) || null,
-      published_time: firstFactText(
-        metaContent(["meta[property='article:published_time']", "meta[name='date']"])
-      ) || null,
-      main_heading: headings[0]?.text || null,
-      scope_selector: scopeSelector || null,
-      scope_applied: Boolean(scope),
-      headings,
-      visible_claims: visibleClaims,
-      quoted_text: quotedText,
-      visible_links: visibleLinks,
-      numeric_facts: numericFacts,
-    };
-    return {
+    const truncated = includeNodeLists && (returnedNodes.length < scopedNodes.length || returnedMediaNodes.length < scopedMediaNodes.length);
+    const result = {
       url: location.href,
       title: document.title,
-      ...(includePageText ? { text: contentText.slice(0, ${BROWSER_GET_STATE_TEXT_MAX_CHARS}) } : {}),
-      scope_selector: scopeSelector || null,
-      scope_applied: Boolean(scope),
-      scope_frame_path: scope?.frame_path || null,
-      scope_frame_url: scope?.frame_url || null,
-      frame_count: documentEntries.length,
-      inaccessible_frame_count: documentCollection.inaccessible_frame_count,
+      ...(includePageText ? { text: scopedText() } : {}),
       viewport: { width: window.innerWidth, height: window.innerHeight },
       scroll: { x: Math.round(window.scrollX), y: Math.round(window.scrollY) },
-      elements_offset: boundedElementOffset,
-      elements_limit: elementLimit,
-      elements_total: nodes.length,
-      elements_has_more: nextElementsOffset < nodes.length,
-      next_elements_offset: nextElementsOffset < nodes.length ? nextElementsOffset : null,
-      media_offset: boundedMediaOffset,
-      media_limit: mediaLimit,
-      media_total: mediaNodes.length,
-      media_has_more: nextMediaOffset < mediaNodes.length,
-      next_media_offset: nextMediaOffset < mediaNodes.length ? nextMediaOffset : null,
-      elements: pagedElements.map((entry, idx) => ({
-        ...describe(entry.element, boundedElementOffset + idx + 1),
-        frame_path: entry.frame_path,
-        frame_url: entry.frame_url || null,
-        in_iframe: entry.frame_path !== "main",
-      })),
-      media: pagedMedia.map((entry, idx) => ({
-        ...describeMedia(entry.element, boundedMediaOffset + idx + 1),
-        frame_path: entry.frame_path,
-        frame_url: entry.frame_url || null,
-        in_iframe: entry.frame_path !== "main",
-      })),
-      page_facts: pageFacts,
+      elements: returnedNodes.map((entry) => describe(entry.element, entry.index)),
+      media: returnedMediaNodes.map((entry) => describeMedia(entry.element, entry.index))
     };
+    if (includeMetadata) {
+      result.metadata = {
+        schema_version: 1,
+        mode,
+        scope,
+        max_nodes: maxNodes,
+        include_page_text: includePageText,
+        include_screenshot: ${options.includeScreenshot ? "true" : "false"},
+        lists_included: includeNodeLists,
+        returned: {
+          elements: returnedNodes.length,
+          media: returnedMediaNodes.length
+        },
+        totals: {
+          elements: scopedNodes.length,
+          media: scopedMediaNodes.length
+        },
+        full_page_totals: scope === "main" ? null : {
+          elements: nodes.length,
+          media: mediaNodes.length
+        },
+        truncated
+      };
+    }
+    return result;
   })()`;
 }
 
@@ -878,9 +1411,12 @@ function contextClickTargetExpression(target: BrowserTargetKind, index: number):
     const targetIndex = ${index};
     const textLimit = ${BROWSER_GET_STATE_ELEMENT_TEXT_MAX_CHARS};
     const mediaTextLimit = ${BROWSER_GET_STATE_MEDIA_TEXT_MAX_CHARS};
-    ${frameAwareBrowserQueryHelpersExpression()}
-    const documentCollection = collectDocumentEntries(document);
-    const documentEntries = documentCollection.entries;
+    const isVisible = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+    };
     const describe = (element) => {
       const text = (element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim().slice(0, textLimit);
       const label = [
@@ -904,18 +1440,15 @@ function contextClickTargetExpression(target: BrowserTargetKind, index: number):
         label: label.slice(0, mediaTextLimit)
       };
     };
-    const candidates = collectVisibleCandidates(
-      documentEntries,
-      targetKind === "media" ? mediaSelector : selector,
-      null,
-    );
-    const targetEntry = candidates[targetIndex - 1] || null;
-    if (!targetEntry || !(targetEntry.element instanceof Element)) {
+    const candidates = Array.from(document.querySelectorAll(targetKind === "media" ? mediaSelector : selector))
+      .filter((element) => isVisible(element))
+      .filter((element, idx, all) => all.indexOf(element) === idx);
+    const target = candidates[targetIndex - 1] || null;
+    if (!target) {
       throw new Error(targetKind === "media"
         ? ${serializedValue(`No visible media found for index ${index}.`)}
         : ${serializedValue(`No interactive element found for index ${index}.`)});
     }
-    const target = targetEntry.element;
     target.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
     if (typeof target.focus === "function") target.focus();
     const rect = target.getBoundingClientRect();
@@ -928,9 +1461,6 @@ function contextClickTargetExpression(target: BrowserTargetKind, index: number):
       x: centerX,
       y: centerY,
       tag_name: target.tagName.toLowerCase(),
-      frame_path: targetEntry.frame_path,
-      frame_url: targetEntry.frame_url || null,
-      in_iframe: targetEntry.frame_path !== "main",
       ...(targetKind === "media" ? describeMedia(target) : describe(target))
     };
   })()`;
@@ -939,13 +1469,16 @@ function contextClickTargetExpression(target: BrowserTargetKind, index: number):
 function clickExpression(index: number): string {
   return `(() => {
     const selector = ${serializedValue(INTERACTIVE_ELEMENTS_SELECTOR)};
-    ${frameAwareBrowserQueryHelpersExpression()}
-    const candidates = collectVisibleCandidates(collectDocumentEntries(document).entries, selector, null);
-    const targetEntry = candidates[${index - 1}] || null;
-    if (!targetEntry || !(targetEntry.element instanceof Element)) {
+    const isVisible = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+    };
+    const target = Array.from(document.querySelectorAll(selector)).filter((element) => isVisible(element))[${index - 1}] || null;
+    if (!target) {
       throw new Error(${serializedValue(`No interactive element found for index ${index}.`)});
     }
-    const target = targetEntry.element;
     target.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
     if (typeof target.focus === "function") target.focus();
     if (typeof target.click === "function") target.click();
@@ -953,9 +1486,6 @@ function clickExpression(index: number): string {
       ok: true,
       index: ${index},
       tag_name: target.tagName.toLowerCase(),
-      frame_path: targetEntry.frame_path,
-      frame_url: targetEntry.frame_url || null,
-      in_iframe: targetEntry.frame_path !== "main",
       text: (target.innerText || target.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 200)
     };
   })()`;
@@ -979,6 +1509,44 @@ function positiveNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value > 0
     ? value
     : null;
+}
+
+function normalizedScreenshotMimeType(value: unknown): string {
+  const raw =
+    typeof value === "string" && value.trim()
+      ? value.trim().toLowerCase()
+      : "";
+  if (raw === "image/jpeg" || raw === "image/jpg") {
+    return "image/jpeg";
+  }
+  if (raw === "image/webp") {
+    return "image/webp";
+  }
+  return "image/png";
+}
+
+function screenshotExtension(mimeType: string): string {
+  if (mimeType === "image/jpeg") {
+    return ".jpg";
+  }
+  if (mimeType === "image/webp") {
+    return ".webp";
+  }
+  return ".png";
+}
+
+function safePathSegment(value: string, fallback: string): string {
+  const sanitized = value.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return sanitized || fallback;
+}
+
+function timestampPathSegment(date = new Date()): string {
+  return date.toISOString().replace(/[^0-9A-Za-z]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function screenshotBase64(value: Record<string, unknown>): string | null {
+  const raw = value.base64;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
 }
 
 function browserGetStateWarnings(params: {
@@ -1013,143 +1581,6 @@ function browserGetStateWarnings(params: {
   return warnings;
 }
 
-function browserContentOrigin(page: Record<string, unknown>): string | null {
-  const pageUrl = typeof page.url === "string" ? page.url.trim() : "";
-  if (!pageUrl) {
-    return null;
-  }
-  try {
-    return new URL(pageUrl).origin;
-  } catch {
-    return null;
-  }
-}
-
-function nonNegativeIntegerOrNull(value: unknown): number | null {
-  const parsed = optionalInteger(value);
-  return parsed !== null && parsed >= 0 ? parsed : null;
-}
-
-function normalizeBrowserGetStateState(params: {
-  state: Record<string, unknown>;
-  scopeSelector: string | null;
-  elementOffset: number;
-  elementLimit: number;
-  mediaOffset: number;
-  mediaLimit: number;
-}): Record<string, unknown> {
-  const normalized = { ...params.state };
-  const elements = Array.isArray(normalized.elements) ? normalized.elements : [];
-  const media = Array.isArray(normalized.media) ? normalized.media : [];
-
-  const elementsOffset = nonNegativeIntegerOrNull(normalized.elements_offset) ?? params.elementOffset;
-  const elementsLimit = nonNegativeIntegerOrNull(normalized.elements_limit) ?? params.elementLimit;
-  const elementsTotal =
-    nonNegativeIntegerOrNull(normalized.elements_total) ??
-    Math.max(elementsOffset + elements.length, elements.length);
-  const elementsHasMore =
-    typeof normalized.elements_has_more === "boolean"
-      ? normalized.elements_has_more
-      : elementsOffset + elements.length < elementsTotal;
-  const nextElementsOffset = elementsHasMore
-    ? nonNegativeIntegerOrNull(normalized.next_elements_offset) ?? elementsOffset + elements.length
-    : null;
-
-  const mediaOffset = nonNegativeIntegerOrNull(normalized.media_offset) ?? params.mediaOffset;
-  const mediaLimit = nonNegativeIntegerOrNull(normalized.media_limit) ?? params.mediaLimit;
-  const mediaTotal =
-    nonNegativeIntegerOrNull(normalized.media_total) ??
-    Math.max(mediaOffset + media.length, media.length);
-  const mediaHasMore =
-    typeof normalized.media_has_more === "boolean"
-      ? normalized.media_has_more
-      : mediaOffset + media.length < mediaTotal;
-  const nextMediaOffset = mediaHasMore
-    ? nonNegativeIntegerOrNull(normalized.next_media_offset) ?? mediaOffset + media.length
-    : null;
-
-  normalized.scope_selector =
-    typeof normalized.scope_selector === "string"
-      ? normalized.scope_selector
-      : params.scopeSelector;
-  normalized.scope_applied =
-    typeof normalized.scope_applied === "boolean"
-      ? normalized.scope_applied
-      : Boolean(normalized.scope_selector);
-  normalized.elements_offset = elementsOffset;
-  normalized.elements_limit = elementsLimit;
-  normalized.elements_total = elementsTotal;
-  normalized.elements_has_more = elementsHasMore;
-  normalized.next_elements_offset = nextElementsOffset;
-  normalized.media_offset = mediaOffset;
-  normalized.media_limit = mediaLimit;
-  normalized.media_total = mediaTotal;
-  normalized.media_has_more = mediaHasMore;
-  normalized.next_media_offset = nextMediaOffset;
-  return normalized;
-}
-
-function extractBrowserPageFacts(state: Record<string, unknown>): Record<string, unknown> | null {
-  const pageFacts = asRecord(state.page_facts);
-  if (!pageFacts) {
-    return null;
-  }
-  delete state.page_facts;
-  return pageFacts;
-}
-
-function browserPageFactsFingerprint(pageFacts: Record<string, unknown>): string {
-  return createHash("sha256").update(JSON.stringify(pageFacts)).digest("hex");
-}
-
-function browserStateFingerprint(params: {
-  page: Record<string, unknown>;
-  state: Record<string, unknown>;
-}): string {
-  const elements = Array.isArray(params.state.elements) ? params.state.elements : [];
-  const media = Array.isArray(params.state.media) ? params.state.media : [];
-  const summary = {
-    page: {
-      url: typeof params.page.url === "string" ? params.page.url : "",
-      title: typeof params.page.title === "string" ? params.page.title : "",
-    },
-    viewport: asRecord(params.state.viewport),
-    scroll: asRecord(params.state.scroll),
-    scope_selector: typeof params.state.scope_selector === "string"
-      ? params.state.scope_selector
-      : null,
-    elements: {
-      offset: optionalInteger(params.state.elements_offset) ?? 0,
-      total: optionalInteger(params.state.elements_total) ?? elements.length,
-      sample: elements
-        .slice(0, 5)
-        .map((entry) => {
-          const item = asRecord(entry);
-          return {
-            tag_name: typeof item?.tag_name === "string" ? item.tag_name : "",
-            label: typeof item?.label === "string" ? item.label : "",
-            text: typeof item?.text === "string" ? item.text : "",
-          };
-        }),
-    },
-    media: {
-      offset: optionalInteger(params.state.media_offset) ?? 0,
-      total: optionalInteger(params.state.media_total) ?? media.length,
-      sample: media
-        .slice(0, 5)
-        .map((entry) => {
-          const item = asRecord(entry);
-          return {
-            tag_name: typeof item?.tag_name === "string" ? item.tag_name : "",
-            media_type: typeof item?.media_type === "string" ? item.media_type : "",
-            label: typeof item?.label === "string" ? item.label : "",
-          };
-        }),
-    },
-  };
-  return createHash("sha256").update(JSON.stringify(summary)).digest("hex");
-}
-
 function browserGetStateSnapshotReady(params: {
   page: Record<string, unknown>;
   state: Record<string, unknown>;
@@ -1159,84 +1590,42 @@ function browserGetStateSnapshotReady(params: {
   return browserGetStateWarnings(params).length === 0;
 }
 
-function typeExpression(params: {
-  index: number;
-  text: string;
-  clear: boolean;
-  submit: boolean;
-}): string {
+function indexedKeyboardTargetExpression(index: number): string {
   return `(() => {
     const selector = ${serializedValue(INTERACTIVE_ELEMENTS_SELECTOR)};
-    ${frameAwareBrowserQueryHelpersExpression()}
-    const candidates = collectVisibleCandidates(collectDocumentEntries(document).entries, selector, null);
-    const targetEntry = candidates[${params.index - 1}] || null;
-    if (!targetEntry || !(targetEntry.element instanceof Element)) {
-      throw new Error(${serializedValue(`No interactive element found for index ${params.index}.`)});
+    const isVisible = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+    };
+    const target = Array.from(document.querySelectorAll(selector)).filter((element) => isVisible(element))[${index - 1}] || null;
+    if (!(target instanceof HTMLElement)) {
+      throw new Error(${serializedValue(`No interactive element found for index ${index}.`)});
     }
-    const target = targetEntry.element;
-    target.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
-    if (typeof target.focus === "function") target.focus();
-    const nextText = ${serializedValue(params.text)};
-    const clear = ${params.clear ? "true" : "false"};
-    const submit = ${params.submit ? "true" : "false"};
-    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-      const prototype = Object.getPrototypeOf(target);
-      const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
-      const prefix = clear ? "" : String(target.value || "");
-      const value = prefix + nextText;
-      if (descriptor && typeof descriptor.set === "function") {
-        descriptor.set.call(target, value);
-      } else {
-        target.value = value;
+    const editTarget =
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target.isContentEditable
+        ? target
+        : target.querySelector("input, textarea, [contenteditable]:not([contenteditable='false'])");
+    if (!(editTarget instanceof HTMLElement)) {
+      throw new Error(${serializedValue(`Element at index ${index} is not text-editable.`)});
+    }
+    editTarget.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+    if (typeof editTarget.focus === "function") {
+      try {
+        editTarget.focus({ preventScroll: true });
+      } catch {
+        editTarget.focus();
       }
-      target.dispatchEvent(new Event("input", { bubbles: true }));
-      target.dispatchEvent(new Event("change", { bubbles: true }));
-      if (submit && target.form && typeof target.form.requestSubmit === "function") {
-        target.form.requestSubmit();
-      }
-      return {
-        ok: true,
-        index: ${params.index},
-        value: target.value,
-        frame_path: targetEntry.frame_path,
-        frame_url: targetEntry.frame_url || null,
-        in_iframe: targetEntry.frame_path !== "main",
-      };
-    }
-    if (target instanceof HTMLElement && target.isContentEditable) {
-      const prefix = clear ? "" : String(target.innerText || "");
-      target.innerText = prefix + nextText;
-      target.dispatchEvent(new Event("input", { bubbles: true }));
-      if (submit) {
-        target.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-      }
-      return {
-        ok: true,
-        index: ${params.index},
-        value: target.innerText,
-        frame_path: targetEntry.frame_path,
-        frame_url: targetEntry.frame_url || null,
-        in_iframe: targetEntry.frame_path !== "main",
-      };
-    }
-    throw new Error(${serializedValue(`Element at index ${params.index} is not text-editable.`)});
-  })()`;
-}
-
-function pressExpression(key: string): string {
-  return `(() => {
-    const target = document.activeElement instanceof HTMLElement ? document.activeElement : document.body;
-    const key = ${serializedValue(key)};
-    for (const type of ["keydown", "keypress", "keyup"]) {
-      target.dispatchEvent(new KeyboardEvent(type, { key, bubbles: true }));
-    }
-    if (key === "Enter" && target instanceof HTMLInputElement && target.form && typeof target.form.requestSubmit === "function") {
-      target.form.requestSubmit();
     }
     return {
       ok: true,
-      key,
-      active_tag: target.tagName ? target.tagName.toLowerCase() : "body"
+      index: ${index},
+      tag_name: editTarget.tagName.toLowerCase(),
+      role: editTarget.getAttribute("role") || "",
+      editable: true
     };
   })()`;
 }
@@ -1265,68 +1654,14 @@ function reloadExpression(): string {
   })()`;
 }
 
-function waitForSelectorProbeExpression(params: {
-  selector: string;
-  state: BrowserWaitSelectorState;
-}): string {
-  return `(() => {
-    const selector = ${serializedValue(params.selector)};
-    const expectedState = ${serializedValue(params.state)};
-    ${frameAwareBrowserQueryHelpersExpression()}
-    const documentCollection = collectDocumentEntries(document);
-    const documentEntries = documentCollection.entries;
-    let presentCount = 0;
-    let visibleCount = 0;
-    let firstFramePath = null;
-    let firstFrameUrl = null;
-    for (const entry of documentEntries) {
-      const nodes = Array.from(entry.doc.querySelectorAll(selector));
-      if (nodes.length === 0) {
-        continue;
-      }
-      presentCount += nodes.length;
-      if (firstFramePath === null) {
-        firstFramePath = entry.frame_path;
-        firstFrameUrl = entry.frame_url || null;
-      }
-      for (const node of nodes) {
-        if (node instanceof Element && isVisible(node)) {
-          visibleCount += 1;
-        }
-      }
-    }
-    const matched =
-      expectedState === "hidden"
-        ? presentCount === 0
-        : expectedState === "present"
-          ? presentCount > 0
-          : visibleCount > 0;
-    return {
-      selector,
-      expected_state: expectedState,
-      matched,
-      present_count: presentCount,
-      visible_count: visibleCount,
-      frame_count: documentEntries.length,
-      inaccessible_frame_count: documentCollection.inaccessible_frame_count,
-      first_match_frame_path: firstFramePath,
-      first_match_frame_url: firstFrameUrl,
-    };
-  })()`;
-}
-
-function waitForLoadStateProbeExpression(): string {
-  return `(() => ({
-    ready_state: document.readyState,
-  }))()`;
-}
-
 export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike {
   readonly #fetch: typeof fetch;
   readonly #resolveConfig: () => ProductRuntimeConfig;
+  readonly #artifactStore: BrowserScreenshotArtifactStore | null;
 
   constructor(options: DesktopBrowserToolServiceOptions = {}) {
     this.#fetch = options.fetchImpl ?? fetch;
+    this.#artifactStore = options.artifactStore ?? null;
     this.#resolveConfig =
       options.resolveConfig ??
       (() =>
@@ -1378,7 +1713,6 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
 
     const config = this.#resolveConfig();
     ensureDesktopBrowserConfig(config);
-    await this.#enforceBrowserSafetyPolicy(config, definition.id, args, context);
 
     switch (definition.id) {
       case "browser_navigate": {
@@ -1409,171 +1743,165 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
         return { ok: true, tabs: result };
       }
       case "browser_get_state": {
-        const includePageText = optionalBoolean(args.include_page_text, false);
-        const includeScreenshot = optionalBoolean(args.include_screenshot, false);
-        const scopeSelector = optionalTrimmedString(args.scope_selector);
-        const elementOffset = browserGetStateOffset(args.element_offset, "element_offset");
-        const elementLimit = browserGetStateLimit({
-          value: args.element_limit,
-          fieldName: "element_limit",
-          defaultValue: DEFAULT_BROWSER_GET_STATE_ELEMENT_LIMIT,
-          maxValue: MAX_BROWSER_GET_STATE_ELEMENT_LIMIT,
-        });
-        const mediaOffset = browserGetStateOffset(args.media_offset, "media_offset");
-        const mediaLimit = browserGetStateLimit({
-          value: args.media_limit,
-          fieldName: "media_limit",
-          defaultValue: DEFAULT_BROWSER_GET_STATE_MEDIA_LIMIT,
-          maxValue: MAX_BROWSER_GET_STATE_MEDIA_LIMIT,
-        });
+        const options = browserGetStateOptions(args);
         const snapshot = await this.#readBrowserGetStateSnapshot(
           config,
           context,
-          {
-            includePageText,
-            includeScreenshot,
-            scopeSelector,
-            elementOffset,
-            elementLimit,
-            mediaOffset,
-            mediaLimit,
-          }
+          options,
         );
         const payload: Record<string, unknown> = {
           ok: true,
           page: snapshot.page,
           state: snapshot.state,
-          state_fingerprint: browserStateFingerprint({
-            page: snapshot.page,
-            state: snapshot.state,
-          }),
-          trust_boundary: {
-            browser_content_untrusted: true,
-            source_origin: browserContentOrigin(snapshot.page),
-            page_text_untrusted: includePageText,
-          },
         };
-        const state = asRecord(payload.state);
-        const pageFacts = state ? extractBrowserPageFacts(state) : null;
-        if (pageFacts) {
-          payload.page_facts = pageFacts;
-          payload.page_facts_fingerprint = browserPageFactsFingerprint(pageFacts);
-          const trustBoundary = asRecord(payload.trust_boundary) ?? {};
-          trustBoundary.page_facts_unverified = true;
-          payload.trust_boundary = trustBoundary;
-        }
-        const sourceOrigin = browserContentOrigin(snapshot.page);
-        if (
-          includePageText &&
-          state &&
-          typeof state.text === "string"
-        ) {
-          const boundaryWrapped = wrapUntrustedBoundaryText({
-            text: state.text,
-            origin: sourceOrigin,
-            enabled: config.desktopBrowserUntrustedBoundariesEnabled !== false,
-          });
-          state.text = boundaryWrapped.wrappedText;
-          if (boundaryWrapped.boundary) {
-            const trustBoundary = asRecord(payload.trust_boundary) ?? {};
-            trustBoundary.page_text_boundary = boundaryWrapped.boundary;
-            payload.trust_boundary = trustBoundary;
-          }
-        }
-        if (snapshot.screenshot) {
-          payload.screenshot = snapshot.screenshot;
-        }
         const warnings = browserGetStateWarnings({
           page: snapshot.page,
           state: snapshot.state,
           screenshot: snapshot.screenshot,
-          includeScreenshot,
+          includeScreenshot: options.includeScreenshot,
         });
-        if (warnings.length > 0) {
-          payload.warnings = warnings;
-        }
-        return payload;
-      }
-      case "browser_extract_facts": {
-        const scopeSelector = optionalTrimmedString(args.scope_selector);
-        const snapshot = await this.#readBrowserGetStateSnapshot(
-          config,
-          context,
-          {
-            includePageText: false,
-            includeScreenshot: false,
-            scopeSelector,
-            elementOffset: 0,
-            elementLimit: 1,
-            mediaOffset: 0,
-            mediaLimit: 1,
-          }
-        );
-        const pageFacts = extractBrowserPageFacts(snapshot.state) ?? {};
-        const payload: Record<string, unknown> = {
-          ok: true,
-          page: snapshot.page,
-          page_facts: pageFacts,
-          page_facts_fingerprint: browserPageFactsFingerprint(pageFacts),
-          state_fingerprint: browserStateFingerprint({
+        if (snapshot.screenshot) {
+          const screenshot = await this.#screenshotForToolResult({
+            screenshot: snapshot.screenshot,
+            context,
+            sourceToolId: "browser_get_state",
             page: snapshot.page,
             state: snapshot.state,
-          }),
-          trust_boundary: {
-            browser_content_untrusted: true,
-            source_origin: browserContentOrigin(snapshot.page),
-            page_facts_unverified: true,
-          },
-        };
-        const warnings = browserGetStateWarnings({
-          page: snapshot.page,
-          state: snapshot.state,
-          includeScreenshot: false,
-        });
+          });
+          payload.screenshot = screenshot.result;
+          if (screenshot.warning) {
+            warnings.push(screenshot.warning);
+          }
+        }
         if (warnings.length > 0) {
           payload.warnings = warnings;
         }
         return payload;
       }
-      case "browser_wait_for_selector": {
-        const selector = requiredString(args.selector, "selector");
-        const state = browserWaitSelectorState(args.state);
-        const timeoutMs = browserWaitTimeoutMs(args.timeout_ms);
-        const intervalMs = browserWaitIntervalMs(args.interval_ms);
-        return await this.#waitForSelector({
-          config,
-          context,
-          selector,
-          state,
-          timeoutMs,
-          intervalMs,
-        });
+      case "browser_find": {
+        const options = browserFindOptions(args);
+        const result = await this.#evaluate(config, browserFindExpression(options), context);
+        return { ok: true, find: result };
       }
-      case "browser_wait_for_url": {
-        const expectedUrl = requiredString(args.url, "url");
-        const mode = browserWaitUrlMode(args.mode);
-        const timeoutMs = browserWaitTimeoutMs(args.timeout_ms);
-        const intervalMs = browserWaitIntervalMs(args.interval_ms);
-        return await this.#waitForUrl({
+      case "browser_act": {
+        const options = browserActOptions(args);
+        if (isNativeTextAction(options.action) && options.value === null) {
+          throw new DesktopBrowserToolServiceError(
+            400,
+            "browser_tool_invalid_args",
+            "value is required for fill and type actions"
+          );
+        }
+        if (options.action === "press" && !options.key) {
+          throw new DesktopBrowserToolServiceError(
+            400,
+            "browser_tool_invalid_args",
+            "key is required for press actions"
+          );
+        }
+        let result = await this.#evaluate(
           config,
+          isNativePointerAction(options.action)
+            ? browserPointerTargetExpression(options)
+            : isNativeTextAction(options.action)
+              ? browserKeyboardTargetExpression(options, { requireEditable: true })
+              : options.action === "press"
+                ? browserKeyboardTargetExpression(options, { requireEditable: false })
+                : browserActExpression(options),
           context,
-          expectedUrl,
-          mode,
-          timeoutMs,
-          intervalMs,
+        );
+        if (isNativePointerAction(options.action)) {
+          const point = asRecord(result.result);
+          const x = requiredNonNegativeInteger(point?.x, "x");
+          const y = requiredNonNegativeInteger(point?.y, "y");
+          const nativeInput = await this.#browserFetch(config, {
+            method: "POST",
+            path: "/mouse",
+            body: { action: options.action, x, y },
+            workspaceId: context.workspaceId,
+            sessionId: context.sessionId,
+            space: context.space,
+          });
+          result = {
+            ...result,
+            result: { ...(asRecord(result.result) ?? {}), native_input: nativeInput },
+          };
+        } else if (isNativeTextAction(options.action)) {
+          const nativeInput = await this.#browserFetch(config, {
+            method: "POST",
+            path: "/keyboard",
+            body: {
+              action: "insert_text",
+              text: options.value ?? "",
+              clear: options.clear === null ? options.action === "fill" : options.clear,
+              submit: options.submit,
+            },
+            workspaceId: context.workspaceId,
+            sessionId: context.sessionId,
+            space: context.space,
+          });
+          result = {
+            ...result,
+            result: {
+              ...(asRecord(result.result) ?? {}),
+              value: options.value ?? "",
+              native_input: nativeInput,
+            },
+          };
+        } else if (options.action === "press") {
+          const nativeInput = await this.#browserFetch(config, {
+            method: "POST",
+            path: "/keyboard",
+            body: { action: "press", key: options.key ?? "" },
+            workspaceId: context.workspaceId,
+            sessionId: context.sessionId,
+            space: context.space,
+          });
+          result = {
+            ...result,
+            result: {
+              ...(asRecord(result.result) ?? {}),
+              key: options.key ?? "",
+              native_input: nativeInput,
+            },
+          };
+        }
+        const page = await this.#browserFetch(config, {
+          method: "GET",
+          path: "/page",
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
         });
+        return { ok: true, action: result, page };
       }
-      case "browser_wait_for_load_state": {
-        const state = browserWaitLoadState(args.state);
-        const timeoutMs = browserWaitTimeoutMs(args.timeout_ms);
-        const intervalMs = browserWaitIntervalMs(args.interval_ms);
-        return await this.#waitForLoadState({
+      case "browser_wait": {
+        const result = await this.#waitForBrowserCondition(config, context, browserWaitOptions(args));
+        return { ok: true, wait: result };
+      }
+      case "browser_evaluate": {
+        const options = browserEvaluateOptions(args);
+        const result = await this.#evaluate(
           config,
+          browserEvaluateExpression(options),
           context,
-          state,
-          timeoutMs,
-          intervalMs,
-        });
+          options.timeoutMs,
+        );
+        return { ok: true, evaluation: result };
+      }
+      case "browser_debug": {
+        const options = browserDebugOptions(args);
+        const [page, debug] = await Promise.all([
+          this.#browserFetch(config, {
+            method: "GET",
+            path: "/page",
+            workspaceId: context.workspaceId,
+            sessionId: context.sessionId,
+            space: context.space,
+          }),
+          this.#evaluate(config, browserDebugExpression(options), context),
+        ]);
+        return { ok: true, page, debug };
       }
       case "browser_click": {
         const index = requiredPositiveInteger(args.index, "index");
@@ -1606,22 +1934,40 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
       case "browser_type": {
         const index = requiredPositiveInteger(args.index, "index");
         const text = requiredString(args.text, "text");
-        const result = await this.#evaluate(
-          config,
-          typeExpression({
-            index,
-            text,
-            clear: optionalBoolean(args.clear, true),
-            submit: optionalBoolean(args.submit, false)
-          }),
-          context
-        );
-        return { ok: true, action: result };
+        const clear = optionalBoolean(args.clear, true);
+        const submit = optionalBoolean(args.submit, false);
+        const result = await this.#evaluate(config, indexedKeyboardTargetExpression(index), context);
+        const nativeInput = await this.#browserFetch(config, {
+          method: "POST",
+          path: "/keyboard",
+          body: { action: "insert_text", text, clear, submit },
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        });
+        return {
+          ok: true,
+          action: {
+            ...result,
+            result: {
+              ...(asRecord(result.result) ?? {}),
+              value: text,
+              native_input: nativeInput,
+            },
+          },
+        };
       }
       case "browser_press": {
         const key = requiredString(args.key, "key");
-        const result = await this.#evaluate(config, pressExpression(key), context);
-        return { ok: true, action: result };
+        const nativeInput = await this.#browserFetch(config, {
+          method: "POST",
+          path: "/keyboard",
+          body: { action: "press", key },
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        });
+        return { ok: true, action: { ok: true, key, native_input: nativeInput } };
       }
       case "browser_scroll": {
         const explicitDelta = optionalInteger(args.delta_y);
@@ -1667,19 +2013,26 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
       case "browser_screenshot": {
         const format = args.format === "jpeg" ? "jpeg" : "png";
         const quality = optionalInteger(args.quality);
+        const screenshot = await this.#browserFetch(config, {
+          method: "POST",
+          path: "/screenshot",
+          body: {
+            format,
+            ...(quality !== null ? { quality } : {})
+          },
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        });
+        const artifactScreenshot = await this.#screenshotForToolResult({
+          screenshot,
+          context,
+          sourceToolId: "browser_screenshot",
+        });
         return {
           ok: true,
-          screenshot: await this.#browserFetch(config, {
-            method: "POST",
-            path: "/screenshot",
-            body: {
-              format,
-              ...(quality !== null ? { quality } : {})
-            },
-            workspaceId: context.workspaceId,
-            sessionId: context.sessionId,
-            space: context.space,
-          })
+          screenshot: artifactScreenshot.result,
+          ...(artifactScreenshot.warning ? { warnings: [artifactScreenshot.warning] } : {})
         };
       }
       case "browser_list_tabs": {
@@ -1697,270 +2050,174 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
     }
   }
 
-  async #enforceBrowserSafetyPolicy(
-    config: ProductRuntimeConfig,
-    toolId: DesktopBrowserToolId,
-    args: Record<string, unknown>,
-    context: DesktopBrowserToolExecutionContext,
-  ): Promise<void> {
-    const actionCategory = browserActionCategory(toolId);
-    if (!actionCategory) {
-      return;
-    }
-
-    const blockedActions = normalizedLowercaseSet(config.desktopBrowserBlockedActions);
-    if (blockedActions.has(actionCategory)) {
-      throw new DesktopBrowserToolServiceError(
-        403,
-        "browser_action_blocked",
-        `Browser action '${actionCategory}' is blocked by runtime policy.`,
-      );
-    }
-
-    const confirmActions = normalizedLowercaseSet(config.desktopBrowserConfirmActions);
-    if (confirmActions.has(actionCategory) && !actionRequiresConfirmation(args)) {
-      throw new DesktopBrowserToolServiceError(
-        409,
-        "browser_action_confirmation_required",
-        `Browser action '${actionCategory}' requires explicit confirmation. Retry with confirm=true.`,
-      );
-    }
-
-    const allowedDomains = config.desktopBrowserAllowedDomains ?? [];
-    if (allowedDomains.length === 0) {
-      return;
-    }
-
-    const candidateUrls: string[] = [];
-    if (toolId === "browser_navigate" || toolId === "browser_open_tab") {
-      const targetUrl = optionalTrimmedString(args.url);
-      if (targetUrl) {
-        candidateUrls.push(targetUrl);
-      } else {
-        return;
-      }
-    } else {
-      const page = await this.#browserFetch(config, {
-        method: "GET",
-        path: "/page",
-        workspaceId: context.workspaceId,
-        sessionId: context.sessionId,
-        space: context.space,
-      });
-      const activeUrl = optionalTrimmedString(page.url);
-      if (activeUrl) {
-        candidateUrls.push(activeUrl);
-      }
-    }
-
-    for (const url of candidateUrls) {
-      if (browserDomainAllowed({ url, allowedDomains })) {
-        return;
-      }
-    }
-    throw new DesktopBrowserToolServiceError(
-      403,
-      "browser_domain_blocked",
-      `Browser action is blocked by domain policy. Allowed domains: ${allowedDomains.join(", ")}`,
-    );
-  }
-
-  async #waitForSelector(params: {
-    config: ProductRuntimeConfig;
-    context: DesktopBrowserToolExecutionContext;
-    selector: string;
-    state: BrowserWaitSelectorState;
-    timeoutMs: number;
-    intervalMs: number;
-  }): Promise<Record<string, unknown>> {
-    const start = Date.now();
-    let lastProbe: Record<string, unknown> = {};
-    while (Date.now() - start <= params.timeoutMs) {
-      lastProbe = await this.#evaluate(
-        params.config,
-        waitForSelectorProbeExpression({
-          selector: params.selector,
-          state: params.state,
-        }),
-        params.context,
-      );
-      if (lastProbe.matched === true) {
-        return {
-          ok: true,
-          waited_for: "selector",
-          selector: params.selector,
-          expected_state: params.state,
-          timeout_ms: params.timeoutMs,
-          elapsed_ms: Date.now() - start,
-          probe: lastProbe,
-        };
-      }
-      await this.#sleep(params.intervalMs);
-    }
-    return {
-      ok: false,
-      timed_out: true,
-      waited_for: "selector",
-      selector: params.selector,
-      expected_state: params.state,
-      timeout_ms: params.timeoutMs,
-      elapsed_ms: Date.now() - start,
-      probe: lastProbe,
-    };
-  }
-
-  async #waitForUrl(params: {
-    config: ProductRuntimeConfig;
-    context: DesktopBrowserToolExecutionContext;
-    expectedUrl: string;
-    mode: BrowserWaitUrlMode;
-    timeoutMs: number;
-    intervalMs: number;
-  }): Promise<Record<string, unknown>> {
-    const start = Date.now();
-    let lastUrl = "";
-    while (Date.now() - start <= params.timeoutMs) {
-      const page = await this.#browserFetch(params.config, {
-        method: "GET",
-        path: "/page",
-        workspaceId: params.context.workspaceId,
-        sessionId: params.context.sessionId,
-        space: params.context.space,
-      });
-      const currentUrl = optionalTrimmedString(page.url) ?? "";
-      lastUrl = currentUrl;
-      let matched = false;
-      if (params.mode === "exact") {
-        matched = currentUrl === params.expectedUrl;
-      } else if (params.mode === "contains") {
-        matched = currentUrl.includes(params.expectedUrl);
-      } else {
-        try {
-          matched = new RegExp(params.expectedUrl).test(currentUrl);
-        } catch {
-          throw new DesktopBrowserToolServiceError(
-            400,
-            "browser_tool_invalid_args",
-            "url regex is invalid",
-          );
-        }
-      }
-      if (matched) {
-        return {
-          ok: true,
-          waited_for: "url",
-          mode: params.mode,
-          expected_url: params.expectedUrl,
-          current_url: currentUrl,
-          timeout_ms: params.timeoutMs,
-          elapsed_ms: Date.now() - start,
-        };
-      }
-      await this.#sleep(params.intervalMs);
-    }
-    return {
-      ok: false,
-      timed_out: true,
-      waited_for: "url",
-      mode: params.mode,
-      expected_url: params.expectedUrl,
-      current_url: lastUrl,
-      timeout_ms: params.timeoutMs,
-      elapsed_ms: Date.now() - start,
-    };
-  }
-
-  async #waitForLoadState(params: {
-    config: ProductRuntimeConfig;
-    context: DesktopBrowserToolExecutionContext;
-    state: BrowserWaitLoadState;
-    timeoutMs: number;
-    intervalMs: number;
-  }): Promise<Record<string, unknown>> {
-    const start = Date.now();
-    let lastReadyState = "";
-    let lastPageLoading: boolean | null = null;
-    while (Date.now() - start <= params.timeoutMs) {
-      const page = await this.#browserFetch(params.config, {
-        method: "GET",
-        path: "/page",
-        workspaceId: params.context.workspaceId,
-        sessionId: params.context.sessionId,
-        space: params.context.space,
-      });
-      const probe = await this.#evaluate(
-        params.config,
-        waitForLoadStateProbeExpression(),
-        params.context,
-      );
-      const readyState = optionalTrimmedString(probe.ready_state) ?? "";
-      lastReadyState = readyState;
-      const pageLoading = page.loading === true;
-      lastPageLoading = pageLoading;
-      const matched =
-        params.state === "domcontentloaded"
-          ? readyState === "interactive" || readyState === "complete"
-          : params.state === "load"
-            ? readyState === "complete"
-            : readyState === "complete" && pageLoading === false;
-      if (matched) {
-        return {
-          ok: true,
-          waited_for: "load_state",
-          state: params.state,
-          ready_state: readyState,
-          page_loading: pageLoading,
-          timeout_ms: params.timeoutMs,
-          elapsed_ms: Date.now() - start,
-        };
-      }
-      await this.#sleep(params.intervalMs);
-    }
-    return {
-      ok: false,
-      timed_out: true,
-      waited_for: "load_state",
-      state: params.state,
-      ready_state: lastReadyState,
-      page_loading: lastPageLoading,
-      timeout_ms: params.timeoutMs,
-      elapsed_ms: Date.now() - start,
-    };
-  }
-
-  async #sleep(delayMs: number): Promise<void> {
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
-  }
-
   async #evaluate(
     config: ProductRuntimeConfig,
     expression: string,
-    context: DesktopBrowserToolExecutionContext = {}
+    context: DesktopBrowserToolExecutionContext = {},
+    timeoutMs: number | null = null,
   ): Promise<Record<string, unknown>> {
-    const response = await this.#browserFetch(config, {
-      method: "POST",
-      path: "/evaluate",
-      body: evaluateExpressionPayload(expression),
-      workspaceId: context.workspaceId,
-      sessionId: context.sessionId,
-      space: context.space,
-    });
-    const payload = asRecord(response);
-    return asRecord(payload?.result) ?? {};
+    const controller = timeoutMs !== null ? new AbortController() : null;
+    const timeout =
+      controller && timeoutMs !== null
+        ? setTimeout(() => controller.abort(), timeoutMs)
+        : null;
+    try {
+      const response = await this.#browserFetch(config, {
+        method: "POST",
+        path: "/evaluate",
+        body: evaluateExpressionPayload(expression),
+        workspaceId: context.workspaceId,
+        sessionId: context.sessionId,
+        space: context.space,
+        signal: controller?.signal,
+      });
+      const payload = asRecord(response);
+      return asRecord(payload?.result) ?? {};
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    }
+  }
+
+  async #waitForBrowserCondition(
+    config: ProductRuntimeConfig,
+    context: DesktopBrowserToolExecutionContext,
+    options: BrowserWaitOptions,
+  ): Promise<Record<string, unknown>> {
+    const startedAt = Date.now();
+    const baseline =
+      options.condition === "dom_change"
+        ? await this.#evaluate(config, browserDomSignatureExpression(), context)
+        : null;
+    let attempts = 0;
+    let lastResult: Record<string, unknown> = {};
+    while (Date.now() - startedAt <= options.timeoutMs) {
+      attempts += 1;
+      lastResult = await this.#evaluate(
+        config,
+        browserWaitPredicateExpression(options, baseline),
+        context,
+      );
+      if (lastResult.matched === true) {
+        return {
+          matched: true,
+          attempts,
+          elapsed_ms: Date.now() - startedAt,
+          condition: options.condition,
+          result: lastResult,
+        };
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, BROWSER_WAIT_POLL_INTERVAL_MS),
+      );
+    }
+    return {
+      matched: false,
+      attempts,
+      elapsed_ms: Date.now() - startedAt,
+      condition: options.condition,
+      result: lastResult,
+    };
+  }
+
+  async #screenshotForToolResult(params: {
+    screenshot: Record<string, unknown>;
+    context: DesktopBrowserToolExecutionContext;
+    sourceToolId: string;
+    page?: Record<string, unknown>;
+    state?: Record<string, unknown>;
+  }): Promise<{ result: Record<string, unknown>; warning: string | null }> {
+    const workspaceId = typeof params.context.workspaceId === "string" ? params.context.workspaceId.trim() : "";
+    if (!this.#artifactStore || !workspaceId) {
+      return { result: params.screenshot, warning: null };
+    }
+
+    const base64 = screenshotBase64(params.screenshot);
+    if (!base64) {
+      return { result: params.screenshot, warning: null };
+    }
+
+    const mimeType = normalizedScreenshotMimeType(
+      params.screenshot.mimeType ?? params.screenshot.mime_type,
+    );
+    const extension = screenshotExtension(mimeType);
+    const sessionId = typeof params.context.sessionId === "string" ? params.context.sessionId.trim() : "";
+    const inputId = typeof params.context.inputId === "string" ? params.context.inputId.trim() : "";
+    const artifactId = randomUUID();
+    const timestamp = timestampPathSegment();
+    const relativePath = path.posix.join(
+      BROWSER_SCREENSHOT_ARTIFACT_DIR,
+      safePathSegment(sessionId, "session"),
+      `${timestamp}-${artifactId}${extension}`,
+    );
+    const absolutePath = path.join(this.#artifactStore.workspaceRoot, workspaceId, ...relativePath.split("/"));
+    const bytes = Buffer.from(base64, "base64");
+
+    try {
+      await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+      await fs.writeFile(absolutePath, bytes);
+      const width = positiveNumber(params.screenshot.width);
+      const height = positiveNumber(params.screenshot.height);
+      const output = this.#artifactStore.createOutput({
+        workspaceId,
+        outputType: "file",
+        title: `Browser screenshot ${new Date().toISOString()}`,
+        status: "completed",
+        filePath: relativePath,
+        sessionId: sessionId || null,
+        inputId: inputId || null,
+        artifactId,
+        platform: "browser",
+        metadata: {
+          origin_type: "browser_tool",
+          change_type: "created",
+          artifact_type: "browser_screenshot",
+          category: "image",
+          mime_type: mimeType,
+          size_bytes: bytes.byteLength,
+          tool_id: params.sourceToolId,
+          inline_base64: false,
+          ...(width !== null ? { width } : {}),
+          ...(height !== null ? { height } : {}),
+          ...(sessionId ? { source_session_id: sessionId } : {}),
+          ...(inputId ? { source_input_id: inputId } : {}),
+          ...(typeof params.page?.url === "string" ? { page_url: params.page.url } : {}),
+          ...(typeof params.page?.title === "string" ? { page_title: params.page.title } : {}),
+          ...(typeof params.state?.url === "string" && typeof params.page?.url !== "string"
+            ? { page_url: params.state.url }
+            : {}),
+          ...(typeof params.state?.title === "string" && typeof params.page?.title !== "string"
+            ? { page_title: params.state.title }
+            : {}),
+        },
+      });
+      return {
+        result: {
+          artifact_id: output.artifactId ?? artifactId,
+          output_id: output.id,
+          file_path: output.filePath ?? relativePath,
+          mime_type: mimeType,
+          size_bytes: bytes.byteLength,
+          ...(width !== null ? { width } : {}),
+          ...(height !== null ? { height } : {}),
+          storage: "workspace_output",
+          inline_base64: false,
+        },
+        warning: null,
+      };
+    } catch {
+      return {
+        result: params.screenshot,
+        warning: "Browser screenshot artifact persistence failed; screenshot is inlined.",
+      };
+    }
   }
 
   async #readBrowserGetStateSnapshot(
     config: ProductRuntimeConfig,
     context: DesktopBrowserToolExecutionContext,
-    params: {
-      includePageText: boolean;
-      includeScreenshot: boolean;
-      scopeSelector: string | null;
-      elementOffset: number;
-      elementLimit: number;
-      mediaOffset: number;
-      mediaLimit: number;
-    },
+    options: BrowserGetStateOptions,
   ): Promise<{
     page: Record<string, unknown>;
     state: Record<string, unknown>;
@@ -1982,27 +2239,12 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
         sessionId: context.sessionId,
         space: context.space,
       });
-      const rawState = await this.#evaluate(
+      const state = await this.#evaluate(
         config,
-        interactiveElementsExpression({
-          includePageText: params.includePageText,
-          scopeSelector: params.scopeSelector,
-          elementOffset: params.elementOffset,
-          elementLimit: params.elementLimit,
-          mediaOffset: params.mediaOffset,
-          mediaLimit: params.mediaLimit,
-        }),
+        interactiveElementsExpression(options),
         context,
       );
-      const state = normalizeBrowserGetStateState({
-        state: rawState,
-        scopeSelector: params.scopeSelector,
-        elementOffset: params.elementOffset,
-        elementLimit: params.elementLimit,
-        mediaOffset: params.mediaOffset,
-        mediaLimit: params.mediaLimit,
-      });
-      const screenshot = params.includeScreenshot
+      const screenshot = options.includeScreenshot
         ? await this.#browserFetch(config, {
             method: "POST",
             path: "/screenshot",
@@ -2018,7 +2260,7 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
           page,
           state,
           screenshot,
-          includeScreenshot: params.includeScreenshot,
+          includeScreenshot: options.includeScreenshot,
         })
       ) {
         return snapshot;
@@ -2034,15 +2276,28 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
 
   async #browserFetch(config: ProductRuntimeConfig, options: BrowserFetchOptions): Promise<Record<string, unknown>> {
     const requestUrl = `${browserBaseUrl(config)}${options.path}`;
-    const response = await this.#fetch(requestUrl, {
-      method: options.method,
-      headers: browserToolHeaders(config, {
-        workspaceId: options.workspaceId,
-        sessionId: options.sessionId,
-        space: options.space,
-      }),
-      body: options.body ? JSON.stringify(options.body) : undefined
-    });
+    let response: Response;
+    try {
+      response = await this.#fetch(requestUrl, {
+        method: options.method,
+        headers: browserToolHeaders(config, {
+          workspaceId: options.workspaceId,
+          sessionId: options.sessionId,
+          space: options.space,
+        }),
+        body: options.body ? JSON.stringify(options.body) : undefined,
+        signal: options.signal,
+      });
+    } catch (error) {
+      if (options.signal?.aborted) {
+        throw new DesktopBrowserToolServiceError(
+          504,
+          "desktop_browser_request_timeout",
+          "Desktop browser request timed out"
+        );
+      }
+      throw error;
+    }
     let payload: unknown = null;
     try {
       payload = await response.json();

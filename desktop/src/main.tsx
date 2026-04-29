@@ -44,4 +44,12 @@ document.addEventListener("visibilitychange", () => {
   });
 });
 
+// Stamp platform on <html> so CSS can opt into translucent surfaces on
+// macOS (where the BrowserWindow has vibrancy enabled). Other platforms
+// keep solid surfaces — the OS material isn't there to show through.
+const platform = window.electronAPI?.platform;
+if (platform) {
+  document.documentElement.dataset.platform = platform;
+}
+
 ReactDOM.createRoot(document.getElementById("root")!).render(<App />);

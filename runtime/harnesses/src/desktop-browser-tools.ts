@@ -1,11 +1,12 @@
 export const DESKTOP_BROWSER_TOOL_IDS = [
   "browser_navigate",
   "browser_open_tab",
-  "browser_wait_for_selector",
-  "browser_wait_for_url",
-  "browser_wait_for_load_state",
   "browser_get_state",
-  "browser_extract_facts",
+  "browser_find",
+  "browser_act",
+  "browser_wait",
+  "browser_evaluate",
+  "browser_debug",
   "browser_click",
   "browser_context_click",
   "browser_type",
@@ -41,7 +42,6 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
       required: ["url"],
       properties: {
         url: { type: "string", minLength: 1 },
-        confirm: { type: "boolean" },
       },
     },
   },
@@ -58,93 +58,150 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
       properties: {
         url: { type: "string", minLength: 1 },
         background: { type: "boolean" },
-        confirm: { type: "boolean" },
-      },
-    },
-  },
-  {
-    id: "browser_wait_for_selector",
-    description:
-      "Wait until a selector appears (or matches the requested state) in the current browser page before continuing interaction. Use this to reduce flakiness after navigation or mutation.",
-    policy: "inspect",
-    session_scope: "workspace_session_only",
-    input_schema: {
-      type: "object",
-      additionalProperties: false,
-      required: ["selector"],
-      properties: {
-        selector: { type: "string", minLength: 1 },
-        state: { type: "string", enum: ["present", "visible", "hidden"] },
-        timeout_ms: { type: "integer", minimum: 1 },
-        interval_ms: { type: "integer", minimum: 1 },
-      },
-    },
-  },
-  {
-    id: "browser_wait_for_url",
-    description:
-      "Wait until the active page URL matches an expected value. Supports exact, contains, and regex matching modes.",
-    policy: "inspect",
-    session_scope: "workspace_session_only",
-    input_schema: {
-      type: "object",
-      additionalProperties: false,
-      required: ["url"],
-      properties: {
-        url: { type: "string", minLength: 1 },
-        mode: { type: "string", enum: ["exact", "contains", "regex"] },
-        timeout_ms: { type: "integer", minimum: 1 },
-        interval_ms: { type: "integer", minimum: 1 },
-      },
-    },
-  },
-  {
-    id: "browser_wait_for_load_state",
-    description:
-      "Wait for browser readiness state. `domcontentloaded` waits for DOM readiness, `load` waits for full document load, and `networkidle` waits for page loading to settle.",
-    policy: "inspect",
-    session_scope: "workspace_session_only",
-    input_schema: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        state: { type: "string", enum: ["domcontentloaded", "load", "networkidle"] },
-        timeout_ms: { type: "integer", minimum: 1 },
-        interval_ms: { type: "integer", minimum: 1 },
       },
     },
   },
   {
     id: "browser_get_state",
     description:
-      "Read the current desktop browser page, visible interactive elements, visible media such as images, compact page facts, and optional screenshot. Prefer this as the DOM-first browser inspection tool for actions and structured extraction. Supports selector scoping and paged windows for elements/media to keep results compact while preserving continuation metadata. Set include_page_text=true only when you need page text, and include_screenshot=true when visual confirmation matters or DOM signals are ambiguous.",
+      "Read the current desktop browser page, visible interactive elements, visible media such as images, and optional screenshot artifact. Prefer this as the DOM-first browser inspection tool for actions and structured extraction. By default it returns a compact state snapshot; use mode/scope/max_nodes to narrow large pages, set include_page_text=true only when you need the current page text, and set include_screenshot=true when visual appearance, layout, prominence, overlays, canvas/chart/PDF content, or user-visible confirmation matters, or when DOM signals are ambiguous or unreliable. Screenshots are returned as artifact handles when workspace storage is available, not inline base64.",
     policy: "inspect",
     session_scope: "workspace_session_only",
     input_schema: {
       type: "object",
       additionalProperties: false,
       properties: {
+        mode: { type: "string", enum: ["state", "text", "structured", "visual"] },
+        scope: {
+          type: "string",
+          enum: ["main", "viewport", "focused", "dialog", "active_dialog", "modal"],
+        },
+        max_nodes: { type: "integer", minimum: 1 },
         include_page_text: { type: "boolean" },
         include_screenshot: { type: "boolean" },
-        scope_selector: { type: "string", minLength: 1 },
-        element_offset: { type: "integer", minimum: 0 },
-        element_limit: { type: "integer", minimum: 1 },
-        media_offset: { type: "integer", minimum: 0 },
-        media_limit: { type: "integer", minimum: 1 },
       },
     },
   },
   {
-    id: "browser_extract_facts",
+    id: "browser_find",
     description:
-      "Extract compact semantic facts from the current desktop browser page without returning a full interactive-element snapshot. Use this when you need canonical page metadata, headings, visible claims, visible links, quoted text, or numeric facts for verification.",
+      "Find visible browser elements across the page by text, accessible label, placeholder, role, CSS selector, XPath, or a combination of those signals. Use this when browser_get_state is truncated, when a visible control is missing from the compact snapshot, or before acting on ambiguous page UI. Search is independent of browser_get_state max_nodes and returns stable refs plus bounding boxes for follow-up browser_act calls.",
     policy: "inspect",
     session_scope: "workspace_session_only",
     input_schema: {
       type: "object",
       additionalProperties: false,
       properties: {
-        scope_selector: { type: "string", minLength: 1 },
+        text: { type: "string" },
+        label: { type: "string" },
+        placeholder: { type: "string" },
+        role: { type: "string" },
+        selector: { type: "string" },
+        xpath: { type: "string" },
+        exact: { type: "boolean" },
+        include_hidden: { type: "boolean" },
+        scope: {
+          type: "string",
+          enum: ["main", "viewport", "focused", "dialog", "active_dialog", "modal"],
+        },
+        max_results: { type: "integer", minimum: 1, maximum: 100 },
+      },
+    },
+  },
+  {
+    id: "browser_act",
+    description:
+      "Perform a general browser action on a ref returned by browser_find, a CSS/XPath selector, or a locator described by text/label/placeholder/role. Supports click, double_click, hover, focus, fill, type, press, select, and scroll_into_view. Pointer and text actions use real browser input when available so rich editors can update their internal state. Prefer this over brittle index-based clicks when the target may be outside browser_get_state or represented by nested generic DOM nodes.",
+    policy: "mutate",
+    session_scope: "workspace_session_only",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["action"],
+      properties: {
+        action: {
+          type: "string",
+          enum: ["click", "double_click", "hover", "focus", "fill", "type", "press", "select", "scroll_into_view"],
+        },
+        ref: { type: "string" },
+        text: { type: "string" },
+        label: { type: "string" },
+        placeholder: { type: "string" },
+        role: { type: "string" },
+        selector: { type: "string" },
+        xpath: { type: "string" },
+        exact: { type: "boolean" },
+        scope: {
+          type: "string",
+          enum: ["main", "viewport", "focused", "dialog", "active_dialog", "modal"],
+        },
+        value: { type: "string" },
+        key: { type: "string" },
+        clear: { type: "boolean" },
+        submit: { type: "boolean" },
+      },
+    },
+  },
+  {
+    id: "browser_wait",
+    description:
+      "Wait for browser state to settle: page load, URL match, visible/hidden element, text presence, or DOM mutation/change. Use after navigation, clicks, form submits, menu opens, and SPA transitions before inspecting or acting again.",
+    policy: "inspect",
+    session_scope: "workspace_session_only",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        condition: {
+          type: "string",
+          enum: ["load", "url", "text", "element", "hidden", "dom_change", "dom_mutation", "change", "mutation"],
+        },
+        url: { type: "string" },
+        text: { type: "string" },
+        label: { type: "string" },
+        placeholder: { type: "string" },
+        role: { type: "string" },
+        selector: { type: "string" },
+        xpath: { type: "string" },
+        exact: { type: "boolean" },
+        scope: {
+          type: "string",
+          enum: ["main", "viewport", "focused", "dialog", "active_dialog", "modal"],
+        },
+        timeout_ms: { type: "integer", minimum: 100, maximum: 30000 },
+      },
+    },
+  },
+  {
+    id: "browser_evaluate",
+    description:
+      "Evaluate JavaScript in the active browser page and return the structured result. Use for general inspection or controlled page automation when built-in browser actions are insufficient. Prefer read-only expressions by default; set allow_mutation=true only when intentionally changing page state.",
+    policy: "mutate",
+    session_scope: "workspace_session_only",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["expression"],
+      properties: {
+        expression: { type: "string", minLength: 1 },
+        allow_mutation: { type: "boolean" },
+        timeout_ms: { type: "integer", minimum: 100, maximum: 30000 },
+      },
+    },
+  },
+  {
+    id: "browser_debug",
+    description:
+      "Return compact browser diagnostics for clickability and page-state problems: current page, ready state, active element, dialogs, iframes, viewport, scroll, and elementFromPoint hit-test data. Use when an element is visible but not found, clicks do nothing, overlays block interaction, or a page appears stuck.",
+    policy: "inspect",
+    session_scope: "workspace_session_only",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        x: { type: "number" },
+        y: { type: "number" },
+        include_dom_sample: { type: "boolean" },
       },
     },
   },
@@ -160,7 +217,6 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
       required: ["index"],
       properties: {
         index: { type: "integer", minimum: 1 },
-        confirm: { type: "boolean" },
       },
     },
   },
@@ -177,7 +233,6 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
       properties: {
         index: { type: "integer", minimum: 1 },
         target: { type: "string", enum: ["element", "media"] },
-        confirm: { type: "boolean" },
       },
     },
   },
@@ -196,7 +251,6 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
         text: { type: "string" },
         clear: { type: "boolean" },
         submit: { type: "boolean" },
-        confirm: { type: "boolean" },
       },
     },
   },
@@ -212,7 +266,6 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
       required: ["key"],
       properties: {
         key: { type: "string", minLength: 1 },
-        confirm: { type: "boolean" },
       },
     },
   },
@@ -229,7 +282,6 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
         direction: { type: "string", enum: ["up", "down"] },
         amount: { type: "integer", minimum: 1 },
         delta_y: { type: "integer" },
-        confirm: { type: "boolean" },
       },
     },
   },
@@ -241,9 +293,7 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
     input_schema: {
       type: "object",
       additionalProperties: false,
-      properties: {
-        confirm: { type: "boolean" },
-      },
+      properties: {},
     },
   },
   {
@@ -254,9 +304,7 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
     input_schema: {
       type: "object",
       additionalProperties: false,
-      properties: {
-        confirm: { type: "boolean" },
-      },
+      properties: {},
     },
   },
   {
@@ -267,15 +315,13 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
     input_schema: {
       type: "object",
       additionalProperties: false,
-      properties: {
-        confirm: { type: "boolean" },
-      },
+      properties: {},
     },
   },
   {
     id: "browser_screenshot",
     description:
-      "Capture a screenshot of the active browser tab when visual verification or interpretation is needed. Do not use it by default for routine navigation or straightforward structured extraction when DOM and text state already suffice.",
+      "Capture a screenshot artifact of the active browser tab when visual verification or interpretation is needed. Do not use it by default for routine navigation or straightforward structured extraction when DOM and text state already suffice. Screenshots are returned as artifact handles when workspace storage is available, not inline base64.",
     policy: "inspect",
     session_scope: "workspace_session_only",
     input_schema: {

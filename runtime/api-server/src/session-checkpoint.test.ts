@@ -10,6 +10,7 @@ import {
   type SessionCheckpointSessionOps,
   enqueueSessionCheckpointJob,
   processSessionCheckpointJob,
+  shouldQueueSessionCheckpoint,
 } from "./session-checkpoint.js";
 import type { RuntimeSentryCaptureOptions } from "./runtime-sentry.js";
 
@@ -68,6 +69,41 @@ function appendFakeMessage(
   state.leafId = id;
   return id;
 }
+
+test("session checkpoint queues only after PI context crosses the 50 percent reserve", () => {
+  assert.equal(
+    shouldQueueSessionCheckpoint({
+      tokens: 525_000,
+      contextWindow: 1_050_000,
+      percent: 50,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldQueueSessionCheckpoint({
+      tokens: 525_001,
+      contextWindow: 1_050_000,
+      percent: 50.1,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldQueueSessionCheckpoint({
+      tokens: 32_768,
+      contextWindow: 65_536,
+      percent: 50,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldQueueSessionCheckpoint({
+      tokens: 32_769,
+      contextWindow: 65_536,
+      percent: 50.1,
+    }),
+    true,
+  );
+});
 
 function appendFakeCompaction(params: {
   states: Map<string, FakeSessionState>;

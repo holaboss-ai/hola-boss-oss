@@ -1514,7 +1514,9 @@ test("claimed input folds attached background updates into a normal user turn", 
 
   assert.match(capturedInstruction, /Pending Background Updates/);
   assert.match(capturedInstruction, /Answer the user's latest message first\./);
+  assert.match(capturedInstruction, /add them after your direct answer as a natural continuation/i);
   assert.match(capturedInstruction, /only one relevant update, weave it in without a `Background updates` heading/i);
+  assert.match(capturedInstruction, /Do not introduce the added update with stock phrases like `Quick follow-up`/i);
   assert.match(capturedInstruction, /Only use a separate `Background updates` section when there are multiple distinct updates/i);
   assert.match(capturedInstruction, /numbered items/i);
   assert.doesNotMatch(capturedInstruction, /<html>/i);

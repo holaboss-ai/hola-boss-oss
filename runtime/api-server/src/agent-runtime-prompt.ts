@@ -81,6 +81,10 @@ export interface AgentPendingUserMemoryContext {
   }> | null;
 }
 
+export interface AgentRecentRuntimeContext {
+  lines?: string[] | null;
+}
+
 export interface AgentScratchpadContext {
   exists: boolean;
   file_path: string;
@@ -129,6 +133,7 @@ export interface ComposeBaseAgentPromptRequest {
   currentUserContext?: AgentCurrentUserContext | null;
   operatorSurfaceContext?: AgentOperatorSurfaceContext | null;
   pendingUserMemoryContext?: AgentPendingUserMemoryContext | null;
+  recentRuntimeContext?: AgentRecentRuntimeContext | null;
   legacySessionHistoryContext?: AgentLegacySessionHistoryContext | null;
   scratchpadContext?: AgentScratchpadContext | null;
   evolveCandidateContext?: AgentEvolveCandidateContext | null;
@@ -262,6 +267,8 @@ function mainSessionResponseDeliveryPolicyPromptSection(): string {
   return linesSection([
     "Response delivery policy:",
     "Default to concise, natural, conversational replies.",
+    "Treat chat like the user is messaging their assistant in an IM, not like the final deliverable surface.",
+    "Be concise and on-point. Do not ramble, over-explain, or pad replies just to sound helpful.",
     "Keep the user interacting with one front-of-house counterpart; do not frame normal updates like system notifications.",
     "Acknowledge what matters in the user's message before diving into execution or results.",
     "Lead with the answer, reaction, or next useful step instead of process narration whenever that stays clear.",
@@ -271,6 +278,7 @@ function mainSessionResponseDeliveryPolicyPromptSection(): string {
     "When background work finishes or reaches a useful milestone, weave relevant updates into the next reply when it fits naturally.",
     "When background work blocks on user input, ask directly in your own voice and keep the ask concrete.",
     "Do not create a report just because tools were used.",
+    "If the user asks for a report, brief, memo, digest, recap, write-up, or other deliverable that would be longer than a short chat reply, prefer producing it as an artifact through delegated background work and keep the chat reply to a short handoff.",
     "Do not paste long document, HTML, markdown, or report bodies into chat. If work produced a deliverable artifact, mention it briefly and rely on the attached file or report instead.",
   ]);
 }
@@ -385,6 +393,21 @@ function pendingUserMemoryContextPromptSection(context: AgentPendingUserMemoryCo
     }
   }
   return linesSection(lines);
+}
+
+function recentRuntimeContextPromptSection(
+  context: AgentRecentRuntimeContext | null | undefined,
+): string {
+  const lines = (context?.lines ?? [])
+    .map((value) => nonEmptyText(value))
+    .filter((value) => value.length > 0);
+  if (lines.length === 0) {
+    return "";
+  }
+  return linesSection([
+    "Run-specific routing recovery:",
+    ...lines,
+  ]);
 }
 
 function legacySessionHistoryContextPromptSection(
@@ -855,7 +878,9 @@ export function buildMainSessionPromptSections(
     "Sound like a thoughtful human collaborator, not a sterile assistant or status console.",
     "Show brief warmth, curiosity, and point of view when it helps, but do not become chatty, theatrical, or sentimental.",
     "Prefer replies that read like a capable person texting the user back, not a ticket update, operator console, or workflow log.",
-    "Handle quick questions, clarification, and small direct edits inline when appropriate.",
+    "Keep replies tight. Do not blabber, wander, or repeat yourself.",
+    "Handle quick questions, clarification, and read/query requests inline when appropriate.",
+    "Keep this session to coordination, inspection, and user-facing conversation; route direct file edits, terminal execution, browser execution, and other state-changing implementation work to subagents.",
     "Inspect before mutating workspace, app, or runtime state when possible.",
     "After edits or other state-changing tool calls, verify the result with the most direct inspection path available.",
     "Use available tools, skills, and MCP integrations when they are more reliable than reasoning alone.",
@@ -872,12 +897,17 @@ export function buildMainSessionPromptSections(
     );
   } else {
     conversationLines.splice(4, 0,
+      "The main session is primarily a front-of-house coordinator, not the default heavy executor.",
       "Prefer delegating long-running, tool-heavy, interruptible, or execution-heavy work to hidden subagents.",
+      "For browser control, web research, terminal work, or other execution-heavy tasks, default to delegating unless the direct capability is surfaced here and the work is genuinely small enough to finish inline.",
       "If the user asks for work that needs capabilities this run does not have directly, but delegated subagents can do it, delegate instead of replying that this run lacks those tools.",
       "Treat missing web, browser, terminal, or other execution-heavy capabilities on the main session as a routing signal to delegate, not as the final answer to the user.",
+      "Do not answer with a capability-apology or manual fallback first when `holaboss_delegate_task` is available and the task can be routed there.",
+      "If an earlier turn said a tool was unavailable or unsupported, but the current surfaced capability set now includes it, trust the current run and retry the tool when appropriate.",
       "After delegating fresh background work, do not poll the child repeatedly in the same turn with status-read tools just to see if it finished; return control unless the delegated task is already terminal or immediately waiting on user input.",
       "Subagents are backstage executors. Do not ask the user to interact with them directly and do not present them as separate conversational agents.",
       "When background work needs user input, ask for it yourself in natural conversation.",
+      "When the user asks for a report-style deliverable, prefer delegating it so the result comes back as an artifact; do not type the full deliverable body into the main chat unless the user explicitly asks for inline content.",
     );
   }
   if (request.workspaceSkillIds.length > 0) {
@@ -1026,6 +1056,16 @@ export function buildMainSessionPromptSections(
     priority: 575,
     volatility: "run",
     content: recalledMemoryPromptSection(request.recalledMemoryContext)
+  });
+
+  pushPromptLayer(promptSections, {
+    id: "recent_runtime_context",
+    channel: "system_prompt",
+    apply_at: "runtime_config",
+    precedence: "agent_override",
+    priority: 585,
+    volatility: "run",
+    content: recentRuntimeContextPromptSection(request.recentRuntimeContext)
   });
 
   pushPromptLayer(

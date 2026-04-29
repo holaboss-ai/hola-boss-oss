@@ -143,6 +143,23 @@ test("buildAgentCapabilityManifest filters browser tools when policy context doe
   assert.equal(buildEnabledToolMapFromManifest(manifest).browser_get_state, undefined);
 });
 
+test("buildAgentCapabilityManifest includes staged browser tools for subagent sessions", () => {
+  const manifest = buildAgentCapabilityManifest({
+    harnessId: "pi",
+    sessionKind: "subagent",
+    browserToolsAvailable: true,
+    browserToolIds: ["browser_get_state"],
+    runtimeToolIds: [],
+    defaultTools: ["read"],
+    extraTools: ["browser_get_state"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  assert.equal(manifest.inspect.some((capability) => capability.callable_name === "browser_get_state"), true);
+  assert.equal(buildEnabledToolMapFromManifest(manifest).browser_get_state, true);
+});
+
 test("buildAgentCapabilityManifest excludes browser tools for onboarding sessions even when staged", () => {
   const manifest = buildAgentCapabilityManifest({
     harnessId: "pi",
@@ -199,6 +216,11 @@ test("renderCapabilityToolRoutingPromptSection tells main sessions to delegate w
   const section = renderCapabilityToolRoutingPromptSection(manifest);
   assert.match(section, /Delegation routing:/);
   assert.match(section, /use `holaboss_delegate_task` instead of replying that the current run lacks those tools/i);
+  assert.match(section, /main session as a coordinator first/i);
+  assert.match(section, /browser-heavy, web-heavy, terminal-heavy, multi-step, or interruptible/i);
+  assert.match(section, /Deliverable routing: when the user asks for a report, brief, memo, digest, recap, or other long-form deliverable, prefer `holaboss_delegate_task`/);
+  assert.match(section, /Do not lead with a capability apology, manual workaround, or "I can't do that here" answer when delegation is available/i);
+  assert.match(section, /trust the current run and retry the tool when it is the right path/i);
   assert.match(section, /Only surface a hard capability limitation to the user when neither the current run nor delegated subagents can actually carry out the request/i);
 });
 
@@ -250,7 +272,7 @@ test("buildAgentCapabilityManifest carries browser tool descriptions that emphas
   assert.match(capability.description, /DOM-first browser inspection tool for actions and structured extraction/i);
   assert.match(capability.description, /visible media such as images/i);
   assert.match(capability.description, /include_screenshot=true/i);
-  assert.match(capability.description, /visual confirmation matters or DOM signals are ambiguous/i);
+  assert.match(capability.description, /user-visible confirmation matters,? or when DOM signals are ambiguous/i);
 });
 
 test("evaluateAgentCapabilities keeps command and skill surfaces while excluding non-staged browser tools", () => {

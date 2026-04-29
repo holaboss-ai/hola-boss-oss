@@ -34,7 +34,6 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
     workspaceId: string;
     sessionId: string;
     browserSpace: string;
-    resultMode: string;
     body: string;
   }> = [];
   const fetchImpl: typeof fetch = async (input, init) => {
@@ -53,9 +52,6 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
       workspaceId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-workspace-id"] ?? ""),
       sessionId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-session-id"] ?? ""),
       browserSpace: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-browser-space"] ?? ""),
-      resultMode: String(
-        (init?.headers as Record<string, string> | undefined)?.["x-holaboss-tool-result-mode"] ?? ""
-      ),
       body,
     });
     if (url.endsWith("/api/v1/capabilities/browser/tools/browser_get_state")) {
@@ -94,44 +90,44 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
     String((getStateTool.parameters as { properties?: { include_screenshot?: { description?: string } } }).properties?.include_screenshot?.description ?? ""),
     /visual appearance, layout, overlays, charts, PDFs, or user-visible confirmation/i
   );
-  assert.ok(
-    (getStateTool.parameters as { properties?: Record<string, unknown> }).properties?.scope_selector
+  assert.deepEqual(
+    (
+      (getStateTool.parameters as { properties?: { mode?: { anyOf?: Array<{ const?: string }> } } })
+        .properties?.mode?.anyOf ?? []
+    ).map((entry) => entry.const),
+    ["state", "text", "structured", "visual"],
   );
-  assert.ok(
-    (getStateTool.parameters as { properties?: Record<string, unknown> }).properties?.element_offset
+  assert.deepEqual(
+    (
+      (getStateTool.parameters as { properties?: { scope?: { anyOf?: Array<{ const?: string }> } } })
+        .properties?.scope?.anyOf ?? []
+    ).map((entry) => entry.const),
+    ["main", "viewport", "focused", "dialog", "active_dialog", "modal"],
   );
-  assert.ok(
-    (getStateTool.parameters as { properties?: Record<string, unknown> }).properties?.element_limit
+  assert.equal(
+    (getStateTool.parameters as { properties?: { max_nodes?: { minimum?: number } } }).properties?.max_nodes?.minimum,
+    1,
   );
-  assert.ok(
-    (getStateTool.parameters as { properties?: Record<string, unknown> }).properties?.media_offset
+  const findTool = tools.find((tool) => tool.name === "browser_find");
+  assert.ok(findTool);
+  assert.match(findTool.description ?? "", /Search is independent of browser_get_state max_nodes/i);
+  assert.deepEqual(
+    (
+      (findTool.parameters as { properties?: { scope?: { anyOf?: Array<{ const?: string }> } } })
+        .properties?.scope?.anyOf ?? []
+    ).map((entry) => entry.const),
+    ["main", "viewport", "focused", "dialog", "active_dialog", "modal"],
   );
-  assert.ok(
-    (getStateTool.parameters as { properties?: Record<string, unknown> }).properties?.media_limit
+  const actTool = tools.find((tool) => tool.name === "browser_act");
+  assert.ok(actTool);
+  assert.deepEqual(
+    (
+      (actTool.parameters as { properties?: { action?: { anyOf?: Array<{ const?: string }> } } })
+        .properties?.action?.anyOf ?? []
+    ).map((entry) => entry.const),
+    ["click", "double_click", "hover", "focus", "fill", "type", "press", "select", "scroll_into_view"],
   );
-  const extractFactsTool = tools.find((tool) => tool.name === "browser_extract_facts");
-  assert.ok(extractFactsTool);
-  assert.match(
-    extractFactsTool.description ?? "",
-    /compact semantic facts/i,
-  );
-  assert.ok(
-    (extractFactsTool.parameters as { properties?: Record<string, unknown> }).properties?.scope_selector
-  );
-  const result = await getStateTool.execute(
-    "call-1",
-    {
-      include_screenshot: true,
-      scope_selector: "#main",
-      element_offset: 40,
-      element_limit: 10,
-      media_offset: 5,
-      media_limit: 4,
-    },
-    undefined,
-    undefined,
-    {} as never
-  );
+  const result = await getStateTool.execute("call-1", { include_screenshot: true }, undefined, undefined, {} as never);
 
   assert.deepEqual(requests, [
       {
@@ -140,15 +136,7 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
         workspaceId: "workspace-1",
         sessionId: "session-1",
         browserSpace: "user",
-        resultMode: "preview",
-        body: JSON.stringify({
-          include_screenshot: true,
-          scope_selector: "#main",
-          element_offset: 40,
-          element_limit: 10,
-          media_offset: 5,
-          media_limit: 4,
-        }),
+        body: JSON.stringify({ include_screenshot: true }),
       },
     ]);
   assert.equal(result.content[0]?.type, "text");
@@ -156,15 +144,68 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
   assert.deepEqual(result.details, { tool_id: "browser_get_state" });
 });
 
+test("Pi desktop browser tools compact large capability results and preserve raw details", async () => {
+  const largeSnapshot = "x".repeat(40000);
+  const payload = { ok: true, title: "Large page", snapshot: largeSnapshot };
+  const fetchImpl: typeof fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/api/v1/capabilities/browser")) {
+      return new Response(JSON.stringify({ available: true }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+
+    if (url.endsWith("/api/v1/capabilities/browser/tools/browser_get_state")) {
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+    throw new Error(`unexpected request: ${url}`);
+  };
+
+  const tools = await resolvePiDesktopBrowserToolDefinitions({
+    runtimeApiBaseUrl: "http://127.0.0.1:5060",
+    fetchImpl,
+  });
+  const getStateTool = tools.find((tool) => tool.name === "browser_get_state");
+  assert.ok(getStateTool);
+
+  const result = await getStateTool.execute("call-1", {}, undefined, undefined, {} as never);
+  assert.equal(result.content[0]?.type, "text");
+  assert.ok((result.content[0]?.text.length ?? 0) < largeSnapshot.length);
+
+  const envelope = JSON.parse(String(result.content[0]?.text ?? "")) as {
+    tool_result_format?: string;
+    status?: string;
+    ok?: boolean;
+    serialized_bytes?: number;
+    preview?: string;
+    raw_result?: { stored_in?: string };
+  };
+  assert.equal(envelope.tool_result_format, "compact_envelope");
+  assert.equal(envelope.status, "truncated");
+  assert.equal(envelope.ok, true);
+  assert.equal(envelope.raw_result?.stored_in, "tool_result.details.raw");
+  assert.equal(typeof envelope.serialized_bytes, "number");
+  assert.ok((envelope.serialized_bytes ?? 0) > 32768);
+  assert.ok(String(envelope.preview ?? "").length < largeSnapshot.length);
+
+  const details = result.details as {
+    tool_id?: string;
+    raw?: unknown;
+    raw_result_bytes?: number;
+    model_result_bytes?: number;
+  };
+  assert.equal(details.tool_id, "browser_get_state");
+  assert.deepEqual(details.raw, payload);
+  assert.equal(details.raw_result_bytes, envelope.serialized_bytes);
+  assert.equal(details.model_result_bytes, new TextEncoder().encode(result.content[0]?.text ?? "").length);
+});
+
 test("Pi desktop browser tools fall back to node http when no fetch implementation is provided", async () => {
-  const requests: Array<{
-    method: string;
-    url: string;
-    workspaceId: string;
-    sessionId: string;
-    resultMode: string;
-    body: string;
-  }> = [];
+  const requests: Array<{ method: string; url: string; workspaceId: string; sessionId: string; body: string }> = [];
   const server = http.createServer((request, response) => {
     const url = request.url ?? "";
     if (request.method === "GET" && url === "/api/v1/capabilities/browser") {
@@ -185,7 +226,6 @@ test("Pi desktop browser tools fall back to node http when no fetch implementati
           url,
           workspaceId: String(request.headers["x-holaboss-workspace-id"] ?? ""),
           sessionId: String(request.headers["x-holaboss-session-id"] ?? ""),
-          resultMode: String(request.headers["x-holaboss-tool-result-mode"] ?? ""),
           body,
         });
         response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
@@ -224,7 +264,6 @@ test("Pi desktop browser tools fall back to node http when no fetch implementati
         url: "/api/v1/capabilities/browser/tools/browser_get_state",
         workspaceId: "workspace-1",
         sessionId: "session-1",
-        resultMode: "preview",
         body: JSON.stringify({ include_screenshot: false }),
       },
     ]);

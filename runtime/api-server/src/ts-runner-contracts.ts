@@ -21,6 +21,7 @@ export type TsRunnerEventType =
   | "skill_invocation"
   | "auto_compaction_start"
   | "auto_compaction_end"
+  | "mcp_server_unavailable"
   | "run_completed"
   | "run_failed";
 

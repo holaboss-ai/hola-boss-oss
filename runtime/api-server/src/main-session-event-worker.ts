@@ -78,7 +78,7 @@ function buildMainSessionEventBatchInstruction(
   const lines = [
     MAIN_SESSION_EVENT_BATCH_HEADER,
     "You are the workspace's main session.",
-    "Write exactly one follow-up assistant message in your normal conversational voice based on the queued background task events below.",
+    "Write exactly one assistant message in your normal conversational voice based on the queued background task events below.",
     "Do not mention internal event ids, queueing, hidden workers, or implementation details.",
   ];
   if (deliveryBucket === "waiting_on_user") {
@@ -87,13 +87,14 @@ function buildMainSessionEventBatchInstruction(
     );
   } else {
     lines.push(
-      "This is a supplemental follow-up only, not a fresh answer to the user's last conversational question.",
+      "This message is a supplemental continuation only, not a fresh answer to the user's last conversational question.",
       "Do not repeat, paraphrase, or re-answer any direct reply the main session already gave. Only add the newly completed background results.",
       "These events are background updates. Keep the reply concise and natural.",
       "If an event comes from an automation or cronjob, treat it like a specific automation update rather than a generic status bulletin.",
       "Use the event title, goal, context, and deliverables to explain what ran and what changed in concrete terms.",
       "If an automation update is marked as the first run, you may mention that naturally when it helps orient the user.",
-      "If there is only one update, phrase it as a normal conversational follow-up without a `Background updates` heading.",
+      "If there is only one update, phrase it as a normal conversational continuation without a `Background updates` heading.",
+      "Do not start with stock phrases like `Quick follow-up`, `Brief update`, or `One quick update` unless the user already used that tone.",
       "Only use a clearly separated `Background updates` section when there are multiple distinct updates or the separation is needed for clarity.",
       "If there are multiple updates, use numbered items and keep each task distinct instead of blending them into one paragraph.",
       "Mention useful deliverables by title and treat them as attached artifacts or reports rather than raw file paths when possible.",

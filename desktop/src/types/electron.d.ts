@@ -670,6 +670,9 @@ interface RuntimeNotificationListOptionsPayload {
     parent_session_id: string | null;
     source_proposal_id: string | null;
     created_by: string | null;
+    source_type?: string | null;
+    cronjob_id?: string | null;
+    proposal_id?: string | null;
     created_at: string;
     updated_at: string;
     archived_at: string | null;
@@ -678,6 +681,13 @@ interface RuntimeNotificationListOptionsPayload {
   interface AgentSessionListResponsePayload {
     items: AgentSessionRecordPayload[];
     count: number;
+  }
+
+  interface ListAgentSessionsRequestPayload {
+    workspaceId: string;
+    includeArchived?: boolean;
+    limit?: number;
+    offset?: number;
   }
 
   interface CreateAgentSessionPayload {
@@ -1302,6 +1312,10 @@ interface RuntimeNotificationListOptionsPayload {
     owner_user_id: string;
     account_label: string;
     account_external_id: string | null;
+    /** Provider-side handle from whoami (e.g. Twitter @joshua) — used for re-auth dedupe. */
+    account_handle: string | null;
+    /** Provider-side email from whoami (e.g. josh@example.com) — used for re-auth dedupe. */
+    account_email: string | null;
     auth_mode: string;
     granted_scopes: string[];
     status: string;
@@ -1348,6 +1362,15 @@ interface RuntimeNotificationListOptionsPayload {
     status?: string;
     secret_ref?: string;
     account_label?: string;
+    /** Backfill provider-side identity. `null` clears, omit to leave alone. */
+    account_handle?: string | null;
+    account_email?: string | null;
+  }
+
+  interface IntegrationMergeConnectionsResult {
+    kept_connection_id: string;
+    removed_count: number;
+    repointed_bindings: number;
   }
 
   interface OAuthAppConfigPayload {
@@ -1522,6 +1545,9 @@ interface RuntimeNotificationListOptionsPayload {
       setConfigDocument: (rawDocument: string) => Promise<RuntimeConfigPayload>;
       exchangeBinding: (sandboxId: string) => Promise<RuntimeConfigPayload>;
       connectCodexOAuth: () => Promise<RuntimeConfigPayload>;
+      validateProvider: (
+        providerId: string,
+      ) => Promise<{ ok: boolean; detail: string }>;
       onConfigChange: (listener: (config: RuntimeConfigPayload) => void) => () => void;
       onStateChange: (listener: (status: RuntimeStatusPayload) => void) => () => void;
     };
@@ -1587,6 +1613,7 @@ interface RuntimeNotificationListOptionsPayload {
         payload: BrowserCopyWorkspaceProfilePayload
       ) => Promise<BrowserImportSummaryPayload>;
       listWorkspaces: () => Promise<WorkspaceListResponsePayload>;
+      listWorkspacesCached: () => Promise<WorkspaceListResponsePayload>;
       getWorkspaceLifecycle: (workspaceId: string) => Promise<WorkspaceLifecyclePayload>;
       activateWorkspace: (workspaceId: string) => Promise<WorkspaceLifecyclePayload>;
       listInstalledApps: (workspaceId: string) => Promise<InstalledWorkspaceAppListResponsePayload>;
@@ -1645,7 +1672,9 @@ interface RuntimeNotificationListOptionsPayload {
         payload: RemoteTaskProposalGenerationRequestPayload
       ) => Promise<RemoteTaskProposalGenerationResponsePayload>;
       ensureMainSession: (workspaceId: string) => Promise<EnsureWorkspaceMainSessionResponsePayload>;
-      listAgentSessions: (workspaceId: string) => Promise<AgentSessionListResponsePayload>;
+      listAgentSessions: (
+        payload: string | ListAgentSessionsRequestPayload
+      ) => Promise<AgentSessionListResponsePayload>;
       createAgentSession: (payload: CreateAgentSessionPayload) => Promise<CreateAgentSessionResponsePayload>;
       listRuntimeStates: (workspaceId: string) => Promise<SessionRuntimeStateListResponsePayload>;
       getSessionHistory: (payload: SessionHistoryRequestPayload) => Promise<SessionHistoryResponsePayload>;
@@ -1670,15 +1699,27 @@ interface RuntimeNotificationListOptionsPayload {
       createIntegrationConnection: (payload: IntegrationCreateConnectionPayload) => Promise<IntegrationConnectionPayload>;
       updateIntegrationConnection: (connectionId: string, payload: IntegrationUpdateConnectionPayload) => Promise<IntegrationConnectionPayload>;
       deleteIntegrationConnection: (connectionId: string) => Promise<{ deleted: boolean }>;
+      mergeIntegrationConnections: (
+        keepConnectionId: string,
+        removeConnectionIds: string[]
+      ) => Promise<IntegrationMergeConnectionsResult>;
       deleteIntegrationBinding: (bindingId: string, workspaceId: string) => Promise<{ deleted: boolean }>;
       listOAuthConfigs: () => Promise<OAuthAppConfigListResponsePayload>;
       upsertOAuthConfig: (providerId: string, payload: OAuthAppConfigUpsertPayload) => Promise<OAuthAppConfigPayload>;
       deleteOAuthConfig: (providerId: string) => Promise<{ deleted: boolean }>;
       startOAuthFlow: (provider: string) => Promise<OAuthAuthorizeResponsePayload>;
       composioListToolkits: () => Promise<{ toolkits: Array<{ slug: string; name: string; description: string; logo: string | null; auth_schemes: string[]; categories: string[] }> }>;
+      composioListConnections: () => Promise<{ connections: Array<{ id: string; toolkitSlug: string; toolkitName: string; toolkitLogo: string | null; userId: string; createdAt: string }> }>;
       composioConnect: (payload: { provider: string; owner_user_id: string; callback_url?: string }) => Promise<ComposioConnectResult>;
       composioAccountStatus: (connectedAccountId: string) => Promise<ComposioAccountStatus>;
-      composioFinalize: (payload: { connected_account_id: string; provider: string; owner_user_id: string; account_label?: string }) => Promise<IntegrationConnectionPayload>;
+      composioFinalize: (payload: {
+        connected_account_id: string;
+        provider: string;
+        owner_user_id: string;
+        account_label?: string;
+        account_handle?: string | null;
+        account_email?: string | null;
+      }) => Promise<IntegrationConnectionPayload>;
       resolveTemplateIntegrations: (payload: HolabossCreateWorkspacePayload) => Promise<ResolveTemplateIntegrationsResult>;
       generateTemplateContent(params: {
         contentType: "onboarding" | "readme";

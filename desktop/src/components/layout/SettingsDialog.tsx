@@ -10,7 +10,6 @@ import {
   Globe,
   Info,
   Loader2,
-  Lock,
   Package,
   Plug,
   RotateCcw,
@@ -24,17 +23,16 @@ import { useEffect, useState } from "react";
 import { AuthPanel } from "@/components/auth/AuthPanel";
 import { BillingSettingsPanel } from "@/components/billing/BillingSettingsPanel";
 import { IntegrationsPane } from "@/components/panes/IntegrationsPane";
-import { SubmissionsPanel } from "@/components/settings/SubmissionsPanel";
+import {
+  SettingsCard,
+  SettingsMenuSelectRow,
+  SettingsRow,
+  SettingsSection,
+  SettingsToggle,
+  SubmissionsPanel,
+} from "@/components/settings";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 
 const THEME_SWATCHES: Record<string, [string, string, string]> = {
   "amber-minimal-dark": ["#1a1814", "#e8853a", "#2e2920"],
@@ -70,7 +68,7 @@ interface SettingsDialogProps {
 }
 
 const THEME_VARIANT_LABELS: Record<ThemeVariant, string> = {
-  "amber-minimal": "Default",
+  "amber-minimal": "Holaos",
   "cosmic-night": "Cosmic Night",
   sepia: "Sepia",
   "clean-slate": "Clean Slate",
@@ -93,7 +91,7 @@ const SETTINGS_SECTIONS: Array<{
   { id: "account", label: "Account", icon: User2 },
   { id: "settings", label: "Settings", icon: Settings2 },
   { id: "billing", label: "Billing", icon: CreditCard },
-  { id: "providers", label: "Model Providers", icon: Waypoints },
+  { id: "providers", label: "AI", icon: Waypoints },
   { id: "integrations", label: "Integrations", icon: Plug },
   { id: "submissions", label: "Submissions", icon: Send },
   { id: "about", label: "About", icon: Info },
@@ -145,7 +143,7 @@ function titleForSection(section: UiSettingsPaneSection): string {
     case "billing":
       return "Billing";
     case "providers":
-      return "Model Providers";
+      return "AI";
     case "integrations":
       return "Integrations";
     case "submissions":
@@ -403,11 +401,11 @@ export function SettingsDialog({
     >
       <DialogPrimitive.Portal>
         <DialogPrimitive.Backdrop
-          className="fixed inset-0 z-50 bg-background/70 backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 duration-200"
+          className="fixed inset-0 z-50 bg-background/60 backdrop-blur-md data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 duration-200"
         />
         <DialogPrimitive.Popup
           aria-label="Settings"
-          className="fixed top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2 grid h-[min(780px,calc(100vh-32px))] w-[min(980px,calc(100vw-24px))] min-w-0 overflow-hidden rounded-2xl bg-background shadow-xl grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[220px_minmax(0,1fr)] lg:grid-rows-1 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-[0.97] data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-[0.98] duration-200 ease-out"
+          className="fixed top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2 grid h-[min(780px,calc(100vh-32px))] w-[min(980px,calc(100vw-24px))] min-w-0 overflow-hidden rounded-2xl bg-background/85 backdrop-blur-2xl backdrop-saturate-150 shadow-xl grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[220px_minmax(0,1fr)] lg:grid-rows-1 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-[0.97] data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-[0.98] duration-200 ease-out"
         >
         <aside className="border-b border-sidebar-border bg-sidebar p-4 text-sidebar-foreground lg:border-b-0 lg:border-r">
           <nav className="mt-4 grid gap-1">
@@ -474,31 +472,21 @@ export function SettingsDialog({
 
             {activeSection === "settings" ? (
               <div className="grid gap-6">
-                <section>
-                  <div className="text-base font-medium text-foreground">
-                    App
-                  </div>
-
-                  <div className="mt-3 overflow-hidden rounded-xl bg-card ring-1 ring-border">
-                    <div className="flex items-center justify-between gap-4 px-4 py-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium text-foreground">
-                          Holaboss Desktop
-                        </div>
-                        <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                          Version
-                        </div>
-                      </div>
+                <SettingsSection title="App">
+                  <SettingsCard>
+                    <SettingsRow label="Holaboss Desktop" description="Version">
                       <Badge
                         variant="outline"
                         className="border-border bg-background/60 font-mono text-[11px] text-foreground"
                       >
                         v{displayAppVersion}
                       </Badge>
-                    </div>
+                    </SettingsRow>
 
-                    <div className="h-px bg-border" />
-
+                    {/* Desktop updates row stays a custom layout — it carries
+                        a progress bar + dynamic install button that don't
+                        fit the simple SettingsRow shape. Padding/spacing
+                        match the surrounding rows. */}
                     <div aria-live="polite" className="px-4 py-3">
                       <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0 flex-1">
@@ -569,291 +557,156 @@ export function SettingsDialog({
                       ) : null}
                     </div>
 
-                    <div className="h-px bg-border" />
-
-                    <div className="flex items-center justify-between gap-4 px-4 py-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                          <span>Beta updates</span>
+                    <SettingsToggle
+                      label={
+                        <span className="flex items-center gap-2">
+                          Beta updates
                           <Badge
                             variant="outline"
                             className="border-border bg-background/60 text-[11px] text-muted-foreground"
                           >
                             {betaChannelEnabled ? "Beta" : "Latest"}
                           </Badge>
-                        </div>
-                        <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                          {appUpdateChannelUnavailable
-                            ? "In-app update channels are unavailable on this build."
-                            : "Opt into beta desktop releases before they reach the stable channel."}
-                        </div>
-                      </div>
+                        </span>
+                      }
+                      description={
+                        appUpdateChannelUnavailable
+                          ? "In-app update channels are unavailable on this build."
+                          : "Opt into beta desktop releases before they reach the stable channel."
+                      }
+                      checked={betaChannelEnabled}
+                      onCheckedChange={(checked) => {
+                        void handleSetBetaChannel(checked);
+                      }}
+                      disabled={
+                        appUpdateChannelPending || appUpdateChannelUnavailable
+                      }
+                    />
+                  </SettingsCard>
+                </SettingsSection>
 
-                      <Switch
-                        checked={betaChannelEnabled}
-                        disabled={
-                          appUpdateChannelPending || appUpdateChannelUnavailable
-                        }
-                        onCheckedChange={(checked) => {
-                          void handleSetBetaChannel(checked);
-                        }}
-                        aria-label="Enable beta updates"
-                      />
-                    </div>
-                  </div>
-                </section>
-
-                <section>
-                  <div className="text-base font-medium text-foreground">
-                    Appearance
-                  </div>
-
-                  <div className="mt-3 overflow-hidden rounded-xl bg-card ring-1 ring-border">
-                    <div className="flex items-center justify-between gap-4 px-4 py-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium text-foreground">
-                          Color scheme
-                        </div>
-                        <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                          Choose whether Holaboss follows the system, light, or
-                          dark theme
-                        </div>
-                      </div>
-                      <Select
-                        value={colorScheme}
-                        onValueChange={(value) =>
-                          onColorSchemeChange(value as ColorScheme)
-                        }
-                      >
-                        <SelectTrigger
-                          size="sm"
-                          className="w-auto min-w-24 border border-border justify-end gap-1.5 bg-transparent px-2 text-xs font-medium hover:bg-accent dark:bg-transparent dark:hover:bg-accent"
-                        >
-                          <SelectValue>
-                            {(value: string) =>
-                              COLOR_SCHEME_LABELS[value as ColorScheme] ?? value
-                            }
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent
-                          align="end"
-                          alignItemWithTrigger={false}
-                          className="min-w-35 gap-0 rounded-lg p-1 shadow-subtle-sm ring-0"
-                        >
-                          {(["system", "light", "dark"] as const).map(
-                            (scheme) => (
-                              <SelectItem
-                                key={scheme}
-                                value={scheme}
-                                className="rounded-md px-2.5 py-1.5 text-xs"
-                              >
-                                {COLOR_SCHEME_LABELS[scheme]}
-                              </SelectItem>
-                            ),
-                          )}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="h-px bg-border" />
-
-                    <div className="flex items-center justify-between gap-4 px-4 py-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium text-foreground">
-                          Theme
-                        </div>
-                        <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                          Customise how Holaboss is themed
-                        </div>
-                      </div>
-                      <Select
-                        value={themeVariant}
-                        onValueChange={(value) =>
-                          onThemeVariantChange(value as ThemeVariant)
-                        }
-                      >
-                        <SelectTrigger
-                          size="sm"
-                          className="w-auto min-w-32 justify-end gap-1.5 bg-transparent px-2 text-xs font-medium hover:bg-accent dark:bg-transparent dark:hover:bg-accent"
-                        >
-                          <SelectValue>
-                            {(value: string) =>
-                              THEME_VARIANT_LABELS[value as ThemeVariant] ??
-                              value
-                            }
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent
-                          align="end"
-                          alignItemWithTrigger={false}
-                          className="min-w-[180px] gap-0 rounded-lg p-1 shadow-subtle-sm ring-0"
-                        >
-                          {themeVariants.map((variant) => {
-                            const swatch =
-                              THEME_SWATCHES[`${variant}-light`]?.[1] ??
-                              THEME_SWATCHES[`${variant}-dark`]?.[1] ??
-                              "#808080";
-                            return (
-                              <SelectItem
-                                key={variant}
-                                value={variant}
-                                className="gap-2 rounded-md px-2.5 py-1.5 text-xs"
-                              >
-                                <span
-                                  aria-hidden="true"
-                                  className="size-3 shrink-0 rounded-[4px] border border-border"
-                                  style={{ background: swatch }}
-                                />
-                                <span className="min-w-0 flex-1">
-                                  {THEME_VARIANT_LABELS[variant]}
-                                </span>
-                              </SelectItem>
-                            );
-                          })}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                </section>
+                <SettingsSection title="Appearance">
+                  <SettingsCard>
+                    <SettingsMenuSelectRow
+                      label="Color scheme"
+                      description="System, light, or dark."
+                      value={colorScheme}
+                      onValueChange={(value) =>
+                        onColorSchemeChange(value as ColorScheme)
+                      }
+                      options={(["system", "light", "dark"] as const).map(
+                        (scheme) => ({
+                          value: scheme,
+                          label: COLOR_SCHEME_LABELS[scheme],
+                        }),
+                      )}
+                      triggerWidth="w-[140px]"
+                    />
+                    <SettingsMenuSelectRow
+                      label="Theme"
+                      description="Pick a colour palette for the app."
+                      value={themeVariant}
+                      onValueChange={(value) =>
+                        onThemeVariantChange(value as ThemeVariant)
+                      }
+                      options={themeVariants.map((variant) => {
+                        const swatch =
+                          THEME_SWATCHES[`${variant}-light`]?.[1] ??
+                          THEME_SWATCHES[`${variant}-dark`]?.[1] ??
+                          "#808080";
+                        return {
+                          value: variant,
+                          label: (
+                            <span className="flex items-center gap-2">
+                              <span
+                                aria-hidden="true"
+                                className="size-3 shrink-0 rounded-[4px] border border-border"
+                                style={{ background: swatch }}
+                              />
+                              {THEME_VARIANT_LABELS[variant]}
+                            </span>
+                          ),
+                        };
+                      })}
+                      triggerWidth="w-[180px]"
+                    />
+                  </SettingsCard>
+                </SettingsSection>
               </div>
             ) : null}
 
             {activeSection === "about" ? (
               <div className="grid gap-6">
-                <section>
-                  <div className="text-base font-medium text-foreground">
-                    Links
-                  </div>
+                <SettingsSection title="Links">
+                  <SettingsCard>
+                    {ABOUT_LINKS.map(({ id, label, icon: Icon, href }) => (
+                      <SettingsRow
+                        key={id}
+                        label={label}
+                        leading={
+                          <Icon className="size-4 text-muted-foreground" />
+                        }
+                        interactive
+                        onClick={() => onOpenExternalUrl(href)}
+                      >
+                        <ExternalLink className="size-4 text-muted-foreground" />
+                      </SettingsRow>
+                    ))}
+                  </SettingsCard>
+                </SettingsSection>
 
-                  <div className="mt-3 overflow-hidden rounded-xl bg-card ring-1 ring-border">
-                    {ABOUT_LINKS.map(
-                      ({ id, label, icon: Icon, href }, index) => (
-                        <div key={id}>
-                          {index > 0 ? (
-                            <div className="h-px bg-border" />
-                          ) : null}
-                          <button
-                            type="button"
-                            onClick={() => onOpenExternalUrl(href)}
-                            className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left transition-colors hover:bg-accent"
-                          >
-                            <span className="flex min-w-0 items-center gap-3">
-                              <Icon className="size-4 shrink-0 text-muted-foreground" />
-                              <span className="min-w-0 text-sm font-medium text-foreground">
-                                {label}
-                              </span>
-                            </span>
-                            <ExternalLink className="size-4 shrink-0 text-muted-foreground" />
-                          </button>
-                        </div>
-                      ),
-                    )}
-                  </div>
-                </section>
-
-                <section>
-                  <div className="text-base font-medium text-foreground">
-                    Diagnostics
-                  </div>
-                  <div className="mt-3 overflow-hidden rounded-xl bg-card ring-1 ring-border">
-                    <div className="flex items-start gap-4 px-4 py-4">
-                      <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                        <Package className="size-4" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="min-w-0">
-                            <div className="text-sm font-medium text-foreground">
-                              Diagnostics bundle
-                            </div>
-                            <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                              A zip with logs, a database snapshot, and a
-                              redacted config — useful when reporting an issue.
-                            </div>
-                          </div>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => void handleExportDiagnosticsBundle()}
-                            disabled={
-                              diagnosticsExportState.status === "exporting"
-                            }
-                          >
-                            {diagnosticsExportState.status === "exporting" ? (
-                              <>
-                                <Loader2 className="size-3.5 animate-spin" />
-                                Exporting…
-                              </>
-                            ) : diagnosticsExportState.status === "success" ? (
-                              "Re-export"
-                            ) : (
-                              "Export"
-                            )}
-                          </Button>
-                        </div>
-                        <ul className="mt-3 grid gap-1 text-xs text-muted-foreground">
-                          <li className="flex items-center gap-2">
-                            <span
-                              aria-hidden
-                              className="size-1 rounded-full bg-muted-foreground/50"
-                            />
-                            <code className="font-mono text-[11px]">
-                              runtime.log
-                            </code>
-                          </li>
-                          <li className="flex items-center gap-2">
-                            <span
-                              aria-hidden
-                              className="size-1 rounded-full bg-muted-foreground/50"
-                            />
-                            <code className="font-mono text-[11px]">
-                              runtime.db
-                            </code>
-                            <span>(consistent snapshot)</span>
-                          </li>
-                          <li className="flex items-center gap-2">
-                            <span
-                              aria-hidden
-                              className="size-1 rounded-full bg-muted-foreground/50"
-                            />
-                            <span>Runtime config (secrets redacted)</span>
-                          </li>
-                        </ul>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 border-t border-border bg-muted/40 px-4 py-2.5 text-xs text-muted-foreground">
-                      <Lock className="size-3.5 shrink-0" />
-                      <span>
-                        Stays on your device — nothing is uploaded
-                        automatically.
-                      </span>
-                    </div>
+                <SettingsSection title="Diagnostics">
+                  <SettingsCard>
+                    <SettingsRow
+                      label="Diagnostics bundle"
+                      description="Logs, a database snapshot, and a redacted config. Stays on your device."
+                      leading={
+                        <Package className="size-4 text-muted-foreground" />
+                      }
+                    >
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void handleExportDiagnosticsBundle()}
+                        disabled={
+                          diagnosticsExportState.status === "exporting"
+                        }
+                      >
+                        {diagnosticsExportState.status === "exporting" ? (
+                          <>
+                            <Loader2 className="size-3.5 animate-spin" />
+                            Exporting…
+                          </>
+                        ) : diagnosticsExportState.status === "success" ? (
+                          "Re-export"
+                        ) : (
+                          "Export"
+                        )}
+                      </Button>
+                    </SettingsRow>
                     {diagnosticsExportState.status === "success" &&
                     diagnosticsExportState.bundlePath ? (
-                      <div className="border-t border-border px-4 py-3">
-                        <div className="flex items-center gap-2 text-sm text-foreground">
-                          <Check className="size-4 text-emerald-600 dark:text-emerald-500" />
-                          <span className="font-medium">Bundle ready</span>
-                          <span className="text-muted-foreground">
-                            ·{" "}
-                            {formatBundleBytes(
-                              diagnosticsExportState.sizeBytes,
-                            )}
-                          </span>
-                        </div>
-                        <div className="mt-1.5 truncate font-mono text-xs text-muted-foreground">
+                      <div className="flex items-center gap-2 px-4 py-2.5 text-xs">
+                        <Check className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-500" />
+                        <span className="truncate font-mono text-muted-foreground">
                           {diagnosticsExportState.bundlePath}
-                        </div>
-                        <div className="mt-2.5 flex items-center gap-1.5">
+                        </span>
+                        <span className="shrink-0 text-muted-foreground">
+                          ·{" "}
+                          {formatBundleBytes(
+                            diagnosticsExportState.sizeBytes,
+                          )}
+                        </span>
+                        <div className="ml-auto flex shrink-0 items-center gap-1">
                           <Button
                             type="button"
-                            variant="bordered"
+                            variant="ghost"
                             size="xs"
                             onClick={() => void handleRevealDiagnosticsBundle()}
                           >
                             <FolderOpen className="size-3" />
-                            Show in Finder
+                            Reveal
                           </Button>
                           <Button
                             type="button"
@@ -869,7 +722,7 @@ export function SettingsDialog({
                             ) : (
                               <>
                                 <Copy className="size-3" />
-                                Copy path
+                                Copy
                               </>
                             )}
                           </Button>
@@ -878,22 +731,15 @@ export function SettingsDialog({
                     ) : null}
                     {diagnosticsExportState.status === "error" &&
                     diagnosticsExportState.message ? (
-                      <div className="border-t border-border bg-destructive/5 px-4 py-3">
-                        <div className="flex items-start gap-2 text-sm text-destructive">
-                          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-                          <div className="min-w-0">
-                            <div className="font-medium">
-                              Couldn&apos;t export bundle
-                            </div>
-                            <div className="mt-0.5 wrap-break-word text-xs text-destructive/80">
-                              {diagnosticsExportState.message}
-                            </div>
-                          </div>
-                        </div>
+                      <div className="flex items-start gap-2 px-4 py-2.5 text-xs text-destructive">
+                        <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                        <span className="wrap-break-word">
+                          {diagnosticsExportState.message}
+                        </span>
                       </div>
                     ) : null}
-                  </div>
-                </section>
+                  </SettingsCard>
+                </SettingsSection>
               </div>
             ) : null}
           </div>

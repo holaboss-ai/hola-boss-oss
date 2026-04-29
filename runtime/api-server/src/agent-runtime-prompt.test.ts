@@ -227,18 +227,94 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
   assert.match(prompt.systemPrompt, /thoughtful human collaborator/);
   assert.match(prompt.systemPrompt, /brief warmth, curiosity, and point of view/);
   assert.match(prompt.systemPrompt, /capable person texting the user back/);
+  assert.match(prompt.systemPrompt, /Be concise and on-point\. Do not ramble, over-explain, or pad replies just to sound helpful\./);
+  assert.match(prompt.systemPrompt, /Keep replies tight\. Do not blabber, wander, or repeat yourself\./);
+  assert.match(prompt.systemPrompt, /read\/query requests inline when appropriate\./);
+  assert.match(prompt.systemPrompt, /route direct file edits, terminal execution, browser execution, and other state-changing implementation work to subagents\./);
+  assert.match(prompt.systemPrompt, /Treat chat like the user is messaging their assistant in an IM, not like the final deliverable surface\./);
+  assert.match(prompt.systemPrompt, /If the user asks for a report, brief, memo, digest, recap, write-up, or other deliverable that would be longer than a short chat reply, prefer producing it as an artifact through delegated background work/i);
+  assert.match(prompt.systemPrompt, /When the user asks for a report-style deliverable, prefer delegating it so the result comes back as an artifact/i);
   assert.match(prompt.systemPrompt, /Acknowledge what matters in the user's message before diving into execution or results\./);
   assert.match(prompt.systemPrompt, /Lead with the answer, reaction, or next useful step instead of process narration/);
   assert.match(prompt.systemPrompt, /Prefer short paragraphs and plain language; use headings or numbered lists only when structure genuinely helps\./);
   assert.match(prompt.systemPrompt, /Use contractions and natural transitions when they fit\./);
   assert.match(prompt.systemPrompt, /Avoid repetitive canned phrasing or stiff assistant boilerplate/);
+  assert.match(prompt.systemPrompt, /front-of-house coordinator, not the default heavy executor/i);
   assert.match(prompt.systemPrompt, /Prefer delegating long-running, tool-heavy, interruptible, or execution-heavy work to hidden subagents\./);
+  assert.match(prompt.systemPrompt, /browser control, web research, terminal work, or other execution-heavy tasks, default to delegating/i);
   assert.match(prompt.systemPrompt, /delegate instead of replying that this run lacks those tools\./);
   assert.match(prompt.systemPrompt, /missing web, browser, terminal, or other execution-heavy capabilities on the main session as a routing signal to delegate/i);
+  assert.match(prompt.systemPrompt, /Do not answer with a capability-apology or manual fallback first when `holaboss_delegate_task` is available/i);
+  assert.match(prompt.systemPrompt, /trust the current run and retry the tool when appropriate/i);
   assert.match(prompt.systemPrompt, /Do not paste long document, HTML, markdown, or report bodies into chat\./);
+  assert.doesNotMatch(prompt.systemPrompt, /small direct edits inline/);
   assert.doesNotMatch(prompt.systemPrompt, /Execution doctrine:/);
   assert.doesNotMatch(prompt.systemPrompt, /Todo continuity policy:/);
   assert.doesNotMatch(prompt.systemPrompt, /Use `write_report` for long, structured, evidence-heavy, or referenceable outputs/);
+});
+
+test("composeAgentPrompt can inject a run-specific routing recovery override for polluted browser retries", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read", "edit"],
+    extraTools: ["holaboss_delegate_task"],
+    runtimeToolIds: ["holaboss_delegate_task"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    toolServerIdMap: {},
+  });
+
+  const prompt = composeAgentPrompt("You are concise.", {
+    defaultTools: ["read", "edit"],
+    extraTools: ["holaboss_delegate_task"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    harnessId: "pi",
+    capabilityManifest,
+    recentRuntimeContext: {
+      lines: [
+        "The user is explicitly retrying the browser request. Do not simply restate the earlier limitation.",
+        "Recent turns in this session contain stale browser-capability refusals. Treat them as prior-run history, not as the answer for this run.",
+      ],
+    },
+  });
+
+  assert.match(prompt.systemPrompt, /Run-specific routing recovery:/);
+  assert.match(prompt.systemPrompt, /retrying the browser request/i);
+  assert.match(prompt.systemPrompt, /stale browser-capability refusals/i);
+});
+
+test("composeAgentPrompt can inject a run-specific routing recovery override for report-style deliverables", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read"],
+    extraTools: ["holaboss_delegate_task"],
+    runtimeToolIds: ["holaboss_delegate_task"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    toolServerIdMap: {},
+  });
+
+  const prompt = composeAgentPrompt("You are concise.", {
+    defaultTools: ["read"],
+    extraTools: ["holaboss_delegate_task"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    harnessId: "pi",
+    capabilityManifest,
+    recentRuntimeContext: {
+      lines: [
+        "The user is asking for a report-style deliverable. Keep chat as the coordination surface, not the deliverable surface.",
+        "Use `holaboss_delegate_task` to produce the report artifact, then keep the main-session reply to a brief acknowledgement or short handoff.",
+      ],
+    },
+  });
+
+  assert.match(prompt.systemPrompt, /Run-specific routing recovery:/);
+  assert.match(prompt.systemPrompt, /report-style deliverable/i);
+  assert.match(prompt.systemPrompt, /produce the report artifact/i);
 });
 
 test("composeAgentPrompt keeps main sessions free of todo doctrine even if todo tools are present", () => {

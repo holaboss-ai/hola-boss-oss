@@ -942,6 +942,169 @@ test("integration connections round trip create list and reload persisted record
   reopened.close();
 });
 
+test("integration connection identity columns persist + null when not provided", () => {
+  const root = makeTempDir("hb-state-store-conn-identity-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  // With identity provided
+  const withIdentity = store.upsertIntegrationConnection({
+    connectionId: "conn-tw-1",
+    providerId: "twitter",
+    ownerUserId: "user-1",
+    accountLabel: "@joshua",
+    accountExternalId: "ca_abc123",
+    accountHandle: "joshua",
+    accountEmail: null,
+    authMode: "composio",
+    grantedScopes: [],
+    status: "active",
+    secretRef: null
+  });
+  assert.equal(withIdentity.accountHandle, "joshua");
+  assert.equal(withIdentity.accountEmail, null);
+
+  // Without identity (legacy callers) — both null
+  const withoutIdentity = store.upsertIntegrationConnection({
+    connectionId: "conn-tw-2",
+    providerId: "twitter",
+    ownerUserId: "user-1",
+    accountLabel: "@unknown",
+    accountExternalId: "ca_def456",
+    authMode: "composio",
+    grantedScopes: [],
+    status: "active",
+    secretRef: null
+  });
+  assert.equal(withoutIdentity.accountHandle, null);
+  assert.equal(withoutIdentity.accountEmail, null);
+
+  // Empty / whitespace strings normalise to null
+  const blankIdentity = store.upsertIntegrationConnection({
+    connectionId: "conn-tw-3",
+    providerId: "twitter",
+    ownerUserId: "user-1",
+    accountLabel: "@blank",
+    accountExternalId: "ca_ghi789",
+    accountHandle: "  ",
+    accountEmail: "",
+    authMode: "composio",
+    grantedScopes: [],
+    status: "active",
+    secretRef: null
+  });
+  assert.equal(blankIdentity.accountHandle, null);
+  assert.equal(blankIdentity.accountEmail, null);
+
+  store.close();
+});
+
+test("findActiveIntegrationConnectionByIdentity matches by handle or email, scoped per provider+owner, ignores inactive", () => {
+  const root = makeTempDir("hb-state-store-conn-identity-find-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  // Two providers for the same user, same handle string — must not cross-match
+  store.upsertIntegrationConnection({
+    connectionId: "conn-tw-personal",
+    providerId: "twitter",
+    ownerUserId: "user-1",
+    accountLabel: "@joshua",
+    accountExternalId: "ca_tw_v1",
+    accountHandle: "joshua",
+    accountEmail: null,
+    authMode: "composio",
+    grantedScopes: [],
+    status: "active",
+    secretRef: null
+  });
+  store.upsertIntegrationConnection({
+    connectionId: "conn-gh-joshua",
+    providerId: "github",
+    ownerUserId: "user-1",
+    accountLabel: "joshua",
+    accountExternalId: "ca_gh_v1",
+    accountHandle: "joshua",
+    accountEmail: null,
+    authMode: "composio",
+    grantedScopes: [],
+    status: "active",
+    secretRef: null
+  });
+
+  // Twitter handle hit (case-insensitive)
+  const tw = store.findActiveIntegrationConnectionByIdentity({
+    providerId: "twitter",
+    ownerUserId: "user-1",
+    accountHandle: "JOSHUA"
+  });
+  assert.equal(tw?.connectionId, "conn-tw-personal");
+
+  // Different owner — no match
+  const otherOwner = store.findActiveIntegrationConnectionByIdentity({
+    providerId: "twitter",
+    ownerUserId: "user-2",
+    accountHandle: "joshua"
+  });
+  assert.equal(otherOwner, null);
+
+  // No identity supplied → caller falls back to insert
+  const noIdentity = store.findActiveIntegrationConnectionByIdentity({
+    providerId: "twitter",
+    ownerUserId: "user-1"
+  });
+  assert.equal(noIdentity, null);
+
+  // Inactive rows are skipped
+  store.upsertIntegrationConnection({
+    connectionId: "conn-gmail-revoked",
+    providerId: "gmail",
+    ownerUserId: "user-1",
+    accountLabel: "j@example.com",
+    accountExternalId: "ca_gm_old",
+    accountHandle: null,
+    accountEmail: "j@example.com",
+    authMode: "composio",
+    grantedScopes: [],
+    status: "revoked",
+    secretRef: null
+  });
+  const skipsRevoked = store.findActiveIntegrationConnectionByIdentity({
+    providerId: "gmail",
+    ownerUserId: "user-1",
+    accountEmail: "j@example.com"
+  });
+  assert.equal(skipsRevoked, null);
+
+  // When both handle & email supplied → either match wins (most recent)
+  store.upsertIntegrationConnection({
+    connectionId: "conn-gmail-active",
+    providerId: "gmail",
+    ownerUserId: "user-1",
+    accountLabel: "j@example.com",
+    accountExternalId: "ca_gm_new",
+    accountHandle: null,
+    accountEmail: "j@example.com",
+    authMode: "composio",
+    grantedScopes: [],
+    status: "active",
+    secretRef: null
+  });
+  const emailHit = store.findActiveIntegrationConnectionByIdentity({
+    providerId: "gmail",
+    ownerUserId: "user-1",
+    accountHandle: "anything",
+    accountEmail: "J@Example.com"
+  });
+  assert.equal(emailHit?.connectionId, "conn-gmail-active");
+
+  store.close();
+});
+
 test("integration bindings round trip upsert list filter and delete by workspace", () => {
   const root = makeTempDir("hb-state-store-integrations-");
   const store = new RuntimeStateStore({
@@ -1918,6 +2081,17 @@ test("turn results support upsert, lookup, count, and listing", () => {
   assert.equal(store.countTurnResults({ workspaceId: "workspace-1", sessionId: "session-main", status: "waiting_user" }), 1);
   assert.deepEqual(store.listTurnResults({ workspaceId: "workspace-1", sessionId: "session-main" }), [updated]);
   assert.deepEqual(store.listTurnResults({ workspaceId: "workspace-1", sessionId: "session-main", status: "waiting_user" }), [updated]);
+  const telemetryOnlyUpdate = store.updateTurnResultContextBudgetDecisions({
+    inputId: "input-1",
+    contextBudgetDecisions: {
+      mode: "observability_only",
+      checkpoint_queued: true,
+    },
+  });
+  assert.deepEqual(telemetryOnlyUpdate?.contextBudgetDecisions, {
+    mode: "observability_only",
+    checkpoint_queued: true,
+  });
   store.close();
 });
 

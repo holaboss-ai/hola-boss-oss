@@ -375,6 +375,10 @@ const RUNTIME_TOOL_DEFINITIONS = new Map<string, ToolCapabilityDefinition>(
   ])
 );
 
+function browserToolSessionKinds(): string[] {
+  return ["workspace_session", "subagent", "task_proposal"];
+}
+
 const BROWSER_TOOL_DEFINITIONS = new Map<string, ToolCapabilityDefinition>(
   DESKTOP_BROWSER_TOOL_DEFINITIONS.map((toolDef) => [
     toolDef.id,
@@ -384,7 +388,10 @@ const BROWSER_TOOL_DEFINITIONS = new Map<string, ToolCapabilityDefinition>(
       title: titleFromToken(toolDef.id),
       description: toolDef.description,
       availability: {
-        sessionKinds: toolDef.session_scope === "workspace_session_only" ? ["workspace_session"] : undefined,
+        sessionKinds:
+          toolDef.session_scope === "workspace_session_only"
+            ? browserToolSessionKinds()
+            : undefined,
       },
     },
   ])
@@ -1276,7 +1283,11 @@ export function renderCapabilityToolRoutingPromptSection(
   if (manifest.runtime_tools.some((capability) => capability.id === "holaboss_delegate_task")) {
     ensureHeading();
     lines.push("Delegation routing: when the user asks for work that needs web, browser, terminal, or other execution-heavy capability not surfaced directly in this run, use `holaboss_delegate_task` instead of replying that the current run lacks those tools.");
+    lines.push("Deliverable routing: when the user asks for a report, brief, memo, digest, recap, or other long-form deliverable, prefer `holaboss_delegate_task` so the result is produced as an artifact and the main chat stays concise.");
+    lines.push("Treat the main session as a coordinator first: if the task is browser-heavy, web-heavy, terminal-heavy, multi-step, or interruptible, route it to a delegated subagent unless the direct capability is clearly surfaced and the work is truly small enough to finish inline.");
     lines.push("Treat current-run capability limits as a delegation signal when hidden subagents can perform the task.");
+    lines.push("Do not lead with a capability apology, manual workaround, or \"I can't do that here\" answer when delegation is available.");
+    lines.push("If an earlier turn said a tool was unavailable or unsupported, but the current surfaced capability set now includes it, trust the current run and retry the tool when it is the right path.");
     lines.push("Only surface a hard capability limitation to the user when neither the current run nor delegated subagents can actually carry out the request.");
     lines.push("Do not simulate waiting on a delegated task by repeatedly calling `holaboss_get_subagent` or `holaboss_list_background_tasks` in the same turn after you just spawned it.");
   }

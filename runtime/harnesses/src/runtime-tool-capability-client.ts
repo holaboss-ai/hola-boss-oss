@@ -1,12 +1,10 @@
 import type { RuntimeAgentToolId } from "./runtime-agent-tools.js";
 import {
-  capabilityReplayBudgetKey,
-  formatCapabilityToolResult,
+  formatCapabilityToolResultForModel,
   isRecord,
   normalizeRuntimeApiBaseUrl,
   requestCapabilityJson,
   toolRequestSignal,
-  withPreviewResultModeHeader,
 } from "./capability-http.js";
 
 const RUNTIME_TOOLS_CAPABILITY_STATUS_PATH = "/api/v1/capabilities/runtime-tools";
@@ -513,6 +511,7 @@ function requestPlan(
         body: {},
       };
   }
+  throw new Error(`Unsupported runtime tool: ${toolId}`);
 }
 
 export async function executeRuntimeToolCapability(params: RuntimeToolCapabilityClientOptions & {
@@ -523,22 +522,25 @@ export async function executeRuntimeToolCapability(params: RuntimeToolCapability
   content: Array<{ type: "text"; text: string }>;
   details: {
     tool_id: RuntimeAgentToolId;
-    replay_budget?: Record<string, unknown>;
+    raw?: unknown;
+    raw_result_bytes?: number;
+    model_result_bytes?: number;
   };
 }> {
   const plan = requestPlan(params.toolId, params.toolParams);
   const response = await requestCapabilityJson({
     url: `${params.runtimeApiBaseUrl}${plan.requestPath}`,
     method: plan.method,
-    headers: withPreviewResultModeHeader({
+    headers: {
       "content-type": "application/json; charset=utf-8",
+      "x-holaboss-tool-result-mode": "preview",
       ...runtimeToolHeaders({
         workspaceId: params.workspaceId,
         sessionId: params.sessionId,
         inputId: params.inputId,
         selectedModel: params.selectedModel,
       }),
-    }),
+    },
     ...(plan.body && plan.method !== "GET" && plan.method !== "DELETE"
       ? { body: JSON.stringify(plan.body) }
       : {}),
@@ -552,34 +554,19 @@ export async function executeRuntimeToolCapability(params: RuntimeToolCapability
       : `Holaboss runtime tool '${params.toolId}' failed.`;
     throw new Error(message);
   }
-  const formatted = formatCapabilityToolResult({
-    payload: response.payload,
-    toolId: params.toolId,
-    replayBudgetKey: capabilityReplayBudgetKey({
-      workspaceId: params.workspaceId,
-      sessionId: params.sessionId,
-      inputId: params.inputId,
-    }),
-  });
 
+  const formatted = formatCapabilityToolResultForModel(response.payload);
   return {
     content: [{ type: "text", text: formatted.text }],
-    details: formatted.replayBudgetDecision?.trimmed
-      ? {
-          tool_id: params.toolId,
-          replay_budget: {
-            mode: formatted.replayBudgetDecision.mode,
-            trimmed: formatted.replayBudgetDecision.trimmed,
-            trim_reason: formatted.replayBudgetDecision.trimReason,
-            replay_chars: formatted.replayBudgetDecision.replayChars,
-            total_replay_chars: formatted.replayBudgetDecision.totalReplayChars,
-            max_replay_chars: formatted.replayBudgetDecision.maxReplayChars,
-            total_replay_items: formatted.replayBudgetDecision.totalReplayItems,
-            max_replay_items: formatted.replayBudgetDecision.maxReplayItems,
-          },
-        }
-      : {
-          tool_id: params.toolId,
-        },
+    details: {
+      tool_id: params.toolId,
+      ...(formatted.compacted
+        ? {
+            raw: response.payload,
+            raw_result_bytes: formatted.serializedBytes,
+            model_result_bytes: formatted.modelTextBytes,
+          }
+        : {}),
+    },
   };
 }

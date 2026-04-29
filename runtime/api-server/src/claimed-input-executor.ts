@@ -39,6 +39,7 @@ import { createBackgroundTaskMemoryModelClient } from "./background-task-model.j
 import {
   enqueueSessionCheckpointJob,
   normalizePiContextUsage,
+  shouldQueueSessionCheckpoint,
   waitForSessionCheckpointCompletion,
   type PiContextUsage,
 } from "./session-checkpoint.js";
@@ -69,6 +70,15 @@ const CLAIMED_INPUT_SENTRY_PERMISSION_DENIAL_LIMIT = 10;
 const BACKEND_OUTPUT_DELTA_RELAY_FLUSH_CHARS = 1200;
 const SUBAGENT_EVENT_COALESCE_WINDOW_MS = 5_000;
 const SUBAGENT_EVENT_IDLE_TIMEOUT_MS = 5_000;
+const CONTEXT_BUDGET_OBSERVABILITY_SCHEMA_VERSION = 1;
+const CONTEXT_BUDGET_COMPACTION_EVENT_TYPES = new Set([
+  "auto_compaction_start",
+  "auto_compaction_end",
+  "compaction_start",
+  "compaction_boundary_written",
+  "compaction_end",
+  "compaction_restored",
+]);
 
 interface SessionInputAttachment {
   id: string;
@@ -86,6 +96,14 @@ interface RuntimeBindingSentryContextInput {
   modelProxyBaseUrl: string;
   defaultModel?: string;
   defaultProvider?: string;
+}
+
+interface TurnContextBudgetTelemetry {
+  modelTurns: number;
+  compactionEvents: number;
+  largestToolPayloadBytes: number;
+  browserSnapshotBytes: number;
+  screenshotBytes: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -656,13 +674,14 @@ function instructionWithInlineBackgroundUpdates(params: {
     "[Pending Background Updates]",
     "These background task updates belong to the same main session.",
     "Answer the user's latest message first.",
-    "If any of these updates are relevant, add them after your direct answer in a natural follow-up voice.",
+    "If any of these updates are relevant, add them after your direct answer as a natural continuation.",
     "If there is only one relevant update, weave it in without a `Background updates` heading.",
+    "Do not introduce the added update with stock phrases like `Quick follow-up`, `Brief update`, or `One quick update` unless the user already used that tone.",
     "Only use a separate `Background updates` section when there are multiple distinct updates or the separation is needed for clarity.",
     "If there are multiple updates, use numbered items and keep each task distinct instead of blending them into one paragraph.",
     "When a queued update includes deliverables, refer to them by title and treat them as attached artifacts or reports rather than raw file paths when possible.",
     "Do not paste long artifact bodies such as HTML, markdown, or full report content into chat. Keep those as attached deliverables and only summarize them briefly.",
-    "If the updates are not directly relevant, append a brief natural follow-up section at the end instead of sounding like a system notification.",
+    "If the updates are not directly relevant, append a brief natural continuation at the end instead of sounding like a system notification.",
     JSON.stringify(events, null, 2),
     "[/Pending Background Updates]",
   ]
@@ -965,6 +984,242 @@ function contextUsageFromPayload(
   return normalizePiContextUsage(payload.context_usage);
 }
 
+function createTurnContextBudgetTelemetry(): TurnContextBudgetTelemetry {
+  return {
+    modelTurns: 0,
+    compactionEvents: 0,
+    largestToolPayloadBytes: 0,
+    browserSnapshotBytes: 0,
+    screenshotBytes: 0,
+  };
+}
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function jsonByteLength(value: unknown): number {
+  try {
+    const text = JSON.stringify(value);
+    return typeof text === "string" ? Buffer.byteLength(text, "utf8") : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function nestedRecord(
+  value: Record<string, unknown> | null | undefined,
+  key: string,
+): Record<string, unknown> | null {
+  return value && isRecord(value[key])
+    ? (value[key] as Record<string, unknown>)
+    : null;
+}
+
+function firstFiniteUsageNumber(
+  usage: Record<string, unknown> | null,
+  keys: string[],
+): number | null {
+  if (!usage) {
+    return null;
+  }
+  for (const key of keys) {
+    const direct = finiteNumber(usage[key]);
+    if (direct !== null) {
+      return direct;
+    }
+  }
+  return null;
+}
+
+function tokenDetailNumber(
+  usage: Record<string, unknown> | null,
+  detailKeys: string[],
+  keys: string[],
+): number | null {
+  if (!usage) {
+    return null;
+  }
+  for (const detailKey of detailKeys) {
+    const detail = nestedRecord(usage, detailKey);
+    const value = firstFiniteUsageNumber(detail, keys);
+    if (value !== null) {
+      return value;
+    }
+  }
+  return firstFiniteUsageNumber(usage, keys);
+}
+
+function latencyMs(startedAt: string, completedAt: string | null): number | null {
+  const startedMs = Date.parse(startedAt);
+  const completedMs = Date.parse(completedAt ?? "");
+  if (!Number.isFinite(startedMs) || !Number.isFinite(completedMs)) {
+    return null;
+  }
+  return Math.max(0, completedMs - startedMs);
+}
+
+function contextUsagePayload(contextUsage: PiContextUsage | null): Record<string, unknown> | null {
+  if (!contextUsage) {
+    return null;
+  }
+  return {
+    tokens: contextUsage.tokens,
+    context_window: contextUsage.contextWindow,
+    percent: contextUsage.percent,
+  };
+}
+
+function promptCacheStableCandidate(promptCacheProfile: Record<string, unknown> | null): boolean {
+  if (!promptCacheProfile) {
+    return false;
+  }
+  if (typeof promptCacheProfile.cacheable_fingerprint === "string" && promptCacheProfile.cacheable_fingerprint) {
+    return true;
+  }
+  return Array.isArray(promptCacheProfile.cacheable_section_ids) && promptCacheProfile.cacheable_section_ids.length > 0;
+}
+
+function turnResultStatusFromTerminalStatus(
+  terminalStatus: "IDLE" | "WAITING_USER" | "PAUSED" | "ERROR",
+): "completed" | "waiting_user" | "paused" | "failed" {
+  if (terminalStatus === "ERROR") {
+    return "failed";
+  }
+  if (terminalStatus === "WAITING_USER") {
+    return "waiting_user";
+  }
+  if (terminalStatus === "PAUSED") {
+    return "paused";
+  }
+  return "completed";
+}
+
+function updateTurnContextBudgetTelemetryFromEvent(
+  telemetry: TurnContextBudgetTelemetry,
+  eventType: string,
+  payload: Record<string, unknown>,
+): void {
+  if (eventType === "pi_native_event" && payload.native_type === "message_end") {
+    telemetry.modelTurns += 1;
+  }
+  if (CONTEXT_BUDGET_COMPACTION_EVENT_TYPES.has(eventType)) {
+    telemetry.compactionEvents += 1;
+  }
+  if (eventType !== "tool_call") {
+    return;
+  }
+
+  const toolPayload =
+    payload.result !== undefined && payload.result !== null
+      ? payload.result
+      : payload.tool_args !== undefined && payload.tool_args !== null
+        ? payload.tool_args
+        : payload;
+  telemetry.largestToolPayloadBytes = Math.max(
+    telemetry.largestToolPayloadBytes,
+    jsonByteLength(toolPayload),
+  );
+
+  const toolName = optionalString(payload.tool_name)?.toLowerCase() ?? "";
+  const result = payload.result;
+  const resultRecord = jsonRecord(result);
+  const screenshotPayload = resultRecord?.screenshot ?? (toolName === "browser_screenshot" ? result : null);
+  if (screenshotPayload !== null && screenshotPayload !== undefined) {
+    telemetry.screenshotBytes += jsonByteLength(screenshotPayload);
+  }
+  if (toolName === "browser_get_state") {
+    if (resultRecord) {
+      const { screenshot: _screenshot, ...snapshotWithoutScreenshot } = resultRecord;
+      telemetry.browserSnapshotBytes += jsonByteLength(snapshotWithoutScreenshot);
+    } else {
+      telemetry.browserSnapshotBytes += jsonByteLength(result);
+    }
+  }
+}
+
+function buildContextBudgetObservabilityPayload(params: {
+  startedAt: string;
+  completedAt: string | null;
+  terminalStatus: "IDLE" | "WAITING_USER" | "PAUSED" | "ERROR";
+  stopReason: string | null;
+  tokenUsage: Record<string, unknown> | null;
+  contextUsage: PiContextUsage | null;
+  promptCacheProfile: Record<string, unknown> | null;
+  telemetry: TurnContextBudgetTelemetry;
+  toolCallCount: number;
+  checkpointQueued: boolean;
+}): Record<string, unknown> {
+  const inputTokens =
+    firstFiniteUsageNumber(params.tokenUsage, ["input_tokens", "prompt_tokens"]);
+  const outputTokens = firstFiniteUsageNumber(params.tokenUsage, [
+    "output_tokens",
+    "completion_tokens",
+  ]);
+  const totalTokens =
+    firstFiniteUsageNumber(params.tokenUsage, ["total_tokens"]) ??
+    (inputTokens !== null && outputTokens !== null ? inputTokens + outputTokens : null);
+  const cachedInputTokens = tokenDetailNumber(
+    params.tokenUsage,
+    ["input_tokens_details", "prompt_tokens_details"],
+    ["cached_tokens"],
+  ) ?? firstFiniteUsageNumber(params.tokenUsage, [
+    "cache_read_input_tokens",
+    "cached_input_tokens",
+  ]);
+  const cacheWriteInputTokens = tokenDetailNumber(
+    params.tokenUsage,
+    ["input_tokens_details", "prompt_tokens_details"],
+    ["cache_creation_tokens", "cache_write_tokens", "cache_creation_input_tokens"],
+  ) ?? firstFiniteUsageNumber(params.tokenUsage, [
+    "cache_creation_input_tokens",
+    "cache_write_input_tokens",
+  ]);
+  const uncachedInputTokens =
+    inputTokens !== null && cachedInputTokens !== null
+      ? Math.max(0, inputTokens - cachedInputTokens)
+      : inputTokens;
+  const status = turnResultStatusFromTerminalStatus(params.terminalStatus);
+  const modelTurns =
+    params.telemetry.modelTurns > 0 || !params.tokenUsage
+      ? params.telemetry.modelTurns
+      : 1;
+
+  return {
+    schema_version: CONTEXT_BUDGET_OBSERVABILITY_SCHEMA_VERSION,
+    mode: "observability_only",
+    pressure_stage: null,
+    lane_decisions: [],
+    checkpoint_recommended: shouldQueueSessionCheckpoint(params.contextUsage),
+    checkpoint_queued: params.checkpointQueued,
+    prompt_cache_stable_candidate: promptCacheStableCandidate(params.promptCacheProfile),
+    tool_replay_trimmed: false,
+    retrieval_clipped: false,
+    reason_codes: [],
+    context_usage: contextUsagePayload(params.contextUsage),
+    model_context_window: params.contextUsage?.contextWindow ?? null,
+    input_budget_total: null,
+    metrics: {
+      status,
+      stop_reason: params.stopReason,
+      task_success: status !== "failed",
+      latency_ms: latencyMs(params.startedAt, params.completedAt),
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      total_tokens: totalTokens,
+      cached_input_tokens: cachedInputTokens,
+      cache_write_input_tokens: cacheWriteInputTokens,
+      uncached_input_tokens: uncachedInputTokens,
+      model_turns: modelTurns,
+      tool_calls: params.toolCallCount,
+      largest_tool_payload_bytes: params.telemetry.largestToolPayloadBytes,
+      browser_snapshot_bytes: params.telemetry.browserSnapshotBytes,
+      screenshot_bytes: params.telemetry.screenshotBytes,
+      compaction_events: params.telemetry.compactionEvents,
+    },
+  };
+}
+
 function claimLeaseUntilIso(
   leaseSeconds: number,
   nowIso = new Date().toISOString(),
@@ -1024,17 +1279,6 @@ function stopReasonForTerminalEvent(params: {
     return "run_failed";
   }
   return null;
-}
-
-function promptCacheStableCandidate(
-  profile: Record<string, unknown> | null,
-): boolean {
-  if (!isRecord(profile) || !Array.isArray(profile.cacheable_section_ids)) {
-    return false;
-  }
-  return profile.cacheable_section_ids.some(
-    (value) => typeof value === "string" && value.trim(),
-  );
 }
 
 function toolReplayTrimmedFromToolResult(result: unknown): boolean {
@@ -2077,14 +2321,7 @@ function persistTurnResult(params: {
     inputId: params.record.inputId,
     startedAt: params.startedAt,
     completedAt: params.completedAt,
-    status:
-      params.terminalStatus === "ERROR"
-        ? "failed"
-        : params.terminalStatus === "WAITING_USER"
-          ? "waiting_user"
-          : params.terminalStatus === "PAUSED"
-            ? "paused"
-            : "completed",
+    status: turnResultStatusFromTerminalStatus(params.terminalStatus),
     stopReason: params.stopReason,
     assistantText: params.assistantText,
     toolUsageSummary: params.toolUsageSummary,
@@ -2254,23 +2491,35 @@ export async function processClaimedInput(params: {
       heartbeatAt: null,
       lastError: { message: "workspace not found" },
     });
+    const completedAt = new Date().toISOString();
     persistTurnResult({
       store,
       record,
       startedAt: turnStartedAt,
-      completedAt: new Date().toISOString(),
+      completedAt,
       terminalStatus: "ERROR",
       stopReason: "workspace_not_found",
       assistantText: "",
       toolUsageSummary: summarizeToolCalls(new Map()),
       permissionDenials: [],
       promptSectionIds: [],
-      capabilityManifestFingerprint: null,
-      requestSnapshotFingerprint: null,
-      promptCacheProfile: null,
-      contextBudgetDecisions: null,
-      tokenUsage: null,
-    });
+        capabilityManifestFingerprint: null,
+        requestSnapshotFingerprint: null,
+        promptCacheProfile: null,
+        contextBudgetDecisions: buildContextBudgetObservabilityPayload({
+          startedAt: turnStartedAt,
+          completedAt,
+          terminalStatus: "ERROR",
+          stopReason: "workspace_not_found",
+        tokenUsage: null,
+        contextUsage: null,
+        promptCacheProfile: null,
+          telemetry: createTurnContextBudgetTelemetry(),
+          toolCallCount: 0,
+          checkpointQueued: false,
+        }),
+        tokenUsage: null,
+      });
     return;
   }
 
@@ -2608,6 +2857,7 @@ export async function processClaimedInput(params: {
     const wideningAudit = createSkillWideningAudit();
     const permissionDenials: Array<Record<string, unknown>> = [];
     const recentRunnerEvents: Array<Record<string, unknown>> = [];
+    const contextBudgetTelemetry = createTurnContextBudgetTelemetry();
     let deferredTerminalEvent: {
       eventType: "run_completed" | "run_failed";
       payload: Record<string, unknown>;
@@ -2727,6 +2977,11 @@ export async function processClaimedInput(params: {
           const eventTimestamp = eventTimestampOrNow(event);
           const eventType =
             typeof event.event_type === "string" ? event.event_type : "unknown";
+          updateTurnContextBudgetTelemetryFromEvent(
+            contextBudgetTelemetry,
+            eventType,
+            eventPayload,
+          );
           recentRunnerEvents.push(
             summarizeRunnerEventForSentry({
               sequence,
@@ -3366,11 +3621,12 @@ export async function processClaimedInput(params: {
           ),
         });
       }
-      const turnResult = persistTurnResult({
+      const effectiveCompletedAt = completedAt ?? new Date().toISOString();
+      let turnResult = persistTurnResult({
         store,
         record,
         startedAt: turnStartedAt,
-        completedAt: completedAt ?? new Date().toISOString(),
+        completedAt: effectiveCompletedAt,
         terminalStatus,
         stopReason,
         assistantText,
@@ -3498,11 +3754,12 @@ export async function processClaimedInput(params: {
         heartbeatAt: null,
         lastError: { message },
       });
+      const errorCompletedAt = new Date().toISOString();
       const turnResult = persistTurnResult({
         store,
         record,
         startedAt: turnStartedAt,
-        completedAt: new Date().toISOString(),
+        completedAt: errorCompletedAt,
         terminalStatus: "ERROR",
         stopReason: "executor_error",
         assistantText: "",
