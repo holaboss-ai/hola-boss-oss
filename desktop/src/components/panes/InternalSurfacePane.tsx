@@ -15,12 +15,6 @@ import {
   SpreadsheetEditor,
 } from "@/components/panes/SpreadsheetEditor";
 import { Button } from "@/components/ui/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { DashboardRenderer } from "@/components/dashboard/DashboardRenderer";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
@@ -570,57 +564,43 @@ export function InternalSurfacePane({
                 </Button>
               ) : null}
               {preview.extension === ".dashboard" ? (
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={toggleDashboardFullWidth}
-                          aria-pressed={dashboardFullWidth}
-                          aria-label={
-                            dashboardFullWidth
-                              ? "Switch to compact width"
-                              : "Switch to full width"
-                          }
-                          className={
-                            dashboardFullWidth
-                              ? "bg-muted text-foreground"
-                              : "text-muted-foreground hover:text-foreground"
-                          }
-                        />
-                      }
-                    >
-                      {dashboardFullWidth ? (
-                        <ChevronsRightLeft className="size-3.5" />
-                      ) : (
-                        <ChevronsLeftRight className="size-3.5" />
-                      )}
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      {dashboardFullWidth ? "Compact width" : "Full width"}
-                    </TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={refreshDashboard}
-                          aria-label="Refresh"
-                          className="text-muted-foreground hover:text-foreground"
-                        />
-                      }
-                    >
-                      <RefreshCw className="size-3.5" />
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">Refresh</TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+                <>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={toggleDashboardFullWidth}
+                    aria-pressed={dashboardFullWidth}
+                    aria-label={
+                      dashboardFullWidth
+                        ? "Switch to compact width"
+                        : "Switch to full width"
+                    }
+                    title={dashboardFullWidth ? "Compact width" : "Full width"}
+                    className={
+                      dashboardFullWidth
+                        ? "bg-muted text-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    }
+                  >
+                    {dashboardFullWidth ? (
+                      <ChevronsRightLeft className="size-3.5" />
+                    ) : (
+                      <ChevronsLeftRight className="size-3.5" />
+                    )}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={refreshDashboard}
+                    aria-label="Refresh"
+                    title="Refresh"
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    <RefreshCw className="size-3.5" />
+                  </Button>
+                </>
               ) : null}
               {preview.isEditable && (isDirty || isSaving) ? (
                 <Button
