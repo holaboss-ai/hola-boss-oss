@@ -3901,7 +3901,7 @@ function AppShellContent() {
 
     if (agentView.type === "inbox") {
       return (
-        <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-card shadow-md backdrop-blur-sm">
+        <section className="flex h-full min-h-0 min-w-0 animate-in fade-in-0 slide-in-from-right-3 flex-col overflow-hidden rounded-xl bg-card shadow-md backdrop-blur-sm duration-200 ease-out">
           <div className="shrink-0 border-b border-border px-4 py-2.5 sm:px-5">
             <div className="flex items-center justify-between gap-3">
               <div className="inline-flex min-w-0 items-center gap-2 text-base font-semibold text-foreground">

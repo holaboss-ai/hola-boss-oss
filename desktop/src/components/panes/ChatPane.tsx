@@ -9694,7 +9694,7 @@ function ArtifactBrowserModal({
   );
 
   return (
-    <div className="absolute inset-y-0 right-0 z-30 flex w-[360px] max-w-full animate-in fade-in-0 slide-in-from-right-4 flex-col overflow-hidden border-l border-border bg-card shadow-xl duration-200 ease-out">
+    <div className="absolute inset-0 z-30 flex animate-in fade-in-0 slide-in-from-right-3 flex-col overflow-hidden bg-card duration-200 ease-out">
       <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2.5">
         <Button
           type="button"
