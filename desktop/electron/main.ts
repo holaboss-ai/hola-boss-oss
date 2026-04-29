@@ -106,6 +106,11 @@ import {
 import * as modelCatalog from "../shared/model-catalog.js";
 import { buildAppSdkClient } from "./appSdkClient.js";
 import { ensureWorkspaceGitRepo } from "./workspace-git.js";
+import {
+  createRuntimeClient,
+  isTransientRuntimeError,
+  runtimeErrorFromBody,
+} from "@holaboss/runtime-client";
 
 const APP_DISPLAY_NAME = "Holaboss";
 const MAC_APP_MENU_PRODUCT_LABEL = "holaOS";
@@ -11664,11 +11669,7 @@ async function listCronjobs(
   workspaceId: string,
   enabledOnly = false,
 ): Promise<CronjobListResponsePayload> {
-  return requestRuntimeJson<CronjobListResponsePayload>({
-    method: "GET",
-    path: "/api/v1/cronjobs",
-    params: { workspace_id: workspaceId, enabled_only: enabledOnly },
-  });
+  return runtimeClient.cronjobs.list(workspaceId, enabledOnly);
 }
 
 async function runCronjobNow(
@@ -11739,16 +11740,11 @@ async function listNotifications(
     includeDismissed,
   );
   try {
-    const response =
-      await requestRuntimeJson<RuntimeNotificationListResponsePayload>({
-        method: "GET",
-        path: "/api/v1/notifications",
-        params: {
-          workspace_id: workspaceId ?? undefined,
-          include_dismissed: includeDismissed,
-          limit: 50,
-        },
-      });
+    const response = await runtimeClient.notifications.list({
+      workspaceId,
+      includeDismissed,
+      limit: 50,
+    });
     runtimeNotificationListCache.set(cacheKey, response);
     return response;
   } catch (error) {
@@ -11776,10 +11772,7 @@ async function updateNotification(
 }
 
 async function listIntegrationCatalog(): Promise<IntegrationCatalogResponsePayload> {
-  return requestRuntimeJson<IntegrationCatalogResponsePayload>({
-    method: "GET",
-    path: "/api/v1/integrations/catalog",
-  });
+  return runtimeClient.integrations.listCatalog();
 }
 
 async function listIntegrationConnections(params?: {
@@ -13413,130 +13406,28 @@ function sleep(ms: number) {
   });
 }
 
-function isTransientRuntimeError(error: unknown): boolean {
-  if (error instanceof TypeError) {
-    return true;
-  }
-  if (!(error instanceof Error)) {
-    return false;
-  }
-  const message = error.message.toLowerCase();
-  return (
-    message.includes("embedded runtime is not ready") ||
-    message.includes("fetch failed") ||
-    message.includes("bad port") ||
-    message.includes("invalid url") ||
-    message.includes("econnrefused") ||
-    message.includes("econnreset") ||
-    message.includes("socket hang up")
-  );
-}
-
-function runtimeErrorFromBody(
-  statusCode: number,
-  statusMessage: string | undefined,
-  body: string,
-): Error {
-  const trimmed = body.trim();
-  if (trimmed) {
-    try {
-      const parsed = JSON.parse(trimmed) as {
-        detail?: unknown;
-        message?: unknown;
-        error?: unknown;
-      };
-      const detail =
-        typeof parsed.detail === "string"
-          ? parsed.detail
-          : typeof parsed.message === "string"
-            ? parsed.message
-            : typeof parsed.error === "string"
-              ? parsed.error
-              : "";
-      if (detail) {
-        return new Error(detail);
-      }
-    } catch {
-      return new Error(trimmed);
+// Singleton runtime client. Owns retry/timeout/error parsing — the legacy
+// `requestRuntimeJson` shim below routes through it so call sites continue to
+// work while Streams A/B migrate to typed domain methods.
+const runtimeClient = createRuntimeClient({
+  getBaseURL: async () => {
+    const status = await ensureRuntimeReady();
+    if (!status.url) {
+      throw new Error("Embedded runtime is not ready (no url yet).");
     }
-  }
-  return new Error(
-    `${statusCode} ${statusMessage ?? "Runtime request failed."}`.trim(),
-  );
-}
+    return status.url;
+  },
+});
 
-async function requestRuntimeJsonViaHttp<T>(
-  targetUrl: URL,
-  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
-  payload?: unknown,
-  timeoutMs = 15000,
-): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const serializedPayload =
-      payload === undefined ? null : JSON.stringify(payload);
-    const request = httpRequest(
-      {
-        hostname: targetUrl.hostname,
-        port: targetUrl.port || "80",
-        path: `${targetUrl.pathname}${targetUrl.search}`,
-        method,
-        headers:
-          serializedPayload === null
-            ? undefined
-            : {
-                "Content-Type": "application/json",
-                "Content-Length": Buffer.byteLength(serializedPayload),
-              },
-        timeout: timeoutMs,
-      },
-      (response) => {
-        const chunks: Buffer[] = [];
-        response.on("data", (chunk) => {
-          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-        });
-        response.on("end", () => {
-          const statusCode = response.statusCode ?? 0;
-          const body = Buffer.concat(chunks).toString("utf-8");
-          if (statusCode < 200 || statusCode >= 300) {
-            reject(
-              runtimeErrorFromBody(statusCode, response.statusMessage, body),
-            );
-            return;
-          }
-          if (statusCode === 204 || !body.trim()) {
-            resolve(null as T);
-            return;
-          }
-          try {
-            resolve(JSON.parse(body) as T);
-          } catch {
-            reject(new Error("Runtime returned invalid JSON."));
-          }
-        });
-      },
-    );
-
-    request.on("timeout", () => {
-      request.destroy(new Error("Runtime request timed out."));
-    });
-    request.on("error", (error) => {
-      reject(error);
-    });
-
-    if (serializedPayload !== null) {
-      request.write(serializedPayload);
-    }
-    request.end();
-  });
-}
-
+// Compat shim — preserves the original signature so the ~55 unmigrated call
+// sites keep working. Delete once Streams A/B are done.
 async function requestRuntimeJson<T>({
   method,
   path: requestPath,
   payload,
   params,
   timeoutMs,
-  retryTransientErrors = false,
+  retryTransientErrors,
 }: {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
@@ -13545,30 +13436,14 @@ async function requestRuntimeJson<T>({
   timeoutMs?: number;
   retryTransientErrors?: boolean;
 }): Promise<T> {
-  const attempts = method === "GET" || retryTransientErrors ? 3 : 1;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    try {
-      const status = await ensureRuntimeReady();
-      const url = new URL(`${status.url}${requestPath}`);
-      if (params) {
-        for (const [key, value] of Object.entries(params)) {
-          if (value === undefined || value === null || value === "") {
-            continue;
-          }
-          url.searchParams.set(key, String(value));
-        }
-      }
-      return requestRuntimeJsonViaHttp<T>(url, method, payload, timeoutMs);
-    } catch (error) {
-      if (attempt < attempts && isTransientRuntimeError(error)) {
-        await sleep(250 * attempt);
-        continue;
-      }
-      throw error;
-    }
-  }
-
-  throw new Error("Runtime request failed after retries.");
+  return runtimeClient.request<T>({
+    method,
+    path: requestPath,
+    payload,
+    params,
+    timeoutMs,
+    retryTransientErrors,
+  });
 }
 
 function workspaceHarness() {
