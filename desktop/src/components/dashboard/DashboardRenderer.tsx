@@ -3,6 +3,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   type Dashboard,
   type DashboardPanel,
   parseDashboard,
@@ -115,9 +121,53 @@ function DashboardBody({
   const widthClass = isFullWidth ? "max-w-none" : "max-w-4xl";
 
   return (
-    <div className="h-full overflow-auto bg-background">
-      <div className={`mx-auto px-10 pt-10 pb-16 ${widthClass}`}>
-        <div className="flex items-start justify-between gap-3">
+    <TooltipProvider>
+      <div className="relative h-full overflow-auto bg-background">
+        {/* Outer-level toolbar — sits above the centered content so the
+            buttons stay anchored top-right of the pane regardless of the
+            page width toggle. Sticky so they ride along with vertical
+            scrolling. */}
+        <div className="sticky top-0 z-10 flex justify-end gap-0.5 bg-background/85 px-3 py-2 backdrop-blur">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={toggleFullWidth}
+                  aria-pressed={isFullWidth}
+                  aria-label={
+                    isFullWidth ? "Switch to compact width" : "Switch to full width"
+                  }
+                />
+              }
+            >
+              {isFullWidth ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {isFullWidth ? "Compact width" : "Full width"}
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={onRefresh}
+                  aria-label="Refresh"
+                />
+              }
+            >
+              <RefreshCw size={14} />
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Refresh</TooltipContent>
+          </Tooltip>
+        </div>
+
+        <div className={`mx-auto px-10 pt-2 pb-16 ${widthClass}`}>
           <div className="min-w-0">
             <h1 className="text-2xl font-semibold tracking-tight text-foreground">
               {dashboard.title}
@@ -128,74 +178,49 @@ function DashboardBody({
               </p>
             ) : null}
           </div>
-          <div className="flex shrink-0 items-center gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={toggleFullWidth}
-              title={isFullWidth ? "Switch to compact width" : "Switch to full width"}
-              aria-pressed={isFullWidth}
-              className="gap-1.5 text-muted-foreground hover:text-foreground"
-            >
-              {isFullWidth ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-              {isFullWidth ? "Compact" : "Full width"}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={onRefresh}
-              title="Re-run all queries"
-              className="-mr-2 gap-1.5 text-muted-foreground hover:text-foreground"
-            >
-              <RefreshCw size={13} />
-              Refresh
-            </Button>
+
+          <div className="mt-8 flex flex-col gap-10">
+            {groups.map((group, gIdx) => {
+              if (group.kind === "kpi-row") {
+                return (
+                  <div
+                    // biome-ignore lint/suspicious/noArrayIndexKey: panel order is canonical
+                    key={`g-${gIdx}`}
+                    className="grid gap-x-8 gap-y-4"
+                    style={{
+                      gridTemplateColumns: `repeat(${Math.min(group.indices.length, 4)}, minmax(0, 1fr))`,
+                    }}
+                  >
+                    {group.indices.map((panelIdx) => {
+                      const panel = dashboard.panels[panelIdx] as Extract<
+                        DashboardPanel,
+                        { type: "kpi" }
+                      >;
+                      return (
+                        <KpiCard
+                          key={panelIdx}
+                          title={panel.title}
+                          state={panelStates[panelIdx] as KpiCardState}
+                        />
+                      );
+                    })}
+                  </div>
+                );
+              }
+              const panel = dashboard.panels[group.index];
+              const state = panelStates[group.index];
+              return (
+                <DataViewPanel
+                  key={group.index}
+                  panel={panel as Extract<DashboardPanel, { type: "data_view" }>}
+                  state={state as DataViewState}
+                />
+              );
+            })}
           </div>
         </div>
-
-        <div className="mt-8 flex flex-col gap-10">
-          {groups.map((group, gIdx) => {
-            if (group.kind === "kpi-row") {
-              return (
-                <div
-                  // biome-ignore lint/suspicious/noArrayIndexKey: panel order is canonical
-                  key={`g-${gIdx}`}
-                  className="grid gap-x-8 gap-y-4"
-                  style={{
-                    gridTemplateColumns: `repeat(${Math.min(group.indices.length, 4)}, minmax(0, 1fr))`,
-                  }}
-                >
-                  {group.indices.map((panelIdx) => {
-                    const panel = dashboard.panels[panelIdx] as Extract<
-                      DashboardPanel,
-                      { type: "kpi" }
-                    >;
-                    return (
-                      <KpiCard
-                        key={panelIdx}
-                        title={panel.title}
-                        state={panelStates[panelIdx] as KpiCardState}
-                      />
-                    );
-                  })}
-                </div>
-              );
-            }
-            const panel = dashboard.panels[group.index];
-            const state = panelStates[group.index];
-            return (
-              <DataViewPanel
-                key={group.index}
-                panel={panel as Extract<DashboardPanel, { type: "data_view" }>}
-                state={state as DataViewState}
-              />
-            );
-          })}
-        </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }
 
