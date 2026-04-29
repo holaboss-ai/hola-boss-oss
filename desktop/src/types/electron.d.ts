@@ -87,6 +87,12 @@ declare global {
     fileName: string;
     archiveSizeBytes: number;
     includedFiles: string[];
+    workspaceId?: string | null;
+    workspaceName?: string | null;
+  }
+
+  interface DiagnosticsExportRequestPayload {
+    workspaceId?: string | null;
   }
 
   interface BrowserBoundsPayload {
@@ -1397,7 +1403,9 @@ declare global {
       onBookmarksChange: (listener: (bookmarks: FileBookmarkPayload[]) => void) => () => void;
     };
     diagnostics: {
-      exportBundle: () => Promise<DiagnosticsExportPayload>;
+      exportBundle: (
+        payload?: DiagnosticsExportRequestPayload,
+      ) => Promise<DiagnosticsExportPayload>;
       revealBundle: (bundlePath: string) => Promise<boolean>;
     };
     runtime: {

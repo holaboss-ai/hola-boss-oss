@@ -70,11 +70,17 @@ interface ExplorerExternalImportResultPayload {
   absolutePaths: string[];
 }
 
+interface DiagnosticsExportRequestPayload {
+  workspaceId?: string | null;
+}
+
 interface DiagnosticsExportPayload {
   bundlePath: string;
   fileName: string;
   archiveSizeBytes: number;
   includedFiles: string[];
+  workspaceId?: string | null;
+  workspaceName?: string | null;
 }
 
 interface BrowserBoundsPayload {
@@ -1135,8 +1141,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }
   },
   diagnostics: {
-    exportBundle: () =>
-      ipcRenderer.invoke("diagnostics:exportBundle") as Promise<DiagnosticsExportPayload>,
+    exportBundle: (payload?: DiagnosticsExportRequestPayload) =>
+      ipcRenderer.invoke("diagnostics:exportBundle", payload) as Promise<DiagnosticsExportPayload>,
     revealBundle: (bundlePath: string) =>
       ipcRenderer.invoke("diagnostics:revealBundle", bundlePath) as Promise<boolean>,
   },
