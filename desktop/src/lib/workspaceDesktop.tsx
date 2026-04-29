@@ -1,3 +1,4 @@
+import { listMarketplaceTemplates as sdkListMarketplaceTemplates } from "@holaboss/app-sdk/core";
 import {
   createContext,
   useContext,
@@ -7,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { getMarketplaceAppSdkClient } from "@/lib/app-sdk-client";
 import { type AuthSession, useDesktopAuthSession } from "@/lib/auth/authClient";
 import { hydrateInstalledWorkspaceApps, type WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
@@ -1076,18 +1078,28 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       setIsLoadingMarketplaceTemplates(true);
       setMarketplaceTemplatesError("");
       try {
-        const response = await window.electronAPI.workspace.listMarketplaceTemplates();
+        // Renderer-direct call to Hono's @holaboss/app-sdk surface (no IPC
+        // round-trip). The SDK targets the same `/api/marketplace/templates`
+        // endpoint the main process used and returns the same shape.
+        const client = getMarketplaceAppSdkClient();
+        const data = await sdkListMarketplaceTemplates({ client });
         if (cancelled) {
           return;
         }
-        const visibleTemplates = response.templates
+        // Community-source templates can omit the array fields. Normalize
+        // here at the read boundary so downstream UI can rely on them
+        // being present — same behaviour the main-process helper had.
+        const rawTemplates = (data.templates ?? []) as TemplateMetadataPayload[];
+        const visibleTemplates = rawTemplates
           .filter((template) => !template.is_hidden)
           .map((template) => ({
             ...template,
-            // Normalize apps: backend may return string[] (legacy) or {name,required}[]
-            apps: template.apps.map((a: unknown) =>
+            apps: (template.apps ?? []).map((a: unknown) =>
               typeof a === "string" ? { name: a, required: true } : a
             ) as TemplateAppEntryPayload[],
+            agents: template.agents ?? [],
+            views: template.views ?? [],
+            tags: template.tags ?? [],
             min_optional_apps: template.min_optional_apps ?? 0,
           }));
         setMarketplaceTemplates(visibleTemplates);

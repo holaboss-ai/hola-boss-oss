@@ -1210,14 +1210,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     writeText: (text: string) =>
       ipcRenderer.invoke("clipboard:writeText", text) as Promise<void>,
   },
-  billing: {
-    getOverview: () =>
-      ipcRenderer.invoke("billing:getOverview") as Promise<DesktopBillingOverviewPayload>,
-    getUsage: (limit?: number) =>
-      ipcRenderer.invoke("billing:getUsage", limit) as Promise<DesktopBillingUsagePayload>,
-    getLinks: () =>
-      ipcRenderer.invoke("billing:getLinks") as Promise<DesktopBillingLinksPayload>,
-  },
   appUpdate: {
     getStatus: () => ipcRenderer.invoke("appUpdate:getStatus") as Promise<AppUpdateStatusPayload>,
     checkNow: () => ipcRenderer.invoke("appUpdate:checkNow") as Promise<AppUpdateStatusPayload>,
@@ -1253,8 +1245,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   workspace: {
     getClientConfig: () => ipcRenderer.invoke("workspace:getClientConfig") as Promise<HolabossClientConfigPayload>,
-    listMarketplaceTemplates: () =>
-      ipcRenderer.invoke("workspace:listMarketplaceTemplates") as Promise<TemplateListResponsePayload>,
     pickTemplateFolder: () =>
       ipcRenderer.invoke("workspace:pickTemplateFolder") as Promise<TemplateFolderSelectionPayload>,
     pickWorkspaceRuntimeFolder: () =>
@@ -1491,6 +1481,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   auth: {
     getUser: () => ipcRenderer.invoke("auth:getUser") as Promise<AuthUserPayload | null>,
+    // Renderer-direct BFF clients (e.g. @holaboss/app-sdk in renderer,
+    // billing RPC) need the Better-Auth cookie + Hono base URL to call
+    // the gateway directly without round-tripping through main. Returning
+    // an empty cookie is OK — public marketplace endpoints work anonymously
+    // and authed endpoints will simply 401 if the user isn't signed in.
+    getCookieHeader: () => ipcRenderer.invoke("auth:getCookieHeader") as Promise<string>,
+    getApiBaseUrl: () => ipcRenderer.invoke("auth:getApiBaseUrl") as Promise<string>,
+    getMarketplaceBaseUrl: () =>
+      ipcRenderer.invoke("auth:getMarketplaceBaseUrl") as Promise<string>,
     requestAuth: () => ipcRenderer.invoke("auth:requestAuth") as Promise<void>,
     signOut: () => ipcRenderer.invoke("auth:signOut") as Promise<void>,
     showPopup: (anchorBounds: BrowserAnchorBoundsPayload) => ipcRenderer.invoke("auth:showPopup", anchorBounds) as Promise<void>,

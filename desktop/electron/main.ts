@@ -97,7 +97,6 @@ import {
   generateMarketplaceTemplateContent as sdkGenerateMarketplaceTemplateContent,
   listMarketplaceAppTemplates as sdkListMarketplaceAppTemplates,
   listMarketplaceSubmissions as sdkListMarketplaceSubmissions,
-  listMarketplaceTemplates as sdkListMarketplaceTemplates,
   materializeMarketplaceTemplate as sdkMaterializeMarketplaceTemplate,
 } from "@holaboss/app-sdk/core";
 import {
@@ -3010,83 +3009,6 @@ interface UpdateQueuedSessionInputResponsePayload {
 interface HolabossClientConfigPayload {
   projectsUrl: string;
   marketplaceUrl: string;
-}
-
-interface DesktopBillingOverviewPayload {
-  hasHostedBillingAccount: boolean;
-  planId: string;
-  planName: string | null;
-  planStatus: string;
-  renewsAt: string | null;
-  expiresAt: string | null;
-  creditsBalance: number;
-  totalAllocated: number;
-  totalUsed: number;
-  monthlyCreditsIncluded: number | null;
-  monthlyCreditsUsed: number | null;
-  dailyRefreshCredits: number | null;
-  dailyRefreshTarget: number | null;
-  lowBalanceThreshold: number;
-  isLowBalance: boolean;
-}
-
-interface DesktopBillingUsageItemPayload {
-  id: string;
-  type: string;
-  sourceType: string | null;
-  reason: string | null;
-  amount: number;
-  absoluteAmount: number;
-  createdAt: string;
-}
-
-interface DesktopBillingUsagePayload {
-  items: DesktopBillingUsageItemPayload[];
-  count: number;
-}
-
-interface DesktopBillingLinksPayload {
-  billingPageUrl: string;
-  addCreditsUrl: string;
-  upgradeUrl: string;
-  usageUrl: string;
-}
-
-interface DesktopBillingRpcEnvelope<T> {
-  json: T;
-  meta?: unknown;
-}
-
-interface DesktopBillingQuotaRpcPayload {
-  balance: number;
-  totalAllocated: number;
-  totalUsed: number;
-}
-
-interface DesktopBillingTransactionRpcPayload {
-  id: string;
-  type: string;
-  sourceType: string | null;
-  reason: string | null;
-  serviceType: string | null;
-  serviceId: string | null;
-  category: string | null;
-  metadata: Record<string, unknown> | null;
-  amount: number;
-  createdAt: string;
-}
-
-interface DesktopBillingSubscriptionRpcPayload {
-  status: string;
-  plan: string;
-  currentPeriodEnd: string | null;
-  cancelAtPeriodEnd: boolean;
-}
-
-interface DesktopBillingInfoRpcPayload {
-  hasActiveSubscription: boolean;
-  subscription: DesktopBillingSubscriptionRpcPayload | null;
-  stripeCustomerId: string | null;
 }
 
 interface InstalledWorkspaceAppPayload {
@@ -9914,188 +9836,6 @@ async function getAuthenticatedUser(): Promise<AuthUserPayload | null> {
   return payload?.user ?? null;
 }
 
-const DESKTOP_BILLING_TOKENS_PER_CREDIT = 2000;
-const DESKTOP_BILLING_LOW_BALANCE_THRESHOLD = 10;
-const DESKTOP_BILLING_PLAN_META = {
-  basic: {
-    planId: "basic",
-    planName: "Holaboss",
-    monthlyCreditsIncluded: 200,
-  },
-  pro: {
-    planId: "pro",
-    planName: "Holaboss Pro",
-    monthlyCreditsIncluded: 2000,
-  },
-  customize: {
-    planId: "customize",
-    planName: "Holaboss Custom",
-    monthlyCreditsIncluded: null,
-  },
-} as const;
-
-type DesktopBillingPlanMeta =
-  (typeof DESKTOP_BILLING_PLAN_META)[keyof typeof DESKTOP_BILLING_PLAN_META];
-
-function desktopBillingTokensToCredits(tokens: number): number {
-  return Math.floor(tokens / DESKTOP_BILLING_TOKENS_PER_CREDIT);
-}
-
-function desktopBillingPlanMeta(
-  plan: string | null | undefined,
-): DesktopBillingPlanMeta {
-  if (plan === "pro" || plan === "customize") {
-    return DESKTOP_BILLING_PLAN_META[plan];
-  }
-  return DESKTOP_BILLING_PLAN_META.basic;
-}
-
-async function billingFetch<T>(path: string, input?: unknown): Promise<T> {
-  if (!AUTH_BASE_URL) {
-    throw new Error(
-      "Remote billing is not configured. Set HOLABOSS_AUTH_BASE_URL outside the public repo.",
-    );
-  }
-
-  const cookieHeader = authCookieHeader();
-  if (!cookieHeader) {
-    throw new Error("Not authenticated — sign in first.");
-  }
-
-  const response = await fetch(`${AUTH_BASE_URL}${path}`, {
-    method: "POST",
-    headers: {
-      Cookie: cookieHeader,
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(input === undefined ? {} : { json: input }),
-  });
-
-  if (!response.ok) {
-    if (response.status === 401 || response.status === 403) {
-      clearPersistedAuthCookie();
-      throw new Error("Not authenticated — sign in first.");
-    }
-    const detail = await response.text();
-    throw new Error(
-      detail || `Desktop billing request failed with status ${response.status}`,
-    );
-  }
-
-  const payload =
-    (await response.json()) as DesktopBillingRpcEnvelope<T> | null;
-  if (!payload || !("json" in payload)) {
-    throw new Error("Desktop billing received a malformed RPC response.");
-  }
-
-  return payload.json;
-}
-
-function desktopAppBaseUrl(): string {
-  if (!AUTH_BASE_URL) {
-    return HOLABOSS_HOME_URL;
-  }
-
-  try {
-    const parsed = new URL(AUTH_BASE_URL);
-    if (parsed.hostname === "localhost" && parsed.port === "4000") {
-      parsed.port = "4321";
-      return parsed.origin;
-    }
-    if (parsed.hostname.startsWith("api-preview.")) {
-      parsed.hostname = parsed.hostname.replace(/^api-preview\./, "preview.");
-      return parsed.origin;
-    }
-    if (parsed.hostname.startsWith("api.")) {
-      parsed.hostname = parsed.hostname.replace(/^api\./, "app.");
-      return parsed.origin;
-    }
-    return parsed.origin;
-  } catch {
-    return HOLABOSS_HOME_URL;
-  }
-}
-
-function buildDesktopBillingLinks(
-  appBaseUrl = desktopAppBaseUrl(),
-): DesktopBillingLinksPayload {
-  const normalizedBaseUrl = normalizeBaseUrl(appBaseUrl) || HOLABOSS_HOME_URL;
-  return {
-    billingPageUrl: `${normalizedBaseUrl}/app/settings?tab=billing`,
-    addCreditsUrl: `${normalizedBaseUrl}/app/settings?tab=billing&intent=add-credits`,
-    upgradeUrl: `${normalizedBaseUrl}/app/settings?tab=billing&intent=upgrade`,
-    usageUrl: `${normalizedBaseUrl}/app/settings?tab=billing&intent=usage`,
-  };
-}
-
-async function getDesktopBillingOverview(): Promise<DesktopBillingOverviewPayload> {
-  const [quota, billingInfo] = await Promise.all([
-    billingFetch<DesktopBillingQuotaRpcPayload>("/rpc/quota/myQuota"),
-    billingFetch<DesktopBillingInfoRpcPayload>("/rpc/billing/myBillingInfo"),
-  ]);
-  const subscription = billingInfo.subscription;
-  const planMeta = desktopBillingPlanMeta(subscription?.plan);
-  const renewsAt =
-    subscription && !subscription.cancelAtPeriodEnd
-      ? subscription.currentPeriodEnd
-      : null;
-  const expiresAt = subscription?.cancelAtPeriodEnd
-    ? subscription.currentPeriodEnd
-    : null;
-  const creditsBalance = quota.balance;
-
-  return {
-    hasHostedBillingAccount: true,
-    planId: planMeta.planId,
-    planName: planMeta.planName,
-    planStatus: subscription?.status ?? "inactive",
-    renewsAt,
-    expiresAt,
-    creditsBalance,
-    totalAllocated: quota.totalAllocated,
-    totalUsed: quota.totalUsed,
-    monthlyCreditsIncluded: planMeta.monthlyCreditsIncluded,
-    monthlyCreditsUsed: null,
-    dailyRefreshCredits: null,
-    dailyRefreshTarget: null,
-    lowBalanceThreshold: DESKTOP_BILLING_LOW_BALANCE_THRESHOLD,
-    isLowBalance:
-      creditsBalance > 0 &&
-      creditsBalance < DESKTOP_BILLING_LOW_BALANCE_THRESHOLD,
-  };
-}
-
-async function getDesktopBillingUsage(
-  limit = 10,
-): Promise<DesktopBillingUsagePayload> {
-  const normalizedLimit = Math.max(1, Math.min(limit, 50));
-  const items = await billingFetch<DesktopBillingTransactionRpcPayload[]>(
-    "/rpc/quota/myTransactions",
-    { limit: normalizedLimit },
-  );
-
-  return {
-    items: items.map((transaction) => {
-      const amount = desktopBillingTokensToCredits(transaction.amount);
-      return {
-        id: transaction.id,
-        type: transaction.type,
-        sourceType: transaction.sourceType,
-        reason: transaction.reason,
-        serviceType: transaction.serviceType,
-        serviceId: transaction.serviceId,
-        category: transaction.category,
-        metadata: transaction.metadata,
-        amount,
-        absoluteAmount: Math.abs(amount),
-        createdAt: transaction.createdAt,
-      };
-    }),
-    count: items.length,
-  };
-}
-
 function authUserId(user: AuthUserPayload | null | undefined): string {
   if (!user || typeof user.id !== "string") {
     return "";
@@ -11278,28 +11018,6 @@ async function parseLocalTemplateMetadata(
     verified: false,
     author_name: "Local folder",
     author_id: "_local",
-  };
-}
-
-async function listMarketplaceTemplates(): Promise<TemplateListResponsePayload> {
-  // Uses @holaboss/app-sdk against Hono's native /api/marketplace/templates
-  // route. The endpoint is publicly readable, so the Cookie header is
-  // forwarded when a session exists but the call still works anonymously.
-  const client = getMarketplaceAppSdkClient();
-  const data = await sdkListMarketplaceTemplates({ client });
-  // Community-source templates can omit the array fields (apps/agents/
-  // views/tags). Normalize at the read boundary so the rest of the UI can
-  // treat them as guaranteed arrays.
-  const templates = (data.templates as TemplateMetadataPayload[]).map((t) => ({
-    ...t,
-    apps: t.apps ?? [],
-    agents: t.agents ?? [],
-    views: t.views ?? [],
-    tags: t.tags ?? [],
-  }));
-  return {
-    templates,
-    spotlight: (data.spotlight ?? []) as SpotlightItemPayload[],
   };
 }
 
@@ -23922,17 +23640,17 @@ app.whenReady().then(async () => {
   handleTrustedIpc("auth:getUser", ["main", "auth-popup"], async () =>
     getAuthenticatedUser(),
   );
-  handleTrustedIpc("billing:getOverview", ["main"], async () =>
-    getDesktopBillingOverview(),
-  );
+  // Renderer-side BFF clients (e.g. @holaboss/app-sdk in renderer, billing
+  // RPC calls) need the Better-Auth Cookie header and API base URL so they
+  // can call Hono directly without round-tripping through main. Returning
+  // an empty cookie is fine when not signed in — the SDK call paths gate on
+  // auth state and the server decides whether auth is required.
+  handleTrustedIpc("auth:getCookieHeader", ["main"], () => authCookieHeader());
+  handleTrustedIpc("auth:getApiBaseUrl", ["main"], () => AUTH_BASE_URL ?? "");
   handleTrustedIpc(
-    "billing:getUsage",
+    "auth:getMarketplaceBaseUrl",
     ["main"],
-    async (_event, limit?: number) =>
-      getDesktopBillingUsage(typeof limit === "number" ? limit : 10),
-  );
-  handleTrustedIpc("billing:getLinks", ["main"], async () =>
-    buildDesktopBillingLinks(),
+    () => marketplaceBaseUrl(),
   );
   handleTrustedIpc("auth:requestAuth", ["main", "auth-popup"], async () => {
     await requireAuthClient().requestAuth();
@@ -24188,9 +23906,6 @@ app.whenReady().then(async () => {
   );
   handleTrustedIpc("workspace:getClientConfig", ["main"], () =>
     getHolabossClientConfig(),
-  );
-  handleTrustedIpc("workspace:listMarketplaceTemplates", ["main"], async () =>
-    listMarketplaceTemplates(),
   );
   handleTrustedIpc("workspace:pickTemplateFolder", ["main"], async () =>
     pickTemplateFolder(),
