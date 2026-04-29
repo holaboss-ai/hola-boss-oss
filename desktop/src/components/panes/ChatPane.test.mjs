@@ -1774,6 +1774,29 @@ test("chat pane reconciles missed autonomous main-session follow-ups before appe
   );
 });
 
+test("chat pane clears prior workspace live-run state immediately on workspace switch", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const previousSelectedWorkspaceIdRef = useRef\(\s*\(selectedWorkspaceId \|\| ""\)\.trim\(\),\s*\);/,
+  );
+  assert.match(
+    source,
+    /const normalizedWorkspaceId = \(selectedWorkspaceId \|\| ""\)\.trim\(\);[\s\S]*const previousWorkspaceId = previousSelectedWorkspaceIdRef\.current;[\s\S]*if \(previousWorkspaceId === normalizedWorkspaceId\) \{\s*return;\s*\}[\s\S]*previousSelectedWorkspaceIdRef\.current = normalizedWorkspaceId;/,
+  );
+  assert.match(source, /activeStreamIdRef\.current = null;/);
+  assert.match(source, /pendingInputIdRef\.current = null;/);
+  assert.match(source, /setQueuedSessionInputs\(\[\]\);/);
+  assert.match(source, /setDesktopMainSession\(null\);/);
+  assert.match(source, /setActiveSession\(null\);/);
+  assert.match(source, /clearSessionView\(\);/);
+  assert.match(
+    source,
+    /if \(activeStreamId\) \{\s*void closeStreamWithReason\(activeStreamId,\s*"selected_workspace_changed"\);\s*\}/,
+  );
+});
+
 test("chat pane preserves optimistic user messages across history refresh until the persisted message arrives", async () => {
   const source = await readFile(sourcePath, "utf8");
 

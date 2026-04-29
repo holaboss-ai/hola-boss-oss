@@ -3161,6 +3161,9 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   const localSessionOpenRequestRef = useRef<ChatPaneSessionOpenRequest | null>(
     null,
   );
+  const previousSelectedWorkspaceIdRef = useRef(
+    (selectedWorkspaceId || "").trim(),
+  );
   const draftParentSessionIdRef = useRef<string | null>(null);
   const draftHydrationWorkspaceIdRef = useRef(
     (selectedWorkspaceId || "").trim(),
@@ -5187,19 +5190,27 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   }, [verboseTelemetryEnabled]);
 
   useEffect(() => {
-    const activeStreamId = activeStreamIdRef.current;
-    if (!activeStreamId) {
+    const normalizedWorkspaceId = (selectedWorkspaceId || "").trim();
+    const previousWorkspaceId = previousSelectedWorkspaceIdRef.current;
+    if (previousWorkspaceId === normalizedWorkspaceId) {
       return;
     }
+    previousSelectedWorkspaceIdRef.current = normalizedWorkspaceId;
 
+    const activeStreamId = activeStreamIdRef.current;
     activeStreamIdRef.current = null;
+    pendingInputIdRef.current = null;
     activeAssistantMessageIdRef.current = null;
+    draftParentSessionIdRef.current = null;
     setIsResponding(false);
-    void closeStreamWithReason(activeStreamId, "selected_workspace_changed");
-  }, [selectedWorkspaceId]);
-
-  useEffect(() => {
     setQueuedSessionInputs([]);
+    setDesktopMainSession(null);
+    setActiveSession(null);
+    clearSessionView();
+
+    if (activeStreamId) {
+      void closeStreamWithReason(activeStreamId, "selected_workspace_changed");
+    }
   }, [selectedWorkspaceId]);
 
   useEffect(() => {
