@@ -23,18 +23,19 @@ test("desktop diagnostics export wires an About-pane button to the Electron brid
     ],
   );
 
-  assert.match(settingsSource, /Export Diagnostics Bundle/);
+  assert.match(settingsSource, /label="Diagnostics bundle"/);
+  assert.match(settingsSource, /label="Workspace"/);
   assert.match(
     settingsSource,
-    /window\.electronAPI\.diagnostics\.exportBundle\(\)/,
+    /window\.electronAPI\.diagnostics\.exportBundle\(\{\s*workspaceId,\s*\}\)/,
   );
   assert.match(
     preloadSource,
-    /diagnostics:\s*\{\s*exportBundle: \(\) =>\s*ipcRenderer\.invoke\("diagnostics:exportBundle"\)/,
+    /diagnostics:\s*\{\s*exportBundle: \(payload\?: DiagnosticsExportRequestPayload\) =>\s*ipcRenderer\.invoke\("diagnostics:exportBundle", payload\)/,
   );
   assert.match(
     rendererTypesSource,
-    /diagnostics:\s*\{\s*exportBundle: \(\) => Promise<DiagnosticsExportPayload>;/,
+    /exportBundle: \(\s*payload\?: DiagnosticsExportRequestPayload,\s*\) => Promise<DiagnosticsExportPayload>;/,
   );
 });
 
@@ -46,13 +47,17 @@ test("desktop diagnostics export snapshots runtime db and redacts runtime config
 
   assert.match(
     mainSource,
-    /handleTrustedIpc\("diagnostics:exportBundle", \["main"\], async \(\) =>\s*exportDesktopDiagnosticsBundle\(\),\s*\);/,
+    /handleTrustedIpc\(\s*"diagnostics:exportBundle",\s*\["main"\],\s*async \(_event, payload\?: DiagnosticsExportRequestPayload\) =>\s*exportDesktopDiagnosticsBundle\(payload\),\s*\);/,
   );
   assert.match(mainSource, /runtimeLogPath: runtimeLogsPath\(\),/);
   assert.match(mainSource, /runtimeDbPath: runtimeDatabasePath\(\),/);
   assert.match(mainSource, /runtimeConfigPath: runtimeConfigPath\(\),/);
+  assert.match(mainSource, /workspaceId: workspace\?\.id \?\? null,/);
+  assert.match(mainSource, /workspace: workspaceSummary,/);
   assert.match(mainSource, /shell\.showItemInFolder\(result\.bundlePath\);/);
   assert.match(bundleSource, /await database\.backup\(targetPath\);/);
+  assert.match(bundleSource, /copyWorkspaceScopedRuntimeDatabase/);
+  assert.match(bundleSource, /workspace\.json/);
   assert.match(bundleSource, /runtime-config\.redacted\.json/);
   assert.match(bundleSource, /REDACTED_VALUE = "\[REDACTED\]"/);
 });

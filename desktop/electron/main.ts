@@ -2508,6 +2508,10 @@ interface WorkspaceListResponsePayload {
   offset: number;
 }
 
+interface DiagnosticsExportRequestPayload {
+  workspaceId?: string | null;
+}
+
 interface SubmissionListResponsePayload {
   submissions: Array<{
     id: string;
@@ -5113,28 +5117,104 @@ function runtimeWorkspaceRoot() {
   return path.join(runtimeSandboxRoot(), "workspace");
 }
 
-function diagnosticsBundleFileName(date = new Date()) {
+function diagnosticsBundleWorkspaceSegment(
+  workspace: WorkspaceRecordPayload | null,
+) {
+  const label = workspace?.name?.trim() || workspace?.id?.trim() || "";
+  const sanitized = label
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return sanitized || null;
+}
+
+function diagnosticsBundleFileName(
+  date = new Date(),
+  workspace: WorkspaceRecordPayload | null = null,
+) {
   const timestamp = date
     .toISOString()
     .replace(/\.\d{3}Z$/, "Z")
     .replace(/:/g, "-");
+  const workspaceSegment = diagnosticsBundleWorkspaceSegment(workspace);
+  if (workspaceSegment) {
+    return `holaboss-diagnostics-${workspaceSegment}-${timestamp}.zip`;
+  }
   return `holaboss-diagnostics-${timestamp}.zip`;
 }
 
-async function exportDesktopDiagnosticsBundle() {
+function diagnosticsWorkspaceSummary(
+  workspace: WorkspaceRecordPayload | null,
+): Record<string, unknown> | null {
+  if (!workspace) {
+    return null;
+  }
+  return {
+    id: workspace.id,
+    name: workspace.name,
+    status: workspace.status,
+    harness: workspace.harness,
+    onboarding_status: workspace.onboarding_status,
+    created_at: workspace.created_at,
+    updated_at: workspace.updated_at,
+    deleted_at_utc: workspace.deleted_at_utc,
+    workspace_path: workspace.workspace_path ?? null,
+    folder_state: workspace.folder_state ?? null,
+  };
+}
+
+function resolveDiagnosticsWorkspace(
+  workspaceId?: string | null,
+): WorkspaceRecordPayload | null {
+  const normalizedWorkspaceId = workspaceId?.trim()
+    ? assertSafeWorkspaceId(workspaceId)
+    : "";
+  if (!normalizedWorkspaceId) {
+    return null;
+  }
+
+  let workspace =
+    listWorkspacesFromLocalDb().items.find(
+      (item) => item.id === normalizedWorkspaceId,
+    ) ?? null;
+  if (!workspace) {
+    try {
+      workspace = getWorkspaceRecord(normalizedWorkspaceId);
+    } catch {
+      workspace = null;
+    }
+  }
+  if (!workspace || workspace.deleted_at_utc) {
+    throw new Error("Selected workspace is not available for diagnostics export.");
+  }
+  return workspace;
+}
+
+async function exportDesktopDiagnosticsBundle(
+  payload?: DiagnosticsExportRequestPayload,
+) {
+  const workspace = resolveDiagnosticsWorkspace(payload?.workspaceId ?? null);
+  const workspaceSummary = diagnosticsWorkspaceSummary(workspace);
   const downloadsDir = app.getPath("downloads");
-  const bundlePath = path.join(downloadsDir, diagnosticsBundleFileName());
+  const bundlePath = path.join(
+    downloadsDir,
+    diagnosticsBundleFileName(new Date(), workspace),
+  );
   const { exportDiagnosticsBundle } = await import("./diagnostics-bundle.js");
   const result = await exportDiagnosticsBundle({
     bundlePath,
     runtimeLogPath: runtimeLogsPath(),
     runtimeDbPath: runtimeDatabasePath(),
     runtimeConfigPath: runtimeConfigPath(),
+    workspaceId: workspace?.id ?? null,
+    workspaceSummary,
     summary: {
       exported_at: utcNowIso(),
       app_version: app.getVersion(),
       platform: process.platform,
       arch: process.arch,
+      workspace: workspaceSummary,
       versions: {
         chrome: process.versions.chrome,
         electron: process.versions.electron,
@@ -5144,7 +5224,11 @@ async function exportDesktopDiagnosticsBundle() {
     },
   });
   shell.showItemInFolder(result.bundlePath);
-  return result;
+  return {
+    ...result,
+    workspaceId: workspace?.id ?? null,
+    workspaceName: workspace?.name ?? null,
+  };
 }
 
 function revealDiagnosticsBundle(targetPath: string): boolean {
@@ -24392,8 +24476,11 @@ app.whenReady().then(async () => {
       return data as { deleted: boolean };
     },
   );
-  handleTrustedIpc("diagnostics:exportBundle", ["main"], async () =>
-    exportDesktopDiagnosticsBundle(),
+  handleTrustedIpc(
+    "diagnostics:exportBundle",
+    ["main"],
+    async (_event, payload?: DiagnosticsExportRequestPayload) =>
+      exportDesktopDiagnosticsBundle(payload),
   );
   handleTrustedIpc(
     "diagnostics:revealBundle",
