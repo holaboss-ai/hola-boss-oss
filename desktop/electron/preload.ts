@@ -201,26 +201,6 @@ interface ClipboardImagePayload {
   height: number;
 }
 
-interface BrowserCommentCaptureAttachmentPayload {
-  id: string;
-  text: string;
-  elementLabel: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  mimeType: string;
-  base64: string;
-}
-
-interface BrowserCommentCapturePayload {
-  tabId: string;
-  pageTitle: string;
-  url: string;
-  comments: BrowserCommentCaptureAttachmentPayload[];
-  canceled: boolean;
-}
-
 interface AddressSuggestionPayload {
   id: string;
   url: string;
@@ -1526,8 +1506,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     stopLoading: () => ipcRenderer.invoke("browser:stopLoading") as Promise<BrowserTabListPayload>,
     captureScreenshotToClipboard: () =>
       ipcRenderer.invoke("browser:captureScreenshotToClipboard") as Promise<BrowserClipboardScreenshotPayload>,
-    captureCommentsForChat: () =>
-      ipcRenderer.invoke("browser:captureCommentsForChat") as Promise<BrowserCommentCapturePayload>,
     newTab: (targetUrl?: string) => ipcRenderer.invoke("browser:newTab", targetUrl) as Promise<BrowserTabListPayload>,
     setActiveTab: (tabId: string) => ipcRenderer.invoke("browser:setActiveTab", tabId) as Promise<BrowserTabListPayload>,
     closeTab: (tabId: string) => ipcRenderer.invoke("browser:closeTab", tabId) as Promise<BrowserTabListPayload>,
