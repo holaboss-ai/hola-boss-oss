@@ -1323,6 +1323,71 @@ function runtimeStateEffectiveStatus(
   );
 }
 
+type BrowserAudioContextConstructor = new (
+  contextOptions?: AudioContextOptions,
+) => AudioContext;
+
+let mainSessionCompletionChimeContext: AudioContext | null = null;
+
+function getMainSessionCompletionChimeContext(): AudioContext | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const AudioContextCtor: BrowserAudioContextConstructor | undefined =
+    window.AudioContext ??
+    (window as Window & { webkitAudioContext?: BrowserAudioContextConstructor })
+      .webkitAudioContext;
+  if (!AudioContextCtor) {
+    return null;
+  }
+  try {
+    mainSessionCompletionChimeContext ??= new AudioContextCtor();
+    return mainSessionCompletionChimeContext;
+  } catch {
+    return null;
+  }
+}
+
+function playMainSessionCompletionChime() {
+  const context = getMainSessionCompletionChimeContext();
+  if (!context) {
+    return;
+  }
+
+  const play = () => {
+    const startAt = context.currentTime + 0.015;
+    const tones = [
+      { frequency: 659.25, offset: 0, duration: 0.13, volume: 0.034 },
+      { frequency: 987.77, offset: 0.12, duration: 0.17, volume: 0.026 },
+    ];
+    for (const tone of tones) {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      const toneStart = startAt + tone.offset;
+      const toneEnd = toneStart + tone.duration;
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(tone.frequency, toneStart);
+      gain.gain.setValueAtTime(0.0001, toneStart);
+      gain.gain.exponentialRampToValueAtTime(tone.volume, toneStart + 0.018);
+      gain.gain.exponentialRampToValueAtTime(0.0001, toneEnd);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.onended = () => {
+        oscillator.disconnect();
+        gain.disconnect();
+      };
+      oscillator.start(toneStart);
+      oscillator.stop(toneEnd + 0.02);
+    }
+  };
+
+  if (context.state === "suspended") {
+    void context.resume().then(play).catch(() => undefined);
+    return;
+  }
+  play();
+}
+
 function defaultWorkspaceSessionTitle(
   kind: string | null | undefined,
   sessionId: string,
@@ -3129,6 +3194,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   const chatScrollbarBodyCursorRef = useRef<string | null>(null);
   const activeSessionIdRef = useRef<string | null>(null);
   const activeStreamIdRef = useRef<string | null>(null);
+  const activeSessionReadOnlyRef = useRef(false);
   const imageAttachmentPreviewObjectUrlRef = useRef<string | null>(null);
   const imageAttachmentPreviewRequestIdRef = useRef(0);
   const terminalEventTypeByInputIdRef = useRef<
@@ -3150,6 +3216,9 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   const seenMainDebugKeysRef = useRef<Set<string>>(new Set());
   const selectedWorkspaceRef = useRef<WorkspaceRecordPayload | null>(null);
   const desktopMainSessionIdRef = useRef("");
+  const playedMainSessionCompletionChimeKeysRef = useRef<Set<string>>(
+    new Set(),
+  );
   const isOnboardingVariant = variant === "onboarding";
   const pendingFocusRequestKeyRef = useRef<number | null>(focusRequestKey);
   const lastHandledSessionJumpRequestKeyRef = useRef(0);
@@ -4088,6 +4157,41 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     return Boolean(normalizedSessionId && normalizedSessionId !== mainSessionId);
   }
 
+  function maybePlayMainSessionCompletionChime(params: {
+    sessionId: string | null | undefined;
+    inputId?: string | null;
+    completedAt?: string | null;
+    terminalStatus?: string | null;
+  }) {
+    if (isOnboardingVariant || activeSessionReadOnlyRef.current) {
+      return;
+    }
+    const sessionId = (params.sessionId || "").trim();
+    const mainSessionId = desktopMainSessionIdRef.current.trim();
+    if (!sessionId || sessionId !== mainSessionId) {
+      return;
+    }
+    if ((params.terminalStatus || "").trim().toLowerCase() === "paused") {
+      return;
+    }
+
+    const uniqueToken =
+      (params.inputId || "").trim() || (params.completedAt || "").trim();
+    if (uniqueToken) {
+      const chimeKey = `${selectedWorkspaceId || ""}:${sessionId}:${uniqueToken}`;
+      const playedKeys = playedMainSessionCompletionChimeKeysRef.current;
+      if (playedKeys.has(chimeKey)) {
+        return;
+      }
+      if (playedKeys.size > 200) {
+        playedKeys.clear();
+      }
+      playedKeys.add(chimeKey);
+    }
+
+    playMainSessionCompletionChime();
+  }
+
   function flushLiveAssistantOutputSegment(
     tone: ChatMessage["tone"] = "default",
   ) {
@@ -4678,6 +4782,10 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   useEffect(() => {
     selectedWorkspaceRef.current = selectedWorkspace;
   }, [selectedWorkspace]);
+
+  useEffect(() => {
+    activeSessionReadOnlyRef.current = activeSessionReadOnly;
+  }, [activeSessionReadOnly]);
 
   useEffect(() => {
     desktopMainSessionIdRef.current = (desktopMainSession?.session_id || "")
@@ -5591,6 +5699,11 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
             completedStatus === "paused" ? "waiting" : "completed",
           );
           commitLiveAssistantMessage();
+          maybePlayMainSessionCompletionChime({
+            sessionId: eventSessionId,
+            inputId: eventInputId,
+            terminalStatus: completedStatus,
+          });
           setIsResponding(false);
           activeStreamIdRef.current = null;
           pendingInputIdRef.current = null;
@@ -5696,6 +5809,12 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
               : "completed",
           );
           commitLiveAssistantMessage();
+          maybePlayMainSessionCompletionChime({
+            sessionId: normalizedCurrentSessionId,
+            inputId: currentRuntimeInputId,
+            completedAt: currentState.last_turn_completed_at,
+            terminalStatus: currentState.last_turn_status ?? status,
+          });
         }
         activeAssistantMessageIdRef.current = null;
         pendingInputIdRef.current = null;
