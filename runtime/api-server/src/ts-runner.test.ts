@@ -1190,6 +1190,7 @@ test("runTsRunnerCli strips subagent orchestration tools from onboarding session
                 "holaboss_list_background_tasks",
                 "holaboss_cancel_subagent",
                 "holaboss_resume_subagent",
+                "holaboss_continue_subagent",
                 "holaboss_onboarding_complete",
               ],
             }),

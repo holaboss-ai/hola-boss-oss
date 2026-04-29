@@ -3884,6 +3884,19 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     const persistedInputIds = new Set(
       turnInputIdsFromHistoryMessages(page.history.messages),
     );
+    const shouldAttachLiveRunStream =
+      !activeStreamIdRef.current &&
+      !pendingInputIdRef.current &&
+      ["BUSY", "QUEUED"].includes(currentRuntimeStatus);
+    const renderedMessagesForDisplay =
+      shouldAttachLiveRunStream && currentRuntimeInputId
+        ? page.renderedMessages.filter(
+            (message) =>
+              message.role !== "assistant" ||
+              inputIdFromMessageId(message.id, "assistant") !==
+                currentRuntimeInputId,
+          )
+        : page.renderedMessages;
     const reconciledPendingOptimisticUserMessages =
       reconcilePendingOptimisticUserMessages(
         pendingOptimisticUserMessagesRef.current,
@@ -3898,7 +3911,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     );
     setMessages(
       mergePendingOptimisticUserMessages(
-        page.renderedMessages,
+        renderedMessagesForDisplay,
         reconciledPendingOptimisticUserMessages,
         {
           workspaceId,
@@ -3915,13 +3928,9 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
         activeStatus: currentRuntimeStatus,
       }),
     );
-    const hasAssistantMessage = page.renderedMessages.some(
+    const hasAssistantMessage = renderedMessagesForDisplay.some(
       (message) => message.role === "assistant",
     );
-    const shouldAttachLiveRunStream =
-      !activeStreamIdRef.current &&
-      !pendingInputIdRef.current &&
-      ["BUSY", "QUEUED"].includes(currentRuntimeStatus);
     const shouldAttachOnboardingBootstrapStream =
       shouldAttachLiveRunStream &&
       isOnboardingVariant &&

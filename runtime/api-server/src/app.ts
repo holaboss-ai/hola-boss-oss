@@ -4448,6 +4448,43 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
+  app.post("/api/v1/capabilities/runtime-tools/subagents/:subagentId/continue", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { subagentId: string };
+    try {
+      const workspaceId = requiredCapabilityWorkspaceId({
+        headers: request.headers as Record<string, unknown>,
+        body: request.body,
+      });
+      const sessionId = capabilitySessionId({
+        headers: request.headers as Record<string, unknown>,
+        body: request.body,
+      });
+      if (!sessionId) {
+        return sendError(reply, 400, "session_id is required");
+      }
+      return runtimeAgentToolsService.continueSubagent({
+        workspaceId,
+        sessionId,
+        inputId: capabilityInputId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        subagentId: requiredString(params.subagentId, "subagentId"),
+        instruction: requiredString(request.body.instruction, "instruction"),
+        title: nullableString(request.body.title) ?? undefined,
+        model: nullableString(request.body.model) ?? undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime continue subagent failed");
+    }
+  });
+
   app.post("/api/v1/capabilities/runtime-tools/images/generate", async (request, reply) => {
     if (!isRecord(request.body)) {
       return sendError(reply, 400, "request body must be an object");

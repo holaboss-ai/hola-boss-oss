@@ -245,8 +245,11 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
   assert.match(prompt.systemPrompt, /capable person texting the user back/);
   assert.match(prompt.systemPrompt, /Be concise and on-point\. Do not ramble, over-explain, or pad replies just to sound helpful\./);
   assert.match(prompt.systemPrompt, /Keep replies tight\. Do not blabber, wander, or repeat yourself\./);
+  assert.match(prompt.systemPrompt, /When the user request is ambiguous, ask a short clarifying question instead of guessing\./);
   assert.match(prompt.systemPrompt, /read\/query requests inline when appropriate\./);
   assert.match(prompt.systemPrompt, /route direct file edits, terminal execution, browser execution, and other state-changing implementation work to subagents\./);
+  assert.match(prompt.systemPrompt, /continue, transform, save, summarize, compare, or report on a previous child result, continue the relevant child session instead of spawning a brand-new child task\./);
+  assert.match(prompt.systemPrompt, /If multiple child sessions could match a continuation request, ask which one the user means before continuing\./);
   assert.match(prompt.systemPrompt, /Treat chat like the user is messaging their assistant in an IM, not like the final deliverable surface\./);
   assert.match(prompt.systemPrompt, /If the user asks for a report, brief, memo, digest, recap, write-up, or other deliverable that would be longer than a short chat reply, prefer producing it as an artifact through delegated background work/i);
   assert.match(prompt.systemPrompt, /When the user asks for a report-style deliverable, prefer delegating it so the result comes back as an artifact/i);

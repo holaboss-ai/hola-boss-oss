@@ -268,6 +268,27 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         required: ["subagent_id", "answer"],
         additionalProperties: false,
       };
+    case "holaboss_continue_subagent":
+      return {
+        type: "object",
+        properties: {
+          subagent_id: {
+            type: "string",
+            description: "Delegated background task id whose child session should receive the continuation.",
+          },
+          instruction: {
+            type: "string",
+            description: "The follow-up instruction to run in the same child session.",
+          },
+          title: {
+            type: "string",
+            description: "Optional updated display title for the continued task.",
+          },
+          model: { type: "string", description: "Optional model override for the continuation turn." },
+        },
+        required: ["subagent_id", "instruction"],
+        additionalProperties: false,
+      };
     case "image_generate":
       return {
         type: "object",
@@ -684,6 +705,14 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "Use `holaboss_resume_subagent` when a delegated task is waiting on user input and the user has provided that answer.",
       "Resume the same paused subagent run instead of delegating a brand-new task when the user is answering an explicit blocker question.",
       "Pass only the answer needed to continue the task; do not restate the entire conversation unless it materially changes the task.",
+    ];
+  }
+  if (toolId === "holaboss_continue_subagent") {
+    return [
+      "Use `holaboss_continue_subagent` when the user asks to transform, save, refine, compare, or otherwise continue the result of a completed delegated task.",
+      "Prefer continuing the existing child session for referential requests like 'turn that into a report', 'save item 2', 'summarize those', or 'compare them'.",
+      "If it is unclear which delegated task the user means, ask a short clarifying question before continuing.",
+      "Do not start a fresh delegated task for a true continuation of the most recent relevant child result.",
     ];
   }
   if (toolId === "todoread") {

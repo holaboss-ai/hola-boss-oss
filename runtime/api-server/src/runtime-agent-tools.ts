@@ -131,6 +131,16 @@ export interface RuntimeAgentToolsResumeSubagentParams {
   model?: string | null;
 }
 
+export interface RuntimeAgentToolsContinueSubagentParams {
+  workspaceId: string;
+  sessionId: string;
+  inputId?: string | null;
+  subagentId: string;
+  instruction: string;
+  title?: string | null;
+  model?: string | null;
+}
+
 export interface RuntimeAgentToolsListBackgroundTasksParams {
   workspaceId: string;
   sessionId?: string | null;
@@ -372,6 +382,12 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/subagents/:subagentId/resume",
     description: runtimeToolBaseDefinition("holaboss_resume_subagent").description
+  },
+  {
+    id: runtimeToolBaseDefinition("holaboss_continue_subagent").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/subagents/:subagentId/continue",
+    description: runtimeToolBaseDefinition("holaboss_continue_subagent").description
   },
   {
     id: runtimeToolBaseDefinition("image_generate").id,
@@ -1669,6 +1685,114 @@ export class RuntimeAgentToolsService {
         eventIds: staleWaitingEventIds,
       });
     }
+    this.options.queueWorker?.wake();
+    return subagentRunPayload(this.syncSubagentRunState(updated));
+  }
+
+  continueSubagent(params: RuntimeAgentToolsContinueSubagentParams): JsonObject {
+    this.requireWorkspace(params.workspaceId);
+    const controllerSession = this.requireSubagentControllerSession(params.workspaceId, params.sessionId);
+    const instruction = normalizedString(params.instruction);
+    if (!instruction) {
+      throw new RuntimeAgentToolsServiceError(400, "subagent_instruction_required", "instruction is required");
+    }
+    const state = this.syncSubagentRunForOwner({
+      workspaceId: params.workspaceId,
+      subagentId: params.subagentId,
+      ownerMainSessionId: controllerSession.sessionId,
+    });
+    if (["queued", "running"].includes(state.run.status)) {
+      throw new RuntimeAgentToolsServiceError(
+        409,
+        "subagent_already_active",
+        "subagent is already active",
+      );
+    }
+    if (state.run.status === "waiting_on_user") {
+      throw new RuntimeAgentToolsServiceError(
+        409,
+        "subagent_waiting_on_user",
+        "subagent is waiting on user input; use resume instead",
+      );
+    }
+    const effectiveModel = normalizedString(params.model) || state.run.effectiveModel || null;
+    const parentInput = normalizedString(params.inputId)
+      ? this.store.getInput(normalizedString(params.inputId))
+      : null;
+    const forwardedAttachments = attachmentsFromInputPayload(parentInput?.payload.attachments);
+    const forwardedImageUrls = normalizedStringList(parentInput?.payload.image_urls);
+    const forwardedQuotedSkillIds = quotedSkillIdsFromInstruction(parentInput?.payload.text);
+    const continuationInstruction = serializeQuotedSkillPrompt(
+      subagentInstruction({
+        goal: instruction,
+        context:
+          "Continue from your previous result in this same child session. Do not treat this as a brand-new unrelated task.",
+      }),
+      forwardedQuotedSkillIds,
+    );
+    this.store.ensureSession(
+      {
+        workspaceId: params.workspaceId,
+        sessionId: state.run.childSessionId,
+        kind: "subagent",
+        parentSessionId: controllerSession.sessionId,
+        title: normalizedString(params.title) || state.run.title,
+        archivedAt: null,
+      },
+      { touchExisting: false },
+    );
+    const continuedInput = this.store.enqueueInput({
+      workspaceId: params.workspaceId,
+      sessionId: state.run.childSessionId,
+      payload: {
+        text: continuationInstruction,
+        attachments: forwardedAttachments,
+        image_urls: forwardedImageUrls,
+        model: effectiveModel,
+        context: {
+          source: "subagent_continue",
+          subagent_id: state.run.subagentId,
+          origin_main_session_id: state.run.originMainSessionId,
+          owner_main_session_id: controllerSession.sessionId,
+          parent_session_id: controllerSession.sessionId,
+          parent_input_id: normalizedString(params.inputId) || null,
+          continued_from_input_id: state.run.latestChildInputId,
+          continued_from_status: state.run.status,
+        },
+      },
+    });
+    this.store.updateRuntimeState({
+      workspaceId: params.workspaceId,
+      sessionId: state.run.childSessionId,
+      status: "QUEUED",
+      currentInputId: continuedInput.inputId,
+      currentWorkerId: null,
+      leaseUntil: null,
+      heartbeatAt: null,
+      lastError: null,
+    });
+    const nextTitle = normalizedSubagentTaskTitle(params.title, instruction);
+    const updated =
+      this.store.updateSubagentRun({
+        subagentId: state.run.subagentId,
+        fields: {
+          parentInputId: normalizedString(params.inputId) || state.run.parentInputId,
+          ownerMainSessionId: controllerSession.sessionId,
+          currentChildInputId: continuedInput.inputId,
+          latestChildInputId: continuedInput.inputId,
+          title: normalizedString(params.title) ? nextTitle : state.run.title,
+          status: "queued",
+          summary: null,
+          blockingPayload: null,
+          resultPayload: null,
+          errorPayload: null,
+          completedAt: null,
+          cancelledAt: null,
+          effectiveModel,
+          latestProgressPayload: null,
+          lastEventAt: null,
+        },
+      }) ?? state.run;
     this.options.queueWorker?.wake();
     return subagentRunPayload(this.syncSubagentRunState(updated));
   }

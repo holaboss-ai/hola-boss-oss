@@ -13,6 +13,7 @@ export interface HarnessDesktopBrowserToolOptions {
   runtimeApiBaseUrl: string;
   workspaceId?: string | null;
   sessionId?: string | null;
+  inputId?: string | null;
   space?: "agent" | "user" | null;
   fetchImpl?: typeof fetch;
 }
@@ -406,6 +407,7 @@ export function createHarnessDesktopBrowserToolDefinition(
         runtimeApiBaseUrl: options.runtimeApiBaseUrl,
         workspaceId: options.workspaceId,
         sessionId: options.sessionId,
+        inputId: options.inputId,
         space: options.space,
         fetchImpl: options.fetchImpl,
         signal,
@@ -426,6 +428,7 @@ export async function resolveHarnessDesktopBrowserToolDefinitions(
     runtimeApiBaseUrl?: string | null;
     workspaceId?: string | null;
     sessionId?: string | null;
+    inputId?: string | null;
     space?: "agent" | "user" | null;
     fetchImpl?: typeof fetch;
   } = {},
@@ -441,6 +444,7 @@ export async function resolveHarnessDesktopBrowserToolDefinitions(
     runtimeApiBaseUrl,
     workspaceId: options.workspaceId,
     sessionId: options.sessionId,
+    inputId: options.inputId,
     space: options.space,
     fetchImpl: options.fetchImpl,
   });

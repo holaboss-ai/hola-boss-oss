@@ -64,6 +64,12 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS = [
     policy: "mutate"
   },
   {
+    id: "holaboss_continue_subagent",
+    description:
+      "Continue a completed delegated background task by sending a new instruction into the same child session.",
+    policy: "mutate"
+  },
+  {
     id: "image_generate",
     description: "Generate an image file in the current workspace using the configured image generation provider and model.",
     policy: "mutate"

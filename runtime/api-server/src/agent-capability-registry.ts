@@ -1291,6 +1291,11 @@ export function renderCapabilityToolRoutingPromptSection(
     lines.push("Only surface a hard capability limitation to the user when neither the current run nor delegated subagents can actually carry out the request.");
     lines.push("Do not simulate waiting on a delegated task by repeatedly calling `holaboss_get_subagent` or `holaboss_list_background_tasks` in the same turn after you just spawned it.");
   }
+  if (manifest.runtime_tools.some((capability) => capability.id === "holaboss_continue_subagent")) {
+    ensureHeading();
+    lines.push("Continuation routing: when the user asks to continue, transform, save, summarize, compare, or report on a previous delegated result, use `holaboss_continue_subagent` on the relevant completed child session instead of creating a brand-new delegated task.");
+    lines.push("If more than one prior child result could match a continuation request, ask which one the user means before continuing.");
+  }
   if (manifest.runtime_tools.some((capability) => capability.id === "terminal_session_start")) {
     ensureHeading();
     lines.push("Background terminal routing: prefer `terminal_session_start` for long-running, interactive, or revisitable shell work such as dev servers, watch mode, and background jobs.");

@@ -15,6 +15,7 @@ export interface BrowserCapabilityClientOptions {
   runtimeApiBaseUrl: string;
   workspaceId?: string | null;
   sessionId?: string | null;
+  inputId?: string | null;
   space?: "agent" | "user" | null;
   fetchImpl?: typeof fetch;
 }
@@ -30,6 +31,7 @@ function capabilityToolUrl(runtimeApiBaseUrl: string, toolId: DesktopBrowserTool
 export function browserCapabilityHeaders(
   workspaceId?: string | null,
   sessionId?: string | null,
+  inputId?: string | null,
   space?: "agent" | "user" | null,
 ): Record<string, string> {
   const headers: Record<string, string> = {};
@@ -40,6 +42,10 @@ export function browserCapabilityHeaders(
   const normalizedSessionId = typeof sessionId === "string" ? sessionId.trim() : "";
   if (normalizedSessionId) {
     headers["x-holaboss-session-id"] = normalizedSessionId;
+  }
+  const normalizedInputId = typeof inputId === "string" ? inputId.trim() : "";
+  if (normalizedInputId) {
+    headers["x-holaboss-input-id"] = normalizedInputId;
   }
   if (space === "agent" || space === "user") {
     headers["x-holaboss-browser-space"] = space;
@@ -58,7 +64,7 @@ export async function browserCapabilityAvailable(
     const response = await requestCapabilityJson({
       url: capabilityStatusUrl(options.runtimeApiBaseUrl),
       method: "GET",
-      headers: browserCapabilityHeaders(options.workspaceId, options.sessionId, options.space),
+      headers: browserCapabilityHeaders(options.workspaceId, options.sessionId, options.inputId, options.space),
       signal: AbortSignal.timeout(2000),
       fetchImpl: options.fetchImpl,
     });
@@ -86,7 +92,7 @@ export async function executeBrowserCapabilityTool(params: BrowserCapabilityClie
     method: "POST",
     headers: {
       "content-type": "application/json; charset=utf-8",
-      ...browserCapabilityHeaders(params.workspaceId, params.sessionId, params.space),
+      ...browserCapabilityHeaders(params.workspaceId, params.sessionId, params.inputId, params.space),
     },
     body: JSON.stringify(isRecord(params.toolParams) ? params.toolParams : {}),
     signal: toolRequestSignal(params.signal, DEFAULT_BROWSER_TOOL_TIMEOUT_MS),

@@ -203,6 +203,15 @@ function createResumeSubagentBody(toolParams: unknown): Record<string, unknown> 
   };
 }
 
+function createContinueSubagentBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    instruction: String(params.instruction ?? ""),
+    ...(optionalString(params.title) ? { title: optionalString(params.title) } : {}),
+    ...(optionalString(params.model) ? { model: optionalString(params.model) } : {}),
+  };
+}
+
 function createDownloadUrlBody(toolParams: unknown): Record<string, unknown> {
   const params = isRecord(toolParams) ? toolParams : {};
   return {
@@ -448,6 +457,12 @@ function requestPlan(
         method: "POST",
         requestPath: `${subagentPath(isRecord(toolParams) ? toolParams.subagent_id : undefined)}/resume`,
         body: createResumeSubagentBody(toolParams),
+      };
+    case "holaboss_continue_subagent":
+      return {
+        method: "POST",
+        requestPath: `${subagentPath(isRecord(toolParams) ? toolParams.subagent_id : undefined)}/continue`,
+        body: createContinueSubagentBody(toolParams),
       };
     case "image_generate":
       return { method: "POST", requestPath: RUNTIME_TOOLS_IMAGE_GENERATE_PATH, body: createImageGenerationBody(toolParams) };

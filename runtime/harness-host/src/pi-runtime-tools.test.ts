@@ -327,10 +327,12 @@ test("Pi runtime subagent tools normalize delegated task bodies and control rout
   const getTool = tools.find((tool) => tool.name === "holaboss_get_subagent");
   const listTool = tools.find((tool) => tool.name === "holaboss_list_background_tasks");
   const cancelTool = tools.find((tool) => tool.name === "holaboss_cancel_subagent");
+  const continueTool = tools.find((tool) => tool.name === "holaboss_continue_subagent");
   assert.ok(delegateTool);
   assert.ok(getTool);
   assert.ok(listTool);
   assert.ok(cancelTool);
+  assert.ok(continueTool);
 
   await delegateTool.execute(
     "call-1",
@@ -367,6 +369,17 @@ test("Pi runtime subagent tools normalize delegated task bodies and control rout
     "call-4",
     {
       subagent_id: "subagent-1",
+    },
+    undefined,
+    undefined,
+    {} as never,
+  );
+  await continueTool.execute(
+    "call-5",
+    {
+      subagent_id: "subagent-1",
+      instruction: "Turn those results into a short report.",
+      title: "Report from topic A",
     },
     undefined,
     undefined,
@@ -409,6 +422,16 @@ test("Pi runtime subagent tools normalize delegated task bodies and control rout
       workspaceId: "workspace-1",
       sessionId: "session-main",
       body: JSON.stringify({}),
+    },
+    {
+      method: "POST",
+      url: "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/subagents/subagent-1/continue",
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      body: JSON.stringify({
+        instruction: "Turn those results into a short report.",
+        title: "Report from topic A",
+      }),
     },
   ]);
 });

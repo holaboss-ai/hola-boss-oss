@@ -1761,6 +1761,23 @@ test("chat pane idly refreshes the active main session to surface autonomous bac
   );
 });
 
+test("chat pane suppresses the in-flight assistant history row when attaching a live stream", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const renderedMessagesForDisplay =\s*shouldAttachLiveRunStream && currentRuntimeInputId\s*\?\s*page\.renderedMessages\.filter\(\s*\(message\) =>\s*message\.role !== "assistant" \|\|\s*inputIdFromMessageId\(message\.id, "assistant"\) !==\s*currentRuntimeInputId,\s*\)\s*:\s*page\.renderedMessages;/,
+  );
+  assert.match(
+    source,
+    /setMessages\(\s*mergePendingOptimisticUserMessages\(\s*renderedMessagesForDisplay,/,
+  );
+  assert.match(
+    source,
+    /const hasAssistantMessage = renderedMessagesForDisplay\.some\(\s*\(message\) => message\.role === "assistant",\s*\);/,
+  );
+});
+
 test("chat pane reconciles missed autonomous main-session follow-ups before appending a new user turn", async () => {
   const source = await readFile(sourcePath, "utf8");
 
