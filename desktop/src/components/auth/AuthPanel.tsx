@@ -12,6 +12,7 @@ import {
   Plug,
   Plus,
   RefreshCw,
+  Search,
   ShieldCheck,
   Terminal,
   Unplug,
@@ -132,6 +133,24 @@ interface ProviderDraft {
 
 type ProviderDraftMap = Record<KnownProviderId, ProviderDraft>;
 
+const WEB_SEARCH_PROVIDER_ORDER = ["holaboss_search", "exa"] as const;
+type WebSearchProviderId = (typeof WEB_SEARCH_PROVIDER_ORDER)[number];
+
+interface WebSearchProviderTemplate {
+  id: WebSearchProviderId;
+  label: string;
+  description: string;
+  kind: "holaboss_search" | "exa_hosted_mcp";
+  defaultBaseUrl: string;
+  apiKeyPlaceholder: string;
+}
+
+interface WebSearchDraft {
+  providerId: WebSearchProviderId;
+  baseUrl: string;
+  apiKey: string;
+}
+
 type BackgroundTasksDraftProviderId = KnownProviderId | "";
 
 interface BackgroundTasksDraft {
@@ -179,6 +198,28 @@ interface ProviderSettingsSnapshot {
   recallEmbeddings: RecallEmbeddingsDraft;
   imageGeneration: ImageGenerationDraft;
 }
+
+const WEB_SEARCH_PROVIDER_TEMPLATES: Record<
+  WebSearchProviderId,
+  WebSearchProviderTemplate
+> = {
+  holaboss_search: {
+    id: "holaboss_search",
+    label: "Holaboss Search",
+    description: "Managed search through your Holaboss account.",
+    kind: "holaboss_search",
+    defaultBaseUrl: "https://api.holaboss.ai/api/v1/search/web",
+    apiKeyPlaceholder: "",
+  },
+  exa: {
+    id: "exa",
+    label: "Exa",
+    description: "Exa hosted MCP web search with an optional Exa API key.",
+    kind: "exa_hosted_mcp",
+    defaultBaseUrl: "https://mcp.exa.ai/mcp",
+    apiKeyPlaceholder: "Optional Exa API key",
+  },
+};
 
 const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
   {
@@ -329,6 +370,50 @@ const RECALL_EMBEDDING_MODEL_SUGGESTIONS: Record<
 
 function isKnownProviderId(value: string): value is KnownProviderId {
   return KNOWN_PROVIDER_ORDER.includes(value as KnownProviderId);
+}
+
+function webSearchProviderDraftId(value: string): WebSearchProviderId {
+  const normalized = value.trim().toLowerCase().replace(/[-\s]+/g, "_");
+  if (normalized === "holaboss" || normalized === "holaboss_search") {
+    return "holaboss_search";
+  }
+  return "exa";
+}
+
+function webSearchProviderStorageId(providerId: WebSearchProviderId): string {
+  return providerId === "holaboss_search" ? "holaboss_search" : "exa";
+}
+
+function isManagedWebSearchProvider(providerId: WebSearchProviderId): boolean {
+  return providerId === "holaboss_search";
+}
+
+function runtimeConfigHasManagedWebSearchBinding(
+  runtimeConfig: RuntimeConfigPayload | null,
+): boolean {
+  return (
+    Boolean(runtimeConfig?.authTokenPresent) &&
+    Boolean((runtimeConfig?.userId || "").trim()) &&
+    Boolean((runtimeConfig?.controlPlaneBaseUrl || "").trim())
+  );
+}
+
+function createDefaultWebSearchDraft(): WebSearchDraft {
+  return {
+    providerId: "exa",
+    baseUrl: WEB_SEARCH_PROVIDER_TEMPLATES.exa.defaultBaseUrl,
+    apiKey: "",
+  };
+}
+
+function defaultHolabossSearchBaseUrl(
+  runtimeConfig: RuntimeConfigPayload | null,
+): string {
+  const baseUrl = (runtimeConfig?.controlPlaneBaseUrl ?? "").trim();
+  if (!baseUrl) {
+    return WEB_SEARCH_PROVIDER_TEMPLATES.holaboss_search.defaultBaseUrl;
+  }
+  return `${baseUrl.replace(/\/+$/, "")}/api/v1/search/web`;
 }
 
 function createDefaultProviderDrafts(): ProviderDraftMap {
@@ -1171,6 +1256,59 @@ function deriveLegacyImageGenerationDraft(
   return matches[0] ?? createDefaultImageGenerationDraft();
 }
 
+function deriveWebSearchDraftFromDocument(
+  document: Record<string, unknown>,
+  runtimeConfig: RuntimeConfigPayload | null,
+): WebSearchDraft {
+  const webSearchPayload = asRecord(
+    document.web_search ?? document.webSearch ?? document.search,
+  );
+  const configuredProviderId = firstNonEmptyString(
+    webSearchPayload.provider as string | undefined,
+    webSearchPayload.provider_id as string | undefined,
+    webSearchPayload.providerId as string | undefined,
+    webSearchPayload.default_provider as string | undefined,
+  );
+  const selectedProviderId = configuredProviderId
+    ? webSearchProviderDraftId(configuredProviderId)
+    : runtimeConfigHasManagedWebSearchBinding(runtimeConfig)
+      ? "holaboss_search"
+      : "exa";
+  const providersPayload = asRecord(webSearchPayload.providers);
+  const storageId = webSearchProviderStorageId(selectedProviderId);
+  const providerPayload = asRecord(
+    providersPayload[storageId] ??
+      providersPayload[
+        selectedProviderId === "holaboss_search"
+          ? "holaboss"
+          : "exa_hosted_mcp"
+      ],
+  );
+  const template = WEB_SEARCH_PROVIDER_TEMPLATES[selectedProviderId];
+  const defaultBaseUrl =
+    selectedProviderId === "holaboss_search"
+      ? defaultHolabossSearchBaseUrl(runtimeConfig)
+      : template.defaultBaseUrl;
+  return {
+    providerId: selectedProviderId,
+    baseUrl: firstNonEmptyString(
+      providerPayload.base_url as string | undefined,
+      providerPayload.baseURL as string | undefined,
+      providerPayload.url as string | undefined,
+      webSearchPayload.base_url as string | undefined,
+      webSearchPayload.baseURL as string | undefined,
+      webSearchPayload.url as string | undefined,
+      defaultBaseUrl,
+    ),
+    apiKey: firstNonEmptyString(
+      providerPayload.api_key as string | undefined,
+      providerPayload.apiKey as string | undefined,
+      providerPayload.auth_token as string | undefined,
+      providerPayload.authToken as string | undefined,
+    ),
+  };
+}
+
 function ProviderBrandIcon({
   providerId,
   className,
@@ -1455,6 +1593,15 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     useState<RecallEmbeddingsDraft>(() => createDefaultRecallEmbeddingsDraft());
   const [imageGenerationDraft, setImageGenerationDraft] =
     useState<ImageGenerationDraft>(() => createDefaultImageGenerationDraft());
+  const [webSearchDraft, setWebSearchDraft] = useState<WebSearchDraft>(() =>
+    createDefaultWebSearchDraft(),
+  );
+  const [hydratedWebSearchDocument, setHydratedWebSearchDocument] =
+    useState<string | null>(null);
+  const [isWebSearchDraftDirty, setIsWebSearchDraftDirty] = useState(false);
+  const [webSearchSaveStatus, setWebSearchSaveStatus] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
   const [showAdvancedRuntimeSettings, setShowAdvancedRuntimeSettings] =
     useState(false);
   const [expandedProviderId, setExpandedProviderId] =
@@ -1582,7 +1729,21 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     setRecallEmbeddingsDraft(derived.recallEmbeddings);
     setImageGenerationDraft(derived.imageGeneration);
     setHydratedRuntimeConfigDocument(runtimeConfigDocument);
-  }, [effectiveRuntimeConfig, isProviderDraftDirty, runtimeConfigDocument]);
+    if (!isWebSearchDraftDirty) {
+      setWebSearchDraft(
+        deriveWebSearchDraftFromDocument(
+          parseRuntimeConfigDocument(runtimeConfigDocument),
+          effectiveRuntimeConfig,
+        ),
+      );
+      setHydratedWebSearchDocument(runtimeConfigDocument);
+    }
+  }, [
+    effectiveRuntimeConfig,
+    isProviderDraftDirty,
+    isWebSearchDraftDirty,
+    runtimeConfigDocument,
+  ]);
 
   useEffect(() => {
     if (
@@ -1649,6 +1810,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   ]);
 
   const isSignedIn = Boolean(sessionUserId(session));
+  const hasHydratedWebSearchDraft =
+    hasLoadedRuntimeConfigDocument &&
+    hydratedWebSearchDocument === runtimeConfigDocument;
 
   // Auto-pick a sensible default chat model the first time a signed-in
   // user lands on this panel. Holaboss-managed gpt-5.4 is the house
@@ -1980,6 +2144,33 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     setProviderSaveStatus("idle");
     setAuthError("");
     setAuthMessage("");
+  }
+
+  function markWebSearchSettingsDirty() {
+    setIsWebSearchDraftDirty(true);
+    setWebSearchSaveStatus("idle");
+    setAuthError("");
+    setAuthMessage("");
+  }
+
+  function updateWebSearchDraft(update: Partial<WebSearchDraft>) {
+    setWebSearchDraft((current) => ({
+      ...current,
+      ...update,
+    }));
+    markWebSearchSettingsDirty();
+  }
+
+  function applyWebSearchProviderSelection(providerId: WebSearchProviderId) {
+    const template = WEB_SEARCH_PROVIDER_TEMPLATES[providerId];
+    updateWebSearchDraft({
+      providerId,
+      baseUrl:
+        isManagedWebSearchProvider(providerId)
+          ? defaultHolabossSearchBaseUrl(effectiveRuntimeConfig)
+          : template.defaultBaseUrl,
+      apiKey: "",
+    });
   }
 
   function updateProviderDraft(
@@ -2422,6 +2613,94 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       );
       setProviderSaveStatus("error");
       return null;
+    } finally {
+      setIsSavingRuntimeConfigDocument(false);
+    }
+  }
+
+  async function handleSaveWebSearchSettings() {
+    if (!window.electronAPI) {
+      return;
+    }
+    const template = WEB_SEARCH_PROVIDER_TEMPLATES[webSearchDraft.providerId];
+    const managedProvider = isManagedWebSearchProvider(webSearchDraft.providerId);
+    const normalizedBaseUrl = managedProvider ? "" : webSearchDraft.baseUrl.trim();
+    if (!managedProvider && !normalizedBaseUrl) {
+      setAuthError(`${template.label} requires an endpoint URL.`);
+      setAuthMessage("");
+      setWebSearchSaveStatus("error");
+      return;
+    }
+
+    setWebSearchSaveStatus("saving");
+    setAuthError("");
+    setAuthMessage("");
+    setIsSavingRuntimeConfigDocument(true);
+    try {
+      const currentDocumentText =
+        await window.electronAPI.runtime.getConfigDocument();
+      const currentDocument = parseRuntimeConfigDocument(currentDocumentText);
+      const currentWebSearch = asRecord(
+        currentDocument.web_search ??
+          currentDocument.webSearch ??
+          currentDocument.search,
+      );
+      const currentProviders = asRecord(currentWebSearch.providers);
+      const storageId = webSearchProviderStorageId(webSearchDraft.providerId);
+      const currentProviderPayload = asRecord(currentProviders[storageId]);
+      const nextProviderPayload: Record<string, unknown> = {
+        ...currentProviderPayload,
+        kind: template.kind,
+      };
+      if (managedProvider) {
+        delete nextProviderPayload.base_url;
+        delete nextProviderPayload.baseURL;
+        delete nextProviderPayload.url;
+      } else {
+        nextProviderPayload.base_url = normalizedBaseUrl;
+      }
+      const normalizedApiKey = managedProvider ? "" : webSearchDraft.apiKey.trim();
+      if (normalizedApiKey) {
+        nextProviderPayload.api_key = normalizedApiKey;
+      } else {
+        delete nextProviderPayload.api_key;
+        delete nextProviderPayload.apiKey;
+        delete nextProviderPayload.auth_token;
+        delete nextProviderPayload.authToken;
+      }
+      const nextWebSearch = {
+        ...currentWebSearch,
+        provider: storageId,
+        providers: {
+          ...currentProviders,
+          [storageId]: nextProviderPayload,
+        },
+      };
+      const nextDocument: Record<string, unknown> = {
+        ...currentDocument,
+        web_search: nextWebSearch,
+      };
+      delete nextDocument.webSearch;
+      delete nextDocument.search;
+      const nextDocumentText = `${JSON.stringify(nextDocument, null, 2)}\n`;
+      const nextConfig =
+        await window.electronAPI.runtime.setConfigDocument(nextDocumentText);
+      setRuntimeConfig(nextConfig);
+      setRuntimeConfigDocument(nextDocumentText);
+      setWebSearchDraft(
+        deriveWebSearchDraftFromDocument(nextDocument, nextConfig),
+      );
+      setHydratedWebSearchDocument(nextDocumentText);
+      setIsWebSearchDraftDirty(false);
+      setWebSearchSaveStatus("saved");
+      setAuthMessage(`${template.label} search settings saved.`);
+    } catch (error) {
+      setAuthError(
+        error instanceof Error
+          ? error.message
+          : "Failed to save web search settings.",
+      );
+      setWebSearchSaveStatus("error");
     } finally {
       setIsSavingRuntimeConfigDocument(false);
     }
@@ -3131,6 +3410,20 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const defaultChatModelMatched = defaultChatModelOptions.some(
     (option) => option.value === defaultChatModelToken,
   );
+  const selectedWebSearchTemplate =
+    WEB_SEARCH_PROVIDER_TEMPLATES[webSearchDraft.providerId];
+  const selectedWebSearchProviderManaged = isManagedWebSearchProvider(
+    webSearchDraft.providerId,
+  );
+  const webSearchProviderOptions: SettingsMenuOption[] =
+    WEB_SEARCH_PROVIDER_ORDER.map((providerId) => {
+      const template = WEB_SEARCH_PROVIDER_TEMPLATES[providerId];
+      return {
+        value: providerId,
+        label: template.label,
+        description: template.description,
+      };
+    });
   const handleDefaultChatModelChange = async (token: string) => {
     if (!window.electronAPI || !token) return;
     try {
@@ -3268,6 +3561,98 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             </DropdownMenuContent>
           </DropdownMenu>
         ) : null}
+      </SettingsSection>
+
+      <SettingsSection
+        title="Web search"
+        description="Choose the provider behind the agent's web_search tool."
+      >
+        <SettingsCard>
+          <SettingsMenuSelectRow
+            label="Search provider"
+            description={selectedWebSearchTemplate.description}
+            leading={<Search className="size-4 text-muted-foreground" />}
+            value={webSearchDraft.providerId}
+            onValueChange={(value) =>
+              applyWebSearchProviderSelection(webSearchProviderDraftId(value))
+            }
+            options={webSearchProviderOptions}
+            triggerWidth="w-[220px]"
+            disabled={
+              !hasHydratedWebSearchDraft || webSearchSaveStatus === "saving"
+            }
+          />
+          {!selectedWebSearchProviderManaged ? (
+            <>
+              <SettingsRow
+                label="Endpoint URL"
+                description="The search endpoint the runtime calls for web_search."
+              >
+                <Input
+                  className="w-[min(320px,40vw)]"
+                  value={webSearchDraft.baseUrl}
+                  onChange={(event) =>
+                    updateWebSearchDraft({ baseUrl: event.target.value })
+                  }
+                  placeholder={selectedWebSearchTemplate.defaultBaseUrl}
+                  disabled={
+                    !hasHydratedWebSearchDraft ||
+                    webSearchSaveStatus === "saving"
+                  }
+                  spellCheck={false}
+                />
+              </SettingsRow>
+              <SettingsRow
+                label="API key"
+                description="Optional for Exa hosted MCP; required for your own Exa quota."
+              >
+                <Input
+                  type="password"
+                  className="w-[min(320px,40vw)]"
+                  value={webSearchDraft.apiKey}
+                  onChange={(event) =>
+                    updateWebSearchDraft({ apiKey: event.target.value })
+                  }
+                  placeholder={selectedWebSearchTemplate.apiKeyPlaceholder}
+                  disabled={
+                    !hasHydratedWebSearchDraft ||
+                    webSearchSaveStatus === "saving"
+                  }
+                  spellCheck={false}
+                />
+              </SettingsRow>
+            </>
+          ) : null}
+          <SettingsRow
+            label="Search settings"
+            description={
+              webSearchSaveStatus === "saved"
+                ? "Saved. The runtime was restarted with the new search settings."
+                : "Save changes before running web_search."
+            }
+          >
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void handleSaveWebSearchSettings()}
+              disabled={
+                !hasHydratedWebSearchDraft ||
+                !isWebSearchDraftDirty ||
+                webSearchSaveStatus === "saving"
+              }
+            >
+              {webSearchSaveStatus === "saving" ? (
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                "Save"
+              )}
+            </Button>
+          </SettingsRow>
+        </SettingsCard>
       </SettingsSection>
 
       <SettingsSection title="Advanced settings">

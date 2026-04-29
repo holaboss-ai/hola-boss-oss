@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { resolvePiWebSearchToolDefinitions } from "./pi-web-search.js";
@@ -9,6 +12,7 @@ test("Pi web search tool proxies Exa hosted MCP and returns the raw text block",
     init?: RequestInit;
   }> = [];
   const tools = await resolvePiWebSearchToolDefinitions({
+    providerKind: "exa_hosted_mcp",
     fetchImpl: async (input, init) => {
       requests.push({ url: String(input), init });
       return new Response(
@@ -81,6 +85,7 @@ test("Pi web search tool proxies Exa hosted MCP and returns the raw text block",
 test("Pi web search tool supports max_results as a compatibility alias for num_results", async () => {
   let requestBody = "";
   const tools = await resolvePiWebSearchToolDefinitions({
+    providerKind: "exa_hosted_mcp",
     fetchImpl: async (_input, init) => {
       requestBody = String(init?.body ?? "");
       return new Response(
@@ -105,8 +110,187 @@ test("Pi web search tool supports max_results as a compatibility alias for num_r
   assert.equal(JSON.parse(requestBody).params.arguments.numResults, 2);
 });
 
+test("Pi web search tool can use a configured Holaboss search provider", async () => {
+  const requests: Array<{
+    url: string;
+    init?: RequestInit;
+  }> = [];
+  const tools = await resolvePiWebSearchToolDefinitions({
+    providerId: "holaboss_search",
+    providerKind: "holaboss_search",
+    baseUrl: "https://api.holaboss.test/api/v1/search/web",
+    apiKey: "hb-search-key",
+    fetchImpl: async (input, init) => {
+      requests.push({ url: String(input), init });
+      return new Response(JSON.stringify({ text: "holaboss result" }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    },
+  });
+
+  const result = await tools[0]!.execute(
+    "call-1",
+    { query: "latest alpha 2026", max_results: 2 },
+    undefined,
+    undefined,
+    {} as never
+  );
+
+  assert.equal(result.content[0]?.type === "text" ? result.content[0].text : "", "holaboss result");
+  assert.equal(requests[0]?.url, "https://api.holaboss.test/api/v1/search/web");
+  assert.deepEqual(result.details, {
+    tool_id: "web_search",
+    provider: "holaboss_search",
+  });
+});
+
+test("Pi web search tool defaults to managed Holaboss search when runtime binding is present", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "holaboss-web-search-"));
+  const previousConfigPath = process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+  const configPath = path.join(tempDir, "runtime-config.json");
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({
+      control_plane_base_url: "https://api.holaboss.test",
+      integrations: {
+        holaboss: {
+          auth_token: "hb-search-key",
+          user_id: "user-1",
+          sandbox_id: "desktop:sandbox-1",
+        },
+      },
+    })
+  );
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
+
+  try {
+    const requests: Array<{
+      url: string;
+      init?: RequestInit;
+    }> = [];
+    const tools = await resolvePiWebSearchToolDefinitions({
+      fetchImpl: async (input, init) => {
+        requests.push({ url: String(input), init });
+        return new Response(JSON.stringify({ text: "managed result" }), {
+          status: 200,
+          headers: { "content-type": "application/json; charset=utf-8" },
+        });
+      },
+    });
+
+    const result = await tools[0]!.execute(
+      "call-1",
+      { query: "latest alpha 2026", max_results: 2 },
+      undefined,
+      undefined,
+      {} as never
+    );
+
+    assert.equal(result.content[0]?.type === "text" ? result.content[0].text : "", "managed result");
+    assert.equal(requests[0]?.url, "https://api.holaboss.test/api/v1/search/web");
+    assert.deepEqual(requests[0]?.init?.headers, {
+      accept: "application/json",
+      "content-type": "application/json",
+      authorization: "Bearer hb-search-key",
+      "x-api-key": "hb-search-key",
+      "X-Holaboss-User-Id": "user-1",
+      "X-Holaboss-Sandbox-Id": "desktop:sandbox-1",
+      "X-Holaboss-Tool-Call-Id": "call-1",
+    });
+    assert.deepEqual(result.details, {
+      tool_id: "web_search",
+      provider: "holaboss_search",
+    });
+  } finally {
+    if (previousConfigPath === undefined) {
+      delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+    } else {
+      process.env.HOLABOSS_RUNTIME_CONFIG_PATH = previousConfigPath;
+    }
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Pi web search tool derives local Holaboss search URL from model proxy config", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "holaboss-web-search-"));
+  const previousConfigPath = process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+  const configPath = path.join(tempDir, "runtime-config.json");
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({
+      model_proxy_base_url: "http://127.0.0.1:3060/api/v1/model-proxy",
+      integrations: {
+        holaboss: {
+          auth_token: "hb-search-key",
+          user_id: "user-1",
+          sandbox_id: "desktop:sandbox-1",
+        },
+      },
+      web_search: {
+        provider: "holaboss_search",
+        providers: {
+          holaboss_search: {
+            kind: "holaboss_search",
+          },
+        },
+      },
+    })
+  );
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
+
+  try {
+    const requests: Array<{
+      url: string;
+      init?: RequestInit;
+    }> = [];
+    const tools = await resolvePiWebSearchToolDefinitions({
+      fetchImpl: async (input, init) => {
+        requests.push({ url: String(input), init });
+        return new Response(JSON.stringify({ text: "managed result" }), {
+          status: 200,
+          headers: { "content-type": "application/json; charset=utf-8" },
+        });
+      },
+    });
+
+    const result = await tools[0]!.execute(
+      "call-1",
+      { query: "latest alpha 2026", max_results: 2 },
+      undefined,
+      undefined,
+      {} as never
+    );
+
+    assert.equal(result.content[0]?.type === "text" ? result.content[0].text : "", "managed result");
+    assert.equal(requests[0]?.url, "http://127.0.0.1:3038/api/v1/search/web");
+    assert.deepEqual(requests[0]?.init?.headers, {
+      accept: "application/json",
+      "content-type": "application/json",
+      authorization: "Bearer hb-search-key",
+      "x-api-key": "hb-search-key",
+      "X-Holaboss-User-Id": "user-1",
+      "X-Holaboss-Sandbox-Id": "desktop:sandbox-1",
+      "X-Holaboss-Tool-Call-Id": "call-1",
+    });
+    assert.deepEqual(result.details, {
+      tool_id: "web_search",
+      provider: "holaboss_search",
+    });
+  } finally {
+    if (previousConfigPath === undefined) {
+      delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+    } else {
+      process.env.HOLABOSS_RUNTIME_CONFIG_PATH = previousConfigPath;
+    }
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("Pi web search tool requires a non-empty query", async () => {
-  const tools = await resolvePiWebSearchToolDefinitions();
+  const tools = await resolvePiWebSearchToolDefinitions({
+    providerKind: "exa_hosted_mcp",
+  });
   await assert.rejects(
     async () => await tools[0]!.execute("call-1", { query: "   " }, undefined, undefined, {} as never),
     /query is required/
@@ -115,6 +299,7 @@ test("Pi web search tool requires a non-empty query", async () => {
 
 test("Pi web search tool surfaces HTTP errors from the hosted MCP endpoint", async () => {
   const tools = await resolvePiWebSearchToolDefinitions({
+    providerKind: "exa_hosted_mcp",
     fetchImpl: async () =>
       new Response("upstream unavailable", {
         status: 503,

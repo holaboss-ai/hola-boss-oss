@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -18,6 +21,7 @@ test("searchPublicWeb proxies hosted Exa MCP and returns the raw text block", as
     livecrawl: "preferred",
     type: "deep",
     contextMaxCharacters: 12000,
+    providerKind: "exa_hosted_mcp",
     fetchImpl: async (input, init) => {
       requests.push({ url: String(input), init });
       return new Response(
@@ -74,6 +78,301 @@ test("nativeWebSearchPayload normalizes compatibility aliases and optional field
   );
 });
 
+test("searchPublicWeb sends configured Exa API keys through hosted MCP query params", async () => {
+  const requests: Array<{
+    url: string;
+    init?: RequestInit;
+  }> = [];
+  await searchPublicWeb({
+    query: "latest alpha 2026",
+    providerKind: "exa_hosted_mcp",
+    apiKey: "exa-test-key",
+    fetchImpl: async (input, init) => {
+      requests.push({ url: String(input), init });
+      return new Response(
+        'event: message\ndata: {"result":{"content":[{"type":"text","text":"ok"}]},"jsonrpc":"2.0","id":1}\n',
+        {
+          status: 200,
+          headers: { "content-type": "text/event-stream; charset=utf-8" },
+        }
+      );
+    },
+  });
+
+  const url = new URL(requests[0]?.url ?? "");
+  assert.equal(url.origin + url.pathname, "https://mcp.exa.ai/mcp");
+  assert.equal(url.searchParams.get("exaApiKey"), "exa-test-key");
+  assert.equal(url.searchParams.get("tools"), "web_search_exa");
+});
+
+test("searchPublicWeb supports the Holaboss search provider", async () => {
+  const requests: Array<{
+    url: string;
+    init?: RequestInit;
+  }> = [];
+  const result = await searchPublicWeb({
+    query: "latest alpha 2026",
+    numResults: 2,
+    providerId: "holaboss_search",
+    providerKind: "holaboss_search",
+    baseUrl: "https://api.holaboss.test/api/v1/search/web",
+    apiKey: "hb-search-key",
+    fetchImpl: async (input, init) => {
+      requests.push({ url: String(input), init });
+      return new Response(
+        JSON.stringify({
+          answer: "Alpha answer",
+          results: [
+            {
+              title: "Alpha Result",
+              url: "https://example.com/alpha",
+              snippet: "Alpha summary",
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json; charset=utf-8" },
+        }
+      );
+    },
+  });
+
+  assert.equal(result.providerId, "holaboss_search");
+  assert.equal(result.text, "Alpha answer\n\nTitle: Alpha Result\nURL: https://example.com/alpha\nHighlights:\nAlpha summary");
+  assert.equal(requests[0]?.url, "https://api.holaboss.test/api/v1/search/web");
+  assert.deepEqual(requests[0]?.init?.headers, {
+    accept: "application/json",
+    "content-type": "application/json",
+    authorization: "Bearer hb-search-key",
+    "x-api-key": "hb-search-key",
+  });
+  assert.deepEqual(JSON.parse(String(requests[0]?.init?.body)), {
+    query: "latest alpha 2026",
+    num_results: 2,
+    livecrawl: "fallback",
+    type: "auto",
+  });
+});
+
+test("searchPublicWeb reads provider settings from runtime config", async (t) => {
+  const previousConfigPath = process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "holaboss-search-"));
+  t.after(async () => {
+    if (previousConfigPath === undefined) {
+      delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+    } else {
+      process.env.HOLABOSS_RUNTIME_CONFIG_PATH = previousConfigPath;
+    }
+    await rm(tempDir, { force: true, recursive: true });
+  });
+
+  const configPath = path.join(tempDir, "runtime-config.json");
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      control_plane_base_url: "https://api.holaboss.test",
+      web_search: {
+        provider: "holaboss_search",
+        providers: {
+          holaboss_search: {
+            kind: "holaboss_search",
+            api_key: "runtime-search-key",
+          },
+        },
+      },
+    }),
+  );
+
+  const requests: Array<{
+    url: string;
+    init?: RequestInit;
+  }> = [];
+  const result = await searchPublicWeb({
+    query: "runtime configured search",
+    fetchImpl: async (input, init) => {
+      requests.push({ url: String(input), init });
+      return new Response(JSON.stringify({ text: "runtime result" }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    },
+  });
+
+  assert.equal(result.providerId, "holaboss_search");
+  assert.equal(result.text, "runtime result");
+  assert.equal(requests[0]?.url, "https://api.holaboss.test/api/v1/search/web");
+  assert.deepEqual(requests[0]?.init?.headers, {
+    accept: "application/json",
+    "content-type": "application/json",
+    authorization: "Bearer runtime-search-key",
+    "x-api-key": "runtime-search-key",
+  });
+});
+
+test("searchPublicWeb derives local Holaboss search URL from model proxy config", async (t) => {
+  const previousConfigPath = process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "holaboss-search-"));
+  t.after(async () => {
+    if (previousConfigPath === undefined) {
+      delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+    } else {
+      process.env.HOLABOSS_RUNTIME_CONFIG_PATH = previousConfigPath;
+    }
+    await rm(tempDir, { force: true, recursive: true });
+  });
+
+  const configPath = path.join(tempDir, "runtime-config.json");
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      model_proxy_base_url: "http://127.0.0.1:3060/api/v1/model-proxy",
+      integrations: {
+        holaboss: {
+          auth_token: "runtime-search-key",
+          user_id: "user-1",
+          sandbox_id: "desktop:sandbox-1",
+        },
+      },
+      web_search: {
+        provider: "holaboss_search",
+        providers: {
+          holaboss_search: {
+            kind: "holaboss_search",
+          },
+        },
+      },
+    }),
+  );
+
+  const requests: Array<{
+    url: string;
+    init?: RequestInit;
+  }> = [];
+  const result = await searchPublicWeb({
+    query: "runtime configured search",
+    fetchImpl: async (input, init) => {
+      requests.push({ url: String(input), init });
+      return new Response(JSON.stringify({ text: "runtime result" }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    },
+  });
+
+  assert.equal(result.providerId, "holaboss_search");
+  assert.equal(result.text, "runtime result");
+  assert.equal(requests[0]?.url, "http://127.0.0.1:3038/api/v1/search/web");
+  assert.deepEqual(requests[0]?.init?.headers, {
+    accept: "application/json",
+    "content-type": "application/json",
+    authorization: "Bearer runtime-search-key",
+    "x-api-key": "runtime-search-key",
+    "X-Holaboss-User-Id": "user-1",
+    "X-Holaboss-Sandbox-Id": "desktop:sandbox-1",
+  });
+});
+
+test("searchPublicWeb maps local control plane URL to Holaboss search service", async (t) => {
+  const previousConfigPath = process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "holaboss-search-"));
+  t.after(async () => {
+    if (previousConfigPath === undefined) {
+      delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+    } else {
+      process.env.HOLABOSS_RUNTIME_CONFIG_PATH = previousConfigPath;
+    }
+    await rm(tempDir, { force: true, recursive: true });
+  });
+
+  const configPath = path.join(tempDir, "runtime-config.json");
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      control_plane_base_url: "http://127.0.0.1:3060",
+      integrations: {
+        holaboss: {
+          auth_token: "runtime-search-key",
+          user_id: "user-1",
+        },
+      },
+    }),
+  );
+
+  const requests: Array<{
+    url: string;
+    init?: RequestInit;
+  }> = [];
+  await searchPublicWeb({
+    query: "runtime configured search",
+    fetchImpl: async (input, init) => {
+      requests.push({ url: String(input), init });
+      return new Response(JSON.stringify({ text: "runtime result" }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    },
+  });
+
+  assert.equal(requests[0]?.url, "http://127.0.0.1:3038/api/v1/search/web");
+});
+
+test("searchPublicWeb explicit Holaboss provider inherits runtime binding", async (t) => {
+  const previousConfigPath = process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "holaboss-search-"));
+  t.after(async () => {
+    if (previousConfigPath === undefined) {
+      delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+    } else {
+      process.env.HOLABOSS_RUNTIME_CONFIG_PATH = previousConfigPath;
+    }
+    await rm(tempDir, { force: true, recursive: true });
+  });
+
+  const configPath = path.join(tempDir, "runtime-config.json");
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      model_proxy_base_url: "http://127.0.0.1:3060/api/v1/model-proxy",
+      integrations: {
+        holaboss: {
+          auth_token: "runtime-search-key",
+          user_id: "user-1",
+        },
+      },
+    }),
+  );
+
+  const requests: Array<{
+    url: string;
+    init?: RequestInit;
+  }> = [];
+  await searchPublicWeb({
+    query: "runtime configured search",
+    providerKind: "holaboss_search",
+    fetchImpl: async (input, init) => {
+      requests.push({ url: String(input), init });
+      return new Response(JSON.stringify({ text: "runtime result" }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    },
+  });
+
+  assert.equal(requests[0]?.url, "http://127.0.0.1:3038/api/v1/search/web");
+  assert.deepEqual(requests[0]?.init?.headers, {
+    accept: "application/json",
+    "content-type": "application/json",
+    authorization: "Bearer runtime-search-key",
+    "x-api-key": "runtime-search-key",
+    "X-Holaboss-User-Id": "user-1",
+  });
+});
+
 test("searchPublicWeb requires a non-empty query", async () => {
   await assert.rejects(async () => await searchPublicWeb({ query: "   " }), /query is required/);
 });
@@ -83,6 +382,7 @@ test("searchPublicWeb surfaces HTTP errors from the hosted MCP endpoint", async 
     async () =>
       await searchPublicWeb({
         query: "alpha 2026",
+        providerKind: "exa_hosted_mcp",
         fetchImpl: async () =>
           new Response("upstream unavailable", {
             status: 503,

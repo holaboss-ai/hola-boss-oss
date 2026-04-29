@@ -395,7 +395,7 @@ const CHAT_HISTORY_PAGE_SIZE = 10;
 const CHAT_HISTORY_TOP_LOAD_THRESHOLD_PX = 96;
 const CHAT_SCROLLBAR_MIN_THUMB_HEIGHT_PX = 40;
 const COMPOSER_FOOTER_GAP_PX = 8;
-const COMPOSER_FULL_MODEL_CONTROL_WIDTH_PX = 168;
+const COMPOSER_FULL_MODEL_CONTROL_WIDTH_PX = 240;
 const COMPOSER_FULL_THINKING_CONTROL_WIDTH_PX = 88;
 const COMPOSER_FULL_PROVIDER_SETUP_WIDTH_PX = 320;
 const COMPOSER_COMPACT_MODEL_CONTROL_MAX_WIDTH_PX = 168;
@@ -10370,11 +10370,7 @@ function ThinkingValueSelect({
   const selectedThinkingLabel = displayThinkingValueLabel(
     selectedThinkingValue,
   );
-  const compactLabelMinWidth = 52 + selectedThinkingLabel.length * 7;
-  const showCompactLabel =
-    !compact ||
-    typeof compactWidth !== "number" ||
-    compactWidth >= compactLabelMinWidth;
+  const showCompactLabel = !compact || typeof compactWidth !== "number";
 
   const renderOption = (value: string) => {
     const active = value === selectedThinkingValue;
@@ -10418,7 +10414,7 @@ function ThinkingValueSelect({
               compact
                 ? showCompactLabel
                   ? "w-full min-w-0 justify-between px-2.5"
-                  : "w-full min-w-0 justify-start px-2.5"
+                  : "w-full min-w-0 justify-center px-2.5"
                 : "px-2"
             }`}
           >
