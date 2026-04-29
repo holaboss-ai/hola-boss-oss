@@ -143,6 +143,14 @@ export function InternalSurfacePane({
     () => setDashboardRefreshKey((k) => k + 1),
     [],
   );
+  // TODO: remove after debugging — verifies state actually flips after
+  // the button click handler returns.
+  useEffect(() => {
+    console.log("[dashboard-toolbar] dashboardFullWidth state =", dashboardFullWidth);
+  }, [dashboardFullWidth]);
+  useEffect(() => {
+    console.log("[dashboard-toolbar] dashboardRefreshKey =", dashboardRefreshKey);
+  }, [dashboardRefreshKey]);
   const isDirtyRef = useRef(false);
   const isSavingRef = useRef(false);
   const pendingExternalRefreshPathRef = useRef<string | null>(null);
@@ -565,11 +573,15 @@ export function InternalSurfacePane({
               ) : null}
               {preview.extension === ".dashboard" ? (
                 <>
-                  <Button
+                  <button
                     type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={toggleDashboardFullWidth}
+                    onClick={(e) => {
+                      console.log("[dashboard-toolbar] full-width clicked", {
+                        before: dashboardFullWidth,
+                        target: e.currentTarget,
+                      });
+                      toggleDashboardFullWidth();
+                    }}
                     aria-pressed={dashboardFullWidth}
                     aria-label={
                       dashboardFullWidth
@@ -577,29 +589,32 @@ export function InternalSurfacePane({
                         : "Switch to full width"
                     }
                     title={dashboardFullWidth ? "Compact width" : "Full width"}
-                    className={
+                    className={`grid size-7 place-items-center rounded-md transition-colors ${
                       dashboardFullWidth
                         ? "bg-muted text-foreground"
-                        : "text-muted-foreground hover:text-foreground"
-                    }
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    }`}
                   >
                     {dashboardFullWidth ? (
                       <ChevronsRightLeft className="size-3.5" />
                     ) : (
                       <ChevronsLeftRight className="size-3.5" />
                     )}
-                  </Button>
-                  <Button
+                  </button>
+                  <button
                     type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={refreshDashboard}
+                    onClick={(e) => {
+                      console.log("[dashboard-toolbar] refresh clicked", {
+                        target: e.currentTarget,
+                      });
+                      refreshDashboard();
+                    }}
                     aria-label="Refresh"
                     title="Refresh"
-                    className="text-muted-foreground hover:text-foreground"
+                    className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                   >
                     <RefreshCw className="size-3.5" />
-                  </Button>
+                  </button>
                 </>
               ) : null}
               {preview.isEditable && (isDirty || isSaving) ? (
