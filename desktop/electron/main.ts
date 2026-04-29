@@ -11402,11 +11402,7 @@ async function listTaskProposals(
   if (!workspaceId.trim()) {
     return { proposals: [], count: 0 };
   }
-  return requestRuntimeJson<TaskProposalListResponsePayload>({
-    method: "GET",
-    path: "/api/v1/task-proposals/unreviewed",
-    params: { workspace_id: workspaceId },
-  });
+  return runtimeClient.taskProposals.listUnreviewed(workspaceId);
 }
 
 async function listMemoryUpdateProposals(
@@ -11415,18 +11411,7 @@ async function listMemoryUpdateProposals(
   if (!payload.workspaceId.trim()) {
     return { proposals: [], count: 0 };
   }
-  return requestRuntimeJson<MemoryUpdateProposalListResponsePayload>({
-    method: "GET",
-    path: "/api/v1/memory-update-proposals",
-    params: {
-      workspace_id: payload.workspaceId,
-      session_id: payload.sessionId ?? undefined,
-      input_id: payload.inputId ?? undefined,
-      state: payload.state ?? undefined,
-      limit: payload.limit ?? 200,
-      offset: payload.offset ?? 0,
-    },
-  });
+  return runtimeClient.memory.listUpdateProposals(payload);
 }
 
 function secondsSinceIso(value: string | null): number | null {
@@ -11444,41 +11429,21 @@ function secondsSinceIso(value: string | null): number | null {
 async function acceptTaskProposal(
   payload: TaskProposalAcceptPayload,
 ): Promise<TaskProposalAcceptResponsePayload> {
-  return requestRuntimeJson<TaskProposalAcceptResponsePayload>({
-    method: "POST",
-    path: `/api/v1/task-proposals/${encodeURIComponent(payload.proposal_id)}/accept`,
-    payload: {
-      task_name: payload.task_name,
-      task_prompt: payload.task_prompt,
-      session_id: payload.session_id,
-      parent_session_id: payload.parent_session_id,
-      created_by: payload.created_by,
-      priority: payload.priority ?? 0,
-      model: payload.model ?? null,
-    },
-  });
+  return runtimeClient.taskProposals.accept(
+    payload,
+  ) as unknown as Promise<TaskProposalAcceptResponsePayload>;
 }
 
 async function acceptMemoryUpdateProposal(
   payload: MemoryUpdateProposalAcceptPayload,
 ): Promise<MemoryUpdateProposalAcceptResponsePayload> {
-  return requestRuntimeJson<MemoryUpdateProposalAcceptResponsePayload>({
-    method: "POST",
-    path: `/api/v1/memory-update-proposals/${encodeURIComponent(payload.proposalId)}/accept`,
-    payload: {
-      summary: payload.summary ?? undefined,
-    },
-  });
+  return runtimeClient.memory.acceptUpdateProposal(payload);
 }
 
 async function dismissMemoryUpdateProposal(
   proposalId: string,
 ): Promise<MemoryUpdateProposalDismissResponsePayload> {
-  return requestRuntimeJson<MemoryUpdateProposalDismissResponsePayload>({
-    method: "POST",
-    path: `/api/v1/memory-update-proposals/${encodeURIComponent(proposalId)}/dismiss`,
-    payload: {},
-  });
+  return runtimeClient.memory.dismissUpdateProposal(proposalId);
 }
 
 async function getProactiveStatus(
@@ -11675,38 +11640,24 @@ async function listCronjobs(
 async function runCronjobNow(
   jobId: string,
 ): Promise<CronjobRunResponsePayload> {
-  return requestRuntimeJson<CronjobRunResponsePayload>({
-    method: "POST",
-    path: `/api/v1/cronjobs/${encodeURIComponent(jobId)}/run`,
-  });
+  return runtimeClient.cronjobs.runNow(jobId);
 }
 
 async function createCronjob(
   payload: CronjobCreatePayload,
 ): Promise<CronjobRecordPayload> {
-  return requestRuntimeJson<CronjobRecordPayload>({
-    method: "POST",
-    path: "/api/v1/cronjobs",
-    payload,
-  });
+  return runtimeClient.cronjobs.create(payload);
 }
 
 async function updateCronjob(
   jobId: string,
   payload: CronjobUpdatePayload,
 ): Promise<CronjobRecordPayload> {
-  return requestRuntimeJson<CronjobRecordPayload>({
-    method: "PATCH",
-    path: `/api/v1/cronjobs/${encodeURIComponent(jobId)}`,
-    payload,
-  });
+  return runtimeClient.cronjobs.update(jobId, payload);
 }
 
 async function deleteCronjob(jobId: string): Promise<{ success: boolean }> {
-  return requestRuntimeJson<{ success: boolean }>({
-    method: "DELETE",
-    path: `/api/v1/cronjobs/${encodeURIComponent(jobId)}`,
-  });
+  return runtimeClient.cronjobs.delete(jobId);
 }
 
 const runtimeNotificationListCache = new Map<
@@ -11762,11 +11713,10 @@ async function updateNotification(
   notificationId: string,
   payload: RuntimeNotificationUpdatePayload,
 ): Promise<RuntimeNotificationRecordPayload> {
-  const response = await requestRuntimeJson<RuntimeNotificationRecordPayload>({
-    method: "PATCH",
-    path: `/api/v1/notifications/${encodeURIComponent(notificationId)}`,
+  const response = await runtimeClient.notifications.update(
+    notificationId,
     payload,
-  });
+  );
   runtimeNotificationListCache.clear();
   return response;
 }
@@ -11779,24 +11729,13 @@ async function listIntegrationConnections(params?: {
   providerId?: string;
   ownerUserId?: string;
 }): Promise<IntegrationConnectionListResponsePayload> {
-  return requestRuntimeJson<IntegrationConnectionListResponsePayload>({
-    method: "GET",
-    path: "/api/v1/integrations/connections",
-    params: {
-      provider_id: params?.providerId,
-      owner_user_id: params?.ownerUserId,
-    },
-  });
+  return runtimeClient.integrations.listConnections(params);
 }
 
 async function listIntegrationBindings(
   workspaceId: string,
 ): Promise<IntegrationBindingListResponsePayload> {
-  return requestRuntimeJson<IntegrationBindingListResponsePayload>({
-    method: "GET",
-    path: "/api/v1/integrations/bindings",
-    params: { workspace_id: workspaceId },
-  });
+  return runtimeClient.integrations.listBindings(workspaceId);
 }
 
 async function upsertIntegrationBinding(
@@ -11806,90 +11745,66 @@ async function upsertIntegrationBinding(
   integrationKey: string,
   payload: IntegrationUpsertBindingPayload,
 ): Promise<IntegrationBindingPayload> {
-  return requestRuntimeJson<IntegrationBindingPayload>({
-    method: "PUT",
-    path: `/api/v1/integrations/bindings/${encodeURIComponent(workspaceId)}/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/${encodeURIComponent(integrationKey)}`,
+  return runtimeClient.integrations.upsertBinding(
+    workspaceId,
+    targetType,
+    targetId,
+    integrationKey,
     payload,
-  });
+  );
 }
 
 async function deleteIntegrationBinding(
   bindingId: string,
   workspaceId: string,
 ): Promise<{ deleted: boolean }> {
-  return requestRuntimeJson<{ deleted: boolean }>({
-    method: "DELETE",
-    path: `/api/v1/integrations/bindings/${encodeURIComponent(bindingId)}`,
-    params: { workspace_id: workspaceId },
-  });
+  return runtimeClient.integrations.deleteBinding(bindingId, workspaceId);
 }
 
 async function createIntegrationConnection(
   payload: IntegrationCreateConnectionPayload,
 ): Promise<IntegrationConnectionPayload> {
-  return requestRuntimeJson<IntegrationConnectionPayload>({
-    method: "POST",
-    path: "/api/v1/integrations/connections",
-    payload,
-  });
+  return runtimeClient.integrations.createConnection(payload);
 }
 
 async function updateIntegrationConnection(
   connectionId: string,
   payload: IntegrationUpdateConnectionPayload,
 ): Promise<IntegrationConnectionPayload> {
-  return requestRuntimeJson<IntegrationConnectionPayload>({
-    method: "PATCH",
-    path: `/api/v1/integrations/connections/${encodeURIComponent(connectionId)}`,
-    payload,
-  });
+  return runtimeClient.integrations.updateConnection(connectionId, payload);
 }
 
 async function deleteIntegrationConnection(
   connectionId: string,
 ): Promise<{ deleted: boolean }> {
-  return requestRuntimeJson<{ deleted: boolean }>({
-    method: "DELETE",
-    path: `/api/v1/integrations/connections/${encodeURIComponent(connectionId)}`,
-  });
+  return runtimeClient.integrations.deleteConnection(connectionId);
 }
 
 async function mergeIntegrationConnections(
   keepConnectionId: string,
   removeConnectionIds: string[],
 ): Promise<IntegrationMergeConnectionsResult> {
-  return requestRuntimeJson<IntegrationMergeConnectionsResult>({
-    method: "POST",
-    path: `/api/v1/integrations/connections/${encodeURIComponent(keepConnectionId)}/merge`,
-    payload: { remove_connection_ids: removeConnectionIds },
-  });
+  return runtimeClient.integrations.mergeConnections(
+    keepConnectionId,
+    removeConnectionIds,
+  );
 }
 
 async function listOAuthConfigs(): Promise<OAuthAppConfigListResponsePayload> {
-  return requestRuntimeJson<OAuthAppConfigListResponsePayload>({
-    method: "GET",
-    path: "/api/v1/integrations/oauth/configs",
-  });
+  return runtimeClient.integrations.listOAuthConfigs();
 }
 
 async function upsertOAuthConfig(
   providerId: string,
   payload: OAuthAppConfigUpsertPayload,
 ): Promise<OAuthAppConfigPayload> {
-  return requestRuntimeJson<OAuthAppConfigPayload>({
-    method: "PUT",
-    path: `/api/v1/integrations/oauth/configs/${encodeURIComponent(providerId)}`,
-    payload,
-  });
+  return runtimeClient.integrations.upsertOAuthConfig(providerId, payload);
 }
 
 async function deleteOAuthConfig(
   providerId: string,
 ): Promise<{ deleted: boolean }> {
-  return requestRuntimeJson<{ deleted: boolean }>({
-    method: "DELETE",
-    path: `/api/v1/integrations/oauth/configs/${encodeURIComponent(providerId)}`,
-  });
+  return runtimeClient.integrations.deleteOAuthConfig(providerId);
 }
 
 async function startOAuthFlow(
@@ -11897,10 +11812,9 @@ async function startOAuthFlow(
 ): Promise<OAuthAuthorizeResponsePayload> {
   const runtimeConfig = await readRuntimeConfigFile();
   const userId = (runtimeConfig.user_id || "").trim() || "local";
-  const result = await requestRuntimeJson<OAuthAuthorizeResponsePayload>({
-    method: "POST",
-    path: "/api/v1/integrations/oauth/authorize",
-    payload: { provider, owner_user_id: userId },
+  const result = await runtimeClient.integrations.authorizeOAuth({
+    provider,
+    owner_user_id: userId,
   });
   if (result.authorize_url) {
     shell.openExternal(result.authorize_url);
@@ -12459,15 +12373,11 @@ async function composioFinalize(payload: {
     }
   }
 
-  return requestRuntimeJson<IntegrationConnectionPayload>({
-    method: "POST",
-    path: "/api/v1/integrations/composio/finalize",
-    payload: {
-      ...payload,
-      ...(resolvedLabel ? { account_label: resolvedLabel } : {}),
-      account_handle: enrichedHandle,
-      account_email: enrichedEmail,
-    },
+  return runtimeClient.integrations.composioFinalize({
+    ...payload,
+    ...(resolvedLabel ? { account_label: resolvedLabel } : {}),
+    account_handle: enrichedHandle,
+    account_email: enrichedEmail,
   });
 }
 
