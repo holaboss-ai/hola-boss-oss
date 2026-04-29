@@ -628,6 +628,19 @@ test("main-session assistant turns suppress trace and thinking while onboarding 
     source,
     /const visibleExecutionItems = showExecutionInternals \? executionItems : \[\];/,
   );
+  assert.match(source, /function hasRenderableAssistantTurn\(\s*message: ChatMessage,\s*options\?: \{ showExecutionInternals\?: boolean \},/);
+  assert.match(
+    source,
+    /const hasExecutionOnlyContent =[\s\S]*segment\.kind === "execution" && segment\.items\.length > 0[\s\S]*\(message\.executionItems\?\.length \?\? 0\) > 0;/,
+  );
+  assert.match(
+    source,
+    /\(showExecutionInternals && hasExecutionOnlyContent\)/,
+  );
+  assert.match(
+    source,
+    /const displayMessages = useMemo\([\s\S]*hasRenderableAssistantTurn\(message,\s*\{\s*showExecutionInternals: showSessionExecutionInternals,\s*\}\)/,
+  );
 });
 
 test("chat pane sends a native desktop notification when the bound main session finishes while the app is minimized", async () => {
@@ -1420,7 +1433,7 @@ test("live assistant turn keeps a plain status placeholder before any trace or o
 
   assert.match(
     source,
-    /const hasVisibleLiveAssistantContent = showSessionExecutionInternals[\s\S]*renderedLiveAssistantSegments\.some\([\s\S]*segment\.kind === "output" && Boolean\(segment\.text\.trim\(\)\)/,
+    /const hasVisibleLiveAssistantContent =[\s\S]*renderedLiveAssistantSegments\.some\([\s\S]*segment\.kind === "output" && Boolean\(segment\.text\.trim\(\)\)/,
   );
   assert.match(
     source,
@@ -1439,9 +1452,9 @@ test("live assistant turn keeps a plain status placeholder before any trace or o
 test("assistant turns can use a soft structural band without adding bubble chrome", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /messages\.map\(\(message, index\) =>/);
+  assert.match(source, /displayMessages\.map\(\(message, index\) =>/);
   assert.match(source, /showSeparator=\{index > 0\}/);
-  assert.match(source, /showSeparator=\{messages\.length > 0\}/);
+  assert.match(source, /showSeparator=\{displayMessages\.length > 0\}/);
   assert.match(source, /showSeparator = false,/);
   assert.match(source, /showSeparator\?: boolean;/);
   assert.match(

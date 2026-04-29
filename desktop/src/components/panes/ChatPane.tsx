@@ -846,16 +846,26 @@ function hasRenderableMessageContent(
   return Boolean(text.trim()) || attachments.length > 0;
 }
 
-function hasRenderableAssistantTurn(message: ChatMessage) {
-  return (
-    hasRenderableMessageContent(message.text, message.attachments ?? []) ||
-    (message.segments?.some((segment) =>
-      segment.kind === "output"
-        ? Boolean(segment.text.trim())
-        : segment.items.length > 0,
+function hasRenderableAssistantTurn(
+  message: ChatMessage,
+  options?: { showExecutionInternals?: boolean },
+) {
+  const showExecutionInternals = options?.showExecutionInternals ?? true;
+  const hasVisibleOutputSegment =
+    message.segments?.some(
+      (segment) =>
+        segment.kind === "output" && Boolean(segment.text.trim()),
+    ) ?? false;
+  const hasExecutionOnlyContent =
+    (message.segments?.some(
+      (segment) => segment.kind === "execution" && segment.items.length > 0,
     ) ??
       false) ||
-    (message.executionItems?.length ?? 0) > 0 ||
+    (message.executionItems?.length ?? 0) > 0;
+  return (
+    hasRenderableMessageContent(message.text, message.attachments ?? []) ||
+    hasVisibleOutputSegment ||
+    (showExecutionInternals && hasExecutionOnlyContent) ||
     (message.outputs?.length ?? 0) > 0 ||
     (message.memoryProposals?.length ?? 0) > 0
   );
@@ -3518,6 +3528,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   }
 
   function historyMessagesFromSessionState(
+    sessionId: string,
     historyMessages: SessionHistoryMessagePayload[],
     outputEvents: SessionOutputEventPayload[],
     outputs: WorkspaceOutputRecordPayload[],
@@ -3674,7 +3685,12 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
             memoryProposals:
               turnMemoryProposals.length > 0 ? turnMemoryProposals : undefined,
           };
-          if (hasRenderableAssistantTurn(syntheticAssistantMessage)) {
+          if (
+            hasRenderableAssistantTurn(syntheticAssistantMessage, {
+              showExecutionInternals:
+                shouldShowExecutionInternalsForSession(sessionId),
+            })
+          ) {
             renderedMessages.push(syntheticAssistantMessage);
           }
         }
@@ -3685,7 +3701,10 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
         (message) =>
           (message.role === "user" || message.role === "assistant") &&
           (message.role === "assistant"
-            ? hasRenderableAssistantTurn(message)
+            ? hasRenderableAssistantTurn(message, {
+                showExecutionInternals:
+                  shouldShowExecutionInternalsForSession(sessionId),
+              })
             : hasRenderableMessageContent(
                 message.text,
                 message.attachments ?? [],
@@ -3732,6 +3751,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
         outputs: [] as WorkspaceOutputRecordPayload[],
         memoryProposals: [] as MemoryUpdateProposalRecordPayload[],
         renderedMessages: historyMessagesFromSessionState(
+          params.sessionId,
           historyMessages,
           [],
           [],
@@ -3828,6 +3848,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
       outputs,
       memoryProposals,
       renderedMessages: historyMessagesFromSessionState(
+        params.sessionId,
         historyMessages,
         outputEvents,
         outputs,
@@ -4086,6 +4107,17 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     setLiveAssistantSegments(nextSegments);
   }
 
+  function shouldShowExecutionInternalsForSession(
+    sessionId: string | null | undefined,
+  ) {
+    if (isOnboardingVariant) {
+      return true;
+    }
+    const normalizedSessionId = (sessionId || "").trim();
+    const mainSessionId = desktopMainSessionIdRef.current.trim();
+    return Boolean(normalizedSessionId && normalizedSessionId !== mainSessionId);
+  }
+
   function flushLiveAssistantOutputSegment(
     tone: ChatMessage["tone"] = "default",
   ) {
@@ -4182,16 +4214,25 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
       return false;
     }
 
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: messageId,
-        role: "assistant",
-        text: "",
-        tone: "default",
-        segments: nextSegments,
-      },
-    ]);
+    const nextMessage: ChatMessage = {
+      id: messageId,
+      role: "assistant",
+      text: "",
+      tone: "default",
+      segments: nextSegments,
+    };
+    if (
+      !hasRenderableAssistantTurn(nextMessage, {
+        showExecutionInternals: shouldShowExecutionInternalsForSession(
+          activeSessionIdRef.current,
+        ),
+      })
+    ) {
+      resetLiveTurn();
+      return false;
+    }
+
+    setMessages((prev) => [...prev, nextMessage]);
     resetLiveTurn();
     return true;
   }
@@ -6818,18 +6859,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   const showLiveAssistantTurn =
     isResponding ||
     hasVisibleLiveAssistantContent;
-  const lastCompletedAssistantMessageId = useMemo(() => {
-    if (showLiveAssistantTurn) {
-      return null;
-    }
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const candidate = messages[index];
-      if (candidate && candidate.role !== "user") {
-        return candidate.id;
-      }
-    }
-    return null;
-  }, [messages, showLiveAssistantTurn]);
   const queuedSessionInputPreview = useQueuedSessionInputPreview({
     workspaceId: selectedWorkspaceId,
     sessionId: activeSessionId,
@@ -6847,7 +6876,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     queuedSessionInputPreview.length > 0
       ? queuedSessionInputPreview
       : activeQueuedSessionInputs;
-  const hasMessages = messages.length > 0 || showLiveAssistantTurn;
   const streamTelemetryTail = useMemo(
     () => streamTelemetry.slice(-80).reverse(),
     [streamTelemetry],
@@ -7084,6 +7112,33 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
       : "Session view";
   const showSessionExecutionInternals =
     isReadOnlyInspectionSession || isOnboardingVariant;
+  const displayMessages = useMemo(
+    () =>
+      messages.filter((message) =>
+        message.role === "assistant"
+          ? hasRenderableAssistantTurn(message, {
+              showExecutionInternals: showSessionExecutionInternals,
+            })
+          : hasRenderableMessageContent(
+              message.text,
+              message.attachments ?? [],
+            ),
+      ),
+    [messages, showSessionExecutionInternals],
+  );
+  const lastCompletedAssistantMessageId = useMemo(() => {
+    if (showLiveAssistantTurn) {
+      return null;
+    }
+    for (let index = displayMessages.length - 1; index >= 0; index -= 1) {
+      const candidate = displayMessages[index];
+      if (candidate && candidate.role !== "user") {
+        return candidate.id;
+      }
+    }
+    return null;
+  }, [displayMessages, showLiveAssistantTurn]);
+  const hasMessages = displayMessages.length > 0 || showLiveAssistantTurn;
   const readinessMessage =
     !selectedWorkspace || isOnboardingVariant || workspaceAppsReady
       ? ""
@@ -7870,7 +7925,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                       </div>
                     </div>
                   ) : null}
-                  {messages.map((message, index) =>
+                  {displayMessages.map((message, index) =>
                     message.role === "user" ? (
                       <UserTurn
                         key={message.id}
@@ -7943,7 +7998,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                     <AssistantTurn
                       label={assistantLabel}
                       mode={assistantMode}
-                      showSeparator={messages.length > 0}
+                      showSeparator={displayMessages.length > 0}
                       showExecutionInternals={showSessionExecutionInternals}
                       text={liveAssistantText}
                       tone="default"
