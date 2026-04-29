@@ -14790,14 +14790,10 @@ function listWorkspacesFromLocalDb(): WorkspaceListResponsePayload {
 }
 
 async function listWorkspacesViaRuntime(): Promise<WorkspaceListResponsePayload> {
-  const response = await requestRuntimeJson<WorkspaceListResponsePayload>({
-    method: "GET",
-    path: "/api/v1/workspaces",
-    params: {
-      include_deleted: false,
-      limit: 100,
-      offset: 0,
-    },
+  const response = await runtimeClient.workspaces.list({
+    includeDeleted: false,
+    limit: 100,
+    offset: 0,
   });
   for (const item of response.items) {
     // List response is authoritative: reset cache so relocated workspaces
@@ -14877,13 +14873,7 @@ function staticCatalogMeta(appId: string) {
 async function listAppCatalog(params: {
   source?: "marketplace" | "local";
 }): Promise<AppCatalogListResponse> {
-  const query: Record<string, string> = {};
-  if (params.source) query.source = params.source;
-  return requestRuntimeJson<AppCatalogListResponse>({
-    method: "GET",
-    path: "/api/v1/apps/catalog",
-    params: query,
-  });
+  return runtimeClient.apps.listCatalog({ source: params.source });
 }
 
 async function syncAppCatalog(params: {
@@ -14914,10 +14904,10 @@ async function syncAppCatalog(params: {
         archive_path: null,
       });
     }
-    return requestRuntimeJson<AppCatalogSyncResponse>({
-      method: "POST",
-      path: "/api/v1/apps/catalog/sync",
-      payload: { source: "marketplace", target, entries },
+    return runtimeClient.apps.syncCatalog({
+      source: "marketplace",
+      target,
+      entries,
     });
   }
 
@@ -14936,10 +14926,10 @@ async function syncAppCatalog(params: {
       archive_path: row.filePath,
     };
   });
-  return requestRuntimeJson<AppCatalogSyncResponse>({
-    method: "POST",
-    path: "/api/v1/apps/catalog/sync",
-    payload: { source: "local", target, entries },
+  return runtimeClient.apps.syncCatalog({
+    source: "local",
+    target,
+    entries,
   });
 }
 
@@ -14994,15 +14984,10 @@ async function installAppFromCatalog(params: {
   });
 
   try {
-    const resp = await requestRuntimeJson<InstallAppFromCatalogResponse>({
-      method: "POST",
-      path: "/api/v1/apps/install-archive",
-      payload: {
-        workspace_id: params.workspaceId,
-        app_id: params.appId,
-        archive_path: archivePath,
-      },
-      timeoutMs: 300_000,
+    const resp = await runtimeClient.apps.installArchive({
+      workspace_id: params.workspaceId,
+      app_id: params.appId,
+      archive_path: archivePath,
     });
     return resp;
   } finally {
@@ -15150,15 +15135,10 @@ async function installAppFromArchiveFile(params: {
   });
 
   try {
-    return await requestRuntimeJson<InstallAppFromCatalogResponse>({
-      method: "POST",
-      path: "/api/v1/apps/install-archive",
-      payload: {
-        workspace_id: workspaceId,
-        app_id: appId,
-        archive_path: stagedPath,
-      },
-      timeoutMs: 300_000,
+    return await runtimeClient.apps.installArchive({
+      workspace_id: workspaceId,
+      app_id: appId,
+      archive_path: stagedPath,
     });
   } finally {
     await cleanup();
@@ -15268,13 +15248,7 @@ async function listInstalledApps(
 async function listInstalledAppsViaRuntime(
   workspaceId: string,
 ): Promise<InstalledWorkspaceAppListResponsePayload> {
-  return requestRuntimeJson<InstalledWorkspaceAppListResponsePayload>({
-    method: "GET",
-    path: "/api/v1/apps",
-    params: {
-      workspace_id: workspaceId,
-    },
-  });
+  return runtimeClient.apps.listInstalled(workspaceId);
 }
 
 async function removeInstalledApp(
@@ -15283,14 +15257,7 @@ async function removeInstalledApp(
 ): Promise<void> {
   const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
   const safeAppId = assertSafeAppId(appId);
-  await requestRuntimeJson<Record<string, unknown>>({
-    method: "DELETE",
-    path: `/api/v1/apps/${encodeURIComponent(safeAppId)}`,
-    payload: {
-      workspace_id: safeWorkspaceId,
-    },
-    timeoutMs: 30000,
-  });
+  await runtimeClient.apps.remove(safeWorkspaceId, safeAppId);
 }
 
 async function controlPlaneWorkspaceUserId(): Promise<string | null> {
@@ -15411,13 +15378,7 @@ async function activateWorkspace(
   const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
   // Desktop always activates via local runtime.
   // Ensure all enabled apps are running in parallel via the runtime.
-  await requestRuntimeJson<Record<string, unknown>>({
-    method: "POST",
-    path: "/api/v1/apps/ensure-running",
-    payload: { workspace_id: safeWorkspaceId },
-    timeoutMs: 300000,
-    retryTransientErrors: true,
-  });
+  await runtimeClient.workspaces.ensureAppsRunning(safeWorkspaceId);
   return getWorkspaceLifecycleViaRuntime(safeWorkspaceId);
 }
 
@@ -15455,20 +15416,16 @@ async function listOutputs(
 ): Promise<WorkspaceOutputListResponsePayload> {
   const requestPayload =
     typeof payload === "string" ? { workspaceId: payload } : payload;
-  return requestRuntimeJson<WorkspaceOutputListResponsePayload>({
-    method: "GET",
-    path: "/api/v1/outputs",
-    params: {
-      workspace_id: requestPayload.workspaceId,
-      output_type: requestPayload.outputType ?? undefined,
-      status: requestPayload.status ?? undefined,
-      platform: requestPayload.platform ?? undefined,
-      folder_id: requestPayload.folderId ?? undefined,
-      session_id: requestPayload.sessionId ?? undefined,
-      input_id: requestPayload.inputId ?? undefined,
-      limit: requestPayload.limit ?? 50,
-      offset: requestPayload.offset ?? 0,
-    },
+  return runtimeClient.outputs.list({
+    workspaceId: requestPayload.workspaceId,
+    outputType: requestPayload.outputType,
+    status: requestPayload.status,
+    platform: requestPayload.platform,
+    folderId: requestPayload.folderId,
+    sessionId: requestPayload.sessionId,
+    inputId: requestPayload.inputId,
+    limit: requestPayload.limit,
+    offset: requestPayload.offset,
   });
 }
 
@@ -15800,16 +15757,12 @@ async function createWorkspace(
     hasCustomWorkspacePath: Boolean(customWorkspacePath),
   });
   try {
-    created = await requestRuntimeJson<WorkspaceResponsePayload>({
-      method: "POST",
-      path: "/api/v1/workspaces",
-      payload: {
-        name: payload.name,
-        harness,
-        status: "provisioning",
-        onboarding_status: "not_required",
-        ...(customWorkspacePath ? { workspace_path: customWorkspacePath } : {}),
-      },
+    created = await runtimeClient.workspaces.create({
+      name: payload.name,
+      harness,
+      status: "provisioning",
+      onboarding_status: "not_required",
+      ...(customWorkspacePath ? { workspace_path: customWorkspacePath } : {}),
     });
     stageLog("runtime_post_workspaces.ok", { workspaceId: created.workspace.id });
   } catch (error) {
@@ -15915,15 +15868,11 @@ async function createWorkspace(
     stageLog("activate_workspace.start", { workspaceId, onboardingStatus });
     let updated: WorkspaceResponsePayload;
     try {
-      updated = await requestRuntimeJson<WorkspaceResponsePayload>({
-        method: "PATCH",
-        path: `/api/v1/workspaces/${workspaceId}`,
-        payload: {
-          status: "active",
-          onboarding_status: onboardingStatus.toLowerCase(),
-          onboarding_session_id: onboardingSessionId,
-          error_message: null,
-        },
+      updated = await runtimeClient.workspaces.update(workspaceId, {
+        status: "active",
+        onboarding_status: onboardingStatus.toLowerCase(),
+        onboarding_session_id: onboardingSessionId,
+        error_message: null,
       });
       stageLog("activate_workspace.ok", { workspaceId });
     } catch (error) {
@@ -16023,27 +15972,21 @@ async function createWorkspace(
 
     if (onboardingSessionId) {
       try {
-        await requestRuntimeJson<EnqueueSessionInputResponsePayload>({
-          method: "POST",
-          path: "/api/v1/agent-sessions/queue",
-          payload: {
-            workspace_id: workspaceId,
-            session_id: onboardingSessionId,
-            text: "Start workspace onboarding now. Use ONBOARD.md as the guide and ask the first onboarding question only.",
-            priority: 0,
-          },
+        await runtimeClient.sessions.queueInput({
+          workspace_id: workspaceId,
+          session_id: onboardingSessionId,
+          text: "Start workspace onboarding now. Use ONBOARD.md as the guide and ask the first onboarding question only.",
+          priority: 0,
         });
       } catch (error) {
-        updated = await requestRuntimeJson<WorkspaceResponsePayload>({
-          method: "PATCH",
-          path: `/api/v1/workspaces/${workspaceId}`,
-          payload: {
+        updated = await runtimeClient.workspaces
+          .update(workspaceId, {
             error_message: contextualWorkspaceCreateError(
               "Workspace created, but automatic onboarding could not start",
               error,
             ),
-          },
-        }).catch(() => updated);
+          })
+          .catch(() => updated);
       }
     }
     const runtimeConfigForHeartbeat = await readRuntimeConfigFile();
@@ -16086,14 +16029,12 @@ async function createWorkspace(
     }
     return updated;
   } catch (error) {
-    await requestRuntimeJson<WorkspaceResponsePayload>({
-      method: "PATCH",
-      path: `/api/v1/workspaces/${workspaceId}`,
-      payload: {
+    await runtimeClient.workspaces
+      .update(workspaceId, {
         status: "error",
         error_message: normalizeErrorMessage(error),
-      },
-    }).catch(() => undefined);
+      })
+      .catch(() => undefined);
     throw error;
   }
 }
@@ -16103,11 +16044,10 @@ async function deleteWorkspace(
   keepFiles?: boolean,
 ): Promise<WorkspaceResponsePayload> {
   const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
-  const response = await requestRuntimeJson<WorkspaceResponsePayload>({
-    method: "DELETE",
-    path: `/api/v1/workspaces/${encodeURIComponent(safeWorkspaceId)}`,
-    ...(keepFiles !== undefined ? { params: { keep_files: keepFiles } } : {}),
-  });
+  const response = await runtimeClient.workspaces.delete(
+    safeWorkspaceId,
+    keepFiles !== undefined ? { keepFiles } : undefined,
+  );
   forgetWorkspaceDir(safeWorkspaceId);
   return response;
 }
@@ -16117,10 +16057,8 @@ async function relocateWorkspace(
   newPath: string,
 ): Promise<WorkspaceResponsePayload> {
   const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
-  const response = await requestRuntimeJson<WorkspaceResponsePayload>({
-    method: "PATCH",
-    path: `/api/v1/workspaces/${encodeURIComponent(safeWorkspaceId)}`,
-    payload: { workspace_path: newPath },
+  const response = await runtimeClient.workspaces.update(safeWorkspaceId, {
+    workspace_path: newPath,
   });
   forgetWorkspaceDir(safeWorkspaceId);
   rememberWorkspaceDir(safeWorkspaceId, response.workspace.workspace_path);
@@ -16131,11 +16069,7 @@ async function activateWorkspaceRecord(
   workspaceId: string,
 ): Promise<WorkspaceResponsePayload> {
   const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
-  return requestRuntimeJson<WorkspaceResponsePayload>({
-    method: "POST",
-    path: `/api/v1/workspaces/${encodeURIComponent(safeWorkspaceId)}/activate`,
-    payload: {},
-  });
+  return runtimeClient.workspaces.activate(safeWorkspaceId);
 }
 
 async function pickWorkspaceRelocationFolder(
@@ -16191,13 +16125,10 @@ async function listRuntimeStates(
   workspaceId: string,
 ): Promise<SessionRuntimeStateListResponsePayload> {
   try {
-    const response = await requestRuntimeJson<SessionRuntimeStateListResponsePayload>({
-      method: "GET",
-      path: `/api/v1/agent-sessions/by-workspace/${workspaceId}/runtime-states`,
-      params: {
-        limit: 100,
-        offset: 0,
-      },
+    const response = await runtimeClient.sessions.listRuntimeStates({
+      workspaceId,
+      limit: 100,
+      offset: 0,
     });
     const items = cacheRuntimeStateRecords(workspaceId, response.items ?? []);
     return {
@@ -16223,15 +16154,11 @@ async function listAgentSessions(
     return { items: [], count: 0 };
   }
   try {
-    const response = await requestRuntimeJson<AgentSessionListResponsePayload>({
-      method: "GET",
-      path: "/api/v1/agent-sessions",
-      params: {
-        workspace_id: workspaceId,
-        include_archived: false,
-        limit: 100,
-        offset: 0,
-      },
+    const response = await runtimeClient.sessions.list({
+      workspaceId,
+      includeArchived: false,
+      limit: 100,
+      offset: 0,
     });
     const items = cacheAgentSessionRecords(workspaceId, response.items ?? []);
     return {
@@ -16253,17 +16180,13 @@ async function listAgentSessions(
 async function createAgentSession(
   payload: CreateAgentSessionPayload,
 ): Promise<CreateAgentSessionResponsePayload> {
-  const response = await requestRuntimeJson<CreateAgentSessionResponsePayload>({
-    method: "POST",
-    path: "/api/v1/agent-sessions",
-    payload: {
-      workspace_id: payload.workspace_id,
-      session_id: payload.session_id ?? undefined,
-      kind: payload.kind ?? undefined,
-      title: payload.title ?? undefined,
-      parent_session_id: payload.parent_session_id ?? undefined,
-      created_by: payload.created_by ?? undefined,
-    },
+  const response = await runtimeClient.sessions.create({
+    workspace_id: payload.workspace_id,
+    session_id: payload.session_id ?? undefined,
+    kind: payload.kind ?? undefined,
+    title: payload.title ?? undefined,
+    parent_session_id: payload.parent_session_id ?? undefined,
+    created_by: payload.created_by ?? undefined,
   });
   if (response.session) {
     upsertCachedAgentSessionRecord(response.session);
@@ -16309,15 +16232,12 @@ async function getSessionHistory(
   payload: SessionHistoryRequestPayload,
 ): Promise<SessionHistoryResponsePayload> {
   try {
-    return await requestRuntimeJson<SessionHistoryResponsePayload>({
-      method: "GET",
-      path: `/api/v1/agent-sessions/${payload.sessionId}/history`,
-      params: {
-        workspace_id: payload.workspaceId,
-        limit: payload.limit ?? 200,
-        offset: payload.offset ?? 0,
-        order: payload.order ?? "asc",
-      },
+    return await runtimeClient.sessions.getHistory({
+      sessionId: payload.sessionId,
+      workspaceId: payload.workspaceId,
+      limit: payload.limit,
+      offset: payload.offset,
+      order: payload.order,
     });
   } catch (error) {
     if (
@@ -16337,15 +16257,9 @@ async function getSessionHistory(
 async function getSessionOutputEvents(
   payload: SessionOutputEventListRequestPayload,
 ): Promise<SessionOutputEventListResponsePayload> {
-  return requestRuntimeJson<SessionOutputEventListResponsePayload>({
-    method: "GET",
-    path: `/api/v1/agent-sessions/${encodeURIComponent(payload.sessionId)}/outputs/events`,
-    params: {
-      input_id: payload.inputId ?? undefined,
-      include_history: true,
-      after_event_id: 0,
-      include_native: false,
-    },
+  return runtimeClient.sessions.getOutputEvents({
+    sessionId: payload.sessionId,
+    inputId: payload.inputId,
   });
 }
 
@@ -16367,10 +16281,8 @@ async function queueSessionInput(
   }
   const idempotencyKey =
     payload.idempotency_key?.trim() || `desktop-session-input:${randomUUID()}`;
-  const response = await requestRuntimeJson<EnqueueSessionInputResponsePayload>({
-    method: "POST",
-    path: "/api/v1/agent-sessions/queue",
-    payload: {
+  const response = await runtimeClient.sessions.queueInput(
+    {
       workspace_id: payload.workspace_id,
       text: payload.text,
       image_urls: payload.image_urls,
@@ -16381,8 +16293,8 @@ async function queueSessionInput(
       model: payload.model,
       thinking_value: payload.thinking_value ?? null,
     },
-    retryTransientErrors: true,
-  });
+    { retryTransientErrors: true },
+  );
   const runtimeStatus = response.runtime_status?.trim() || response.status || "QUEUED";
   const effectiveState =
     response.effective_state?.trim() || runtimeStatus || "QUEUED";
@@ -16410,12 +16322,8 @@ async function queueSessionInput(
 async function pauseSessionRun(
   payload: HolabossPauseSessionRunPayload,
 ): Promise<PauseSessionRunResponsePayload> {
-  const response = await requestRuntimeJson<PauseSessionRunResponsePayload>({
-    method: "POST",
-    path: `/api/v1/agent-sessions/${encodeURIComponent(payload.session_id)}/pause`,
-    payload: {
-      workspace_id: payload.workspace_id,
-    },
+  const response = await runtimeClient.sessions.pause(payload.session_id, {
+    workspace_id: payload.workspace_id,
   });
   upsertCachedRuntimeStateRecord({
     workspace_id: payload.workspace_id,
@@ -16441,14 +16349,14 @@ async function pauseSessionRun(
 async function updateQueuedSessionInput(
   payload: HolabossUpdateQueuedSessionInputPayload,
 ): Promise<UpdateQueuedSessionInputResponsePayload> {
-  return requestRuntimeJson<UpdateQueuedSessionInputResponsePayload>({
-    method: "PATCH",
-    path: `/api/v1/agent-sessions/${encodeURIComponent(payload.session_id)}/inputs/${encodeURIComponent(payload.input_id)}`,
-    payload: {
+  return runtimeClient.sessions.updateQueuedInput(
+    payload.session_id,
+    payload.input_id,
+    {
       workspace_id: payload.workspace_id,
       text: payload.text,
     },
-  });
+  );
 }
 
 async function* iterSseEvents(stream: NodeJS.ReadableStream) {
