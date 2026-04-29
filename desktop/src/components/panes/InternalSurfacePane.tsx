@@ -17,6 +17,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { DashboardRenderer } from "@/components/dashboard/DashboardRenderer";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
+import {
+  bumpDashboardRefreshKey,
+  toggleDashboardFullWidth as toggleDashboardFullWidthGlobal,
+  useDashboardToolbarState,
+} from "@/lib/dashboardToolbarStore";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 type InternalSurfaceType = "document" | "preview" | "file" | "event";
@@ -117,40 +122,13 @@ export function InternalSurfacePane({
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  // Dashboard-specific toolbar state — lifted up so the buttons live
-  // in this pane's file header strip alongside Eye/Save, not inside
-  // the renderer body.
-  const [dashboardFullWidth, setDashboardFullWidth] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem("dashboardRenderer:fullWidth") === "1";
-    } catch {
-      return false;
-    }
-  });
-  const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
-  const toggleDashboardFullWidth = useCallback(() => {
-    setDashboardFullWidth((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem("dashboardRenderer:fullWidth", next ? "1" : "0");
-      } catch {
-        // ignore — quota / private mode
-      }
-      return next;
-    });
-  }, []);
-  const refreshDashboard = useCallback(
-    () => setDashboardRefreshKey((k) => k + 1),
-    [],
-  );
-  // TODO: remove after debugging — verifies state actually flips after
-  // the button click handler returns.
-  useEffect(() => {
-    console.log("[dashboard-toolbar] dashboardFullWidth state =", dashboardFullWidth);
-  }, [dashboardFullWidth]);
-  useEffect(() => {
-    console.log("[dashboard-toolbar] dashboardRefreshKey =", dashboardRefreshKey);
-  }, [dashboardRefreshKey]);
+  // Dashboard toolbar state lives in a module-level store
+  // (dashboardToolbarStore) — more than one InternalSurfacePane can be
+  // mounted at once (chat surface + main display) and component-local
+  // useState would diverge across them: a click would flip one
+  // instance's state while the other keeps showing its stale render.
+  const { fullWidth: dashboardFullWidth, refreshKey: dashboardRefreshKey } =
+    useDashboardToolbarState();
   const isDirtyRef = useRef(false);
   const isSavingRef = useRef(false);
   const pendingExternalRefreshPathRef = useRef<string | null>(null);
@@ -575,13 +553,7 @@ export function InternalSurfacePane({
                 <>
                   <button
                     type="button"
-                    onClick={(e) => {
-                      console.log("[dashboard-toolbar] full-width clicked", {
-                        before: dashboardFullWidth,
-                        target: e.currentTarget,
-                      });
-                      toggleDashboardFullWidth();
-                    }}
+                    onClick={toggleDashboardFullWidthGlobal}
                     aria-pressed={dashboardFullWidth}
                     aria-label={
                       dashboardFullWidth
@@ -603,12 +575,7 @@ export function InternalSurfacePane({
                   </button>
                   <button
                     type="button"
-                    onClick={(e) => {
-                      console.log("[dashboard-toolbar] refresh clicked", {
-                        target: e.currentTarget,
-                      });
-                      refreshDashboard();
-                    }}
+                    onClick={bumpDashboardRefreshKey}
                     aria-label="Refresh"
                     title="Refresh"
                     className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
