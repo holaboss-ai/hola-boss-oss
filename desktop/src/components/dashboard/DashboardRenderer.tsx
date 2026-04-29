@@ -1,4 +1,4 @@
-import { RefreshCw } from "lucide-react";
+import { Maximize2, Minimize2, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -55,6 +55,26 @@ function DashboardBody({
     dashboard.panels.map(() => ({ kind: "loading" })),
   );
   const [refreshKey, setRefreshKey] = useState(0);
+  // Notion-style page-width toggle. Persists across sessions per
+  // browser profile so the user's preferred reading width sticks.
+  const [isFullWidth, setIsFullWidth] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("dashboardRenderer:fullWidth") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleFullWidth = useCallback(() => {
+    setIsFullWidth((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("dashboardRenderer:fullWidth", next ? "1" : "0");
+      } catch {
+        // ignore — quota / private mode
+      }
+      return next;
+    });
+  }, []);
 
   // Run all queries when the dashboard changes (file edited, new mount,
   // or refresh). Each result writes into its own slot so a slow query
@@ -92,9 +112,11 @@ function DashboardBody({
 
   const groups = useMemo(() => groupPanels(dashboard.panels), [dashboard.panels]);
 
+  const widthClass = isFullWidth ? "max-w-none" : "max-w-4xl";
+
   return (
     <div className="h-full overflow-auto bg-background">
-      <div className="mx-auto max-w-3xl px-10 pt-10 pb-16">
+      <div className={`mx-auto px-10 pt-10 pb-16 ${widthClass}`}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h1 className="text-2xl font-semibold tracking-tight text-foreground">
@@ -106,17 +128,31 @@ function DashboardBody({
               </p>
             ) : null}
           </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={onRefresh}
-            title="Re-run all queries"
-            className="-mr-2 shrink-0 gap-1.5 text-muted-foreground hover:text-foreground"
-          >
-            <RefreshCw size={13} />
-            Refresh
-          </Button>
+          <div className="flex shrink-0 items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={toggleFullWidth}
+              title={isFullWidth ? "Switch to compact width" : "Switch to full width"}
+              aria-pressed={isFullWidth}
+              className="gap-1.5 text-muted-foreground hover:text-foreground"
+            >
+              {isFullWidth ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+              {isFullWidth ? "Compact" : "Full width"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={onRefresh}
+              title="Re-run all queries"
+              className="-mr-2 gap-1.5 text-muted-foreground hover:text-foreground"
+            >
+              <RefreshCw size={13} />
+              Refresh
+            </Button>
+          </div>
         </div>
 
         <div className="mt-8 flex flex-col gap-10">
