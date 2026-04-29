@@ -162,6 +162,8 @@ Important behavior to understand:
 
 The desktop browser service is now more than a browser-tool bridge. In addition to page and tab routes, it exposes `/api/v1/browser/operator-surface-context`, which lets the embedded runtime load the current active operator surfaces for the workspace. That payload combines browser-owned surfaces with the non-browser surfaces `AppShell` reports through `workspace.setOperatorSurfaceContext(...)`.
 
+The same service is also the narrow bridge for browser-session helpers such as download status and cookie reads/writes. Keep those helpers here so session semantics stay aligned with the embedded BrowserView partition instead of drifting into ad hoc runtime-side shims.
+
 This split is why browser behavior belongs to desktop internals, not to generic UI code alone.
 
 The non-browser half of that context comes from the renderer:

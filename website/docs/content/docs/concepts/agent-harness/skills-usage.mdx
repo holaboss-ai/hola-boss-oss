@@ -27,6 +27,8 @@ Those manifests are used in three places:
 - quoted skill preparation from leading `/skill-id` lines in the instruction
 - runtime-backed `skill` invocation
 
+Embedded skills are a good fit for reusable host behavior that should travel with the shipped runtime, such as the embedded-browser workflow skills that bias the agent toward compact state, action-local waits, and evidence-first debugging.
+
 ## Quoted skill preparation
 
 If the instruction starts with slash-prefixed skill ids, the runtime prepares those skill blocks before the harness host request is built.

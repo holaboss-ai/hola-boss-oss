@@ -40,19 +40,29 @@ In the shipped `pi` path, tools such as `todoread`, `todowrite`, `skill`, `web_s
 
 These tools only appear for workspace sessions when the desktop browser bridge is available. Each workspace gets its own dedicated agent browser surface, so the agent does not interfere with the user's own browser space.
 
+The efficient default loop is:
+
+1. use `browser_act` directly when the target is already well described
+2. use `browser_find` when you know the target but not its exact placement
+3. use `browser_get_state` in compact mode for orientation
+4. attach `wait_for` to the action itself when possible
+5. escalate to page text, screenshots, or broader state only when the cheaper path is ambiguous
+
 | Tool | What it does |
 | --- | --- |
 | `browser_navigate` | Navigate the desktop browser to a URL for direct inspection or interaction on a specific live site when search results are not enough. |
 | `browser_open_tab` | Open a URL in a new desktop browser tab so the agent can inspect or compare specific live pages without losing the current page state. |
-| `browser_get_state` | Read the current desktop browser page, visible interactive elements, visible media such as images, and optional screenshot. |
+| `browser_select_tab` | Switch the active desktop browser tab using a tab id from `browser_list_tabs` so later browser tools operate on the intended tab. |
+| `browser_close_tab` | Close a desktop browser tab using a tab id from `browser_list_tabs` and return the updated tab state. |
+| `browser_get_state` | Read the current desktop browser page, visible interactive elements, visible media such as images, and optional screenshot. Returns a compact snapshot by default, includes a stable `revision`, and supports `since_revision` plus `changed_only=true` to skip full snapshots when nothing changed. |
 | `browser_find` | Find visible browser elements by text, label, placeholder, role, CSS selector, or XPath without depending on a capped state snapshot. |
-| `browser_act` | Perform a general browser action such as click, hover, focus, fill, type, press, select, or scroll into view using a ref or locator. |
-| `browser_wait` | Wait for page load, URL changes, visible/hidden elements, text, or DOM changes before continuing a browser workflow. |
+| `browser_act` | Perform a general browser action such as click, hover, focus, fill, type, press, select, check, uncheck, or scroll into view using a ref or locator. Supports inline `wait_for`, `wait_timeout_ms`, and `post_state` follow-up. |
+| `browser_wait` | Wait for page load or load-state readiness, URL changes, visible/hidden elements, text, DOM changes, a JavaScript predicate, or download start/completion before continuing a browser workflow. |
 | `browser_evaluate` | Evaluate JavaScript in the active page and return a structured result for general inspection or controlled automation. |
 | `browser_debug` | Inspect clickability and page-state diagnostics such as active element, dialogs, iframes, hit tests, viewport, and scroll. |
-| `browser_click` | Click an interactive element from `browser_get_state` by index to continue a live browser workflow. |
+| `browser_click` | Click an interactive element from `browser_get_state` by index to continue a live browser workflow. Supports inline `wait_for`, `wait_timeout_ms`, and `post_state` follow-up. |
 | `browser_context_click` | Open the native browser context menu on an interactive element or visible media item from `browser_get_state`. |
-| `browser_type` | Type text into an interactive element from `browser_get_state` by index to search, filter, fill inputs, or continue a live browser workflow. |
+| `browser_type` | Type text into an interactive element from `browser_get_state` by index to search, filter, fill inputs, or continue a live browser workflow. Supports inline `wait_for`, `wait_timeout_ms`, and `post_state` follow-up. |
 | `browser_press` | Send a keyboard key to the currently focused element to submit forms, confirm dialogs, or continue keyboard-driven browser interaction. |
 | `browser_scroll` | Scroll the current page vertically to load, inspect, or reach additional live content that is not yet visible. |
 | `browser_back` | Go back in the active browser tab history while preserving the live browser session state. |
@@ -60,6 +70,15 @@ These tools only appear for workspace sessions when the desktop browser bridge i
 | `browser_reload` | Reload the active browser tab to refresh live page state before re-checking exact details. |
 | `browser_screenshot` | Capture a screenshot of the active browser tab when visual verification or interpretation is needed. |
 | `browser_list_tabs` | List open browser tabs and the active tab id so the agent can manage multi-tab workflows. |
+| `browser_list_downloads` | List recent browser downloads and their status so the agent can confirm a download completed before using the file in the workspace. |
+| `browser_get_console` | Read a compact recent slice of console output for the active tab when a page appears broken or a UI action silently fails. |
+| `browser_get_errors` | Read recent page, runtime, or network failures for the active tab without opening a full browser trace. |
+| `browser_list_requests` | List a small recent window of browser requests with compact status and timing fields to spot failed API calls or redirects. |
+| `browser_get_request` | Read detailed metadata for one recent browser request, including headers, status, timing, and body metadata when available. |
+| `browser_storage_get` | Read `localStorage` or `sessionStorage` entries without paying for a full DOM snapshot. |
+| `browser_storage_set` | Set or remove `localStorage` or `sessionStorage` entries for lightweight browser-state repair. |
+| `browser_cookies_get` | Read cookies for the current browser session, defaulting to the active page URL when one is available. |
+| `browser_cookies_set` | Set a cookie in the current browser session for lightweight auth or session repair without replaying a full login flow. |
 
 ## Onboarding
 

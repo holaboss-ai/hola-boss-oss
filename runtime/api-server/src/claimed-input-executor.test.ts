@@ -396,6 +396,97 @@ test("claimed input persists runner events, assistant text, and idle state on su
   store.close();
 });
 
+test("claimed input summarizes browser tool usage and browser telemetry", async () => {
+  const store = makeStore("hb-claimed-input-browser-telemetry-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "check browser flow" },
+  });
+  setNodeRunnerCommand([
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: {} }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'tool_call', payload: { phase: 'completed', tool_name: 'browser_get_state', tool_id: 'browser_get_state', call_id: 'call-browser-state', error: false, result: { content: [{ type: 'text', text: JSON.stringify({ ok: true, page: { url: 'https://example.com' }, state: { url: 'https://example.com', text: 'Visible text', elements: [{ index: 1 }], media: [] } }, null, 2) }], details: { tool_id: 'browser_get_state', browser_usage: { tool_id: 'browser_get_state', detail: 'compact', truncated: true, page_text_chars: 120 } } } } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 3, event_type: 'tool_call', payload: { phase: 'completed', tool_name: 'browser_wait', tool_id: 'browser_wait', call_id: 'call-browser-wait', error: false, result: { content: [{ type: 'text', text: JSON.stringify({ ok: true, wait: { matched: true } }, null, 2) }], details: { tool_id: 'browser_wait', browser_usage: { tool_id: 'browser_wait', condition: 'function' } } } } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 4, event_type: 'tool_call', payload: { phase: 'completed', tool_name: 'browser_type', tool_id: 'browser_type', call_id: 'call-browser-type', error: false, result: { content: [{ type: 'text', text: JSON.stringify({ ok: true, action: { ok: true }, page: { url: 'https://example.com/search' }, state: { url: 'https://example.com/search', elements: [{ index: 1 }], media: [] } }, null, 2) }], details: { tool_id: 'browser_type', browser_usage: { tool_id: 'browser_type', detail: 'compact', post_state: 'state', wait_condition: 'function', page_text_chars: 0 } } } } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 5, event_type: 'run_completed', payload: { status: 'ok' } }) + '\\n');`,
+  ]);
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+  });
+
+  const turnResult = store.getTurnResult({ inputId: queued.inputId });
+  assert.ok(turnResult);
+  assert.deepEqual(turnResult.toolUsageSummary, {
+    total_calls: 3,
+    completed_calls: 3,
+    failed_calls: 0,
+    tool_names: ["browser_get_state", "browser_type", "browser_wait"],
+    tool_ids: ["browser_get_state", "browser_type", "browser_wait"],
+    browser: {
+      total_calls: 3,
+      state_reads: 2,
+      compact_state_reads: 2,
+      standard_state_reads: 0,
+      truncated_state_reads: 1,
+      action_calls: 1,
+      wait_calls: 1,
+      find_calls: 0,
+      screenshot_calls: 0,
+      page_text_chars: 120,
+    },
+  });
+  assert.equal(
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_tool_calls,
+    3,
+  );
+  assert.equal(
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_state_reads,
+    2,
+  );
+  assert.equal(
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_compact_state_reads,
+    2,
+  );
+  assert.equal(
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_action_calls,
+    1,
+  );
+  assert.equal(
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_wait_calls,
+    1,
+  );
+  assert.equal(
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_truncated_state_reads,
+    1,
+  );
+  assert.equal(
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_page_text_chars,
+    120,
+  );
+  assert.ok(
+    Number(
+      (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_snapshot_bytes ?? 0,
+    ) > 0,
+  );
+
+  store.close();
+});
+
 test("claimed input creates a completion notification for successful cronjob session runs", async () => {
   const store = makeStore("hb-claimed-input-cronjob-success-");
   const workspace = store.createWorkspace({

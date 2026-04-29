@@ -55,7 +55,14 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
       body,
     });
     if (url.endsWith("/api/v1/capabilities/browser/tools/browser_get_state")) {
-      return new Response(JSON.stringify({ ok: true, title: "Example" }), {
+      return new Response(JSON.stringify({
+        ok: true,
+        title: "Example",
+        browser_usage: {
+          tool_id: "browser_get_state",
+          detail: "compact",
+        },
+      }), {
         status: 200,
         headers: { "content-type": "application/json; charset=utf-8" },
       });
@@ -104,9 +111,23 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
     ).map((entry) => entry.const),
     ["main", "viewport", "focused", "dialog", "active_dialog", "modal"],
   );
+  assert.deepEqual(
+    (
+      (getStateTool.parameters as { properties?: { detail?: { anyOf?: Array<{ const?: string }> } } })
+        .properties?.detail?.anyOf ?? []
+    ).map((entry) => entry.const),
+    ["compact", "standard"],
+  );
   assert.equal(
     (getStateTool.parameters as { properties?: { max_nodes?: { minimum?: number } } }).properties?.max_nodes?.minimum,
     1,
+  );
+  assert.equal(
+    (getStateTool.parameters as { properties?: { since_revision?: { minLength?: number } } }).properties?.since_revision?.minLength,
+    1,
+  );
+  assert.ok(
+    (getStateTool.parameters as { properties?: Record<string, unknown> }).properties?.changed_only,
   );
   const findTool = tools.find((tool) => tool.name === "browser_find");
   assert.ok(findTool);
@@ -125,7 +146,71 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
       (actTool.parameters as { properties?: { action?: { anyOf?: Array<{ const?: string }> } } })
         .properties?.action?.anyOf ?? []
     ).map((entry) => entry.const),
-    ["click", "double_click", "hover", "focus", "fill", "type", "press", "select", "scroll_into_view"],
+    ["click", "double_click", "hover", "focus", "fill", "type", "press", "select", "check", "uncheck", "scroll_into_view"],
+  );
+  assert.ok((actTool.parameters as { properties?: Record<string, unknown> }).properties?.wait_for);
+  assert.ok((actTool.parameters as { properties?: Record<string, unknown> }).properties?.post_state);
+  const waitTool = tools.find((tool) => tool.name === "browser_wait");
+  assert.ok(waitTool);
+  assert.ok(
+    (
+      (waitTool.parameters as { properties?: { condition?: { anyOf?: Array<{ const?: string }> } } })
+        .properties?.condition?.anyOf ?? []
+    ).some((entry) => entry.const === "download_completed"),
+  );
+  assert.ok(
+    (waitTool.parameters as { properties?: Record<string, unknown> }).properties?.filename,
+  );
+  const selectTabTool = tools.find((tool) => tool.name === "browser_select_tab");
+  assert.ok(selectTabTool);
+  assert.equal(
+    (selectTabTool.parameters as { properties?: { tab_id?: { minLength?: number } } }).properties?.tab_id?.minLength,
+    1,
+  );
+  const listDownloadsTool = tools.find((tool) => tool.name === "browser_list_downloads");
+  assert.ok(listDownloadsTool);
+  const consoleTool = tools.find((tool) => tool.name === "browser_get_console");
+  assert.ok(consoleTool);
+  assert.equal(
+    (consoleTool.parameters as { properties?: { limit?: { maximum?: number } } }).properties?.limit?.maximum,
+    100,
+  );
+  const errorsTool = tools.find((tool) => tool.name === "browser_get_errors");
+  assert.ok(errorsTool);
+  assert.ok(
+    (errorsTool.parameters as { properties?: Record<string, unknown> }).properties?.source,
+  );
+  const listRequestsTool = tools.find((tool) => tool.name === "browser_list_requests");
+  assert.ok(listRequestsTool);
+  assert.ok(
+    (listRequestsTool.parameters as { properties?: Record<string, unknown> }).properties?.failures_only,
+  );
+  const getRequestTool = tools.find((tool) => tool.name === "browser_get_request");
+  assert.ok(getRequestTool);
+  assert.equal(
+    (getRequestTool.parameters as { properties?: { request_id?: { minLength?: number } } }).properties?.request_id?.minLength,
+    1,
+  );
+  const storageGetTool = tools.find((tool) => tool.name === "browser_storage_get");
+  assert.ok(storageGetTool);
+  assert.equal(
+    (storageGetTool.parameters as { properties?: { max_entries?: { maximum?: number } } }).properties?.max_entries?.maximum,
+    100,
+  );
+  const storageSetTool = tools.find((tool) => tool.name === "browser_storage_set");
+  assert.ok(storageSetTool);
+  assert.ok(
+    (storageSetTool.parameters as { properties?: Record<string, unknown> }).properties?.delete,
+  );
+  const cookiesGetTool = tools.find((tool) => tool.name === "browser_cookies_get");
+  assert.ok(cookiesGetTool);
+  assert.ok(
+    (cookiesGetTool.parameters as { properties?: Record<string, unknown> }).properties?.names,
+  );
+  const cookiesSetTool = tools.find((tool) => tool.name === "browser_cookies_set");
+  assert.ok(cookiesSetTool);
+  assert.ok(
+    (cookiesSetTool.parameters as { properties?: Record<string, unknown> }).properties?.same_site,
   );
   const result = await getStateTool.execute("call-1", { include_screenshot: true }, undefined, undefined, {} as never);
 
@@ -138,10 +223,16 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
         browserSpace: "user",
         body: JSON.stringify({ include_screenshot: true }),
       },
-    ]);
+  ]);
   assert.equal(result.content[0]?.type, "text");
   assert.equal(result.content[0]?.text, JSON.stringify({ ok: true, title: "Example" }, null, 2));
-  assert.deepEqual(result.details, { tool_id: "browser_get_state" });
+  assert.deepEqual(result.details, {
+    tool_id: "browser_get_state",
+    browser_usage: {
+      tool_id: "browser_get_state",
+      detail: "compact",
+    },
+  });
 });
 
 test("Pi desktop browser tools compact large capability results and preserve raw details", async () => {
