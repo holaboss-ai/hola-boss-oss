@@ -88,3 +88,36 @@ export interface PublishSessionArtifactRequest {
   artifactId?: string | null
   changeType?: string | null
 }
+
+export interface AppResourceOutputInput {
+  /** Module identifier (twitter, linkedin, reddit, gmail, …). */
+  moduleId: string
+  /** Platform tag stored on the output (defaults to `moduleId`). */
+  platform?: string | null
+  /** Artifact type used when publishing a session-bound artifact. */
+  artifactType?: string
+  /** Output type used when creating a workspace-scoped output fallback. */
+  outputType?: string
+  /**
+   * Existing output id to update in place. Pass null when the resource
+   * has never been synced before.
+   */
+  existingOutputId?: string | null
+  /** Current lifecycle state of the underlying resource. */
+  status?: string | null
+  /** Resource descriptor; builds both presentation and metadata label. */
+  resource: {
+    entityType: string
+    entityId: string
+    title: string
+    view: string
+    path: string
+  }
+  /** Extra metadata merged into the standard envelope. */
+  extraMetadata?: Record<string, unknown>
+}
+
+export interface AppResourceOutputResult {
+  outputId: string | null
+  isNew: boolean
+}

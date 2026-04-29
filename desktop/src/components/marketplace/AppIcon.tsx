@@ -12,10 +12,11 @@ interface AppIconProps {
   label: string;
   /**
    * Visual size variant.
-   *  - "card": 36px chip with a 24px logo (catalog cards)
-   *  - "row":  16px chip with a 16px logo (sidebar / inline rows)
+   *  - "card":    36px chip with a 24px logo (catalog cards)
+   *  - "row":     16px chip with a 16px logo (sidebar / inline rows)
+   *  - "toolbar": 28px chip with a 22px logo (app surface toolbar)
    */
-  size?: "card" | "row";
+  size?: "card" | "row" | "toolbar";
 }
 
 /**
@@ -39,19 +40,31 @@ export function AppIcon({
   label,
   size = "card",
 }: AppIconProps) {
-  const isCard = size === "card";
-  const localSvg = providerIcon(appId, isCard ? 22 : 14);
+  const localSvgPx =
+    size === "card" ? 22 : size === "toolbar" ? 22 : 14;
+  const localSvg = providerIcon(appId, localSvgPx);
 
   const initialStage: Stage = iconUrl ? "backend" : "cdn";
   const [stage, setStage] = useState<Stage>(initialStage);
 
-  const containerClass = isCard
-    ? "grid size-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-muted/40"
-    : "grid size-4 shrink-0 place-items-center overflow-hidden rounded-[4px]";
-  const letterClass = isCard
-    ? "grid size-9 shrink-0 place-items-center rounded-lg bg-muted/40 text-sm font-semibold uppercase text-muted-foreground"
-    : "grid size-4 shrink-0 place-items-center rounded-[4px] bg-muted text-[9px] font-semibold uppercase text-muted-foreground";
-  const imgClass = isCard ? "size-6 object-contain" : "size-4 object-contain";
+  const containerClass =
+    size === "card"
+      ? "grid size-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-muted/40"
+      : size === "toolbar"
+        ? "grid size-7 shrink-0 place-items-center overflow-hidden rounded-md border border-border bg-muted"
+        : "grid size-4 shrink-0 place-items-center overflow-hidden rounded-[4px]";
+  const letterClass =
+    size === "card"
+      ? "grid size-9 shrink-0 place-items-center rounded-lg bg-muted/40 text-sm font-semibold uppercase text-muted-foreground"
+      : size === "toolbar"
+        ? "grid size-7 shrink-0 place-items-center rounded-md border border-border bg-muted text-[10px] font-semibold uppercase text-muted-foreground"
+        : "grid size-4 shrink-0 place-items-center rounded-[4px] bg-muted text-[9px] font-semibold uppercase text-muted-foreground";
+  const imgClass =
+    size === "card"
+      ? "size-6 object-contain"
+      : size === "toolbar"
+        ? "size-[22px] object-contain"
+        : "size-4 object-contain";
 
   if (stage === "backend" && iconUrl) {
     return (
@@ -84,7 +97,11 @@ export function AppIcon({
     return <span className={containerClass}>{localSvg}</span>;
   }
 
-  return <span className={letterClass}>{computeInitials(label, isCard)}</span>;
+  return (
+    <span className={letterClass}>
+      {computeInitials(label, size === "card")}
+    </span>
+  );
 }
 
 /**

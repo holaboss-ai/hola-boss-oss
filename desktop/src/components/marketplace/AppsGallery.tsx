@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ExternalLink, LoaderCircle } from "lucide-react";
+import { ExternalLink, FileUp, LoaderCircle } from "lucide-react";
 import { getProviderForApp, useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { Button } from "@/components/ui/button";
 import {
@@ -64,7 +64,35 @@ export function AppsGallery() {
     clearPendingAppInstall,
     connectAndInstallApp,
     isConnectingAppIntegration,
+    refreshInstalledApps,
   } = useWorkspaceDesktop();
+
+  const [isInstallingFromFile, setIsInstallingFromFile] = useState(false);
+  const [installFromFileError, setInstallFromFileError] = useState<
+    string | null
+  >(null);
+
+  const handleInstallFromArchive = useCallback(async () => {
+    if (!selectedWorkspace) return;
+    setInstallFromFileError(null);
+    setIsInstallingFromFile(true);
+    try {
+      const result =
+        await window.electronAPI.workspace.installAppFromArchiveFile({
+          workspaceId: selectedWorkspace.id,
+        });
+      // null = user cancelled the file picker; not an error.
+      if (result) {
+        await refreshInstalledApps();
+      }
+    } catch (err) {
+      setInstallFromFileError(
+        err instanceof Error ? err.message : String(err),
+      );
+    } finally {
+      setIsInstallingFromFile(false);
+    }
+  }, [selectedWorkspace, refreshInstalledApps]);
 
   useEffect(() => {
     void refreshAppCatalog();
@@ -135,11 +163,36 @@ export function AppsGallery() {
         <p className="text-xs text-muted-foreground">
           Select a workspace to install apps.
         </p>
-      ) : null}
+      ) : (
+        <div className="mb-1 flex items-center justify-end">
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={
+              isInstallingFromFile || anyInstalling || Boolean(pendingAppInstall)
+            }
+            onClick={() => void handleInstallFromArchive()}
+            title="Pick a .tar.gz built by hola-boss-apps/scripts/build-archive.sh"
+          >
+            {isInstallingFromFile ? (
+              <LoaderCircle size={13} className="animate-spin" />
+            ) : (
+              <FileUp size={13} />
+            )}
+            Install from file…
+          </Button>
+        </div>
+      )}
 
       {appCatalogError ? (
         <div className="mt-3 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">
           {appCatalogError}
+        </div>
+      ) : null}
+
+      {installFromFileError ? (
+        <div className="mt-2 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+          {installFromFileError}
         </div>
       ) : null}
 

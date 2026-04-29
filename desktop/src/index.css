@@ -53,13 +53,13 @@
   --color-background: var(--background);
   /* Radius scale — base 0.5rem (8px). Steps land on integer px (4/6/8/10/12/16/20)
      for a refined craft feel, distinct from Tailwind v4 default progression. */
-  --radius-sm: calc(var(--radius) * 0.5);    /* 4px */
-  --radius-md: calc(var(--radius) * 0.75);   /* 6px — default button/menu-item */
-  --radius-lg: var(--radius);                 /* 8px — default card/input */
-  --radius-xl: calc(var(--radius) * 1.25);   /* 10px — popover/dropdown */
-  --radius-2xl: calc(var(--radius) * 1.5);   /* 12px — panel inner */
-  --radius-3xl: calc(var(--radius) * 2);     /* 16px — large container */
-  --radius-4xl: calc(var(--radius) * 2.5);   /* 20px */
+  --radius-sm: calc(var(--radius) * 0.5); /* 4px */
+  --radius-md: calc(var(--radius) * 0.75); /* 6px — default button/menu-item */
+  --radius-lg: var(--radius); /* 8px — default card/input */
+  --radius-xl: calc(var(--radius) * 1.25); /* 10px — popover/dropdown */
+  --radius-2xl: calc(var(--radius) * 1.5); /* 12px — panel inner */
+  --radius-3xl: calc(var(--radius) * 2); /* 16px — large container */
+  --radius-4xl: calc(var(--radius) * 2.5); /* 20px */
 
   /* Font weight scale — each step ~50 lighter than Tailwind default.
      Depends on Inter Variable for continuous weights. */
@@ -77,20 +77,16 @@
      (0 0 0 1px / 0.5px). Gives cards & buttons a "glass edge" without
      a real border. Use: shadow-subtle-xs / shadow-subtle-sm */
   --shadow-subtle-xs:
-    rgba(0, 0, 0, 0.025) 0 1px 1px -0.5px,
-    rgba(0, 0, 0, 0.05) 0 2px 2px -1px,
+    rgba(0, 0, 0, 0.025) 0 1px 1px -0.5px, rgba(0, 0, 0, 0.05) 0 2px 2px -1px,
     rgba(0, 0, 0, 0.05) 0 0 0 1px;
   --shadow-subtle-sm:
-    rgba(0, 0, 0, 0.02) 0 1px 1px -0.5px,
-    rgba(0, 0, 0, 0.04) 0 1px 1px -0.5px,
-    rgba(0, 0, 0, 0.04) 0 2px 2px -1px,
-    rgba(0, 0, 0, 0.03) 0 0 0 0.5px;
+    rgba(0, 0, 0, 0.02) 0 1px 1px -0.5px, rgba(0, 0, 0, 0.04) 0 1px 1px -0.5px,
+    rgba(0, 0, 0, 0.04) 0 2px 2px -1px, rgba(0, 0, 0, 0.03) 0 0 0 0.5px;
 
   /* One step up from shadow-subtle-xs — for elements that should
      read as gently lifted off the surface (logos, badges, pills). */
   --shadow-floating-xs:
-    rgba(0, 0, 0, 0.04) 0 1px 2px,
-    rgba(0, 0, 0, 0.06) 0 3px 6px -1px,
+    rgba(0, 0, 0, 0.04) 0 1px 2px, rgba(0, 0, 0, 0.06) 0 3px 6px -1px,
     rgba(0, 0, 0, 0.08) 0 0 0 1px;
 
   /* Tight type scale — ~10-20% denser than Tailwind default. The
@@ -118,8 +114,7 @@
   --text-5xl: 3.052rem;
 
   /* Entrance animations */
-  --animate-reveal-pop: reveal-pop 0.5s cubic-bezier(0.16, 1, 0.3, 1)
-    forwards;
+  --animate-reveal-pop: reveal-pop 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   --animate-fade-in-once: fade-in-once 0.6s ease-out forwards;
 
   /* ============================================================
@@ -139,8 +134,8 @@
    * .dark). Distinct from craft (0.06/0.06 light, 0.15/0.12 dark
    * with doubling 1/3/6/12/24px stack).
    * ============================================================ */
-  --shadow-sm:
-    0 0 0 1px oklch(from var(--foreground) l c h / var(--hairline-alpha));
+  --shadow-sm: 0 0 0 1px
+    oklch(from var(--foreground) l c h / var(--hairline-alpha));
   --shadow-md:
     0 0 0 1px oklch(from var(--foreground) l c h / var(--hairline-alpha)),
     0 1px 2px -1px rgba(0, 0, 0, var(--shadow-alpha)),
@@ -169,14 +164,14 @@
    * (those stay for in-component layering); these are app chrome.
    * 100-step rhythm avoids the 390/400/410 collision-prone scheme.
    * ============================================================ */
-  --z-index-sticky:  100;
-  --z-index-chrome:  200;
-  --z-index-panel:   300;
+  --z-index-sticky: 100;
+  --z-index-chrome: 200;
+  --z-index-panel: 300;
   --z-index-popover: 500;
   --z-index-tooltip: 600;
-  --z-index-modal:   700;
+  --z-index-modal: 700;
   --z-index-overlay: 800;
-  --z-index-toast:   900;
+  --z-index-toast: 900;
   --z-index-splash: 1000;
 
   /* ============================================================
@@ -186,7 +181,7 @@
    * ============================================================ */
   --default-transition-duration: 180ms;
   --default-transition-timing-function: cubic-bezier(0.32, 0.08, 0.24, 1);
-  --ease-standard:  cubic-bezier(0.32, 0.08, 0.24, 1);
+  --ease-standard: cubic-bezier(0.32, 0.08, 0.24, 1);
   --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
   --duration-fast: 120ms;
   --duration-base: 220ms;
@@ -220,7 +215,8 @@
 }
 
 @keyframes holaboss-splash-halo {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 0.35;
     transform: scale(1);
   }
@@ -231,7 +227,8 @@
 }
 
 @keyframes holaboss-splash-dot {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 0.2;
     transform: translateY(0);
   }
@@ -246,12 +243,36 @@
  * switches (and hover-preview) interpolate smoothly. Chromium
  * Houdini support is full; safe in Electron-only context.
  * ============================================================ */
-@property --background  { syntax: "<color>"; inherits: true; initial-value: oklch(0.985 0.002 60); }
-@property --foreground  { syntax: "<color>"; inherits: true; initial-value: oklch(0.18 0.015 55); }
-@property --primary     { syntax: "<color>"; inherits: true; initial-value: oklch(0.68 0.21 37); }
-@property --info        { syntax: "<color>"; inherits: true; initial-value: oklch(0.62 0.17 240); }
-@property --success     { syntax: "<color>"; inherits: true; initial-value: oklch(0.58 0.16 148); }
-@property --destructive { syntax: "<color>"; inherits: true; initial-value: oklch(0.55 0.24 18); }
+@property --background {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: oklch(0.985 0.002 60);
+}
+@property --foreground {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: oklch(0.18 0.015 55);
+}
+@property --primary {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: oklch(0.68 0.21 37);
+}
+@property --info {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: oklch(0.62 0.17 240);
+}
+@property --success {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: oklch(0.58 0.16 148);
+}
+@property --destructive {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: oklch(0.55 0.24 18);
+}
 
 /* ============================================================
  * Token fallbacks — tweakcn theme imports override these.
@@ -270,11 +291,15 @@
   /* Elevation alpha — tuned per mode (light: subtle, dark: stronger).
      Distinct from craft's 0.06/0.06 light, 0.15/0.12 dark. */
   --hairline-alpha: 0.05;
-  --shadow-alpha:   0.07;
+  --shadow-alpha: 0.07;
 
   /* Elevated background — for unfocused panels in multi-panel mode.
      bg-foreground @ 2% mixed into bg-background. */
-  --background-elevated: color-mix(in srgb, var(--foreground) 2%, var(--background));
+  --background-elevated: color-mix(
+    in srgb,
+    var(--foreground) 2%,
+    var(--background)
+  );
 
   /* ============================================================
    * MIX AXIS — solid foreground-on-background blends.
@@ -283,10 +308,10 @@
    * transparent overlays. Step rhythm is 4-base (2/4/6/8/12/16/
    * 24/32/48/64/80/92), distinct from craft's mixed-parity scale.
    * ============================================================ */
-  --fg-2:  color-mix(in srgb, var(--foreground) 2%,  var(--background));
-  --fg-4:  color-mix(in srgb, var(--foreground) 4%,  var(--background));
-  --fg-6:  color-mix(in srgb, var(--foreground) 6%,  var(--background));
-  --fg-8:  color-mix(in srgb, var(--foreground) 8%,  var(--background));
+  --fg-2: color-mix(in srgb, var(--foreground) 2%, var(--background));
+  --fg-4: color-mix(in srgb, var(--foreground) 4%, var(--background));
+  --fg-6: color-mix(in srgb, var(--foreground) 6%, var(--background));
+  --fg-8: color-mix(in srgb, var(--foreground) 8%, var(--background));
   --fg-12: color-mix(in srgb, var(--foreground) 12%, var(--background));
   --fg-16: color-mix(in srgb, var(--foreground) 16%, var(--background));
   --fg-24: color-mix(in srgb, var(--foreground) 24%, var(--background));
@@ -298,16 +323,20 @@
 
   /* Status text — perceptually uniform oklab blend toward foreground.
      For tinted text on neutral backgrounds (e.g. error labels). */
-  --success-text:     color-mix(in oklab, var(--success)     45%, var(--foreground));
-  --destructive-text: color-mix(in oklab, var(--destructive) 45%, var(--foreground));
-  --info-text:        color-mix(in oklab, var(--info)        45%, var(--foreground));
+  --success-text: color-mix(in oklab, var(--success) 45%, var(--foreground));
+  --destructive-text: color-mix(
+    in oklab,
+    var(--destructive) 45%,
+    var(--foreground)
+  );
+  --info-text: color-mix(in oklab, var(--info) 45%, var(--foreground));
 }
 
 /* Dark-mode shadow alpha — deeper to keep edges visible against
    dark surfaces. Color tokens themselves come from active theme. */
 .dark {
   --hairline-alpha: 0.14;
-  --shadow-alpha:   0.13;
+  --shadow-alpha: 0.13;
 }
 
 @layer base {
@@ -381,7 +410,8 @@ body {
 }
 .shadow-tinted-destructive {
   box-shadow:
-    0 0 0 1px rgb(from var(--destructive) r g b / calc(var(--hairline-alpha) * 1.5)),
+    0 0 0 1px
+      rgb(from var(--destructive) r g b / calc(var(--hairline-alpha) * 1.5)),
     0 1px 2px -1px rgb(from var(--destructive) r g b / var(--shadow-alpha)),
     0 3px 5px -1px rgb(from var(--destructive) r g b / var(--shadow-alpha));
 }
@@ -861,7 +891,6 @@ webview {
   color: var(--foreground);
 }
 
-
 /* ---- Simple Markdown ---- */
 
 .simple-markdown {
@@ -1047,7 +1076,11 @@ webview {
   color: var(--foreground);
   text-decoration: underline;
   text-underline-offset: 3px;
-  text-decoration-color: color-mix(in oklch, var(--foreground) 30%, transparent);
+  text-decoration-color: color-mix(
+    in oklch,
+    var(--foreground) 30%,
+    transparent
+  );
 }
 
 .simple-markdown .md-link:hover {
@@ -1157,30 +1190,26 @@ webview {
 }
 
 .chat-markdown .md-inline-code {
-  display: inline-block;
-  max-width: 100%;
+  display: inline;
   overflow-wrap: anywhere;
   white-space: break-spaces;
-  background: color-mix(in oklch, var(--input) 84%, var(--card) 16%);
-  color: color-mix(in oklch, var(--foreground) 92%, transparent);
-  border: 0.8px solid color-mix(in oklch, var(--border) 76%, transparent);
-  border-radius: 7px;
-  /* Tight Y padding so inline `code` chips don't push line height around;
-     X stays roomy enough for the chip shape. */
-  padding: 0.04em 0.4em;
-  font-size: 0.875em;
+  background: color-mix(in oklch, var(--muted) 68%, transparent);
+  color: color-mix(in oklch, var(--foreground) 88%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
+  border-radius: 6px;
+  padding: 0.18em 0.5em;
+  font-size: 0.88em;
   font-family: var(--font-mono);
   font-weight: var(--font-weight-medium);
+  letter-spacing: -0.005em;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
 
-.chat-markdown .md-p > .md-inline-code:only-child,
-.chat-markdown .md-li > .md-inline-code:only-child,
-.chat-markdown .md-oli > .md-inline-code:only-child {
-  padding: 0.42rem 0.65rem;
-  border-radius: 11px;
-  line-height: 1.55;
+.chat-user-markdown .md-inline-code {
+  background: color-mix(in oklch, var(--foreground) 8%, transparent);
+  border-color: color-mix(in oklch, var(--foreground) 14%, transparent);
+  color: color-mix(in oklch, var(--foreground) 92%, transparent);
 }
 
 .chat-assistant-markdown .md-blockquote {
@@ -1305,7 +1334,6 @@ webview {
   color: inherit;
   font-family: inherit;
 }
-
 
 /* ---- File Preview Markdown (document reader — spacing modifier) ---- */
 

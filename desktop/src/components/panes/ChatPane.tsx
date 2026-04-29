@@ -37,6 +37,7 @@ import {
   Globe,
   Image as ImageIcon,
   Inbox,
+  LayoutDashboard,
   Lightbulb,
   Link2,
   Loader2,
@@ -1052,6 +1053,12 @@ function outputBrowserFilterForOutput(
 }
 
 function outputKindLabel(output: WorkspaceOutputRecordPayload) {
+  // .dashboard files outrank generic origin/category labels — they're
+  // a first-class artifact type with their own renderer.
+  const ext = outputFileExtensionFromTitle(output);
+  if (ext === "dashboard") {
+    return "Dashboard";
+  }
   if (
     outputMetadataString(output, "origin_type") === "app" ||
     output.module_id
@@ -1079,6 +1086,25 @@ function outputKindLabel(output: WorkspaceOutputRecordPayload) {
     return "Document";
   }
   return output.output_type === "document" ? "Document" : "File";
+}
+
+// Lightweight extension lookup that doesn't depend on the metadata
+// envelope (which agent-authored files often skip). Reads the title
+// suffix only — used inside outputKindLabel before metadata parsing.
+function outputFileExtensionFromTitle(
+  output: WorkspaceOutputRecordPayload,
+): string {
+  const fromTitle = output.title?.trim() ?? "";
+  const dotIndex = fromTitle.lastIndexOf(".");
+  if (dotIndex > 0 && dotIndex < fromTitle.length - 1) {
+    return fromTitle.slice(dotIndex + 1).toLowerCase();
+  }
+  const path = outputMetadataString(output, "file_path") ?? output.file_path ?? "";
+  const pathDot = path.lastIndexOf(".");
+  if (pathDot > 0 && pathDot < path.length - 1) {
+    return path.slice(pathDot + 1).toLowerCase();
+  }
+  return "";
 }
 
 function outputChangeLabel(output: WorkspaceOutputRecordPayload) {
@@ -6251,7 +6277,9 @@ export function ChatPane({
         };
         setMessages((prev) =>
           prev.map((message) =>
-            message.id === optimisticUserMessageId ? persistedUserMessage : message,
+            message.id === optimisticUserMessageId
+              ? persistedUserMessage
+              : message,
           ),
         );
         updatePendingOptimisticUserMessagesState((current) =>
@@ -6802,9 +6830,9 @@ export function ChatPane({
         kind:
           attachment.source === "local-file"
             ? attachmentLooksLikeImage(
-                  attachment.file.name,
-                  attachment.file.type,
-                )
+                attachment.file.name,
+                attachment.file.type,
+              )
               ? ("image" as const)
               : ("file" as const)
             : attachment.kind,
@@ -6867,8 +6895,9 @@ export function ChatPane({
     const requestId = imageAttachmentPreviewRequestIdRef.current;
     clearImageAttachmentPreviewObjectUrl();
     let localObjectUrl = "";
-    const browserSnapshotPromise =
-      window.electronAPI.browser.captureVisibleSnapshot().catch(() => null);
+    const browserSnapshotPromise = window.electronAPI.browser
+      .captureVisibleSnapshot()
+      .catch(() => null);
     const imageDataResultPromise = (async () => {
       try {
         if (attachment.file) {
@@ -7614,9 +7643,7 @@ export function ChatPane({
 
   return (
     <PaneCard
-      className={
-        isOnboardingVariant ? "w-full border-primary/20" : "w-full"
-      }
+      className={isOnboardingVariant ? "w-full border-primary/20" : "w-full"}
     >
       <div className="relative flex h-full min-h-0 min-w-0 flex-col">
         <div className="theme-chat-composer-glow pointer-events-none absolute inset-x-8 bottom-0 h-44 rounded-full blur-2xl" />
@@ -8232,7 +8259,7 @@ function SessionSelector({
             render={
               <Button
                 variant="outline"
-                className="w-full min-w-0 justify-start"
+                className="w-full min-w-0 justify-start gap-1"
                 aria-label="Select agent session"
               />
             }
@@ -8242,7 +8269,7 @@ function SessionSelector({
             >
               {activeIndicator.icon}
             </span>
-            <span className="min-w-0 flex-1 truncate text-xs text-start font-medium text-foreground">
+            <span className="min-w-0 flex-1 truncate text-sm text-start font-medium text-foreground">
               {activeTitle}
             </span>
             <ChevronDown
@@ -8254,7 +8281,7 @@ function SessionSelector({
         </div>
         <PopoverContent
           align="start"
-          className="w-[300px] gap-0 rounded-lg p-0 shadow-subtle-sm ring-0"
+          className="w-75 gap-0 rounded-lg p-0 shadow-subtle-sm ring-0"
         >
           <div className="border-b border-border p-2">
             <div className="relative flex h-8 items-center rounded-md border border-border bg-background px-2.5 transition-colors focus-within:border-muted-foreground">
@@ -8264,12 +8291,11 @@ function SessionSelector({
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search sessions..."
                 className="embedded-input h-full w-full bg-transparent pl-2 text-xs text-foreground outline-none placeholder:text-muted-foreground"
-                autoFocus
               />
             </div>
           </div>
 
-          <div className="max-h-[320px] overflow-y-auto p-1.5 space-y-0.5">
+          <div className="max-h-80 overflow-y-auto p-1.5 space-y-0.5">
             {isLoading ? (
               <div className="px-3 py-3 text-xs text-muted-foreground">
                 Loading sessions...
@@ -8990,7 +9016,10 @@ type OutputVisualKind =
   | "image"
   | "link"
   | "app"
+  | "dashboard"
   | "file";
+
+const DASHBOARD_EXTENSIONS = new Set(["dashboard"]);
 
 const SPREADSHEET_EXTENSIONS = new Set([
   "xlsx",
@@ -9071,6 +9100,9 @@ function outputVisualKind(
 
   const extension = outputFileExtension(output);
   if (extension) {
+    if (DASHBOARD_EXTENSIONS.has(extension)) {
+      return "dashboard";
+    }
     if (SPREADSHEET_EXTENSIONS.has(extension)) {
       return "spreadsheet";
     }
@@ -9143,6 +9175,12 @@ function outputVisualTheme(kind: OutputVisualKind): {
     case "app":
       return {
         Icon: Waypoints,
+        tileClass: "bg-primary/12 ring-1 ring-inset ring-primary/20",
+        iconClass: "text-primary",
+      };
+    case "dashboard":
+      return {
+        Icon: LayoutDashboard,
         tileClass: "bg-primary/12 ring-1 ring-inset ring-primary/20",
         iconClass: "text-primary",
       };
@@ -9546,82 +9584,87 @@ function ArtifactBrowserModal({
   );
 
   return (
-    <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 px-6 py-8 backdrop-blur-[2px]">
-      <div className="flex max-h-full w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border bg-background shadow-xl">
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
-          <div>
-            <div className="text-sm font-semibold text-foreground">
-              Artifacts
-            </div>
-            <div className="text-xs text-muted-foreground">
-              {outputs.length} item{outputs.length === 1 ? "" : "s"} in this
-              session
-            </div>
+    <div className="absolute inset-0 z-30 flex animate-in fade-in-0 slide-in-from-right-3 flex-col overflow-hidden bg-card duration-200 ease-out">
+      <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2.5">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          onClick={onClose}
+          aria-label="Back to chat"
+        >
+          <ArrowLeft className="size-3.5" />
+        </Button>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-semibold leading-tight text-foreground">
+            Artifacts
           </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={onClose}
-            aria-label="Close"
-          >
-            <X className="size-3.5" />
-          </Button>
+          <div className="text-xs leading-tight text-muted-foreground">
+            {outputs.length} item{outputs.length === 1 ? "" : "s"} in this
+            session
+          </div>
         </div>
+      </div>
 
-        <div className="flex shrink-0 flex-wrap gap-1.5 border-b border-border px-4 py-2.5">
-          {filterLabels.map((item) => {
-            const active = filter === item.id;
-            return (
-              <Button
-                key={item.id}
-                variant={active ? "secondary" : "ghost"}
-                size="xs"
-                onClick={() => onFilterChange(item.id)}
-              >
-                {item.label}
-              </Button>
-            );
-          })}
-        </div>
+      <div className="flex shrink-0 flex-wrap gap-1 border-b border-border px-3 py-2">
+        {filterLabels.map((item) => {
+          const active = filter === item.id;
+          return (
+            <Button
+              key={item.id}
+              variant={active ? "secondary" : "ghost"}
+              size="xs"
+              onClick={() => onFilterChange(item.id)}
+            >
+              {item.label}
+            </Button>
+          );
+        })}
+      </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-          {filteredOutputs.length === 0 ? (
-            <div className="py-10 text-center text-xs text-muted-foreground">
-              No artifacts match this filter.
-            </div>
-          ) : (
-            <div className="grid gap-1">
-              {filteredOutputs.map((output) => (
-                <Button
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+        {filteredOutputs.length === 0 ? (
+          <div className="py-10 text-center text-xs text-muted-foreground">
+            No artifacts match this filter.
+          </div>
+        ) : (
+          <div className="grid gap-2">
+            {filteredOutputs.map((output) => {
+              const kindLabel = outputKindLabel(output);
+              const changeLabel = outputChangeLabel(output);
+              return (
+                <button
                   key={output.id}
-                  variant="ghost"
+                  type="button"
                   onClick={() => {
                     onClose();
                     onOpenOutput?.(output);
                   }}
                   disabled={!onOpenOutput}
-                  className="h-auto w-full min-w-0 justify-start gap-3 overflow-hidden px-3 py-2.5 text-left"
+                  className="group flex w-full min-w-0 items-start gap-2.5 rounded-lg border border-border bg-card px-3 py-2.5 text-left ring-border transition-colors hover:bg-accent/50 disabled:cursor-default disabled:hover:bg-card"
                 >
                   <OutputArtifactIcon output={output} />
                   <div className="min-w-0 flex-1">
+                    <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                      {kindLabel}
+                    </div>
                     <div className="truncate text-sm font-medium text-foreground">
                       {output.title || "Untitled artifact"}
                     </div>
-                    <div className="truncate text-xs text-muted-foreground">
-                      {outputSecondaryLabel(output)}
-                    </div>
                   </div>
-                  {outputChangeLabel(output) ? (
-                    <Badge variant="outline" className="shrink-0 uppercase">
-                      {outputChangeLabel(output)}
+                  {changeLabel ? (
+                    <Badge
+                      variant="outline"
+                      className="shrink-0 text-[10px] uppercase"
+                    >
+                      {changeLabel}
                     </Badge>
                   ) : null}
-                </Button>
-              ))}
-            </div>
-          )}
-        </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -9946,8 +9989,8 @@ function AttachmentList({
           Boolean(onPreview) &&
           Boolean(
             attachment.file ||
-              (typeof attachment.workspace_path === "string" &&
-                attachment.workspace_path.trim()),
+            (typeof attachment.workspace_path === "string" &&
+              attachment.workspace_path.trim()),
           );
 
         const content = (
@@ -9959,7 +10002,9 @@ function AttachmentList({
             ) : (
               <FileText className="size-3 shrink-0 text-primary" />
             )}
-            <span className="truncate">{attachmentButtonLabel(attachment)}</span>
+            <span className="truncate">
+              {attachmentButtonLabel(attachment)}
+            </span>
           </>
         );
 
@@ -10085,7 +10130,9 @@ function ImageAttachmentPreviewModal({
 
         <div
           className={`overflow-auto px-4 py-4 ${
-            showImage ? "bg-transparent" : "min-h-[240px] min-w-[320px] bg-muted/20"
+            showImage
+              ? "bg-transparent"
+              : "min-h-[240px] min-w-[320px] bg-muted/20"
           }`}
         >
           {preview.isLoading ? (
@@ -10435,7 +10482,9 @@ function ThinkingValueSelect({
               )
             ) : (
               <>
-                <span className="whitespace-nowrap">{selectedThinkingLabel}</span>
+                <span className="whitespace-nowrap">
+                  {selectedThinkingLabel}
+                </span>
                 <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
               </>
             )}
@@ -10984,9 +11033,7 @@ function Composer({
         onDragLeave={onDragLeave}
         onDrop={onDrop}
         className={`overflow-hidden rounded-2xl bg-background shadow-md ${
-          isDragActive
-            ? "ring-1 ring-primary/40 bg-primary/[0.04]"
-            : ""
+          isDragActive ? "ring-1 ring-primary/40 bg-primary/[0.04]" : ""
         }`}
       >
         <input
@@ -11028,7 +11075,7 @@ function Composer({
             </div>
           </div>
         ) : null}
-        <div className="px-5 pb-3 pt-4">
+        <div className="px-5 pb-2 pt-3">
           <textarea
             ref={textareaRef}
             value={input}
@@ -11066,11 +11113,6 @@ function Composer({
                   : noAvailableModels
                     ? "min-w-0 flex flex-1 basis-full flex-wrap items-center gap-2"
                     : "min-w-0 shrink-0"
-              }
-              style={
-                compactComposerControls
-                  ? { width: `${compactModelControlWidth}px` }
-                  : undefined
               }
             >
               {noAvailableModels ? (
@@ -11124,16 +11166,7 @@ function Composer({
           )}
 
           {showThinkingValueSelector ? (
-            <div
-              className={
-                compactComposerControls ? "shrink-0" : "shrink-0"
-              }
-              style={
-                compactComposerControls
-                  ? { width: `${compactThinkingControlWidth}px` }
-                  : undefined
-              }
-            >
+            <div className="shrink-0">
               <ThinkingValueSelect
                 selectedThinkingValue={selectedThinkingValue}
                 thinkingValues={thinkingValues}
@@ -11181,9 +11214,7 @@ function Composer({
                 side="top"
                 sideOffset={8}
                 className={`gap-0 rounded-xl border border-border bg-popover p-0 shadow-subtle-sm ring-0 ${
-                  composerActionsView === "skills"
-                    ? "w-[320px]"
-                    : "w-[224px]"
+                  composerActionsView === "skills" ? "w-[320px]" : "w-[224px]"
                 }`}
               >
                 {composerActionsView === "skills" ? (
@@ -11305,35 +11336,35 @@ function Composer({
             {isResponding ? (
               <Button
                 type="button"
-                variant="outline"
-                size="sm"
+                size="icon-sm"
+                aria-label="Pause"
                 disabled={pausePending || pauseDisabled || disabled}
                 onClick={onPause}
-                className="rounded-full px-2.5"
+                className="rounded-lg"
               >
                 {pausePending ? (
-                  <Loader2 className="mr-1 size-3.5 animate-spin" />
+                  <Loader2 className="size-3.5 animate-spin" />
                 ) : (
-                  <Square className="mr-1 size-3 fill-current" />
+                  <Square className="size-3 fill-current" />
                 )}
-                Pause
               </Button>
-            ) : null}
-            <Button
-              size="icon-sm"
-              aria-label={isResponding ? "Queue message" : "Send message"}
-              disabled={
-                (!input.trim() &&
-                  attachments.length === 0 &&
-                  quotedSkills.length === 0) ||
-                disabled ||
-                submitDisabled
-              }
-              render={<button type="submit" />}
-              className="rounded-lg"
-            >
-              <ArrowUp className="size-3.5" />
-            </Button>
+            ) : (
+              <Button
+                size="icon-sm"
+                aria-label="Send message"
+                disabled={
+                  (!input.trim() &&
+                    attachments.length === 0 &&
+                    quotedSkills.length === 0) ||
+                  disabled ||
+                  submitDisabled
+                }
+                render={<button type="submit" />}
+                className="rounded-lg"
+              >
+                <ArrowUp className="size-3.5" />
+              </Button>
+            )}
           </div>
         </div>
       </div>

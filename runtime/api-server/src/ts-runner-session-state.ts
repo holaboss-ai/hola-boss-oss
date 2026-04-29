@@ -47,6 +47,14 @@ export function workspaceSessionStatePath(workspaceDir: string): string {
   return path.join(path.resolve(workspaceDir), SESSION_STATE_DIR_NAME, SESSION_STATE_FILE_NAME);
 }
 
+/** Filesystem path of the workspace's shared data SQLite. Single file
+ *  per workspace; module apps write tables prefixed with their app id
+ *  (twitter_posts, linkedin_posts, …). The path is injected into app
+ *  processes via the WORKSPACE_DB_PATH env var. */
+export function workspaceDataDbPath(workspaceDir: string): string {
+  return path.join(path.resolve(workspaceDir), SESSION_STATE_DIR_NAME, "data.db");
+}
+
 function normalizeHarness(value: unknown): string {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }

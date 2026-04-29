@@ -1,14 +1,40 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, LoaderCircle, Plug, Plus, RefreshCw, Trash2 } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  Activity,
+  LoaderCircle,
+  MoreHorizontal,
+  Plug,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
+import { AppIcon } from "@/components/marketplace/AppIcon";
 import { providerIcon } from "@/components/onboarding/constants";
+import {
+  accountAvatarFallbackChar,
+  accountDisplayLabel,
+  useEnrichedConnections,
+} from "@/lib/integrationDisplay";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import {
@@ -82,14 +108,29 @@ export function AppSurfacePane({
   const [frameUrl, setFrameUrl] = useState("");
   const [frameLoading, setFrameLoading] = useState(false);
   const [frameError, setFrameError] = useState("");
+  const [paneWidth, setPaneWidth] = useState(0);
+  const paneRef = useRef<HTMLDivElement | null>(null);
+
+  // Mirrors BrowserPane's compaction thresholds so toolbar density stays
+  // consistent across panes.
+  const isCompactPane = paneWidth > 0 && paneWidth <= 360;
+  const isNarrowPane = paneWidth > 0 && paneWidth <= 260;
+
+  useLayoutEffect(() => {
+    const pane = paneRef.current;
+    if (!pane) return;
+    const sync = () =>
+      setPaneWidth(Math.round(pane.getBoundingClientRect().width));
+    sync();
+    const observer = new ResizeObserver(sync);
+    observer.observe(pane);
+    return () => observer.disconnect();
+  }, []);
 
   const label = app?.label ?? appId;
   const ready = app && "ready" in app ? app.ready : false;
   const error =
     app && "error" in app && typeof app.error === "string" ? app.error : null;
-  const summary = app?.summary ?? "";
-  const brandIcon = providerIcon(appId, 22);
-  const iconFallback = label.slice(0, 2).toUpperCase();
 
   const routePath = useMemo(
     () => resolveAppSurfacePath({ path, resourceId, view }),
@@ -107,6 +148,15 @@ export function AppSurfacePane({
     currentConnectionId: string | null;
   } | null>(null);
   const [bindingBusy, setBindingBusy] = useState(false);
+  const [avatarFailures, setAvatarFailures] = useState<Set<string>>(
+    () => new Set(),
+  );
+
+  const candidates = useMemo(
+    () => integrationContext?.candidates ?? [],
+    [integrationContext],
+  );
+  const accountMetadata = useEnrichedConnections(candidates);
 
   const checkIntegration = useCallback(async () => {
     if (!selectedWorkspaceId) return;
@@ -123,6 +173,12 @@ export function AppSurfacePane({
       // Resolve the expected provider for this app: prefer any existing
       // app-level binding (which encodes the integration_key authoritatively),
       // otherwise fall back to a static appId → provider mapping.
+      // Fallback when there's no app-level binding yet — used to render
+      // the "Connect <provider>" button on the app surface so users can
+      // bootstrap the binding from the app view itself. Keys are the
+      // app id; values are the Composio toolkit slug (NOT always the
+      // app id — Cal.com's app id is "calcom" but its Composio slug is
+      // "cal", and the same shape applies to Google sub-toolkits).
       const knownProviders: Record<string, string> = {
         gmail: "gmail",
         sheets: "googlesheets",
@@ -130,6 +186,12 @@ export function AppSurfacePane({
         reddit: "reddit",
         twitter: "twitter",
         linkedin: "linkedin",
+        calcom: "cal",
+        attio: "attio",
+        hubspot: "hubspot",
+        apollo: "apollo",
+        instantly: "instantly",
+        zoominfo: "zoominfo",
       };
       const appBinding = bindingsResult.bindings.find(
         (b) => b.target_type === "app" && b.target_id === appId,
@@ -280,7 +342,7 @@ export function AppSurfacePane({
     setActionError("");
     setFrameError("");
     try {
-      await refreshInstalledApps();
+      await Promise.all([refreshInstalledApps(), checkIntegration()]);
       setReloadKey((k) => k + 1);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Retry failed.");
@@ -294,192 +356,80 @@ export function AppSurfacePane({
     return <div className="h-full min-h-0" />;
   }
 
-  // Initializing state
-  if (!ready && !error) {
-    return (
-      <div className="flex h-full min-h-0 gap-2">
-        <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl bg-card shadow-md backdrop-blur-sm">
-          <div className="flex flex-1 items-center justify-center p-4">
-            <div className="max-w-[200px] text-center">
-              <LoaderCircle
-                size={20}
-                className="mx-auto animate-spin text-muted-foreground"
-              />
-              <div className="mt-3 text-sm font-medium text-foreground">
-                {label}
-              </div>
-              <div className="mt-1 text-xs text-muted-foreground">
-                Initializing... This may take a few minutes on first setup.
-              </div>
-            </div>
+  // One pane, three states. Top bar stays consistent; only the status pill
+  // and body area swap. Replaces the previous 260px left card with a thin
+  // toolbar modeled after BrowserPane's chrome row.
+  const surfaceState: "initializing" | "error" | "ready" =
+    !ready && error ? "error" : !ready ? "initializing" : "ready";
+  const showIntegration = surfaceState === "ready" && integrationContext;
+  const showRetry = surfaceState !== "initializing";
+  const onRetry =
+    surfaceState === "error"
+      ? () => void handleRetry()
+      : () => {
+          setReloadKey((k) => k + 1);
+          void checkIntegration();
+        };
+
+  return (
+    <div
+      ref={paneRef}
+      className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl bg-card shadow-md backdrop-blur-sm"
+    >
+      {/* Top bar — mirrors BrowserPane chrome row: shrink-0 + border-b,
+          ghost icon-buttons for low-frequency ops, outline for the
+          destructive overflow trigger. */}
+      <div className="shrink-0 border-b border-border px-3 py-2">
+        <div className="flex items-center gap-2.5">
+          <AppIcon appId={appId} label={label} size="toolbar" />
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <span className="truncate text-xs font-semibold tracking-wide text-foreground">
+              {label}
+            </span>
+            {surfaceState === "ready" ? (
+              <span
+                className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-success"
+                title="Running"
+              >
+                <span className="size-1.5 rounded-full bg-success" />
+                {!isNarrowPane ? "Running" : null}
+              </span>
+            ) : surfaceState === "initializing" ? (
+              <span
+                className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-muted-foreground"
+                title="Initializing"
+              >
+                <LoaderCircle size={11} className="animate-spin" />
+                {!isNarrowPane ? "Initializing" : null}
+              </span>
+            ) : (
+              <span
+                className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-destructive"
+                title="Error"
+              >
+                <span className="size-1.5 rounded-full bg-destructive" />
+                {!isNarrowPane ? "Error" : null}
+              </span>
+            )}
           </div>
-          <div className="border-t border-border p-3">
-            {confirmRemove ? (
-              <div className="flex items-center gap-1.5">
-                <Button
-                  type="button"
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => void handleRemove()}
-                  disabled={isRemoving}
-                  className="flex-1 justify-center"
-                >
-                  {isRemoving ? "Removing..." : "Confirm"}
-                </Button>
+
+          <div className="flex shrink-0 items-center gap-1">
+            {showIntegration ? (
+              integrationContext.candidates.length === 0 ? (
                 <Button
                   type="button"
                   variant="outline"
-                  size="sm"
-                  onClick={() => setConfirmRemove(false)}
-                  className="flex-1 justify-center"
+                  size={isNarrowPane ? "icon-sm" : "sm"}
+                  onClick={handleConnectAccount}
+                  className={isNarrowPane ? "" : "gap-1.5"}
+                  title={`Connect ${integrationContext.providerName}`}
+                  aria-label={`Connect ${integrationContext.providerName}`}
                 >
-                  Cancel
+                  <Plus size={12} />
+                  {!isNarrowPane ? (
+                    <>Connect {integrationContext.providerName}</>
+                  ) : null}
                 </Button>
-              </div>
-            ) : (
-              <Button
-                type="button"
-                variant="destructive"
-                size="sm"
-                onClick={() => setConfirmRemove(true)}
-                className="w-full justify-center border border-destructive/30 font-semibold"
-              >
-                <Trash2 size={12} />
-                Remove app
-              </Button>
-            )}
-            {actionError ? (
-              <div className="mt-2 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-                {actionError}
-              </div>
-            ) : null}
-          </div>
-        </section>
-        <section className="flex min-w-0 flex-1 items-center justify-center rounded-xl bg-card shadow-md backdrop-blur-sm">
-          <div className="text-center">
-            <LoaderCircle
-              size={16}
-              className="mx-auto animate-spin text-muted-foreground"
-            />
-            <div className="mt-2 text-xs text-muted-foreground">
-              Waiting for app...
-            </div>
-          </div>
-        </section>
-      </div>
-    );
-  }
-
-  // Error state
-  if (!ready && error) {
-    return (
-      <div className="flex h-full min-h-0 gap-2">
-        <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card p-4 shadow-xs backdrop-blur-sm">
-          <div className="flex shrink-0 items-center gap-2 text-destructive">
-            <Activity size={14} />
-            <span className="text-[10px] uppercase tracking-widest">
-              App error
-            </span>
-          </div>
-          <div className="mt-3 shrink-0 text-sm font-semibold text-foreground">
-            {label}
-          </div>
-          <div className="mt-3 min-h-0 flex-1 overflow-y-auto rounded-lg border border-destructive/25 bg-destructive/5 p-3">
-            <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-5 text-foreground">
-              {error}
-            </pre>
-          </div>
-          <div className="mt-3 shrink-0">
-            <Button
-              type="button"
-              variant="destructive"
-              size="sm"
-              onClick={() => void handleRemove()}
-              disabled={isRemoving}
-              className="border border-destructive/30 font-semibold"
-            >
-              {isRemoving ? (
-                <LoaderCircle size={13} className="animate-spin" />
-              ) : (
-                <Trash2 size={13} />
-              )}
-              Remove
-            </Button>
-          </div>
-          {actionError ? (
-            <div className="mt-2 shrink-0 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-              {actionError}
-            </div>
-          ) : null}
-        </section>
-        <section className="flex min-w-0 flex-1 items-center justify-center rounded-xl bg-card shadow-md backdrop-blur-sm">
-          <div className="text-center">
-            <Activity size={18} className="mx-auto text-destructive" />
-            <div className="mt-2 text-xs text-muted-foreground">
-              App failed to start
-            </div>
-          </div>
-        </section>
-      </div>
-    );
-  }
-
-  // Ready state — left info card + right iframe
-  return (
-    <div className="flex h-full min-h-0 gap-2">
-      {/* Left: App info card */}
-      <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl bg-card shadow-md backdrop-blur-sm">
-        <div className="chat-scrollbar-hidden flex-1 overflow-y-auto p-4">
-          <div className="flex items-center gap-3">
-            <span className="grid size-10 shrink-0 place-items-center rounded-lg border border-border bg-muted text-xs font-semibold uppercase text-muted-foreground">
-              {brandIcon ?? iconFallback}
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-semibold text-foreground">
-                {label}
-              </div>
-              <div className="mt-0.5 flex items-center gap-1.5 text-xs font-medium text-success">
-                <span className="size-1.5 rounded-full bg-success" />
-                Running
-              </div>
-            </div>
-          </div>
-
-          {summary ? (
-            <p className="mt-3 text-xs leading-5 text-muted-foreground">
-              {summary}
-            </p>
-          ) : null}
-
-          {resourceId || path ? (
-            <div className="mt-4 flex items-center justify-between rounded-md border border-border bg-muted px-3 py-2">
-              <span className="text-xs text-muted-foreground">
-                {resourceId ? "Resource" : "Route"}
-              </span>
-              <span className="max-w-[120px] truncate text-xs font-medium text-foreground">
-                {resourceId || path}
-              </span>
-            </div>
-          ) : null}
-
-          {integrationContext ? (
-            <div className="mt-4">
-              <div className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-                Integrations
-              </div>
-              {integrationContext.candidates.length === 0 ? (
-                <div className="mt-2 rounded-md border border-border bg-muted px-3 py-2">
-                  <Button
-                    className="h-auto w-full justify-start gap-1.5 px-0 py-0 text-xs"
-                    onClick={handleConnectAccount}
-                    size="sm"
-                    type="button"
-                    variant="ghost"
-                  >
-                    <Plus size={12} />
-                    Connect {integrationContext.providerName}
-                  </Button>
-                </div>
               ) : (
                 <Select
                   disabled={bindingBusy}
@@ -493,51 +443,112 @@ export function AppSurfacePane({
                   }}
                   value={integrationContext.currentConnectionId ?? ""}
                 >
-                  <SelectTrigger
-                    className="mt-2 h-auto w-full gap-2 rounded-md border border-border bg-muted px-3 py-2 text-left hover:bg-accent [&>svg]:shrink-0"
-                    size="sm"
-                  >
-                    <span className="flex min-w-0 flex-1 items-center gap-2.5">
-                      <span className="grid size-7 shrink-0 place-items-center rounded-md bg-background text-muted-foreground">
-                        {providerIcon(integrationContext.providerId, 16) ?? <Plug size={12} />}
-                      </span>
-                      <span className="flex min-w-0 flex-1 flex-col">
-                        <span className="truncate text-xs font-medium text-foreground">
-                          {connectionPrimary(
-                            integrationContext.candidates.find(
-                              (c) => c.connection_id === integrationContext.currentConnectionId,
-                            ),
-                            integrationContext.providerName,
+                  {(() => {
+                    const currentIndex = candidates.findIndex(
+                      (c) =>
+                        c.connection_id ===
+                        integrationContext.currentConnectionId,
+                    );
+                    const currentConn =
+                      currentIndex >= 0 ? candidates[currentIndex] : null;
+                    const currentMeta = currentConn
+                      ? accountMetadata.get(currentConn.connection_id)
+                      : undefined;
+                    const currentLabel = currentConn
+                      ? accountDisplayLabel(
+                          currentConn,
+                          currentMeta,
+                          currentIndex,
+                        )
+                      : `Pick an ${integrationContext.providerName} account`;
+                    const currentAvatar = currentMeta?.avatarUrl?.trim();
+                    const currentAvatarBroken = currentConn
+                      ? avatarFailures.has(currentConn.connection_id)
+                      : false;
+                    const showCurrentAvatar =
+                      Boolean(currentAvatar) && !currentAvatarBroken;
+                    return (
+                      <SelectTrigger
+                        className={`h-7 gap-1.5 rounded-md border border-border bg-background/80 px-2 py-0 text-xs hover:bg-accent [&>svg]:size-3 [&>svg]:shrink-0 ${isNarrowPane ? "max-w-[100px]" : isCompactPane ? "max-w-[140px]" : "max-w-[200px]"}`}
+                        size="sm"
+                        title={currentLabel}
+                      >
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          {showCurrentAvatar ? (
+                            <img
+                              alt=""
+                              src={currentAvatar}
+                              referrerPolicy="no-referrer"
+                              className="size-4 shrink-0 rounded-full bg-muted object-cover"
+                              onError={() =>
+                                currentConn &&
+                                setAvatarFailures((prev) => {
+                                  if (prev.has(currentConn.connection_id))
+                                    return prev;
+                                  const next = new Set(prev);
+                                  next.add(currentConn.connection_id);
+                                  return next;
+                                })
+                              }
+                            />
+                          ) : (
+                            <span className="grid size-4 shrink-0 place-items-center text-muted-foreground">
+                              {providerIcon(integrationContext.providerId, 12) ?? (
+                                <Plug size={10} />
+                              )}
+                            </span>
                           )}
+                          {!isNarrowPane ? (
+                            <span className="truncate text-xs font-medium text-foreground">
+                              {currentLabel}
+                            </span>
+                          ) : null}
                         </span>
-                        <span className="truncate text-[10px] text-muted-foreground">
-                          {integrationContext.providerName}
-                        </span>
-                      </span>
-                    </span>
-                  </SelectTrigger>
+                      </SelectTrigger>
+                    );
+                  })()}
                   <SelectContent
                     align="end"
                     className="min-w-[240px] gap-0 rounded-lg p-1 shadow-subtle-sm"
                   >
-                    {integrationContext.candidates.map((conn) => {
-                      const primary = connectionPrimary(conn, integrationContext.providerName);
-                      const secondary = connectionSecondary(conn);
+                    {candidates.map((conn, index) => {
+                      const meta = accountMetadata.get(conn.connection_id);
+                      const itemLabel = accountDisplayLabel(conn, meta, index);
+                      const avatarUrl = meta?.avatarUrl?.trim();
+                      const avatarBroken = avatarFailures.has(conn.connection_id);
+                      const showAvatar = Boolean(avatarUrl) && !avatarBroken;
+                      const fallbackChar = accountAvatarFallbackChar(itemLabel);
                       return (
                         <SelectItem
                           className="rounded-md px-2.5 py-1.5 text-xs"
                           key={conn.connection_id}
                           value={conn.connection_id}
                         >
-                          <span className="flex min-w-0 flex-col">
-                            <span className="truncate font-medium text-foreground">
-                              {primary}
-                            </span>
-                            {secondary ? (
-                              <span className="truncate text-[10px] text-muted-foreground">
-                                {secondary}
+                          <span className="flex min-w-0 items-center gap-2">
+                            {showAvatar ? (
+                              <img
+                                alt=""
+                                src={avatarUrl}
+                                referrerPolicy="no-referrer"
+                                className="size-4 shrink-0 rounded-full bg-muted object-cover"
+                                onError={() =>
+                                  setAvatarFailures((prev) => {
+                                    if (prev.has(conn.connection_id))
+                                      return prev;
+                                    const next = new Set(prev);
+                                    next.add(conn.connection_id);
+                                    return next;
+                                  })
+                                }
+                              />
+                            ) : (
+                              <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-muted text-[9px] font-semibold text-muted-foreground">
+                                {fallbackChar}
                               </span>
-                            ) : null}
+                            )}
+                            <span className="truncate font-medium text-foreground">
+                              {itemLabel}
+                            </span>
                           </span>
                         </SelectItem>
                       );
@@ -550,130 +561,178 @@ export function AppSurfacePane({
                     </SelectItem>
                   </SelectContent>
                 </Select>
-              )}
-            </div>
-          ) : null}
-
-        </div>
-
-        {/* Actions pinned to bottom */}
-        <div className="border-t border-border p-3">
-          <div className="flex flex-col gap-1.5">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setReloadKey((k) => k + 1);
-                void checkIntegration();
-              }}
-              className="w-full justify-center"
-            >
-              <RefreshCw size={12} />
-              Reload
-            </Button>
-            {confirmRemove ? (
-              <div className="flex items-center gap-1.5">
-                <Button
-                  type="button"
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => void handleRemove()}
-                  disabled={isRemoving}
-                  className="flex-1 justify-center"
-                >
-                  {isRemoving ? "Removing..." : "Confirm"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setConfirmRemove(false)}
-                  className="flex-1 justify-center"
-                >
-                  Cancel
-                </Button>
-              </div>
-            ) : (
+              )
+            ) : null}
+            {showRetry ? (
               <Button
                 type="button"
-                variant="destructive"
-                size="sm"
-                onClick={() => setConfirmRemove(true)}
-                className="w-full justify-center border border-destructive/30 font-semibold"
+                variant="ghost"
+                size="icon-sm"
+                onClick={onRetry}
+                disabled={isRetrying}
+                title={surfaceState === "error" ? "Retry" : "Reload"}
+                aria-label={surfaceState === "error" ? "Retry" : "Reload"}
               >
-                <Trash2 size={12} />
-                Remove app
+                {isRetrying ? (
+                  <LoaderCircle size={13} className="animate-spin" />
+                ) : (
+                  <RefreshCw size={13} />
+                )}
               </Button>
-            )}
-          </div>
-
-          {actionError ? (
-            <div className="mt-2 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-              {actionError}
-            </div>
-          ) : null}
-        </div>
-      </section>
-
-      {/* Right: App iframe */}
-      <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-background shadow-md">
-        <div
-          className="relative min-h-0 flex-1"
-          style={{ borderRadius: "inherit" }}
-        >
-          {frameUrl ? (
-            <iframe
-              key={`${frameUrl}:${reloadKey}`}
-              src={frameUrl}
-              title={`${label} surface`}
-              className="h-full w-full border-0"
-              onLoad={() => {
-                setFrameLoading(false);
-                setFrameError("");
-              }}
-            />
-          ) : null}
-          {frameLoading ? (
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/80">
-              <div className="text-center">
-                <LoaderCircle
-                  size={18}
-                  className="mx-auto animate-spin text-muted-foreground"
-                />
-                <div className="mt-2 text-xs text-muted-foreground">
-                  Loading {label}...
-                </div>
-              </div>
-            </div>
-          ) : null}
-          {frameError ? (
-            <div className="absolute inset-0 flex items-center justify-center px-6">
-              <div className="max-w-sm rounded-lg border border-destructive/25 bg-destructive/5 p-4 text-center">
-                <div className="text-sm font-medium text-foreground">
-                  App preview unavailable
-                </div>
-                <div className="mt-2 text-xs leading-5 text-muted-foreground">
-                  {frameError}
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="default"
-                  onClick={() => {
-                    setReloadKey((k) => k + 1);
-                    void checkIntegration();
-                  }}
-                  className="mt-3"
+            ) : null}
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    title="More options"
+                    aria-label="More options"
+                  />
+                }
+              >
+                <MoreHorizontal size={14} />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                className="min-w-[160px] rounded-lg p-1 shadow-subtle-sm"
+              >
+                <DropdownMenuItem
+                  variant="destructive"
+                  className="gap-2 rounded-md px-2.5 py-1.5 text-xs"
+                  onClick={() => setConfirmRemove(true)}
                 >
-                  <RefreshCw size={12} />
-                  Retry
-                </Button>
+                  <Trash2 size={12} />
+                  Remove app
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+      </div>
+
+      {confirmRemove ? (
+        <div className="flex shrink-0 items-center gap-2 border-b border-destructive/25 bg-destructive/5 px-3 py-2 text-xs">
+          <span className="flex-1 text-foreground">
+            Remove {label}? This will delete the app and its workspace data.
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setConfirmRemove(false)}
+            disabled={isRemoving}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            size="sm"
+            onClick={() => void handleRemove()}
+            disabled={isRemoving}
+          >
+            {isRemoving ? "Removing..." : "Confirm"}
+          </Button>
+        </div>
+      ) : null}
+
+      {actionError ? (
+        <div className="shrink-0 border-b border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+          {actionError}
+        </div>
+      ) : null}
+
+      <div className="relative min-h-0 flex-1 bg-background">
+        {surfaceState === "ready" ? (
+          <>
+            {frameUrl ? (
+              <iframe
+                key={`${frameUrl}:${reloadKey}`}
+                src={frameUrl}
+                title={`${label} surface`}
+                className="h-full w-full border-0"
+                onLoad={() => {
+                  setFrameLoading(false);
+                  setFrameError("");
+                }}
+              />
+            ) : null}
+            {frameLoading ? (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/80">
+                <div className="text-center">
+                  <LoaderCircle
+                    size={18}
+                    className="mx-auto animate-spin text-muted-foreground"
+                  />
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    Loading {label}...
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            {frameError ? (
+              <div className="absolute inset-0 flex items-center justify-center px-6">
+                <div className="max-w-sm rounded-lg border border-destructive/25 bg-destructive/5 p-4 text-center">
+                  <div className="text-sm font-medium text-foreground">
+                    App preview unavailable
+                  </div>
+                  <div className="mt-2 text-xs leading-5 text-muted-foreground">
+                    {frameError}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="default"
+                    onClick={() => setReloadKey((k) => k + 1)}
+                    className="mt-3"
+                  >
+                    <RefreshCw size={12} />
+                    Retry
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </>
+        ) : surfaceState === "initializing" ? (
+          <div className="absolute inset-0 flex items-center justify-center px-6">
+            <div className="max-w-sm text-center">
+              <LoaderCircle
+                size={20}
+                className="mx-auto animate-spin text-muted-foreground"
+              />
+              <div className="mt-3 text-sm font-medium text-foreground">
+                Initializing {label}
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                This may take a few minutes on first setup.
               </div>
             </div>
-          ) : null}
-        </div>
-      </section>
+          </div>
+        ) : (
+          <div className="absolute inset-0 flex items-center justify-center px-6">
+            <div className="w-full max-w-md">
+              <div className="rounded-lg border border-destructive/25 bg-destructive/5 p-4">
+                <div className="flex items-center gap-2 text-destructive">
+                  <Activity size={14} />
+                  <span className="text-[10px] uppercase tracking-widest">
+                    App failed to start
+                  </span>
+                </div>
+                <div className="mt-2 text-sm font-medium text-foreground">
+                  {label}
+                </div>
+                <div className="mt-3 max-h-64 overflow-y-auto rounded-md border border-destructive/20 bg-background p-3">
+                  <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-5 text-foreground">
+                    {error}
+                  </pre>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

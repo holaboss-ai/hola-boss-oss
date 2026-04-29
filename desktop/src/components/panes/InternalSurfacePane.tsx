@@ -1,12 +1,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Eye, FileText, FileWarning, Loader2, Save } from "lucide-react";
+import {
+  ChevronsLeftRight,
+  ChevronsRightLeft,
+  Eye,
+  FileText,
+  FileWarning,
+  Loader2,
+  RefreshCw,
+  Save,
+} from "lucide-react";
 import {
   areTablePreviewSheetsEqual,
   cloneTablePreviewSheets,
   SpreadsheetEditor,
 } from "@/components/panes/SpreadsheetEditor";
 import { Button } from "@/components/ui/button";
+import { DashboardRenderer } from "@/components/dashboard/DashboardRenderer";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
+import {
+  bumpDashboardRefreshKey,
+  toggleDashboardFullWidth as toggleDashboardFullWidthGlobal,
+  useDashboardToolbarState,
+} from "@/lib/dashboardToolbarStore";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 type InternalSurfaceType = "document" | "preview" | "file" | "event";
@@ -107,6 +122,13 @@ export function InternalSurfacePane({
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  // Dashboard toolbar state lives in a module-level store
+  // (dashboardToolbarStore) — more than one InternalSurfacePane can be
+  // mounted at once (chat surface + main display) and component-local
+  // useState would diverge across them: a click would flip one
+  // instance's state while the other keeps showing its stale render.
+  const { fullWidth: dashboardFullWidth, refreshKey: dashboardRefreshKey } =
+    useDashboardToolbarState();
   const isDirtyRef = useRef(false);
   const isSavingRef = useRef(false);
   const pendingExternalRefreshPathRef = useRef<string | null>(null);
@@ -527,6 +549,41 @@ export function InternalSurfacePane({
                   <Eye className="size-3.5" />
                 </Button>
               ) : null}
+              {preview.extension === ".dashboard" ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={toggleDashboardFullWidthGlobal}
+                    aria-pressed={dashboardFullWidth}
+                    aria-label={
+                      dashboardFullWidth
+                        ? "Switch to compact width"
+                        : "Switch to full width"
+                    }
+                    title={dashboardFullWidth ? "Compact width" : "Full width"}
+                    className={`grid size-7 place-items-center rounded-md transition-colors ${
+                      dashboardFullWidth
+                        ? "bg-muted text-foreground"
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    }`}
+                  >
+                    {dashboardFullWidth ? (
+                      <ChevronsRightLeft className="size-3.5" />
+                    ) : (
+                      <ChevronsLeftRight className="size-3.5" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={bumpDashboardRefreshKey}
+                    aria-label="Refresh"
+                    title="Refresh"
+                    className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  >
+                    <RefreshCw className="size-3.5" />
+                  </button>
+                </>
+              ) : null}
               {preview.isEditable && (isDirty || isSaving) ? (
                 <Button
                   type="button"
@@ -577,6 +634,13 @@ export function InternalSurfacePane({
                 </div>
               </div>
             )
+          ) : preview.extension === ".dashboard" && selectedWorkspaceId ? (
+            <DashboardRenderer
+              workspaceId={selectedWorkspaceId}
+              content={previewDraft}
+              fullWidth={dashboardFullWidth}
+              refreshKey={dashboardRefreshKey}
+            />
           ) : (
             <textarea
               value={previewDraft}
