@@ -1452,11 +1452,13 @@ export function resolveTsRunnerBootstrapState(
   const workspaceDir = resolveRegisteredWorkspaceDir(request.workspace_id, {
     logger,
   });
-  const persistedHarnessSessionId = readWorkspaceHarnessSessionId({
-    workspaceDir,
-    harness,
-    logger,
-  });
+  const persistedHarnessSessionId = requestedHarnessSessionId
+    ? null
+    : readWorkspaceHarnessSessionId({
+        workspaceDir,
+        harness,
+        logger,
+      });
 
   return {
     harness,
