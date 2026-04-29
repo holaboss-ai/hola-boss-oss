@@ -189,6 +189,30 @@ export function AppSurfacePane({
     void checkIntegration();
   }, [checkIntegration]);
 
+  // Re-check integration connections when the user returns to the window or
+  // this tab becomes visible again. OAuth flows leave Holaboss to the browser
+  // and come back, so window-focus is a natural trigger to pick up newly
+  // connected accounts without making the user click Reload.
+  const lastFocusRefetchRef = useRef(0);
+  useEffect(() => {
+    const refetch = () => {
+      const now = Date.now();
+      // Throttle: at most once every 3s to avoid storms when users alt-tab.
+      if (now - lastFocusRefetchRef.current < 3000) return;
+      lastFocusRefetchRef.current = now;
+      void checkIntegration();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refetch();
+    };
+    window.addEventListener("focus", refetch);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", refetch);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [checkIntegration]);
+
   const handleSelectBinding = useCallback(
     async (connectionId: string) => {
       if (!selectedWorkspaceId || !integrationContext) return;
@@ -270,7 +294,7 @@ export function AppSurfacePane({
     setActionError("");
     setFrameError("");
     try {
-      await refreshInstalledApps();
+      await Promise.all([refreshInstalledApps(), checkIntegration()]);
       setReloadKey((k) => k + 1);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Retry failed.");
@@ -292,7 +316,12 @@ export function AppSurfacePane({
   const showIntegration = surfaceState === "ready" && integrationContext;
   const showRetry = surfaceState !== "initializing";
   const onRetry =
-    surfaceState === "error" ? () => void handleRetry() : () => setReloadKey((k) => k + 1);
+    surfaceState === "error"
+      ? () => void handleRetry()
+      : () => {
+          setReloadKey((k) => k + 1);
+          void checkIntegration();
+        };
 
   return (
     <div
