@@ -11493,35 +11493,35 @@ function Composer({
             {isResponding ? (
               <Button
                 type="button"
-                variant="outline"
-                size="sm"
+                size="icon-sm"
+                aria-label="Pause"
                 disabled={pausePending || pauseDisabled || disabled}
                 onClick={onPause}
-                className="rounded-full px-2.5"
+                className="rounded-lg"
               >
                 {pausePending ? (
-                  <Loader2 className="mr-1 size-3.5 animate-spin" />
+                  <Loader2 className="size-3.5 animate-spin" />
                 ) : (
-                  <Square className="mr-1 size-3 fill-current" />
+                  <Square className="size-3 fill-current" />
                 )}
-                Pause
               </Button>
-            ) : null}
-            <Button
-              size="icon-sm"
-              aria-label={isResponding ? "Queue message" : "Send message"}
-              disabled={
-                (!input.trim() &&
-                  attachments.length === 0 &&
-                  quotedSkills.length === 0) ||
-                disabled ||
-                submitDisabled
-              }
-              render={<button type="submit" />}
-              className="rounded-lg"
-            >
-              <ArrowUp className="size-3.5" />
-            </Button>
+            ) : (
+              <Button
+                size="icon-sm"
+                aria-label="Send message"
+                disabled={
+                  (!input.trim() &&
+                    attachments.length === 0 &&
+                    quotedSkills.length === 0) ||
+                  disabled ||
+                  submitDisabled
+                }
+                render={<button type="submit" />}
+                className="rounded-lg"
+              >
+                <ArrowUp className="size-3.5" />
+              </Button>
+            )}
           </div>
         </div>
       </div>
