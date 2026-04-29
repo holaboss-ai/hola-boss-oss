@@ -4,12 +4,18 @@ import test from "node:test";
 
 const HOOK_PATH = new URL("./useDesktopBilling.tsx", import.meta.url);
 
-test("desktop billing hook reads overview, usage, and links from electron API", async () => {
+test("desktop billing hook calls Hono BFF directly via renderer-side adapter", async () => {
   const source = await readFile(HOOK_PATH, "utf8");
 
-  assert.match(source, /window\.electronAPI\.billing\.getOverview/);
-  assert.match(source, /window\.electronAPI\.billing\.getUsage/);
-  assert.match(source, /window\.electronAPI\.billing\.getLinks/);
+  // The renderer-direct cleanup removed `window.electronAPI.billing.*` and
+  // routes the same RPC calls through `billingRpcFetch` against Hono.
+  assert.doesNotMatch(source, /window\.electronAPI\.billing\.getOverview/);
+  assert.doesNotMatch(source, /window\.electronAPI\.billing\.getUsage/);
+  assert.doesNotMatch(source, /window\.electronAPI\.billing\.getLinks/);
+  assert.match(source, /billingRpcFetch/);
+  assert.match(source, /\/rpc\/quota\/myQuota/);
+  assert.match(source, /\/rpc\/billing\/myBillingInfo/);
+  assert.match(source, /\/rpc\/quota\/myTransactions/);
 });
 
 test("desktop billing hook gates billing fetches on desktop auth state", async () => {
