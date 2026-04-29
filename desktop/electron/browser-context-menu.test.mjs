@@ -45,8 +45,33 @@ test("desktop browser service exposes a real context-click endpoint for BrowserV
   const source = await readFile(MAIN_PATH, "utf8");
 
   assert.match(source, /if \(method === "POST" && pathname === "\/api\/v1\/browser\/context-click"\)/);
+  assert.match(source, /await withProgrammaticBrowserInput\(activeTab\.view\.webContents, async \(\) => \{/);
   assert.match(source, /activeTab\.view\.webContents\.focus\(\);/);
   assert.match(source, /await activeTab\.view\.webContents\.sendInputEvent\(\{\s*type: "mouseMove",/);
   assert.match(source, /await activeTab\.view\.webContents\.sendInputEvent\(\{\s*type: "mouseDown",[\s\S]*button: "right",/);
   assert.match(source, /await activeTab\.view\.webContents\.sendInputEvent\(\{\s*type: "mouseUp",[\s\S]*button: "right",/);
+});
+
+test("desktop browser service exposes a real mouse endpoint for BrowserView input", async () => {
+  const source = await readFile(MAIN_PATH, "utf8");
+
+  assert.match(source, /if \(method === "POST" && pathname === "\/api\/v1\/browser\/mouse"\)/);
+  assert.match(source, /const action =\s*payload\.action === "double_click" \|\| payload\.action === "hover"/);
+  assert.match(source, /await withProgrammaticBrowserInput\(activeTab\.view\.webContents, async \(\) => \{/);
+  assert.match(source, /activeTab\.view\.webContents\.focus\(\);/);
+  assert.match(source, /await activeTab\.view\.webContents\.sendInputEvent\(\{\s*type: "mouseMove",/);
+  assert.match(source, /await activeTab\.view\.webContents\.sendInputEvent\(\{\s*type: "mouseDown",[\s\S]*button: "left",/);
+  assert.match(source, /await activeTab\.view\.webContents\.sendInputEvent\(\{\s*type: "mouseUp",[\s\S]*button: "left",/);
+  assert.match(source, /clickCount: 2,/);
+});
+
+test("desktop browser service exposes real keyboard input for rich editors", async () => {
+  const source = await readFile(MAIN_PATH, "utf8");
+
+  assert.match(source, /if \(method === "POST" && pathname === "\/api\/v1\/browser\/keyboard"\)/);
+  assert.match(source, /await withProgrammaticBrowserInput\(activeTab\.view\.webContents, async \(\) => \{/);
+  assert.match(source, /await activeTab\.view\.webContents\.insertText\(text\);/);
+  assert.match(source, /async function clearFocusedBrowserTextInput\(/);
+  assert.match(source, /await sendBrowserKeyPress\(webContents, "A", \[selectAllModifier\]\);/);
+  assert.match(source, /await sendBrowserKeyPress\(activeTab\.view\.webContents, "Enter"\);/);
 });

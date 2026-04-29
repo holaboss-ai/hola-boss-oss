@@ -1,13 +1,20 @@
 import fs from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
 
+import {
+  extractImages,
+  extractLinks,
+  extractText,
+  extractTextItems,
+  getDocumentProxy,
+  getMeta,
+  renderPageAsImage,
+  type StructuredTextItem,
+} from "unpdf";
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
 
 import type { HarnessInputAttachmentPayload } from "./types.js";
-
-const require = createRequire(import.meta.url);
 
 export interface HarnessInlineImageContent {
   type: "image";
@@ -35,6 +42,10 @@ export interface HarnessInlineImageAttachmentParams {
 export const DEFAULT_HARNESS_MAX_INLINE_IMAGE_BYTES = 10 * 1024 * 1024;
 export const DEFAULT_HARNESS_MAX_INLINE_TEXT_BYTES = 128 * 1024;
 export const DEFAULT_HARNESS_MAX_EXTRACTED_TEXT_CHARS = 120_000;
+const DEFAULT_HARNESS_MAX_PDF_IMAGE_SCAN_PAGES = 20;
+const DEFAULT_HARNESS_MAX_PDF_RENDERED_PAGE_PREVIEWS = 1;
+const MAX_PDF_METADATA_ENTRIES = 80;
+const MAX_PDF_LINKS = 200;
 
 const TEXT_ATTACHMENT_MIME_TYPES = new Set([
   "application/json",
@@ -106,17 +117,6 @@ const EXCEL_ATTACHMENT_MIME_TYPES = new Set([
   "application/vnd.ms-excel",
 ]);
 
-function normalizePdfjsFactoryPath(directory: string): string {
-  return `${directory.replaceAll("\\", "/").replace(/\/+$/u, "")}/`;
-}
-
-function resolvePdfStandardFontDataPath(): string {
-  const packageJsonPath = require.resolve("pdfjs-dist/package.json");
-  return normalizePdfjsFactoryPath(path.join(path.dirname(packageJsonPath), "standard_fonts"));
-}
-
-const PDF_STANDARD_FONT_DATA_PATH = resolvePdfStandardFontDataPath();
-
 function isTextLikeAttachment(attachment: HarnessInputAttachmentPayload): boolean {
   const mimeType = attachment.mime_type.trim().toLowerCase();
   if (mimeType.startsWith("text/") || TEXT_ATTACHMENT_MIME_TYPES.has(mimeType)) {
@@ -159,6 +159,10 @@ function normalizeExtractedText(value: string): string {
     .trim();
 }
 
+function escapeXmlText(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 function escapeXmlAttribute(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -191,25 +195,204 @@ function buildAttachmentXmlPromptPath(attachment: HarnessInputAttachmentPayload)
   return `./${attachment.workspace_path}`;
 }
 
-async function extractPdfAttachmentText(buffer: Buffer, fileName: string): Promise<string> {
-  const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const pdf = await pdfjsLib.getDocument({
-    data: new Uint8Array(buffer),
-    standardFontDataUrl: PDF_STANDARD_FONT_DATA_PATH,
-  }).promise;
+function serializePdfValue(value: unknown): string {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
   try {
-    let extractedText = `<pdf filename="${escapeXmlAttribute(fileName)}">`;
-    for (let index = 1; index <= pdf.numPages; index += 1) {
-      const page = await pdf.getPage(index);
-      const textContent = await page.getTextContent();
-      const pageText = textContent.items
-        .map((item) => ("str" in item ? item.str : ""))
-        .filter((part) => part.trim().length > 0)
-        .join(" ");
-      extractedText += `\n<page number="${index}">\n${pageText}\n</page>`;
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function pdfRecordEntries(record: Record<string, unknown> | undefined): Array<[string, string]> {
+  if (!record) {
+    return [];
+  }
+  return Object.entries(record)
+    .map(([key, value]) => [key, serializePdfValue(value)] as [string, string])
+    .filter(([, value]) => value.length > 0);
+}
+
+function pdfMetadataEntries(metadata: unknown): Array<[string, string]> {
+  if (!metadata || typeof metadata !== "object") {
+    return [];
+  }
+  const iterable = metadata as Partial<Iterable<unknown>>;
+  if (typeof iterable[Symbol.iterator] === "function") {
+    const entries: Array<[string, string]> = [];
+    for (const entry of metadata as Iterable<unknown>) {
+      if (Array.isArray(entry) && entry.length >= 2) {
+        const key = serializePdfValue(entry[0]);
+        const value = serializePdfValue(entry[1]);
+        if (key && value) {
+          entries.push([key, value]);
+        }
+      }
     }
-    extractedText += "\n</pdf>";
-    return normalizeExtractedText(extractedText);
+    return entries;
+  }
+  return pdfRecordEntries(metadata as Record<string, unknown>);
+}
+
+function formatPdfMetadataSection(
+  infoEntries: Array<[string, string]>,
+  metadataEntries: Array<[string, string]>,
+): string {
+  const lines = ['<metadata>'];
+  const limitedInfoEntries = infoEntries.slice(0, MAX_PDF_METADATA_ENTRIES);
+  const limitedMetadataEntries = metadataEntries.slice(0, MAX_PDF_METADATA_ENTRIES);
+
+  if (limitedInfoEntries.length > 0) {
+    lines.push('<info>');
+    for (const [key, value] of limitedInfoEntries) {
+      lines.push(`<entry key="${escapeXmlAttribute(key)}">${escapeXmlText(value)}</entry>`);
+    }
+    lines.push('</info>');
+  }
+  if (limitedMetadataEntries.length > 0) {
+    lines.push('<xmp>');
+    for (const [key, value] of limitedMetadataEntries) {
+      lines.push(`<entry key="${escapeXmlAttribute(key)}">${escapeXmlText(value)}</entry>`);
+    }
+    lines.push('</xmp>');
+  }
+  if (infoEntries.length > limitedInfoEntries.length || metadataEntries.length > limitedMetadataEntries.length) {
+    lines.push(
+      `<truncated info_entries="${infoEntries.length}" xmp_entries="${metadataEntries.length}" max_entries="${MAX_PDF_METADATA_ENTRIES}" />`,
+    );
+  }
+  lines.push('</metadata>');
+  return lines.join("\n");
+}
+
+function summarizeStructuredTextItems(items: StructuredTextItem[]): string {
+  const fontFamilies = [...new Set(items.map((item) => item.fontFamily).filter(Boolean))].slice(0, 12);
+  const directions = [...new Set(items.map((item) => item.dir).filter(Boolean))].slice(0, 4);
+  const eolCount = items.filter((item) => item.hasEOL).length;
+  return [
+    `items="${items.length}"`,
+    `line_breaks="${eolCount}"`,
+    fontFamilies.length > 0 ? `fonts="${escapeXmlAttribute(fontFamilies.join(", "))}"` : null,
+    directions.length > 0 ? `directions="${escapeXmlAttribute(directions.join(", "))}"` : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function normalizePdfPageText(text: string): string {
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\u0000/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .trim();
+}
+
+async function extractPdfAttachmentText(buffer: Buffer, fileName: string): Promise<string> {
+  const pdf = await getDocumentProxy(new Uint8Array(buffer));
+  try {
+    const lines = [`<pdf filename="${escapeXmlAttribute(fileName)}" pages="${pdf.numPages}">`];
+
+    try {
+      const meta = await getMeta(pdf, { parseDates: true });
+      const infoEntries = pdfRecordEntries(meta.info);
+      const xmpEntries = pdfMetadataEntries(meta.metadata);
+      if (infoEntries.length > 0 || xmpEntries.length > 0) {
+        lines.push(formatPdfMetadataSection(infoEntries, xmpEntries));
+      }
+    } catch (error) {
+      lines.push(`<metadata error="${escapeXmlAttribute(error instanceof Error ? error.message : String(error))}" />`);
+    }
+
+    try {
+      const linkResult = await extractLinks(pdf);
+      const links = linkResult.links.slice(0, MAX_PDF_LINKS);
+      lines.push(`<links total="${linkResult.links.length}" pages="${linkResult.totalPages}">`);
+      for (let index = 0; index < links.length; index += 1) {
+        lines.push(`<link index="${index + 1}">${escapeXmlText(links[index])}</link>`);
+      }
+      if (linkResult.links.length > links.length) {
+        lines.push(`<truncated max_links="${MAX_PDF_LINKS}" />`);
+      }
+      lines.push('</links>');
+    } catch (error) {
+      lines.push(`<links error="${escapeXmlAttribute(error instanceof Error ? error.message : String(error))}" />`);
+    }
+
+    const textResult = await extractText(pdf, { mergePages: false });
+    const structuredTextResult = await extractTextItems(pdf);
+    lines.push(`<pages total="${textResult.totalPages}">`);
+    for (let index = 0; index < textResult.text.length; index += 1) {
+      const pageNumber = index + 1;
+      const pageText = normalizePdfPageText(textResult.text[index] ?? "");
+      const textItems = structuredTextResult.items[index] ?? [];
+      lines.push(`<page number="${pageNumber}">`);
+      lines.push(`<text_item_summary ${summarizeStructuredTextItems(textItems)} />`);
+      lines.push(`<text>${escapeXmlText(pageText)}</text>`);
+      lines.push('</page>');
+    }
+    lines.push('</pages>');
+
+    const imageScanPages = Math.min(pdf.numPages, DEFAULT_HARNESS_MAX_PDF_IMAGE_SCAN_PAGES);
+    lines.push(`<embedded_images scanned_pages="${imageScanPages}" total_pages="${pdf.numPages}">`);
+    let imageCount = 0;
+    for (let pageNumber = 1; pageNumber <= imageScanPages; pageNumber += 1) {
+      try {
+        const images = await extractImages(pdf, pageNumber);
+        imageCount += images.length;
+        lines.push(`<page number="${pageNumber}" count="${images.length}">`);
+        for (const image of images) {
+          lines.push(
+            `<image key="${escapeXmlAttribute(image.key)}" width="${image.width}" height="${image.height}" channels="${image.channels}" bytes="${image.data.byteLength}" />`,
+          );
+        }
+        lines.push('</page>');
+      } catch (error) {
+        lines.push(
+          `<page number="${pageNumber}" error="${escapeXmlAttribute(error instanceof Error ? error.message : String(error))}" />`,
+        );
+      }
+    }
+    if (imageScanPages < pdf.numPages) {
+      lines.push(`<skipped_pages count="${pdf.numPages - imageScanPages}" />`);
+    }
+    lines.push(`<summary total_images="${imageCount}" />`);
+    lines.push('</embedded_images>');
+
+    const renderedPagePreviews = Math.min(pdf.numPages, DEFAULT_HARNESS_MAX_PDF_RENDERED_PAGE_PREVIEWS);
+    lines.push(`<rendered_pages scanned_pages="${renderedPagePreviews}" total_pages="${pdf.numPages}">`);
+    for (let pageNumber = 1; pageNumber <= renderedPagePreviews; pageNumber += 1) {
+      try {
+        const page = await pdf.getPage(pageNumber);
+        const viewport = page.getViewport({ scale: 1 });
+        const image = await renderPageAsImage(pdf, pageNumber, {
+          width: 320,
+          canvasImport: () => import("@napi-rs/canvas"),
+        });
+        lines.push(
+          `<page number="${pageNumber}" source_width="${Math.round(viewport.width)}" source_height="${Math.round(viewport.height)}" rendered_width="320" bytes="${image.byteLength}" format="image/png" />`,
+        );
+      } catch (error) {
+        lines.push(
+          `<page number="${pageNumber}" error="${escapeXmlAttribute(error instanceof Error ? error.message : String(error))}" />`,
+        );
+      }
+    }
+    lines.push('</rendered_pages>');
+
+    lines.push("</pdf>");
+    return normalizeExtractedText(lines.join("\n"));
   } finally {
     await pdf.destroy();
   }

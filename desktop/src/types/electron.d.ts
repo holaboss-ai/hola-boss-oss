@@ -1431,6 +1431,9 @@ declare global {
       setConfigDocument: (rawDocument: string) => Promise<RuntimeConfigPayload>;
       exchangeBinding: (sandboxId: string) => Promise<RuntimeConfigPayload>;
       connectCodexOAuth: () => Promise<RuntimeConfigPayload>;
+      validateProvider: (
+        providerId: string,
+      ) => Promise<{ ok: boolean; detail: string }>;
       onConfigChange: (listener: (config: RuntimeConfigPayload) => void) => () => void;
       onStateChange: (listener: (status: RuntimeStatusPayload) => void) => () => void;
     };
@@ -1493,6 +1496,7 @@ declare global {
         payload: BrowserCopyWorkspaceProfilePayload
       ) => Promise<BrowserImportSummaryPayload>;
       listWorkspaces: () => Promise<WorkspaceListResponsePayload>;
+      listWorkspacesCached: () => Promise<WorkspaceListResponsePayload>;
       getWorkspaceLifecycle: (workspaceId: string) => Promise<WorkspaceLifecyclePayload>;
       activateWorkspace: (workspaceId: string) => Promise<WorkspaceLifecyclePayload>;
       listInstalledApps: (workspaceId: string) => Promise<InstalledWorkspaceAppListResponsePayload>;

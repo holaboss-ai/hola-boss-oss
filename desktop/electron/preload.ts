@@ -1176,6 +1176,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("runtime:exchangeBinding", sandboxId) as Promise<RuntimeConfigPayload>,
     connectCodexOAuth: () =>
       ipcRenderer.invoke("runtime:connectCodexOAuth") as Promise<RuntimeConfigPayload>,
+    validateProvider: (providerId: string) =>
+      ipcRenderer.invoke("runtime:validateProvider", providerId) as Promise<{
+        ok: boolean;
+        detail: string;
+      }>,
     onConfigChange: (listener: (config: RuntimeConfigPayload) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, config: RuntimeConfigPayload) => listener(config);
       ipcRenderer.on("runtime:config", wrapped);
@@ -1281,6 +1286,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     copyBrowserWorkspaceProfile: (payload: BrowserCopyWorkspaceProfilePayload) =>
       ipcRenderer.invoke("workspace:copyBrowserWorkspaceProfile", payload) as Promise<BrowserImportSummaryPayload>,
     listWorkspaces: () => ipcRenderer.invoke("workspace:listWorkspaces") as Promise<WorkspaceListResponsePayload>,
+    listWorkspacesCached: () =>
+      ipcRenderer.invoke("workspace:listWorkspacesCached") as Promise<WorkspaceListResponsePayload>,
     getWorkspaceLifecycle: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:getWorkspaceLifecycle", workspaceId) as Promise<WorkspaceLifecyclePayload>,
     activateWorkspace: (workspaceId: string) =>

@@ -365,6 +365,31 @@ test("claimed input persists runner events, assistant text, and idle state on su
     input_tokens: 12,
     output_tokens: 34,
   });
+  assert.equal(turnResult.contextBudgetDecisions?.mode, "observability_only");
+  assert.equal(turnResult.contextBudgetDecisions?.pressure_stage, null);
+  assert.deepEqual(turnResult.contextBudgetDecisions?.lane_decisions, []);
+  assert.equal(turnResult.contextBudgetDecisions?.checkpoint_queued, false);
+  assert.equal(turnResult.contextBudgetDecisions?.prompt_cache_stable_candidate, true);
+  assert.equal(
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.input_tokens,
+    12,
+  );
+  assert.equal(
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.total_tokens,
+    46,
+  );
+  assert.equal(
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.tool_calls,
+    3,
+  );
+  assert.equal(
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.model_turns,
+    1,
+  );
+  assert.equal(
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.compaction_events,
+    0,
+  );
   const snapshot = store.getTurnRequestSnapshot({ inputId: queued.inputId });
   assert.equal(snapshot, null);
 

@@ -12,6 +12,7 @@ import {
   Trash2,
   XCircle,
 } from "lucide-react";
+import { SettingsCard } from "@/components/settings/SettingsCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useDesktopAuthSession } from "@/lib/auth/authClient";
@@ -332,43 +333,38 @@ export function SubmissionsPanel() {
         aria-label="Loading submissions"
         className="grid gap-6"
       >
-        <section>
-          <div className="text-base font-medium text-foreground">
-            Submissions
-          </div>
-          <div className="mt-3 overflow-hidden rounded-xl bg-card ring-1 ring-border">
+        <SettingsCard>
             {skeletonWidths.map((w, i) => (
-              <div key={i}>
-                {i > 0 ? <div className="h-px bg-border" /> : null}
-                <div className="flex items-center justify-between gap-4 px-4 py-3">
-                  <div className="flex min-w-0 flex-1 items-center gap-3">
-                    <span className="size-3.5 shrink-0 animate-pulse rounded-sm bg-muted-foreground/20" />
-                    <div className="min-w-0 flex-1 space-y-1.5">
-                      <span
-                        className={`block h-3.5 animate-pulse rounded bg-muted-foreground/20 ${w.name}`}
-                      />
-                      <span
-                        className={`block h-2.5 animate-pulse rounded bg-muted-foreground/20 ${w.sub}`}
-                      />
-                    </div>
+              <div
+                key={i}
+                className="flex items-center justify-between gap-4 px-4 py-3"
+              >
+                <div className="flex min-w-0 flex-1 items-center gap-3">
+                  <span className="size-3.5 shrink-0 animate-pulse rounded-sm bg-muted-foreground/20" />
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    <span
+                      className={`block h-3.5 animate-pulse rounded bg-muted-foreground/20 ${w.name}`}
+                    />
+                    <span
+                      className={`block h-2.5 animate-pulse rounded bg-muted-foreground/20 ${w.sub}`}
+                    />
                   </div>
-                  <div className="flex shrink-0 items-center gap-3">
-                    <span
-                      className={`h-5 animate-pulse rounded-full bg-muted-foreground/20 ${w.badge}`}
-                    />
-                    <span
-                      className={`h-3 w-14 animate-pulse rounded bg-muted-foreground/20 ${w.size}`}
-                    />
-                    <span
-                      className={`h-3 w-20 animate-pulse rounded bg-muted-foreground/20 ${w.date}`}
-                    />
-                    <span className="size-5 animate-pulse rounded bg-muted-foreground/20" />
-                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-3">
+                  <span
+                    className={`h-5 animate-pulse rounded-full bg-muted-foreground/20 ${w.badge}`}
+                  />
+                  <span
+                    className={`h-3 w-14 animate-pulse rounded bg-muted-foreground/20 ${w.size}`}
+                  />
+                  <span
+                    className={`h-3 w-20 animate-pulse rounded bg-muted-foreground/20 ${w.date}`}
+                  />
+                  <span className="size-5 animate-pulse rounded bg-muted-foreground/20" />
                 </div>
               </div>
             ))}
-          </div>
-        </section>
+        </SettingsCard>
       </div>
     );
   }
@@ -376,17 +372,14 @@ export function SubmissionsPanel() {
   if (error) {
     return (
       <div className="grid gap-6">
-        <section>
-          <div className="text-base font-medium text-foreground">
-            Submissions
+        {/* Destructive variant — stays a custom card since SettingsCard
+            uses bg-card; we want bg-destructive/5 for error tone. */}
+        <div className="overflow-hidden rounded-xl bg-destructive/5 shadow-md">
+          <div className="flex items-center gap-2.5 px-4 py-3">
+            <AlertTriangle className="size-4 shrink-0 text-destructive" />
+            <p className="text-sm text-destructive">{error}</p>
           </div>
-          <div className="mt-3 overflow-hidden rounded-xl bg-destructive/5 ring-1 ring-destructive/30">
-            <div className="flex items-center gap-2.5 px-4 py-3">
-              <AlertTriangle className="size-4 shrink-0 text-destructive" />
-              <p className="text-sm text-destructive">{error}</p>
-            </div>
-          </div>
-        </section>
+        </div>
       </div>
     );
   }
@@ -394,11 +387,7 @@ export function SubmissionsPanel() {
   if (!isSignedIn) {
     return (
       <div className="grid gap-6">
-        <section>
-          <div className="text-base font-medium text-foreground">
-            Submissions
-          </div>
-          <div className="mt-3 overflow-hidden rounded-xl bg-card ring-1 ring-border">
+        <SettingsCard>
             <div className="flex flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
                 <div className="flex items-center gap-2 text-sm font-medium text-foreground">
@@ -420,8 +409,7 @@ export function SubmissionsPanel() {
                 Sign in
               </Button>
             </div>
-          </div>
-        </section>
+        </SettingsCard>
       </div>
     );
   }
@@ -429,11 +417,7 @@ export function SubmissionsPanel() {
   if (submissions.length === 0) {
     return (
       <div className="grid gap-6">
-        <section>
-          <div className="text-base font-medium text-foreground">
-            Submissions
-          </div>
-          <div className="mt-3 overflow-hidden rounded-xl bg-card ring-1 ring-border">
+        <SettingsCard>
             <div className="px-4 py-10 text-center">
               <Package className="mx-auto mb-3 size-8 text-muted-foreground" />
               <p className="text-sm font-medium text-foreground">
@@ -443,29 +427,23 @@ export function SubmissionsPanel() {
                 Publish a workspace template to see it listed here.
               </p>
             </div>
-          </div>
-        </section>
+        </SettingsCard>
       </div>
     );
   }
 
   return (
     <div className="grid gap-6">
-      <section>
-        <div className="text-base font-medium text-foreground">Submissions</div>
-        <div className="mt-3 overflow-hidden rounded-xl bg-card ring-1 ring-border">
-          {submissions.map((submission, idx) => (
-            <div key={submission.id}>
-              {idx > 0 ? <div className="h-px bg-border" /> : null}
-              <SubmissionRow
-                submission={submission}
-                isDeleting={deletingId === submission.id}
-                onDelete={() => void handleDelete(submission)}
-              />
-            </div>
-          ))}
-        </div>
-      </section>
+      <SettingsCard>
+        {submissions.map((submission) => (
+          <SubmissionRow
+            key={submission.id}
+            submission={submission}
+            isDeleting={deletingId === submission.id}
+            onDelete={() => void handleDelete(submission)}
+          />
+        ))}
+      </SettingsCard>
     </div>
   );
 }

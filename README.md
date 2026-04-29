@@ -2,7 +2,7 @@
   <img src="docs/images/banner.png" alt="Holaboss logo" />
 </p>
 
-<p align="center"><strong>An Agent Computer for long-horizon work, continuity, and self-improvement.</strong></p>
+<p align="center"><strong>An Open Agent Computer for ANY digital work.</strong></p>
 
 <p align="center">
   <a href="https://github.com/holaboss-ai/holaOS/actions/workflows/ci.yml"><img src="https://github.com/holaboss-ai/holaOS/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
@@ -14,19 +14,26 @@
 </p>
 
 <p align="center">
-  <a href="https://www.holaboss.ai/?utm_source=github&utm_medium=oss&utm_campaign=hola_boss_oss&utm_content=readme_nav_website">Website</a> ·
-  <a href="https://www.holaboss.ai/docs?utm_source=github&utm_medium=oss&utm_campaign=hola_boss_oss&utm_content=readme_nav_docs">Docs</a> ·
-  <a href="https://www.holaboss.ai/signin?utm_source=github&utm_medium=oss&utm_campaign=hola_boss_oss&utm_content=readme_nav_signin">Sign in</a> ·
+  <a href="https://x.com/Holabossai"><img src="https://img.shields.io/badge/Follow%20on%20X-000000?style=for-the-badge&logo=x&logoColor=white" alt="Follow on X" /></a>
+  <a href="https://discord.com/invite/NSeHUCBj6"><img src="https://img.shields.io/badge/Join%20our%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join our Discord" /></a>
+</p>
+
+<p align="center"><strong>⭐ Help us reach more developers and grow the holaOS community. Star this repo!</strong></p>
+
+<p align="center">
+  <a href="https://www.holaos.ai/?utm_source=github&utm_medium=oss&utm_campaign=hola_boss_oss&utm_content=readme_nav_website">Website</a> ·
+  <a href="https://www.holaos.ai/docs/getting-started?utm_source=github&utm_medium=oss&utm_campaign=hola_boss_oss&utm_content=readme_nav_docs">Docs</a> ·
+  <a href="https://www.holaos.ai/signin?utm_source=github&utm_medium=oss&utm_campaign=hola_boss_oss&utm_content=readme_nav_signin">Sign in</a> ·
   <a href="#quick-start">Quick Start</a>
 </p>
 
 # holaOS
 
-holaOS is an Agent Computer for role-driven work. It gives agents full computer capabilities through the file system, apps, and browser so they can work continuously, evolve over time, and stay inspectable across long-horizon runs. Users can build their own agent roles and distribute them through the template marketplace, or start quickly from role templates in the marketplace when they are not sure where to begin.
+holaOS is an open agent computer for any digital work. It reimagines the computer as a shared environment where humans and AI agents operate side by side—with full access to the same browser, files, and apps, like collaborating with a powerful teammate that continuously learns how to work better with you. Instead of working across disconnected tools and contexts, everything lives in one place where memory, execution, and goals remain coherent, so work doesn’t reset or lose state. Agents operate continuously within this environment, evolving over time while remaining fully inspectable, and can be shaped by you through roles and templates to support consistent, repeatable ways of working.
 
 
 <p align="center">
-  <img src="docs/images/desktop-workspace.png" alt="Holaboss desktop workspace screenshot" width="1280" />
+  <img src="docs/images/desktop-workspace.png" alt="holaOS desktop workspace screenshot" width="1280" />
 </p>
 
 
@@ -46,56 +53,45 @@ holaOS is an Agent Computer for role-driven work. It gives agents full computer 
 
 ## Quick Start
 
-Quick Start is the shortest path to a working local Holaboss Desktop environment powered by `holaOS`. Use the one-line repository installer on a fresh machine, or follow the manual path if you want to control each setup step.
-
-### What you need
-
-- `curl`
-- `bash`
-- macOS, Linux, or WSL
-
-The installer bootstraps `git`, Node.js `24.14.1`, and `npm` if they are missing. On Linux it may use `sudo` to install `git`.
-
-
 ### One-Line Install
 
 For a fresh-machine bootstrap on macOS, Linux, or WSL, use the repository installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/holaboss-ai/holaboss-ai/main/scripts/install.sh | bash -s -- --launch
+curl -fsSL https://raw.githubusercontent.com/holaboss-ai/holaOS/main/scripts/install.sh | bash -s -- --launch
 ```
+
+You can also follow the manual path if you want to control each setup step.
 
 ## Star the Repository
 
 <p align="center">
-  <img src="docs/images/star-the-repo.gif" alt="Animated preview from the Holaboss star-the-repo video" width="1280" />
+  <img src="docs/images/star-the-repo.gif" alt="Animated preview from the holaOS star-the-repo video" width="1280" />
 </p>
 
-<p align="center"><strong>If Holaboss is useful or interesting, a GitHub Star would be greatly appreciated.</strong></p>
+<p align="center"><strong>If holaOS is useful or interesting, a GitHub Star would be greatly appreciated.</strong></p>
 
 ## Documentation
 
-All deeper technical and product documentation lives at **[holaboss.ai/docs](https://www.holaboss.ai/docs/)**:
+All deeper technical and product documentation lives at **[holaos.ai/docs](https://www.holaos.ai/docs)**:
 
 | Section | What's Covered |
 | --- | --- |
-| [Overview](https://www.holaboss.ai/docs/) | The merged entry page for the environment-engineering thesis and system model |
-| [Quick Start](https://www.holaboss.ai/docs/getting-started/) | The fastest path to a working local desktop environment |
-| [Learning Path](https://www.holaboss.ai/docs/getting-started/learning-path) | The technical path through the docs after setup |
-| [Environment Engineering](https://www.holaboss.ai/docs/holaos/environment-engineering) | The core thesis behind holaOS and why the environment defines the system |
-| [Concepts](https://www.holaboss.ai/docs/holaos/concepts) | Core system vocabulary for workspaces, runtime, memory, and outputs |
-| [Workspace Model](https://www.holaboss.ai/docs/holaos/workspace-model) | Workspace contract, authored surfaces, and runtime-owned state |
-| [Memory and Continuity](https://www.holaboss.ai/docs/holaos/memory-and-continuity/) | Durable memory, continuity artifacts, and long-horizon resume behavior |
-| [Agent Harness](https://www.holaboss.ai/docs/holaos/agent-harness/) | The stable harness boundary inside the runtime and how executors fit into it |
-| [Build on holaOS](https://www.holaboss.ai/docs/build-on-holaos/) | The code-true developer map for desktop, runtime, apps, templates, and validation paths |
-| [Start Developing](https://www.holaboss.ai/docs/build-on-holaos/start-developing/) | The local developer path for desktop and runtime validation |
-| [Workspace Experience](https://www.holaboss.ai/docs/build-on-holaos/desktop/workspace-experience) | The desktop workspace surface and operator-facing shell behavior |
-| [Model Configuration](https://www.holaboss.ai/docs/build-on-holaos/desktop/model-configuration) | Providers, defaults, catalog-driven model metadata, and runtime model selection |
-| [Runtime APIs](https://www.holaboss.ai/docs/build-on-holaos/runtime/apis) | The runtime operational surface for workspaces, runs, streaming, and app lifecycle |
-| [Independent Deploy](https://www.holaboss.ai/docs/build-on-holaos/runtime/independent-deploy) | Running the portable runtime without the desktop app |
-| [Build Your First App](https://www.holaboss.ai/docs/app-development/applications/first-app) | Building workspace apps on top of holaOS |
-| [Troubleshooting](https://www.holaboss.ai/docs/build-on-holaos/troubleshooting) | The common local runtime and desktop failure modes |
-| [Reference](https://www.holaboss.ai/docs/reference/environment-variables) | Environment variables and supporting reference material |
+| [Overview](https://www.holaos.ai/docs/getting-started) | The merged entry page for the environment-engineering thesis and system model |
+| [Quick Start](https://www.holaos.ai/docs/getting-started/quick-start) | The fastest path to a working local desktop environment |
+| [Workspaces](https://www.holaos.ai/docs/getting-started/workspaces) | How workspaces are created, switched, managed, and represented on disk |
+| [Environment Engineering](https://www.holaos.ai/docs/concepts/environment-engineering) | The core thesis behind holaOS and why the environment defines the system |
+| [Concepts](https://www.holaos.ai/docs/concepts/concepts) | Core system vocabulary for workspaces, runtime, memory, and outputs |
+| [Workspace Model](https://www.holaos.ai/docs/concepts/workspace-model) | Workspace contract, authored surfaces, and runtime-owned state |
+| [Memory and Continuity](https://www.holaos.ai/docs/concepts/memory-and-continuity) | Durable memory, continuity artifacts, and long-horizon resume behavior |
+| [Agent Harness](https://www.holaos.ai/docs/concepts/agent-harness) | The stable harness boundary inside the runtime and how executors fit into it |
+| [Independent Deploy](https://www.holaos.ai/docs/contribute/runtime/independent-deploy) | Running the portable runtime without the desktop app |
+| [Build on holaOS](https://www.holaos.ai/docs/contribute) | The code-true developer map for desktop, runtime, apps, templates, and validation paths |
+| [Start Developing](https://www.holaos.ai/docs/contribute/start-developing) | The local developer path for desktop and runtime validation |
+| [Runtime APIs](https://www.holaos.ai/docs/contribute/runtime/apis) | The runtime operational surface for workspaces, runs, streaming, and app lifecycle |
+| [Build Your First App](https://www.holaos.ai/docs/build/apps/first-app) | Building workspace apps on top of holaOS |
+| [Reference](https://www.holaos.ai/docs/reference/environment-variables) | Environment variables and supporting reference material |
+
 
 ## Manual Install
 
@@ -112,7 +108,7 @@ npm --version
 If you use Codex, Claude Code, Cursor, Windsurf, or another coding agent, you can hand it the setup instructions in one sentence:
 
 ```text
-Run the Holaboss install script from https://raw.githubusercontent.com/holaboss-ai/holaboss-ai/main/scripts/install.sh. It should install git and Node.js 24.14.1/npm if they are missing, clone or update the repo into ~/holaboss-ai unless I specify another --dir, run desktop:install, create desktop/.env from desktop/.env.example if needed, run desktop:prepare-runtime:local and desktop:typecheck, and only run desktop:dev if I ask for --launch. If Electron cannot open, stop after verification and tell me the next manual step.
+Run the holaOS install script from https://raw.githubusercontent.com/holaboss-ai/holaOS/main/scripts/install.sh. It should install git and Node.js 24.14.1/npm if they are missing, clone or update the repo into ~/holaboss-ai unless I specify another --dir, run desktop:install, create desktop/.env from desktop/.env.example if needed, run desktop:prepare-runtime:local and desktop:typecheck, and only run desktop:dev if I ask for --launch. If Electron cannot open, stop after verification and tell me the next manual step.
 ```
 
 That handoff keeps the installation flow self-contained while leaving the detailed bootstrap steps in the repo-local [INSTALL.md](INSTALL.md) runbook.
@@ -173,7 +169,7 @@ Use `One-Line Install` when you want the fastest path to a working local desktop
 
 ## Contributing
 
-If you want to contribute, start with [Start Developing](https://www.holaboss.ai/docs/build-on-holaos/start-developing/) to get the local desktop and runtime loop working, then use [Contributing](https://www.holaboss.ai/docs/build-on-holaos/start-developing/contributing) for validation, commit, and review expectations.
+If you want to contribute, start with [Start Developing](https://www.holaos.ai/docs/contribute/start-developing) to get the local desktop and runtime loop working, then use [Contributing](https://www.holaos.ai/docs/contribute/start-developing/contributing) for validation, commit, and review expectations.
 
 ## OSS Release Notes
 

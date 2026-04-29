@@ -916,6 +916,7 @@ const agentSessionCache = new Map<
   Map<string, AgentSessionRecordPayload>
 >();
 const userBrowserInterruptPrompts = new Set<string>();
+const programmaticBrowserInputDepth = new WeakMap<WebContents, number>();
 const reportedOperatorSurfaceContexts = new Map<
   string,
   ReportedOperatorSurfaceContextPayload
@@ -1951,6 +1952,49 @@ async function openExternalUrl(rawUrl: string): Promise<void> {
   }
 
   await shell.openExternal(parsed.toString());
+}
+
+function isHttpOrHttpsUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl.trim());
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isBrowserPopupNavigationUrl(rawUrl: string): boolean {
+  const normalizedUrl = rawUrl.trim();
+  return normalizedUrl === "about:blank" || isHttpOrHttpsUrl(normalizedUrl);
+}
+
+function shouldAllowBrowserPopupWindow(
+  normalizedUrl: string,
+  frameName?: string | null,
+  features?: string | null,
+): boolean {
+  return (
+    isBrowserPopupNavigationUrl(normalizedUrl) &&
+    (normalizedUrl === "about:blank" ||
+      isBrowserPopupWindowRequest(frameName, features))
+  );
+}
+
+function openExternalUrlFromMain(rawUrl: string, source: string): void {
+  const normalizedUrl = rawUrl.trim();
+  if (!normalizedUrl || normalizedUrl === "about:blank") {
+    return;
+  }
+
+  try {
+    new URL(normalizedUrl);
+  } catch {
+    return;
+  }
+
+  shell.openExternal(normalizedUrl).catch((error) => {
+    console.warn(`[desktop] Failed to open external URL from ${source}:`, error);
+  });
 }
 
 function emitOpenSettingsPane(section: UiSettingsPaneSection = "settings") {
@@ -6149,6 +6193,103 @@ async function readRuntimeConfigDocument(): Promise<Record<string, unknown>> {
   }
 }
 
+// ============================================================
+// Provider validation — cheap probe per provider to confirm the
+// stored credentials still work. Hit one read-only endpoint with
+// a short timeout. We don't try to parse model lists or authn
+// scopes; a 2xx is enough signal for "your key is alive".
+// ============================================================
+
+interface ValidateProviderResult {
+  ok: boolean;
+  detail: string;
+}
+
+const PROVIDER_DEFAULT_BASE_URL: Record<string, string> = {
+  openai_direct: "https://api.openai.com",
+  openai_codex: "https://api.openai.com",
+  anthropic_direct: "https://api.anthropic.com",
+  openrouter_direct: "https://openrouter.ai/api",
+  gemini_direct: "https://generativelanguage.googleapis.com/v1beta/openai",
+  minimax: "https://api.minimaxi.chat",
+  ollama_local: "http://localhost:11434",
+};
+
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, "");
+}
+
+async function validateRuntimeProvider(
+  providerId: string,
+): Promise<ValidateProviderResult> {
+  // Holaboss = managed proxy, gated by Better Auth session cookie.
+  if (providerId === "holaboss") {
+    const cookie = authCookieHeader();
+    if (!cookie) {
+      return { ok: false, detail: "Not signed in" };
+    }
+    return { ok: true, detail: "Signed in" };
+  }
+
+  const document = await readRuntimeConfigDocument();
+  const providers = (document.providers as Record<string, unknown>) ?? {};
+  const storageId =
+    providerId === "holaboss" ? "holaboss_model_proxy" : providerId;
+  const provider = providers[storageId] as Record<string, unknown> | undefined;
+  if (!provider) {
+    return { ok: false, detail: "Not configured" };
+  }
+
+  const apiKey = String(provider.api_key ?? "").trim();
+  const configuredBase = String(provider.base_url ?? "").trim();
+  const baseUrl = trimTrailingSlash(
+    configuredBase || PROVIDER_DEFAULT_BASE_URL[providerId] || "",
+  );
+  if (!baseUrl) {
+    return { ok: false, detail: "No base URL configured" };
+  }
+  if (!apiKey && providerId !== "ollama_local" && providerId !== "openai_codex") {
+    return { ok: false, detail: "API key missing" };
+  }
+
+  let url = `${baseUrl}/v1/models`;
+  const headers: Record<string, string> = {};
+  if (providerId === "anthropic_direct") {
+    headers["x-api-key"] = apiKey;
+    headers["anthropic-version"] = "2023-06-01";
+  } else if (providerId === "ollama_local") {
+    url = `${baseUrl}/api/tags`;
+  } else if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+
+  // 6s upper bound — anything slower is effectively "down" from the
+  // user's perspective.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6_000);
+  try {
+    const response = await fetchWithNetworkRetry(url, {
+      method: "GET",
+      headers,
+      signal: controller.signal,
+    });
+    if (response.ok) {
+      return { ok: true, detail: `${response.status} ${response.statusText || "OK"}` };
+    }
+    return { ok: false, detail: `HTTP ${response.status}` };
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      return { ok: false, detail: "Timed out" };
+    }
+    return {
+      ok: false,
+      detail: error instanceof Error ? error.message : "Network error",
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function writeRuntimeConfigTextAtomically(
   nextText: string,
 ): Promise<void> {
@@ -6344,10 +6485,14 @@ function openAiCodexErrorMessage(
   payload: Record<string, unknown>,
   fallbackMessage: string,
 ): string {
+  const errorPayload = runtimeConfigObject(payload.error);
   return runtimeFirstNonEmptyString(
-    payload.error_description as string | undefined,
-    payload.message as string | undefined,
-    payload.error as string | undefined,
+    payload.error_description,
+    payload.message,
+    payload.detail,
+    errorPayload.message,
+    errorPayload.error_description,
+    payload.error,
     fallbackMessage,
   );
 }
@@ -7034,25 +7179,27 @@ async function handleDesktopBrowserServiceRequest(
       if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) {
         mainWindow.focus();
       }
-      activeTab.view.webContents.focus();
-      await activeTab.view.webContents.sendInputEvent({
-        type: "mouseMove",
-        x,
-        y,
-      });
-      await activeTab.view.webContents.sendInputEvent({
-        type: "mouseDown",
-        x,
-        y,
-        button: "right",
-        clickCount: 1,
-      });
-      await activeTab.view.webContents.sendInputEvent({
-        type: "mouseUp",
-        x,
-        y,
-        button: "right",
-        clickCount: 1,
+      await withProgrammaticBrowserInput(activeTab.view.webContents, async () => {
+        activeTab.view.webContents.focus();
+        await activeTab.view.webContents.sendInputEvent({
+          type: "mouseMove",
+          x,
+          y,
+        });
+        await activeTab.view.webContents.sendInputEvent({
+          type: "mouseDown",
+          x,
+          y,
+          button: "right",
+          clickCount: 1,
+        });
+        await activeTab.view.webContents.sendInputEvent({
+          type: "mouseUp",
+          x,
+          y,
+          button: "right",
+          clickCount: 1,
+        });
       });
 
       writeBrowserServiceJson(response, 200, {
@@ -7060,6 +7207,165 @@ async function handleDesktopBrowserServiceRequest(
         tabId: activeTab.state.id,
         x,
         y,
+      });
+      return;
+    }
+
+    if (method === "POST" && pathname === "/api/v1/browser/mouse") {
+      const payload = await readBrowserServiceJsonBody(request);
+      const x =
+        typeof payload.x === "number" && Number.isFinite(payload.x)
+          ? Math.round(payload.x)
+          : NaN;
+      const y =
+        typeof payload.y === "number" && Number.isFinite(payload.y)
+          ? Math.round(payload.y)
+          : NaN;
+      const action =
+        payload.action === "double_click" || payload.action === "hover"
+          ? payload.action
+          : "click";
+      if (!Number.isFinite(x) || x < 0 || !Number.isFinite(y) || y < 0) {
+        writeBrowserServiceJson(response, 400, {
+          error: "Fields 'x' and 'y' must be non-negative numbers.",
+        });
+        return;
+      }
+
+      const workspace = await ensureTargetBrowserSpace("mouse");
+      if (!workspace) {
+        return;
+      }
+      const activeTab = getActiveBrowserTab(
+        targetWorkspaceId,
+        targetSpace,
+        ensuredSessionId,
+        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
+      );
+      if (!activeTab) {
+        writeBrowserServiceJson(response, 409, {
+          error: "No active browser tab is available.",
+        });
+        return;
+      }
+
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) {
+        mainWindow.focus();
+      }
+      await withProgrammaticBrowserInput(activeTab.view.webContents, async () => {
+        activeTab.view.webContents.focus();
+        await activeTab.view.webContents.sendInputEvent({
+          type: "mouseMove",
+          x,
+          y,
+        });
+
+        if (action === "click" || action === "double_click") {
+          await activeTab.view.webContents.sendInputEvent({
+            type: "mouseDown",
+            x,
+            y,
+            button: "left",
+            clickCount: 1,
+          });
+          await activeTab.view.webContents.sendInputEvent({
+            type: "mouseUp",
+            x,
+            y,
+            button: "left",
+            clickCount: 1,
+          });
+        }
+        if (action === "double_click") {
+          await activeTab.view.webContents.sendInputEvent({
+            type: "mouseDown",
+            x,
+            y,
+            button: "left",
+            clickCount: 2,
+          });
+          await activeTab.view.webContents.sendInputEvent({
+            type: "mouseUp",
+            x,
+            y,
+            button: "left",
+            clickCount: 2,
+          });
+        }
+      });
+
+      writeBrowserServiceJson(response, 200, {
+        ok: true,
+        tabId: activeTab.state.id,
+        action,
+        x,
+        y,
+      });
+      return;
+    }
+
+    if (method === "POST" && pathname === "/api/v1/browser/keyboard") {
+      const payload = await readBrowserServiceJsonBody(request);
+      const action = payload.action === "press" ? "press" : "insert_text";
+      const text = typeof payload.text === "string" ? payload.text : "";
+      const key =
+        typeof payload.key === "string" && payload.key.trim()
+          ? payload.key.trim()
+          : "";
+      const clear = payload.clear === true;
+      const submit = payload.submit === true;
+      if (action === "press" && !key) {
+        writeBrowserServiceJson(response, 400, {
+          error: "Field 'key' is required for keyboard press actions.",
+        });
+        return;
+      }
+
+      const workspace = await ensureTargetBrowserSpace("keyboard");
+      if (!workspace) {
+        return;
+      }
+      const activeTab = getActiveBrowserTab(
+        targetWorkspaceId,
+        targetSpace,
+        ensuredSessionId,
+        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
+      );
+      if (!activeTab) {
+        writeBrowserServiceJson(response, 409, {
+          error: "No active browser tab is available.",
+        });
+        return;
+      }
+
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) {
+        mainWindow.focus();
+      }
+      await withProgrammaticBrowserInput(activeTab.view.webContents, async () => {
+        activeTab.view.webContents.focus();
+        if (action === "press") {
+          await sendBrowserKeyPress(activeTab.view.webContents, key);
+          return;
+        }
+        if (clear) {
+          await clearFocusedBrowserTextInput(activeTab.view.webContents);
+        }
+        if (text) {
+          await activeTab.view.webContents.insertText(text);
+        }
+        if (submit) {
+          await sendBrowserKeyPress(activeTab.view.webContents, "Enter");
+        }
+      });
+
+      writeBrowserServiceJson(response, 200, {
+        ok: true,
+        tabId: activeTab.state.id,
+        action,
+        text_length: action === "insert_text" ? text.length : 0,
+        key: action === "press" ? key : "",
+        clear,
+        submit,
       });
       return;
     }
@@ -7472,10 +7778,13 @@ function runtimeConfigObject(value: unknown): Record<string, unknown> {
 }
 
 function runtimeFirstNonEmptyString(
-  ...values: Array<string | null | undefined>
+  ...values: unknown[]
 ): string {
   for (const value of values) {
-    const normalized = (value ?? "").trim();
+    if (typeof value !== "string") {
+      continue;
+    }
+    const normalized = value.trim();
     if (normalized) {
       return normalized;
     }
@@ -14024,6 +14333,116 @@ async function listWorkspaces(): Promise<WorkspaceListResponsePayload> {
   return listWorkspacesViaRuntime();
 }
 
+/**
+ * Read the workspaces table directly from runtime.db without going
+ * through the sidecar. Used to hydrate the splash before the sidecar
+ * finishes spawning + schema-ensure. The desktop and runtime share
+ * runtime.db; the schema converges after the sidecar runs once on a
+ * given machine, but we tolerate a missing `workspace_path` column on
+ * the very first launch by reading PRAGMA table_info first.
+ *
+ * Synchronous + fast (5-15ms) — better-sqlite3 with WAL allows this
+ * read while the sidecar is still booting in another process.
+ *
+ * Returns an empty list (not an error) on any failure so the renderer
+ * silently falls back to the sidecar path.
+ */
+function listWorkspacesFromLocalDb(): WorkspaceListResponsePayload {
+  const empty: WorkspaceListResponsePayload = {
+    items: [],
+    total: 0,
+    limit: 100,
+    offset: 0,
+  };
+  let database: Database.Database | null = null;
+  try {
+    database = new Database(runtimeDatabasePath(), { readonly: true });
+    const tableExists = database
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'workspaces' LIMIT 1",
+      )
+      .get();
+    if (!tableExists) {
+      return empty;
+    }
+    const columns = new Set<string>(
+      (
+        database.prepare("PRAGMA table_info(workspaces)").all() as Array<{
+          name: string;
+        }>
+      ).map((row) => row.name),
+    );
+    const hasWorkspacePath = columns.has("workspace_path");
+    const select = hasWorkspacePath
+      ? `SELECT id, name, status, harness, error_message,
+                onboarding_status, onboarding_session_id,
+                onboarding_completed_at, onboarding_completion_summary,
+                onboarding_requested_at, onboarding_requested_by,
+                created_at, updated_at, deleted_at_utc, workspace_path
+         FROM workspaces
+         WHERE deleted_at_utc IS NULL
+         ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC
+         LIMIT 100`
+      : `SELECT id, name, status, harness, error_message,
+                onboarding_status, onboarding_session_id,
+                onboarding_completed_at, onboarding_completion_summary,
+                onboarding_requested_at, onboarding_requested_by,
+                created_at, updated_at, deleted_at_utc
+         FROM workspaces
+         WHERE deleted_at_utc IS NULL
+         ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC
+         LIMIT 100`;
+    const rows = database.prepare(select).all() as Array<
+      Record<string, unknown>
+    >;
+    const items: WorkspaceRecordPayload[] = rows.map((row) => ({
+      id: String(row.id ?? ""),
+      name: String(row.name ?? ""),
+      status: String(row.status ?? "unknown"),
+      harness: row.harness == null ? null : String(row.harness),
+      error_message: row.error_message == null ? null : String(row.error_message),
+      onboarding_status: String(row.onboarding_status ?? "complete"),
+      onboarding_session_id:
+        row.onboarding_session_id == null
+          ? null
+          : String(row.onboarding_session_id),
+      onboarding_completed_at:
+        row.onboarding_completed_at == null
+          ? null
+          : String(row.onboarding_completed_at),
+      onboarding_completion_summary:
+        row.onboarding_completion_summary == null
+          ? null
+          : String(row.onboarding_completion_summary),
+      onboarding_requested_at:
+        row.onboarding_requested_at == null
+          ? null
+          : String(row.onboarding_requested_at),
+      onboarding_requested_by:
+        row.onboarding_requested_by == null
+          ? null
+          : String(row.onboarding_requested_by),
+      created_at: row.created_at == null ? null : String(row.created_at),
+      updated_at: row.updated_at == null ? null : String(row.updated_at),
+      deleted_at_utc:
+        row.deleted_at_utc == null ? null : String(row.deleted_at_utc),
+      workspace_path:
+        hasWorkspacePath && row.workspace_path != null
+          ? String(row.workspace_path)
+          : null,
+    }));
+    return { items, total: items.length, limit: 100, offset: 0 };
+  } catch {
+    return empty;
+  } finally {
+    try {
+      database?.close();
+    } catch {
+      // ignore
+    }
+  }
+}
+
 async function listWorkspacesViaRuntime(): Promise<WorkspaceListResponsePayload> {
   const response = await requestRuntimeJson<WorkspaceListResponsePayload>({
     method: "GET",
@@ -16935,7 +17354,7 @@ function getOrCreateAppSurfaceView(appId: string): BrowserView {
     vertical: false,
   });
   view.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    openExternalUrlFromMain(url, "app surface window open");
     return { action: "deny" };
   });
   appSurfaceViews.set(appId, view);
@@ -17519,6 +17938,51 @@ function maybePromptBrowserInterrupt(
   }
   void confirmBrowserInterrupt(workspaceId, controllingSessionId);
   return true;
+}
+
+function isProgrammaticBrowserInput(webContents: WebContents): boolean {
+  return (programmaticBrowserInputDepth.get(webContents) ?? 0) > 0;
+}
+
+async function withProgrammaticBrowserInput<T>(
+  webContents: WebContents,
+  callback: () => Promise<T>,
+): Promise<T> {
+  programmaticBrowserInputDepth.set(
+    webContents,
+    (programmaticBrowserInputDepth.get(webContents) ?? 0) + 1,
+  );
+  try {
+    return await callback();
+  } finally {
+    const nextDepth = (programmaticBrowserInputDepth.get(webContents) ?? 1) - 1;
+    if (nextDepth > 0) {
+      programmaticBrowserInputDepth.set(webContents, nextDepth);
+    } else {
+      programmaticBrowserInputDepth.delete(webContents);
+    }
+  }
+}
+
+async function sendBrowserKeyPress(
+  webContents: WebContents,
+  keyCode: string,
+  modifiers?: Array<"meta" | "control">,
+): Promise<void> {
+  const event = {
+    keyCode,
+    ...(modifiers && modifiers.length > 0 ? { modifiers } : {}),
+  };
+  await webContents.sendInputEvent({ type: "keyDown", ...event });
+  await webContents.sendInputEvent({ type: "keyUp", ...event });
+}
+
+async function clearFocusedBrowserTextInput(
+  webContents: WebContents,
+): Promise<void> {
+  const selectAllModifier = process.platform === "darwin" ? "meta" : "control";
+  await sendBrowserKeyPress(webContents, "A", [selectAllModifier]);
+  await sendBrowserKeyPress(webContents, "Backspace");
 }
 
 function hydrateAgentSessionBrowserSpace(
@@ -20949,7 +21413,7 @@ function handleBrowserWindowOpenAsTab(
   try {
     const parsed = new URL(normalizedUrl);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      void shell.openExternal(normalizedUrl);
+      openExternalUrlFromMain(normalizedUrl, "browser tab creation");
       return;
     }
   } catch {
@@ -21122,7 +21586,7 @@ function showBrowserViewContextMenu(params: {
       {
         label: "Open Link Externally",
         click: () => {
-          void shell.openExternal(linkUrl);
+          openExternalUrlFromMain(linkUrl, "browser context menu");
         },
       },
       {
@@ -21300,54 +21764,55 @@ function createBrowserTab(
   });
   view.webContents.setWindowOpenHandler(
     ({ url, disposition, frameName, features }) => {
-    const normalizedUrl = url.trim();
-    if (!normalizedUrl) {
-      return { action: "deny" };
-    }
-
-    try {
-      const parsed = new URL(normalizedUrl);
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-        void shell.openExternal(normalizedUrl);
+      const normalizedUrl = url.trim();
+      if (!normalizedUrl) {
         return { action: "deny" };
       }
-    } catch {
-      return { action: "deny" };
-    }
 
-    if (isBrowserPopupWindowRequest(frameName, features)) {
-      return {
-        action: "allow",
-        overrideBrowserWindowOptions: {
-          parent: mainWindow ?? undefined,
-          autoHideMenuBar: true,
-          backgroundColor: "#050907",
-          width: 520,
-          height: 760,
-          minWidth: 420,
-          minHeight: 620,
-          webPreferences: {
-            preload: path.join(__dirname, "browserPopupPreload.cjs"),
+      if (shouldAllowBrowserPopupWindow(normalizedUrl, frameName, features)) {
+        return {
+          action: "allow",
+          overrideBrowserWindowOptions: {
+            parent: mainWindow ?? undefined,
+            autoHideMenuBar: true,
+            backgroundColor: "#050907",
+            width: 520,
+            height: 760,
+            minWidth: 420,
+            minHeight: 620,
+            webPreferences: {
+              session: workspace.session,
+              preload: path.join(__dirname, "browserPopupPreload.cjs"),
+            },
           },
-        },
-      };
-    }
+        };
+      }
 
-    const shouldOpenAsTab =
-      disposition === "foreground-tab" ||
-      disposition === "background-tab" ||
-      disposition === "new-window";
-    if (shouldOpenAsTab) {
-      handleBrowserWindowOpenAsTab(
-        workspaceId,
-        normalizedUrl,
-        disposition,
-        frameName,
-        browserSpace,
-        normalizedSessionId,
-      );
-    }
-    return { action: "deny" };
+      try {
+        const parsed = new URL(normalizedUrl);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+          openExternalUrlFromMain(normalizedUrl, "browser window open");
+          return { action: "deny" };
+        }
+      } catch {
+        return { action: "deny" };
+      }
+
+      const shouldOpenAsTab =
+        disposition === "foreground-tab" ||
+        disposition === "background-tab" ||
+        disposition === "new-window";
+      if (shouldOpenAsTab) {
+        handleBrowserWindowOpenAsTab(
+          workspaceId,
+          normalizedUrl,
+          disposition,
+          frameName,
+          browserSpace,
+          normalizedSessionId,
+        );
+      }
+      return { action: "deny" };
     },
   );
   view.webContents.setZoomFactor(1);
@@ -21361,6 +21826,9 @@ function createBrowserTab(
     )?.tabs.get(tabId);
 
   view.webContents.on("before-input-event", (event, input) => {
+    if (isProgrammaticBrowserInput(view.webContents)) {
+      return;
+    }
     if (
       (input.type === "keyDown" ||
         input.type === "keyUp" ||
@@ -21377,6 +21845,9 @@ function createBrowserTab(
   });
 
   view.webContents.on("before-mouse-event", (event, mouse) => {
+    if (isProgrammaticBrowserInput(view.webContents)) {
+      return;
+    }
     if (
       mouse.type !== "mouseMove" &&
       mouse.type !== "mouseEnter" &&
@@ -23145,18 +23616,46 @@ function toggleOverflowPopup(anchorBounds: BrowserAnchorBoundsPayload) {
   popup.focus();
 }
 
+function resolveWindowsBackgroundMaterial():
+  | "mica"
+  | "acrylic"
+  | undefined {
+  if (process.platform !== "win32") return undefined;
+  const buildNumber = Number.parseInt(
+    os.release().split(".")[2] ?? "0",
+    10,
+  );
+  // Win 11 22000+ supports Mica; Win 10 1809 (17763)+ supports Acrylic.
+  if (buildNumber >= 22000) return "mica";
+  if (buildNumber >= 17763) return "acrylic";
+  return undefined;
+}
+
 function createMainWindow() {
-  const titleBarOptions =
-    process.platform === "darwin"
+  const isMac = process.platform === "darwin";
+  const isWindows = process.platform === "win32";
+  const winBackgroundMaterial = resolveWindowsBackgroundMaterial();
+
+  const platformOptions: Electron.BrowserWindowConstructorOptions = isMac
+    ? {
+        titleBarStyle: "hiddenInset",
+        trafficLightPosition: { x: 14, y: 16 },
+        // 'sidebar' renders the Finder-style frosted glass — significantly
+        // more visible than 'under-window' in dark mode, where Apple's
+        // 'under-window' intentionally leans quiet/moody and is hard to
+        // perceive as glass. Both materials adapt automatically to
+        // light/dark; 'sidebar' just has more presence.
+        vibrancy: "sidebar",
+        visualEffectState: "active",
+      }
+    : isWindows
       ? {
-          titleBarStyle: "hiddenInset" as const,
-          trafficLightPosition: { x: 14, y: 16 },
+          frame: false,
+          ...(winBackgroundMaterial && {
+            backgroundMaterial: winBackgroundMaterial,
+          }),
         }
-      : process.platform === "win32"
-        ? {
-            frame: false,
-          }
-        : {};
+      : {};
 
   const appIcon = nativeImage.createFromPath(desktopAppIconPath());
 
@@ -23167,10 +23666,15 @@ function createMainWindow() {
     minHeight: 720,
     show: false,
     center: true,
-    backgroundColor: "#050907",
+    // On macOS we omit backgroundColor so the NSVisualEffectView (vibrancy)
+    // paints the window backdrop — setting it to a transparent value would
+    // mark the window itself as transparent and prevent vibrancy from
+    // engaging. Other platforms keep the dark fill for a flicker-free first
+    // paint.
+    ...(isMac ? {} : { backgroundColor: "#050907" }),
     autoHideMenuBar: true,
     icon: appIcon,
-    ...titleBarOptions,
+    ...platformOptions,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -23744,8 +24248,15 @@ app.whenReady().then(async () => {
       return fileBookmarks;
     },
   );
+  // Returns the *cached* runtime status. The full refreshRuntimeStatus()
+  // path probes /healthz, which during boot — when the sidecar isn't up
+  // yet — eats a 1500ms HTTP timeout per call. Push events
+  // (`runtime:state`) already keep the cached value current; renderer
+  // gets a real-time stream + can poll this IPC for the same state in
+  // microseconds. (Boot timing: shaved ~1s off the splash by removing
+  // the redundant probe round-trip from this hot path.)
   handleTrustedIpc("runtime:getStatus", ["main", "auth-popup"], () =>
-    refreshRuntimeStatus(),
+    Promise.resolve(runtimeStatus),
   );
   handleTrustedIpc("runtime:restart", ["main"], async () => {
     await restartEmbeddedRuntimeSafely("manual_restart");
@@ -23855,6 +24366,11 @@ app.whenReady().then(async () => {
     "runtime:connectCodexOAuth",
     ["main", "auth-popup"],
     async () => connectOpenAiCodexProvider(),
+  );
+  handleTrustedIpc(
+    "runtime:validateProvider",
+    ["main", "auth-popup"],
+    async (_event, providerId: string) => validateRuntimeProvider(providerId),
   );
   handleTrustedIpc(
     "ui:getTheme",
@@ -24067,6 +24583,15 @@ app.whenReady().then(async () => {
     "workspace:listWorkspaces",
     ["main", "auth-popup"],
     async () => listWorkspaces(),
+  );
+  // Cached read straight from runtime.db without going through the
+  // sidecar — used by the splash to hydrate before the sidecar
+  // finishes spawning. Returns empty on any failure so the renderer
+  // can silently fall back to the live sidecar path.
+  handleTrustedIpc(
+    "workspace:listWorkspacesCached",
+    ["main"],
+    async () => listWorkspacesFromLocalDb(),
   );
   handleTrustedIpc(
     "workspace:getWorkspaceLifecycle",

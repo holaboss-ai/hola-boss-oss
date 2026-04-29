@@ -33,11 +33,23 @@ test("desktop browser keeps auth-style popup windows while promoting ordinary ne
   );
   assert.match(
     source,
-    /if \(isBrowserPopupWindowRequest\(frameName, features\)\) \{\s*return \{\s*action: "allow",[\s\S]*overrideBrowserWindowOptions: \{[\s\S]*parent: mainWindow \?\? undefined,[\s\S]*width: 520,[\s\S]*height: 760,/,
+    /if \(shouldAllowBrowserPopupWindow\(normalizedUrl, frameName, features\)\) \{\s*return \{\s*action: "allow",[\s\S]*overrideBrowserWindowOptions: \{[\s\S]*parent: mainWindow \?\? undefined,[\s\S]*width: 520,[\s\S]*height: 760,[\s\S]*session: workspace\.session,/,
   );
   assert.match(
     source,
-    /handleBrowserWindowOpenAsTab\(\s*workspaceId,\s*normalizedUrl,\s*disposition,\s*frameName,\s*browserSpace,\s*\);/,
+    /function isBrowserPopupNavigationUrl\(rawUrl: string\): boolean \{[\s\S]*normalizedUrl === "about:blank" \|\| isHttpOrHttpsUrl\(normalizedUrl\);[\s\S]*\}/,
+  );
+  assert.match(
+    source,
+    /function shouldAllowBrowserPopupWindow\([\s\S]*normalizedUrl === "about:blank" \|\|[\s\S]*isBrowserPopupWindowRequest\(frameName, features\)/,
+  );
+  assert.match(
+    source,
+    /function openExternalUrlFromMain\(rawUrl: string, source: string\): void \{[\s\S]*shell\.openExternal\(normalizedUrl\)\.catch/,
+  );
+  assert.match(
+    source,
+    /handleBrowserWindowOpenAsTab\(\s*workspaceId,\s*normalizedUrl,\s*disposition,\s*frameName,\s*browserSpace,\s*normalizedSessionId,\s*\);/,
   );
   assert.match(
     source,
@@ -49,7 +61,7 @@ test("desktop browser keeps auth-style popup windows while promoting ordinary ne
   );
   assert.match(
     source,
-    /if \(existingPopupTab\) \{[\s\S]*focusBrowserTabInSpace\(workspaceId, tabSpace, existingTabId, space\);[\s\S]*return;\s*\}/,
+    /if \(existingPopupTab\) \{[\s\S]*focusBrowserTabInSpace\(workspaceId, tabSpace, existingTabId, space, sessionId\);[\s\S]*return;\s*\}/,
   );
 });
 

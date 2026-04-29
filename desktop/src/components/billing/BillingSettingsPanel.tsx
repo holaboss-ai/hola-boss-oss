@@ -12,6 +12,10 @@ import {
   Zap,
 } from "lucide-react";
 import { BillingSummaryCard } from "@/components/billing/BillingSummaryCard";
+import {
+  SettingsCard,
+  SettingsSection,
+} from "@/components/settings";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -422,27 +426,22 @@ export function BillingSettingsPanel() {
         </div>
       ) : null}
 
-      <section>
-        <div className="text-base font-medium text-foreground">Plan</div>
-        <div className="mt-3">
-          <BillingSummaryCard
-            overview={overview}
-            usage={usage}
-            links={links}
-            isLoading={isLoading}
-            error={error}
-            onRefresh={() => {
-              void refresh();
-            }}
-          />
-        </div>
-      </section>
+      <SettingsSection title="Plan">
+        <BillingSummaryCard
+          overview={overview}
+          usage={usage}
+          links={links}
+          isLoading={isLoading}
+          error={error}
+          onRefresh={() => {
+            void refresh();
+          }}
+        />
+      </SettingsSection>
 
-      <section>
-        <div className="flex items-center justify-between gap-2">
-          <div className="text-base font-medium text-foreground">
-            Usage record
-          </div>
+      <SettingsSection
+        title="Usage record"
+        action={
           <Tooltip>
             <TooltipTrigger
               render={
@@ -466,9 +465,9 @@ export function BillingSettingsPanel() {
               {isLoading ? "Refreshing..." : "Refresh"}
             </TooltipContent>
           </Tooltip>
-        </div>
-
-        <div className="mt-3 overflow-hidden rounded-xl bg-card ring-1 ring-border">
+        }
+      >
+        <SettingsCard>
           {isLoading && groups.length === 0 ? (
             <div
               role="status"
@@ -476,20 +475,20 @@ export function BillingSettingsPanel() {
               aria-label="Loading usage"
               className="px-4 py-2"
             >
-              {[80, 96, 64].map((w, idx) => (
-                <div key={w}>
-                  {idx > 0 ? <div className="h-px bg-border" /> : null}
-                  <div className="flex items-center gap-2.5 py-3">
-                    <span className="h-7 w-7 shrink-0 animate-pulse rounded-full bg-muted-foreground/20" />
-                    <div className="flex min-w-0 flex-1 flex-col gap-1">
-                      <span
-                        className="h-3 animate-pulse rounded bg-muted-foreground/20"
-                        style={{ width: `${w}%` }}
-                      />
-                      <span className="h-2.5 w-32 animate-pulse rounded bg-muted-foreground/20" />
-                    </div>
-                    <span className="h-3 w-10 shrink-0 animate-pulse rounded bg-muted-foreground/20" />
+              {[80, 96, 64].map((w) => (
+                <div
+                  key={w}
+                  className="flex items-center gap-2.5 py-3"
+                >
+                  <span className="h-7 w-7 shrink-0 animate-pulse rounded-full bg-muted-foreground/20" />
+                  <div className="flex min-w-0 flex-1 flex-col gap-1">
+                    <span
+                      className="h-3 animate-pulse rounded bg-muted-foreground/20"
+                      style={{ width: `${w}%` }}
+                    />
+                    <span className="h-2.5 w-32 animate-pulse rounded bg-muted-foreground/20" />
                   </div>
+                  <span className="h-3 w-10 shrink-0 animate-pulse rounded bg-muted-foreground/20" />
                 </div>
               ))}
             </div>
@@ -498,21 +497,18 @@ export function BillingSettingsPanel() {
               No usage yet.
             </div>
           ) : (
-            groups.map((group, idx) => (
-              <div key={group.key}>
-                {idx > 0 ? <div className="h-px bg-border" /> : null}
-                <div className="px-4">
-                  <UsageGroupRow
-                    group={group}
-                    expanded={expandedGroups.has(group.key)}
-                    onToggle={() => toggleGroup(group.key)}
-                  />
-                </div>
+            groups.map((group) => (
+              <div key={group.key} className="px-4">
+                <UsageGroupRow
+                  group={group}
+                  expanded={expandedGroups.has(group.key)}
+                  onToggle={() => toggleGroup(group.key)}
+                />
               </div>
             ))
           )}
-        </div>
-      </section>
+        </SettingsCard>
+      </SettingsSection>
     </div>
   );
 }

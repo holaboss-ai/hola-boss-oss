@@ -1253,6 +1253,7 @@ function upsertCompactedSummary(store: RuntimeStateStore, turnResult: TurnResult
     promptCacheProfile: turnResult.promptCacheProfile,
     compactedSummary,
     tokenUsage: turnResult.tokenUsage,
+    contextBudgetDecisions: turnResult.contextBudgetDecisions,
     createdAt: turnResult.createdAt,
   });
 }

@@ -45,6 +45,11 @@ These tools only appear for workspace sessions when the desktop browser bridge i
 | `browser_navigate` | Navigate the desktop browser to a URL for direct inspection or interaction on a specific live site when search results are not enough. |
 | `browser_open_tab` | Open a URL in a new desktop browser tab so the agent can inspect or compare specific live pages without losing the current page state. |
 | `browser_get_state` | Read the current desktop browser page, visible interactive elements, visible media such as images, and optional screenshot. |
+| `browser_find` | Find visible browser elements by text, label, placeholder, role, CSS selector, or XPath without depending on a capped state snapshot. |
+| `browser_act` | Perform a general browser action such as click, hover, focus, fill, type, press, select, or scroll into view using a ref or locator. |
+| `browser_wait` | Wait for page load, URL changes, visible/hidden elements, text, or DOM changes before continuing a browser workflow. |
+| `browser_evaluate` | Evaluate JavaScript in the active page and return a structured result for general inspection or controlled automation. |
+| `browser_debug` | Inspect clickability and page-state diagnostics such as active element, dialogs, iframes, hit tests, viewport, and scroll. |
 | `browser_click` | Click an interactive element from `browser_get_state` by index to continue a live browser workflow. |
 | `browser_context_click` | Open the native browser context menu on an interactive element or visible media item from `browser_get_state`. |
 | `browser_type` | Type text into an interactive element from `browser_get_state` by index to search, filter, fill inputs, or continue a live browser workflow. |

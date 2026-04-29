@@ -37,7 +37,7 @@ test("desktop runtime config writes Holaboss binding fields back into canonical 
   );
   assert.match(
     writeRuntimeConfigSection,
-    /const holabossIntegration = runtimeConfigObject\(integrationsPayload\.holaboss\);/,
+    /const holabossIntegration = runtimeConfigObject\([\s\S]*integrationsPayload\.holaboss[\s\S]*\);/,
   );
   assert.match(
     writeRuntimeConfigSection,
