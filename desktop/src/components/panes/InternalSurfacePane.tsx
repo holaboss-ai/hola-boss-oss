@@ -1,11 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Eye, FileText, FileWarning, Loader2, Save } from "lucide-react";
+import {
+  Eye,
+  FileText,
+  FileWarning,
+  Loader2,
+  Maximize2,
+  Minimize2,
+  RefreshCw,
+  Save,
+} from "lucide-react";
 import {
   areTablePreviewSheetsEqual,
   cloneTablePreviewSheets,
   SpreadsheetEditor,
 } from "@/components/panes/SpreadsheetEditor";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { DashboardRenderer } from "@/components/dashboard/DashboardRenderer";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
@@ -108,6 +123,32 @@ export function InternalSurfacePane({
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  // Dashboard-specific toolbar state — lifted up so the buttons live
+  // in this pane's file header strip alongside Eye/Save, not inside
+  // the renderer body.
+  const [dashboardFullWidth, setDashboardFullWidth] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("dashboardRenderer:fullWidth") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
+  const toggleDashboardFullWidth = useCallback(() => {
+    setDashboardFullWidth((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("dashboardRenderer:fullWidth", next ? "1" : "0");
+      } catch {
+        // ignore — quota / private mode
+      }
+      return next;
+    });
+  }, []);
+  const refreshDashboard = useCallback(
+    () => setDashboardRefreshKey((k) => k + 1),
+    [],
+  );
   const isDirtyRef = useRef(false);
   const isSavingRef = useRef(false);
   const pendingExternalRefreshPathRef = useRef<string | null>(null);
@@ -528,6 +569,55 @@ export function InternalSurfacePane({
                   <Eye className="size-3.5" />
                 </Button>
               ) : null}
+              {preview.extension === ".dashboard" ? (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={toggleDashboardFullWidth}
+                          aria-pressed={dashboardFullWidth}
+                          aria-label={
+                            dashboardFullWidth
+                              ? "Switch to compact width"
+                              : "Switch to full width"
+                          }
+                          className="text-muted-foreground hover:text-foreground"
+                        />
+                      }
+                    >
+                      {dashboardFullWidth ? (
+                        <Minimize2 className="size-3.5" />
+                      ) : (
+                        <Maximize2 className="size-3.5" />
+                      )}
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      {dashboardFullWidth ? "Compact width" : "Full width"}
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={refreshDashboard}
+                          aria-label="Refresh"
+                          className="text-muted-foreground hover:text-foreground"
+                        />
+                      }
+                    >
+                      <RefreshCw className="size-3.5" />
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">Refresh</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              ) : null}
               {preview.isEditable && (isDirty || isSaving) ? (
                 <Button
                   type="button"
@@ -582,6 +672,8 @@ export function InternalSurfacePane({
             <DashboardRenderer
               workspaceId={selectedWorkspaceId}
               content={previewDraft}
+              fullWidth={dashboardFullWidth}
+              refreshKey={dashboardRefreshKey}
             />
           ) : (
             <textarea

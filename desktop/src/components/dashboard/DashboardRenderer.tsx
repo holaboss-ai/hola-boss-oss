@@ -1,13 +1,5 @@
-import { Maximize2, Minimize2, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import { Button } from "@/components/ui/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import {
   type Dashboard,
   type DashboardPanel,
@@ -20,19 +12,26 @@ import { type DataViewState, DataViewPanel } from "./DataViewPanel";
 interface DashboardRendererProps {
   workspaceId: string;
   content: string;
+  /** Toggled by the host pane (InternalSurfacePane). When true, the
+   *  centered max-width is dropped and the renderer fills its container. */
+  fullWidth?: boolean;
+  /** Bumped by the host pane to force a full re-fetch of every panel. */
+  refreshKey?: number;
 }
 
 type PanelState = KpiCardState | DataViewState;
 
 // Reads a `.dashboard` YAML doc, runs each panel's query against the
 // workspace's shared data.db (read-only IPC), and renders panels in
-// document order. Notion-styled: no surrounding card chrome on the
-// page, generous whitespace, and consecutive KPI panels grouped into
-// a single horizontal row so a Total/Published pair reads as a stat
-// strip instead of two stacked blocks.
+// document order. The toolbar (refresh / full-width toggle) is owned
+// by the host pane — they need to share visual chrome with the
+// pane's existing file header (filename, save, etc.) so the renderer
+// surfaces them via props rather than rendering a duplicate strip.
 export function DashboardRenderer({
   workspaceId,
   content,
+  fullWidth = false,
+  refreshKey = 0,
 }: DashboardRendererProps) {
   const parsed = useMemo(() => parseDashboard(content), [content]);
 
@@ -47,40 +46,30 @@ export function DashboardRenderer({
     );
   }
 
-  return <DashboardBody workspaceId={workspaceId} dashboard={parsed.dashboard} />;
+  return (
+    <DashboardBody
+      workspaceId={workspaceId}
+      dashboard={parsed.dashboard}
+      fullWidth={fullWidth}
+      refreshKey={refreshKey}
+    />
+  );
 }
 
 function DashboardBody({
   workspaceId,
   dashboard,
+  fullWidth,
+  refreshKey,
 }: {
   workspaceId: string;
   dashboard: Dashboard;
+  fullWidth: boolean;
+  refreshKey: number;
 }) {
   const [panelStates, setPanelStates] = useState<PanelState[]>(() =>
     dashboard.panels.map(() => ({ kind: "loading" })),
   );
-  const [refreshKey, setRefreshKey] = useState(0);
-  // Notion-style page-width toggle. Persists across sessions per
-  // browser profile so the user's preferred reading width sticks.
-  const [isFullWidth, setIsFullWidth] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem("dashboardRenderer:fullWidth") === "1";
-    } catch {
-      return false;
-    }
-  });
-  const toggleFullWidth = useCallback(() => {
-    setIsFullWidth((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem("dashboardRenderer:fullWidth", next ? "1" : "0");
-      } catch {
-        // ignore — quota / private mode
-      }
-      return next;
-    });
-  }, []);
 
   // Run all queries when the dashboard changes (file edited, new mount,
   // or refresh). Each result writes into its own slot so a slow query
@@ -114,113 +103,64 @@ function DashboardBody({
     };
   }, [dashboard, workspaceId, refreshKey]);
 
-  const onRefresh = useCallback(() => setRefreshKey((k) => k + 1), []);
-
   const groups = useMemo(() => groupPanels(dashboard.panels), [dashboard.panels]);
-
-  const widthClass = isFullWidth ? "max-w-none" : "max-w-4xl";
+  const widthClass = fullWidth ? "max-w-none" : "max-w-4xl";
 
   return (
-    <TooltipProvider>
-      <div className="relative h-full overflow-auto bg-background">
-        {/* Outer-level toolbar — sits above the centered content so the
-            buttons stay anchored top-right of the pane regardless of the
-            page width toggle. Sticky so they ride along with vertical
-            scrolling. */}
-        <div className="sticky top-0 z-10 flex justify-end gap-0.5 bg-background/85 px-3 py-2 backdrop-blur">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={toggleFullWidth}
-                  aria-pressed={isFullWidth}
-                  aria-label={
-                    isFullWidth ? "Switch to compact width" : "Switch to full width"
-                  }
-                />
-              }
-            >
-              {isFullWidth ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-            </TooltipTrigger>
-            <TooltipContent side="bottom">
-              {isFullWidth ? "Compact width" : "Full width"}
-            </TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={onRefresh}
-                  aria-label="Refresh"
-                />
-              }
-            >
-              <RefreshCw size={14} />
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Refresh</TooltipContent>
-          </Tooltip>
+    <div className="h-full overflow-auto bg-background">
+      <div className={`mx-auto px-10 pt-10 pb-16 ${widthClass}`}>
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+            {dashboard.title}
+          </h1>
+          {dashboard.description ? (
+            <p className="mt-1 text-sm text-muted-foreground">
+              {dashboard.description}
+            </p>
+          ) : null}
         </div>
 
-        <div className={`mx-auto px-10 pt-2 pb-16 ${widthClass}`}>
-          <div className="min-w-0">
-            <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-              {dashboard.title}
-            </h1>
-            {dashboard.description ? (
-              <p className="mt-1 text-sm text-muted-foreground">
-                {dashboard.description}
-              </p>
-            ) : null}
-          </div>
-
-          <div className="mt-8 flex flex-col gap-10">
-            {groups.map((group, gIdx) => {
-              if (group.kind === "kpi-row") {
-                return (
-                  <div
-                    // biome-ignore lint/suspicious/noArrayIndexKey: panel order is canonical
-                    key={`g-${gIdx}`}
-                    className="grid gap-x-8 gap-y-4"
-                    style={{
-                      gridTemplateColumns: `repeat(${Math.min(group.indices.length, 4)}, minmax(0, 1fr))`,
-                    }}
-                  >
-                    {group.indices.map((panelIdx) => {
-                      const panel = dashboard.panels[panelIdx] as Extract<
-                        DashboardPanel,
-                        { type: "kpi" }
-                      >;
-                      return (
-                        <KpiCard
-                          key={panelIdx}
-                          title={panel.title}
-                          state={panelStates[panelIdx] as KpiCardState}
-                        />
-                      );
-                    })}
-                  </div>
-                );
-              }
-              const panel = dashboard.panels[group.index];
-              const state = panelStates[group.index];
+        <div className="mt-8 flex flex-col gap-10">
+          {groups.map((group, gIdx) => {
+            if (group.kind === "kpi-row") {
               return (
-                <DataViewPanel
-                  key={group.index}
-                  panel={panel as Extract<DashboardPanel, { type: "data_view" }>}
-                  state={state as DataViewState}
-                />
+                <div
+                  // biome-ignore lint/suspicious/noArrayIndexKey: panel order is canonical
+                  key={`g-${gIdx}`}
+                  className="grid gap-x-8 gap-y-4"
+                  style={{
+                    gridTemplateColumns: `repeat(${Math.min(group.indices.length, 4)}, minmax(0, 1fr))`,
+                  }}
+                >
+                  {group.indices.map((panelIdx) => {
+                    const panel = dashboard.panels[panelIdx] as Extract<
+                      DashboardPanel,
+                      { type: "kpi" }
+                    >;
+                    return (
+                      <KpiCard
+                        key={panelIdx}
+                        title={panel.title}
+                        state={panelStates[panelIdx] as KpiCardState}
+                      />
+                    );
+                  })}
+                </div>
               );
-            })}
-          </div>
+            }
+            const panel = dashboard.panels[group.index];
+            const state = panelStates[group.index];
+            return (
+              <DataViewPanel
+                key={group.index}
+                panel={panel as Extract<DashboardPanel, { type: "data_view" }>}
+                state={state as DataViewState}
+              />
+            );
+          })}
         </div>
       </div>
-    </TooltipProvider>
+    </div>
   );
 }
 
