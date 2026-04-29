@@ -114,6 +114,7 @@ const SUBAGENT_DEFAULT_TOOLS = [
   "grep",
   "glob",
   "list",
+  "question",
   "todowrite",
   "todoread",
   "skill",
@@ -149,6 +150,8 @@ const ONBOARDING_SESSION_RUNTIME_TOOL_IDS = new Set([
 const BROWSER_RETRY_REQUEST_PATTERN = /\b(?:try again|retry|do it again|again)\b/i;
 const BROWSER_ACTION_REQUEST_PATTERN =
   /\b(?:browser|tab|page|site|url|open|go to|navigate|visit|click|scroll|type)\b/i;
+const AVAILABLE_TOOL_FALLBACK_REQUEST_PATTERN =
+  /(?:\b(?:check(?: out)?|look(?: up)?|find|get|inspect|pull|verify|show(?: me)?|what(?:'s| is| are))\b[\s\S]{0,160}\b(?:stats?|analytics?|metrics?|insights?|status|latest|current|recent|post|page|dashboard|profile|account|site|app|repo|issues?|email|inbox|doc|file)\b)|(?:\b(?:stats?|analytics?|metrics?|insights?|status|latest|current|recent|post|page|dashboard|profile|account|site|app|repo|issues?|email|inbox|doc|file)\b[\s\S]{0,160}\b(?:check(?: out)?|look(?: up)?|find|get|inspect|pull|verify|show)\b)/i;
 const STALE_BROWSER_REFUSAL_PATTERN =
   /(?:browser(?:-control)?(?: capability)? (?:isn't|is not|wasn't|not) exposed|can't directly (?:operate|control) the browser|can't actually click or navigate|couldn't actually drive the browser|nothing on your tab was changed)/i;
 const REPORT_STYLE_REQUEST_PATTERN =
@@ -773,6 +776,8 @@ function loadRecentRuntimeContext(params: {
   const reportLike = REPORT_STYLE_REQUEST_PATTERN.test(instruction);
   const retryLike = BROWSER_RETRY_REQUEST_PATTERN.test(instruction);
   const browserIntentLike = BROWSER_ACTION_REQUEST_PATTERN.test(instruction);
+  const availableToolFallbackLike =
+    AVAILABLE_TOOL_FALLBACK_REQUEST_PATTERN.test(instruction);
   const browserRecoveryEligible =
     params.browserToolIds.length === 0 &&
     hasActiveUserBrowserSurface(params.operatorSurfaceContext);
@@ -786,6 +791,21 @@ function loadRecentRuntimeContext(params: {
       ],
     };
   }
+  if (availableToolFallbackLike) {
+    const lines = [
+      "The user is asking for a concrete check or lookup where the first-choice tool might be missing.",
+      "Do not stop at a missing MCP/API/native tool. Try the best available route before saying it cannot be done.",
+      "Choose the route that can actually satisfy the request: direct tool first, then delegated browser, web, terminal, or file inspection as appropriate.",
+      "Only ask the user for access/context or state a limitation after viable direct and delegated routes are unavailable, blocked, or genuinely need human input.",
+    ];
+    if (!browserRecoveryEligible) {
+      lines.push(
+        "If no usable route is visible from the current context, ask one concise question for the missing access/context instead of giving a generic capability refusal.",
+      );
+    }
+    return { lines };
+  }
+
   if (!browserRecoveryEligible) {
     return null;
   }

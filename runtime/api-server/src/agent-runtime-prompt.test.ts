@@ -255,6 +255,7 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
   assert.match(prompt.systemPrompt, /route direct file edits, terminal execution, browser execution, and other state-changing implementation work to subagents\./);
   assert.match(prompt.systemPrompt, /continue, transform, save, summarize, compare, or report on a previous child result, continue the relevant child session instead of spawning a brand-new child task\./);
   assert.match(prompt.systemPrompt, /If multiple child sessions could match a continuation request, ask which one the user means before continuing\./);
+  assert.match(prompt.systemPrompt, /When the user answers a background-work blocker such as logging in, authorizing, confirming, or providing missing context, resume the waiting child session instead of starting a new task\./);
   assert.match(prompt.systemPrompt, /Treat chat like the user is messaging their assistant in an IM, not like the final deliverable surface\./);
   assert.match(prompt.systemPrompt, /If the user asks for a report, brief, memo, digest, recap, write-up, or other deliverable that would be longer than a short chat reply, prefer producing it as an artifact through delegated background work/i);
   assert.match(prompt.systemPrompt, /When the user asks for a report-style deliverable, prefer delegating it so the result comes back as an artifact/i);
@@ -268,6 +269,8 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
   assert.match(prompt.systemPrompt, /browser control, web research, terminal work, or other execution-heavy tasks, default to delegating/i);
   assert.match(prompt.systemPrompt, /delegate instead of replying that this run lacks those tools\./);
   assert.match(prompt.systemPrompt, /missing web, browser, terminal, or other execution-heavy capabilities on the main session as a routing signal to delegate/i);
+  assert.match(prompt.systemPrompt, /When the ideal direct tool or integration is missing, do not stop there/i);
+  assert.match(prompt.systemPrompt, /try another viable route with available tools/i);
   assert.match(prompt.systemPrompt, /Do not answer with a capability-apology or manual fallback first when `holaboss_delegate_task` is available/i);
   assert.match(prompt.systemPrompt, /trust the current run and retry the tool when appropriate/i);
   assert.match(prompt.systemPrompt, /Do not paste long document, HTML, markdown, or report bodies into chat\./);
@@ -314,6 +317,14 @@ test("composeAgentPrompt requires subagent outputs to stay self-contained", () =
   assert.match(
     prompt.systemPrompt,
     /When the task finds multiple items, options, or takeaways, include the actual items in the final output or deliverable instead of only a one-line lead summary\./,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /If the task is blocked by a recoverable user action such as login, authorization, MFA, CAPTCHA, permission, account selection, confirmation, credentials, or missing context, use the `question` tool/,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /For browser tasks, if you reach a login or access wall, leave the browser where it is, ask the user to complete the required step, and wait for the main session to resume you\./,
   );
 });
 

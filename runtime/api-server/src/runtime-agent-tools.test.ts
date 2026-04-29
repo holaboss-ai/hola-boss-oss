@@ -132,6 +132,103 @@ test("continueSubagent queues a new input onto the same completed child session"
   }
 });
 
+test("background task sync preserves persisted waiting-on-user blockers", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "hb-runtime-agent-tools-waiting-sync-"));
+  const workspaceRoot = path.join(root, "workspace");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceId = "workspace-1";
+  const mainSessionId = "main-1";
+  const childSessionId = "subagent-child-1";
+  const subagentId = "subagent-run-1";
+  const completedAt = utcNowIso();
+
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+  try {
+    store.createWorkspace({
+      workspaceId,
+      name: "Workspace 1",
+      harness: "pi",
+      status: "active",
+    });
+    store.ensureSession({
+      workspaceId,
+      sessionId: mainSessionId,
+      kind: "workspace_session",
+      createdBy: "workspace_user",
+    });
+    store.ensureSession({
+      workspaceId,
+      sessionId: childSessionId,
+      kind: "subagent",
+      parentSessionId: mainSessionId,
+      createdBy: "workspace_agent",
+    });
+    const input = store.enqueueInput({
+      workspaceId,
+      sessionId: childSessionId,
+      payload: { text: "check account stats" },
+    });
+    store.updateInput(input.inputId, { status: "DONE" });
+    store.upsertTurnResult({
+      workspaceId,
+      sessionId: childSessionId,
+      inputId: input.inputId,
+      startedAt: completedAt,
+      completedAt,
+      status: "completed",
+      stopReason: "success",
+      assistantText: "The page is logged out, so I cannot inspect the account stats.",
+    });
+    store.createSubagentRun({
+      subagentId,
+      workspaceId,
+      parentSessionId: mainSessionId,
+      parentInputId: "parent-input-1",
+      originMainSessionId: mainSessionId,
+      ownerMainSessionId: mainSessionId,
+      childSessionId,
+      initialChildInputId: input.inputId,
+      currentChildInputId: input.inputId,
+      latestChildInputId: input.inputId,
+      title: "Check account stats",
+      goal: "Inspect the account stats in the browser.",
+      sourceType: "delegate_task",
+      status: "completed",
+      summary: "Blocked by login.",
+      blockingPayload: {
+        status: "waiting_on_user",
+        blocking_question:
+          "Please log in or complete the required access step, then tell me to continue.",
+      },
+      resultPayload: { assistant_text: "The page is logged out." },
+      completedAt,
+    });
+
+    const service = new RuntimeAgentToolsService(store, { workspaceRoot });
+    const result = service.listBackgroundTasks({
+      workspaceId,
+      sessionId: mainSessionId,
+      ownerMainSessionId: mainSessionId,
+      statuses: ["waiting_on_user"],
+    }) as Record<string, unknown>;
+    const tasks = result.tasks as Array<Record<string, unknown>>;
+    const updatedRun = store.getSubagentRun({ subagentId });
+
+    assert.equal(result.count, 1);
+    assert.equal(tasks[0]?.status, "waiting_on_user");
+    assert.equal(updatedRun?.status, "waiting_on_user");
+    assert.equal(updatedRun?.completedAt, null);
+    assert.equal(updatedRun?.resultPayload, null);
+    assert.equal(
+      updatedRun?.blockingPayload?.blocking_question,
+      "Please log in or complete the required access step, then tell me to continue.",
+    );
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("cancelSubagent waits for a claimed child runtime to settle before returning", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "hb-runtime-agent-tools-"));
   const workspaceRoot = path.join(root, "workspace");

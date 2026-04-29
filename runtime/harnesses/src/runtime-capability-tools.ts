@@ -676,6 +676,7 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "Delegate execution-heavy work instead of narrating that you will do it later without actually spawning the background task.",
       "When the user asks for work that needs capability missing from the current main-session run, delegate it instead of replying that the current run lacks those tools.",
       "For latest-news, source discovery, and similar external research, usually delegate with `tools: [\"web\"]` and escalate to `browser` only when direct interaction or UI verification is needed.",
+      "When the ideal direct integration is missing, delegate with the capability bucket that can still solve the task: `browser` for UI/app state, `web` for public information, and `terminal` or `file` for workspace inspection.",
     ];
   }
   if (toolId === "holaboss_get_subagent") {

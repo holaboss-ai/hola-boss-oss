@@ -540,6 +540,10 @@ function normalizedStringList(value: unknown): string[] {
     .filter((item) => item.length > 0);
 }
 
+function subagentRunHasWaitingBlocker(run: SubagentRunRecord): boolean {
+  return normalizedString(run.blockingPayload?.status).toLowerCase() === "waiting_on_user";
+}
+
 function parseSessionInputAttachment(value: unknown): SessionInputAttachmentPayload | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -2494,19 +2498,25 @@ export class RuntimeAgentToolsService {
     const latestInput = latestInputId ? this.store.getInput(latestInputId) : null;
     const latestTurnResult = latestInputId ? this.store.getTurnResult({ inputId: latestInputId }) : null;
 
+    const runtimeStatus = normalizedString(runtimeState?.status).toUpperCase();
+    const currentInputStatus = normalizedString(currentInput?.status).toUpperCase();
+    const hasWaitingBlocker = subagentRunHasWaitingBlocker(run);
+
     let derivedStatus = run.status;
     if (run.cancelledAt || normalizedString(run.status) === "cancelled") {
       derivedStatus = "cancelled";
+    } else if (currentInputStatus === "CLAIMED" || runtimeStatus === "BUSY") {
+      derivedStatus = "running";
+    } else if (currentInputStatus === "QUEUED" || runtimeStatus === "QUEUED") {
+      derivedStatus = "queued";
     } else if (latestTurnResult?.status === "waiting_user" || runtimeState?.status === "WAITING_USER") {
+      derivedStatus = "waiting_on_user";
+    } else if (normalizedString(run.status) === "waiting_on_user" || hasWaitingBlocker) {
       derivedStatus = "waiting_on_user";
     } else if (latestTurnResult?.status === "failed" || runtimeState?.status === "ERROR") {
       derivedStatus = "failed";
     } else if (latestTurnResult?.status === "completed") {
       derivedStatus = "completed";
-    } else if (currentInput?.status === "CLAIMED" || runtimeState?.status === "BUSY") {
-      derivedStatus = "running";
-    } else if (currentInput?.status === "QUEUED" || runtimeState?.status === "QUEUED") {
-      derivedStatus = "queued";
     }
 
     const summaryFromTurn = normalizedString(latestTurnResult?.assistantText);
@@ -2564,6 +2574,17 @@ export class RuntimeAgentToolsService {
         stop_reason: latestTurnResult.stopReason,
       };
       updates.lastEventAt = latestTurnResult.completedAt ?? latestTurnResult.updatedAt;
+    }
+    if (derivedStatus === "waiting_on_user") {
+      if (run.completedAt) {
+        updates.completedAt = null;
+      }
+      if (run.resultPayload) {
+        updates.resultPayload = null;
+      }
+      if (run.errorPayload) {
+        updates.errorPayload = null;
+      }
     }
 
     const syncedRun =

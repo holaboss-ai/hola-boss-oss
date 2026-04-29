@@ -218,6 +218,9 @@ test("renderCapabilityToolRoutingPromptSection tells main sessions to delegate w
   assert.match(section, /use `holaboss_delegate_task` instead of replying that the current run lacks those tools/i);
   assert.match(section, /main session as a coordinator first/i);
   assert.match(section, /browser-heavy, web-heavy, terminal-heavy, multi-step, or interruptible/i);
+  assert.match(section, /Available-tool fallback:/);
+  assert.match(section, /missing the ideal MCP, API, browser, web, terminal, or file tool is not enough to stop/i);
+  assert.match(section, /choose another viable direct or delegated route/i);
   assert.match(section, /Deliverable routing: when the user asks for a report, brief, memo, digest, recap, or other long-form deliverable, prefer `holaboss_delegate_task`/);
   assert.match(section, /Do not lead with a capability apology, manual workaround, or "I can't do that here" answer when delegation is available/i);
   assert.match(section, /trust the current run and retry the tool when it is the right path/i);

@@ -1722,6 +1722,97 @@ test("runTsRunnerCli injects report-routing recovery context for report-style ma
   ]);
 });
 
+test("runTsRunnerCli injects available-tool fallback context for concrete checks", async () => {
+  setTempSandboxRoot("hb-ts-runner-account-ui-fallback-");
+
+  let capturedProjectRequest: AgentRuntimeConfigCliRequest | null = null;
+  const exitCode = await runTsRunnerCli(
+    [
+      "--request-base64",
+      encodeRequest({
+        ...baseRequest(),
+        instruction:
+          "can you check out what are the stats for my latest post?",
+      }),
+    ],
+    {
+      deps: {
+        ...testDeps({
+          pluginOverrides: {
+            stageRuntimeTools: () => ({
+              changed: false,
+              toolIds: ["holaboss_delegate_task"],
+            }),
+          },
+        }),
+        loadOperatorSurfaceContext: async () => ({
+          active_surface_id: "browser:user",
+          surfaces: [
+            {
+              surface_id: "browser:user",
+              surface_type: "browser",
+              owner: "user",
+              active: true,
+              mutability: "takeover_allowed",
+              summary: "User browser is open to the relevant site.",
+            },
+          ],
+        }),
+        projectAgentRuntimeConfig: (request) => {
+          capturedProjectRequest = request;
+          return {
+            provider_id: "openai",
+            model_id: "gpt-5.4",
+            mode: "code",
+            system_prompt: "You are concise.",
+            model_client: {
+              model_proxy_provider: "openai_compatible",
+              api_key: "token",
+              base_url: "http://127.0.0.1:4000/openai/v1",
+              default_headers: { "X-Test": "1" },
+            },
+            tools: { read: true },
+            workspace_tool_ids: [],
+            workspace_skill_ids: [],
+            output_schema_member_id: null,
+            output_format: null,
+            workspace_config_checksum: "checksum-1",
+          };
+        },
+      },
+      io: {
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.ok(capturedProjectRequest);
+  if (!capturedProjectRequest) {
+    throw new Error("expected project runtime config request");
+  }
+  const runtimeConfigRequest =
+    capturedProjectRequest as AgentRuntimeConfigCliRequest;
+  assert.deepEqual(runtimeConfigRequest.runtime_tool_ids, [
+    "holaboss_delegate_task",
+  ]);
+  assert.deepEqual(runtimeConfigRequest.recent_runtime_context?.lines, [
+    "The user is asking for a concrete check or lookup where the first-choice tool might be missing.",
+    "Do not stop at a missing MCP/API/native tool. Try the best available route before saying it cannot be done.",
+    "Choose the route that can actually satisfy the request: direct tool first, then delegated browser, web, terminal, or file inspection as appropriate.",
+    "Only ask the user for access/context or state a limitation after viable direct and delegated routes are unavailable, blocked, or genuinely need human input.",
+  ]);
+});
+
 test("runTsRunnerCli does not emit a synthetic resume event before harness run events", async () => {
   const sandboxRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "hb-ts-runner-resume-event-"),
@@ -3141,6 +3232,7 @@ test("runTsRunnerCli stages browser tools for subagent executor sessions and str
       "grep",
       "glob",
       "list",
+      "question",
       "todowrite",
       "todoread",
       "skill",

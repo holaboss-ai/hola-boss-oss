@@ -1285,6 +1285,7 @@ export function renderCapabilityToolRoutingPromptSection(
     lines.push("Delegation routing: when the user asks for work that needs web, browser, terminal, or other execution-heavy capability not surfaced directly in this run, use `holaboss_delegate_task` instead of replying that the current run lacks those tools.");
     lines.push("Deliverable routing: when the user asks for a report, brief, memo, digest, recap, or other long-form deliverable, prefer `holaboss_delegate_task` so the result is produced as an artifact and the main chat stays concise.");
     lines.push("Treat the main session as a coordinator first: if the task is browser-heavy, web-heavy, terminal-heavy, multi-step, or interruptible, route it to a delegated subagent unless the direct capability is clearly surfaced and the work is truly small enough to finish inline.");
+    lines.push("Available-tool fallback: missing the ideal MCP, API, browser, web, terminal, or file tool is not enough to stop; choose another viable direct or delegated route before surfacing a limitation.");
     lines.push("Treat current-run capability limits as a delegation signal when hidden subagents can perform the task.");
     lines.push("Do not lead with a capability apology, manual workaround, or \"I can't do that here\" answer when delegation is available.");
     lines.push("If an earlier turn said a tool was unavailable or unsupported, but the current surfaced capability set now includes it, trust the current run and retry the tool when it is the right path.");

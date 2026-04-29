@@ -1214,6 +1214,88 @@ test("claimed input writes waiting-on-user subagent blockers and queues a blocke
   store.close();
 });
 
+test("claimed input treats recoverable login blockers as waiting-on-user subagent blockers", async () => {
+  const store = makeStore("hb-claimed-input-subagent-login-blocker-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const { queued, run } = createSubagentRunFixture({
+    store,
+    workspaceId: workspace.id,
+    title: "Check latest post stats",
+    goal: "Inspect the latest post stats in the browser",
+  });
+
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "output_delta",
+        payload: {
+          delta:
+            "I reached the page, but it is currently logged out, so I could not retrieve the latest post stats.",
+        },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 3,
+        event_type: "run_completed",
+        payload: { status: "success" },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  const updatedRun = store.getSubagentRun({ subagentId: run.subagentId });
+  const queuedEvents = store.listPendingMainSessionEvents({
+    ownerMainSessionId: "session-main",
+  });
+
+  assert.ok(updatedRun);
+  assert.equal(updatedRun?.status, "waiting_on_user");
+  assert.equal(updatedRun?.currentChildInputId, queued.inputId);
+  assert.equal(updatedRun?.completedAt, null);
+  assert.equal(
+    updatedRun?.blockingPayload?.blocking_question,
+    "Please log in or complete the required access step, then tell me to continue.",
+  );
+  assert.match(
+    String(updatedRun?.blockingPayload?.partial_summary ?? ""),
+    /currently logged out/,
+  );
+  assert.equal(queuedEvents.length, 1);
+  assert.equal(queuedEvents[0]?.eventType, "waiting_on_user");
+  assert.equal(queuedEvents[0]?.deliveryBucket, "waiting_on_user");
+  assert.equal(
+    queuedEvents[0]?.payload.blocking_question,
+    "Please log in or complete the required access step, then tell me to continue.",
+  );
+  assert.equal(queuedEvents[0]?.latestDeliverAt, null);
+
+  store.close();
+});
+
 test("claimed input writes failed subagent results and queues a failure update", async () => {
   const store = makeStore("hb-claimed-input-subagent-failed-");
   const workspace = store.createWorkspace({

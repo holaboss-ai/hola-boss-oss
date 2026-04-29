@@ -2080,6 +2080,9 @@ function subagentLifecycleStatusFromTurnResult(params: {
   if (params.turnResult.status === "waiting_user") {
     return "waiting_on_user";
   }
+  if (inferredRecoverableUserBlockerQuestion(params.turnResult)) {
+    return "waiting_on_user";
+  }
   if (params.turnResult.status === "failed") {
     return "failed";
   }
@@ -2090,6 +2093,43 @@ function subagentLifecycleStatusFromTurnResult(params: {
     return "cancelled";
   }
   return null;
+}
+
+function inferredRecoverableUserBlockerQuestion(
+  turnResult: TurnResultRecord,
+): string | null {
+  if (turnResult.status !== "completed") {
+    return null;
+  }
+  const text = [
+    turnResult.assistantText,
+    turnResult.stopReason,
+  ]
+    .map((item) => optionalString(item))
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+  if (!text) {
+    return null;
+  }
+  const accessBlocker =
+    /\b(?:logged out|not logged in|sign[- ]?in|login|authenticate|authentication|authorize|authorization|mfa|2fa|captcha|permission denied|access denied|requires? permission|missing permission|credentials?)\b/i.test(
+      text,
+    );
+  const cannotProceed =
+    /\b(?:could not|couldn't|cannot|can't|unable|blocked|need(?:s|ed)?|requires?|must|no .*accessible|not .*accessible)\b/i.test(
+      text,
+    );
+  if (!accessBlocker || !cannotProceed) {
+    return null;
+  }
+  if (/\b(?:logged out|not logged in|sign[- ]?in|login)\b/i.test(text)) {
+    return "Please log in or complete the required access step, then tell me to continue.";
+  }
+  if (/\b(?:authorize|authorization|authenticate|authentication|permission|credentials?)\b/i.test(text)) {
+    return "Please complete the required authorization or access step, then tell me to continue.";
+  }
+  return "Please complete the required user action, then tell me to continue.";
 }
 
 function subagentLifecycleSummary(params: {
@@ -2143,7 +2183,16 @@ function subagentLifecyclePayload(params: {
     payload.forwardable_deliverables = forwardableDeliverables;
   }
   if (params.status === "waiting_on_user") {
-    payload.blocking_question = assistantText ?? params.summary;
+    payload.blocking_question =
+      inferredRecoverableUserBlockerQuestion(params.turnResult) ??
+      assistantText ??
+      params.summary;
+    if (
+      inferredRecoverableUserBlockerQuestion(params.turnResult) &&
+      assistantText
+    ) {
+      payload.partial_summary = assistantText;
+    }
     if (forwardableDeliverables.length > 0) {
       payload.partial_deliverables = forwardableDeliverables;
     }

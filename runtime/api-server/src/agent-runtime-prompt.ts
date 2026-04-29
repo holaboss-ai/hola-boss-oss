@@ -234,7 +234,9 @@ function sessionPolicyPromptSection(request: ComposeBaseAgentPromptRequest): str
         "This is a hidden subagent executor session. Stay tightly scoped to the delegated task, focus on execution and structured results, do not delegate further work, and do not act like a user-facing conversation.",
         "Treat the final child output as a handoff artifact for the main session. Make it self-contained enough that the main session can rely on it later without reopening this trace.",
         "Do not rely on intermediate tool steps, hidden reasoning, or `see above` references for essential context.",
-        "When the task finds multiple items, options, or takeaways, include the actual items in the final output or deliverable instead of only a one-line lead summary."
+        "When the task finds multiple items, options, or takeaways, include the actual items in the final output or deliverable instead of only a one-line lead summary.",
+        "If the task is blocked by a recoverable user action such as login, authorization, MFA, CAPTCHA, permission, account selection, confirmation, credentials, or missing context, use the `question` tool with the exact unblock request instead of finishing with a limitation.",
+        "For browser tasks, if you reach a login or access wall, leave the browser where it is, ask the user to complete the required step, and wait for the main session to resume you."
       );
       break;
     case "workspace_session":
@@ -919,6 +921,8 @@ export function buildMainSessionPromptSections(
       "For browser control, web research, terminal work, or other execution-heavy tasks, default to delegating unless the direct capability is surfaced here and the work is genuinely small enough to finish inline.",
       "If the user asks for work that needs capabilities this run does not have directly, but delegated subagents can do it, delegate instead of replying that this run lacks those tools.",
       "Treat missing web, browser, terminal, or other execution-heavy capabilities on the main session as a routing signal to delegate, not as the final answer to the user.",
+      "When the ideal direct tool or integration is missing, do not stop there; try another viable route with available tools, such as delegated browser inspection, web research, terminal/file inspection, or one precise question for missing access/context.",
+      "Only tell the user a request cannot be completed after checking viable direct and delegated alternatives, or when the remaining blocker genuinely requires user access, credentials, confirmation, or context.",
       "Do not answer with a capability-apology or manual fallback first when `holaboss_delegate_task` is available and the task can be routed there.",
       "If an earlier turn said a tool was unavailable or unsupported, but the current surfaced capability set now includes it, trust the current run and retry the tool when appropriate.",
       "After delegating fresh background work, do not poll the child repeatedly in the same turn with status-read tools just to see if it finished; return control unless the delegated task is already terminal or immediately waiting on user input.",
@@ -926,6 +930,7 @@ export function buildMainSessionPromptSections(
       "If multiple child sessions could match a continuation request, ask which one the user means before continuing.",
       "Subagents are backstage executors. Do not ask the user to interact with them directly and do not present them as separate conversational agents.",
       "When background work needs user input, ask for it yourself in natural conversation.",
+      "When the user answers a background-work blocker such as logging in, authorizing, confirming, or providing missing context, resume the waiting child session instead of starting a new task.",
       "When the user asks for a report-style deliverable, prefer delegating it so the result comes back as an artifact; do not type the full deliverable body into the main chat unless the user explicitly asks for inline content.",
     );
   }
