@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -71,6 +71,7 @@ type BrowserFetchOptions = {
 
 type BrowserTargetKind = "element" | "media";
 type BrowserGetStateMode = "state" | "text" | "structured" | "visual";
+type BrowserGetStateDetail = "compact" | "standard";
 type BrowserGetStateScope = "main" | "viewport" | "focused" | "dialog";
 type BrowserActionKind =
   | "click"
@@ -81,16 +82,33 @@ type BrowserActionKind =
   | "type"
   | "press"
   | "select"
+  | "check"
+  | "uncheck"
   | "scroll_into_view";
-type BrowserWaitCondition = "load" | "url" | "text" | "element" | "hidden" | "dom_change";
+type BrowserWaitLoadState = "interactive" | "complete";
+type BrowserWaitCondition =
+  | "load"
+  | "url"
+  | "text"
+  | "element"
+  | "hidden"
+  | "dom_change"
+  | "function"
+  | "download_started"
+  | "download_completed";
+type BrowserPostStateMode = "none" | "page" | "state";
 
 type BrowserGetStateOptions = {
   includePageText: boolean;
   includeScreenshot: boolean;
   mode: BrowserGetStateMode;
+  detail: BrowserGetStateDetail;
   scope: BrowserGetStateScope;
   maxNodes: number | null;
+  sinceRevision: string | null;
+  changedOnly: boolean;
   includeMetadata: boolean;
+  returnMetadata: boolean;
 };
 
 type BrowserLocatorOptions = {
@@ -121,7 +139,107 @@ type BrowserActOptions = BrowserLocatorOptions & {
 type BrowserWaitOptions = BrowserLocatorOptions & {
   condition: BrowserWaitCondition;
   url: string | null;
+  filename: string | null;
+  expression: string | null;
+  loadState: BrowserWaitLoadState;
   timeoutMs: number;
+};
+
+type BrowserDownloadStatus =
+  | "progressing"
+  | "completed"
+  | "cancelled"
+  | "interrupted";
+
+type BrowserConsoleLevel = "debug" | "info" | "warning" | "error";
+type BrowserErrorSource = "page" | "runtime" | "network";
+
+type BrowserDownloadRecord = {
+  id: string;
+  url: string;
+  filename: string;
+  targetPath: string;
+  status: BrowserDownloadStatus;
+  receivedBytes: number;
+  totalBytes: number;
+  createdAt: string;
+  completedAt: string | null;
+};
+
+type BrowserGetConsoleOptions = {
+  limit: number;
+  level: BrowserConsoleLevel | null;
+};
+
+type BrowserGetErrorsOptions = {
+  limit: number;
+  source: BrowserErrorSource | null;
+};
+
+type BrowserListRequestsOptions = {
+  limit: number;
+  resourceType: string | null;
+  failuresOnly: boolean;
+};
+
+type BrowserStorageKind = "local" | "session";
+
+type BrowserStorageGetOptions = {
+  storage: BrowserStorageKind;
+  key: string | null;
+  keys: string[];
+  prefix: string | null;
+  maxEntries: number;
+};
+
+type BrowserStorageSetOptions = {
+  storage: BrowserStorageKind;
+  key: string;
+  value: string | null;
+  delete: boolean;
+};
+
+type BrowserCookieSameSite =
+  | "unspecified"
+  | "no_restriction"
+  | "lax"
+  | "strict";
+
+type BrowserCookieRecord = {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  secure: boolean;
+  httpOnly: boolean;
+  session: boolean;
+  sameSite: BrowserCookieSameSite;
+  expirationDate: number | null;
+};
+
+type BrowserCookiesGetOptions = {
+  url: string | null;
+  name: string | null;
+  names: string[];
+  domain: string | null;
+  maxResults: number;
+};
+
+type BrowserCookiesSetOptions = {
+  url: string | null;
+  name: string;
+  value: string;
+  domain: string | null;
+  path: string | null;
+  secure: boolean;
+  httpOnly: boolean;
+  sameSite: BrowserCookieSameSite | null;
+  expirationDate: number | null;
+};
+
+type BrowserPostActionOptions = {
+  waitFor: BrowserWaitOptions | null;
+  postState: BrowserPostStateMode;
 };
 
 type BrowserEvaluateOptions = {
@@ -157,11 +275,19 @@ const VISIBLE_MEDIA_SELECTOR = [
 const BROWSER_GET_STATE_TEXT_MAX_CHARS = 2500;
 const BROWSER_GET_STATE_ELEMENT_TEXT_MAX_CHARS = 120;
 const BROWSER_GET_STATE_MEDIA_TEXT_MAX_CHARS = 240;
+const BROWSER_GET_STATE_COMPACT_MAX_NODES = 30;
 const BROWSER_GET_STATE_MAX_ATTEMPTS = 4;
 const BROWSER_GET_STATE_RETRY_DELAY_MS = 350;
+const BROWSER_POST_ACTION_STATE_MAX_NODES = 12;
 const BROWSER_SCREENSHOT_ARTIFACT_DIR = "outputs/browser-screenshots";
 const BROWSER_FIND_DEFAULT_MAX_RESULTS = 25;
 const BROWSER_FIND_MAX_RESULTS = 100;
+const BROWSER_OBSERVABILITY_DEFAULT_LIMIT = 20;
+const BROWSER_OBSERVABILITY_MAX_LIMIT = 100;
+const BROWSER_STORAGE_DEFAULT_MAX_ENTRIES = 25;
+const BROWSER_STORAGE_MAX_ENTRIES = 100;
+const BROWSER_COOKIES_DEFAULT_MAX_RESULTS = 25;
+const BROWSER_COOKIES_MAX_RESULTS = 100;
 const BROWSER_WAIT_DEFAULT_TIMEOUT_MS = 5000;
 const BROWSER_TOOL_MAX_TIMEOUT_MS = 30000;
 const BROWSER_WAIT_POLL_INTERVAL_MS = 250;
@@ -203,6 +329,200 @@ function optionalStringArg(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+}
+
+function optionalRawStringArg(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function optionalStringArrayArg(
+  value: unknown,
+  fieldName: string,
+  options: { maxItems?: number } = {},
+): string[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new DesktopBrowserToolServiceError(
+      400,
+      "browser_tool_invalid_args",
+      `${fieldName} must be an array of non-empty strings`,
+    );
+  }
+  const maxItems = options.maxItems ?? 50;
+  if (value.length > maxItems) {
+    throw new DesktopBrowserToolServiceError(
+      400,
+      "browser_tool_invalid_args",
+      `${fieldName} must contain at most ${maxItems} values`,
+    );
+  }
+  const normalized = value
+    .map((entry) => optionalStringArg(entry))
+    .filter((entry): entry is string => Boolean(entry));
+  if (normalized.length !== value.length) {
+    throw new DesktopBrowserToolServiceError(
+      400,
+      "browser_tool_invalid_args",
+      `${fieldName} must contain only non-empty strings`,
+    );
+  }
+  return normalized;
+}
+
+function isBrowserDownloadWaitCondition(
+  condition: BrowserWaitCondition,
+): condition is "download_started" | "download_completed" {
+  return condition === "download_started" || condition === "download_completed";
+}
+
+function browserDownloadStatus(value: unknown): BrowserDownloadStatus | null {
+  return value === "progressing" ||
+    value === "completed" ||
+    value === "cancelled" ||
+    value === "interrupted"
+    ? value
+    : null;
+}
+
+function browserDownloadFromUnknown(value: unknown): BrowserDownloadRecord | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const id = optionalStringArg(record.id);
+  const url = optionalStringArg(record.url);
+  const filename = optionalStringArg(record.filename);
+  const status = browserDownloadStatus(record.status);
+  if (!id || !url || !filename || !status) {
+    return null;
+  }
+  return {
+    id,
+    url,
+    filename,
+    targetPath: optionalStringArg(record.targetPath) ?? "",
+    status,
+    receivedBytes: optionalNumber(record.receivedBytes) ?? 0,
+    totalBytes: optionalNumber(record.totalBytes) ?? 0,
+    createdAt: optionalStringArg(record.createdAt) ?? "",
+    completedAt: optionalStringArg(record.completedAt),
+  };
+}
+
+function browserDownloadsFromPayload(
+  payload: Record<string, unknown>,
+): BrowserDownloadRecord[] {
+  const downloads = Array.isArray(payload.downloads) ? payload.downloads : [];
+  return downloads
+    .map((entry) => browserDownloadFromUnknown(entry))
+    .filter((entry): entry is BrowserDownloadRecord => Boolean(entry));
+}
+
+function browserCookieSameSiteValue(value: unknown): BrowserCookieSameSite | null {
+  return value === "unspecified" ||
+    value === "no_restriction" ||
+    value === "lax" ||
+    value === "strict"
+    ? value
+    : null;
+}
+
+function browserCookieFromUnknown(value: unknown): BrowserCookieRecord | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const name = optionalStringArg(record.name);
+  if (!name) {
+    return null;
+  }
+  return {
+    name,
+    value: typeof record.value === "string" ? record.value : "",
+    domain: optionalStringArg(record.domain) ?? "",
+    path: optionalStringArg(record.path) ?? "/",
+    secure: record.secure === true,
+    httpOnly: record.httpOnly === true || record.http_only === true,
+    session: record.session === true,
+    sameSite: browserCookieSameSiteValue(record.sameSite ?? record.same_site) ?? "unspecified",
+    expirationDate: optionalNumber(record.expirationDate ?? record.expiration_date),
+  };
+}
+
+function browserCookiesFromPayload(
+  payload: Record<string, unknown>,
+): BrowserCookieRecord[] {
+  const cookies = Array.isArray(payload.cookies) ? payload.cookies : [];
+  return cookies
+    .map((entry) => browserCookieFromUnknown(entry))
+    .filter((entry): entry is BrowserCookieRecord => Boolean(entry));
+}
+
+function browserDownloadUrlMatches(
+  value: string,
+  expected: string | null,
+  exact: boolean,
+): boolean {
+  if (!expected) {
+    return true;
+  }
+  if (!exact && expected.startsWith("/") && expected.endsWith("/") && expected.length > 2) {
+    try {
+      return new RegExp(expected.slice(1, -1)).test(value);
+    } catch {
+      return value.includes(expected);
+    }
+  }
+  return exact ? value === expected : value.includes(expected);
+}
+
+function browserDownloadFilenameMatches(
+  value: string,
+  expected: string | null,
+  exact: boolean,
+): boolean {
+  if (!expected) {
+    return true;
+  }
+  const normalizedValue = value.trim().toLowerCase();
+  const normalizedExpected = expected.trim().toLowerCase();
+  return exact
+    ? normalizedValue === normalizedExpected
+    : normalizedValue.includes(normalizedExpected);
+}
+
+function browserDownloadMatches(
+  download: BrowserDownloadRecord,
+  options: BrowserWaitOptions,
+): boolean {
+  return (
+    browserDownloadUrlMatches(download.url, options.url, options.exact) &&
+    browserDownloadFilenameMatches(download.filename, options.filename, options.exact)
+  );
+}
+
+function matchedBrowserDownloadForWait(
+  downloads: BrowserDownloadRecord[],
+  baselineStatuses: Map<string, BrowserDownloadStatus>,
+  options: BrowserWaitOptions,
+): BrowserDownloadRecord | null {
+  const matchingDownloads = downloads.filter((download) =>
+    browserDownloadMatches(download, options),
+  );
+  if (options.condition === "download_started") {
+    return matchingDownloads.find((download) => !baselineStatuses.has(download.id)) ?? null;
+  }
+  return (
+    matchingDownloads.find((download) => {
+      if (download.status !== "completed") {
+        return false;
+      }
+      const baselineStatus = baselineStatuses.get(download.id) ?? null;
+      return !baselineStatus || baselineStatus !== "completed";
+    }) ?? null
+  );
 }
 
 function optionalPositiveIntegerArg(
@@ -250,6 +570,30 @@ function boundedMaxResults(value: unknown): number {
   return Math.min(parsed, BROWSER_FIND_MAX_RESULTS);
 }
 
+function boundedObservabilityLimit(
+  value: unknown,
+  fieldName = "limit",
+): number {
+  const parsed =
+    optionalPositiveIntegerArg(value, fieldName) ??
+    BROWSER_OBSERVABILITY_DEFAULT_LIMIT;
+  return Math.min(parsed, BROWSER_OBSERVABILITY_MAX_LIMIT);
+}
+
+function boundedStorageMaxEntries(value: unknown): number {
+  const parsed =
+    optionalPositiveIntegerArg(value, "max_entries") ??
+    BROWSER_STORAGE_DEFAULT_MAX_ENTRIES;
+  return Math.min(parsed, BROWSER_STORAGE_MAX_ENTRIES);
+}
+
+function boundedCookieMaxResults(value: unknown): number {
+  const parsed =
+    optionalPositiveIntegerArg(value, "max_results") ??
+    BROWSER_COOKIES_DEFAULT_MAX_RESULTS;
+  return Math.min(parsed, BROWSER_COOKIES_MAX_RESULTS);
+}
+
 function requiredPositiveInteger(value: unknown, fieldName: string): number {
   const parsed = optionalInteger(value);
   if (!parsed || parsed <= 0) {
@@ -284,6 +628,8 @@ function browserActionKind(value: unknown): BrowserActionKind {
     value === "type" ||
     value === "press" ||
     value === "select" ||
+    value === "check" ||
+    value === "uncheck" ||
     value === "scroll_into_view"
   ) {
     return value;
@@ -291,7 +637,7 @@ function browserActionKind(value: unknown): BrowserActionKind {
   throw new DesktopBrowserToolServiceError(
     400,
     "browser_tool_invalid_args",
-    "action must be one of `click`, `double_click`, `hover`, `focus`, `fill`, `type`, `press`, `select`, or `scroll_into_view`"
+    "action must be one of `click`, `double_click`, `hover`, `focus`, `fill`, `type`, `press`, `select`, `check`, `uncheck`, or `scroll_into_view`"
   );
 }
 
@@ -309,6 +655,9 @@ function hasLocator(args: Record<string, unknown>): boolean {
 
 function browserWaitCondition(value: unknown, args: Record<string, unknown>): BrowserWaitCondition {
   if (value === undefined || value === null) {
+    if (optionalStringArg(args.expression)) {
+      return "function";
+    }
     if (optionalStringArg(args.url)) {
       return "url";
     }
@@ -322,13 +671,17 @@ function browserWaitCondition(value: unknown, args: Record<string, unknown>): Br
   }
   if (
     value === "load" ||
+    value === "load_state" ||
     value === "url" ||
     value === "text" ||
     value === "element" ||
     value === "hidden" ||
-    value === "dom_change"
+    value === "dom_change" ||
+    value === "function" ||
+    value === "download_started" ||
+    value === "download_completed"
   ) {
-    return value;
+    return value === "load_state" ? "load" : value;
   }
   if (value === "dom_mutation") {
     return "dom_change";
@@ -339,7 +692,7 @@ function browserWaitCondition(value: unknown, args: Record<string, unknown>): Br
   throw new DesktopBrowserToolServiceError(
     400,
     "browser_tool_invalid_args",
-    "condition must be `load`, `url`, `text`, `element`, `hidden`, `dom_change`, `dom_mutation`, `change`, or `mutation`"
+    "condition must be `load`, `load_state`, `url`, `text`, `element`, `hidden`, `dom_change`, `dom_mutation`, `change`, `mutation`, `function`, `download_started`, or `download_completed`"
   );
 }
 
@@ -357,6 +710,20 @@ function browserGetStateMode(value: unknown): BrowserGetStateMode {
   );
 }
 
+function browserGetStateDetail(value: unknown): BrowserGetStateDetail {
+  if (value === undefined || value === null) {
+    return "compact";
+  }
+  if (value === "compact" || value === "standard") {
+    return value;
+  }
+  throw new DesktopBrowserToolServiceError(
+    400,
+    "browser_tool_invalid_args",
+    "detail must be `compact` or `standard`",
+  );
+}
+
 function browserGetStateScope(value: unknown): BrowserGetStateScope {
   if (value === undefined || value === null) {
     return "main";
@@ -371,6 +738,110 @@ function browserGetStateScope(value: unknown): BrowserGetStateScope {
     400,
     "browser_tool_invalid_args",
     "scope must be `main`, `viewport`, `focused`, `dialog`, `active_dialog`, or `modal`"
+  );
+}
+
+function browserWaitLoadState(value: unknown): BrowserWaitLoadState {
+  if (value === undefined || value === null) {
+    return "complete";
+  }
+  if (value === "interactive" || value === "domcontentloaded") {
+    return "interactive";
+  }
+  if (value === "complete" || value === "load") {
+    return "complete";
+  }
+  throw new DesktopBrowserToolServiceError(
+    400,
+    "browser_tool_invalid_args",
+    "load_state must be `interactive`, `domcontentloaded`, `complete`, or `load`",
+  );
+}
+
+function browserPostStateMode(
+  value: unknown,
+  defaultValue: BrowserPostStateMode,
+): BrowserPostStateMode {
+  if (value === undefined || value === null) {
+    return defaultValue;
+  }
+  if (value === "none" || value === "page" || value === "state") {
+    return value;
+  }
+  throw new DesktopBrowserToolServiceError(
+    400,
+    "browser_tool_invalid_args",
+    "post_state must be `none`, `page`, or `state`",
+  );
+}
+
+function browserStorageKind(value: unknown): BrowserStorageKind {
+  if (value === undefined || value === null) {
+    return "local";
+  }
+  if (value === "local" || value === "session") {
+    return value;
+  }
+  throw new DesktopBrowserToolServiceError(
+    400,
+    "browser_tool_invalid_args",
+    "storage must be `local` or `session`",
+  );
+}
+
+function browserCookieSameSite(value: unknown): BrowserCookieSameSite | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (
+    value === "unspecified" ||
+    value === "no_restriction" ||
+    value === "lax" ||
+    value === "strict"
+  ) {
+    return value;
+  }
+  throw new DesktopBrowserToolServiceError(
+    400,
+    "browser_tool_invalid_args",
+    "same_site must be `unspecified`, `no_restriction`, `lax`, or `strict`",
+  );
+}
+
+function browserConsoleLevel(
+  value: unknown,
+): BrowserConsoleLevel | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (
+    value === "debug" ||
+    value === "info" ||
+    value === "warning" ||
+    value === "error"
+  ) {
+    return value;
+  }
+  throw new DesktopBrowserToolServiceError(
+    400,
+    "browser_tool_invalid_args",
+    "level must be `debug`, `info`, `warning`, or `error`",
+  );
+}
+
+function browserErrorSource(
+  value: unknown,
+): BrowserErrorSource | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (value === "page" || value === "runtime" || value === "network") {
+    return value;
+  }
+  throw new DesktopBrowserToolServiceError(
+    400,
+    "browser_tool_invalid_args",
+    "source must be `page`, `runtime`, or `network`",
   );
 }
 
@@ -428,17 +899,29 @@ function browserActOptions(args: Record<string, unknown>): BrowserActOptions {
 function browserWaitOptions(args: Record<string, unknown>): BrowserWaitOptions {
   const condition = browserWaitCondition(args.condition, args);
   const url = optionalStringArg(args.url);
+  const filename = optionalStringArg(args.filename ?? args.file_name ?? args.fileName);
   const text = optionalStringArg(args.text);
+  const expression = optionalStringArg(args.expression);
   if (condition === "url" && !url) {
     throw new DesktopBrowserToolServiceError(400, "browser_tool_invalid_args", "url is required for url waits");
   }
   if (condition === "text" && !text) {
     throw new DesktopBrowserToolServiceError(400, "browser_tool_invalid_args", "text is required for text waits");
   }
+  if (condition === "function" && !expression) {
+    throw new DesktopBrowserToolServiceError(
+      400,
+      "browser_tool_invalid_args",
+      "expression is required for function waits",
+    );
+  }
   return {
     ...browserLocatorOptions(args, { requireLocator: condition === "element" || condition === "hidden" }),
     condition,
     url,
+    filename,
+    expression,
+    loadState: browserWaitLoadState(args.load_state ?? args.loadState),
     timeoutMs: boundedTimeoutMs(args.timeout_ms ?? args.timeoutMs, BROWSER_WAIT_DEFAULT_TIMEOUT_MS),
   };
 }
@@ -461,21 +944,202 @@ function browserDebugOptions(args: Record<string, unknown>): BrowserDebugOptions
 
 function browserGetStateOptions(args: Record<string, unknown>): BrowserGetStateOptions {
   const mode = browserGetStateMode(args.mode);
+  const detail = browserGetStateDetail(args.detail);
   const scope = browserGetStateScope(args.scope);
-  const maxNodes = optionalPositiveIntegerArg(args.max_nodes ?? args.maxNodes, "max_nodes");
+  const requestedMaxNodes = optionalPositiveIntegerArg(args.max_nodes ?? args.maxNodes, "max_nodes");
+  const maxNodes =
+    requestedMaxNodes ??
+    (detail === "compact" && mode !== "text" ? BROWSER_GET_STATE_COMPACT_MAX_NODES : null);
   const includePageText = mode === "text" || optionalBoolean(args.include_page_text, false);
   const includeScreenshot = mode === "visual" || optionalBoolean(args.include_screenshot, false);
+  const explicitControls =
+    args.mode !== undefined ||
+    args.detail !== undefined ||
+    args.scope !== undefined ||
+    args.max_nodes !== undefined ||
+    args.maxNodes !== undefined;
   return {
     includePageText,
     includeScreenshot,
     mode,
+    detail,
     scope,
     maxNodes,
-    includeMetadata:
-      args.mode !== undefined ||
-      args.scope !== undefined ||
-      args.max_nodes !== undefined ||
-      args.maxNodes !== undefined,
+    sinceRevision: optionalStringArg(args.since_revision ?? args.sinceRevision),
+    changedOnly: optionalBoolean(args.changed_only ?? args.changedOnly, false),
+    includeMetadata: explicitControls || detail === "compact",
+    returnMetadata: explicitControls,
+  };
+}
+
+function browserStorageGetOptions(
+  args: Record<string, unknown>,
+): BrowserStorageGetOptions {
+  return {
+    storage: browserStorageKind(args.storage),
+    key: optionalStringArg(args.key),
+    keys: optionalStringArrayArg(args.keys, "keys"),
+    prefix: optionalStringArg(args.prefix),
+    maxEntries: boundedStorageMaxEntries(args.max_entries ?? args.maxEntries),
+  };
+}
+
+function browserGetConsoleOptions(
+  args: Record<string, unknown>,
+): BrowserGetConsoleOptions {
+  return {
+    limit: boundedObservabilityLimit(args.limit),
+    level: browserConsoleLevel(args.level),
+  };
+}
+
+function browserGetErrorsOptions(
+  args: Record<string, unknown>,
+): BrowserGetErrorsOptions {
+  return {
+    limit: boundedObservabilityLimit(args.limit),
+    source: browserErrorSource(args.source),
+  };
+}
+
+function browserListRequestsOptions(
+  args: Record<string, unknown>,
+): BrowserListRequestsOptions {
+  return {
+    limit: boundedObservabilityLimit(args.limit),
+    resourceType: optionalStringArg(args.resource_type ?? args.resourceType),
+    failuresOnly: optionalBoolean(args.failures_only ?? args.failuresOnly, false),
+  };
+}
+
+function browserStorageSetOptions(
+  args: Record<string, unknown>,
+): BrowserStorageSetOptions {
+  const deleteEntry = optionalBoolean(args.delete, false);
+  const value = optionalRawStringArg(args.value);
+  if (!deleteEntry && value === null) {
+    throw new DesktopBrowserToolServiceError(
+      400,
+      "browser_tool_invalid_args",
+      "value is required when delete is false",
+    );
+  }
+  return {
+    storage: browserStorageKind(args.storage),
+    key: requiredString(args.key, "key"),
+    value,
+    delete: deleteEntry,
+  };
+}
+
+function browserCookiesGetOptions(
+  args: Record<string, unknown>,
+): BrowserCookiesGetOptions {
+  return {
+    url: optionalStringArg(args.url),
+    name: optionalStringArg(args.name),
+    names: optionalStringArrayArg(args.names, "names"),
+    domain: optionalStringArg(args.domain),
+    maxResults: boundedCookieMaxResults(args.max_results ?? args.maxResults),
+  };
+}
+
+function browserCookiesSetOptions(
+  args: Record<string, unknown>,
+): BrowserCookiesSetOptions {
+  const expirationDate = optionalNumber(
+    args.expiration_date ?? args.expirationDate,
+  );
+  if (expirationDate !== null && expirationDate <= 0) {
+    throw new DesktopBrowserToolServiceError(
+      400,
+      "browser_tool_invalid_args",
+      "expiration_date must be a positive Unix timestamp in seconds",
+    );
+  }
+  return {
+    url: optionalStringArg(args.url),
+    name: requiredString(args.name, "name"),
+    value: optionalRawStringArg(args.value) ?? "",
+    domain: optionalStringArg(args.domain),
+    path: optionalStringArg(args.path),
+    secure: optionalBoolean(args.secure, false),
+    httpOnly: optionalBoolean(args.http_only ?? args.httpOnly, false),
+    sameSite: browserCookieSameSite(args.same_site ?? args.sameSite),
+    expirationDate,
+  };
+}
+
+function browserInlineWaitOptions(
+  value: unknown,
+  timeoutValue: unknown,
+): BrowserWaitOptions | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    if (!normalized) {
+      throw new DesktopBrowserToolServiceError(
+        400,
+        "browser_tool_invalid_args",
+        "wait_for must be a non-empty wait condition",
+      );
+    }
+    if (
+      normalized === "interactive" ||
+      normalized === "domcontentloaded" ||
+      normalized === "complete" ||
+      normalized === "load"
+    ) {
+      return browserWaitOptions({
+        condition: "load",
+        load_state: normalized,
+        ...(timeoutValue !== undefined ? { timeout_ms: timeoutValue } : {}),
+      });
+    }
+    return browserWaitOptions({
+      condition: normalized,
+      ...(timeoutValue !== undefined ? { timeout_ms: timeoutValue } : {}),
+    });
+  }
+  const waitArgs = asRecord(value);
+  if (!waitArgs) {
+    throw new DesktopBrowserToolServiceError(
+      400,
+      "browser_tool_invalid_args",
+      "wait_for must be a wait condition string or object",
+    );
+  }
+  const resolvedTimeout =
+    timeoutValue ?? waitArgs.timeout_ms ?? waitArgs.timeoutMs;
+  return browserWaitOptions({
+    ...waitArgs,
+    ...(resolvedTimeout !== undefined ? { timeout_ms: resolvedTimeout } : {}),
+  });
+}
+
+function defaultPostStateForBrowserAction(
+  action: BrowserActionKind,
+): BrowserPostStateMode {
+  if (
+    action === "click" ||
+    action === "double_click" ||
+    action === "press"
+  ) {
+    return "page";
+  }
+  return "none";
+}
+
+function browserPostActionOptions(
+  args: Record<string, unknown>,
+  defaultPostState: BrowserPostStateMode,
+): BrowserPostActionOptions {
+  const waitTimeoutValue = args.wait_timeout_ms ?? args.waitTimeoutMs;
+  return {
+    waitFor: browserInlineWaitOptions(args.wait_for ?? args.waitFor, waitTimeoutValue),
+    postState: browserPostStateMode(args.post_state ?? args.postState, defaultPostState),
   };
 }
 
@@ -527,6 +1191,140 @@ function evaluateExpressionPayload(expression: string): Record<string, unknown> 
 
 function serializedValue(value: unknown): string {
   return JSON.stringify(value);
+}
+
+function optionalRecordNumber(value: Record<string, unknown> | null, key: string): number | null {
+  return optionalInteger(value?.[key]);
+}
+
+function browserStateUsageFields(state: Record<string, unknown>): Record<string, unknown> {
+  const metadata = asRecord(state.metadata);
+  const returned = asRecord(metadata?.returned);
+  const totals = asRecord(metadata?.totals);
+  const fullPageTotals = asRecord(metadata?.full_page_totals);
+  const payload: Record<string, unknown> = {
+    page_text_chars: typeof state.text === "string" ? state.text.length : 0,
+  };
+  const detail = typeof metadata?.detail === "string" ? metadata.detail : null;
+  if (detail) {
+    payload.detail = detail;
+  }
+  const maxNodes = optionalRecordNumber(metadata, "max_nodes");
+  if (maxNodes !== null) {
+    payload.max_nodes = maxNodes;
+  }
+  const returnedElements = optionalRecordNumber(returned, "elements");
+  const returnedMedia = optionalRecordNumber(returned, "media");
+  const totalElements = optionalRecordNumber(totals, "elements");
+  const totalMedia = optionalRecordNumber(totals, "media");
+  if (returnedElements !== null) {
+    payload.returned_elements = returnedElements;
+  }
+  if (returnedMedia !== null) {
+    payload.returned_media = returnedMedia;
+  }
+  if (totalElements !== null) {
+    payload.total_elements = totalElements;
+  }
+  if (totalMedia !== null) {
+    payload.total_media = totalMedia;
+  }
+  const fullPageElements = optionalRecordNumber(fullPageTotals, "elements");
+  const fullPageMedia = optionalRecordNumber(fullPageTotals, "media");
+  if (fullPageElements !== null) {
+    payload.full_page_elements = fullPageElements;
+  }
+  if (fullPageMedia !== null) {
+    payload.full_page_media = fullPageMedia;
+  }
+  if (metadata?.truncated === true) {
+    payload.truncated = true;
+  }
+  return payload;
+}
+
+function browserStateRevisionPayload(
+  page: Record<string, unknown>,
+  state: Record<string, unknown>,
+): Record<string, unknown> {
+  const metadata = asRecord(state.metadata);
+  return {
+    page: {
+      tabId: optionalStringArg(page.tabId ?? page.tab_id),
+      url: optionalStringArg(page.url),
+      title: optionalStringArg(page.title),
+      loading: page.loading === true,
+      initialized: page.initialized !== false,
+      canGoBack: page.canGoBack === true,
+      canGoForward: page.canGoForward === true,
+      error: optionalStringArg(page.error) ?? "",
+    },
+    state: {
+      url: optionalStringArg(state.url),
+      title: optionalStringArg(state.title),
+      text: typeof state.text === "string" ? state.text : null,
+      viewport: asRecord(state.viewport),
+      scroll: asRecord(state.scroll),
+      elements: Array.isArray(state.elements) ? state.elements : [],
+      media: Array.isArray(state.media) ? state.media : [],
+      metadata: metadata
+        ? {
+            mode: optionalStringArg(metadata.mode),
+            detail: optionalStringArg(metadata.detail),
+            scope: optionalStringArg(metadata.scope),
+            max_nodes: optionalInteger(metadata.max_nodes),
+            include_page_text: metadata.include_page_text === true,
+            lists_included: metadata.lists_included !== false,
+            returned: asRecord(metadata.returned),
+            totals: asRecord(metadata.totals),
+            full_page_totals: asRecord(metadata.full_page_totals),
+            truncated: metadata.truncated === true,
+          }
+        : null,
+    },
+  };
+}
+
+function browserStateRevision(
+  page: Record<string, unknown>,
+  state: Record<string, unknown>,
+): string {
+  return createHash("sha256")
+    .update(JSON.stringify(browserStateRevisionPayload(page, state)))
+    .digest("hex")
+    .slice(0, 24);
+}
+
+function browserStateWithRevision(
+  page: Record<string, unknown>,
+  state: Record<string, unknown>,
+  options: Pick<BrowserGetStateOptions, "sinceRevision" | "changedOnly">,
+): Record<string, unknown> {
+  const revision = browserStateRevision(page, state);
+  const changed =
+    options.sinceRevision !== null ? options.sinceRevision !== revision : true;
+  if (options.changedOnly && options.sinceRevision && !changed) {
+    return {
+      revision,
+      changed: false,
+    };
+  }
+  return {
+    ...state,
+    revision,
+    ...(options.sinceRevision !== null ? { changed } : {}),
+  };
+}
+
+function browserStateForResult(
+  state: Record<string, unknown>,
+  options: { returnMetadata: boolean },
+): Record<string, unknown> {
+  if (options.returnMetadata || !("metadata" in state)) {
+    return state;
+  }
+  const { metadata: _metadata, ...rest } = state;
+  return rest;
 }
 
 function browserLocatorRuntime(locator: BrowserLocatorOptions): string {
@@ -965,6 +1763,19 @@ function browserActExpression(options: BrowserActOptions): string {
       }
       return element.querySelector("input, textarea, select, [contenteditable]:not([contenteditable='false'])");
     };
+    const checkableTarget = (element) => {
+      if (
+        element instanceof HTMLInputElement &&
+        ["checkbox", "radio"].includes(String(element.type || "").toLowerCase())
+      ) {
+        return element;
+      }
+      const explicitRole = String(element.getAttribute("role") || "").toLowerCase();
+      if (["checkbox", "radio", "switch"].includes(explicitRole)) {
+        return element;
+      }
+      return element.querySelector("input[type='checkbox'], input[type='radio'], [role='checkbox'], [role='radio'], [role='switch']");
+    };
     const setNativeValue = (element, nextValue) => {
       if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
         const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), "value");
@@ -1008,9 +1819,61 @@ function browserActExpression(options: BrowserActOptions): string {
         element.form.requestSubmit();
       }
     };
+    const checkedState = (element) => {
+      if (
+        element instanceof HTMLInputElement &&
+        ["checkbox", "radio"].includes(String(element.type || "").toLowerCase())
+      ) {
+        return Boolean(element.checked);
+      }
+      const ariaChecked = String(element.getAttribute("aria-checked") || "").toLowerCase();
+      if (ariaChecked === "true") return true;
+      if (ariaChecked === "false") return false;
+      return null;
+    };
+    const setCheckableState = (element, desiredChecked) => {
+      const currentChecked = checkedState(element);
+      if (currentChecked === desiredChecked) {
+        return { checked: currentChecked, changed: false };
+      }
+      if (element instanceof HTMLInputElement) {
+        const inputType = String(element.type || "").toLowerCase();
+        if (inputType === "radio" && !desiredChecked) {
+          throw new Error("Radio buttons cannot be unchecked directly.");
+        }
+        if (typeof element.focus === "function") element.focus();
+        if (typeof element.click === "function") element.click();
+        const clickedState = checkedState(element);
+        if (clickedState === desiredChecked) {
+          return { checked: clickedState, changed: true };
+        }
+        element.checked = desiredChecked;
+        element.dispatchEvent(new Event("input", { bubbles: true }));
+        element.dispatchEvent(new Event("change", { bubbles: true }));
+        return { checked: Boolean(element.checked), changed: true };
+      }
+      const explicitRole = String(element.getAttribute("role") || "").toLowerCase();
+      if (explicitRole === "radio" && !desiredChecked) {
+        throw new Error("Radio buttons cannot be unchecked directly.");
+      }
+      if (typeof element.focus === "function") element.focus();
+      if (typeof element.click === "function") element.click();
+      const clickedState = checkedState(element);
+      if (clickedState === desiredChecked) {
+        return { checked: clickedState, changed: true };
+      }
+      if (["checkbox", "radio", "switch"].includes(explicitRole)) {
+        element.setAttribute("aria-checked", desiredChecked ? "true" : "false");
+        element.dispatchEvent(new Event("input", { bubbles: true }));
+        element.dispatchEvent(new Event("change", { bubbles: true }));
+        return { checked: desiredChecked, changed: true };
+      }
+      throw new Error("Target element is not checkable.");
+    };
     target.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
     if (typeof target.focus === "function") target.focus();
     let actionResult = {};
+    let describedActionTarget = actionTarget;
     if (action === "click" || action === "double_click") {
       if (typeof actionTarget.focus === "function") actionTarget.focus();
       const point = dispatchMouse(actionTarget, "mousemove");
@@ -1052,6 +1915,18 @@ function browserActExpression(options: BrowserActOptions): string {
       selectTarget.dispatchEvent(new Event("input", { bubbles: true }));
       selectTarget.dispatchEvent(new Event("change", { bubbles: true }));
       actionResult = { value: selectTarget.value, selected_text: option.textContent || "" };
+    } else if (action === "check" || action === "uncheck") {
+      const toggleTarget = checkableTarget(target);
+      if (!(toggleTarget instanceof HTMLElement)) {
+        throw new Error("No checkable element matched the requested action locator.");
+      }
+      describedActionTarget = toggleTarget;
+      const nextChecked = action === "check";
+      const toggled = setCheckableState(toggleTarget, nextChecked);
+      actionResult = {
+        checked: toggled.checked,
+        changed: toggled.changed,
+      };
     } else if (action === "scroll_into_view") {
       target.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
     }
@@ -1059,7 +1934,7 @@ function browserActExpression(options: BrowserActOptions): string {
       ok: true,
       action,
       target: describeElement(target),
-      action_target: describeElement(actionTarget),
+      action_target: describeElement(describedActionTarget),
       result: actionResult
     };
   })()`;
@@ -1084,12 +1959,14 @@ function browserWaitPredicateExpression(options: BrowserWaitOptions, baseline: R
     ...options,
     includeHidden: options.condition === "hidden" ? false : options.includeHidden,
   };
-  return `(() => {
+  return `(async () => {
     ${browserLocatorRuntime(locatorForWait)}
     const condition = ${serializedValue(options.condition)};
     const expectedUrl = ${serializedValue(options.url)};
     const baseline = ${serializedValue(baseline)};
     const textNeedle = ${serializedValue(options.text)};
+    const functionSource = ${serializedValue(options.expression)};
+    const loadState = ${serializedValue(options.loadState)};
     const matchesUrl = (value, expected) => {
       if (!expected) return false;
       if (expected.startsWith("/") && expected.endsWith("/") && expected.length > 2) {
@@ -1110,8 +1987,19 @@ function browserWaitPredicateExpression(options: BrowserWaitOptions, baseline: R
       element_count: document.querySelectorAll("body *").length,
       active_tag: document.activeElement instanceof HTMLElement ? document.activeElement.tagName.toLowerCase() : ""
     };
+    const evaluateFunctionWait = async () => {
+      if (!functionSource) return false;
+      const evaluated = (0, eval)("(" + functionSource + ")");
+      const result = typeof evaluated === "function" ? await evaluated() : await evaluated;
+      return result;
+    };
+    const functionResult = condition === "function" ? await evaluateFunctionWait() : null;
+    const loadMatched =
+      loadState === "interactive"
+        ? document.readyState === "interactive" || document.readyState === "complete"
+        : document.readyState === "complete";
     const matches = condition === "load"
-      ? document.readyState === "complete"
+      ? loadMatched
       : condition === "url"
         ? matchesUrl(location.href, expectedUrl || "")
         : condition === "text"
@@ -1120,12 +2008,18 @@ function browserWaitPredicateExpression(options: BrowserWaitOptions, baseline: R
             ? findMatches().length > 0
             : condition === "hidden"
               ? findMatches().length === 0
-              : JSON.stringify(currentSignature) !== JSON.stringify(baseline || {});
+              : condition === "function"
+                ? Boolean(functionResult)
+                : JSON.stringify(currentSignature) !== JSON.stringify(baseline || {});
     return {
       ok: true,
       matched: matches,
       condition,
+      load_state: condition === "load" ? loadState : null,
       match_count: condition === "element" || condition === "hidden" ? findMatches().length : null,
+      function_result: condition === "function"
+        ? (functionResult === undefined ? null : functionResult)
+        : null,
       current: currentSignature
     };
   })()`;
@@ -1138,6 +2032,86 @@ function browserEvaluateExpression(options: BrowserEvaluateOptions): string {
       ok: true,
       allow_mutation: ${options.allowMutation ? "true" : "false"},
       result: result === undefined ? null : result
+    };
+  })()`;
+}
+
+function browserStorageGetExpression(options: BrowserStorageGetOptions): string {
+  return `(() => {
+    const storageKind = ${serializedValue(options.storage)};
+    const targetStorage = storageKind === "session" ? window.sessionStorage : window.localStorage;
+    if (!targetStorage) {
+      throw new Error("Requested browser storage is not available.");
+    }
+    const key = ${serializedValue(options.key)};
+    const explicitKeys = ${serializedValue(options.keys)};
+    const prefix = ${serializedValue(options.prefix)};
+    const maxEntries = ${String(options.maxEntries)};
+    const seenKeys = new Set();
+    const entries = [];
+    const pushEntry = (entryKey) => {
+      if (!entryKey || seenKeys.has(entryKey)) return;
+      if (prefix && !String(entryKey).startsWith(prefix)) return;
+      seenKeys.add(entryKey);
+      if (entries.length >= maxEntries) return;
+      const entryValue = targetStorage.getItem(entryKey);
+      entries.push({
+        key: entryKey,
+        value: entryValue === null ? null : String(entryValue),
+      });
+    };
+    if (key) {
+      pushEntry(key);
+    }
+    for (const explicitKey of explicitKeys) {
+      pushEntry(explicitKey);
+    }
+    if (!key && explicitKeys.length === 0) {
+      for (let index = 0; index < targetStorage.length; index += 1) {
+        const entryKey = targetStorage.key(index);
+        if (entryKey) {
+          pushEntry(entryKey);
+        }
+      }
+    }
+    return {
+      ok: true,
+      storage: storageKind,
+      key,
+      prefix,
+      count: entries.length,
+      truncated: entries.length >= maxEntries && targetStorage.length > entries.length,
+      entries,
+      value: key ? (entries[0]?.value ?? null) : null,
+      available_keys: Math.min(targetStorage.length, maxEntries),
+    };
+  })()`;
+}
+
+function browserStorageSetExpression(options: BrowserStorageSetOptions): string {
+  return `(() => {
+    const storageKind = ${serializedValue(options.storage)};
+    const targetStorage = storageKind === "session" ? window.sessionStorage : window.localStorage;
+    if (!targetStorage) {
+      throw new Error("Requested browser storage is not available.");
+    }
+    const key = ${serializedValue(options.key)};
+    const deleteEntry = ${options.delete ? "true" : "false"};
+    const nextValue = ${serializedValue(options.value ?? "")};
+    const previousValue = targetStorage.getItem(key);
+    if (deleteEntry) {
+      targetStorage.removeItem(key);
+    } else {
+      targetStorage.setItem(key, nextValue);
+    }
+    return {
+      ok: true,
+      storage: storageKind,
+      key,
+      deleted: deleteEntry,
+      existed: previousValue !== null,
+      previous_value: previousValue === null ? null : String(previousValue),
+      value: deleteEntry ? null : String(targetStorage.getItem(key) || ""),
     };
   })()`;
 }
@@ -1222,6 +2196,7 @@ function interactiveElementsExpression(options: BrowserGetStateOptions): string 
     const includePageText = ${options.includePageText ? "true" : "false"};
     const includeMetadata = ${options.includeMetadata ? "true" : "false"};
     const mode = ${serializedValue(options.mode)};
+    const detail = ${serializedValue(options.detail)};
     const scope = ${serializedValue(options.scope)};
     const maxNodes = ${options.maxNodes === null ? "null" : String(options.maxNodes)};
     const textLimit = ${BROWSER_GET_STATE_ELEMENT_TEXT_MAX_CHARS};
@@ -1377,8 +2352,9 @@ function interactiveElementsExpression(options: BrowserGetStateOptions): string 
     };
     if (includeMetadata) {
       result.metadata = {
-        schema_version: 1,
+        schema_version: 2,
         mode,
+        detail,
         scope,
         max_nodes: maxNodes,
         include_page_text: includePageText,
@@ -1578,6 +2554,11 @@ function browserGetStateWarnings(params: {
       warnings.push("Browser screenshot capture reported 0x0 dimensions.");
     }
   }
+  if (asRecord(params.state.metadata)?.truncated === true) {
+    warnings.push(
+      "Browser state snapshot is truncated; use browser_find, increase max_nodes, or set detail=standard if a target is missing.",
+    );
+  }
   return warnings;
 }
 
@@ -1716,6 +2697,7 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
 
     switch (definition.id) {
       case "browser_navigate": {
+        const startedAt = Date.now();
         const url = requiredString(args.url, "url");
         const result = await this.#browserFetch(config, {
           method: "POST",
@@ -1725,9 +2707,17 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
           sessionId: context.sessionId,
           space: context.space,
         });
-        return { ok: true, navigation: result };
+        return {
+          ok: true,
+          navigation: result,
+          browser_usage: {
+            tool_id: "browser_navigate",
+            elapsed_ms: Date.now() - startedAt,
+          },
+        };
       }
       case "browser_open_tab": {
+        const startedAt = Date.now();
         const url = requiredString(args.url, "url");
         const result = await this.#browserFetch(config, {
           method: "POST",
@@ -1740,19 +2730,94 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
           sessionId: context.sessionId,
           space: context.space,
         });
-        return { ok: true, tabs: result };
+        return {
+          ok: true,
+          tabs: result,
+          browser_usage: {
+            tool_id: "browser_open_tab",
+            elapsed_ms: Date.now() - startedAt,
+          },
+        };
+      }
+      case "browser_select_tab": {
+        const startedAt = Date.now();
+        const tabId = requiredString(args.tab_id ?? args.tabId, "tab_id");
+        const result = await this.#browserFetch(config, {
+          method: "POST",
+          path: "/tabs/select",
+          body: { tab_id: tabId },
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        });
+        return {
+          ok: true,
+          tabs: result,
+          browser_usage: {
+            tool_id: "browser_select_tab",
+            elapsed_ms: Date.now() - startedAt,
+            tab_id: tabId,
+          },
+        };
+      }
+      case "browser_close_tab": {
+        const startedAt = Date.now();
+        const tabId = requiredString(args.tab_id ?? args.tabId, "tab_id");
+        const result = await this.#browserFetch(config, {
+          method: "POST",
+          path: "/tabs/close",
+          body: { tab_id: tabId },
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        });
+        return {
+          ok: true,
+          tabs: result,
+          browser_usage: {
+            tool_id: "browser_close_tab",
+            elapsed_ms: Date.now() - startedAt,
+            tab_id: tabId,
+          },
+        };
       }
       case "browser_get_state": {
+        const startedAt = Date.now();
         const options = browserGetStateOptions(args);
         const snapshot = await this.#readBrowserGetStateSnapshot(
           config,
           context,
           options,
         );
+        const stateWithRevision = browserStateWithRevision(
+          snapshot.page,
+          snapshot.state,
+          options,
+        );
+        const stateForResult = browserStateForResult(stateWithRevision, options);
+        const currentRevision = optionalStringArg(stateWithRevision.revision);
+        const changed =
+          typeof stateWithRevision.changed === "boolean"
+            ? stateWithRevision.changed
+            : null;
         const payload: Record<string, unknown> = {
           ok: true,
           page: snapshot.page,
-          state: snapshot.state,
+          state: stateForResult,
+          browser_usage: {
+            tool_id: "browser_get_state",
+            elapsed_ms: Date.now() - startedAt,
+            mode: options.mode,
+            detail: options.detail,
+            scope: options.scope,
+            include_page_text: options.includePageText,
+            include_screenshot: options.includeScreenshot,
+            since_revision: options.sinceRevision,
+            changed_only: options.changedOnly,
+            revision: currentRevision,
+            changed,
+            ...browserStateUsageFields(snapshot.state),
+          },
         };
         const warnings = browserGetStateWarnings({
           page: snapshot.page,
@@ -1779,12 +2844,27 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
         return payload;
       }
       case "browser_find": {
+        const startedAt = Date.now();
         const options = browserFindOptions(args);
         const result = await this.#evaluate(config, browserFindExpression(options), context);
-        return { ok: true, find: result };
+        return {
+          ok: true,
+          find: result,
+          browser_usage: {
+            tool_id: "browser_find",
+            elapsed_ms: Date.now() - startedAt,
+            count: optionalInteger(result.count),
+            truncated: result.truncated === true,
+          },
+        };
       }
       case "browser_act": {
+        const startedAt = Date.now();
         const options = browserActOptions(args);
+        const postAction = browserPostActionOptions(
+          args,
+          defaultPostStateForBrowserAction(options.action),
+        );
         if (isNativeTextAction(options.action) && options.value === null) {
           throw new DesktopBrowserToolServiceError(
             400,
@@ -1866,20 +2946,61 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
             },
           };
         }
-        const page = await this.#browserFetch(config, {
-          method: "GET",
-          path: "/page",
-          workspaceId: context.workspaceId,
-          sessionId: context.sessionId,
-          space: context.space,
-        });
-        return { ok: true, action: result, page };
+        const wait =
+          postAction.waitFor
+            ? await this.#waitForBrowserCondition(config, context, postAction.waitFor)
+            : null;
+        const followUp = await this.#readPostActionState(
+          config,
+          context,
+          postAction.postState,
+        );
+        return {
+          ok: true,
+          action: result,
+          ...(wait ? { wait } : {}),
+          ...(followUp.page ? { page: followUp.page } : {}),
+          ...(followUp.state ? { state: followUp.state } : {}),
+          browser_usage: {
+            tool_id: "browser_act",
+            elapsed_ms: Date.now() - startedAt,
+            action: options.action,
+            post_state: postAction.postState,
+            ...(wait
+              ? {
+                  wait_condition: wait.condition,
+                  wait_matched: wait.matched === true,
+                  wait_attempts: optionalInteger(wait.attempts),
+                  wait_elapsed_ms: optionalInteger(wait.elapsed_ms),
+                }
+              : {}),
+            ...(followUp.stateWithMetadata
+              ? browserStateUsageFields(followUp.stateWithMetadata)
+              : {}),
+          },
+        };
       }
       case "browser_wait": {
-        const result = await this.#waitForBrowserCondition(config, context, browserWaitOptions(args));
-        return { ok: true, wait: result };
+        const startedAt = Date.now();
+        const options = browserWaitOptions(args);
+        const result = await this.#waitForBrowserCondition(config, context, options);
+        return {
+          ok: true,
+          wait: result,
+          browser_usage: {
+            tool_id: "browser_wait",
+            elapsed_ms: Date.now() - startedAt,
+            condition: options.condition,
+            load_state: options.condition === "load" ? options.loadState : null,
+            url: options.url,
+            filename: options.filename,
+            matched: result.matched === true,
+            attempts: optionalInteger(result.attempts),
+          },
+        };
       }
       case "browser_evaluate": {
+        const startedAt = Date.now();
         const options = browserEvaluateOptions(args);
         const result = await this.#evaluate(
           config,
@@ -1887,9 +3008,17 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
           context,
           options.timeoutMs,
         );
-        return { ok: true, evaluation: result };
+        return {
+          ok: true,
+          evaluation: result,
+          browser_usage: {
+            tool_id: "browser_evaluate",
+            elapsed_ms: Date.now() - startedAt,
+          },
+        };
       }
       case "browser_debug": {
+        const startedAt = Date.now();
         const options = browserDebugOptions(args);
         const [page, debug] = await Promise.all([
           this.#browserFetch(config, {
@@ -1901,21 +3030,56 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
           }),
           this.#evaluate(config, browserDebugExpression(options), context),
         ]);
-        return { ok: true, page, debug };
+        return {
+          ok: true,
+          page,
+          debug,
+          browser_usage: {
+            tool_id: "browser_debug",
+            elapsed_ms: Date.now() - startedAt,
+          },
+        };
       }
       case "browser_click": {
+        const startedAt = Date.now();
+        const postAction = browserPostActionOptions(args, "page");
         const index = requiredPositiveInteger(args.index, "index");
         const result = await this.#evaluate(config, clickExpression(index), context);
-        const page = await this.#browserFetch(config, {
-          method: "GET",
-          path: "/page",
-          workspaceId: context.workspaceId,
-          sessionId: context.sessionId,
-          space: context.space,
-        });
-        return { ok: true, action: result, page };
+        const wait =
+          postAction.waitFor
+            ? await this.#waitForBrowserCondition(config, context, postAction.waitFor)
+            : null;
+        const followUp = await this.#readPostActionState(
+          config,
+          context,
+          postAction.postState,
+        );
+        return {
+          ok: true,
+          action: result,
+          ...(wait ? { wait } : {}),
+          ...(followUp.page ? { page: followUp.page } : {}),
+          ...(followUp.state ? { state: followUp.state } : {}),
+          browser_usage: {
+            tool_id: "browser_click",
+            elapsed_ms: Date.now() - startedAt,
+            post_state: postAction.postState,
+            ...(wait
+              ? {
+                  wait_condition: wait.condition,
+                  wait_matched: wait.matched === true,
+                  wait_attempts: optionalInteger(wait.attempts),
+                  wait_elapsed_ms: optionalInteger(wait.elapsed_ms),
+                }
+              : {}),
+            ...(followUp.stateWithMetadata
+              ? browserStateUsageFields(followUp.stateWithMetadata)
+              : {}),
+          },
+        };
       }
       case "browser_context_click": {
+        const startedAt = Date.now();
         const index = requiredPositiveInteger(args.index, "index");
         const target = browserTargetKind(args.target);
         const result = await this.#evaluate(config, contextClickTargetExpression(target, index), context);
@@ -1929,9 +3093,19 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
           sessionId: context.sessionId,
           space: context.space,
         });
-        return { ok: true, action: result, context_menu: contextMenu };
+        return {
+          ok: true,
+          action: result,
+          context_menu: contextMenu,
+          browser_usage: {
+            tool_id: "browser_context_click",
+            elapsed_ms: Date.now() - startedAt,
+          },
+        };
       }
       case "browser_type": {
+        const startedAt = Date.now();
+        const postAction = browserPostActionOptions(args, "none");
         const index = requiredPositiveInteger(args.index, "index");
         const text = requiredString(args.text, "text");
         const clear = optionalBoolean(args.clear, true);
@@ -1945,6 +3119,15 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
           sessionId: context.sessionId,
           space: context.space,
         });
+        const wait =
+          postAction.waitFor
+            ? await this.#waitForBrowserCondition(config, context, postAction.waitFor)
+            : null;
+        const followUp = await this.#readPostActionState(
+          config,
+          context,
+          postAction.postState,
+        );
         return {
           ok: true,
           action: {
@@ -1955,9 +3138,29 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
               native_input: nativeInput,
             },
           },
+          ...(wait ? { wait } : {}),
+          ...(followUp.page ? { page: followUp.page } : {}),
+          ...(followUp.state ? { state: followUp.state } : {}),
+          browser_usage: {
+            tool_id: "browser_type",
+            elapsed_ms: Date.now() - startedAt,
+            post_state: postAction.postState,
+            ...(wait
+              ? {
+                  wait_condition: wait.condition,
+                  wait_matched: wait.matched === true,
+                  wait_attempts: optionalInteger(wait.attempts),
+                  wait_elapsed_ms: optionalInteger(wait.elapsed_ms),
+                }
+              : {}),
+            ...(followUp.stateWithMetadata
+              ? browserStateUsageFields(followUp.stateWithMetadata)
+              : {}),
+          },
         };
       }
       case "browser_press": {
+        const startedAt = Date.now();
         const key = requiredString(args.key, "key");
         const nativeInput = await this.#browserFetch(config, {
           method: "POST",
@@ -1967,17 +3170,33 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
           sessionId: context.sessionId,
           space: context.space,
         });
-        return { ok: true, action: { ok: true, key, native_input: nativeInput } };
+        return {
+          ok: true,
+          action: { ok: true, key, native_input: nativeInput },
+          browser_usage: {
+            tool_id: "browser_press",
+            elapsed_ms: Date.now() - startedAt,
+          },
+        };
       }
       case "browser_scroll": {
+        const startedAt = Date.now();
         const explicitDelta = optionalInteger(args.delta_y);
         const amount = optionalInteger(args.amount) ?? 600;
         const direction = args.direction === "up" ? "up" : "down";
         const deltaY = explicitDelta ?? (direction === "up" ? -Math.abs(amount) : Math.abs(amount));
         const result = await this.#evaluate(config, scrollExpression(deltaY), context);
-        return { ok: true, action: result };
+        return {
+          ok: true,
+          action: result,
+          browser_usage: {
+            tool_id: "browser_scroll",
+            elapsed_ms: Date.now() - startedAt,
+          },
+        };
       }
       case "browser_back": {
+        const startedAt = Date.now();
         const result = await this.#evaluate(config, historyExpression("back"), context);
         const page = await this.#browserFetch(config, {
           method: "GET",
@@ -1986,9 +3205,18 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
           sessionId: context.sessionId,
           space: context.space,
         });
-        return { ok: true, action: result, page };
+        return {
+          ok: true,
+          action: result,
+          page,
+          browser_usage: {
+            tool_id: "browser_back",
+            elapsed_ms: Date.now() - startedAt,
+          },
+        };
       }
       case "browser_forward": {
+        const startedAt = Date.now();
         const result = await this.#evaluate(config, historyExpression("forward"), context);
         const page = await this.#browserFetch(config, {
           method: "GET",
@@ -1997,9 +3225,18 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
           sessionId: context.sessionId,
           space: context.space,
         });
-        return { ok: true, action: result, page };
+        return {
+          ok: true,
+          action: result,
+          page,
+          browser_usage: {
+            tool_id: "browser_forward",
+            elapsed_ms: Date.now() - startedAt,
+          },
+        };
       }
       case "browser_reload": {
+        const startedAt = Date.now();
         const result = await this.#evaluate(config, reloadExpression(), context);
         const page = await this.#browserFetch(config, {
           method: "GET",
@@ -2008,9 +3245,18 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
           sessionId: context.sessionId,
           space: context.space,
         });
-        return { ok: true, action: result, page };
+        return {
+          ok: true,
+          action: result,
+          page,
+          browser_usage: {
+            tool_id: "browser_reload",
+            elapsed_ms: Date.now() - startedAt,
+          },
+        };
       }
       case "browser_screenshot": {
+        const startedAt = Date.now();
         const format = args.format === "jpeg" ? "jpeg" : "png";
         const quality = optionalInteger(args.quality);
         const screenshot = await this.#browserFetch(config, {
@@ -2032,10 +3278,15 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
         return {
           ok: true,
           screenshot: artifactScreenshot.result,
-          ...(artifactScreenshot.warning ? { warnings: [artifactScreenshot.warning] } : {})
+          ...(artifactScreenshot.warning ? { warnings: [artifactScreenshot.warning] } : {}),
+          browser_usage: {
+            tool_id: "browser_screenshot",
+            elapsed_ms: Date.now() - startedAt,
+          },
         };
       }
       case "browser_list_tabs": {
+        const startedAt = Date.now();
         return {
           ok: true,
           tabs: await this.#browserFetch(config, {
@@ -2044,7 +3295,274 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
             workspaceId: context.workspaceId,
             sessionId: context.sessionId,
             space: context.space,
-          })
+          }),
+          browser_usage: {
+            tool_id: "browser_list_tabs",
+            elapsed_ms: Date.now() - startedAt,
+          },
+        };
+      }
+      case "browser_list_downloads": {
+        const startedAt = Date.now();
+        const result = await this.#browserFetch(config, {
+          method: "GET",
+          path: "/downloads",
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        });
+        const downloads = Array.isArray(result.downloads) ? result.downloads : [];
+        return {
+          ok: true,
+          downloads,
+          browser_usage: {
+            tool_id: "browser_list_downloads",
+            elapsed_ms: Date.now() - startedAt,
+            count: downloads.length,
+          },
+        };
+      }
+      case "browser_get_console": {
+        const startedAt = Date.now();
+        const options = browserGetConsoleOptions(args);
+        const query = new URLSearchParams();
+        query.set("limit", String(options.limit));
+        if (options.level) {
+          query.set("level", options.level);
+        }
+        const result = await this.#browserFetch(config, {
+          method: "GET",
+          path: `/console?${query.toString()}`,
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        });
+        const entries = Array.isArray(result.entries) ? result.entries : [];
+        return {
+          ok: true,
+          entries,
+          total: optionalInteger(result.total) ?? entries.length,
+          truncated: result.truncated === true,
+          browser_usage: {
+            tool_id: "browser_get_console",
+            elapsed_ms: Date.now() - startedAt,
+            count: entries.length,
+            level: options.level,
+            truncated: result.truncated === true,
+          },
+        };
+      }
+      case "browser_get_errors": {
+        const startedAt = Date.now();
+        const options = browserGetErrorsOptions(args);
+        const query = new URLSearchParams();
+        query.set("limit", String(options.limit));
+        if (options.source) {
+          query.set("source", options.source);
+        }
+        const result = await this.#browserFetch(config, {
+          method: "GET",
+          path: `/errors?${query.toString()}`,
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        });
+        const errors = Array.isArray(result.errors) ? result.errors : [];
+        return {
+          ok: true,
+          errors,
+          total: optionalInteger(result.total) ?? errors.length,
+          truncated: result.truncated === true,
+          browser_usage: {
+            tool_id: "browser_get_errors",
+            elapsed_ms: Date.now() - startedAt,
+            count: errors.length,
+            source: options.source,
+            truncated: result.truncated === true,
+          },
+        };
+      }
+      case "browser_list_requests": {
+        const startedAt = Date.now();
+        const options = browserListRequestsOptions(args);
+        const query = new URLSearchParams();
+        query.set("limit", String(options.limit));
+        if (options.resourceType) {
+          query.set("resource_type", options.resourceType);
+        }
+        if (options.failuresOnly) {
+          query.set("failures_only", "true");
+        }
+        const result = await this.#browserFetch(config, {
+          method: "GET",
+          path: `/requests?${query.toString()}`,
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        });
+        const requests = Array.isArray(result.requests) ? result.requests : [];
+        return {
+          ok: true,
+          requests,
+          total: optionalInteger(result.total) ?? requests.length,
+          truncated: result.truncated === true,
+          browser_usage: {
+            tool_id: "browser_list_requests",
+            elapsed_ms: Date.now() - startedAt,
+            count: requests.length,
+            resource_type: options.resourceType,
+            failures_only: options.failuresOnly,
+            truncated: result.truncated === true,
+          },
+        };
+      }
+      case "browser_get_request": {
+        const startedAt = Date.now();
+        const requestId = requiredString(
+          args.request_id ?? args.requestId,
+          "request_id",
+        );
+        const result = await this.#browserFetch(config, {
+          method: "GET",
+          path: `/requests/${encodeURIComponent(requestId)}`,
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        });
+        return {
+          ok: true,
+          request: asRecord(result.request) ?? result,
+          browser_usage: {
+            tool_id: "browser_get_request",
+            elapsed_ms: Date.now() - startedAt,
+            request_id: requestId,
+          },
+        };
+      }
+      case "browser_storage_get": {
+        const startedAt = Date.now();
+        const options = browserStorageGetOptions(args);
+        const result = await this.#evaluate(
+          config,
+          browserStorageGetExpression(options),
+          context,
+        );
+        return {
+          ok: true,
+          storage: result,
+          browser_usage: {
+            tool_id: "browser_storage_get",
+            elapsed_ms: Date.now() - startedAt,
+            storage: options.storage,
+            count: optionalInteger(result.count),
+            truncated: result.truncated === true,
+          },
+        };
+      }
+      case "browser_storage_set": {
+        const startedAt = Date.now();
+        const options = browserStorageSetOptions(args);
+        const result = await this.#evaluate(
+          config,
+          browserStorageSetExpression(options),
+          context,
+        );
+        return {
+          ok: true,
+          storage: result,
+          browser_usage: {
+            tool_id: "browser_storage_set",
+            elapsed_ms: Date.now() - startedAt,
+            storage: options.storage,
+            deleted: options.delete,
+          },
+        };
+      }
+      case "browser_cookies_get": {
+        const startedAt = Date.now();
+        const options = browserCookiesGetOptions(args);
+        const query = new URLSearchParams();
+        if (options.url) {
+          query.set("url", options.url);
+        }
+        if (options.name) {
+          query.set("name", options.name);
+        }
+        if (options.domain) {
+          query.set("domain", options.domain);
+        }
+        const result = await this.#browserFetch(config, {
+          method: "GET",
+          path: `/cookies${query.size > 0 ? `?${query.toString()}` : ""}`,
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        });
+        const allowedNames =
+          options.names.length > 0
+            ? new Set(options.names.map((name) => name.toLowerCase()))
+            : null;
+        const normalizedDomain = options.domain?.replace(/^\.+/, "").toLowerCase() ?? null;
+        const cookies = browserCookiesFromPayload(result)
+          .filter((cookie) =>
+            options.name
+              ? cookie.name.toLowerCase() === options.name.toLowerCase()
+              : true,
+          )
+          .filter((cookie) =>
+            allowedNames ? allowedNames.has(cookie.name.toLowerCase()) : true,
+          )
+          .filter((cookie) =>
+            normalizedDomain
+              ? cookie.domain.replace(/^\.+/, "").toLowerCase() === normalizedDomain ||
+                cookie.domain.replace(/^\.+/, "").toLowerCase().endsWith(`.${normalizedDomain}`)
+              : true,
+          )
+          .slice(0, options.maxResults);
+        return {
+          ok: true,
+          cookies,
+          browser_usage: {
+            tool_id: "browser_cookies_get",
+            elapsed_ms: Date.now() - startedAt,
+            count: cookies.length,
+            url: options.url,
+            domain: options.domain,
+          },
+        };
+      }
+      case "browser_cookies_set": {
+        const startedAt = Date.now();
+        const options = browserCookiesSetOptions(args);
+        const result = await this.#browserFetch(config, {
+          method: "POST",
+          path: "/cookies",
+          body: {
+            ...(options.url ? { url: options.url } : {}),
+            name: options.name,
+            value: options.value,
+            ...(options.domain ? { domain: options.domain } : {}),
+            ...(options.path ? { path: options.path } : {}),
+            secure: options.secure,
+            http_only: options.httpOnly,
+            ...(options.sameSite ? { same_site: options.sameSite } : {}),
+            ...(options.expirationDate !== null
+              ? { expiration_date: options.expirationDate }
+              : {}),
+          },
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        });
+        return {
+          ok: true,
+          cookie: browserCookieFromUnknown(result.cookie) ?? result.cookie ?? result,
+          browser_usage: {
+            tool_id: "browser_cookies_set",
+            elapsed_ms: Date.now() - startedAt,
+            secure: options.secure,
+            http_only: options.httpOnly,
+          },
         };
       }
     }
@@ -2085,6 +3603,9 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
     context: DesktopBrowserToolExecutionContext,
     options: BrowserWaitOptions,
   ): Promise<Record<string, unknown>> {
+    if (isBrowserDownloadWaitCondition(options.condition)) {
+      return await this.#waitForBrowserDownloadCondition(config, context, options);
+    }
     const startedAt = Date.now();
     const baseline =
       options.condition === "dom_change"
@@ -2105,6 +3626,7 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
           attempts,
           elapsed_ms: Date.now() - startedAt,
           condition: options.condition,
+          ...(options.condition === "load" ? { load_state: options.loadState } : {}),
           result: lastResult,
         };
       }
@@ -2117,7 +3639,124 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
       attempts,
       elapsed_ms: Date.now() - startedAt,
       condition: options.condition,
+      ...(options.condition === "load" ? { load_state: options.loadState } : {}),
       result: lastResult,
+    };
+  }
+
+  async #waitForBrowserDownloadCondition(
+    config: ProductRuntimeConfig,
+    context: DesktopBrowserToolExecutionContext,
+    options: BrowserWaitOptions,
+  ): Promise<Record<string, unknown>> {
+    const startedAt = Date.now();
+    const baselineDownloads = await this.#listBrowserDownloads(config, context);
+    const baselineStatuses = new Map(
+      baselineDownloads.map((download) => [download.id, download.status] as const),
+    );
+    let attempts = 0;
+    let lastDownloads = baselineDownloads;
+    let matchedDownload: BrowserDownloadRecord | null = null;
+    while (Date.now() - startedAt <= options.timeoutMs) {
+      attempts += 1;
+      lastDownloads = await this.#listBrowserDownloads(config, context);
+      matchedDownload = matchedBrowserDownloadForWait(
+        lastDownloads,
+        baselineStatuses,
+        options,
+      );
+      if (matchedDownload) {
+        return {
+          matched: true,
+          attempts,
+          elapsed_ms: Date.now() - startedAt,
+          condition: options.condition,
+          ...(options.filename ? { filename: options.filename } : {}),
+          ...(options.url ? { url: options.url } : {}),
+          download: matchedDownload,
+          result: {
+            download_count: lastDownloads.length,
+            download: matchedDownload,
+          },
+        };
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, BROWSER_WAIT_POLL_INTERVAL_MS),
+      );
+    }
+    return {
+      matched: false,
+      attempts,
+      elapsed_ms: Date.now() - startedAt,
+      condition: options.condition,
+      ...(options.filename ? { filename: options.filename } : {}),
+      ...(options.url ? { url: options.url } : {}),
+      result: {
+        download_count: lastDownloads.length,
+        latest_download:
+          lastDownloads.find((download) => browserDownloadMatches(download, options)) ??
+          null,
+      },
+    };
+  }
+
+  async #listBrowserDownloads(
+    config: ProductRuntimeConfig,
+    context: DesktopBrowserToolExecutionContext,
+  ): Promise<BrowserDownloadRecord[]> {
+    const payload = await this.#browserFetch(config, {
+      method: "GET",
+      path: "/downloads",
+      workspaceId: context.workspaceId,
+      sessionId: context.sessionId,
+      space: context.space,
+    });
+    return browserDownloadsFromPayload(payload);
+  }
+
+  async #readPostActionState(
+    config: ProductRuntimeConfig,
+    context: DesktopBrowserToolExecutionContext,
+    postState: BrowserPostStateMode,
+  ): Promise<{
+    page?: Record<string, unknown>;
+    state?: Record<string, unknown>;
+    stateWithMetadata?: Record<string, unknown>;
+  }> {
+    if (postState === "none") {
+      return {};
+    }
+    if (postState === "page") {
+      return {
+        page: await this.#browserFetch(config, {
+          method: "GET",
+          path: "/page",
+          workspaceId: context.workspaceId,
+          sessionId: context.sessionId,
+          space: context.space,
+        }),
+      };
+    }
+    const snapshot = await this.#readBrowserGetStateSnapshot(config, context, {
+      includePageText: false,
+      includeScreenshot: false,
+      mode: "state",
+      detail: "compact",
+      scope: "main",
+      maxNodes: BROWSER_POST_ACTION_STATE_MAX_NODES,
+      sinceRevision: null,
+      changedOnly: false,
+      includeMetadata: true,
+      returnMetadata: false,
+    });
+    const stateWithRevision = browserStateWithRevision(snapshot.page, snapshot.state, {
+      sinceRevision: null,
+      changedOnly: false,
+    });
+    return {
+      page: snapshot.page,
+      state: browserStateForResult(stateWithRevision, { returnMetadata: false }),
+      stateWithMetadata: snapshot.state,
     };
   }
 

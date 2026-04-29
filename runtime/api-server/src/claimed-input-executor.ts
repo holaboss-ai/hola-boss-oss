@@ -104,6 +104,16 @@ interface TurnContextBudgetTelemetry {
   largestToolPayloadBytes: number;
   browserSnapshotBytes: number;
   screenshotBytes: number;
+  browserToolCalls: number;
+  browserStateReads: number;
+  browserCompactStateReads: number;
+  browserStandardStateReads: number;
+  browserTruncatedStateReads: number;
+  browserActionCalls: number;
+  browserWaitCalls: number;
+  browserFindCalls: number;
+  browserScreenshotCalls: number;
+  browserPageTextChars: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -991,6 +1001,16 @@ function createTurnContextBudgetTelemetry(): TurnContextBudgetTelemetry {
     largestToolPayloadBytes: 0,
     browserSnapshotBytes: 0,
     screenshotBytes: 0,
+    browserToolCalls: 0,
+    browserStateReads: 0,
+    browserCompactStateReads: 0,
+    browserStandardStateReads: 0,
+    browserTruncatedStateReads: 0,
+    browserActionCalls: 0,
+    browserWaitCalls: 0,
+    browserFindCalls: 0,
+    browserScreenshotCalls: 0,
+    browserPageTextChars: 0,
   };
 }
 
@@ -1030,6 +1050,81 @@ function firstFiniteUsageNumber(
     }
   }
   return null;
+}
+
+function browserCapabilityPayloadFromToolResult(
+  value: unknown,
+): Record<string, unknown> | null {
+  const resultRecord = jsonRecord(value);
+  const details = nestedRecord(resultRecord, "details");
+  const raw = nestedRecord(details, "raw");
+  if (raw) {
+    return raw;
+  }
+  const content = Array.isArray(resultRecord?.content) ? resultRecord.content : [];
+  for (const block of content) {
+    const blockRecord = jsonRecord(block);
+    if (blockRecord?.type !== "text" || typeof blockRecord.text !== "string") {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(blockRecord.text);
+      const record = jsonRecord(parsed);
+      if (record) {
+        return record;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+function browserUsageFromToolResult(
+  value: unknown,
+): Record<string, unknown> | null {
+  return nestedRecord(nestedRecord(jsonRecord(value), "details"), "browser_usage");
+}
+
+function browserToolIdFromUsage(
+  value: Record<string, unknown> | null,
+): string | null {
+  return typeof value?.tool_id === "string" && value.tool_id.trim()
+    ? value.tool_id.trim()
+    : null;
+}
+
+function browserToolCallCategory(toolId: string | null): "state" | "action" | "wait" | "find" | "screenshot" | null {
+  switch (toolId) {
+    case "browser_get_state":
+      return "state";
+    case "browser_wait":
+      return "wait";
+    case "browser_find":
+      return "find";
+    case "browser_screenshot":
+      return "screenshot";
+    case "browser_act":
+    case "browser_click":
+    case "browser_context_click":
+    case "browser_type":
+    case "browser_press":
+    case "browser_scroll":
+    case "browser_back":
+    case "browser_forward":
+    case "browser_reload":
+    case "browser_navigate":
+    case "browser_open_tab":
+    case "browser_select_tab":
+    case "browser_close_tab":
+    case "browser_list_tabs":
+    case "browser_list_downloads":
+    case "browser_storage_set":
+    case "browser_cookies_set":
+      return "action";
+    default:
+      return null;
+  }
 }
 
 function tokenDetailNumber(
@@ -1122,18 +1217,55 @@ function updateTurnContextBudgetTelemetryFromEvent(
   );
 
   const toolName = optionalString(payload.tool_name)?.toLowerCase() ?? "";
-  const result = payload.result;
-  const resultRecord = jsonRecord(result);
-  const screenshotPayload = resultRecord?.screenshot ?? (toolName === "browser_screenshot" ? result : null);
+  const capabilityPayload = browserCapabilityPayloadFromToolResult(payload.result);
+  const browserUsage = browserUsageFromToolResult(payload.result);
+  const browserToolId =
+    browserToolIdFromUsage(browserUsage) ??
+    (toolName.startsWith("browser_") ? toolName : null);
+  const screenshotPayload =
+    capabilityPayload?.screenshot ??
+    (toolName === "browser_screenshot" ? capabilityPayload ?? payload.result : null);
   if (screenshotPayload !== null && screenshotPayload !== undefined) {
     telemetry.screenshotBytes += jsonByteLength(screenshotPayload);
   }
-  if (toolName === "browser_get_state") {
-    if (resultRecord) {
-      const { screenshot: _screenshot, ...snapshotWithoutScreenshot } = resultRecord;
-      telemetry.browserSnapshotBytes += jsonByteLength(snapshotWithoutScreenshot);
-    } else {
-      telemetry.browserSnapshotBytes += jsonByteLength(result);
+  if (capabilityPayload?.state) {
+    telemetry.browserSnapshotBytes += jsonByteLength({
+      page: capabilityPayload.page ?? null,
+      state: capabilityPayload.state,
+    });
+  }
+  if (browserUsage) {
+    telemetry.browserToolCalls += 1;
+    const category = browserToolCallCategory(browserToolId);
+    const hasStateSnapshot =
+      category === "state" || typeof browserUsage.detail === "string";
+    if (hasStateSnapshot) {
+      telemetry.browserStateReads += 1;
+      if (browserUsage.detail === "compact") {
+        telemetry.browserCompactStateReads += 1;
+      }
+      if (browserUsage.detail === "standard") {
+        telemetry.browserStandardStateReads += 1;
+      }
+      if (browserUsage.truncated === true) {
+        telemetry.browserTruncatedStateReads += 1;
+      }
+    }
+    if (category === "action") {
+      telemetry.browserActionCalls += 1;
+    }
+    if (category === "wait") {
+      telemetry.browserWaitCalls += 1;
+    }
+    if (category === "find") {
+      telemetry.browserFindCalls += 1;
+    }
+    if (category === "screenshot") {
+      telemetry.browserScreenshotCalls += 1;
+    }
+    const pageTextChars = finiteNumber(browserUsage.page_text_chars);
+    if (pageTextChars !== null) {
+      telemetry.browserPageTextChars += pageTextChars;
     }
   }
 }
@@ -1215,8 +1347,54 @@ function buildContextBudgetObservabilityPayload(params: {
       largest_tool_payload_bytes: params.telemetry.largestToolPayloadBytes,
       browser_snapshot_bytes: params.telemetry.browserSnapshotBytes,
       screenshot_bytes: params.telemetry.screenshotBytes,
+      browser_tool_calls: params.telemetry.browserToolCalls,
+      browser_state_reads: params.telemetry.browserStateReads,
+      browser_compact_state_reads: params.telemetry.browserCompactStateReads,
+      browser_standard_state_reads: params.telemetry.browserStandardStateReads,
+      browser_truncated_state_reads: params.telemetry.browserTruncatedStateReads,
+      browser_action_calls: params.telemetry.browserActionCalls,
+      browser_wait_calls: params.telemetry.browserWaitCalls,
+      browser_find_calls: params.telemetry.browserFindCalls,
+      browser_screenshot_calls: params.telemetry.browserScreenshotCalls,
+      browser_page_text_chars: params.telemetry.browserPageTextChars,
       compaction_events: params.telemetry.compactionEvents,
     },
+  };
+}
+
+function buildMergedContextBudgetPayload(params: {
+  startedAt: string;
+  completedAt: string | null;
+  terminalStatus: "IDLE" | "WAITING_USER" | "PAUSED" | "ERROR";
+  stopReason: string | null;
+  tokenUsage: Record<string, unknown> | null;
+  contextUsage: PiContextUsage | null;
+  promptCacheProfile: Record<string, unknown> | null;
+  telemetry: TurnContextBudgetTelemetry;
+  toolCallCount: number;
+  toolReplayTrimmed: boolean;
+  retrievalClipped?: boolean;
+  checkpointQueued: boolean;
+}): Record<string, unknown> {
+  return {
+    ...buildContextBudgetObservabilityPayload({
+      startedAt: params.startedAt,
+      completedAt: params.completedAt,
+      terminalStatus: params.terminalStatus,
+      stopReason: params.stopReason,
+      tokenUsage: params.tokenUsage,
+      contextUsage: params.contextUsage,
+      promptCacheProfile: params.promptCacheProfile,
+      telemetry: params.telemetry,
+      toolCallCount: params.toolCallCount,
+      checkpointQueued: params.checkpointQueued,
+    }),
+    ...buildContextBudgetDecisions({
+      promptCacheProfile: params.promptCacheProfile,
+      toolReplayTrimmed: params.toolReplayTrimmed,
+      retrievalClipped: params.retrievalClipped,
+      checkpointQueued: params.checkpointQueued,
+    }),
   };
 }
 
@@ -2008,6 +2186,7 @@ function summarizeToolCalls(
       toolId: string | null;
       completed: boolean;
       error: boolean;
+      browserUsage: Record<string, unknown> | null;
     }
   >,
   skillInvocationsById: Map<string, SkillInvocationSummaryEntry> = new Map(),
@@ -2030,6 +2209,58 @@ function summarizeToolCalls(
       ),
     ].sort((left, right) => left.localeCompare(right)),
   };
+  const browserCalls = calls.filter((call) =>
+    browserToolCallCategory(
+      browserToolIdFromUsage(call.browserUsage) ??
+        (call.toolName.toLowerCase().startsWith("browser_") ? call.toolName.toLowerCase() : call.toolId),
+    ) !== null,
+  );
+  if (browserCalls.length > 0) {
+    const compactStateReads = browserCalls.filter(
+      (call) => call.browserUsage?.detail === "compact",
+    ).length;
+    const standardStateReads = browserCalls.filter(
+      (call) => call.browserUsage?.detail === "standard",
+    ).length;
+    summary.browser = {
+      total_calls: browserCalls.length,
+      state_reads: browserCalls.filter(
+        (call) =>
+          browserToolCallCategory(browserToolIdFromUsage(call.browserUsage) ?? call.toolId ?? call.toolName) ===
+            "state" ||
+          typeof call.browserUsage?.detail === "string",
+      ).length,
+      compact_state_reads: compactStateReads,
+      standard_state_reads: standardStateReads,
+      truncated_state_reads: browserCalls.filter(
+        (call) => call.browserUsage?.truncated === true,
+      ).length,
+      action_calls: browserCalls.filter(
+        (call) =>
+          browserToolCallCategory(browserToolIdFromUsage(call.browserUsage) ?? call.toolId ?? call.toolName) ===
+          "action",
+      ).length,
+      wait_calls: browserCalls.filter(
+        (call) =>
+          browserToolCallCategory(browserToolIdFromUsage(call.browserUsage) ?? call.toolId ?? call.toolName) ===
+          "wait",
+      ).length,
+      find_calls: browserCalls.filter(
+        (call) =>
+          browserToolCallCategory(browserToolIdFromUsage(call.browserUsage) ?? call.toolId ?? call.toolName) ===
+          "find",
+      ).length,
+      screenshot_calls: browserCalls.filter(
+        (call) =>
+          browserToolCallCategory(browserToolIdFromUsage(call.browserUsage) ?? call.toolId ?? call.toolName) ===
+          "screenshot",
+      ).length,
+      page_text_chars: browserCalls.reduce((total, call) => {
+        const value = finiteNumber(call.browserUsage?.page_text_chars);
+        return total + (value ?? 0);
+      }, 0),
+    };
+  }
   if (skillInvocationsById.size > 0) {
     summary.skill_invocations = summarizeSkillInvocations(skillInvocationsById);
   }
@@ -2609,16 +2840,17 @@ export async function processClaimedInput(params: {
         capabilityManifestFingerprint: null,
         requestSnapshotFingerprint: null,
         promptCacheProfile: null,
-        contextBudgetDecisions: buildContextBudgetObservabilityPayload({
+        contextBudgetDecisions: buildMergedContextBudgetPayload({
           startedAt: turnStartedAt,
           completedAt,
           terminalStatus: "ERROR",
           stopReason: "workspace_not_found",
-        tokenUsage: null,
-        contextUsage: null,
-        promptCacheProfile: null,
+          tokenUsage: null,
+          contextUsage: null,
+          promptCacheProfile: null,
           telemetry: createTurnContextBudgetTelemetry(),
           toolCallCount: 0,
+          toolReplayTrimmed: false,
           checkpointQueued: false,
         }),
         tokenUsage: null,
@@ -2954,6 +3186,7 @@ export async function processClaimedInput(params: {
         toolId: string | null;
         completed: boolean;
         error: boolean;
+        browserUsage: Record<string, unknown> | null;
       }
     >();
     const skillInvocationsById = new Map<string, SkillInvocationSummaryEntry>();
@@ -3194,11 +3427,16 @@ export async function processClaimedInput(params: {
               existingCall?.completed === true;
             const errored =
               eventPayload.error === true || existingCall?.error === true;
+            const browserUsage =
+              browserUsageFromToolResult(eventPayload.result) ??
+              existingCall?.browserUsage ??
+              null;
             toolCallsById.set(callId, {
               toolName,
               toolId,
               completed,
               error: errored,
+              browserUsage,
             });
             if (eventPayload.phase === "completed") {
               toolReplayTrimmed =
@@ -3604,8 +3842,16 @@ export async function processClaimedInput(params: {
         contextUsage,
         wakeWorker: params.wakeDurableMemoryWorker ?? null,
       });
-      const contextBudgetDecisions = buildContextBudgetDecisions({
+      const contextBudgetDecisions = buildMergedContextBudgetPayload({
+        startedAt: turnStartedAt,
+        completedAt: completedAt ?? new Date().toISOString(),
+        terminalStatus,
+        stopReason,
+        tokenUsage,
+        contextUsage,
         promptCacheProfile,
+        telemetry: contextBudgetTelemetry,
+        toolCallCount: toolCallsById.size,
         toolReplayTrimmed,
         checkpointQueued: Boolean(checkpointJob),
       });
@@ -3845,8 +4091,16 @@ export async function processClaimedInput(params: {
         eventType: "run_failed",
         payload: {
           message,
-          context_budget_decisions: buildContextBudgetDecisions({
+          context_budget_decisions: buildMergedContextBudgetPayload({
+            startedAt: turnStartedAt,
+            completedAt: new Date().toISOString(),
+            terminalStatus: "ERROR",
+            stopReason: "executor_error",
+            tokenUsage: null,
+            contextUsage,
             promptCacheProfile,
+            telemetry: contextBudgetTelemetry,
+            toolCallCount: toolCallsById.size,
             toolReplayTrimmed,
             checkpointQueued: false,
           }),
@@ -3877,8 +4131,16 @@ export async function processClaimedInput(params: {
         capabilityManifestFingerprint: null,
         requestSnapshotFingerprint: null,
         promptCacheProfile: null,
-        contextBudgetDecisions: buildContextBudgetDecisions({
+        contextBudgetDecisions: buildMergedContextBudgetPayload({
+          startedAt: turnStartedAt,
+          completedAt: errorCompletedAt,
+          terminalStatus: "ERROR",
+          stopReason: "executor_error",
+          tokenUsage: null,
+          contextUsage,
           promptCacheProfile,
+          telemetry: contextBudgetTelemetry,
+          toolCallCount: toolCallsById.size,
           toolReplayTrimmed,
           checkpointQueued: false,
         }),

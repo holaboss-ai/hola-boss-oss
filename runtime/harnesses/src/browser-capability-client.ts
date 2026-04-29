@@ -82,6 +82,7 @@ export async function executeBrowserCapabilityTool(params: BrowserCapabilityClie
   content: Array<{ type: "text"; text: string }>;
   details: {
     tool_id: DesktopBrowserToolId;
+    browser_usage?: Record<string, unknown>;
     raw?: unknown;
     raw_result_bytes?: number;
     model_result_bytes?: number;
@@ -104,11 +105,22 @@ export async function executeBrowserCapabilityTool(params: BrowserCapabilityClie
       : `Holaboss browser tool '${params.toolId}' failed.`;
     throw new Error(message);
   }
-  const formatted = formatCapabilityToolResultForModel(response.payload);
+  const payloadRecord = isRecord(response.payload) ? response.payload : null;
+  const browserUsage = isRecord(payloadRecord?.browser_usage)
+    ? (payloadRecord?.browser_usage as Record<string, unknown>)
+    : null;
+  const modelPayload =
+    payloadRecord && browserUsage
+      ? Object.fromEntries(
+          Object.entries(payloadRecord).filter(([key]) => key !== "browser_usage"),
+        )
+      : response.payload;
+  const formatted = formatCapabilityToolResultForModel(modelPayload);
   return {
     content: [{ type: "text", text: formatted.text }],
     details: {
       tool_id: params.toolId,
+      ...(browserUsage ? { browser_usage: browserUsage } : {}),
       ...(formatted.compacted
         ? {
             raw: response.payload,

@@ -141,6 +141,9 @@ const USER_BROWSER_LOCK_TIMEOUT_MS = 15_000;
 const SESSION_BROWSER_BUSY_CHECK_MS = 15_000;
 const SESSION_BROWSER_COMPLETED_GRACE_MS = 30_000;
 const SESSION_BROWSER_WARM_TTL_MS = 2 * 60 * 1000;
+const BROWSER_OBSERVABILITY_ENTRY_LIMIT = 100;
+const BROWSER_REQUEST_HISTORY_LIMIT = 200;
+const BROWSER_OBSERVABILITY_DEFAULT_LIMIT = 20;
 const CHROME_HISTORY_IMPORT_LIMIT = 500;
 const CHROME_COOKIE_SAFE_STORAGE_SERVICE_NAMES = [
   "Chrome Safe Storage",
@@ -531,6 +534,10 @@ interface BrowserTabRecord {
   state: BrowserStatePayload;
   popupFrameName?: string;
   popupOpenedAtMs?: number;
+  consoleEntries: BrowserConsoleEntry[];
+  errorEntries: BrowserObservedError[];
+  requests: Map<string, BrowserRequestRecord>;
+  requestOrder: string[];
 }
 
 interface BrowserUserLockState {
@@ -626,6 +633,66 @@ interface BrowserDownloadPayload {
   totalBytes: number;
   createdAt: string;
   completedAt: string | null;
+}
+
+type BrowserConsoleLevel = "debug" | "info" | "warning" | "error";
+type BrowserErrorSource = "page" | "runtime" | "network";
+
+interface BrowserConsoleEntry {
+  id: string;
+  level: BrowserConsoleLevel;
+  message: string;
+  sourceId: string;
+  lineNumber: number | null;
+  timestamp: string;
+  frameUrl: string;
+}
+
+interface BrowserObservedError {
+  id: string;
+  source: BrowserErrorSource;
+  kind: string;
+  level: "warning" | "error";
+  message: string;
+  timestamp: string;
+  url: string;
+  requestId?: string;
+  statusCode?: number;
+  resourceType?: string;
+  lineNumber?: number;
+  sourceId?: string;
+  errorCode?: number;
+}
+
+interface BrowserRequestBodyMetadata {
+  entryCount: number;
+  byteLength: number;
+  fileCount: number;
+  types: string[];
+}
+
+interface BrowserResponseBodyMetadata {
+  contentType: string | null;
+  contentLength: number | null;
+}
+
+interface BrowserRequestRecord {
+  id: string;
+  url: string;
+  method: string;
+  resourceType: string;
+  referrer: string;
+  startedAt: string;
+  completedAt: string | null;
+  durationMs: number | null;
+  fromCache: boolean;
+  statusCode: number | null;
+  statusLine: string;
+  error: string;
+  requestHeaders: Record<string, string[]> | null;
+  responseHeaders: Record<string, string[]> | null;
+  requestBody: BrowserRequestBodyMetadata | null;
+  responseBody: BrowserResponseBodyMetadata | null;
 }
 
 interface BrowserHistoryEntryPayload {
@@ -5147,6 +5214,430 @@ function setRequestHeaderValue(
   return headers;
 }
 
+function browserObservabilityLimit(
+  value: string | null | undefined,
+  defaultValue = BROWSER_OBSERVABILITY_DEFAULT_LIMIT,
+): number {
+  const parsed = Number(value ?? "");
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return defaultValue;
+  }
+  return Math.max(1, Math.min(BROWSER_OBSERVABILITY_ENTRY_LIMIT, Math.floor(parsed)));
+}
+
+function browserConsoleLevelValue(value: unknown): BrowserConsoleLevel {
+  return value === "warning" ||
+    value === "error" ||
+    value === "debug" ||
+    value === "info"
+    ? value
+    : "info";
+}
+
+function browserConsoleLevelRank(level: BrowserConsoleLevel): number {
+  switch (level) {
+    case "debug":
+      return 0;
+    case "info":
+      return 1;
+    case "warning":
+      return 2;
+    case "error":
+      return 3;
+  }
+}
+
+function browserObservedErrorSource(
+  value: unknown,
+): BrowserErrorSource | null {
+  return value === "page" || value === "runtime" || value === "network"
+    ? value
+    : null;
+}
+
+function browserIsoFromNetworkTimestamp(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return new Date(value * 1000).toISOString();
+  }
+  return new Date().toISOString();
+}
+
+function browserHeaderRecord(
+  value: unknown,
+): Record<string, string[]> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const result: Record<string, string[]> = {};
+  for (const [key, rawValue] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof rawValue === "string") {
+      result[key] = [rawValue];
+      continue;
+    }
+    if (Array.isArray(rawValue)) {
+      const entries = rawValue
+        .filter((entry): entry is string => typeof entry === "string")
+        .map((entry) => entry);
+      if (entries.length > 0) {
+        result[key] = entries;
+      }
+    }
+  }
+  return Object.keys(result).length > 0 ? result : null;
+}
+
+function browserHeaderFirstValue(
+  headers: Record<string, string[]> | null | undefined,
+  headerName: string,
+): string | null {
+  if (!headers) {
+    return null;
+  }
+  const normalizedName = headerName.toLowerCase();
+  for (const [key, values] of Object.entries(headers)) {
+    if (key.toLowerCase() !== normalizedName || values.length === 0) {
+      continue;
+    }
+    const value = values[0]?.trim() || "";
+    return value || null;
+  }
+  return null;
+}
+
+function browserResponseBodyMetadata(
+  headers: Record<string, string[]> | null,
+): BrowserResponseBodyMetadata | null {
+  if (!headers) {
+    return null;
+  }
+  const contentType = browserHeaderFirstValue(headers, "content-type");
+  const contentLengthRaw = browserHeaderFirstValue(headers, "content-length");
+  const contentLength = contentLengthRaw ? Number(contentLengthRaw) : null;
+  if (!contentType && !Number.isFinite(contentLength ?? NaN)) {
+    return null;
+  }
+  return {
+    contentType,
+    contentLength:
+      typeof contentLength === "number" && Number.isFinite(contentLength)
+        ? contentLength
+        : null,
+  };
+}
+
+function browserRequestBodyMetadata(
+  uploadData: unknown,
+): BrowserRequestBodyMetadata | null {
+  if (!Array.isArray(uploadData) || uploadData.length === 0) {
+    return null;
+  }
+  let byteLength = 0;
+  let fileCount = 0;
+  const types = new Set<string>();
+  for (const entry of uploadData) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    const record = entry as Record<string, unknown>;
+    if (record.bytes instanceof Uint8Array) {
+      byteLength += record.bytes.byteLength;
+      types.add("bytes");
+    } else if (Buffer.isBuffer(record.bytes)) {
+      byteLength += record.bytes.byteLength;
+      types.add("bytes");
+    } else if (typeof record.file === "string" && record.file.trim()) {
+      fileCount += 1;
+      types.add("file");
+    } else if (typeof record.blobUUID === "string" && record.blobUUID.trim()) {
+      types.add("blob");
+    } else {
+      types.add("other");
+    }
+  }
+  return {
+    entryCount: uploadData.length,
+    byteLength,
+    fileCount,
+    types: [...types],
+  };
+}
+
+function appendBoundedEntry<T>(entries: T[], entry: T, limit: number): void {
+  entries.push(entry);
+  if (entries.length > limit) {
+    entries.splice(0, entries.length - limit);
+  }
+}
+
+function browserTabForWebContentsId(
+  webContentsId: number,
+): BrowserTabRecord | null {
+  for (const workspace of browserWorkspaces.values()) {
+    for (const tab of workspace.spaces.user.tabs.values()) {
+      if (tab.view.webContents.id === webContentsId) {
+        return tab;
+      }
+    }
+    for (const tab of workspace.spaces.agent.tabs.values()) {
+      if (tab.view.webContents.id === webContentsId) {
+        return tab;
+      }
+    }
+    for (const tabSpace of workspace.agentSessionSpaces.values()) {
+      for (const tab of tabSpace.tabs.values()) {
+        if (tab.view.webContents.id === webContentsId) {
+          return tab;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function appendBrowserObservedError(
+  tab: BrowserTabRecord,
+  entry: BrowserObservedError,
+): void {
+  appendBoundedEntry(
+    tab.errorEntries,
+    entry,
+    BROWSER_OBSERVABILITY_ENTRY_LIMIT,
+  );
+}
+
+function browserRequestIdValue(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(Math.trunc(value));
+  }
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  return "";
+}
+
+function browserRequestFailure(record: BrowserRequestRecord): boolean {
+  return Boolean(record.error) || (record.statusCode ?? 0) >= 400;
+}
+
+function browserRequestSummary(
+  record: BrowserRequestRecord,
+): Record<string, unknown> {
+  return {
+    id: record.id,
+    url: record.url,
+    method: record.method,
+    resourceType: record.resourceType,
+    startedAt: record.startedAt,
+    completedAt: record.completedAt,
+    durationMs: record.durationMs,
+    fromCache: record.fromCache,
+    statusCode: record.statusCode,
+    statusLine: record.statusLine,
+    error: record.error,
+  };
+}
+
+function upsertBrowserRequestRecord(
+  tab: BrowserTabRecord,
+  requestId: string,
+  overrides: Partial<BrowserRequestRecord>,
+): BrowserRequestRecord {
+  const existing = tab.requests.get(requestId);
+  if (existing) {
+    const next = { ...existing, ...overrides };
+    tab.requests.set(requestId, next);
+    return next;
+  }
+  const next: BrowserRequestRecord = {
+    id: requestId,
+    url: overrides.url ?? "",
+    method: overrides.method ?? "",
+    resourceType: overrides.resourceType ?? "other",
+    referrer: overrides.referrer ?? "",
+    startedAt: overrides.startedAt ?? new Date().toISOString(),
+    completedAt: overrides.completedAt ?? null,
+    durationMs: overrides.durationMs ?? null,
+    fromCache: overrides.fromCache ?? false,
+    statusCode: overrides.statusCode ?? null,
+    statusLine: overrides.statusLine ?? "",
+    error: overrides.error ?? "",
+    requestHeaders: overrides.requestHeaders ?? null,
+    responseHeaders: overrides.responseHeaders ?? null,
+    requestBody: overrides.requestBody ?? null,
+    responseBody: overrides.responseBody ?? null,
+  };
+  tab.requests.set(requestId, next);
+  tab.requestOrder.push(requestId);
+  if (tab.requestOrder.length > BROWSER_REQUEST_HISTORY_LIMIT) {
+    const removedRequestId = tab.requestOrder.shift();
+    if (removedRequestId) {
+      tab.requests.delete(removedRequestId);
+    }
+  }
+  return next;
+}
+
+function trackBrowserRequestStart(details: {
+  id: unknown;
+  webContentsId?: number;
+  url?: string;
+  method?: string;
+  resourceType?: string;
+  referrer?: string;
+  timestamp?: number;
+  uploadData?: unknown;
+}): void {
+  if (typeof details.webContentsId !== "number") {
+    return;
+  }
+  const tab = browserTabForWebContentsId(details.webContentsId);
+  const requestId = browserRequestIdValue(details.id);
+  if (!tab || !requestId) {
+    return;
+  }
+  upsertBrowserRequestRecord(tab, requestId, {
+    url: typeof details.url === "string" ? details.url : "",
+    method: typeof details.method === "string" ? details.method : "",
+    resourceType:
+      typeof details.resourceType === "string" ? details.resourceType : "other",
+    referrer: typeof details.referrer === "string" ? details.referrer : "",
+    startedAt: browserIsoFromNetworkTimestamp(details.timestamp),
+    requestBody: browserRequestBodyMetadata(details.uploadData),
+  });
+}
+
+function trackBrowserRequestHeaders(details: {
+  id: unknown;
+  webContentsId?: number;
+  requestHeaders?: unknown;
+}): void {
+  if (typeof details.webContentsId !== "number") {
+    return;
+  }
+  const tab = browserTabForWebContentsId(details.webContentsId);
+  const requestId = browserRequestIdValue(details.id);
+  if (!tab || !requestId) {
+    return;
+  }
+  upsertBrowserRequestRecord(tab, requestId, {
+    requestHeaders: browserHeaderRecord(details.requestHeaders),
+  });
+}
+
+function trackBrowserRequestCompletion(details: {
+  id: unknown;
+  webContentsId?: number;
+  url?: string;
+  method?: string;
+  resourceType?: string;
+  referrer?: string;
+  timestamp?: number;
+  fromCache?: boolean;
+  statusCode?: number;
+  statusLine?: string;
+  error?: string;
+  responseHeaders?: unknown;
+}): void {
+  if (typeof details.webContentsId !== "number") {
+    return;
+  }
+  const tab = browserTabForWebContentsId(details.webContentsId);
+  const requestId = browserRequestIdValue(details.id);
+  if (!tab || !requestId) {
+    return;
+  }
+  const existing = upsertBrowserRequestRecord(tab, requestId, {
+    url: typeof details.url === "string" ? details.url : "",
+    method: typeof details.method === "string" ? details.method : "",
+    resourceType:
+      typeof details.resourceType === "string" ? details.resourceType : "other",
+    referrer: typeof details.referrer === "string" ? details.referrer : "",
+    completedAt: browserIsoFromNetworkTimestamp(details.timestamp),
+    fromCache: details.fromCache === true,
+    statusCode:
+      typeof details.statusCode === "number" && Number.isFinite(details.statusCode)
+        ? details.statusCode
+        : null,
+    statusLine: typeof details.statusLine === "string" ? details.statusLine : "",
+    error: typeof details.error === "string" ? details.error : "",
+    responseHeaders: browserHeaderRecord(details.responseHeaders),
+  });
+  if (existing.completedAt) {
+    const startedAtMs = Date.parse(existing.startedAt);
+    const completedAtMs = Date.parse(existing.completedAt);
+    if (Number.isFinite(startedAtMs) && Number.isFinite(completedAtMs)) {
+      existing.durationMs = Math.max(0, completedAtMs - startedAtMs);
+    }
+  }
+  existing.responseBody = browserResponseBodyMetadata(existing.responseHeaders);
+  tab.requests.set(requestId, existing);
+  if ((existing.statusCode ?? 0) >= 400) {
+    appendBrowserObservedError(tab, {
+      id: `network-${requestId}-${existing.completedAt ?? existing.startedAt}`,
+      source: "network",
+      kind: "http_error",
+      level: "error",
+      message:
+        existing.statusLine || `HTTP ${existing.statusCode ?? "error"} ${existing.url}`,
+      timestamp: existing.completedAt ?? new Date().toISOString(),
+      url: existing.url,
+      requestId,
+      statusCode: existing.statusCode ?? undefined,
+      resourceType: existing.resourceType,
+    });
+  }
+}
+
+function trackBrowserRequestFailure(details: {
+  id: unknown;
+  webContentsId?: number;
+  url?: string;
+  method?: string;
+  resourceType?: string;
+  referrer?: string;
+  timestamp?: number;
+  fromCache?: boolean;
+  error?: string;
+}): void {
+  if (typeof details.webContentsId !== "number") {
+    return;
+  }
+  const tab = browserTabForWebContentsId(details.webContentsId);
+  const requestId = browserRequestIdValue(details.id);
+  if (!tab || !requestId) {
+    return;
+  }
+  const existing = upsertBrowserRequestRecord(tab, requestId, {
+    url: typeof details.url === "string" ? details.url : "",
+    method: typeof details.method === "string" ? details.method : "",
+    resourceType:
+      typeof details.resourceType === "string" ? details.resourceType : "other",
+    referrer: typeof details.referrer === "string" ? details.referrer : "",
+    completedAt: browserIsoFromNetworkTimestamp(details.timestamp),
+    fromCache: details.fromCache === true,
+    error: typeof details.error === "string" ? details.error : "Request failed",
+  });
+  if (existing.completedAt) {
+    const startedAtMs = Date.parse(existing.startedAt);
+    const completedAtMs = Date.parse(existing.completedAt);
+    if (Number.isFinite(startedAtMs) && Number.isFinite(completedAtMs)) {
+      existing.durationMs = Math.max(0, completedAtMs - startedAtMs);
+    }
+  }
+  tab.requests.set(requestId, existing);
+  appendBrowserObservedError(tab, {
+    id: `network-${requestId}-${existing.completedAt ?? existing.startedAt}`,
+    source: "network",
+    kind: "request_error",
+    level: "error",
+    message: existing.error || `Request failed for ${existing.url}`,
+    timestamp: existing.completedAt ?? new Date().toISOString(),
+    url: existing.url,
+    requestId,
+    resourceType: existing.resourceType,
+  });
+}
+
 function configureBrowserWorkspaceSession(
   session: Session,
 ): BrowserSessionIdentity {
@@ -5154,6 +5645,13 @@ function configureBrowserWorkspaceSession(
   session.setUserAgent(
     browserIdentity.userAgent,
     browserIdentity.acceptLanguages,
+  );
+  session.webRequest.onBeforeRequest(
+    { urls: ["http://*/*", "https://*/*"] },
+    (details, callback) => {
+      trackBrowserRequestStart(details);
+      callback({});
+    },
   );
   session.webRequest.onBeforeSendHeaders(
     { urls: ["http://*/*", "https://*/*"] },
@@ -5166,7 +5664,23 @@ function configureBrowserWorkspaceSession(
         "Accept-Language",
         browserIdentity.acceptLanguages,
       );
+      trackBrowserRequestHeaders({
+        ...details,
+        requestHeaders,
+      });
       callback({ requestHeaders });
+    },
+  );
+  session.webRequest.onCompleted(
+    { urls: ["http://*/*", "https://*/*"] },
+    (details) => {
+      trackBrowserRequestCompletion(details);
+    },
+  );
+  session.webRequest.onErrorOccurred(
+    { urls: ["http://*/*", "https://*/*"] },
+    (details) => {
+      trackBrowserRequestFailure(details);
     },
   );
   return browserIdentity;
@@ -7145,6 +7659,228 @@ async function handleDesktopBrowserServiceRequest(
       return;
     }
 
+    if (method === "GET" && pathname === "/api/v1/browser/downloads") {
+      const workspace = await ensureTargetBrowserSpace("downloads");
+      if (!workspace) {
+        return;
+      }
+      writeBrowserServiceJson(response, 200, {
+        downloads: workspace.downloads,
+      });
+      return;
+    }
+
+    if (method === "GET" && pathname === "/api/v1/browser/console") {
+      if (!(await ensureTargetBrowserSpace("console"))) {
+        return;
+      }
+      const activeTab = getActiveBrowserTab(
+        targetWorkspaceId,
+        targetSpace,
+        ensuredSessionId,
+        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
+      );
+      if (!activeTab) {
+        writeBrowserServiceJson(response, 409, {
+          error: "No active browser tab is available.",
+        });
+        return;
+      }
+      const requestedLevel = requestUrl.searchParams.get("level")?.trim() || "";
+      const minimumLevel =
+        requestedLevel === "debug" ||
+        requestedLevel === "info" ||
+        requestedLevel === "warning" ||
+        requestedLevel === "error"
+          ? requestedLevel
+          : null;
+      const filtered = [...activeTab.consoleEntries].filter((entry) =>
+        minimumLevel
+          ? browserConsoleLevelRank(entry.level) >=
+            browserConsoleLevelRank(minimumLevel)
+          : true,
+      );
+      const limit = browserObservabilityLimit(
+        requestUrl.searchParams.get("limit"),
+      );
+      const entries = filtered.slice(-limit).reverse();
+      writeBrowserServiceJson(response, 200, {
+        entries,
+        total: filtered.length,
+        truncated: filtered.length > entries.length,
+      });
+      return;
+    }
+
+    if (method === "GET" && pathname === "/api/v1/browser/errors") {
+      if (!(await ensureTargetBrowserSpace("errors"))) {
+        return;
+      }
+      const activeTab = getActiveBrowserTab(
+        targetWorkspaceId,
+        targetSpace,
+        ensuredSessionId,
+        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
+      );
+      if (!activeTab) {
+        writeBrowserServiceJson(response, 409, {
+          error: "No active browser tab is available.",
+        });
+        return;
+      }
+      const requestedSource = browserObservedErrorSource(
+        requestUrl.searchParams.get("source")?.trim() || null,
+      );
+      const filtered = [...activeTab.errorEntries].filter((entry) =>
+        requestedSource ? entry.source === requestedSource : true,
+      );
+      const limit = browserObservabilityLimit(
+        requestUrl.searchParams.get("limit"),
+      );
+      const errors = filtered.slice(-limit).reverse();
+      writeBrowserServiceJson(response, 200, {
+        errors,
+        total: filtered.length,
+        truncated: filtered.length > errors.length,
+      });
+      return;
+    }
+
+    if (method === "GET" && pathname === "/api/v1/browser/requests") {
+      if (!(await ensureTargetBrowserSpace("requests"))) {
+        return;
+      }
+      const activeTab = getActiveBrowserTab(
+        targetWorkspaceId,
+        targetSpace,
+        ensuredSessionId,
+        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
+      );
+      if (!activeTab) {
+        writeBrowserServiceJson(response, 409, {
+          error: "No active browser tab is available.",
+        });
+        return;
+      }
+      const requestedResourceType =
+        requestUrl.searchParams.get("resource_type")?.trim().toLowerCase() || "";
+      const failuresOnly = requestUrl.searchParams.get("failures_only") === "true";
+      const filtered = [...activeTab.requestOrder]
+        .map((requestId) => activeTab.requests.get(requestId) ?? null)
+        .filter((request): request is BrowserRequestRecord => Boolean(request))
+        .filter((request) =>
+          requestedResourceType
+            ? request.resourceType.toLowerCase() === requestedResourceType
+            : true,
+        )
+        .filter((request) => (failuresOnly ? browserRequestFailure(request) : true));
+      const limit = browserObservabilityLimit(
+        requestUrl.searchParams.get("limit"),
+      );
+      const requests = filtered.slice(-limit).reverse().map((request) =>
+        browserRequestSummary(request),
+      );
+      writeBrowserServiceJson(response, 200, {
+        requests,
+        total: filtered.length,
+        truncated: filtered.length > requests.length,
+      });
+      return;
+    }
+
+    if (
+      method === "GET" &&
+      pathname.startsWith("/api/v1/browser/requests/")
+    ) {
+      if (!(await ensureTargetBrowserSpace("request"))) {
+        return;
+      }
+      const activeTab = getActiveBrowserTab(
+        targetWorkspaceId,
+        targetSpace,
+        ensuredSessionId,
+        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
+      );
+      if (!activeTab) {
+        writeBrowserServiceJson(response, 409, {
+          error: "No active browser tab is available.",
+        });
+        return;
+      }
+      const requestId = decodeURIComponent(
+        pathname.slice("/api/v1/browser/requests/".length),
+      ).trim();
+      if (!requestId) {
+        writeBrowserServiceJson(response, 400, {
+          error: "Request id is required.",
+        });
+        return;
+      }
+      const requestRecord = activeTab.requests.get(requestId) ?? null;
+      if (!requestRecord) {
+        writeBrowserServiceJson(response, 404, {
+          error: "Browser request not found for the active tab.",
+        });
+        return;
+      }
+      writeBrowserServiceJson(response, 200, {
+        request: requestRecord,
+      });
+      return;
+    }
+
+    if (method === "GET" && pathname === "/api/v1/browser/cookies") {
+      const workspace = await ensureTargetBrowserSpace("cookies:get");
+      if (!workspace) {
+        return;
+      }
+      const useVisibleAgentSession = targetSpace === "agent" && !requestedSessionId;
+      const activeTab = getActiveBrowserTab(
+        targetWorkspaceId,
+        targetSpace,
+        ensuredSessionId,
+        { useVisibleAgentSession },
+      );
+      const requestedUrl = requestUrl.searchParams.get("url")?.trim() || "";
+      const requestedName = requestUrl.searchParams.get("name")?.trim() || "";
+      const requestedDomain =
+        requestUrl.searchParams.get("domain")?.trim() || "";
+      try {
+        const cookies = await workspace.session.cookies.get({
+          ...(requestedUrl || activeTab?.view.webContents.getURL()
+            ? { url: requestedUrl || activeTab?.view.webContents.getURL() || "" }
+            : {}),
+          ...(requestedName ? { name: requestedName } : {}),
+          ...(requestedDomain ? { domain: requestedDomain } : {}),
+        });
+        writeBrowserServiceJson(response, 200, {
+          cookies: cookies.map((cookie) => ({
+            name: cookie.name || "",
+            value: cookie.value || "",
+            domain: cookie.domain || "",
+            path: cookie.path || "/",
+            secure: Boolean(cookie.secure),
+            httpOnly: Boolean(cookie.httpOnly),
+            session: Boolean(cookie.session),
+            sameSite: cookie.sameSite || "unspecified",
+            expirationDate:
+              typeof cookie.expirationDate === "number" &&
+              Number.isFinite(cookie.expirationDate)
+                ? cookie.expirationDate
+                : null,
+          })),
+        });
+      } catch (error) {
+        writeBrowserServiceJson(response, 400, {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to read browser cookies.",
+        });
+      }
+      return;
+    }
+
     if (method === "GET" && pathname === "/api/v1/browser/page") {
       const workspace = await ensureTargetBrowserSpace("page");
       if (!workspace) {
@@ -7203,6 +7939,173 @@ async function handleDesktopBrowserServiceRequest(
         ensuredSessionId,
       );
       writeBrowserServiceJson(response, 200, snapshot);
+      return;
+    }
+
+    if (method === "POST" && pathname === "/api/v1/browser/tabs/select") {
+      const payload = await readBrowserServiceJsonBody(request);
+      const tabId =
+        typeof payload.tab_id === "string" && payload.tab_id.trim()
+          ? payload.tab_id.trim()
+          : typeof payload.tabId === "string" && payload.tabId.trim()
+            ? payload.tabId.trim()
+            : "";
+      if (!tabId) {
+        writeBrowserServiceJson(response, 400, {
+          error: "Field 'tab_id' is required.",
+        });
+        return;
+      }
+      const workspace = await ensureTargetBrowserSpace("tabs:select");
+      if (!workspace) {
+        return;
+      }
+      const snapshot = await setActiveBrowserTab(tabId, {
+        workspaceId: workspace.workspaceId,
+        space: targetSpace,
+        sessionId: ensuredSessionId,
+        useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId,
+      });
+      writeBrowserServiceJson(response, 200, snapshot);
+      return;
+    }
+
+    if (method === "POST" && pathname === "/api/v1/browser/tabs/close") {
+      const payload = await readBrowserServiceJsonBody(request);
+      const tabId =
+        typeof payload.tab_id === "string" && payload.tab_id.trim()
+          ? payload.tab_id.trim()
+          : typeof payload.tabId === "string" && payload.tabId.trim()
+            ? payload.tabId.trim()
+            : "";
+      if (!tabId) {
+        writeBrowserServiceJson(response, 400, {
+          error: "Field 'tab_id' is required.",
+        });
+        return;
+      }
+      const workspace = await ensureTargetBrowserSpace("tabs:close");
+      if (!workspace) {
+        return;
+      }
+      const snapshot = await closeBrowserTab(tabId, {
+        workspaceId: workspace.workspaceId,
+        space: targetSpace,
+        sessionId: ensuredSessionId,
+        useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId,
+      });
+      writeBrowserServiceJson(response, 200, snapshot);
+      return;
+    }
+
+    if (method === "POST" && pathname === "/api/v1/browser/cookies") {
+      const payload = await readBrowserServiceJsonBody(request);
+      const workspace = await ensureTargetBrowserSpace("cookies:set");
+      if (!workspace) {
+        return;
+      }
+      const useVisibleAgentSession = targetSpace === "agent" && !requestedSessionId;
+      const activeTab = getActiveBrowserTab(
+        targetWorkspaceId,
+        targetSpace,
+        ensuredSessionId,
+        { useVisibleAgentSession },
+      );
+      const activeTabUrl = activeTab?.view.webContents.getURL()?.trim() || "";
+      const targetUrl =
+        (typeof payload.url === "string" && payload.url.trim()
+          ? payload.url.trim()
+          : activeTabUrl) || "";
+      const cookieName =
+        typeof payload.name === "string" && payload.name.trim()
+          ? payload.name.trim()
+          : "";
+      if (!targetUrl) {
+        writeBrowserServiceJson(response, 400, {
+          error: "Field 'url' is required when there is no active browser page.",
+        });
+        return;
+      }
+      if (!cookieName) {
+        writeBrowserServiceJson(response, 400, {
+          error: "Field 'name' is required.",
+        });
+        return;
+      }
+      try {
+        const expirationDate =
+          typeof payload.expiration_date === "number" &&
+          Number.isFinite(payload.expiration_date)
+            ? payload.expiration_date
+            : typeof payload.expirationDate === "number" &&
+                Number.isFinite(payload.expirationDate)
+              ? payload.expirationDate
+              : undefined;
+        await workspace.session.cookies.set({
+          url: targetUrl,
+          name: cookieName,
+          value: typeof payload.value === "string" ? payload.value : "",
+          ...(typeof payload.domain === "string" && payload.domain.trim()
+            ? { domain: payload.domain.trim() }
+            : {}),
+          ...(typeof payload.path === "string" && payload.path.trim()
+            ? { path: payload.path.trim() }
+            : {}),
+          ...(typeof payload.secure === "boolean"
+            ? { secure: payload.secure }
+            : {}),
+          ...(typeof payload.http_only === "boolean"
+            ? { httpOnly: payload.http_only }
+            : typeof payload.httpOnly === "boolean"
+              ? { httpOnly: payload.httpOnly }
+              : {}),
+          ...(payload.same_site === "unspecified" ||
+          payload.same_site === "no_restriction" ||
+          payload.same_site === "lax" ||
+          payload.same_site === "strict"
+            ? { sameSite: payload.same_site }
+            : payload.sameSite === "unspecified" ||
+                payload.sameSite === "no_restriction" ||
+                payload.sameSite === "lax" ||
+                payload.sameSite === "strict"
+              ? { sameSite: payload.sameSite }
+              : {}),
+          ...(typeof expirationDate === "number" ? { expirationDate } : {}),
+        });
+        await workspace.session.cookies.flushStore();
+        const cookies = await workspace.session.cookies.get({
+          url: targetUrl,
+          name: cookieName,
+        });
+        const cookie = cookies[0] ?? null;
+        writeBrowserServiceJson(response, 200, {
+          ok: true,
+          cookie: cookie
+            ? {
+                name: cookie.name || "",
+                value: cookie.value || "",
+                domain: cookie.domain || "",
+                path: cookie.path || "/",
+                secure: Boolean(cookie.secure),
+                httpOnly: Boolean(cookie.httpOnly),
+                session: Boolean(cookie.session),
+                sameSite: cookie.sameSite || "unspecified",
+                expirationDate:
+                  typeof cookie.expirationDate === "number" &&
+                  Number.isFinite(cookie.expirationDate)
+                    ? cookie.expirationDate
+                    : null,
+              }
+            : null,
+        });
+      } catch (error) {
+        writeBrowserServiceJson(response, 400, {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to set browser cookie.",
+        });
+      }
       return;
     }
 
@@ -21267,6 +22170,10 @@ function createBrowserTab(
     popupFrameName: options.popupFrameName?.trim() || undefined,
     popupOpenedAtMs:
       typeof options.popupOpenedAtMs === "number" ? options.popupOpenedAtMs : undefined,
+    consoleEntries: [],
+    errorEntries: [],
+    requests: new Map<string, BrowserRequestRecord>(),
+    requestOrder: [],
   });
 
   view.setBounds(browserBounds);
@@ -21338,6 +22245,45 @@ function createBrowserTab(
       browserSpace,
       normalizedSessionId,
     )?.tabs.get(tabId);
+
+  view.webContents.on("console-message", ({ level, message, lineNumber, sourceId, frame }) => {
+    const currentTab = currentTabRecord();
+    if (!currentTab) {
+      return;
+    }
+    const consoleLevel = browserConsoleLevelValue(level);
+    const entry: BrowserConsoleEntry = {
+      id: randomUUID(),
+      level: consoleLevel,
+      message: typeof message === "string" ? message : String(message ?? ""),
+      sourceId: typeof sourceId === "string" ? sourceId : "",
+      lineNumber:
+        typeof lineNumber === "number" && Number.isFinite(lineNumber)
+          ? Math.floor(lineNumber)
+          : null,
+      timestamp: new Date().toISOString(),
+      frameUrl:
+        frame && typeof frame.url === "string" ? frame.url : "",
+    };
+    appendBoundedEntry(
+      currentTab.consoleEntries,
+      entry,
+      BROWSER_OBSERVABILITY_ENTRY_LIMIT,
+    );
+    if (consoleLevel === "warning" || consoleLevel === "error") {
+      appendBrowserObservedError(currentTab, {
+        id: `runtime-console-${entry.id}`,
+        source: "runtime",
+        kind: "console_message",
+        level: consoleLevel,
+        message: entry.message,
+        timestamp: entry.timestamp,
+        url: currentBrowserTabUrl(currentTab),
+        ...(entry.lineNumber !== null ? { lineNumber: entry.lineNumber } : {}),
+        ...(entry.sourceId ? { sourceId: entry.sourceId } : {}),
+      });
+    }
+  });
 
   view.webContents.on("before-input-event", (event, input) => {
     if (isProgrammaticBrowserInput(view.webContents)) {
@@ -21466,10 +22412,52 @@ function createBrowserTab(
         error: `${errorDescription} (${errorCode})`,
         url: validatedURL || currentTab.state.url,
       };
+      appendBrowserObservedError(currentTab, {
+        id: `page-load-${randomUUID()}`,
+        source: "page",
+        kind: "load_failed",
+        level: "error",
+        message: errorDescription || "Page load failed.",
+        timestamp: new Date().toISOString(),
+        url: validatedURL || currentTab.state.url || currentBrowserTabUrl(currentTab),
+        errorCode,
+      });
       emitBrowserState(workspaceId, browserSpace);
       void persistBrowserWorkspace(workspaceId);
     },
   );
+
+  view.webContents.on("render-process-gone", (_event, details) => {
+    const currentTab = currentTabRecord();
+    if (!currentTab) {
+      return;
+    }
+    const reason = typeof details.reason === "string" ? details.reason : "gone";
+    const exitCode =
+      typeof details.exitCode === "number" && Number.isFinite(details.exitCode)
+        ? details.exitCode
+        : null;
+    const message =
+      exitCode !== null
+        ? `Browser render process exited: ${reason} (${exitCode})`
+        : `Browser render process exited: ${reason}`;
+    currentTab.state = {
+      ...currentTab.state,
+      loading: false,
+      error: message,
+    };
+    appendBrowserObservedError(currentTab, {
+      id: `runtime-render-${randomUUID()}`,
+      source: "runtime",
+      kind: "render_process_gone",
+      level: "error",
+      message,
+      timestamp: new Date().toISOString(),
+      url: currentBrowserTabUrl(currentTab),
+    });
+    emitBrowserState(workspaceId, browserSpace);
+    void persistBrowserWorkspace(workspaceId);
+  });
 
   if (hasInitialUrl) {
     void view.webContents.loadURL(initialUrl).catch((error) => {
@@ -21931,26 +22919,35 @@ async function setActiveBrowserWorkspace(
 
 async function setActiveBrowserTab(
   tabId: string,
-  space?: BrowserSpaceId | null,
-  sessionId?: string | null,
+  options: {
+    workspaceId?: string | null;
+    space?: BrowserSpaceId | null;
+    sessionId?: string | null;
+    useVisibleAgentSession?: boolean;
+  } = {},
 ) {
-  const browserSpace = browserSpaceId(space);
+  const browserSpace = browserSpaceId(options.space);
   const normalizedSessionId =
+    browserSpace === "agent" ? browserSessionId(options.sessionId) : "";
+  const useVisibleAgentSession =
     browserSpace === "agent"
-      ? browserSessionId(sessionId) || browserSessionId(activeBrowserSessionId)
-      : "";
+      ? options.useVisibleAgentSession ?? !normalizedSessionId
+      : false;
   const workspace = await ensureBrowserWorkspace(
-    undefined,
+    options.workspaceId,
     browserSpace,
     normalizedSessionId,
   );
   const tabSpace = browserTabSpaceState(workspace, browserSpace, normalizedSessionId, {
-    useVisibleAgentSession: !normalizedSessionId,
+    useVisibleAgentSession,
   });
   if (!workspace || !tabSpace || !tabSpace.tabs.has(tabId)) {
-    return browserWorkspaceSnapshot(undefined, browserSpace, normalizedSessionId, {
-      useVisibleAgentSession: true,
-    });
+    return browserWorkspaceSnapshot(
+      workspace?.workspaceId ?? options.workspaceId,
+      browserSpace,
+      normalizedSessionId,
+      { useVisibleAgentSession },
+    );
   }
 
   tabSpace.activeTabId = tabId;
@@ -21958,6 +22955,11 @@ async function setActiveBrowserTab(
   if (browserSpace === "agent" && normalizedSessionId) {
     setVisibleAgentBrowserSession(workspace, normalizedSessionId);
     scheduleAgentSessionBrowserLifecycleCheck(workspace.workspaceId, normalizedSessionId);
+  } else if (browserSpace === "agent" && useVisibleAgentSession) {
+    const visibleSessionId = browserVisibleAgentSessionId(workspace);
+    if (visibleSessionId) {
+      scheduleAgentSessionBrowserLifecycleCheck(workspace.workspaceId, visibleSessionId);
+    }
   }
   if (
     workspace.workspaceId === activeBrowserWorkspaceId &&
@@ -21971,34 +22973,50 @@ async function setActiveBrowserTab(
     workspace.workspaceId,
     browserSpace,
     normalizedSessionId,
-    { useVisibleAgentSession: true },
+    { useVisibleAgentSession },
   );
 }
 
 async function closeBrowserTab(
   tabId: string,
-  space?: BrowserSpaceId | null,
-  sessionId?: string | null,
+  options: {
+    workspaceId?: string | null;
+    space?: BrowserSpaceId | null;
+    sessionId?: string | null;
+    useVisibleAgentSession?: boolean;
+  } = {},
 ) {
-  const browserSpace = browserSpaceId(space);
+  const browserSpace = browserSpaceId(options.space);
   const normalizedSessionId =
+    browserSpace === "agent" ? browserSessionId(options.sessionId) : "";
+  const useVisibleAgentSession =
     browserSpace === "agent"
-      ? browserSessionId(sessionId) || browserSessionId(activeBrowserSessionId)
-      : "";
+      ? options.useVisibleAgentSession ?? !normalizedSessionId
+      : false;
   const workspace = await ensureBrowserWorkspace(
-    undefined,
+    options.workspaceId,
     browserSpace,
     normalizedSessionId,
   );
   const tabSpace = browserTabSpaceState(workspace, browserSpace, normalizedSessionId, {
-    useVisibleAgentSession: !normalizedSessionId,
+    useVisibleAgentSession,
   });
   const tab = tabSpace?.tabs.get(tabId);
   if (!workspace || !tabSpace || !tab) {
-    return browserWorkspaceSnapshot(undefined, browserSpace, normalizedSessionId, {
-      useVisibleAgentSession: true,
-    });
+    return browserWorkspaceSnapshot(
+      workspace?.workspaceId ?? options.workspaceId,
+      browserSpace,
+      normalizedSessionId,
+      { useVisibleAgentSession },
+    );
   }
+  const resolvedSessionId =
+    browserSpace === "agent" &&
+    !normalizedSessionId &&
+    useVisibleAgentSession &&
+    workspace
+      ? browserVisibleAgentSessionId(workspace)
+      : normalizedSessionId;
 
   const tabIds = Array.from(tabSpace.tabs.keys());
   const closedIndex = tabIds.indexOf(tabId);
@@ -22010,7 +23028,7 @@ async function closeBrowserTab(
     const replacementTabId = createBrowserTab(workspace.workspaceId, {
       url: HOME_URL,
       browserSpace,
-      sessionId: normalizedSessionId,
+      sessionId: resolvedSessionId,
     });
     tabSpace.activeTabId = replacementTabId ?? "";
   } else if (tabSpace.activeTabId === tabId) {
@@ -22027,6 +23045,11 @@ async function closeBrowserTab(
   }
   if (browserSpace === "agent" && normalizedSessionId) {
     scheduleAgentSessionBrowserLifecycleCheck(workspace.workspaceId, normalizedSessionId);
+  } else if (browserSpace === "agent" && useVisibleAgentSession) {
+    const visibleSessionId = browserVisibleAgentSessionId(workspace);
+    if (visibleSessionId) {
+      scheduleAgentSessionBrowserLifecycleCheck(workspace.workspaceId, visibleSessionId);
+    }
   }
   emitBrowserState(workspace.workspaceId, browserSpace);
   await persistBrowserWorkspace(workspace.workspaceId);
@@ -22034,7 +23057,7 @@ async function closeBrowserTab(
     workspace.workspaceId,
     browserSpace,
     normalizedSessionId,
-    { useVisibleAgentSession: true },
+    { useVisibleAgentSession },
   );
 }
 
@@ -25270,8 +26293,11 @@ app.whenReady().then(async () => {
     );
     return setActiveBrowserTab(
       tabId,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+      {
+        space: activeBrowserSpaceId,
+        sessionId: activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+        useVisibleAgentSession: true,
+      },
     );
   });
   ipcMain.handle("browser:closeTab", async (_event, tabId: string) => {
@@ -25297,8 +26323,11 @@ app.whenReady().then(async () => {
     );
     return closeBrowserTab(
       tabId,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+      {
+        space: activeBrowserSpaceId,
+        sessionId: activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+        useVisibleAgentSession: true,
+      },
     );
   });
   ipcMain.handle("browser:getBookmarks", async () => {

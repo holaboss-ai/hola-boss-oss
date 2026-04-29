@@ -542,23 +542,110 @@ test("claimed input persists context-budget telemetry from replay clipping and c
   const terminalEvent = events.at(-1);
 
   assert.ok(turnResult);
-  assert.deepEqual(turnResult.contextBudgetDecisions, {
-    pressure_stage: "queue_checkpoint",
-    lane_decisions: [],
-    prompt_cache_stable_candidate: true,
-    tool_replay_trimmed: true,
-    retrieval_clipped: false,
-    checkpoint_queued: true,
-  });
+  assert.equal(turnResult.contextBudgetDecisions?.pressure_stage, "queue_checkpoint");
+  assert.deepEqual(turnResult.contextBudgetDecisions?.lane_decisions, []);
+  assert.equal(turnResult.contextBudgetDecisions?.prompt_cache_stable_candidate, true);
+  assert.equal(turnResult.contextBudgetDecisions?.tool_replay_trimmed, true);
+  assert.equal(turnResult.contextBudgetDecisions?.retrieval_clipped, false);
+  assert.equal(turnResult.contextBudgetDecisions?.checkpoint_queued, true);
   assert.equal(terminalEvent?.eventType, "run_completed");
-  assert.deepEqual(terminalEvent?.payload.context_budget_decisions, {
-    pressure_stage: "queue_checkpoint",
-    lane_decisions: [],
-    prompt_cache_stable_candidate: true,
-    tool_replay_trimmed: true,
-    retrieval_clipped: false,
-    checkpoint_queued: true,
+  assert.equal(terminalEvent?.payload.context_budget_decisions?.pressure_stage, "queue_checkpoint");
+  assert.deepEqual(terminalEvent?.payload.context_budget_decisions?.lane_decisions, []);
+  assert.equal(terminalEvent?.payload.context_budget_decisions?.prompt_cache_stable_candidate, true);
+  assert.equal(terminalEvent?.payload.context_budget_decisions?.tool_replay_trimmed, true);
+  assert.equal(terminalEvent?.payload.context_budget_decisions?.retrieval_clipped, false);
+  assert.equal(terminalEvent?.payload.context_budget_decisions?.checkpoint_queued, true);
+
+  store.close();
+});
+
+test("claimed input summarizes browser tool usage and browser telemetry", async () => {
+  const store = makeStore("hb-claimed-input-browser-telemetry-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
   });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "check browser flow" },
+  });
+  setNodeRunnerCommand([
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: {} }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'tool_call', payload: { phase: 'completed', tool_name: 'browser_get_state', tool_id: 'browser_get_state', call_id: 'call-browser-state', error: false, result: { content: [{ type: 'text', text: JSON.stringify({ ok: true, page: { url: 'https://example.com' }, state: { url: 'https://example.com', text: 'Visible text', elements: [{ index: 1 }], media: [] } }, null, 2) }], details: { tool_id: 'browser_get_state', browser_usage: { tool_id: 'browser_get_state', detail: 'compact', truncated: true, page_text_chars: 120 } } } } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 3, event_type: 'tool_call', payload: { phase: 'completed', tool_name: 'browser_wait', tool_id: 'browser_wait', call_id: 'call-browser-wait', error: false, result: { content: [{ type: 'text', text: JSON.stringify({ ok: true, wait: { matched: true } }, null, 2) }], details: { tool_id: 'browser_wait', browser_usage: { tool_id: 'browser_wait', condition: 'function' } } } } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 4, event_type: 'tool_call', payload: { phase: 'completed', tool_name: 'browser_type', tool_id: 'browser_type', call_id: 'call-browser-type', error: false, result: { content: [{ type: 'text', text: JSON.stringify({ ok: true, action: { ok: true }, page: { url: 'https://example.com/search' }, state: { url: 'https://example.com/search', elements: [{ index: 1 }], media: [] } }, null, 2) }], details: { tool_id: 'browser_type', browser_usage: { tool_id: 'browser_type', detail: 'compact', post_state: 'state', wait_condition: 'function', page_text_chars: 0 } } } } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 5, event_type: 'run_completed', payload: { status: 'ok' } }) + '\\n');`,
+  ]);
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+  });
+
+  const turnResult = store.getTurnResult({ inputId: queued.inputId });
+  assert.ok(turnResult);
+  assert.deepEqual(turnResult.toolUsageSummary, {
+    total_calls: 3,
+    completed_calls: 3,
+    failed_calls: 0,
+    tool_names: ["browser_get_state", "browser_type", "browser_wait"],
+    tool_ids: ["browser_get_state", "browser_type", "browser_wait"],
+    browser: {
+      total_calls: 3,
+      state_reads: 2,
+      compact_state_reads: 2,
+      standard_state_reads: 0,
+      truncated_state_reads: 1,
+      action_calls: 1,
+      wait_calls: 1,
+      find_calls: 0,
+      screenshot_calls: 0,
+      page_text_chars: 120,
+    },
+  });
+  assert.equal(
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_tool_calls,
+    3,
+  );
+  assert.equal(
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_state_reads,
+    2,
+  );
+  assert.equal(
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_compact_state_reads,
+    2,
+  );
+  assert.equal(
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_action_calls,
+    1,
+  );
+  assert.equal(
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_wait_calls,
+    1,
+  );
+  assert.equal(
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_truncated_state_reads,
+    1,
+  );
+  assert.equal(
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_page_text_chars,
+    120,
+  );
+  assert.ok(
+    Number(
+      (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_snapshot_bytes ?? 0,
+    ) > 0,
+  );
 
   store.close();
 });
@@ -921,19 +1008,33 @@ test("claimed input persists a paused turn when the run is aborted mid-execution
     events.map((event) => event.eventType),
     ["run_started", "run_completed"],
   );
-  assert.deepEqual(events[1]?.payload, {
-    status: "paused",
-    stop_reason: "paused",
-    message: "Run paused by user request",
-    context_budget_decisions: {
-      pressure_stage: "normal",
-      lane_decisions: [],
-      prompt_cache_stable_candidate: false,
-      tool_replay_trimmed: false,
-      retrieval_clipped: false,
-      checkpoint_queued: false,
-    },
-  });
+  assert.equal(events[1]?.payload.status, "paused");
+  assert.equal(events[1]?.payload.stop_reason, "paused");
+  assert.equal(events[1]?.payload.message, "Run paused by user request");
+  assert.equal(
+    events[1]?.payload.context_budget_decisions?.pressure_stage,
+    "normal",
+  );
+  assert.deepEqual(
+    events[1]?.payload.context_budget_decisions?.lane_decisions,
+    [],
+  );
+  assert.equal(
+    events[1]?.payload.context_budget_decisions?.prompt_cache_stable_candidate,
+    false,
+  );
+  assert.equal(
+    events[1]?.payload.context_budget_decisions?.tool_replay_trimmed,
+    false,
+  );
+  assert.equal(
+    events[1]?.payload.context_budget_decisions?.retrieval_clipped,
+    false,
+  );
+  assert.equal(
+    events[1]?.payload.context_budget_decisions?.checkpoint_queued,
+    false,
+  );
   assert.ok(turnResult);
   assert.equal(turnResult.status, "paused");
   assert.equal(turnResult.stopReason, "paused");
@@ -2924,20 +3025,38 @@ test("claimed input relays tool, output, and terminal run events for backend-own
   assert.deepEqual(relayedEvents[2]?.payload, {
     delta: "Opened Bing.",
   });
-  assert.deepEqual(relayedEvents[3]?.payload, {
-    status: "ok",
-    usage: { input_tokens: 12, output_tokens: 34, total_tokens: 46 },
-    final_output_text: "Opened Bing.",
-    source: "runner",
-    context_budget_decisions: {
-      pressure_stage: "normal",
-      lane_decisions: [],
-      prompt_cache_stable_candidate: false,
-      tool_replay_trimmed: false,
-      retrieval_clipped: false,
-      checkpoint_queued: false,
-    },
+  assert.equal(relayedEvents[3]?.payload.status, "ok");
+  assert.deepEqual(relayedEvents[3]?.payload.usage, {
+    input_tokens: 12,
+    output_tokens: 34,
+    total_tokens: 46,
   });
+  assert.equal(relayedEvents[3]?.payload.final_output_text, "Opened Bing.");
+  assert.equal(relayedEvents[3]?.payload.source, "runner");
+  assert.equal(
+    relayedEvents[3]?.payload.context_budget_decisions?.pressure_stage,
+    "normal",
+  );
+  assert.deepEqual(
+    relayedEvents[3]?.payload.context_budget_decisions?.lane_decisions,
+    [],
+  );
+  assert.equal(
+    relayedEvents[3]?.payload.context_budget_decisions?.prompt_cache_stable_candidate,
+    false,
+  );
+  assert.equal(
+    relayedEvents[3]?.payload.context_budget_decisions?.tool_replay_trimmed,
+    false,
+  );
+  assert.equal(
+    relayedEvents[3]?.payload.context_budget_decisions?.retrieval_clipped,
+    false,
+  );
+  assert.equal(
+    relayedEvents[3]?.payload.context_budget_decisions?.checkpoint_queued,
+    false,
+  );
 
   store.close();
 });
@@ -3127,22 +3246,43 @@ test("claimed input relays skill invocations, coalesced output, and waiting-user
     source: "runner",
     terminal_event_type: "run_completed",
   });
-  assert.deepEqual(relayedEvents[6]?.payload, {
-    status: "waiting_user",
-    stop_reason: "waiting_user",
-    summary: "Deploy paused waiting for confirmation.",
-    usage: { input_tokens: 18, output_tokens: 7, total_tokens: 25 },
-    final_output_text: "Need approval.",
-    source: "runner",
-    context_budget_decisions: {
-      pressure_stage: "normal",
-      lane_decisions: [],
-      prompt_cache_stable_candidate: false,
-      tool_replay_trimmed: false,
-      retrieval_clipped: false,
-      checkpoint_queued: false,
-    },
+  assert.equal(relayedEvents[6]?.payload.status, "waiting_user");
+  assert.equal(relayedEvents[6]?.payload.stop_reason, "waiting_user");
+  assert.equal(
+    relayedEvents[6]?.payload.summary,
+    "Deploy paused waiting for confirmation.",
+  );
+  assert.deepEqual(relayedEvents[6]?.payload.usage, {
+    input_tokens: 18,
+    output_tokens: 7,
+    total_tokens: 25,
   });
+  assert.equal(relayedEvents[6]?.payload.final_output_text, "Need approval.");
+  assert.equal(relayedEvents[6]?.payload.source, "runner");
+  assert.equal(
+    relayedEvents[6]?.payload.context_budget_decisions?.pressure_stage,
+    "normal",
+  );
+  assert.deepEqual(
+    relayedEvents[6]?.payload.context_budget_decisions?.lane_decisions,
+    [],
+  );
+  assert.equal(
+    relayedEvents[6]?.payload.context_budget_decisions?.prompt_cache_stable_candidate,
+    false,
+  );
+  assert.equal(
+    relayedEvents[6]?.payload.context_budget_decisions?.tool_replay_trimmed,
+    false,
+  );
+  assert.equal(
+    relayedEvents[6]?.payload.context_budget_decisions?.retrieval_clipped,
+    false,
+  );
+  assert.equal(
+    relayedEvents[6]?.payload.context_budget_decisions?.checkpoint_queued,
+    false,
+  );
 
   store.close();
 });

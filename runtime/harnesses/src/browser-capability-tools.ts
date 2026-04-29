@@ -90,6 +90,85 @@ function browserLocatorProperties(): Record<string, unknown> {
   };
 }
 
+function browserWaitConditionValues(): string[] {
+  return [
+    "load",
+    "load_state",
+    "url",
+    "text",
+    "element",
+    "hidden",
+    "dom_change",
+    "dom_mutation",
+    "change",
+    "mutation",
+    "function",
+    "download_started",
+    "download_completed",
+  ];
+}
+
+function browserWaitShorthandValues(): string[] {
+  return [
+    "load",
+    "url",
+    "text",
+    "element",
+    "hidden",
+    "dom_change",
+    "dom_mutation",
+    "change",
+    "mutation",
+    "function",
+    "download_started",
+    "download_completed",
+    "interactive",
+    "domcontentloaded",
+    "complete",
+  ];
+}
+
+function browserWaitForParameters(description: string): Record<string, unknown> {
+  return {
+    anyOf: [
+      {
+        type: "string",
+        enum: browserWaitShorthandValues(),
+      },
+      {
+        type: "object",
+        properties: {
+          condition: literalStringUnion(
+            browserWaitConditionValues(),
+            "Browser condition to wait for.",
+          ),
+          load_state: literalStringUnion(
+            ["interactive", "domcontentloaded", "complete", "load"],
+            "Explicit page readiness target for load waits.",
+          ),
+          expression: {
+            type: "string",
+            description:
+              "JavaScript expression or function source to poll until it returns a truthy value when condition=function.",
+          },
+          url: {
+            type: "string",
+            description: "URL substring or regular expression body to wait for when condition=url.",
+          },
+          filename: {
+            type: "string",
+            description:
+              "Download filename substring or exact name to wait for when condition=download_started or download_completed.",
+          },
+          ...browserLocatorProperties(),
+        },
+        additionalProperties: false,
+      },
+    ],
+    description,
+  };
+}
+
 function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unknown> {
   switch (toolId) {
     case "browser_navigate":
@@ -136,6 +215,14 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
             description:
               "State mode to return. Use `state` by default, `text` for scoped visible text, `structured` for schema-like extraction state, and `visual` only when a screenshot is needed.",
           },
+          detail: {
+            anyOf: [
+              { type: "string", const: "compact" },
+              { type: "string", const: "standard" },
+            ],
+            description:
+              "Response detail level. `compact` is the default and returns a smaller actionable snapshot. Use `standard` when you need a broader page inventory.",
+          },
           scope: {
             anyOf: [
               { type: "string", const: "main" },
@@ -153,6 +240,17 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
             description:
               "Maximum combined element/media nodes to return. Returned indexes still reference the original page order for follow-up click/type tools.",
             minimum: 1,
+          },
+          since_revision: {
+            type: "string",
+            description:
+              "Prior revision returned by browser_get_state. Use together with changed_only=true to avoid a full snapshot when the page has not changed.",
+            minLength: 1,
+          },
+          changed_only: {
+            type: "boolean",
+            description:
+              "When true and since_revision matches the current page revision, return only revision metadata instead of a full snapshot.",
           },
           include_page_text: {
             type: "boolean",
@@ -190,7 +288,7 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
         type: "object",
         properties: {
           action: literalStringUnion(
-            ["click", "double_click", "hover", "focus", "fill", "type", "press", "select", "scroll_into_view"],
+            ["click", "double_click", "hover", "focus", "fill", "type", "press", "select", "check", "uncheck", "scroll_into_view"],
             "Browser action to perform.",
           ),
           ...browserLocatorProperties(),
@@ -210,8 +308,35 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
             type: "boolean",
             description: "Submit after fill/type, usually by pressing Enter or requestSubmit.",
           },
+          wait_for: browserWaitForParameters(
+            "Optional inline stabilization wait. Use a string shorthand like `interactive` or a full wait object for element, text, URL, DOM change, function, or download waits.",
+          ),
+          wait_timeout_ms: {
+            type: "integer",
+            description: "Maximum inline stabilization wait time in milliseconds.",
+            minimum: 100,
+            maximum: 30000,
+          },
+          post_state: literalStringUnion(
+            ["none", "page", "state"],
+            "Post-action follow-up to return. `page` is a cheap page summary, `state` returns a compact post-action snapshot, and `none` skips follow-up state.",
+          ),
         },
         required: ["action"],
+        additionalProperties: false,
+      };
+    case "browser_select_tab":
+    case "browser_close_tab":
+      return {
+        type: "object",
+        properties: {
+          tab_id: {
+            type: "string",
+            description: "Browser tab id returned by browser_list_tabs.",
+            minLength: 1,
+          },
+        },
+        required: ["tab_id"],
         additionalProperties: false,
       };
     case "browser_wait":
@@ -219,12 +344,26 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
         type: "object",
         properties: {
           condition: literalStringUnion(
-            ["load", "url", "text", "element", "hidden", "dom_change", "dom_mutation", "change", "mutation"],
+            browserWaitConditionValues(),
             "Browser condition to wait for.",
           ),
+          load_state: literalStringUnion(
+            ["interactive", "domcontentloaded", "complete", "load"],
+            "Explicit page readiness target for load waits. Use `interactive` or `domcontentloaded` after lightweight SPA transitions, or `complete`/`load` for full page load completion.",
+          ),
+          expression: {
+            type: "string",
+            description:
+              "JavaScript expression or function source to poll until it returns a truthy value when condition=function.",
+          },
           url: {
             type: "string",
             description: "URL substring or regular expression body to wait for when condition=url.",
+          },
+          filename: {
+            type: "string",
+            description:
+              "Download filename substring or exact name to wait for when condition=download_started or download_completed.",
           },
           ...browserLocatorProperties(),
           timeout_ms: {
@@ -288,6 +427,19 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
             description: "Interactive element index from browser_get_state.",
             minimum: 1,
           },
+          wait_for: browserWaitForParameters(
+            "Optional inline stabilization wait. Use a string shorthand like `interactive` or a full wait object for URL, text, element, DOM change, function, or download waits.",
+          ),
+          wait_timeout_ms: {
+            type: "integer",
+            description: "Maximum inline stabilization wait time in milliseconds.",
+            minimum: 100,
+            maximum: 30000,
+          },
+          post_state: literalStringUnion(
+            ["none", "page", "state"],
+            "Post-click follow-up to return. `page` is the default for browser_click.",
+          ),
         },
         required: ["index"],
         additionalProperties: false,
@@ -330,6 +482,19 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
             type: "boolean",
             description: "Submit after typing, typically by pressing Enter.",
           },
+          wait_for: browserWaitForParameters(
+            "Optional inline stabilization wait. Use this when typing triggers autosuggests, submit flows, downloads, or other page updates.",
+          ),
+          wait_timeout_ms: {
+            type: "integer",
+            description: "Maximum inline stabilization wait time in milliseconds.",
+            minimum: 100,
+            maximum: 30000,
+          },
+          post_state: literalStringUnion(
+            ["none", "page", "state"],
+            "Post-type follow-up to return. Leave `none` for the cheapest path when no follow-up read is needed.",
+          ),
         },
         required: ["index", "text"],
         additionalProperties: false,
@@ -382,9 +547,225 @@ function browserToolParameters(toolId: DesktopBrowserToolId): Record<string, unk
     case "browser_forward":
     case "browser_reload":
     case "browser_list_tabs":
+    case "browser_list_downloads":
       return {
         type: "object",
         properties: {},
+        additionalProperties: false,
+      };
+    case "browser_get_console":
+      return {
+        type: "object",
+        properties: {
+          limit: {
+            type: "integer",
+            description: "Maximum number of recent console entries to return.",
+            minimum: 1,
+            maximum: 100,
+          },
+          level: literalStringUnion(
+            ["debug", "info", "warning", "error"],
+            "Optional minimum console level to include.",
+          ),
+        },
+        additionalProperties: false,
+      };
+    case "browser_get_errors":
+      return {
+        type: "object",
+        properties: {
+          limit: {
+            type: "integer",
+            description: "Maximum number of recent browser failures to return.",
+            minimum: 1,
+            maximum: 100,
+          },
+          source: literalStringUnion(
+            ["page", "runtime", "network"],
+            "Restrict results to one browser failure source.",
+          ),
+        },
+        additionalProperties: false,
+      };
+    case "browser_list_requests":
+      return {
+        type: "object",
+        properties: {
+          limit: {
+            type: "integer",
+            description: "Maximum number of recent requests to return.",
+            minimum: 1,
+            maximum: 100,
+          },
+          resource_type: {
+            type: "string",
+            description:
+              "Optional resource type filter such as mainFrame, subFrame, script, image, xhr, fetch, media, font, or other.",
+            minLength: 1,
+          },
+          failures_only: {
+            type: "boolean",
+            description:
+              "When true, include only failed network requests or HTTP error responses.",
+          },
+        },
+        additionalProperties: false,
+      };
+    case "browser_get_request":
+      return {
+        type: "object",
+        properties: {
+          request_id: {
+            type: "string",
+            description: "Request id returned by browser_list_requests.",
+            minLength: 1,
+          },
+        },
+        required: ["request_id"],
+        additionalProperties: false,
+      };
+    case "browser_storage_get":
+      return {
+        type: "object",
+        properties: {
+          storage: literalStringUnion(
+            ["local", "session"],
+            "Browser storage namespace to read. Defaults to `local`.",
+          ),
+          key: {
+            type: "string",
+            description: "Single storage key to read.",
+            minLength: 1,
+          },
+          keys: {
+            type: "array",
+            description: "Explicit storage keys to read.",
+            items: { type: "string", minLength: 1 },
+            minItems: 1,
+            maxItems: 50,
+          },
+          prefix: {
+            type: "string",
+            description: "Only return storage entries whose keys start with this prefix.",
+            minLength: 1,
+          },
+          max_entries: {
+            type: "integer",
+            description: "Maximum number of storage entries to return.",
+            minimum: 1,
+            maximum: 100,
+          },
+        },
+        additionalProperties: false,
+      };
+    case "browser_storage_set":
+      return {
+        type: "object",
+        properties: {
+          storage: literalStringUnion(
+            ["local", "session"],
+            "Browser storage namespace to mutate. Defaults to `local`.",
+          ),
+          key: {
+            type: "string",
+            description: "Storage key to write or delete.",
+            minLength: 1,
+          },
+          value: {
+            type: "string",
+            description: "String value to store when delete is false.",
+          },
+          delete: {
+            type: "boolean",
+            description: "Remove the key instead of setting it.",
+          },
+        },
+        required: ["key"],
+        additionalProperties: false,
+      };
+    case "browser_cookies_get":
+      return {
+        type: "object",
+        properties: {
+          url: {
+            type: "string",
+            description:
+              "URL whose cookie jar should be read. Defaults to the active browser page URL when omitted.",
+            minLength: 1,
+          },
+          name: {
+            type: "string",
+            description: "Single cookie name to read.",
+            minLength: 1,
+          },
+          names: {
+            type: "array",
+            description: "Explicit cookie names to include.",
+            items: { type: "string", minLength: 1 },
+            minItems: 1,
+            maxItems: 50,
+          },
+          domain: {
+            type: "string",
+            description: "Restrict results to a specific cookie domain.",
+            minLength: 1,
+          },
+          max_results: {
+            type: "integer",
+            description: "Maximum cookies to return.",
+            minimum: 1,
+            maximum: 100,
+          },
+        },
+        additionalProperties: false,
+      };
+    case "browser_cookies_set":
+      return {
+        type: "object",
+        properties: {
+          url: {
+            type: "string",
+            description:
+              "URL to associate with the cookie. Defaults to the active browser page URL when omitted.",
+            minLength: 1,
+          },
+          name: {
+            type: "string",
+            description: "Cookie name.",
+            minLength: 1,
+          },
+          value: {
+            type: "string",
+            description: "Cookie value.",
+          },
+          domain: {
+            type: "string",
+            description: "Optional cookie domain.",
+            minLength: 1,
+          },
+          path: {
+            type: "string",
+            description: "Optional cookie path. Defaults to `/`.",
+            minLength: 1,
+          },
+          secure: {
+            type: "boolean",
+            description: "Mark the cookie as secure.",
+          },
+          http_only: {
+            type: "boolean",
+            description: "Mark the cookie as HTTP-only.",
+          },
+          same_site: literalStringUnion(
+            ["unspecified", "no_restriction", "lax", "strict"],
+            "Cookie SameSite policy.",
+          ),
+          expiration_date: {
+            type: "number",
+            description: "Cookie expiration date in seconds since the Unix epoch.",
+          },
+        },
+        required: ["name", "value"],
         additionalProperties: false,
       };
   }
