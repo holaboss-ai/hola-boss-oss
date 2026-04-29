@@ -28,6 +28,7 @@ import {
   SelectItem,
   SelectTrigger,
 } from "@/components/ui/select";
+import { AppIcon } from "@/components/marketplace/AppIcon";
 import { providerIcon } from "@/components/onboarding/constants";
 import {
   accountAvatarFallbackChar,
@@ -93,8 +94,6 @@ export function AppSurfacePane({
   const ready = app && "ready" in app ? app.ready : false;
   const error =
     app && "error" in app && typeof app.error === "string" ? app.error : null;
-  const brandIcon = providerIcon(appId, 22);
-  const iconFallback = label.slice(0, 2).toUpperCase();
 
   const routePath = useMemo(
     () => resolveAppSurfacePath({ path, resourceId, view }),
@@ -333,9 +332,7 @@ export function AppSurfacePane({
           destructive overflow trigger. */}
       <div className="shrink-0 border-b border-border px-3 py-2">
         <div className="flex items-center gap-2.5">
-          <span className="grid size-7 shrink-0 place-items-center rounded-md border border-border bg-muted text-[10px] font-semibold uppercase text-muted-foreground">
-            {brandIcon ?? iconFallback}
-          </span>
+          <AppIcon appId={appId} label={label} size="toolbar" />
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <span className="truncate text-xs font-semibold tracking-wide text-foreground">
               {label}
