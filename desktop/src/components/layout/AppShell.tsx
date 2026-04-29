@@ -4035,6 +4035,7 @@ function AppShellContent() {
     if (agentView.type === "app") {
       return (
         <AppSurfacePane
+          key={agentView.appId}
           appId={agentView.appId}
           app={
             activeAppId === agentView.appId
@@ -4139,6 +4140,7 @@ function AppShellContent() {
       return (
         <div className="h-full min-h-0 p-3">
           <AppSurfacePane
+            key={spaceDisplayView.appId}
             appId={spaceDisplayView.appId}
             app={
               activeAppId === spaceDisplayView.appId
