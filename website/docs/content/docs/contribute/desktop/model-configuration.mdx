@@ -5,7 +5,7 @@ description: How holaOS Desktop configures model providers and routing.
 
 ![Model Settings](/images/model-settings.png)
 
-holaOS ships with a default model setup. In most cases, you do not need to edit `runtime-config.json` by hand, because the desktop app already exposes the main configuration surfaces for provider connection, managed model catalogs, background tasks, recall embeddings, and image generation.
+holaOS ships with a default model setup. In most cases, you do not need to edit `runtime-config.json` by hand, because the desktop app already exposes the main configuration surfaces for provider connection, managed model catalogs, background tasks, recall embeddings, image generation, and web search.
 
 This page is the configuration reference for operators and builders. For the Electron IPC path, runtime model-catalog refresh flow, queued `thinking_value` handoff, and other execution internals, continue into [Desktop Internals](/build-on-holaos/desktop/internals) and [Runtime APIs](/build-on-holaos/runtime/apis).
 
@@ -37,7 +37,8 @@ holaOS already provides model configuration in the desktop app:
 - use the `Background tasks` panel to choose one connected provider and model for recall selection, finalization, and evolve tasks
 - use the `Recall embeddings` panel to leave vector-assisted recall on `Automatic` or choose an explicit embedding-capable provider and model
 - use the `Image generation` panel to choose an image-capable provider and model for runtime image generation
-- changes autosave to `runtime-config.json`, and the chat model picker uses the configured provider models
+- use the `Web search` panel to choose Holaboss Search or Exa and provide a search API key when needed
+- saved changes update `runtime-config.json`, and the chat model picker uses the configured provider models
 
 When the first direct provider is connected, the desktop seeds background tasks to that provider and its built-in default background model. holaOS-managed sessions can also inject managed background and embedding defaults through the runtime binding. For `ollama_direct`, the provider can be selected, but you must choose a model explicitly before background LLM tasks are enabled.
 
@@ -143,6 +144,12 @@ You can override that path with:
   - provider used for runtime image generation
 - `runtime.image_generation.model`
   - image model id used for runtime image generation
+- `web_search.provider`
+  - provider used by the native `web_search` runtime tool
+- `web_search.providers.<id>.base_url`
+  - search endpoint URL
+- `web_search.providers.<id>.api_key`
+  - optional search provider credential
 - `runtime.default_provider`
   - configured default provider for unprefixed model ids
 - `runtime.default_model`
@@ -189,6 +196,22 @@ The current shipped desktop does not provide built-in image-generation defaults 
 - `ollama_direct`
 - `minimax_direct`
 
+## Web search providers
+
+The native `web_search` tool reads a top-level `web_search` block from `runtime-config.json`. If that block is absent, the runtime keeps the legacy behavior and uses hosted Exa MCP without authentication.
+
+The desktop currently exposes:
+
+- `holaboss_search`
+  - default endpoint: the runtime binding's control-plane base URL plus `/api/v1/search/web`
+  - production fallback endpoint: `https://api.holaboss.ai/api/v1/search/web`
+  - API key is optional when the runtime has a signed-in Holaboss binding
+- `exa`
+  - default endpoint: `https://mcp.exa.ai/mcp`
+  - API key is optional for the hosted MCP path, but can be provided for your own Exa quota
+
+The runtime also accepts legacy config keys `webSearch` and `search`, but the desktop writes the canonical `web_search` key.
+
 ## Model string format
 
 Use provider-prefixed model ids when you want to be explicit:
@@ -217,6 +240,20 @@ The runtime also treats unprefixed `claude...` model ids as Anthropic models. If
     "recall_embeddings": {
       "provider": "openai_direct",
       "model": "text-embedding-3-small"
+    }
+  },
+  "web_search": {
+    "provider": "holaboss_search",
+    "providers": {
+      "holaboss_search": {
+        "kind": "holaboss_search",
+        "base_url": "https://api.holaboss.ai/api/v1/search/web"
+      },
+      "exa": {
+        "kind": "exa_hosted_mcp",
+        "base_url": "https://mcp.exa.ai/mcp",
+        "api_key": "exa-your-api-key"
+      }
     }
   },
   "providers": {
