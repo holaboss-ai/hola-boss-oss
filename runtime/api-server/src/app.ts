@@ -4271,11 +4271,17 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
   app.get("/api/v1/capabilities/runtime-tools/data-tables", async (request, reply) => {
     try {
+      const query = isRecord(request.query) ? request.query : null;
+      const includeSystem =
+        query && typeof query.include_system === "string"
+          ? query.include_system === "true" || query.include_system === "1"
+          : false;
       return runtimeAgentToolsService.listDataTables({
         workspaceId: requiredCapabilityWorkspaceId({
           headers: request.headers as Record<string, unknown>,
-          query: isRecord(request.query) ? request.query : null,
+          query,
         }),
+        includeSystem,
       });
     } catch (error) {
       if (error instanceof RuntimeAgentToolsServiceError) {

@@ -487,7 +487,17 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         additionalProperties: false,
       };
     case "list_data_tables":
-      return { type: "object", properties: {}, additionalProperties: false };
+      return {
+        type: "object",
+        properties: {
+          include_system: {
+            type: "boolean",
+            description:
+              "Include app-internal tables (publish queues, scheduler logs, api_usage, settings). Default false.",
+          },
+        },
+        additionalProperties: false,
+      };
     case "create_dashboard":
       return {
         type: "object",

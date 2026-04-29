@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ChevronsLeftRight,
+  ChevronsRightLeft,
   Eye,
   FileText,
   FileWarning,
   Loader2,
-  Maximize2,
-  Minimize2,
   RefreshCw,
   Save,
 } from "lucide-react";
@@ -585,14 +585,18 @@ export function InternalSurfacePane({
                               ? "Switch to compact width"
                               : "Switch to full width"
                           }
-                          className="text-muted-foreground hover:text-foreground"
+                          className={
+                            dashboardFullWidth
+                              ? "bg-muted text-foreground"
+                              : "text-muted-foreground hover:text-foreground"
+                          }
                         />
                       }
                     >
                       {dashboardFullWidth ? (
-                        <Minimize2 className="size-3.5" />
+                        <ChevronsRightLeft className="size-3.5" />
                       ) : (
-                        <Maximize2 className="size-3.5" />
+                        <ChevronsLeftRight className="size-3.5" />
                       )}
                     </TooltipTrigger>
                     <TooltipContent side="bottom">

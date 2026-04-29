@@ -406,8 +406,16 @@ function requestPlan(
         requestPath: `${terminalSessionPath(isRecord(toolParams) ? toolParams.terminal_id : undefined)}/close`,
         body: {},
       };
-    case "list_data_tables":
-      return { method: "GET", requestPath: RUNTIME_TOOLS_DATA_TABLES_PATH };
+    case "list_data_tables": {
+      const params = isRecord(toolParams) ? toolParams : {};
+      const include = params.include_system === true ? "true" : "";
+      return {
+        method: "GET",
+        requestPath: include
+          ? `${RUNTIME_TOOLS_DATA_TABLES_PATH}?include_system=true`
+          : RUNTIME_TOOLS_DATA_TABLES_PATH,
+      };
+    }
     case "create_dashboard": {
       const params = isRecord(toolParams) ? toolParams : {};
       return {

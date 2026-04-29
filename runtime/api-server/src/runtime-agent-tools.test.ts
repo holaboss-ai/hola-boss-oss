@@ -104,6 +104,37 @@ test("listDataTables introspects tables, columns, and row counts", () => {
   assert.deepEqual(colNames.slice(0, 4), ["id", "content", "status", "created_at"]);
 });
 
+test("listDataTables hides app-internal tables by default; includeSystem reveals them", () => {
+  seedTwitterPosts(harness.dataDbPath);
+  // Add the metrics-convention internal tables.
+  const db = new Database(harness.dataDbPath);
+  db.exec(`
+    CREATE TABLE twitter_jobs (id TEXT PRIMARY KEY);
+    CREATE TABLE twitter_metrics_runs (id INTEGER PRIMARY KEY, started_at TEXT);
+    CREATE TABLE twitter_api_usage (date TEXT PRIMARY KEY);
+    CREATE TABLE twitter_settings (key TEXT PRIMARY KEY, value TEXT);
+    CREATE TABLE twitter_post_metrics (post_id TEXT, captured_at TEXT, PRIMARY KEY (post_id, captured_at));
+  `);
+  db.close();
+
+  const filtered = harness.service.listDataTables({ workspaceId: harness.workspaceId });
+  const filteredNames = (filtered.tables as Array<{ name: string }>).map((t) => t.name);
+  assert.deepEqual(
+    filteredNames.sort(),
+    ["twitter_post_metrics", "twitter_posts"].sort(),
+    "default response hides queues/runs/usage/settings",
+  );
+  assert.equal(filtered.hidden_system_count, 4);
+
+  const all = harness.service.listDataTables({
+    workspaceId: harness.workspaceId,
+    includeSystem: true,
+  });
+  const allNames = (all.tables as Array<{ name: string }>).map((t) => t.name);
+  assert.equal(allNames.length, 6);
+  assert.equal(all.hidden_system_count, undefined);
+});
+
 test("createDashboard validates SQL and writes a YAML file", async () => {
   seedTwitterPosts(harness.dataDbPath);
   const result = await harness.service.createDashboard({

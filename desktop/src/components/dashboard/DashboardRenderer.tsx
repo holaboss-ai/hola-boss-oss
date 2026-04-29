@@ -104,11 +104,17 @@ function DashboardBody({
   }, [dashboard, workspaceId, refreshKey]);
 
   const groups = useMemo(() => groupPanels(dashboard.panels), [dashboard.panels]);
-  const widthClass = fullWidth ? "max-w-none" : "max-w-4xl";
+  // `max-w-none` resolves to a huge max-width so a CSS transition would
+  // animate over a literal-billion-px change. Use a concrete pixel width
+  // for full-width too — wide enough to count as "full" against any
+  // realistic pane size, narrow enough that the swap stays smooth.
+  const widthClass = fullWidth ? "max-w-[1600px]" : "max-w-4xl";
 
   return (
     <div className="h-full overflow-auto bg-background">
-      <div className={`mx-auto px-10 pt-10 pb-16 ${widthClass}`}>
+      <div
+        className={`mx-auto px-10 pt-10 pb-16 transition-[max-width] duration-200 ease-out ${widthClass}`}
+      >
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">
             {dashboard.title}

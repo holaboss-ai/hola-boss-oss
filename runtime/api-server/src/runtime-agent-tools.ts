@@ -137,6 +137,29 @@ export interface RuntimeAgentToolsInvokeSkillParams {
 
 export interface RuntimeAgentToolsListDataTablesParams {
   workspaceId: string;
+  /** When true, include tables that the convention treats as
+   *  app-internal (queues, scheduler logs, settings, api usage).
+   *  Default false — agents almost never need to compose dashboards
+   *  off these and their visibility just adds noise. */
+  includeSystem?: boolean;
+}
+
+// Suffixes that mark a table as app-internal under the cross-platform
+// metrics convention (see post-metrics-convention plan doc). Tables
+// matching these are hidden from list_data_tables by default so the
+// agent's "what can I query?" view stays focused on user-facing data.
+// Anything not on this list is treated as user data.
+const SYSTEM_TABLE_SUFFIXES = [
+  "_jobs", // publish queue
+  "_metrics_runs", // scheduler activity log
+  "_api_usage", // call counters
+  "_settings", // pause flags & app config
+  "_migrations", // future schema-version table
+];
+
+function isSystemTable(name: string): boolean {
+  const lowered = name.toLowerCase();
+  return SYSTEM_TABLE_SUFFIXES.some((suffix) => lowered.endsWith(suffix));
 }
 
 export type DashboardPanelInput =
@@ -1699,8 +1722,14 @@ export class RuntimeAgentToolsService {
         )
         .all() as Array<{ name: string }>;
 
+      const includeSystem = Boolean(params.includeSystem);
       const out: JsonObject[] = [];
+      let hiddenSystemCount = 0;
       for (const { name } of tables) {
+        if (!includeSystem && isSystemTable(name)) {
+          hiddenSystemCount += 1;
+          continue;
+        }
         const cols = db
           .prepare(`PRAGMA table_info("${name.replace(/"/g, '""')}")`)
           .all() as Array<{ name: string; type: string; notnull: number; pk: number }>;
@@ -1718,7 +1747,14 @@ export class RuntimeAgentToolsService {
           row_count: rowCountRow.c,
         });
       }
-      return { tables: out, count: out.length };
+      const result: JsonObject = { tables: out, count: out.length };
+      if (hiddenSystemCount > 0) {
+        result.hidden_system_count = hiddenSystemCount;
+        result.note =
+          `${hiddenSystemCount} app-internal table(s) hidden (queues, scheduler logs, api usage, settings). ` +
+          "Pass include_system=true if you genuinely need them — they aren't typically useful for user-facing dashboards.";
+      }
+      return result;
     } catch (error) {
       throw new RuntimeAgentToolsServiceError(
         500,

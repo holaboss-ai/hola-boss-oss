@@ -133,7 +133,7 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS = [
   {
     id: "list_data_tables",
     description:
-      "List the tables and columns in the workspace's shared SQLite (data.db) so you can compose SQL for `create_dashboard`. Each row reports a table's name, its columns with types, and approximate row count. Module apps write app-namespaced tables here (e.g. twitter_posts, linkedin_posts) — read across them freely; never write here yourself.",
+      "List the user-facing tables in the workspace's shared SQLite (data.db) so you can compose SQL for `create_dashboard`. Each row reports a table's name, its columns with types, and approximate row count. Module apps write app-namespaced tables (e.g. twitter_posts, linkedin_posts, twitter_post_metrics) — read across them freely; never write here yourself. App-internal tables (publish queues, scheduler logs, api usage counters, settings flags) are hidden by default — pass include_system=true if you actually need them, but they're rarely useful for dashboards.",
     policy: "inspect"
   },
   {
