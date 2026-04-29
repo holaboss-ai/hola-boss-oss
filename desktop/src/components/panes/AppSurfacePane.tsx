@@ -136,6 +136,10 @@ export function AppSurfacePane({
       // Resolve the expected provider for this app: prefer any existing
       // app-level binding (which encodes the integration_key authoritatively),
       // otherwise fall back to a static appId → provider mapping.
+      // Fallback when there's no app-level binding yet — used to render
+      // the "Connect <provider>" button on the app surface so users can
+      // bootstrap the binding from the app view itself. Keep in sync
+      // with the provider slugs the marketplace ships.
       const knownProviders: Record<string, string> = {
         gmail: "gmail",
         sheets: "googlesheets",
@@ -143,6 +147,12 @@ export function AppSurfacePane({
         reddit: "reddit",
         twitter: "twitter",
         linkedin: "linkedin",
+        calcom: "calcom",
+        attio: "attio",
+        hubspot: "hubspot",
+        apollo: "apollo",
+        instantly: "instantly",
+        zoominfo: "zoominfo",
       };
       const appBinding = bindingsResult.bindings.find(
         (b) => b.target_type === "app" && b.target_id === appId,
