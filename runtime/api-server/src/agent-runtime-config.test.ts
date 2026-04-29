@@ -767,7 +767,10 @@ test("projectAgentRuntimeConfig omits workspace and recent-runtime layers when n
       result.context_messages?.join("\n\n") ?? "",
       /Capability availability snapshot:/,
     );
-    assert.match(result.system_prompt, /This is a workspace session/i);
+    assert.match(
+      result.system_prompt,
+      /front-of-house coordinator with only a partial direct capability surface/i,
+    );
   } finally {
     delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
   }

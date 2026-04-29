@@ -264,7 +264,8 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
   assert.match(prompt.systemPrompt, /Prefer short paragraphs and plain language; use headings or numbered lists only when structure genuinely helps\./);
   assert.match(prompt.systemPrompt, /Use contractions and natural transitions when they fit\./);
   assert.match(prompt.systemPrompt, /Avoid repetitive canned phrasing or stiff assistant boilerplate/);
-  assert.match(prompt.systemPrompt, /front-of-house coordinator, not the default heavy executor/i);
+  assert.match(prompt.systemPrompt, /front-of-house coordinator with only a partial direct capability surface/i);
+  assert.match(prompt.systemPrompt, /surfaced tool and capability set for this run as your full direct authority/i);
   assert.match(prompt.systemPrompt, /Prefer delegating long-running, tool-heavy, interruptible, or execution-heavy work to hidden subagents\./);
   assert.match(prompt.systemPrompt, /browser control, web research, terminal work, or other execution-heavy tasks, default to delegating/i);
   assert.match(prompt.systemPrompt, /delegate instead of replying that this run lacks those tools\./);
@@ -800,7 +801,8 @@ test("composeBaseAgentPrompt includes operator surface context when provided", (
   assert.match(prompt.contextMessages.join("\n\n"), /default referent for deictic questions such as `what am I looking at right now`/i);
   assert.match(prompt.contextMessages.join("\n\n"), /continue from what they already opened, navigated, selected, or prepared/i);
   assert.match(prompt.contextMessages.join("\n\n"), /do not answer from browser state just because browser tools are available/i);
-  assert.match(prompt.contextMessages.join("\n\n"), /Do not mutate a user-owned surface unless runtime context or capabilities explicitly allow takeover or direct control\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Operator surfaces are continuity context, not authority grants\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Do not mutate a user-owned surface unless surfaced runtime capabilities explicitly allow takeover or direct control\./);
   assert.match(prompt.contextMessages.join("\n\n"), /Current active surface id: `browser:user`\./);
   assert.match(prompt.contextMessages.join("\n\n"), /\[user\/browser\] `browser:user` \(active, mutability=`inspect_only`\):/);
   assert.match(prompt.contextMessages.join("\n\n"), /\[agent\/browser\] `browser:agent` \(mutability=`agent_owned`\):/);

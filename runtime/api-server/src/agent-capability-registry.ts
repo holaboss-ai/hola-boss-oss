@@ -1313,6 +1313,9 @@ export function renderCapabilityToolRoutingPromptSection(
 export function renderCapabilityAvailabilityContextPromptSection(
   manifest: AgentCapabilityManifest,
 ): string {
+  const normalizedSessionKind = normalizeOptionalToken(
+    manifest.context.session_kind,
+  );
   const lines = [
     "Capability availability snapshot:",
     "Treat this as the currently surfaced capability set for this run. Availability may differ in later runs.",
@@ -1329,6 +1332,15 @@ export function renderCapabilityAvailabilityContextPromptSection(
     lines.push("Use surfaced MCP tools when relevant; tool names may be resolved dynamically by the runtime.");
   } else {
     lines.push("Connected MCP access: none.");
+  }
+  if (
+    (normalizedSessionKind === "workspace_session" ||
+      normalizedSessionKind === "main") &&
+    manifest.runtime_tools.some((capability) => capability.id === "holaboss_delegate_task")
+  ) {
+    lines.push(
+      "This front session is intentionally capability-incomplete. Treat the surfaced tools above as your full direct capability set for this run; if the request needs more and `holaboss_delegate_task` is available, delegate it.",
+    );
   }
   return lines.join("\n");
 }

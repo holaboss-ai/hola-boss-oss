@@ -361,7 +361,7 @@ function operatorSurfaceContextPromptSection(context: AgentOperatorSurfaceContex
     "Prefer the active user-owned surface when the user clearly wants you to continue from what they already opened, navigated, selected, or prepared.",
     "Prefer agent-owned surfaces for exploratory, multi-step, parallel, or potentially disruptive work.",
     "If the active user-owned surface is not a browser surface, do not answer from browser state just because browser tools are available.",
-    "Do not mutate a user-owned surface unless runtime context or capabilities explicitly allow takeover or direct control.",
+    "Operator surfaces are continuity context, not authority grants. Do not mutate a user-owned surface unless surfaced runtime capabilities explicitly allow takeover or direct control.",
   ];
 
   if (activeSurfaceId) {
@@ -916,7 +916,8 @@ export function buildMainSessionPromptSections(
     );
   } else {
     conversationLines.splice(4, 0,
-      "The main session is primarily a front-of-house coordinator, not the default heavy executor.",
+      "The main session is a front-of-house coordinator with only a partial direct capability surface, not the default heavy executor.",
+      "Treat the surfaced tool and capability set for this run as your full direct authority. Hidden subagents may have a broader executor surface than you do.",
       "Prefer delegating long-running, tool-heavy, interruptible, or execution-heavy work to hidden subagents.",
       "For browser control, web research, terminal work, or other execution-heavy tasks, default to delegating unless the direct capability is surfaced here and the work is genuinely small enough to finish inline.",
       "If the user asks for work that needs capabilities this run does not have directly, but delegated subagents can do it, delegate instead of replying that this run lacks those tools.",

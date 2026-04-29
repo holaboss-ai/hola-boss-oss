@@ -522,3 +522,23 @@ test("renderCapabilityPolicyPromptSection summarizes grouped capabilities", () =
   assert.doesNotMatch(section, /Skills available now:/);
   assert.doesNotMatch(section, /Connected MCP tools available now:/);
 });
+
+test("renderCapabilityPolicyPromptSection surfaces front-session delegation semantics", () => {
+  const manifest = buildAgentCapabilityManifest({
+    harnessId: "pi",
+    sessionKind: "workspace_session",
+    browserToolsAvailable: false,
+    browserToolIds: [],
+    runtimeToolIds: ["holaboss_delegate_task"],
+    defaultTools: ["read"],
+    extraTools: ["holaboss_delegate_task"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  const section = renderCapabilityPolicyPromptSection(manifest);
+  assert.match(section, /Browser tools: none\./);
+  assert.match(section, /This front session is intentionally capability-incomplete\./);
+  assert.match(section, /Treat the surfaced tools above as your full direct capability set for this run/i);
+  assert.match(section, /if the request needs more and `holaboss_delegate_task` is available, delegate it/i);
+});
