@@ -11075,7 +11075,7 @@ function Composer({
             </div>
           </div>
         ) : null}
-        <div className="px-5 pb-3 pt-4">
+        <div className="px-5 pb-2 pt-3">
           <textarea
             ref={textareaRef}
             value={input}
