@@ -12,6 +12,24 @@ function optionalString(value: unknown): string | null {
   return trimmed ? trimmed : null;
 }
 
+const MAX_BACKGROUND_OUTPUT_PROMPT_CHARS = 6_000;
+const HTML_LIKE_BACKGROUND_OUTPUT_PATTERN =
+  /<(?:!doctype|html|head|body|script|style|iframe|svg)\b/i;
+
+function sanitizeBackgroundOutputForPrompt(value: unknown): string | undefined {
+  const text = optionalString(value);
+  if (!text) {
+    return undefined;
+  }
+  if (HTML_LIKE_BACKGROUND_OUTPUT_PATTERN.test(text)) {
+    return undefined;
+  }
+  if (text.length <= MAX_BACKGROUND_OUTPUT_PROMPT_CHARS) {
+    return text;
+  }
+  return `${text.slice(0, MAX_BACKGROUND_OUTPUT_PROMPT_CHARS)}\n\n[truncated]`;
+}
+
 function sanitizedDeliverableMetadata(
   metadata: Record<string, unknown> | null,
 ): Record<string, unknown> | undefined {
@@ -99,6 +117,11 @@ function sanitizeBackgroundEventPayloadForPrompt(
     if (payload[key] !== undefined) {
       sanitized[key] = payload[key];
     }
+  }
+
+  const assistantText = sanitizeBackgroundOutputForPrompt(payload.assistant_text);
+  if (assistantText) {
+    sanitized.assistant_text = assistantText;
   }
 
   const forwardableDeliverables = sanitizeDeliverableArray(

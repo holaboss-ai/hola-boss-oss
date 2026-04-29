@@ -231,7 +231,10 @@ function sessionPolicyPromptSection(request: ComposeBaseAgentPromptRequest): str
       break;
     case "subagent":
       lines.push(
-        "This is a hidden subagent executor session. Stay tightly scoped to the delegated task, focus on execution and structured results, do not delegate further work, and do not act like a user-facing conversation."
+        "This is a hidden subagent executor session. Stay tightly scoped to the delegated task, focus on execution and structured results, do not delegate further work, and do not act like a user-facing conversation.",
+        "Treat the final child output as a handoff artifact for the main session. Make it self-contained enough that the main session can rely on it later without reopening this trace.",
+        "Do not rely on intermediate tool steps, hidden reasoning, or `see above` references for essential context.",
+        "When the task finds multiple items, options, or takeaways, include the actual items in the final output or deliverable instead of only a one-line lead summary."
       );
       break;
     case "workspace_session":

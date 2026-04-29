@@ -1,0 +1,67 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { queuedMainSessionEventPromptEntry } from "./main-session-event-prompt.js";
+
+test("queued main-session event prompt entry strips html-like child outputs", () => {
+  const entry = queuedMainSessionEventPromptEntry({
+    event_id: "event-1",
+    event_type: "completed",
+    delivery_bucket: "background_update",
+    status: "pending",
+    subagent_id: "subagent-1",
+    created_at: "2026-04-29T00:00:00.000Z",
+    payload: {
+      status: "completed",
+      summary: "Repo scan finished.",
+      assistant_text:
+        "<html><body><h1>Full report body</h1><p>This should stay out of the main-session prompt.</p></body></html>",
+    },
+  });
+
+  const payload = entry.payload as Record<string, unknown>;
+
+  assert.equal(payload.assistant_text, undefined);
+  assert.equal(payload.summary, "Repo scan finished.");
+});
+
+test("queued main-session event prompt entry forwards plain-text child outputs", () => {
+  const assistantText = [
+    "Here are the items I found:",
+    "1. OpenAI expands on AWS Bedrock.",
+    "2. AI regulation is still unsettled.",
+    "3. Government AI deployment keeps moving.",
+  ].join("\n");
+
+  const entry = queuedMainSessionEventPromptEntry({
+    event_id: "event-2",
+    event_type: "completed",
+    delivery_bucket: "background_update",
+    status: "pending",
+    subagent_id: "subagent-2",
+    created_at: "2026-04-29T00:00:00.000Z",
+    payload: {
+      status: "completed",
+      summary: "Hourly AI news run came in.",
+      assistant_text: assistantText,
+      forwardable_deliverables: [
+        {
+          output_id: "output-1",
+          type: "report",
+          title: "hourly-ai-news.md",
+        },
+      ],
+    },
+  });
+
+  const payload = entry.payload as Record<string, unknown>;
+
+  assert.equal(payload.assistant_text, assistantText);
+  assert.deepEqual(payload.forwardable_deliverables, [
+    {
+      output_id: "output-1",
+      type: "report",
+      title: "hourly-ai-news.md",
+    },
+  ]);
+});

@@ -269,6 +269,46 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
   assert.doesNotMatch(prompt.systemPrompt, /Use `write_report` for long, structured, evidence-heavy, or referenceable outputs/);
 });
 
+test("composeAgentPrompt requires subagent outputs to stay self-contained", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read", "edit", "bash"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    toolServerIdMap: {},
+  });
+
+  const prompt = composeAgentPrompt("You are concise.", {
+    defaultTools: ["read", "edit", "bash"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "subagent",
+    sessionMode: "code",
+    harnessId: "pi",
+    capabilityManifest,
+  });
+
+  assert.doesNotMatch(prompt.systemPrompt, /Assistant soul:/);
+  assert.match(prompt.systemPrompt, /This is a hidden subagent executor session\./);
+  assert.match(
+    prompt.systemPrompt,
+    /Treat the final child output as a handoff artifact for the main session\./,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Make it self-contained enough that the main session can rely on it later without reopening this trace\./,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Do not rely on intermediate tool steps, hidden reasoning, or `see above` references for essential context\./,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /When the task finds multiple items, options, or takeaways, include the actual items in the final output or deliverable instead of only a one-line lead summary\./,
+  );
+});
+
 test("composeAgentPrompt can inject a run-specific routing recovery override for polluted browser retries", () => {
   const capabilityManifest = buildAgentCapabilityManifest({
     defaultTools: ["read", "edit"],
