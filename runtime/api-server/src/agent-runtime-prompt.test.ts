@@ -222,6 +222,22 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
     capabilityManifest,
   });
 
+  assert.deepEqual(prompt.promptLayers.map((layer) => layer.id), [
+    "runtime_core",
+    "assistant_soul",
+    "execution_policy",
+    "response_delivery_policy",
+    "session_policy",
+    "capability_policy",
+    "capability_tool_routing",
+    "workspace_policy",
+  ]);
+  assert.ok(prompt.promptSections.some((section) => section.id === "assistant_soul"));
+  assert.ok(
+    prompt.promptCacheProfile.cacheable_section_ids.includes("assistant_soul"),
+  );
+  assert.match(prompt.systemPrompt, /Assistant soul:/);
+  assert.match(prompt.systemPrompt, /You are the user's assistant for this workspace\./);
   assert.match(prompt.systemPrompt, /Conversation and orchestration doctrine:/);
   assert.match(prompt.systemPrompt, /single front-of-house counterpart/);
   assert.match(prompt.systemPrompt, /thoughtful human collaborator/);

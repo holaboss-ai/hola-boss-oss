@@ -24041,7 +24041,7 @@ function shouldShowNativeDesktopNotification(): boolean {
   return Boolean(
     mainWindow &&
       !mainWindow.isDestroyed() &&
-      (mainWindow.isMinimized() || !mainWindow.isVisible()),
+      mainWindow.isMinimized(),
   );
 }
 

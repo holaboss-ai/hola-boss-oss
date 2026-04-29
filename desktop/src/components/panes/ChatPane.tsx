@@ -975,18 +975,6 @@ function assistantSegmentsIncludeOutput(segments: ChatAssistantSegment[]) {
   );
 }
 
-function assistantSegmentsPreviewText(segments: ChatAssistantSegment[]) {
-  return segments
-    .filter(
-      (segment): segment is Extract<ChatAssistantSegment, { kind: "output" }> =>
-        segment.kind === "output" && Boolean(segment.text.trim()),
-    )
-    .map((segment) => segment.text.trim())
-    .join("\n\n")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 function formatAttachmentSize(sizeBytes: number) {
   if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
     return "";
@@ -3170,9 +3158,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   const terminalEventTypeByInputIdRef = useRef<
     Map<string, "run_completed" | "run_failed">
   >(new Map());
-  const notifiedMainSessionCompletionInputIdsRef = useRef<Set<string>>(
-    new Set(),
-  );
   const activeAssistantMessageIdRef = useRef<string | null>(null);
   const lastSyncedAgentOperationFileKeyRef = useRef("");
   const pendingInputIdRef = useRef<string | null>(null);
@@ -4235,53 +4220,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     setMessages((prev) => [...prev, nextMessage]);
     resetLiveTurn();
     return true;
-  }
-
-  function maybeRememberMainSessionCompletionNotification(inputId: string) {
-    const normalizedInputId = inputId.trim();
-    if (!normalizedInputId) {
-      return false;
-    }
-    const seen = notifiedMainSessionCompletionInputIdsRef.current;
-    if (seen.has(normalizedInputId)) {
-      return false;
-    }
-    seen.add(normalizedInputId);
-    while (seen.size > 64) {
-      const oldestInputId = seen.values().next().value;
-      if (typeof oldestInputId !== "string") {
-        break;
-      }
-      seen.delete(oldestInputId);
-    }
-    return true;
-  }
-
-  function maybeShowMainSessionCompletionNotification(params: {
-    inputId: string;
-    sessionId: string;
-    previewText: string;
-  }) {
-    const normalizedInputId = params.inputId.trim();
-    const normalizedSessionId = params.sessionId.trim();
-    const previewText = params.previewText.trim() || "Your latest reply is ready.";
-    if (
-      !normalizedInputId ||
-      !normalizedSessionId ||
-      normalizedSessionId !== desktopMainSessionIdRef.current ||
-      !maybeRememberMainSessionCompletionNotification(normalizedInputId)
-    ) {
-      return;
-    }
-
-    const workspace = selectedWorkspaceRef.current;
-    const workspaceTitle = workspace?.name?.trim() || "Holaboss";
-    void window.electronAPI.ui.showNativeNotification({
-      title: `${workspaceTitle} — Reply ready`,
-      body: previewText,
-      workspaceId: workspace?.id ?? null,
-      sessionId: normalizedSessionId,
-    });
   }
 
   function scheduleConversationRefresh(
@@ -5658,13 +5596,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
             typeof eventPayload.status === "string"
               ? eventPayload.status.trim().toLowerCase()
               : "";
-          const completionPreviewText = assistantSegmentsPreviewText(
-            liveAssistantSegmentsForRender(
-              liveAssistantSegmentsRef.current,
-              liveExecutionItemsRef.current,
-              liveAssistantTextRef.current,
-            ),
-          );
           finalizeLiveTraceSteps(
             completedStatus === "paused" ? "waiting" : "completed",
           );
@@ -5682,13 +5613,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
             action: "applied_run_completed",
             detail: "run completed",
           });
-          if (completedStatus !== "paused") {
-            maybeShowMainSessionCompletionNotification({
-              inputId: eventInputId,
-              sessionId: eventSessionId,
-              previewText: completionPreviewText,
-            });
-          }
           scheduleConversationRefresh(eventSessionId, selectedWorkspaceId);
           void refreshWorkspaceData().catch(() => undefined);
         }
@@ -5775,26 +5699,12 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
             committedFailureMessage && shouldPersistFailureText ? "" : detail,
           );
         } else {
-          const completionPreviewText = assistantSegmentsPreviewText(
-            liveAssistantSegmentsForRender(
-              liveAssistantSegmentsRef.current,
-              liveExecutionItemsRef.current,
-              liveAssistantTextRef.current,
-            ),
-          );
           finalizeLiveTraceSteps(
             status === "WAITING_USER" || status === "PAUSED"
               ? "waiting"
               : "completed",
           );
           commitLiveAssistantMessage();
-          if (status !== "WAITING_USER" && status !== "PAUSED") {
-            maybeShowMainSessionCompletionNotification({
-              inputId: currentRuntimeInputId,
-              sessionId: normalizedCurrentSessionId,
-              previewText: completionPreviewText,
-            });
-          }
         }
         activeAssistantMessageIdRef.current = null;
         pendingInputIdRef.current = null;

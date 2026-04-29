@@ -265,7 +265,10 @@ test("app shell treats missing or stopped runtime states as startup blockers", a
 test("app shell polls runtime notifications and renders the toast stack", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /window\.electronAPI\.workspace\.listNotifications\(\s*null\s*\)/);
+  assert.match(
+    source,
+    /window\.electronAPI\.workspace\.listNotifications\(\s*null,\s*false,\s*\{\s*includeCronjobSource: true,\s*\}\s*\)/,
+  );
   assert.match(source, /<NotificationToastStack[\s\S]*leadingToast=\{/);
   assert.match(source, /const effectiveToastNotifications = useMemo\(/);
   assert.match(source, /<NotificationToastStack[\s\S]*notifications=\{effectiveToastNotifications\}/);
@@ -300,25 +303,27 @@ test("app shell opens cronjob session-run notifications in the sub-session chat"
   assert.match(source, /setChatFocusRequestKey\(\(current\) => current \+ 1\);/);
 });
 
-test("app shell maps system-notification cronjobs to native desktop alerts instead of toast inbox items", async () => {
+test("app shell routes runtime notifications by window state and workspace visibility", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(source, /function notificationDeliveryChannel\(/);
-  assert.match(source, /function notificationCreatedAtMs\(/);
-  assert.match(source, /const nativeCronjobNotificationsStartedAtRef = useRef\(Date\.now\(\)\);/);
-  assert.match(source, /const nativeCronjobNotificationAttemptedAtRef = useRef\(\s*new Map<string, number>\(\),\s*\);/);
+  assert.match(source, /function isSystemCronjobNotification\(/);
+  assert.match(source, /function shouldIncludeRuntimeNotificationInShell\(/);
+  assert.match(source, /function shouldShowNativeRuntimeNotification\(/);
+  assert.match(source, /function shouldDismissVisibleRuntimeNotification\(/);
+  assert.match(source, /function shouldToastVisibleRuntimeNotification\(/);
+  assert.match(source, /const nativeRuntimeNotificationAttemptedAtRef = useRef\(\s*new Map<string, number>\(\),\s*\);/);
   assert.match(source, /window\.electronAPI\.workspace\.listNotifications\(\s*null,\s*false,/);
+  assert.match(source, /window\.electronAPI\.ui\.getWindowState\(\)\.catch\(\(\) => null\)/);
   assert.match(source, /includeCronjobSource: true/);
-  assert.match(source, /sourceType: "cronjob"/);
-  assert.match(source, /notificationDeliveryChannel\(item\) === "system_notification"/);
-  assert.match(source, /const startupAtMs = nativeCronjobNotificationsStartedAtRef\.current;/);
-  assert.match(source, /const createdAtMs = notificationCreatedAtMs\(item\);/);
-  assert.match(source, /createdAtMs !== null && createdAtMs > startupAtMs/);
+  assert.match(source, /const shellNotifications = response\.items\.filter\(\s*shouldIncludeRuntimeNotificationInShell,\s*\)/);
+  assert.match(source, /const isWindowMinimized = windowState\?\.isMinimized === true;/);
+  assert.match(source, /shouldShowNativeRuntimeNotification\(item,\s*isWindowMinimized\)/);
   assert.match(source, /const shown = await window\.electronAPI\.ui\.showNativeNotification\(\{/);
-  assert.match(source, /if \(!shown\) \{\s*continue;\s*\}/);
   assert.match(source, /Date\.now\(\) - lastAttemptAt < 15_000/);
-  assert.match(source, /window\.electronAPI\.ui\.showNativeNotification\(\{/);
-  assert.match(source, /force: true/);
+  assert.match(source, /shouldDismissVisibleRuntimeNotification\(item,\s*selectedWorkspaceId\)/);
+  assert.match(source, /shouldToastVisibleRuntimeNotification\(item,\s*selectedWorkspaceId\)/);
+  assert.doesNotMatch(source, /force: true/);
   assert.match(
     source,
     /await window\.electronAPI\.workspace\.updateNotification\(item\.id,\s*\{\s*state: "dismissed",\s*\}\);/,

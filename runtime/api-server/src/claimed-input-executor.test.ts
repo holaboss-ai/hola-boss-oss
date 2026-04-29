@@ -740,6 +740,64 @@ test("claimed input creates a completion notification for failed cronjob session
   store.close();
 });
 
+test("claimed input creates a completion notification for completed main-session runs", async () => {
+  const store = makeStore("hb-claimed-input-main-session-notification-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    kind: "workspace_session",
+    title: "Main Session",
+    createdBy: "workspace_user",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "hello" },
+  });
+  setNodeRunnerCommand([
+    "const request = process.argv.at(-1) ?? '';",
+    "void request;",
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello' } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'output_delta', payload: { delta: 'Hello from the main session.' } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 3, event_type: 'run_completed', payload: { status: 'ok' } }) + '\\n');`,
+  ]);
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+  });
+
+  const notifications = store.listRuntimeNotifications({
+    workspaceId: workspace.id,
+    sourceType: "main_session",
+  });
+
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0]?.title, "Workspace 1 — Reply ready");
+  assert.equal(notifications[0]?.message, "Hello from the main session.");
+  assert.equal(notifications[0]?.level, "info");
+  assert.equal(notifications[0]?.sourceType, "main_session");
+  assert.equal(notifications[0]?.metadata.session_id, "session-main");
+  assert.equal(notifications[0]?.metadata.input_id, queued.inputId);
+  assert.equal(notifications[0]?.metadata.turn_status, "completed");
+  assert.equal(notifications[0]?.metadata.activation_state, "dismissed");
+
+  store.close();
+});
+
 test("claimed input persists waiting_user terminal status for harnesses that support it", async () => {
   const store = makeStore("hb-claimed-input-pi-waiting-user-");
   const workspace = store.createWorkspace({

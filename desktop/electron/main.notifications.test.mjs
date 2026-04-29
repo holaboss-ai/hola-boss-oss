@@ -46,7 +46,7 @@ test("desktop bridge exposes native notifications for minimized main-session com
   assert.match(mainSource, /logNativeDesktopNotificationEvent\("dev_fallback_failed"/);
   assert.match(
     mainSource,
-    /mainWindow[\s\S]*\(mainWindow\.isMinimized\(\) \|\| !mainWindow\.isVisible\(\)\)/,
+    /function shouldShowNativeDesktopNotification\(\): boolean \{\s*return Boolean\(\s*mainWindow &&\s*!mainWindow\.isDestroyed\(\) &&\s*mainWindow\.isMinimized\(\),\s*\);\s*\}/s,
   );
   assert.match(mainSource, /function logNativeDesktopNotificationEvent\(/);
   assert.match(mainSource, /function showNativeDesktopNotification\(/);

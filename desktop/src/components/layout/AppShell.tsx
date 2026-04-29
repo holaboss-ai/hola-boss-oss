@@ -693,11 +693,80 @@ function notificationDeliveryChannel(
   return null;
 }
 
-function notificationCreatedAtMs(
+function isSystemCronjobNotification(
   notification: RuntimeNotificationRecordPayload,
-): number | null {
-  const parsed = Date.parse(notification.created_at);
-  return Number.isFinite(parsed) ? parsed : null;
+): boolean {
+  return (
+    notification.source_type === "cronjob" &&
+    notificationDeliveryChannel(notification) === "system_notification"
+  );
+}
+
+function shouldIncludeRuntimeNotificationInShell(
+  notification: RuntimeNotificationRecordPayload,
+): boolean {
+  return (
+    notification.source_type !== "cronjob" ||
+    isSystemCronjobNotification(notification)
+  );
+}
+
+function notificationBelongsToSelectedWorkspace(
+  notification: RuntimeNotificationRecordPayload,
+  selectedWorkspaceId: string | null,
+): boolean {
+  const notificationWorkspaceId = notification.workspace_id.trim();
+  const normalizedSelectedWorkspaceId = selectedWorkspaceId?.trim() || "";
+  return Boolean(
+    notificationWorkspaceId &&
+      normalizedSelectedWorkspaceId &&
+      notificationWorkspaceId === normalizedSelectedWorkspaceId,
+  );
+}
+
+function shouldShowNativeRuntimeNotification(
+  notification: RuntimeNotificationRecordPayload,
+  isWindowMinimized: boolean,
+): boolean {
+  if (!isWindowMinimized) {
+    return false;
+  }
+  return (
+    notification.source_type === "main_session" ||
+    isSystemCronjobNotification(notification)
+  );
+}
+
+function shouldDismissVisibleRuntimeNotification(
+  notification: RuntimeNotificationRecordPayload,
+  selectedWorkspaceId: string | null,
+): boolean {
+  if (
+    notification.source_type !== "main_session" &&
+    !isSystemCronjobNotification(notification)
+  ) {
+    return false;
+  }
+  return notificationBelongsToSelectedWorkspace(
+    notification,
+    selectedWorkspaceId,
+  );
+}
+
+function shouldToastVisibleRuntimeNotification(
+  notification: RuntimeNotificationRecordPayload,
+  selectedWorkspaceId: string | null,
+): boolean {
+  if (
+    notification.source_type === "main_session" ||
+    isSystemCronjobNotification(notification)
+  ) {
+    return !notificationBelongsToSelectedWorkspace(
+      notification,
+      selectedWorkspaceId,
+    );
+  }
+  return true;
 }
 
 function notificationActivationState(
@@ -1484,10 +1553,7 @@ function AppShellContent() {
   const spaceVisibilityRef = useRef(spaceVisibility);
   const notificationsHydratedRef = useRef(false);
   const seenNotificationIdsRef = useRef(new Set<string>());
-  const nativeCronjobNotificationsHydratedRef = useRef(false);
-  const nativeCronjobNotificationsStartedAtRef = useRef(Date.now());
-  const seenNativeCronjobNotificationIdsRef = useRef(new Set<string>());
-  const nativeCronjobNotificationAttemptedAtRef = useRef(
+  const nativeRuntimeNotificationAttemptedAtRef = useRef(
     new Map<string, number>(),
   );
   const knownTaskProposalIdsByWorkspaceRef = useRef<Record<string, string[]>>(
@@ -2137,25 +2203,79 @@ function AppShellContent() {
     }
 
     try {
-      const response =
-        await window.electronAPI.workspace.listNotifications(null);
-      setNotifications(response.items);
+      const [response, windowState] = await Promise.all([
+        window.electronAPI.workspace.listNotifications(null, false, {
+          includeCronjobSource: true,
+        }),
+        window.electronAPI.ui.getWindowState().catch(() => null),
+      ]);
+      const shellNotifications = response.items.filter(
+        shouldIncludeRuntimeNotificationInShell,
+      );
+      setNotifications(shellNotifications);
 
       if (!notificationsHydratedRef.current) {
         notificationsHydratedRef.current = true;
-        for (const item of response.items) {
+        for (const item of shellNotifications) {
           seenNotificationIdsRef.current.add(item.id);
         }
         return;
       }
 
-      for (const item of response.items) {
+      const isWindowMinimized = windowState?.isMinimized === true;
+      for (const item of shellNotifications) {
         if (
           item.state !== "unread" ||
           seenNotificationIdsRef.current.has(item.id)
         ) {
           continue;
         }
+
+        if (
+          shouldShowNativeRuntimeNotification(item, isWindowMinimized)
+        ) {
+          const lastAttemptAt =
+            nativeRuntimeNotificationAttemptedAtRef.current.get(item.id) ?? 0;
+          if (Date.now() - lastAttemptAt < 15_000) {
+            continue;
+          }
+          nativeRuntimeNotificationAttemptedAtRef.current.set(item.id, Date.now());
+          const shown = await window.electronAPI.ui.showNativeNotification({
+            title: item.title,
+            body: item.message,
+            workspaceId: item.workspace_id,
+            sessionId: notificationTargetSessionId(item),
+          });
+          if (shown) {
+            seenNotificationIdsRef.current.add(item.id);
+            nativeRuntimeNotificationAttemptedAtRef.current.delete(item.id);
+            try {
+              await window.electronAPI.workspace.updateNotification(item.id, {
+                state: "dismissed",
+              });
+            } catch {
+              // Ignore transient dismissal failures; the seen set prevents duplicate local alerts.
+            }
+          }
+          continue;
+        }
+
+        if (shouldDismissVisibleRuntimeNotification(item, selectedWorkspaceId)) {
+          seenNotificationIdsRef.current.add(item.id);
+          try {
+            await window.electronAPI.workspace.updateNotification(item.id, {
+              state: "dismissed",
+            });
+          } catch {
+            // Ignore transient dismissal failures in the shell.
+          }
+          continue;
+        }
+
+        if (!shouldToastVisibleRuntimeNotification(item, selectedWorkspaceId)) {
+          continue;
+        }
+
         seenNotificationIdsRef.current.add(item.id);
         setToastNotifications((current) => {
           if (current.some((existing) => existing.id === item.id)) {
@@ -2167,75 +2287,7 @@ function AppShellContent() {
     } catch {
       // Notification polling should stay silent when the runtime is restarting.
     }
-  }, []);
-
-  const refreshCronjobNativeNotifications = useCallback(async () => {
-    if (!window.electronAPI) {
-      return;
-    }
-
-    try {
-      const response = await window.electronAPI.workspace.listNotifications(
-        null,
-        false,
-        {
-          includeCronjobSource: true,
-          sourceType: "cronjob",
-        },
-      );
-      const systemCronjobNotifications = response.items.filter(
-        (item) =>
-          item.state === "unread" &&
-          item.source_type === "cronjob" &&
-          notificationDeliveryChannel(item) === "system_notification",
-      );
-
-      if (!nativeCronjobNotificationsHydratedRef.current) {
-        nativeCronjobNotificationsHydratedRef.current = true;
-        const startupAtMs = nativeCronjobNotificationsStartedAtRef.current;
-        for (const item of systemCronjobNotifications) {
-          const createdAtMs = notificationCreatedAtMs(item);
-          if (createdAtMs !== null && createdAtMs > startupAtMs) {
-            continue;
-          }
-          seenNativeCronjobNotificationIdsRef.current.add(item.id);
-        }
-      }
-
-      for (const item of systemCronjobNotifications) {
-        if (seenNativeCronjobNotificationIdsRef.current.has(item.id)) {
-          continue;
-        }
-        const lastAttemptAt =
-          nativeCronjobNotificationAttemptedAtRef.current.get(item.id) ?? 0;
-        if (Date.now() - lastAttemptAt < 15_000) {
-          continue;
-        }
-        nativeCronjobNotificationAttemptedAtRef.current.set(item.id, Date.now());
-        const shown = await window.electronAPI.ui.showNativeNotification({
-          title: item.title,
-          body: item.message,
-          workspaceId: item.workspace_id,
-          sessionId: notificationTargetSessionId(item),
-          force: true,
-        });
-        if (!shown) {
-          continue;
-        }
-        seenNativeCronjobNotificationIdsRef.current.add(item.id);
-        nativeCronjobNotificationAttemptedAtRef.current.delete(item.id);
-        try {
-          await window.electronAPI.workspace.updateNotification(item.id, {
-            state: "dismissed",
-          });
-        } catch {
-          // Ignore transient dismissal failures; the seen set prevents duplicate local alerts.
-        }
-      }
-    } catch {
-      // Native cronjob reminders should stay silent when the runtime is restarting.
-    }
-  }, []);
+  }, [selectedWorkspaceId]);
 
   useEffect(() => {
     const activeNotificationIds = new Set(
@@ -2246,16 +2298,6 @@ function AppShellContent() {
       return next.length === current.length ? current : next;
     });
   }, [notifications]);
-
-  useEffect(() => {
-    void refreshCronjobNativeNotifications();
-    const intervalId = window.setInterval(() => {
-      void refreshCronjobNativeNotifications();
-    }, 5000);
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [refreshCronjobNativeNotifications]);
 
   const handleActivateNotification = useCallback(
     async (notificationId: string) => {

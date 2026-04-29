@@ -643,21 +643,12 @@ test("main-session assistant turns suppress trace and thinking while onboarding 
   );
 });
 
-test("chat pane sends a native desktop notification when the bound main session finishes while the app is minimized", async () => {
+test("chat pane no longer sends native desktop notifications directly for main-session completions", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /const notifiedMainSessionCompletionInputIdsRef = useRef<Set<string>>\(\s*new Set\(\),\s*\);/);
-  assert.match(source, /const desktopMainSessionIdRef = useRef\(""\);/);
-  assert.match(source, /function assistantSegmentsPreviewText\(segments: ChatAssistantSegment\[]\)/);
-  assert.match(source, /function maybeRememberMainSessionCompletionNotification\(inputId: string\)/);
-  assert.match(source, /function maybeShowMainSessionCompletionNotification\(params: \{/);
-  assert.match(source, /normalizedSessionId !== desktopMainSessionIdRef\.current/);
-  assert.match(source, /void window\.electronAPI\.ui\.showNativeNotification\(\{/);
-  assert.match(source, /const workspaceTitle = workspace\?\.name\?\.trim\(\) \|\| "Holaboss";/);
-  assert.match(source, /title: `\$\{workspaceTitle\} — Reply ready`/);
-  assert.match(source, /body: previewText/);
-  assert.match(source, /maybeShowMainSessionCompletionNotification\(\{\s*inputId: eventInputId,\s*sessionId: eventSessionId,\s*previewText: completionPreviewText,/s);
-  assert.match(source, /maybeShowMainSessionCompletionNotification\(\{\s*inputId: currentRuntimeInputId,\s*sessionId: normalizedCurrentSessionId,\s*previewText: completionPreviewText,/s);
+  assert.doesNotMatch(source, /function maybeRememberMainSessionCompletionNotification\(inputId: string\)/);
+  assert.doesNotMatch(source, /function maybeShowMainSessionCompletionNotification\(params: \{/);
+  assert.doesNotMatch(source, /Reply ready/);
 });
 
 test("chat trace tool errors surface stderr text instead of a generic error label", async () => {

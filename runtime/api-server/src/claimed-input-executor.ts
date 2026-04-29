@@ -1793,6 +1793,60 @@ function maybeCreateCronjobCompletionNotification(params: {
   });
 }
 
+function maybeCreateMainSessionCompletionNotification(params: {
+  store: RuntimeStateStore;
+  record: SessionInputRecord;
+  turnResult: TurnResultRecord;
+}): void {
+  const session = params.store.getSession({
+    workspaceId: params.record.workspaceId,
+    sessionId: params.record.sessionId,
+  });
+  if (optionalString(session?.kind)?.toLowerCase() !== "workspace_session") {
+    return;
+  }
+
+  if (!["completed", "failed"].includes(params.turnResult.status)) {
+    return;
+  }
+
+  const workspace = params.store.getWorkspace(params.record.workspaceId);
+  if (!workspace) {
+    return;
+  }
+
+  const workspaceName = workspace.name.trim() || "Workspace";
+  const message =
+    compactTurnSummary(params.turnResult) ||
+    optionalString(params.turnResult.assistantText) ||
+    (params.turnResult.status === "failed"
+      ? "The latest reply failed."
+      : "Your latest reply is ready.");
+  if (!message) {
+    return;
+  }
+
+  params.store.createRuntimeNotification({
+    workspaceId: params.record.workspaceId,
+    sourceType: "main_session",
+    sourceLabel: workspaceName,
+    title:
+      params.turnResult.status === "failed"
+        ? `${workspaceName} — Reply failed`
+        : `${workspaceName} — Reply ready`,
+    message,
+    level: params.turnResult.status === "failed" ? "error" : "info",
+    priority: "normal",
+    metadata: {
+      session_id: params.record.sessionId,
+      input_id: params.record.inputId,
+      turn_status: params.turnResult.status,
+      stop_reason: params.turnResult.stopReason,
+      activation_state: "dismissed",
+    },
+  });
+}
+
 async function maybePromoteAcceptedEvolveSkillCandidate(params: {
   store: RuntimeStateStore;
   record: SessionInputRecord;
@@ -3710,6 +3764,11 @@ export async function processClaimedInput(params: {
         record,
         turnResult,
       });
+      maybeCreateMainSessionCompletionNotification({
+        store,
+        record,
+        turnResult,
+      });
       maybeQueueCronjobCompletionFollowup({
         store,
         record,
@@ -3796,6 +3855,11 @@ export async function processClaimedInput(params: {
         onTaskError: params.onEvolveTaskError,
       });
       maybeCreateCronjobCompletionNotification({
+        store,
+        record,
+        turnResult,
+      });
+      maybeCreateMainSessionCompletionNotification({
         store,
         record,
         turnResult,
