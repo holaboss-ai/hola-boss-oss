@@ -182,6 +182,7 @@ const PI_HARNESS_CLIENT_VERSION = "0.1.0";
 const PI_MCP_DISCOVERY_RETRY_INTERVAL_MS = 250;
 const PI_FALLBACK_CONTEXT_WINDOW = 65_536;
 const PI_FALLBACK_MAX_TOKENS = 8_192;
+const PI_COMPACTION_CONTEXT_RESERVE_RATIO = 0.5;
 
 const PI_MODEL_CATALOG = MODELS as Record<string, Record<string, HarnessCatalogModelEntry>>;
 const PI_MCP_DISCOVERY_MAX_WAIT_MS = 10000;
@@ -1084,20 +1085,16 @@ function wrapToolWithWorkspaceBoundary<TTool extends { name: string; execute: (.
 }
 
 function resolveRequestedSessionFile(request: HarnessHostPiRequest): string | null {
-  const candidates = [
-    firstNonEmptyString(request.harness_session_id),
-    firstNonEmptyString(request.persisted_harness_session_id),
-  ];
-  const seen = new Set<string>();
-  for (const candidate of candidates) {
-    if (!candidate || seen.has(candidate)) {
-      continue;
-    }
-    seen.add(candidate);
-    const resolved = path.resolve(candidate);
-    if (fs.existsSync(resolved)) {
-      return resolved;
-    }
+  const requestedSessionId = firstNonEmptyString(request.harness_session_id);
+  if (requestedSessionId) {
+    const resolved = path.resolve(requestedSessionId);
+    return fs.existsSync(resolved) ? resolved : null;
+  }
+
+  const persistedSessionId = firstNonEmptyString(request.persisted_harness_session_id);
+  if (persistedSessionId) {
+    const resolved = path.resolve(persistedSessionId);
+    return fs.existsSync(resolved) ? resolved : null;
   }
   return null;
 }
@@ -1355,6 +1352,13 @@ export function requestedPiThinkingConfig(
   return requestedHarnessThinkingConfig(request);
 }
 
+export function piCompactionReserveTokens(contextWindow: number): number {
+  if (!Number.isFinite(contextWindow) || contextWindow <= 0) {
+    return 0;
+  }
+  return Math.ceil(contextWindow * PI_COMPACTION_CONTEXT_RESERVE_RATIO);
+}
+
 export function buildPiProviderConfig(request: HarnessHostPiRequest) {
   const profile = resolvePiModelProfile(request);
 
@@ -1396,12 +1400,16 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
   modelRegistry.registerProvider(request.provider_id, buildPiProviderConfig(request));
 
   const model = resolvePiModel(request, modelRegistry);
+  const compactionReserveTokens = piCompactionReserveTokens(model.contextWindow);
   const requestedThinking = requestedPiThinkingLevel(request) ?? "off";
   const requestedThinkingBudgets = requestedPiThinkingBudgets(request);
   const settingsManager = SettingsManager.inMemory({
     defaultProvider: request.provider_id,
     defaultModel: request.model_id,
     defaultThinkingLevel: requestedThinking,
+    compaction: {
+      reserveTokens: compactionReserveTokens,
+    },
     ...(requestedThinkingBudgets
       ? { thinkingBudgets: requestedThinkingBudgets }
       : {}),

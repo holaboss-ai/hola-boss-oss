@@ -1743,6 +1743,10 @@ test("turn results support upsert, lookup, count, and listing", () => {
     },
     compactedSummary: null,
     tokenUsage: { input_tokens: 10, output_tokens: 20 },
+    contextBudgetDecisions: {
+      mode: "observability_only",
+      metrics: { input_tokens: 10, output_tokens: 20 },
+    },
   });
   const updated = store.upsertTurnResult({
     workspaceId: "workspace-1",
@@ -1770,6 +1774,10 @@ test("turn results support upsert, lookup, count, and listing", () => {
     },
     compactedSummary: "summary",
     tokenUsage: { input_tokens: 11, output_tokens: 21 },
+    contextBudgetDecisions: {
+      mode: "observability_only",
+      metrics: { input_tokens: 11, output_tokens: 21 },
+    },
   });
 
   assert.equal(updated.status, "waiting_user");
@@ -1781,6 +1789,10 @@ test("turn results support upsert, lookup, count, and listing", () => {
     cacheable_section_ids: ["runtime_core"],
     volatile_section_ids: ["session_policy"],
   });
+  assert.deepEqual(updated.contextBudgetDecisions, {
+    mode: "observability_only",
+    metrics: { input_tokens: 11, output_tokens: 21 },
+  });
   assert.deepEqual(updated.permissionDenials, [
     { tool_name: "deploy", tool_id: null, reason: "permission denied" }
   ]);
@@ -1790,6 +1802,18 @@ test("turn results support upsert, lookup, count, and listing", () => {
   assert.equal(store.countTurnResults({ workspaceId: "workspace-1", sessionId: "session-main", status: "waiting_user" }), 1);
   assert.deepEqual(store.listTurnResults({ workspaceId: "workspace-1", sessionId: "session-main" }), [updated]);
   assert.deepEqual(store.listTurnResults({ workspaceId: "workspace-1", sessionId: "session-main", status: "waiting_user" }), [updated]);
+  const telemetryOnlyUpdate = store.updateTurnResultContextBudgetDecisions({
+    inputId: "input-1",
+    contextBudgetDecisions: {
+      mode: "observability_only",
+      checkpoint_queued: true,
+    },
+  });
+  assert.deepEqual(telemetryOnlyUpdate?.contextBudgetDecisions, {
+    mode: "observability_only",
+    checkpoint_queued: true,
+  });
+  assert.equal(telemetryOnlyUpdate?.compactedSummary, "summary");
   store.close();
 });
 

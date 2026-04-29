@@ -1,6 +1,6 @@
 import type { RuntimeAgentToolId } from "./runtime-agent-tools.js";
 import {
-  formatCapabilityToolResult,
+  formatCapabilityToolResultForModel,
   isRecord,
   normalizeRuntimeApiBaseUrl,
   requestCapabilityJson,
@@ -440,7 +440,12 @@ export async function executeRuntimeToolCapability(params: RuntimeToolCapability
   signal?: AbortSignal;
 }): Promise<{
   content: Array<{ type: "text"; text: string }>;
-  details: { tool_id: RuntimeAgentToolId };
+  details: {
+    tool_id: RuntimeAgentToolId;
+    raw?: unknown;
+    raw_result_bytes?: number;
+    model_result_bytes?: number;
+  };
 }> {
   const plan = requestPlan(params.toolId, params.toolParams);
   const response = await requestCapabilityJson({
@@ -469,10 +474,18 @@ export async function executeRuntimeToolCapability(params: RuntimeToolCapability
     throw new Error(message);
   }
 
+  const formatted = formatCapabilityToolResultForModel(response.payload);
   return {
-    content: [{ type: "text", text: formatCapabilityToolResult(response.payload) }],
+    content: [{ type: "text", text: formatted.text }],
     details: {
       tool_id: params.toolId,
+      ...(formatted.compacted
+        ? {
+            raw: response.payload,
+            raw_result_bytes: formatted.serializedBytes,
+            model_result_bytes: formatted.modelTextBytes,
+          }
+        : {}),
     },
   };
 }

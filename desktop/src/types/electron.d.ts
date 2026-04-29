@@ -87,6 +87,12 @@ declare global {
     fileName: string;
     archiveSizeBytes: number;
     includedFiles: string[];
+    workspaceId?: string | null;
+    workspaceName?: string | null;
+  }
+
+  interface DiagnosticsExportRequestPayload {
+    workspaceId?: string | null;
   }
 
   interface BrowserBoundsPayload {
@@ -204,26 +210,6 @@ declare global {
     content_base64: string;
     width: number;
     height: number;
-  }
-
-  interface BrowserCommentCaptureAttachmentPayload {
-    id: string;
-    text: string;
-    elementLabel: string;
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    mimeType: string;
-    base64: string;
-  }
-
-  interface BrowserCommentCapturePayload {
-    tabId: string;
-    pageTitle: string;
-    url: string;
-    comments: BrowserCommentCaptureAttachmentPayload[];
-    canceled: boolean;
   }
 
   interface AddressSuggestionPayload {
@@ -1428,7 +1414,9 @@ declare global {
       onBookmarksChange: (listener: (bookmarks: FileBookmarkPayload[]) => void) => () => void;
     };
     diagnostics: {
-      exportBundle: () => Promise<DiagnosticsExportPayload>;
+      exportBundle: (
+        payload?: DiagnosticsExportRequestPayload,
+      ) => Promise<DiagnosticsExportPayload>;
       revealBundle: (bundlePath: string) => Promise<boolean>;
     };
     runtime: {
@@ -1664,7 +1652,6 @@ declare global {
       reload: () => Promise<BrowserTabListPayload>;
       stopLoading: () => Promise<BrowserTabListPayload>;
       captureScreenshotToClipboard: () => Promise<BrowserClipboardScreenshotPayload>;
-      captureCommentsForChat: () => Promise<BrowserCommentCapturePayload>;
       newTab: (targetUrl?: string) => Promise<BrowserTabListPayload>;
       setActiveTab: (tabId: string) => Promise<BrowserTabListPayload>;
       closeTab: (tabId: string) => Promise<BrowserTabListPayload>;

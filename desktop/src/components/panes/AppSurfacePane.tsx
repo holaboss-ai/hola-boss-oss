@@ -52,6 +52,43 @@ interface AppSurfacePaneProps {
   view?: string | null;
 }
 
+/**
+ * Pick the most user-recognisable label for a connection. Backend whoami
+ * lookups populate `account_handle` (e.g. "@joshua") and `account_email`;
+ * `account_label` is admin-supplied; `account_external_id` and the UUID
+ * `connection_id` are last-resort fallbacks that should rarely surface
+ * to the user but are kept so the UI never renders empty.
+ */
+function connectionPrimary(
+  conn: IntegrationConnectionPayload | undefined,
+  providerName: string,
+): string {
+  if (!conn) return `Pick an ${providerName} account`;
+  const label = conn.account_label?.trim();
+  const handle = conn.account_handle?.trim();
+  const email = conn.account_email?.trim();
+  const external = conn.account_external_id?.trim();
+  // Prefer human-readable identity over admin-set labels — handles let the
+  // user immediately recognise which account this is.
+  return handle || email || label || external || `${providerName} account`;
+}
+
+/**
+ * Secondary line for the dropdown items — disambiguates when several
+ * connections share the same handle (e.g. work + personal email under
+ * the same account_label). Returns null when secondary would just
+ * duplicate the primary line.
+ */
+function connectionSecondary(conn: IntegrationConnectionPayload): string | null {
+  const primary = conn.account_handle?.trim() || conn.account_email?.trim() || conn.account_label?.trim();
+  const candidates = [
+    conn.account_email?.trim(),
+    conn.account_label?.trim(),
+    conn.account_external_id?.trim(),
+  ].filter((s): s is string => !!s && s !== primary);
+  return candidates[0] ?? null;
+}
+
 export function AppSurfacePane({
   appId,
   app: providedApp,

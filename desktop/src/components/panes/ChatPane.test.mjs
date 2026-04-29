@@ -215,7 +215,7 @@ test("chat composer footer wraps controls based on available pane width instead 
   );
   assert.match(
     source,
-    /className=\{`border-t border-border\/20 px-3 py-3 text-muted-foreground \$\{[\s\S]*compactComposerControls[\s\S]*\? "flex items-center gap-2 overflow-hidden"[\s\S]*: "flex flex-wrap items-center gap-2"[\s\S]*`\}/,
+    /className=\{`px-3 pb-3 text-muted-foreground \$\{[\s\S]*compactComposerControls[\s\S]*\? "flex items-center gap-1\.5 overflow-hidden"[\s\S]*: "flex flex-wrap items-center gap-1\.5"[\s\S]*`\}/,
   );
   assert.match(
     source,
@@ -227,7 +227,7 @@ test("chat composer footer wraps controls based on available pane width instead 
   );
   assert.match(
     source,
-    /className="ml-auto flex shrink-0 items-center gap-2"/,
+    /className="ml-auto flex shrink-0 items-center gap-1\.5"/,
   );
   assert.match(source, /compact=\{compactComposerControls\}/);
   assert.doesNotMatch(source, /sm:w-\[208px\]/);
@@ -293,11 +293,11 @@ test("chat composer switches model and thinking selectors into icon-led compact 
   assert.match(source, /const compactLabel = compactComposerModelLabel\(displayLabel\);/);
   assert.match(
     source,
-    /compact \? \(\s*<span className="flex min-w-0 items-center gap-2">[\s\S]*<Waypoints[\s\S]*<span className="truncate">\{compactLabel\}<\/span>/,
+    /compact \? \(\s*<>\s*<span className="flex min-w-0 items-center gap-1\.5">[\s\S]*<ProviderBrandIcon[\s\S]*<span className="truncate">\{compactLabel\}<\/span>/,
   );
   assert.match(
     source,
-    /const selectedThinkingLabel = displayThinkingValueLabel\(selectedThinkingValue\);/,
+    /const selectedThinkingLabel = displayThinkingValueLabel\(\s*selectedThinkingValue,\s*\);/,
   );
   assert.match(source, /const \[open, setOpen\] = useState\(false\);/);
   assert.match(
@@ -306,7 +306,7 @@ test("chat composer switches model and thinking selectors into icon-led compact 
   );
   assert.match(
     source,
-    /compact\s*\?\s*showCompactLabel\s*\?\s*"min-w-0 justify-between px-2\.5"\s*:\s*"min-w-0 justify-start gap-1\.5 px-2\.5"/,
+    /compact\s*\?\s*showCompactLabel\s*\?\s*"w-full min-w-0 justify-between px-2\.5"\s*:\s*"w-full min-w-0 justify-center px-2\.5"/,
   );
   assert.match(
     source,
@@ -314,7 +314,7 @@ test("chat composer switches model and thinking selectors into icon-led compact 
   );
   assert.match(
     source,
-    /<PopoverContent[\s\S]*align="start"[\s\S]*side="top"[\s\S]*sideOffset=\{8\}[\s\S]*className="w-\[220px\] p-0"[\s\S]*Reasoning effort[\s\S]*thinkingValues\.map\(\(value\) => renderOption\(value\)\)/,
+    /<PopoverContent[\s\S]*align="start"[\s\S]*side="top"[\s\S]*sideOffset=\{8\}[\s\S]*className="max-w-40 gap-0 rounded-lg p-1 shadow-subtle-sm ring-0"[\s\S]*Reasoning effort[\s\S]*thinkingValues\.map\(\(value\) => renderOption\(value\)\)/,
   );
 });
 

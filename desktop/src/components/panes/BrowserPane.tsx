@@ -14,7 +14,6 @@ import {
   ChevronRight,
   Globe,
   Loader2,
-  MessageSquarePlus,
   MoreHorizontal,
   Plus,
   RefreshCcw,
@@ -27,7 +26,6 @@ import { PaneCard } from "@/components/ui/PaneCard";
 import { browserSurfaceStatusSummary } from "@/components/panes/browserSessionUi";
 import {
   BrowserCaptureStatusToast,
-  type BrowserChatCommentDraftPayload,
   useBrowserCaptureActions,
 } from "@/components/panes/useBrowserCaptureActions";
 import { useBrowserGlowPreview } from "@/components/panes/useBrowserGlowPreview";
@@ -108,13 +106,11 @@ function normalizeUrl(rawInput: string) {
 interface BrowserPaneProps {
   suspendNativeView?: boolean;
   layoutSyncKey?: string;
-  onAttachCommentsToChat?: (payload: BrowserChatCommentDraftPayload) => void;
 }
 
 export function BrowserPane({
   suspendNativeView = false,
   layoutSyncKey = "",
-  onAttachCommentsToChat,
 }: BrowserPaneProps) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const [paneWidth, setPaneWidth] = useState(0);
@@ -160,12 +156,8 @@ export function BrowserPane({
   const {
     actionStatus,
     captureScreenshotToClipboard,
-    captureCommentsForChat,
     screenshotCapturePending,
-    commentCapturePending,
-  } = useBrowserCaptureActions({
-    onAttachCommentsToChat,
-  });
+  } = useBrowserCaptureActions();
 
   useLayoutEffect(() => {
     const pane = paneRef.current;
@@ -788,7 +780,7 @@ export function BrowserPane({
                   aria-label="Copy browser screenshot"
                   title="Copy browser screenshot"
                   onClick={() => void captureScreenshotToClipboard()}
-                  disabled={!activeTab.initialized || commentCapturePending}
+                  disabled={!activeTab.initialized}
                 >
                   {screenshotCapturePending ? (
                     <Loader2 size={13} className="animate-spin" />
@@ -796,23 +788,6 @@ export function BrowserPane({
                     <Camera size={13} />
                   )}
                   {!isNarrowPane ? <span>Capture</span> : null}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="shrink-0 gap-1.5"
-                  aria-label="Add browser comments to chat"
-                  title="Add browser comments to chat"
-                  onClick={() => void captureCommentsForChat()}
-                  disabled={!activeTab.initialized || screenshotCapturePending}
-                >
-                  {commentCapturePending ? (
-                    <Loader2 size={13} className="animate-spin" />
-                  ) : (
-                    <MessageSquarePlus size={13} />
-                  )}
-                  {!isNarrowPane ? <span>Comment</span> : null}
                 </Button>
                 <Button
                   ref={moreButtonRef}

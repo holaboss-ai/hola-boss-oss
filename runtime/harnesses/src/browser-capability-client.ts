@@ -1,6 +1,6 @@
 import type { DesktopBrowserToolId } from "./desktop-browser-tools.js";
 import {
-  formatCapabilityToolResult,
+  formatCapabilityToolResultForModel,
   isRecord,
   normalizeRuntimeApiBaseUrl,
   requestCapabilityJson,
@@ -74,7 +74,12 @@ export async function executeBrowserCapabilityTool(params: BrowserCapabilityClie
   signal?: AbortSignal;
 }): Promise<{
   content: Array<{ type: "text"; text: string }>;
-  details: { tool_id: DesktopBrowserToolId };
+  details: {
+    tool_id: DesktopBrowserToolId;
+    raw?: unknown;
+    raw_result_bytes?: number;
+    model_result_bytes?: number;
+  };
 }> {
   const response = await requestCapabilityJson({
     url: capabilityToolUrl(params.runtimeApiBaseUrl, params.toolId),
@@ -93,10 +98,18 @@ export async function executeBrowserCapabilityTool(params: BrowserCapabilityClie
       : `Holaboss browser tool '${params.toolId}' failed.`;
     throw new Error(message);
   }
+  const formatted = formatCapabilityToolResultForModel(response.payload);
   return {
-    content: [{ type: "text", text: formatCapabilityToolResult(response.payload) }],
+    content: [{ type: "text", text: formatted.text }],
     details: {
       tool_id: params.toolId,
+      ...(formatted.compacted
+        ? {
+            raw: response.payload,
+            raw_result_bytes: formatted.serializedBytes,
+            model_result_bytes: formatted.modelTextBytes,
+          }
+        : {}),
     },
   };
 }

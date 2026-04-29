@@ -385,6 +385,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connections, accountMetadata]);
 
+
   // Map providerId → all active connections. A user can have multiple accounts
   // per provider (e.g., personal + work Twitter); each connection is its own
   // row in the Connected section, each with its own delete button.

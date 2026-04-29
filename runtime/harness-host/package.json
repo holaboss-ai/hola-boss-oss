@@ -24,13 +24,14 @@
     "@mariozechner/pi-tui": "0.66.0"
   },
   "dependencies": {
-    "@sinclair/typebox": "^0.34.41",
     "@mariozechner/pi-ai": "0.66.0",
     "@mariozechner/pi-coding-agent": "0.66.0",
+    "@napi-rs/canvas": "^0.1.100",
     "@sentry/node": "^10.48.0",
+    "@sinclair/typebox": "^0.34.41",
     "exceljs": "^4.4.0",
     "jszip": "^3.10.1",
     "mcporter": "^0.7.3",
-    "pdfjs-dist": "^5.5.207"
+    "unpdf": "^1.6.1"
   }
 }

@@ -12,7 +12,7 @@ import { buildRunnerEnv } from "./runner-worker.js";
 import { captureRuntimeException } from "./runtime-sentry.js";
 
 export const SESSION_CHECKPOINT_JOB_TYPE = "session_checkpoint";
-const PI_DEFAULT_COMPACTION_RESERVE_TOKENS = 16_384;
+const PI_COMPACTION_CONTEXT_RESERVE_RATIO = 0.5;
 const SESSION_CHECKPOINT_WAIT_POLL_INTERVAL_MS = 100;
 
 export interface PiContextUsage {
@@ -293,10 +293,19 @@ function recordSessionCheckpointResult(params: {
 }
 
 export function shouldQueueSessionCheckpoint(contextUsage: PiContextUsage | null): boolean {
-  if (!contextUsage || contextUsage.tokens == null || contextUsage.contextWindow <= 0) {
+  if (
+    !contextUsage ||
+    contextUsage.tokens == null ||
+    !Number.isFinite(contextUsage.tokens) ||
+    !Number.isFinite(contextUsage.contextWindow) ||
+    contextUsage.contextWindow <= 0
+  ) {
     return false;
   }
-  return contextUsage.tokens > contextUsage.contextWindow - PI_DEFAULT_COMPACTION_RESERVE_TOKENS;
+  const reserveTokens = Math.ceil(
+    contextUsage.contextWindow * PI_COMPACTION_CONTEXT_RESERVE_RATIO,
+  );
+  return contextUsage.tokens > contextUsage.contextWindow - reserveTokens;
 }
 
 export function listInFlightSessionCheckpointJobs(params: {
