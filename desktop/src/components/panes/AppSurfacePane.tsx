@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Activity, LoaderCircle, Plug, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -173,6 +173,30 @@ export function AppSurfacePane({
 
   useEffect(() => {
     void checkIntegration();
+  }, [checkIntegration]);
+
+  // Re-check integration connections when the user returns to the window or
+  // this tab becomes visible again. OAuth flows leave Holaboss to the browser
+  // and come back, so window-focus is a natural trigger to pick up newly
+  // connected accounts without making the user click Reload.
+  const lastFocusRefetchRef = useRef(0);
+  useEffect(() => {
+    const refetch = () => {
+      const now = Date.now();
+      // Throttle: at most once every 3s to avoid storms when users alt-tab.
+      if (now - lastFocusRefetchRef.current < 3000) return;
+      lastFocusRefetchRef.current = now;
+      void checkIntegration();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refetch();
+    };
+    window.addEventListener("focus", refetch);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", refetch);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [checkIntegration]);
 
   const handleSelectBinding = useCallback(
@@ -539,7 +563,10 @@ export function AppSurfacePane({
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => setReloadKey((k) => k + 1)}
+              onClick={() => {
+                setReloadKey((k) => k + 1);
+                void checkIntegration();
+              }}
               className="w-full justify-center"
             >
               <RefreshCw size={12} />
@@ -633,7 +660,10 @@ export function AppSurfacePane({
                   type="button"
                   variant="outline"
                   size="default"
-                  onClick={() => setReloadKey((k) => k + 1)}
+                  onClick={() => {
+                    setReloadKey((k) => k + 1);
+                    void checkIntegration();
+                  }}
                   className="mt-3"
                 >
                   <RefreshCw size={12} />

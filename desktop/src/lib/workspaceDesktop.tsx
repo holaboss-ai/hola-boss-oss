@@ -781,7 +781,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     }
   }
 
-  // (Same map exported above as APP_TO_PROVIDER_MAP for renderer-side reuse.)
+  // (Same map exported below as APP_TO_PROVIDER for renderer-side reuse.)
   // Local alias keeps the rest of the hook readable.
   const APP_TO_PROVIDER = APP_TO_PROVIDER_MAP;
 
