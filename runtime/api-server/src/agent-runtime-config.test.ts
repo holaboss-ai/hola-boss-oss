@@ -149,6 +149,7 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
         "response_delivery_policy",
         "session_policy",
         "capability_policy",
+        "capability_tool_routing",
         "workspace_policy",
       ],
     );
@@ -160,6 +161,8 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
         "response_delivery_policy",
         "session_policy",
         "capability_policy",
+        "capability_tool_routing",
+        "capability_availability_context",
         "workspace_policy",
       ],
     );
@@ -175,7 +178,11 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
       result.system_prompt,
       renderedPromptSections(result.prompt_sections ?? []),
     );
-    assert.deepEqual(result.context_messages, []);
+    assert.equal(result.context_messages?.length, 1);
+    assert.match(
+      result.context_messages?.join("\n\n") ?? "",
+      /Capability availability snapshot:/,
+    );
     assert.deepEqual(
       result.prompt_channel_contents,
       promptChannelContents(result.prompt_sections ?? []),
@@ -185,18 +192,20 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
       "runtime_core",
       "execution_policy",
       "response_delivery_policy",
-      "workspace_policy",
-    ]);
-    assert.deepEqual(result.prompt_cache_profile?.volatile_section_ids, [
       "session_policy",
       "capability_policy",
+      "capability_tool_routing",
+      "workspace_policy",
     ]);
+    assert.deepEqual(result.prompt_cache_profile?.volatile_section_ids, []);
     assert.deepEqual(
       result.prompt_cache_profile?.compatibility_context_ids,
-      [],
+      ["capability_availability_context"],
     );
     assert.deepEqual(result.prompt_cache_profile?.attachment_ids, []);
-    assert.deepEqual(result.prompt_cache_profile?.delta_section_ids, []);
+    assert.deepEqual(result.prompt_cache_profile?.delta_section_ids, [
+      "capability_availability_context",
+    ]);
     assert.deepEqual(result.prompt_cache_profile?.channel_section_ids, {
       system_prompt: [
         "runtime_core",
@@ -204,8 +213,10 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
         "response_delivery_policy",
         "session_policy",
         "capability_policy",
+        "capability_tool_routing",
         "workspace_policy",
       ],
+      context_message: ["capability_availability_context"],
     });
     assert.match(result.system_prompt, /Session policy:/);
     assert.match(result.system_prompt, /Response delivery policy:/);
@@ -215,12 +226,16 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
       result.system_prompt,
       /MCP callable tool names for this run:/,
     );
-    assert.match(result.system_prompt, /Connected MCP access: available\./);
+    assert.doesNotMatch(result.system_prompt, /Connected MCP access: available\./);
+    assert.match(
+      result.context_messages?.join("\n\n") ?? "",
+      /Connected MCP access: available\./,
+    );
     assert.doesNotMatch(result.system_prompt, /Skills available now:/);
     assert.deepEqual(result.workspace_skill_ids, ["skill-creator"]);
     assert.equal(result.tools.browser_get_state, undefined);
     assert.equal(result.tools.skill, true);
-    assert.equal(result.tools.workspace_lookup, true);
+    assert.equal(result.tools.mcp__workspace__lookup, true);
     assert.ok(result.capability_manifest);
     assert.deepEqual(result.capability_manifest?.context, {
       harness_id: "pi",
@@ -260,7 +275,7 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
   }
 });
 
-test("projectAgentRuntimeConfig includes shared todo continuity policy when todo tools are enabled", () => {
+test("projectAgentRuntimeConfig keeps workspace sessions free of todo continuity policy even when todo tools are enabled", () => {
   process.env.HOLABOSS_MODEL_PROXY_BASE_URL =
     "https://runtime.example/api/v1/model-proxy";
   process.env.HOLABOSS_USER_ID = "user-1";
@@ -294,24 +309,29 @@ test("projectAgentRuntimeConfig includes shared todo continuity policy when todo
       },
     });
 
-    assert.ok(
+    assert.equal(
       result.prompt_sections?.some(
         (section) => section.id === "todo_continuity_policy",
       ),
+      false,
     );
-    assert.ok(
+    assert.equal(
       result.prompt_layers?.some((layer) => layer.id === "todo_continuity_policy"),
+      false,
     );
-    assert.match(result.system_prompt, /Todo continuity policy:/);
-    assert.match(
-      result.system_prompt,
-      /Do not resume unfinished todo work unless the newest message clearly asks to continue it or clearly advances the same work\./,
+    assert.doesNotMatch(result.system_prompt, /Todo continuity policy:/);
+    assert.ok(result.prompt_cache_profile?.cacheable_section_ids.includes("runtime_core"));
+    assert.ok(result.prompt_cache_profile?.cacheable_section_ids.includes("assistant_soul"));
+    assert.ok(result.prompt_cache_profile?.cacheable_section_ids.includes("execution_policy"));
+    assert.ok(result.prompt_cache_profile?.cacheable_section_ids.includes("response_delivery_policy"));
+    assert.ok(result.prompt_cache_profile?.cacheable_section_ids.includes("session_policy"));
+    assert.ok(result.prompt_cache_profile?.cacheable_section_ids.includes("capability_policy"));
+    assert.ok(result.prompt_cache_profile?.cacheable_section_ids.includes("workspace_policy"));
+    assert.equal(
+      result.prompt_cache_profile?.cacheable_section_ids.includes("todo_continuity_policy"),
+      false,
     );
-    assert.deepEqual(result.prompt_cache_profile?.volatile_section_ids, [
-      "session_policy",
-      "todo_continuity_policy",
-      "capability_policy",
-    ]);
+    assert.deepEqual(result.prompt_cache_profile?.volatile_section_ids, []);
   } finally {
     delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
   }
@@ -433,9 +453,11 @@ test("projectAgentRuntimeConfig includes current user context as a context messa
       "context_message",
     );
     assert.deepEqual(result.prompt_cache_profile?.context_message_ids, [
+      "capability_availability_context",
       "current_user_context",
     ]);
     assert.deepEqual(result.prompt_cache_profile?.compatibility_context_ids, [
+      "capability_availability_context",
       "current_user_context",
     ]);
     assert.deepEqual(
@@ -491,7 +513,7 @@ test("projectAgentRuntimeConfig surfaces connected MCP servers when no explicit 
     });
 
     assert.match(
-      result.system_prompt,
+      result.context_messages?.join("\n\n") ?? "",
       /Connected MCP access: available\./,
     );
     assert.match(
@@ -674,9 +696,11 @@ test("projectAgentRuntimeConfig includes pending user memory context as a contex
       "context_message",
     );
     assert.deepEqual(result.prompt_cache_profile?.context_message_ids, [
+      "capability_availability_context",
       "pending_user_memory",
     ]);
     assert.deepEqual(result.prompt_cache_profile?.compatibility_context_ids, [
+      "capability_availability_context",
       "pending_user_memory",
     ]);
     assert.match(
@@ -742,8 +766,110 @@ test("projectAgentRuntimeConfig omits workspace and recent-runtime layers when n
       ),
       false,
     );
-    assert.deepEqual(result.context_messages, []);
-    assert.match(result.system_prompt, /This is a workspace session/i);
+    assert.equal(result.context_messages?.length, 1);
+    assert.match(
+      result.context_messages?.join("\n\n") ?? "",
+      /Capability availability snapshot:/,
+    );
+    assert.match(
+      result.system_prompt,
+      /front-of-house coordinator with only a partial direct capability surface/i,
+    );
+  } finally {
+    delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
+  }
+});
+
+test("projectAgentRuntimeConfig includes delegated executor capability context for main workspace sessions", () => {
+  process.env.HOLABOSS_MODEL_PROXY_BASE_URL =
+    "https://runtime.example/api/v1/model-proxy";
+  process.env.HOLABOSS_USER_ID = "user-1";
+  try {
+    const result = projectAgentRuntimeConfig({
+      session_id: "session-1",
+      workspace_id: "workspace-1",
+      input_id: "input-1",
+      session_kind: "workspace_session",
+      harness_id: "pi",
+      browser_tools_available: false,
+      browser_tool_ids: [],
+      runtime_tool_ids: ["holaboss_delegate_task"],
+      workspace_command_ids: [],
+      delegated_session_kind: "subagent",
+      delegated_browser_tools_available: true,
+      delegated_browser_tool_ids: ["browser_get_state"],
+      delegated_runtime_tool_ids: ["list_data_tables", "create_dashboard"],
+      delegated_workspace_command_ids: [],
+      runtime_exec_model_proxy_api_key: "hbrt.v1.token",
+      runtime_exec_sandbox_id: "sandbox-1",
+      runtime_exec_run_id: "run-1",
+      selected_model: null,
+      default_provider_id: "openai",
+      session_mode: "code",
+      workspace_config_checksum: "checksum-1",
+      workspace_skill_ids: [],
+      default_tools: ["read"],
+      extra_tools: ["holaboss_delegate_task"],
+      delegated_default_tools: ["read", "edit", "bash"],
+      delegated_extra_tools: [
+        "browser_get_state",
+        "list_data_tables",
+        "create_dashboard",
+      ],
+      resolved_mcp_tool_refs: [],
+      delegated_resolved_mcp_tool_refs: [
+        {
+          tool_id: "twitter.twitter_create_post",
+          server_id: "twitter",
+          tool_name: "twitter_create_post",
+        },
+      ],
+      delegated_resolved_mcp_server_ids: ["twitter"],
+      resolved_output_schemas: {},
+      agent: {
+        id: "workspace.general",
+        model: "gpt-5.4",
+        prompt: "You are concise.",
+      },
+    });
+
+    assert.ok(
+      result.prompt_sections?.some(
+        (section) => section.id === "delegated_capability_availability_context",
+      ),
+    );
+    assert.deepEqual(result.prompt_cache_profile?.context_message_ids, [
+      "capability_availability_context",
+      "delegated_capability_availability_context",
+    ]);
+    assert.deepEqual(result.prompt_cache_profile?.compatibility_context_ids, [
+      "capability_availability_context",
+      "delegated_capability_availability_context",
+    ]);
+    assert.match(
+      result.system_prompt,
+      /route against that capability instead of asking a generic tool-discovery question/i,
+    );
+    assert.match(
+      result.context_messages?.join("\n\n") ?? "",
+      /Delegated executor capability snapshot:/,
+    );
+    assert.match(
+      result.context_messages?.join("\n\n") ?? "",
+      /Delegated browser execution is available even though this front session has no direct browser tools\./,
+    );
+    assert.match(
+      result.context_messages?.join("\n\n") ?? "",
+      /Create Dashboard \(`create_dashboard`\)/,
+    );
+    assert.match(
+      result.context_messages?.join("\n\n") ?? "",
+      /List Data Tables \(`list_data_tables`\)/,
+    );
+    assert.match(
+      result.context_messages?.join("\n\n") ?? "",
+      /Delegated app integrations available via: `twitter`\./,
+    );
   } finally {
     delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
   }
@@ -807,9 +933,11 @@ test("projectAgentRuntimeConfig includes recalled durable memory in context mess
       false,
     );
     assert.deepEqual(result.prompt_cache_profile?.context_message_ids, [
+      "capability_availability_context",
       "memory_recall",
     ]);
     assert.deepEqual(result.prompt_cache_profile?.compatibility_context_ids, [
+      "capability_availability_context",
       "memory_recall",
     ]);
     assert.deepEqual(

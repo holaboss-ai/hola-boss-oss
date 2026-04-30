@@ -33,8 +33,9 @@ test("scheduled rows expose a run-now action for each automation", async () => {
   assert.match(source, /const handleRunNow = async \(job: CronjobRecordPayload\) => \{/);
   assert.match(source, /await window\.electronAPI\.workspace\.runCronjobNow\(job\.id\);/);
   assert.match(source, /item\.id === response\.cronjob\.id \? response\.cronjob : item/);
+  assert.match(source, /if \(onRunNow\) \{\s*onRunNow\(response\.cronjob\);\s*return;\s*\}/);
   assert.match(source, /Run now/);
-  assert.match(source, /<Play size=\{16\} \/>/);
+  assert.match(source, /<Play size=\{14\} \/>/);
 });
 
 test("post-action refresh preserves the current banner and suppresses transient refresh errors", async () => {
@@ -60,7 +61,7 @@ test("scheduled rows label whether an automation is a notification or task run",
 test("new schedule button can route creation into the workspace chat", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /interface AutomationsPaneProps \{\s*workspaceId\?: string \| null;\s*showHeader\?: boolean;\s*emptyWorkspaceMessage\?: string;\s*toolbarLeading\?: ReactNode;\s*onOpenRunSession\?: \(sessionId: string\) => void;\s*onCreateSchedule\?: \(\) => void;\s*onEditSchedule\?: \(job: CronjobRecordPayload\) => void;\s*\}/);
+  assert.match(source, /interface AutomationsPaneProps \{\s*workspaceId\?: string \| null;\s*emptyWorkspaceMessage\?: string;\s*onOpenRunSession\?: \(sessionId: string\) => void;\s*onRunNow\?: \(job: CronjobRecordPayload\) => void;\s*onCreateSchedule\?: \(\) => void;\s*onEditSchedule\?: \(job: CronjobRecordPayload\) => void;\s*\}/);
   assert.match(source, /if \(onCreateSchedule\) \{\s*onCreateSchedule\(\);\s*return;\s*\}/);
   assert.match(source, /onClick=\{handleNewSchedule\}/);
 });

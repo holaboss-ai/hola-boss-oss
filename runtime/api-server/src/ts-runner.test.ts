@@ -7,6 +7,7 @@ import { afterEach, test } from "node:test";
 import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
 import { buildAgentCapabilityManifest } from "./agent-capability-registry.js";
+import type { AgentRuntimeConfigCliRequest } from "./agent-runtime-config.js";
 import {
   decodeTsRunnerRequest,
   validateTsRunnerRequest,
@@ -1053,15 +1054,17 @@ test("runTsRunnerCli only advertises structured output when the selected harness
     "build_harness_host_request",
     "compile_runtime_plan",
     "load_current_user_context",
+    "load_legacy_session_history_context",
     "load_operator_surface_context",
     "load_pending_user_memory_context",
     "load_recalled_memory_context",
-    "load_session_scratchpad_context",
+    "load_recent_runtime_context",
     "persist_turn_request_snapshot",
     "prepare_harness_run",
     "project_runtime_config",
     "resolve_workspace_skills",
     "stage_browser_tools",
+    "stage_delegated_browser_tools",
     "stage_runtime_tools",
   ]);
 });
@@ -1088,7 +1091,7 @@ test("runTsRunnerCli loads current user context from the runtime profile", async
   });
   store.close();
 
-  let capturedProjectRequest: Record<string, unknown> | null = null;
+  let capturedProjectRequest: AgentRuntimeConfigCliRequest | null = null;
   const exitCode = await runTsRunnerCli(
     [
       "--request-base64",
@@ -1099,12 +1102,16 @@ test("runTsRunnerCli loads current user context from the runtime profile", async
     ],
     {
       deps: {
-        ...testDeps(),
+        ...testDeps({
+          pluginOverrides: {
+            stageRuntimeTools: () => ({
+              changed: false,
+              toolIds: ["holaboss_delegate_task"],
+            }),
+          },
+        }),
         projectAgentRuntimeConfig: (request) => {
-          capturedProjectRequest = request as unknown as Record<
-            string,
-            unknown
-          >;
+          capturedProjectRequest = request;
           return {
             provider_id: "openai",
             model_id: "gpt-5.4",
@@ -1156,12 +1163,18 @@ test("runTsRunnerCli loads current user context from the runtime profile", async
   );
 });
 
-test("runTsRunnerCli includes staged runtime tool ids in the projected extra tool set", async () => {
-  setTempSandboxRoot("hb-ts-runner-runtime-tools-");
-  let capturedProjectRequest: Record<string, unknown> | null = null;
+test("runTsRunnerCli strips subagent orchestration tools from onboarding sessions", async () => {
+  setTempSandboxRoot("hb-ts-runner-onboarding-tools-");
+  let capturedProjectRequest: AgentRuntimeConfigCliRequest | null = null;
 
   const exitCode = await runTsRunnerCli(
-    ["--request-base64", encodeRequest(baseRequest())],
+    [
+      "--request-base64",
+      encodeRequest({
+        ...baseRequest(),
+        session_kind: "onboarding",
+      }),
+    ],
     {
       deps: {
         ...testDeps({
@@ -1172,15 +1185,102 @@ test("runTsRunnerCli includes staged runtime tool ids in the projected extra too
             }),
             stageRuntimeTools: () => ({
               changed: false,
-              toolIds: ["holaboss_onboarding_complete"],
+              toolIds: [
+                "holaboss_delegate_task",
+                "holaboss_get_subagent",
+                "holaboss_list_background_tasks",
+                "holaboss_cancel_subagent",
+                "holaboss_resume_subagent",
+                "holaboss_continue_subagent",
+                "holaboss_onboarding_complete",
+              ],
             }),
           },
         }),
         projectAgentRuntimeConfig: (request) => {
-          capturedProjectRequest = request as unknown as Record<
-            string,
-            unknown
-          >;
+          capturedProjectRequest = request;
+          return {
+            provider_id: "openai",
+            model_id: "gpt-5.4",
+            mode: "code",
+            system_prompt: "You are concise.",
+            model_client: {
+              model_proxy_provider: "openai_compatible",
+              api_key: "token",
+              base_url: "http://127.0.0.1:4000/openai/v1",
+              default_headers: { "X-Test": "1" },
+            },
+            tools: { read: true },
+            workspace_tool_ids: [],
+            workspace_skill_ids: [],
+            output_schema_member_id: null,
+            output_format: null,
+            workspace_config_checksum: "checksum-1",
+          };
+        },
+      },
+      io: {
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.ok(capturedProjectRequest);
+  assert.equal(
+    (capturedProjectRequest as { session_kind: string | null }).session_kind,
+    "onboarding",
+  );
+  assert.deepEqual(
+    (capturedProjectRequest as { browser_tool_ids: string[] }).browser_tool_ids,
+    [],
+  );
+  assert.deepEqual(
+    (capturedProjectRequest as { runtime_tool_ids: string[] }).runtime_tool_ids,
+    ["holaboss_onboarding_complete"],
+  );
+  assert.deepEqual(
+    (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
+    ["holaboss_onboarding_complete"],
+  );
+  assert.equal(
+    "delegated_session_kind" in (capturedProjectRequest as Record<string, unknown>),
+    false,
+  );
+});
+
+test("runTsRunnerCli strips staged execution tools from front-of-house workspace sessions", async () => {
+  setTempSandboxRoot("hb-ts-runner-runtime-tools-");
+  let capturedProjectRequest: AgentRuntimeConfigCliRequest | null = null;
+
+  const exitCode = await runTsRunnerCli(
+    ["--request-base64", encodeRequest(baseRequest())],
+    {
+      deps: {
+        ...testDeps({
+          pluginOverrides: {
+            stageBrowserTools: ({ sessionKind }) => ({
+              changed: false,
+              toolIds:
+                sessionKind === "subagent" ? ["browser_get_state"] : [],
+            }),
+            stageRuntimeTools: () => ({
+              changed: false,
+              toolIds: ["holaboss_onboarding_complete", "write_report"],
+            }),
+          },
+        }),
+        projectAgentRuntimeConfig: (request) => {
+          capturedProjectRequest = request;
           return {
             provider_id: "openai",
             model_id: "gpt-5.4",
@@ -1221,19 +1321,193 @@ test("runTsRunnerCli includes staged runtime tool ids in the projected extra too
   assert.equal(
     (capturedProjectRequest as { browser_tools_available: boolean })
       .browser_tools_available,
-    true,
+    false,
   );
   assert.deepEqual(
     (capturedProjectRequest as { browser_tool_ids: string[] }).browser_tool_ids,
-    ["browser_get_state"],
+    [],
   );
   assert.deepEqual(
     (capturedProjectRequest as { runtime_tool_ids: string[] }).runtime_tool_ids,
-    ["holaboss_onboarding_complete"],
+    [],
+  );
+  assert.deepEqual(
+    (capturedProjectRequest as { default_tools: string[] }).default_tools,
+    [
+      "read",
+      "grep",
+      "glob",
+      "list",
+      "question",
+      "skill",
+    ],
+  );
+  assert.equal(
+    "session_scratchpad_context" in (capturedProjectRequest as Record<string, unknown>),
+    false,
   );
   assert.deepEqual(
     (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
-    ["web_search", "browser_get_state", "holaboss_onboarding_complete"],
+    [],
+  );
+  assert.equal(
+    (capturedProjectRequest as {
+      delegated_session_kind?: string | null;
+    }).delegated_session_kind,
+    "subagent",
+  );
+  assert.equal(
+    (capturedProjectRequest as {
+      delegated_browser_tools_available?: boolean | null;
+    }).delegated_browser_tools_available,
+    true,
+  );
+  assert.deepEqual(
+    (capturedProjectRequest as { delegated_browser_tool_ids?: string[] })
+      .delegated_browser_tool_ids,
+    ["browser_get_state"],
+  );
+  assert.deepEqual(
+    (capturedProjectRequest as { delegated_runtime_tool_ids?: string[] })
+      .delegated_runtime_tool_ids,
+    ["holaboss_onboarding_complete", "write_report"],
+  );
+  assert.deepEqual(
+    (capturedProjectRequest as { delegated_default_tools?: string[] })
+      .delegated_default_tools,
+    [
+      "read",
+      "edit",
+      "bash",
+      "grep",
+      "glob",
+      "list",
+      "question",
+      "todowrite",
+      "todoread",
+      "skill",
+    ],
+  );
+  assert.deepEqual(
+    (capturedProjectRequest as { delegated_extra_tools?: string[] })
+      .delegated_extra_tools,
+    [
+      "web_search",
+      "browser_get_state",
+      "holaboss_onboarding_complete",
+      "write_report",
+    ],
+  );
+});
+
+test("runTsRunnerCli filters mutating MCP tools out of front-session requests", async () => {
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-front-mcp-filter-"),
+  );
+  process.env.HB_SANDBOX_ROOT = sandboxRoot;
+  let capturedProjectRequest: AgentRuntimeConfigCliRequest | null = null;
+
+  const exitCode = await runTsRunnerCli(
+    [
+      "--request-base64",
+      encodeRequest({
+        ...baseRequest(),
+        context: {
+          _sandbox_runtime_exec_v1: {
+            harness: "pi",
+          },
+        },
+      }),
+    ],
+    {
+      deps: {
+        ...testDeps(),
+        compilePlan: () =>
+          ({
+            ...baseCompiledPlan(),
+            resolved_mcp_tool_refs: [
+              {
+                tool_id: "docs.lookup",
+                server_id: "docs",
+                tool_name: "lookup",
+              },
+              {
+                tool_id: "workspace.write_report",
+                server_id: "workspace",
+                tool_name: "write_report",
+              },
+            ],
+          }) as never,
+        projectAgentRuntimeConfig: (request) => {
+          capturedProjectRequest = request;
+          return {
+            provider_id: "openai",
+            model_id: "gpt-5.4",
+            mode: "code",
+            system_prompt: "You are concise.",
+            model_client: {
+              model_proxy_provider: "openai_compatible",
+              api_key: "token",
+              base_url: "http://127.0.0.1:4000/openai/v1",
+            },
+            tools: { read: true },
+            workspace_tool_ids: [],
+            workspace_skill_ids: [],
+            output_schema_member_id: null,
+            output_format: null,
+            workspace_config_checksum: "checksum-1",
+          };
+        },
+      },
+      io: {
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.ok(capturedProjectRequest);
+  assert.deepEqual(
+    (
+      capturedProjectRequest as {
+        resolved_mcp_tool_refs: Array<Record<string, string>>;
+      }
+    ).resolved_mcp_tool_refs,
+    [
+      {
+        tool_id: "docs.lookup",
+        server_id: "docs",
+        tool_name: "lookup",
+      },
+    ],
+  );
+  assert.deepEqual(
+    (
+      capturedProjectRequest as {
+        delegated_resolved_mcp_tool_refs?: Array<Record<string, string>>;
+      }
+    ).delegated_resolved_mcp_tool_refs,
+    [
+      {
+        tool_id: "docs.lookup",
+        server_id: "docs",
+        tool_name: "lookup",
+      },
+      {
+        tool_id: "workspace.write_report",
+        server_id: "workspace",
+        tool_name: "write_report",
+      },
+    ],
   );
 });
 
@@ -1278,8 +1552,6 @@ test("runTsRunnerCli does not derive prompt continuity from the latest prior tur
     ],
     promptSectionIds: ["runtime_core", "execution_policy"],
     capabilityManifestFingerprint: "c".repeat(64),
-    compactedSummary:
-      "Run failed while trying to deploy because policy denied the action.",
     tokenUsage: { input_tokens: 3, output_tokens: 5 },
   });
   store.insertSessionMessage({
@@ -1291,17 +1563,14 @@ test("runTsRunnerCli does not derive prompt continuity from the latest prior tur
   });
   store.close();
 
-  let capturedProjectRequest: Record<string, unknown> | null = null;
+  let capturedProjectRequest: AgentRuntimeConfigCliRequest | null = null;
   const exitCode = await runTsRunnerCli(
     ["--request-base64", encodeRequest(baseRequest())],
     {
       deps: {
         ...testDeps(),
         projectAgentRuntimeConfig: (request) => {
-          capturedProjectRequest = request as unknown as Record<
-            string,
-            unknown
-          >;
+          capturedProjectRequest = request;
           return {
             provider_id: "openai",
             model_id: "gpt-5.4",
@@ -1339,9 +1608,14 @@ test("runTsRunnerCli does not derive prompt continuity from the latest prior tur
 
   assert.equal(exitCode, 0);
   assert.ok(capturedProjectRequest);
-  assert.equal("recent_runtime_context" in capturedProjectRequest, false);
+  if (!capturedProjectRequest) {
+    throw new Error("expected project runtime config request");
+  }
+  const runtimeConfigRequest =
+    capturedProjectRequest as AgentRuntimeConfigCliRequest;
+  assert.equal(runtimeConfigRequest.recent_runtime_context, undefined);
   assert.equal(
-    (capturedProjectRequest as { session_resume_context?: Record<string, unknown> })
+    (runtimeConfigRequest as { session_resume_context?: Record<string, unknown> })
       .session_resume_context,
     undefined,
   );
@@ -1372,17 +1646,14 @@ test("runTsRunnerCli does not project session memory into runtime prompt config"
       "Resume from compacted deploy attempt. Draft report path: outputs/reports/deploy.md.",
   });
 
-  let capturedProjectRequest: Record<string, unknown> | null = null;
+  let capturedProjectRequest: AgentRuntimeConfigCliRequest | null = null;
   const exitCode = await runTsRunnerCli(
     ["--request-base64", encodeRequest(baseRequest())],
     {
       deps: {
         ...testDeps(),
         projectAgentRuntimeConfig: (request) => {
-          capturedProjectRequest = request as unknown as Record<
-            string,
-            unknown
-          >;
+          capturedProjectRequest = request;
           return {
             provider_id: "openai",
             model_id: "gpt-5.4",
@@ -1420,12 +1691,199 @@ test("runTsRunnerCli does not project session memory into runtime prompt config"
 
   assert.equal(exitCode, 0);
   assert.ok(capturedProjectRequest);
-  assert.equal("recent_runtime_context" in capturedProjectRequest, false);
+  if (!capturedProjectRequest) {
+    throw new Error("expected project runtime config request");
+  }
+  const runtimeConfigRequest =
+    capturedProjectRequest as AgentRuntimeConfigCliRequest;
+  assert.equal(runtimeConfigRequest.recent_runtime_context, undefined);
   assert.equal(
-    (capturedProjectRequest as { session_resume_context?: Record<string, unknown> })
+    (runtimeConfigRequest as { session_resume_context?: Record<string, unknown> })
       .session_resume_context,
     undefined,
   );
+});
+
+test("runTsRunnerCli injects report-routing recovery context for report-style main-session requests", async () => {
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-report-routing-"),
+  );
+  process.env.HB_SANDBOX_ROOT = sandboxRoot;
+  const workspaceRoot = path.join(sandboxRoot, "workspace");
+  const store = new RuntimeStateStore({
+    workspaceRoot,
+    sandboxRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.close();
+
+  let capturedProjectRequest: AgentRuntimeConfigCliRequest | null = null;
+  const exitCode = await runTsRunnerCli(
+    [
+      "--request-base64",
+      encodeRequest({
+        ...baseRequest(),
+        instruction: "write me a report on what we did so far",
+      }),
+    ],
+    {
+      deps: {
+        ...testDeps({
+          pluginOverrides: {
+            stageRuntimeTools: () => ({
+              changed: false,
+              toolIds: ["holaboss_delegate_task"],
+            }),
+          },
+        }),
+        projectAgentRuntimeConfig: (request) => {
+          capturedProjectRequest = request;
+          return {
+            provider_id: "openai",
+            model_id: "gpt-5.4",
+            mode: "code",
+            system_prompt: "You are concise.",
+            model_client: {
+              model_proxy_provider: "openai_compatible",
+              api_key: "token",
+              base_url: "http://127.0.0.1:4000/openai/v1",
+              default_headers: { "X-Test": "1" },
+            },
+            tools: { read: true },
+            workspace_tool_ids: [],
+            workspace_skill_ids: [],
+            output_schema_member_id: null,
+            output_format: null,
+            workspace_config_checksum: "checksum-1",
+          };
+        },
+      },
+      io: {
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.ok(capturedProjectRequest);
+  if (!capturedProjectRequest) {
+    throw new Error("expected project runtime config request");
+  }
+  const runtimeConfigRequest = capturedProjectRequest as AgentRuntimeConfigCliRequest;
+  assert.deepEqual(runtimeConfigRequest.runtime_tool_ids, [
+    "holaboss_delegate_task",
+  ]);
+  assert.deepEqual(runtimeConfigRequest.recent_runtime_context?.lines, [
+    "The user is asking for a report-style deliverable. Keep chat as the coordination surface, not the deliverable surface.",
+    "Do not paste a long report, memo, brief, recap, or document body into the conversation.",
+    "Use `holaboss_delegate_task` to produce the report artifact, then keep the main-session reply to a brief acknowledgement or short handoff.",
+    "Only provide the full content inline if the user explicitly asks for it in chat and it will remain short.",
+  ]);
+});
+
+test("runTsRunnerCli injects available-tool fallback context for concrete checks", async () => {
+  setTempSandboxRoot("hb-ts-runner-account-ui-fallback-");
+
+  let capturedProjectRequest: AgentRuntimeConfigCliRequest | null = null;
+  const exitCode = await runTsRunnerCli(
+    [
+      "--request-base64",
+      encodeRequest({
+        ...baseRequest(),
+        instruction:
+          "can you check out what are the stats for my latest post?",
+      }),
+    ],
+    {
+      deps: {
+        ...testDeps({
+          pluginOverrides: {
+            stageRuntimeTools: () => ({
+              changed: false,
+              toolIds: ["holaboss_delegate_task"],
+            }),
+          },
+        }),
+        loadOperatorSurfaceContext: async () => ({
+          active_surface_id: "browser:user",
+          surfaces: [
+            {
+              surface_id: "browser:user",
+              surface_type: "browser",
+              owner: "user",
+              active: true,
+              mutability: "takeover_allowed",
+              summary: "User browser is open to the relevant site.",
+            },
+          ],
+        }),
+        projectAgentRuntimeConfig: (request) => {
+          capturedProjectRequest = request;
+          return {
+            provider_id: "openai",
+            model_id: "gpt-5.4",
+            mode: "code",
+            system_prompt: "You are concise.",
+            model_client: {
+              model_proxy_provider: "openai_compatible",
+              api_key: "token",
+              base_url: "http://127.0.0.1:4000/openai/v1",
+              default_headers: { "X-Test": "1" },
+            },
+            tools: { read: true },
+            workspace_tool_ids: [],
+            workspace_skill_ids: [],
+            output_schema_member_id: null,
+            output_format: null,
+            workspace_config_checksum: "checksum-1",
+          };
+        },
+      },
+      io: {
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.ok(capturedProjectRequest);
+  if (!capturedProjectRequest) {
+    throw new Error("expected project runtime config request");
+  }
+  const runtimeConfigRequest =
+    capturedProjectRequest as AgentRuntimeConfigCliRequest;
+  assert.deepEqual(runtimeConfigRequest.runtime_tool_ids, [
+    "holaboss_delegate_task",
+  ]);
+  assert.deepEqual(runtimeConfigRequest.recent_runtime_context?.lines, [
+    "The user is asking for a concrete check or lookup where the first-choice tool might be missing.",
+    "Do not stop at a missing MCP/API/native tool. Try the best available route before saying it cannot be done.",
+    "Choose the route that can actually satisfy the request: direct tool first, then delegated browser, web, terminal, or file inspection as appropriate.",
+    "Only ask the user for access/context or state a limitation after viable direct and delegated routes are unavailable, blocked, or genuinely need human input.",
+  ]);
 });
 
 test("runTsRunnerCli does not emit a synthetic resume event before harness run events", async () => {
@@ -2006,6 +2464,105 @@ test("runTsRunnerCli loads pending user memory proposals into prompt context for
     pendingUserMemoryContext.entries[0]?.summary,
     "Do not compress or zip multiple files; deliver them individually.",
   );
+});
+
+test("runTsRunnerCli loads legacy session history exports into main-session prompt context", async () => {
+  const sandboxRoot = setTempSandboxRoot("hb-ts-runner-legacy-session-history-");
+  const workspaceDir = path.join(sandboxRoot, "workspace", "workspace-1");
+  const legacyDir = path.join(
+    workspaceDir,
+    ".holaboss",
+    "legacy-session-histories",
+  );
+  fs.mkdirSync(legacyDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(legacyDir, "index.json"),
+    JSON.stringify(
+      [
+        {
+          session_id: "session-older",
+          title: "Earlier planning chat",
+          kind: "workspace_session",
+          archived_at: "2026-04-24T06:52:27.419Z",
+          message_count: 14,
+          output_count: 1,
+          json_path: path.join(legacyDir, "session-older.json"),
+          markdown_path: path.join(legacyDir, "session-older.md"),
+        },
+      ],
+      null,
+      2,
+    ),
+    "utf8",
+  );
+
+  let capturedProjectRequest: Record<string, unknown> | null = null;
+  const exitCode = await runTsRunnerCli(
+    ["--request-base64", encodeRequest(baseRequest())],
+    {
+      deps: {
+        ...testDeps(),
+        projectAgentRuntimeConfig: (request) => {
+          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          return {
+            provider_id: "openai",
+            model_id: "gpt-5.4",
+            mode: "code",
+            system_prompt: "You are concise.",
+            model_client: {
+              model_proxy_provider: "openai_compatible",
+              api_key: "token",
+              base_url: "http://127.0.0.1:4000/openai/v1",
+              default_headers: { "X-Test": "1" },
+            },
+            tools: { read: true },
+            workspace_tool_ids: [],
+            workspace_skill_ids: [],
+            output_schema_member_id: null,
+            output_format: null,
+            workspace_config_checksum: "checksum-1",
+          };
+        },
+      },
+      io: {
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.ok(capturedProjectRequest);
+  const legacyContext = (
+    capturedProjectRequest as {
+      legacy_session_history_context: Record<string, unknown>;
+    }
+  ).legacy_session_history_context;
+  assert.equal(
+    legacyContext.manifest_path,
+    ".holaboss/legacy-session-histories/index.json",
+  );
+  assert.equal(legacyContext.legacy_session_count, 1);
+  assert.deepEqual(legacyContext.entries, [
+    {
+      session_id: "session-older",
+      title: "Earlier planning chat",
+      kind: "workspace_session",
+      archived_at: "2026-04-24T06:52:27.419Z",
+      message_count: 14,
+      output_count: 1,
+      json_path: ".holaboss/legacy-session-histories/session-older.json",
+      markdown_path: ".holaboss/legacy-session-histories/session-older.md",
+    },
+  ]);
 });
 
 test("runTsRunnerCli loads operator surface context into prompt context for the same run", async () => {
@@ -2855,7 +3412,7 @@ test(
   },
 );
 
-test("runTsRunnerCli only stages browser tools for workspace sessions", async () => {
+test("runTsRunnerCli stages browser tools for subagent executor sessions and strips orchestration runtime tools", async () => {
   setTempSandboxRoot("hb-ts-runner-browser-scope-");
   const seenSessionKinds: Array<string | null | undefined> = [];
   let capturedProjectRequest: Record<string, unknown> | null = null;
@@ -2865,7 +3422,7 @@ test("runTsRunnerCli only stages browser tools for workspace sessions", async ()
       "--request-base64",
       encodeRequest({
         ...baseRequest(),
-        session_kind: "task_proposal",
+        session_kind: "subagent",
       }),
     ],
     {
@@ -2877,14 +3434,17 @@ test("runTsRunnerCli only stages browser tools for workspace sessions", async ()
               return {
                 changed: false,
                 toolIds:
-                  sessionKind === "workspace_session"
+                  sessionKind === "subagent"
                     ? ["browser_get_state"]
                     : [],
               };
             },
             stageRuntimeTools: () => ({
               changed: false,
-              toolIds: ["holaboss_onboarding_complete"],
+              toolIds: [
+                "holaboss_onboarding_complete",
+                "holaboss_delegate_task",
+              ],
             }),
           },
         }),
@@ -2929,28 +3489,43 @@ test("runTsRunnerCli only stages browser tools for workspace sessions", async ()
   );
 
   assert.equal(exitCode, 0);
-  assert.deepEqual(seenSessionKinds, ["task_proposal"]);
+  assert.deepEqual(seenSessionKinds, ["subagent"]);
   assert.ok(capturedProjectRequest);
   assert.equal(
     (capturedProjectRequest as { browser_tools_available: boolean })
       .browser_tools_available,
-    false,
+    true,
   );
   assert.equal(
     (capturedProjectRequest as { session_kind: string | null }).session_kind,
-    "task_proposal",
+    "subagent",
   );
   assert.deepEqual(
     (capturedProjectRequest as { browser_tool_ids: string[] }).browser_tool_ids,
-    [],
+    ["browser_get_state"],
   );
   assert.deepEqual(
     (capturedProjectRequest as { runtime_tool_ids: string[] }).runtime_tool_ids,
     ["holaboss_onboarding_complete"],
   );
   assert.deepEqual(
+    (capturedProjectRequest as { default_tools: string[] }).default_tools,
+    [
+      "read",
+      "edit",
+      "bash",
+      "grep",
+      "glob",
+      "list",
+      "question",
+      "todowrite",
+      "todoread",
+      "skill",
+    ],
+  );
+  assert.deepEqual(
     (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
-    ["web_search", "holaboss_onboarding_complete"],
+    ["web_search", "browser_get_state", "holaboss_onboarding_complete"],
   );
 });
 
@@ -3266,7 +3841,13 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
   assert.deepEqual(
     (capturedProjectRequest as { workspace_skill_ids: string[] })
       .workspace_skill_ids,
-    ["skill-creator", "skill-installer", "alpha"],
+    [
+      "browser-core-efficient",
+      "browser-qa",
+      "skill-creator",
+      "skill-installer",
+      "alpha",
+    ],
   );
   assert.ok(capturedHarnessRequest);
   assert.equal(
@@ -3279,7 +3860,13 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
         workspace_skill_dirs: string[];
       }
     ).workspace_skill_dirs.map((skillDir) => path.basename(skillDir)),
-    ["skill-creator", "skill-installer", "alpha"],
+    [
+      "browser-core-efficient",
+      "browser-qa",
+      "skill-creator",
+      "skill-installer",
+      "alpha",
+    ],
   );
 });
 

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, test } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import Database from "better-sqlite3";
 
@@ -595,6 +596,274 @@ test("binding transfer reassigns an existing harness session to a different sess
     }),
     transferred
   );
+  store.close();
+});
+
+test("conversation bindings round trip across channels and session ownership", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const desktop = store.upsertConversationBinding({
+    workspaceId: "workspace-1",
+    channel: "desktop",
+    conversationKey: "workspace-main",
+    sessionId: "session-desktop-main",
+    role: "main",
+    metadata: { surface: "desktop" }
+  });
+  const telegram = store.upsertConversationBinding({
+    workspaceId: "workspace-1",
+    channel: "telegram",
+    conversationKey: "chat-123",
+    sessionId: "session-telegram-main",
+    role: "main",
+    metadata: { chat_id: "chat-123" }
+  });
+  const touched = store.touchConversationBinding({
+    bindingId: desktop.bindingId,
+    lastActiveAt: "2026-04-24T12:00:00.000Z"
+  });
+  const inactive = store.setConversationBindingActive({
+    bindingId: telegram.bindingId,
+    isActive: false
+  });
+
+  assert.ok(touched);
+  assert.ok(inactive);
+  assert.equal(desktop.role, "main");
+  assert.equal(telegram.channel, "telegram");
+  assert.equal(touched?.lastActiveAt, "2026-04-24T12:00:00.000Z");
+  assert.equal(inactive?.isActive, false);
+  assert.deepEqual(
+    store.getConversationBindingByConversation({
+      workspaceId: "workspace-1",
+      channel: "desktop",
+      conversationKey: "workspace-main",
+      role: "main"
+    }),
+    touched
+  );
+  assert.deepEqual(
+    store.getConversationBindingBySession({
+      workspaceId: "workspace-1",
+      sessionId: "session-telegram-main",
+      role: "main"
+    }),
+    inactive
+  );
+  assert.deepEqual(
+    store.listConversationBindings({ workspaceId: "workspace-1" }).map((record) => record.bindingId).sort(),
+    [desktop.bindingId, telegram.bindingId].sort()
+  );
+
+  store.close();
+});
+
+test("subagent runs round trip and support waiting-user resume metadata", () => {
+  const root = makeTempDir("hb-state-store-subagents-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const created = store.createSubagentRun({
+    workspaceId: "workspace-1",
+    parentSessionId: "session-main",
+    parentInputId: "parent-input-1",
+    originMainSessionId: "session-main",
+    childSessionId: "session-subagent-1",
+    initialChildInputId: "child-input-1",
+    title: "Research competitors",
+    goal: "Find recent proactive agent products",
+    toolProfile: { tools: ["web"] },
+    status: "running"
+  });
+  const updated = store.updateSubagentRun({
+    subagentId: created.subagentId,
+    fields: {
+      status: "waiting_on_user",
+      currentChildInputId: "child-input-2",
+      latestChildInputId: "child-input-2",
+      blockingPayload: { question: "Which repo should I inspect?" },
+      lastEventAt: "2026-04-24T12:10:00.000Z"
+    }
+  });
+
+  assert.ok(updated);
+  assert.equal(created.childSessionId, "session-subagent-1");
+  assert.equal(updated?.status, "waiting_on_user");
+  assert.equal(updated?.currentChildInputId, "child-input-2");
+  assert.equal(updated?.latestChildInputId, "child-input-2");
+  assert.deepEqual(updated?.blockingPayload, { question: "Which repo should I inspect?" });
+  assert.deepEqual(
+    store.getSubagentRunByChildSession({
+      workspaceId: "workspace-1",
+      childSessionId: "session-subagent-1"
+    }),
+    updated
+  );
+  assert.deepEqual(
+    store.listSubagentRunsByOwner({ ownerMainSessionId: "session-main" }).map((record) => record.subagentId),
+    [created.subagentId]
+  );
+  assert.deepEqual(
+    store.listWaitingSubagentRuns({ ownerMainSessionId: "session-main" }).map((record) => record.subagentId),
+    [created.subagentId]
+  );
+  assert.deepEqual(
+    store.listIncompleteSubagentRuns({ workspaceId: "workspace-1" }).map((record) => record.subagentId),
+    [created.subagentId]
+  );
+
+  store.close();
+});
+
+test("transferring subagent ownership also moves pending queued main-session events", () => {
+  const root = makeTempDir("hb-state-store-subagents-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const run = store.createSubagentRun({
+    workspaceId: "workspace-1",
+    parentSessionId: "session-main-desktop",
+    originMainSessionId: "session-main-desktop",
+    childSessionId: "session-subagent-1",
+    goal: "Debug the failing tests",
+    status: "running"
+  });
+  const pending = store.enqueueMainSessionEvent({
+    workspaceId: "workspace-1",
+    ownerMainSessionId: "session-main-desktop",
+    originMainSessionId: "session-main-desktop",
+    subagentId: run.subagentId,
+    eventType: "progress",
+    deliveryBucket: "background_update",
+    payload: { summary: "Tests reproduced locally." }
+  });
+  const delivered = store.enqueueMainSessionEvent({
+    workspaceId: "workspace-1",
+    ownerMainSessionId: "session-main-desktop",
+    originMainSessionId: "session-main-desktop",
+    subagentId: run.subagentId,
+    eventType: "completed",
+    deliveryBucket: "background_update",
+    status: "delivered",
+    deliveredAt: "2026-04-24T12:20:00.000Z",
+    payload: { summary: "Fixed." }
+  });
+
+  const transferred = store.transferSubagentOwnership({
+    subagentId: run.subagentId,
+    ownerMainSessionId: "session-main-telegram",
+    ownerTransferredAt: "2026-04-24T12:21:00.000Z"
+  });
+
+  assert.ok(transferred);
+  assert.equal(transferred?.ownerMainSessionId, "session-main-telegram");
+  assert.equal(transferred?.ownerTransferredAt, "2026-04-24T12:21:00.000Z");
+  assert.equal(store.getMainSessionEvent({ eventId: pending.eventId })?.ownerMainSessionId, "session-main-telegram");
+  assert.equal(store.getMainSessionEvent({ eventId: delivered.eventId })?.ownerMainSessionId, "session-main-desktop");
+
+  store.close();
+});
+
+test("main session event queue supports materialize deliver supersede lifecycle", () => {
+  const root = makeTempDir("hb-state-store-events-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const first = store.enqueueMainSessionEvent({
+    workspaceId: "workspace-1",
+    ownerMainSessionId: "session-main",
+    originMainSessionId: "session-main",
+    eventType: "completed",
+    deliveryBucket: "background_update",
+    payload: { summary: "Research is done." }
+  });
+  const second = store.enqueueMainSessionEvent({
+    workspaceId: "workspace-1",
+    ownerMainSessionId: "session-main",
+    originMainSessionId: "session-main",
+    eventType: "waiting_on_user",
+    deliveryBucket: "waiting_on_user",
+    payload: { question: "Create a new GCP project?" }
+  });
+
+  const pending = store.listPendingMainSessionEvents({ ownerMainSessionId: "session-main" });
+  const materialized = store.markMainSessionEventsMaterialized({
+    eventIds: [first.eventId],
+    materializedInputId: "main-input-1"
+  });
+  const delivered = store.markMainSessionEventsDelivered({
+    eventIds: [first.eventId],
+    deliveredAt: "2026-04-24T12:30:00.000Z"
+  });
+  const superseded = store.markMainSessionEventsSuperseded({
+    eventIds: [second.eventId],
+    supersededAt: "2026-04-24T12:31:00.000Z"
+  });
+
+  assert.equal(pending.length, 2);
+  assert.equal(materialized[0]?.status, "materialized");
+  assert.equal(materialized[0]?.materializedInputId, "main-input-1");
+  assert.equal(delivered[0]?.status, "delivered");
+  assert.equal(delivered[0]?.deliveredAt, "2026-04-24T12:30:00.000Z");
+  assert.equal(superseded[0]?.status, "superseded");
+  assert.equal(superseded[0]?.supersededAt, "2026-04-24T12:31:00.000Z");
+  assert.equal(store.listPendingMainSessionEvents({ ownerMainSessionId: "session-main" }).length, 0);
+
+  store.close();
+});
+
+test("main session pending selectors exclude materialized events", () => {
+  const root = makeTempDir("hb-state-store-pending-events-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const pending = store.enqueueMainSessionEvent({
+    workspaceId: "workspace-1",
+    ownerMainSessionId: "session-main",
+    originMainSessionId: "session-main",
+    eventType: "completed",
+    deliveryBucket: "background_update",
+    payload: { summary: "Pending follow-up." }
+  });
+  const materialized = store.enqueueMainSessionEvent({
+    workspaceId: "workspace-1",
+    ownerMainSessionId: "session-main",
+    originMainSessionId: "session-main",
+    eventType: "completed",
+    deliveryBucket: "background_update",
+    payload: { summary: "Already queued." }
+  });
+
+  store.markMainSessionEventsMaterialized({
+    eventIds: [materialized.eventId],
+    materializedInputId: "main-input-1"
+  });
+
+  assert.deepEqual(
+    store
+      .listPendingMainSessionEvents({ ownerMainSessionId: "session-main" })
+      .map((event) => event.eventId),
+    [pending.eventId]
+  );
+  assert.deepEqual(
+    store
+      .listPendingMainSessionEventsByWorkspace({ workspaceId: "workspace-1" })
+      .map((event) => event.eventId),
+    [pending.eventId]
+  );
+
   store.close();
 });
 
@@ -1741,12 +2010,15 @@ test("turn results support upsert, lookup, count, and listing", () => {
       cacheable_section_ids: ["runtime_core"],
       volatile_section_ids: ["execution_policy"],
     },
-    compactedSummary: null,
-    tokenUsage: { input_tokens: 10, output_tokens: 20 },
     contextBudgetDecisions: {
-      mode: "observability_only",
-      metrics: { input_tokens: 10, output_tokens: 20 },
+      pressure_stage: "normal",
+      lane_decisions: [],
+      prompt_cache_stable_candidate: true,
+      tool_replay_trimmed: false,
+      retrieval_clipped: false,
+      checkpoint_queued: false,
     },
+    tokenUsage: { input_tokens: 10, output_tokens: 20 },
   });
   const updated = store.upsertTurnResult({
     workspaceId: "workspace-1",
@@ -1772,12 +2044,15 @@ test("turn results support upsert, lookup, count, and listing", () => {
       cacheable_section_ids: ["runtime_core"],
       volatile_section_ids: ["session_policy"],
     },
-    compactedSummary: "summary",
-    tokenUsage: { input_tokens: 11, output_tokens: 21 },
     contextBudgetDecisions: {
-      mode: "observability_only",
-      metrics: { input_tokens: 11, output_tokens: 21 },
+      pressure_stage: "trim_replay",
+      lane_decisions: [],
+      prompt_cache_stable_candidate: true,
+      tool_replay_trimmed: true,
+      retrieval_clipped: false,
+      checkpoint_queued: false,
     },
+    tokenUsage: { input_tokens: 11, output_tokens: 21 },
   });
 
   assert.equal(updated.status, "waiting_user");
@@ -1790,8 +2065,12 @@ test("turn results support upsert, lookup, count, and listing", () => {
     volatile_section_ids: ["session_policy"],
   });
   assert.deepEqual(updated.contextBudgetDecisions, {
-    mode: "observability_only",
-    metrics: { input_tokens: 11, output_tokens: 21 },
+    pressure_stage: "trim_replay",
+    lane_decisions: [],
+    prompt_cache_stable_candidate: true,
+    tool_replay_trimmed: true,
+    retrieval_clipped: false,
+    checkpoint_queued: false,
   });
   assert.deepEqual(updated.permissionDenials, [
     { tool_name: "deploy", tool_id: null, reason: "permission denied" }
@@ -1813,7 +2092,6 @@ test("turn results support upsert, lookup, count, and listing", () => {
     mode: "observability_only",
     checkpoint_queued: true,
   });
-  assert.equal(telemetryOnlyUpdate?.compactedSummary, "summary");
   store.close();
 });
 
@@ -2300,6 +2578,34 @@ test("task proposal acceptance fields and child session metadata round trip", ()
   assert.equal(updated.acceptedSessionId, "proposal-session-1");
   assert.equal(updated.acceptedInputId, "input-1");
   assert.equal(updated.acceptedAt, "2026-01-01T01:00:00+00:00");
+  store.close();
+});
+
+test("listSessions preserves millisecond ordering for latest session selection", async () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  store.ensureSession({
+    workspaceId: "workspace-1",
+    sessionId: "session-older",
+    kind: "workspace_session",
+    title: "Older"
+  });
+  await sleep(5);
+  store.ensureSession({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    kind: "workspace_session",
+    title: "Main"
+  });
+
+  const sessions = store.listSessions({ workspaceId: "workspace-1" });
+
+  assert.equal(sessions[0]?.sessionId, "session-main");
+  assert.equal(sessions[1]?.sessionId, "session-older");
   store.close();
 });
 

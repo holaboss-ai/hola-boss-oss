@@ -5,6 +5,8 @@ import {
   buildAgentCapabilityManifest,
   buildEnabledToolMapFromManifest,
   evaluateAgentCapabilities,
+  renderDelegatedCapabilityAvailabilityContextPromptSection,
+  renderCapabilityToolRoutingPromptSection,
   renderCapabilityPolicyPromptSection,
 } from "./agent-capability-registry.js";
 
@@ -48,7 +50,11 @@ test("buildAgentCapabilityManifest classifies tools, skills, and MCP aliases", (
   );
   assert.ok(manifest.inspect.some((capability) => capability.callable_name === "read"));
   assert.ok(manifest.inspect.some((capability) => capability.callable_name === "browser_get_state"));
-  assert.ok(manifest.inspect.some((capability) => capability.callable_name === "workspace_lookup"));
+  assert.ok(
+    manifest.inspect.some(
+      (capability) => capability.callable_name === "mcp__workspace__lookup"
+    )
+  );
   assert.ok(manifest.mutate.some((capability) => capability.callable_name === "edit"));
   assert.ok(
     manifest.mutate.some((capability) => capability.callable_name === "holaboss_onboarding_complete")
@@ -81,7 +87,7 @@ test("buildAgentCapabilityManifest classifies tools, skills, and MCP aliases", (
   assert.equal(toolMap.todoread, true);
   assert.equal(toolMap.todowrite, true);
   assert.equal(toolMap.browser_get_state, true);
-  assert.equal(toolMap.workspace_lookup, true);
+  assert.equal(toolMap.mcp__workspace__lookup, true);
   assert.equal(toolMap.skill, true);
 });
 
@@ -107,10 +113,13 @@ test("buildAgentCapabilityManifest applies tool server id mappings to MCP callab
       tool_id: "workspace.lookup",
       server_id: "workspace__sandbox123",
       tool_name: "lookup",
-      callable_name: "workspace__sandbox123_lookup",
+      callable_name: "mcp__workspace_sandbox123__lookup",
     },
   ]);
-  assert.equal(buildEnabledToolMapFromManifest(manifest).workspace__sandbox123_lookup, true);
+  assert.equal(
+    buildEnabledToolMapFromManifest(manifest).mcp__workspace_sandbox123__lookup,
+    true,
+  );
 });
 
 test("buildAgentCapabilityManifest filters browser tools when policy context does not allow them", () => {
@@ -140,6 +149,23 @@ test("buildAgentCapabilityManifest filters browser tools when policy context doe
   assert.equal(manifest.inspect.some((capability) => capability.callable_name === "browser_get_state"), false);
   assert.equal(manifest.mutate.some((capability) => capability.callable_name === "holaboss_onboarding_complete"), true);
   assert.equal(buildEnabledToolMapFromManifest(manifest).browser_get_state, undefined);
+});
+
+test("buildAgentCapabilityManifest includes staged browser tools for subagent sessions", () => {
+  const manifest = buildAgentCapabilityManifest({
+    harnessId: "pi",
+    sessionKind: "subagent",
+    browserToolsAvailable: true,
+    browserToolIds: ["browser_get_state"],
+    runtimeToolIds: [],
+    defaultTools: ["read"],
+    extraTools: ["browser_get_state"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  assert.equal(manifest.inspect.some((capability) => capability.callable_name === "browser_get_state"), true);
+  assert.equal(buildEnabledToolMapFromManifest(manifest).browser_get_state, true);
 });
 
 test("buildAgentCapabilityManifest excludes browser tools for onboarding sessions even when staged", () => {
@@ -182,6 +208,105 @@ test("buildAgentCapabilityManifest includes native web search as a runtime tool"
   assert.equal(buildEnabledToolMapFromManifest(manifest).web_search, true);
 });
 
+test("renderCapabilityToolRoutingPromptSection tells main sessions to delegate when direct capability is missing", () => {
+  const manifest = buildAgentCapabilityManifest({
+    harnessId: "pi",
+    sessionKind: "workspace_session",
+    browserToolsAvailable: false,
+    browserToolIds: [],
+    runtimeToolIds: ["holaboss_delegate_task", "holaboss_continue_subagent"],
+    defaultTools: ["read", "edit"],
+    extraTools: ["holaboss_delegate_task", "holaboss_continue_subagent"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  const section = renderCapabilityToolRoutingPromptSection(manifest);
+  assert.match(section, /Delegation routing:/);
+  assert.match(section, /use `holaboss_delegate_task` instead of replying that the current run lacks those tools/i);
+  assert.match(section, /main session as a coordinator first/i);
+  assert.match(section, /browser-heavy, web-heavy, terminal-heavy, multi-step, or interruptible/i);
+  assert.match(section, /Available-tool fallback:/);
+  assert.match(section, /missing the ideal MCP, API, browser, web, terminal, or file tool is not enough to stop/i);
+  assert.match(section, /choose another viable direct or delegated route/i);
+  assert.match(section, /Deliverable routing: when the user asks for a report, brief, memo, digest, recap, or other long-form deliverable, prefer `holaboss_delegate_task`/);
+  assert.match(section, /Do not lead with a capability apology, manual workaround, or "I can't do that here" answer when delegation is available/i);
+  assert.match(section, /trust the current run and retry the tool when it is the right path/i);
+  assert.match(section, /Only surface a hard capability limitation to the user when neither the current run nor delegated subagents can actually carry out the request/i);
+  assert.match(section, /Continuation routing:/);
+  assert.match(section, /use `holaboss_continue_subagent` on the relevant completed child session instead of creating a brand-new delegated task/i);
+  assert.match(section, /ask which one the user means before continuing/i);
+});
+
+test("renderCapabilityToolRoutingPromptSection prefers surfaced MCP tools before diagnostic fallbacks in executor sessions", () => {
+  const manifest = buildAgentCapabilityManifest({
+    harnessId: "pi",
+    sessionKind: "subagent",
+    defaultTools: ["read", "bash"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [
+      {
+        tool_id: "twitter.twitter_create_post",
+        server_id: "twitter",
+        tool_name: "twitter_create_post",
+      },
+    ],
+  });
+
+  const section = renderCapabilityToolRoutingPromptSection(manifest);
+  assert.match(section, /MCP-first routing:/);
+  assert.match(section, /use those tools as the primary execution path before falling back to bash, file inspection, or browser exploration/i);
+  assert.match(section, /Do not spend the turn rediscovering an app integration from workspace files or config/i);
+  assert.match(section, /Use file, config, or browser inspection to debug or verify an MCP\/app route only after a relevant surfaced tool call is blocked, fails/i);
+  assert.match(section, /In executor sessions, prefer proving capability by actually invoking the relevant surfaced MCP\/app tool/i);
+});
+
+test("renderDelegatedCapabilityAvailabilityContextPromptSection exposes backstage tools without expanding direct authority", () => {
+  const directManifest = buildAgentCapabilityManifest({
+    harnessId: "pi",
+    sessionKind: "workspace_session",
+    defaultTools: ["read", "question"],
+    extraTools: ["holaboss_delegate_task"],
+    runtimeToolIds: ["holaboss_delegate_task"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+  const delegatedManifest = buildAgentCapabilityManifest({
+    harnessId: "pi",
+    sessionKind: "subagent",
+    browserToolsAvailable: true,
+    browserToolIds: ["browser_get_state"],
+    runtimeToolIds: ["list_data_tables", "create_dashboard"],
+    defaultTools: ["read", "edit", "bash"],
+    extraTools: ["browser_get_state", "list_data_tables", "create_dashboard"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [
+      {
+        tool_id: "twitter.twitter_create_post",
+        server_id: "twitter",
+        tool_name: "twitter_create_post",
+      },
+    ],
+  });
+
+  const section = renderDelegatedCapabilityAvailabilityContextPromptSection(
+    directManifest,
+    delegatedManifest,
+  );
+  assert.match(section, /Delegated executor capability snapshot:/);
+  assert.match(section, /do not expand your own direct authority in this front session/i);
+  assert.match(section, /Delegated browser tools: available \(1 enabled\)\./);
+  assert.match(section, /Delegated runtime tools: available \(2 enabled\)\./);
+  assert.match(section, /Delegated connected MCP\/app access: available\./);
+  assert.match(section, /Delegated browser execution is available even though this front session has no direct browser tools\./);
+  assert.match(section, /Delegated app integrations available via: `twitter`\./);
+  assert.match(section, /Notable delegated-only tools for this run:/);
+  assert.match(section, /Create Dashboard \(`create_dashboard`\)/);
+  assert.match(section, /List Data Tables \(`list_data_tables`\)/);
+  assert.match(section, /Twitter Create Post \(`mcp__twitter__twitter_create_post`\)/);
+});
+
 test("buildAgentCapabilityManifest marks connected MCP servers as available without pre-enumerated tool refs", () => {
   const manifest = buildAgentCapabilityManifest({
     harnessId: "pi",
@@ -210,6 +335,7 @@ test("buildAgentCapabilityManifest marks connected MCP servers as available with
   const section = renderCapabilityPolicyPromptSection(manifest);
   assert.match(section, /Connected MCP access: available\./);
   assert.match(section, /Use surfaced MCP tools when relevant; tool names may be resolved dynamically by the runtime\./i);
+  assert.doesNotMatch(section, /MCP callable tool aliases for this run:/);
 });
 
 test("buildAgentCapabilityManifest carries browser tool descriptions that emphasize live verification", () => {
@@ -230,7 +356,7 @@ test("buildAgentCapabilityManifest carries browser tool descriptions that emphas
   assert.match(capability.description, /DOM-first browser inspection tool for actions and structured extraction/i);
   assert.match(capability.description, /visible media such as images/i);
   assert.match(capability.description, /include_screenshot=true/i);
-  assert.match(capability.description, /visual appearance, layout, prominence, overlays, canvas\/chart\/PDF content/i);
+  assert.match(capability.description, /user-visible confirmation matters,? or when DOM signals are ambiguous/i);
 });
 
 test("evaluateAgentCapabilities keeps command and skill surfaces while excluding non-staged browser tools", () => {
@@ -470,7 +596,35 @@ test("renderCapabilityPolicyPromptSection summarizes grouped capabilities", () =
   assert.match(section, /Browser tools: none\./);
   assert.match(section, /Connected MCP access: available\./);
   assert.match(section, /Use surfaced MCP tools when relevant/);
-  assert.doesNotMatch(section, /MCP callable tool names for this run:/);
+  assert.match(
+    section,
+    /When the capability snapshot lists an MCP tool id alongside a callable alias, use the callable alias for tool invocation\./i,
+  );
+  assert.match(section, /MCP callable tool aliases for this run:/);
+  assert.match(
+    section,
+    /`workspace\.lookup` -> call `mcp__workspace__lookup`/,
+  );
   assert.doesNotMatch(section, /Skills available now:/);
   assert.doesNotMatch(section, /Connected MCP tools available now:/);
+});
+
+test("renderCapabilityPolicyPromptSection surfaces front-session delegation semantics", () => {
+  const manifest = buildAgentCapabilityManifest({
+    harnessId: "pi",
+    sessionKind: "workspace_session",
+    browserToolsAvailable: false,
+    browserToolIds: [],
+    runtimeToolIds: ["holaboss_delegate_task"],
+    defaultTools: ["read"],
+    extraTools: ["holaboss_delegate_task"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  const section = renderCapabilityPolicyPromptSection(manifest);
+  assert.match(section, /Browser tools: none\./);
+  assert.match(section, /This front session is intentionally capability-incomplete\./);
+  assert.match(section, /Treat the surfaced tools above as your full direct capability set for this run/i);
+  assert.match(section, /if the request needs more and `holaboss_delegate_task` is available, delegate it/i);
 });

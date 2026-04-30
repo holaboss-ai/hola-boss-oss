@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildAgentCapabilityManifest } from "./agent-capability-registry.js";
-import { composeBaseAgentPrompt } from "./agent-runtime-prompt.js";
+import { composeAgentPrompt, composeBaseAgentPrompt } from "./agent-runtime-prompt.js";
 
 test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   const capabilityManifest = buildAgentCapabilityManifest({
@@ -44,6 +44,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     "response_delivery_policy",
     "session_policy",
     "capability_policy",
+    "capability_tool_routing",
     "workspace_policy",
   ]);
   assert.deepEqual(prompt.promptSections.map((section) => section.id), [
@@ -52,6 +53,8 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     "response_delivery_policy",
     "session_policy",
     "capability_policy",
+    "capability_tool_routing",
+    "capability_availability_context",
     "workspace_policy",
   ]);
   assert.deepEqual(prompt.promptSections.map((section) => section.channel), [
@@ -61,13 +64,17 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     "system_prompt",
     "system_prompt",
     "system_prompt",
+    "context_message",
+    "system_prompt",
   ]);
-  assert.deepEqual(prompt.promptSections.map((section) => section.priority), [100, 200, 250, 300, 400, 600]);
+  assert.deepEqual(prompt.promptSections.map((section) => section.priority), [100, 200, 250, 300, 400, 425, 450, 600]);
   assert.deepEqual(prompt.promptSections.map((section) => section.volatility), [
     "stable",
     "stable",
     "stable",
-    "run",
+    "workspace",
+    "workspace",
+    "workspace",
     "run",
     "workspace",
   ]);
@@ -77,9 +84,12 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     "base_runtime",
     "session_policy",
     "capability_policy",
+    "capability_policy",
+    "capability_policy",
     "workspace_policy",
   ]);
   assert.deepEqual(prompt.promptLayers.map((layer) => layer.apply_at), [
+    "runtime_config",
     "runtime_config",
     "runtime_config",
     "runtime_config",
@@ -155,7 +165,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     /do not create skills for one-off state\./i
   );
   assert.match(prompt.systemPrompt, /Session policy:/);
-  assert.match(prompt.systemPrompt, /This is a workspace session/i);
+  assert.match(prompt.systemPrompt, /front-of-house workspace session/i);
   assert.match(prompt.systemPrompt, /Capability policy for this run:/);
   assert.match(prompt.systemPrompt, /Workspace instructions from AGENTS\.md:/);
   assert.doesNotMatch(prompt.systemPrompt, /OpenCode MCP tool naming:/);
@@ -163,19 +173,27 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   assert.doesNotMatch(prompt.systemPrompt, /Mutating capabilities available now:/);
   assert.doesNotMatch(prompt.systemPrompt, /Connected MCP tools available now:/);
   assert.doesNotMatch(prompt.systemPrompt, /Skills available now:/);
+  assert.doesNotMatch(prompt.systemPrompt, /Connected MCP access: available\./);
   assert.ok(prompt.systemPrompt.length < 4500);
-  assert.deepEqual(prompt.contextMessages, []);
+  assert.equal(prompt.contextMessages.length, 1);
+  assert.match(prompt.contextMessages.join("\n\n"), /Capability availability snapshot:/);
+  assert.match(prompt.contextMessages.join("\n\n"), /Inspect tools: available \(\d+ enabled\)\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Mutating tools: available \(\d+ enabled\)\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Workspace skills: available \(1 enabled\)\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Connected MCP access: available\./);
   assert.deepEqual(prompt.promptCacheProfile.cacheable_section_ids, [
     "runtime_core",
     "execution_policy",
     "response_delivery_policy",
-    "workspace_policy",
-  ]);
-  assert.deepEqual(prompt.promptCacheProfile.volatile_section_ids, [
     "session_policy",
     "capability_policy",
+    "capability_tool_routing",
+    "workspace_policy",
   ]);
-  assert.deepEqual(prompt.promptCacheProfile.compatibility_context_ids, []);
+  assert.deepEqual(prompt.promptCacheProfile.volatile_section_ids, []);
+  assert.deepEqual(prompt.promptCacheProfile.compatibility_context_ids, [
+    "capability_availability_context",
+  ]);
   assert.deepEqual(prompt.promptCacheProfile.precedence_order, [
     "base_runtime",
     "session_policy",
@@ -188,6 +206,379 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   ]);
   assert.match(prompt.promptCacheProfile.cacheable_fingerprint, /^[a-f0-9]{64}$/);
   assert.match(prompt.promptCacheProfile.full_system_prompt_fingerprint, /^[a-f0-9]{64}$/);
+});
+
+test("composeAgentPrompt uses a conversational main-session prompt for workspace sessions", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read", "edit"],
+    extraTools: ["holaboss_delegate_task", "holaboss_get_subagent", "holaboss_list_background_tasks"],
+    runtimeToolIds: ["holaboss_delegate_task", "holaboss_get_subagent", "holaboss_list_background_tasks"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    toolServerIdMap: {},
+  });
+  const delegatedCapabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read", "edit", "bash"],
+    extraTools: ["browser_get_state", "list_data_tables", "create_dashboard"],
+    browserToolsAvailable: true,
+    browserToolIds: ["browser_get_state"],
+    runtimeToolIds: ["list_data_tables", "create_dashboard"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    toolServerIdMap: {},
+    sessionKind: "subagent",
+  });
+
+  const prompt = composeAgentPrompt("You are concise.", {
+    defaultTools: ["read", "edit"],
+    extraTools: ["holaboss_delegate_task", "holaboss_get_subagent", "holaboss_list_background_tasks"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    harnessId: "pi",
+    capabilityManifest,
+    delegatedCapabilityManifest,
+  });
+
+  assert.deepEqual(prompt.promptLayers.map((layer) => layer.id), [
+    "runtime_core",
+    "assistant_soul",
+    "execution_policy",
+    "response_delivery_policy",
+    "session_policy",
+    "capability_policy",
+    "capability_tool_routing",
+    "workspace_policy",
+  ]);
+  assert.ok(prompt.promptSections.some((section) => section.id === "assistant_soul"));
+  assert.ok(
+    prompt.promptCacheProfile.cacheable_section_ids.includes("assistant_soul"),
+  );
+  assert.match(prompt.systemPrompt, /Assistant soul:/);
+  assert.match(prompt.systemPrompt, /You are Hola, the user's front-of-house teammate for this workspace\./);
+  assert.match(prompt.systemPrompt, /Perform Hola as a consistent character/);
+  assert.match(prompt.systemPrompt, /Conversation and orchestration doctrine:/);
+  assert.match(prompt.systemPrompt, /single front-of-house counterpart/);
+  assert.match(prompt.systemPrompt, /real teammate with taste, memory, preferences, and reactions/);
+  assert.match(prompt.systemPrompt, /brief warmth, curiosity, humor, and point of view/);
+  assert.match(prompt.systemPrompt, /capable person texting the user back/);
+  assert.match(prompt.systemPrompt, /React naturally before explaining/);
+  assert.match(prompt.systemPrompt, /Have opinions\. Pick a sensible path by default instead of listing options/);
+  assert.match(prompt.systemPrompt, /Do not narrate or analyze your own persona\. Just speak as Hola\./);
+  assert.match(prompt.systemPrompt, /Do not fake empathy or perform customer-support warmth/);
+  assert.match(prompt.systemPrompt, /Be concise and on-point\. Do not ramble, over-explain, or pad replies just to sound helpful\./);
+  assert.match(prompt.systemPrompt, /Keep replies tight\. Do not blabber, wander, or repeat yourself\./);
+  assert.match(prompt.systemPrompt, /When the user request is ambiguous, ask a short clarifying question instead of guessing\./);
+  assert.match(prompt.systemPrompt, /If the delegated executor snapshot already shows a concrete backstage capability family for the request, route against that capability instead of asking a generic tool-discovery question\./);
+  assert.match(prompt.systemPrompt, /read\/query requests inline when appropriate\./);
+  assert.match(prompt.systemPrompt, /route direct file edits, terminal execution, browser execution, and other state-changing implementation work to subagents\./);
+  assert.match(prompt.systemPrompt, /continue, transform, save, summarize, compare, or report on a previous child result, continue the relevant child session instead of spawning a brand-new child task\./);
+  assert.match(prompt.systemPrompt, /If multiple child sessions could match a continuation request, ask which one the user means before continuing\./);
+  assert.match(prompt.systemPrompt, /When the user answers a background-work blocker such as logging in, authorizing, confirming, or providing missing context, resume the waiting child session instead of starting a new task\./);
+  assert.match(prompt.systemPrompt, /Treat chat like the user is messaging their assistant in an IM, not like the final deliverable surface\./);
+  assert.match(prompt.systemPrompt, /Keep accepted, in-progress, waiting, and completed work clearly separate in how you speak\./);
+  assert.match(prompt.systemPrompt, /Right after spawning fresh delegated work, describe it only as started, queued, underway, or being handled; do not describe it as already done\./);
+  assert.match(prompt.systemPrompt, /For a fresh delegated kickoff, give one concise acknowledgement of that state\./);
+  assert.match(prompt.systemPrompt, /Reserve completion language such as `done`, `finished`, `created`, `sent`, `navigated`, `verified`, or `it's there now`/i);
+  assert.match(prompt.systemPrompt, /If delegated work immediately comes back waiting on user input, say it is blocked on that step and ask only for what is needed to continue\./);
+  assert.match(prompt.systemPrompt, /When a delegated result truly finishes early enough to merge into the same reply, state the completion once and do not also frame it like a fresh kickoff\./);
+  assert.match(prompt.systemPrompt, /If the user asks for a report, brief, memo, digest, recap, write-up, or other deliverable that would be longer than a short chat reply, prefer producing it as an artifact through delegated background work/i);
+  assert.match(prompt.systemPrompt, /When the user asks for a report-style deliverable, prefer delegating it so the result comes back as an artifact/i);
+  assert.match(prompt.systemPrompt, /Acknowledge what matters in the user's message before diving into execution or results\./);
+  assert.match(prompt.systemPrompt, /Lead with the answer, reaction, or next useful step instead of process narration/);
+  assert.match(prompt.systemPrompt, /Prefer short paragraphs and plain language; use headings or numbered lists only when structure genuinely helps\./);
+  assert.match(prompt.systemPrompt, /Use contractions and natural transitions when they fit\./);
+  assert.match(prompt.systemPrompt, /Avoid repetitive canned phrasing or stiff assistant boilerplate/);
+  assert.match(prompt.systemPrompt, /front-of-house coordinator with only a partial direct capability surface/i);
+  assert.match(prompt.systemPrompt, /surfaced tool and capability set for this run as your full direct authority/i);
+  assert.match(prompt.systemPrompt, /Prefer delegating long-running, tool-heavy, interruptible, or execution-heavy work to hidden subagents\./);
+  assert.match(prompt.systemPrompt, /browser control, web research, terminal work, or other execution-heavy tasks, default to delegating/i);
+  assert.match(prompt.systemPrompt, /Default delegated browser work to the agent browser\./);
+  assert.match(prompt.systemPrompt, /set `use_user_browser_surface: true` on `holaboss_delegate_task`/i);
+  assert.match(prompt.systemPrompt, /delegate instead of replying that this run lacks those tools\./);
+  assert.match(prompt.systemPrompt, /missing web, browser, terminal, or other execution-heavy capabilities on the main session as a routing signal to delegate/i);
+  assert.match(prompt.systemPrompt, /When the ideal direct tool or integration is missing, do not stop there/i);
+  assert.match(prompt.systemPrompt, /try another viable route with available tools/i);
+  assert.match(prompt.systemPrompt, /Do not answer with a capability-apology or manual fallback first when `holaboss_delegate_task` is available/i);
+  assert.match(prompt.systemPrompt, /trust the current run and retry the tool when appropriate/i);
+  assert.match(prompt.systemPrompt, /Do not paste long document, HTML, markdown, or report bodies into chat\./);
+  assert.ok(
+    prompt.promptSections.some(
+      (section) => section.id === "delegated_capability_availability_context",
+    ),
+  );
+  assert.ok(
+    prompt.contextMessages.some((message) =>
+      /Delegated executor capability snapshot:/.test(message),
+    ),
+  );
+  assert.ok(
+    prompt.contextMessages.some((message) =>
+      /Create Dashboard \(`create_dashboard`\)/.test(message),
+    ),
+  );
+  assert.ok(
+    prompt.contextMessages.some((message) =>
+      /List Data Tables \(`list_data_tables`\)/.test(message),
+    ),
+  );
+  assert.doesNotMatch(prompt.systemPrompt, /small direct edits inline/);
+  assert.doesNotMatch(prompt.systemPrompt, /Execution doctrine:/);
+  assert.doesNotMatch(prompt.systemPrompt, /Todo continuity policy:/);
+  assert.doesNotMatch(prompt.systemPrompt, /Use `write_report` for long, structured, evidence-heavy, or referenceable outputs/);
+});
+
+test("composeAgentPrompt requires subagent outputs to stay self-contained", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read", "edit", "bash"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [
+      {
+        tool_id: "twitter.twitter_create_post",
+        server_id: "twitter",
+        tool_name: "twitter_create_post",
+      },
+    ],
+    toolServerIdMap: {},
+  });
+
+  const prompt = composeAgentPrompt("You are concise.", {
+    defaultTools: ["read", "edit", "bash"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [
+      {
+        tool_id: "twitter.twitter_create_post",
+        server_id: "twitter",
+        tool_name: "twitter_create_post",
+      },
+    ],
+    sessionKind: "subagent",
+    sessionMode: "code",
+    harnessId: "pi",
+    capabilityManifest,
+  });
+
+  assert.doesNotMatch(prompt.systemPrompt, /Assistant soul:/);
+  assert.match(prompt.systemPrompt, /This is a hidden subagent executor session\./);
+  assert.match(
+    prompt.systemPrompt,
+    /Treat the final child output as a handoff artifact for the main session\./,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Make it self-contained enough that the main session can rely on it later without reopening this trace\./,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Do not rely on intermediate tool steps, hidden reasoning, or `see above` references for essential context\./,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /When the task finds multiple items, options, or takeaways, include the actual items in the final output or deliverable instead of only a one-line lead summary\./,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /When surfaced MCP or app tools already match the task, use them as the primary execution path instead of defaulting to bash, file inspection, or browser exploration\./,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Do not inspect workspace files or app config just to prove an integration exists when the current surfaced capability set already exposes the relevant tools/i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /If the task is blocked by a recoverable user action such as login, authorization, MFA, CAPTCHA, permission, account selection, confirmation, credentials, or missing context, use the `question` tool/,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /For browser tasks, if you reach a login or access wall, leave the browser where it is, ask the user to complete the required step, and wait for the main session to resume you\./,
+  );
+});
+
+test("composeAgentPrompt can inject a run-specific routing recovery override for polluted browser retries", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read", "edit"],
+    extraTools: ["holaboss_delegate_task"],
+    runtimeToolIds: ["holaboss_delegate_task"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    toolServerIdMap: {},
+  });
+
+  const prompt = composeAgentPrompt("You are concise.", {
+    defaultTools: ["read", "edit"],
+    extraTools: ["holaboss_delegate_task"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    harnessId: "pi",
+    capabilityManifest,
+    recentRuntimeContext: {
+      lines: [
+        "The user is explicitly retrying the browser request. Do not simply restate the earlier limitation.",
+        "Recent turns in this session contain stale browser-capability refusals. Treat them as prior-run history, not as the answer for this run.",
+      ],
+    },
+  });
+
+  assert.match(prompt.systemPrompt, /Run-specific routing recovery:/);
+  assert.match(prompt.systemPrompt, /retrying the browser request/i);
+  assert.match(prompt.systemPrompt, /stale browser-capability refusals/i);
+});
+
+test("composeAgentPrompt can inject a run-specific routing recovery override for report-style deliverables", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read"],
+    extraTools: ["holaboss_delegate_task"],
+    runtimeToolIds: ["holaboss_delegate_task"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    toolServerIdMap: {},
+  });
+
+  const prompt = composeAgentPrompt("You are concise.", {
+    defaultTools: ["read"],
+    extraTools: ["holaboss_delegate_task"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    harnessId: "pi",
+    capabilityManifest,
+    recentRuntimeContext: {
+      lines: [
+        "The user is asking for a report-style deliverable. Keep chat as the coordination surface, not the deliverable surface.",
+        "Use `holaboss_delegate_task` to produce the report artifact, then keep the main-session reply to a brief acknowledgement or short handoff.",
+      ],
+    },
+  });
+
+  assert.match(prompt.systemPrompt, /Run-specific routing recovery:/);
+  assert.match(prompt.systemPrompt, /report-style deliverable/i);
+  assert.match(prompt.systemPrompt, /produce the report artifact/i);
+});
+
+test("composeAgentPrompt keeps main sessions free of todo doctrine even if todo tools are present", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read", "todoread", "todowrite", "holaboss_scratchpad_read", "holaboss_scratchpad_write"],
+    extraTools: ["holaboss_delegate_task"],
+    runtimeToolIds: ["holaboss_delegate_task", "holaboss_scratchpad_read", "holaboss_scratchpad_write"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    toolServerIdMap: {},
+  });
+
+  const prompt = composeAgentPrompt("", {
+    defaultTools: ["read", "todoread", "todowrite", "holaboss_scratchpad_read", "holaboss_scratchpad_write"],
+    extraTools: ["holaboss_delegate_task"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    harnessId: "pi",
+    capabilityManifest,
+  });
+
+  assert.doesNotMatch(prompt.systemPrompt, /Todo continuity policy:/);
+  assert.doesNotMatch(
+    prompt.systemPrompt,
+    /When you need the current phase ids, task ids, or recorded state from an existing todo before continuing or updating it, use `todoread` first instead of guessing\./
+  );
+  assert.doesNotMatch(
+    prompt.systemPrompt,
+    /Use `todowrite` for task structure and status only; use the scratchpad/
+  );
+  assert.doesNotMatch(
+    prompt.contextMessages.join("\n"),
+    /Do not use `todowrite` as a substitute for scratchpad notes/
+  );
+  assert.equal(
+    prompt.promptSections.some((section) => section.id === "scratchpad_context"),
+    false,
+  );
+  assert.equal(
+    prompt.promptCacheProfile.context_message_ids.includes("scratchpad_context"),
+    false,
+  );
+});
+
+test("composeAgentPrompt keeps onboarding sessions free of subagent delegation doctrine", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read", "edit"],
+    extraTools: ["holaboss_onboarding_status", "holaboss_onboarding_complete"],
+    runtimeToolIds: ["holaboss_onboarding_status", "holaboss_onboarding_complete"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    toolServerIdMap: {},
+  });
+
+  const prompt = composeAgentPrompt("You are concise.", {
+    defaultTools: ["read", "edit"],
+    extraTools: ["holaboss_onboarding_status", "holaboss_onboarding_complete"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "onboarding",
+    sessionMode: "code",
+    harnessId: "pi",
+    capabilityManifest,
+  });
+
+  assert.match(prompt.systemPrompt, /This is an onboarding session\./);
+  assert.match(prompt.systemPrompt, /Keep onboarding work in this session\./);
+  assert.doesNotMatch(
+    prompt.systemPrompt,
+    /Prefer delegating long-running, tool-heavy, interruptible, or execution-heavy work to hidden subagents\./,
+  );
+  assert.doesNotMatch(
+    prompt.systemPrompt,
+    /delegate instead of replying that this run lacks those tools\./,
+  );
+  assert.doesNotMatch(prompt.systemPrompt, /Subagents are backstage executors\./);
+});
+
+test("composeAgentPrompt tells main sessions how to inspect legacy session exports", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read", "glob", "list"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    toolServerIdMap: {},
+  });
+
+  const prompt = composeAgentPrompt("", {
+    defaultTools: ["read", "glob", "list"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    harnessId: "pi",
+    legacySessionHistoryContext: {
+      manifest_path: ".holaboss/legacy-session-histories/index.json",
+      legacy_session_count: 2,
+      entries: [
+        {
+          session_id: "session-older",
+          title: "Earlier planning chat",
+          kind: "workspace_session",
+          archived_at: "2026-04-24T06:52:27.419Z",
+          message_count: 14,
+          output_count: 1,
+          json_path: ".holaboss/legacy-session-histories/session-older.json",
+          markdown_path: ".holaboss/legacy-session-histories/session-older.md",
+        },
+      ],
+    },
+    capabilityManifest,
+  });
+
+  assert.match(prompt.contextMessages.join("\n"), /Legacy session history exports:/);
+  assert.match(prompt.contextMessages.join("\n"), /consult the manifest or a directly relevant export before saying that prior session context is unavailable/i);
+  assert.match(prompt.contextMessages.join("\n"), /Manifest path: `\.holaboss\/legacy-session-histories\/index\.json`\./);
+  assert.match(prompt.contextMessages.join("\n"), /Earlier planning chat:/);
 });
 
 test("composeBaseAgentPrompt includes shared todo continuity policy when todo tools are available", () => {
@@ -242,11 +633,163 @@ test("composeBaseAgentPrompt includes shared todo continuity policy when todo to
     prompt.systemPrompt,
     /If the user's newest message clearly redirects to unrelated work, handle that new request first without marking the unfinished todo complete, then propose continuing it afterward\./
   );
-  assert.deepEqual(prompt.promptCacheProfile.volatile_section_ids, [
+  assert.deepEqual(prompt.promptCacheProfile.cacheable_section_ids, [
+    "runtime_core",
+    "execution_policy",
+    "response_delivery_policy",
     "session_policy",
     "todo_continuity_policy",
     "capability_policy",
   ]);
+  assert.deepEqual(prompt.promptCacheProfile.volatile_section_ids, []);
+});
+
+test("composeBaseAgentPrompt promotes scratchpad as working memory even before a scratchpad file exists", () => {
+  const defaultTools = ["read", "todoread", "todowrite", "holaboss_scratchpad_read", "holaboss_scratchpad_write"];
+  const capabilityManifest = buildAgentCapabilityManifest({
+    runtimeToolIds: ["todoread", "todowrite", "holaboss_scratchpad_read", "holaboss_scratchpad_write"],
+    defaultTools,
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  const prompt = composeBaseAgentPrompt("", {
+    defaultTools,
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    capabilityManifest,
+  });
+
+  assert.match(
+    prompt.systemPrompt,
+    /When a task becomes multi-step, evidence-heavy, or long-running, create or update the session scratchpad early and keep the current working state there\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Use `todowrite` for task structure and status only; use the scratchpad for verified findings, interim evidence, candidate lists, open questions, and compacted current state\./
+  );
+  assert.ok(prompt.promptSections.some((section) => section.id === "scratchpad_context"));
+  assert.equal(
+    prompt.promptSections.find((section) => section.id === "scratchpad_context")?.channel,
+    "context_message"
+  );
+  assert.match(
+    prompt.contextMessages.join("\n"),
+    /A session-scoped scratchpad is available for this session, but no scratchpad file exists yet\./
+  );
+  assert.match(
+    prompt.contextMessages.join("\n"),
+    /Do not use `todowrite` as a substitute for scratchpad notes; todo state is for task coordination, not evidence or long-form working memory\./
+  );
+  assert.ok(prompt.promptCacheProfile.context_message_ids.includes("scratchpad_context"));
+  assert.ok(prompt.promptCacheProfile.compatibility_context_ids.includes("scratchpad_context"));
+});
+
+test("composeBaseAgentPrompt exposes existing scratchpad metadata without collapsing it into todo state", () => {
+  const defaultTools = ["read", "todoread", "todowrite", "holaboss_scratchpad_read", "holaboss_scratchpad_write"];
+  const capabilityManifest = buildAgentCapabilityManifest({
+    runtimeToolIds: ["todoread", "todowrite", "holaboss_scratchpad_read", "holaboss_scratchpad_write"],
+    defaultTools,
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  const prompt = composeBaseAgentPrompt("", {
+    defaultTools,
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    capabilityManifest,
+    scratchpadContext: {
+      exists: true,
+      file_path: ".holaboss/scratchpads/session-main.md",
+      updated_at: "2026-04-23T15:00:00.000Z",
+      size_bytes: 128,
+      preview: "- verified finding\n- open question",
+    },
+  });
+
+  const scratchpadMessage = prompt.contextMessages.join("\n");
+  assert.match(scratchpadMessage, /A session-scoped scratchpad file already exists for this session\./);
+  assert.match(
+    scratchpadMessage,
+    /Use the scratchpad as the session's working memory for multi-step execution, interim findings, open questions, candidate lists, and compacted current state\./
+  );
+  assert.match(scratchpadMessage, /Path: `\.holaboss\/scratchpads\/session-main\.md`\./);
+  assert.match(scratchpadMessage, /Preview: - verified finding/);
+  assert.match(
+    scratchpadMessage,
+    /Do not use `todowrite` as a substitute for scratchpad notes; todo state is for task coordination, not evidence or long-form working memory\./
+  );
+});
+
+test("composeBaseAgentPrompt keeps the cacheable fingerprint stable across runtime-only context changes", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    harnessId: "pi",
+    sessionKind: "workspace_session",
+    defaultTools: ["read"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  const basePrompt = composeBaseAgentPrompt("", {
+    defaultTools: ["read"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    capabilityManifest,
+  });
+
+  const promptWithRuntimeContext = composeBaseAgentPrompt("", {
+    defaultTools: ["read"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    capabilityManifest,
+    operatorSurfaceContext: {
+      active_surface_id: "browser:user",
+      surfaces: [
+        {
+          surface_id: "browser:user",
+          surface_type: "browser",
+          owner: "user",
+          active: true,
+          mutability: "inspect_only",
+          summary: "User browser currently focused on the release dashboard.",
+        },
+      ],
+    },
+    pendingUserMemoryContext: {
+      entries: [
+        {
+          proposal_id: "proposal-1",
+          proposal_kind: "preference",
+          target_key: "response-style",
+          title: "Response style",
+          summary: "Prefer terse answers.",
+        },
+      ],
+    },
+  });
+
+  assert.equal(
+    basePrompt.promptCacheProfile.cacheable_fingerprint,
+    promptWithRuntimeContext.promptCacheProfile.cacheable_fingerprint,
+  );
+  assert.equal(basePrompt.systemPrompt, promptWithRuntimeContext.systemPrompt);
+  assert.notDeepEqual(basePrompt.contextMessages, promptWithRuntimeContext.contextMessages);
 });
 
 test("composeBaseAgentPrompt includes current user context when provided", () => {
@@ -326,7 +869,8 @@ test("composeBaseAgentPrompt includes operator surface context when provided", (
   assert.match(prompt.contextMessages.join("\n\n"), /default referent for deictic questions such as `what am I looking at right now`/i);
   assert.match(prompt.contextMessages.join("\n\n"), /continue from what they already opened, navigated, selected, or prepared/i);
   assert.match(prompt.contextMessages.join("\n\n"), /do not answer from browser state just because browser tools are available/i);
-  assert.match(prompt.contextMessages.join("\n\n"), /Do not mutate a user-owned surface unless runtime context or capabilities explicitly allow takeover or direct control\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Operator surfaces are continuity context, not authority grants\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Do not mutate a user-owned surface unless surfaced runtime capabilities explicitly allow takeover or direct control\./);
   assert.match(prompt.contextMessages.join("\n\n"), /Current active surface id: `browser:user`\./);
   assert.match(prompt.contextMessages.join("\n\n"), /\[user\/browser\] `browser:user` \(active, mutability=`inspect_only`\):/);
   assert.match(prompt.contextMessages.join("\n\n"), /\[agent\/browser\] `browser:agent` \(mutability=`agent_owned`\):/);

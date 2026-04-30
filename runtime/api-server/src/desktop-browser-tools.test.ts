@@ -151,10 +151,24 @@ test("desktop browser tool service forwards workspace and session context to the
       { include_screenshot: true },
       { workspaceId: "workspace-1", sessionId: "session-1" }
     );
-    assert.deepEqual(result, {
+    const { browser_usage: browserUsage, ...visibleResult } = result;
+    const state = visibleResult.state as Record<string, unknown>;
+    const revision = state.revision;
+    delete state.revision;
+    assert.deepEqual(visibleResult, {
       ok: true,
       page: { tabId: "tab-1", url: "https://example.com", title: "Example" },
-      state: {
+      state,
+      screenshot: {
+        tabId: "tab-1",
+        mimeType: "image/png",
+        width: 1280,
+        height: 720,
+        base64: "cG5n"
+      }
+    });
+    assert.equal(typeof revision, "string");
+    assert.deepEqual(state, {
         url: "https://example.com",
         title: "Example",
         viewport: { width: 1280, height: 720 },
@@ -172,15 +186,10 @@ test("desktop browser tool service forwards workspace and session context to the
           link_href: "",
           bounding_box: { x: 24, y: 48, width: 320, height: 180 }
         }]
-      },
-      screenshot: {
-        tabId: "tab-1",
-        mimeType: "image/png",
-        width: 1280,
-        height: 720,
-        base64: "cG5n"
-      }
     });
+    assert.equal((browserUsage as { tool_id?: string }).tool_id, "browser_get_state");
+    assert.equal((browserUsage as { detail?: string }).detail, "compact");
+    assert.equal((browserUsage as { include_screenshot?: boolean }).include_screenshot, true);
     assert.deepEqual(
       requests.map((entry) => [entry.path, entry.token, entry.workspaceId, entry.sessionId]),
       [
@@ -541,7 +550,8 @@ test("desktop browser tool service opens a native context menu for media targets
       { workspaceId: "workspace-1", sessionId: "session-1" }
     );
 
-    assert.deepEqual(result, {
+    const { browser_usage: contextBrowserUsage, ...visibleContextResult } = result;
+    assert.deepEqual(visibleContextResult, {
       ok: true,
       action: {
         ok: true,
@@ -560,6 +570,7 @@ test("desktop browser tool service opens a native context menu for media targets
         y: 138,
       }
     });
+    assert.equal((contextBrowserUsage as { tool_id?: string }).tool_id, "browser_context_click");
     assert.deepEqual(
       requests.map((entry) => entry.path),
       ["/api/v1/browser/evaluate", "/api/v1/browser/context-click"],
@@ -656,8 +667,9 @@ test("desktop browser tool service accepts scoped browser_get_state controls", a
             elements: [],
             media: [],
             metadata: {
-              schema_version: 1,
+              schema_version: 2,
               mode: "text",
+              detail: "compact",
               scope: "dialog",
               max_nodes: 2,
               include_page_text: true,
@@ -709,8 +721,9 @@ test("desktop browser tool service accepts scoped browser_get_state controls", a
 
     assert.equal((result.state as { text?: string }).text, "Visible viewport text");
     assert.deepEqual((result.state as { metadata?: unknown }).metadata, {
-      schema_version: 1,
+      schema_version: 2,
       mode: "text",
+      detail: "compact",
       scope: "dialog",
       max_nodes: 2,
       include_page_text: true,
@@ -724,9 +737,123 @@ test("desktop browser tool service accepts scoped browser_get_state controls", a
     assert.equal("screenshot" in result, false);
     assert.equal(evaluateBodies.length, 1);
     assert.match(evaluateBodies[0] ?? "", /const mode = \\"text\\";/);
+    assert.match(evaluateBodies[0] ?? "", /const detail = \\"compact\\";/);
     assert.match(evaluateBodies[0] ?? "", /const scope = \\"dialog\\";/);
     assert.match(evaluateBodies[0] ?? "", /const maxNodes = 2;/);
     assert.match(evaluateBodies[0] ?? "", /const includeMetadata = true;/);
+    assert.equal((result.browser_usage as { detail?: string }).detail, "compact");
+  } finally {
+    await browserServer.close();
+  }
+});
+
+test("desktop browser tool service supports revision-aware browser_get_state deltas", async () => {
+  const browserServer = await startBrowserServer(async (request, response) => {
+    response.setHeader("content-type", "application/json; charset=utf-8");
+    if (request.url === "/api/v1/browser/page") {
+      response.end(
+        JSON.stringify({
+          tabId: "tab-1",
+          url: "https://example.com/dashboard",
+          title: "Dashboard",
+          loading: false,
+          initialized: true,
+        }),
+      );
+      return;
+    }
+    if (request.url === "/api/v1/browser/evaluate") {
+      response.end(
+        JSON.stringify({
+          tabId: "tab-1",
+          result: {
+            url: "https://example.com/dashboard",
+            title: "Dashboard",
+            viewport: { width: 1280, height: 720 },
+            scroll: { x: 0, y: 120 },
+            elements: [
+              { index: 1, tag_name: "button", role: "button", text: "Refresh", label: "Refresh" },
+            ],
+            media: [],
+            metadata: {
+              schema_version: 2,
+              mode: "state",
+              detail: "compact",
+              scope: "main",
+              max_nodes: 30,
+              include_page_text: false,
+              include_screenshot: false,
+              lists_included: true,
+              returned: { elements: 1, media: 0 },
+              totals: { elements: 1, media: 0 },
+              full_page_totals: null,
+              truncated: false,
+            },
+          },
+        }),
+      );
+      return;
+    }
+    response.statusCode = 404;
+    response.end(JSON.stringify({ error: "not found" }));
+  });
+
+  try {
+    const service = new DesktopBrowserToolService({
+      resolveConfig: () => ({
+        authToken: "",
+        userId: "",
+        sandboxId: "",
+        modelProxyBaseUrl: "",
+        defaultModel: "openai/gpt-5.4",
+        runtimeMode: "oss",
+        defaultProvider: "",
+        holabossEnabled: false,
+        desktopBrowserEnabled: true,
+        desktopBrowserUrl: browserServer.url,
+        desktopBrowserAuthToken: "browser-token",
+        configPath: "/tmp/runtime-config.json",
+        loadedFromFile: true,
+      }),
+    });
+
+    const initial = await service.execute(
+      "browser_get_state",
+      {},
+      { workspaceId: "workspace-1", sessionId: "session-1" },
+    );
+    const initialState = initial.state as Record<string, unknown>;
+    const revision = String(initialState.revision ?? "");
+    assert.ok(revision.length > 0);
+
+    const delta = await service.execute(
+      "browser_get_state",
+      {
+        since_revision: revision,
+        changed_only: true,
+      },
+      { workspaceId: "workspace-1", sessionId: "session-1" },
+    );
+
+    assert.deepEqual(delta.page, {
+      tabId: "tab-1",
+      url: "https://example.com/dashboard",
+      title: "Dashboard",
+      loading: false,
+      initialized: true,
+    });
+    assert.deepEqual(delta.state, {
+      revision,
+      changed: false,
+    });
+    assert.equal(
+      (delta.browser_usage as { changed?: boolean | null }).changed,
+      false,
+    );
+    assert.equal(
+      (delta.browser_usage as { since_revision?: string | null }).since_revision,
+      revision,
+    );
   } finally {
     await browserServer.close();
   }
@@ -810,6 +937,21 @@ test("desktop browser tool service exposes general find, act, wait, evaluate, an
               target: { ref: "css:#editor", text: "" },
               action_target: { ref: "css:#editor", role: "textbox", editable: true },
               result: { focused: true },
+            },
+          }),
+        );
+        return;
+      }
+      if (expression.includes('const action = "check"')) {
+        response.end(
+          JSON.stringify({
+            tabId: "tab-1",
+            result: {
+              ok: true,
+              action: "check",
+              target: { ref: "css:#newsletter-row", text: "Newsletter" },
+              action_target: { ref: "css:#newsletter", role: "checkbox" },
+              result: { checked: true, changed: true },
             },
           }),
         );
@@ -932,6 +1074,7 @@ test("desktop browser tool service exposes general find, act, wait, evaluate, an
       { ok: true, tabId: "tab-1", action: "click", x: 370, y: 104 },
     );
     assert.deepEqual(actResult.page, { tabId: "tab-1", url: "https://example.com/app", title: "Example App" });
+    assert.equal((actResult.browser_usage as { tool_id?: string }).tool_id, "browser_act");
     assert.deepEqual(mouseBodies, [JSON.stringify({ action: "click", x: 370, y: 104 })]);
 
     const fillResult = await service.execute("browser_act", {
@@ -945,9 +1088,22 @@ test("desktop browser tool service exposes general find, act, wait, evaluate, an
       (((fillResult.action as { result?: Record<string, unknown> }).result ?? {}).native_input),
       { ok: true, tabId: "tab-1", action: "insert_text", text_length: 14, clear: true, submit: false },
     );
+    assert.equal((fillResult.browser_usage as { tool_id?: string }).tool_id, "browser_act");
     assert.deepEqual(keyboardBodies, [
       JSON.stringify({ action: "insert_text", text: "Robotics notes", clear: true, submit: false }),
     ]);
+
+    const checkResult = await service.execute("browser_act", {
+      action: "check",
+      label: "Newsletter",
+      role: "checkbox",
+    });
+    assert.equal((checkResult.action as { action?: string }).action, "check");
+    assert.deepEqual(
+      ((checkResult.action as { result?: Record<string, unknown> }).result ?? {}),
+      { checked: true, changed: true },
+    );
+    assert.equal((checkResult.browser_usage as { tool_id?: string }).tool_id, "browser_act");
 
     const waitResult = await service.execute("browser_wait", {
       condition: "element",
@@ -956,6 +1112,7 @@ test("desktop browser tool service exposes general find, act, wait, evaluate, an
     });
     assert.equal((waitResult.wait as { matched?: boolean }).matched, true);
     assert.equal((waitResult.wait as { attempts?: number }).attempts, 2);
+    assert.equal((waitResult.browser_usage as { tool_id?: string }).tool_id, "browser_wait");
 
     const changeWaitResult = await service.execute("browser_wait", {
       condition: "change",
@@ -979,7 +1136,382 @@ test("desktop browser tool service exposes general find, act, wait, evaluate, an
     assert.match(findExpression, /"role":"button"/);
     assert.ok(expressions.some((expression) => /const action = "click"/.test(expression)));
     assert.ok(expressions.some((expression) => /const action = "fill"/.test(expression)));
+    assert.ok(expressions.some((expression) => /const action = "check"/.test(expression)));
     assert.ok(expressions.some((expression) => /const condition = "element"/.test(expression)));
+  } finally {
+    await browserServer.close();
+  }
+});
+
+test("desktop browser tool service supports load_state and function browser_wait conditions", async () => {
+  const evaluateBodies: string[] = [];
+  const browserServer = await startBrowserServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    response.setHeader("content-type", "application/json; charset=utf-8");
+    if (request.url === "/api/v1/browser/evaluate") {
+      const body = Buffer.concat(chunks).toString("utf8");
+      evaluateBodies.push(body);
+      const expression = String((JSON.parse(body) as { expression?: string }).expression ?? "");
+      if (expression.includes('const condition = "load"')) {
+        response.end(
+          JSON.stringify({
+            tabId: "tab-1",
+            result: {
+              ok: true,
+              matched: true,
+              condition: "load",
+              load_state: "interactive",
+              current: {
+                ready_state: "interactive",
+              },
+            },
+          }),
+        );
+        return;
+      }
+      if (expression.includes('const condition = "function"')) {
+        response.end(
+          JSON.stringify({
+            tabId: "tab-1",
+            result: {
+              ok: true,
+              matched: true,
+              condition: "function",
+              function_result: { ready: true },
+            },
+          }),
+        );
+        return;
+      }
+    }
+    response.statusCode = 404;
+    response.end(JSON.stringify({ error: "not found" }));
+  });
+
+  try {
+    const service = new DesktopBrowserToolService({
+      resolveConfig: () => ({
+        authToken: "",
+        userId: "",
+        sandboxId: "",
+        modelProxyBaseUrl: "",
+        defaultModel: "openai/gpt-5.4",
+        runtimeMode: "oss",
+        defaultProvider: "",
+        holabossEnabled: false,
+        desktopBrowserEnabled: true,
+        desktopBrowserUrl: browserServer.url,
+        desktopBrowserAuthToken: "browser-token",
+        configPath: "/tmp/runtime-config.json",
+        loadedFromFile: true,
+      }),
+    });
+
+    const loadWait = await service.execute("browser_wait", {
+      load_state: "domcontentloaded",
+      timeout_ms: 1000,
+    });
+    assert.equal((loadWait.wait as { matched?: boolean }).matched, true);
+    assert.equal((loadWait.wait as { load_state?: string }).load_state, "interactive");
+
+    const functionWait = await service.execute("browser_wait", {
+      condition: "function",
+      expression: "() => ({ ready: true })",
+      timeout_ms: 1000,
+    });
+    assert.equal((functionWait.wait as { matched?: boolean }).matched, true);
+    assert.deepEqual(
+      (((functionWait.wait as { result?: Record<string, unknown> }).result ?? {}).function_result),
+      { ready: true },
+    );
+
+    const expressions = evaluateBodies.map((body) => String((JSON.parse(body) as { expression?: string }).expression ?? ""));
+    assert.ok(expressions.some((expression) => /const loadState = "interactive"/.test(expression)));
+    assert.ok(expressions.some((expression) => /const functionSource = "\(\) => \(\{ ready: true \}\)"/.test(expression)));
+  } finally {
+    await browserServer.close();
+  }
+});
+
+test("desktop browser tool service waits for browser downloads to start and complete", async () => {
+  let downloadRequestCount = 0;
+  const browserServer = await startBrowserServer(async (request, response) => {
+    response.setHeader("content-type", "application/json; charset=utf-8");
+    if (request.url === "/api/v1/browser/downloads") {
+      downloadRequestCount += 1;
+      const payload =
+        downloadRequestCount <= 2
+          ? { downloads: [] }
+          : downloadRequestCount <= 4
+            ? {
+                downloads: [
+                  {
+                    id: "download-1",
+                    url: "https://example.com/report.csv",
+                    filename: "report.csv",
+                    targetPath: "/tmp/report.csv",
+                    status: "progressing",
+                    receivedBytes: 128,
+                    totalBytes: 512,
+                    createdAt: "2026-04-29T12:00:00.000Z",
+                    completedAt: null,
+                  },
+                ],
+              }
+            : {
+                downloads: [
+                  {
+                    id: "download-1",
+                    url: "https://example.com/report.csv",
+                    filename: "report.csv",
+                    targetPath: "/tmp/report.csv",
+                    status: "completed",
+                    receivedBytes: 512,
+                    totalBytes: 512,
+                    createdAt: "2026-04-29T12:00:00.000Z",
+                    completedAt: "2026-04-29T12:00:01.000Z",
+                  },
+                ],
+              };
+      response.end(JSON.stringify(payload));
+      return;
+    }
+    response.statusCode = 404;
+    response.end(JSON.stringify({ error: "not found" }));
+  });
+
+  try {
+    const service = new DesktopBrowserToolService({
+      resolveConfig: () => ({
+        authToken: "",
+        userId: "",
+        sandboxId: "",
+        modelProxyBaseUrl: "",
+        defaultModel: "openai/gpt-5.4",
+        runtimeMode: "oss",
+        defaultProvider: "",
+        holabossEnabled: false,
+        desktopBrowserEnabled: true,
+        desktopBrowserUrl: browserServer.url,
+        desktopBrowserAuthToken: "browser-token",
+        configPath: "/tmp/runtime-config.json",
+        loadedFromFile: true,
+      }),
+    });
+
+    const startWait = await service.execute("browser_wait", {
+      condition: "download_started",
+      timeout_ms: 1000,
+    });
+    assert.equal((startWait.wait as { matched?: boolean }).matched, true);
+    assert.equal((startWait.wait as { condition?: string }).condition, "download_started");
+    assert.deepEqual(
+      ((startWait.wait as { download?: Record<string, unknown> }).download ?? {}),
+      {
+        id: "download-1",
+        url: "https://example.com/report.csv",
+        filename: "report.csv",
+        targetPath: "/tmp/report.csv",
+        status: "progressing",
+        receivedBytes: 128,
+        totalBytes: 512,
+        createdAt: "2026-04-29T12:00:00.000Z",
+        completedAt: null,
+      },
+    );
+
+    const completeWait = await service.execute("browser_wait", {
+      condition: "download_completed",
+      filename: "report.csv",
+      timeout_ms: 1000,
+    });
+    assert.equal((completeWait.wait as { matched?: boolean }).matched, true);
+    assert.equal((completeWait.wait as { filename?: string }).filename, "report.csv");
+    assert.deepEqual(
+      ((completeWait.wait as { download?: Record<string, unknown> }).download ?? {}),
+      {
+        id: "download-1",
+        url: "https://example.com/report.csv",
+        filename: "report.csv",
+        targetPath: "/tmp/report.csv",
+        status: "completed",
+        receivedBytes: 512,
+        totalBytes: 512,
+        createdAt: "2026-04-29T12:00:00.000Z",
+        completedAt: "2026-04-29T12:00:01.000Z",
+      },
+    );
+    assert.equal(
+      (completeWait.browser_usage as { condition?: string }).condition,
+      "download_completed",
+    );
+    assert.equal(
+      (completeWait.browser_usage as { filename?: string }).filename,
+      "report.csv",
+    );
+  } finally {
+    await browserServer.close();
+  }
+});
+
+test("desktop browser tool service supports inline wait_for and post_state on browser_type", async () => {
+  const requests: string[] = [];
+  const bodies: string[] = [];
+  let evaluateCount = 0;
+  const browserServer = await startBrowserServer(async (request, response) => {
+    requests.push(request.url ?? "");
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    const body = Buffer.concat(chunks).toString("utf8");
+    bodies.push(body);
+    response.setHeader("content-type", "application/json; charset=utf-8");
+    if (request.url === "/api/v1/browser/page") {
+      response.end(
+        JSON.stringify({ tabId: "tab-1", url: "https://example.com/search", title: "Search" }),
+      );
+      return;
+    }
+    if (request.url === "/api/v1/browser/evaluate") {
+      evaluateCount += 1;
+      const expression = String((JSON.parse(body) as { expression?: string }).expression ?? "");
+      if (evaluateCount === 1) {
+        response.end(
+          JSON.stringify({
+            tabId: "tab-1",
+            result: { ok: true, index: 1, tag_name: "input", role: "textbox", editable: true },
+          }),
+        );
+        return;
+      }
+      if (expression.includes('const condition = "function"')) {
+        response.end(
+          JSON.stringify({
+            tabId: "tab-1",
+            result: {
+              ok: true,
+              matched: true,
+              condition: "function",
+              function_result: true,
+            },
+          }),
+        );
+        return;
+      }
+      response.end(
+        JSON.stringify({
+          tabId: "tab-1",
+          result: {
+            url: "https://example.com/search",
+            title: "Search",
+            viewport: { width: 1280, height: 720 },
+            scroll: { x: 0, y: 0 },
+            elements: [{ index: 1, tag_name: "a", role: "link", text: "Result", label: "Result" }],
+            media: [],
+            metadata: {
+              schema_version: 2,
+              mode: "state",
+              detail: "compact",
+              scope: "main",
+              max_nodes: 12,
+              include_page_text: false,
+              include_screenshot: false,
+              lists_included: true,
+              returned: { elements: 1, media: 0 },
+              totals: { elements: 1, media: 0 },
+              full_page_totals: null,
+              truncated: false,
+            },
+          },
+        }),
+      );
+      return;
+    }
+    if (request.url === "/api/v1/browser/keyboard") {
+      response.end(
+        JSON.stringify({
+          ok: true,
+          tabId: "tab-1",
+          action: "insert_text",
+          text_length: 12,
+          clear: true,
+          submit: false,
+        }),
+      );
+      return;
+    }
+    response.statusCode = 404;
+    response.end(JSON.stringify({ error: "not found" }));
+  });
+
+  try {
+    const service = new DesktopBrowserToolService({
+      resolveConfig: () => ({
+        authToken: "",
+        userId: "",
+        sandboxId: "",
+        modelProxyBaseUrl: "",
+        defaultModel: "openai/gpt-5.4",
+        runtimeMode: "oss",
+        defaultProvider: "",
+        holabossEnabled: false,
+        desktopBrowserEnabled: true,
+        desktopBrowserUrl: browserServer.url,
+        desktopBrowserAuthToken: "browser-token",
+        configPath: "/tmp/runtime-config.json",
+        loadedFromFile: true,
+      }),
+    });
+
+    const result = await service.execute(
+      "browser_type",
+      {
+        index: 1,
+        text: "search terms",
+        wait_for: { condition: "function", expression: "() => true" },
+        wait_timeout_ms: 1000,
+        post_state: "state",
+      },
+      { workspaceId: "workspace-1", sessionId: "session-1" },
+    );
+
+    assert.equal((result.wait as { matched?: boolean }).matched, true);
+    assert.deepEqual(result.page, {
+      tabId: "tab-1",
+      url: "https://example.com/search",
+      title: "Search",
+    });
+    const postState = result.state as Record<string, unknown>;
+    assert.equal(typeof postState.revision, "string");
+    delete postState.revision;
+    assert.deepEqual(postState, {
+      url: "https://example.com/search",
+      title: "Search",
+      viewport: { width: 1280, height: 720 },
+      scroll: { x: 0, y: 0 },
+      elements: [{ index: 1, tag_name: "a", role: "link", text: "Result", label: "Result" }],
+      media: [],
+    });
+    assert.equal((result.browser_usage as { tool_id?: string }).tool_id, "browser_type");
+    assert.equal((result.browser_usage as { post_state?: string }).post_state, "state");
+    assert.equal((result.browser_usage as { wait_condition?: string }).wait_condition, "function");
+    assert.equal((result.browser_usage as { detail?: string }).detail, "compact");
+    assert.deepEqual(requests, [
+      "/api/v1/browser/evaluate",
+      "/api/v1/browser/keyboard",
+      "/api/v1/browser/evaluate",
+      "/api/v1/browser/page",
+      "/api/v1/browser/evaluate",
+    ]);
+    const expressions = bodies
+      .filter((body) => body.includes("\"expression\""))
+      .map((body) => String((JSON.parse(body) as { expression?: string }).expression ?? ""));
+    assert.ok(expressions.some((expression) => /const condition = "function"/.test(expression)));
+    assert.ok(expressions.some((expression) => /const maxNodes = 12;/.test(expression)));
   } finally {
     await browserServer.close();
   }
@@ -1047,7 +1579,8 @@ test("desktop browser tool service avoids refetching page summaries for browser_
       { workspaceId: "workspace-1", sessionId: "session-1" }
     );
 
-    assert.deepEqual(result, {
+    const { browser_usage: typeBrowserUsage, ...visibleTypeResult } = result;
+    assert.deepEqual(visibleTypeResult, {
       ok: true,
       action: {
         ok: true,
@@ -1068,6 +1601,7 @@ test("desktop browser tool service avoids refetching page summaries for browser_
         },
       }
     });
+    assert.equal((typeBrowserUsage as { tool_id?: string }).tool_id, "browser_type");
     assert.deepEqual(requests, ["/api/v1/browser/evaluate", "/api/v1/browser/keyboard"]);
     assert.equal(bodies[1], JSON.stringify({ action: "insert_text", text: "search terms", clear: true, submit: false }));
   } finally {
@@ -1131,7 +1665,8 @@ test("desktop browser tool service executes browser_open_tab against the desktop
       { url: "https://example.org", background: true },
       { workspaceId: "workspace-1" }
     );
-    assert.deepEqual(result, {
+    const { browser_usage: openTabBrowserUsage, ...visibleOpenTabResult } = result;
+    assert.deepEqual(visibleOpenTabResult, {
       ok: true,
       tabs: {
         activeTabId: "tab-2",
@@ -1141,6 +1676,7 @@ test("desktop browser tool service executes browser_open_tab against the desktop
         ]
       }
     });
+    assert.equal((openTabBrowserUsage as { tool_id?: string }).tool_id, "browser_open_tab");
     assert.deepEqual(requests, [
       {
         path: "/api/v1/browser/tabs",
@@ -1149,6 +1685,669 @@ test("desktop browser tool service executes browser_open_tab against the desktop
         sessionId: "",
         body: JSON.stringify({ url: "https://example.org", background: true })
       }
+    ]);
+  } finally {
+    await browserServer.close();
+  }
+});
+
+test("desktop browser tool service executes browser_select_tab and browser_close_tab against the desktop browser service", async () => {
+  const requests: Array<{
+    path: string;
+    token: string;
+    workspaceId: string;
+    sessionId: string;
+    browserSpace: string;
+    body: string;
+  }> = [];
+  const browserServer = await startBrowserServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    const body = Buffer.concat(chunks).toString("utf8");
+    requests.push({
+      path: request.url ?? "",
+      token: String(request.headers["x-holaboss-desktop-token"] ?? ""),
+      workspaceId: String(request.headers["x-holaboss-workspace-id"] ?? ""),
+      sessionId: String(request.headers["x-holaboss-session-id"] ?? ""),
+      browserSpace: String(request.headers["x-holaboss-browser-space"] ?? ""),
+      body,
+    });
+    response.setHeader("content-type", "application/json; charset=utf-8");
+    if (request.url === "/api/v1/browser/tabs/select") {
+      response.end(
+        JSON.stringify({
+          activeTabId: "tab-2",
+          tabs: [
+            { id: "tab-1", url: "https://example.com", title: "Example" },
+            { id: "tab-2", url: "https://example.org", title: "Example Org" },
+          ],
+        }),
+      );
+      return;
+    }
+    if (request.url === "/api/v1/browser/tabs/close") {
+      response.end(
+        JSON.stringify({
+          activeTabId: "tab-1",
+          tabs: [{ id: "tab-1", url: "https://example.com", title: "Example" }],
+        }),
+      );
+      return;
+    }
+    response.statusCode = 404;
+    response.end(JSON.stringify({ error: "not found" }));
+  });
+
+  try {
+    const service = new DesktopBrowserToolService({
+      resolveConfig: () => ({
+        authToken: "",
+        userId: "",
+        sandboxId: "",
+        modelProxyBaseUrl: "",
+        defaultModel: "openai/gpt-5.4",
+        runtimeMode: "oss",
+        defaultProvider: "",
+        holabossEnabled: false,
+        desktopBrowserEnabled: true,
+        desktopBrowserUrl: browserServer.url,
+        desktopBrowserAuthToken: "browser-token",
+        configPath: "/tmp/runtime-config.json",
+        loadedFromFile: true,
+      }),
+    });
+
+    const selection = await service.execute(
+      "browser_select_tab",
+      { tab_id: "tab-2" },
+      { workspaceId: "workspace-1", sessionId: "session-7", space: "agent" },
+    );
+    const { browser_usage: selectTabBrowserUsage, ...visibleSelection } = selection;
+    assert.deepEqual(visibleSelection, {
+      ok: true,
+      tabs: {
+        activeTabId: "tab-2",
+        tabs: [
+          { id: "tab-1", url: "https://example.com", title: "Example" },
+          { id: "tab-2", url: "https://example.org", title: "Example Org" },
+        ],
+      },
+    });
+    assert.equal(
+      (selectTabBrowserUsage as { tool_id?: string }).tool_id,
+      "browser_select_tab",
+    );
+
+    const close = await service.execute(
+      "browser_close_tab",
+      { tab_id: "tab-2" },
+      { workspaceId: "workspace-1", sessionId: "session-7", space: "agent" },
+    );
+    const { browser_usage: closeTabBrowserUsage, ...visibleClose } = close;
+    assert.deepEqual(visibleClose, {
+      ok: true,
+      tabs: {
+        activeTabId: "tab-1",
+        tabs: [{ id: "tab-1", url: "https://example.com", title: "Example" }],
+      },
+    });
+    assert.equal(
+      (closeTabBrowserUsage as { tool_id?: string }).tool_id,
+      "browser_close_tab",
+    );
+
+    assert.deepEqual(requests, [
+      {
+        path: "/api/v1/browser/tabs/select",
+        token: "browser-token",
+        workspaceId: "workspace-1",
+        sessionId: "session-7",
+        browserSpace: "agent",
+        body: JSON.stringify({ tab_id: "tab-2" }),
+      },
+      {
+        path: "/api/v1/browser/tabs/close",
+        token: "browser-token",
+        workspaceId: "workspace-1",
+        sessionId: "session-7",
+        browserSpace: "agent",
+        body: JSON.stringify({ tab_id: "tab-2" }),
+      },
+    ]);
+  } finally {
+    await browserServer.close();
+  }
+});
+
+test("desktop browser tool service executes browser_list_downloads against the desktop browser service", async () => {
+  const requests: Array<{
+    path: string;
+    token: string;
+    workspaceId: string;
+    sessionId: string;
+    browserSpace: string;
+  }> = [];
+  const browserServer = await startBrowserServer(async (request, response) => {
+    requests.push({
+      path: request.url ?? "",
+      token: String(request.headers["x-holaboss-desktop-token"] ?? ""),
+      workspaceId: String(request.headers["x-holaboss-workspace-id"] ?? ""),
+      sessionId: String(request.headers["x-holaboss-session-id"] ?? ""),
+      browserSpace: String(request.headers["x-holaboss-browser-space"] ?? ""),
+    });
+    response.setHeader("content-type", "application/json; charset=utf-8");
+    if (request.url === "/api/v1/browser/downloads") {
+      response.end(
+        JSON.stringify({
+          downloads: [
+            {
+              id: "download-1",
+              url: "https://example.com/report.csv",
+              filename: "report.csv",
+              targetPath: "/tmp/report.csv",
+              status: "completed",
+              receivedBytes: 512,
+              totalBytes: 512,
+              createdAt: "2026-04-29T12:00:00.000Z",
+              completedAt: "2026-04-29T12:00:01.000Z",
+            },
+          ],
+        }),
+      );
+      return;
+    }
+    response.statusCode = 404;
+    response.end(JSON.stringify({ error: "not found" }));
+  });
+
+  try {
+    const service = new DesktopBrowserToolService({
+      resolveConfig: () => ({
+        authToken: "",
+        userId: "",
+        sandboxId: "",
+        modelProxyBaseUrl: "",
+        defaultModel: "openai/gpt-5.4",
+        runtimeMode: "oss",
+        defaultProvider: "",
+        holabossEnabled: false,
+        desktopBrowserEnabled: true,
+        desktopBrowserUrl: browserServer.url,
+        desktopBrowserAuthToken: "browser-token",
+        configPath: "/tmp/runtime-config.json",
+        loadedFromFile: true,
+      }),
+    });
+
+    const result = await service.execute(
+      "browser_list_downloads",
+      {},
+      { workspaceId: "workspace-1", sessionId: "session-9", space: "user" },
+    );
+    const { browser_usage: listDownloadsBrowserUsage, ...visibleResult } = result;
+    assert.deepEqual(visibleResult, {
+      ok: true,
+      downloads: [
+        {
+          id: "download-1",
+          url: "https://example.com/report.csv",
+          filename: "report.csv",
+          targetPath: "/tmp/report.csv",
+          status: "completed",
+          receivedBytes: 512,
+          totalBytes: 512,
+          createdAt: "2026-04-29T12:00:00.000Z",
+          completedAt: "2026-04-29T12:00:01.000Z",
+        },
+      ],
+    });
+    assert.equal(
+      (listDownloadsBrowserUsage as { tool_id?: string }).tool_id,
+      "browser_list_downloads",
+    );
+    assert.deepEqual(requests, [
+      {
+        path: "/api/v1/browser/downloads",
+        token: "browser-token",
+        workspaceId: "workspace-1",
+        sessionId: "session-9",
+        browserSpace: "user",
+      },
+    ]);
+  } finally {
+    await browserServer.close();
+  }
+});
+
+test("desktop browser tool service supports compact console, error, and request observability tools", async () => {
+  const requests: Array<{ path: string; body: string }> = [];
+  const browserServer = await startBrowserServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    const body = Buffer.concat(chunks).toString("utf8");
+    requests.push({
+      path: request.url ?? "",
+      body,
+    });
+    response.setHeader("content-type", "application/json; charset=utf-8");
+    if (request.url === "/api/v1/browser/console?limit=5&level=warning") {
+      response.end(
+        JSON.stringify({
+          entries: [
+            {
+              id: "console-1",
+              level: "error",
+              message: "Unhandled error",
+              sourceId: "https://example.com/app.js",
+              lineNumber: 18,
+              timestamp: "2026-04-29T12:00:00.000Z",
+              frameUrl: "https://example.com/app",
+            },
+          ],
+          total: 1,
+          truncated: false,
+        }),
+      );
+      return;
+    }
+    if (request.url === "/api/v1/browser/errors?limit=3&source=network") {
+      response.end(
+        JSON.stringify({
+          errors: [
+            {
+              id: "network-1",
+              source: "network",
+              kind: "request_error",
+              level: "error",
+              message: "net::ERR_CONNECTION_REFUSED",
+              timestamp: "2026-04-29T12:00:01.000Z",
+              url: "https://example.com/api",
+              requestId: "84",
+              resourceType: "xhr",
+            },
+          ],
+          total: 1,
+          truncated: false,
+        }),
+      );
+      return;
+    }
+    if (request.url === "/api/v1/browser/requests?limit=4&resource_type=xhr&failures_only=true") {
+      response.end(
+        JSON.stringify({
+          requests: [
+            {
+              id: "84",
+              url: "https://example.com/api",
+              method: "GET",
+              resourceType: "xhr",
+              startedAt: "2026-04-29T12:00:00.000Z",
+              completedAt: "2026-04-29T12:00:01.000Z",
+              durationMs: 1000,
+              fromCache: false,
+              statusCode: 500,
+              statusLine: "HTTP/1.1 500 Internal Server Error",
+              error: "",
+            },
+          ],
+          total: 1,
+          truncated: false,
+        }),
+      );
+      return;
+    }
+    if (request.url === "/api/v1/browser/requests/84") {
+      response.end(
+        JSON.stringify({
+          request: {
+            id: "84",
+            url: "https://example.com/api",
+            method: "POST",
+            resourceType: "xhr",
+            referrer: "https://example.com/app",
+            startedAt: "2026-04-29T12:00:00.000Z",
+            completedAt: "2026-04-29T12:00:01.000Z",
+            durationMs: 1000,
+            fromCache: false,
+            statusCode: 500,
+            statusLine: "HTTP/1.1 500 Internal Server Error",
+            error: "",
+            requestHeaders: {
+              "content-type": ["application/json"],
+            },
+            responseHeaders: {
+              "content-type": ["application/json"],
+              "content-length": ["128"],
+            },
+            requestBody: {
+              entryCount: 1,
+              byteLength: 42,
+              fileCount: 0,
+              types: ["bytes"],
+            },
+            responseBody: {
+              contentType: "application/json",
+              contentLength: 128,
+            },
+          },
+        }),
+      );
+      return;
+    }
+    response.statusCode = 404;
+    response.end(JSON.stringify({ error: "not found" }));
+  });
+
+  try {
+    const service = new DesktopBrowserToolService({
+      resolveConfig: () => ({
+        authToken: "",
+        userId: "",
+        sandboxId: "",
+        modelProxyBaseUrl: "",
+        defaultModel: "openai/gpt-5.4",
+        runtimeMode: "oss",
+        defaultProvider: "",
+        holabossEnabled: false,
+        desktopBrowserEnabled: true,
+        desktopBrowserUrl: browserServer.url,
+        desktopBrowserAuthToken: "browser-token",
+        configPath: "/tmp/runtime-config.json",
+        loadedFromFile: true,
+      }),
+    });
+
+    const consoleResult = await service.execute("browser_get_console", {
+      limit: 5,
+      level: "warning",
+    });
+    assert.equal((consoleResult.entries as unknown[]).length, 1);
+    assert.equal(
+      (consoleResult.browser_usage as { tool_id?: string }).tool_id,
+      "browser_get_console",
+    );
+
+    const errorsResult = await service.execute("browser_get_errors", {
+      limit: 3,
+      source: "network",
+    });
+    assert.equal((errorsResult.errors as unknown[]).length, 1);
+    assert.equal(
+      (errorsResult.browser_usage as { tool_id?: string }).tool_id,
+      "browser_get_errors",
+    );
+
+    const requestsResult = await service.execute("browser_list_requests", {
+      limit: 4,
+      resource_type: "xhr",
+      failures_only: true,
+    });
+    assert.equal((requestsResult.requests as unknown[]).length, 1);
+    assert.equal(
+      (requestsResult.browser_usage as { tool_id?: string }).tool_id,
+      "browser_list_requests",
+    );
+
+    const requestResult = await service.execute("browser_get_request", {
+      request_id: "84",
+    });
+    assert.equal(
+      ((requestResult.request as { id?: string }).id),
+      "84",
+    );
+    assert.equal(
+      (requestResult.browser_usage as { tool_id?: string }).tool_id,
+      "browser_get_request",
+    );
+
+    assert.deepEqual(
+      requests.map((entry) => entry.path),
+      [
+        "/api/v1/browser/console?limit=5&level=warning",
+        "/api/v1/browser/errors?limit=3&source=network",
+        "/api/v1/browser/requests?limit=4&resource_type=xhr&failures_only=true",
+        "/api/v1/browser/requests/84",
+      ],
+    );
+  } finally {
+    await browserServer.close();
+  }
+});
+
+test("desktop browser tool service supports browser storage and cookie helpers", async () => {
+  const evaluateBodies: string[] = [];
+  const cookieRequests: Array<{ method: string; path: string; body: string }> = [];
+  const browserServer = await startBrowserServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    const body = Buffer.concat(chunks).toString("utf8");
+    response.setHeader("content-type", "application/json; charset=utf-8");
+    if (request.url === "/api/v1/browser/evaluate") {
+      evaluateBodies.push(body);
+      const expression = String((JSON.parse(body) as { expression?: string }).expression ?? "");
+      if (expression.includes("targetStorage.setItem")) {
+        response.end(
+          JSON.stringify({
+            tabId: "tab-1",
+            result: {
+              ok: true,
+              storage: "session",
+              key: "auth-token",
+              deleted: false,
+              existed: false,
+              previous_value: null,
+              value: "secret",
+            },
+          }),
+        );
+        return;
+      }
+      if (expression.includes("const targetStorage = storageKind === \"session\"")) {
+        response.end(
+          JSON.stringify({
+            tabId: "tab-1",
+            result: {
+              ok: true,
+              storage: "session",
+              key: null,
+              prefix: "auth:",
+              count: 1,
+              truncated: false,
+              entries: [{ key: "auth-token", value: "secret" }],
+              value: null,
+              available_keys: 1,
+            },
+          }),
+        );
+        return;
+      }
+    }
+    if ((request.url ?? "").startsWith("/api/v1/browser/cookies")) {
+      cookieRequests.push({
+        method: request.method ?? "GET",
+        path: request.url ?? "",
+        body,
+      });
+      if (request.method === "GET") {
+        response.end(
+          JSON.stringify({
+            cookies: [
+              {
+                name: "sid",
+                value: "one",
+                domain: ".example.com",
+                path: "/",
+                secure: true,
+                httpOnly: true,
+                session: false,
+                sameSite: "lax",
+                expirationDate: 1800000000,
+              },
+              {
+                name: "prefs",
+                value: "two",
+                domain: ".example.com",
+                path: "/",
+                secure: false,
+                httpOnly: false,
+                session: true,
+                sameSite: "unspecified",
+                expirationDate: null,
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      response.end(
+        JSON.stringify({
+          ok: true,
+          cookie: {
+            name: "sid",
+            value: "fresh",
+            domain: ".example.com",
+            path: "/",
+            secure: true,
+            httpOnly: true,
+            session: false,
+            sameSite: "lax",
+            expirationDate: 1800000000,
+          },
+        }),
+      );
+      return;
+    }
+    response.statusCode = 404;
+    response.end(JSON.stringify({ error: "not found" }));
+  });
+
+  try {
+    const service = new DesktopBrowserToolService({
+      resolveConfig: () => ({
+        authToken: "",
+        userId: "",
+        sandboxId: "",
+        modelProxyBaseUrl: "",
+        defaultModel: "openai/gpt-5.4",
+        runtimeMode: "oss",
+        defaultProvider: "",
+        holabossEnabled: false,
+        desktopBrowserEnabled: true,
+        desktopBrowserUrl: browserServer.url,
+        desktopBrowserAuthToken: "browser-token",
+        configPath: "/tmp/runtime-config.json",
+        loadedFromFile: true,
+      }),
+    });
+
+    const storageSet = await service.execute("browser_storage_set", {
+      storage: "session",
+      key: "auth-token",
+      value: "secret",
+    });
+    assert.equal(
+      ((storageSet.storage as { value?: string }).value),
+      "secret",
+    );
+    assert.equal(
+      (storageSet.browser_usage as { tool_id?: string }).tool_id,
+      "browser_storage_set",
+    );
+
+    const storageGet = await service.execute("browser_storage_get", {
+      storage: "session",
+      prefix: "auth:",
+    });
+    assert.deepEqual(storageGet.storage, {
+      ok: true,
+      storage: "session",
+      key: null,
+      prefix: "auth:",
+      count: 1,
+      truncated: false,
+      entries: [{ key: "auth-token", value: "secret" }],
+      value: null,
+      available_keys: 1,
+    });
+    assert.equal(
+      (storageGet.browser_usage as { tool_id?: string }).tool_id,
+      "browser_storage_get",
+    );
+
+    const cookiesGet = await service.execute("browser_cookies_get", {
+      url: "https://example.com/account",
+      names: ["sid"],
+      max_results: 10,
+    });
+    assert.deepEqual(cookiesGet.cookies, [
+      {
+        name: "sid",
+        value: "one",
+        domain: ".example.com",
+        path: "/",
+        secure: true,
+        httpOnly: true,
+        session: false,
+        sameSite: "lax",
+        expirationDate: 1800000000,
+      },
+    ]);
+
+    const cookiesSet = await service.execute("browser_cookies_set", {
+      url: "https://example.com/account",
+      name: "sid",
+      value: "fresh",
+      secure: true,
+      http_only: true,
+      same_site: "lax",
+      expiration_date: 1800000000,
+    });
+    assert.deepEqual(cookiesSet.cookie, {
+      name: "sid",
+      value: "fresh",
+      domain: ".example.com",
+      path: "/",
+      secure: true,
+      httpOnly: true,
+      session: false,
+      sameSite: "lax",
+      expirationDate: 1800000000,
+    });
+
+    const expressions = evaluateBodies.map((entry) =>
+      String((JSON.parse(entry) as { expression?: string }).expression ?? ""),
+    );
+    assert.ok(
+      expressions.some((expression) => /targetStorage\.setItem/.test(expression)),
+    );
+    assert.ok(
+      expressions.some((expression) => /const storageKind = "session"/.test(expression)),
+    );
+    assert.deepEqual(cookieRequests, [
+      {
+        method: "GET",
+        path: "/api/v1/browser/cookies?url=https%3A%2F%2Fexample.com%2Faccount",
+        body: "",
+      },
+      {
+        method: "POST",
+        path: "/api/v1/browser/cookies",
+        body: JSON.stringify({
+          url: "https://example.com/account",
+          name: "sid",
+          value: "fresh",
+          secure: true,
+          http_only: true,
+          same_site: "lax",
+          expiration_date: 1800000000,
+        }),
+      },
     ]);
   } finally {
     await browserServer.close();

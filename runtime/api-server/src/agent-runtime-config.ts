@@ -7,11 +7,13 @@ import {
   type AgentCapabilityManifest,
 } from "./agent-capability-registry.js";
 import {
-  composeBaseAgentPrompt,
+  composeAgentPrompt,
   type AgentCurrentUserContext,
   type AgentEvolveCandidateContext,
+  type AgentLegacySessionHistoryContext,
   type AgentOperatorSurfaceContext,
   type AgentPendingUserMemoryContext,
+  type AgentRecentRuntimeContext,
   type AgentRecalledMemoryContext,
   type AgentScratchpadContext,
 } from "./agent-runtime-prompt.js";
@@ -41,6 +43,11 @@ export interface AgentRuntimeConfigCliRequest {
   browser_tool_ids?: string[] | null;
   runtime_tool_ids?: string[] | null;
   workspace_command_ids?: string[] | null;
+  delegated_session_kind?: string | null;
+  delegated_browser_tools_available?: boolean | null;
+  delegated_browser_tool_ids?: string[] | null;
+  delegated_runtime_tool_ids?: string[] | null;
+  delegated_workspace_command_ids?: string[] | null;
   runtime_exec_model_proxy_api_key?: string | null;
   runtime_exec_sandbox_id?: string | null;
   runtime_exec_run_id?: string | null;
@@ -48,6 +55,8 @@ export interface AgentRuntimeConfigCliRequest {
   current_user_context?: AgentCurrentUserContext | null;
   operator_surface_context?: AgentOperatorSurfaceContext | null;
   pending_user_memory_context?: AgentPendingUserMemoryContext | null;
+  recent_runtime_context?: AgentRecentRuntimeContext | null;
+  legacy_session_history_context?: AgentLegacySessionHistoryContext | null;
   session_scratchpad_context?: AgentScratchpadContext | null;
   evolve_candidate_context?: AgentEvolveCandidateContext | null;
   selected_model?: string | null;
@@ -57,6 +66,8 @@ export interface AgentRuntimeConfigCliRequest {
   workspace_skill_ids: string[];
   default_tools: string[];
   extra_tools: string[];
+  delegated_default_tools?: string[] | null;
+  delegated_extra_tools?: string[] | null;
   tool_server_id_map?: Record<string, string> | null;
   resolved_mcp_tool_refs: Array<{
     tool_id: string;
@@ -64,6 +75,12 @@ export interface AgentRuntimeConfigCliRequest {
     tool_name: string;
   }>;
   resolved_mcp_server_ids?: string[] | null;
+  delegated_resolved_mcp_tool_refs?: Array<{
+    tool_id: string;
+    server_id: string;
+    tool_name: string;
+  }> | null;
+  delegated_resolved_mcp_server_ids?: string[] | null;
   resolved_output_schemas: Record<string, Record<string, unknown>>;
   agent: AgentRuntimeConfigGeneralMemberPayload;
 }
@@ -1489,7 +1506,33 @@ export function projectAgentRuntimeConfig(
     resolvedMcpServerIds: request.resolved_mcp_server_ids ?? null,
     toolServerIdMap: request.tool_server_id_map ?? null,
   });
-  const promptComposition = composeBaseAgentPrompt(request.agent.prompt, {
+  const delegatedCapabilityManifest =
+    Array.isArray(request.delegated_default_tools) &&
+    Array.isArray(request.delegated_extra_tools) &&
+    Array.isArray(request.delegated_resolved_mcp_tool_refs)
+      ? buildAgentCapabilityManifest({
+          harnessId: request.harness_id ?? null,
+          sessionKind: request.delegated_session_kind ?? "subagent",
+          browserToolsAvailable:
+            typeof request.delegated_browser_tools_available === "boolean"
+              ? request.delegated_browser_tools_available
+              : null,
+          browserToolIds: request.delegated_browser_tool_ids ?? null,
+          runtimeToolIds: request.delegated_runtime_tool_ids ?? null,
+          workspaceCommandIds:
+            request.delegated_workspace_command_ids ??
+            request.workspace_command_ids ??
+            null,
+          defaultTools: request.delegated_default_tools,
+          extraTools: request.delegated_extra_tools,
+          workspaceSkillIds: request.workspace_skill_ids ?? [],
+          resolvedMcpToolRefs: request.delegated_resolved_mcp_tool_refs,
+          resolvedMcpServerIds:
+            request.delegated_resolved_mcp_server_ids ?? null,
+          toolServerIdMap: request.tool_server_id_map ?? null,
+        })
+      : null;
+  const promptComposition = composeAgentPrompt(request.agent.prompt, {
     defaultTools: request.default_tools,
     extraTools: request.extra_tools,
     workspaceSkillIds: request.workspace_skill_ids ?? [],
@@ -1502,9 +1545,12 @@ export function projectAgentRuntimeConfig(
     currentUserContext: request.current_user_context ?? null,
     operatorSurfaceContext: request.operator_surface_context ?? null,
     pendingUserMemoryContext: request.pending_user_memory_context ?? null,
+    recentRuntimeContext: request.recent_runtime_context ?? null,
+    legacySessionHistoryContext: request.legacy_session_history_context ?? null,
     scratchpadContext: request.session_scratchpad_context ?? null,
     evolveCandidateContext: request.evolve_candidate_context ?? null,
     capabilityManifest,
+    delegatedCapabilityManifest,
   });
 
   const target = resolveRuntimeModelTarget(

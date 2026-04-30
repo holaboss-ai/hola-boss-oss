@@ -15,8 +15,12 @@ import type {
 import type { MemoryServiceLike } from "./memory.js";
 import { governanceRuleForMemoryType } from "./memory-governance.js";
 import {
-  compactTurnSummary,
-} from "./turn-result-summary.js";
+  assistantTextFromTurnArtifacts,
+  compactedSummaryFromTurnArtifacts,
+  latestUserMessageForSessionMessages,
+  permissionDenialsFromTurnArtifacts,
+  recentUserMessagesForTurn,
+} from "./turn-semantic-artifacts.js";
 import {
   extractDurableMemoryCandidatesFromModel,
   type DurableMemoryExtractionContext,
@@ -61,9 +65,12 @@ interface DurableMemoryPersistResult {
 }
 
 interface TurnWritebackContext {
+  assistantText: string;
   compactedSummary: string | null;
+  currentPermissionDenials: Array<Record<string, unknown>>;
+  recentTurnPermissionDenials: Array<Array<Record<string, unknown>>>;
+  recentTurnSummaries: string[];
   turnResult: TurnResultRecord;
-  recentTurns: TurnResultRecord[];
   recentUserMessages: SessionMessageRecord[];
   completedTurnCount: number;
 }
@@ -247,19 +254,13 @@ export function detectExplicitResponseStylePreference(messageText: string): Resp
   return null;
 }
 
-function latestUserMessage(sessionMessages: SessionMessageRecord[]): SessionMessageRecord | null {
-  for (let index = sessionMessages.length - 1; index >= 0; index -= 1) {
-    const message = sessionMessages[index];
-    if (message.role === "user" && compactWhitespace(message.text)) {
-      return message;
-    }
-  }
-  return null;
-}
-
-function durableMemorySources(turnResult: TurnResultRecord, sessionMessages: SessionMessageRecord[]): MemorySourceEvidence[] {
+function durableMemorySources(
+  turnResult: TurnResultRecord,
+  sessionMessages: SessionMessageRecord[],
+  assistantText: string,
+): MemorySourceEvidence[] {
   const sources: MemorySourceEvidence[] = [];
-  const message = latestUserMessage(sessionMessages);
+  const message = latestUserMessageForSessionMessages(sessionMessages);
   if (message) {
     sources.push({
       text: message.text,
@@ -269,9 +270,9 @@ function durableMemorySources(turnResult: TurnResultRecord, sessionMessages: Ses
       sourceMessageId: message.id,
     });
   }
-  if (compactWhitespace(turnResult.assistantText)) {
+  if (compactWhitespace(assistantText)) {
     sources.push({
-      text: turnResult.assistantText,
+      text: assistantText,
       sourceLabel: "latest assistant turn",
       sourceType: "assistant_turn",
       observedAt: turnResult.completedAt ?? turnResult.updatedAt,
@@ -462,11 +463,12 @@ function detectWorkspaceProcedure(messageText: string): WorkspaceProcedure[] {
 
 function workspaceCommandFactCandidates(
   turnResult: TurnResultRecord,
-  sessionMessages: SessionMessageRecord[]
+  sessionMessages: SessionMessageRecord[],
+  assistantText: string,
 ): DurableMemoryCandidate[] {
   const governance = governanceRuleForMemoryType("fact");
   const deduped = new Map<string, DurableMemoryCandidate>();
-  for (const source of durableMemorySources(turnResult, sessionMessages)) {
+  for (const source of durableMemorySources(turnResult, sessionMessages, assistantText)) {
     for (const fact of detectWorkspaceCommandFacts(source.text)) {
       const summary = `Use \`${fact.command}\` for ${fact.label} in this workspace.`;
       const lines = [
@@ -515,11 +517,12 @@ function workspaceCommandFactCandidates(
 
 function workspaceBusinessFactCandidates(
   turnResult: TurnResultRecord,
-  sessionMessages: SessionMessageRecord[]
+  sessionMessages: SessionMessageRecord[],
+  assistantText: string,
 ): DurableMemoryCandidate[] {
   const governance = governanceRuleForMemoryType("fact");
   const deduped = new Map<string, DurableMemoryCandidate>();
-  for (const source of durableMemorySources(turnResult, sessionMessages)) {
+  for (const source of durableMemorySources(turnResult, sessionMessages, assistantText)) {
     for (const fact of detectWorkspaceBusinessFacts(source.text)) {
       const lines = [
         `# Workspace Fact: ${fact.title}`,
@@ -565,11 +568,12 @@ function workspaceBusinessFactCandidates(
 
 function workspaceProcedureCandidates(
   turnResult: TurnResultRecord,
-  sessionMessages: SessionMessageRecord[]
+  sessionMessages: SessionMessageRecord[],
+  assistantText: string,
 ): DurableMemoryCandidate[] {
   const governance = governanceRuleForMemoryType("procedure");
   const deduped = new Map<string, DurableMemoryCandidate>();
-  for (const source of durableMemorySources(turnResult, sessionMessages)) {
+  for (const source of durableMemorySources(turnResult, sessionMessages, assistantText)) {
     for (const procedure of detectWorkspaceProcedure(source.text)) {
       const summary = `${titleCase(procedure.label)} procedure for this workspace.`;
       const lines = [
@@ -620,16 +624,17 @@ function workspaceProcedureCandidates(
 }
 
 function repeatedPermissionBlockerCandidates(params: {
+  currentPermissionDenials: Array<Record<string, unknown>>;
+  recentTurnPermissionDenials: Array<Array<Record<string, unknown>>>;
   turnResult: TurnResultRecord;
-  recentTurns: TurnResultRecord[];
   summary: string | null;
 }): DurableMemoryCandidate[] {
   const governance = governanceRuleForMemoryType("blocker");
-  return params.turnResult.permissionDenials.flatMap((denial) => {
+  return params.currentPermissionDenials.flatMap((denial) => {
     const toolName = typeof denial.tool_name === "string" && denial.tool_name.trim() ? denial.tool_name.trim() : "unknown";
     const toolId = typeof denial.tool_id === "string" && denial.tool_id.trim() ? denial.tool_id.trim() : null;
     const reason = typeof denial.reason === "string" && denial.reason.trim() ? denial.reason.trim() : "permission denied";
-    const recurrenceCount = params.recentTurns.flatMap((turnResult) => turnResult.permissionDenials).filter((candidate) => {
+    const recurrenceCount = params.recentTurnPermissionDenials.flatMap((denials) => denials).filter((candidate) => {
       const candidateToolName =
         typeof candidate.tool_name === "string" && candidate.tool_name.trim() ? candidate.tool_name.trim() : "unknown";
       const candidateToolId =
@@ -767,8 +772,9 @@ function durableCandidateFromExtracted(params: {
 
 async function extractedDurableMemoryCandidates(params: {
   turnResult: TurnResultRecord;
-  recentTurns: TurnResultRecord[];
+  assistantText: string;
   recentUserMessages: SessionMessageRecord[];
+  recentTurnSummaries: string[];
   completedTurnCount: number;
   modelContext?: TurnMemoryWritebackModelContext | null;
 }): Promise<ModelDurableCandidate[]> {
@@ -778,10 +784,6 @@ async function extractedDurableMemoryCandidates(params: {
   if (!shouldRunModelExtractionForTurnCount(params.completedTurnCount)) {
     return [];
   }
-  const recentTurnSummaries = params.recentTurns
-    .slice(0, 4)
-    .map((turnResult) => turnResult.compactedSummary ?? compactTurnSummary(turnResult))
-    .filter((summary): summary is string => Boolean(summary));
   const recentUserMessages = params.recentUserMessages
     .slice(-4)
     .map((message) => clippedText(message.text, 220));
@@ -791,9 +793,9 @@ async function extractedDurableMemoryCandidates(params: {
     sessionId: params.turnResult.sessionId,
     inputId: params.turnResult.inputId,
     instruction: params.modelContext.instruction?.trim() || recentUserMessages[recentUserMessages.length - 1] || "",
-    assistantText: clippedText(params.turnResult.assistantText, 1400),
+    assistantText: clippedText(params.assistantText, 1400),
     recentUserMessages,
-    recentTurnSummaries,
+    recentTurnSummaries: params.recentTurnSummaries.slice(0, 4),
   };
   const extracted = await extractDurableMemoryCandidatesFromModel(extractionContext);
   return extracted.map((candidate) => ({
@@ -871,18 +873,21 @@ function mergeDurableCandidates(
 }
 
 function buildDurableMemoryCandidates(params: {
+  assistantText: string;
+  currentPermissionDenials: Array<Record<string, unknown>>;
+  recentTurnPermissionDenials: Array<Array<Record<string, unknown>>>;
   turnResult: TurnResultRecord;
   summary: string | null;
-  recentTurns: TurnResultRecord[];
   sessionMessages: SessionMessageRecord[];
 }): DurableMemoryCandidate[] {
   return [
-    ...workspaceCommandFactCandidates(params.turnResult, params.sessionMessages),
-    ...workspaceBusinessFactCandidates(params.turnResult, params.sessionMessages),
-    ...workspaceProcedureCandidates(params.turnResult, params.sessionMessages),
+    ...workspaceCommandFactCandidates(params.turnResult, params.sessionMessages, params.assistantText),
+    ...workspaceBusinessFactCandidates(params.turnResult, params.sessionMessages, params.assistantText),
+    ...workspaceProcedureCandidates(params.turnResult, params.sessionMessages, params.assistantText),
     ...repeatedPermissionBlockerCandidates({
+      currentPermissionDenials: params.currentPermissionDenials,
+      recentTurnPermissionDenials: params.recentTurnPermissionDenials,
       turnResult: params.turnResult,
-      recentTurns: params.recentTurns,
       summary: params.summary,
     }),
   ];
@@ -1232,32 +1237,6 @@ async function upsertMemoryIndexes(params: {
   return restoredPaths;
 }
 
-function upsertCompactedSummary(store: RuntimeStateStore, turnResult: TurnResultRecord, compactedSummary: string | null): TurnResultRecord {
-  if (turnResult.compactedSummary === compactedSummary) {
-    return turnResult;
-  }
-  return store.upsertTurnResult({
-    workspaceId: turnResult.workspaceId,
-    sessionId: turnResult.sessionId,
-    inputId: turnResult.inputId,
-    startedAt: turnResult.startedAt,
-    completedAt: turnResult.completedAt,
-    status: turnResult.status,
-    stopReason: turnResult.stopReason,
-    assistantText: turnResult.assistantText,
-    toolUsageSummary: turnResult.toolUsageSummary,
-    permissionDenials: turnResult.permissionDenials,
-    promptSectionIds: turnResult.promptSectionIds,
-    capabilityManifestFingerprint: turnResult.capabilityManifestFingerprint,
-    requestSnapshotFingerprint: turnResult.requestSnapshotFingerprint,
-    promptCacheProfile: turnResult.promptCacheProfile,
-    compactedSummary,
-    tokenUsage: turnResult.tokenUsage,
-    contextBudgetDecisions: turnResult.contextBudgetDecisions,
-    createdAt: turnResult.createdAt,
-  });
-}
-
 async function upsertDurableMemoryCandidate(params: {
   store: RuntimeStateStore;
   memoryService: MemoryServiceLike;
@@ -1320,30 +1299,31 @@ async function upsertDurableMemoryCandidate(params: {
 }
 
 function loadTurnWritebackContext(store: RuntimeStateStore, turnResult: TurnResultRecord): TurnWritebackContext {
-  const compactedSummary = compactTurnSummary(turnResult);
-  const updatedTurnResult = upsertCompactedSummary(store, turnResult, compactedSummary);
+  // Keep turn_results as a deterministic execution ledger. Any short summary
+  // used by background writeback is ephemeral evidence, not persisted state.
+  const assistantText = assistantTextFromTurnArtifacts(store, turnResult);
+  const compactedSummary = compactedSummaryFromTurnArtifacts(store, turnResult);
   const recentTurns = store.listTurnResults({
-    workspaceId: updatedTurnResult.workspaceId,
-    sessionId: updatedTurnResult.sessionId,
+    workspaceId: turnResult.workspaceId,
+    sessionId: turnResult.sessionId,
     limit: RECENT_TURNS_LIMIT,
     offset: 0,
   });
-  const recentUserMessages = store.listSessionMessages({
-    workspaceId: updatedTurnResult.workspaceId,
-    sessionId: updatedTurnResult.sessionId,
-    role: "user",
-    order: "desc",
-    limit: RECENT_USER_MESSAGES_LIMIT,
-    offset: 0,
-  });
+  const recentUserMessages = recentUserMessagesForTurn(store, turnResult, RECENT_USER_MESSAGES_LIMIT);
   return {
+    assistantText,
     compactedSummary,
-    turnResult: updatedTurnResult,
-    recentTurns,
-    recentUserMessages: [...recentUserMessages].reverse(),
+    currentPermissionDenials: permissionDenialsFromTurnArtifacts(store, turnResult),
+    recentTurnPermissionDenials: recentTurns.map((item) => permissionDenialsFromTurnArtifacts(store, item)),
+    recentTurnSummaries: recentTurns
+      .slice(0, 4)
+      .map((item) => compactedSummaryFromTurnArtifacts(store, item))
+      .filter((summary): summary is string => Boolean(summary)),
+    turnResult,
+    recentUserMessages,
     completedTurnCount: store.countTurnResults({
-      workspaceId: updatedTurnResult.workspaceId,
-      sessionId: updatedTurnResult.sessionId,
+      workspaceId: turnResult.workspaceId,
+      sessionId: turnResult.sessionId,
       status: "completed",
     }),
   };
@@ -1376,15 +1356,18 @@ export async function writeTurnDurableMemory(params: {
 }): Promise<TurnResultRecord> {
   const context = loadTurnWritebackContext(params.store, params.turnResult);
   const heuristicDurableCandidates = buildDurableMemoryCandidates({
+    assistantText: context.assistantText,
+    currentPermissionDenials: context.currentPermissionDenials,
+    recentTurnPermissionDenials: context.recentTurnPermissionDenials,
     turnResult: context.turnResult,
     summary: context.compactedSummary,
-    recentTurns: context.recentTurns,
     sessionMessages: context.recentUserMessages,
   });
   const extractedCandidates = await extractedDurableMemoryCandidates({
     turnResult: context.turnResult,
-    recentTurns: context.recentTurns,
+    assistantText: context.assistantText,
     recentUserMessages: context.recentUserMessages,
+    recentTurnSummaries: context.recentTurnSummaries,
     completedTurnCount: context.completedTurnCount,
     modelContext: params.modelContext ?? null,
   });

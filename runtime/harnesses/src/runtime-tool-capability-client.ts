@@ -11,6 +11,8 @@ const RUNTIME_TOOLS_CAPABILITY_STATUS_PATH = "/api/v1/capabilities/runtime-tools
 const RUNTIME_TOOLS_ONBOARDING_STATUS_PATH = "/api/v1/capabilities/runtime-tools/onboarding/status";
 const RUNTIME_TOOLS_ONBOARDING_COMPLETE_PATH = "/api/v1/capabilities/runtime-tools/onboarding/complete";
 const RUNTIME_TOOLS_CRONJOBS_PATH = "/api/v1/capabilities/runtime-tools/cronjobs";
+const RUNTIME_TOOLS_SUBAGENTS_PATH = "/api/v1/capabilities/runtime-tools/subagents";
+const RUNTIME_TOOLS_BACKGROUND_TASKS_PATH = "/api/v1/capabilities/runtime-tools/background-tasks";
 const RUNTIME_TOOLS_IMAGE_GENERATE_PATH = "/api/v1/capabilities/runtime-tools/images/generate";
 const RUNTIME_TOOLS_DOWNLOADS_PATH = "/api/v1/capabilities/runtime-tools/downloads";
 const RUNTIME_TOOLS_REPORTS_PATH = "/api/v1/capabilities/runtime-tools/reports";
@@ -56,6 +58,17 @@ function parseOptionalJsonObject(raw: unknown, fieldName: string): Record<string
   return parsed;
 }
 
+function optionalStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const items = value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  return items.length > 0 ? items : undefined;
+}
+
 function buildDeliveryPayload(toolParams: unknown): Record<string, unknown> | undefined {
   const params = isRecord(toolParams) ? toolParams : {};
   const channel = optionalString(params.delivery_channel);
@@ -69,6 +82,14 @@ function buildDeliveryPayload(toolParams: unknown): Record<string, unknown> | un
     ...(mode ? { mode } : {}),
     ...(to !== undefined ? { to } : {}),
   };
+}
+
+function subagentPath(subagentId: unknown): string {
+  const value = optionalString(subagentId);
+  if (!value) {
+    throw new Error("subagent_id is required");
+  }
+  return `${RUNTIME_TOOLS_SUBAGENTS_PATH}/${encodeURIComponent(value)}`;
 }
 
 function cronjobPath(jobId: unknown): string {
@@ -129,6 +150,73 @@ function createImageGenerationBody(toolParams: unknown): Record<string, unknown>
   };
 }
 
+function normalizeDelegateTask(taskParams: unknown): Record<string, unknown> {
+  const params = isRecord(taskParams) ? taskParams : {};
+  const goal = optionalString(params.goal);
+  return {
+    ...(optionalString(params.title) ? { title: optionalString(params.title) } : {}),
+    ...(goal ? { goal } : {}),
+    ...(optionalString(params.context) ? { context: optionalString(params.context) } : {}),
+    ...(optionalStringArray(params.tools) ? { tools: optionalStringArray(params.tools) } : {}),
+    ...(optionalString(params.model) ? { model: optionalString(params.model) } : {}),
+    ...(params.use_user_browser_surface === true
+      ? { use_user_browser_surface: true }
+      : {}),
+    ...(typeof params.timeout_ms === "number" ? { timeout_ms: params.timeout_ms } : {}),
+  };
+}
+
+function createDelegateTaskBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  const normalizedTasks = Array.isArray(params.tasks)
+    ? params.tasks.map((task) => normalizeDelegateTask(task)).filter((task) => typeof task.goal === "string")
+    : [];
+  if (normalizedTasks.length > 0) {
+    return { tasks: normalizedTasks };
+  }
+  return { tasks: [normalizeDelegateTask(params)] };
+}
+
+function getSubagentPath(toolParams: unknown): string {
+  return subagentPath(isRecord(toolParams) ? toolParams.subagent_id : undefined);
+}
+
+function listBackgroundTasksPath(toolParams: unknown): string {
+  const params = isRecord(toolParams) ? toolParams : {};
+  const query = new URLSearchParams();
+  for (const status of optionalStringArray(params.statuses) ?? []) {
+    query.append("status", status);
+  }
+  const ownerMainSessionId = optionalString(params.owner_main_session_id);
+  if (ownerMainSessionId) {
+    query.set("owner_main_session_id", ownerMainSessionId);
+  }
+  if (typeof params.limit === "number" && Number.isFinite(params.limit)) {
+    query.set("limit", String(Math.trunc(params.limit)));
+  }
+  const suffix = query.toString();
+  return suffix
+    ? `${RUNTIME_TOOLS_BACKGROUND_TASKS_PATH}?${suffix}`
+    : RUNTIME_TOOLS_BACKGROUND_TASKS_PATH;
+}
+
+function createResumeSubagentBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    answer: String(params.answer ?? ""),
+    ...(optionalString(params.model) ? { model: optionalString(params.model) } : {}),
+  };
+}
+
+function createContinueSubagentBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    instruction: String(params.instruction ?? ""),
+    ...(optionalString(params.title) ? { title: optionalString(params.title) } : {}),
+    ...(optionalString(params.model) ? { model: optionalString(params.model) } : {}),
+  };
+}
+
 function createDownloadUrlBody(toolParams: unknown): Record<string, unknown> {
   const params = isRecord(toolParams) ? toolParams : {};
   return {
@@ -162,6 +250,8 @@ function createWebSearchBody(toolParams: unknown): Record<string, unknown> {
     ...(typeof params.context_max_characters === "number"
       ? { context_max_characters: params.context_max_characters }
       : {}),
+    ...(typeof params.text_offset === "number" ? { text_offset: params.text_offset } : {}),
+    ...(typeof params.text_limit === "number" ? { text_limit: params.text_limit } : {}),
   };
 }
 
@@ -345,6 +435,40 @@ function requestPlan(
         method: "DELETE",
         requestPath: cronjobPath(isRecord(toolParams) ? toolParams.job_id : undefined),
       };
+    case "holaboss_delegate_task":
+      return {
+        method: "POST",
+        requestPath: RUNTIME_TOOLS_SUBAGENTS_PATH,
+        body: createDelegateTaskBody(toolParams),
+      };
+    case "holaboss_get_subagent":
+      return {
+        method: "GET",
+        requestPath: getSubagentPath(toolParams),
+      };
+    case "holaboss_list_background_tasks":
+      return {
+        method: "GET",
+        requestPath: listBackgroundTasksPath(toolParams),
+      };
+    case "holaboss_cancel_subagent":
+      return {
+        method: "POST",
+        requestPath: `${subagentPath(isRecord(toolParams) ? toolParams.subagent_id : undefined)}/cancel`,
+        body: {},
+      };
+    case "holaboss_resume_subagent":
+      return {
+        method: "POST",
+        requestPath: `${subagentPath(isRecord(toolParams) ? toolParams.subagent_id : undefined)}/resume`,
+        body: createResumeSubagentBody(toolParams),
+      };
+    case "holaboss_continue_subagent":
+      return {
+        method: "POST",
+        requestPath: `${subagentPath(isRecord(toolParams) ? toolParams.subagent_id : undefined)}/continue`,
+        body: createContinueSubagentBody(toolParams),
+      };
     case "image_generate":
       return { method: "POST", requestPath: RUNTIME_TOOLS_IMAGE_GENERATE_PATH, body: createImageGenerationBody(toolParams) };
     case "download_url":
@@ -432,6 +556,7 @@ function requestPlan(
       };
     }
   }
+  throw new Error(`Unsupported runtime tool: ${toolId}`);
 }
 
 export async function executeRuntimeToolCapability(params: RuntimeToolCapabilityClientOptions & {
@@ -453,6 +578,7 @@ export async function executeRuntimeToolCapability(params: RuntimeToolCapability
     method: plan.method,
     headers: {
       "content-type": "application/json; charset=utf-8",
+      "x-holaboss-tool-result-mode": "preview",
       ...runtimeToolHeaders({
         workspaceId: params.workspaceId,
         sessionId: params.sessionId,

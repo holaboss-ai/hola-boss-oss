@@ -8,10 +8,12 @@ import {
   type RuntimeNotificationLevel,
   type RuntimeNotificationPriority,
   type RuntimeStateStore,
+  utcNowIso,
   type WorkspaceRecord
 } from "@holaboss/runtime-state-store";
 
 import type { QueueWorkerLike } from "./queue-worker.js";
+import { normalizeSubagentToolProfile } from "./runtime-agent-tools.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
 
@@ -101,10 +103,45 @@ function inheritedCronjobModelFromSession(params: {
   return cronjobModelFromSnapshotPayload(snapshot.payload);
 }
 
-function preferredCronjobModelSessionId(params: {
+function isCronjobMainSessionKind(value: string | null | undefined): boolean {
+  const normalized = normalizedString(value).toLowerCase();
+  return (
+    normalized === "" ||
+    normalized === "workspace_session" ||
+    normalized === "main" ||
+    normalized === "onboarding"
+  );
+}
+
+function preferredCronjobMainSessionId(params: {
   store: RuntimeStateStore;
   workspace: WorkspaceRecord;
+  metadata: Record<string, unknown>;
 }): string | null {
+  const preferredIds = [
+    normalizedString(params.metadata.source_session_id),
+    normalizedString(params.metadata.session_id),
+  ].filter(Boolean);
+  for (const sessionId of preferredIds) {
+    const session = params.store.getSession({
+      workspaceId: params.workspace.id,
+      sessionId,
+    });
+    if (session && isCronjobMainSessionKind(session.kind)) {
+      return session.sessionId;
+    }
+  }
+
+  const desktopBinding = params.store.getConversationBindingByConversation({
+    workspaceId: params.workspace.id,
+    channel: "desktop",
+    conversationKey: "workspace-main",
+    role: "main",
+  });
+  if (desktopBinding) {
+    return desktopBinding.sessionId;
+  }
+
   const onboardingSessionId = normalizedString(params.workspace.onboardingSessionId);
   const sessions = params.store.listSessions({
     workspaceId: params.workspace.id,
@@ -113,22 +150,69 @@ function preferredCronjobModelSessionId(params: {
     offset: 0,
   });
   const preferred = sessions.find((session) => {
-    const kind = normalizedString(session.kind).toLowerCase();
     if (session.sessionId === onboardingSessionId) {
       return false;
     }
-    return !kind || kind === "workspace_session";
+    return isCronjobMainSessionKind(session.kind);
   });
   if (preferred) {
     return preferred.sessionId;
   }
-  return sessions.find((session) => session.sessionId !== onboardingSessionId)?.sessionId ?? null;
+  return (
+    sessions.find(
+      (session) =>
+        session.sessionId !== onboardingSessionId &&
+        isCronjobMainSessionKind(session.kind),
+    )?.sessionId ?? null
+  );
+}
+
+function resolveCronjobMainSession(params: {
+  store: RuntimeStateStore;
+  workspace: WorkspaceRecord;
+  metadata: Record<string, unknown>;
+}): string {
+  const existing = preferredCronjobMainSessionId(params);
+  if (existing) {
+    params.store.upsertConversationBinding({
+      workspaceId: params.workspace.id,
+      channel: "desktop",
+      conversationKey: "workspace-main",
+      sessionId: existing,
+      role: "main",
+      isActive: true,
+      metadata: {},
+      lastActiveAt: utcNowIso(),
+    });
+    return existing;
+  }
+
+  const sessionId = `main-${randomUUID()}`;
+  params.store.ensureSession({
+    workspaceId: params.workspace.id,
+    sessionId,
+    kind: "workspace_session",
+    title: params.workspace.name.trim() || "Main Session",
+    createdBy: "cronjob",
+  });
+  params.store.upsertConversationBinding({
+    workspaceId: params.workspace.id,
+    channel: "desktop",
+    conversationKey: "workspace-main",
+    sessionId,
+    role: "main",
+    isActive: true,
+    metadata: {},
+    lastActiveAt: utcNowIso(),
+  });
+  return sessionId;
 }
 
 function resolvedCronjobModel(params: {
   store: RuntimeStateStore;
   workspace: WorkspaceRecord;
   metadata: Record<string, unknown>;
+  sessionId?: string | null;
 }): string | null {
   const explicitModel = normalizedString(params.metadata.model);
   if (explicitModel) {
@@ -138,7 +222,13 @@ function resolvedCronjobModel(params: {
     inheritedCronjobModelFromSession({
       store: params.store,
       workspace: params.workspace,
-      sessionId: preferredCronjobModelSessionId(params),
+      sessionId:
+        params.sessionId ??
+        preferredCronjobMainSessionId({
+          store: params.store,
+          workspace: params.workspace,
+          metadata: params.metadata,
+        }),
     }) ||
     inheritedCronjobModelFromSession({
       store: params.store,
@@ -170,6 +260,13 @@ export function cronjobNextRunAt(cronExpression: string, now: Date): string | nu
 export function cronjobIsDue(job: CronjobRecord, now: Date): boolean {
   if (!job.enabled) {
     return false;
+  }
+  const nextRunAtRaw = normalizedString(job.nextRunAt);
+  if (nextRunAtRaw) {
+    const nextRunAt = new Date(nextRunAtRaw);
+    if (!Number.isNaN(nextRunAt.getTime())) {
+      return now >= nextRunAt;
+    }
   }
   let lastScheduled: Date;
   try {
@@ -218,39 +315,53 @@ export function queueLocalCronjobRun(
     throw new Error(`workspace not found for cronjob ${job.id}`);
   }
   const metadata = isRecord(job.metadata) ? job.metadata : {};
-  const resolvedSessionId =
-    typeof metadata.session_id === "string" && metadata.session_id.trim() ? metadata.session_id.trim() : randomUUID();
-  const model = resolvedCronjobModel({ store, workspace, metadata });
+  const mainSessionId = resolveCronjobMainSession({ store, workspace, metadata });
+  const childSessionId = `subagent-${randomUUID()}`;
+  const subagentId = randomUUID();
+  const model = resolvedCronjobModel({
+    store,
+    workspace,
+    metadata,
+    sessionId: mainSessionId,
+  });
   const priority = Number.isInteger(metadata.priority) ? (metadata.priority as number) : 0;
   const idempotencyKey = typeof metadata.idempotency_key === "string" ? metadata.idempotency_key : null;
+  const executableInstruction = cronjobInstruction(job.instruction, metadata);
+  const subagentTitle =
+    normalizedString(job.name) ||
+    normalizedString(job.description) ||
+    "Scheduled task";
+  const toolProfile = normalizeSubagentToolProfile({
+    tools: ["terminal", "file", "browser", "web"],
+  });
 
   store.ensureSession({
     workspaceId: job.workspaceId,
-    sessionId: resolvedSessionId,
-    kind: "cronjob",
-    title: job.name.trim() || job.description.trim() || "Cronjob run",
+    sessionId: childSessionId,
+    kind: "subagent",
+    title: subagentTitle,
+    parentSessionId: mainSessionId,
     createdBy: job.initiatedBy
   });
-  if (!store.getBinding({ workspaceId: job.workspaceId, sessionId: resolvedSessionId })) {
+  if (!store.getBinding({ workspaceId: job.workspaceId, sessionId: childSessionId })) {
     const harness = (workspace.harness ?? process.env.SANDBOX_AGENT_HARNESS ?? "pi").trim() || "pi";
     store.upsertBinding({
       workspaceId: job.workspaceId,
-      sessionId: resolvedSessionId,
+      sessionId: childSessionId,
       harness,
-      harnessSessionId: resolvedSessionId
+      harnessSessionId: childSessionId
     });
   }
 
   store.ensureRuntimeState({
     workspaceId: job.workspaceId,
-    sessionId: resolvedSessionId,
+    sessionId: childSessionId,
     status: "QUEUED"
   });
 
-  const executableInstruction = cronjobInstruction(job.instruction, metadata);
   const record = store.enqueueInput({
     workspaceId: job.workspaceId,
-    sessionId: resolvedSessionId,
+    sessionId: childSessionId,
     priority,
     idempotencyKey,
     payload: {
@@ -258,23 +369,53 @@ export function queueLocalCronjobRun(
       image_urls: [],
       model,
       context: {
-        source: "cronjob",
-        cronjob_id: job.id
+        source: "subagent",
+        source_type: "cronjob",
+        cronjob_id: job.id,
+        subagent_id: subagentId,
+        origin_main_session_id: mainSessionId,
+        owner_main_session_id: mainSessionId,
+        parent_session_id: mainSessionId,
+        parent_input_id: null,
+        task_title: subagentTitle,
+        tool_profile: toolProfile,
+        goal:
+          normalizedString(job.description) ||
+          normalizedString(job.instruction) ||
+          subagentTitle,
       }
     }
   });
-
-  store.insertSessionMessage({
+  store.createSubagentRun({
+    subagentId,
     workspaceId: job.workspaceId,
-    sessionId: resolvedSessionId,
-    role: "user",
-    text: executableInstruction,
-    messageId: `cronjob-${job.id}-${record.inputId}`
+    parentSessionId: mainSessionId,
+    parentInputId: null,
+    originMainSessionId: mainSessionId,
+    ownerMainSessionId: mainSessionId,
+    childSessionId,
+    initialChildInputId: record.inputId,
+    currentChildInputId: record.inputId,
+    latestChildInputId: record.inputId,
+    title: subagentTitle,
+    goal:
+      normalizedString(job.description) ||
+      normalizedString(job.instruction) ||
+      subagentTitle,
+    context: normalizedString(job.instruction) || null,
+    sourceType: "cronjob",
+    sourceId: job.id,
+    cronjobId: job.id,
+    toolProfile,
+    requestedModel: typeof metadata.model === "string" ? metadata.model : null,
+    effectiveModel: model,
+    status: "queued",
+    lastEventAt: now.toISOString(),
   });
 
   store.updateRuntimeState({
     workspaceId: job.workspaceId,
-    sessionId: resolvedSessionId,
+    sessionId: childSessionId,
     status: "QUEUED",
     currentInputId: record.inputId,
     currentWorkerId: null,
@@ -284,7 +425,7 @@ export function queueLocalCronjobRun(
   });
 
   wakeQueueWorker?.();
-  return resolvedSessionId;
+  return mainSessionId;
 }
 
 export function deliverLocalCronjobNotification(
@@ -298,6 +439,11 @@ export function deliverLocalCronjobNotification(
   }
 
   const metadata = isRecord(job.metadata) ? job.metadata : {};
+  const sessionId =
+    (typeof options?.sessionId === "string" && options.sessionId.trim()
+      ? options.sessionId.trim()
+      : null) ??
+    resolveCronjobMainSession({ store, workspace, metadata });
   const notification = store.createRuntimeNotification({
     workspaceId: job.workspaceId,
     cronjobId: job.id,
@@ -313,9 +459,7 @@ export function deliverLocalCronjobNotification(
       cronjob_description: job.description,
       cronjob_instruction: job.instruction,
       session_id:
-        typeof options?.sessionId === "string" && options.sessionId.trim()
-          ? options.sessionId.trim()
-          : null,
+        sessionId,
       delivery: job.delivery,
       cronjob_metadata: metadata
     }

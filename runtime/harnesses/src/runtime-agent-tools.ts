@@ -35,6 +35,41 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS = [
     policy: "mutate"
   },
   {
+    id: "holaboss_delegate_task",
+    description:
+      "Delegate one or more background tasks to hidden subagents for the current workspace session while keeping the main conversation free.",
+    policy: "coordinate"
+  },
+  {
+    id: "holaboss_get_subagent",
+    description:
+      "Read one delegated background task by subagent id and return its latest structured state.",
+    policy: "inspect"
+  },
+  {
+    id: "holaboss_list_background_tasks",
+    description:
+      "List delegated background tasks for the current workspace session using persisted task state instead of a blocking wait.",
+    policy: "inspect"
+  },
+  {
+    id: "holaboss_cancel_subagent",
+    description: "Cancel one delegated background task by subagent id when it is still queued or waiting on user input.",
+    policy: "mutate"
+  },
+  {
+    id: "holaboss_resume_subagent",
+    description:
+      "Resume a delegated background task that is waiting on user input by sending the user's answer back into the paused subagent run.",
+    policy: "mutate"
+  },
+  {
+    id: "holaboss_continue_subagent",
+    description:
+      "Continue a completed delegated background task by sending a new instruction into the same child session.",
+    policy: "mutate"
+  },
+  {
     id: "image_generate",
     description: "Generate an image file in the current workspace using the configured image generation provider and model.",
     policy: "mutate"
@@ -66,19 +101,19 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS = [
   {
     id: "todowrite",
     description:
-      "Update the current phased todo plan for the current workspace session. Valid `op` values are exactly `replace`, `add_phase`, `add_task`, `update`, and `remove_task`.",
+      "Update the current phased todo plan for the current workspace session. Use it for task coordination, not working notes or evidence. Valid `op` values are exactly `replace`, `add_phase`, `add_task`, `update`, and `remove_task`.",
     policy: "coordinate"
   },
   {
     id: "holaboss_scratchpad_read",
     description:
-      "Read the current session scratchpad stored in the workspace-local runtime folder.",
+      "Read the current session scratchpad stored in the workspace-local runtime folder for working notes and compacted current state.",
     policy: "inspect"
   },
   {
     id: "holaboss_scratchpad_write",
     description:
-      "Append to, replace, or clear the current session scratchpad stored in the workspace-local runtime folder.",
+      "Append to, replace, or clear the current session scratchpad stored in the workspace-local runtime folder for working notes, evidence, and compacted current state.",
     policy: "mutate"
   },
   {

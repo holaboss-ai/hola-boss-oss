@@ -12,6 +12,7 @@ import {
 const CRONJOB_DELIVERY_CHANNELS = ["system_notification", "session_run"] as const;
 const CRONJOB_DELIVERY_MODES = ["announce", "none"] as const;
 const SCRATCHPAD_WRITE_OPS = ["append", "replace", "clear"] as const;
+const SUBAGENT_TOOL_BUCKETS = ["web", "browser", "terminal", "file"] as const;
 const TODO_STATUSES = ["pending", "in_progress", "blocked", "completed", "abandoned"] as const;
 const TODO_WRITE_OPS_TEXT = "`replace`, `add_phase`, `add_task`, `update`, and `remove_task`";
 const TODO_WRITE_ALIAS_WARNING =
@@ -66,6 +67,13 @@ function scratchpadWriteOpSchema(): Record<string, unknown> {
 
 function todoStatusSchema(): Record<string, unknown> {
   return literalStringUnion(TODO_STATUSES, "Todo task status.");
+}
+
+function subagentToolBucketSchema(): Record<string, unknown> {
+  return literalStringUnion(
+    SUBAGENT_TOOL_BUCKETS,
+    "Delegated capability bucket. Use `web`, `browser`, `terminal`, or `file`.",
+  );
 }
 
 function runtimeToolLabel(toolId: RuntimeAgentToolId): string {
@@ -157,6 +165,140 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         required: ["job_id"],
         additionalProperties: false,
       };
+    case "holaboss_delegate_task":
+      return {
+        type: "object",
+        properties: {
+          tasks: {
+            type: "array",
+            description:
+              "Background tasks to delegate. Prefer this canonical batched form when delegating multiple tasks at once.",
+            items: {
+              type: "object",
+              properties: {
+                title: { type: "string", description: "Optional short task title." },
+                goal: { type: "string", description: "Required task goal or instruction." },
+                context: { type: "string", description: "Optional supporting context for this task." },
+                tools: {
+                  type: "array",
+                  description: "Optional task-scoped capability buckets for the delegated worker.",
+                  items: subagentToolBucketSchema(),
+                },
+                model: { type: "string", description: "Optional model override for this delegated task." },
+                use_user_browser_surface: {
+                  type: "boolean",
+                  description:
+                    "Set true only when the user explicitly asked the delegated browser work to use their current/shared browser tab, page, or browser surface. Omit otherwise so the task uses the agent browser.",
+                },
+                timeout_ms: {
+                  type: "integer",
+                  description: "Optional timeout hint for this delegated task in milliseconds.",
+                  minimum: 1,
+                },
+              },
+              required: ["goal"],
+              additionalProperties: false,
+            },
+          },
+          title: { type: "string", description: "Singleton alias: optional short task title." },
+          goal: { type: "string", description: "Singleton alias: task goal or instruction." },
+          context: { type: "string", description: "Singleton alias: supporting context for the task." },
+          tools: {
+            type: "array",
+            description: "Singleton alias: task-scoped capability buckets for the delegated worker.",
+            items: subagentToolBucketSchema(),
+          },
+          model: { type: "string", description: "Singleton alias: model override for the delegated task." },
+          use_user_browser_surface: {
+            type: "boolean",
+            description:
+              "Singleton alias: set true only when the user explicitly asked the delegated browser work to use their current/shared browser tab, page, or browser surface.",
+          },
+          timeout_ms: {
+            type: "integer",
+            description: "Singleton alias: timeout hint for the delegated task in milliseconds.",
+            minimum: 1,
+          },
+        },
+        additionalProperties: false,
+      };
+    case "holaboss_get_subagent":
+      return {
+        type: "object",
+        properties: {
+          subagent_id: {
+            type: "string",
+            description: "Delegated background task id to inspect.",
+          },
+        },
+        required: ["subagent_id"],
+        additionalProperties: false,
+      };
+    case "holaboss_list_background_tasks":
+      return {
+        type: "object",
+        properties: {
+          statuses: {
+            type: "array",
+            description: "Optional delegated background task statuses to include.",
+            items: literalStringUnion(
+              ["queued", "running", "waiting_on_user", "completed", "failed", "cancelled"],
+              "Background task status filter.",
+            ),
+          },
+          owner_main_session_id: {
+            type: "string",
+            description: "Optional owner main session id filter.",
+          },
+          limit: {
+            type: "integer",
+            description: "Optional maximum number of background tasks to return.",
+            minimum: 1,
+          },
+        },
+        additionalProperties: false,
+      };
+    case "holaboss_cancel_subagent":
+      return {
+        type: "object",
+        properties: {
+          subagent_id: { type: "string", description: "Delegated background task id to cancel." },
+        },
+        required: ["subagent_id"],
+        additionalProperties: false,
+      };
+    case "holaboss_resume_subagent":
+      return {
+        type: "object",
+        properties: {
+          subagent_id: { type: "string", description: "Delegated background task id to resume." },
+          answer: { type: "string", description: "The user's answer that should resume the paused task." },
+          model: { type: "string", description: "Optional model override for the resumed task turn." },
+        },
+        required: ["subagent_id", "answer"],
+        additionalProperties: false,
+      };
+    case "holaboss_continue_subagent":
+      return {
+        type: "object",
+        properties: {
+          subagent_id: {
+            type: "string",
+            description: "Delegated background task id whose child session should receive the continuation.",
+          },
+          instruction: {
+            type: "string",
+            description: "The follow-up instruction to run in the same child session.",
+          },
+          title: {
+            type: "string",
+            description: "Optional updated display title for the continued task.",
+          },
+          model: { type: "string", description: "Optional model override for the continuation turn." },
+        },
+        required: ["subagent_id", "instruction"],
+        additionalProperties: false,
+      };
     case "image_generate":
       return {
         type: "object",
@@ -233,6 +375,18 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
           context_max_characters: {
             type: "integer",
             description: "Maximum number of context characters to request from the search backend.",
+            minimum: 1,
+          },
+          text_offset: {
+            type: "integer",
+            description:
+              "Optional character offset for paginating long web_search responses.",
+            minimum: 0,
+          },
+          text_limit: {
+            type: "integer",
+            description:
+              "Optional maximum number of characters to return in this page of web_search text.",
             minimum: 1,
           },
         },
@@ -590,6 +744,55 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "Use `args` only for short follow-up instructions that should accompany the skill block.",
     ];
   }
+  if (toolId === "holaboss_delegate_task") {
+    return [
+      "Use `holaboss_delegate_task` for longer-running, multi-step, or interruptible work that should continue while the main conversation remains free.",
+      "Keep each delegated task narrowly scoped and self-contained. Use the canonical `tasks` array for batched delegation and the singleton top-level fields only for one task.",
+      "Use `tools` as coarse capability buckets such as `web`, `browser`, `terminal`, or `file`; do not treat them as raw low-level tool ids.",
+      "Default delegated browser work to the agent browser. Set `use_user_browser_surface` only when the user explicitly asks to use their current tab, current page, shared browser, or equivalent user-owned browser context.",
+      "Delegate execution-heavy work instead of narrating that you will do it later without actually spawning the background task.",
+      "When the user asks for work that needs capability missing from the current main-session run, delegate it instead of replying that the current run lacks those tools.",
+      "For latest-news, source discovery, and similar external research, usually delegate with `tools: [\"web\"]` and escalate to `browser` only when direct interaction or UI verification is needed.",
+      "When the ideal direct integration is missing, delegate with the capability bucket that can still solve the task: `browser` for UI/app state, `web` for public information, and `terminal` or `file` for workspace inspection.",
+    ];
+  }
+  if (toolId === "holaboss_get_subagent") {
+    return [
+      "Use `holaboss_get_subagent` when you need the latest structured state for one delegated background task.",
+      "Use this for targeted status questions like whether one task is done, failed, or waiting on user input.",
+      "This reads persisted task state only; it does not block waiting for the task to change.",
+      "Do not call this repeatedly in the same turn right after delegating a fresh task just to see if it finished; return control unless the task is already in a terminal or waiting-on-user state.",
+    ];
+  }
+  if (toolId === "holaboss_list_background_tasks") {
+    return [
+      "Use `holaboss_list_background_tasks` when you need a compact overview of delegated background work for the current workspace.",
+      "Use optional filters to narrow the list instead of asking every task to report in full.",
+      "This reads persisted task state only; it does not block waiting for any task to change.",
+      "Do not use this as a polling loop in the same turn after spawning fresh delegated work.",
+    ];
+  }
+  if (toolId === "holaboss_cancel_subagent") {
+    return [
+      "Use `holaboss_cancel_subagent` only when the user clearly wants to stop a specific delegated task.",
+      "Resolve which delegated task the user means before calling this tool; do not guess if multiple background tasks are plausible matches.",
+    ];
+  }
+  if (toolId === "holaboss_resume_subagent") {
+    return [
+      "Use `holaboss_resume_subagent` when a delegated task is waiting on user input and the user has provided that answer.",
+      "Resume the same paused subagent run instead of delegating a brand-new task when the user is answering an explicit blocker question.",
+      "Pass only the answer needed to continue the task; do not restate the entire conversation unless it materially changes the task.",
+    ];
+  }
+  if (toolId === "holaboss_continue_subagent") {
+    return [
+      "Use `holaboss_continue_subagent` when the user asks to transform, save, refine, compare, or otherwise continue the result of a completed delegated task.",
+      "Prefer continuing the existing child session for referential requests like 'turn that into a report', 'save item 2', 'summarize those', or 'compare them'.",
+      "If it is unclear which delegated task the user means, ask a short clarifying question before continuing.",
+      "Do not start a fresh delegated task for a true continuation of the most recent relevant child result.",
+    ];
+  }
   if (toolId === "todoread") {
     return [
       "Use `todoread` before changing an existing phased plan when current todo state may matter.",
@@ -600,6 +803,7 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
   if (toolId === "todowrite") {
     return [
       "Use `todowrite` for complex or long-running tasks that benefit from an explicit phased plan.",
+      "Use `todowrite` for task coordination only, not as a ledger for evidence, extracted facts, or long-form working notes; keep those in the session scratchpad.",
       "The top-level phases are grouped tasks, and each phase's `tasks` entries are the actionable task items within that grouped task.",
       `Valid \`op\` values are exactly ${TODO_WRITE_OPS_TEXT}.`,
       TODO_WRITE_ALIAS_WARNING,
@@ -615,12 +819,17 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "Use `holaboss_scratchpad_read` when a resumed or long-running session likely has session-scoped notes that matter for the current turn.",
       "Treat scratchpad notes as session continuity, not as durable memory or verified current truth.",
       "Read the scratchpad when you need the saved notes again; do not assume they are already in prompt context.",
+      "When the scratchpad already contains the needed working state, prefer reading it instead of reopening or re-parsing large prior tool artifacts.",
     ];
   }
   if (toolId === "holaboss_scratchpad_write") {
     return [
-      "Use `holaboss_scratchpad_write` for long-running working notes, interim findings, open questions, or compacted current state that should survive beyond the current prompt window.",
+      "Use `holaboss_scratchpad_write` for long-running working notes, interim findings, open questions, evidence ledgers, or compacted current state that should survive beyond the current prompt window.",
+      "After the first material findings in a multi-step task, start or update the scratchpad so verified state does not live only in transient prompt context.",
       "Use `append` while accumulating notes, `replace` when compacting the scratchpad into a fresher shorter summary, and `clear` when the notes are no longer useful.",
+      "Use the scratchpad as working memory for verified findings, extracted facts, candidate lists, artifact handles, open questions, and compacted current state.",
+      "Do not use `todowrite` as a substitute for scratchpad notes; todo state is for coordination, not evidence.",
+      "When replay or context pressure rises, or when a tool returns a large artifact, compact the verified findings and next questions into the scratchpad before continuing.",
       "Keep durable memory, user-visible deliverables, and final answers out of the scratchpad unless they are explicitly session-scoped working notes.",
     ];
   }

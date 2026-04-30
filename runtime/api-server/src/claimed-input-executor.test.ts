@@ -81,6 +81,12 @@ function makeTempDir(prefix: string): string {
   return dir;
 }
 
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 function makeStore(prefix: string): RuntimeStateStore {
   const root = makeTempDir(prefix);
   return new RuntimeStateStore({
@@ -104,6 +110,50 @@ function writeRuntimeConfigDocument(document: Record<string, unknown>): string {
     "utf8",
   );
   return configPath;
+}
+
+function createSubagentRunFixture(params: {
+  store: RuntimeStateStore;
+  workspaceId: string;
+  mainSessionId?: string;
+  childSessionId?: string;
+  title?: string;
+  goal?: string;
+  inputText?: string;
+}) {
+  const mainSessionId = params.mainSessionId ?? "session-main";
+  const childSessionId = params.childSessionId ?? "session-subagent";
+  params.store.ensureSession({
+    workspaceId: params.workspaceId,
+    sessionId: mainSessionId,
+    kind: "workspace_session",
+  });
+  params.store.ensureSession({
+    workspaceId: params.workspaceId,
+    sessionId: childSessionId,
+    kind: "subagent",
+    parentSessionId: mainSessionId,
+  });
+  const queued = params.store.enqueueInput({
+    workspaceId: params.workspaceId,
+    sessionId: childSessionId,
+    payload: { text: params.inputText ?? "handle the delegated task" },
+  });
+  const run = params.store.createSubagentRun({
+    workspaceId: params.workspaceId,
+    parentSessionId: mainSessionId,
+    parentInputId: "parent-input-1",
+    originMainSessionId: mainSessionId,
+    ownerMainSessionId: mainSessionId,
+    childSessionId,
+    initialChildInputId: queued.inputId,
+    currentChildInputId: queued.inputId,
+    latestChildInputId: queued.inputId,
+    title: params.title ?? "Delegated task",
+    goal: params.goal ?? "Complete delegated work",
+    status: "queued",
+  });
+  return { queued, run };
 }
 
 test("claimed input marks missing workspace failed and runtime error", async () => {
@@ -315,7 +365,6 @@ test("claimed input persists runner events, assistant text, and idle state on su
   assert.equal(turnResult.status, "completed");
   assert.equal(turnResult.stopReason, "ok");
   assert.equal(turnResult.assistantText, "Hello from TS");
-  assert.equal(turnResult.compactedSummary, null);
   assert.deepEqual(turnResult.promptSectionIds, [
     "runtime_core",
     "execution_policy",
@@ -365,33 +414,247 @@ test("claimed input persists runner events, assistant text, and idle state on su
     input_tokens: 12,
     output_tokens: 34,
   });
-  assert.equal(turnResult.contextBudgetDecisions?.mode, "observability_only");
-  assert.equal(turnResult.contextBudgetDecisions?.pressure_stage, null);
+  const snapshot = store.getTurnRequestSnapshot({ inputId: queued.inputId });
+  assert.equal(snapshot, null);
+
+  store.close();
+});
+
+test("claimed input persists context-budget telemetry from replay clipping and checkpoint queueing", async () => {
+  const store = makeStore("hb-claimed-input-context-budget-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "summarize this run" },
+  });
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    executeRunnerRequestFn: async (_payload, options = {}) => {
+      await options.onEvent?.({
+        session_id: "session-main",
+        input_id: queued.inputId,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {
+          instruction_preview: "summarize this run",
+          prompt_section_ids: ["runtime_core"],
+          prompt_cache_profile: {
+            cacheable_section_ids: ["runtime_core"],
+            volatile_section_ids: [],
+          },
+        },
+      });
+      await options.onEvent?.({
+        session_id: "session-main",
+        input_id: queued.inputId,
+        sequence: 2,
+        event_type: "tool_call",
+        payload: {
+          phase: "completed",
+          tool_name: "web_search",
+          tool_id: "web_search",
+          call_id: "call-1",
+          error: false,
+          result: {
+            content: [
+              {
+                type: "text",
+                text: "{\"note\":\"Inline replay omitted because the per-turn replay budget was exhausted.\"}",
+              },
+            ],
+            details: {
+              tool_id: "web_search",
+              replay_budget: {
+                mode: "reference_only",
+                trimmed: true,
+                trim_reason: "max_replay_chars",
+                replay_chars: 25000,
+                total_replay_chars: 24000,
+                max_replay_chars: 24000,
+                total_replay_items: 2,
+                max_replay_items: 8,
+              },
+            },
+          },
+        },
+      });
+      await options.onEvent?.({
+        session_id: "session-main",
+        input_id: queued.inputId,
+        sequence: 3,
+        event_type: "run_completed",
+        payload: {
+          status: "ok",
+          usage: { input_tokens: 20, output_tokens: 10 },
+          context_usage: { tokens: 99000, context_window: 100000 },
+          harness_session_id: path.join(
+            store.workspaceDir(workspace.id),
+            "pi-session.json",
+          ),
+        },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        aborted: false,
+        sawTerminal: true,
+        abortReason: null,
+      };
+    },
+    enqueueSessionCheckpointJobFn: () =>
+      ({
+        jobId: 1,
+        jobType: "session_checkpoint",
+        workspaceId: workspace.id,
+        sessionId: "session-main",
+        inputId: queued.inputId,
+        status: "QUEUED",
+        attempts: 0,
+        priority: 10,
+        payload: {},
+        idempotencyKey: "checkpoint-1",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        claimedBy: null,
+        claimedUntil: null,
+        startedAt: null,
+        completedAt: null,
+        lastError: null,
+      }) as never,
+    runEvolveTasksFn: async () => {},
+  });
+
+  const turnResult = store.getTurnResult({ inputId: queued.inputId });
+  const events = store.listOutputEvents({
+    sessionId: "session-main",
+    inputId: queued.inputId,
+  });
+  const terminalEvent = events.at(-1);
+  const terminalBudgetDecisions = recordValue(
+    terminalEvent?.payload.context_budget_decisions,
+  );
+
+  assert.ok(turnResult);
+  assert.equal(turnResult.contextBudgetDecisions?.pressure_stage, "queue_checkpoint");
   assert.deepEqual(turnResult.contextBudgetDecisions?.lane_decisions, []);
-  assert.equal(turnResult.contextBudgetDecisions?.checkpoint_queued, false);
   assert.equal(turnResult.contextBudgetDecisions?.prompt_cache_stable_candidate, true);
+  assert.equal(turnResult.contextBudgetDecisions?.tool_replay_trimmed, true);
+  assert.equal(turnResult.contextBudgetDecisions?.retrieval_clipped, false);
+  assert.equal(turnResult.contextBudgetDecisions?.checkpoint_queued, true);
+  assert.equal(terminalEvent?.eventType, "run_completed");
+  assert.equal(terminalBudgetDecisions?.pressure_stage, "queue_checkpoint");
+  assert.deepEqual(terminalBudgetDecisions?.lane_decisions, []);
+  assert.equal(terminalBudgetDecisions?.prompt_cache_stable_candidate, true);
+  assert.equal(terminalBudgetDecisions?.tool_replay_trimmed, true);
+  assert.equal(terminalBudgetDecisions?.retrieval_clipped, false);
+  assert.equal(terminalBudgetDecisions?.checkpoint_queued, true);
+
+  store.close();
+});
+
+test("claimed input summarizes browser tool usage and browser telemetry", async () => {
+  const store = makeStore("hb-claimed-input-browser-telemetry-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "check browser flow" },
+  });
+  setNodeRunnerCommand([
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: {} }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'tool_call', payload: { phase: 'completed', tool_name: 'browser_get_state', tool_id: 'browser_get_state', call_id: 'call-browser-state', error: false, result: { content: [{ type: 'text', text: JSON.stringify({ ok: true, page: { url: 'https://example.com' }, state: { url: 'https://example.com', text: 'Visible text', elements: [{ index: 1 }], media: [] } }, null, 2) }], details: { tool_id: 'browser_get_state', browser_usage: { tool_id: 'browser_get_state', detail: 'compact', truncated: true, page_text_chars: 120 } } } } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 3, event_type: 'tool_call', payload: { phase: 'completed', tool_name: 'browser_wait', tool_id: 'browser_wait', call_id: 'call-browser-wait', error: false, result: { content: [{ type: 'text', text: JSON.stringify({ ok: true, wait: { matched: true } }, null, 2) }], details: { tool_id: 'browser_wait', browser_usage: { tool_id: 'browser_wait', condition: 'function' } } } } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 4, event_type: 'tool_call', payload: { phase: 'completed', tool_name: 'browser_type', tool_id: 'browser_type', call_id: 'call-browser-type', error: false, result: { content: [{ type: 'text', text: JSON.stringify({ ok: true, action: { ok: true }, page: { url: 'https://example.com/search' }, state: { url: 'https://example.com/search', elements: [{ index: 1 }], media: [] } }, null, 2) }], details: { tool_id: 'browser_type', browser_usage: { tool_id: 'browser_type', detail: 'compact', post_state: 'state', wait_condition: 'function', page_text_chars: 0 } } } } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 5, event_type: 'run_completed', payload: { status: 'ok' } }) + '\\n');`,
+  ]);
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+  });
+
+  const turnResult = store.getTurnResult({ inputId: queued.inputId });
+  assert.ok(turnResult);
+  assert.deepEqual(turnResult.toolUsageSummary, {
+    total_calls: 3,
+    completed_calls: 3,
+    failed_calls: 0,
+    tool_names: ["browser_get_state", "browser_type", "browser_wait"],
+    tool_ids: ["browser_get_state", "browser_type", "browser_wait"],
+    browser: {
+      total_calls: 3,
+      state_reads: 2,
+      compact_state_reads: 2,
+      standard_state_reads: 0,
+      truncated_state_reads: 1,
+      action_calls: 1,
+      wait_calls: 1,
+      find_calls: 0,
+      screenshot_calls: 0,
+      page_text_chars: 120,
+    },
+  });
   assert.equal(
-    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.input_tokens,
-    12,
-  );
-  assert.equal(
-    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.total_tokens,
-    46,
-  );
-  assert.equal(
-    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.tool_calls,
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_tool_calls,
     3,
   );
   assert.equal(
-    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.model_turns,
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_state_reads,
+    2,
+  );
+  assert.equal(
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_compact_state_reads,
+    2,
+  );
+  assert.equal(
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_action_calls,
     1,
   );
   assert.equal(
-    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.compaction_events,
-    0,
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_wait_calls,
+    1,
   );
-  const snapshot = store.getTurnRequestSnapshot({ inputId: queued.inputId });
-  assert.equal(snapshot, null);
+  assert.equal(
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_truncated_state_reads,
+    1,
+  );
+  assert.equal(
+    (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_page_text_chars,
+    120,
+  );
+  assert.ok(
+    Number(
+      (turnResult.contextBudgetDecisions?.metrics as Record<string, unknown> | undefined)?.browser_snapshot_bytes ?? 0,
+    ) > 0,
+  );
 
   store.close();
 });
@@ -404,6 +667,13 @@ test("claimed input creates a completion notification for successful cronjob ses
     harness: "pi",
     status: "active",
   });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    kind: "workspace_session",
+    title: "Main Session",
+    createdBy: "workspace_user",
+  });
   const job = store.createCronjob({
     workspaceId: workspace.id,
     initiatedBy: "workspace_agent",
@@ -415,6 +685,7 @@ test("claimed input creates a completion notification for successful cronjob ses
     metadata: {
       notification_title: "Daily Run",
       notification_priority: "high",
+      source_session_id: "session-main",
     },
   });
   store.ensureSession({
@@ -458,6 +729,9 @@ test("claimed input creates a completion notification for successful cronjob ses
   const notifications = store.listRuntimeNotifications({
     workspaceId: workspace.id,
   });
+  const queuedEvents = store.listPendingMainSessionEvents({
+    ownerMainSessionId: "session-main",
+  });
 
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0]?.title, "Daily Run Completed");
@@ -469,6 +743,20 @@ test("claimed input creates a completion notification for successful cronjob ses
   assert.equal(notifications[0]?.metadata.input_id, queued.inputId);
   assert.equal(notifications[0]?.metadata.turn_status, "completed");
   assert.equal(notifications[0]?.metadata.stop_reason, "ok");
+  assert.equal(queuedEvents.length, 1);
+  assert.equal(queuedEvents[0]?.eventType, "completed");
+  assert.equal(queuedEvents[0]?.deliveryBucket, "background_update");
+  assert.equal(queuedEvents[0]?.payload.cronjob_id, job.id);
+  assert.equal(queuedEvents[0]?.payload.source_type, "cronjob");
+  assert.equal(queuedEvents[0]?.payload.cronjob_name, "daily-sync");
+  assert.equal(queuedEvents[0]?.payload.title, "Daily Sync");
+  assert.equal(queuedEvents[0]?.payload.goal, "Daily sync");
+  assert.equal(queuedEvents[0]?.payload.context, "Sync the workspace.");
+  assert.equal(queuedEvents[0]?.payload.summary, "Hello from cron");
+  assert.equal(queuedEvents[0]?.payload.cronjob_schedule, "0 9 * * *");
+  assert.equal(queuedEvents[0]?.payload.cronjob_first_run, true);
+  assert.equal(queuedEvents[0]?.payload.cronjob_delivery_channel, "session_run");
+  assert.equal(queuedEvents[0]?.payload.cronjob_delivery_mode, "announce");
 
   store.close();
 });
@@ -544,6 +832,64 @@ test("claimed input creates a completion notification for failed cronjob session
   assert.equal(notifications[0]?.metadata.input_id, queued.inputId);
   assert.equal(notifications[0]?.metadata.turn_status, "failed");
   assert.equal(notifications[0]?.metadata.stop_reason, "ProviderError");
+
+  store.close();
+});
+
+test("claimed input creates a completion notification for completed main-session runs", async () => {
+  const store = makeStore("hb-claimed-input-main-session-notification-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    kind: "workspace_session",
+    title: "Main Session",
+    createdBy: "workspace_user",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "hello" },
+  });
+  setNodeRunnerCommand([
+    "const request = process.argv.at(-1) ?? '';",
+    "void request;",
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello' } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'output_delta', payload: { delta: 'Hello from the main session.' } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 3, event_type: 'run_completed', payload: { status: 'ok' } }) + '\\n');`,
+  ]);
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+  });
+
+  const notifications = store.listRuntimeNotifications({
+    workspaceId: workspace.id,
+    sourceType: "main_session",
+  });
+
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0]?.title, "Workspace 1 — Reply ready");
+  assert.equal(notifications[0]?.message, "Hello from the main session.");
+  assert.equal(notifications[0]?.level, "info");
+  assert.equal(notifications[0]?.sourceType, "main_session");
+  assert.equal(notifications[0]?.metadata.session_id, "session-main");
+  assert.equal(notifications[0]?.metadata.input_id, queued.inputId);
+  assert.equal(notifications[0]?.metadata.turn_status, "completed");
+  assert.equal(notifications[0]?.metadata.activation_state, "dismissed");
 
   store.close();
 });
@@ -659,6 +1005,9 @@ test("claimed input persists a paused turn when the run is aborted mid-execution
     inputId: queued.inputId,
   });
   const turnResult = store.getTurnResult({ inputId: queued.inputId });
+  const completedBudgetDecisions = recordValue(
+    events[1]?.payload.context_budget_decisions,
+  );
 
   assert.equal(evolveCalls, 1);
   assert.ok(updated);
@@ -671,11 +1020,15 @@ test("claimed input persists a paused turn when the run is aborted mid-execution
     events.map((event) => event.eventType),
     ["run_started", "run_completed"],
   );
-  assert.deepEqual(events[1]?.payload, {
-    status: "paused",
-    stop_reason: "paused",
-    message: "Run paused by user request",
-  });
+  assert.equal(events[1]?.payload.status, "paused");
+  assert.equal(events[1]?.payload.stop_reason, "paused");
+  assert.equal(events[1]?.payload.message, "Run paused by user request");
+  assert.equal(completedBudgetDecisions?.pressure_stage, "normal");
+  assert.deepEqual(completedBudgetDecisions?.lane_decisions, []);
+  assert.equal(completedBudgetDecisions?.prompt_cache_stable_candidate, false);
+  assert.equal(completedBudgetDecisions?.tool_replay_trimmed, false);
+  assert.equal(completedBudgetDecisions?.retrieval_clipped, false);
+  assert.equal(completedBudgetDecisions?.checkpoint_queued, false);
   assert.ok(turnResult);
   assert.equal(turnResult.status, "paused");
   assert.equal(turnResult.stopReason, "paused");
@@ -754,6 +1107,687 @@ test("claimed input captures file outputs and persists an assistant turn for out
   assert.equal(messages[1].id, `assistant-${queued.inputId}`);
   assert.equal(messages[1].role, "assistant");
   assert.equal(messages[1].text, "");
+
+  store.close();
+});
+
+test("claimed input writes completed subagent results and queues a background update", async () => {
+  const store = makeStore("hb-claimed-input-subagent-completed-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const { queued, run } = createSubagentRunFixture({
+    store,
+    workspaceId: workspace.id,
+    title: "Research competitors",
+    goal: "Find recent proactive agent products",
+  });
+
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      store.createOutput({
+        workspaceId: workspace.id,
+        outputType: "document",
+        title: "research-report.md",
+        status: "completed",
+        filePath: "outputs/research-report.md",
+        sessionId: String(payload.session_id),
+        inputId: String(payload.input_id),
+        metadata: {
+          artifact_type: "report",
+          category: "document",
+        },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "tool_call",
+        payload: {
+          phase: "completed",
+          tool_name: "web_search",
+          call_id: "call-1",
+          error: false,
+        },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 3,
+        event_type: "output_delta",
+        payload: { delta: "Research complete with a report attached." },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 4,
+        event_type: "run_completed",
+        payload: { status: "ok" },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  const updatedRun = store.getSubagentRun({ subagentId: run.subagentId });
+  const queuedEvents = store.listPendingMainSessionEvents({
+    ownerMainSessionId: "session-main",
+  });
+
+  assert.ok(updatedRun);
+  assert.equal(updatedRun?.status, "completed");
+  assert.equal(updatedRun?.latestChildInputId, queued.inputId);
+  assert.equal(updatedRun?.currentChildInputId, null);
+  assert.equal(updatedRun?.summary, "Research complete with a report attached.");
+  assert.equal(updatedRun?.latestProgressPayload, null);
+  assert.equal(updatedRun?.resultPayload?.status, "completed");
+  assert.equal(updatedRun?.resultPayload?.goal, "Find recent proactive agent products");
+  assert.equal(
+    store.getSession({
+      workspaceId: workspace.id,
+      sessionId: run.childSessionId,
+    })?.archivedAt,
+    updatedRun?.completedAt,
+  );
+  assert.equal(
+    Array.isArray(updatedRun?.resultPayload?.forwardable_deliverables)
+      ? updatedRun?.resultPayload?.forwardable_deliverables.length
+      : 0,
+    1,
+  );
+  assert.equal(queuedEvents.length, 1);
+  assert.equal(queuedEvents[0]?.eventType, "completed");
+  assert.equal(queuedEvents[0]?.deliveryBucket, "background_update");
+  assert.equal(queuedEvents[0]?.payload.status, "completed");
+  assert.equal(
+    Array.isArray(queuedEvents[0]?.payload.forwardable_deliverables)
+      ? queuedEvents[0]?.payload.forwardable_deliverables.length
+      : 0,
+    1,
+  );
+  assert.ok(queuedEvents[0]?.latestDeliverAt);
+
+  store.close();
+});
+
+test("claimed input writes waiting-on-user subagent blockers and queues a blocker event", async () => {
+  const store = makeStore("hb-claimed-input-subagent-waiting-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const { queued, run } = createSubagentRunFixture({
+    store,
+    workspaceId: workspace.id,
+    title: "Gmail setup",
+    goal: "Finish Gmail OAuth setup",
+  });
+
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "output_delta",
+        payload: { delta: "Should I create a new GCP project for OAuth?" },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 3,
+        event_type: "run_completed",
+        payload: {
+          status: "waiting_user",
+          stop_reason: "waiting_user",
+          summary: "Need a GCP project decision.",
+        },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  const updatedRun = store.getSubagentRun({ subagentId: run.subagentId });
+  const queuedEvents = store.listPendingMainSessionEvents({
+    ownerMainSessionId: "session-main",
+  });
+
+  assert.ok(updatedRun);
+  assert.equal(updatedRun?.status, "waiting_on_user");
+  assert.equal(updatedRun?.currentChildInputId, queued.inputId);
+  assert.equal(updatedRun?.latestChildInputId, queued.inputId);
+  assert.equal(updatedRun?.summary, "Should I create a new GCP project for OAuth?");
+  assert.equal(updatedRun?.blockingPayload?.status, "waiting_on_user");
+  assert.equal(
+    updatedRun?.blockingPayload?.blocking_question,
+    "Should I create a new GCP project for OAuth?",
+  );
+  assert.equal(queuedEvents.length, 1);
+  assert.equal(queuedEvents[0]?.eventType, "waiting_on_user");
+  assert.equal(queuedEvents[0]?.deliveryBucket, "waiting_on_user");
+  assert.equal(queuedEvents[0]?.payload.status, "waiting_on_user");
+  assert.equal(
+    queuedEvents[0]?.payload.blocking_question,
+    "Should I create a new GCP project for OAuth?",
+  );
+  assert.equal(queuedEvents[0]?.latestDeliverAt, null);
+
+  store.close();
+});
+
+test("claimed input treats recoverable login blockers as waiting-on-user subagent blockers", async () => {
+  const store = makeStore("hb-claimed-input-subagent-login-blocker-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const { queued, run } = createSubagentRunFixture({
+    store,
+    workspaceId: workspace.id,
+    title: "Check latest post stats",
+    goal: "Inspect the latest post stats in the browser",
+  });
+
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "output_delta",
+        payload: {
+          delta:
+            "I reached the page, but it is currently logged out, so I could not retrieve the latest post stats.",
+        },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 3,
+        event_type: "run_completed",
+        payload: { status: "success" },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  const updatedRun = store.getSubagentRun({ subagentId: run.subagentId });
+  const queuedEvents = store.listPendingMainSessionEvents({
+    ownerMainSessionId: "session-main",
+  });
+
+  assert.ok(updatedRun);
+  assert.equal(updatedRun?.status, "waiting_on_user");
+  assert.equal(updatedRun?.currentChildInputId, queued.inputId);
+  assert.equal(updatedRun?.completedAt, null);
+  assert.equal(
+    updatedRun?.blockingPayload?.blocking_question,
+    "Please log in or complete the required access step, then tell me to continue.",
+  );
+  assert.match(
+    String(updatedRun?.blockingPayload?.partial_summary ?? ""),
+    /currently logged out/,
+  );
+  assert.equal(queuedEvents.length, 1);
+  assert.equal(queuedEvents[0]?.eventType, "waiting_on_user");
+  assert.equal(queuedEvents[0]?.deliveryBucket, "waiting_on_user");
+  assert.equal(
+    queuedEvents[0]?.payload.blocking_question,
+    "Please log in or complete the required access step, then tell me to continue.",
+  );
+  assert.equal(queuedEvents[0]?.latestDeliverAt, null);
+
+  store.close();
+});
+
+test("claimed input writes failed subagent results and queues a failure update", async () => {
+  const store = makeStore("hb-claimed-input-subagent-failed-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const { queued, run } = createSubagentRunFixture({
+    store,
+    workspaceId: workspace.id,
+    title: "Fix the build",
+    goal: "Repair the failing build",
+  });
+
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "run_failed",
+        payload: {
+          type: "RuntimeError",
+          message: "compiler crashed",
+        },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 1,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  const updatedRun = store.getSubagentRun({ subagentId: run.subagentId });
+  const queuedEvents = store.listPendingMainSessionEvents({
+    ownerMainSessionId: "session-main",
+  });
+
+  assert.ok(updatedRun);
+  assert.equal(updatedRun?.status, "failed");
+  assert.equal(updatedRun?.latestChildInputId, queued.inputId);
+  assert.equal(updatedRun?.errorPayload?.status, "failed");
+  assert.equal(updatedRun?.errorPayload?.goal, "Repair the failing build");
+  assert.equal(queuedEvents.length, 1);
+  assert.equal(queuedEvents[0]?.eventType, "failed");
+  assert.equal(queuedEvents[0]?.deliveryBucket, "background_update");
+  assert.equal(queuedEvents[0]?.payload.status, "failed");
+
+  store.close();
+});
+
+test("claimed input delivers materialized main-session event batches without inserting a fake user turn", async () => {
+  const store = makeStore("hb-claimed-input-main-session-event-batch-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    kind: "workspace_session",
+  });
+  const event = store.enqueueMainSessionEvent({
+    workspaceId: workspace.id,
+    ownerMainSessionId: "session-main",
+    originMainSessionId: "session-main",
+    subagentId: "subagent-1",
+    eventType: "completed",
+    deliveryBucket: "background_update",
+    payload: {
+      status: "completed",
+      summary: "Research is done.",
+    },
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: {
+      text: "[Holaboss Main Session Event Batch v1]\nSummarize the queued event.",
+      context: {
+        source: "main_session_event_batch",
+        main_session_event_ids: [event.eventId],
+        delivery_bucket: "background_update",
+      },
+    },
+    idempotencyKey: `main-session-event-batch:${event.eventId}`,
+  });
+  store.markMainSessionEventsMaterialized({
+    eventIds: [event.eventId],
+    materializedInputId: queued.inputId,
+  });
+
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "output_delta",
+        payload: { delta: "The research is done and the report is ready." },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 3,
+        event_type: "run_completed",
+        payload: { status: "ok" },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  const messages = store.listSessionMessages({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+  });
+  const updatedEvent = store.getMainSessionEvent({ eventId: event.eventId });
+
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]?.role, "assistant");
+  assert.equal(
+    messages[0]?.text,
+    "The research is done and the report is ready.",
+  );
+  assert.equal(updatedEvent?.status, "delivered");
+  assert.ok(updatedEvent?.deliveredAt);
+
+  store.close();
+});
+
+test("claimed input requeues materialized main-session event batches when the reply fails", async () => {
+  const store = makeStore("hb-claimed-input-main-session-event-requeue-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    kind: "workspace_session",
+  });
+  const event = store.enqueueMainSessionEvent({
+    workspaceId: workspace.id,
+    ownerMainSessionId: "session-main",
+    originMainSessionId: "session-main",
+    subagentId: "subagent-1",
+    eventType: "failed",
+    deliveryBucket: "background_update",
+    payload: {
+      status: "failed",
+      summary: "Build fix failed.",
+    },
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: {
+      text: "[Holaboss Main Session Event Batch v1]\nSummarize the queued event.",
+      context: {
+        source: "main_session_event_batch",
+        main_session_event_ids: [event.eventId],
+        delivery_bucket: "background_update",
+      },
+    },
+    idempotencyKey: `main-session-event-batch:${event.eventId}`,
+  });
+  store.markMainSessionEventsMaterialized({
+    eventIds: [event.eventId],
+    materializedInputId: queued.inputId,
+  });
+
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async () => {
+      throw new Error("model call failed");
+    },
+  });
+
+  const updatedEvent = store.getMainSessionEvent({ eventId: event.eventId });
+
+  assert.equal(updatedEvent?.status, "pending");
+  assert.equal(updatedEvent?.materializedInputId, null);
+  assert.equal(updatedEvent?.deliveredAt, null);
+  assert.ok(updatedEvent?.earliestDeliverAt);
+
+  store.close();
+});
+
+test("claimed input folds attached background updates into a normal user turn", async () => {
+  const store = makeStore("hb-claimed-input-inline-background-events-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    kind: "workspace_session",
+  });
+  const event = store.enqueueMainSessionEvent({
+    workspaceId: workspace.id,
+    ownerMainSessionId: "session-main",
+    originMainSessionId: "session-main",
+    subagentId: "subagent-1",
+    eventType: "completed",
+    deliveryBucket: "background_update",
+    payload: {
+      status: "completed",
+      summary: "Build fix is done.",
+      forwardable_deliverables: [
+        {
+          output_id: "output-1",
+          artifact_id: "artifact-1",
+          type: "report",
+          output_type: "document",
+          title: "build-fix-report.md",
+          status: "completed",
+          file_path: "outputs/reports/build-fix-report.md",
+          metadata: {
+            artifact_type: "report",
+          },
+        },
+      ],
+    },
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: {
+      text: "What changed?",
+      context: {
+        main_session_event_ids: [event.eventId],
+        delivery_bucket: "background_update",
+        queued_events: [
+          {
+            event_id: event.eventId,
+            event_type: "completed",
+            delivery_bucket: "background_update",
+            payload: {
+              status: "completed",
+              summary: "Build fix is done.",
+              assistant_text:
+                "<html><body><h1>Build Fix Report</h1><p>Long HTML body that should not be pasted back into the main-session prompt.</p></body></html>",
+              forwardable_deliverables: [
+                {
+                  output_id: "output-1",
+                  artifact_id: "artifact-1",
+                  type: "report",
+                  output_type: "document",
+                  title: "build-fix-report.md",
+                  status: "completed",
+                  module_id: "twitter",
+                  module_resource_id: "post-123",
+                  file_path: "outputs/reports/build-fix-report.md",
+                  platform: "twitter",
+                  metadata: {
+                    artifact_type: "report",
+                    presentation: {
+                      kind: "app_resource",
+                      view: "posts",
+                      path: "/posts/post-123",
+                    },
+                    resource: {
+                      entity_type: "post",
+                      entity_id: "post-123",
+                      label: "build-fix-report.md",
+                    },
+                  },
+                },
+              ],
+            },
+            created_at: event.createdAt,
+          },
+        ],
+      },
+    },
+  });
+  store.markMainSessionEventsMaterialized({
+    eventIds: [event.eventId],
+    materializedInputId: queued.inputId,
+  });
+
+  let capturedInstruction = "";
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      capturedInstruction = String(payload.instruction);
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "output_delta",
+        payload: {
+          delta: "The build fix is done. I updated the failing test helper and the deployment check still looks healthy.",
+        },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 3,
+        event_type: "run_completed",
+        payload: { status: "ok" },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  const messages = store.listSessionMessages({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+  });
+  const updatedEvent = store.getMainSessionEvent({ eventId: event.eventId });
+  const outputs = store.listOutputs({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: queued.inputId,
+    limit: 20,
+    offset: 0,
+  });
+
+  assert.match(capturedInstruction, /Pending Background Updates/);
+  assert.match(capturedInstruction, /Answer the user's latest message first\./);
+  assert.match(capturedInstruction, /add them after your direct answer as a natural continuation/i);
+  assert.match(capturedInstruction, /only one relevant update, weave it in without a `Background updates` heading/i);
+  assert.match(capturedInstruction, /Do not introduce the added update with stock phrases like `Quick follow-up`/i);
+  assert.match(capturedInstruction, /Only use a separate `Background updates` section when there are multiple distinct updates/i);
+  assert.match(capturedInstruction, /numbered items/i);
+  assert.doesNotMatch(capturedInstruction, /<html>/i);
+  assert.match(capturedInstruction, /build-fix-report\.md/i);
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0]?.role, "user");
+  assert.equal(messages[0]?.text, "What changed?");
+  assert.equal(messages[1]?.role, "assistant");
+  assert.equal(outputs.length, 1);
+  assert.equal(outputs[0]?.title, "build-fix-report.md");
+  assert.equal(outputs[0]?.moduleId, "twitter");
+  assert.equal(outputs[0]?.moduleResourceId, "post-123");
+  assert.equal(outputs[0]?.filePath, "outputs/reports/build-fix-report.md");
+  assert.equal(outputs[0]?.metadata.origin_type, "forwarded_subagent");
+  assert.deepEqual(outputs[0]?.metadata.presentation, {
+    kind: "app_resource",
+    view: "posts",
+    path: "/posts/post-123",
+  });
+  assert.equal(outputs[0]?.metadata.owner_container_type, "background_update");
+  assert.equal(outputs[0]?.metadata.owner_container_input_id, queued.inputId);
+  assert.equal(outputs[0]?.metadata.owner_container_session_id, "session-main");
+  assert.equal(updatedEvent?.status, "delivered");
 
   store.close();
 });
@@ -1108,6 +2142,86 @@ test("claimed input does not duplicate a file output already persisted earlier i
   assert.equal(outputs.length, 1);
   assert.equal(outputs[0].filePath, "outputs/reports/report.md");
   assert.equal(outputs[0].metadata.origin_type, "runtime_tool");
+
+  store.close();
+});
+
+test("claimed input does not attach a workspace file output that was already recorded on another turn", async () => {
+  const store = makeStore(
+    "hb-claimed-input-cross-turn-file-output-dedupe-",
+  );
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "open google" },
+  });
+
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      const workspaceDir = store.workspaceDir(workspace.id);
+      fs.mkdirSync(path.join(workspaceDir, "outputs", "reports"), {
+        recursive: true,
+      });
+      fs.writeFileSync(
+        path.join(workspaceDir, "outputs", "reports", "report.md"),
+        "# Report\n",
+      );
+      store.createOutput({
+        workspaceId: workspace.id,
+        outputType: "document",
+        title: "Report",
+        status: "completed",
+        filePath: "outputs/reports/report.md",
+        sessionId: "subagent-1",
+        inputId: "subagent-input-1",
+        metadata: {
+          origin_type: "runtime_tool",
+          change_type: "created",
+          category: "document",
+          artifact_type: "report",
+        },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "run_completed",
+        payload: { status: "ok" },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  const outputs = store.listOutputs({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: queued.inputId,
+    limit: 20,
+    offset: 0,
+  });
+
+  assert.equal(outputs.length, 0);
 
   store.close();
 });
@@ -1925,12 +3039,23 @@ test("claimed input relays tool, output, and terminal run events for backend-own
   assert.deepEqual(relayedEvents[2]?.payload, {
     delta: "Opened Bing.",
   });
-  assert.deepEqual(relayedEvents[3]?.payload, {
-    status: "ok",
-    usage: { input_tokens: 12, output_tokens: 34, total_tokens: 46 },
-    final_output_text: "Opened Bing.",
-    source: "runner",
+  const browserRunBudgetDecisions = recordValue(
+    relayedEvents[3]?.payload.context_budget_decisions,
+  );
+  assert.equal(relayedEvents[3]?.payload.status, "ok");
+  assert.deepEqual(relayedEvents[3]?.payload.usage, {
+    input_tokens: 12,
+    output_tokens: 34,
+    total_tokens: 46,
   });
+  assert.equal(relayedEvents[3]?.payload.final_output_text, "Opened Bing.");
+  assert.equal(relayedEvents[3]?.payload.source, "runner");
+  assert.equal(browserRunBudgetDecisions?.pressure_stage, "normal");
+  assert.deepEqual(browserRunBudgetDecisions?.lane_decisions, []);
+  assert.equal(browserRunBudgetDecisions?.prompt_cache_stable_candidate, false);
+  assert.equal(browserRunBudgetDecisions?.tool_replay_trimmed, false);
+  assert.equal(browserRunBudgetDecisions?.retrieval_clipped, false);
+  assert.equal(browserRunBudgetDecisions?.checkpoint_queued, false);
 
   store.close();
 });
@@ -2120,14 +3245,28 @@ test("claimed input relays skill invocations, coalesced output, and waiting-user
     source: "runner",
     terminal_event_type: "run_completed",
   });
-  assert.deepEqual(relayedEvents[6]?.payload, {
-    status: "waiting_user",
-    stop_reason: "waiting_user",
-    summary: "Deploy paused waiting for confirmation.",
-    usage: { input_tokens: 18, output_tokens: 7, total_tokens: 25 },
-    final_output_text: "Need approval.",
-    source: "runner",
+  assert.equal(relayedEvents[6]?.payload.status, "waiting_user");
+  assert.equal(relayedEvents[6]?.payload.stop_reason, "waiting_user");
+  assert.equal(
+    relayedEvents[6]?.payload.summary,
+    "Deploy paused waiting for confirmation.",
+  );
+  assert.deepEqual(relayedEvents[6]?.payload.usage, {
+    input_tokens: 18,
+    output_tokens: 7,
+    total_tokens: 25,
   });
+  const waitingRunBudgetDecisions = recordValue(
+    relayedEvents[6]?.payload.context_budget_decisions,
+  );
+  assert.equal(relayedEvents[6]?.payload.final_output_text, "Need approval.");
+  assert.equal(relayedEvents[6]?.payload.source, "runner");
+  assert.equal(waitingRunBudgetDecisions?.pressure_stage, "normal");
+  assert.deepEqual(waitingRunBudgetDecisions?.lane_decisions, []);
+  assert.equal(waitingRunBudgetDecisions?.prompt_cache_stable_candidate, false);
+  assert.equal(waitingRunBudgetDecisions?.tool_replay_trimmed, false);
+  assert.equal(waitingRunBudgetDecisions?.retrieval_clipped, false);
+  assert.equal(waitingRunBudgetDecisions?.checkpoint_queued, false);
 
   store.close();
 });

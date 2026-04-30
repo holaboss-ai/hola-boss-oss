@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   DESKTOP_BROWSER_TOOL_DEFINITIONS,
 } from "../../harnesses/src/desktop-browser-tools.js";
+import { buildHarnessMcpToolName } from "../../harnesses/src/mcp.js";
 import {
   NATIVE_WEB_SEARCH_TOOL_DEFINITIONS,
 } from "../../harnesses/src/native-web-search-tools.js";
@@ -375,6 +376,10 @@ const RUNTIME_TOOL_DEFINITIONS = new Map<string, ToolCapabilityDefinition>(
   ])
 );
 
+function browserToolSessionKinds(): string[] {
+  return ["workspace_session", "subagent", "task_proposal"];
+}
+
 const BROWSER_TOOL_DEFINITIONS = new Map<string, ToolCapabilityDefinition>(
   DESKTOP_BROWSER_TOOL_DEFINITIONS.map((toolDef) => [
     toolDef.id,
@@ -384,7 +389,10 @@ const BROWSER_TOOL_DEFINITIONS = new Map<string, ToolCapabilityDefinition>(
       title: titleFromToken(toolDef.id),
       description: toolDef.description,
       availability: {
-        sessionKinds: toolDef.session_scope === "workspace_session_only" ? ["workspace_session"] : undefined,
+        sessionKinds:
+          toolDef.session_scope === "workspace_session_only"
+            ? browserToolSessionKinds()
+            : undefined,
       },
     },
   ])
@@ -506,7 +514,7 @@ function inferMcpPolicy(toolRef: AgentCapabilityMcpToolRef): AgentCapabilityPoli
 }
 
 export function callableToolNameFromMcpServerAndTool(serverId: string, toolName: string): string {
-  return `${serverId}_${toolName}`;
+  return buildHarnessMcpToolName(serverId, toolName);
 }
 
 function definitionAllowedInContext(
@@ -1242,7 +1250,69 @@ function summarizeAvailability(label: string, count: number): string {
   return `${label}: available (${count} enabled).`;
 }
 
-export function renderCapabilityPolicyPromptSection(manifest: AgentCapabilityManifest): string {
+function capabilityIdentity(capability: AgentCapabilityRecord): string {
+  return normalizeOptionalToken(capability.callable_name) || normalizeOptionalToken(capability.id);
+}
+
+function delegatedOnlyCapabilities(
+  directManifest: AgentCapabilityManifest,
+  delegatedManifest: AgentCapabilityManifest,
+): AgentCapabilityRecord[] {
+  const directIds = new Set(
+    directManifest.tools.map((capability) => capabilityIdentity(capability)),
+  );
+  return delegatedManifest.tools.filter(
+    (capability) => !directIds.has(capabilityIdentity(capability)),
+  );
+}
+
+function delegatedMcpServerNames(manifest: AgentCapabilityManifest): string[] {
+  const names = new Set<string>();
+  for (const alias of manifest.mcp_tool_aliases) {
+    const normalized = alias.server_id.trim();
+    if (normalized) {
+      names.add(normalized);
+    }
+  }
+  for (const serverId of manifest.context.mcp_server_ids ?? []) {
+    const normalized = serverId.trim();
+    if (normalized) {
+      names.add(normalized);
+    }
+  }
+  return [...names].sort((left, right) => left.localeCompare(right));
+}
+
+function sortDelegatedOnlyCapabilities(
+  capabilities: AgentCapabilityRecord[],
+): AgentCapabilityRecord[] {
+  const kindPriority: Record<AgentCapabilityKind, number> = {
+    runtime_tool: 1,
+    mcp_tool: 2,
+    browser_tool: 3,
+    builtin_tool: 4,
+    custom_tool: 5,
+    skill: 6,
+    workspace_command: 7,
+    mcp_resource: 8,
+    mcp_prompt: 9,
+    mcp_command: 10,
+    plugin_capability: 11,
+    local_capability: 12,
+  };
+  return [...capabilities].sort((left, right) => {
+    const priorityDelta =
+      (kindPriority[left.kind] ?? 99) - (kindPriority[right.kind] ?? 99);
+    if (priorityDelta !== 0) {
+      return priorityDelta;
+    }
+    return left.title.localeCompare(right.title);
+  });
+}
+
+export function renderCapabilityPolicyCorePromptSection(
+  manifest: AgentCapabilityManifest,
+): string {
   const lines = [
     "Capability policy for this run:",
     `Harness: ${manifest.context.harness_id ?? "unknown"}.`,
@@ -1250,37 +1320,192 @@ export function renderCapabilityPolicyPromptSection(manifest: AgentCapabilityMan
     "Use inspection capabilities to gather context before mutating workspace, app, browser, or runtime state whenever possible.",
     "After edits, shell commands, browser actions, MCP mutations, or runtime mutations, run a follow-up inspection or verification step before claiming success.",
     "Use coordination capabilities to track progress, consult available skills, or ask for clarification instead of keeping hidden state.",
-    "If a capability is not listed below, do not assume it is available in this run.",
-    summarizeAvailability("Inspect tools", manifest.inspect.length),
-    summarizeAvailability("Mutating tools", manifest.mutate.length),
-    summarizeAvailability("Coordination tools", manifest.coordinate.length),
+    "If a capability is not surfaced in the runtime context for this run, do not assume it is available.",
   ];
+  return lines.join("\n");
+}
 
-  lines.push(summarizeAvailability("Browser tools", manifest.browser_tools.length));
-  lines.push(summarizeAvailability("Runtime tools", manifest.runtime_tools.length));
-
+export function renderCapabilityToolRoutingPromptSection(
+  manifest: AgentCapabilityManifest,
+): string {
+  const lines: string[] = [];
+  const normalizedSessionKind = normalizeOptionalToken(
+    manifest.context.session_kind,
+  );
+  const ensureHeading = () => {
+    if (lines.length === 0) {
+      lines.push("Capability routing addenda:");
+    }
+  };
   if (manifest.runtime_tools.some((capability) => capability.id === "holaboss_cronjobs_create")) {
+    ensureHeading();
     lines.push("Cronjob delivery routing: use `session_run` for recurring agent work such as running instructions, tasks, analysis, browsing, or writing.");
     lines.push("Use `system_notification` only for lightweight reminders or notifications where the primary outcome is a short message rather than agent execution.");
     lines.push("When creating or updating cronjobs, put the executable task in `instruction` and keep `description` as a short display summary only.");
     lines.push("Do not repeat schedule wording such as 'every 5 minutes' inside the cronjob `instruction` unless the task itself genuinely requires saying that phrase.");
   }
+  if (manifest.runtime_tools.some((capability) => capability.id === "holaboss_delegate_task")) {
+    ensureHeading();
+    lines.push("Delegation routing: when the user asks for work that needs web, browser, terminal, or other execution-heavy capability not surfaced directly in this run, use `holaboss_delegate_task` instead of replying that the current run lacks those tools.");
+    lines.push("Deliverable routing: when the user asks for a report, brief, memo, digest, recap, or other long-form deliverable, prefer `holaboss_delegate_task` so the result is produced as an artifact and the main chat stays concise.");
+    lines.push("Treat the main session as a coordinator first: if the task is browser-heavy, web-heavy, terminal-heavy, multi-step, or interruptible, route it to a delegated subagent unless the direct capability is clearly surfaced and the work is truly small enough to finish inline.");
+    lines.push("Available-tool fallback: missing the ideal MCP, API, browser, web, terminal, or file tool is not enough to stop; choose another viable direct or delegated route before surfacing a limitation.");
+    lines.push("Treat current-run capability limits as a delegation signal when hidden subagents can perform the task.");
+    lines.push("Do not lead with a capability apology, manual workaround, or \"I can't do that here\" answer when delegation is available.");
+    lines.push("If an earlier turn said a tool was unavailable or unsupported, but the current surfaced capability set now includes it, trust the current run and retry the tool when it is the right path.");
+    lines.push("Only surface a hard capability limitation to the user when neither the current run nor delegated subagents can actually carry out the request.");
+    lines.push("Do not simulate waiting on a delegated task by repeatedly calling `holaboss_get_subagent` or `holaboss_list_background_tasks` in the same turn after you just spawned it.");
+  }
+  if (manifest.runtime_tools.some((capability) => capability.id === "holaboss_continue_subagent")) {
+    ensureHeading();
+    lines.push("Continuation routing: when the user asks to continue, transform, save, summarize, compare, or report on a previous delegated result, use `holaboss_continue_subagent` on the relevant completed child session instead of creating a brand-new delegated task.");
+    lines.push("If more than one prior child result could match a continuation request, ask which one the user means before continuing.");
+  }
   if (manifest.runtime_tools.some((capability) => capability.id === "terminal_session_start")) {
+    ensureHeading();
     lines.push("Background terminal routing: prefer `terminal_session_start` for long-running, interactive, or revisitable shell work such as dev servers, watch mode, and background jobs.");
     lines.push("Prefer one-shot `bash` for short commands that should complete within the current tool call.");
     lines.push("After starting a background terminal, inspect it with `terminal_session_read` or `terminal_session_wait` before claiming success.");
   }
   if (manifest.runtime_tools.some((capability) => capability.id === "download_url")) {
+    ensureHeading();
     lines.push("Remote file transfer: prefer `download_url` when you already have a direct asset URL and need a saved workspace file instead of relying on browser-only downloads or ad hoc shell fetches.");
   }
-  lines.push(summarizeAvailability("Workspace commands", manifest.workspace_commands.length));
-  lines.push(summarizeAvailability("Workspace skills", manifest.workspace_skills.length));
+  if (manifest.mcp_tools.length > 0) {
+    ensureHeading();
+    lines.push(
+      "MCP-first routing: when surfaced MCP tools already match the user's target app, integration, or data source, use those tools as the primary execution path before falling back to bash, file inspection, or browser exploration.",
+    );
+    if (manifest.mcp_tool_aliases.length > 0) {
+      lines.push(
+        "When the capability snapshot lists an MCP tool id alongside a callable alias, use the callable alias for tool invocation. The dotted tool id is an identifier, not necessarily the runtime callable name.",
+      );
+    }
+    lines.push(
+      "Do not spend the turn rediscovering an app integration from workspace files or config when the current surfaced capability set already includes its MCP tools.",
+    );
+    lines.push(
+      "Use file, config, or browser inspection to debug or verify an MCP/app route only after a relevant surfaced tool call is blocked, fails, or the user explicitly asked for environment inspection.",
+    );
+    if (
+      normalizedSessionKind === "subagent" ||
+      normalizedSessionKind === "task_proposal"
+    ) {
+      lines.push(
+        "In executor sessions, prefer proving capability by actually invoking the relevant surfaced MCP/app tool or the narrowest direct health check, not by only summarizing workspace configuration.",
+      );
+    }
+  }
+  return lines.join("\n");
+}
+
+export function renderCapabilityAvailabilityContextPromptSection(
+  manifest: AgentCapabilityManifest,
+): string {
+  const normalizedSessionKind = normalizeOptionalToken(
+    manifest.context.session_kind,
+  );
+  const lines = [
+    "Capability availability snapshot:",
+    "Treat this as the currently surfaced capability set for this run. Availability may differ in later runs.",
+    summarizeAvailability("Inspect tools", manifest.inspect.length),
+    summarizeAvailability("Mutating tools", manifest.mutate.length),
+    summarizeAvailability("Coordination tools", manifest.coordinate.length),
+    summarizeAvailability("Browser tools", manifest.browser_tools.length),
+    summarizeAvailability("Runtime tools", manifest.runtime_tools.length),
+    summarizeAvailability("Workspace commands", manifest.workspace_commands.length),
+    summarizeAvailability("Workspace skills", manifest.workspace_skills.length),
+  ];
   if (manifest.mcp_tools.length > 0 || (manifest.context.mcp_server_ids?.length ?? 0) > 0) {
     lines.push("Connected MCP access: available.");
     lines.push("Use surfaced MCP tools when relevant; tool names may be resolved dynamically by the runtime.");
+    if (manifest.mcp_tool_aliases.length > 0) {
+      lines.push("MCP callable tool aliases for this run:");
+      for (const alias of manifest.mcp_tool_aliases) {
+        lines.push(`- \`${alias.tool_id}\` -> call \`${alias.callable_name}\``);
+      }
+    }
   } else {
     lines.push("Connected MCP access: none.");
   }
+  if (
+    (normalizedSessionKind === "workspace_session" ||
+      normalizedSessionKind === "main") &&
+    manifest.runtime_tools.some((capability) => capability.id === "holaboss_delegate_task")
+  ) {
+    lines.push(
+      "This front session is intentionally capability-incomplete. Treat the surfaced tools above as your full direct capability set for this run; if the request needs more and `holaboss_delegate_task` is available, delegate it.",
+    );
+  }
+  return lines.join("\n");
+}
+
+export function renderDelegatedCapabilityAvailabilityContextPromptSection(
+  directManifest: AgentCapabilityManifest,
+  delegatedManifest: AgentCapabilityManifest,
+): string {
+  const lines = [
+    "Delegated executor capability snapshot:",
+    "Use this only for routing and delegation. These are backstage capabilities that hidden subagents may use for this run; they do not expand your own direct authority in this front session.",
+    summarizeAvailability("Delegated inspect tools", delegatedManifest.inspect.length),
+    summarizeAvailability("Delegated mutating tools", delegatedManifest.mutate.length),
+    summarizeAvailability("Delegated coordination tools", delegatedManifest.coordinate.length),
+    summarizeAvailability("Delegated browser tools", delegatedManifest.browser_tools.length),
+    summarizeAvailability("Delegated runtime tools", delegatedManifest.runtime_tools.length),
+    summarizeAvailability("Delegated workspace commands", delegatedManifest.workspace_commands.length),
+    summarizeAvailability("Delegated workspace skills", delegatedManifest.workspace_skills.length),
+  ];
+  if (
+    delegatedManifest.mcp_tools.length > 0 ||
+    (delegatedManifest.context.mcp_server_ids?.length ?? 0) > 0
+  ) {
+    lines.push("Delegated connected MCP/app access: available.");
+  } else {
+    lines.push("Delegated connected MCP/app access: none.");
+  }
+  if (
+    directManifest.browser_tools.length === 0 &&
+    delegatedManifest.browser_tools.length > 0
+  ) {
+    lines.push(
+      "Delegated browser execution is available even though this front session has no direct browser tools.",
+    );
+  }
+  if (
+    directManifest.mcp_tools.length === 0 &&
+    delegatedManifest.mcp_tools.length > 0
+  ) {
+    const delegatedServers = delegatedMcpServerNames(delegatedManifest);
+    if (delegatedServers.length > 0) {
+      lines.push(
+        `Delegated app integrations available via: ${delegatedServers
+          .map((serverId) => `\`${serverId}\``)
+          .join(", ")}.`,
+      );
+    }
+  }
+
+  const delegatedOnly = sortDelegatedOnlyCapabilities(
+    delegatedOnlyCapabilities(directManifest, delegatedManifest),
+  ).slice(0, 8);
+  if (delegatedOnly.length > 0) {
+    lines.push("Notable delegated-only tools for this run:");
+    for (const capability of delegatedOnly) {
+      lines.push(`- ${capability.title} (\`${capability.callable_name ?? capability.id}\`)`);
+    }
+  }
 
   return lines.join("\n");
+}
+
+export function renderCapabilityPolicyPromptSection(
+  manifest: AgentCapabilityManifest,
+): string {
+  return [
+    renderCapabilityPolicyCorePromptSection(manifest),
+    renderCapabilityToolRoutingPromptSection(manifest),
+    renderCapabilityAvailabilityContextPromptSection(manifest),
+  ]
+    .filter((section) => section.trim().length > 0)
+    .join("\n");
 }

@@ -96,7 +96,8 @@ function normalizeHarnessIdInternal(value: unknown): string {
 }
 
 function browserToolsAllowedForSession(sessionKind: string | null | undefined): boolean {
-  return normalizeSessionKind(sessionKind) === "workspace_session";
+  const normalized = normalizeSessionKind(sessionKind);
+  return normalized === "subagent" || normalized === "task_proposal";
 }
 
 function normalizeSessionKind(value: string | null | undefined): string {

@@ -55,6 +55,20 @@ export interface SessionBindingRecord {
   updatedAt: string;
 }
 
+export interface ConversationBindingRecord {
+  bindingId: string;
+  workspaceId: string;
+  channel: string;
+  conversationKey: string;
+  sessionId: string;
+  role: string;
+  isActive: boolean;
+  metadata: Record<string, unknown>;
+  lastActiveAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface IntegrationConnectionRecord {
   connectionId: string;
   providerId: string;
@@ -208,9 +222,8 @@ export interface TurnResultRecord {
   capabilityManifestFingerprint: string | null;
   requestSnapshotFingerprint: string | null;
   promptCacheProfile: Record<string, unknown> | null;
-  compactedSummary: string | null;
-  tokenUsage: Record<string, unknown> | null;
   contextBudgetDecisions: Record<string, unknown> | null;
+  tokenUsage: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -224,6 +237,72 @@ export interface TurnRequestSnapshotRecord {
   payload: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface SubagentRunRecord {
+  subagentId: string;
+  workspaceId: string;
+  parentSessionId: string | null;
+  parentInputId: string | null;
+  originMainSessionId: string;
+  ownerMainSessionId: string;
+  childSessionId: string;
+  initialChildInputId: string | null;
+  currentChildInputId: string | null;
+  latestChildInputId: string | null;
+  title: string | null;
+  goal: string;
+  context: string | null;
+  sourceType: string | null;
+  sourceId: string | null;
+  proposalId: string | null;
+  cronjobId: string | null;
+  retryOfSubagentId: string | null;
+  toolProfile: Record<string, unknown>;
+  requestedModel: string | null;
+  effectiveModel: string | null;
+  status: string;
+  summary: string | null;
+  latestProgressPayload: Record<string, unknown> | null;
+  blockingPayload: Record<string, unknown> | null;
+  resultPayload: Record<string, unknown> | null;
+  errorPayload: Record<string, unknown> | null;
+  lastEventAt: string | null;
+  ownerTransferredAt: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  cancelledAt: string | null;
+  updatedAt: string;
+}
+
+export interface MainSessionEventQueueRecord {
+  eventId: string;
+  workspaceId: string;
+  ownerMainSessionId: string;
+  originMainSessionId: string;
+  subagentId: string | null;
+  eventType: string;
+  deliveryBucket: string;
+  status: string;
+  payload: Record<string, unknown>;
+  coalesceKey: string | null;
+  earliestDeliverAt: string | null;
+  latestDeliverAt: string | null;
+  materializedInputId: string | null;
+  supersededByEventId: string | null;
+  deliveredAt: string | null;
+  supersededAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LatestSessionInputOptions {
+  workspaceId: string;
+  sessionId: string;
+  excludeContextSources?: string[];
+  preferConfiguredModel?: boolean;
+  limit?: number;
 }
 
 const SESSION_RUNTIME_STATE_STATUSES = [
@@ -562,6 +641,14 @@ type AgentSessionUpdateFields = Partial<{
   archivedAt: string | null;
 }>;
 
+type ConversationBindingUpdateFields = Partial<{
+  sessionId: string;
+  role: string | null;
+  isActive: boolean;
+  metadata: Record<string, unknown>;
+  lastActiveAt: string | null;
+}>;
+
 type InputUpdateFields = Partial<{
   sessionId: string;
   workspaceId: string;
@@ -627,6 +714,56 @@ type EvolveSkillCandidateUpdateFields = Partial<{
   dismissedAt: string | null;
   acceptedAt: string | null;
   promotedAt: string | null;
+}>;
+
+type SubagentRunUpdateFields = Partial<{
+  parentSessionId: string | null;
+  parentInputId: string | null;
+  originMainSessionId: string;
+  ownerMainSessionId: string;
+  childSessionId: string;
+  initialChildInputId: string | null;
+  currentChildInputId: string | null;
+  latestChildInputId: string | null;
+  title: string | null;
+  goal: string;
+  context: string | null;
+  sourceType: string | null;
+  sourceId: string | null;
+  proposalId: string | null;
+  cronjobId: string | null;
+  retryOfSubagentId: string | null;
+  toolProfile: Record<string, unknown>;
+  requestedModel: string | null;
+  effectiveModel: string | null;
+  status: string;
+  summary: string | null;
+  latestProgressPayload: Record<string, unknown> | null;
+  blockingPayload: Record<string, unknown> | null;
+  resultPayload: Record<string, unknown> | null;
+  errorPayload: Record<string, unknown> | null;
+  lastEventAt: string | null;
+  ownerTransferredAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  cancelledAt: string | null;
+}>;
+
+type MainSessionEventQueueUpdateFields = Partial<{
+  ownerMainSessionId: string;
+  originMainSessionId: string;
+  subagentId: string | null;
+  eventType: string;
+  deliveryBucket: string;
+  status: string;
+  payload: Record<string, unknown>;
+  coalesceKey: string | null;
+  earliestDeliverAt: string | null;
+  latestDeliverAt: string | null;
+  materializedInputId: string | null;
+  supersededByEventId: string | null;
+  deliveredAt: string | null;
+  supersededAt: string | null;
 }>;
 
 type WorkspaceRow = {
@@ -1238,7 +1375,7 @@ export class RuntimeStateStore {
         FROM agent_sessions
         WHERE workspace_id = ?
           AND (? = 1 OR archived_at IS NULL)
-        ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC, session_id DESC
+        ORDER BY updated_at DESC, created_at DESC, session_id DESC
         LIMIT ? OFFSET ?
       `)
       .all(
@@ -1519,6 +1656,1160 @@ export class RuntimeStateStore {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
+  }
+
+  upsertConversationBinding(params: {
+    bindingId?: string;
+    workspaceId: string;
+    channel: string;
+    conversationKey: string;
+    sessionId: string;
+    role?: string | null;
+    isActive?: boolean;
+    metadata?: Record<string, unknown> | null;
+    lastActiveAt?: string | null;
+    createdAt?: string;
+    updatedAt?: string;
+  }): ConversationBindingRecord {
+    this.ensureSession(
+      {
+        workspaceId: params.workspaceId,
+        sessionId: params.sessionId,
+      },
+      { touchExisting: false }
+    );
+    const now = params.updatedAt ?? utcNowIso();
+    const createdAt = params.createdAt ?? now;
+    const role = this.normalizedConversationBindingRole(params.role);
+    const channel = this.requiredNormalizedText(params.channel, "channel");
+    const conversationKey = this.requiredNormalizedText(params.conversationKey, "conversationKey");
+    const bindingId = params.bindingId ?? randomUUID();
+
+    this.db()
+      .prepare(`
+        INSERT INTO conversation_bindings (
+            binding_id,
+            workspace_id,
+            channel,
+            conversation_key,
+            session_id,
+            role,
+            is_active,
+            metadata,
+            last_active_at,
+            created_at,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(workspace_id, channel, conversation_key, role) DO UPDATE SET
+            session_id = excluded.session_id,
+            is_active = excluded.is_active,
+            metadata = excluded.metadata,
+            last_active_at = excluded.last_active_at,
+            updated_at = excluded.updated_at
+      `)
+      .run(
+        bindingId,
+        params.workspaceId,
+        channel,
+        conversationKey,
+        params.sessionId,
+        role,
+        params.isActive === false ? 0 : 1,
+        JSON.stringify(params.metadata ?? {}),
+        this.normalizedNullableText(params.lastActiveAt),
+        createdAt,
+        now
+      );
+
+    const record = this.getConversationBindingByConversation({
+      workspaceId: params.workspaceId,
+      channel,
+      conversationKey,
+      role,
+    });
+    if (!record) {
+      throw new Error("conversation binding row not found after upsert");
+    }
+    return record;
+  }
+
+  getConversationBinding(params: { bindingId: string }): ConversationBindingRecord | null {
+    const row = this.db()
+      .prepare<[string], Record<string, unknown>>("SELECT * FROM conversation_bindings WHERE binding_id = ? LIMIT 1")
+      .get(params.bindingId);
+    return row ? this.rowToConversationBinding(row) : null;
+  }
+
+  getConversationBindingByConversation(params: {
+    workspaceId: string;
+    channel: string;
+    conversationKey: string;
+    role?: string | null;
+  }): ConversationBindingRecord | null {
+    const role = params.role === undefined ? undefined : this.normalizedConversationBindingRole(params.role);
+    let query = `
+      SELECT *
+      FROM conversation_bindings
+      WHERE workspace_id = ?
+        AND channel = ?
+        AND conversation_key = ?
+    `;
+    const values: string[] = [
+      params.workspaceId,
+      this.requiredNormalizedText(params.channel, "channel"),
+      this.requiredNormalizedText(params.conversationKey, "conversationKey"),
+    ];
+    if (role !== undefined) {
+      query += " AND role = ?";
+      values.push(role);
+    }
+    query += " ORDER BY is_active DESC, datetime(updated_at) DESC, created_at DESC LIMIT 1";
+    const row = this.db().prepare(query).get(...values) as Record<string, unknown> | undefined;
+    return row ? this.rowToConversationBinding(row) : null;
+  }
+
+  getConversationBindingBySession(params: {
+    workspaceId: string;
+    sessionId: string;
+    role?: string | null;
+  }): ConversationBindingRecord | null {
+    const role = params.role === undefined ? undefined : this.normalizedConversationBindingRole(params.role);
+    let query = `
+      SELECT *
+      FROM conversation_bindings
+      WHERE workspace_id = ?
+        AND session_id = ?
+    `;
+    const values: string[] = [params.workspaceId, params.sessionId];
+    if (role !== undefined) {
+      query += " AND role = ?";
+      values.push(role);
+    }
+    query += " ORDER BY is_active DESC, datetime(updated_at) DESC, created_at DESC LIMIT 1";
+    const row = this.db().prepare(query).get(...values) as Record<string, unknown> | undefined;
+    return row ? this.rowToConversationBinding(row) : null;
+  }
+
+  listConversationBindings(params: {
+    workspaceId: string;
+    role?: string | null;
+    channel?: string | null;
+    isActive?: boolean | null;
+    limit?: number;
+    offset?: number;
+  }): ConversationBindingRecord[] {
+    let query = `
+      SELECT *
+      FROM conversation_bindings
+      WHERE workspace_id = ?
+    `;
+    const values: Array<string | number> = [params.workspaceId];
+    if (params.role !== undefined && params.role !== null) {
+      query += " AND role = ?";
+      values.push(this.normalizedConversationBindingRole(params.role));
+    }
+    if (params.channel !== undefined && params.channel !== null) {
+      query += " AND channel = ?";
+      values.push(this.requiredNormalizedText(params.channel, "channel"));
+    }
+    if (typeof params.isActive === "boolean") {
+      query += " AND is_active = ?";
+      values.push(params.isActive ? 1 : 0);
+    }
+    query += `
+      ORDER BY is_active DESC, datetime(updated_at) DESC, datetime(created_at) DESC, binding_id DESC
+      LIMIT ? OFFSET ?
+    `;
+    values.push(params.limit ?? 100, params.offset ?? 0);
+    const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToConversationBinding(row));
+  }
+
+  setConversationBindingActive(params: {
+    bindingId: string;
+    isActive: boolean;
+  }): ConversationBindingRecord | null {
+    return this.updateConversationBinding({
+      bindingId: params.bindingId,
+      fields: { isActive: params.isActive },
+    });
+  }
+
+  touchConversationBinding(params: {
+    bindingId: string;
+    lastActiveAt?: string | null;
+  }): ConversationBindingRecord | null {
+    return this.updateConversationBinding({
+      bindingId: params.bindingId,
+      fields: { lastActiveAt: params.lastActiveAt ?? utcNowIso() },
+    });
+  }
+
+  transferConversationBindingSession(params: {
+    bindingId: string;
+    sessionId: string;
+  }): ConversationBindingRecord | null {
+    const binding = this.getConversationBinding({ bindingId: params.bindingId });
+    if (!binding) {
+      return null;
+    }
+    this.ensureSession(
+      {
+        workspaceId: binding.workspaceId,
+        sessionId: params.sessionId,
+      },
+      { touchExisting: false }
+    );
+    return this.updateConversationBinding({
+      bindingId: params.bindingId,
+      fields: { sessionId: params.sessionId },
+    });
+  }
+
+  createSubagentRun(params: {
+    subagentId?: string;
+    workspaceId: string;
+    parentSessionId?: string | null;
+    parentInputId?: string | null;
+    originMainSessionId: string;
+    ownerMainSessionId?: string | null;
+    childSessionId: string;
+    initialChildInputId?: string | null;
+    currentChildInputId?: string | null;
+    latestChildInputId?: string | null;
+    title?: string | null;
+    goal: string;
+    context?: string | null;
+    sourceType?: string | null;
+    sourceId?: string | null;
+    proposalId?: string | null;
+    cronjobId?: string | null;
+    retryOfSubagentId?: string | null;
+    toolProfile?: Record<string, unknown> | null;
+    requestedModel?: string | null;
+    effectiveModel?: string | null;
+    status?: string;
+    summary?: string | null;
+    latestProgressPayload?: Record<string, unknown> | null;
+    blockingPayload?: Record<string, unknown> | null;
+    resultPayload?: Record<string, unknown> | null;
+    errorPayload?: Record<string, unknown> | null;
+    lastEventAt?: string | null;
+    ownerTransferredAt?: string | null;
+    createdAt?: string;
+    startedAt?: string | null;
+    completedAt?: string | null;
+    cancelledAt?: string | null;
+    updatedAt?: string;
+  }): SubagentRunRecord {
+    const ownerMainSessionId = this.normalizedNullableText(params.ownerMainSessionId) ?? params.originMainSessionId;
+    if (params.parentSessionId) {
+      this.ensureSession(
+        {
+          workspaceId: params.workspaceId,
+          sessionId: params.parentSessionId,
+        },
+        { touchExisting: false }
+      );
+    }
+    this.ensureSession(
+      {
+        workspaceId: params.workspaceId,
+        sessionId: params.originMainSessionId,
+      },
+      { touchExisting: false }
+    );
+    this.ensureSession(
+      {
+        workspaceId: params.workspaceId,
+        sessionId: ownerMainSessionId,
+      },
+      { touchExisting: false }
+    );
+    this.ensureSession(
+      {
+        workspaceId: params.workspaceId,
+        sessionId: params.childSessionId,
+        kind: "subagent",
+        parentSessionId: params.parentSessionId,
+        title: params.title,
+      },
+      { touchExisting: false }
+    );
+
+    const subagentId = params.subagentId ?? randomUUID();
+    const now = params.updatedAt ?? utcNowIso();
+    const createdAt = params.createdAt ?? now;
+    const initialChildInputId = this.normalizedNullableText(params.initialChildInputId);
+    const currentChildInputId =
+      this.normalizedNullableText(params.currentChildInputId) ?? initialChildInputId;
+    const latestChildInputId =
+      this.normalizedNullableText(params.latestChildInputId) ?? currentChildInputId ?? initialChildInputId;
+
+    this.db()
+      .prepare(`
+        INSERT INTO subagent_runs (
+            subagent_id,
+            workspace_id,
+            parent_session_id,
+            parent_input_id,
+            origin_main_session_id,
+            owner_main_session_id,
+            child_session_id,
+            initial_child_input_id,
+            current_child_input_id,
+            latest_child_input_id,
+            title,
+            goal,
+            context,
+            source_type,
+            source_id,
+            proposal_id,
+            cronjob_id,
+            retry_of_subagent_id,
+            tool_profile,
+            requested_model,
+            effective_model,
+            status,
+            summary,
+            latest_progress_payload,
+            blocking_payload,
+            result_payload,
+            error_payload,
+            last_event_at,
+            owner_transferred_at,
+            created_at,
+            started_at,
+            completed_at,
+            cancelled_at,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        subagentId,
+        params.workspaceId,
+        this.normalizedNullableText(params.parentSessionId),
+        this.normalizedNullableText(params.parentInputId),
+        params.originMainSessionId,
+        ownerMainSessionId,
+        params.childSessionId,
+        initialChildInputId,
+        currentChildInputId,
+        latestChildInputId,
+        this.normalizedNullableText(params.title),
+        this.requiredNormalizedText(params.goal, "goal"),
+        this.normalizedNullableText(params.context),
+        this.normalizedNullableText(params.sourceType),
+        this.normalizedNullableText(params.sourceId),
+        this.normalizedNullableText(params.proposalId),
+        this.normalizedNullableText(params.cronjobId),
+        this.normalizedNullableText(params.retryOfSubagentId),
+        JSON.stringify(params.toolProfile ?? {}),
+        this.normalizedNullableText(params.requestedModel),
+        this.normalizedNullableText(params.effectiveModel),
+        this.requiredNormalizedText(params.status ?? "queued", "status"),
+        this.normalizedNullableText(params.summary),
+        params.latestProgressPayload == null ? null : JSON.stringify(params.latestProgressPayload),
+        params.blockingPayload == null ? null : JSON.stringify(params.blockingPayload),
+        params.resultPayload == null ? null : JSON.stringify(params.resultPayload),
+        params.errorPayload == null ? null : JSON.stringify(params.errorPayload),
+        this.normalizedNullableText(params.lastEventAt),
+        this.normalizedNullableText(params.ownerTransferredAt),
+        createdAt,
+        this.normalizedNullableText(params.startedAt),
+        this.normalizedNullableText(params.completedAt),
+        this.normalizedNullableText(params.cancelledAt),
+        now
+      );
+
+    const record = this.getSubagentRun({ subagentId });
+    if (!record) {
+      throw new Error("subagent run row not found after insert");
+    }
+    return record;
+  }
+
+  updateSubagentRun(params: {
+    subagentId: string;
+    fields: SubagentRunUpdateFields;
+  }): SubagentRunRecord | null {
+    const entries = Object.entries(params.fields);
+    if (entries.length === 0) {
+      return this.getSubagentRun({ subagentId: params.subagentId });
+    }
+    const existing = this.getSubagentRun({ subagentId: params.subagentId });
+    if (!existing) {
+      return null;
+    }
+    if (params.fields.parentSessionId) {
+      this.ensureSession(
+        {
+          workspaceId: existing.workspaceId,
+          sessionId: params.fields.parentSessionId,
+        },
+        { touchExisting: false }
+      );
+    }
+    if (params.fields.originMainSessionId) {
+      this.ensureSession(
+        {
+          workspaceId: existing.workspaceId,
+          sessionId: params.fields.originMainSessionId,
+        },
+        { touchExisting: false }
+      );
+    }
+    if (params.fields.ownerMainSessionId) {
+      this.ensureSession(
+        {
+          workspaceId: existing.workspaceId,
+          sessionId: params.fields.ownerMainSessionId,
+        },
+        { touchExisting: false }
+      );
+    }
+    if (params.fields.childSessionId) {
+      this.ensureSession(
+        {
+          workspaceId: existing.workspaceId,
+          sessionId: params.fields.childSessionId,
+          kind: "subagent",
+        },
+        { touchExisting: false }
+      );
+    }
+
+    const columnMap: Record<keyof SubagentRunUpdateFields, string> = {
+      parentSessionId: "parent_session_id",
+      parentInputId: "parent_input_id",
+      originMainSessionId: "origin_main_session_id",
+      ownerMainSessionId: "owner_main_session_id",
+      childSessionId: "child_session_id",
+      initialChildInputId: "initial_child_input_id",
+      currentChildInputId: "current_child_input_id",
+      latestChildInputId: "latest_child_input_id",
+      title: "title",
+      goal: "goal",
+      context: "context",
+      sourceType: "source_type",
+      sourceId: "source_id",
+      proposalId: "proposal_id",
+      cronjobId: "cronjob_id",
+      retryOfSubagentId: "retry_of_subagent_id",
+      toolProfile: "tool_profile",
+      requestedModel: "requested_model",
+      effectiveModel: "effective_model",
+      status: "status",
+      summary: "summary",
+      latestProgressPayload: "latest_progress_payload",
+      blockingPayload: "blocking_payload",
+      resultPayload: "result_payload",
+      errorPayload: "error_payload",
+      lastEventAt: "last_event_at",
+      ownerTransferredAt: "owner_transferred_at",
+      startedAt: "started_at",
+      completedAt: "completed_at",
+      cancelledAt: "cancelled_at",
+    };
+
+    const jsonKeys = new Set<keyof SubagentRunUpdateFields>([
+      "toolProfile",
+      "latestProgressPayload",
+      "blockingPayload",
+      "resultPayload",
+      "errorPayload",
+    ]);
+    const textKeys = new Set<keyof SubagentRunUpdateFields>([
+      "parentSessionId",
+      "parentInputId",
+      "originMainSessionId",
+      "ownerMainSessionId",
+      "childSessionId",
+      "initialChildInputId",
+      "currentChildInputId",
+      "latestChildInputId",
+      "title",
+      "goal",
+      "context",
+      "sourceType",
+      "sourceId",
+      "proposalId",
+      "cronjobId",
+      "retryOfSubagentId",
+      "requestedModel",
+      "effectiveModel",
+      "status",
+      "summary",
+      "lastEventAt",
+      "ownerTransferredAt",
+      "startedAt",
+      "completedAt",
+      "cancelledAt",
+    ]);
+
+    const assignments: string[] = [];
+    const values: unknown[] = [];
+    for (const [key, value] of entries) {
+      const typedKey = key as keyof SubagentRunUpdateFields;
+      const column = columnMap[typedKey];
+      if (!column) {
+        throw new Error(`unsupported subagent run update field: ${key}`);
+      }
+      assignments.push(`${column} = ?`);
+      if (jsonKeys.has(typedKey)) {
+        values.push(value == null ? null : JSON.stringify(value));
+      } else if (textKeys.has(typedKey)) {
+        values.push(this.normalizedNullableText(typeof value === "string" ? value : (value as string | null | undefined)));
+      } else {
+        values.push(value ?? null);
+      }
+    }
+    assignments.push("updated_at = ?");
+    values.push(utcNowIso(), params.subagentId);
+
+    const result = this.db()
+      .prepare(`UPDATE subagent_runs SET ${assignments.join(", ")} WHERE subagent_id = ?`)
+      .run(...values);
+    if (result.changes <= 0) {
+      return null;
+    }
+    return this.getSubagentRun({ subagentId: params.subagentId });
+  }
+
+  getSubagentRun(params: { subagentId: string }): SubagentRunRecord | null {
+    const row = this.db()
+      .prepare<[string], Record<string, unknown>>("SELECT * FROM subagent_runs WHERE subagent_id = ? LIMIT 1")
+      .get(params.subagentId);
+    return row ? this.rowToSubagentRun(row) : null;
+  }
+
+  getSubagentRunByChildSession(params: {
+    workspaceId: string;
+    childSessionId: string;
+  }): SubagentRunRecord | null {
+    const row = this.db()
+      .prepare<[string, string], Record<string, unknown>>(`
+        SELECT *
+        FROM subagent_runs
+        WHERE workspace_id = ?
+          AND child_session_id = ?
+        LIMIT 1
+      `)
+      .get(params.workspaceId, params.childSessionId);
+    return row ? this.rowToSubagentRun(row) : null;
+  }
+
+  listSubagentRunsByWorkspace(params: {
+    workspaceId: string;
+    status?: string | null;
+    ownerMainSessionId?: string | null;
+    limit?: number;
+    offset?: number;
+  }): SubagentRunRecord[] {
+    let query = `
+      SELECT *
+      FROM subagent_runs
+      WHERE workspace_id = ?
+    `;
+    const values: Array<string | number> = [params.workspaceId];
+    if (params.status) {
+      query += " AND status = ?";
+      values.push(this.requiredNormalizedText(params.status, "status"));
+    }
+    if (params.ownerMainSessionId) {
+      query += " AND owner_main_session_id = ?";
+      values.push(params.ownerMainSessionId);
+    }
+    query += `
+      ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC, subagent_id DESC
+      LIMIT ? OFFSET ?
+    `;
+    values.push(params.limit ?? 100, params.offset ?? 0);
+    const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToSubagentRun(row));
+  }
+
+  listSubagentRunsByOwner(params: {
+    ownerMainSessionId: string;
+    status?: string | null;
+    limit?: number;
+    offset?: number;
+  }): SubagentRunRecord[] {
+    let query = `
+      SELECT *
+      FROM subagent_runs
+      WHERE owner_main_session_id = ?
+    `;
+    const values: Array<string | number> = [params.ownerMainSessionId];
+    if (params.status) {
+      query += " AND status = ?";
+      values.push(this.requiredNormalizedText(params.status, "status"));
+    }
+    query += `
+      ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC, subagent_id DESC
+      LIMIT ? OFFSET ?
+    `;
+    values.push(params.limit ?? 100, params.offset ?? 0);
+    const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToSubagentRun(row));
+  }
+
+  listSubagentRunsByOrigin(params: {
+    originMainSessionId: string;
+    status?: string | null;
+    limit?: number;
+    offset?: number;
+  }): SubagentRunRecord[] {
+    let query = `
+      SELECT *
+      FROM subagent_runs
+      WHERE origin_main_session_id = ?
+    `;
+    const values: Array<string | number> = [params.originMainSessionId];
+    if (params.status) {
+      query += " AND status = ?";
+      values.push(this.requiredNormalizedText(params.status, "status"));
+    }
+    query += `
+      ORDER BY datetime(created_at) DESC, subagent_id DESC
+      LIMIT ? OFFSET ?
+    `;
+    values.push(params.limit ?? 100, params.offset ?? 0);
+    const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToSubagentRun(row));
+  }
+
+  listWaitingSubagentRuns(params: {
+    workspaceId?: string | null;
+    ownerMainSessionId?: string | null;
+    limit?: number;
+    offset?: number;
+  }): SubagentRunRecord[] {
+    let query = `
+      SELECT *
+      FROM subagent_runs
+      WHERE status = 'waiting_on_user'
+    `;
+    const values: Array<string | number> = [];
+    if (params.workspaceId) {
+      query += " AND workspace_id = ?";
+      values.push(params.workspaceId);
+    }
+    if (params.ownerMainSessionId) {
+      query += " AND owner_main_session_id = ?";
+      values.push(params.ownerMainSessionId);
+    }
+    query += `
+      ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC, subagent_id DESC
+      LIMIT ? OFFSET ?
+    `;
+    values.push(params.limit ?? 100, params.offset ?? 0);
+    const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToSubagentRun(row));
+  }
+
+  listIncompleteSubagentRuns(params: {
+    workspaceId?: string | null;
+    ownerMainSessionId?: string | null;
+    limit?: number;
+    offset?: number;
+  }): SubagentRunRecord[] {
+    let query = `
+      SELECT *
+      FROM subagent_runs
+      WHERE status NOT IN ('completed', 'failed', 'cancelled')
+    `;
+    const values: Array<string | number> = [];
+    if (params.workspaceId) {
+      query += " AND workspace_id = ?";
+      values.push(params.workspaceId);
+    }
+    if (params.ownerMainSessionId) {
+      query += " AND owner_main_session_id = ?";
+      values.push(params.ownerMainSessionId);
+    }
+    query += `
+      ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC, subagent_id DESC
+      LIMIT ? OFFSET ?
+    `;
+    values.push(params.limit ?? 100, params.offset ?? 0);
+    const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToSubagentRun(row));
+  }
+
+  transferSubagentOwnership(params: {
+    subagentId: string;
+    ownerMainSessionId: string;
+    ownerTransferredAt?: string;
+  }): SubagentRunRecord | null {
+    const existing = this.getSubagentRun({ subagentId: params.subagentId });
+    if (!existing) {
+      return null;
+    }
+    this.ensureSession(
+      {
+        workspaceId: existing.workspaceId,
+        sessionId: params.ownerMainSessionId,
+      },
+      { touchExisting: false }
+    );
+    const ownerTransferredAt = params.ownerTransferredAt ?? utcNowIso();
+    const transaction = this.db().transaction(() => {
+      const updated = this.updateSubagentRun({
+        subagentId: params.subagentId,
+        fields: {
+          ownerMainSessionId: params.ownerMainSessionId,
+          ownerTransferredAt,
+        },
+      });
+      if (!updated) {
+        return null;
+      }
+      this.db()
+        .prepare(`
+          UPDATE main_session_event_queue
+          SET owner_main_session_id = ?,
+              updated_at = ?
+          WHERE subagent_id = ?
+            AND delivered_at IS NULL
+            AND superseded_at IS NULL
+        `)
+        .run(params.ownerMainSessionId, utcNowIso(), params.subagentId);
+      return this.getSubagentRun({ subagentId: params.subagentId });
+    });
+    return transaction();
+  }
+
+  appendSubagentProgress(params: {
+    subagentId: string;
+    latestProgressPayload: Record<string, unknown>;
+    lastEventAt?: string | null;
+  }): SubagentRunRecord | null {
+    return this.updateSubagentRun({
+      subagentId: params.subagentId,
+      fields: {
+        latestProgressPayload: params.latestProgressPayload,
+        lastEventAt: params.lastEventAt ?? utcNowIso(),
+      },
+    });
+  }
+
+  enqueueMainSessionEvent(params: {
+    eventId?: string;
+    workspaceId: string;
+    ownerMainSessionId: string;
+    originMainSessionId: string;
+    subagentId?: string | null;
+    eventType: string;
+    deliveryBucket: string;
+    status?: string;
+    payload?: Record<string, unknown> | null;
+    coalesceKey?: string | null;
+    earliestDeliverAt?: string | null;
+    latestDeliverAt?: string | null;
+    materializedInputId?: string | null;
+    supersededByEventId?: string | null;
+    deliveredAt?: string | null;
+    supersededAt?: string | null;
+    createdAt?: string;
+    updatedAt?: string;
+  }): MainSessionEventQueueRecord {
+    this.ensureSession(
+      {
+        workspaceId: params.workspaceId,
+        sessionId: params.ownerMainSessionId,
+      },
+      { touchExisting: false }
+    );
+    this.ensureSession(
+      {
+        workspaceId: params.workspaceId,
+        sessionId: params.originMainSessionId,
+      },
+      { touchExisting: false }
+    );
+    const eventId = params.eventId ?? randomUUID();
+    const now = params.updatedAt ?? utcNowIso();
+    const createdAt = params.createdAt ?? now;
+    this.db()
+      .prepare(`
+        INSERT INTO main_session_event_queue (
+            event_id,
+            workspace_id,
+            owner_main_session_id,
+            origin_main_session_id,
+            subagent_id,
+            event_type,
+            delivery_bucket,
+            status,
+            payload,
+            coalesce_key,
+            earliest_deliver_at,
+            latest_deliver_at,
+            materialized_input_id,
+            superseded_by_event_id,
+            delivered_at,
+            superseded_at,
+            created_at,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        eventId,
+        params.workspaceId,
+        params.ownerMainSessionId,
+        params.originMainSessionId,
+        this.normalizedNullableText(params.subagentId),
+        this.requiredNormalizedText(params.eventType, "eventType"),
+        this.requiredNormalizedText(params.deliveryBucket, "deliveryBucket"),
+        this.requiredNormalizedText(params.status ?? "pending", "status"),
+        JSON.stringify(params.payload ?? {}),
+        this.normalizedNullableText(params.coalesceKey),
+        this.normalizedNullableText(params.earliestDeliverAt),
+        this.normalizedNullableText(params.latestDeliverAt),
+        this.normalizedNullableText(params.materializedInputId),
+        this.normalizedNullableText(params.supersededByEventId),
+        this.normalizedNullableText(params.deliveredAt),
+        this.normalizedNullableText(params.supersededAt),
+        createdAt,
+        now
+      );
+    const record = this.getMainSessionEvent({ eventId });
+    if (!record) {
+      throw new Error("main session event row not found after insert");
+    }
+    return record;
+  }
+
+  updateMainSessionEvent(params: {
+    eventId: string;
+    fields: MainSessionEventQueueUpdateFields;
+  }): MainSessionEventQueueRecord | null {
+    const entries = Object.entries(params.fields);
+    if (entries.length === 0) {
+      return this.getMainSessionEvent({ eventId: params.eventId });
+    }
+    const existing = this.getMainSessionEvent({ eventId: params.eventId });
+    if (!existing) {
+      return null;
+    }
+    if (params.fields.ownerMainSessionId) {
+      this.ensureSession(
+        {
+          workspaceId: existing.workspaceId,
+          sessionId: params.fields.ownerMainSessionId,
+        },
+        { touchExisting: false }
+      );
+    }
+    if (params.fields.originMainSessionId) {
+      this.ensureSession(
+        {
+          workspaceId: existing.workspaceId,
+          sessionId: params.fields.originMainSessionId,
+        },
+        { touchExisting: false }
+      );
+    }
+
+    const columnMap: Record<keyof MainSessionEventQueueUpdateFields, string> = {
+      ownerMainSessionId: "owner_main_session_id",
+      originMainSessionId: "origin_main_session_id",
+      subagentId: "subagent_id",
+      eventType: "event_type",
+      deliveryBucket: "delivery_bucket",
+      status: "status",
+      payload: "payload",
+      coalesceKey: "coalesce_key",
+      earliestDeliverAt: "earliest_deliver_at",
+      latestDeliverAt: "latest_deliver_at",
+      materializedInputId: "materialized_input_id",
+      supersededByEventId: "superseded_by_event_id",
+      deliveredAt: "delivered_at",
+      supersededAt: "superseded_at",
+    };
+    const jsonKeys = new Set<keyof MainSessionEventQueueUpdateFields>(["payload"]);
+    const textKeys = new Set<keyof MainSessionEventQueueUpdateFields>([
+      "ownerMainSessionId",
+      "originMainSessionId",
+      "subagentId",
+      "eventType",
+      "deliveryBucket",
+      "status",
+      "coalesceKey",
+      "earliestDeliverAt",
+      "latestDeliverAt",
+      "materializedInputId",
+      "supersededByEventId",
+      "deliveredAt",
+      "supersededAt",
+    ]);
+
+    const assignments: string[] = [];
+    const values: unknown[] = [];
+    for (const [key, value] of entries) {
+      const typedKey = key as keyof MainSessionEventQueueUpdateFields;
+      const column = columnMap[typedKey];
+      if (!column) {
+        throw new Error(`unsupported main session event update field: ${key}`);
+      }
+      assignments.push(`${column} = ?`);
+      if (jsonKeys.has(typedKey)) {
+        values.push(value == null ? null : JSON.stringify(value));
+      } else if (textKeys.has(typedKey)) {
+        values.push(this.normalizedNullableText(typeof value === "string" ? value : (value as string | null | undefined)));
+      } else {
+        values.push(value ?? null);
+      }
+    }
+    assignments.push("updated_at = ?");
+    values.push(utcNowIso(), params.eventId);
+    const result = this.db()
+      .prepare(`UPDATE main_session_event_queue SET ${assignments.join(", ")} WHERE event_id = ?`)
+      .run(...values);
+    if (result.changes <= 0) {
+      return null;
+    }
+    return this.getMainSessionEvent({ eventId: params.eventId });
+  }
+
+  getMainSessionEvent(params: { eventId: string }): MainSessionEventQueueRecord | null {
+    const row = this.db()
+      .prepare<[string], Record<string, unknown>>("SELECT * FROM main_session_event_queue WHERE event_id = ? LIMIT 1")
+      .get(params.eventId);
+    return row ? this.rowToMainSessionEventQueue(row) : null;
+  }
+
+  listPendingMainSessionEvents(params: {
+    ownerMainSessionId: string;
+    deliveryBucket?: string | null;
+    before?: string | null;
+    limit?: number;
+  }): MainSessionEventQueueRecord[] {
+    let query = `
+      SELECT *
+      FROM main_session_event_queue
+      WHERE owner_main_session_id = ?
+        AND status = 'pending'
+        AND delivered_at IS NULL
+        AND superseded_at IS NULL
+    `;
+    const values: Array<string | number> = [params.ownerMainSessionId];
+    if (params.deliveryBucket) {
+      query += " AND delivery_bucket = ?";
+      values.push(this.requiredNormalizedText(params.deliveryBucket, "deliveryBucket"));
+    }
+    if (params.before) {
+      query += " AND (earliest_deliver_at IS NULL OR datetime(earliest_deliver_at) <= datetime(?))";
+      values.push(params.before);
+    }
+    query += `
+      ORDER BY datetime(COALESCE(earliest_deliver_at, created_at)) ASC, datetime(created_at) ASC, event_id ASC
+    `;
+    if (typeof params.limit === "number" && Number.isFinite(params.limit) && params.limit > 0) {
+      query += " LIMIT ?";
+      values.push(Math.floor(params.limit));
+    }
+    const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToMainSessionEventQueue(row));
+  }
+
+  listPendingMainSessionEventsByWorkspace(params: {
+    workspaceId: string;
+    before?: string | null;
+    limit?: number;
+  }): MainSessionEventQueueRecord[] {
+    let query = `
+      SELECT *
+      FROM main_session_event_queue
+      WHERE workspace_id = ?
+        AND status = 'pending'
+        AND delivered_at IS NULL
+        AND superseded_at IS NULL
+    `;
+    const values: Array<string | number> = [params.workspaceId];
+    if (params.before) {
+      query += " AND (earliest_deliver_at IS NULL OR datetime(earliest_deliver_at) <= datetime(?))";
+      values.push(params.before);
+    }
+    query += `
+      ORDER BY datetime(COALESCE(earliest_deliver_at, created_at)) ASC, datetime(created_at) ASC, event_id ASC
+    `;
+    if (typeof params.limit === "number" && Number.isFinite(params.limit) && params.limit > 0) {
+      query += " LIMIT ?";
+      values.push(Math.floor(params.limit));
+    }
+    const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToMainSessionEventQueue(row));
+  }
+
+  markMainSessionEventsMaterialized(params: {
+    eventIds: string[];
+    materializedInputId: string;
+  }): MainSessionEventQueueRecord[] {
+    if (params.eventIds.length === 0) {
+      return [];
+    }
+    const now = utcNowIso();
+    this.db()
+      .prepare(`
+        UPDATE main_session_event_queue
+        SET status = 'materialized',
+            materialized_input_id = ?,
+            updated_at = ?
+        WHERE event_id IN (${params.eventIds.map(() => "?").join(", ")})
+      `)
+      .run(params.materializedInputId, now, ...params.eventIds);
+    return this.listMainSessionEventsByIds(params.eventIds);
+  }
+
+  markMainSessionEventsDelivered(params: {
+    eventIds: string[];
+    deliveredAt?: string;
+  }): MainSessionEventQueueRecord[] {
+    if (params.eventIds.length === 0) {
+      return [];
+    }
+    const deliveredAt = params.deliveredAt ?? utcNowIso();
+    this.db()
+      .prepare(`
+        UPDATE main_session_event_queue
+        SET status = 'delivered',
+            delivered_at = ?,
+            updated_at = ?
+        WHERE event_id IN (${params.eventIds.map(() => "?").join(", ")})
+      `)
+      .run(deliveredAt, deliveredAt, ...params.eventIds);
+    return this.listMainSessionEventsByIds(params.eventIds);
+  }
+
+  markMainSessionEventsSuperseded(params: {
+    eventIds: string[];
+    supersededByEventId?: string | null;
+    supersededAt?: string;
+  }): MainSessionEventQueueRecord[] {
+    if (params.eventIds.length === 0) {
+      return [];
+    }
+    const supersededAt = params.supersededAt ?? utcNowIso();
+    this.db()
+      .prepare(`
+        UPDATE main_session_event_queue
+        SET status = 'superseded',
+            superseded_by_event_id = ?,
+            superseded_at = ?,
+            updated_at = ?
+        WHERE event_id IN (${params.eventIds.map(() => "?").join(", ")})
+      `)
+      .run(this.normalizedNullableText(params.supersededByEventId), supersededAt, supersededAt, ...params.eventIds);
+    return this.listMainSessionEventsByIds(params.eventIds);
+  }
+
+  transferQueuedMainSessionEvents(params: {
+    subagentId: string;
+    ownerMainSessionId: string;
+  }): MainSessionEventQueueRecord[] {
+    const existing = this.db()
+      .prepare<[string], { workspace_id: string }>(`
+        SELECT workspace_id
+        FROM main_session_event_queue
+        WHERE subagent_id = ?
+        LIMIT 1
+      `)
+      .get(params.subagentId);
+    if (existing) {
+      this.ensureSession(
+        {
+          workspaceId: existing.workspace_id,
+          sessionId: params.ownerMainSessionId,
+        },
+        { touchExisting: false }
+      );
+    }
+    const now = utcNowIso();
+    this.db()
+      .prepare(`
+        UPDATE main_session_event_queue
+        SET owner_main_session_id = ?,
+            updated_at = ?
+        WHERE subagent_id = ?
+          AND delivered_at IS NULL
+          AND superseded_at IS NULL
+      `)
+      .run(params.ownerMainSessionId, now, params.subagentId);
+    const rows = this.db()
+      .prepare<[string], Record<string, unknown>>(`
+        SELECT *
+        FROM main_session_event_queue
+        WHERE subagent_id = ?
+          AND delivered_at IS NULL
+          AND superseded_at IS NULL
+        ORDER BY datetime(created_at) ASC, event_id ASC
+      `)
+      .all(params.subagentId);
+    return rows.map((row) => this.rowToMainSessionEventQueue(row));
+  }
+
+  recoverFailedMaterializedMainSessionEvents(params: {
+    workspaceId: string;
+    nowIso?: string;
+  }): MainSessionEventQueueRecord[] {
+    const rows = this.db()
+      .prepare<[string], Record<string, unknown>>(
+        `
+          SELECT q.*
+          FROM main_session_event_queue AS q
+          INNER JOIN agent_session_inputs AS i
+            ON i.input_id = q.materialized_input_id
+          WHERE q.workspace_id = ?
+            AND q.status = 'materialized'
+            AND q.delivered_at IS NULL
+            AND q.superseded_at IS NULL
+            AND i.status = 'FAILED'
+          ORDER BY datetime(q.created_at) ASC, q.event_id ASC
+        `
+      )
+      .all(params.workspaceId);
+    const events = rows.map((row) => this.rowToMainSessionEventQueue(row));
+    if (events.length === 0) {
+      return [];
+    }
+    const now = params.nowIso ?? utcNowIso();
+    const resetEventStatement = this.db().prepare(`
+      UPDATE main_session_event_queue
+      SET status = 'pending',
+          materialized_input_id = NULL,
+          delivered_at = NULL,
+          earliest_deliver_at = ?,
+          updated_at = ?
+      WHERE event_id = ?
+    `);
+    const clearFailedInputIdempotencyStatement = this.db().prepare(`
+      UPDATE agent_session_inputs
+      SET idempotency_key = NULL,
+          updated_at = ?
+      WHERE input_id = ?
+        AND status = 'FAILED'
+    `);
+    const transaction = this.db().transaction(
+      (records: Array<{ eventId: string; materializedInputId: string | null }>) => {
+        for (const record of records) {
+          resetEventStatement.run(now, now, record.eventId);
+          if (record.materializedInputId) {
+            clearFailedInputIdempotencyStatement.run(now, record.materializedInputId);
+          }
+        }
+      }
+    );
+    transaction(
+      events.map((event) => ({
+        eventId: event.eventId,
+        materializedInputId: event.materializedInputId,
+      }))
+    );
+    return events
+      .map((event) => this.getMainSessionEvent({ eventId: event.eventId }))
+      .filter((event): event is MainSessionEventQueueRecord => event !== null);
   }
 
   upsertIntegrationConnection(params: {
@@ -1895,6 +3186,57 @@ export class RuntimeStateStore {
       )
       .get(idempotencyKey);
     return this.rowToInput(row);
+  }
+
+  getLatestInputForSession(params: LatestSessionInputOptions): SessionInputRecord | null {
+    const limit =
+      typeof params.limit === "number" && Number.isFinite(params.limit) && params.limit > 0
+        ? Math.floor(params.limit)
+        : 200;
+    const rows = this.db()
+      .prepare<[string, string, number], Record<string, unknown>>(
+        `
+          SELECT *
+          FROM agent_session_inputs
+          WHERE workspace_id = ? AND session_id = ?
+          ORDER BY datetime(created_at) DESC, input_id DESC
+          LIMIT ?
+        `
+      )
+      .all(params.workspaceId, params.sessionId, limit);
+    const records = rows
+      .map((row) => this.rowToInput(row))
+      .filter((record): record is SessionInputRecord => record !== null);
+    const excludedSources = new Set(
+      (params.excludeContextSources ?? []).map((value) => value.trim()).filter(Boolean)
+    );
+    const filtered = records.filter((record) => {
+      const context =
+        record.payload.context &&
+        typeof record.payload.context === "object" &&
+        !Array.isArray(record.payload.context)
+          ? (record.payload.context as Record<string, unknown>)
+          : null;
+      const source =
+        context && typeof context.source === "string" ? context.source.trim() : "";
+      return !excludedSources.has(source);
+    });
+    if (filtered.length === 0) {
+      return null;
+    }
+    if (!params.preferConfiguredModel) {
+      return filtered[0] ?? null;
+    }
+    const configured = filtered.find((record) => {
+      const model =
+        typeof record.payload.model === "string" ? record.payload.model.trim() : "";
+      const thinkingValue =
+        typeof record.payload.thinking_value === "string"
+          ? record.payload.thinking_value.trim()
+          : "";
+      return Boolean(model || thinkingValue);
+    });
+    return configured ?? filtered[0] ?? null;
   }
 
   updateInput(inputId: string, fields: InputUpdateFields): SessionInputRecord | null {
@@ -2860,9 +4202,8 @@ export class RuntimeStateStore {
     capabilityManifestFingerprint?: string | null;
     requestSnapshotFingerprint?: string | null;
     promptCacheProfile?: Record<string, unknown> | null;
-    compactedSummary?: string | null;
-    tokenUsage?: Record<string, unknown> | null;
     contextBudgetDecisions?: Record<string, unknown> | null;
+    tokenUsage?: Record<string, unknown> | null;
     createdAt?: string;
     updatedAt?: string;
   }): TurnResultRecord {
@@ -2894,12 +4235,11 @@ export class RuntimeStateStore {
             capability_manifest_fingerprint,
             request_snapshot_fingerprint,
             prompt_cache_profile,
-            compacted_summary,
-            token_usage,
             context_budget_decisions,
+            token_usage,
             created_at,
             updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(input_id) DO UPDATE SET
             workspace_id = excluded.workspace_id,
             session_id = excluded.session_id,
@@ -2914,9 +4254,8 @@ export class RuntimeStateStore {
             capability_manifest_fingerprint = excluded.capability_manifest_fingerprint,
             request_snapshot_fingerprint = excluded.request_snapshot_fingerprint,
             prompt_cache_profile = excluded.prompt_cache_profile,
-            compacted_summary = excluded.compacted_summary,
-            token_usage = excluded.token_usage,
             context_budget_decisions = excluded.context_budget_decisions,
+            token_usage = excluded.token_usage,
             updated_at = excluded.updated_at
       `)
       .run(
@@ -2934,9 +4273,10 @@ export class RuntimeStateStore {
         params.capabilityManifestFingerprint ?? null,
         params.requestSnapshotFingerprint ?? null,
         params.promptCacheProfile ? JSON.stringify(params.promptCacheProfile) : null,
-        params.compactedSummary ?? null,
+        params.contextBudgetDecisions
+          ? JSON.stringify(params.contextBudgetDecisions)
+          : null,
         params.tokenUsage ? JSON.stringify(params.tokenUsage) : null,
-        params.contextBudgetDecisions ? JSON.stringify(params.contextBudgetDecisions) : null,
         createdAt,
         now
       );
@@ -4373,6 +5713,8 @@ export class RuntimeStateStore {
     workspaceId?: string | null;
     includeDismissed?: boolean;
     limit?: number | null;
+    sourceType?: string | null;
+    excludeSourceTypes?: string[] | null;
   }): RuntimeNotificationRecord[] {
     let query = "SELECT * FROM runtime_notifications";
     const filters: string[] = [];
@@ -4381,8 +5723,25 @@ export class RuntimeStateStore {
       filters.push("workspace_id = ?");
       values.push(params.workspaceId);
     }
+    const normalizedSourceType = this.normalizedNullableText(params.sourceType);
+    if (normalizedSourceType) {
+      filters.push("source_type = ?");
+      values.push(normalizedSourceType);
+    }
     if (!params.includeDismissed) {
       filters.push("state != 'dismissed'");
+    }
+    const excludedSourceTypes =
+      params.excludeSourceTypes
+        ?.map((value) => this.normalizedNullableText(value))
+        .filter((value): value is string => Boolean(value)) ?? [];
+    if (excludedSourceTypes.length > 0) {
+      filters.push(
+        `coalesce(source_type, '') NOT IN (${excludedSourceTypes
+          .map(() => "?")
+          .join(", ")})`,
+      );
+      values.push(...excludedSourceTypes);
     }
     if (filters.length > 0) {
       query += ` WHERE ${filters.join(" AND ")}`;
@@ -4952,6 +6311,28 @@ export class RuntimeStateStore {
       CREATE INDEX IF NOT EXISTS idx_agent_runtime_sessions_workspace_updated
           ON agent_runtime_sessions (workspace_id, updated_at DESC);
 
+      CREATE TABLE IF NOT EXISTS conversation_bindings (
+          binding_id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel TEXT NOT NULL,
+          conversation_key TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          role TEXT NOT NULL DEFAULT 'main',
+          is_active INTEGER NOT NULL DEFAULT 1,
+          metadata TEXT NOT NULL DEFAULT '{}',
+          last_active_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE (workspace_id, channel, conversation_key, role),
+          UNIQUE (session_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_conversation_bindings_workspace_role_active_updated
+          ON conversation_bindings (workspace_id, role, is_active, updated_at DESC, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_conversation_bindings_channel_key_active
+          ON conversation_bindings (channel, conversation_key, is_active);
+
       CREATE TABLE IF NOT EXISTS integration_connections (
           connection_id TEXT PRIMARY KEY,
           provider_id TEXT NOT NULL,
@@ -5040,6 +6421,39 @@ export class RuntimeStateStore {
 
       CREATE INDEX IF NOT EXISTS idx_post_run_jobs_session_status
           ON post_run_jobs (session_id, status, available_at);
+
+      CREATE TABLE IF NOT EXISTS main_session_event_queue (
+          event_id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          owner_main_session_id TEXT NOT NULL,
+          origin_main_session_id TEXT NOT NULL,
+          subagent_id TEXT,
+          event_type TEXT NOT NULL,
+          delivery_bucket TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          payload TEXT NOT NULL DEFAULT '{}',
+          coalesce_key TEXT,
+          earliest_deliver_at TEXT,
+          latest_deliver_at TEXT,
+          materialized_input_id TEXT,
+          superseded_by_event_id TEXT,
+          delivered_at TEXT,
+          superseded_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_main_session_event_queue_owner_status_earliest
+          ON main_session_event_queue (owner_main_session_id, status, earliest_deliver_at, created_at ASC);
+
+      CREATE INDEX IF NOT EXISTS idx_main_session_event_queue_workspace_status_created
+          ON main_session_event_queue (workspace_id, status, created_at ASC);
+
+      CREATE INDEX IF NOT EXISTS idx_main_session_event_queue_subagent_created
+          ON main_session_event_queue (subagent_id, created_at ASC);
+
+      CREATE INDEX IF NOT EXISTS idx_main_session_event_queue_materialized_input
+          ON main_session_event_queue (materialized_input_id);
 
       CREATE TABLE IF NOT EXISTS session_runtime_state (
           workspace_id TEXT NOT NULL,
@@ -5163,9 +6577,8 @@ export class RuntimeStateStore {
           capability_manifest_fingerprint TEXT,
           request_snapshot_fingerprint TEXT,
           prompt_cache_profile TEXT,
-          compacted_summary TEXT,
-          token_usage TEXT,
           context_budget_decisions TEXT,
+          token_usage TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
       );
@@ -5175,6 +6588,56 @@ export class RuntimeStateStore {
 
       CREATE INDEX IF NOT EXISTS idx_turn_results_session_input
           ON turn_results (session_id, input_id);
+
+      CREATE TABLE IF NOT EXISTS subagent_runs (
+          subagent_id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          parent_session_id TEXT,
+          parent_input_id TEXT,
+          origin_main_session_id TEXT NOT NULL,
+          owner_main_session_id TEXT NOT NULL,
+          child_session_id TEXT NOT NULL,
+          initial_child_input_id TEXT,
+          current_child_input_id TEXT,
+          latest_child_input_id TEXT,
+          title TEXT,
+          goal TEXT NOT NULL,
+          context TEXT,
+          source_type TEXT,
+          source_id TEXT,
+          proposal_id TEXT,
+          cronjob_id TEXT,
+          retry_of_subagent_id TEXT,
+          tool_profile TEXT NOT NULL DEFAULT '{}',
+          requested_model TEXT,
+          effective_model TEXT,
+          status TEXT NOT NULL,
+          summary TEXT,
+          latest_progress_payload TEXT,
+          blocking_payload TEXT,
+          result_payload TEXT,
+          error_payload TEXT,
+          last_event_at TEXT,
+          owner_transferred_at TEXT,
+          created_at TEXT NOT NULL,
+          started_at TEXT,
+          completed_at TEXT,
+          cancelled_at TEXT,
+          updated_at TEXT NOT NULL,
+          UNIQUE (workspace_id, child_session_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_subagent_runs_workspace_status_updated
+          ON subagent_runs (workspace_id, status, updated_at DESC, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_subagent_runs_owner_status_updated
+          ON subagent_runs (owner_main_session_id, status, updated_at DESC, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_subagent_runs_origin_created
+          ON subagent_runs (origin_main_session_id, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_subagent_runs_retry_created
+          ON subagent_runs (retry_of_subagent_id, created_at DESC);
 
       CREATE TABLE IF NOT EXISTS turn_request_snapshots (
           input_id TEXT PRIMARY KEY,
@@ -5464,6 +6927,9 @@ export class RuntimeStateStore {
           updated_at TEXT NOT NULL
       );
     `);
+    this.ensureConversationBindingsTableSchema(db);
+    this.ensureSubagentRunsTableSchema(db);
+    this.ensureMainSessionEventQueueTableSchema(db);
     this.ensureSessionRuntimeStateTableSchema(db);
     this.migrateLegacySessionArtifactsToOutputs(db);
     this.migrateRuntimeNotificationPriority(db);
@@ -5471,6 +6937,130 @@ export class RuntimeStateStore {
     this.migrateAppBuildRestartAttempts(db);
     this.migrateRevertIntegrationConnectionsWorkspace(db);
     this.migrateIntegrationConnectionIdentityColumns(db);
+  }
+
+  private ensureConversationBindingsTableSchema(db: Database.Database): void {
+    const tableNames = new Set<string>(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(
+        (row) => row.name
+      )
+    );
+    if (!tableNames.has("conversation_bindings")) {
+      return;
+    }
+    const columns = new Set<string>(
+      (db.prepare("PRAGMA table_info(conversation_bindings)").all() as Array<{ name: string }>).map((row) => row.name)
+    );
+    if (!columns.has("metadata")) {
+      db.exec("ALTER TABLE conversation_bindings ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}';");
+    }
+    if (!columns.has("last_active_at")) {
+      db.exec("ALTER TABLE conversation_bindings ADD COLUMN last_active_at TEXT;");
+    }
+    if (!columns.has("is_active")) {
+      db.exec("ALTER TABLE conversation_bindings ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1;");
+    }
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_conversation_bindings_workspace_role_active_updated
+          ON conversation_bindings (workspace_id, role, is_active, updated_at DESC, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_conversation_bindings_channel_key_active
+          ON conversation_bindings (channel, conversation_key, is_active);
+    `);
+  }
+
+  private ensureSubagentRunsTableSchema(db: Database.Database): void {
+    const tableNames = new Set<string>(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(
+        (row) => row.name
+      )
+    );
+    if (!tableNames.has("subagent_runs")) {
+      return;
+    }
+    const columns = new Set<string>(
+      (db.prepare("PRAGMA table_info(subagent_runs)").all() as Array<{ name: string }>).map((row) => row.name)
+    );
+    if (!columns.has("initial_child_input_id")) {
+      db.exec("ALTER TABLE subagent_runs ADD COLUMN initial_child_input_id TEXT;");
+    }
+    if (!columns.has("current_child_input_id")) {
+      db.exec("ALTER TABLE subagent_runs ADD COLUMN current_child_input_id TEXT;");
+    }
+    if (!columns.has("latest_child_input_id")) {
+      db.exec("ALTER TABLE subagent_runs ADD COLUMN latest_child_input_id TEXT;");
+    }
+    if (!columns.has("latest_progress_payload")) {
+      db.exec("ALTER TABLE subagent_runs ADD COLUMN latest_progress_payload TEXT;");
+    }
+    if (!columns.has("blocking_payload")) {
+      db.exec("ALTER TABLE subagent_runs ADD COLUMN blocking_payload TEXT;");
+    }
+    if (!columns.has("result_payload")) {
+      db.exec("ALTER TABLE subagent_runs ADD COLUMN result_payload TEXT;");
+    }
+    if (!columns.has("error_payload")) {
+      db.exec("ALTER TABLE subagent_runs ADD COLUMN error_payload TEXT;");
+    }
+    if (!columns.has("last_event_at")) {
+      db.exec("ALTER TABLE subagent_runs ADD COLUMN last_event_at TEXT;");
+    }
+    if (!columns.has("owner_transferred_at")) {
+      db.exec("ALTER TABLE subagent_runs ADD COLUMN owner_transferred_at TEXT;");
+    }
+    if (!columns.has("cancelled_at")) {
+      db.exec("ALTER TABLE subagent_runs ADD COLUMN cancelled_at TEXT;");
+    }
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_subagent_runs_workspace_status_updated
+          ON subagent_runs (workspace_id, status, updated_at DESC, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_subagent_runs_owner_status_updated
+          ON subagent_runs (owner_main_session_id, status, updated_at DESC, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_subagent_runs_origin_created
+          ON subagent_runs (origin_main_session_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_subagent_runs_retry_created
+          ON subagent_runs (retry_of_subagent_id, created_at DESC);
+    `);
+  }
+
+  private ensureMainSessionEventQueueTableSchema(db: Database.Database): void {
+    const tableNames = new Set<string>(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(
+        (row) => row.name
+      )
+    );
+    if (!tableNames.has("main_session_event_queue")) {
+      return;
+    }
+    const columns = new Set<string>(
+      (db.prepare("PRAGMA table_info(main_session_event_queue)").all() as Array<{ name: string }>).map(
+        (row) => row.name
+      )
+    );
+    if (!columns.has("coalesce_key")) {
+      db.exec("ALTER TABLE main_session_event_queue ADD COLUMN coalesce_key TEXT;");
+    }
+    if (!columns.has("materialized_input_id")) {
+      db.exec("ALTER TABLE main_session_event_queue ADD COLUMN materialized_input_id TEXT;");
+    }
+    if (!columns.has("superseded_by_event_id")) {
+      db.exec("ALTER TABLE main_session_event_queue ADD COLUMN superseded_by_event_id TEXT;");
+    }
+    if (!columns.has("delivered_at")) {
+      db.exec("ALTER TABLE main_session_event_queue ADD COLUMN delivered_at TEXT;");
+    }
+    if (!columns.has("superseded_at")) {
+      db.exec("ALTER TABLE main_session_event_queue ADD COLUMN superseded_at TEXT;");
+    }
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_main_session_event_queue_owner_status_earliest
+          ON main_session_event_queue (owner_main_session_id, status, earliest_deliver_at, created_at ASC);
+      CREATE INDEX IF NOT EXISTS idx_main_session_event_queue_workspace_status_created
+          ON main_session_event_queue (workspace_id, status, created_at ASC);
+      CREATE INDEX IF NOT EXISTS idx_main_session_event_queue_subagent_created
+          ON main_session_event_queue (subagent_id, created_at ASC);
+      CREATE INDEX IF NOT EXISTS idx_main_session_event_queue_materialized_input
+          ON main_session_event_queue (materialized_input_id);
+    `);
   }
 
   private ensureSessionRuntimeStateTableSchema(db: Database.Database): void {
@@ -5906,9 +7496,9 @@ export class RuntimeStateStore {
     }
   }
 
-  private rebuildTurnResultsWithoutCompactionBoundary(db: Database.Database): void {
+  private rebuildTurnResultsWithoutLegacyColumns(db: Database.Database): void {
     db.exec(`
-      ALTER TABLE turn_results RENAME TO turn_results_legacy_with_compaction_boundary;
+      ALTER TABLE turn_results RENAME TO turn_results_legacy_with_removed_columns;
 
       CREATE TABLE turn_results (
           input_id TEXT PRIMARY KEY,
@@ -5925,9 +7515,8 @@ export class RuntimeStateStore {
           capability_manifest_fingerprint TEXT,
           request_snapshot_fingerprint TEXT,
           prompt_cache_profile TEXT,
-          compacted_summary TEXT,
-          token_usage TEXT,
           context_budget_decisions TEXT,
+          token_usage TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
       );
@@ -5947,9 +7536,8 @@ export class RuntimeStateStore {
           capability_manifest_fingerprint,
           request_snapshot_fingerprint,
           prompt_cache_profile,
-          compacted_summary,
-          token_usage,
           context_budget_decisions,
+          token_usage,
           created_at,
           updated_at
       )
@@ -5968,14 +7556,13 @@ export class RuntimeStateStore {
           capability_manifest_fingerprint,
           request_snapshot_fingerprint,
           prompt_cache_profile,
-          compacted_summary,
-          token_usage,
           context_budget_decisions,
+          token_usage,
           created_at,
           updated_at
-      FROM turn_results_legacy_with_compaction_boundary;
+      FROM turn_results_legacy_with_removed_columns;
 
-      DROP TABLE turn_results_legacy_with_compaction_boundary;
+      DROP TABLE turn_results_legacy_with_removed_columns;
 
       CREATE INDEX IF NOT EXISTS idx_turn_results_workspace_session_completed
           ON turn_results (workspace_id, session_id, completed_at DESC, started_at DESC);
@@ -6005,8 +7592,8 @@ export class RuntimeStateStore {
       if (!columns.has("context_budget_decisions")) {
         db.exec("ALTER TABLE turn_results ADD COLUMN context_budget_decisions TEXT;");
       }
-      if (columns.has("compaction_boundary_id")) {
-        this.rebuildTurnResultsWithoutCompactionBoundary(db);
+      if (columns.has("compaction_boundary_id") || columns.has("compacted_summary")) {
+        this.rebuildTurnResultsWithoutLegacyColumns(db);
       }
     }
     if (tableNames.has("compaction_boundaries")) {
@@ -6588,10 +8175,11 @@ export class RuntimeStateStore {
       requestSnapshotFingerprint:
         row.request_snapshot_fingerprint == null ? null : String(row.request_snapshot_fingerprint),
       promptCacheProfile: row.prompt_cache_profile == null ? null : this.parseJsonObjectOrMessage(row.prompt_cache_profile),
-      compactedSummary: row.compacted_summary == null ? null : String(row.compacted_summary),
-      tokenUsage: row.token_usage == null ? null : this.parseJsonObjectOrMessage(row.token_usage),
       contextBudgetDecisions:
-        row.context_budget_decisions == null ? null : this.parseJsonObjectOrMessage(row.context_budget_decisions),
+        row.context_budget_decisions == null
+          ? null
+          : this.parseJsonObjectOrMessage(row.context_budget_decisions),
+      tokenUsage: row.token_usage == null ? null : this.parseJsonObjectOrMessage(row.token_usage),
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
     };
@@ -6749,6 +8337,22 @@ export class RuntimeStateStore {
     };
   }
 
+  private rowToConversationBinding(row: Record<string, unknown>): ConversationBindingRecord {
+    return {
+      bindingId: String(row.binding_id),
+      workspaceId: String(row.workspace_id),
+      channel: String(row.channel),
+      conversationKey: String(row.conversation_key),
+      sessionId: String(row.session_id),
+      role: String(row.role),
+      isActive: Boolean(Number(row.is_active)),
+      metadata: this.parseJsonDict(row.metadata),
+      lastActiveAt: row.last_active_at == null ? null : String(row.last_active_at),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
   private rowToAgentSession(row: Record<string, unknown>): AgentSessionRecord {
     return {
       workspaceId: String(row.workspace_id),
@@ -6761,6 +8365,69 @@ export class RuntimeStateStore {
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
       archivedAt: row.archived_at == null ? null : String(row.archived_at)
+    };
+  }
+
+  private rowToSubagentRun(row: Record<string, unknown>): SubagentRunRecord {
+    return {
+      subagentId: String(row.subagent_id),
+      workspaceId: String(row.workspace_id),
+      parentSessionId: row.parent_session_id == null ? null : String(row.parent_session_id),
+      parentInputId: row.parent_input_id == null ? null : String(row.parent_input_id),
+      originMainSessionId: String(row.origin_main_session_id),
+      ownerMainSessionId: String(row.owner_main_session_id),
+      childSessionId: String(row.child_session_id),
+      initialChildInputId: row.initial_child_input_id == null ? null : String(row.initial_child_input_id),
+      currentChildInputId: row.current_child_input_id == null ? null : String(row.current_child_input_id),
+      latestChildInputId: row.latest_child_input_id == null ? null : String(row.latest_child_input_id),
+      title: row.title == null ? null : String(row.title),
+      goal: String(row.goal),
+      context: row.context == null ? null : String(row.context),
+      sourceType: row.source_type == null ? null : String(row.source_type),
+      sourceId: row.source_id == null ? null : String(row.source_id),
+      proposalId: row.proposal_id == null ? null : String(row.proposal_id),
+      cronjobId: row.cronjob_id == null ? null : String(row.cronjob_id),
+      retryOfSubagentId: row.retry_of_subagent_id == null ? null : String(row.retry_of_subagent_id),
+      toolProfile: this.parseJsonDict(row.tool_profile),
+      requestedModel: row.requested_model == null ? null : String(row.requested_model),
+      effectiveModel: row.effective_model == null ? null : String(row.effective_model),
+      status: String(row.status),
+      summary: row.summary == null ? null : String(row.summary),
+      latestProgressPayload:
+        row.latest_progress_payload == null ? null : this.parseJsonObjectOrMessage(row.latest_progress_payload),
+      blockingPayload: row.blocking_payload == null ? null : this.parseJsonObjectOrMessage(row.blocking_payload),
+      resultPayload: row.result_payload == null ? null : this.parseJsonObjectOrMessage(row.result_payload),
+      errorPayload: row.error_payload == null ? null : this.parseJsonObjectOrMessage(row.error_payload),
+      lastEventAt: row.last_event_at == null ? null : String(row.last_event_at),
+      ownerTransferredAt: row.owner_transferred_at == null ? null : String(row.owner_transferred_at),
+      createdAt: String(row.created_at),
+      startedAt: row.started_at == null ? null : String(row.started_at),
+      completedAt: row.completed_at == null ? null : String(row.completed_at),
+      cancelledAt: row.cancelled_at == null ? null : String(row.cancelled_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private rowToMainSessionEventQueue(row: Record<string, unknown>): MainSessionEventQueueRecord {
+    return {
+      eventId: String(row.event_id),
+      workspaceId: String(row.workspace_id),
+      ownerMainSessionId: String(row.owner_main_session_id),
+      originMainSessionId: String(row.origin_main_session_id),
+      subagentId: row.subagent_id == null ? null : String(row.subagent_id),
+      eventType: String(row.event_type),
+      deliveryBucket: String(row.delivery_bucket),
+      status: String(row.status),
+      payload: this.parseJsonDict(row.payload),
+      coalesceKey: row.coalesce_key == null ? null : String(row.coalesce_key),
+      earliestDeliverAt: row.earliest_deliver_at == null ? null : String(row.earliest_deliver_at),
+      latestDeliverAt: row.latest_deliver_at == null ? null : String(row.latest_deliver_at),
+      materializedInputId: row.materialized_input_id == null ? null : String(row.materialized_input_id),
+      supersededByEventId: row.superseded_by_event_id == null ? null : String(row.superseded_by_event_id),
+      deliveredAt: row.delivered_at == null ? null : String(row.delivered_at),
+      supersededAt: row.superseded_at == null ? null : String(row.superseded_at),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
     };
   }
   private parseJsonDict(raw: unknown): Record<string, unknown> {
@@ -6992,6 +8659,18 @@ export class RuntimeStateStore {
     return trimmed || null;
   }
 
+  private requiredNormalizedText(value: string | null | undefined, fieldName: string): string {
+    const normalized = this.normalizedNullableText(value);
+    if (!normalized) {
+      throw new Error(`${fieldName} is required`);
+    }
+    return normalized;
+  }
+
+  private normalizedConversationBindingRole(value: string | null | undefined): string {
+    return this.normalizedNullableText(value) ?? "main";
+  }
+
   private normalizedSessionKind(value: string | null | undefined): string {
     return this.normalizedNullableText(value) ?? "workspace_session";
   }
@@ -7031,6 +8710,71 @@ export class RuntimeStateStore {
       throw new Error("agent session row not found");
     }
     return record;
+  }
+
+  private updateConversationBinding(params: {
+    bindingId: string;
+    fields: ConversationBindingUpdateFields;
+  }): ConversationBindingRecord | null {
+    const existing = this.getConversationBinding({ bindingId: params.bindingId });
+    if (!existing) {
+      return null;
+    }
+    const next: ConversationBindingRecord = {
+      ...existing,
+      sessionId:
+        params.fields.sessionId === undefined
+          ? existing.sessionId
+          : this.requiredNormalizedText(params.fields.sessionId, "sessionId"),
+      role:
+        params.fields.role === undefined
+          ? existing.role
+          : this.normalizedConversationBindingRole(params.fields.role),
+      isActive: params.fields.isActive === undefined ? existing.isActive : Boolean(params.fields.isActive),
+      metadata: params.fields.metadata === undefined ? existing.metadata : params.fields.metadata,
+      lastActiveAt:
+        params.fields.lastActiveAt === undefined
+          ? existing.lastActiveAt
+          : this.normalizedNullableText(params.fields.lastActiveAt),
+      updatedAt: utcNowIso(),
+    };
+
+    this.db()
+      .prepare(`
+        UPDATE conversation_bindings
+        SET session_id = ?,
+            role = ?,
+            is_active = ?,
+            metadata = ?,
+            last_active_at = ?,
+            updated_at = ?
+        WHERE binding_id = ?
+      `)
+      .run(
+        next.sessionId,
+        next.role,
+        next.isActive ? 1 : 0,
+        JSON.stringify(next.metadata),
+        next.lastActiveAt,
+        next.updatedAt,
+        params.bindingId
+      );
+    return this.getConversationBinding({ bindingId: params.bindingId });
+  }
+
+  private listMainSessionEventsByIds(eventIds: string[]): MainSessionEventQueueRecord[] {
+    if (eventIds.length === 0) {
+      return [];
+    }
+    const rows = this.db()
+      .prepare(`
+        SELECT *
+        FROM main_session_event_queue
+        WHERE event_id IN (${eventIds.map(() => "?").join(", ")})
+        ORDER BY datetime(created_at) ASC, event_id ASC
+      `)
+      .all(...eventIds) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToMainSessionEventQueue(row));
   }
 
   private requireUpdatedSession(params: {

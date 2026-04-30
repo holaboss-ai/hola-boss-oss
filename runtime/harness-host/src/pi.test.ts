@@ -19,6 +19,7 @@ import {
   compactPiSession,
   createPiTodoToolDefinitions,
   createPiEventMapperState,
+  filterPiToolDefinitionsForRequest,
   createPiMcpCustomTools,
   mapPiSessionEvent,
   piCompactionReserveTokens,
@@ -98,6 +99,33 @@ test("pi normalizes array-wrapped openai-compatible error bodies", async () => {
     message: "User location is not supported for the API use.",
     status: "FAILED_PRECONDITION",
   });
+});
+
+test("filterPiToolDefinitionsForRequest enforces the projected tool map and aliases", () => {
+  const filtered = filterPiToolDefinitionsForRequest(
+    {
+      tools: {
+        read: true,
+        glob: true,
+        list: true,
+        skill: true,
+        web_search: false,
+      },
+    },
+    [
+      { name: "read" },
+      { name: "find" },
+      { name: "ls" },
+      { name: "skill" },
+      { name: "web_search" },
+      { name: "bash" },
+    ]
+  );
+
+  assert.deepEqual(
+    filtered.map((tool) => tool.name),
+    ["read", "find", "ls", "skill"]
+  );
 });
 
 test("mapPiSessionEvent extracts nested Gemini provider error messages", () => {

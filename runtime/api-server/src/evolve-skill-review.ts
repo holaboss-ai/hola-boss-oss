@@ -12,6 +12,12 @@ import type {
 import type { MemoryModelClientConfig } from "./memory-model-client.js";
 import { queryMemoryModelJson } from "./memory-model-client.js";
 import type { MemoryServiceLike } from "./memory.js";
+import {
+  assistantTextFromTurnArtifacts,
+  compactedSummaryFromTurnArtifacts,
+  permissionDenialsFromTurnArtifacts,
+  toolUsageSummaryFromTurnArtifacts,
+} from "./turn-semantic-artifacts.js";
 import { resolveWorkspaceSkills } from "./workspace-skills.js";
 
 const SKILL_REVIEW_INTERVAL_TURNS = 3;
@@ -406,7 +412,13 @@ function recentCompletedTurnSummaries(store: RuntimeStateStore, turnResult: Turn
       limit: RECENT_SKILL_REVIEW_TURN_LIMIT,
       offset: 0,
     })
-    .map((item) => clipText(item.compactedSummary ?? item.assistantText ?? "", 220))
+    .map((item) => {
+      const summary = compactedSummaryFromTurnArtifacts(store, item);
+      if (summary) {
+        return clipText(summary, 220);
+      }
+      return clipText(assistantTextFromTurnArtifacts(store, item), 220);
+    })
     .filter(Boolean);
 }
 
@@ -529,15 +541,18 @@ export async function reviewTurnForSkillCandidate(params: {
   const resolvedSkillIds = existingResolvedSkillIds(params.store, params.turnResult.workspaceId);
   const workspaceSkillDrafts = existingWorkspaceSkillDrafts(params.store, params.turnResult.workspaceId);
   const workspaceSkillIdSet = new Set(workspaceSkillDrafts.map((skill) => skill.skillId));
+  const assistantText = assistantTextFromTurnArtifacts(params.store, params.turnResult);
+  const toolUsageSummary = toolUsageSummaryFromTurnArtifacts(params.store, params.turnResult);
+  const permissionDenials = permissionDenialsFromTurnArtifacts(params.store, params.turnResult);
   const extracted = await extractSkillCandidateFromModel({
     modelClient: params.modelClient,
     workspaceId: params.turnResult.workspaceId,
     sessionId: params.turnResult.sessionId,
     inputId: params.turnResult.inputId,
     instruction: params.instruction,
-    assistantText: params.turnResult.assistantText,
-    toolUsageSummary: params.turnResult.toolUsageSummary,
-    permissionDenials: params.turnResult.permissionDenials,
+    assistantText,
+    toolUsageSummary,
+    permissionDenials,
     recentUserMessages: recentUserMessages(params.store, params.turnResult),
     recentTurnSummaries: recentCompletedTurnSummaries(params.store, params.turnResult),
     existingResolvedSkillIds: resolvedSkillIds,

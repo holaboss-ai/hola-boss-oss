@@ -34,6 +34,7 @@ test("Pi runtime tools execute through the local runtime capability API", async 
     workspaceId: string;
     sessionId: string;
     selectedModel: string;
+    resultMode: string;
     body: string;
   }> = [];
   const fetchImpl: typeof fetch = async (input, init) => {
@@ -53,6 +54,9 @@ test("Pi runtime tools execute through the local runtime capability API", async 
       sessionId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-session-id"] ?? ""),
       selectedModel: String(
         (init?.headers as Record<string, string> | undefined)?.["x-holaboss-selected-model"] ?? ""
+      ),
+      resultMode: String(
+        (init?.headers as Record<string, string> | undefined)?.["x-holaboss-tool-result-mode"] ?? ""
       ),
       body,
     });
@@ -96,6 +100,7 @@ test("Pi runtime tools execute through the local runtime capability API", async 
       workspaceId: "workspace-1",
       sessionId: "session-main",
       selectedModel: "openai/gpt-5.4",
+      resultMode: "preview",
       body: JSON.stringify({ summary: "ready to work", requested_by: "workspace_agent" }),
     },
   ]);
@@ -278,6 +283,157 @@ test("Pi runtime cronjob tools expose only allowed delivery enum values", async 
   assert.deepEqual(createDeliveryChannelValues, ["system_notification", "session_run"]);
   assert.deepEqual(updateDeliveryModeValues, ["announce", "none"]);
   assert.deepEqual(updateDeliveryChannelValues, ["system_notification", "session_run"]);
+});
+
+test("Pi runtime subagent tools normalize delegated task bodies and control routes", async () => {
+  const requests: Array<{
+    method: string;
+    url: string;
+    workspaceId: string;
+    sessionId: string;
+    body: string;
+  }> = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/api/v1/capabilities/runtime-tools")) {
+      return new Response(JSON.stringify({ available: true }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+
+    requests.push({
+      method: String(init?.method ?? "GET"),
+      url,
+      workspaceId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-workspace-id"] ?? ""),
+      sessionId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-session-id"] ?? ""),
+      body: init?.body ? String(init.body) : "",
+    });
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    });
+  };
+
+  const tools = await resolvePiRuntimeToolDefinitions({
+    runtimeApiBaseUrl: "http://127.0.0.1:5060",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    fetchImpl,
+  });
+
+  const delegateTool = tools.find((tool) => tool.name === "holaboss_delegate_task");
+  const getTool = tools.find((tool) => tool.name === "holaboss_get_subagent");
+  const listTool = tools.find((tool) => tool.name === "holaboss_list_background_tasks");
+  const cancelTool = tools.find((tool) => tool.name === "holaboss_cancel_subagent");
+  const continueTool = tools.find((tool) => tool.name === "holaboss_continue_subagent");
+  assert.ok(delegateTool);
+  assert.ok(getTool);
+  assert.ok(listTool);
+  assert.ok(cancelTool);
+  assert.ok(continueTool);
+
+  await delegateTool.execute(
+    "call-1",
+    {
+      goal: "Research topic A",
+      context: "Focus on recent changes.",
+      tools: ["web", "browser"],
+    },
+    undefined,
+    undefined,
+    {} as never,
+  );
+  await getTool.execute(
+    "call-2",
+    {
+      subagent_id: "subagent-1",
+    },
+    undefined,
+    undefined,
+    {} as never,
+  );
+  await listTool.execute(
+    "call-3",
+    {
+      statuses: ["running", "waiting_on_user"],
+      owner_main_session_id: "session-main",
+      limit: 25,
+    },
+    undefined,
+    undefined,
+    {} as never,
+  );
+  await cancelTool.execute(
+    "call-4",
+    {
+      subagent_id: "subagent-1",
+    },
+    undefined,
+    undefined,
+    {} as never,
+  );
+  await continueTool.execute(
+    "call-5",
+    {
+      subagent_id: "subagent-1",
+      instruction: "Turn those results into a short report.",
+      title: "Report from topic A",
+    },
+    undefined,
+    undefined,
+    {} as never,
+  );
+
+  assert.deepEqual(requests, [
+    {
+      method: "POST",
+      url: "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/subagents",
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      body: JSON.stringify({
+        tasks: [
+          {
+            goal: "Research topic A",
+            context: "Focus on recent changes.",
+            tools: ["web", "browser"],
+          },
+        ],
+      }),
+    },
+    {
+      method: "GET",
+      url: "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/subagents/subagent-1",
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      body: "",
+    },
+    {
+      method: "GET",
+      url: "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/background-tasks?status=running&status=waiting_on_user&owner_main_session_id=session-main&limit=25",
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      body: "",
+    },
+    {
+      method: "POST",
+      url: "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/subagents/subagent-1/cancel",
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      body: JSON.stringify({}),
+    },
+    {
+      method: "POST",
+      url: "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/subagents/subagent-1/continue",
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      body: JSON.stringify({
+        instruction: "Turn those results into a short report.",
+        title: "Report from topic A",
+      }),
+    },
+  ]);
 });
 
 test("Pi runtime image generation tool forwards prompt and optional output settings", async () => {
@@ -823,4 +979,81 @@ test("Pi runtime terminal session tools proxy terminal session routes and includ
     (startTool.promptGuidelines ?? []).join("\n"),
     /After starting a terminal session, use `terminal_session_read` or `terminal_session_wait` to inspect output before claiming success\./,
   );
+});
+
+test("Pi runtime web_search tool forwards pagination window params", async () => {
+  const requests: Array<{
+    method: string;
+    url: string;
+    workspaceId: string;
+    sessionId: string;
+    selectedModel: string;
+    body: string;
+  }> = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/api/v1/capabilities/runtime-tools")) {
+      return new Response(JSON.stringify({ available: true }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+
+    const body = init?.body ? String(init.body) : "";
+    requests.push({
+      method: String(init?.method ?? "GET"),
+      url,
+      workspaceId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-workspace-id"] ?? ""),
+      sessionId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-session-id"] ?? ""),
+      selectedModel: String(
+        (init?.headers as Record<string, string> | undefined)?.["x-holaboss-selected-model"] ?? ""
+      ),
+      body,
+    });
+
+    return new Response(JSON.stringify({ text: "ok", tool_id: "web_search" }), {
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    });
+  };
+
+  const tools = await resolvePiRuntimeToolDefinitions({
+    runtimeApiBaseUrl: "http://127.0.0.1:5060",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    selectedModel: "openai/gpt-5.4",
+    fetchImpl,
+  });
+
+  const webSearchTool = tools.find((tool) => tool.name === "web_search");
+  assert.ok(webSearchTool);
+
+  await webSearchTool.execute(
+    "call-1",
+    {
+      query: "trade policy updates 2026",
+      num_results: 6,
+      text_offset: 8000,
+      text_limit: 2000,
+    },
+    undefined,
+    undefined,
+    {} as never,
+  );
+
+  assert.deepEqual(requests, [
+    {
+      method: "POST",
+      url: "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/web-search",
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      selectedModel: "openai/gpt-5.4",
+      body: JSON.stringify({
+        query: "trade policy updates 2026",
+        num_results: 6,
+        text_offset: 8000,
+        text_limit: 2000,
+      }),
+    },
+  ]);
 });

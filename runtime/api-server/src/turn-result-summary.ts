@@ -1,5 +1,9 @@
 import type { TurnResultRecord } from "@holaboss/runtime-state-store";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 function compactWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -32,10 +36,85 @@ function firstNonEmptyLines(value: string, maxLines: number, maxChars: number): 
   return selected;
 }
 
+function pluralize(value: number, singular: string, plural = `${singular}s`): string {
+  return value === 1 ? singular : plural;
+}
+
+function browserRunSummary(turnResult: TurnResultRecord): string | null {
+  const browser = isRecord(turnResult.toolUsageSummary.browser)
+    ? turnResult.toolUsageSummary.browser
+    : null;
+  if (!browser) {
+    return null;
+  }
+  const totalCalls =
+    typeof browser.total_calls === "number" && Number.isFinite(browser.total_calls)
+      ? browser.total_calls
+      : 0;
+  if (totalCalls <= 0) {
+    return null;
+  }
+  const stateReads =
+    typeof browser.state_reads === "number" && Number.isFinite(browser.state_reads)
+      ? browser.state_reads
+      : 0;
+  const actionCalls =
+    typeof browser.action_calls === "number" && Number.isFinite(browser.action_calls)
+      ? browser.action_calls
+      : 0;
+  const waitCalls =
+    typeof browser.wait_calls === "number" && Number.isFinite(browser.wait_calls)
+      ? browser.wait_calls
+      : 0;
+  const compactReads =
+    typeof browser.compact_state_reads === "number" && Number.isFinite(browser.compact_state_reads)
+      ? browser.compact_state_reads
+      : 0;
+  const truncatedReads =
+    typeof browser.truncated_state_reads === "number" && Number.isFinite(browser.truncated_state_reads)
+      ? browser.truncated_state_reads
+      : 0;
+  const parts = [`${totalCalls} browser ${pluralize(totalCalls, "call")}`];
+  if (stateReads > 0) {
+    parts.push(`${stateReads} state ${pluralize(stateReads, "read")}`);
+  }
+  if (actionCalls > 0) {
+    parts.push(`${actionCalls} ${pluralize(actionCalls, "action")}`);
+  }
+  if (waitCalls > 0) {
+    parts.push(`${waitCalls} ${pluralize(waitCalls, "wait")}`);
+  }
+  if (compactReads > 0) {
+    parts.push(`${compactReads} compact snapshot${compactReads === 1 ? "" : "s"}`);
+  }
+  if (truncatedReads > 0) {
+    parts.push(`${truncatedReads} truncated snapshot${truncatedReads === 1 ? "" : "s"}`);
+  }
+  const stopReason = compactWhitespace(turnResult.stopReason ?? "");
+  if (turnResult.status === "failed") {
+    return stopReason
+      ? `Browser-heavy run failed after ${parts.join(", ")} with stop reason ${stopReason}.`
+      : `Browser-heavy run failed after ${parts.join(", ")}.`;
+  }
+  if (turnResult.status === "waiting_user") {
+    return `Browser-heavy run paused waiting for user input after ${parts.join(", ")}.`;
+  }
+  if (turnResult.status === "paused") {
+    return `Browser-heavy run was paused after ${parts.join(", ")}.`;
+  }
+  return stopReason
+    ? `Browser-heavy run completed after ${parts.join(", ")} with stop reason ${stopReason}.`
+    : `Browser-heavy run completed after ${parts.join(", ")}.`;
+}
+
 export function compactTurnSummary(turnResult: TurnResultRecord): string | null {
   const assistantLines = firstNonEmptyLines(turnResult.assistantText, 3, 320);
   if (assistantLines.length > 0) {
     return assistantLines.join(" ");
+  }
+  const browserSummary = browserRunSummary(turnResult);
+  if (browserSummary) {
+    return browserSummary;
   }
   if (turnResult.status === "waiting_user") {
     return "Run paused waiting for user input.";

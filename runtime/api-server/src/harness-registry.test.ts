@@ -80,7 +80,7 @@ test("requireRuntimeHarnessPlugin uses extended timeouts for task proposal runs"
   );
 });
 
-test("requireRuntimeHarnessPlugin stages browser tools only for workspace sessions", () => {
+test("requireRuntimeHarnessPlugin stages browser tools for executor sessions, not front sessions", () => {
   const plugin = requireRuntimeHarnessPlugin("pi");
   const browserConfig = {
     desktopBrowserEnabled: true,
@@ -92,6 +92,28 @@ test("requireRuntimeHarnessPlugin stages browser tools only for workspace sessio
     plugin.stageBrowserTools({
       workspaceDir: "/tmp/workspace-1",
       sessionKind: "workspace_session",
+      browserConfig
+    }),
+    {
+      changed: false,
+      toolIds: []
+    }
+  );
+  assert.deepEqual(
+    plugin.stageBrowserTools({
+      workspaceDir: "/tmp/workspace-1",
+      sessionKind: "subagent",
+      browserConfig
+    }),
+    {
+      changed: false,
+      toolIds: [...DESKTOP_BROWSER_TOOL_IDS]
+    }
+  );
+  assert.deepEqual(
+    plugin.stageBrowserTools({
+      workspaceDir: "/tmp/workspace-1",
+      sessionKind: "task_proposal",
       browserConfig
     }),
     {

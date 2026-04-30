@@ -72,6 +72,7 @@ export interface HarnessHostPiRequest {
   input_id: string;
   instruction: string;
   context_messages?: string[];
+  tools?: Record<string, boolean>;
   attachments?: HarnessHostInputAttachmentPayload[];
   thinking_value?: string | null;
   debug: boolean;
@@ -388,6 +389,7 @@ export function decodeHarnessHostPiRequestBase64(encoded: string): HarnessHostPi
     input_id: requiredString(parsed.input_id, "input_id"),
     instruction: requiredString(parsed.instruction, "instruction"),
     context_messages: stringArray(parsed.context_messages),
+    tools: booleanRecord(parsed.tools),
     attachments: inputAttachments(parsed.attachments, "attachments"),
     thinking_value: optionalString(parsed.thinking_value),
     debug: optionalBoolean(parsed.debug, false),

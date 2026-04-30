@@ -266,7 +266,6 @@ test("session checkpoint merges snapshot compaction into a live session that onl
       capabilityManifestFingerprint: null,
       requestSnapshotFingerprint: "snap-1",
       promptCacheProfile: null,
-      compactedSummary: null,
       tokenUsage: null,
       createdAt: new Date().toISOString(),
     });
@@ -395,7 +394,6 @@ test("session checkpoint re-resolves model client auth while preserving snapshot
       capabilityManifestFingerprint: null,
       requestSnapshotFingerprint: "snap-auth",
       promptCacheProfile: null,
-      compactedSummary: null,
       tokenUsage: null,
       createdAt: new Date().toISOString(),
     });
@@ -561,7 +559,6 @@ test("session checkpoint records not_compacted when PI reports a compaction no-o
       capabilityManifestFingerprint: null,
       requestSnapshotFingerprint: "snap-not-compacted",
       promptCacheProfile: null,
-      compactedSummary: null,
       tokenUsage: null,
       createdAt: new Date().toISOString(),
     });
@@ -669,7 +666,6 @@ test("session checkpoint treats provider 422 summarization failures as a soft no
       capabilityManifestFingerprint: null,
       requestSnapshotFingerprint: "snap-soft-422",
       promptCacheProfile: null,
-      compactedSummary: null,
       tokenUsage: null,
       createdAt: new Date().toISOString(),
     });

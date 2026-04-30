@@ -35,6 +35,7 @@ import {
   BrowserView,
   BrowserWindow,
   Menu,
+  Notification,
   Tray,
   clipboard,
   dialog,
@@ -101,7 +102,7 @@ import { buildAppSdkClient } from "./appSdkClient.js";
 import { ensureWorkspaceGitRepo } from "./workspace-git.js";
 import {
   createRuntimeClient,
-  isTransientRuntimeError,
+  isTransientRuntimeError as sdkIsTransientRuntimeError,
   runtimeErrorFromBody,
 } from "@holaboss/runtime-client";
 import { installBffFetchHandler } from "./bff-fetch.js";
@@ -185,6 +186,9 @@ const USER_BROWSER_LOCK_TIMEOUT_MS = 15_000;
 const SESSION_BROWSER_BUSY_CHECK_MS = 15_000;
 const SESSION_BROWSER_COMPLETED_GRACE_MS = 30_000;
 const SESSION_BROWSER_WARM_TTL_MS = 2 * 60 * 1000;
+const BROWSER_OBSERVABILITY_ENTRY_LIMIT = 100;
+const BROWSER_REQUEST_HISTORY_LIMIT = 200;
+const BROWSER_OBSERVABILITY_DEFAULT_LIMIT = 20;
 // Chromium cookie / profile-discovery constants moved to
 // `browser-pane/import-chromium.ts`. Safari export filename constants
 // moved to `browser-pane/import-browsers.ts`.
@@ -264,6 +268,14 @@ const RUNTIME_LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<
 interface DevLaunchContext {
   devServerUrl: string;
   userDataPath: string;
+}
+
+interface DesktopNativeNotificationPayload {
+  title: string;
+  body: string;
+  workspaceId?: string | null;
+  sessionId?: string | null;
+  force?: boolean;
 }
 
 function maybeAuthCallbackUrl(argument: string | undefined): string | null {
@@ -548,6 +560,10 @@ interface BrowserTabRecord {
   state: BrowserStatePayload;
   popupFrameName?: string;
   popupOpenedAtMs?: number;
+  consoleEntries: BrowserConsoleEntry[];
+  errorEntries: BrowserObservedError[];
+  requests: Map<string, BrowserRequestRecord>;
+  requestOrder: string[];
 }
 
 interface BrowserUserLockState {
@@ -643,6 +659,66 @@ interface BrowserDownloadPayload {
   totalBytes: number;
   createdAt: string;
   completedAt: string | null;
+}
+
+type BrowserConsoleLevel = "debug" | "info" | "warning" | "error";
+type BrowserErrorSource = "page" | "runtime" | "network";
+
+interface BrowserConsoleEntry {
+  id: string;
+  level: BrowserConsoleLevel;
+  message: string;
+  sourceId: string;
+  lineNumber: number | null;
+  timestamp: string;
+  frameUrl: string;
+}
+
+interface BrowserObservedError {
+  id: string;
+  source: BrowserErrorSource;
+  kind: string;
+  level: "warning" | "error";
+  message: string;
+  timestamp: string;
+  url: string;
+  requestId?: string;
+  statusCode?: number;
+  resourceType?: string;
+  lineNumber?: number;
+  sourceId?: string;
+  errorCode?: number;
+}
+
+interface BrowserRequestBodyMetadata {
+  entryCount: number;
+  byteLength: number;
+  fileCount: number;
+  types: string[];
+}
+
+interface BrowserResponseBodyMetadata {
+  contentType: string | null;
+  contentLength: number | null;
+}
+
+interface BrowserRequestRecord {
+  id: string;
+  url: string;
+  method: string;
+  resourceType: string;
+  referrer: string;
+  startedAt: string;
+  completedAt: string | null;
+  durationMs: number | null;
+  fromCache: boolean;
+  statusCode: number | null;
+  statusLine: string;
+  error: string;
+  requestHeaders: Record<string, string[]> | null;
+  responseHeaders: Record<string, string[]> | null;
+  requestBody: BrowserRequestBodyMetadata | null;
+  responseBody: BrowserResponseBodyMetadata | null;
 }
 
 interface BrowserHistoryEntryPayload {
@@ -2560,6 +2636,84 @@ interface TaskProposalListResponsePayload {
   count: number;
 }
 
+interface BackgroundTaskLiveStatePayload {
+  runtime_status: string | null;
+  current_input_id: string | null;
+  current_input_status: string | null;
+  latest_input_id: string | null;
+  latest_input_status: string | null;
+  latest_turn_status: string | null;
+  latest_turn_stop_reason: string | null;
+}
+
+interface BackgroundTaskRecordPayload {
+  subagent_id: string;
+  workspace_id: string;
+  parent_session_id: string | null;
+  parent_input_id: string | null;
+  origin_main_session_id: string;
+  owner_main_session_id: string;
+  child_session_id: string;
+  initial_child_input_id: string | null;
+  current_child_input_id: string | null;
+  latest_child_input_id: string | null;
+  title: string;
+  goal: string;
+  context: string | null;
+  source_type: string | null;
+  source_id: string | null;
+  proposal_id: string | null;
+  cronjob_id: string | null;
+  retry_of_subagent_id: string | null;
+  tool_profile: Record<string, unknown>;
+  requested_model: string | null;
+  effective_model: string | null;
+  status: string;
+  summary: string | null;
+  latest_progress_payload: Record<string, unknown> | null;
+  blocking_payload: Record<string, unknown> | null;
+  result_payload: Record<string, unknown> | null;
+  error_payload: Record<string, unknown> | null;
+  last_event_at: string | null;
+  owner_transferred_at: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  cancelled_at: string | null;
+  updated_at: string;
+  live_state: BackgroundTaskLiveStatePayload;
+}
+
+interface BackgroundTaskListRequestPayload {
+  workspaceId: string;
+  ownerMainSessionId?: string | null;
+  statuses?: string[];
+  limit?: number;
+}
+
+interface BackgroundTaskListResponsePayload {
+  tasks: BackgroundTaskRecordPayload[];
+  count: number;
+}
+
+interface MainSessionLegacyExportPayload {
+  session_id: string;
+  title: string | null;
+  kind: string;
+  archived_at: string;
+  exported_at: string;
+  message_count: number;
+  output_count: number;
+  json_path: string;
+  markdown_path: string;
+}
+
+interface EnsureWorkspaceMainSessionResponsePayload {
+  session: AgentSessionRecordPayload;
+  migrated_legacy_sessions: MainSessionLegacyExportPayload[];
+  migrated_legacy_session_count: number;
+}
+
 type MemoryUpdateProposalKind = "preference" | "identity" | "profile";
 type MemoryUpdateProposalState = "pending" | "accepted" | "dismissed";
 
@@ -3455,6 +3609,430 @@ function setRequestHeaderValue(
   return headers;
 }
 
+function browserObservabilityLimit(
+  value: string | null | undefined,
+  defaultValue = BROWSER_OBSERVABILITY_DEFAULT_LIMIT,
+): number {
+  const parsed = Number(value ?? "");
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return defaultValue;
+  }
+  return Math.max(1, Math.min(BROWSER_OBSERVABILITY_ENTRY_LIMIT, Math.floor(parsed)));
+}
+
+function browserConsoleLevelValue(value: unknown): BrowserConsoleLevel {
+  return value === "warning" ||
+    value === "error" ||
+    value === "debug" ||
+    value === "info"
+    ? value
+    : "info";
+}
+
+function browserConsoleLevelRank(level: BrowserConsoleLevel): number {
+  switch (level) {
+    case "debug":
+      return 0;
+    case "info":
+      return 1;
+    case "warning":
+      return 2;
+    case "error":
+      return 3;
+  }
+}
+
+function browserObservedErrorSource(
+  value: unknown,
+): BrowserErrorSource | null {
+  return value === "page" || value === "runtime" || value === "network"
+    ? value
+    : null;
+}
+
+function browserIsoFromNetworkTimestamp(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return new Date(value * 1000).toISOString();
+  }
+  return new Date().toISOString();
+}
+
+function browserHeaderRecord(
+  value: unknown,
+): Record<string, string[]> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const result: Record<string, string[]> = {};
+  for (const [key, rawValue] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof rawValue === "string") {
+      result[key] = [rawValue];
+      continue;
+    }
+    if (Array.isArray(rawValue)) {
+      const entries = rawValue
+        .filter((entry): entry is string => typeof entry === "string")
+        .map((entry) => entry);
+      if (entries.length > 0) {
+        result[key] = entries;
+      }
+    }
+  }
+  return Object.keys(result).length > 0 ? result : null;
+}
+
+function browserHeaderFirstValue(
+  headers: Record<string, string[]> | null | undefined,
+  headerName: string,
+): string | null {
+  if (!headers) {
+    return null;
+  }
+  const normalizedName = headerName.toLowerCase();
+  for (const [key, values] of Object.entries(headers)) {
+    if (key.toLowerCase() !== normalizedName || values.length === 0) {
+      continue;
+    }
+    const value = values[0]?.trim() || "";
+    return value || null;
+  }
+  return null;
+}
+
+function browserResponseBodyMetadata(
+  headers: Record<string, string[]> | null,
+): BrowserResponseBodyMetadata | null {
+  if (!headers) {
+    return null;
+  }
+  const contentType = browserHeaderFirstValue(headers, "content-type");
+  const contentLengthRaw = browserHeaderFirstValue(headers, "content-length");
+  const contentLength = contentLengthRaw ? Number(contentLengthRaw) : null;
+  if (!contentType && !Number.isFinite(contentLength ?? NaN)) {
+    return null;
+  }
+  return {
+    contentType,
+    contentLength:
+      typeof contentLength === "number" && Number.isFinite(contentLength)
+        ? contentLength
+        : null,
+  };
+}
+
+function browserRequestBodyMetadata(
+  uploadData: unknown,
+): BrowserRequestBodyMetadata | null {
+  if (!Array.isArray(uploadData) || uploadData.length === 0) {
+    return null;
+  }
+  let byteLength = 0;
+  let fileCount = 0;
+  const types = new Set<string>();
+  for (const entry of uploadData) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    const record = entry as Record<string, unknown>;
+    if (record.bytes instanceof Uint8Array) {
+      byteLength += record.bytes.byteLength;
+      types.add("bytes");
+    } else if (Buffer.isBuffer(record.bytes)) {
+      byteLength += record.bytes.byteLength;
+      types.add("bytes");
+    } else if (typeof record.file === "string" && record.file.trim()) {
+      fileCount += 1;
+      types.add("file");
+    } else if (typeof record.blobUUID === "string" && record.blobUUID.trim()) {
+      types.add("blob");
+    } else {
+      types.add("other");
+    }
+  }
+  return {
+    entryCount: uploadData.length,
+    byteLength,
+    fileCount,
+    types: [...types],
+  };
+}
+
+function appendBoundedEntry<T>(entries: T[], entry: T, limit: number): void {
+  entries.push(entry);
+  if (entries.length > limit) {
+    entries.splice(0, entries.length - limit);
+  }
+}
+
+function browserTabForWebContentsId(
+  webContentsId: number,
+): BrowserTabRecord | null {
+  for (const workspace of browserWorkspaces.values()) {
+    for (const tab of workspace.spaces.user.tabs.values()) {
+      if (tab.view.webContents.id === webContentsId) {
+        return tab;
+      }
+    }
+    for (const tab of workspace.spaces.agent.tabs.values()) {
+      if (tab.view.webContents.id === webContentsId) {
+        return tab;
+      }
+    }
+    for (const tabSpace of workspace.agentSessionSpaces.values()) {
+      for (const tab of tabSpace.tabs.values()) {
+        if (tab.view.webContents.id === webContentsId) {
+          return tab;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function appendBrowserObservedError(
+  tab: BrowserTabRecord,
+  entry: BrowserObservedError,
+): void {
+  appendBoundedEntry(
+    tab.errorEntries,
+    entry,
+    BROWSER_OBSERVABILITY_ENTRY_LIMIT,
+  );
+}
+
+function browserRequestIdValue(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(Math.trunc(value));
+  }
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  return "";
+}
+
+function browserRequestFailure(record: BrowserRequestRecord): boolean {
+  return Boolean(record.error) || (record.statusCode ?? 0) >= 400;
+}
+
+function browserRequestSummary(
+  record: BrowserRequestRecord,
+): Record<string, unknown> {
+  return {
+    id: record.id,
+    url: record.url,
+    method: record.method,
+    resourceType: record.resourceType,
+    startedAt: record.startedAt,
+    completedAt: record.completedAt,
+    durationMs: record.durationMs,
+    fromCache: record.fromCache,
+    statusCode: record.statusCode,
+    statusLine: record.statusLine,
+    error: record.error,
+  };
+}
+
+function upsertBrowserRequestRecord(
+  tab: BrowserTabRecord,
+  requestId: string,
+  overrides: Partial<BrowserRequestRecord>,
+): BrowserRequestRecord {
+  const existing = tab.requests.get(requestId);
+  if (existing) {
+    const next = { ...existing, ...overrides };
+    tab.requests.set(requestId, next);
+    return next;
+  }
+  const next: BrowserRequestRecord = {
+    id: requestId,
+    url: overrides.url ?? "",
+    method: overrides.method ?? "",
+    resourceType: overrides.resourceType ?? "other",
+    referrer: overrides.referrer ?? "",
+    startedAt: overrides.startedAt ?? new Date().toISOString(),
+    completedAt: overrides.completedAt ?? null,
+    durationMs: overrides.durationMs ?? null,
+    fromCache: overrides.fromCache ?? false,
+    statusCode: overrides.statusCode ?? null,
+    statusLine: overrides.statusLine ?? "",
+    error: overrides.error ?? "",
+    requestHeaders: overrides.requestHeaders ?? null,
+    responseHeaders: overrides.responseHeaders ?? null,
+    requestBody: overrides.requestBody ?? null,
+    responseBody: overrides.responseBody ?? null,
+  };
+  tab.requests.set(requestId, next);
+  tab.requestOrder.push(requestId);
+  if (tab.requestOrder.length > BROWSER_REQUEST_HISTORY_LIMIT) {
+    const removedRequestId = tab.requestOrder.shift();
+    if (removedRequestId) {
+      tab.requests.delete(removedRequestId);
+    }
+  }
+  return next;
+}
+
+function trackBrowserRequestStart(details: {
+  id: unknown;
+  webContentsId?: number;
+  url?: string;
+  method?: string;
+  resourceType?: string;
+  referrer?: string;
+  timestamp?: number;
+  uploadData?: unknown;
+}): void {
+  if (typeof details.webContentsId !== "number") {
+    return;
+  }
+  const tab = browserTabForWebContentsId(details.webContentsId);
+  const requestId = browserRequestIdValue(details.id);
+  if (!tab || !requestId) {
+    return;
+  }
+  upsertBrowserRequestRecord(tab, requestId, {
+    url: typeof details.url === "string" ? details.url : "",
+    method: typeof details.method === "string" ? details.method : "",
+    resourceType:
+      typeof details.resourceType === "string" ? details.resourceType : "other",
+    referrer: typeof details.referrer === "string" ? details.referrer : "",
+    startedAt: browserIsoFromNetworkTimestamp(details.timestamp),
+    requestBody: browserRequestBodyMetadata(details.uploadData),
+  });
+}
+
+function trackBrowserRequestHeaders(details: {
+  id: unknown;
+  webContentsId?: number;
+  requestHeaders?: unknown;
+}): void {
+  if (typeof details.webContentsId !== "number") {
+    return;
+  }
+  const tab = browserTabForWebContentsId(details.webContentsId);
+  const requestId = browserRequestIdValue(details.id);
+  if (!tab || !requestId) {
+    return;
+  }
+  upsertBrowserRequestRecord(tab, requestId, {
+    requestHeaders: browserHeaderRecord(details.requestHeaders),
+  });
+}
+
+function trackBrowserRequestCompletion(details: {
+  id: unknown;
+  webContentsId?: number;
+  url?: string;
+  method?: string;
+  resourceType?: string;
+  referrer?: string;
+  timestamp?: number;
+  fromCache?: boolean;
+  statusCode?: number;
+  statusLine?: string;
+  error?: string;
+  responseHeaders?: unknown;
+}): void {
+  if (typeof details.webContentsId !== "number") {
+    return;
+  }
+  const tab = browserTabForWebContentsId(details.webContentsId);
+  const requestId = browserRequestIdValue(details.id);
+  if (!tab || !requestId) {
+    return;
+  }
+  const existing = upsertBrowserRequestRecord(tab, requestId, {
+    url: typeof details.url === "string" ? details.url : "",
+    method: typeof details.method === "string" ? details.method : "",
+    resourceType:
+      typeof details.resourceType === "string" ? details.resourceType : "other",
+    referrer: typeof details.referrer === "string" ? details.referrer : "",
+    completedAt: browserIsoFromNetworkTimestamp(details.timestamp),
+    fromCache: details.fromCache === true,
+    statusCode:
+      typeof details.statusCode === "number" && Number.isFinite(details.statusCode)
+        ? details.statusCode
+        : null,
+    statusLine: typeof details.statusLine === "string" ? details.statusLine : "",
+    error: typeof details.error === "string" ? details.error : "",
+    responseHeaders: browserHeaderRecord(details.responseHeaders),
+  });
+  if (existing.completedAt) {
+    const startedAtMs = Date.parse(existing.startedAt);
+    const completedAtMs = Date.parse(existing.completedAt);
+    if (Number.isFinite(startedAtMs) && Number.isFinite(completedAtMs)) {
+      existing.durationMs = Math.max(0, completedAtMs - startedAtMs);
+    }
+  }
+  existing.responseBody = browserResponseBodyMetadata(existing.responseHeaders);
+  tab.requests.set(requestId, existing);
+  if ((existing.statusCode ?? 0) >= 400) {
+    appendBrowserObservedError(tab, {
+      id: `network-${requestId}-${existing.completedAt ?? existing.startedAt}`,
+      source: "network",
+      kind: "http_error",
+      level: "error",
+      message:
+        existing.statusLine || `HTTP ${existing.statusCode ?? "error"} ${existing.url}`,
+      timestamp: existing.completedAt ?? new Date().toISOString(),
+      url: existing.url,
+      requestId,
+      statusCode: existing.statusCode ?? undefined,
+      resourceType: existing.resourceType,
+    });
+  }
+}
+
+function trackBrowserRequestFailure(details: {
+  id: unknown;
+  webContentsId?: number;
+  url?: string;
+  method?: string;
+  resourceType?: string;
+  referrer?: string;
+  timestamp?: number;
+  fromCache?: boolean;
+  error?: string;
+}): void {
+  if (typeof details.webContentsId !== "number") {
+    return;
+  }
+  const tab = browserTabForWebContentsId(details.webContentsId);
+  const requestId = browserRequestIdValue(details.id);
+  if (!tab || !requestId) {
+    return;
+  }
+  const existing = upsertBrowserRequestRecord(tab, requestId, {
+    url: typeof details.url === "string" ? details.url : "",
+    method: typeof details.method === "string" ? details.method : "",
+    resourceType:
+      typeof details.resourceType === "string" ? details.resourceType : "other",
+    referrer: typeof details.referrer === "string" ? details.referrer : "",
+    completedAt: browserIsoFromNetworkTimestamp(details.timestamp),
+    fromCache: details.fromCache === true,
+    error: typeof details.error === "string" ? details.error : "Request failed",
+  });
+  if (existing.completedAt) {
+    const startedAtMs = Date.parse(existing.startedAt);
+    const completedAtMs = Date.parse(existing.completedAt);
+    if (Number.isFinite(startedAtMs) && Number.isFinite(completedAtMs)) {
+      existing.durationMs = Math.max(0, completedAtMs - startedAtMs);
+    }
+  }
+  tab.requests.set(requestId, existing);
+  appendBrowserObservedError(tab, {
+    id: `network-${requestId}-${existing.completedAt ?? existing.startedAt}`,
+    source: "network",
+    kind: "request_error",
+    level: "error",
+    message: existing.error || `Request failed for ${existing.url}`,
+    timestamp: existing.completedAt ?? new Date().toISOString(),
+    url: existing.url,
+    requestId,
+    resourceType: existing.resourceType,
+  });
+}
+
 function configureBrowserWorkspaceSession(
   session: Session,
 ): BrowserSessionIdentity {
@@ -3462,6 +4040,13 @@ function configureBrowserWorkspaceSession(
   session.setUserAgent(
     browserIdentity.userAgent,
     browserIdentity.acceptLanguages,
+  );
+  session.webRequest.onBeforeRequest(
+    { urls: ["http://*/*", "https://*/*"] },
+    (details, callback) => {
+      trackBrowserRequestStart(details);
+      callback({});
+    },
   );
   session.webRequest.onBeforeSendHeaders(
     { urls: ["http://*/*", "https://*/*"] },
@@ -3474,7 +4059,23 @@ function configureBrowserWorkspaceSession(
         "Accept-Language",
         browserIdentity.acceptLanguages,
       );
+      trackBrowserRequestHeaders({
+        ...details,
+        requestHeaders,
+      });
       callback({ requestHeaders });
+    },
+  );
+  session.webRequest.onCompleted(
+    { urls: ["http://*/*", "https://*/*"] },
+    (details) => {
+      trackBrowserRequestCompletion(details);
+    },
+  );
+  session.webRequest.onErrorOccurred(
+    { urls: ["http://*/*", "https://*/*"] },
+    (details) => {
+      trackBrowserRequestFailure(details);
     },
   );
   return browserIdentity;
@@ -5438,6 +6039,228 @@ async function handleDesktopBrowserServiceRequest(
       return;
     }
 
+    if (method === "GET" && pathname === "/api/v1/browser/downloads") {
+      const workspace = await ensureTargetBrowserSpace("downloads");
+      if (!workspace) {
+        return;
+      }
+      writeBrowserServiceJson(response, 200, {
+        downloads: workspace.downloads,
+      });
+      return;
+    }
+
+    if (method === "GET" && pathname === "/api/v1/browser/console") {
+      if (!(await ensureTargetBrowserSpace("console"))) {
+        return;
+      }
+      const activeTab = getActiveBrowserTab(
+        targetWorkspaceId,
+        targetSpace,
+        ensuredSessionId,
+        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
+      );
+      if (!activeTab) {
+        writeBrowserServiceJson(response, 409, {
+          error: "No active browser tab is available.",
+        });
+        return;
+      }
+      const requestedLevel = requestUrl.searchParams.get("level")?.trim() || "";
+      const minimumLevel =
+        requestedLevel === "debug" ||
+        requestedLevel === "info" ||
+        requestedLevel === "warning" ||
+        requestedLevel === "error"
+          ? requestedLevel
+          : null;
+      const filtered = [...activeTab.consoleEntries].filter((entry) =>
+        minimumLevel
+          ? browserConsoleLevelRank(entry.level) >=
+            browserConsoleLevelRank(minimumLevel)
+          : true,
+      );
+      const limit = browserObservabilityLimit(
+        requestUrl.searchParams.get("limit"),
+      );
+      const entries = filtered.slice(-limit).reverse();
+      writeBrowserServiceJson(response, 200, {
+        entries,
+        total: filtered.length,
+        truncated: filtered.length > entries.length,
+      });
+      return;
+    }
+
+    if (method === "GET" && pathname === "/api/v1/browser/errors") {
+      if (!(await ensureTargetBrowserSpace("errors"))) {
+        return;
+      }
+      const activeTab = getActiveBrowserTab(
+        targetWorkspaceId,
+        targetSpace,
+        ensuredSessionId,
+        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
+      );
+      if (!activeTab) {
+        writeBrowserServiceJson(response, 409, {
+          error: "No active browser tab is available.",
+        });
+        return;
+      }
+      const requestedSource = browserObservedErrorSource(
+        requestUrl.searchParams.get("source")?.trim() || null,
+      );
+      const filtered = [...activeTab.errorEntries].filter((entry) =>
+        requestedSource ? entry.source === requestedSource : true,
+      );
+      const limit = browserObservabilityLimit(
+        requestUrl.searchParams.get("limit"),
+      );
+      const errors = filtered.slice(-limit).reverse();
+      writeBrowserServiceJson(response, 200, {
+        errors,
+        total: filtered.length,
+        truncated: filtered.length > errors.length,
+      });
+      return;
+    }
+
+    if (method === "GET" && pathname === "/api/v1/browser/requests") {
+      if (!(await ensureTargetBrowserSpace("requests"))) {
+        return;
+      }
+      const activeTab = getActiveBrowserTab(
+        targetWorkspaceId,
+        targetSpace,
+        ensuredSessionId,
+        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
+      );
+      if (!activeTab) {
+        writeBrowserServiceJson(response, 409, {
+          error: "No active browser tab is available.",
+        });
+        return;
+      }
+      const requestedResourceType =
+        requestUrl.searchParams.get("resource_type")?.trim().toLowerCase() || "";
+      const failuresOnly = requestUrl.searchParams.get("failures_only") === "true";
+      const filtered = [...activeTab.requestOrder]
+        .map((requestId) => activeTab.requests.get(requestId) ?? null)
+        .filter((request): request is BrowserRequestRecord => Boolean(request))
+        .filter((request) =>
+          requestedResourceType
+            ? request.resourceType.toLowerCase() === requestedResourceType
+            : true,
+        )
+        .filter((request) => (failuresOnly ? browserRequestFailure(request) : true));
+      const limit = browserObservabilityLimit(
+        requestUrl.searchParams.get("limit"),
+      );
+      const requests = filtered.slice(-limit).reverse().map((request) =>
+        browserRequestSummary(request),
+      );
+      writeBrowserServiceJson(response, 200, {
+        requests,
+        total: filtered.length,
+        truncated: filtered.length > requests.length,
+      });
+      return;
+    }
+
+    if (
+      method === "GET" &&
+      pathname.startsWith("/api/v1/browser/requests/")
+    ) {
+      if (!(await ensureTargetBrowserSpace("request"))) {
+        return;
+      }
+      const activeTab = getActiveBrowserTab(
+        targetWorkspaceId,
+        targetSpace,
+        ensuredSessionId,
+        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
+      );
+      if (!activeTab) {
+        writeBrowserServiceJson(response, 409, {
+          error: "No active browser tab is available.",
+        });
+        return;
+      }
+      const requestId = decodeURIComponent(
+        pathname.slice("/api/v1/browser/requests/".length),
+      ).trim();
+      if (!requestId) {
+        writeBrowserServiceJson(response, 400, {
+          error: "Request id is required.",
+        });
+        return;
+      }
+      const requestRecord = activeTab.requests.get(requestId) ?? null;
+      if (!requestRecord) {
+        writeBrowserServiceJson(response, 404, {
+          error: "Browser request not found for the active tab.",
+        });
+        return;
+      }
+      writeBrowserServiceJson(response, 200, {
+        request: requestRecord,
+      });
+      return;
+    }
+
+    if (method === "GET" && pathname === "/api/v1/browser/cookies") {
+      const workspace = await ensureTargetBrowserSpace("cookies:get");
+      if (!workspace) {
+        return;
+      }
+      const useVisibleAgentSession = targetSpace === "agent" && !requestedSessionId;
+      const activeTab = getActiveBrowserTab(
+        targetWorkspaceId,
+        targetSpace,
+        ensuredSessionId,
+        { useVisibleAgentSession },
+      );
+      const requestedUrl = requestUrl.searchParams.get("url")?.trim() || "";
+      const requestedName = requestUrl.searchParams.get("name")?.trim() || "";
+      const requestedDomain =
+        requestUrl.searchParams.get("domain")?.trim() || "";
+      try {
+        const cookies = await workspace.session.cookies.get({
+          ...(requestedUrl || activeTab?.view.webContents.getURL()
+            ? { url: requestedUrl || activeTab?.view.webContents.getURL() || "" }
+            : {}),
+          ...(requestedName ? { name: requestedName } : {}),
+          ...(requestedDomain ? { domain: requestedDomain } : {}),
+        });
+        writeBrowserServiceJson(response, 200, {
+          cookies: cookies.map((cookie) => ({
+            name: cookie.name || "",
+            value: cookie.value || "",
+            domain: cookie.domain || "",
+            path: cookie.path || "/",
+            secure: Boolean(cookie.secure),
+            httpOnly: Boolean(cookie.httpOnly),
+            session: Boolean(cookie.session),
+            sameSite: cookie.sameSite || "unspecified",
+            expirationDate:
+              typeof cookie.expirationDate === "number" &&
+              Number.isFinite(cookie.expirationDate)
+                ? cookie.expirationDate
+                : null,
+          })),
+        });
+      } catch (error) {
+        writeBrowserServiceJson(response, 400, {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to read browser cookies.",
+        });
+      }
+      return;
+    }
+
     if (method === "GET" && pathname === "/api/v1/browser/page") {
       const workspace = await ensureTargetBrowserSpace("page");
       if (!workspace) {
@@ -5496,6 +6319,173 @@ async function handleDesktopBrowserServiceRequest(
         ensuredSessionId,
       );
       writeBrowserServiceJson(response, 200, snapshot);
+      return;
+    }
+
+    if (method === "POST" && pathname === "/api/v1/browser/tabs/select") {
+      const payload = await readBrowserServiceJsonBody(request);
+      const tabId =
+        typeof payload.tab_id === "string" && payload.tab_id.trim()
+          ? payload.tab_id.trim()
+          : typeof payload.tabId === "string" && payload.tabId.trim()
+            ? payload.tabId.trim()
+            : "";
+      if (!tabId) {
+        writeBrowserServiceJson(response, 400, {
+          error: "Field 'tab_id' is required.",
+        });
+        return;
+      }
+      const workspace = await ensureTargetBrowserSpace("tabs:select");
+      if (!workspace) {
+        return;
+      }
+      const snapshot = await setActiveBrowserTab(tabId, {
+        workspaceId: workspace.workspaceId,
+        space: targetSpace,
+        sessionId: ensuredSessionId,
+        useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId,
+      });
+      writeBrowserServiceJson(response, 200, snapshot);
+      return;
+    }
+
+    if (method === "POST" && pathname === "/api/v1/browser/tabs/close") {
+      const payload = await readBrowserServiceJsonBody(request);
+      const tabId =
+        typeof payload.tab_id === "string" && payload.tab_id.trim()
+          ? payload.tab_id.trim()
+          : typeof payload.tabId === "string" && payload.tabId.trim()
+            ? payload.tabId.trim()
+            : "";
+      if (!tabId) {
+        writeBrowserServiceJson(response, 400, {
+          error: "Field 'tab_id' is required.",
+        });
+        return;
+      }
+      const workspace = await ensureTargetBrowserSpace("tabs:close");
+      if (!workspace) {
+        return;
+      }
+      const snapshot = await closeBrowserTab(tabId, {
+        workspaceId: workspace.workspaceId,
+        space: targetSpace,
+        sessionId: ensuredSessionId,
+        useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId,
+      });
+      writeBrowserServiceJson(response, 200, snapshot);
+      return;
+    }
+
+    if (method === "POST" && pathname === "/api/v1/browser/cookies") {
+      const payload = await readBrowserServiceJsonBody(request);
+      const workspace = await ensureTargetBrowserSpace("cookies:set");
+      if (!workspace) {
+        return;
+      }
+      const useVisibleAgentSession = targetSpace === "agent" && !requestedSessionId;
+      const activeTab = getActiveBrowserTab(
+        targetWorkspaceId,
+        targetSpace,
+        ensuredSessionId,
+        { useVisibleAgentSession },
+      );
+      const activeTabUrl = activeTab?.view.webContents.getURL()?.trim() || "";
+      const targetUrl =
+        (typeof payload.url === "string" && payload.url.trim()
+          ? payload.url.trim()
+          : activeTabUrl) || "";
+      const cookieName =
+        typeof payload.name === "string" && payload.name.trim()
+          ? payload.name.trim()
+          : "";
+      if (!targetUrl) {
+        writeBrowserServiceJson(response, 400, {
+          error: "Field 'url' is required when there is no active browser page.",
+        });
+        return;
+      }
+      if (!cookieName) {
+        writeBrowserServiceJson(response, 400, {
+          error: "Field 'name' is required.",
+        });
+        return;
+      }
+      try {
+        const expirationDate =
+          typeof payload.expiration_date === "number" &&
+          Number.isFinite(payload.expiration_date)
+            ? payload.expiration_date
+            : typeof payload.expirationDate === "number" &&
+                Number.isFinite(payload.expirationDate)
+              ? payload.expirationDate
+              : undefined;
+        await workspace.session.cookies.set({
+          url: targetUrl,
+          name: cookieName,
+          value: typeof payload.value === "string" ? payload.value : "",
+          ...(typeof payload.domain === "string" && payload.domain.trim()
+            ? { domain: payload.domain.trim() }
+            : {}),
+          ...(typeof payload.path === "string" && payload.path.trim()
+            ? { path: payload.path.trim() }
+            : {}),
+          ...(typeof payload.secure === "boolean"
+            ? { secure: payload.secure }
+            : {}),
+          ...(typeof payload.http_only === "boolean"
+            ? { httpOnly: payload.http_only }
+            : typeof payload.httpOnly === "boolean"
+              ? { httpOnly: payload.httpOnly }
+              : {}),
+          ...(payload.same_site === "unspecified" ||
+          payload.same_site === "no_restriction" ||
+          payload.same_site === "lax" ||
+          payload.same_site === "strict"
+            ? { sameSite: payload.same_site }
+            : payload.sameSite === "unspecified" ||
+                payload.sameSite === "no_restriction" ||
+                payload.sameSite === "lax" ||
+                payload.sameSite === "strict"
+              ? { sameSite: payload.sameSite }
+              : {}),
+          ...(typeof expirationDate === "number" ? { expirationDate } : {}),
+        });
+        await workspace.session.cookies.flushStore();
+        const cookies = await workspace.session.cookies.get({
+          url: targetUrl,
+          name: cookieName,
+        });
+        const cookie = cookies[0] ?? null;
+        writeBrowserServiceJson(response, 200, {
+          ok: true,
+          cookie: cookie
+            ? {
+                name: cookie.name || "",
+                value: cookie.value || "",
+                domain: cookie.domain || "",
+                path: cookie.path || "/",
+                secure: Boolean(cookie.secure),
+                httpOnly: Boolean(cookie.httpOnly),
+                session: Boolean(cookie.session),
+                sameSite: cookie.sameSite || "unspecified",
+                expirationDate:
+                  typeof cookie.expirationDate === "number" &&
+                  Number.isFinite(cookie.expirationDate)
+                    ? cookie.expirationDate
+                    : null,
+              }
+            : null,
+        });
+      } catch (error) {
+        writeBrowserServiceJson(response, 400, {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to set browser cookie.",
+        });
+      }
       return;
     }
 
@@ -9576,6 +10566,46 @@ async function listTaskProposals(
   return runtimeClient.taskProposals.listUnreviewed(workspaceId);
 }
 
+async function listBackgroundTasks(
+  payload: BackgroundTaskListRequestPayload,
+): Promise<BackgroundTaskListResponsePayload> {
+  if (!payload.workspaceId.trim()) {
+    return { tasks: [], count: 0 };
+  }
+  return requestRuntimeJson<BackgroundTaskListResponsePayload>({
+    method: "GET",
+    path: "/api/v1/background-tasks",
+    params: {
+      workspace_id: payload.workspaceId,
+      owner_main_session_id: payload.ownerMainSessionId ?? undefined,
+      statuses:
+        payload.statuses && payload.statuses.length > 0
+          ? payload.statuses.join(",")
+          : undefined,
+      limit: payload.limit ?? 200,
+    },
+  });
+}
+
+async function archiveBackgroundTask(
+  payload: ArchiveBackgroundTaskPayload,
+): Promise<ArchiveBackgroundTaskResponsePayload> {
+  if (!payload.workspaceId.trim()) {
+    throw new Error("workspaceId is required");
+  }
+  if (!payload.subagentId.trim()) {
+    throw new Error("subagentId is required");
+  }
+  return requestRuntimeJson<ArchiveBackgroundTaskResponsePayload>({
+    method: "POST",
+    path: `/api/v1/background-tasks/${encodeURIComponent(payload.subagentId)}/archive`,
+    payload: {
+      workspace_id: payload.workspaceId,
+      owner_main_session_id: payload.ownerMainSessionId ?? undefined,
+    },
+  });
+}
+
 async function listMemoryUpdateProposals(
   payload: MemoryUpdateProposalListRequestPayload,
 ): Promise<MemoryUpdateProposalListResponsePayload> {
@@ -9839,10 +10869,16 @@ const runtimeNotificationListCache = new Map<
 function runtimeNotificationListCacheKey(
   workspaceId?: string | null,
   includeDismissed = false,
+  options?: {
+    includeCronjobSource?: boolean;
+    sourceType?: string | null;
+  },
 ): string {
   return JSON.stringify({
     workspaceId: workspaceId?.trim() || null,
     includeDismissed,
+    includeCronjobSource: options?.includeCronjobSource === true,
+    sourceType: options?.sourceType?.trim() || null,
   });
 }
 
@@ -9856,17 +10892,30 @@ function emptyRuntimeNotificationListResponse(): RuntimeNotificationListResponse
 async function listNotifications(
   workspaceId?: string | null,
   includeDismissed = false,
+  options?: {
+    includeCronjobSource?: boolean;
+    sourceType?: string | null;
+  },
 ): Promise<RuntimeNotificationListResponsePayload> {
   const cacheKey = runtimeNotificationListCacheKey(
     workspaceId,
     includeDismissed,
+    options,
   );
   try {
-    const response = await runtimeClient.notifications.list({
-      workspaceId,
-      includeDismissed,
-      limit: 50,
-    });
+    const response =
+      await requestRuntimeJson<RuntimeNotificationListResponsePayload>({
+        method: "GET",
+        path: "/api/v1/notifications",
+        params: {
+          workspace_id: workspaceId ?? undefined,
+          include_dismissed: includeDismissed,
+          include_cronjob_source:
+            options?.includeCronjobSource === true ? true : undefined,
+          source_type: options?.sourceType ?? undefined,
+          limit: 50,
+        },
+      });
     runtimeNotificationListCache.set(cacheKey, response);
     return response;
   } catch (error) {
@@ -11858,36 +12907,63 @@ function runtimeBaseUrl() {
 }
 
 async function ensureRuntimeReady() {
-  const status = await startEmbeddedRuntime();
-  if (status.status === "running" && status.url) {
-    return status;
-  }
+  let attemptedRecovery = false;
+  for (;;) {
+    const status = await startEmbeddedRuntime();
+    if (status.status === "running" && status.url) {
+      return status;
+    }
 
-  const runtimeUrl = status.url ?? runtimeBaseUrl();
-  if (status.status === "starting" && runtimeUrl) {
-    const healthy = await waitForRuntimeHealth(runtimeUrl, 10, 300);
-    if (healthy) {
-      const refreshed = await refreshRuntimeStatus();
-      if (refreshed.status === "running" && refreshed.url) {
-        return refreshed;
+    const runtimeUrl = status.url ?? runtimeBaseUrl();
+    if (status.status === "starting" && runtimeUrl) {
+      const healthy = await waitForRuntimeHealth(runtimeUrl, 10, 300);
+      if (healthy) {
+        const refreshed = await refreshRuntimeStatus();
+        if (refreshed.status === "running" && refreshed.url) {
+          return refreshed;
+        }
       }
     }
-  }
 
-  const refreshed = await refreshRuntimeStatus();
-  if (refreshed.status === "running" && refreshed.url) {
-    return refreshed;
-  }
+    const refreshed = await refreshRuntimeStatus();
+    if (refreshed.status === "running" && refreshed.url) {
+      return refreshed;
+    }
 
-  throw new Error(
-    refreshed.lastError || status.lastError || "Embedded runtime is not ready.",
-  );
+    const failureMessage =
+      refreshed.lastError || status.lastError || "Embedded runtime is not ready.";
+    if (
+      !attemptedRecovery &&
+      isRuntimeHealthcheckStartupFailureMessage(failureMessage)
+    ) {
+      attemptedRecovery = true;
+      await stopEmbeddedRuntime();
+      await sleep(250);
+      continue;
+    }
+
+    throw new Error(failureMessage);
+  }
 }
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function isRuntimeHealthcheckStartupFailureMessage(message: string): boolean {
+  return message
+    .toLowerCase()
+    .includes("runtime process started but did not pass health checks");
+}
+
+function isTransientRuntimeError(error: unknown): boolean {
+  return (
+    (error instanceof Error &&
+      isRuntimeHealthcheckStartupFailureMessage(error.message)) ||
+    sdkIsTransientRuntimeError(error)
+  );
 }
 
 // Singleton runtime client. Owns retry/timeout/error parsing for every
@@ -11903,6 +12979,112 @@ const runtimeClient = createRuntimeClient({
     return status.url;
   },
 });
+
+async function requestRuntimeJsonViaHttp<T>(
+  targetUrl: URL,
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+  payload?: unknown,
+  timeoutMs = 15000,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const serializedPayload =
+      payload === undefined ? null : JSON.stringify(payload);
+    const request = httpRequest(
+      {
+        hostname: targetUrl.hostname,
+        port: targetUrl.port || "80",
+        path: `${targetUrl.pathname}${targetUrl.search}`,
+        method,
+        headers:
+          serializedPayload === null
+            ? undefined
+            : {
+                "Content-Type": "application/json",
+                "Content-Length": Buffer.byteLength(serializedPayload),
+              },
+        timeout: timeoutMs,
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        response.on("end", () => {
+          const statusCode = response.statusCode ?? 0;
+          const body = Buffer.concat(chunks).toString("utf-8");
+          if (statusCode < 200 || statusCode >= 300) {
+            reject(
+              runtimeErrorFromBody(statusCode, response.statusMessage, body),
+            );
+            return;
+          }
+          if (statusCode === 204 || !body.trim()) {
+            resolve(null as T);
+            return;
+          }
+          try {
+            resolve(JSON.parse(body) as T);
+          } catch {
+            reject(new Error("Runtime returned invalid JSON."));
+          }
+        });
+      },
+    );
+
+    request.on("timeout", () => {
+      request.destroy(new Error("Runtime request timed out."));
+    });
+    request.on("error", (error) => {
+      reject(error);
+    });
+
+    if (serializedPayload !== null) {
+      request.write(serializedPayload);
+    }
+    request.end();
+  });
+}
+
+async function requestRuntimeJson<T>({
+  method,
+  path: requestPath,
+  payload,
+  params,
+  timeoutMs,
+  retryTransientErrors = false,
+}: {
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  path: string;
+  payload?: unknown;
+  params?: Record<string, string | number | boolean | null | undefined>;
+  timeoutMs?: number;
+  retryTransientErrors?: boolean;
+}): Promise<T> {
+  const attempts = method === "GET" || retryTransientErrors ? 3 : 1;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const status = await ensureRuntimeReady();
+      const url = new URL(`${status.url}${requestPath}`);
+      if (params) {
+        for (const [key, value] of Object.entries(params)) {
+          if (value === undefined || value === null || value === "") {
+            continue;
+          }
+          url.searchParams.set(key, String(value));
+        }
+      }
+      return requestRuntimeJsonViaHttp<T>(url, method, payload, timeoutMs);
+    } catch (error) {
+      if (attempt < attempts && isTransientRuntimeError(error)) {
+        await sleep(250 * attempt);
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw new Error("Runtime request failed after retries.");
+}
 
 function workspaceHarness() {
   return (
@@ -12565,6 +13747,9 @@ function normalizeAgentSessionRecord(
     parent_session_id: record.parent_session_id?.trim() || null,
     source_proposal_id: record.source_proposal_id?.trim() || null,
     created_by: record.created_by?.trim() || null,
+    source_type: record.source_type?.trim() || null,
+    cronjob_id: record.cronjob_id?.trim() || null,
+    proposal_id: record.proposal_id?.trim() || null,
     created_at: record.created_at || now,
     updated_at: record.updated_at || record.created_at || now,
     archived_at: record.archived_at?.trim() || null,
@@ -14197,20 +15382,54 @@ async function listRuntimeStates(
   }
 }
 
+function normalizeListAgentSessionsRequest(
+  payload: string | ListAgentSessionsRequestPayload,
+): {
+  workspaceId: string;
+  includeArchived: boolean;
+  limit: number;
+  offset: number;
+} {
+  if (typeof payload === "string") {
+    return {
+      workspaceId: payload.trim(),
+      includeArchived: false,
+      limit: 100,
+      offset: 0,
+    };
+  }
+  return {
+    workspaceId: payload.workspaceId.trim(),
+    includeArchived: payload.includeArchived === true,
+    limit:
+      typeof payload.limit === "number" && Number.isFinite(payload.limit)
+        ? Math.max(1, Math.min(500, Math.trunc(payload.limit)))
+        : 100,
+    offset:
+      typeof payload.offset === "number" && Number.isFinite(payload.offset)
+        ? Math.max(0, Math.trunc(payload.offset))
+        : 0,
+  };
+}
+
 async function listAgentSessions(
-  workspaceId: string,
+  payload: string | ListAgentSessionsRequestPayload,
 ): Promise<AgentSessionListResponsePayload> {
-  if (!workspaceId.trim()) {
+  const requestPayload = normalizeListAgentSessionsRequest(payload);
+  if (!requestPayload.workspaceId) {
     return { items: [], count: 0 };
   }
   try {
     const response = await runtimeClient.sessions.list({
-      workspaceId,
-      includeArchived: false,
-      limit: 100,
-      offset: 0,
+      workspaceId: requestPayload.workspaceId,
+      includeArchived: requestPayload.includeArchived,
+      limit: requestPayload.limit,
+      offset: requestPayload.offset,
     });
-    const items = cacheAgentSessionRecords(workspaceId, response.items ?? []);
+    const items = cacheAgentSessionRecords(
+      requestPayload.workspaceId,
+      response.items ?? [],
+    );
     return {
       ...response,
       items,
@@ -14218,13 +15437,30 @@ async function listAgentSessions(
     };
   } catch (error) {
     if (isTransientRuntimeError(error)) {
-      const items = cachedAgentSessionRecords(workspaceId);
+      const items = cachedAgentSessionRecords(requestPayload.workspaceId).filter(
+        (item) =>
+          requestPayload.includeArchived ||
+          !(item.archived_at || "").trim(),
+      );
       if (items.length > 0) {
         return { items, count: items.length };
       }
     }
     throw error;
   }
+}
+
+async function ensureWorkspaceMainSession(
+  workspaceId: string,
+): Promise<EnsureWorkspaceMainSessionResponsePayload> {
+  const response = await requestRuntimeJson<EnsureWorkspaceMainSessionResponsePayload>({
+    method: "POST",
+    path: `/api/v1/workspaces/${workspaceId}/ensure-main-session`,
+  });
+  if (response.session) {
+    upsertCachedAgentSessionRecord(response.session);
+  }
+  return response;
 }
 
 async function createAgentSession(
@@ -19428,6 +20664,10 @@ function createBrowserTab(
     popupFrameName: options.popupFrameName?.trim() || undefined,
     popupOpenedAtMs:
       typeof options.popupOpenedAtMs === "number" ? options.popupOpenedAtMs : undefined,
+    consoleEntries: [],
+    errorEntries: [],
+    requests: new Map<string, BrowserRequestRecord>(),
+    requestOrder: [],
   });
 
   view.setBounds(browserBounds);
@@ -19499,6 +20739,45 @@ function createBrowserTab(
       browserSpace,
       normalizedSessionId,
     )?.tabs.get(tabId);
+
+  view.webContents.on("console-message", ({ level, message, lineNumber, sourceId, frame }) => {
+    const currentTab = currentTabRecord();
+    if (!currentTab) {
+      return;
+    }
+    const consoleLevel = browserConsoleLevelValue(level);
+    const entry: BrowserConsoleEntry = {
+      id: randomUUID(),
+      level: consoleLevel,
+      message: typeof message === "string" ? message : String(message ?? ""),
+      sourceId: typeof sourceId === "string" ? sourceId : "",
+      lineNumber:
+        typeof lineNumber === "number" && Number.isFinite(lineNumber)
+          ? Math.floor(lineNumber)
+          : null,
+      timestamp: new Date().toISOString(),
+      frameUrl:
+        frame && typeof frame.url === "string" ? frame.url : "",
+    };
+    appendBoundedEntry(
+      currentTab.consoleEntries,
+      entry,
+      BROWSER_OBSERVABILITY_ENTRY_LIMIT,
+    );
+    if (consoleLevel === "warning" || consoleLevel === "error") {
+      appendBrowserObservedError(currentTab, {
+        id: `runtime-console-${entry.id}`,
+        source: "runtime",
+        kind: "console_message",
+        level: consoleLevel,
+        message: entry.message,
+        timestamp: entry.timestamp,
+        url: currentBrowserTabUrl(currentTab),
+        ...(entry.lineNumber !== null ? { lineNumber: entry.lineNumber } : {}),
+        ...(entry.sourceId ? { sourceId: entry.sourceId } : {}),
+      });
+    }
+  });
 
   view.webContents.on("before-input-event", (event, input) => {
     if (isProgrammaticBrowserInput(view.webContents)) {
@@ -19627,10 +20906,52 @@ function createBrowserTab(
         error: `${errorDescription} (${errorCode})`,
         url: validatedURL || currentTab.state.url,
       };
+      appendBrowserObservedError(currentTab, {
+        id: `page-load-${randomUUID()}`,
+        source: "page",
+        kind: "load_failed",
+        level: "error",
+        message: errorDescription || "Page load failed.",
+        timestamp: new Date().toISOString(),
+        url: validatedURL || currentTab.state.url || currentBrowserTabUrl(currentTab),
+        errorCode,
+      });
       emitBrowserState(workspaceId, browserSpace);
       void persistBrowserWorkspace(workspaceId);
     },
   );
+
+  view.webContents.on("render-process-gone", (_event, details) => {
+    const currentTab = currentTabRecord();
+    if (!currentTab) {
+      return;
+    }
+    const reason = typeof details.reason === "string" ? details.reason : "gone";
+    const exitCode =
+      typeof details.exitCode === "number" && Number.isFinite(details.exitCode)
+        ? details.exitCode
+        : null;
+    const message =
+      exitCode !== null
+        ? `Browser render process exited: ${reason} (${exitCode})`
+        : `Browser render process exited: ${reason}`;
+    currentTab.state = {
+      ...currentTab.state,
+      loading: false,
+      error: message,
+    };
+    appendBrowserObservedError(currentTab, {
+      id: `runtime-render-${randomUUID()}`,
+      source: "runtime",
+      kind: "render_process_gone",
+      level: "error",
+      message,
+      timestamp: new Date().toISOString(),
+      url: currentBrowserTabUrl(currentTab),
+    });
+    emitBrowserState(workspaceId, browserSpace);
+    void persistBrowserWorkspace(workspaceId);
+  });
 
   if (hasInitialUrl) {
     void view.webContents.loadURL(initialUrl).catch((error) => {
@@ -19992,26 +21313,35 @@ async function setActiveBrowserWorkspace(
 
 async function setActiveBrowserTab(
   tabId: string,
-  space?: BrowserSpaceId | null,
-  sessionId?: string | null,
+  options: {
+    workspaceId?: string | null;
+    space?: BrowserSpaceId | null;
+    sessionId?: string | null;
+    useVisibleAgentSession?: boolean;
+  } = {},
 ) {
-  const browserSpace = browserSpaceId(space);
+  const browserSpace = browserSpaceId(options.space);
   const normalizedSessionId =
+    browserSpace === "agent" ? browserSessionId(options.sessionId) : "";
+  const useVisibleAgentSession =
     browserSpace === "agent"
-      ? browserSessionId(sessionId) || browserSessionId(activeBrowserSessionId)
-      : "";
+      ? options.useVisibleAgentSession ?? !normalizedSessionId
+      : false;
   const workspace = await ensureBrowserWorkspace(
-    undefined,
+    options.workspaceId,
     browserSpace,
     normalizedSessionId,
   );
   const tabSpace = browserTabSpaceState(workspace, browserSpace, normalizedSessionId, {
-    useVisibleAgentSession: !normalizedSessionId,
+    useVisibleAgentSession,
   });
   if (!workspace || !tabSpace || !tabSpace.tabs.has(tabId)) {
-    return browserWorkspaceSnapshot(undefined, browserSpace, normalizedSessionId, {
-      useVisibleAgentSession: true,
-    });
+    return browserWorkspaceSnapshot(
+      workspace?.workspaceId ?? options.workspaceId,
+      browserSpace,
+      normalizedSessionId,
+      { useVisibleAgentSession },
+    );
   }
 
   tabSpace.activeTabId = tabId;
@@ -20019,6 +21349,11 @@ async function setActiveBrowserTab(
   if (browserSpace === "agent" && normalizedSessionId) {
     setVisibleAgentBrowserSession(workspace, normalizedSessionId);
     scheduleAgentSessionBrowserLifecycleCheck(workspace.workspaceId, normalizedSessionId);
+  } else if (browserSpace === "agent" && useVisibleAgentSession) {
+    const visibleSessionId = browserVisibleAgentSessionId(workspace);
+    if (visibleSessionId) {
+      scheduleAgentSessionBrowserLifecycleCheck(workspace.workspaceId, visibleSessionId);
+    }
   }
   if (
     workspace.workspaceId === activeBrowserWorkspaceId &&
@@ -20032,34 +21367,50 @@ async function setActiveBrowserTab(
     workspace.workspaceId,
     browserSpace,
     normalizedSessionId,
-    { useVisibleAgentSession: true },
+    { useVisibleAgentSession },
   );
 }
 
 async function closeBrowserTab(
   tabId: string,
-  space?: BrowserSpaceId | null,
-  sessionId?: string | null,
+  options: {
+    workspaceId?: string | null;
+    space?: BrowserSpaceId | null;
+    sessionId?: string | null;
+    useVisibleAgentSession?: boolean;
+  } = {},
 ) {
-  const browserSpace = browserSpaceId(space);
+  const browserSpace = browserSpaceId(options.space);
   const normalizedSessionId =
+    browserSpace === "agent" ? browserSessionId(options.sessionId) : "";
+  const useVisibleAgentSession =
     browserSpace === "agent"
-      ? browserSessionId(sessionId) || browserSessionId(activeBrowserSessionId)
-      : "";
+      ? options.useVisibleAgentSession ?? !normalizedSessionId
+      : false;
   const workspace = await ensureBrowserWorkspace(
-    undefined,
+    options.workspaceId,
     browserSpace,
     normalizedSessionId,
   );
   const tabSpace = browserTabSpaceState(workspace, browserSpace, normalizedSessionId, {
-    useVisibleAgentSession: !normalizedSessionId,
+    useVisibleAgentSession,
   });
   const tab = tabSpace?.tabs.get(tabId);
   if (!workspace || !tabSpace || !tab) {
-    return browserWorkspaceSnapshot(undefined, browserSpace, normalizedSessionId, {
-      useVisibleAgentSession: true,
-    });
+    return browserWorkspaceSnapshot(
+      workspace?.workspaceId ?? options.workspaceId,
+      browserSpace,
+      normalizedSessionId,
+      { useVisibleAgentSession },
+    );
   }
+  const resolvedSessionId =
+    browserSpace === "agent" &&
+    !normalizedSessionId &&
+    useVisibleAgentSession &&
+    workspace
+      ? browserVisibleAgentSessionId(workspace)
+      : normalizedSessionId;
 
   const tabIds = Array.from(tabSpace.tabs.keys());
   const closedIndex = tabIds.indexOf(tabId);
@@ -20071,7 +21422,7 @@ async function closeBrowserTab(
     const replacementTabId = createBrowserTab(workspace.workspaceId, {
       url: HOME_URL,
       browserSpace,
-      sessionId: normalizedSessionId,
+      sessionId: resolvedSessionId,
     });
     tabSpace.activeTabId = replacementTabId ?? "";
   } else if (tabSpace.activeTabId === tabId) {
@@ -20088,6 +21439,11 @@ async function closeBrowserTab(
   }
   if (browserSpace === "agent" && normalizedSessionId) {
     scheduleAgentSessionBrowserLifecycleCheck(workspace.workspaceId, normalizedSessionId);
+  } else if (browserSpace === "agent" && useVisibleAgentSession) {
+    const visibleSessionId = browserVisibleAgentSessionId(workspace);
+    if (visibleSessionId) {
+      scheduleAgentSessionBrowserLifecycleCheck(workspace.workspaceId, visibleSessionId);
+    }
   }
   emitBrowserState(workspace.workspaceId, browserSpace);
   await persistBrowserWorkspace(workspace.workspaceId);
@@ -20095,7 +21451,7 @@ async function closeBrowserTab(
     workspace.workspaceId,
     browserSpace,
     normalizedSessionId,
-    { useVisibleAgentSession: true },
+    { useVisibleAgentSession },
   );
 }
 
@@ -20475,6 +21831,213 @@ function desktopStatusItemIconPath(): string {
   return app.isPackaged
     ? path.join(process.resourcesPath, "holaStatusTemplate.png")
     : path.join(__dirname, "..", "..", "resources", "holaStatusTemplate.png");
+}
+
+function shouldShowNativeDesktopNotification(): boolean {
+  return Boolean(
+    mainWindow &&
+      !mainWindow.isDestroyed() &&
+      mainWindow.isMinimized(),
+  );
+}
+
+function normalizedNativeNotificationText(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "";
+  }
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function shouldUseMacDevelopmentNotificationFallback(): boolean {
+  return process.platform === "darwin" && !app.isPackaged;
+}
+
+function appleScriptStringLiteral(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function logNativeDesktopNotificationEvent(
+  event: string,
+  payload: {
+    title?: string | null;
+    body?: string | null;
+    force?: boolean;
+    detail?: string | null;
+  },
+): void {
+  const title = normalizedNativeNotificationText(payload.title ?? "", 80);
+  const body = normalizedNativeNotificationText(payload.body ?? "", 120);
+  const detail = normalizedNativeNotificationText(payload.detail ?? "", 160);
+  const line = [
+    `[desktop-notification] event=${event}`,
+    `force=${payload.force === true ? "true" : "false"}`,
+    `title=${JSON.stringify(title)}`,
+    `body=${JSON.stringify(body)}`,
+    detail ? `detail=${JSON.stringify(detail)}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  void appendRuntimeLog(`${line}\n`);
+}
+
+function showMacDevelopmentNotificationFallback(payload: {
+  title: string;
+  body: string;
+  force?: boolean;
+}): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const script = `display notification ${appleScriptStringLiteral(payload.body)} with title ${appleScriptStringLiteral(payload.title)}`;
+    logNativeDesktopNotificationEvent("dev_fallback_requested", payload);
+    const child = spawn("osascript", ["-e", script], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.once("error", (error) => {
+      logNativeDesktopNotificationEvent("dev_fallback_failed", {
+        ...payload,
+        detail: error instanceof Error ? error.message : String(error),
+      });
+      resolve(false);
+    });
+    child.once("exit", (code) => {
+      if (code === 0) {
+        logNativeDesktopNotificationEvent("dev_fallback_shown", payload);
+        resolve(true);
+        return;
+      }
+      logNativeDesktopNotificationEvent("dev_fallback_failed", {
+        ...payload,
+        detail: stderr.trim() || `osascript exit code ${code ?? "null"}`,
+      });
+      resolve(false);
+    });
+  });
+}
+
+function showNativeDesktopNotification(
+  payload: DesktopNativeNotificationPayload,
+): Promise<boolean> {
+  const title = normalizedNativeNotificationText(payload.title, 80);
+  const body = normalizedNativeNotificationText(payload.body, 240);
+  const supported = Notification.isSupported();
+  if (!supported) {
+    logNativeDesktopNotificationEvent("skipped", {
+      title,
+      body,
+      force: payload.force,
+      detail: "Notification.isSupported() returned false.",
+    });
+    return Promise.resolve(false);
+  }
+  if (!payload.force && !shouldShowNativeDesktopNotification()) {
+    logNativeDesktopNotificationEvent("skipped", {
+      title,
+      body,
+      force: payload.force,
+      detail: "Main window is visible and not minimized.",
+    });
+    return Promise.resolve(false);
+  }
+  if (!title || !body) {
+    logNativeDesktopNotificationEvent("skipped", {
+      title,
+      body,
+      force: payload.force,
+      detail: "Missing title or body after normalization.",
+    });
+    return Promise.resolve(false);
+  }
+  if (shouldUseMacDevelopmentNotificationFallback()) {
+    return showMacDevelopmentNotificationFallback({
+      title,
+      body,
+      force: payload.force,
+    });
+  }
+
+  return new Promise<boolean>((resolve) => {
+    logNativeDesktopNotificationEvent("show_requested", {
+      title,
+      body,
+      force: payload.force,
+    });
+    const notification = new Notification({
+      title,
+      body,
+      icon: desktopAppIconPath(),
+      silent: false,
+    });
+    let settled = false;
+    const settle = (value: boolean) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(value);
+    };
+    const showTimeout = setTimeout(() => {
+      logNativeDesktopNotificationEvent("show_timeout", {
+        title,
+        body,
+        force: payload.force,
+        detail: "Notification did not emit show within 1500ms.",
+      });
+      settle(false);
+    }, 1500);
+    notification.on("show", () => {
+      clearTimeout(showTimeout);
+      logNativeDesktopNotificationEvent("shown", {
+        title,
+        body,
+        force: payload.force,
+      });
+      settle(true);
+    });
+    notification.on("failed", (_event, error) => {
+      clearTimeout(showTimeout);
+      logNativeDesktopNotificationEvent("failed", {
+        title,
+        body,
+        force: payload.force,
+        detail:
+          typeof error === "string"
+            ? error
+            : error && typeof error === "object" && "message" in error
+              ? String((error as { message?: unknown }).message ?? "unknown")
+              : String(error ?? "unknown"),
+      });
+      settle(false);
+    });
+    notification.on("click", () => {
+      logNativeDesktopNotificationEvent("clicked", {
+        title,
+        body,
+        force: payload.force,
+      });
+      if (process.platform === "darwin") {
+        app.dock?.show();
+        app.focus({ steal: true });
+      } else {
+        app.focus();
+      }
+      focusOrCreateMainWindow();
+    });
+    notification.on("close", () => {
+      logNativeDesktopNotificationEvent("closed", {
+        title,
+        body,
+        force: payload.force,
+      });
+    });
+    notification.show();
+  });
 }
 
 function installMacStatusItem() {
@@ -21163,6 +22726,13 @@ app.whenReady().then(async () => {
     },
   );
   handleTrustedIpc(
+    "ui:showNativeNotification",
+    ["main"],
+    async (_event, payload: DesktopNativeNotificationPayload) => {
+      return await showNativeDesktopNotification(payload);
+    },
+  );
+  handleTrustedIpc(
     "appUpdate:getStatus",
     ["main"],
     async () => appUpdateStatus,
@@ -21441,8 +23011,15 @@ app.whenReady().then(async () => {
   handleTrustedIpc(
     "workspace:listNotifications",
     ["main"],
-    async (_event, workspaceId?: string | null, includeDismissed?: boolean) =>
-      listNotifications(workspaceId, includeDismissed),
+    async (
+      _event,
+      workspaceId?: string | null,
+      includeDismissed?: boolean,
+      options?: {
+        includeCronjobSource?: boolean;
+        sourceType?: string | null;
+      },
+    ) => listNotifications(workspaceId, includeDismissed, options),
   );
   handleTrustedIpc(
     "workspace:updateNotification",
@@ -21457,6 +23034,18 @@ app.whenReady().then(async () => {
     "workspace:listTaskProposals",
     ["main"],
     async (_event, workspaceId: string) => listTaskProposals(workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:listBackgroundTasks",
+    ["main"],
+    async (_event, payload: BackgroundTaskListRequestPayload) =>
+      listBackgroundTasks(payload),
+  );
+  handleTrustedIpc(
+    "workspace:archiveBackgroundTask",
+    ["main"],
+    async (_event, payload: ArchiveBackgroundTaskPayload) =>
+      archiveBackgroundTask(payload),
   );
   handleTrustedIpc(
     "workspace:acceptTaskProposal",
@@ -21536,6 +23125,11 @@ app.whenReady().then(async () => {
     "workspace:listAgentSessions",
     ["main"],
     async (_event, workspaceId: string) => listAgentSessions(workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:ensureMainSession",
+    ["main"],
+    async (_event, workspaceId: string) => ensureWorkspaceMainSession(workspaceId),
   );
   handleTrustedIpc(
     "workspace:createAgentSession",
@@ -22239,8 +23833,11 @@ app.whenReady().then(async () => {
     );
     return setActiveBrowserTab(
       tabId,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+      {
+        space: activeBrowserSpaceId,
+        sessionId: activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+        useVisibleAgentSession: true,
+      },
     );
   });
   ipcMain.handle("browser:closeTab", async (_event, tabId: string) => {
@@ -22266,8 +23863,11 @@ app.whenReady().then(async () => {
     );
     return closeBrowserTab(
       tabId,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+      {
+        space: activeBrowserSpaceId,
+        sessionId: activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
+        useVisibleAgentSession: true,
+      },
     );
   });
   ipcMain.handle("browser:getBookmarks", async () => {

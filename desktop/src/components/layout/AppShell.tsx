@@ -1,5 +1,6 @@
 import {
   ArrowLeft,
+  Bot,
   CircleCheck,
   Clock3,
   Folder,
@@ -39,6 +40,7 @@ import {
 import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
 import { MissingWorkspacePane } from "@/components/panes/MissingWorkspacePane";
 import { OnboardingPane } from "@/components/panes/OnboardingPane";
+import { SubagentSessionsPane } from "@/components/panes/SubagentSessionsPane";
 import { SpaceApplicationsExplorerPane } from "@/components/panes/SpaceApplicationsExplorerPane";
 import { SpaceBrowserDisplayPane } from "@/components/panes/SpaceBrowserDisplayPane";
 import { SpaceBrowserExplorerPane } from "@/components/panes/SpaceBrowserExplorerPane";
@@ -74,6 +76,8 @@ const OPERATIONS_DRAWER_TAB_STORAGE_KEY = "holaboss-operations-drawer-tab-v1";
 const TASK_PROPOSAL_SEEN_STORAGE_KEY = "holaboss-task-proposal-seen-v1";
 const BROWSER_PANE_WIDTH_STORAGE_KEY = "holaboss-browser-pane-width-v1";
 const SPACE_VISIBILITY_STORAGE_KEY = "holaboss-space-visibility-v1";
+const SPACE_WORKSPACE_PANEL_COLLAPSED_STORAGE_KEY =
+  "holaboss-space-workspace-panel-collapsed-v1";
 const THEMES = [
   "amber-minimal-dark",
   "amber-minimal-light",
@@ -200,6 +204,7 @@ function isSettingsPaneSection(value: string): value is UiSettingsPaneSection {
 
 type AgentView =
   | { type: "chat" }
+  | { type: "sessions" }
   | { type: "inbox" }
   | { type: "automations" }
   | {
@@ -659,6 +664,98 @@ function notificationTargetSessionId(
   return notificationMetadataString(notification, "session_id");
 }
 
+function notificationDeliveryChannel(
+  notification: RuntimeNotificationRecordPayload,
+): string | null {
+  const delivery = notification.metadata.delivery;
+  if (
+    delivery &&
+    typeof delivery === "object" &&
+    !Array.isArray(delivery) &&
+    typeof (delivery as { channel?: unknown }).channel === "string"
+  ) {
+    const channel = (delivery as { channel: string }).channel.trim();
+    return channel || null;
+  }
+  return null;
+}
+
+function isSystemCronjobNotification(
+  notification: RuntimeNotificationRecordPayload,
+): boolean {
+  return (
+    notification.source_type === "cronjob" &&
+    notificationDeliveryChannel(notification) === "system_notification"
+  );
+}
+
+function shouldIncludeRuntimeNotificationInShell(
+  notification: RuntimeNotificationRecordPayload,
+): boolean {
+  return (
+    notification.source_type !== "cronjob" ||
+    isSystemCronjobNotification(notification)
+  );
+}
+
+function notificationBelongsToSelectedWorkspace(
+  notification: RuntimeNotificationRecordPayload,
+  selectedWorkspaceId: string | null,
+): boolean {
+  const notificationWorkspaceId = notification.workspace_id.trim();
+  const normalizedSelectedWorkspaceId = selectedWorkspaceId?.trim() || "";
+  return Boolean(
+    notificationWorkspaceId &&
+      normalizedSelectedWorkspaceId &&
+      notificationWorkspaceId === normalizedSelectedWorkspaceId,
+  );
+}
+
+function shouldShowNativeRuntimeNotification(
+  notification: RuntimeNotificationRecordPayload,
+  isWindowMinimized: boolean,
+): boolean {
+  if (!isWindowMinimized) {
+    return false;
+  }
+  return (
+    notification.source_type === "main_session" ||
+    isSystemCronjobNotification(notification)
+  );
+}
+
+function shouldDismissVisibleRuntimeNotification(
+  notification: RuntimeNotificationRecordPayload,
+  selectedWorkspaceId: string | null,
+): boolean {
+  if (
+    notification.source_type !== "main_session" &&
+    !isSystemCronjobNotification(notification)
+  ) {
+    return false;
+  }
+  return notificationBelongsToSelectedWorkspace(
+    notification,
+    selectedWorkspaceId,
+  );
+}
+
+function shouldToastVisibleRuntimeNotification(
+  notification: RuntimeNotificationRecordPayload,
+  selectedWorkspaceId: string | null,
+): boolean {
+  if (
+    notification.source_type === "main_session" ||
+    isSystemCronjobNotification(notification)
+  ) {
+    return !notificationBelongsToSelectedWorkspace(
+      notification,
+      selectedWorkspaceId,
+    );
+  }
+  return true;
+}
+
 function notificationActivationState(
   notification: RuntimeNotificationRecordPayload,
 ): RuntimeNotificationState {
@@ -711,6 +808,24 @@ function loadBrowserPaneWidth(): number {
   }
 
   return DEFAULT_BROWSER_PANE_WIDTH;
+}
+
+function loadSpaceWorkspacePanelCollapsed(): boolean {
+  try {
+    const raw = localStorage.getItem(
+      SPACE_WORKSPACE_PANEL_COLLAPSED_STORAGE_KEY,
+    );
+    if (raw === "1" || raw === "true") {
+      return true;
+    }
+    if (raw === "0" || raw === "false") {
+      return false;
+    }
+  } catch {
+    // ignore invalid persisted layout state
+  }
+
+  return false;
 }
 
 function loadOperationsDrawerOpen(): boolean {
@@ -965,22 +1080,42 @@ function workspaceOutputNavigationTarget(
   installedAppIds: Set<string>,
 ): WorkspaceOutputNavigationTarget {
   const moduleId = (output.module_id || "").trim().toLowerCase();
+  const platformId = (output.platform || "").trim().toLowerCase();
   const metadata = (output.metadata ?? {}) as Record<string, unknown>;
   const presentation = metadata.presentation as
     | { kind?: string; view?: string; path?: string }
     | undefined;
+  const resource = metadata.resource as
+    | { entity_id?: string; entity_type?: string; label?: string }
+    | undefined;
   const hasAppPresentation =
     presentation?.kind === "app_resource" && presentation.view;
+  const looksLikeAppBackedDraft =
+    output.output_type === "post" ||
+    ((metadata.artifact_type as string | undefined)?.trim()?.toLowerCase() ??
+      "") === "draft";
+  const appId =
+    moduleId && installedAppIds.has(moduleId)
+      ? moduleId
+      : (hasAppPresentation || looksLikeAppBackedDraft) &&
+          platformId &&
+          installedAppIds.has(platformId)
+        ? platformId
+        : "";
 
-  if (moduleId && installedAppIds.has(moduleId)) {
+  if (appId) {
     return {
       type: "app",
-      appId: moduleId,
+      appId,
       path: hasAppPresentation ? presentation?.path || null : null,
-      resourceId: output.module_resource_id || output.artifact_id || output.id,
+      resourceId:
+        output.module_resource_id ||
+        (typeof resource?.entity_id === "string" ? resource.entity_id : null),
       view: hasAppPresentation
         ? presentation.view
-        : output.output_type || "home",
+        : output.output_type === "post"
+          ? "posts"
+          : output.output_type || "home",
     };
   }
 
@@ -1326,6 +1461,8 @@ function AppShellContent() {
   // Animate the content swap when the Space explorer mode changes. Every mode
   // enters from the right so all three tabs share one consistent idiom.
   const spaceExplorerSlideInClass = "slide-in-from-right-3";
+  const [spaceWorkspacePanelCollapsed, setSpaceWorkspacePanelCollapsed] =
+    useState(loadSpaceWorkspacePanelCollapsed);
   const [spaceBrowserSpace, setSpaceBrowserSpace] =
     useState<BrowserSpaceId>("user");
   const [spaceDisplayView, setSpaceDisplayView] = useState<SpaceDisplayView>({
@@ -1420,6 +1557,9 @@ function AppShellContent() {
   const spaceVisibilityRef = useRef(spaceVisibility);
   const notificationsHydratedRef = useRef(false);
   const seenNotificationIdsRef = useRef(new Set<string>());
+  const nativeRuntimeNotificationAttemptedAtRef = useRef(
+    new Map<string, number>(),
+  );
   const knownTaskProposalIdsByWorkspaceRef = useRef<Record<string, string[]>>(
     {},
   );
@@ -1441,6 +1581,7 @@ function AppShellContent() {
   filesPaneWidthRef.current = filesPaneWidth;
   browserPaneWidthRef.current = browserPaneWidth;
   spaceVisibilityRef.current = spaceVisibility;
+  const effectiveSpaceWorkspacePanelCollapsed = false;
 
   const proactiveHeartbeatWorkspaceSyncKey = useMemo(
     () =>
@@ -2066,25 +2207,79 @@ function AppShellContent() {
     }
 
     try {
-      const response =
-        await window.electronAPI.workspace.listNotifications(null);
-      setNotifications(response.items);
+      const [response, windowState] = await Promise.all([
+        window.electronAPI.workspace.listNotifications(null, false, {
+          includeCronjobSource: true,
+        }),
+        window.electronAPI.ui.getWindowState().catch(() => null),
+      ]);
+      const shellNotifications = response.items.filter(
+        shouldIncludeRuntimeNotificationInShell,
+      );
+      setNotifications(shellNotifications);
 
       if (!notificationsHydratedRef.current) {
         notificationsHydratedRef.current = true;
-        for (const item of response.items) {
+        for (const item of shellNotifications) {
           seenNotificationIdsRef.current.add(item.id);
         }
         return;
       }
 
-      for (const item of response.items) {
+      const isWindowMinimized = windowState?.isMinimized === true;
+      for (const item of shellNotifications) {
         if (
           item.state !== "unread" ||
           seenNotificationIdsRef.current.has(item.id)
         ) {
           continue;
         }
+
+        if (
+          shouldShowNativeRuntimeNotification(item, isWindowMinimized)
+        ) {
+          const lastAttemptAt =
+            nativeRuntimeNotificationAttemptedAtRef.current.get(item.id) ?? 0;
+          if (Date.now() - lastAttemptAt < 15_000) {
+            continue;
+          }
+          nativeRuntimeNotificationAttemptedAtRef.current.set(item.id, Date.now());
+          const shown = await window.electronAPI.ui.showNativeNotification({
+            title: item.title,
+            body: item.message,
+            workspaceId: item.workspace_id,
+            sessionId: notificationTargetSessionId(item),
+          });
+          if (shown) {
+            seenNotificationIdsRef.current.add(item.id);
+            nativeRuntimeNotificationAttemptedAtRef.current.delete(item.id);
+            try {
+              await window.electronAPI.workspace.updateNotification(item.id, {
+                state: "dismissed",
+              });
+            } catch {
+              // Ignore transient dismissal failures; the seen set prevents duplicate local alerts.
+            }
+          }
+          continue;
+        }
+
+        if (shouldDismissVisibleRuntimeNotification(item, selectedWorkspaceId)) {
+          seenNotificationIdsRef.current.add(item.id);
+          try {
+            await window.electronAPI.workspace.updateNotification(item.id, {
+              state: "dismissed",
+            });
+          } catch {
+            // Ignore transient dismissal failures in the shell.
+          }
+          continue;
+        }
+
+        if (!shouldToastVisibleRuntimeNotification(item, selectedWorkspaceId)) {
+          continue;
+        }
+
         seenNotificationIdsRef.current.add(item.id);
         setToastNotifications((current) => {
           if (current.some((existing) => existing.id === item.id)) {
@@ -2096,7 +2291,7 @@ function AppShellContent() {
     } catch {
       // Notification polling should stay silent when the runtime is restarting.
     }
-  }, []);
+  }, [selectedWorkspaceId]);
 
   useEffect(() => {
     const activeNotificationIds = new Set(
@@ -2261,6 +2456,7 @@ function AppShellContent() {
 
   const revealBrowserPane = useCallback((space: BrowserSpaceId = "user") => {
     setActiveShellView("space");
+    setSpaceWorkspacePanelCollapsed(false);
     setSpaceExplorerMode("browser");
     setSpaceBrowserSpace(space);
     setSpaceDisplayView({ type: "browser" });
@@ -2433,6 +2629,20 @@ function AppShellContent() {
       String(browserPaneWidth),
     );
   }, [browserPaneWidth]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      SPACE_WORKSPACE_PANEL_COLLAPSED_STORAGE_KEY,
+      spaceWorkspacePanelCollapsed ? "1" : "0",
+    );
+  }, [spaceWorkspacePanelCollapsed]);
+
+  useEffect(() => {
+    if (!spaceWorkspacePanelCollapsed) {
+      return;
+    }
+    setSpaceWorkspacePanelCollapsed(false);
+  }, [spaceWorkspacePanelCollapsed]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -2707,19 +2917,18 @@ function AppShellContent() {
     setProposalAction({ proposalId: proposal.proposal_id, action: "accept" });
     setTaskProposalStatusMessage("");
     try {
-      const proposalSessionId = `proposal-${crypto.randomUUID()}`;
       const accepted = await window.electronAPI.workspace.acceptTaskProposal({
         proposal_id: proposal.proposal_id,
         task_name: proposal.task_name,
         task_prompt: proposal.task_prompt,
-        session_id: proposalSessionId,
         parent_session_id: activeChatSessionId?.trim() || null,
         priority: 0,
         model: runtimeConfig?.defaultModel ?? null,
       });
-      const targetSessionId = accepted.session.session_id;
-
-      const detail = `Queued "${proposal.task_name}" into session ${targetSessionId}.`;
+      const detail =
+        accepted.input.status === "QUEUED"
+          ? `Started background task "${proposal.task_name}".`
+          : `Accepted "${proposal.task_name}" as background work.`;
       setTaskProposalStatusMessage(detail);
       await refreshTaskProposals();
     } catch (error) {
@@ -2962,6 +3171,7 @@ function AppShellContent() {
       },
     ) => {
       setActiveShellView("space");
+      setSpaceWorkspacePanelCollapsed(false);
       setSpaceExplorerMode("applications");
       setSpaceVisibility((previous) => ({
         ...previous,
@@ -3148,6 +3358,15 @@ function AppShellContent() {
   const handleOpenInboxPane = useCallback(() => {
     openTaskProposalInbox(selectedWorkspaceId);
   }, [openTaskProposalInbox, selectedWorkspaceId]);
+
+  const handleOpenSessionsPane = useCallback(() => {
+    setActiveShellView("space");
+    setSpaceVisibility((previous) => ({
+      ...previous,
+      agent: true,
+    }));
+    setAgentView({ type: "sessions" });
+  }, []);
 
   const handleOpenAutomationsPane = useCallback(() => {
     setActiveShellView("space");
@@ -3399,6 +3618,7 @@ function AppShellContent() {
         explorer_mode: spaceExplorerMode,
         browser_space: spaceBrowserSpace,
         visibility: spaceVisibility,
+        workspace_panel_collapsed: effectiveSpaceWorkspacePanelCollapsed,
       },
       workspace: {
         count: workspaces.length,
@@ -3472,6 +3692,7 @@ function AppShellContent() {
       spaceBrowserSpace,
       spaceDisplayView,
       spaceExplorerMode,
+      effectiveSpaceWorkspacePanelCollapsed,
       spaceVisibility,
       taskProposalDetailsDialogOpen,
       taskProposals.length,
@@ -3499,6 +3720,7 @@ function AppShellContent() {
       space_display_type: spaceDisplayView.type,
       space_explorer_mode: spaceExplorerMode,
       space_browser_space: spaceBrowserSpace,
+      space_workspace_panel_collapsed: effectiveSpaceWorkspacePanelCollapsed,
     });
   }, [
     activeShellView,
@@ -3506,6 +3728,7 @@ function AppShellContent() {
     spaceBrowserSpace,
     spaceDisplayView.type,
     spaceExplorerMode,
+    effectiveSpaceWorkspacePanelCollapsed,
   ]);
 
   useEffect(() => {
@@ -3650,6 +3873,7 @@ function AppShellContent() {
     }
 
     setActiveShellView("space");
+    setSpaceWorkspacePanelCollapsed(false);
     setSpaceExplorerMode("files");
     setSpaceVisibility((previous) => ({
       ...previous,
@@ -3687,6 +3911,7 @@ function AppShellContent() {
           target.resourceId?.trim()
         ) {
           setActiveShellView("space");
+          setSpaceWorkspacePanelCollapsed(false);
           setSpaceExplorerMode("files");
           setSpaceVisibility((previous) => ({
             ...previous,
@@ -3707,6 +3932,7 @@ function AppShellContent() {
         }
 
         setActiveShellView("space");
+        setSpaceWorkspacePanelCollapsed(false);
         setSpaceVisibility((previous) => ({
           ...previous,
           agent: true,
@@ -3832,6 +4058,7 @@ function AppShellContent() {
               onOpenRunSession={(sessionId) =>
                 handleOpenAutomationRunSession(sessionId, selectedWorkspaceId)
               }
+              onRunNow={handleReturnToChatPane}
               onCreateSchedule={() =>
                 handleCreateScheduleInChat(selectedWorkspaceId)
               }
@@ -3910,6 +4137,38 @@ function AppShellContent() {
       );
     }
 
+    if (agentView.type === "sessions") {
+      return (
+        <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-card shadow-md backdrop-blur-sm">
+          <div className="shrink-0 border-b border-border px-4 py-2.5 sm:px-5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="inline-flex min-w-0 items-center gap-2 text-base font-semibold text-foreground">
+                <Bot size={14} className="shrink-0 text-muted-foreground" />
+                <span className="truncate">Sessions</span>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={handleReturnToChatPane}
+                aria-label="Return to chat"
+              >
+                <ArrowLeft size={15} />
+              </Button>
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <SubagentSessionsPane
+              workspaceId={selectedWorkspaceId}
+              variant="full"
+              onOpenSession={(session) =>
+                handleOpenRunningSession(session.session_id)
+              }
+            />
+          </div>
+        </section>
+      );
+    }
+
     if (agentView.type === "chat") {
       if (selectedWorkspace && selectedWorkspace.folder_state === "missing") {
         return (
@@ -3957,12 +4216,10 @@ function AppShellContent() {
           browserJumpRequest={activeChatBrowserJumpRequest}
           onBrowserJumpRequestConsumed={consumeChatBrowserJumpRequest}
           onJumpToSessionBrowser={handleJumpToSessionBrowser}
+          onOpenSessions={handleOpenSessionsPane}
           onOpenInbox={handleOpenInboxPane}
           inboxUnreadCount={unreadTaskProposalCount}
           onOpenAutomations={handleOpenAutomationsPane}
-          onRequestCreateSession={(request) =>
-            void handleCreateSession(request)
-          }
           composerDraftText={
             selectedWorkspaceId
               ? (chatComposerDraftTextByWorkspace[selectedWorkspaceId] ?? "")
@@ -4021,6 +4278,7 @@ function AppShellContent() {
     handleJumpToSessionBrowser,
     handleMissingInternalResource,
     handleOpenInboxPane,
+    handleOpenSessionsPane,
     handleOpenAutomationsPane,
     handleOpenAutomationRunSession,
     handleCreateScheduleInChat,
@@ -4573,7 +4831,10 @@ function AppShellContent() {
                     ref={utilityPaneHostRef}
                     className="flex min-h-0 min-w-0 flex-1 items-stretch p-0.5"
                   >
-                    <section className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl bg-card shadow-md backdrop-blur-sm">
+                    <section
+                      id="space-workspace-panel"
+                      className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-card shadow-md backdrop-blur-sm"
+                    >
                       <div
                         className="shrink-0 overflow-hidden border-r border-border bg-card"
                         style={{
@@ -4666,7 +4927,8 @@ function AppShellContent() {
                         </div>
                         <div
                           id="space-explorer-panel"
-                          className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-r border-border bg-card">
+                          className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-r border-border bg-card"
+                        >
                           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                             <div
                               key={spaceExplorerMode}

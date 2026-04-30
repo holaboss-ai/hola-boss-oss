@@ -15,6 +15,7 @@ export interface BrowserCapabilityClientOptions {
   runtimeApiBaseUrl: string;
   workspaceId?: string | null;
   sessionId?: string | null;
+  inputId?: string | null;
   space?: "agent" | "user" | null;
   fetchImpl?: typeof fetch;
 }
@@ -30,6 +31,7 @@ function capabilityToolUrl(runtimeApiBaseUrl: string, toolId: DesktopBrowserTool
 export function browserCapabilityHeaders(
   workspaceId?: string | null,
   sessionId?: string | null,
+  inputId?: string | null,
   space?: "agent" | "user" | null,
 ): Record<string, string> {
   const headers: Record<string, string> = {};
@@ -40,6 +42,10 @@ export function browserCapabilityHeaders(
   const normalizedSessionId = typeof sessionId === "string" ? sessionId.trim() : "";
   if (normalizedSessionId) {
     headers["x-holaboss-session-id"] = normalizedSessionId;
+  }
+  const normalizedInputId = typeof inputId === "string" ? inputId.trim() : "";
+  if (normalizedInputId) {
+    headers["x-holaboss-input-id"] = normalizedInputId;
   }
   if (space === "agent" || space === "user") {
     headers["x-holaboss-browser-space"] = space;
@@ -58,7 +64,7 @@ export async function browserCapabilityAvailable(
     const response = await requestCapabilityJson({
       url: capabilityStatusUrl(options.runtimeApiBaseUrl),
       method: "GET",
-      headers: browserCapabilityHeaders(options.workspaceId, options.sessionId, options.space),
+      headers: browserCapabilityHeaders(options.workspaceId, options.sessionId, options.inputId, options.space),
       signal: AbortSignal.timeout(2000),
       fetchImpl: options.fetchImpl,
     });
@@ -76,6 +82,7 @@ export async function executeBrowserCapabilityTool(params: BrowserCapabilityClie
   content: Array<{ type: "text"; text: string }>;
   details: {
     tool_id: DesktopBrowserToolId;
+    browser_usage?: Record<string, unknown>;
     raw?: unknown;
     raw_result_bytes?: number;
     model_result_bytes?: number;
@@ -86,7 +93,7 @@ export async function executeBrowserCapabilityTool(params: BrowserCapabilityClie
     method: "POST",
     headers: {
       "content-type": "application/json; charset=utf-8",
-      ...browserCapabilityHeaders(params.workspaceId, params.sessionId, params.space),
+      ...browserCapabilityHeaders(params.workspaceId, params.sessionId, params.inputId, params.space),
     },
     body: JSON.stringify(isRecord(params.toolParams) ? params.toolParams : {}),
     signal: toolRequestSignal(params.signal, DEFAULT_BROWSER_TOOL_TIMEOUT_MS),
@@ -98,11 +105,22 @@ export async function executeBrowserCapabilityTool(params: BrowserCapabilityClie
       : `Holaboss browser tool '${params.toolId}' failed.`;
     throw new Error(message);
   }
-  const formatted = formatCapabilityToolResultForModel(response.payload);
+  const payloadRecord = isRecord(response.payload) ? response.payload : null;
+  const browserUsage = isRecord(payloadRecord?.browser_usage)
+    ? (payloadRecord?.browser_usage as Record<string, unknown>)
+    : null;
+  const modelPayload =
+    payloadRecord && browserUsage
+      ? Object.fromEntries(
+          Object.entries(payloadRecord).filter(([key]) => key !== "browser_usage"),
+        )
+      : response.payload;
+  const formatted = formatCapabilityToolResultForModel(modelPayload);
   return {
     content: [{ type: "text", text: formatted.text }],
     details: {
       tool_id: params.toolId,
+      ...(browserUsage ? { browser_usage: browserUsage } : {}),
       ...(formatted.compacted
         ? {
             raw: response.payload,
