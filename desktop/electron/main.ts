@@ -970,6 +970,10 @@ const browserPaneTabState: BrowserPaneTabState = createBrowserPaneTabState({
   touchAgentSessionBrowserSpace: (workspaceId, sessionId) =>
     touchAgentSessionBrowserSpace(workspaceId, sessionId),
   isAbortedBrowserLoadError: (error) => isAbortedBrowserLoadError(error),
+  openExternalUrlFromMain: (url, reason) => openExternalUrlFromMain(url, reason),
+  normalizeBrowserPopupFrameName: (frameName) =>
+    normalizeBrowserPopupFrameName(frameName),
+  duplicateBrowserPopupTabWindowMs: DUPLICATE_BROWSER_POPUP_TAB_WINDOW_MS,
 });
 const getActiveBrowserTab = browserPaneTabState.getActiveBrowserTab;
 const activeVisibleBrowserTarget = browserPaneTabState.activeVisibleBrowserTarget;
@@ -1004,6 +1008,7 @@ const focusBrowserTabInSpace = (
 const setActiveBrowserTab = browserPaneTabState.setActiveBrowserTab;
 const closeBrowserTab = browserPaneTabState.closeBrowserTab;
 const navigateActiveBrowserTab = browserPaneTabState.navigateActiveBrowserTab;
+const handleBrowserWindowOpenAsTab = browserPaneTabState.handleBrowserWindowOpenAsTab;
 const reportedOperatorSurfaceContexts = new Map<
   string,
   ReportedOperatorSurfaceContextPayload
@@ -18924,93 +18929,6 @@ function isBrowserPopupWindowRequest(
 
 // focusBrowserTabInSpace moved to browser-pane/tab-state.ts (BP-P5b-3).
 
-function handleBrowserWindowOpenAsTab(
-  workspaceId: string,
-  targetUrl: string,
-  disposition: string,
-  frameName: string,
-  space: BrowserSpaceId,
-  sessionId?: string | null,
-) {
-  const normalizedUrl = targetUrl.trim();
-  if (!normalizedUrl) {
-    return;
-  }
-
-  try {
-    const parsed = new URL(normalizedUrl);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      openExternalUrlFromMain(normalizedUrl, "browser tab creation");
-      return;
-    }
-  } catch {
-    return;
-  }
-
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const tabSpace = browserTabSpaceState(workspace, space, sessionId, {
-    createIfMissing: true,
-  });
-  if (!workspace || !tabSpace) {
-    return;
-  }
-
-  const normalizedFrameName = normalizeBrowserPopupFrameName(frameName);
-  const now = Date.now();
-  const existingPopupTab = Array.from(tabSpace.tabs.entries()).find(
-    ([, tab]) =>
-      (normalizedFrameName && tab.popupFrameName === normalizedFrameName) ||
-      (!normalizedFrameName &&
-        tab.state.url === normalizedUrl &&
-        typeof tab.popupOpenedAtMs === "number" &&
-        now - tab.popupOpenedAtMs <= DUPLICATE_BROWSER_POPUP_TAB_WINDOW_MS),
-  );
-
-  if (existingPopupTab) {
-    const [existingTabId, existingTab] = existingPopupTab;
-    existingTab.popupFrameName =
-      normalizedFrameName || existingTab.popupFrameName;
-    existingTab.popupOpenedAtMs = now;
-    if (existingTab.state.url !== normalizedUrl) {
-      existingTab.state = { ...existingTab.state, error: "" };
-      void existingTab.view.webContents.loadURL(normalizedUrl).catch((error) => {
-        if (isAbortedBrowserLoadError(error)) {
-          return;
-        }
-        existingTab.state = {
-          ...existingTab.state,
-          loading: false,
-          error: error instanceof Error ? error.message : "Failed to load URL.",
-        };
-        emitBrowserState(workspaceId, space);
-        void persistBrowserWorkspace(workspaceId);
-      });
-    }
-    if (disposition !== "background-tab") {
-      focusBrowserTabInSpace(workspaceId, tabSpace, existingTabId, space, sessionId);
-    }
-    return;
-  }
-
-  const nextTabId = createBrowserTab(workspaceId, {
-    url: normalizedUrl,
-    browserSpace: space,
-    sessionId,
-    popupFrameName: normalizedFrameName,
-    popupOpenedAtMs: now,
-  });
-  if (!nextTabId) {
-    return;
-  }
-
-  if (disposition !== "background-tab") {
-    focusBrowserTabInSpace(workspaceId, tabSpace, nextTabId, space, sessionId);
-    return;
-  }
-
-  emitBrowserState(workspaceId, space);
-  void persistBrowserWorkspace(workspaceId);
-}
 
 function browserContextSuggestedFilename(context: ContextMenuParams): string {
   return browserContextSuggestedFilenameUtil(context, sanitizeAttachmentName);

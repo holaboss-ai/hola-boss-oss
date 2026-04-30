@@ -148,6 +148,18 @@ export interface BrowserPaneTabStateDeps {
 
   /** Detect ERR_ABORTED-style load errors (utils). */
   isAbortedBrowserLoadError: (error: unknown) => boolean;
+
+  /** Open a non-http(s) URL in the OS default browser (main owns this). */
+  openExternalUrlFromMain: (url: string, reason: string) => void;
+
+  /** Normalize a popup window's frame name for de-dup. (utils) */
+  normalizeBrowserPopupFrameName: (frameName?: string | null) => string;
+
+  /**
+   * Window during which a window.open() with the same URL is treated as a
+   * duplicate of an existing tab (and merged) rather than spawned anew.
+   */
+  duplicateBrowserPopupTabWindowMs: number;
 }
 
 export interface BrowserPaneTabState {
@@ -178,6 +190,14 @@ export interface BrowserPaneTabState {
     space?: BrowserSpaceId,
     sessionId?: string | null,
   ) => Promise<BrowserTabListPayload>;
+  handleBrowserWindowOpenAsTab: (
+    workspaceId: string,
+    targetUrl: string,
+    disposition: string,
+    frameName: string,
+    space: BrowserSpaceId,
+    sessionId?: string | null,
+  ) => void;
   // ensureBrowserTabSpaceInitialized + initialBrowserTabSeed deferred —
   // they pull in oppositeBrowserSpaceId / browserTabSpaceStates / NEW_TAB_TITLE
   // which are still being threaded through. Move them in BP-P5b-4.
@@ -488,6 +508,103 @@ export function createBrowserPaneTabState(
     );
   }
 
+  function handleBrowserWindowOpenAsTab(
+    workspaceId: string,
+    targetUrl: string,
+    disposition: string,
+    frameName: string,
+    space: BrowserSpaceId,
+    sessionId?: string | null,
+  ): void {
+    const normalizedUrl = targetUrl.trim();
+    if (!normalizedUrl) {
+      return;
+    }
+
+    try {
+      const parsed = new URL(normalizedUrl);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        deps.openExternalUrlFromMain(normalizedUrl, "browser tab creation");
+        return;
+      }
+    } catch {
+      return;
+    }
+
+    const workspace = deps.getWorkspace(workspaceId);
+    const tabSpace = deps.browserTabSpaceState(workspace, space, sessionId, {
+      createIfMissing: true,
+    });
+    if (!workspace || !tabSpace) {
+      return;
+    }
+
+    const normalizedFrameName = deps.normalizeBrowserPopupFrameName(frameName);
+    const now = Date.now();
+    const existingPopupTab = Array.from(tabSpace.tabs.entries()).find(
+      ([, tab]) =>
+        (normalizedFrameName && tab.popupFrameName === normalizedFrameName) ||
+        (!normalizedFrameName &&
+          tab.state.url === normalizedUrl &&
+          typeof tab.popupOpenedAtMs === "number" &&
+          now - tab.popupOpenedAtMs <= deps.duplicateBrowserPopupTabWindowMs),
+    );
+
+    if (existingPopupTab) {
+      const [existingTabId, existingTab] = existingPopupTab;
+      existingTab.popupFrameName =
+        normalizedFrameName || existingTab.popupFrameName;
+      existingTab.popupOpenedAtMs = now;
+      if (existingTab.state.url !== normalizedUrl) {
+        existingTab.state = { ...existingTab.state, error: "" };
+        void existingTab.view.webContents
+          .loadURL(normalizedUrl)
+          .catch((error: unknown) => {
+            if (deps.isAbortedBrowserLoadError(error)) {
+              return;
+            }
+            existingTab.state = {
+              ...existingTab.state,
+              loading: false,
+              error:
+                error instanceof Error ? error.message : "Failed to load URL.",
+            };
+            emitBrowserState(workspaceId, space);
+            void deps.persistWorkspace(workspaceId);
+          });
+      }
+      if (disposition !== "background-tab") {
+        focusBrowserTabInSpace(
+          workspaceId,
+          tabSpace,
+          existingTabId,
+          space,
+          sessionId,
+        );
+      }
+      return;
+    }
+
+    const nextTabId = deps.createBrowserTab(workspaceId, {
+      url: normalizedUrl,
+      browserSpace: space,
+      sessionId,
+      popupFrameName: normalizedFrameName,
+      popupOpenedAtMs: now,
+    });
+    if (!nextTabId) {
+      return;
+    }
+
+    if (disposition !== "background-tab") {
+      focusBrowserTabInSpace(workspaceId, tabSpace, nextTabId, space, sessionId);
+      return;
+    }
+
+    emitBrowserState(workspaceId, space);
+    void deps.persistWorkspace(workspaceId);
+  }
+
   async function navigateActiveBrowserTab(
     workspaceId: string,
     targetUrl: string,
@@ -699,6 +816,7 @@ export function createBrowserPaneTabState(
     setActiveBrowserTab,
     closeBrowserTab,
     navigateActiveBrowserTab,
+    handleBrowserWindowOpenAsTab,
     getActiveBrowserTab,
     activeVisibleBrowserTarget,
     currentBrowserTabPageTitle,
