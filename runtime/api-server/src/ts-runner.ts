@@ -1096,9 +1096,6 @@ function normalizedSessionKindValue(value: string | null | undefined): string {
 function requestUsesUserBrowserSurface(
   request: Pick<TsRunnerRequest, "session_kind" | "context">,
 ): boolean {
-  if (normalizedSessionKindValue(request.session_kind) === "workspace_session") {
-    return true;
-  }
   return request.context.use_user_browser_surface === true;
 }
 
