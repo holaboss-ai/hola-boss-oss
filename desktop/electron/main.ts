@@ -967,6 +967,9 @@ const browserPaneTabState: BrowserPaneTabState = createBrowserPaneTabState({
   createBrowserTab: (workspaceId, options) =>
     createBrowserTab(workspaceId, options),
   homeUrl: HOME_URL,
+  touchAgentSessionBrowserSpace: (workspaceId, sessionId) =>
+    touchAgentSessionBrowserSpace(workspaceId, sessionId),
+  isAbortedBrowserLoadError: (error) => isAbortedBrowserLoadError(error),
 });
 const getActiveBrowserTab = browserPaneTabState.getActiveBrowserTab;
 const activeVisibleBrowserTarget = browserPaneTabState.activeVisibleBrowserTarget;
@@ -1000,6 +1003,7 @@ const focusBrowserTabInSpace = (
   );
 const setActiveBrowserTab = browserPaneTabState.setActiveBrowserTab;
 const closeBrowserTab = browserPaneTabState.closeBrowserTab;
+const navigateActiveBrowserTab = browserPaneTabState.navigateActiveBrowserTab;
 const reportedOperatorSurfaceContexts = new Map<
   string,
   ReportedOperatorSurfaceContextPayload
@@ -5412,45 +5416,7 @@ function isAbortedBrowserLoadFailure(
   return isAbortedBrowserLoadFailureUtil(errorCode, errorDescription);
 }
 
-async function navigateActiveBrowserTab(
-  workspaceId: string,
-  targetUrl: string,
-  space: BrowserSpaceId = activeBrowserSpaceId,
-  sessionId?: string | null,
-): Promise<BrowserTabListPayload> {
-  await ensureBrowserWorkspace(workspaceId, space, sessionId);
-  if (space === "agent" && browserSessionId(sessionId)) {
-    touchAgentSessionBrowserSpace(workspaceId, sessionId);
-  }
-  const activeTab = getActiveBrowserTab(workspaceId, space, sessionId, {
-    useVisibleAgentSession: !browserSessionId(sessionId),
-  });
-  if (!activeTab) {
-    throw new Error("No active browser tab is available.");
-  }
-
-  try {
-    activeTab.state = { ...activeTab.state, error: "" };
-    await activeTab.view.webContents.loadURL(targetUrl);
-  } catch (error) {
-    if (isAbortedBrowserLoadError(error)) {
-      return browserWorkspaceSnapshot(workspaceId, space, sessionId, {
-        useVisibleAgentSession: !browserSessionId(sessionId),
-      });
-    }
-    activeTab.state = {
-      ...activeTab.state,
-      loading: false,
-      error: error instanceof Error ? error.message : "Failed to load URL.",
-    };
-    emitBrowserState(workspaceId, space);
-    throw error;
-  }
-
-  return browserWorkspaceSnapshot(workspaceId, space, sessionId, {
-    useVisibleAgentSession: !browserSessionId(sessionId),
-  });
-}
+// navigateActiveBrowserTab moved to browser-pane/tab-state.ts (BP-P5b-4).
 
 async function handleDesktopBrowserServiceRequest(
   request: IncomingMessage,

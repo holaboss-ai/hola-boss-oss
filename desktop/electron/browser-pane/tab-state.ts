@@ -139,6 +139,15 @@ export interface BrowserPaneTabStateDeps {
 
   /** Default URL to seed a new tab with when there's nothing else to land on. */
   homeUrl: string;
+
+  /** P6 callback — keep an agent-session space alive (extends suspend timer). */
+  touchAgentSessionBrowserSpace: (
+    workspaceId: string,
+    sessionId?: string | null,
+  ) => void;
+
+  /** Detect ERR_ABORTED-style load errors (utils). */
+  isAbortedBrowserLoadError: (error: unknown) => boolean;
 }
 
 export interface BrowserPaneTabState {
@@ -161,6 +170,12 @@ export interface BrowserPaneTabState {
   closeBrowserTab: (
     tabId: string,
     space?: BrowserSpaceId | null,
+    sessionId?: string | null,
+  ) => Promise<BrowserTabListPayload>;
+  navigateActiveBrowserTab: (
+    workspaceId: string,
+    targetUrl: string,
+    space?: BrowserSpaceId,
     sessionId?: string | null,
   ) => Promise<BrowserTabListPayload>;
   // ensureBrowserTabSpaceInitialized + initialBrowserTabSeed deferred —
@@ -473,6 +488,46 @@ export function createBrowserPaneTabState(
     );
   }
 
+  async function navigateActiveBrowserTab(
+    workspaceId: string,
+    targetUrl: string,
+    space: BrowserSpaceId = deps.getActiveSpaceId(),
+    sessionId?: string | null,
+  ): Promise<BrowserTabListPayload> {
+    await deps.ensureBrowserWorkspace(workspaceId, space, sessionId);
+    if (space === "agent" && deps.browserSessionId(sessionId)) {
+      deps.touchAgentSessionBrowserSpace(workspaceId, sessionId);
+    }
+    const activeTab = getActiveBrowserTab(workspaceId, space, sessionId, {
+      useVisibleAgentSession: !deps.browserSessionId(sessionId),
+    });
+    if (!activeTab) {
+      throw new Error("No active browser tab is available.");
+    }
+
+    try {
+      activeTab.state = { ...activeTab.state, error: "" };
+      await activeTab.view.webContents.loadURL(targetUrl);
+    } catch (error) {
+      if (deps.isAbortedBrowserLoadError(error)) {
+        return deps.browserWorkspaceSnapshot(workspaceId, space, sessionId, {
+          useVisibleAgentSession: !deps.browserSessionId(sessionId),
+        });
+      }
+      activeTab.state = {
+        ...activeTab.state,
+        loading: false,
+        error: error instanceof Error ? error.message : "Failed to load URL.",
+      };
+      emitBrowserState(workspaceId, space);
+      throw error;
+    }
+
+    return deps.browserWorkspaceSnapshot(workspaceId, space, sessionId, {
+      useVisibleAgentSession: !deps.browserSessionId(sessionId),
+    });
+  }
+
   async function closeBrowserTab(
     tabId: string,
     space?: BrowserSpaceId | null,
@@ -643,6 +698,7 @@ export function createBrowserPaneTabState(
     focusBrowserTabInSpace,
     setActiveBrowserTab,
     closeBrowserTab,
+    navigateActiveBrowserTab,
     getActiveBrowserTab,
     activeVisibleBrowserTarget,
     currentBrowserTabPageTitle,
