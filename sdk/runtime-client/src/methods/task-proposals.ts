@@ -40,9 +40,17 @@ export type TaskProposalAcceptResponse = {
   input: Record<string, unknown>;
 };
 
+export type TaskProposalStateUpdateResponse = {
+  proposal: TaskProposalRecord;
+};
+
 export type TaskProposalsMethods = {
   listUnreviewed(workspaceId: string): Promise<TaskProposalListResponse>;
   accept(payload: TaskProposalAcceptPayload): Promise<TaskProposalAcceptResponse>;
+  updateState(
+    proposalId: string,
+    state: string
+  ): Promise<TaskProposalStateUpdateResponse>;
 };
 
 export function makeTaskProposalsMethods(
@@ -69,6 +77,13 @@ export function makeTaskProposalsMethods(
           priority: payload.priority ?? 0,
           model: payload.model ?? null,
         },
+      });
+    },
+    updateState(proposalId, state) {
+      return request<TaskProposalStateUpdateResponse>({
+        method: "PATCH",
+        path: `/api/v1/task-proposals/${encodeURIComponent(proposalId)}`,
+        payload: { state },
       });
     },
   };

@@ -53,6 +53,7 @@ export type DeleteWorkspaceOptions = {
 
 export type WorkspacesMethods = {
   list(params?: ListWorkspacesParams): Promise<WorkspaceListResponse>;
+  get(workspaceId: string): Promise<WorkspaceResponse>;
   create(payload: CreateWorkspaceBody): Promise<WorkspaceResponse>;
   update(
     workspaceId: string,
@@ -77,6 +78,13 @@ export function makeWorkspacesMethods(request: RequestFn): WorkspacesMethods {
           limit,
           offset,
         },
+      });
+    },
+
+    get(workspaceId) {
+      return request<WorkspaceResponse>({
+        method: "GET",
+        path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}`,
       });
     },
 

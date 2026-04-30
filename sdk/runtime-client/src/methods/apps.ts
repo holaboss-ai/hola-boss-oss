@@ -62,6 +62,8 @@ export type ListAppCatalogParams = {
   source?: "marketplace" | "local";
 };
 
+export type AppPortMap = Record<string, { http: number; mcp: number }>;
+
 export type AppsMethods = {
   listCatalog(params?: ListAppCatalogParams): Promise<AppCatalogListResponse>;
   syncCatalog(payload: AppCatalogSyncBody): Promise<AppCatalogSyncResponse>;
@@ -75,6 +77,7 @@ export type AppsMethods = {
     appId: string,
     options?: { timeoutMs?: number }
   ): Promise<Record<string, unknown>>;
+  listPorts(workspaceId: string): Promise<AppPortMap>;
 };
 
 export function makeAppsMethods(request: RequestFn): AppsMethods {
@@ -126,6 +129,14 @@ export function makeAppsMethods(request: RequestFn): AppsMethods {
           workspace_id: workspaceId,
         },
         timeoutMs: options.timeoutMs ?? 30000,
+      });
+    },
+
+    listPorts(workspaceId) {
+      return request<AppPortMap>({
+        method: "GET",
+        path: "/api/v1/apps/ports",
+        params: { workspace_id: workspaceId },
       });
     },
   };

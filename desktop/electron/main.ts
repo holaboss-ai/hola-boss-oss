@@ -10856,7 +10856,7 @@ async function ingestWorkspaceHeartbeat(params: {
 
   try {
     const bundledContext =
-      await requestRuntimeJson<ProactiveContextCaptureResponsePayload>({
+      await runtimeClient.request<ProactiveContextCaptureResponsePayload>({
         method: "POST",
         path: "/api/v1/proactive/context/capture",
         payload: {
@@ -12676,11 +12676,7 @@ async function updateTaskProposalState(
   proposalId: string,
   state: string,
 ): Promise<TaskProposalStateUpdatePayload> {
-  return requestRuntimeJson<TaskProposalStateUpdatePayload>({
-    method: "PATCH",
-    path: `/api/v1/task-proposals/${encodeURIComponent(proposalId)}`,
-    payload: { state },
-  });
+  return runtimeClient.taskProposals.updateState(proposalId, state);
 }
 
 const LOCAL_TEMPLATE_IGNORE_NAMES = new Set([
@@ -13441,9 +13437,10 @@ function sleep(ms: number) {
   });
 }
 
-// Singleton runtime client. Owns retry/timeout/error parsing — the legacy
-// `requestRuntimeJson` shim below routes through it so call sites continue to
-// work while Streams A/B migrate to typed domain methods.
+// Singleton runtime client. Owns retry/timeout/error parsing for every
+// runtime call in this process; new endpoints should reach for typed methods
+// (`runtimeClient.<domain>.<method>(...)`) or the generic `runtimeClient.request<T>()`
+// rather than reintroducing inline fetch.
 const runtimeClient = createRuntimeClient({
   getBaseURL: async () => {
     const status = await ensureRuntimeReady();
@@ -13453,33 +13450,6 @@ const runtimeClient = createRuntimeClient({
     return status.url;
   },
 });
-
-// Compat shim — preserves the original signature so the ~55 unmigrated call
-// sites keep working. Delete once Streams A/B are done.
-async function requestRuntimeJson<T>({
-  method,
-  path: requestPath,
-  payload,
-  params,
-  timeoutMs,
-  retryTransientErrors,
-}: {
-  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-  path: string;
-  payload?: unknown;
-  params?: Record<string, string | number | boolean | null | undefined>;
-  timeoutMs?: number;
-  retryTransientErrors?: boolean;
-}): Promise<T> {
-  return runtimeClient.request<T>({
-    method,
-    path: requestPath,
-    payload,
-    params,
-    timeoutMs,
-    retryTransientErrors,
-  });
-}
 
 function workspaceHarness() {
   return (
@@ -13557,10 +13527,7 @@ async function resolveWorkspaceDir(workspaceId: string): Promise<string> {
     return cached;
   }
   try {
-    const response = await requestRuntimeJson<WorkspaceResponsePayload>({
-      method: "GET",
-      path: `/api/v1/workspaces/${encodeURIComponent(safeId)}`,
-    });
+    const response = await runtimeClient.workspaces.get(safeId);
     const registered = response.workspace.workspace_path?.trim() || "";
     if (registered) {
       const resolved = path.resolve(registered);
@@ -17484,13 +17451,7 @@ async function getAppHttpUrl(
   appId: string,
 ): Promise<string | null> {
   try {
-    const ports = await requestRuntimeJson<
-      Record<string, { http: number; mcp: number }>
-    >({
-      method: "GET",
-      path: "/api/v1/apps/ports",
-      params: { workspace_id: workspaceId },
-    });
+    const ports = await runtimeClient.apps.listPorts(workspaceId);
     const appPorts = ports[appId];
     if (!appPorts?.http) {
       return null;
