@@ -1267,9 +1267,10 @@ test("runTsRunnerCli strips staged execution tools from front-of-house workspace
       deps: {
         ...testDeps({
           pluginOverrides: {
-            stageBrowserTools: () => ({
+            stageBrowserTools: ({ sessionKind }) => ({
               changed: false,
-              toolIds: ["browser_get_state"],
+              toolIds:
+                sessionKind === "subagent" ? ["browser_get_state"] : [],
             }),
             stageRuntimeTools: () => ({
               changed: false,

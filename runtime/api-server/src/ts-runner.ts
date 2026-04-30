@@ -1387,9 +1387,12 @@ function buildAgentRuntimeConfigRequest(params: {
   harnessId: string;
   browserToolsAvailable: boolean;
   browserToolIds: string[];
+  delegatedBrowserToolsAvailable?: boolean | null;
+  delegatedBrowserToolIds?: string[] | null;
   runtimeToolIds: string[];
   compiledPlan: CompiledWorkspaceRuntimePlan;
   extraToolIds: string[];
+  delegatedExtraToolIds?: string[] | null;
   workspaceSkillIds: string[];
   workspaceCommandIds: string[];
   toolServerIdMap: Readonly<Record<string, string>>;
@@ -1431,7 +1434,7 @@ function buildAgentRuntimeConfigRequest(params: {
     ? projectExtraToolIdsForSession({
         harnessId: params.harnessId,
         sessionKind: "subagent",
-        extraToolIds: params.extraToolIds,
+        extraToolIds: params.delegatedExtraToolIds ?? params.extraToolIds,
       })
     : null;
   const delegatedRuntimeToolIds = delegatedCapabilitySnapshotEligible
@@ -1443,7 +1446,7 @@ function buildAgentRuntimeConfigRequest(params: {
   const delegatedBrowserToolIds = delegatedCapabilitySnapshotEligible
     ? projectBrowserToolIdsForSession({
         sessionKind: "subagent",
-        browserToolIds: params.browserToolIds,
+        browserToolIds: params.delegatedBrowserToolIds ?? params.browserToolIds,
       })
     : null;
   const delegatedResolvedMcpToolRefs = delegatedCapabilitySnapshotEligible
@@ -1486,10 +1489,11 @@ function buildAgentRuntimeConfigRequest(params: {
       : [...SUBAGENT_DEFAULT_TOOLS],
     extra_tools: extraTools,
     ...(delegatedCapabilitySnapshotEligible
-      ? {
+        ? {
           delegated_session_kind: "subagent",
           delegated_browser_tools_available:
-            params.browserToolsAvailable &&
+            (params.delegatedBrowserToolsAvailable ??
+              params.browserToolsAvailable) &&
             (delegatedBrowserToolIds?.length ?? 0) > 0,
           delegated_browser_tool_ids: [...(delegatedBrowserToolIds ?? [])],
           delegated_runtime_tool_ids: [...(delegatedRuntimeToolIds ?? [])],
@@ -2006,6 +2010,19 @@ export async function executeTsRunnerRequest(
           browserConfig,
         }),
     );
+    const stagedDelegatedBrowserTools =
+      isDelegatingFrontSessionKind(request.session_kind)
+        ? measureBootstrapStage(
+            bootstrapStageTimingsMs,
+            "stage_delegated_browser_tools",
+            () =>
+              harnessPlugin.stageBrowserTools({
+                workspaceDir: bootstrap.workspaceDir,
+                sessionKind: "subagent",
+                browserConfig,
+              }),
+          )
+        : null;
     const stagedRuntimeTools = measureBootstrapStage(
       bootstrapStageTimingsMs,
       "stage_runtime_tools",
@@ -2224,10 +2241,21 @@ export async function executeTsRunnerRequest(
             harnessId: bootstrap.harness,
             browserToolsAvailable: stagedBrowserTools.toolIds.length > 0,
             browserToolIds: [...stagedBrowserTools.toolIds],
+            delegatedBrowserToolsAvailable:
+              stagedDelegatedBrowserTools?.toolIds.length
+                ? true
+                : false,
+            delegatedBrowserToolIds: [
+              ...(stagedDelegatedBrowserTools?.toolIds ?? []),
+            ],
             runtimeToolIds: [...stagedRuntimeTools.toolIds],
             compiledPlan,
             extraToolIds: [
               ...stagedBrowserTools.toolIds,
+              ...stagedRuntimeTools.toolIds,
+            ],
+            delegatedExtraToolIds: [
+              ...(stagedDelegatedBrowserTools?.toolIds ?? []),
               ...stagedRuntimeTools.toolIds,
             ],
             workspaceSkillIds: workspaceSkills.map((skill) => skill.skill_id),
