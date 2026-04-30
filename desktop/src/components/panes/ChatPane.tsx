@@ -7837,15 +7837,18 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
           </div>
         ) : null}
 
-        {!isOnboardingVariant && !isReadOnlyInspectionSession ? (
-          <BackgroundTasksPane
-            workspaceId={selectedWorkspaceId}
-            variant="inline"
-            onOpenTaskSession={handleOpenBackgroundTaskSession}
-          />
-        ) : null}
-
         <div className="relative flex min-h-0 flex-1 flex-col">
+          {!isOnboardingVariant && !isReadOnlyInspectionSession ? (
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-20">
+              <div className="pointer-events-auto">
+                <BackgroundTasksPane
+                  workspaceId={selectedWorkspaceId}
+                  variant="inline"
+                  onOpenTaskSession={handleOpenBackgroundTaskSession}
+                />
+              </div>
+            </div>
+          ) : null}
           <div
             className="relative min-h-0 flex-1 overflow-hidden"
             style={{

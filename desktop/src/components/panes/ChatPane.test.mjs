@@ -1590,7 +1590,7 @@ test("chat pane renders inline background tasks near the top of the pane", async
 
   assert.match(
     source,
-    /!isOnboardingVariant && !isReadOnlyInspectionSession \? \(\s*<BackgroundTasksPane[\s\S]*workspaceId=\{selectedWorkspaceId\}[\s\S]*variant="inline"[\s\S]*\) : null/,
+    /!isOnboardingVariant && !isReadOnlyInspectionSession \? \(\s*<div className="pointer-events-none absolute inset-x-0 top-0 z-20">[\s\S]*<BackgroundTasksPane[\s\S]*workspaceId=\{selectedWorkspaceId\}[\s\S]*variant="inline"[\s\S]*\) : null/,
   );
   assert.doesNotMatch(
     source,
@@ -1601,6 +1601,10 @@ test("chat pane renders inline background tasks near the top of the pane", async
   assert.match(
     source,
     /className=\{`flex min-w-0 w-full flex-col gap-4 px-4 pb-3 pt-5 \$\{\s*showHistoryRestoreScreen \? "invisible" : ""\s*\}`\}/,
+  );
+  assert.match(
+    source,
+    /className="pointer-events-none absolute inset-x-0 top-0 z-20"/,
   );
   assert.doesNotMatch(source, /<CurrentTodoPanel/);
 });

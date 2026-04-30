@@ -13,12 +13,13 @@ test("chat pane renders background tasks inline and removes the separate quick a
   assert.doesNotMatch(source, /onClick=\{\(\) => onOpenBackgroundTasks\(\)\}/);
   assert.match(
     source,
-    /!isOnboardingVariant && !isReadOnlyInspectionSession \? \(\s*<BackgroundTasksPane[\s\S]*workspaceId=\{selectedWorkspaceId\}[\s\S]*variant="inline"/,
+    /!isOnboardingVariant && !isReadOnlyInspectionSession \? \(\s*<div className="pointer-events-none absolute inset-x-0 top-0 z-20">[\s\S]*<BackgroundTasksPane[\s\S]*workspaceId=\{selectedWorkspaceId\}[\s\S]*variant="inline"/,
   );
   assert.match(
     source,
     /<BackgroundTasksPane[\s\S]*onOpenTaskSession=\{handleOpenBackgroundTaskSession\}/,
   );
+  assert.match(source, /<div className="pointer-events-auto">/);
   assert.doesNotMatch(source, /<SubagentSessionsPane[\s\S]*variant="inline"/);
   assert.match(source, /readOnly: true,/);
   assert.match(source, /onOpenSessions\?: \(\) => void;/);
