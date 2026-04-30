@@ -1089,15 +1089,30 @@ function buildAgentRuntimeConfigRequest(params: {
   };
 }
 
+function normalizedSessionKindValue(value: string | null | undefined): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function requestUsesUserBrowserSurface(
+  request: Pick<TsRunnerRequest, "session_kind" | "context">,
+): boolean {
+  if (normalizedSessionKindValue(request.session_kind) === "workspace_session") {
+    return true;
+  }
+  return request.context.use_user_browser_surface === true;
+}
+
 function browserSpaceFromOperatorSurfaceContext(
   context: AgentOperatorSurfaceContext | null | undefined,
+  request: Pick<TsRunnerRequest, "session_kind" | "context">,
 ): "agent" | "user" | null {
+  const allowUserSurface = requestUsesUserBrowserSurface(request);
   const activeSurfaceId =
     typeof context?.active_surface_id === "string"
       ? context.active_surface_id.trim()
       : "";
   if (activeSurfaceId === "browser:user") {
-    return "user";
+    return allowUserSurface ? "user" : "agent";
   }
   if (activeSurfaceId === "browser:agent") {
     return "agent";
@@ -1109,7 +1124,10 @@ function browserSpaceFromOperatorSurfaceContext(
   if (!activeBrowserSurface) {
     return null;
   }
-  return activeBrowserSurface.owner === "user" ? "user" : "agent";
+  if (activeBrowserSurface.owner === "user") {
+    return allowUserSurface ? "user" : "agent";
+  }
+  return "agent";
 }
 
 function terminalHarnessSessionId(event: TsRunnerEvent): string | null {
@@ -1808,6 +1826,7 @@ export async function executeTsRunnerRequest(
         prepared_instruction: preparedInstruction,
         browserSpace: browserSpaceFromOperatorSurfaceContext(
           operatorSurfaceContext,
+          request,
         ),
         runtimeApiBaseUrl: currentRuntimeApiUrl(),
         workspaceSkills,
@@ -1851,6 +1870,7 @@ export async function executeTsRunnerRequest(
       prepared_instruction: preparedInstruction,
       browserSpace: browserSpaceFromOperatorSurfaceContext(
         operatorSurfaceContext,
+        request,
       ),
       runtimeApiBaseUrl: currentRuntimeApiUrl(),
       workspaceSkills,
