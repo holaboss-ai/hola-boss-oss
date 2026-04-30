@@ -1,4 +1,9 @@
 import { contextBridge, ipcRenderer } from "electron";
+import {
+  BFF_FETCH_CHANNEL,
+  type BffFetchRequest,
+  type BffFetchResponse,
+} from "../shared/bff-fetch-protocol.js";
 
 interface FileSystemEntry {
   name: string;
@@ -1210,6 +1215,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
     writeText: (text: string) =>
       ipcRenderer.invoke("clipboard:writeText", text) as Promise<void>,
   },
+  bff: {
+    /**
+     * fetch-shaped IPC bridge to the BFF. Use the renderer-side wrapper
+     * `bffFetch` from `src/lib/bff-fetch-bridge.ts` rather than calling
+     * this directly — the wrapper presents a real `Response` object.
+     */
+    fetch: (req: BffFetchRequest): Promise<BffFetchResponse> =>
+      ipcRenderer.invoke(BFF_FETCH_CHANNEL, req) as Promise<BffFetchResponse>,
+  },
   appUpdate: {
     getStatus: () => ipcRenderer.invoke("appUpdate:getStatus") as Promise<AppUpdateStatusPayload>,
     checkNow: () => ipcRenderer.invoke("appUpdate:checkNow") as Promise<AppUpdateStatusPayload>,
@@ -1482,11 +1496,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   auth: {
     getUser: () => ipcRenderer.invoke("auth:getUser") as Promise<AuthUserPayload | null>,
     // Renderer-direct BFF clients (e.g. @holaboss/app-sdk in renderer,
-    // billing RPC) need the Better-Auth cookie + Hono base URL to call
-    // the gateway directly without round-tripping through main. Returning
-    // an empty cookie is OK — public marketplace endpoints work anonymously
-    // and authed endpoints will simply 401 if the user isn't signed in.
-    getCookieHeader: () => ipcRenderer.invoke("auth:getCookieHeader") as Promise<string>,
+    // billing RPC) reach the BFF via the bff:fetch bridge below — the
+    // raw cookie stays in main. These two accessors expose only the host
+    // URL the renderer should target.
     getApiBaseUrl: () => ipcRenderer.invoke("auth:getApiBaseUrl") as Promise<string>,
     getMarketplaceBaseUrl: () =>
       ipcRenderer.invoke("auth:getMarketplaceBaseUrl") as Promise<string>,

@@ -1453,6 +1453,11 @@ declare global {
       readImage: () => Promise<ClipboardImagePayload | null>;
       writeText: (text: string) => Promise<void>;
     };
+    bff: {
+      fetch: (
+        req: import("../../shared/bff-fetch-protocol").BffFetchRequest,
+      ) => Promise<import("../../shared/bff-fetch-protocol").BffFetchResponse>;
+    };
     appUpdate: {
       getStatus: () => Promise<AppUpdateStatusPayload>;
       checkNow: () => Promise<AppUpdateStatusPayload>;
@@ -1620,8 +1625,8 @@ declare global {
     };
     auth: {
       getUser: () => Promise<AuthUserPayload | null>;
-      // Renderer-direct BFF needs cookie + base URL; see preload.ts auth IPC.
-      getCookieHeader: () => Promise<string>;
+      // Renderer-side BFF clients reach the API via the bff.fetch bridge —
+      // these accessors expose only the host URLs the renderer should target.
       getApiBaseUrl: () => Promise<string>;
       getMarketplaceBaseUrl: () => Promise<string>;
       requestAuth: () => Promise<void>;

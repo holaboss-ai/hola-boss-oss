@@ -110,6 +110,7 @@ import {
   isTransientRuntimeError,
   runtimeErrorFromBody,
 } from "@holaboss/runtime-client";
+import { installBffFetchHandler } from "./bff-fetch.js";
 
 const APP_DISPLAY_NAME = "Holaboss";
 const MAC_APP_MENU_PRODUCT_LABEL = "holaOS";
@@ -1325,6 +1326,22 @@ const AUTH_SIGN_IN_URL = configuredRemoteBaseUrl(
   ["HOLABOSS_AUTH_SIGN_IN_URL"],
   packagedDesktopConfig.authSignInUrl,
 );
+
+// Hosts the renderer is allowed to reach via the bff:fetch IPC bridge.
+// Derived from the configured AUTH/BACKEND base URLs so the allowlist tracks
+// whichever environment (prod, staging, local) the desktop is wired to.
+function bffFetchAllowedHosts(): readonly string[] {
+  const hosts = new Set<string>();
+  for (const base of [AUTH_BASE_URL, BACKEND_BASE_URL]) {
+    if (!base) continue;
+    try {
+      hosts.add(new URL(base).host);
+    } catch {
+      // ignore malformed config — the allowlist stays narrower
+    }
+  }
+  return [...hosts];
+}
 const DESKTOP_RUNTIME_BINDING_EXCHANGE_PATH =
   "/api/v1/desktop-runtime/bindings/exchange";
 const DESKTOP_RUNTIME_MODEL_CATALOG_PATH =
@@ -23417,6 +23434,19 @@ app.whenReady().then(async () => {
   ensureOpenAiCodexRefreshLoop();
   void refreshOpenAiCodexProviderCredentials().catch(() => undefined);
 
+  installBffFetchHandler({
+    getCookieHeader: () => authCookieHeader(),
+    allowedHosts: () => bffFetchAllowedHosts(),
+    register: (channel, handler) =>
+      handleTrustedIpc(channel, ["main"], handler),
+    log: (event) => {
+      // Same shape as the rest of the structured logs — short, single-line,
+      // single source of truth in main stdout.
+      // eslint-disable-next-line no-console
+      console.info(`[bff-fetch] ${JSON.stringify(event)}`);
+    },
+  });
+
   handleTrustedIpc(
     "fs:listDirectory",
     ["main"],
@@ -23602,11 +23632,10 @@ app.whenReady().then(async () => {
     getAuthenticatedUser(),
   );
   // Renderer-side BFF clients (e.g. @holaboss/app-sdk in renderer, billing
-  // RPC calls) need the Better-Auth Cookie header and API base URL so they
-  // can call Hono directly without round-tripping through main. Returning
-  // an empty cookie is fine when not signed in — the SDK call paths gate on
-  // auth state and the server decides whether auth is required.
-  handleTrustedIpc("auth:getCookieHeader", ["main"], () => authCookieHeader());
+  // RPC calls) reach the BFF via the bff:fetch IPC bridge — main injects
+  // the auth cookie there, so the renderer never sees it. The two URL
+  // accessors below stay because the renderer still needs to know which
+  // host to target (encoded in the SDK's baseURL).
   handleTrustedIpc("auth:getApiBaseUrl", ["main"], () => AUTH_BASE_URL ?? "");
   handleTrustedIpc(
     "auth:getMarketplaceBaseUrl",
