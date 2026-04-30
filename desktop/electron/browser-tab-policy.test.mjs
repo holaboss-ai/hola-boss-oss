@@ -7,21 +7,24 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const mainSourcePath = path.join(__dirname, "main.ts");
 const popupsPath = path.join(__dirname, "browser-pane", "popups.ts");
+const utilsPath = path.join(__dirname, "browser-pane", "utils.ts");
 
 test("desktop browser keeps auth-style popup windows while promoting ordinary new-window requests into tabs", async () => {
   const source = await readFile(mainSourcePath, "utf8");
+  // Popup-frame-name normalisation moved to browser-pane/utils.ts in BP-P5.
+  const utilsSource = await readFile(utilsPath, "utf8");
 
-  assert.match(source, /function normalizeBrowserPopupFrameName\(frameName\?: string \| null\): string \{/);
+  assert.match(utilsSource, /export function normalizeBrowserPopupFrameName\(\s*frameName\?: string \| null,\s*\): string \{/);
   assert.match(
-    source,
-    /function isBrowserPopupWindowRequest\(\s*frameName\?: string \| null,\s*features\?: string \| null,\s*\): boolean \{/,
+    utilsSource,
+    /export function isBrowserPopupWindowRequest\(\s*frameName\?: string \| null,\s*features\?: string \| null,\s*\): boolean \{/,
   );
   assert.match(
-    source,
+    utilsSource,
     /if \(normalizeBrowserPopupFrameName\(frameName\)\) \{\s*return true;\s*\}/,
   );
   assert.match(
-    source,
+    utilsSource,
     /normalizedFeatures\.includes\("popup"\)[\s\S]*normalizedFeatures\.includes\("width="\)[\s\S]*normalizedFeatures\.includes\("height="\)/,
   );
   assert.match(

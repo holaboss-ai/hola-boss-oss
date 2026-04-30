@@ -132,6 +132,25 @@ import type {
   BrowserImportSource,
   BrowserWorkspaceImportTarget,
 } from "./browser-pane/types.js";
+import {
+  browserAcceptedLanguages as browserAcceptedLanguagesUtil,
+  browserChromeLikePlatformToken as browserChromeLikePlatformTokenUtil,
+  browserContextSuggestedFilename as browserContextSuggestedFilenameUtil,
+  browserSessionId as browserSessionIdUtil,
+  browserSpaceId as browserSpaceIdUtil,
+  browserWorkspacePartition as browserWorkspacePartitionUtil,
+  browserWorkspaceStatePath as browserWorkspaceStatePathUtil,
+  browserWorkspaceStorageDir as browserWorkspaceStorageDirUtil,
+  createBrowserState as createBrowserStateUtil,
+  emptyBrowserTabCountsPayload as emptyBrowserTabCountsPayloadUtil,
+  isAbortedBrowserLoadError as isAbortedBrowserLoadErrorUtil,
+  isAbortedBrowserLoadFailure as isAbortedBrowserLoadFailureUtil,
+  isBrowserPopupWindowRequest as isBrowserPopupWindowRequestUtil,
+  normalizeBrowserPopupFrameName as normalizeBrowserPopupFrameNameUtil,
+  oppositeBrowserSpaceId as oppositeBrowserSpaceIdUtil,
+  sanitizeBrowserWorkspaceSegment as sanitizeBrowserWorkspaceSegmentUtil,
+  shouldTrackHistoryUrl as shouldTrackHistoryUrlUtil,
+} from "./browser-pane/utils.js";
 
 const APP_DISPLAY_NAME = "Holaboss";
 const MAC_APP_MENU_PRODUCT_LABEL = "holaOS";
@@ -3210,35 +3229,19 @@ function appendSessionStreamDebug(
 }
 
 function sanitizeBrowserWorkspaceSegment(workspaceId: string) {
-  const normalized =
-    workspaceId
-      .trim()
-      .replace(/[^A-Za-z0-9_-]+/g, "_")
-      .replace(/^_+|_+$/g, "") || "workspace";
-  const digest = createHash("sha256")
-    .update(workspaceId.trim(), "utf8")
-    .digest("hex")
-    .slice(0, 12);
-  return `${normalized}-${digest}`;
+  return sanitizeBrowserWorkspaceSegmentUtil(workspaceId);
 }
 
 function browserWorkspaceStorageDir(workspaceId: string) {
-  return path.join(
-    app.getPath("userData"),
-    "browser-workspaces",
-    sanitizeBrowserWorkspaceSegment(workspaceId),
-  );
+  return browserWorkspaceStorageDirUtil(app.getPath("userData"), workspaceId);
 }
 
 function browserWorkspaceStatePath(workspaceId: string) {
-  return path.join(
-    browserWorkspaceStorageDir(workspaceId),
-    "browser-state.json",
-  );
+  return browserWorkspaceStatePathUtil(app.getPath("userData"), workspaceId);
 }
 
 function browserWorkspacePartition(workspaceId: string) {
-  return `persist:holaboss-browser-${sanitizeBrowserWorkspaceSegment(workspaceId)}`;
+  return browserWorkspacePartitionUtil(workspaceId);
 }
 
 // ---------------------------------------------------------------------------
@@ -3418,20 +3421,11 @@ const importChromeProfileIntoWorkspace = (workspaceId: string) =>
   );
 
 function browserChromeLikePlatformToken(): string {
-  switch (process.platform) {
-    case "darwin":
-      return "Macintosh; Intel Mac OS X 10_15_7";
-    case "win32":
-      return "Windows NT 10.0; Win64; x64";
-    default:
-      return "X11; Linux x86_64";
-  }
+  return browserChromeLikePlatformTokenUtil();
 }
 
 function browserAcceptedLanguages(): string {
-  const locale = app.getLocale().trim().replace(/_/g, "-");
-  const preferred = [locale, "en-US", "en"].filter(Boolean);
-  return [...new Set(preferred)].join(",");
+  return browserAcceptedLanguagesUtil(app.getLocale());
 }
 
 function browserNativeIdentity(session: Session): BrowserSessionIdentity {
@@ -5306,29 +5300,14 @@ function serializeBrowserEvalResult(value: unknown): unknown {
 }
 
 function isAbortedBrowserLoadError(error: unknown): boolean {
-  if (!error || typeof error !== "object") {
-    return false;
-  }
-  const candidate = error as {
-    code?: unknown;
-    errno?: unknown;
-    message?: unknown;
-  };
-  return (
-    candidate.code === "ERR_ABORTED" ||
-    candidate.errno === -3 ||
-    (typeof candidate.message === "string" &&
-      candidate.message.includes("ERR_ABORTED"))
-  );
+  return isAbortedBrowserLoadErrorUtil(error);
 }
 
 function isAbortedBrowserLoadFailure(
   errorCode: number,
   errorDescription: string,
 ): boolean {
-  return (
-    errorCode === -3 || errorDescription.trim().toUpperCase() === "ERR_ABORTED"
-  );
+  return isAbortedBrowserLoadFailureUtil(errorCode, errorDescription);
 }
 
 async function navigateActiveBrowserTab(
@@ -15761,28 +15740,18 @@ function persistFileBookmarks() {
 function createBrowserState(
   overrides?: Partial<BrowserStatePayload>,
 ): BrowserStatePayload {
-  return {
-    id: overrides?.id ?? "",
-    url: overrides?.url ?? "",
-    title: overrides?.title ?? NEW_TAB_TITLE,
-    faviconUrl: overrides?.faviconUrl,
-    canGoBack: overrides?.canGoBack ?? false,
-    canGoForward: overrides?.canGoForward ?? false,
-    loading: overrides?.loading ?? false,
-    initialized: overrides?.initialized ?? false,
-    error: overrides?.error ?? "",
-  };
+  return createBrowserStateUtil({ newTabTitle: NEW_TAB_TITLE }, overrides);
 }
 
 function browserSpaceId(
   value?: string | null,
   fallback: BrowserSpaceId = activeBrowserSpaceId,
 ): BrowserSpaceId {
-  return value === "agent" ? "agent" : value === "user" ? "user" : fallback;
+  return browserSpaceIdUtil(value, fallback);
 }
 
 function browserSessionId(value?: string | null): string {
-  return typeof value === "string" ? value.trim() : "";
+  return browserSessionIdUtil(value);
 }
 
 function createBrowserTabSpaceState(): BrowserTabSpaceState {
@@ -15853,10 +15822,7 @@ function browserTabSpaceStates(
 }
 
 function emptyBrowserTabCountsPayload(): BrowserTabCountsPayload {
-  return {
-    user: 0,
-    agent: 0,
-  };
+  return emptyBrowserTabCountsPayloadUtil();
 }
 
 function emptyBrowserTabListPayload(
@@ -16161,7 +16127,7 @@ function browserTabSpaceState(
 }
 
 function oppositeBrowserSpaceId(space: BrowserSpaceId): BrowserSpaceId {
-  return space === "agent" ? "user" : "agent";
+  return oppositeBrowserSpaceIdUtil(space);
 }
 
 function browserWorkspaceTabCounts(
@@ -18757,16 +18723,7 @@ function createAuthPopupHtml() {
 }
 
 function shouldTrackHistoryUrl(rawUrl: string) {
-  if (!rawUrl) {
-    return false;
-  }
-
-  try {
-    const parsed = new URL(rawUrl);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
-  }
+  return shouldTrackHistoryUrlUtil(rawUrl);
 }
 
 async function recordHistoryVisit(
@@ -19104,26 +19061,14 @@ function syncBrowserState(
 }
 
 function normalizeBrowserPopupFrameName(frameName?: string | null): string {
-  const normalized = typeof frameName === "string" ? frameName.trim() : "";
-  return normalized && normalized !== "_blank" ? normalized : "";
+  return normalizeBrowserPopupFrameNameUtil(frameName);
 }
 
 function isBrowserPopupWindowRequest(
   frameName?: string | null,
   features?: string | null,
 ): boolean {
-  if (normalizeBrowserPopupFrameName(frameName)) {
-    return true;
-  }
-  const normalizedFeatures =
-    typeof features === "string" ? features.trim().toLowerCase() : "";
-  return (
-    normalizedFeatures.includes("popup") ||
-    normalizedFeatures.includes("width=") ||
-    normalizedFeatures.includes("height=") ||
-    normalizedFeatures.includes("left=") ||
-    normalizedFeatures.includes("top=")
-  );
+  return isBrowserPopupWindowRequestUtil(frameName, features);
 }
 
 function focusBrowserTabInSpace(
@@ -19234,27 +19179,7 @@ function handleBrowserWindowOpenAsTab(
 }
 
 function browserContextSuggestedFilename(context: ContextMenuParams): string {
-  const suggested = context.suggestedFilename.trim();
-  if (suggested) {
-    return sanitizeAttachmentName(suggested);
-  }
-
-  const candidateUrl = context.srcURL.trim() || context.linkURL.trim();
-  if (!candidateUrl) {
-    return context.mediaType === "image" ? "image" : "download";
-  }
-
-  try {
-    const parsed = new URL(candidateUrl);
-    const basename = path.basename(parsed.pathname).trim();
-    if (basename) {
-      return sanitizeAttachmentName(basename);
-    }
-  } catch {
-    // fall through to fallback names below
-  }
-
-  return context.mediaType === "image" ? "image" : "download";
+  return browserContextSuggestedFilenameUtil(context, sanitizeAttachmentName);
 }
 
 function queueBrowserDownloadPrompt(

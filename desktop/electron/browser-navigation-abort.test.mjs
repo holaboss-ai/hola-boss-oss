@@ -14,13 +14,16 @@ const electronTypesPath = path.join(
   "types",
   "electron.d.ts",
 );
+const utilsSourcePath = path.join(__dirname, "browser-pane", "utils.ts");
 
 test("desktop browser ignores aborted loadURL rejections during active navigations", async () => {
   const source = await readFile(mainSourcePath, "utf8");
+  // ERR_ABORTED detection helpers moved to browser-pane/utils.ts in BP-P5.
+  const utilsSource = await readFile(utilsSourcePath, "utf8");
 
-  assert.match(source, /function isAbortedBrowserLoadError\(error: unknown\): boolean \{/);
+  assert.match(utilsSource, /export function isAbortedBrowserLoadError\(error: unknown\): boolean \{/);
   assert.match(
-    source,
+    utilsSource,
     /candidate\.code === "ERR_ABORTED"[\s\S]*candidate\.errno === -3[\s\S]*candidate\.message\.includes\("ERR_ABORTED"\)/,
   );
   assert.match(
@@ -35,13 +38,14 @@ test("desktop browser ignores aborted loadURL rejections during active navigatio
 
 test("desktop browser ignores aborted main-frame load failures and initial tab redirects", async () => {
   const source = await readFile(mainSourcePath, "utf8");
+  const utilsSource = await readFile(utilsSourcePath, "utf8");
 
   assert.match(
-    source,
-    /function isAbortedBrowserLoadFailure\(\s*errorCode: number,\s*errorDescription: string,\s*\): boolean \{/,
+    utilsSource,
+    /export function isAbortedBrowserLoadFailure\(\s*errorCode: number,\s*errorDescription: string,\s*\): boolean \{/,
   );
   assert.match(
-    source,
+    utilsSource,
     /errorCode === -3 \|\| errorDescription\.trim\(\)\.toUpperCase\(\) === "ERR_ABORTED"/,
   );
   assert.match(
