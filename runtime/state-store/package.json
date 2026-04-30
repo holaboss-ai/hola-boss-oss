@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "holaboss-state-store": "dist/cli.mjs"
+    "holaboss-state-store": "dist/cli.mjs",
+    "holaboss-runtime": "dist/debug-cli.mjs"
   },
   "main": "dist/index.mjs",
   "types": "dist/index.d.ts",
