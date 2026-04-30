@@ -82,7 +82,6 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { URL } from "node:url";
 import ExcelJS from "exceljs";
-import JSZip from "jszip";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import {
@@ -108,26 +107,18 @@ import {
 import { installBffFetchHandler } from "./bff-fetch.js";
 import { installBrowserPaneHandlers } from "./browser-pane/index.js";
 import {
-  CHROME_HISTORY_IMPORT_LIMIT,
-  chromiumFamilyDisplayName,
-  chromeTimestampMicrosToIso,
-  discoverChromiumFamilyImportProfiles,
-  importChromiumFamilyCookiesIntoWorkspaceSession,
-  importedCookieUrl,
-  readChromeBookmarks,
-  readChromeHistory,
-  resolveChromiumFamilyProfileSelection,
-  shouldTrackHistoryUrlForImport,
-} from "./browser-pane/import-chromium.js";
+  copyBrowserWorkspaceProfile as importBrowsersCopyBrowserWorkspaceProfile,
+  importBrowserProfileIntoWorkspace as importBrowsersImportBrowserProfileIntoWorkspace,
+  importChromeProfileIntoWorkspace as importBrowsersImportChromeProfileIntoWorkspace,
+  listImportBrowserProfiles as importBrowsersListImportBrowserProfiles,
+  type BrowserCopySpaceAction,
+  type BrowserImportDeps,
+} from "./browser-pane/import-browsers.js";
 import type {
-  BrowserCookieImportSummary,
   BrowserCopyWorkspaceProfilePayload,
-  BrowserImportProfileOptionPayload,
   BrowserImportProfilePayload,
   BrowserImportSource,
-  BrowserImportSummary,
-  ChromiumFamilyBrowser,
-  ChromiumProfileSelection,
+  BrowserWorkspaceImportTarget,
 } from "./browser-pane/types.js";
 
 const APP_DISPLAY_NAME = "Holaboss";
@@ -164,11 +155,8 @@ const SESSION_BROWSER_BUSY_CHECK_MS = 15_000;
 const SESSION_BROWSER_COMPLETED_GRACE_MS = 30_000;
 const SESSION_BROWSER_WARM_TTL_MS = 2 * 60 * 1000;
 // Chromium cookie / profile-discovery constants moved to
-// `browser-pane/import-chromium.ts`. CHROME_HISTORY_IMPORT_LIMIT is
-// re-exported from there for use by the safari + merge code that still
-// lives in main.ts (they will move in BP-P2b).
-const SAFARI_EXPORT_BOOKMARKS_FILE_NAME = "bookmarks.html";
-const SAFARI_EXPORT_HISTORY_FILE_NAME = "history.json";
+// `browser-pane/import-chromium.ts`. Safari export filename constants
+// moved to `browser-pane/import-browsers.ts`.
 const APP_THEMES = new Set([
   "amber-minimal-dark",
   "amber-minimal-light",
@@ -3222,695 +3210,181 @@ function browserWorkspacePartition(workspaceId: string) {
   return `persist:holaboss-browser-${sanitizeBrowserWorkspaceSegment(workspaceId)}`;
 }
 
-async function listImportBrowserProfiles(
-  source: BrowserImportSource,
-): Promise<BrowserImportProfileOptionPayload[]> {
-  if (source === "safari") {
-    return [];
-  }
-  const { profiles } = await discoverChromiumFamilyImportProfiles(source);
-  return profiles.map((profile) => ({
-    profileId: profile.profileId,
-    profileLabel: profile.profileLabel,
-    profileDir: profile.profileDir,
-  }));
+// ---------------------------------------------------------------------------
+// browser-pane/import-browsers binding
+//
+// The chromium-family + Safari profile import flow lives in
+// `electron/browser-pane/import-{chromium,browsers}.ts`. main.ts still owns
+// the BrowserWorkspaceState graph and the renderer-notification surface, so
+// we hand those to the import module via the deps object below.
+// ---------------------------------------------------------------------------
+
+function asBrowserImportTarget(
+  workspace: BrowserWorkspaceState,
+): BrowserWorkspaceImportTarget {
+  return workspace as unknown as BrowserWorkspaceImportTarget;
 }
 
-function decodeHtmlEntities(value: string) {
-  return value
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, "\"")
-    .replace(/&#39;/gi, "'");
-}
-
-function stripHtmlTags(value: string) {
-  return value.replace(/<[^>]*>/g, " ");
-}
-
-function parseImportedVisitTimestamp(value: unknown): string | null {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) {
-      return null;
-    }
-    const numeric = Number(trimmed);
-    if (Number.isFinite(numeric) && /^\d+(\.\d+)?$/.test(trimmed)) {
-      return parseImportedVisitTimestamp(numeric);
-    }
-    const parsed = Date.parse(trimmed);
-    if (Number.isFinite(parsed)) {
-      return new Date(parsed).toISOString();
-    }
-    return null;
-  }
-
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    return null;
-  }
-
-  if (value >= 11644473600000000) {
-    return chromeTimestampMicrosToIso(Math.floor(value)) ?? null;
-  }
-
-  if (value > 10_000_000_000_000) {
-    return new Date(Math.floor(value / 1000)).toISOString();
-  }
-
-  if (value > 10_000_000_000) {
-    return new Date(Math.floor(value)).toISOString();
-  }
-
-  return new Date(Math.floor(value * 1000)).toISOString();
-}
-
-function zipEntryBasename(entryName: string) {
-  const normalized = entryName.replace(/\\/g, "/");
-  const segments = normalized.split("/").filter(Boolean);
-  return (segments[segments.length - 1] || "").toLowerCase();
-}
-
-function parseSafariBookmarksFromHtml(html: string): BrowserBookmarkPayload[] {
-  const bookmarks: BrowserBookmarkPayload[] = [];
-  const anchorPattern =
-    /<a\b[^>]*\bhref\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
-  for (const match of html.matchAll(anchorPattern)) {
-    const url = (match[1] || "").trim();
-    if (!shouldTrackHistoryUrl(url)) {
-      continue;
-    }
-    const cleanedTitle = decodeHtmlEntities(
-      stripHtmlTags(match[2] || "")
-        .replace(/\s+/g, " ")
-        .trim(),
-    );
-    bookmarks.push({
-      id: `bookmark-import-${randomUUID()}`,
-      url,
-      title: cleanedTitle || url,
-      createdAt: utcNowIso(),
-    });
-  }
-  return bookmarks;
-}
-
-function safariHistoryObjectString(
-  value: Record<string, unknown>,
-  keys: readonly string[],
-) {
-  for (const key of keys) {
-    const raw = value[key];
-    if (typeof raw === "string" && raw.trim()) {
-      return raw.trim();
-    }
-  }
-  return "";
-}
-
-function safariHistoryObjectNumber(
-  value: Record<string, unknown>,
-  keys: readonly string[],
-) {
-  for (const key of keys) {
-    const raw = value[key];
-    if (typeof raw === "number" && Number.isFinite(raw)) {
-      return raw;
-    }
-    if (typeof raw === "string") {
-      const parsed = Number(raw.trim());
-      if (Number.isFinite(parsed)) {
-        return parsed;
-      }
-    }
-  }
-  return null;
-}
-
-function collectSafariHistoryEntries(
-  value: unknown,
-  bucket: BrowserHistoryEntryPayload[],
-) {
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      collectSafariHistoryEntries(entry, bucket);
-    }
-    return;
-  }
-
-  if (!value || typeof value !== "object") {
-    return;
-  }
-
-  const record = value as Record<string, unknown>;
-  const url = safariHistoryObjectString(record, ["url", "URL"]);
-  if (url && shouldTrackHistoryUrl(url)) {
-    const title =
-      safariHistoryObjectString(record, [
-        "title",
-        "Title",
-        "pageTitle",
-        "page_title",
-      ]) || url;
-    const visitCountRaw = safariHistoryObjectNumber(record, [
-      "visit_count",
-      "visitCount",
-      "visit_count_total",
-    ]);
-    const visitCount =
-      visitCountRaw && visitCountRaw > 0 ? Math.floor(visitCountRaw) : 1;
-    const lastVisitedAt =
-      parseImportedVisitTimestamp(
-        record.lastVisitedAt ??
-          record.last_visited_at ??
-          record.lastVisitTime ??
-          record.last_visit_time ??
-          record.visitedAt ??
-          record.visited_at ??
-          record.visit_time ??
-          record.visitTime ??
-          record.timestamp,
-      ) ?? utcNowIso();
-    bucket.push({
-      id: `history-import-${randomUUID()}`,
-      url,
-      title,
-      visitCount,
-      createdAt: lastVisitedAt,
-      lastVisitedAt,
-    });
-  }
-
-  for (const nestedValue of Object.values(record)) {
-    if (nestedValue && typeof nestedValue === "object") {
-      collectSafariHistoryEntries(nestedValue, bucket);
-    }
-  }
-}
-
-function parseSafariHistoryEntriesFromJson(
-  jsonContent: string,
-): BrowserHistoryEntryPayload[] {
-  const parsed = JSON.parse(jsonContent) as unknown;
-  const entries: BrowserHistoryEntryPayload[] = [];
-  collectSafariHistoryEntries(parsed, entries);
-  return entries.slice(0, CHROME_HISTORY_IMPORT_LIMIT);
-}
-
-async function selectSafariExportArchivePath(): Promise<string | null> {
-  const options: OpenDialogOptions = {
-    title: "Select Safari Export ZIP",
-    buttonLabel: "Import Safari Export",
-    properties: ["openFile"],
-    filters: [{ name: "ZIP files", extensions: ["zip"] }],
-    defaultPath: path.join(os.homedir(), "Downloads"),
-    message:
-      "Choose a Safari export zip that contains Bookmarks.html and History.json.",
-  };
-  const ownerWindow =
-    mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-  const result = ownerWindow
-    ? await dialog.showOpenDialog(ownerWindow, options)
-    : await dialog.showOpenDialog(options);
-  if (result.canceled || result.filePaths.length === 0) {
-    return null;
-  }
-  return result.filePaths[0]?.trim() || null;
-}
-
-async function readSafariExportArchive(
-  archivePath: string,
-): Promise<{
-  bookmarks: BrowserBookmarkPayload[];
-  history: BrowserHistoryEntryPayload[];
-}> {
-  const zipBuffer = await fs.readFile(archivePath);
-  const zip = await JSZip.loadAsync(zipBuffer);
-
-  let bookmarksHtmlContent = "";
-  let historyJsonContent = "";
-  for (const zipEntry of Object.values(zip.files)) {
-    if (zipEntry.dir) {
-      continue;
-    }
-    const basename = zipEntryBasename(zipEntry.name);
-    if (!bookmarksHtmlContent && basename === SAFARI_EXPORT_BOOKMARKS_FILE_NAME) {
-      bookmarksHtmlContent = await zipEntry.async("string");
-      continue;
-    }
-    if (!historyJsonContent && basename === SAFARI_EXPORT_HISTORY_FILE_NAME) {
-      historyJsonContent = await zipEntry.async("string");
-    }
-  }
-
-  if (!bookmarksHtmlContent && !historyJsonContent) {
-    throw new Error(
-      "Safari export zip did not include Bookmarks.html or History.json.",
-    );
-  }
-
+function buildBrowserImportDepsBase(): Omit<BrowserImportDeps, "tabGraph"> {
   return {
-    bookmarks: bookmarksHtmlContent
-      ? parseSafariBookmarksFromHtml(bookmarksHtmlContent)
-      : [],
-    history: historyJsonContent
-      ? parseSafariHistoryEntriesFromJson(historyJsonContent)
-      : [],
-  };
-}
-
-function mergeImportedBookmarksIntoWorkspace(
-  workspace: BrowserWorkspaceState,
-  importedBookmarks: BrowserBookmarkPayload[],
-) {
-  const bookmarkByUrl = new Map(
-    workspace.bookmarks.map((bookmark) => [bookmark.url, bookmark] as const),
-  );
-  let changedCount = 0;
-
-  for (const importedBookmark of importedBookmarks) {
-    if (!shouldTrackHistoryUrl(importedBookmark.url)) {
-      continue;
-    }
-    const existing = bookmarkByUrl.get(importedBookmark.url);
-    if (!existing) {
-      bookmarkByUrl.set(importedBookmark.url, importedBookmark);
-      changedCount += 1;
-      continue;
-    }
-
-    const nextTitle = importedBookmark.title?.trim() || existing.title;
-    const nextCreatedAt = existing.createdAt || importedBookmark.createdAt;
-    if (nextTitle !== existing.title || nextCreatedAt !== existing.createdAt) {
-      bookmarkByUrl.set(importedBookmark.url, {
-        ...existing,
-        title: nextTitle,
-        createdAt: nextCreatedAt,
-      });
-      changedCount += 1;
-    }
-  }
-
-  workspace.bookmarks = Array.from(bookmarkByUrl.values()).sort(
-    (left, right) =>
-      new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
-  );
-  return changedCount;
-}
-
-function mergeImportedHistoryIntoWorkspace(
-  workspace: BrowserWorkspaceState,
-  importedHistoryEntries: BrowserHistoryEntryPayload[],
-) {
-  const historyByUrl = new Map(
-    workspace.history.map((entry) => [entry.url, entry] as const),
-  );
-  let changedCount = 0;
-
-  for (const importedEntry of importedHistoryEntries) {
-    if (!shouldTrackHistoryUrl(importedEntry.url)) {
-      continue;
-    }
-    const existing = historyByUrl.get(importedEntry.url);
-    if (!existing) {
-      historyByUrl.set(importedEntry.url, importedEntry);
-      changedCount += 1;
-      continue;
-    }
-
-    const nextLastVisitedAt =
-      new Date(importedEntry.lastVisitedAt).getTime() >
-        new Date(existing.lastVisitedAt).getTime()
-        ? importedEntry.lastVisitedAt
-        : existing.lastVisitedAt;
-    const nextCreatedAt =
-      new Date(importedEntry.createdAt).getTime() <
-        new Date(existing.createdAt).getTime()
-        ? importedEntry.createdAt
-        : existing.createdAt;
-    const nextVisitCount = Math.max(
-      existing.visitCount,
-      importedEntry.visitCount,
-    );
-    const nextTitle = importedEntry.title?.trim() || existing.title;
-    if (
-      nextLastVisitedAt !== existing.lastVisitedAt ||
-      nextCreatedAt !== existing.createdAt ||
-      nextVisitCount !== existing.visitCount ||
-      nextTitle !== existing.title
-    ) {
-      historyByUrl.set(importedEntry.url, {
-        ...existing,
-        title: nextTitle,
-        createdAt: nextCreatedAt,
-        lastVisitedAt: nextLastVisitedAt,
-        visitCount: nextVisitCount,
-      });
-      changedCount += 1;
-    }
-  }
-
-  workspace.history = Array.from(historyByUrl.values())
-    .sort(
-      (left, right) =>
-        new Date(right.lastVisitedAt).getTime() -
-        new Date(left.lastVisitedAt).getTime(),
-    )
-    .slice(0, CHROME_HISTORY_IMPORT_LIMIT);
-  return changedCount;
-}
-
-async function copyCookiesBetweenBrowserSessions(
-  sourceSession: Session,
-  targetSession: Session,
-): Promise<BrowserCookieImportSummary> {
-  await targetSession.clearStorageData({ storages: ["cookies"] });
-
-  const sourceCookies = await sourceSession.cookies.get({});
-  let importedCount = 0;
-  let skippedCount = 0;
-  const warnings = new Set<string>();
-
-  for (const cookie of sourceCookies) {
-    const cookieUrl = importedCookieUrl(
-      cookie.domain || "",
-      cookie.path || "/",
-      Boolean(cookie.secure),
-    );
-    if (!cookieUrl || !cookie.name?.trim()) {
-      skippedCount += 1;
-      continue;
-    }
-    try {
-      await targetSession.cookies.set({
-        url: cookieUrl,
-        name: cookie.name.trim(),
-        value: cookie.value ?? "",
-        domain: cookie.domain || undefined,
-        path: cookie.path || "/",
-        secure: Boolean(cookie.secure),
-        httpOnly: Boolean(cookie.httpOnly),
-        sameSite: cookie.sameSite ?? "unspecified",
-        expirationDate:
-          typeof cookie.expirationDate === "number" &&
-            Number.isFinite(cookie.expirationDate)
-            ? cookie.expirationDate
-            : undefined,
-      });
-      importedCount += 1;
-    } catch (error) {
-      skippedCount += 1;
-      warnings.add(
-        error instanceof Error
-          ? error.message
-          : "Some cookies could not be copied into the target workspace.",
+    ensureBrowserWorkspace: async (workspaceId, space) => {
+      const resolved = await ensureBrowserWorkspace(
+        typeof workspaceId === "string" ? workspaceId : null,
+        space ?? null,
       );
-    }
-  }
-
-  await targetSession.cookies.flushStore();
-  return {
-    importedCount,
-    skippedCount,
-    warnings: Array.from(warnings),
+      return resolved ? asBrowserImportTarget(resolved) : null;
+    },
+    persistBrowserWorkspace: (workspaceId) =>
+      persistBrowserWorkspace(workspaceId),
+    emitBookmarksState: (workspaceId) => emitBookmarksState(workspaceId),
+    emitHistoryState: (workspaceId) => emitHistoryState(workspaceId),
+    emitDownloadsState: (workspaceId) => emitDownloadsState(workspaceId),
+    emitBrowserState: (workspaceId, space) =>
+      emitBrowserState(workspaceId, space),
+    getActiveBrowserWorkspaceId: () => activeBrowserWorkspaceId,
+    getActiveBrowserSpaceId: () => activeBrowserSpaceId,
+    updateAttachedBrowserView: () => updateAttachedBrowserView(),
+    getMainWindow: () => mainWindow,
   };
 }
 
-function cloneBrowserBookmarkPayload(
-  bookmark: BrowserBookmarkPayload,
-): BrowserBookmarkPayload {
+/**
+ * Build the `tabGraph` deps for `copyBrowserWorkspaceProfile`. Per-call
+ * because it captures the source/target workspace pair.
+ */
+function buildBrowserImportTabGraph(
+  sourceWorkspaceId: string,
+  targetWorkspaceId: string,
+): BrowserImportDeps["tabGraph"] {
   return {
-    id: `bookmark-import-${randomUUID()}`,
-    url: bookmark.url,
-    title: bookmark.title,
-    faviconUrl: bookmark.faviconUrl,
-    createdAt: bookmark.createdAt,
-  };
-}
+    forEachBrowserSpace: (callback) => {
+      for (const browserSpace of BROWSER_SPACE_IDS) {
+        const sourceWorkspace = browserWorkspaces.get(sourceWorkspaceId);
+        const targetWorkspace = browserWorkspaces.get(targetWorkspaceId);
+        if (!sourceWorkspace || !targetWorkspace) {
+          return;
+        }
+        const sourceSpace = sourceWorkspace.spaces[browserSpace];
+        const targetSpace = targetWorkspace.spaces[browserSpace];
 
-function cloneBrowserHistoryEntryPayload(
-  entry: BrowserHistoryEntryPayload,
-): BrowserHistoryEntryPayload {
-  return {
-    id: `history-import-${randomUUID()}`,
-    url: entry.url,
-    title: entry.title,
-    faviconUrl: entry.faviconUrl,
-    visitCount: entry.visitCount,
-    createdAt: entry.createdAt,
-    lastVisitedAt: entry.lastVisitedAt,
-  };
-}
-
-function cloneBrowserDownloadPayload(
-  download: BrowserDownloadPayload,
-): BrowserDownloadPayload {
-  return {
-    ...download,
-    id: `download-import-${randomUUID()}`,
-  };
-}
-
-async function importChromiumFamilyProfileIntoWorkspace(
-  browser: ChromiumFamilyBrowser,
-  workspaceId?: string | null,
-  profileDir?: string | null,
-): Promise<BrowserImportSummary | null> {
-  const workspace = await ensureBrowserWorkspace(workspaceId, activeBrowserSpaceId);
-  if (!workspace) {
-    throw new Error("Choose a workspace before importing browser data.");
-  }
-  const browserDisplayName = chromiumFamilyDisplayName(browser);
-
-  const selection = await resolveChromiumFamilyProfileSelection(
-    browser,
-    profileDir,
-    mainWindow,
-  );
-  if (!selection) {
-    return null;
-  }
-
-  const importedBookmarks = await readChromeBookmarks(selection.profileDir);
-  const importedHistoryEntries = await readChromeHistory(selection.profileDir);
-  const bookmarkCount = mergeImportedBookmarksIntoWorkspace(
-    workspace,
-    importedBookmarks,
-  );
-  const historyCount = mergeImportedHistoryIntoWorkspace(
-    workspace,
-    importedHistoryEntries,
-  );
-  const cookieSummary = await importChromiumFamilyCookiesIntoWorkspaceSession(
-    browser,
-    workspace.session,
-    selection.profileDir,
-  );
-
-  if (
-    bookmarkCount === 0 &&
-    historyCount === 0 &&
-    cookieSummary.importedCount === 0 &&
-    cookieSummary.warnings.length === 0
-  ) {
-    throw new Error(
-      `No importable bookmarks, history, or cookies were found in that ${browserDisplayName} profile.`,
-    );
-  }
-
-  emitBookmarksState(workspace.workspaceId);
-  emitHistoryState(workspace.workspaceId);
-  await persistBrowserWorkspace(workspace.workspaceId);
-
-  return {
-    sourceKind: browser,
-    sourceLabel: `${browserDisplayName} ${selection.profileLabel}`,
-    sourcePath: selection.profileDir,
-    sourceProfileDir: selection.profileDir,
-    sourceProfileLabel: selection.profileLabel,
-    importedBookmarks: bookmarkCount,
-    importedHistoryEntries: historyCount,
-    importedCookies: cookieSummary.importedCount,
-    skippedCookies: cookieSummary.skippedCount,
-    warnings: cookieSummary.warnings,
-  };
-}
-
-async function importSafariProfileIntoWorkspace(
-  workspaceId?: string | null,
-  safariArchivePath?: string | null,
-): Promise<BrowserImportSummary | null> {
-  const workspace = await ensureBrowserWorkspace(workspaceId, activeBrowserSpaceId);
-  if (!workspace) {
-    throw new Error("Choose a workspace before importing browser data.");
-  }
-
-  const archivePath =
-    typeof safariArchivePath === "string" && safariArchivePath.trim()
-      ? safariArchivePath.trim()
-      : await selectSafariExportArchivePath();
-  if (!archivePath) {
-    return null;
-  }
-
-  const safariExport = await readSafariExportArchive(archivePath);
-  const bookmarkCount = mergeImportedBookmarksIntoWorkspace(
-    workspace,
-    safariExport.bookmarks,
-  );
-  const historyCount = mergeImportedHistoryIntoWorkspace(
-    workspace,
-    safariExport.history,
-  );
-
-  if (bookmarkCount === 0 && historyCount === 0) {
-    throw new Error(
-      "No importable bookmarks or history entries were found in that Safari export.",
-    );
-  }
-
-  emitBookmarksState(workspace.workspaceId);
-  emitHistoryState(workspace.workspaceId);
-  await persistBrowserWorkspace(workspace.workspaceId);
-
-  return {
-    sourceKind: "safari",
-    sourceLabel: `Safari export ${path.basename(archivePath)}`,
-    sourcePath: archivePath,
-    sourceProfileDir: archivePath,
-    sourceProfileLabel: path.basename(archivePath),
-    importedBookmarks: bookmarkCount,
-    importedHistoryEntries: historyCount,
-    importedCookies: 0,
-    skippedCookies: 0,
-    warnings: [
-      "Safari export files include bookmarks and history only. Cookies and login sessions are not included.",
-    ],
-  };
-}
-
-async function copyBrowserWorkspaceProfile(
-  payload: BrowserCopyWorkspaceProfilePayload,
-): Promise<BrowserImportSummary> {
-  const sourceWorkspaceId = payload.sourceWorkspaceId.trim();
-  const targetWorkspaceId = payload.targetWorkspaceId.trim();
-  if (!sourceWorkspaceId || !targetWorkspaceId) {
-    throw new Error("Both source and target workspaces are required.");
-  }
-  if (sourceWorkspaceId === targetWorkspaceId) {
-    throw new Error("Choose a different source workspace to copy from.");
-  }
-
-  const sourceWorkspace = await ensureBrowserWorkspace(sourceWorkspaceId, "user");
-  const targetWorkspace = await ensureBrowserWorkspace(targetWorkspaceId, "user");
-  if (!sourceWorkspace || !targetWorkspace) {
-    throw new Error("Could not resolve source and target workspace browser state.");
-  }
-
-  targetWorkspace.bookmarks = sourceWorkspace.bookmarks.map(
-    cloneBrowserBookmarkPayload,
-  );
-  targetWorkspace.history = sourceWorkspace.history.map(
-    cloneBrowserHistoryEntryPayload,
-  );
-  targetWorkspace.downloads = sourceWorkspace.downloads.map(
-    cloneBrowserDownloadPayload,
-  );
-
-  for (const browserSpace of BROWSER_SPACE_IDS) {
-    const sourceSpace = sourceWorkspace.spaces[browserSpace];
-    const targetSpace = targetWorkspace.spaces[browserSpace];
-    clearBrowserTabSpaceSuspendTimer(targetSpace);
-    for (const tab of targetSpace.tabs.values()) {
-      closeBrowserTabRecord(tab);
-    }
-    targetSpace.tabs.clear();
-    targetSpace.persistedTabs = [];
-    targetSpace.lifecycleState = "active";
-
-    const tabIdMap = new Map<string, string>();
-    for (const sourceTab of sourceSpace.tabs.values()) {
-      const copiedTabId = createBrowserTab(targetWorkspaceId, {
-        browserSpace,
-        url: sourceTab.state.url || HOME_URL,
-        title: sourceTab.state.title || NEW_TAB_TITLE,
-        faviconUrl: sourceTab.state.faviconUrl,
-        skipInitialHistoryRecord: true,
-      });
-      if (copiedTabId) {
-        tabIdMap.set(sourceTab.state.id, copiedTabId);
+        const action: BrowserCopySpaceAction = {
+          resetTargetSpace: () => {
+            clearBrowserTabSpaceSuspendTimer(targetSpace);
+            for (const tab of targetSpace.tabs.values()) {
+              closeBrowserTabRecord(tab);
+            }
+            targetSpace.tabs.clear();
+            targetSpace.persistedTabs = [];
+            targetSpace.lifecycleState = "active";
+          },
+          copyTabsAndResolveActive: () => {
+            const tabIdMap = new Map<string, string>();
+            for (const sourceTab of sourceSpace.tabs.values()) {
+              const copiedTabId = createBrowserTab(targetWorkspaceId, {
+                browserSpace,
+                url: sourceTab.state.url || HOME_URL,
+                title: sourceTab.state.title || NEW_TAB_TITLE,
+                faviconUrl: sourceTab.state.faviconUrl,
+                skipInitialHistoryRecord: true,
+              });
+              if (copiedTabId) {
+                tabIdMap.set(sourceTab.state.id, copiedTabId);
+              }
+            }
+            if (targetSpace.tabs.size === 0) {
+              ensureBrowserTabSpaceInitialized(
+                targetWorkspaceId,
+                browserSpace,
+              );
+            }
+            const mappedActiveTabId = tabIdMap.get(
+              sourceSpace.activeTabId || "",
+            );
+            return (
+              (mappedActiveTabId && targetSpace.tabs.has(mappedActiveTabId)
+                ? mappedActiveTabId
+                : Array.from(targetSpace.tabs.keys())[0]) || ""
+            );
+          },
+          setActiveTab: (activeTabId) => {
+            targetSpace.activeTabId = activeTabId;
+          },
+        };
+        callback(browserSpace, action);
       }
-    }
-
-    if (targetSpace.tabs.size === 0) {
-      ensureBrowserTabSpaceInitialized(targetWorkspaceId, browserSpace);
-    }
-    const mappedActiveTabId = tabIdMap.get(sourceSpace.activeTabId || "");
-    targetSpace.activeTabId =
-      (mappedActiveTabId && targetSpace.tabs.has(mappedActiveTabId)
-        ? mappedActiveTabId
-        : Array.from(targetSpace.tabs.keys())[0]) || "";
-  }
-  for (const tabSpace of targetWorkspace.agentSessionSpaces.values()) {
-    clearBrowserTabSpaceSuspendTimer(tabSpace);
-    for (const tab of tabSpace.tabs.values()) {
-      closeBrowserTabRecord(tab);
-    }
-    tabSpace.tabs.clear();
-  }
-  targetWorkspace.agentSessionSpaces.clear();
-  targetWorkspace.userBrowserLock = null;
-  targetWorkspace.activeAgentSessionId = null;
-
-  const cookieSummary = await copyCookiesBetweenBrowserSessions(
-    sourceWorkspace.session,
-    targetWorkspace.session,
-  );
-
-  if (targetWorkspaceId === activeBrowserWorkspaceId) {
-    updateAttachedBrowserView();
-    emitBrowserState(targetWorkspaceId, activeBrowserSpaceId);
-  }
-  emitBookmarksState(targetWorkspaceId);
-  emitDownloadsState(targetWorkspaceId);
-  emitHistoryState(targetWorkspaceId);
-  await persistBrowserWorkspace(targetWorkspaceId);
-
-  return {
-    sourceKind: "workspace_copy",
-    sourceLabel: sourceWorkspaceId,
-    sourcePath: sourceWorkspaceId,
-    sourceProfileDir: sourceWorkspaceId,
-    sourceProfileLabel: sourceWorkspaceId,
-    importedBookmarks: targetWorkspace.bookmarks.length,
-    importedHistoryEntries: targetWorkspace.history.length,
-    importedCookies: cookieSummary.importedCount,
-    skippedCookies: cookieSummary.skippedCount,
-    warnings: cookieSummary.warnings,
+    },
+    resetAgentSessionSpaces: (workspaceId) => {
+      const targetWorkspace = browserWorkspaces.get(workspaceId);
+      if (!targetWorkspace) {
+        return;
+      }
+      for (const tabSpace of targetWorkspace.agentSessionSpaces.values()) {
+        clearBrowserTabSpaceSuspendTimer(tabSpace);
+        for (const tab of tabSpace.tabs.values()) {
+          closeBrowserTabRecord(tab);
+        }
+        tabSpace.tabs.clear();
+      }
+      targetWorkspace.agentSessionSpaces.clear();
+    },
+    clearUserBrowserLock: (workspaceId) => {
+      const targetWorkspace = browserWorkspaces.get(workspaceId);
+      if (targetWorkspace) {
+        targetWorkspace.userBrowserLock = null;
+      }
+    },
+    clearActiveAgentSession: (workspaceId) => {
+      const targetWorkspace = browserWorkspaces.get(workspaceId);
+      if (targetWorkspace) {
+        targetWorkspace.activeAgentSessionId = null;
+      }
+    },
   };
 }
 
-async function importBrowserProfileIntoWorkspace(
-  payload: BrowserImportProfilePayload,
-): Promise<BrowserImportSummary | null> {
-  const source = payload.source;
-  const workspaceId = payload.workspaceId;
-  if (source === "safari") {
-    return importSafariProfileIntoWorkspace(workspaceId, payload.safariArchivePath);
-  }
-  return importChromiumFamilyProfileIntoWorkspace(
-    source,
-    workspaceId,
-    payload.profileDir,
-  );
+function buildBrowserImportDeps(
+  tabGraph?: BrowserImportDeps["tabGraph"],
+): BrowserImportDeps {
+  return {
+    ...buildBrowserImportDepsBase(),
+    tabGraph: tabGraph ?? {
+      // Unused for non-copy import flows. Throw if a caller tries to use it.
+      forEachBrowserSpace: () => {
+        throw new Error("tabGraph not bound for this import flow");
+      },
+      resetAgentSessionSpaces: () => undefined,
+      clearUserBrowserLock: () => undefined,
+      clearActiveAgentSession: () => undefined,
+    },
+  };
 }
 
-async function importChromeProfileIntoWorkspace(
-  workspaceId?: string | null,
-): Promise<BrowserImportSummary | null> {
-  return importChromiumFamilyProfileIntoWorkspace("chrome", workspaceId);
-}
+const listImportBrowserProfiles = importBrowsersListImportBrowserProfiles;
+
+const importBrowserProfileIntoWorkspace = (
+  payload: BrowserImportProfilePayload,
+) =>
+  importBrowsersImportBrowserProfileIntoWorkspace(
+    payload,
+    buildBrowserImportDeps(),
+  );
+
+const copyBrowserWorkspaceProfile = (
+  payload: BrowserCopyWorkspaceProfilePayload,
+) => {
+  const sourceId = payload.sourceWorkspaceId.trim();
+  const targetId = payload.targetWorkspaceId.trim();
+  return importBrowsersCopyBrowserWorkspaceProfile(
+    payload,
+    buildBrowserImportDeps(buildBrowserImportTabGraph(sourceId, targetId)),
+  );
+};
+
+const importChromeProfileIntoWorkspace = (workspaceId: string) =>
+  importBrowsersImportChromeProfileIntoWorkspace(
+    workspaceId,
+    buildBrowserImportDeps(),
+  );
 
 function browserChromeLikePlatformToken(): string {
   switch (process.platform) {

@@ -12,13 +12,17 @@ const importChromiumPath = path.join(
   "browser-pane",
   "import-chromium.ts",
 );
+const importBrowsersPath = path.join(
+  __dirname,
+  "browser-pane",
+  "import-browsers.ts",
+);
 
 test("desktop browser import flow discovers a Chrome profile and imports bookmarks, history, and cookies", async () => {
   const chromiumSource = await readFile(importChromiumPath, "utf8");
-  const mainSource = await readFile(mainSourcePath, "utf8");
+  const browsersSource = await readFile(importBrowsersPath, "utf8");
 
-  // Chromium-family profile discovery + selection live in
-  // browser-pane/import-chromium.ts (BP-P2a).
+  // Chromium profile discovery + selection.
   assert.match(
     chromiumSource,
     /export function resolveChromiumFamilyUserDataRoot\(\s*browser: ChromiumFamilyBrowser,\s*\): string \| null \{/,
@@ -108,31 +112,30 @@ test("desktop browser import flow discovers a Chrome profile and imports bookmar
   assert.match(chromiumSource, /await browserSession\.cookies\.set\(\{/);
   assert.match(chromiumSource, /await browserSession\.cookies\.flushStore\(\);/);
 
-  // Public orchestration entry points still live in main.ts in this phase.
-  // (BP-P2b will move them into browser-pane/import-browsers.ts.)
+  // Public orchestration entry points moved to import-browsers.ts.
   assert.match(
-    mainSource,
-    /async function listImportBrowserProfiles\(\s*source: BrowserImportSource,\s*\): Promise<BrowserImportProfileOptionPayload\[]> \{/,
+    browsersSource,
+    /export async function listImportBrowserProfiles\(\s*source: BrowserImportSource,\s*\): Promise<BrowserImportProfileOptionPayload\[]> \{/,
   );
   assert.match(
-    mainSource,
-    /async function importChromiumFamilyProfileIntoWorkspace\(\s*browser: ChromiumFamilyBrowser,\s*workspaceId\?: string \| null,\s*profileDir\?: string \| null,\s*\): Promise<BrowserImportSummary \| null> \{/,
+    browsersSource,
+    /export async function importChromiumFamilyProfileIntoWorkspace\(\s*browser: ChromiumFamilyBrowser,\s*workspaceId: string \| null \| undefined,\s*profileDir: string \| null \| undefined,\s*deps: BrowserImportDeps,\s*\): Promise<BrowserImportSummary \| null> \{/,
   );
   assert.match(
-    mainSource,
-    /async function importSafariProfileIntoWorkspace\(\s*workspaceId\?: string \| null,\s*safariArchivePath\?: string \| null,\s*\): Promise<BrowserImportSummary \| null> \{/,
+    browsersSource,
+    /export async function importSafariProfileIntoWorkspace\(\s*workspaceId: string \| null \| undefined,\s*safariArchivePath: string \| null \| undefined,\s*deps: BrowserImportDeps,\s*\): Promise<BrowserImportSummary \| null> \{/,
   );
   assert.match(
-    mainSource,
-    /async function importBrowserProfileIntoWorkspace\(\s*payload: BrowserImportProfilePayload,\s*\): Promise<BrowserImportSummary \| null> \{/,
+    browsersSource,
+    /export async function importBrowserProfileIntoWorkspace\(\s*payload: BrowserImportProfilePayload,\s*deps: BrowserImportDeps,\s*\): Promise<BrowserImportSummary \| null> \{/,
   );
   assert.match(
-    mainSource,
-    /async function copyBrowserWorkspaceProfile\(\s*payload: BrowserCopyWorkspaceProfilePayload,\s*\): Promise<BrowserImportSummary> \{/,
+    browsersSource,
+    /export async function copyBrowserWorkspaceProfile\(\s*payload: BrowserCopyWorkspaceProfilePayload,\s*deps: BrowserImportDeps,\s*\): Promise<BrowserImportSummary> \{/,
   );
   assert.match(
-    mainSource,
-    /async function importChromeProfileIntoWorkspace\(\s*workspaceId\?: string \| null,\s*\): Promise<BrowserImportSummary \| null> \{/,
+    browsersSource,
+    /export async function importChromeProfileIntoWorkspace\(\s*workspaceId: string \| null \| undefined,\s*deps: BrowserImportDeps,\s*\): Promise<BrowserImportSummary \| null> \{/,
   );
 });
 
