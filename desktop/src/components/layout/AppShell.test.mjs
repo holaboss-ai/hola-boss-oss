@@ -35,6 +35,20 @@ test("app shell routes file outputs into the explorer and universal display whil
 test("app shell routes app outputs into the applications explorer and app surface", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
+  assert.match(source, /const platformId = \(output\.platform \|\| ""\)\.trim\(\)\.toLowerCase\(\);/);
+  assert.match(source, /presentation\?\.kind === "app_resource" && presentation\.view/);
+  assert.match(
+    source,
+    /const looksLikeAppBackedDraft =[\s\S]*output\.output_type === "post"[\s\S]*artifact_type[\s\S]*=== "draft"/,
+  );
+  assert.match(
+    source,
+    /const appId =[\s\S]*moduleId && installedAppIds\.has\(moduleId\)[\s\S]*\? moduleId/,
+  );
+  assert.match(
+    source,
+    /\(hasAppPresentation \|\| looksLikeAppBackedDraft\) &&[\s\S]*platformId &&[\s\S]*installedAppIds\.has\(platformId\)[\s\S]*\? platformId/,
+  );
   assert.match(source, /const handleOpenSpaceApp = useCallback\(/);
   assert.match(source, /setSpaceWorkspacePanelCollapsed\(false\);/);
   assert.match(source, /setSpaceExplorerMode\("applications"\);/);

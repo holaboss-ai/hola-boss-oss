@@ -1080,22 +1080,42 @@ function workspaceOutputNavigationTarget(
   installedAppIds: Set<string>,
 ): WorkspaceOutputNavigationTarget {
   const moduleId = (output.module_id || "").trim().toLowerCase();
+  const platformId = (output.platform || "").trim().toLowerCase();
   const metadata = (output.metadata ?? {}) as Record<string, unknown>;
   const presentation = metadata.presentation as
     | { kind?: string; view?: string; path?: string }
     | undefined;
+  const resource = metadata.resource as
+    | { entity_id?: string; entity_type?: string; label?: string }
+    | undefined;
   const hasAppPresentation =
     presentation?.kind === "app_resource" && presentation.view;
+  const looksLikeAppBackedDraft =
+    output.output_type === "post" ||
+    ((metadata.artifact_type as string | undefined)?.trim()?.toLowerCase() ??
+      "") === "draft";
+  const appId =
+    moduleId && installedAppIds.has(moduleId)
+      ? moduleId
+      : (hasAppPresentation || looksLikeAppBackedDraft) &&
+          platformId &&
+          installedAppIds.has(platformId)
+        ? platformId
+        : "";
 
-  if (moduleId && installedAppIds.has(moduleId)) {
+  if (appId) {
     return {
       type: "app",
-      appId: moduleId,
+      appId,
       path: hasAppPresentation ? presentation?.path || null : null,
-      resourceId: output.module_resource_id || output.artifact_id || output.id,
+      resourceId:
+        output.module_resource_id ||
+        (typeof resource?.entity_id === "string" ? resource.entity_id : null),
       view: hasAppPresentation
         ? presentation.view
-        : output.output_type || "home",
+        : output.output_type === "post"
+          ? "posts"
+          : output.output_type || "home",
     };
   }
 
@@ -4014,7 +4034,7 @@ function AppShellContent() {
 
     if (agentView.type === "automations") {
       return (
-        <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-card shadow-md backdrop-blur-sm">
+        <section className="flex h-full min-h-0 min-w-0 animate-in fade-in-0 slide-in-from-right-3 flex-col overflow-hidden rounded-xl bg-card shadow-md backdrop-blur-sm duration-200 ease-out">
           <div className="shrink-0 border-b border-border px-4 py-2.5 sm:px-5">
             <div className="flex items-center justify-between gap-3">
               <div className="inline-flex min-w-0 items-center gap-2 text-base font-semibold text-foreground">
@@ -4053,7 +4073,7 @@ function AppShellContent() {
 
     if (agentView.type === "inbox") {
       return (
-        <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-card shadow-md backdrop-blur-sm">
+        <section className="flex h-full min-h-0 min-w-0 animate-in fade-in-0 slide-in-from-right-3 flex-col overflow-hidden rounded-xl bg-card shadow-md backdrop-blur-sm duration-200 ease-out">
           <div className="shrink-0 border-b border-border px-4 py-2.5 sm:px-5">
             <div className="flex items-center justify-between gap-3">
               <div className="inline-flex min-w-0 items-center gap-2 text-base font-semibold text-foreground">
@@ -4212,28 +4232,33 @@ function AppShellContent() {
 
     if (agentView.type === "app") {
       return (
-        <AppSurfacePane
-          appId={agentView.appId}
-          app={
-            activeAppId === agentView.appId
-              ? activeApp
-              : getWorkspaceAppDefinition(agentView.appId, installedApps)
-          }
-          path={agentView.path}
-          resourceId={agentView.resourceId}
-          view={agentView.view}
-        />
+        <div className="flex h-full min-h-0 min-w-0 animate-in fade-in-0 slide-in-from-right-3 flex-col duration-200 ease-out">
+          <AppSurfacePane
+            key={agentView.appId}
+            appId={agentView.appId}
+            app={
+              activeAppId === agentView.appId
+                ? activeApp
+                : getWorkspaceAppDefinition(agentView.appId, installedApps)
+            }
+            path={agentView.path}
+            resourceId={agentView.resourceId}
+            view={agentView.view}
+          />
+        </div>
       );
     }
 
     return (
-      <InternalSurfacePane
-        surface={agentView.surface}
-        resourceId={agentView.resourceId}
-        htmlContent={agentView.htmlContent}
-        onResourceMissing={handleMissingInternalResource}
-        onOpenLinkInBrowser={handleOpenLinkInNewAppBrowserTab}
-      />
+      <div className="flex h-full min-h-0 min-w-0 animate-in fade-in-0 slide-in-from-right-3 flex-col duration-200 ease-out">
+        <InternalSurfacePane
+          surface={agentView.surface}
+          resourceId={agentView.resourceId}
+          htmlContent={agentView.htmlContent}
+          onResourceMissing={handleMissingInternalResource}
+          onOpenLinkInBrowser={handleOpenLinkInNewAppBrowserTab}
+        />
+      </div>
     );
   }, [
     activeApp,
@@ -4318,6 +4343,7 @@ function AppShellContent() {
       return (
         <div className="h-full min-h-0 p-3">
           <AppSurfacePane
+            key={spaceDisplayView.appId}
             appId={spaceDisplayView.appId}
             app={
               activeAppId === spaceDisplayView.appId

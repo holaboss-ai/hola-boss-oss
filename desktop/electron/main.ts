@@ -13060,6 +13060,356 @@ async function composioAccountStatus(
   );
 }
 
+/**
+ * Composio returns this when the connected_account_id has been deleted
+ * upstream — common for legacy rows whose external_id pointed at a
+ * Composio account that's since been revoked or rotated. It's a
+ * permanent, recoverable condition; surfacing it as an unhandled IPC
+ * rejection just adds noise to the console.
+ */
+function isComposioAccountMissingError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return /ConnectedAccount_ResourceNotFound|"code":606/.test(err.message);
+}
+
+/**
+ * Synthetic "tombstone" status for an external account that no longer
+ * exists. The frontend cache treats this like any other resolved
+ * status — display falls through to the persisted connection fields,
+ * and we don't keep re-fetching it on every mount.
+ */
+function missingComposioStatus(
+  connectedAccountId: string,
+): ComposioAccountStatus {
+  return {
+    id: connectedAccountId,
+    status: "missing",
+    authConfigId: null,
+    toolkitSlug: null,
+    userId: null,
+  };
+}
+
+interface ComposioProxyResponse<TData = unknown> {
+  data: TData | null;
+  status: number;
+  headers: Record<string, string>;
+}
+
+/**
+ * Call a provider's own API as the connected account, via Composio's
+ * proxy. Used for whoami fallbacks when Composio's generic
+ * `/api/composio/account/{id}` endpoint doesn't carry provider-side
+ * identity (notably Twitter/X). `endpoint` is the absolute provider
+ * URL — Composio attaches the connection's auth and forwards.
+ */
+async function composioProxyFetch<TData>(
+  connectedAccountId: string,
+  endpoint: string,
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+  body?: unknown,
+): Promise<TData | null> {
+  const wrapped = await composioFetch<ComposioProxyResponse<TData>>(
+    "/api/composio/proxy",
+    "POST",
+    {
+      connected_account_id: connectedAccountId,
+      endpoint,
+      method,
+      ...(body !== undefined ? { body } : {}),
+    },
+  );
+  return wrapped.data ?? null;
+}
+
+/**
+ * Per-provider whoami via Composio proxy. When the toolkit's response
+ * shape differs from the generic identity columns, we read the
+ * provider's native user-me response and project handle / displayName /
+ * avatarUrl out. Keep this table small — only providers where the
+ * generic Composio whoami doesn't return identity (Twitter/X, etc.)
+ * actually need a proxy fallback.
+ */
+interface ProxyWhoamiConfig {
+  url: string;
+  method: "GET";
+  extract: (data: unknown) => Partial<ExtractedIdentity>;
+}
+
+function pickString(value: unknown): string | null {
+  return trimOrNull(typeof value === "string" ? value : null);
+}
+
+const PROVIDER_PROXY_WHOAMI: Record<string, ProxyWhoamiConfig> = {
+  twitter: {
+    url: "https://api.x.com/2/users/me?user.fields=username,name,profile_image_url",
+    method: "GET",
+    extract: (raw) => {
+      const root = (raw as { data?: unknown } | null)?.data ?? raw;
+      const user = root as Record<string, unknown> | null;
+      if (!user) return {};
+      return {
+        handle: pickString(user.username) ?? pickString(user.screen_name),
+        displayName: pickString(user.name),
+        avatarUrl:
+          pickString(user.profile_image_url) ??
+          pickString((user as Record<string, unknown>).profile_image_url_https),
+      };
+    },
+  },
+  x: {
+    url: "https://api.x.com/2/users/me?user.fields=username,name,profile_image_url",
+    method: "GET",
+    extract: (raw) => {
+      const root = (raw as { data?: unknown } | null)?.data ?? raw;
+      const user = root as Record<string, unknown> | null;
+      if (!user) return {};
+      return {
+        handle: pickString(user.username) ?? pickString(user.screen_name),
+        displayName: pickString(user.name),
+        avatarUrl:
+          pickString(user.profile_image_url) ??
+          pickString((user as Record<string, unknown>).profile_image_url_https),
+      };
+    },
+  },
+  reddit: {
+    url: "https://oauth.reddit.com/api/v1/me",
+    method: "GET",
+    extract: (raw) => {
+      const u = raw as Record<string, unknown> | null;
+      if (!u) return {};
+      return {
+        handle: pickString(u.name),
+        avatarUrl: pickString(u.icon_img) ?? pickString(u.snoovatar_img),
+      };
+    },
+  },
+  linkedin: {
+    url: "https://api.linkedin.com/v2/userinfo",
+    method: "GET",
+    extract: (raw) => {
+      const u = raw as Record<string, unknown> | null;
+      if (!u) return {};
+      return {
+        email: pickString(u.email),
+        displayName: pickString(u.name),
+        avatarUrl: pickString(u.picture),
+      };
+    },
+  },
+  github: {
+    url: "https://api.github.com/user",
+    method: "GET",
+    extract: (raw) => {
+      const u = raw as Record<string, unknown> | null;
+      if (!u) return {};
+      return {
+        handle: pickString(u.login),
+        email: pickString(u.email),
+        displayName: pickString(u.name),
+        avatarUrl: pickString(u.avatar_url),
+      };
+    },
+  },
+};
+
+async function tryProxyWhoami(
+  connectedAccountId: string,
+  providerId: string,
+): Promise<Partial<ExtractedIdentity>> {
+  const normalized = providerId.toLowerCase();
+  const config = PROVIDER_PROXY_WHOAMI[normalized];
+  if (!config) {
+    console.warn(
+      `[integrations] no proxy whoami config for provider=${normalized}; skipping fallback`,
+    );
+    return {};
+  }
+  try {
+    const data = await composioProxyFetch<unknown>(
+      connectedAccountId,
+      config.url,
+      config.method,
+    );
+    if (!data) {
+      console.warn(
+        `[integrations] proxy whoami for provider=${normalized} returned no data`,
+      );
+      return {};
+    }
+    const extracted = config.extract(data);
+    if (
+      !extracted.handle &&
+      !extracted.email &&
+      !extracted.displayName &&
+      !extracted.avatarUrl
+    ) {
+      console.warn(
+        `[integrations] proxy whoami for provider=${normalized} returned empty identity (raw shape may have shifted):`,
+        JSON.stringify(data).slice(0, 300),
+      );
+    }
+    return extracted;
+  } catch (err) {
+    // Proxy call failed (Hono missing endpoint, provider 4xx, expired
+    // scope, etc.). Surface to stderr so dev can diagnose; caller still
+    // gets the unenriched status and the UI shows "no change".
+    console.warn(
+      `[integrations] proxy whoami failed for provider=${normalized}:`,
+      err instanceof Error ? err.message : String(err),
+    );
+    return {};
+  }
+}
+
+/**
+ * Composio account status, enriched with per-provider proxy whoami
+ * when the generic endpoint doesn't carry identity. The returned
+ * status is shape-compatible with `ComposioAccountStatus` (extra
+ * fields like avatarUrl get folded in), so frontend callers don't
+ * need to distinguish between the two sources.
+ */
+async function composioAccountStatusEnriched(
+  connectedAccountId: string,
+  providerId: string | null | undefined,
+): Promise<ComposioAccountStatus> {
+  const status = await composioAccountStatus(connectedAccountId);
+  if (!providerId) return status;
+  const generic = extractComposioIdentity(providerId, status);
+  // Skip the proxy round-trip when the generic whoami already covered
+  // the basics — this is the common case for GitHub / Gmail / Reddit.
+  if (generic.handle || generic.email) return status;
+  const proxy = await tryProxyWhoami(connectedAccountId, providerId);
+  if (
+    !proxy.handle &&
+    !proxy.email &&
+    !proxy.displayName &&
+    !proxy.avatarUrl
+  ) {
+    return status;
+  }
+  return {
+    ...status,
+    handle: status.handle ?? proxy.handle ?? null,
+    email: status.email ?? proxy.email ?? null,
+    displayName: status.displayName ?? proxy.displayName ?? null,
+    avatarUrl: status.avatarUrl ?? proxy.avatarUrl ?? null,
+  };
+}
+
+/**
+ * Extracted identity for a Composio-connected account, normalized across
+ * providers. Composio's whoami endpoint populates the top-level
+ * `handle/email/displayName/avatarUrl` for some toolkits (GitHub, Gmail)
+ * but leaves them empty for others (Twitter/X, Reddit) — the actual
+ * provider response gets passed through verbatim under `data` instead.
+ * `extractComposioIdentity` reads the top-level fields first and falls
+ * back to per-provider extraction from `data` so Twitter handles like
+ * `@joshua` no longer show as "Account 1".
+ */
+function trimOrNull(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+interface ExtractedIdentity {
+  handle: string | null;
+  email: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+}
+
+function extractComposioIdentity(
+  providerId: string,
+  status: ComposioAccountStatus,
+): ExtractedIdentity {
+  let handle = trimOrNull(status.handle);
+  let email = trimOrNull(status.email);
+  let displayName = trimOrNull(status.displayName);
+  let avatarUrl = trimOrNull(status.avatarUrl);
+
+  // Some Composio toolkits put the provider whoami response verbatim
+  // under `data`; others wrap it in another `data` key (mirroring
+  // provider response shape, e.g. Twitter v2's `{ data: { … } }`).
+  const blob =
+    status.data && typeof status.data === "object"
+      ? ((status.data as Record<string, unknown>).data &&
+        typeof (status.data as Record<string, unknown>).data === "object"
+          ? ((status.data as Record<string, unknown>).data as Record<string, unknown>)
+          : (status.data as Record<string, unknown>))
+      : null;
+
+  if (blob) {
+    switch (providerId.toLowerCase()) {
+      case "twitter":
+      case "x":
+        handle =
+          handle ??
+          trimOrNull(blob.username) ??
+          trimOrNull(blob.screen_name) ??
+          trimOrNull(blob.handle);
+        displayName =
+          displayName ?? trimOrNull(blob.name) ?? trimOrNull(blob.full_name);
+        avatarUrl =
+          avatarUrl ??
+          trimOrNull(blob.profile_image_url) ??
+          trimOrNull(blob.profile_image_url_https);
+        break;
+      case "github":
+        handle = handle ?? trimOrNull(blob.login);
+        email = email ?? trimOrNull(blob.email);
+        displayName = displayName ?? trimOrNull(blob.name);
+        avatarUrl = avatarUrl ?? trimOrNull(blob.avatar_url);
+        break;
+      case "reddit":
+        handle = handle ?? trimOrNull(blob.name);
+        avatarUrl =
+          avatarUrl ??
+          trimOrNull(blob.icon_img) ??
+          trimOrNull(blob.snoovatar_img);
+        break;
+      case "linkedin":
+        email = email ?? trimOrNull(blob.email);
+        displayName =
+          displayName ??
+          (typeof blob.given_name === "string" || typeof blob.family_name === "string"
+            ? trimOrNull(`${blob.given_name ?? ""} ${blob.family_name ?? ""}`)
+            : null);
+        avatarUrl = avatarUrl ?? trimOrNull(blob.picture);
+        break;
+      case "gmail":
+      case "googlesheets":
+      case "google":
+        email = email ?? trimOrNull(blob.email);
+        displayName = displayName ?? trimOrNull(blob.name);
+        avatarUrl = avatarUrl ?? trimOrNull(blob.picture);
+        break;
+      default:
+        // Best-effort generic field probe — many providers expose
+        // `username`/`login`/`screen_name` for handle, `email`, `name`,
+        // and `avatar_url` under various names.
+        handle =
+          handle ??
+          trimOrNull(blob.username) ??
+          trimOrNull(blob.login) ??
+          trimOrNull(blob.screen_name) ??
+          trimOrNull(blob.handle);
+        email = email ?? trimOrNull(blob.email);
+        displayName = displayName ?? trimOrNull(blob.name);
+        avatarUrl =
+          avatarUrl ??
+          trimOrNull(blob.avatar_url) ??
+          trimOrNull(blob.picture) ??
+          trimOrNull(blob.profile_image_url);
+        break;
+    }
+  }
+
+  return { handle, email, displayName, avatarUrl };
+}
+
 async function composioFinalize(payload: {
   connected_account_id: string;
   provider: string;
@@ -13083,20 +13433,15 @@ async function composioFinalize(payload: {
   let resolvedLabel = payload.account_label;
   if (!enrichedHandle && !enrichedEmail) {
     try {
-      const status = await composioAccountStatus(payload.connected_account_id);
-      enrichedHandle =
-        typeof status.handle === "string" && status.handle.trim().length > 0
-          ? status.handle.trim()
-          : null;
-      enrichedEmail =
-        typeof status.email === "string" && status.email.trim().length > 0
-          ? status.email.trim()
-          : null;
+      const status = await composioAccountStatusEnriched(
+        payload.connected_account_id,
+        payload.provider,
+      );
+      const identity = extractComposioIdentity(payload.provider, status);
+      enrichedHandle = identity.handle;
+      enrichedEmail = identity.email;
       const preferredDisplayName =
-        typeof status.displayName === "string" &&
-        status.displayName.trim().length > 0
-          ? status.displayName.trim()
-          : enrichedHandle ?? enrichedEmail ?? null;
+        identity.displayName ?? enrichedHandle ?? enrichedEmail ?? null;
       if (preferredDisplayName && (!resolvedLabel || resolvedLabel.trim().length === 0)) {
         resolvedLabel = preferredDisplayName;
       }
@@ -13142,21 +13487,15 @@ async function composioFinalize(payload: {
         await Promise.all(
           slice.map(async (legacy) => {
             try {
-              const probe = await composioAccountStatus(
+              const probe = await composioAccountStatusEnriched(
                 legacy.account_external_id as string,
+                legacy.provider_id,
               );
-              const probeHandle =
-                typeof probe.handle === "string" && probe.handle.trim().length > 0
-                  ? probe.handle.trim()
-                  : null;
-              const probeEmail =
-                typeof probe.email === "string" && probe.email.trim().length > 0
-                  ? probe.email.trim()
-                  : null;
-              if (!probeHandle && !probeEmail) return;
+              const identity = extractComposioIdentity(legacy.provider_id, probe);
+              if (!identity.handle && !identity.email) return;
               await updateIntegrationConnection(legacy.connection_id, {
-                account_handle: probeHandle,
-                account_email: probeEmail,
+                account_handle: identity.handle,
+                account_email: identity.email,
               });
             } catch {
               // Per-row failure is fine — that row simply won't dedupe
@@ -13181,6 +13520,74 @@ async function composioFinalize(payload: {
       account_email: enrichedEmail,
     },
   });
+}
+
+/**
+ * Re-run identity enrichment for an existing connection. Reads the
+ * connection's `account_external_id`, hits Composio whoami, runs the
+ * per-provider extractor, and writes any newly-resolved handle/email
+ * back to the connection. Used by the "Refresh" button in
+ * IntegrationsPane to fix legacy rows that were created before the
+ * per-provider extractor existed (e.g. Twitter rows showing
+ * "Account 1") without the user having to disconnect and re-auth.
+ *
+ * Returns the updated connection (or the unchanged one if the probe
+ * yielded no new identity).
+ */
+interface ComposioRefreshResult {
+  connection: IntegrationConnectionPayload;
+  /** True iff the probe resolved a new handle or email and we wrote it back. */
+  changed: boolean;
+  /** Short reason code when `changed === false`, for the UI to surface. */
+  reason?: "no_external_id" | "account_missing" | "no_new_identity";
+}
+
+async function composioRefreshConnection(
+  connectionId: string,
+): Promise<ComposioRefreshResult> {
+  const trimmed = typeof connectionId === "string" ? connectionId.trim() : "";
+  if (!trimmed) {
+    throw new Error("composioRefreshConnection: connection_id required");
+  }
+  const { connections } = await listIntegrationConnections();
+  const target = connections.find((c) => c.connection_id === trimmed);
+  if (!target) {
+    throw new Error(`composioRefreshConnection: connection ${trimmed} not found`);
+  }
+  if (!target.account_external_id) {
+    return { connection: target, changed: false, reason: "no_external_id" };
+  }
+  let status: ComposioAccountStatus;
+  try {
+    status = await composioAccountStatusEnriched(
+      target.account_external_id,
+      target.provider_id,
+    );
+  } catch (err) {
+    if (isComposioAccountMissingError(err)) {
+      // Upstream account is gone. Don't blow up the Refresh button —
+      // just return the existing row unchanged so the UI surfaces the
+      // current persisted identity (Phase 2 / Slice 2 will mark these
+      // rows stale + prompt the user to reconnect).
+      return { connection: target, changed: false, reason: "account_missing" };
+    }
+    throw err;
+  }
+  const identity = extractComposioIdentity(target.provider_id, status);
+  // Only write fields that gained a value — preserve persisted data on
+  // a partial probe (e.g. handle resolved but email still missing).
+  const update: { account_handle?: string | null; account_email?: string | null } = {};
+  if (identity.handle && identity.handle !== target.account_handle) {
+    update.account_handle = identity.handle;
+  }
+  if (identity.email && identity.email !== target.account_email) {
+    update.account_email = identity.email;
+  }
+  if (Object.keys(update).length === 0) {
+    return { connection: target, changed: false, reason: "no_new_identity" };
+  }
+  const updated = await updateIntegrationConnection(trimmed, update);
+  return { connection: updated, changed: true };
 }
 
 interface TemplateIntegrationRequirement {
@@ -15799,6 +16206,242 @@ async function installAppFromCatalog(params: {
         await fs.rm(archivePath, { force: true });
       } catch {
         /* best effort */
+      }
+    }
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// Mirrors the runtime's allowlist (see api-server/src/app.ts
+// `isAllowedArchivePath`). The runtime ultimately re-validates, but
+// checking here lets us decide whether the picked file already lives
+// somewhere the runtime will accept or needs to be staged to
+// ~/.holaboss/downloads first.
+function isAllowedArchivePathForRuntime(p: string): boolean {
+  if (!p) return false;
+  const abs = path.resolve(p);
+  const candidates: string[] = [path.resolve(os.tmpdir())];
+  const envOverride = process.env.HOLABOSS_APP_ARCHIVE_DIR;
+  if (envOverride && envOverride.trim().length > 0) {
+    candidates.push(path.resolve(envOverride.trim()));
+  }
+  const home = process.env.HOME || process.env.USERPROFILE;
+  if (home && home.trim().length > 0) {
+    candidates.push(path.resolve(home.trim(), ".holaboss", "downloads"));
+  }
+  for (const root of candidates) {
+    if (abs === root || abs.startsWith(root + path.sep)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Reads `app.runtime.yaml` from a tarball without extracting the rest, so
+// a user-picked archive's app id can be resolved before we hand the path
+// to the runtime. Uses the system `tar` binary (bundled on macOS, Linux,
+// and Windows 10+) so we don't pull in a Node tar dep just for this dev
+// path.
+async function peekAppArchiveSlug(archivePath: string): Promise<string> {
+  const { spawnSync } = await import("node:child_process");
+  const result = spawnSync(
+    "tar",
+    ["-xzOf", archivePath, "app.runtime.yaml"],
+    { encoding: "utf8", maxBuffer: 1024 * 1024 },
+  );
+  if (result.status !== 0 || !result.stdout) {
+    const tail = (result.stderr ?? "").slice(0, 300).trim();
+    throw new Error(
+      `Could not read app.runtime.yaml from archive (tar exit ${result.status})${tail ? `: ${tail}` : ""}`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(result.stdout);
+  } catch (err) {
+    throw new Error(
+      `app.runtime.yaml is not valid YAML: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  if (!isRecord(parsed)) {
+    throw new Error("app.runtime.yaml must be a mapping");
+  }
+  const record = parsed as Record<string, unknown>;
+  const slugValue = record.slug ?? record.app_id;
+  const slug = typeof slugValue === "string" ? slugValue.trim() : "";
+  if (!slug) {
+    throw new Error(
+      "app.runtime.yaml must declare `slug` (or `app_id`) so the archive can be installed",
+    );
+  }
+  return slug;
+}
+
+// Copies the picked archive into ~/.holaboss/downloads/ when it's outside
+// the runtime's allowlist. Returns the path the runtime should consume
+// plus a cleanup callback that's a no-op when no copy was needed.
+async function stageArchiveForInstall(
+  srcPath: string,
+): Promise<{ stagedPath: string; cleanup: () => Promise<void> }> {
+  const abs = path.resolve(srcPath);
+  if (isAllowedArchivePathForRuntime(abs)) {
+    return { stagedPath: abs, cleanup: async () => {} };
+  }
+  const home = process.env.HOME || process.env.USERPROFILE;
+  if (!home) {
+    throw new Error(
+      "HOME/USERPROFILE is not set; cannot stage archive for install",
+    );
+  }
+  const stagingDir = path.join(home, ".holaboss", "downloads");
+  await fs.mkdir(stagingDir, { recursive: true });
+  const stagedPath = path.join(stagingDir, path.basename(abs));
+  await fs.copyFile(abs, stagedPath);
+  return {
+    stagedPath,
+    cleanup: async () => {
+      try {
+        await fs.rm(stagedPath, { force: true });
+      } catch {
+        /* best effort */
+      }
+    },
+  };
+}
+
+async function installAppFromArchiveFile(params: {
+  workspaceId: string;
+  archivePath: string;
+}): Promise<InstallAppFromCatalogResponse> {
+  const workspaceId = assertSafeWorkspaceId(params.workspaceId);
+  const archivePath = path.resolve(params.archivePath);
+
+  const stat = await fs.stat(archivePath).catch(() => null);
+  if (!stat || !stat.isFile()) {
+    throw new Error(`Archive not found or not a file: ${archivePath}`);
+  }
+  if (!/\.(tar\.gz|tgz)$/i.test(archivePath)) {
+    throw new Error(
+      `Archive must be a .tar.gz or .tgz file: ${path.basename(archivePath)}`,
+    );
+  }
+
+  const slug = await peekAppArchiveSlug(archivePath);
+  const appId = assertSafeAppId(slug);
+
+  const { stagedPath, cleanup } = await stageArchiveForInstall(archivePath);
+
+  mainWindow?.webContents.send("app-install-progress", {
+    appId,
+    phase: "installing",
+    bytes: 0,
+    total: 0,
+  });
+
+  try {
+    return await requestRuntimeJson<InstallAppFromCatalogResponse>({
+      method: "POST",
+      path: "/api/v1/apps/install-archive",
+      payload: {
+        workspace_id: workspaceId,
+        app_id: appId,
+        archive_path: stagedPath,
+      },
+      timeoutMs: 300_000,
+    });
+  } finally {
+    await cleanup();
+  }
+}
+
+// User-driven entry point: opens a file picker, then installs the picked
+// tarball. Returns null when the user cancels so the renderer can
+// distinguish cancel from error.
+async function pickAndInstallAppFromArchiveFile(params: {
+  workspaceId: string;
+}): Promise<InstallAppFromCatalogResponse | null> {
+  const workspaceId = assertSafeWorkspaceId(params.workspaceId);
+  const dialogOptions: Electron.OpenDialogOptions = {
+    title: "Install app from archive",
+    buttonLabel: "Install",
+    properties: ["openFile"],
+    filters: [
+      { name: "App archive", extensions: ["tar.gz", "tgz"] },
+      { name: "All files", extensions: ["*"] },
+    ],
+  };
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, dialogOptions)
+    : await dialog.showOpenDialog(dialogOptions);
+  if (result.canceled || result.filePaths.length === 0) {
+    return null;
+  }
+  return installAppFromArchiveFile({
+    workspaceId,
+    archivePath: result.filePaths[0],
+  });
+}
+
+interface DashboardQueryRowsResult {
+  ok: true;
+  columns: string[];
+  rows: unknown[][];
+}
+
+interface DashboardQueryErrorResult {
+  ok: false;
+  error: string;
+}
+
+type DashboardQueryResult = DashboardQueryRowsResult | DashboardQueryErrorResult;
+
+// Read-only SQL execution against the workspace's shared data.db. Used by
+// the dashboard renderer to populate kpi cards, tables, and board panels.
+// Each call opens its own short-lived handle so a panel-level query error
+// can't leak into a long-lived cache, and so the file isn't held open if
+// the renderer is torn down without explicit cleanup.
+async function runDashboardQuery(params: {
+  workspaceId: string;
+  sql: string;
+}): Promise<DashboardQueryResult> {
+  const workspaceId = assertSafeWorkspaceId(params.workspaceId);
+  const sql = (params.sql ?? "").trim();
+  if (!sql) {
+    return { ok: false, error: "Query is empty." };
+  }
+  const workspaceDir = await resolveWorkspaceDir(workspaceId);
+  const dbPath = path.join(workspaceDir, ".holaboss", "data.db");
+  if (!existsSync(dbPath)) {
+    return {
+      ok: false,
+      error: `Workspace data.db not found at ${dbPath}. Has any app written data yet?`,
+    };
+  }
+  let db: Database.Database | null = null;
+  try {
+    db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    db.pragma("query_only = ON");
+    const stmt = db.prepare(sql);
+    // raw() returns rows as arrays in column order; columns() gives the
+    // order we hand back, so the renderer can zip them by index without
+    // worrying about object-key ordering surprises.
+    const cols = stmt.columns().map((c) => c.name);
+    const rows = (stmt.raw().all() as unknown[][]).slice(0, 5_000);
+    return { ok: true, columns: cols, rows };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  } finally {
+    if (db) {
+      try {
+        db.close();
+      } catch {
+        // best effort
       }
     }
   }
@@ -19399,6 +20042,7 @@ const TEXT_FILE_EXTENSIONS = new Set([
   ".php",
   ".sql",
   ".log",
+  ".dashboard",
 ]);
 
 const TABLE_FILE_EXTENSIONS = new Set([".csv", ".xlsx", ".xls"]);
@@ -24628,6 +25272,27 @@ function installMacApplicationMenu() {
         { label: "Select All", role: "selectAll" },
       ],
     },
+    {
+      label: "View",
+      submenu: [
+        // Reload + Force Reload only useful in dev — packaged builds load
+        // a static bundle, so reloading just re-renders the same artifact.
+        ...(isDev
+          ? ([
+              { label: "Reload", role: "reload" },
+              { label: "Force Reload", role: "forceReload" },
+              { type: "separator" },
+            ] as MenuItemConstructorOptions[])
+          : []),
+        { label: "Toggle Developer Tools", role: "toggleDevTools" },
+        { type: "separator" },
+        { label: "Actual Size", role: "resetZoom" },
+        { label: "Zoom In", role: "zoomIn" },
+        { label: "Zoom Out", role: "zoomOut" },
+        { type: "separator" },
+        { label: "Toggle Full Screen", role: "togglefullscreen" },
+      ],
+    },
   ];
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
@@ -25388,6 +26053,18 @@ app.whenReady().then(async () => {
       }),
   );
   handleTrustedIpc(
+    "workspace:installAppFromArchiveFile",
+    ["main"],
+    async (_event, params: { workspaceId: string }) =>
+      pickAndInstallAppFromArchiveFile({ workspaceId: params.workspaceId }),
+  );
+  handleTrustedIpc(
+    "dashboard:runQuery",
+    ["main"],
+    async (_event, params: { workspaceId: string; sql: string }) =>
+      runDashboardQuery(params),
+  );
+  handleTrustedIpc(
     "appSurface:navigate",
     ["main"],
     async (_event, workspaceId: string, appId: string, urlPath?: string) =>
@@ -25789,8 +26466,22 @@ app.whenReady().then(async () => {
   handleTrustedIpc(
     "workspace:composioAccountStatus",
     ["main"],
-    async (_event, connectedAccountId: string) =>
-      composioAccountStatus(connectedAccountId),
+    async (
+      _event,
+      connectedAccountId: string,
+      providerId?: string | null,
+    ) => {
+      try {
+        return providerId
+          ? await composioAccountStatusEnriched(connectedAccountId, providerId)
+          : await composioAccountStatus(connectedAccountId);
+      } catch (err) {
+        if (isComposioAccountMissingError(err)) {
+          return missingComposioStatus(connectedAccountId);
+        }
+        throw err;
+      }
+    },
   );
   handleTrustedIpc(
     "workspace:composioFinalize",
@@ -25804,6 +26495,12 @@ app.whenReady().then(async () => {
         account_label?: string;
       },
     ) => composioFinalize(payload),
+  );
+  handleTrustedIpc(
+    "workspace:composioRefreshConnection",
+    ["main"],
+    async (_event, connectionId: string) =>
+      composioRefreshConnection(connectionId),
   );
   handleTrustedIpc(
     "workspace:resolveTemplateIntegrations",

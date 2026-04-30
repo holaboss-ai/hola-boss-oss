@@ -630,6 +630,72 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         required: ["terminal_id"],
         additionalProperties: false,
       };
+    case "list_data_tables":
+      return {
+        type: "object",
+        properties: {
+          include_system: {
+            type: "boolean",
+            description:
+              "Include app-internal tables (publish queues, scheduler logs, api_usage, settings). Default false.",
+          },
+        },
+        additionalProperties: false,
+      };
+    case "create_dashboard":
+      return {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description:
+              "Filesystem-safe slug for the file (no extension). Becomes <name>.dashboard under workspace/files/dashboards/.",
+          },
+          title: { type: "string", description: "Dashboard title shown at the top." },
+          description: {
+            type: "string",
+            description: "Optional one-line description shown under the title.",
+          },
+          panels: {
+            type: "array",
+            minItems: 1,
+            description:
+              "Ordered list of panels. Each panel is either a `kpi` (single-value SELECT) or a `data_view` (one SELECT shared across one or more views).",
+            items: {
+              type: "object",
+              properties: {
+                type: { type: "string", enum: ["kpi", "data_view"] },
+                title: { type: "string" },
+                query: {
+                  type: "string",
+                  description:
+                    "Read-only SQL against data.db. For kpi, prefer aliasing the answer as `value`.",
+                },
+                views: {
+                  type: "array",
+                  description:
+                    "Required when type is `data_view`. Each entry is `{ type: \"table\", columns?: string[] }` or `{ type: \"board\", group_by, card_title, card_subtitle? }`.",
+                  items: {
+                    type: "object",
+                    properties: {
+                      type: { type: "string", enum: ["table", "board"] },
+                      columns: { type: "array", items: { type: "string" } },
+                      group_by: { type: "string" },
+                      card_title: { type: "string" },
+                      card_subtitle: { type: "string" },
+                    },
+                    required: ["type"],
+                  },
+                },
+                default_view: { type: "string", enum: ["table", "board"] },
+              },
+              required: ["type", "title", "query"],
+            },
+          },
+        },
+        required: ["name", "title", "panels"],
+        additionalProperties: false,
+      };
   }
 }
 

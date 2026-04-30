@@ -1251,6 +1251,10 @@ test("runTsRunnerCli strips subagent orchestration tools from onboarding session
     (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
     ["holaboss_onboarding_complete"],
   );
+  assert.equal(
+    "delegated_session_kind" in (capturedProjectRequest as Record<string, unknown>),
+    false,
+  );
 });
 
 test("runTsRunnerCli strips staged execution tools from front-of-house workspace sessions", async () => {
@@ -1344,6 +1348,54 @@ test("runTsRunnerCli strips staged execution tools from front-of-house workspace
     (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
     [],
   );
+  assert.equal(
+    (capturedProjectRequest as {
+      delegated_session_kind?: string | null;
+    }).delegated_session_kind,
+    "subagent",
+  );
+  assert.equal(
+    (capturedProjectRequest as {
+      delegated_browser_tools_available?: boolean | null;
+    }).delegated_browser_tools_available,
+    true,
+  );
+  assert.deepEqual(
+    (capturedProjectRequest as { delegated_browser_tool_ids?: string[] })
+      .delegated_browser_tool_ids,
+    ["browser_get_state"],
+  );
+  assert.deepEqual(
+    (capturedProjectRequest as { delegated_runtime_tool_ids?: string[] })
+      .delegated_runtime_tool_ids,
+    ["holaboss_onboarding_complete", "write_report"],
+  );
+  assert.deepEqual(
+    (capturedProjectRequest as { delegated_default_tools?: string[] })
+      .delegated_default_tools,
+    [
+      "read",
+      "edit",
+      "bash",
+      "grep",
+      "glob",
+      "list",
+      "question",
+      "todowrite",
+      "todoread",
+      "skill",
+    ],
+  );
+  assert.deepEqual(
+    (capturedProjectRequest as { delegated_extra_tools?: string[] })
+      .delegated_extra_tools,
+    [
+      "web_search",
+      "browser_get_state",
+      "holaboss_onboarding_complete",
+      "write_report",
+    ],
+  );
 });
 
 test("runTsRunnerCli filters mutating MCP tools out of front-session requests", async () => {
@@ -1433,6 +1485,25 @@ test("runTsRunnerCli filters mutating MCP tools out of front-session requests", 
         tool_id: "docs.lookup",
         server_id: "docs",
         tool_name: "lookup",
+      },
+    ],
+  );
+  assert.deepEqual(
+    (
+      capturedProjectRequest as {
+        delegated_resolved_mcp_tool_refs?: Array<Record<string, string>>;
+      }
+    ).delegated_resolved_mcp_tool_refs,
+    [
+      {
+        tool_id: "docs.lookup",
+        server_id: "docs",
+        tool_name: "lookup",
+      },
+      {
+        tool_id: "workspace.write_report",
+        server_id: "workspace",
+        tool_name: "write_report",
       },
     ],
   );

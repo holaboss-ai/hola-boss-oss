@@ -3,7 +3,10 @@ import {
   getWorkspaceId,
   resolveWorkspaceApiUrl,
 } from "./env"
+import { buildAppResourcePresentation } from "./presentation"
 import type {
+  AppResourceOutputInput,
+  AppResourceOutputResult,
   CreateAppOutputRequest,
   HolabossTurnContext,
   PublishSessionArtifactRequest,
@@ -169,4 +172,82 @@ export async function publishSessionArtifact(
   }
 
   return ((await response.json()) as SessionArtifactResponsePayload).artifact
+}
+
+/**
+ * Mirrors an app resource into the workspace Outputs surface.
+ *
+ * Behavior:
+ * 1. If `existingOutputId` is set → PATCH the existing output in place.
+ * 2. Else if a `context` is provided → POST a session-bound artifact
+ *    scoped to the assistant turn.
+ * 3. Else → POST a workspace-scoped output (UI-driven path with no turn).
+ *
+ * Returns `{ outputId: null, isNew: false }` when publishing is not
+ * available (e.g. local dev without a workspace context), so apps can
+ * call this unconditionally.
+ */
+export async function syncAppResourceOutput(
+  context: HolabossTurnContext | null,
+  input: AppResourceOutputInput,
+): Promise<AppResourceOutputResult> {
+  if (!canPublishAppOutputs()) {
+    return { outputId: null, isNew: false }
+  }
+
+  const metadata = {
+    source_kind: "application",
+    presentation: buildAppResourcePresentation({
+      view: input.resource.view,
+      path: input.resource.path,
+    }),
+    resource: {
+      entity_type: input.resource.entityType,
+      entity_id: input.resource.entityId,
+      label: input.resource.title,
+    },
+    ...(input.extraMetadata ?? {}),
+  }
+  const platform = input.platform ?? input.moduleId
+  const status = input.status ?? null
+
+  if (input.existingOutputId) {
+    await updateAppOutput(input.existingOutputId, {
+      title: input.resource.title,
+      status,
+      moduleResourceId: input.resource.entityId,
+      metadata,
+    })
+    return { outputId: input.existingOutputId, isNew: false }
+  }
+
+  if (context) {
+    const artifact = await publishSessionArtifact(context, {
+      artifactType: input.artifactType ?? "draft",
+      externalId: input.resource.entityId,
+      title: input.resource.title,
+      moduleId: input.moduleId,
+      moduleResourceId: input.resource.entityId,
+      platform,
+      metadata,
+    })
+    return {
+      outputId: artifact?.output_id ?? null,
+      isNew: Boolean(artifact?.output_id),
+    }
+  }
+
+  const output = await createAppOutput({
+    outputType: input.outputType ?? input.artifactType ?? "draft",
+    title: input.resource.title,
+    moduleId: input.moduleId,
+    moduleResourceId: input.resource.entityId,
+    platform,
+    status,
+    metadata,
+  })
+  return {
+    outputId: output?.id ?? null,
+    isNew: Boolean(output?.id),
+  }
 }

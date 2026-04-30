@@ -829,6 +829,9 @@ function materializeQueuedBackgroundDeliverablesForTurn(params: {
       outputType: outputTypeForForwardedDeliverable(entry.deliverable),
       title,
       status: optionalString(entry.deliverable.status) ?? "completed",
+      moduleId: optionalString(entry.deliverable.module_id) ?? null,
+      moduleResourceId:
+        optionalString(entry.deliverable.module_resource_id) ?? null,
       filePath,
       sessionId: params.record.sessionId,
       inputId: params.record.inputId,
@@ -2292,6 +2295,8 @@ function subagentForwardableDeliverables(
       output_type: output.outputType,
       title: output.title,
       status: output.status,
+      module_id: output.moduleId,
+      module_resource_id: output.moduleResourceId,
       file_path: output.filePath,
       artifact_id: output.artifactId,
       platform: output.platform,

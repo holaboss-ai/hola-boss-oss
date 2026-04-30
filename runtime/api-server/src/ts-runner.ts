@@ -1094,6 +1094,15 @@ function isFrontSessionKind(value: string | null | undefined): boolean {
   );
 }
 
+function isDelegatingFrontSessionKind(value: string | null | undefined): boolean {
+  const normalized = normalizedSessionKindValue(value);
+  return (
+    normalized === "" ||
+    normalized === "workspace_session" ||
+    normalized === "main"
+  );
+}
+
 function allowedRuntimeToolIdsForFrontSession(
   sessionKind: string | null | undefined,
 ): Set<string> {
@@ -1399,6 +1408,8 @@ function buildAgentRuntimeConfigRequest(params: {
     params.request.session_kind,
   );
   const frontSession = isFrontSessionKind(normalizedSessionKind);
+  const delegatedCapabilitySnapshotEligible =
+    isDelegatingFrontSessionKind(normalizedSessionKind);
   const extraTools = projectExtraToolIdsForSession({
     harnessId: params.harnessId,
     sessionKind: normalizedSessionKind,
@@ -1416,6 +1427,31 @@ function buildAgentRuntimeConfigRequest(params: {
     sessionKind: normalizedSessionKind,
     resolvedMcpToolRefs: params.resolvedMcpToolRefs,
   });
+  const delegatedExtraTools = delegatedCapabilitySnapshotEligible
+    ? projectExtraToolIdsForSession({
+        harnessId: params.harnessId,
+        sessionKind: "subagent",
+        extraToolIds: params.extraToolIds,
+      })
+    : null;
+  const delegatedRuntimeToolIds = delegatedCapabilitySnapshotEligible
+    ? projectRuntimeToolIdsForSession({
+        sessionKind: "subagent",
+        runtimeToolIds: params.runtimeToolIds,
+      })
+    : null;
+  const delegatedBrowserToolIds = delegatedCapabilitySnapshotEligible
+    ? projectBrowserToolIdsForSession({
+        sessionKind: "subagent",
+        browserToolIds: params.browserToolIds,
+      })
+    : null;
+  const delegatedResolvedMcpToolRefs = delegatedCapabilitySnapshotEligible
+    ? projectResolvedMcpToolRefsForSession({
+        sessionKind: "subagent",
+        resolvedMcpToolRefs: params.resolvedMcpToolRefs,
+      })
+    : null;
   const common = {
     session_id: params.request.session_id,
     workspace_id: params.request.workspace_id,
@@ -1449,6 +1485,19 @@ function buildAgentRuntimeConfigRequest(params: {
       ? [...MAIN_SESSION_DEFAULT_TOOLS]
       : [...SUBAGENT_DEFAULT_TOOLS],
     extra_tools: extraTools,
+    ...(delegatedCapabilitySnapshotEligible
+      ? {
+          delegated_session_kind: "subagent",
+          delegated_browser_tools_available:
+            params.browserToolsAvailable &&
+            (delegatedBrowserToolIds?.length ?? 0) > 0,
+          delegated_browser_tool_ids: [...(delegatedBrowserToolIds ?? [])],
+          delegated_runtime_tool_ids: [...(delegatedRuntimeToolIds ?? [])],
+          delegated_workspace_command_ids: [...params.workspaceCommandIds],
+          delegated_default_tools: [...SUBAGENT_DEFAULT_TOOLS],
+          delegated_extra_tools: [...(delegatedExtraTools ?? [])],
+        }
+      : {}),
     ...(frontSession
       ? {}
       : {
@@ -1462,6 +1511,18 @@ function buildAgentRuntimeConfigRequest(params: {
       tool_name: toolRef.tool_name,
     })),
     resolved_mcp_server_ids: [...params.resolvedMcpServerIds],
+    ...(delegatedCapabilitySnapshotEligible
+      ? {
+          delegated_resolved_mcp_tool_refs: (
+            delegatedResolvedMcpToolRefs ?? []
+          ).map((toolRef) => ({
+            tool_id: toolRef.tool_id,
+            server_id: toolRef.server_id,
+            tool_name: toolRef.tool_name,
+          })),
+          delegated_resolved_mcp_server_ids: [...params.resolvedMcpServerIds],
+        }
+      : {}),
     resolved_output_schemas: {},
   };
   return {

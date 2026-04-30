@@ -4,6 +4,7 @@ import {
   Loader2,
   LogIn,
   Plus,
+  RefreshCw,
   Search,
   ShieldAlert,
   Unplug,
@@ -23,6 +24,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useDesktopAuthSession } from "@/lib/auth/authClient";
+import { accountDisplayLabel } from "@/lib/integrationDisplay";
+import {
+  invalidateIntegrationAccountCache,
+  useIntegrationAccountMetadata,
+} from "@/lib/integrationAccountStore";
 
 interface ComposioToolkit {
   slug: string;
@@ -203,10 +209,11 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
   const [disconnectingConnectionId, setDisconnectingConnectionId] = useState<
     string | null
   >(null);
+  const [refreshingConnectionId, setRefreshingConnectionId] = useState<
+    string | null
+  >(null);
   const [statusMessage, setStatusMessage] = useState("");
-  const [accountMetadata, setAccountMetadata] = useState<
-    Map<string, ComposioAccountStatus>
-  >(new Map());
+  const accountMetadata = useIntegrationAccountMetadata(connections);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -235,51 +242,6 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
   useEffect(() => {
     void loadData();
   }, [isSignedIn, loadData]);
-
-  // After connections load, fetch each account's profile metadata (handle,
-  // avatar, etc.) from Composio in parallel. The metadata map is keyed by
-  // connection_id so the card render can decorate accounts as data arrives;
-  // it's append-only across loads so a transient fetch failure doesn't blank
-  // out the avatar already on screen.
-  useEffect(() => {
-    let cancelled = false;
-    const targets = connections
-      .filter((c) => c.account_external_id)
-      .map((c) => ({
-        connectionId: c.connection_id,
-        externalId: c.account_external_id as string,
-      }));
-    if (targets.length === 0) {
-      return;
-    }
-    void Promise.all(
-      targets.map(async (t) => {
-        try {
-          const status =
-            await window.electronAPI.workspace.composioAccountStatus(
-              t.externalId,
-            );
-          return [t.connectionId, status] as const;
-        } catch {
-          return null;
-        }
-      }),
-    ).then((results) => {
-      if (cancelled) return;
-      setAccountMetadata((prev) => {
-        const next = new Map(prev);
-        for (const result of results) {
-          if (result) {
-            next.set(result[0], result[1]);
-          }
-        }
-        return next;
-      });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [connections]);
 
   // Auto-reconcile duplicates that pre-date the dedupe-on-finalize fix.
   // When the same real account got connected twice (each Composio re-auth
@@ -394,6 +356,10 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
               keep.connection_id,
               remove.map((r) => r.connection_id),
             );
+            // Drop cache entries for the removed connections so other
+            // panes (AppSurfacePane picker, AppCatalogCard) don't keep
+            // showing stale rows after the merge.
+            invalidateIntegrationAccountCache(remove.map((r) => r.connection_id));
           } catch {
             // Surface via reload — listConnections will re-render
             // current state including any partial merges.
@@ -418,6 +384,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     // here, leading to a tight loop).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connections, accountMetadata]);
+
 
   // Map providerId → all active connections. A user can have multiple accounts
   // per provider (e.g., personal + work Twitter); each connection is its own
@@ -594,11 +561,44 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
       await window.electronAPI.workspace.deleteIntegrationConnection(
         connectionId,
       );
+      invalidateIntegrationAccountCache([connectionId]);
       void loadData();
     } catch (error) {
       setStatusMessage(normalizeErrorMessage(error));
     } finally {
       setDisconnectingConnectionId(null);
+    }
+  }
+
+  async function handleRefresh(connectionId: string) {
+    setRefreshingConnectionId(connectionId);
+    setStatusMessage("");
+    try {
+      const result =
+        await window.electronAPI.workspace.composioRefreshConnection(
+          connectionId,
+        );
+      // Drop the cached whoami so other surfaces re-probe with the fresh
+      // identity once the persisted handle/email come through loadData.
+      invalidateIntegrationAccountCache([connectionId]);
+      await loadData();
+      if (result.changed) {
+        setStatusMessage("Identity refreshed.");
+      } else if (result.reason === "account_missing") {
+        setStatusMessage(
+          "Upstream account no longer exists — disconnect and reconnect to recover.",
+        );
+      } else if (result.reason === "no_external_id") {
+        setStatusMessage("Connection has no external account to probe.");
+      } else {
+        setStatusMessage(
+          "Provider didn't return a new handle or email — check dev console for proxy whoami details.",
+        );
+      }
+    } catch (error) {
+      setStatusMessage(normalizeErrorMessage(error));
+    } finally {
+      setRefreshingConnectionId(null);
     }
   }
 
@@ -778,6 +778,10 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
                 onDisconnect={(connectionId) =>
                   void handleDisconnect(connectionId)
                 }
+                onRefresh={(connectionId) =>
+                  void handleRefresh(connectionId)
+                }
+                refreshingConnectionId={refreshingConnectionId}
               />
             ))}
           </div>
@@ -951,6 +955,10 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
                   onDisconnect={(connectionId) =>
                     void handleDisconnect(connectionId)
                   }
+                  onRefresh={(connectionId) =>
+                    void handleRefresh(connectionId)
+                  }
+                  refreshingConnectionId={refreshingConnectionId}
                 />
               ))}
             </div>
@@ -1235,33 +1243,6 @@ function IntegrationEmbeddedCard({
   );
 }
 
-function accountDisplayLabel(
-  conn: IntegrationConnectionPayload,
-  meta: ComposioAccountStatus | undefined,
-  index: number
-): string {
-  const handle = meta?.handle?.trim();
-  if (handle) {
-    return handle.startsWith("@") ? handle : `@${handle}`;
-  }
-  const email = meta?.email?.trim();
-  if (email) {
-    return email;
-  }
-  const displayName = meta?.displayName?.trim();
-  if (displayName) {
-    return displayName;
-  }
-  const label = normalizedText(conn.account_label);
-  // Skip the auto-generated "<provider> (Managed)" label and any raw
-  // Composio connected_account_id (always prefixed with "ca_") — those
-  // tell the user nothing useful. Fall through to a stable index label.
-  if (label && !/\(managed\)/i.test(label) && !label.startsWith("ca_")) {
-    return label;
-  }
-  return `Account ${index + 1}`;
-}
-
 function ConnectedProviderCard({
   integration,
   connections,
@@ -1269,6 +1250,8 @@ function ConnectedProviderCard({
   connectDisabledReason,
   onConnect,
   onDisconnect,
+  onRefresh,
+  refreshingConnectionId,
   connecting,
   disconnectingConnectionId,
   metadata,
@@ -1280,6 +1263,8 @@ function ConnectedProviderCard({
   connectDisabledReason: string;
   onConnect: () => void;
   onDisconnect: (connectionId: string) => void;
+  onRefresh: (connectionId: string) => void;
+  refreshingConnectionId: string | null;
   connecting: boolean;
   disconnectingConnectionId: string | null;
   metadata: Map<string, ComposioAccountStatus>;
@@ -1383,6 +1368,25 @@ function ConnectedProviderCard({
                 {label}
               </span>
               <Button
+                aria-label={`Refresh ${label} identity`}
+                title="Refetch handle, email, and avatar from the provider"
+                className="text-muted-foreground hover:text-foreground"
+                disabled={
+                  disconnecting ||
+                  refreshingConnectionId === conn.connection_id
+                }
+                onClick={() => onRefresh(conn.connection_id)}
+                size="icon-xs"
+                type="button"
+                variant="ghost"
+              >
+                {refreshingConnectionId === conn.connection_id ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="size-3" />
+                )}
+              </Button>
+              <Button
                 aria-label={`Disconnect ${label}`}
                 className="text-muted-foreground hover:text-destructive"
                 disabled={disconnecting}
@@ -1413,7 +1417,7 @@ const PROVIDER_CATEGORY_GROUPS: Record<string, string[]> = {
   linkedin: ["social"],
   hubspot: ["crm"],
   attio: ["crm"],
-  calcom: ["productivity"],
+  cal: ["productivity"],
   apollo: ["sales"],
   instantly: ["sales"],
   zoominfo: ["sales"],
@@ -1427,7 +1431,7 @@ const PROVIDER_TOOLKIT_PREFERENCE: Record<string, string[]> = {
   linkedin: ["linkedin"],
   hubspot: ["hubspot"],
   attio: ["attio"],
-  calcom: ["calcom"],
+  cal: ["cal"],
   apollo: ["apollo"],
   instantly: ["instantly"],
   zoominfo: ["zoominfo"],

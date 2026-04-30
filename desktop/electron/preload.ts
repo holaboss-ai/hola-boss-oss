@@ -1296,6 +1296,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:syncAppCatalog", params) as Promise<AppCatalogSyncResponse>,
     installAppFromCatalog: (params: InstallAppFromCatalogRequest) =>
       ipcRenderer.invoke("workspace:installAppFromCatalog", params) as Promise<InstallAppFromCatalogResponse>,
+    installAppFromArchiveFile: (params: { workspaceId: string }) =>
+      ipcRenderer.invoke("workspace:installAppFromArchiveFile", params) as Promise<InstallAppFromCatalogResponse | null>,
+    runDashboardQuery: (params: { workspaceId: string; sql: string }) =>
+      ipcRenderer.invoke("dashboard:runQuery", params) as Promise<DashboardQueryResult>,
     listOutputs: (payload: string | HolabossListOutputsPayload) =>
       ipcRenderer.invoke("workspace:listOutputs", payload) as Promise<WorkspaceOutputListResponsePayload>,
     listSkills: (workspaceId: string) =>
@@ -1450,8 +1454,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:composioListConnections") as Promise<{ connections: Array<{ id: string; toolkitSlug: string; toolkitName: string; toolkitLogo: string | null; userId: string; createdAt: string }> }>,
     composioConnect: (payload: { provider: string; owner_user_id: string; callback_url?: string }) =>
       ipcRenderer.invoke("workspace:composioConnect", payload) as Promise<ComposioConnectResult>,
-    composioAccountStatus: (connectedAccountId: string) =>
-      ipcRenderer.invoke("workspace:composioAccountStatus", connectedAccountId) as Promise<ComposioAccountStatus>,
+    composioAccountStatus: (
+      connectedAccountId: string,
+      providerId?: string | null,
+    ) =>
+      ipcRenderer.invoke(
+        "workspace:composioAccountStatus",
+        connectedAccountId,
+        providerId ?? null,
+      ) as Promise<ComposioAccountStatus>,
     composioFinalize: (payload: {
       connected_account_id: string;
       provider: string;
@@ -1461,6 +1472,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
       account_email?: string | null;
     }) =>
       ipcRenderer.invoke("workspace:composioFinalize", payload) as Promise<IntegrationConnectionPayload>,
+    composioRefreshConnection: (connectionId: string) =>
+      ipcRenderer.invoke(
+        "workspace:composioRefreshConnection",
+        connectionId,
+      ) as Promise<{
+        connection: IntegrationConnectionPayload;
+        changed: boolean;
+        reason?: "no_external_id" | "account_missing" | "no_new_identity";
+      }>,
     resolveTemplateIntegrations: (payload: HolabossCreateWorkspacePayload) =>
       ipcRenderer.invoke("workspace:resolveTemplateIntegrations", payload) as Promise<ResolveTemplateIntegrationsResult>,
     generateTemplateContent: (params: {

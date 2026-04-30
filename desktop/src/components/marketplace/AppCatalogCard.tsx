@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Check, Download, LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -7,9 +8,13 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 import { AppIcon } from "@/components/marketplace/AppIcon";
+import {
+  accountAvatarFallbackChar,
+  accountDisplayLabel,
+  useEnrichedConnections,
+} from "@/lib/integrationDisplay";
 
 type AppCardState = "available" | "installing" | "installed";
 
@@ -35,18 +40,6 @@ interface AppCatalogCardProps {
   onSelectAccount?: (connectionId: string) => void;
 }
 
-function pickAccountLabel(conn: IntegrationConnectionPayload): string {
-  const trimmedLabel = conn.account_label?.trim() ?? "";
-  if (trimmedLabel.length > 0) return trimmedLabel;
-  const handle = conn.account_handle?.trim() ?? "";
-  if (handle.length > 0) return `@${handle}`;
-  const email = conn.account_email?.trim() ?? "";
-  if (email.length > 0) return email;
-  const externalId = conn.account_external_id?.trim() ?? "";
-  if (externalId.length > 0) return externalId;
-  return conn.connection_id;
-}
-
 export function AppCatalogCard({
   entry,
   state,
@@ -63,6 +56,39 @@ export function AppCatalogCard({
     Array.isArray(availableAccounts) &&
     availableAccounts.length >= 2 &&
     typeof onSelectAccount === "function";
+  const accountMetadata = useEnrichedConnections(availableAccounts ?? []);
+  const [avatarFailures, setAvatarFailures] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const activeConnectionId =
+    selectedConnectionId ?? availableAccounts?.[0]?.connection_id ?? "";
+  const activeIndex =
+    availableAccounts?.findIndex(
+      (c) => c.connection_id === activeConnectionId,
+    ) ?? -1;
+  const activeConn = activeIndex >= 0 ? availableAccounts?.[activeIndex] : null;
+  const activeMeta = activeConn
+    ? accountMetadata.get(activeConn.connection_id)
+    : undefined;
+  const activeLabel = activeConn
+    ? accountDisplayLabel(activeConn, activeMeta, activeIndex)
+    : "Choose account";
+  const activeAvatar = activeMeta?.avatarUrl?.trim();
+  const activeAvatarBroken = activeConn
+    ? avatarFailures.has(activeConn.connection_id)
+    : false;
+  const showActiveAvatar =
+    Boolean(activeAvatar) && !activeAvatarBroken && Boolean(activeConn);
+  const activeFallback = accountAvatarFallbackChar(activeLabel);
+
+  function markAvatarFailed(connectionId: string) {
+    setAvatarFailures((prev) => {
+      if (prev.has(connectionId)) return prev;
+      const next = new Set(prev);
+      next.add(connectionId);
+      return next;
+    });
+  }
   return (
     <Card size="sm">
       <CardHeader>
@@ -93,31 +119,76 @@ export function AppCatalogCard({
       <CardFooter className="flex-wrap items-center justify-end gap-2">
         {showAccountPicker ? (
           <Select
-            value={selectedConnectionId ?? availableAccounts?.[0]?.connection_id ?? ""}
+            value={activeConnectionId}
             onValueChange={(next) => {
               if (next) onSelectAccount?.(next);
             }}
           >
             <SelectTrigger
-              className="mr-auto h-7 min-w-[140px] gap-1.5 border-border/55 bg-transparent px-2 text-xs"
+              className="mr-auto h-7 min-w-[140px] gap-1.5 border-border/55 bg-transparent px-2 text-xs [&>svg]:size-3 [&>svg]:shrink-0"
               size="sm"
               aria-label="Choose account"
+              title={activeLabel}
             >
-              <SelectValue placeholder="Choose account" />
+              <span className="flex min-w-0 items-center gap-1.5">
+                {showActiveAvatar ? (
+                  <img
+                    alt=""
+                    src={activeAvatar}
+                    referrerPolicy="no-referrer"
+                    className="size-4 shrink-0 rounded-full bg-muted object-cover"
+                    onError={() =>
+                      activeConn && markAvatarFailed(activeConn.connection_id)
+                    }
+                  />
+                ) : (
+                  <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-muted text-[9px] font-semibold text-muted-foreground">
+                    {activeFallback}
+                  </span>
+                )}
+                <span className="truncate text-xs font-medium text-foreground">
+                  {activeLabel}
+                </span>
+              </span>
             </SelectTrigger>
             <SelectContent
               align="start"
               className="min-w-[200px] gap-0 rounded-lg p-1 shadow-subtle-sm"
             >
-              {availableAccounts?.map((conn) => (
-                <SelectItem
-                  key={conn.connection_id}
-                  value={conn.connection_id}
-                  className="rounded-md px-2.5 py-1.5 text-xs"
-                >
-                  {pickAccountLabel(conn)}
-                </SelectItem>
-              ))}
+              {availableAccounts?.map((conn, index) => {
+                const meta = accountMetadata.get(conn.connection_id);
+                const itemLabel = accountDisplayLabel(conn, meta, index);
+                const avatarUrl = meta?.avatarUrl?.trim();
+                const avatarBroken = avatarFailures.has(conn.connection_id);
+                const showAvatar = Boolean(avatarUrl) && !avatarBroken;
+                const fallbackChar = accountAvatarFallbackChar(itemLabel);
+                return (
+                  <SelectItem
+                    key={conn.connection_id}
+                    value={conn.connection_id}
+                    className="rounded-md px-2.5 py-1.5 text-xs"
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      {showAvatar ? (
+                        <img
+                          alt=""
+                          src={avatarUrl}
+                          referrerPolicy="no-referrer"
+                          className="size-4 shrink-0 rounded-full bg-muted object-cover"
+                          onError={() => markAvatarFailed(conn.connection_id)}
+                        />
+                      ) : (
+                        <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-muted text-[9px] font-semibold text-muted-foreground">
+                          {fallbackChar}
+                        </span>
+                      )}
+                      <span className="truncate font-medium text-foreground">
+                        {itemLabel}
+                      </span>
+                    </span>
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
         ) : null}

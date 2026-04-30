@@ -44,6 +44,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     "response_delivery_policy",
     "session_policy",
     "capability_policy",
+    "capability_tool_routing",
     "workspace_policy",
   ]);
   assert.deepEqual(prompt.promptSections.map((section) => section.id), [
@@ -52,6 +53,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     "response_delivery_policy",
     "session_policy",
     "capability_policy",
+    "capability_tool_routing",
     "capability_availability_context",
     "workspace_policy",
   ]);
@@ -61,14 +63,16 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     "system_prompt",
     "system_prompt",
     "system_prompt",
+    "system_prompt",
     "context_message",
     "system_prompt",
   ]);
-  assert.deepEqual(prompt.promptSections.map((section) => section.priority), [100, 200, 250, 300, 400, 450, 600]);
+  assert.deepEqual(prompt.promptSections.map((section) => section.priority), [100, 200, 250, 300, 400, 425, 450, 600]);
   assert.deepEqual(prompt.promptSections.map((section) => section.volatility), [
     "stable",
     "stable",
     "stable",
+    "workspace",
     "workspace",
     "workspace",
     "run",
@@ -81,9 +85,11 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     "session_policy",
     "capability_policy",
     "capability_policy",
+    "capability_policy",
     "workspace_policy",
   ]);
   assert.deepEqual(prompt.promptLayers.map((layer) => layer.apply_at), [
+    "runtime_config",
     "runtime_config",
     "runtime_config",
     "runtime_config",
@@ -181,6 +187,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     "response_delivery_policy",
     "session_policy",
     "capability_policy",
+    "capability_tool_routing",
     "workspace_policy",
   ]);
   assert.deepEqual(prompt.promptCacheProfile.volatile_section_ids, []);
@@ -210,6 +217,17 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
     resolvedMcpToolRefs: [],
     toolServerIdMap: {},
   });
+  const delegatedCapabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read", "edit", "bash"],
+    extraTools: ["browser_get_state", "list_data_tables", "create_dashboard"],
+    browserToolsAvailable: true,
+    browserToolIds: ["browser_get_state"],
+    runtimeToolIds: ["list_data_tables", "create_dashboard"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    toolServerIdMap: {},
+    sessionKind: "subagent",
+  });
 
   const prompt = composeAgentPrompt("You are concise.", {
     defaultTools: ["read", "edit"],
@@ -220,6 +238,7 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
     sessionMode: "code",
     harnessId: "pi",
     capabilityManifest,
+    delegatedCapabilityManifest,
   });
 
   assert.deepEqual(prompt.promptLayers.map((layer) => layer.id), [
@@ -251,6 +270,7 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
   assert.match(prompt.systemPrompt, /Be concise and on-point\. Do not ramble, over-explain, or pad replies just to sound helpful\./);
   assert.match(prompt.systemPrompt, /Keep replies tight\. Do not blabber, wander, or repeat yourself\./);
   assert.match(prompt.systemPrompt, /When the user request is ambiguous, ask a short clarifying question instead of guessing\./);
+  assert.match(prompt.systemPrompt, /If the delegated executor snapshot already shows a concrete backstage capability family for the request, route against that capability instead of asking a generic tool-discovery question\./);
   assert.match(prompt.systemPrompt, /read\/query requests inline when appropriate\./);
   assert.match(prompt.systemPrompt, /route direct file edits, terminal execution, browser execution, and other state-changing implementation work to subagents\./);
   assert.match(prompt.systemPrompt, /continue, transform, save, summarize, compare, or report on a previous child result, continue the relevant child session instead of spawning a brand-new child task\./);
@@ -275,6 +295,26 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
   assert.match(prompt.systemPrompt, /Do not answer with a capability-apology or manual fallback first when `holaboss_delegate_task` is available/i);
   assert.match(prompt.systemPrompt, /trust the current run and retry the tool when appropriate/i);
   assert.match(prompt.systemPrompt, /Do not paste long document, HTML, markdown, or report bodies into chat\./);
+  assert.ok(
+    prompt.promptSections.some(
+      (section) => section.id === "delegated_capability_availability_context",
+    ),
+  );
+  assert.ok(
+    prompt.contextMessages.some((message) =>
+      /Delegated executor capability snapshot:/.test(message),
+    ),
+  );
+  assert.ok(
+    prompt.contextMessages.some((message) =>
+      /Create Dashboard \(`create_dashboard`\)/.test(message),
+    ),
+  );
+  assert.ok(
+    prompt.contextMessages.some((message) =>
+      /List Data Tables \(`list_data_tables`\)/.test(message),
+    ),
+  );
   assert.doesNotMatch(prompt.systemPrompt, /small direct edits inline/);
   assert.doesNotMatch(prompt.systemPrompt, /Execution doctrine:/);
   assert.doesNotMatch(prompt.systemPrompt, /Todo continuity policy:/);
@@ -286,7 +326,13 @@ test("composeAgentPrompt requires subagent outputs to stay self-contained", () =
     defaultTools: ["read", "edit", "bash"],
     extraTools: [],
     workspaceSkillIds: [],
-    resolvedMcpToolRefs: [],
+    resolvedMcpToolRefs: [
+      {
+        tool_id: "twitter.twitter_create_post",
+        server_id: "twitter",
+        tool_name: "twitter_create_post",
+      },
+    ],
     toolServerIdMap: {},
   });
 
@@ -294,7 +340,13 @@ test("composeAgentPrompt requires subagent outputs to stay self-contained", () =
     defaultTools: ["read", "edit", "bash"],
     extraTools: [],
     workspaceSkillIds: [],
-    resolvedMcpToolRefs: [],
+    resolvedMcpToolRefs: [
+      {
+        tool_id: "twitter.twitter_create_post",
+        server_id: "twitter",
+        tool_name: "twitter_create_post",
+      },
+    ],
     sessionKind: "subagent",
     sessionMode: "code",
     harnessId: "pi",
@@ -318,6 +370,14 @@ test("composeAgentPrompt requires subagent outputs to stay self-contained", () =
   assert.match(
     prompt.systemPrompt,
     /When the task finds multiple items, options, or takeaways, include the actual items in the final output or deliverable instead of only a one-line lead summary\./,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /When surfaced MCP or app tools already match the task, use them as the primary execution path instead of defaulting to bash, file inspection, or browser exploration\./,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Do not inspect workspace files or app config just to prove an integration exists when the current surfaced capability set already exposes the relevant tools/i,
   );
   assert.match(
     prompt.systemPrompt,

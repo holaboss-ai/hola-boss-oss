@@ -102,6 +102,7 @@ import { BrokerError, IntegrationBrokerService } from "./integration-broker.js";
 import { OAuthService } from "./oauth-service.js";
 import { ComposioService } from "./composio-service.js";
 import {
+  type RuntimeAgentToolsCreateDashboardParams,
   RuntimeAgentToolsService,
   RuntimeAgentToolsServiceError,
 } from "./runtime-agent-tools.js";
@@ -5034,15 +5035,22 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     try {
       return runtimeAgentToolsService.listBackgroundTasks({
         workspaceId: requiredString(query.workspace_id, "workspace_id"),
-        ownerMainSessionId: nullableString(query.owner_main_session_id) ?? undefined,
+        ownerMainSessionId:
+          nullableString(query.owner_main_session_id) ?? undefined,
         statuses: optionalStringList(query.statuses),
-        limit: hasOwn(query, "limit") ? optionalInteger(query.limit, 200) : undefined,
+        limit: hasOwn(query, "limit")
+          ? optionalInteger(query.limit, 200)
+          : undefined,
       });
     } catch (error) {
       if (error instanceof RuntimeAgentToolsServiceError) {
         return sendError(reply, error.statusCode, error.message);
       }
-      return sendError(reply, 400, error instanceof Error ? error.message : "background task list failed");
+      return sendError(
+        reply,
+        400,
+        error instanceof Error ? error.message : "background task list failed",
+      );
     }
   });
 
@@ -5053,34 +5061,111 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return runtimeAgentToolsService.getBackgroundTask({
         workspaceId: requiredString(query.workspace_id, "workspace_id"),
         subagentId: requiredString(params.subagentId, "subagentId"),
-        ownerMainSessionId: nullableString(query.owner_main_session_id) ?? undefined,
+        ownerMainSessionId:
+          nullableString(query.owner_main_session_id) ?? undefined,
       });
     } catch (error) {
       if (error instanceof RuntimeAgentToolsServiceError) {
         return sendError(reply, error.statusCode, error.message);
       }
-      return sendError(reply, 400, error instanceof Error ? error.message : "background task fetch failed");
+      return sendError(
+        reply,
+        400,
+        error instanceof Error ? error.message : "background task fetch failed",
+      );
     }
   });
 
-  app.post("/api/v1/background-tasks/:subagentId/archive", async (request, reply) => {
-    const params = request.params as { subagentId: string };
-    if (!isRecord(request.body)) {
-      return sendError(reply, 400, "request body must be an object");
-    }
-    try {
-      return runtimeAgentToolsService.archiveBackgroundTask({
-        workspaceId: requiredString(request.body.workspace_id, "workspace_id"),
-        subagentId: requiredString(params.subagentId, "subagentId"),
-        ownerMainSessionId: nullableString(request.body.owner_main_session_id) ?? undefined,
-      });
-    } catch (error) {
-      if (error instanceof RuntimeAgentToolsServiceError) {
-        return sendError(reply, error.statusCode, error.message);
+  app.post(
+    "/api/v1/background-tasks/:subagentId/archive",
+    async (request, reply) => {
+      const params = request.params as { subagentId: string };
+      if (!isRecord(request.body)) {
+        return sendError(reply, 400, "request body must be an object");
       }
-      return sendError(reply, 400, error instanceof Error ? error.message : "background task archive failed");
-    }
-  });
+      try {
+        return runtimeAgentToolsService.archiveBackgroundTask({
+          workspaceId: requiredString(request.body.workspace_id, "workspace_id"),
+          subagentId: requiredString(params.subagentId, "subagentId"),
+          ownerMainSessionId:
+            nullableString(request.body.owner_main_session_id) ?? undefined,
+        });
+      } catch (error) {
+        if (error instanceof RuntimeAgentToolsServiceError) {
+          return sendError(reply, error.statusCode, error.message);
+        }
+        return sendError(
+          reply,
+          400,
+          error instanceof Error
+            ? error.message
+            : "background task archive failed",
+        );
+      }
+    },
+  );
+
+  app.get(
+    "/api/v1/capabilities/runtime-tools/data-tables",
+    async (request, reply) => {
+      try {
+        const query = isRecord(request.query) ? request.query : null;
+        const includeSystem =
+          query && typeof query.include_system === "string"
+            ? query.include_system === "true" || query.include_system === "1"
+            : false;
+        return runtimeAgentToolsService.listDataTables({
+          workspaceId: requiredCapabilityWorkspaceId({
+            headers: request.headers as Record<string, unknown>,
+            query,
+          }),
+          includeSystem,
+        });
+      } catch (error) {
+        if (error instanceof RuntimeAgentToolsServiceError) {
+          return sendError(reply, error.statusCode, error.message);
+        }
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "list_data_tables failed",
+        );
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/capabilities/runtime-tools/dashboards",
+    async (request, reply) => {
+      if (!isRecord(request.body)) {
+        return sendError(reply, 400, "request body must be an object");
+      }
+      try {
+        const body = request.body;
+        return await runtimeAgentToolsService.createDashboard({
+          workspaceId: requiredCapabilityWorkspaceId({
+            headers: request.headers as Record<string, unknown>,
+            body,
+          }),
+          name: requiredString(body.name, "name"),
+          title: requiredString(body.title, "title"),
+          description: nullableString(body.description) ?? undefined,
+          panels: Array.isArray(body.panels)
+            ? (body.panels as unknown[] as RuntimeAgentToolsCreateDashboardParams["panels"])
+            : [],
+        });
+      } catch (error) {
+        if (error instanceof RuntimeAgentToolsServiceError) {
+          return sendError(reply, error.statusCode, error.message);
+        }
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "create_dashboard failed",
+        );
+      }
+    },
+  );
 
   app.post("/api/v1/lifecycle/shutdown", async (request, reply) => {
     void request;

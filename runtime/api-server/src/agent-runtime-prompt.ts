@@ -1,5 +1,6 @@
 import {
   renderCapabilityAvailabilityContextPromptSection,
+  renderDelegatedCapabilityAvailabilityContextPromptSection,
   renderCapabilityPolicyCorePromptSection,
   renderCapabilityToolRoutingPromptSection,
   type AgentCapabilityManifest,
@@ -138,6 +139,7 @@ export interface ComposeBaseAgentPromptRequest {
   scratchpadContext?: AgentScratchpadContext | null;
   evolveCandidateContext?: AgentEvolveCandidateContext | null;
   capabilityManifest?: AgentCapabilityManifest | null;
+  delegatedCapabilityManifest?: AgentCapabilityManifest | null;
 }
 
 export interface AgentPromptComposition {
@@ -235,6 +237,8 @@ function sessionPolicyPromptSection(request: ComposeBaseAgentPromptRequest): str
         "Treat the final child output as a handoff artifact for the main session. Make it self-contained enough that the main session can rely on it later without reopening this trace.",
         "Do not rely on intermediate tool steps, hidden reasoning, or `see above` references for essential context.",
         "When the task finds multiple items, options, or takeaways, include the actual items in the final output or deliverable instead of only a one-line lead summary.",
+        "When surfaced MCP or app tools already match the task, use them as the primary execution path instead of defaulting to bash, file inspection, or browser exploration.",
+        "Do not inspect workspace files or app config just to prove an integration exists when the current surfaced capability set already exposes the relevant tools; invoke the relevant surfaced tool first, then inspect config only if the direct route fails or the user explicitly asked for environment inspection.",
         "If the task is blocked by a recoverable user action such as login, authorization, MFA, CAPTCHA, permission, account selection, confirmation, credentials, or missing context, use the `question` tool with the exact unblock request instead of finishing with a limitation.",
         "For browser tasks, if you reach a login or access wall, leave the browser where it is, ask the user to complete the required step, and wait for the main session to resume you."
       );
@@ -923,6 +927,7 @@ export function buildMainSessionPromptSections(
       "If the user asks for work that needs capabilities this run does not have directly, but delegated subagents can do it, delegate instead of replying that this run lacks those tools.",
       "Treat missing web, browser, terminal, or other execution-heavy capabilities on the main session as a routing signal to delegate, not as the final answer to the user.",
       "When the ideal direct tool or integration is missing, do not stop there; try another viable route with available tools, such as delegated browser inspection, web research, terminal/file inspection, or one precise question for missing access/context.",
+      "If the delegated executor snapshot already shows a concrete backstage capability family for the request, route against that capability instead of asking a generic tool-discovery question. Only ask clarifying questions about the user's actual goal, data, or ambiguity.",
       "Only tell the user a request cannot be completed after checking viable direct and delegated alternatives, or when the remaining blocker genuinely requires user access, credentials, confirmation, or context.",
       "Do not answer with a capability-apology or manual fallback first when `holaboss_delegate_task` is available and the task can be routed there.",
       "If an earlier turn said a tool was unavailable or unsupported, but the current surfaced capability set now includes it, trust the current run and retry the tool when appropriate.",
@@ -1029,6 +1034,24 @@ export function buildMainSessionPromptSections(
           priority: 450,
           volatility: "run",
           content: renderCapabilityAvailabilityContextPromptSection(capabilityManifest),
+        }
+      : null
+  );
+
+  pushPromptLayer(
+    promptSections,
+    capabilityManifest && request.delegatedCapabilityManifest
+      ? {
+          id: "delegated_capability_availability_context",
+          channel: "context_message",
+          apply_at: "runtime_config",
+          precedence: "capability_policy",
+          priority: 451,
+          volatility: "run",
+          content: renderDelegatedCapabilityAvailabilityContextPromptSection(
+            capabilityManifest,
+            request.delegatedCapabilityManifest,
+          ),
         }
       : null
   );

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   DESKTOP_BROWSER_TOOL_DEFINITIONS,
 } from "../../harnesses/src/desktop-browser-tools.js";
+import { buildHarnessMcpToolName } from "../../harnesses/src/mcp.js";
 import {
   NATIVE_WEB_SEARCH_TOOL_DEFINITIONS,
 } from "../../harnesses/src/native-web-search-tools.js";
@@ -513,7 +514,7 @@ function inferMcpPolicy(toolRef: AgentCapabilityMcpToolRef): AgentCapabilityPoli
 }
 
 export function callableToolNameFromMcpServerAndTool(serverId: string, toolName: string): string {
-  return `${serverId}_${toolName}`;
+  return buildHarnessMcpToolName(serverId, toolName);
 }
 
 function definitionAllowedInContext(
@@ -1249,6 +1250,66 @@ function summarizeAvailability(label: string, count: number): string {
   return `${label}: available (${count} enabled).`;
 }
 
+function capabilityIdentity(capability: AgentCapabilityRecord): string {
+  return normalizeOptionalToken(capability.callable_name) || normalizeOptionalToken(capability.id);
+}
+
+function delegatedOnlyCapabilities(
+  directManifest: AgentCapabilityManifest,
+  delegatedManifest: AgentCapabilityManifest,
+): AgentCapabilityRecord[] {
+  const directIds = new Set(
+    directManifest.tools.map((capability) => capabilityIdentity(capability)),
+  );
+  return delegatedManifest.tools.filter(
+    (capability) => !directIds.has(capabilityIdentity(capability)),
+  );
+}
+
+function delegatedMcpServerNames(manifest: AgentCapabilityManifest): string[] {
+  const names = new Set<string>();
+  for (const alias of manifest.mcp_tool_aliases) {
+    const normalized = alias.server_id.trim();
+    if (normalized) {
+      names.add(normalized);
+    }
+  }
+  for (const serverId of manifest.context.mcp_server_ids ?? []) {
+    const normalized = serverId.trim();
+    if (normalized) {
+      names.add(normalized);
+    }
+  }
+  return [...names].sort((left, right) => left.localeCompare(right));
+}
+
+function sortDelegatedOnlyCapabilities(
+  capabilities: AgentCapabilityRecord[],
+): AgentCapabilityRecord[] {
+  const kindPriority: Record<AgentCapabilityKind, number> = {
+    runtime_tool: 1,
+    mcp_tool: 2,
+    browser_tool: 3,
+    builtin_tool: 4,
+    custom_tool: 5,
+    skill: 6,
+    workspace_command: 7,
+    mcp_resource: 8,
+    mcp_prompt: 9,
+    mcp_command: 10,
+    plugin_capability: 11,
+    local_capability: 12,
+  };
+  return [...capabilities].sort((left, right) => {
+    const priorityDelta =
+      (kindPriority[left.kind] ?? 99) - (kindPriority[right.kind] ?? 99);
+    if (priorityDelta !== 0) {
+      return priorityDelta;
+    }
+    return left.title.localeCompare(right.title);
+  });
+}
+
 export function renderCapabilityPolicyCorePromptSection(
   manifest: AgentCapabilityManifest,
 ): string {
@@ -1268,6 +1329,9 @@ export function renderCapabilityToolRoutingPromptSection(
   manifest: AgentCapabilityManifest,
 ): string {
   const lines: string[] = [];
+  const normalizedSessionKind = normalizeOptionalToken(
+    manifest.context.session_kind,
+  );
   const ensureHeading = () => {
     if (lines.length === 0) {
       lines.push("Capability routing addenda:");
@@ -1307,6 +1371,31 @@ export function renderCapabilityToolRoutingPromptSection(
     ensureHeading();
     lines.push("Remote file transfer: prefer `download_url` when you already have a direct asset URL and need a saved workspace file instead of relying on browser-only downloads or ad hoc shell fetches.");
   }
+  if (manifest.mcp_tools.length > 0) {
+    ensureHeading();
+    lines.push(
+      "MCP-first routing: when surfaced MCP tools already match the user's target app, integration, or data source, use those tools as the primary execution path before falling back to bash, file inspection, or browser exploration.",
+    );
+    if (manifest.mcp_tool_aliases.length > 0) {
+      lines.push(
+        "When the capability snapshot lists an MCP tool id alongside a callable alias, use the callable alias for tool invocation. The dotted tool id is an identifier, not necessarily the runtime callable name.",
+      );
+    }
+    lines.push(
+      "Do not spend the turn rediscovering an app integration from workspace files or config when the current surfaced capability set already includes its MCP tools.",
+    );
+    lines.push(
+      "Use file, config, or browser inspection to debug or verify an MCP/app route only after a relevant surfaced tool call is blocked, fails, or the user explicitly asked for environment inspection.",
+    );
+    if (
+      normalizedSessionKind === "subagent" ||
+      normalizedSessionKind === "task_proposal"
+    ) {
+      lines.push(
+        "In executor sessions, prefer proving capability by actually invoking the relevant surfaced MCP/app tool or the narrowest direct health check, not by only summarizing workspace configuration.",
+      );
+    }
+  }
   return lines.join("\n");
 }
 
@@ -1330,6 +1419,12 @@ export function renderCapabilityAvailabilityContextPromptSection(
   if (manifest.mcp_tools.length > 0 || (manifest.context.mcp_server_ids?.length ?? 0) > 0) {
     lines.push("Connected MCP access: available.");
     lines.push("Use surfaced MCP tools when relevant; tool names may be resolved dynamically by the runtime.");
+    if (manifest.mcp_tool_aliases.length > 0) {
+      lines.push("MCP callable tool aliases for this run:");
+      for (const alias of manifest.mcp_tool_aliases) {
+        lines.push(`- \`${alias.tool_id}\` -> call \`${alias.callable_name}\``);
+      }
+    }
   } else {
     lines.push("Connected MCP access: none.");
   }
@@ -1342,6 +1437,64 @@ export function renderCapabilityAvailabilityContextPromptSection(
       "This front session is intentionally capability-incomplete. Treat the surfaced tools above as your full direct capability set for this run; if the request needs more and `holaboss_delegate_task` is available, delegate it.",
     );
   }
+  return lines.join("\n");
+}
+
+export function renderDelegatedCapabilityAvailabilityContextPromptSection(
+  directManifest: AgentCapabilityManifest,
+  delegatedManifest: AgentCapabilityManifest,
+): string {
+  const lines = [
+    "Delegated executor capability snapshot:",
+    "Use this only for routing and delegation. These are backstage capabilities that hidden subagents may use for this run; they do not expand your own direct authority in this front session.",
+    summarizeAvailability("Delegated inspect tools", delegatedManifest.inspect.length),
+    summarizeAvailability("Delegated mutating tools", delegatedManifest.mutate.length),
+    summarizeAvailability("Delegated coordination tools", delegatedManifest.coordinate.length),
+    summarizeAvailability("Delegated browser tools", delegatedManifest.browser_tools.length),
+    summarizeAvailability("Delegated runtime tools", delegatedManifest.runtime_tools.length),
+    summarizeAvailability("Delegated workspace commands", delegatedManifest.workspace_commands.length),
+    summarizeAvailability("Delegated workspace skills", delegatedManifest.workspace_skills.length),
+  ];
+  if (
+    delegatedManifest.mcp_tools.length > 0 ||
+    (delegatedManifest.context.mcp_server_ids?.length ?? 0) > 0
+  ) {
+    lines.push("Delegated connected MCP/app access: available.");
+  } else {
+    lines.push("Delegated connected MCP/app access: none.");
+  }
+  if (
+    directManifest.browser_tools.length === 0 &&
+    delegatedManifest.browser_tools.length > 0
+  ) {
+    lines.push(
+      "Delegated browser execution is available even though this front session has no direct browser tools.",
+    );
+  }
+  if (
+    directManifest.mcp_tools.length === 0 &&
+    delegatedManifest.mcp_tools.length > 0
+  ) {
+    const delegatedServers = delegatedMcpServerNames(delegatedManifest);
+    if (delegatedServers.length > 0) {
+      lines.push(
+        `Delegated app integrations available via: ${delegatedServers
+          .map((serverId) => `\`${serverId}\``)
+          .join(", ")}.`,
+      );
+    }
+  }
+
+  const delegatedOnly = sortDelegatedOnlyCapabilities(
+    delegatedOnlyCapabilities(directManifest, delegatedManifest),
+  ).slice(0, 8);
+  if (delegatedOnly.length > 0) {
+    lines.push("Notable delegated-only tools for this run:");
+    for (const capability of delegatedOnly) {
+      lines.push(`- ${capability.title} (\`${capability.callable_name ?? capability.id}\`)`);
+    }
+  }
+
   return lines.join("\n");
 }
 

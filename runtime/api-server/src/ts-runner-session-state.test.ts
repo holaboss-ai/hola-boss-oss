@@ -9,6 +9,7 @@ import {
   persistWorkspaceHarnessSessionId,
   readWorkspaceHarnessSessionId,
   readWorkspaceSessionState,
+  workspaceDataDbPath,
   workspaceSessionStatePath
 } from "./ts-runner-session-state.js";
 
@@ -125,4 +126,10 @@ test("clearWorkspaceHarnessSessionId removes only the targeted harness entry", (
   });
   assert.equal(readWorkspaceHarnessSessionId({ workspaceDir, harness: "pi" }), null);
   assert.equal(readWorkspaceHarnessSessionId({ workspaceDir, harness: "other" }), "session-123");
+});
+
+test("workspaceDataDbPath places data.db under the workspace `.holaboss` folder", () => {
+  const workspaceDir = path.join(os.tmpdir(), "hb-ts-runner-data-db-test");
+  const dbPath = workspaceDataDbPath(workspaceDir);
+  assert.equal(dbPath, path.join(path.resolve(workspaceDir), ".holaboss", "data.db"));
 });

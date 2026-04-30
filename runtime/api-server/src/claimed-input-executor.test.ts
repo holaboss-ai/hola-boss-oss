@@ -1683,9 +1683,22 @@ test("claimed input folds attached background updates into a normal user turn", 
                   output_type: "document",
                   title: "build-fix-report.md",
                   status: "completed",
+                  module_id: "twitter",
+                  module_resource_id: "post-123",
                   file_path: "outputs/reports/build-fix-report.md",
+                  platform: "twitter",
                   metadata: {
                     artifact_type: "report",
+                    presentation: {
+                      kind: "app_resource",
+                      view: "posts",
+                      path: "/posts/post-123",
+                    },
+                    resource: {
+                      entity_type: "post",
+                      entity_id: "post-123",
+                      label: "build-fix-report.md",
+                    },
                   },
                 },
               ],
@@ -1768,8 +1781,15 @@ test("claimed input folds attached background updates into a normal user turn", 
   assert.equal(messages[1]?.role, "assistant");
   assert.equal(outputs.length, 1);
   assert.equal(outputs[0]?.title, "build-fix-report.md");
+  assert.equal(outputs[0]?.moduleId, "twitter");
+  assert.equal(outputs[0]?.moduleResourceId, "post-123");
   assert.equal(outputs[0]?.filePath, "outputs/reports/build-fix-report.md");
   assert.equal(outputs[0]?.metadata.origin_type, "forwarded_subagent");
+  assert.deepEqual(outputs[0]?.metadata.presentation, {
+    kind: "app_resource",
+    view: "posts",
+    path: "/posts/post-123",
+  });
   assert.equal(outputs[0]?.metadata.owner_container_type, "background_update");
   assert.equal(outputs[0]?.metadata.owner_container_input_id, queued.inputId);
   assert.equal(outputs[0]?.metadata.owner_container_session_id, "session-main");

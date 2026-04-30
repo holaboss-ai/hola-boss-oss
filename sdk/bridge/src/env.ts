@@ -1,5 +1,6 @@
 const APP_GRANT = () => process.env.HOLABOSS_APP_GRANT ?? ""
 const WORKSPACE_ID = () => process.env.HOLABOSS_WORKSPACE_ID ?? ""
+const WORKSPACE_DB_PATH = () => process.env.WORKSPACE_DB_PATH ?? ""
 
 export function getAppGrant(): string {
   return APP_GRANT()
@@ -7,6 +8,18 @@ export function getAppGrant(): string {
 
 export function getWorkspaceId(): string {
   return WORKSPACE_ID()
+}
+
+/**
+ * Filesystem path of the workspace's shared SQLite database. Set by the
+ * runtime when an app process is spawned. Apps should treat this as the
+ * authoritative location for workspace data and write tables prefixed
+ * with their app id (e.g. `twitter_posts`). When missing — typical in
+ * unit tests outside the runtime — callers can fall back to a private
+ * path of their own choosing.
+ */
+export function resolveWorkspaceDbPath(): string {
+  return WORKSPACE_DB_PATH()
 }
 
 export function resolveBrokerUrl(): string {

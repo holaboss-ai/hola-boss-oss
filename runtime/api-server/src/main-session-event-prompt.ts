@@ -45,6 +45,9 @@ function sanitizedDeliverableMetadata(
     "size_bytes",
     "modified_at",
     "summary",
+    "origin_type",
+    "presentation",
+    "resource",
   ]) {
     if (metadata[key] !== undefined) {
       sanitized[key] = metadata[key];
@@ -70,6 +73,8 @@ function sanitizedForwardedDeliverable(
     "output_type",
     "title",
     "status",
+    "module_id",
+    "module_resource_id",
     "file_path",
     "platform",
     "safe_to_forward",
