@@ -118,6 +118,14 @@ import {
   createBrowserPanePopups,
   type BrowserPanePopups,
 } from "./browser-pane/popups.js";
+import {
+  createBrowserPaneBookmarks,
+  type BrowserPaneBookmarks,
+} from "./browser-pane/bookmarks.js";
+import {
+  createBrowserPaneDownloads,
+  type BrowserPaneDownloads,
+} from "./browser-pane/downloads.js";
 import type {
   BrowserCopyWorkspaceProfilePayload,
   BrowserImportProfilePayload,
@@ -825,6 +833,38 @@ const browserPanePopups: BrowserPanePopups = createBrowserPanePopups({
   popupThemeCss: () => popupThemeCss(),
   preloadDir: () => __dirname,
 });
+const browserPaneBookmarks: BrowserPaneBookmarks = createBrowserPaneBookmarks({
+  getMainWindow: () => mainWindow,
+  getActiveWorkspaceId: () => activeBrowserWorkspaceId,
+  getWorkspaceBookmarks: (workspaceId) =>
+    browserWorkspaceOrEmpty(workspaceId)?.bookmarks ?? [],
+});
+const browserPaneDownloads: BrowserPaneDownloads = createBrowserPaneDownloads({
+  getMainWindow: () => mainWindow,
+  getActiveWorkspaceId: () => activeBrowserWorkspaceId,
+  getWorkspace: (id) => browserWorkspaceFromMap(id),
+  consumeDownloadOverride: (workspace, targetUrl) =>
+    consumeBrowserDownloadOverride(
+      workspace as unknown as BrowserWorkspaceState,
+      targetUrl,
+    ),
+  resolveTargetPath: (workspaceId, filename) =>
+    resolveWorkspaceDownloadTargetPath(workspaceId, filename),
+  persistWorkspace: (workspaceId) => persistBrowserWorkspace(workspaceId),
+  sendDownloadsToPopup: (downloads) =>
+    browserPanePopups.sendDownloadsToPopup(downloads),
+  hasOpenDownloadsPopup: () => browserPanePopups.hasOpenDownloadsPopup(),
+});
+const emitBookmarksState = browserPaneBookmarks.emitBookmarksState;
+const emitDownloadsState = browserPaneDownloads.emitDownloadsState;
+const ensureBrowserWorkspaceDownloadTracking = (
+  workspace: BrowserWorkspaceState,
+) =>
+  browserPaneDownloads.ensureBrowserWorkspaceDownloadTracking(
+    workspace as unknown as Parameters<
+      typeof browserPaneDownloads.ensureBrowserWorkspaceDownloadTracking
+    >[0],
+  );
 let activeBrowserWorkspaceId = "";
 let activeBrowserSpaceId: BrowserSpaceId = "user";
 let activeBrowserSessionId = "";
@@ -843,7 +883,6 @@ const reportedOperatorSurfaceContexts = new Map<
   string,
   ReportedOperatorSurfaceContextPayload
 >();
-const browserDownloadTrackingPartitions = new Set<string>();
 const appSurfaceViews = new Map<string, BrowserView>();
 let appSurfaceBounds: BrowserBoundsPayload = {
   x: 0,
@@ -18951,40 +18990,6 @@ function emitBrowserState(
   );
 }
 
-function emitBookmarksState(workspaceId?: string | null) {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return;
-  }
-  const normalizedWorkspaceId =
-    typeof workspaceId === "string"
-      ? workspaceId.trim()
-      : activeBrowserWorkspaceId;
-  if (normalizedWorkspaceId !== activeBrowserWorkspaceId) {
-    return;
-  }
-  const workspace = browserWorkspaceOrEmpty(normalizedWorkspaceId);
-  mainWindow.webContents.send("browser:bookmarks", workspace?.bookmarks ?? []);
-}
-
-function emitDownloadsState(workspaceId?: string | null) {
-  const normalizedWorkspaceId =
-    typeof workspaceId === "string"
-      ? workspaceId.trim()
-      : activeBrowserWorkspaceId;
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    if (!browserPanePopups.hasOpenDownloadsPopup()) {
-      return;
-    }
-  }
-  if (normalizedWorkspaceId !== activeBrowserWorkspaceId) {
-    return;
-  }
-  const workspace = browserWorkspaceOrEmpty(normalizedWorkspaceId);
-  const downloads = workspace?.downloads ?? [];
-  mainWindow?.webContents.send("browser:downloads", downloads);
-  browserPanePopups.sendDownloadsToPopup(downloads);
-}
-
 function emitHistoryState(workspaceId?: string | null) {
   const normalizedWorkspaceId =
     typeof workspaceId === "string"
@@ -19819,106 +19824,6 @@ function ensureBrowserTabSpaceInitialized(
     seedVisibleAgentBrowserSession(workspace, normalizedSessionId);
   }
   return true;
-}
-
-function ensureBrowserWorkspaceDownloadTracking(
-  workspace: BrowserWorkspaceState,
-) {
-  if (
-    workspace.downloadTrackingRegistered ||
-    browserDownloadTrackingPartitions.has(workspace.partition)
-  ) {
-    workspace.downloadTrackingRegistered = true;
-    return;
-  }
-  workspace.downloadTrackingRegistered = true;
-  browserDownloadTrackingPartitions.add(workspace.partition);
-  workspace.session.on("will-download", (_event, item: DownloadItem) => {
-    const currentWorkspace = browserWorkspaceFromMap(workspace.workspaceId);
-    if (!currentWorkspace) {
-      return;
-    }
-
-    const createdAt = new Date().toISOString();
-    const downloadId = `download-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const override = consumeBrowserDownloadOverride(
-      currentWorkspace,
-      item.getURL(),
-    );
-    const savePath = override
-      ? ""
-      : resolveWorkspaceDownloadTargetPath(
-          currentWorkspace.workspaceId,
-          item.getFilename(),
-        );
-    if (override) {
-      item.setSaveDialogOptions({
-        title: override.dialogTitle,
-        buttonLabel: override.buttonLabel,
-        defaultPath: override.defaultPath,
-        properties: ["showOverwriteConfirmation"],
-      });
-    } else {
-      item.setSavePath(savePath);
-    }
-
-    const payload: BrowserDownloadPayload = {
-      id: downloadId,
-      url: item.getURL(),
-      filename: item.getFilename(),
-      targetPath: item.getSavePath() || savePath,
-      status: "progressing",
-      receivedBytes: 0,
-      totalBytes: item.getTotalBytes(),
-      createdAt,
-      completedAt: null,
-    };
-
-    currentWorkspace.downloads = [payload, ...currentWorkspace.downloads].slice(
-      0,
-      100,
-    );
-    emitDownloadsState(workspace.workspaceId);
-    void persistBrowserWorkspace(workspace.workspaceId);
-
-    const updateDownload = (patch: Partial<BrowserDownloadPayload>) => {
-      const latestWorkspace = browserWorkspaceFromMap(workspace.workspaceId);
-      if (!latestWorkspace) {
-        return;
-      }
-      latestWorkspace.downloads = latestWorkspace.downloads.map((download) =>
-        download.id === downloadId ? { ...download, ...patch } : download,
-      );
-      emitDownloadsState(workspace.workspaceId);
-      void persistBrowserWorkspace(workspace.workspaceId);
-    };
-
-    item.on("updated", (_updatedEvent, state) => {
-      updateDownload({
-        status: state === "interrupted" ? "interrupted" : "progressing",
-        targetPath: item.getSavePath() || "",
-        receivedBytes: item.getReceivedBytes(),
-        totalBytes: item.getTotalBytes(),
-      });
-    });
-
-    item.once("done", (_doneEvent, state) => {
-      const nextStatus: BrowserDownloadStatus =
-        state === "completed"
-          ? "completed"
-          : state === "cancelled"
-            ? "cancelled"
-            : "interrupted";
-      updateDownload({
-        status: nextStatus,
-        targetPath: item.getSavePath() || "",
-        receivedBytes: item.getReceivedBytes(),
-        totalBytes: item.getTotalBytes(),
-        completedAt:
-          nextStatus === "completed" ? new Date().toISOString() : null,
-      });
-    });
-  });
 }
 
 async function ensureBrowserWorkspace(
