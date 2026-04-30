@@ -27,7 +27,6 @@ function makeTurnResult(overrides: Partial<TurnResultRecord> = {}): TurnResultRe
     capabilityManifestFingerprint: null,
     requestSnapshotFingerprint: null,
     promptCacheProfile: null,
-    compactedSummary: null,
     tokenUsage: null,
     contextBudgetDecisions: null,
     createdAt: "2026-04-29T00:00:05.000Z",

@@ -81,6 +81,12 @@ function makeTempDir(prefix: string): string {
   return dir;
 }
 
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 function makeStore(prefix: string): RuntimeStateStore {
   const root = makeTempDir(prefix);
   return new RuntimeStateStore({
@@ -540,6 +546,9 @@ test("claimed input persists context-budget telemetry from replay clipping and c
     inputId: queued.inputId,
   });
   const terminalEvent = events.at(-1);
+  const terminalBudgetDecisions = recordValue(
+    terminalEvent?.payload.context_budget_decisions,
+  );
 
   assert.ok(turnResult);
   assert.equal(turnResult.contextBudgetDecisions?.pressure_stage, "queue_checkpoint");
@@ -549,12 +558,12 @@ test("claimed input persists context-budget telemetry from replay clipping and c
   assert.equal(turnResult.contextBudgetDecisions?.retrieval_clipped, false);
   assert.equal(turnResult.contextBudgetDecisions?.checkpoint_queued, true);
   assert.equal(terminalEvent?.eventType, "run_completed");
-  assert.equal(terminalEvent?.payload.context_budget_decisions?.pressure_stage, "queue_checkpoint");
-  assert.deepEqual(terminalEvent?.payload.context_budget_decisions?.lane_decisions, []);
-  assert.equal(terminalEvent?.payload.context_budget_decisions?.prompt_cache_stable_candidate, true);
-  assert.equal(terminalEvent?.payload.context_budget_decisions?.tool_replay_trimmed, true);
-  assert.equal(terminalEvent?.payload.context_budget_decisions?.retrieval_clipped, false);
-  assert.equal(terminalEvent?.payload.context_budget_decisions?.checkpoint_queued, true);
+  assert.equal(terminalBudgetDecisions?.pressure_stage, "queue_checkpoint");
+  assert.deepEqual(terminalBudgetDecisions?.lane_decisions, []);
+  assert.equal(terminalBudgetDecisions?.prompt_cache_stable_candidate, true);
+  assert.equal(terminalBudgetDecisions?.tool_replay_trimmed, true);
+  assert.equal(terminalBudgetDecisions?.retrieval_clipped, false);
+  assert.equal(terminalBudgetDecisions?.checkpoint_queued, true);
 
   store.close();
 });
@@ -996,6 +1005,9 @@ test("claimed input persists a paused turn when the run is aborted mid-execution
     inputId: queued.inputId,
   });
   const turnResult = store.getTurnResult({ inputId: queued.inputId });
+  const completedBudgetDecisions = recordValue(
+    events[1]?.payload.context_budget_decisions,
+  );
 
   assert.equal(evolveCalls, 1);
   assert.ok(updated);
@@ -1011,30 +1023,12 @@ test("claimed input persists a paused turn when the run is aborted mid-execution
   assert.equal(events[1]?.payload.status, "paused");
   assert.equal(events[1]?.payload.stop_reason, "paused");
   assert.equal(events[1]?.payload.message, "Run paused by user request");
-  assert.equal(
-    events[1]?.payload.context_budget_decisions?.pressure_stage,
-    "normal",
-  );
-  assert.deepEqual(
-    events[1]?.payload.context_budget_decisions?.lane_decisions,
-    [],
-  );
-  assert.equal(
-    events[1]?.payload.context_budget_decisions?.prompt_cache_stable_candidate,
-    false,
-  );
-  assert.equal(
-    events[1]?.payload.context_budget_decisions?.tool_replay_trimmed,
-    false,
-  );
-  assert.equal(
-    events[1]?.payload.context_budget_decisions?.retrieval_clipped,
-    false,
-  );
-  assert.equal(
-    events[1]?.payload.context_budget_decisions?.checkpoint_queued,
-    false,
-  );
+  assert.equal(completedBudgetDecisions?.pressure_stage, "normal");
+  assert.deepEqual(completedBudgetDecisions?.lane_decisions, []);
+  assert.equal(completedBudgetDecisions?.prompt_cache_stable_candidate, false);
+  assert.equal(completedBudgetDecisions?.tool_replay_trimmed, false);
+  assert.equal(completedBudgetDecisions?.retrieval_clipped, false);
+  assert.equal(completedBudgetDecisions?.checkpoint_queued, false);
   assert.ok(turnResult);
   assert.equal(turnResult.status, "paused");
   assert.equal(turnResult.stopReason, "paused");
@@ -3045,6 +3039,9 @@ test("claimed input relays tool, output, and terminal run events for backend-own
   assert.deepEqual(relayedEvents[2]?.payload, {
     delta: "Opened Bing.",
   });
+  const browserRunBudgetDecisions = recordValue(
+    relayedEvents[3]?.payload.context_budget_decisions,
+  );
   assert.equal(relayedEvents[3]?.payload.status, "ok");
   assert.deepEqual(relayedEvents[3]?.payload.usage, {
     input_tokens: 12,
@@ -3053,30 +3050,12 @@ test("claimed input relays tool, output, and terminal run events for backend-own
   });
   assert.equal(relayedEvents[3]?.payload.final_output_text, "Opened Bing.");
   assert.equal(relayedEvents[3]?.payload.source, "runner");
-  assert.equal(
-    relayedEvents[3]?.payload.context_budget_decisions?.pressure_stage,
-    "normal",
-  );
-  assert.deepEqual(
-    relayedEvents[3]?.payload.context_budget_decisions?.lane_decisions,
-    [],
-  );
-  assert.equal(
-    relayedEvents[3]?.payload.context_budget_decisions?.prompt_cache_stable_candidate,
-    false,
-  );
-  assert.equal(
-    relayedEvents[3]?.payload.context_budget_decisions?.tool_replay_trimmed,
-    false,
-  );
-  assert.equal(
-    relayedEvents[3]?.payload.context_budget_decisions?.retrieval_clipped,
-    false,
-  );
-  assert.equal(
-    relayedEvents[3]?.payload.context_budget_decisions?.checkpoint_queued,
-    false,
-  );
+  assert.equal(browserRunBudgetDecisions?.pressure_stage, "normal");
+  assert.deepEqual(browserRunBudgetDecisions?.lane_decisions, []);
+  assert.equal(browserRunBudgetDecisions?.prompt_cache_stable_candidate, false);
+  assert.equal(browserRunBudgetDecisions?.tool_replay_trimmed, false);
+  assert.equal(browserRunBudgetDecisions?.retrieval_clipped, false);
+  assert.equal(browserRunBudgetDecisions?.checkpoint_queued, false);
 
   store.close();
 });
@@ -3277,32 +3256,17 @@ test("claimed input relays skill invocations, coalesced output, and waiting-user
     output_tokens: 7,
     total_tokens: 25,
   });
+  const waitingRunBudgetDecisions = recordValue(
+    relayedEvents[6]?.payload.context_budget_decisions,
+  );
   assert.equal(relayedEvents[6]?.payload.final_output_text, "Need approval.");
   assert.equal(relayedEvents[6]?.payload.source, "runner");
-  assert.equal(
-    relayedEvents[6]?.payload.context_budget_decisions?.pressure_stage,
-    "normal",
-  );
-  assert.deepEqual(
-    relayedEvents[6]?.payload.context_budget_decisions?.lane_decisions,
-    [],
-  );
-  assert.equal(
-    relayedEvents[6]?.payload.context_budget_decisions?.prompt_cache_stable_candidate,
-    false,
-  );
-  assert.equal(
-    relayedEvents[6]?.payload.context_budget_decisions?.tool_replay_trimmed,
-    false,
-  );
-  assert.equal(
-    relayedEvents[6]?.payload.context_budget_decisions?.retrieval_clipped,
-    false,
-  );
-  assert.equal(
-    relayedEvents[6]?.payload.context_budget_decisions?.checkpoint_queued,
-    false,
-  );
+  assert.equal(waitingRunBudgetDecisions?.pressure_stage, "normal");
+  assert.deepEqual(waitingRunBudgetDecisions?.lane_decisions, []);
+  assert.equal(waitingRunBudgetDecisions?.prompt_cache_stable_candidate, false);
+  assert.equal(waitingRunBudgetDecisions?.tool_replay_trimmed, false);
+  assert.equal(waitingRunBudgetDecisions?.retrieval_clipped, false);
+  assert.equal(waitingRunBudgetDecisions?.checkpoint_queued, false);
 
   store.close();
 });
