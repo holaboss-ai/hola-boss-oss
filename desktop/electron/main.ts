@@ -955,6 +955,18 @@ const browserPaneTabState: BrowserPaneTabState = createBrowserPaneTabState({
   sendHistoryToPopup: (history) => browserPanePopups.sendHistoryToPopup(history),
   reserveMainWindowClosedListenerBudget: (count) =>
     reserveMainWindowClosedListenerBudget(count),
+  ensureBrowserWorkspace: (workspaceId, space, sessionId) =>
+    ensureBrowserWorkspace(workspaceId, space, sessionId) as unknown as ReturnType<
+      Parameters<typeof createBrowserPaneTabState>[0]["ensureBrowserWorkspace"]
+    >,
+  setVisibleAgentBrowserSession: (workspace, sessionId) =>
+    setVisibleAgentBrowserSession(
+      workspace as unknown as BrowserWorkspaceState,
+      sessionId,
+    ),
+  createBrowserTab: (workspaceId, options) =>
+    createBrowserTab(workspaceId, options),
+  homeUrl: HOME_URL,
 });
 const getActiveBrowserTab = browserPaneTabState.getActiveBrowserTab;
 const activeVisibleBrowserTarget = browserPaneTabState.activeVisibleBrowserTarget;
@@ -970,6 +982,24 @@ const syncBrowserState = browserPaneTabState.syncBrowserState;
 const recordHistoryVisit = browserPaneTabState.recordHistoryVisit;
 const setBrowserBounds = browserPaneTabState.setBounds;
 const captureVisibleBrowserSnapshot = browserPaneTabState.captureVisibleSnapshot;
+const focusBrowserTabInSpace = (
+  workspaceId: string,
+  tabSpace: BrowserTabSpaceState,
+  tabId: string,
+  space: BrowserSpaceId,
+  sessionId?: string | null,
+) =>
+  browserPaneTabState.focusBrowserTabInSpace(
+    workspaceId,
+    tabSpace as unknown as Parameters<
+      typeof browserPaneTabState.focusBrowserTabInSpace
+    >[1],
+    tabId,
+    space,
+    sessionId,
+  );
+const setActiveBrowserTab = browserPaneTabState.setActiveBrowserTab;
+const closeBrowserTab = browserPaneTabState.closeBrowserTab;
 const reportedOperatorSurfaceContexts = new Map<
   string,
   ReportedOperatorSurfaceContextPayload
@@ -18926,24 +18956,7 @@ function isBrowserPopupWindowRequest(
   return isBrowserPopupWindowRequestUtil(frameName, features);
 }
 
-function focusBrowserTabInSpace(
-  workspaceId: string,
-  tabSpace: BrowserTabSpaceState,
-  tabId: string,
-  space: BrowserSpaceId,
-  sessionId?: string | null,
-) {
-  tabSpace.activeTabId = tabId;
-  browserTabSpaceTouch(tabSpace);
-  if (space === "agent" && browserSessionId(sessionId)) {
-    scheduleAgentSessionBrowserLifecycleCheck(workspaceId, sessionId);
-  }
-  if (workspaceId === activeBrowserWorkspaceId && space === activeBrowserSpaceId) {
-    updateAttachedBrowserView();
-  }
-  emitBrowserState(workspaceId, space);
-  void persistBrowserWorkspace(workspaceId);
-}
+// focusBrowserTabInSpace moved to browser-pane/tab-state.ts (BP-P5b-3).
 
 function handleBrowserWindowOpenAsTab(
   workspaceId: string,
@@ -19843,115 +19856,9 @@ async function setActiveBrowserWorkspace(
   );
 }
 
-async function setActiveBrowserTab(
-  tabId: string,
-  space?: BrowserSpaceId | null,
-  sessionId?: string | null,
-) {
-  const browserSpace = browserSpaceId(space);
-  const normalizedSessionId =
-    browserSpace === "agent"
-      ? browserSessionId(sessionId) || browserSessionId(activeBrowserSessionId)
-      : "";
-  const workspace = await ensureBrowserWorkspace(
-    undefined,
-    browserSpace,
-    normalizedSessionId,
-  );
-  const tabSpace = browserTabSpaceState(workspace, browserSpace, normalizedSessionId, {
-    useVisibleAgentSession: !normalizedSessionId,
-  });
-  if (!workspace || !tabSpace || !tabSpace.tabs.has(tabId)) {
-    return browserWorkspaceSnapshot(undefined, browserSpace, normalizedSessionId, {
-      useVisibleAgentSession: true,
-    });
-  }
+// setActiveBrowserTab moved to browser-pane/tab-state.ts (BP-P5b-3).
 
-  tabSpace.activeTabId = tabId;
-  browserTabSpaceTouch(tabSpace);
-  if (browserSpace === "agent" && normalizedSessionId) {
-    setVisibleAgentBrowserSession(workspace, normalizedSessionId);
-    scheduleAgentSessionBrowserLifecycleCheck(workspace.workspaceId, normalizedSessionId);
-  }
-  if (
-    workspace.workspaceId === activeBrowserWorkspaceId &&
-    browserSpace === activeBrowserSpaceId
-  ) {
-    updateAttachedBrowserView();
-  }
-  emitBrowserState(workspace.workspaceId, browserSpace);
-  await persistBrowserWorkspace(workspace.workspaceId);
-  return browserWorkspaceSnapshot(
-    workspace.workspaceId,
-    browserSpace,
-    normalizedSessionId,
-    { useVisibleAgentSession: true },
-  );
-}
-
-async function closeBrowserTab(
-  tabId: string,
-  space?: BrowserSpaceId | null,
-  sessionId?: string | null,
-) {
-  const browserSpace = browserSpaceId(space);
-  const normalizedSessionId =
-    browserSpace === "agent"
-      ? browserSessionId(sessionId) || browserSessionId(activeBrowserSessionId)
-      : "";
-  const workspace = await ensureBrowserWorkspace(
-    undefined,
-    browserSpace,
-    normalizedSessionId,
-  );
-  const tabSpace = browserTabSpaceState(workspace, browserSpace, normalizedSessionId, {
-    useVisibleAgentSession: !normalizedSessionId,
-  });
-  const tab = tabSpace?.tabs.get(tabId);
-  if (!workspace || !tabSpace || !tab) {
-    return browserWorkspaceSnapshot(undefined, browserSpace, normalizedSessionId, {
-      useVisibleAgentSession: true,
-    });
-  }
-
-  const tabIds = Array.from(tabSpace.tabs.keys());
-  const closedIndex = tabIds.indexOf(tabId);
-  tabSpace.tabs.delete(tabId);
-  closeBrowserTabRecord(tab);
-  browserTabSpaceTouch(tabSpace);
-
-  if (tabSpace.tabs.size === 0) {
-    const replacementTabId = createBrowserTab(workspace.workspaceId, {
-      url: HOME_URL,
-      browserSpace,
-      sessionId: normalizedSessionId,
-    });
-    tabSpace.activeTabId = replacementTabId ?? "";
-  } else if (tabSpace.activeTabId === tabId) {
-    const remainingIds = Array.from(tabSpace.tabs.keys());
-    tabSpace.activeTabId =
-      remainingIds[Math.max(0, closedIndex - 1)] ?? remainingIds[0] ?? "";
-  }
-
-  if (
-    workspace.workspaceId === activeBrowserWorkspaceId &&
-    browserSpace === activeBrowserSpaceId
-  ) {
-    updateAttachedBrowserView();
-  }
-  if (browserSpace === "agent" && normalizedSessionId) {
-    scheduleAgentSessionBrowserLifecycleCheck(workspace.workspaceId, normalizedSessionId);
-  }
-  emitBrowserState(workspace.workspaceId, browserSpace);
-  await persistBrowserWorkspace(workspace.workspaceId);
-  return browserWorkspaceSnapshot(
-    workspace.workspaceId,
-    browserSpace,
-    normalizedSessionId,
-    { useVisibleAgentSession: true },
-  );
-}
-
+// closeBrowserTab moved to browser-pane/tab-state.ts (BP-P5b-3).
 // setBrowserBounds, captureVisibleBrowserSnapshot moved to
 // browser-pane/tab-state.ts (BP-P5b-2).
 

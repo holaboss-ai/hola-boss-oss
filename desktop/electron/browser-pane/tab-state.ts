@@ -108,6 +108,37 @@ export interface BrowserPaneTabStateDeps {
   sendHistoryToPopup: (history: BrowserHistoryEntryPayload[]) => void;
 
   reserveMainWindowClosedListenerBudget: (additionalClosedListeners?: number) => void;
+
+  /** P6 callback — provision/reuse the workspace for a given space+session. */
+  ensureBrowserWorkspace: (
+    workspaceId?: string | null,
+    space?: BrowserSpaceId | null,
+    sessionId?: string | null,
+  ) => Promise<BrowserWorkspaceState | null>;
+
+  /** P6 callback — promote a session to the visible agent space. */
+  setVisibleAgentBrowserSession: (
+    workspace: BrowserWorkspaceState,
+    sessionId: string,
+  ) => void;
+
+  /**
+   * P5b-4 callback — open a fresh tab in the given workspace+space. We pass
+   * it in (rather than implement here) because createBrowserTab is heavy and
+   * lives in main.ts until the next extraction.
+   */
+  createBrowserTab: (
+    workspaceId: string,
+    options: {
+      url?: string;
+      browserSpace?: BrowserSpaceId;
+      sessionId?: string | null;
+      [key: string]: unknown;
+    },
+  ) => string | null;
+
+  /** Default URL to seed a new tab with when there's nothing else to land on. */
+  homeUrl: string;
 }
 
 export interface BrowserPaneTabState {
@@ -115,6 +146,26 @@ export interface BrowserPaneTabState {
   setBounds: (bounds: BrowserBoundsPayload) => void;
   captureVisibleSnapshot: () => Promise<BrowserVisibleSnapshotPayload | null>;
   closeBrowserTabRecord: (tab: BrowserTabRecord) => void;
+  focusBrowserTabInSpace: (
+    workspaceId: string,
+    tabSpace: BrowserTabSpaceState,
+    tabId: string,
+    space: BrowserSpaceId,
+    sessionId?: string | null,
+  ) => void;
+  setActiveBrowserTab: (
+    tabId: string,
+    space?: BrowserSpaceId | null,
+    sessionId?: string | null,
+  ) => Promise<BrowserTabListPayload>;
+  closeBrowserTab: (
+    tabId: string,
+    space?: BrowserSpaceId | null,
+    sessionId?: string | null,
+  ) => Promise<BrowserTabListPayload>;
+  // ensureBrowserTabSpaceInitialized + initialBrowserTabSeed deferred —
+  // they pull in oppositeBrowserSpaceId / browserTabSpaceStates / NEW_TAB_TITLE
+  // which are still being threaded through. Move them in BP-P5b-4.
   getActiveBrowserTab: (
     workspaceId?: string | null,
     space?: BrowserSpaceId | null,
@@ -344,6 +395,157 @@ export function createBrowserPaneTabState(
     ).close?.();
   }
 
+  function focusBrowserTabInSpace(
+    workspaceId: string,
+    tabSpace: BrowserTabSpaceState,
+    tabId: string,
+    space: BrowserSpaceId,
+    sessionId?: string | null,
+  ): void {
+    tabSpace.activeTabId = tabId;
+    deps.browserTabSpaceTouch(tabSpace);
+    if (space === "agent" && deps.browserSessionId(sessionId)) {
+      deps.scheduleAgentSessionBrowserLifecycleCheck(workspaceId, sessionId);
+    }
+    if (
+      workspaceId === deps.getActiveWorkspaceId() &&
+      space === deps.getActiveSpaceId()
+    ) {
+      updateAttachedBrowserView();
+    }
+    emitBrowserState(workspaceId, space);
+    void deps.persistWorkspace(workspaceId);
+  }
+
+  async function setActiveBrowserTab(
+    tabId: string,
+    space?: BrowserSpaceId | null,
+    sessionId?: string | null,
+  ): Promise<BrowserTabListPayload> {
+    const browserSpace = deps.browserSpaceId(space);
+    const normalizedSessionId =
+      browserSpace === "agent"
+        ? deps.browserSessionId(sessionId) ||
+          deps.browserSessionId(deps.getActiveSessionId())
+        : "";
+    const workspace = await deps.ensureBrowserWorkspace(
+      undefined,
+      browserSpace,
+      normalizedSessionId,
+    );
+    const tabSpace = deps.browserTabSpaceState(
+      workspace,
+      browserSpace,
+      normalizedSessionId,
+      { useVisibleAgentSession: !normalizedSessionId },
+    );
+    if (!workspace || !tabSpace || !tabSpace.tabs.has(tabId)) {
+      return deps.browserWorkspaceSnapshot(
+        undefined,
+        browserSpace,
+        normalizedSessionId,
+        { useVisibleAgentSession: true },
+      );
+    }
+
+    tabSpace.activeTabId = tabId;
+    deps.browserTabSpaceTouch(tabSpace);
+    if (browserSpace === "agent" && normalizedSessionId) {
+      deps.setVisibleAgentBrowserSession(workspace, normalizedSessionId);
+      deps.scheduleAgentSessionBrowserLifecycleCheck(
+        workspace.workspaceId,
+        normalizedSessionId,
+      );
+    }
+    if (
+      workspace.workspaceId === deps.getActiveWorkspaceId() &&
+      browserSpace === deps.getActiveSpaceId()
+    ) {
+      updateAttachedBrowserView();
+    }
+    emitBrowserState(workspace.workspaceId, browserSpace);
+    await deps.persistWorkspace(workspace.workspaceId);
+    return deps.browserWorkspaceSnapshot(
+      workspace.workspaceId,
+      browserSpace,
+      normalizedSessionId,
+      { useVisibleAgentSession: true },
+    );
+  }
+
+  async function closeBrowserTab(
+    tabId: string,
+    space?: BrowserSpaceId | null,
+    sessionId?: string | null,
+  ): Promise<BrowserTabListPayload> {
+    const browserSpace = deps.browserSpaceId(space);
+    const normalizedSessionId =
+      browserSpace === "agent"
+        ? deps.browserSessionId(sessionId) ||
+          deps.browserSessionId(deps.getActiveSessionId())
+        : "";
+    const workspace = await deps.ensureBrowserWorkspace(
+      undefined,
+      browserSpace,
+      normalizedSessionId,
+    );
+    const tabSpace = deps.browserTabSpaceState(
+      workspace,
+      browserSpace,
+      normalizedSessionId,
+      { useVisibleAgentSession: !normalizedSessionId },
+    );
+    const tab = tabSpace?.tabs.get(tabId);
+    if (!workspace || !tabSpace || !tab) {
+      return deps.browserWorkspaceSnapshot(
+        undefined,
+        browserSpace,
+        normalizedSessionId,
+        { useVisibleAgentSession: true },
+      );
+    }
+
+    const tabIds = Array.from(tabSpace.tabs.keys());
+    const closedIndex = tabIds.indexOf(tabId);
+    tabSpace.tabs.delete(tabId);
+    closeBrowserTabRecord(tab);
+    deps.browserTabSpaceTouch(tabSpace);
+
+    if (tabSpace.tabs.size === 0) {
+      const replacementTabId = deps.createBrowserTab(workspace.workspaceId, {
+        url: deps.homeUrl,
+        browserSpace,
+        sessionId: normalizedSessionId,
+      });
+      tabSpace.activeTabId = replacementTabId ?? "";
+    } else if (tabSpace.activeTabId === tabId) {
+      const remainingIds = Array.from(tabSpace.tabs.keys());
+      tabSpace.activeTabId =
+        remainingIds[Math.max(0, closedIndex - 1)] ?? remainingIds[0] ?? "";
+    }
+
+    if (
+      workspace.workspaceId === deps.getActiveWorkspaceId() &&
+      browserSpace === deps.getActiveSpaceId()
+    ) {
+      updateAttachedBrowserView();
+    }
+    if (browserSpace === "agent" && normalizedSessionId) {
+      deps.scheduleAgentSessionBrowserLifecycleCheck(
+        workspace.workspaceId,
+        normalizedSessionId,
+      );
+    }
+    emitBrowserState(workspace.workspaceId, browserSpace);
+    await deps.persistWorkspace(workspace.workspaceId);
+    return deps.browserWorkspaceSnapshot(
+      workspace.workspaceId,
+      browserSpace,
+      normalizedSessionId,
+      { useVisibleAgentSession: true },
+    );
+  }
+
   function syncBrowserState(
     workspaceId: string,
     tabId: string,
@@ -438,6 +640,9 @@ export function createBrowserPaneTabState(
     setBounds,
     captureVisibleSnapshot,
     closeBrowserTabRecord,
+    focusBrowserTabInSpace,
+    setActiveBrowserTab,
+    closeBrowserTab,
     getActiveBrowserTab,
     activeVisibleBrowserTarget,
     currentBrowserTabPageTitle,
