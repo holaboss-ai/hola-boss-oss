@@ -964,9 +964,17 @@ const browserPaneTabState: BrowserPaneTabState = createBrowserPaneTabState({
       workspace as unknown as BrowserWorkspaceState,
       sessionId,
     ),
-  createBrowserTab: (workspaceId, options) =>
-    createBrowserTab(workspaceId, options),
   homeUrl: HOME_URL,
+  shouldAllowBrowserPopupWindow: (url, frameName, features) =>
+    shouldAllowBrowserPopupWindow(url, frameName, features),
+  maybePromptBrowserInterrupt: (workspaceId, space, sessionId) =>
+    maybePromptBrowserInterrupt(workspaceId, space, sessionId),
+  isAbortedBrowserLoadFailure: (errorCode, errorDescription) =>
+    isAbortedBrowserLoadFailure(errorCode, errorDescription),
+  isProgrammaticBrowserInput: (webContents) =>
+    isProgrammaticBrowserInput(webContents),
+  preloadDir: __dirname,
+  newTabTitle: NEW_TAB_TITLE,
   touchAgentSessionBrowserSpace: (workspaceId, sessionId) =>
     touchAgentSessionBrowserSpace(workspaceId, sessionId),
   isAbortedBrowserLoadError: (error) => isAbortedBrowserLoadError(error),
@@ -1014,6 +1022,7 @@ const closeBrowserTab = browserPaneTabState.closeBrowserTab;
 const navigateActiveBrowserTab = browserPaneTabState.navigateActiveBrowserTab;
 const handleBrowserWindowOpenAsTab = browserPaneTabState.handleBrowserWindowOpenAsTab;
 const showBrowserViewContextMenu = browserPaneTabState.showBrowserViewContextMenu;
+const createBrowserTab = browserPaneTabState.createBrowserTab;
 const reportedOperatorSurfaceContexts = new Map<
   string,
   ReportedOperatorSurfaceContextPayload
@@ -18982,295 +18991,6 @@ function consumeBrowserDownloadOverride(
   return override ?? null;
 }
 
-
-function createBrowserTab(
-  workspaceId: string,
-  options: {
-    browserSpace?: BrowserSpaceId;
-    sessionId?: string | null;
-    id?: string;
-    url?: string;
-    title?: string;
-    faviconUrl?: string;
-    popupFrameName?: string;
-    popupOpenedAtMs?: number;
-    skipInitialHistoryRecord?: boolean;
-  } = {},
-) {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const browserSpace = browserSpaceId(options.browserSpace);
-  const normalizedSessionId = browserSessionId(options.sessionId);
-  const tabSpace = browserTabSpaceState(
-    workspace,
-    browserSpace,
-    normalizedSessionId,
-    {
-      createIfMissing: Boolean(normalizedSessionId),
-    },
-  );
-  if (!mainWindow || !workspace || !tabSpace) {
-    return null;
-  }
-  tabSpace.lifecycleState = "active";
-  browserTabSpaceTouch(tabSpace);
-
-  const tabId =
-    options.id?.trim() ||
-    `tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const initialUrl = options.url?.trim() || "";
-  const hasInitialUrl = initialUrl.length > 0;
-  let suppressNextHistoryEntry = Boolean(options.skipInitialHistoryRecord);
-  const view = new BrowserView({
-    webPreferences: {
-      session: workspace.session,
-      sandbox: false,
-      nodeIntegration: false,
-      contextIsolation: true,
-    },
-  });
-  view.webContents.setUserAgent(workspace.browserIdentity.userAgent);
-  const state = createBrowserState({
-    id: tabId,
-    url: initialUrl,
-    title: options.title || NEW_TAB_TITLE,
-    faviconUrl: options.faviconUrl,
-    initialized: !hasInitialUrl,
-  });
-  tabSpace.tabs.set(tabId, {
-    view,
-    state,
-    popupFrameName: options.popupFrameName?.trim() || undefined,
-    popupOpenedAtMs:
-      typeof options.popupOpenedAtMs === "number" ? options.popupOpenedAtMs : undefined,
-  });
-
-  view.setBounds(browserBounds);
-  view.setAutoResize({
-    width: false,
-    height: false,
-    horizontal: false,
-    vertical: false,
-  });
-  view.webContents.setWindowOpenHandler(
-    ({ url, disposition, frameName, features }) => {
-      const normalizedUrl = url.trim();
-      if (!normalizedUrl) {
-        return { action: "deny" };
-      }
-
-      if (shouldAllowBrowserPopupWindow(normalizedUrl, frameName, features)) {
-        return {
-          action: "allow",
-          overrideBrowserWindowOptions: {
-            parent: mainWindow ?? undefined,
-            autoHideMenuBar: true,
-            backgroundColor: "#050907",
-            width: 520,
-            height: 760,
-            minWidth: 420,
-            minHeight: 620,
-            webPreferences: {
-              session: workspace.session,
-              preload: path.join(__dirname, "browserPopupPreload.cjs"),
-            },
-          },
-        };
-      }
-
-      try {
-        const parsed = new URL(normalizedUrl);
-        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-          openExternalUrlFromMain(normalizedUrl, "browser window open");
-          return { action: "deny" };
-        }
-      } catch {
-        return { action: "deny" };
-      }
-
-      const shouldOpenAsTab =
-        disposition === "foreground-tab" ||
-        disposition === "background-tab" ||
-        disposition === "new-window";
-      if (shouldOpenAsTab) {
-        handleBrowserWindowOpenAsTab(
-          workspaceId,
-          normalizedUrl,
-          disposition,
-          frameName,
-          browserSpace,
-          normalizedSessionId,
-        );
-      }
-      return { action: "deny" };
-    },
-  );
-  view.webContents.setZoomFactor(1);
-  view.webContents.setVisualZoomLevelLimits(1, 1).catch(() => undefined);
-
-  const currentTabRecord = () =>
-    browserTabSpaceState(
-      browserWorkspaceFromMap(workspaceId),
-      browserSpace,
-      normalizedSessionId,
-    )?.tabs.get(tabId);
-
-  view.webContents.on("before-input-event", (event, input) => {
-    if (isProgrammaticBrowserInput(view.webContents)) {
-      return;
-    }
-    if (
-      (input.type === "keyDown" ||
-        input.type === "keyUp" ||
-        input.type === "char" ||
-        input.type === "rawKeyDown") &&
-      maybePromptBrowserInterrupt(
-        workspaceId,
-        browserSpace,
-        normalizedSessionId,
-      )
-    ) {
-      event.preventDefault();
-    }
-  });
-
-  view.webContents.on("before-mouse-event", (event, mouse) => {
-    if (isProgrammaticBrowserInput(view.webContents)) {
-      return;
-    }
-    if (
-      mouse.type !== "mouseMove" &&
-      mouse.type !== "mouseEnter" &&
-      mouse.type !== "mouseLeave" &&
-      maybePromptBrowserInterrupt(
-        workspaceId,
-        browserSpace,
-        normalizedSessionId,
-      )
-    ) {
-      event.preventDefault();
-    }
-  });
-
-  view.webContents.on("dom-ready", () => {
-    const currentTab = currentTabRecord();
-    if (!currentTab) {
-      return;
-    }
-    currentTab.state = { ...currentTab.state, initialized: true, error: "" };
-    syncBrowserState(workspaceId, tabId, browserSpace, normalizedSessionId);
-  });
-
-  view.webContents.on("did-start-loading", () => {
-    const currentTab = currentTabRecord();
-    if (!currentTab) {
-      return;
-    }
-    currentTab.state = { ...currentTab.state, loading: true, error: "" };
-    syncBrowserState(workspaceId, tabId, browserSpace, normalizedSessionId);
-  });
-
-  view.webContents.on("did-stop-loading", () => {
-    const currentTab = currentTabRecord();
-    if (!currentTab) {
-      return;
-    }
-    currentTab.state = { ...currentTab.state, loading: false, error: "" };
-    syncBrowserState(workspaceId, tabId, browserSpace, normalizedSessionId);
-    if (suppressNextHistoryEntry) {
-      suppressNextHistoryEntry = false;
-      return;
-    }
-    void recordHistoryVisit(workspaceId, {
-      url: currentTab.view.webContents.getURL() || currentTab.state.url,
-      title: currentTab.view.webContents.getTitle() || currentTab.state.title,
-      faviconUrl: currentTab.state.faviconUrl,
-    });
-  });
-
-  view.webContents.on("page-title-updated", () => {
-    syncBrowserState(workspaceId, tabId, browserSpace, normalizedSessionId);
-  });
-
-  view.webContents.on("page-favicon-updated", (_event, favicons) => {
-    const currentTab = currentTabRecord();
-    if (!currentTab) {
-      return;
-    }
-    currentTab.state = {
-      ...currentTab.state,
-      faviconUrl: favicons[0] || currentTab.state.faviconUrl,
-    };
-    emitBrowserState(workspaceId, browserSpace);
-    void persistBrowserWorkspace(workspaceId);
-  });
-
-  view.webContents.on("did-navigate", () => {
-    syncBrowserState(workspaceId, tabId, browserSpace, normalizedSessionId);
-  });
-
-  view.webContents.on("did-navigate-in-page", () => {
-    syncBrowserState(workspaceId, tabId, browserSpace, normalizedSessionId);
-  });
-
-  view.webContents.on("context-menu", (_event, params) => {
-    showBrowserViewContextMenu({
-      workspaceId,
-      space: browserSpace,
-      sessionId: normalizedSessionId,
-      view,
-      context: params,
-    });
-  });
-
-  view.webContents.on(
-    "did-fail-load",
-    (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-      if (
-        !isMainFrame ||
-        isAbortedBrowserLoadFailure(errorCode, errorDescription)
-      ) {
-        return;
-      }
-      const currentTab = currentTabRecord();
-      if (!currentTab) {
-        return;
-      }
-      currentTab.state = {
-        ...currentTab.state,
-        loading: false,
-        error: `${errorDescription} (${errorCode})`,
-        url: validatedURL || currentTab.state.url,
-      };
-      emitBrowserState(workspaceId, browserSpace);
-      void persistBrowserWorkspace(workspaceId);
-    },
-  );
-
-  if (hasInitialUrl) {
-    void view.webContents.loadURL(initialUrl).catch((error) => {
-      if (isAbortedBrowserLoadError(error)) {
-        return;
-      }
-      const currentTab = currentTabRecord();
-      if (!currentTab) {
-        return;
-      }
-      currentTab.state = {
-        ...currentTab.state,
-        loading: false,
-        error: error instanceof Error ? error.message : "Failed to load page.",
-      };
-      emitBrowserState(workspaceId, browserSpace);
-      void persistBrowserWorkspace(workspaceId);
-    });
-  }
-
-  if (browserSpace === "agent" && normalizedSessionId) {
-    scheduleAgentSessionBrowserLifecycleCheck(workspaceId, normalizedSessionId);
-  }
-
-  return tabId;
-}
 
 function initialBrowserTabSeed(
   workspaceId: string,
