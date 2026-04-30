@@ -185,6 +185,11 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
                   items: subagentToolBucketSchema(),
                 },
                 model: { type: "string", description: "Optional model override for this delegated task." },
+                use_user_browser_surface: {
+                  type: "boolean",
+                  description:
+                    "Set true only when the user explicitly asked the delegated browser work to use their current/shared browser tab, page, or browser surface. Omit otherwise so the task uses the agent browser.",
+                },
                 timeout_ms: {
                   type: "integer",
                   description: "Optional timeout hint for this delegated task in milliseconds.",
@@ -204,6 +209,11 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
             items: subagentToolBucketSchema(),
           },
           model: { type: "string", description: "Singleton alias: model override for the delegated task." },
+          use_user_browser_surface: {
+            type: "boolean",
+            description:
+              "Singleton alias: set true only when the user explicitly asked the delegated browser work to use their current/shared browser tab, page, or browser surface.",
+          },
           timeout_ms: {
             type: "integer",
             description: "Singleton alias: timeout hint for the delegated task in milliseconds.",
@@ -739,6 +749,7 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "Use `holaboss_delegate_task` for longer-running, multi-step, or interruptible work that should continue while the main conversation remains free.",
       "Keep each delegated task narrowly scoped and self-contained. Use the canonical `tasks` array for batched delegation and the singleton top-level fields only for one task.",
       "Use `tools` as coarse capability buckets such as `web`, `browser`, `terminal`, or `file`; do not treat them as raw low-level tool ids.",
+      "Default delegated browser work to the agent browser. Set `use_user_browser_surface` only when the user explicitly asks to use their current tab, current page, shared browser, or equivalent user-owned browser context.",
       "Delegate execution-heavy work instead of narrating that you will do it later without actually spawning the background task.",
       "When the user asks for work that needs capability missing from the current main-session run, delegate it instead of replying that the current run lacks those tools.",
       "For latest-news, source discovery, and similar external research, usually delegate with `tools: [\"web\"]` and escalate to `browser` only when direct interaction or UI verification is needed.",

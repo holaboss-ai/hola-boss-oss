@@ -82,3 +82,43 @@ test("browser and runtime capability clients share a per-turn replay ledger keye
       browserResult.details.replay_budget.replay_chars > 18000,
   );
 });
+
+test("runtime delegate-task client forwards use_user_browser_surface when explicitly requested", async () => {
+  let capturedBody: Record<string, unknown> | null = null;
+
+  const fetchImpl: typeof fetch = async (_input, init) => {
+    capturedBody =
+      typeof init?.body === "string"
+        ? (JSON.parse(init.body) as Record<string, unknown>)
+        : null;
+    return new Response(JSON.stringify({ tasks: [], count: 0 }), {
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    });
+  };
+
+  await executeRuntimeToolCapability({
+    runtimeApiBaseUrl: "http://127.0.0.1:5060",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    selectedModel: "openai/gpt-5.4",
+    toolId: "holaboss_delegate_task",
+    toolParams: {
+      goal: "Inspect the current tab",
+      tools: ["browser"],
+      use_user_browser_surface: true,
+    },
+    fetchImpl,
+  });
+
+  assert.deepEqual(capturedBody, {
+    tasks: [
+      {
+        goal: "Inspect the current tab",
+        tools: ["browser"],
+        use_user_browser_surface: true,
+      },
+    ],
+  });
+});

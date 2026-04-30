@@ -633,6 +633,7 @@ function parseDelegateTaskInput(value: unknown): {
   tools?: string[] | null;
   model?: string | null;
   timeoutMs?: number | null;
+  useUserBrowserSurface?: boolean | null;
 } | null {
   if (!isRecord(value)) {
     return null;
@@ -647,6 +648,7 @@ function parseDelegateTaskInput(value: unknown): {
     context: nullableString(value.context) ?? null,
     tools: optionalStringList(value.tools),
     model: nullableString(value.model) ?? null,
+    useUserBrowserSurface: value.use_user_browser_surface === true,
     timeoutMs:
       typeof value.timeout_ms === "number" && Number.isFinite(value.timeout_ms)
         ? Math.max(1, Math.trunc(value.timeout_ms))
@@ -661,6 +663,7 @@ function requiredDelegateTaskInputs(body: Record<string, unknown>): Array<{
   tools?: string[] | null;
   model?: string | null;
   timeoutMs?: number | null;
+  useUserBrowserSurface?: boolean | null;
 }> {
   if (Array.isArray(body.tasks)) {
     const tasks = body.tasks

@@ -109,6 +109,7 @@ export interface RuntimeAgentToolsDelegateTaskItem {
   tools?: string[] | null;
   model?: string | null;
   timeoutMs?: number | null;
+  useUserBrowserSurface?: boolean | null;
 }
 
 export interface RuntimeAgentToolsDelegateTaskParams {
@@ -712,37 +713,6 @@ function normalizedSubagentTaskTitle(value: string | null | undefined, goal: str
     .map((line) => line.trim())
     .find((line) => line.length > 0);
   return (firstLine ?? goal).slice(0, 120);
-}
-
-const USER_BROWSER_SURFACE_PATTERNS = [
-  /\b(?:current|active|existing|same)\s+browser(?:\s+tab)?\b/i,
-  /\b(?:current|active|existing|same)\s+(?:tab|page|window)\b/i,
-  /\b(?:this|my|shared)\s+(?:browser(?:\s+tab)?|tab|page|window)\b/i,
-  /\buser(?:'s|s)?\s+(?:current\s+)?(?:browser(?:\s+tab)?|tab|page|window)\b/i,
-];
-
-const USER_BROWSER_SURFACE_NEGATION_PATTERN =
-  /\b(?:do\s+not|don't|dont|avoid|without)\s+(?:using?\s+)?(?:my|this|the current|the user's|user|shared)\s+(?:browser(?:\s+tab)?|tab|page|window)\b/i;
-
-function textRequestsUserBrowserSurface(value: unknown): boolean {
-  const text = normalizedString(value);
-  if (!text) {
-    return false;
-  }
-  if (USER_BROWSER_SURFACE_NEGATION_PATTERN.test(text)) {
-    return false;
-  }
-  return USER_BROWSER_SURFACE_PATTERNS.some((pattern) => pattern.test(text));
-}
-
-function taskRequestsUserBrowserSurface(params: {
-  goal?: string | null;
-  context?: string | null;
-}): boolean {
-  return (
-    textRequestsUserBrowserSurface(params.goal) ||
-    textRequestsUserBrowserSurface(params.context)
-  );
 }
 
 function contextUsesUserBrowserSurface(value: unknown): boolean {
@@ -1532,6 +1502,7 @@ export class RuntimeAgentToolsService {
         context: normalizedString(task.context),
         tools: normalizedStringList(task.tools),
         model: normalizedString(task.model),
+        useUserBrowserSurface: task.useUserBrowserSurface === true,
         timeoutMs:
           typeof task.timeoutMs === "number" && Number.isFinite(task.timeoutMs)
             ? Math.max(1, Math.trunc(task.timeoutMs))
@@ -1560,10 +1531,7 @@ export class RuntimeAgentToolsService {
       const forwardedAttachments = attachmentsFromInputPayload(parentInput?.payload.attachments);
       const forwardedImageUrls = normalizedStringList(parentInput?.payload.image_urls);
       const forwardedQuotedSkillIds = quotedSkillIdsFromInstruction(parentInput?.payload.text);
-      const useUserBrowserSurface = taskRequestsUserBrowserSurface({
-        goal: task.goal,
-        context: task.context || null,
-      });
+      const useUserBrowserSurface = task.useUserBrowserSurface === true;
       const delegatedInstruction = serializeQuotedSkillPrompt(
         subagentInstruction({ goal: task.goal, context: task.context || null }),
         forwardedQuotedSkillIds,
@@ -1760,9 +1728,7 @@ export class RuntimeAgentToolsService {
     const previousChildInput = normalizedString(state.run.latestChildInputId)
       ? this.store.getInput(normalizedString(state.run.latestChildInputId))
       : null;
-    const useUserBrowserSurface =
-      inputUsesUserBrowserSurface(previousChildInput) ||
-      textRequestsUserBrowserSurface(answer);
+    const useUserBrowserSurface = inputUsesUserBrowserSurface(previousChildInput);
     const resumedInput = this.store.enqueueInput({
       workspaceId: params.workspaceId,
       sessionId: state.run.childSessionId,
@@ -1860,9 +1826,7 @@ export class RuntimeAgentToolsService {
     const forwardedAttachments = attachmentsFromInputPayload(parentInput?.payload.attachments);
     const forwardedImageUrls = normalizedStringList(parentInput?.payload.image_urls);
     const forwardedQuotedSkillIds = quotedSkillIdsFromInstruction(parentInput?.payload.text);
-    const useUserBrowserSurface =
-      inputUsesUserBrowserSurface(previousChildInput) ||
-      textRequestsUserBrowserSurface(instruction);
+    const useUserBrowserSurface = inputUsesUserBrowserSurface(previousChildInput);
     const continuationInstruction = serializeQuotedSkillPrompt(
       subagentInstruction({
         goal: instruction,

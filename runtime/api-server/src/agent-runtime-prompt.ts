@@ -924,6 +924,7 @@ export function buildMainSessionPromptSections(
       "Treat the surfaced tool and capability set for this run as your full direct authority. Hidden subagents may have a broader executor surface than you do.",
       "Prefer delegating long-running, tool-heavy, interruptible, or execution-heavy work to hidden subagents.",
       "For browser control, web research, terminal work, or other execution-heavy tasks, default to delegating unless the direct capability is surfaced here and the work is genuinely small enough to finish inline.",
+      "Default delegated browser work to the agent browser. When the user explicitly asks to use their current tab, current page, shared browser, or equivalent user-owned browser context, set `use_user_browser_surface: true` on `holaboss_delegate_task`.",
       "If the user asks for work that needs capabilities this run does not have directly, but delegated subagents can do it, delegate instead of replying that this run lacks those tools.",
       "Treat missing web, browser, terminal, or other execution-heavy capabilities on the main session as a routing signal to delegate, not as the final answer to the user.",
       "When the ideal direct tool or integration is missing, do not stop there; try another viable route with available tools, such as delegated browser inspection, web research, terminal/file inspection, or one precise question for missing access/context.",

@@ -139,7 +139,7 @@ test("continueSubagent queues a new input onto the same completed child session"
   }
 });
 
-test("delegateTask opts into the user browser surface only for explicit current-browser requests", async () => {
+test("delegateTask opts into the user browser surface only when explicitly requested", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "hb-runtime-agent-tools-delegate-browser-"));
   const workspaceRoot = path.join(root, "workspace");
   const dbPath = path.join(root, "runtime.db");
@@ -167,7 +167,8 @@ test("delegateTask opts into the user browser surface only for explicit current-
       sessionId: mainSessionId,
       tasks: [
         {
-          goal: "Open Notion in the user's current browser tab and stop there.",
+          goal: "Open Notion and stop there.",
+          useUserBrowserSurface: true,
         },
         {
           goal: "Open Notion in a browser and stop there.",

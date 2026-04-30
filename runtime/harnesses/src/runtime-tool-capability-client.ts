@@ -159,6 +159,9 @@ function normalizeDelegateTask(taskParams: unknown): Record<string, unknown> {
     ...(optionalString(params.context) ? { context: optionalString(params.context) } : {}),
     ...(optionalStringArray(params.tools) ? { tools: optionalStringArray(params.tools) } : {}),
     ...(optionalString(params.model) ? { model: optionalString(params.model) } : {}),
+    ...(params.use_user_browser_surface === true
+      ? { use_user_browser_surface: true }
+      : {}),
     ...(typeof params.timeout_ms === "number" ? { timeout_ms: params.timeout_ms } : {}),
   };
 }

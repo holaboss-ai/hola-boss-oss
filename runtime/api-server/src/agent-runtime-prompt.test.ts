@@ -288,6 +288,8 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
   assert.match(prompt.systemPrompt, /surfaced tool and capability set for this run as your full direct authority/i);
   assert.match(prompt.systemPrompt, /Prefer delegating long-running, tool-heavy, interruptible, or execution-heavy work to hidden subagents\./);
   assert.match(prompt.systemPrompt, /browser control, web research, terminal work, or other execution-heavy tasks, default to delegating/i);
+  assert.match(prompt.systemPrompt, /Default delegated browser work to the agent browser\./);
+  assert.match(prompt.systemPrompt, /set `use_user_browser_surface: true` on `holaboss_delegate_task`/i);
   assert.match(prompt.systemPrompt, /delegate instead of replying that this run lacks those tools\./);
   assert.match(prompt.systemPrompt, /missing web, browser, terminal, or other execution-heavy capabilities on the main session as a routing signal to delegate/i);
   assert.match(prompt.systemPrompt, /When the ideal direct tool or integration is missing, do not stop there/i);
