@@ -3839,7 +3839,13 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
   assert.deepEqual(
     (capturedProjectRequest as { workspace_skill_ids: string[] })
       .workspace_skill_ids,
-    ["skill-creator", "skill-installer", "alpha"],
+    [
+      "browser-core-efficient",
+      "browser-qa",
+      "skill-creator",
+      "skill-installer",
+      "alpha",
+    ],
   );
   assert.ok(capturedHarnessRequest);
   assert.equal(
@@ -3852,7 +3858,13 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
         workspace_skill_dirs: string[];
       }
     ).workspace_skill_dirs.map((skillDir) => path.basename(skillDir)),
-    ["skill-creator", "skill-installer", "alpha"],
+    [
+      "browser-core-efficient",
+      "browser-qa",
+      "skill-creator",
+      "skill-installer",
+      "alpha",
+    ],
   );
 });
 
