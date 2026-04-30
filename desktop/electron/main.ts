@@ -6955,11 +6955,30 @@ function emitWindowStateChanged(
   if (!resolvedWindow) {
     return;
   }
-
-  resolvedWindow.webContents.send(
-    "ui:windowState",
-    desktopWindowStatePayload(resolvedWindow),
-  );
+  // Window-state events ('maximize'/'minimize'/'ready-to-show'/...) can
+  // race with window teardown. There are two distinct disposal states to
+  // guard against:
+  //   1. WebContents fully destroyed — caught by isDestroyed().
+  //   2. WebContents alive but the underlying RenderFrame (WebFrameMain)
+  //      has been disposed mid-teardown — send() throws
+  //      `Render frame was disposed before WebFrameMain could be accessed`
+  //      and isDestroyed() still returns false.
+  // We catch (1) cheaply and try/catch (2) since it's not introspectable.
+  const wc = resolvedWindow.webContents;
+  if (wc.isDestroyed()) {
+    return;
+  }
+  try {
+    wc.send("ui:windowState", desktopWindowStatePayload(resolvedWindow));
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      /render frame was disposed/i.test(error.message)
+    ) {
+      return;
+    }
+    throw error;
+  }
 }
 
 function runtimeModelProxyApiKeyFromConfig(
