@@ -5,6 +5,12 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import * as sqliteVec from "sqlite-vec";
 
+import { MigrationRunner, type MigrationLogEvent } from "./migrations.js";
+import {
+  LATEST_SEED_VERSION,
+  RUNTIME_DB_MIGRATIONS,
+} from "./migrations/index.js";
+
 const RUNTIME_DB_PATH_ENV = "HOLABOSS_RUNTIME_DB_PATH";
 const WORKSPACE_RUNTIME_DIRNAME = ".holaboss";
 const WORKSPACE_IDENTITY_FILENAME = "workspace_id";
@@ -527,6 +533,12 @@ export interface RuntimeStateStoreOptions {
   workspaceRoot?: string;
   sandboxRoot?: string;
   sandboxAgentHarness?: string;
+  /**
+   * Optional structured log hook for schema migrations. Wire to pino/Sentry
+   * in api-server; tests can pass a recorder. Receives events shaped like
+   * `{event: "migrations.applied", id: 3, name: "...", durationMs: 12}`.
+   */
+  onMigrationEvent?: (event: MigrationLogEvent) => void;
 }
 
 type WorkspaceUpdateFields = Partial<{
@@ -705,12 +717,14 @@ export class RuntimeStateStore {
   readonly dbPath: string;
   readonly workspaceRoot: string;
   readonly sandboxAgentHarness: string | null;
+  readonly #onMigrationEvent: ((event: MigrationLogEvent) => void) | undefined;
   #db: Database.Database | null = null;
   #vectorIndexSupported = false;
 
   constructor(options: RuntimeStateStoreOptions = {}) {
     this.dbPath = runtimeDbPath(options);
     this.workspaceRoot = path.resolve(options.workspaceRoot ?? path.join(os.tmpdir(), "workspace-root"));
+    this.#onMigrationEvent = options.onMigrationEvent;
     this.sandboxAgentHarness = (options.sandboxAgentHarness ?? process.env.SANDBOX_AGENT_HARNESS ?? "").trim() || null;
   }
 
@@ -4800,8 +4814,24 @@ export class RuntimeStateStore {
     db.pragma("foreign_keys = ON");
     this.#vectorIndexSupported = this.tryLoadVectorExtension(db);
     this.ensureRuntimeDbSchema(db);
+    this.runPendingMigrations(db);
     this.#db = db;
     return db;
+  }
+
+  private runPendingMigrations(db: Database.Database): void {
+    if (RUNTIME_DB_MIGRATIONS.length === 0 && LATEST_SEED_VERSION === 0) {
+      // No migrations registered yet — skip the runner entirely so we don't
+      // even read PRAGMA user_version. Future schema changes opt in by adding
+      // a file under src/migrations/ and bumping LATEST_SEED_VERSION when
+      // they overlap with the legacy ensure-helpers.
+      return;
+    }
+    const runner = new MigrationRunner(RUNTIME_DB_MIGRATIONS, {
+      latestSeedVersion: LATEST_SEED_VERSION,
+      log: this.#onMigrationEvent,
+    });
+    runner.apply(db);
   }
 
   private ensureWorkspaceMetadataReady(): void {
