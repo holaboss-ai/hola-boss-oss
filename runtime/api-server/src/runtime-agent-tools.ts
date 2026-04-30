@@ -714,6 +714,52 @@ function normalizedSubagentTaskTitle(value: string | null | undefined, goal: str
   return (firstLine ?? goal).slice(0, 120);
 }
 
+const USER_BROWSER_SURFACE_PATTERNS = [
+  /\b(?:current|active|existing|same)\s+browser(?:\s+tab)?\b/i,
+  /\b(?:current|active|existing|same)\s+(?:tab|page|window)\b/i,
+  /\b(?:this|my|shared)\s+(?:browser(?:\s+tab)?|tab|page|window)\b/i,
+  /\buser(?:'s|s)?\s+(?:current\s+)?(?:browser(?:\s+tab)?|tab|page|window)\b/i,
+];
+
+const USER_BROWSER_SURFACE_NEGATION_PATTERN =
+  /\b(?:do\s+not|don't|dont|avoid|without)\s+(?:using?\s+)?(?:my|this|the current|the user's|user|shared)\s+(?:browser(?:\s+tab)?|tab|page|window)\b/i;
+
+function textRequestsUserBrowserSurface(value: unknown): boolean {
+  const text = normalizedString(value);
+  if (!text) {
+    return false;
+  }
+  if (USER_BROWSER_SURFACE_NEGATION_PATTERN.test(text)) {
+    return false;
+  }
+  return USER_BROWSER_SURFACE_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function taskRequestsUserBrowserSurface(params: {
+  goal?: string | null;
+  context?: string | null;
+}): boolean {
+  return (
+    textRequestsUserBrowserSurface(params.goal) ||
+    textRequestsUserBrowserSurface(params.context)
+  );
+}
+
+function contextUsesUserBrowserSurface(value: unknown): boolean {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      (value as Record<string, unknown>).use_user_browser_surface === true,
+  );
+}
+
+function inputUsesUserBrowserSurface(
+  input: { payload?: Record<string, unknown> | null } | null | undefined,
+): boolean {
+  return contextUsesUserBrowserSurface(input?.payload?.context);
+}
+
 function subagentInstruction(params: {
   goal: string;
   context?: string | null;
@@ -1514,6 +1560,10 @@ export class RuntimeAgentToolsService {
       const forwardedAttachments = attachmentsFromInputPayload(parentInput?.payload.attachments);
       const forwardedImageUrls = normalizedStringList(parentInput?.payload.image_urls);
       const forwardedQuotedSkillIds = quotedSkillIdsFromInstruction(parentInput?.payload.text);
+      const useUserBrowserSurface = taskRequestsUserBrowserSurface({
+        goal: task.goal,
+        context: task.context || null,
+      });
       const delegatedInstruction = serializeQuotedSkillPrompt(
         subagentInstruction({ goal: task.goal, context: task.context || null }),
         forwardedQuotedSkillIds,
@@ -1570,6 +1620,7 @@ export class RuntimeAgentToolsService {
             effective_model: effectiveModel,
             forwarded_attachment_count: forwardedAttachments.length,
             forwarded_quoted_skill_ids: forwardedQuotedSkillIds,
+            ...(useUserBrowserSurface ? { use_user_browser_surface: true } : {}),
           },
         },
       });
@@ -1706,6 +1757,12 @@ export class RuntimeAgentToolsService {
       );
     }
     const effectiveModel = normalizedString(params.model) || state.run.effectiveModel || null;
+    const previousChildInput = normalizedString(state.run.latestChildInputId)
+      ? this.store.getInput(normalizedString(state.run.latestChildInputId))
+      : null;
+    const useUserBrowserSurface =
+      inputUsesUserBrowserSurface(previousChildInput) ||
+      textRequestsUserBrowserSurface(answer);
     const resumedInput = this.store.enqueueInput({
       workspaceId: params.workspaceId,
       sessionId: state.run.childSessionId,
@@ -1723,6 +1780,7 @@ export class RuntimeAgentToolsService {
           parent_input_id: normalizedString(params.inputId) || null,
           resumed_from_input_id: state.run.latestChildInputId,
           resumed_from_status: state.run.status,
+          ...(useUserBrowserSurface ? { use_user_browser_surface: true } : {}),
         },
       },
     });
@@ -1796,9 +1854,15 @@ export class RuntimeAgentToolsService {
     const parentInput = normalizedString(params.inputId)
       ? this.store.getInput(normalizedString(params.inputId))
       : null;
+    const previousChildInput = normalizedString(state.run.latestChildInputId)
+      ? this.store.getInput(normalizedString(state.run.latestChildInputId))
+      : null;
     const forwardedAttachments = attachmentsFromInputPayload(parentInput?.payload.attachments);
     const forwardedImageUrls = normalizedStringList(parentInput?.payload.image_urls);
     const forwardedQuotedSkillIds = quotedSkillIdsFromInstruction(parentInput?.payload.text);
+    const useUserBrowserSurface =
+      inputUsesUserBrowserSurface(previousChildInput) ||
+      textRequestsUserBrowserSurface(instruction);
     const continuationInstruction = serializeQuotedSkillPrompt(
       subagentInstruction({
         goal: instruction,
@@ -1835,6 +1899,7 @@ export class RuntimeAgentToolsService {
           parent_input_id: normalizedString(params.inputId) || null,
           continued_from_input_id: state.run.latestChildInputId,
           continued_from_status: state.run.status,
+          ...(useUserBrowserSurface ? { use_user_browser_surface: true } : {}),
         },
       },
     });

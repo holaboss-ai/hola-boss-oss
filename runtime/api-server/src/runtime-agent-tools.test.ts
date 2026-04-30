@@ -139,6 +139,161 @@ test("continueSubagent queues a new input onto the same completed child session"
   }
 });
 
+test("delegateTask opts into the user browser surface only for explicit current-browser requests", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "hb-runtime-agent-tools-delegate-browser-"));
+  const workspaceRoot = path.join(root, "workspace");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceId = "workspace-1";
+  const mainSessionId = "main-1";
+
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+  try {
+    store.createWorkspace({
+      workspaceId,
+      name: "Workspace 1",
+      harness: "pi",
+      status: "active",
+    });
+    store.ensureSession({
+      workspaceId,
+      sessionId: mainSessionId,
+      kind: "workspace_session",
+      createdBy: "workspace_user",
+    });
+
+    const service = new RuntimeAgentToolsService(store, { workspaceRoot });
+    const result = service.delegateTask({
+      workspaceId,
+      sessionId: mainSessionId,
+      tasks: [
+        {
+          goal: "Open Notion in the user's current browser tab and stop there.",
+        },
+        {
+          goal: "Open Notion in a browser and stop there.",
+        },
+      ],
+    }) as { tasks?: Array<Record<string, unknown>> };
+
+    const tasks = result.tasks ?? [];
+    assert.equal(tasks.length, 2);
+
+    const explicitInput = store.getInput(String(tasks[0]?.latest_child_input_id ?? ""));
+    const genericInput = store.getInput(String(tasks[1]?.latest_child_input_id ?? ""));
+
+    assert.equal(
+      (explicitInput?.payload.context as Record<string, unknown> | undefined)
+        ?.use_user_browser_surface,
+      true,
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(
+        (genericInput?.payload.context as Record<string, unknown> | undefined) ?? {},
+        "use_user_browser_surface",
+      ),
+      false,
+    );
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("continueSubagent preserves the user browser surface flag for follow-up work", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "hb-runtime-agent-tools-continue-browser-"));
+  const workspaceRoot = path.join(root, "workspace");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceId = "workspace-1";
+  const mainSessionId = "main-1";
+  const childSessionId = "subagent-child-1";
+  const subagentId = "subagent-run-1";
+  const completedAt = utcNowIso();
+
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+  try {
+    store.createWorkspace({
+      workspaceId,
+      name: "Workspace 1",
+      harness: "pi",
+      status: "active",
+    });
+    store.ensureSession({
+      workspaceId,
+      sessionId: mainSessionId,
+      kind: "workspace_session",
+      createdBy: "workspace_user",
+    });
+    store.ensureSession({
+      workspaceId,
+      sessionId: childSessionId,
+      kind: "subagent",
+      parentSessionId: mainSessionId,
+      createdBy: "workspace_agent",
+      archivedAt: completedAt,
+    });
+    const firstInput = store.enqueueInput({
+      workspaceId,
+      sessionId: childSessionId,
+      payload: {
+        text: "Open Notion in the current tab.",
+        context: {
+          source: "subagent",
+          use_user_browser_surface: true,
+        },
+      },
+    });
+    store.updateInput(firstInput.inputId, { status: "DONE" });
+    store.upsertTurnResult({
+      workspaceId,
+      sessionId: childSessionId,
+      inputId: firstInput.inputId,
+      startedAt: completedAt,
+      completedAt,
+      status: "completed",
+      stopReason: "success",
+      assistantText: "Reached the login page.",
+    });
+    store.createSubagentRun({
+      subagentId,
+      workspaceId,
+      parentSessionId: mainSessionId,
+      parentInputId: "parent-input-1",
+      originMainSessionId: mainSessionId,
+      ownerMainSessionId: mainSessionId,
+      childSessionId,
+      initialChildInputId: firstInput.inputId,
+      currentChildInputId: null,
+      latestChildInputId: firstInput.inputId,
+      title: "Open Notion",
+      goal: "Open Notion in the user's current browser tab.",
+      sourceType: "delegate_task",
+      status: "completed",
+      summary: "Reached login.",
+      resultPayload: { assistant_text: "Reached the login page." },
+      completedAt,
+    });
+
+    const service = new RuntimeAgentToolsService(store, { workspaceRoot });
+    const result = service.continueSubagent({
+      workspaceId,
+      sessionId: mainSessionId,
+      inputId: "parent-input-2",
+      subagentId,
+      instruction: "Try again now that the page is ready.",
+    }) as Record<string, unknown>;
+
+    const nextInput = store.getInput(String(result.latest_child_input_id));
+    assert.equal(
+      (nextInput?.payload.context as Record<string, unknown> | undefined)
+        ?.use_user_browser_surface,
+      true,
+    );
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("background task sync preserves persisted waiting-on-user blockers", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "hb-runtime-agent-tools-waiting-sync-"));
   const workspaceRoot = path.join(root, "workspace");
@@ -229,6 +384,102 @@ test("background task sync preserves persisted waiting-on-user blockers", async 
     assert.equal(
       updatedRun?.blockingPayload?.blocking_question,
       "Please log in or complete the required access step, then tell me to continue.",
+    );
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("resumeSubagent preserves the user browser surface flag while waiting on user access", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "hb-runtime-agent-tools-resume-browser-"));
+  const workspaceRoot = path.join(root, "workspace");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceId = "workspace-1";
+  const mainSessionId = "main-1";
+  const childSessionId = "subagent-child-1";
+  const subagentId = "subagent-run-1";
+  const blockedAt = utcNowIso();
+
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+  try {
+    store.createWorkspace({
+      workspaceId,
+      name: "Workspace 1",
+      harness: "pi",
+      status: "active",
+    });
+    store.ensureSession({
+      workspaceId,
+      sessionId: mainSessionId,
+      kind: "workspace_session",
+      createdBy: "workspace_user",
+    });
+    store.ensureSession({
+      workspaceId,
+      sessionId: childSessionId,
+      kind: "subagent",
+      parentSessionId: mainSessionId,
+      createdBy: "workspace_agent",
+    });
+    const blockedInput = store.enqueueInput({
+      workspaceId,
+      sessionId: childSessionId,
+      payload: {
+        text: "Check the latest X post stats in my current browser tab.",
+        context: {
+          source: "subagent",
+          use_user_browser_surface: true,
+        },
+      },
+    });
+    store.updateInput(blockedInput.inputId, { status: "DONE" });
+    store.upsertTurnResult({
+      workspaceId,
+      sessionId: childSessionId,
+      inputId: blockedInput.inputId,
+      startedAt: blockedAt,
+      completedAt: blockedAt,
+      status: "completed",
+      stopReason: "waiting_on_user",
+      assistantText: "Please log in to continue.",
+    });
+    store.createSubagentRun({
+      subagentId,
+      workspaceId,
+      parentSessionId: mainSessionId,
+      parentInputId: "parent-input-1",
+      originMainSessionId: mainSessionId,
+      ownerMainSessionId: mainSessionId,
+      childSessionId,
+      initialChildInputId: blockedInput.inputId,
+      currentChildInputId: blockedInput.inputId,
+      latestChildInputId: blockedInput.inputId,
+      title: "Check X stats",
+      goal: "Inspect the latest X post stats in the user's current browser tab.",
+      sourceType: "delegate_task",
+      status: "waiting_on_user",
+      summary: "Blocked by login.",
+      blockingPayload: {
+        status: "waiting_on_user",
+        blocking_question: "Please log in, then tell me to continue.",
+      },
+    });
+
+    const service = new RuntimeAgentToolsService(store, { workspaceRoot });
+    const result = service.resumeSubagent({
+      workspaceId,
+      sessionId: mainSessionId,
+      inputId: "parent-input-2",
+      subagentId,
+      answer: "Logged in now.",
+    }) as Record<string, unknown>;
+
+    const resumedInput = store.getInput(String(result.latest_child_input_id));
+    assert.equal(
+      (resumedInput?.payload.context as Record<string, unknown> | undefined)
+        ?.use_user_browser_surface,
+      true,
     );
   } finally {
     store.close();

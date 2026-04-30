@@ -1536,10 +1536,6 @@ function buildAgentRuntimeConfigRequest(params: {
   };
 }
 
-function normalizedSessionKindValue(value: string | null | undefined): string {
-  return typeof value === "string" ? value.trim().toLowerCase() : "";
-}
-
 function requestUsesUserBrowserSurface(
   request: Pick<TsRunnerRequest, "session_kind" | "context">,
 ): boolean {
