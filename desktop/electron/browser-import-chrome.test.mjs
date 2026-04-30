@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const mainSourcePath = path.join(__dirname, "main.ts");
 const overflowPreloadPath = path.join(__dirname, "overflowPopupPreload.ts");
+const popupsPath = path.join(__dirname, "browser-pane", "popups.ts");
 const importChromiumPath = path.join(
   __dirname,
   "browser-pane",
@@ -141,12 +142,14 @@ test("desktop browser import flow discovers a Chrome profile and imports bookmar
 
 test("desktop browser overflow popup exposes Chrome import and reports the result", async () => {
   const source = await readFile(mainSourcePath, "utf8");
+  const popupsSource = await readFile(popupsPath, "utf8");
 
+  // Overflow popup HTML lives in browser-pane/popups.ts (BP-P3 extraction).
   assert.match(
-    source,
+    popupsSource,
     /<button class="item" id="chrome-import"><span class="icon">⇪<\/span><span>Import Chrome<\/span><\/button>/,
   );
-  assert.match(source, /window\.overflowPopup\.importChrome\(\)/);
+  assert.match(popupsSource, /window\.overflowPopup\.importChrome\(\)/);
   assert.match(
     source,
     /ipcMain\.handle\("browser:overflowImportChrome", async \(\) => \{/,

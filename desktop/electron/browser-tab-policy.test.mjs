@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const mainSourcePath = path.join(__dirname, "main.ts");
+const popupsPath = path.join(__dirname, "browser-pane", "popups.ts");
 
 test("desktop browser keeps auth-style popup windows while promoting ordinary new-window requests into tabs", async () => {
   const source = await readFile(mainSourcePath, "utf8");
@@ -76,9 +77,11 @@ test("desktop browser service exposes explicit tab creation endpoint", async () 
 
 test("desktop browser overflow popup exposes downloads and history actions", async () => {
   const source = await readFile(mainSourcePath, "utf8");
+  const popupsSource = await readFile(popupsPath, "utf8");
 
-  assert.match(source, /<button class="item" id="downloads"><span class="icon">⭳<\/span><span>Downloads<\/span><\/button>/);
-  assert.match(source, /window\.overflowPopup\.openDownloads\(\)/);
+  // Overflow popup HTML lives in browser-pane/popups.ts (BP-P3 extraction).
+  assert.match(popupsSource, /<button class="item" id="downloads"><span class="icon">⭳<\/span><span>Downloads<\/span><\/button>/);
+  assert.match(popupsSource, /window\.overflowPopup\.openDownloads\(\)/);
   assert.match(source, /ipcMain\.handle\("browser:overflowOpenDownloads", \(\) => \{/);
-  assert.match(source, /toggleDownloadsPopup\(overflowAnchorBounds\);/);
+  assert.match(source, /browserPanePopups\.toggleDownloadsPopup\(overflowAnchorBounds\);/);
 });
