@@ -1064,6 +1064,7 @@ test("runTsRunnerCli only advertises structured output when the selected harness
     "project_runtime_config",
     "resolve_workspace_skills",
     "stage_browser_tools",
+    "stage_delegated_browser_tools",
     "stage_runtime_tools",
   ]);
 });
