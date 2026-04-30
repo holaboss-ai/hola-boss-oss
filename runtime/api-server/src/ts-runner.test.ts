@@ -2885,6 +2885,147 @@ test("runTsRunnerCli forwards the active browser surface as browser_space in the
   );
 });
 
+test("runTsRunnerCli defaults delegated sessions to the agent browser when the user browser is active", async () => {
+  let capturedHarnessRequest: Record<string, unknown> | null = null;
+
+  const exitCode = await runTsRunnerCli(
+    [
+      "--request-base64",
+      encodeRequest({
+        ...baseRequest(),
+        session_kind: "subagent",
+      }),
+    ],
+    {
+      deps: {
+        ...testDeps(),
+        loadOperatorSurfaceContext: async () => ({
+          active_surface_id: "browser:user",
+          surfaces: [
+            {
+              surface_id: "browser:user",
+              surface_type: "browser",
+              owner: "user",
+              active: true,
+              mutability: "takeover_allowed",
+              summary: "User browser surface with 1 open tab.",
+            },
+            {
+              surface_id: "browser:agent",
+              surface_type: "browser",
+              owner: "agent",
+              active: false,
+              mutability: "agent_owned",
+              summary: "Agent browser surface with 1 open tab.",
+            },
+          ],
+        }),
+        runHarnessHost: async ({ requestPayload }) => {
+          capturedHarnessRequest = requestPayload;
+          return {
+            exitCode: 0,
+            stderr: "",
+            sawEvent: false,
+            terminalEmitted: false,
+            lastSequence: 0,
+          };
+        },
+      },
+      io: {
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.ok(capturedHarnessRequest);
+  assert.equal(
+    (capturedHarnessRequest as { browser_space?: string | null }).browser_space,
+    "agent",
+  );
+});
+
+test("runTsRunnerCli honors explicit delegated requests to use the user browser surface", async () => {
+  let capturedHarnessRequest: Record<string, unknown> | null = null;
+
+  const exitCode = await runTsRunnerCli(
+    [
+      "--request-base64",
+      encodeRequest({
+        ...baseRequest(),
+        session_kind: "subagent",
+        context: {
+          use_user_browser_surface: true,
+        },
+      }),
+    ],
+    {
+      deps: {
+        ...testDeps(),
+        loadOperatorSurfaceContext: async () => ({
+          active_surface_id: "browser:user",
+          surfaces: [
+            {
+              surface_id: "browser:user",
+              surface_type: "browser",
+              owner: "user",
+              active: true,
+              mutability: "takeover_allowed",
+              summary: "User browser surface with 1 open tab.",
+            },
+            {
+              surface_id: "browser:agent",
+              surface_type: "browser",
+              owner: "agent",
+              active: false,
+              mutability: "agent_owned",
+              summary: "Agent browser surface with 1 open tab.",
+            },
+          ],
+        }),
+        runHarnessHost: async ({ requestPayload }) => {
+          capturedHarnessRequest = requestPayload;
+          return {
+            exitCode: 0,
+            stderr: "",
+            sawEvent: false,
+            terminalEmitted: false,
+            lastSequence: 0,
+          };
+        },
+      },
+      io: {
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.ok(capturedHarnessRequest);
+  assert.equal(
+    (capturedHarnessRequest as { browser_space?: string | null }).browser_space,
+    "user",
+  );
+});
+
 test("runTsRunnerCli recalls workspace memory from scoped entries even with many newer cross-workspace entries", async () => {
   const sandboxRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "hb-ts-runner-recalled-memory-scope-"),
