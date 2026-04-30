@@ -111,6 +111,7 @@ import {
   runtimeErrorFromBody,
 } from "@holaboss/runtime-client";
 import { installBffFetchHandler } from "./bff-fetch.js";
+import { installBrowserPaneHandlers } from "./browser-pane/index.js";
 
 const APP_DISPLAY_NAME = "Holaboss";
 const MAC_APP_MENU_PRODUCT_LABEL = "holaOS";
@@ -23444,6 +23445,17 @@ app.whenReady().then(async () => {
       // single source of truth in main stdout.
       // eslint-disable-next-line no-console
       console.info(`[bff-fetch] ${JSON.stringify(event)}`);
+    },
+  });
+
+  installBrowserPaneHandlers({
+    getMainWindow: () => mainWindow,
+    getCookieHeader: () => authCookieHeader(),
+    register: (channel, handler) =>
+      handleTrustedIpc(channel, ["main"], handler),
+    log: (event) => {
+      // eslint-disable-next-line no-console
+      console.info(`[browser-pane] ${JSON.stringify(event)}`);
     },
   });
 
