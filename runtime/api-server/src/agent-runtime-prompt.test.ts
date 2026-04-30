@@ -278,11 +278,10 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
   assert.match(prompt.systemPrompt, /When the user answers a background-work blocker such as logging in, authorizing, confirming, or providing missing context, resume the waiting child session instead of starting a new task\./);
   assert.match(prompt.systemPrompt, /Treat chat like the user is messaging their assistant in an IM, not like the final deliverable surface\./);
   assert.match(prompt.systemPrompt, /Keep accepted, in-progress, waiting, and completed work clearly separate in how you speak\./);
-  assert.match(prompt.systemPrompt, /Right after spawning fresh delegated work, describe it only as started, queued, underway, or being handled; do not describe it as already done\./);
-  assert.match(prompt.systemPrompt, /For a fresh delegated kickoff, give one concise acknowledgement of that state\./);
+  assert.match(prompt.systemPrompt, /When routing work through `holaboss_delegate_task`, call the tool first and then write at most one user-facing update based on the returned task state\./);
   assert.match(prompt.systemPrompt, /Reserve completion language such as `done`, `finished`, `created`, `sent`, `navigated`, `verified`, or `it's there now`/i);
   assert.match(prompt.systemPrompt, /If delegated work immediately comes back waiting on user input, say it is blocked on that step and ask only for what is needed to continue\./);
-  assert.match(prompt.systemPrompt, /When a delegated result truly finishes early enough to merge into the same reply, state the completion once and do not also frame it like a fresh kickoff\./);
+  assert.match(prompt.systemPrompt, /If delegated work finishes early enough to merge into the same reply, state the completion once instead of also describing it as newly started or queued\./);
   assert.match(prompt.systemPrompt, /If the user asks for a report, brief, memo, digest, recap, write-up, or other deliverable that would be longer than a short chat reply, prefer producing it as an artifact through delegated background work/i);
   assert.match(prompt.systemPrompt, /When the user asks for a report-style deliverable, prefer delegating it so the result comes back as an artifact/i);
   assert.match(prompt.systemPrompt, /Acknowledge what matters in the user's message before diving into execution or results\./);

@@ -762,7 +762,7 @@ test("runTsRunnerCli persists pi harness session ids when runtime context select
   );
 });
 
-test("runTsRunnerCli passes MCP servers and tool refs into the pi harness request", async () => {
+test("runTsRunnerCli passes MCP servers and tool refs into the pi harness request for subagent sessions", async () => {
   const sandboxRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "hb-ts-runner-pi-mcp-"),
   );
@@ -774,6 +774,7 @@ test("runTsRunnerCli passes MCP servers and tool refs into the pi harness reques
       "--request-base64",
       encodeRequest({
         ...baseRequest(),
+        session_kind: "subagent",
         context: {
           _sandbox_runtime_exec_v1: {
             harness: "pi",
@@ -1400,7 +1401,7 @@ test("runTsRunnerCli strips staged execution tools from front-of-house workspace
   );
 });
 
-test("runTsRunnerCli filters mutating MCP tools out of front-session requests", async () => {
+test("runTsRunnerCli removes direct MCP tools from front-session requests", async () => {
   const sandboxRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "hb-ts-runner-front-mcp-filter-"),
   );
@@ -1482,13 +1483,7 @@ test("runTsRunnerCli filters mutating MCP tools out of front-session requests", 
         resolved_mcp_tool_refs: Array<Record<string, string>>;
       }
     ).resolved_mcp_tool_refs,
-    [
-      {
-        tool_id: "docs.lookup",
-        server_id: "docs",
-        tool_name: "lookup",
-      },
-    ],
+    [],
   );
   assert.deepEqual(
     (
@@ -4362,7 +4357,7 @@ test(
       assert.deepEqual(
         (capturedProjectRequest as { resolved_mcp_server_ids: string[] })
           .resolved_mcp_server_ids,
-        ["context7"],
+        [],
       );
       assert.deepEqual(
         (
@@ -4377,7 +4372,7 @@ test(
         (
           capturedHarnessRequest as { mcp_servers: Array<{ name: string }> }
         ).mcp_servers.map((server) => server.name),
-        ["context7"],
+        [],
       );
       assert.deepEqual(
         (capturedHarnessRequest as { mcp_tool_refs: unknown[] }).mcp_tool_refs,
@@ -4396,7 +4391,10 @@ test("runTsRunnerCli synthesizes run_failed when harness-host ends without a ter
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   let stdout = "";
   const exitCode = await runTsRunnerCli(
-    ["--request-base64", encodeRequest(baseRequest())],
+    [
+      "--request-base64",
+      encodeRequest({ ...baseRequest(), session_kind: "subagent" }),
+    ],
     {
       deps: testDeps({
         harnessEvents: [
@@ -4454,7 +4452,10 @@ test("runTsRunnerCli appends bootstrapped app MCP servers into the harness-host 
   let capturedRequestPayload: Record<string, unknown> | null = null;
 
   const exitCode = await runTsRunnerCli(
-    ["--request-base64", encodeRequest(baseRequest())],
+    [
+      "--request-base64",
+      encodeRequest({ ...baseRequest(), session_kind: "subagent" }),
+    ],
     {
       deps: {
         ...testDeps(),

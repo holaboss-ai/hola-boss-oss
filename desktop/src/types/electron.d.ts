@@ -15,7 +15,13 @@ declare global {
     entries: LocalFileEntry[];
   }
 
-  type FilePreviewKind = "text" | "image" | "pdf" | "table" | "unsupported";
+  type FilePreviewKind =
+    | "text"
+    | "image"
+    | "pdf"
+    | "table"
+    | "presentation"
+    | "unsupported";
 
   interface FilePreviewTableSheetPayload {
     name: string;
@@ -29,6 +35,22 @@ declare global {
     hasHeaderRow: boolean;
   }
 
+  interface FilePreviewPresentationTextBoxPayload {
+    xPct: number;
+    yPct: number;
+    widthPct: number;
+    heightPct: number;
+    paragraphs: string[];
+    align: "left" | "center" | "right" | "justify";
+    fontSizePx?: number;
+    bold?: boolean;
+  }
+
+  interface FilePreviewPresentationSlidePayload {
+    index: number;
+    boxes: FilePreviewPresentationTextBoxPayload[];
+  }
+
   interface FilePreviewPayload {
     absolutePath: string;
     name: string;
@@ -38,6 +60,9 @@ declare global {
     content?: string;
     dataUrl?: string;
     tableSheets?: FilePreviewTableSheetPayload[];
+    presentationSlides?: FilePreviewPresentationSlidePayload[];
+    presentationWidth?: number;
+    presentationHeight?: number;
     size: number;
     modifiedAt: string;
     isEditable: boolean;

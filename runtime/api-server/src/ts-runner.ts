@@ -1154,24 +1154,6 @@ function projectExtraToolIdsForSession(params: {
   );
 }
 
-function inferMcpToolPolicy(toolRef: {
-  tool_id: string;
-  tool_name: string;
-}): "inspect" | "mutate" | "coordinate" {
-  const haystack = `${toolRef.tool_id} ${toolRef.tool_name}`.toLowerCase();
-  if (
-    /(create|update|delete|remove|write|edit|patch|post|send|run|execute|trigger|start|stop)/.test(
-      haystack,
-    )
-  ) {
-    return "mutate";
-  }
-  if (/(ask|question|plan|todo|approve|confirm)/.test(haystack)) {
-    return "coordinate";
-  }
-  return "inspect";
-}
-
 function projectResolvedMcpToolRefsForSession(params: {
   sessionKind: string | null | undefined;
   resolvedMcpToolRefs: CompiledWorkspaceRuntimePlan["resolved_mcp_tool_refs"];
@@ -1179,9 +1161,17 @@ function projectResolvedMcpToolRefsForSession(params: {
   if (!isFrontSessionKind(params.sessionKind)) {
     return params.resolvedMcpToolRefs;
   }
-  return params.resolvedMcpToolRefs.filter(
-    (toolRef) => inferMcpToolPolicy(toolRef) !== "mutate",
-  );
+  return [];
+}
+
+function projectResolvedMcpServerIdsForSession(params: {
+  sessionKind: string | null | undefined;
+  resolvedMcpServerIds: string[];
+}): string[] {
+  if (!isFrontSessionKind(params.sessionKind)) {
+    return params.resolvedMcpServerIds;
+  }
+  return [];
 }
 
 function explicitHolabossUserId(request: TsRunnerRequest): string | undefined {
@@ -1455,6 +1445,10 @@ function buildAgentRuntimeConfigRequest(params: {
         resolvedMcpToolRefs: params.resolvedMcpToolRefs,
       })
     : null;
+  const resolvedMcpServerIds = projectResolvedMcpServerIdsForSession({
+    sessionKind: normalizedSessionKind,
+    resolvedMcpServerIds: params.resolvedMcpServerIds,
+  });
   const common = {
     session_id: params.request.session_id,
     workspace_id: params.request.workspace_id,
@@ -1514,7 +1508,7 @@ function buildAgentRuntimeConfigRequest(params: {
       server_id: toolRef.server_id,
       tool_name: toolRef.tool_name,
     })),
-    resolved_mcp_server_ids: [...params.resolvedMcpServerIds],
+    resolved_mcp_server_ids: [...resolvedMcpServerIds],
     ...(delegatedCapabilitySnapshotEligible
       ? {
           delegated_resolved_mcp_tool_refs: (
@@ -2131,6 +2125,11 @@ export async function executeTsRunnerRequest(
         })
       : [];
 
+    const directResolvedMcpToolRefs = projectResolvedMcpToolRefsForSession({
+      sessionKind: request.session_kind,
+      resolvedMcpToolRefs,
+    });
+
     if (
       runnerPrepPlan.bootstrapResolvedApplications &&
       compiledPlan.resolved_applications.length > 0
@@ -2150,6 +2149,16 @@ export async function executeTsRunnerRequest(
         ),
       );
     }
+
+    const directMcpServerIds = new Set(
+      projectResolvedMcpServerIdsForSession({
+        sessionKind: request.session_kind,
+        resolvedMcpServerIds: effectiveMcpServers.map((server) => server.name),
+      }),
+    );
+    const directMcpServers = effectiveMcpServers.filter((server) =>
+      directMcpServerIds.has(server.name),
+    );
 
     const sessionScratchpadContext = isFrontSessionKind(request.session_kind)
       ? null
@@ -2310,7 +2319,7 @@ export async function executeTsRunnerRequest(
       harnessSupportsStructuredOutput:
         harnessAdapter.capabilities.supportsStructuredOutput,
       mcpServerIdMap: serverIdMap,
-      mcpServers: effectiveMcpServers,
+      mcpServers: directMcpServers,
       sidecar,
       bootstrapStartedAt,
       bootstrapReadyAt: bootstrapStartedAt,
@@ -2329,8 +2338,8 @@ export async function executeTsRunnerRequest(
         ),
         runtimeApiBaseUrl: currentRuntimeApiUrl(),
         workspaceSkills,
-        mcpServers: effectiveMcpServers,
-        mcpToolRefs: resolvedMcpToolRefs.map((toolRef) => ({
+        mcpServers: directMcpServers,
+        mcpToolRefs: directResolvedMcpToolRefs.map((toolRef) => ({
           tool_id: toolRef.tool_id,
           server_id: serverIdMap[toolRef.server_id] ?? toolRef.server_id,
           tool_name: toolRef.tool_name,
@@ -2355,7 +2364,7 @@ export async function executeTsRunnerRequest(
       harnessSupportsStructuredOutput:
         harnessAdapter.capabilities.supportsStructuredOutput,
       mcpServerIdMap: serverIdMap,
-      mcpServers: effectiveMcpServers,
+      mcpServers: directMcpServers,
       sidecar,
       bootstrapStartedAt,
       bootstrapReadyAt: bootstrapStartedAt,
@@ -2373,8 +2382,8 @@ export async function executeTsRunnerRequest(
       ),
       runtimeApiBaseUrl: currentRuntimeApiUrl(),
       workspaceSkills,
-      mcpServers: effectiveMcpServers,
-      mcpToolRefs: resolvedMcpToolRefs.map((toolRef) => ({
+      mcpServers: directMcpServers,
+      mcpToolRefs: directResolvedMcpToolRefs.map((toolRef) => ({
         tool_id: toolRef.tool_id,
         server_id: serverIdMap[toolRef.server_id] ?? toolRef.server_id,
         tool_name: toolRef.tool_name,

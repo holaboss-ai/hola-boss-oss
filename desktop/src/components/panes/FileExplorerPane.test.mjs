@@ -361,6 +361,23 @@ test("file explorer renders editable spreadsheet previews", async () => {
   );
 });
 
+test("file explorer renders PowerPoint presentation previews", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /import \{ PresentationPreview \} from "@\/components\/panes\/PresentationPreview";/,
+  );
+  assert.match(
+    source,
+    /preview\?\.kind === "presentation" && preview\.presentationSlides/,
+  );
+  assert.match(
+    source,
+    /<PresentationPreview[\s\S]*slides=\{preview\.presentationSlides\}[\s\S]*slideWidth=\{preview\.presentationWidth\}[\s\S]*slideHeight=\{preview\.presentationHeight\}/,
+  );
+});
+
 test("file explorer preview metadata omits the absolute file path", async () => {
   const source = await readFile(sourcePath, "utf8");
 

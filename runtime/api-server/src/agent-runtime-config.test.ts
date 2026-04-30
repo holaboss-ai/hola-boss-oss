@@ -477,7 +477,7 @@ test("projectAgentRuntimeConfig includes current user context as a context messa
   }
 });
 
-test("projectAgentRuntimeConfig surfaces connected MCP servers when no explicit MCP tool refs are pre-enumerated", () => {
+test("projectAgentRuntimeConfig strips direct MCP access from workspace sessions", () => {
   process.env.HOLABOSS_MODEL_PROXY_BASE_URL =
     "https://runtime.example/api/v1/model-proxy";
   process.env.HOLABOSS_USER_ID = "user-1";
@@ -502,8 +502,14 @@ test("projectAgentRuntimeConfig surfaces connected MCP servers when no explicit 
       workspace_skill_ids: [],
       default_tools: ["read"],
       extra_tools: [],
-      resolved_mcp_tool_refs: [],
-      resolved_mcp_server_ids: ["context7"],
+      resolved_mcp_tool_refs: [
+        {
+          tool_id: "workspace.lookup",
+          server_id: "workspace",
+          tool_name: "lookup",
+        },
+      ],
+      resolved_mcp_server_ids: ["context7", "workspace"],
       resolved_output_schemas: {},
       agent: {
         id: "workspace.general",
@@ -512,14 +518,19 @@ test("projectAgentRuntimeConfig surfaces connected MCP servers when no explicit 
       },
     });
 
-    assert.match(
+    assert.doesNotMatch(
       result.context_messages?.join("\n\n") ?? "",
       /Connected MCP access: available\./,
     );
-    assert.match(
+    assert.doesNotMatch(
       result.system_prompt,
       /If connected MCP access exists without tool names listed here, do not assume MCP is unavailable; use surfaced MCP tools when relevant\./i,
     );
+    assert.doesNotMatch(
+      result.system_prompt,
+      /Use relevant MCP tools directly instead of only describing them\./,
+    );
+    assert.equal(result.tools.mcp__workspace__lookup, undefined);
     assert.deepEqual(result.workspace_tool_ids, []);
     assert.deepEqual(result.capability_manifest?.context, {
       harness_id: "pi",
@@ -528,10 +539,9 @@ test("projectAgentRuntimeConfig surfaces connected MCP servers when no explicit 
       browser_tool_ids: [],
       runtime_tool_ids: [],
       workspace_command_ids: [],
-      mcp_server_ids: ["context7"],
       workspace_commands_available: false,
       workspace_skills_available: false,
-      mcp_tools_available: true,
+      mcp_tools_available: false,
     });
   } finally {
     delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;

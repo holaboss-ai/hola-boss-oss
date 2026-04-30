@@ -42,6 +42,7 @@ import catppuccinCollection from "@iconify-json/catppuccin/icons.json";
 addCollection(catppuccinCollection as Parameters<typeof addCollection>[0]);
 import { DashboardRenderer } from "@/components/dashboard/DashboardRenderer";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
+import { PresentationPreview } from "@/components/panes/PresentationPreview";
 import {
   areTablePreviewSheetsEqual,
   cloneTablePreviewSheets,
@@ -3575,6 +3576,13 @@ export function FileExplorerPane({
               className="h-full w-full border-0"
             />
           </div>
+        ) : preview?.kind === "presentation" && preview.presentationSlides ? (
+          <PresentationPreview
+            name={preview.name}
+            slides={preview.presentationSlides}
+            slideWidth={preview.presentationWidth}
+            slideHeight={preview.presentationHeight}
+          />
         ) : preview?.kind === "table" && activeTableSheet ? (
           <SpreadsheetEditor
             sheets={previewTableSheets}

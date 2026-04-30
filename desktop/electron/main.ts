@@ -83,6 +83,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { URL } from "node:url";
 import ExcelJS from "exceljs";
+import JSZip from "jszip";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import {
@@ -419,7 +420,13 @@ interface DirectoryPayload {
   entries: DirectoryEntryPayload[];
 }
 
-type FilePreviewKind = "text" | "image" | "pdf" | "table" | "unsupported";
+type FilePreviewKind =
+  | "text"
+  | "image"
+  | "pdf"
+  | "table"
+  | "presentation"
+  | "unsupported";
 
 interface FilePreviewTableSheetPayload {
   name: string;
@@ -433,6 +440,22 @@ interface FilePreviewTableSheetPayload {
   hasHeaderRow: boolean;
 }
 
+interface FilePreviewPresentationTextBoxPayload {
+  xPct: number;
+  yPct: number;
+  widthPct: number;
+  heightPct: number;
+  paragraphs: string[];
+  align: "left" | "center" | "right" | "justify";
+  fontSizePx?: number;
+  bold?: boolean;
+}
+
+interface FilePreviewPresentationSlidePayload {
+  index: number;
+  boxes: FilePreviewPresentationTextBoxPayload[];
+}
+
 interface FilePreviewPayload {
   absolutePath: string;
   name: string;
@@ -442,6 +465,9 @@ interface FilePreviewPayload {
   content?: string;
   dataUrl?: string;
   tableSheets?: FilePreviewTableSheetPayload[];
+  presentationSlides?: FilePreviewPresentationSlidePayload[];
+  presentationWidth?: number;
+  presentationHeight?: number;
   size: number;
   modifiedAt: string;
   isEditable: boolean;
@@ -17997,6 +18023,7 @@ const TEXT_FILE_EXTENSIONS = new Set([
 ]);
 
 const TABLE_FILE_EXTENSIONS = new Set([".csv", ".xlsx", ".xls"]);
+const PRESENTATION_FILE_EXTENSIONS = new Set([".pptx"]);
 
 const IMAGE_FILE_MIME_TYPES = new Map<string, string>([
   [".png", "image/png"],
@@ -18015,9 +18042,12 @@ const PDF_FILE_MIME_TYPES = new Map<string, string>([
 const MAX_TEXT_PREVIEW_BYTES = 1024 * 1024 * 2;
 const MAX_IMAGE_PREVIEW_BYTES = 1024 * 1024 * 12;
 const MAX_TABLE_PREVIEW_BYTES = 1024 * 1024 * 8;
+const MAX_PRESENTATION_PREVIEW_BYTES = 1024 * 1024 * 20;
 const MAX_TABLE_PREVIEW_ROWS = 250;
 const MAX_TABLE_PREVIEW_COLUMNS = 60;
 const MAX_TABLE_PREVIEW_SHEETS = 8;
+const DEFAULT_PRESENTATION_WIDTH_EMU = 12_192_000;
+const DEFAULT_PRESENTATION_HEIGHT_EMU = 6_858_000;
 
 function toPreviewTableCellValue(value: unknown): string {
   if (value === null || value === undefined) {
@@ -18403,6 +18433,245 @@ async function buildTablePreviewSheets(
   return buildWorkbookPreviewSheets(buffer);
 }
 
+function decodeXmlEntities(value: string): string {
+  return value
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&#x([0-9a-f]+);/gi, (_match, hex) =>
+      String.fromCodePoint(Number.parseInt(hex, 16)),
+    )
+    .replace(/&#(\d+);/g, (_match, decimal) =>
+      String.fromCodePoint(Number.parseInt(decimal, 10)),
+    );
+}
+
+function normalizePresentationText(value: string): string {
+  return value
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\u0000/g, "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
+function clampPresentationPercent(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, value));
+}
+
+function fontSizePxFromOpenXmlSize(
+  rawSize: string | null | undefined,
+): number | undefined {
+  if (!rawSize) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(rawSize, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+  const points = parsed / 100;
+  return Math.max(12, Math.min(42, Math.round(points * (96 / 72))));
+}
+
+function presentationTextAlignFromOpenXml(
+  rawAlign: string | null | undefined,
+): FilePreviewPresentationTextBoxPayload["align"] {
+  switch ((rawAlign ?? "").trim().toLowerCase()) {
+    case "ctr":
+      return "center";
+    case "r":
+      return "right";
+    case "just":
+    case "dist":
+      return "justify";
+    default:
+      return "left";
+  }
+}
+
+function parsePresentationSlideSize(
+  presentationXml: string | null | undefined,
+): { width: number; height: number } {
+  const match = presentationXml?.match(
+    /<p:sldSz\b[^>]*\bcx="(\d+)"[^>]*\bcy="(\d+)"/i,
+  );
+  const width = Number.parseInt(match?.[1] ?? "", 10);
+  const height = Number.parseInt(match?.[2] ?? "", 10);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return {
+      width: DEFAULT_PRESENTATION_WIDTH_EMU,
+      height: DEFAULT_PRESENTATION_HEIGHT_EMU,
+    };
+  }
+  return { width, height };
+}
+
+function extractPresentationSlideTextBoxes(
+  slideXml: string,
+  slideWidth: number,
+  slideHeight: number,
+): FilePreviewPresentationTextBoxPayload[] {
+  const boxes: FilePreviewPresentationTextBoxPayload[] = [];
+  const shapeMatches = slideXml.matchAll(/<p:sp\b[\s\S]*?<\/p:sp>/gi);
+  for (const shapeMatch of shapeMatches) {
+    const shapeXml = shapeMatch[0];
+    if (!/<p:txBody\b/i.test(shapeXml)) {
+      continue;
+    }
+
+    const paragraphs: string[] = [];
+    let align: FilePreviewPresentationTextBoxPayload["align"] = "left";
+    let alignResolved = false;
+    let fontSizePx: number | undefined;
+    let bold = false;
+    const paragraphMatches = shapeXml.matchAll(/<a:p\b[\s\S]*?<\/a:p>/gi);
+    for (const paragraphMatch of paragraphMatches) {
+      const paragraphXml = paragraphMatch[0];
+      if (!alignResolved) {
+        const paragraphAlign = paragraphXml.match(
+          /<a:pPr\b[^>]*\balgn="([^"]+)"/i,
+        )?.[1];
+        if (paragraphAlign) {
+          align = presentationTextAlignFromOpenXml(paragraphAlign);
+          alignResolved = true;
+        }
+      }
+      if (fontSizePx === undefined) {
+        const rawSize =
+          paragraphXml.match(
+            /<(?:a:rPr|a:defRPr|a:endParaRPr)\b[^>]*\bsz="(\d+)"/i,
+          )?.[1] ?? null;
+        fontSizePx = fontSizePxFromOpenXmlSize(rawSize);
+      }
+      if (
+        !bold &&
+        /<(?:a:rPr|a:defRPr|a:endParaRPr)\b[^>]*\bb="1"/i.test(paragraphXml)
+      ) {
+        bold = true;
+      }
+      const textRuns = [...paragraphXml.matchAll(/<a:t[^>]*>([\s\S]*?)<\/a:t>/gi)]
+        .map((match) => decodeXmlEntities(match[1] ?? ""))
+        .join("");
+      const normalizedText = normalizePresentationText(textRuns);
+      if (normalizedText) {
+        paragraphs.push(normalizedText);
+      }
+    }
+
+    if (paragraphs.length === 0) {
+      continue;
+    }
+
+    const xfrmMatch = shapeXml.match(
+      /<a:xfrm\b[\s\S]*?<a:off\b[^>]*\bx="(\d+)"[^>]*\by="(\d+)"[^>]*\/>[\s\S]*?<a:ext\b[^>]*\bcx="(\d+)"[^>]*\bcy="(\d+)"[^>]*\/>[\s\S]*?<\/a:xfrm>/i,
+    );
+    const x = Number.parseInt(xfrmMatch?.[1] ?? "", 10);
+    const y = Number.parseInt(xfrmMatch?.[2] ?? "", 10);
+    const width = Number.parseInt(xfrmMatch?.[3] ?? "", 10);
+    const height = Number.parseInt(xfrmMatch?.[4] ?? "", 10);
+    if (
+      !Number.isFinite(x) ||
+      !Number.isFinite(y) ||
+      !Number.isFinite(width) ||
+      !Number.isFinite(height) ||
+      width <= 0 ||
+      height <= 0
+    ) {
+      boxes.push({
+        xPct: 8,
+        yPct: clampPresentationPercent(10 + boxes.length * 12),
+        widthPct: 84,
+        heightPct: 12,
+        paragraphs,
+        align,
+        ...(fontSizePx ? { fontSizePx } : {}),
+        ...(bold ? { bold: true } : {}),
+      });
+      continue;
+    }
+
+    boxes.push({
+      xPct: clampPresentationPercent((x / slideWidth) * 100),
+      yPct: clampPresentationPercent((y / slideHeight) * 100),
+      widthPct: clampPresentationPercent((width / slideWidth) * 100),
+      heightPct: clampPresentationPercent((height / slideHeight) * 100),
+      paragraphs,
+      align,
+      ...(fontSizePx ? { fontSizePx } : {}),
+      ...(bold ? { bold: true } : {}),
+    });
+  }
+
+  boxes.sort((left, right) => {
+    if (left.yPct !== right.yPct) {
+      return left.yPct - right.yPct;
+    }
+    return left.xPct - right.xPct;
+  });
+
+  if (boxes.length > 0) {
+    return boxes;
+  }
+
+  const fallbackParagraphs = [...slideXml.matchAll(/<a:t[^>]*>([\s\S]*?)<\/a:t>/gi)]
+    .map((match) =>
+      normalizePresentationText(decodeXmlEntities(match[1] ?? "")),
+    )
+    .filter(Boolean);
+  if (fallbackParagraphs.length === 0) {
+    return [];
+  }
+  return [
+    {
+      xPct: 8,
+      yPct: 10,
+      widthPct: 84,
+      heightPct: 80,
+      paragraphs: fallbackParagraphs,
+      align: "left",
+    },
+  ];
+}
+
+async function buildPresentationPreview(buffer: Buffer): Promise<{
+  presentationSlides: FilePreviewPresentationSlidePayload[];
+  presentationWidth: number;
+  presentationHeight: number;
+}> {
+  const zip = await JSZip.loadAsync(buffer);
+  const presentationXml = await zip.file("ppt/presentation.xml")?.async("text");
+  const { width, height } = parsePresentationSlideSize(presentationXml);
+  const slideFiles = Object.keys(zip.files)
+    .filter((name) => /ppt\/slides\/slide\d+\.xml$/i.test(name))
+    .sort((left, right) =>
+      left.localeCompare(right, undefined, { numeric: true }),
+    );
+  const presentationSlides: FilePreviewPresentationSlidePayload[] = [];
+  for (const [index, slideFilePath] of slideFiles.entries()) {
+    const slideXml = await zip.file(slideFilePath)?.async("text");
+    if (!slideXml) {
+      continue;
+    }
+    presentationSlides.push({
+      index: index + 1,
+      boxes: extractPresentationSlideTextBoxes(slideXml, width, height),
+    });
+  }
+  return {
+    presentationSlides,
+    presentationWidth: width,
+    presentationHeight: height,
+  };
+}
+
 function getFilePreviewKind(targetPath: string) {
   const extension = path.extname(targetPath).toLowerCase();
   if (!extension) {
@@ -18411,6 +18680,10 @@ function getFilePreviewKind(targetPath: string) {
 
   if (TABLE_FILE_EXTENSIONS.has(extension)) {
     return { extension, kind: "table" as const };
+  }
+
+  if (PRESENTATION_FILE_EXTENSIONS.has(extension)) {
+    return { extension, kind: "presentation" as const };
   }
 
   if (TEXT_FILE_EXTENSIONS.has(extension)) {
@@ -18554,6 +18827,50 @@ async function readFilePreview(
         isEditable: false,
         unsupportedReason:
           "Spreadsheet could not be parsed for inline preview.",
+      };
+    }
+  }
+
+  if (kind === "presentation") {
+    if (stat.size > MAX_PRESENTATION_PREVIEW_BYTES) {
+      return {
+        ...basePayload,
+        kind: "unsupported",
+        isEditable: false,
+        unsupportedReason: "Presentation is too large to preview inline.",
+      };
+    }
+
+    try {
+      const buffer = await fs.readFile(absolutePath);
+      const {
+        presentationSlides,
+        presentationWidth,
+        presentationHeight,
+      } = await buildPresentationPreview(buffer);
+      if (presentationSlides.length === 0) {
+        return {
+          ...basePayload,
+          kind: "unsupported",
+          isEditable: false,
+          unsupportedReason:
+            "No slide content could be extracted from this presentation.",
+        };
+      }
+      return {
+        ...basePayload,
+        kind: "presentation",
+        presentationSlides,
+        presentationWidth,
+        presentationHeight,
+      };
+    } catch {
+      return {
+        ...basePayload,
+        kind: "unsupported",
+        isEditable: false,
+        unsupportedReason:
+          "Presentation could not be parsed for inline preview.",
       };
     }
   }

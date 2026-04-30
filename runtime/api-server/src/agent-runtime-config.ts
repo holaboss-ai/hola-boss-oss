@@ -205,6 +205,40 @@ const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<
   },
 };
 
+function normalizedSessionKindValue(value: string | null | undefined): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function directMcpDisabledForSession(value: string | null | undefined): boolean {
+  const normalized = normalizedSessionKindValue(value);
+  return (
+    normalized === "" ||
+    normalized === "workspace_session" ||
+    normalized === "main" ||
+    normalized === "onboarding"
+  );
+}
+
+function directResolvedMcpToolRefsForSession(
+  sessionKind: string | null | undefined,
+  toolRefs: AgentRuntimeConfigCliRequest["resolved_mcp_tool_refs"],
+): AgentRuntimeConfigCliRequest["resolved_mcp_tool_refs"] {
+  if (!directMcpDisabledForSession(sessionKind)) {
+    return toolRefs;
+  }
+  return [];
+}
+
+function directResolvedMcpServerIdsForSession(
+  sessionKind: string | null | undefined,
+  serverIds: string[] | null | undefined,
+): string[] {
+  if (!directMcpDisabledForSession(sessionKind)) {
+    return serverIds ?? [];
+  }
+  return [];
+}
+
 interface ConfiguredRuntimeProvider {
   id: string;
   kind: string;
@@ -1489,6 +1523,14 @@ export function projectAgentRuntimeConfig(
 ): AgentRuntimeConfigCliResponse {
   const selectedModel =
     request.selected_model?.trim() || defaultExecutionModel();
+  const directResolvedMcpToolRefs = directResolvedMcpToolRefsForSession(
+    request.session_kind ?? null,
+    request.resolved_mcp_tool_refs,
+  );
+  const directResolvedMcpServerIds = directResolvedMcpServerIdsForSession(
+    request.session_kind ?? null,
+    request.resolved_mcp_server_ids ?? null,
+  );
   const capabilityManifest = buildAgentCapabilityManifest({
     harnessId: request.harness_id ?? null,
     sessionKind: request.session_kind ?? null,
@@ -1502,8 +1544,8 @@ export function projectAgentRuntimeConfig(
     defaultTools: request.default_tools,
     extraTools: request.extra_tools,
     workspaceSkillIds: request.workspace_skill_ids ?? [],
-    resolvedMcpToolRefs: request.resolved_mcp_tool_refs,
-    resolvedMcpServerIds: request.resolved_mcp_server_ids ?? null,
+    resolvedMcpToolRefs: directResolvedMcpToolRefs,
+    resolvedMcpServerIds: directResolvedMcpServerIds,
     toolServerIdMap: request.tool_server_id_map ?? null,
   });
   const delegatedCapabilityManifest =
@@ -1536,8 +1578,8 @@ export function projectAgentRuntimeConfig(
     defaultTools: request.default_tools,
     extraTools: request.extra_tools,
     workspaceSkillIds: request.workspace_skill_ids ?? [],
-    resolvedMcpToolRefs: request.resolved_mcp_tool_refs,
-    resolvedMcpServerIds: request.resolved_mcp_server_ids ?? null,
+    resolvedMcpToolRefs: directResolvedMcpToolRefs,
+    resolvedMcpServerIds: directResolvedMcpServerIds,
     sessionKind: request.session_kind ?? null,
     sessionMode: request.session_mode,
     harnessId: request.harness_id ?? null,
@@ -1558,7 +1600,7 @@ export function projectAgentRuntimeConfig(
     request.default_provider_id,
   );
   const workspaceToolIds = uniqueNonEmptyStringsInOrder(
-    request.resolved_mcp_tool_refs.map((toolRef) => toolRef.tool_id),
+    directResolvedMcpToolRefs.map((toolRef) => toolRef.tool_id),
   );
   const tools = buildEnabledToolMapFromManifest(capabilityManifest);
 

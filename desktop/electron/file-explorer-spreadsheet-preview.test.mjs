@@ -21,7 +21,7 @@ test("desktop file preview supports tabular spreadsheet kinds", async () => {
 
   assert.match(
     source,
-    /type FilePreviewKind = "text" \| "image" \| "pdf" \| "table" \| "unsupported";/,
+    /type FilePreviewKind =[\s\S]*"text"[\s\S]*"image"[\s\S]*"pdf"[\s\S]*"table"[\s\S]*"presentation"[\s\S]*"unsupported";/,
   );
   assert.match(
     source,
@@ -45,6 +45,36 @@ test("desktop file preview supports tabular spreadsheet kinds", async () => {
   assert.match(
     source,
     /const TEXT_FILE_EXTENSIONS = new Set\(\[[\s\S]*"\.md"[\s\S]*"\.mdx"[\s\S]*"\.markdown"[\s\S]*\]\);/,
+  );
+});
+
+test("desktop file preview supports PowerPoint presentation kinds", async () => {
+  const source = await readFile(mainSourcePath, "utf8");
+  const fileExplorerSource = await readFile(fileExplorerPaneSourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const PRESENTATION_FILE_EXTENSIONS = new Set\(\["\.pptx"\]\);/,
+  );
+  assert.match(source, /interface FilePreviewPresentationTextBoxPayload \{/);
+  assert.match(source, /interface FilePreviewPresentationSlidePayload \{/);
+  assert.match(source, /async function buildPresentationPreview\(buffer: Buffer\)/);
+  assert.match(source, /return \{ extension, kind: "presentation" as const \};/);
+  assert.match(
+    source,
+    /if \(kind === "presentation"\) \{[\s\S]*await buildPresentationPreview\(buffer\);[\s\S]*presentationSlides,[\s\S]*presentationWidth,[\s\S]*presentationHeight,/,
+  );
+  assert.match(
+    fileExplorerSource,
+    /import \{ PresentationPreview \} from "@\/components\/panes\/PresentationPreview";/,
+  );
+  assert.match(
+    fileExplorerSource,
+    /preview\?\.kind === "presentation" && preview\.presentationSlides/,
+  );
+  assert.match(
+    fileExplorerSource,
+    /<PresentationPreview[\s\S]*slides=\{preview\.presentationSlides\}[\s\S]*slideWidth=\{preview\.presentationWidth\}[\s\S]*slideHeight=\{preview\.presentationHeight\}/,
   );
 });
 

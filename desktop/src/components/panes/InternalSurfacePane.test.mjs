@@ -113,6 +113,23 @@ test("internal surface renders editable spreadsheet previews", async () => {
   );
 });
 
+test("internal surface renders PowerPoint presentation previews", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /import \{ PresentationPreview \} from "@\/components\/panes\/PresentationPreview";/,
+  );
+  assert.match(
+    source,
+    /preview\.kind === "presentation" && preview\.presentationSlides/,
+  );
+  assert.match(
+    source,
+    /<PresentationPreview[\s\S]*slides=\{preview\.presentationSlides\}[\s\S]*slideWidth=\{preview\.presentationWidth\}[\s\S]*slideHeight=\{preview\.presentationHeight\}/,
+  );
+});
+
 test("internal surface refreshes open file previews when the backing file changes on disk", async () => {
   const source = await readFile(sourcePath, "utf8");
 

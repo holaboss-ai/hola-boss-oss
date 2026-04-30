@@ -19,7 +19,13 @@ interface ListDirectoryResponse {
   entries: FileSystemEntry[];
 }
 
-type FilePreviewKind = "text" | "image" | "pdf" | "table" | "unsupported";
+type FilePreviewKind =
+  | "text"
+  | "image"
+  | "pdf"
+  | "table"
+  | "presentation"
+  | "unsupported";
 
 interface FilePreviewTableSheetPayload {
   name: string;
@@ -33,6 +39,22 @@ interface FilePreviewTableSheetPayload {
   hasHeaderRow: boolean;
 }
 
+interface FilePreviewPresentationTextBoxPayload {
+  xPct: number;
+  yPct: number;
+  widthPct: number;
+  heightPct: number;
+  paragraphs: string[];
+  align: "left" | "center" | "right" | "justify";
+  fontSizePx?: number;
+  bold?: boolean;
+}
+
+interface FilePreviewPresentationSlidePayload {
+  index: number;
+  boxes: FilePreviewPresentationTextBoxPayload[];
+}
+
 interface FilePreviewPayload {
   absolutePath: string;
   name: string;
@@ -42,6 +64,9 @@ interface FilePreviewPayload {
   content?: string;
   dataUrl?: string;
   tableSheets?: FilePreviewTableSheetPayload[];
+  presentationSlides?: FilePreviewPresentationSlidePayload[];
+  presentationWidth?: number;
+  presentationHeight?: number;
   size: number;
   modifiedAt: string;
   isEditable: boolean;

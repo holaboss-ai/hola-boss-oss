@@ -17,6 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { DashboardRenderer } from "@/components/dashboard/DashboardRenderer";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
+import { PresentationPreview } from "@/components/panes/PresentationPreview";
 import {
   bumpDashboardRefreshKey,
   toggleDashboardFullWidth as toggleDashboardFullWidthGlobal,
@@ -674,6 +675,17 @@ export function InternalSurfacePane({
           title={preview.name}
           src={preview.dataUrl}
           className="h-full w-full border-0"
+        />
+      );
+    }
+
+    if (preview.kind === "presentation" && preview.presentationSlides) {
+      return (
+        <PresentationPreview
+          name={preview.name}
+          slides={preview.presentationSlides}
+          slideWidth={preview.presentationWidth}
+          slideHeight={preview.presentationHeight}
         />
       );
     }
