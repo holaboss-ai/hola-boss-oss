@@ -968,6 +968,8 @@ const emitHistoryState = browserPaneTabState.emitHistoryState;
 const closeBrowserTabRecord = browserPaneTabState.closeBrowserTabRecord;
 const syncBrowserState = browserPaneTabState.syncBrowserState;
 const recordHistoryVisit = browserPaneTabState.recordHistoryVisit;
+const setBrowserBounds = browserPaneTabState.setBounds;
+const captureVisibleBrowserSnapshot = browserPaneTabState.captureVisibleSnapshot;
 const reportedOperatorSurfaceContexts = new Map<
   string,
   ReportedOperatorSurfaceContextPayload
@@ -19950,45 +19952,8 @@ async function closeBrowserTab(
   );
 }
 
-function setBrowserBounds(bounds: BrowserBoundsPayload) {
-  browserBounds = {
-    x: Math.max(0, Math.round(bounds.x)),
-    y: Math.max(0, Math.round(bounds.y)),
-    width: Math.max(0, Math.round(bounds.width)),
-    height: Math.max(0, Math.round(bounds.height)),
-  };
-
-  const activeTab = getActiveBrowserTab(
-    activeBrowserWorkspaceId,
-    activeBrowserSpaceId,
-    activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-    { useVisibleAgentSession: true },
-  );
-  if (!activeTab || !hasVisibleBrowserBounds()) {
-    mainWindow?.setBrowserView(null);
-    attachedBrowserTabView = null;
-    return;
-  }
-  updateAttachedBrowserView();
-}
-
-async function captureVisibleBrowserSnapshot(): Promise<BrowserVisibleSnapshotPayload | null> {
-  const activeTab = getActiveBrowserTab(
-    activeBrowserWorkspaceId,
-    activeBrowserSpaceId,
-    activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-    { useVisibleAgentSession: true },
-  );
-  if (!activeTab || !hasVisibleBrowserBounds()) {
-    return null;
-  }
-
-  const image = await activeTab.view.webContents.capturePage();
-  return {
-    bounds: { ...browserBounds },
-    dataUrl: `data:image/png;base64,${image.toPNG().toString("base64")}`,
-  };
-}
+// setBrowserBounds, captureVisibleBrowserSnapshot moved to
+// browser-pane/tab-state.ts (BP-P5b-2).
 
 function ensureAuthPopupWindow() {
   if (authPopupWindow && !authPopupWindow.isDestroyed()) {

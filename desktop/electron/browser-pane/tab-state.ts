@@ -27,6 +27,7 @@ import type {
   BrowserSpaceId,
   BrowserStatePayload,
   BrowserTabListPayload,
+  BrowserVisibleSnapshotPayload,
 } from "../../shared/browser-pane-protocol.js";
 
 /**
@@ -111,6 +112,8 @@ export interface BrowserPaneTabStateDeps {
 
 export interface BrowserPaneTabState {
   hasVisibleBounds: () => boolean;
+  setBounds: (bounds: BrowserBoundsPayload) => void;
+  captureVisibleSnapshot: () => Promise<BrowserVisibleSnapshotPayload | null>;
   closeBrowserTabRecord: (tab: BrowserTabRecord) => void;
   getActiveBrowserTab: (
     workspaceId?: string | null,
@@ -155,6 +158,48 @@ export function createBrowserPaneTabState(
   function hasVisibleBounds(): boolean {
     const b = deps.getBrowserBounds();
     return b.width > 0 && b.height > 0;
+  }
+
+  function setBounds(bounds: BrowserBoundsPayload): void {
+    deps.setBrowserBounds({
+      x: Math.max(0, Math.round(bounds.x)),
+      y: Math.max(0, Math.round(bounds.y)),
+      width: Math.max(0, Math.round(bounds.width)),
+      height: Math.max(0, Math.round(bounds.height)),
+    });
+
+    const target = activeVisibleBrowserTarget();
+    const activeTab = getActiveBrowserTab(
+      target.workspaceId,
+      target.space,
+      target.sessionId,
+      { useVisibleAgentSession: true },
+    );
+    if (!activeTab || !hasVisibleBounds()) {
+      const win = deps.getMainWindow();
+      win?.setBrowserView(null);
+      deps.setAttachedView(null);
+      return;
+    }
+    updateAttachedBrowserView();
+  }
+
+  async function captureVisibleSnapshot(): Promise<BrowserVisibleSnapshotPayload | null> {
+    const target = activeVisibleBrowserTarget();
+    const activeTab = getActiveBrowserTab(
+      target.workspaceId,
+      target.space,
+      target.sessionId,
+      { useVisibleAgentSession: true },
+    );
+    if (!activeTab || !hasVisibleBounds()) {
+      return null;
+    }
+    const image = await activeTab.view.webContents.capturePage();
+    return {
+      bounds: { ...deps.getBrowserBounds() },
+      dataUrl: `data:image/png;base64,${image.toPNG().toString("base64")}`,
+    };
   }
 
   function getActiveBrowserTab(
@@ -390,6 +435,8 @@ export function createBrowserPaneTabState(
 
   return {
     hasVisibleBounds,
+    setBounds,
+    captureVisibleSnapshot,
     closeBrowserTabRecord,
     getActiveBrowserTab,
     activeVisibleBrowserTarget,
