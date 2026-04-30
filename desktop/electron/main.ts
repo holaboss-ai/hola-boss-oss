@@ -13183,6 +13183,8 @@ async function installAppFromArchiveFile(params: {
   });
 
   try {
+    // SDK's installArchive defaults timeoutMs to 300_000 — equivalent to the
+    // upstream change in main. Keeping the typed-method form.
     return await runtimeClient.apps.installArchive({
       workspace_id: workspaceId,
       app_id: appId,
