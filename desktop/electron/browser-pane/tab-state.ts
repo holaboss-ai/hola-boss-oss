@@ -15,10 +15,14 @@
  * single source of truth. When the remaining write-side functions move,
  * those vars can collapse into the factory closure.
  */
-import type {
-  BrowserView,
-  BrowserWindow,
-  WebContents,
+import {
+  Menu,
+  clipboard,
+  type BrowserView,
+  type BrowserWindow,
+  type ContextMenuParams,
+  type MenuItemConstructorOptions,
+  type WebContents,
 } from "electron";
 
 import type {
@@ -160,6 +164,20 @@ export interface BrowserPaneTabStateDeps {
    * duplicate of an existing tab (and merged) rather than spawned anew.
    */
   duplicateBrowserPopupTabWindowMs: number;
+
+  /** Queue a save-as override for an upcoming Electron download. */
+  queueBrowserDownloadPrompt: (
+    workspaceId: string,
+    targetUrl: string,
+    options: {
+      defaultFilename: string;
+      dialogTitle: string;
+      buttonLabel: string;
+    },
+  ) => void;
+
+  /** Compute a sanitized suggested filename from the right-click context. */
+  browserContextSuggestedFilename: (context: ContextMenuParams) => string;
 }
 
 export interface BrowserPaneTabState {
@@ -198,6 +216,13 @@ export interface BrowserPaneTabState {
     space: BrowserSpaceId,
     sessionId?: string | null,
   ) => void;
+  showBrowserViewContextMenu: (params: {
+    workspaceId: string;
+    space: BrowserSpaceId;
+    sessionId?: string | null;
+    view: BrowserView;
+    context: ContextMenuParams;
+  }) => void;
   // ensureBrowserTabSpaceInitialized + initialBrowserTabSeed deferred —
   // they pull in oppositeBrowserSpaceId / browserTabSpaceStates / NEW_TAB_TITLE
   // which are still being threaded through. Move them in BP-P5b-4.
@@ -506,6 +531,150 @@ export function createBrowserPaneTabState(
       normalizedSessionId,
       { useVisibleAgentSession: true },
     );
+  }
+
+  function showBrowserViewContextMenu(params: {
+    workspaceId: string;
+    space: BrowserSpaceId;
+    sessionId?: string | null;
+    view: BrowserView;
+    context: ContextMenuParams;
+  }): void {
+    const { workspaceId, space, sessionId, view, context } = params;
+    const template: MenuItemConstructorOptions[] = [];
+    const selectionText = context.selectionText.trim();
+    const linkUrl = context.linkURL.trim();
+    const canGoBack = view.webContents.navigationHistory.canGoBack();
+    const canGoForward = view.webContents.navigationHistory.canGoForward();
+    const bounds = deps.getBrowserBounds();
+    const popupX = bounds.x + context.x;
+    const popupY = bounds.y + context.y;
+    const imageUrl = context.srcURL.trim();
+
+    if (linkUrl) {
+      template.push(
+        {
+          label: "Open Link in New Tab",
+          click: () =>
+            handleBrowserWindowOpenAsTab(
+              workspaceId,
+              linkUrl,
+              "foreground-tab",
+              "",
+              space,
+              sessionId,
+            ),
+        },
+        {
+          label: "Open Link Externally",
+          click: () => {
+            deps.openExternalUrlFromMain(linkUrl, "browser context menu");
+          },
+        },
+        {
+          label: "Copy Link Address",
+          click: () => {
+            clipboard.writeText(linkUrl);
+          },
+        },
+        { type: "separator" },
+      );
+    }
+
+    if (context.mediaType === "image" && imageUrl) {
+      template.push(
+        {
+          label: "Open Image in New Tab",
+          click: () =>
+            handleBrowserWindowOpenAsTab(
+              workspaceId,
+              imageUrl,
+              "foreground-tab",
+              "",
+              space,
+              sessionId,
+            ),
+        },
+        {
+          label: "Copy Image Address",
+          click: () => {
+            clipboard.writeText(imageUrl);
+          },
+        },
+        {
+          label: "Save Image As...",
+          click: () => {
+            deps.queueBrowserDownloadPrompt(workspaceId, imageUrl, {
+              defaultFilename: deps.browserContextSuggestedFilename(context),
+              dialogTitle: "Save Image As",
+              buttonLabel: "Save Image",
+            });
+            void view.webContents.downloadURL(imageUrl);
+          },
+        },
+        { type: "separator" },
+      );
+    }
+
+    if (context.isEditable) {
+      template.push(
+        { label: "Undo", role: "undo", enabled: context.editFlags.canUndo },
+        { label: "Redo", role: "redo", enabled: context.editFlags.canRedo },
+        { type: "separator" },
+        { label: "Cut", role: "cut", enabled: context.editFlags.canCut },
+        { label: "Copy", role: "copy", enabled: context.editFlags.canCopy },
+        { label: "Paste", role: "paste", enabled: context.editFlags.canPaste },
+        {
+          label: "Select All",
+          role: "selectAll",
+          enabled: context.editFlags.canSelectAll,
+        },
+      );
+    } else if (selectionText) {
+      template.push(
+        { label: "Copy", role: "copy", enabled: context.editFlags.canCopy },
+        {
+          label: "Select All",
+          role: "selectAll",
+          enabled: context.editFlags.canSelectAll,
+        },
+      );
+    } else {
+      template.push(
+        {
+          label: "Back",
+          enabled: canGoBack,
+          click: () => view.webContents.navigationHistory.goBack(),
+        },
+        {
+          label: "Forward",
+          enabled: canGoForward,
+          click: () => view.webContents.navigationHistory.goForward(),
+        },
+        {
+          label: "Reload",
+          click: () => view.webContents.reload(),
+        },
+        {
+          label: "Select All",
+          role: "selectAll",
+          enabled: context.editFlags.canSelectAll,
+        },
+      );
+    }
+
+    if (template.length === 0) {
+      return;
+    }
+
+    const win = deps.getMainWindow();
+    Menu.buildFromTemplate(template).popup({
+      window: win ?? undefined,
+      frame: context.frame ?? undefined,
+      x: popupX,
+      y: popupY,
+      sourceType: context.menuSourceType,
+    });
   }
 
   function handleBrowserWindowOpenAsTab(
@@ -817,6 +986,7 @@ export function createBrowserPaneTabState(
     closeBrowserTab,
     navigateActiveBrowserTab,
     handleBrowserWindowOpenAsTab,
+    showBrowserViewContextMenu,
     getActiveBrowserTab,
     activeVisibleBrowserTarget,
     currentBrowserTabPageTitle,

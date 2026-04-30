@@ -974,6 +974,10 @@ const browserPaneTabState: BrowserPaneTabState = createBrowserPaneTabState({
   normalizeBrowserPopupFrameName: (frameName) =>
     normalizeBrowserPopupFrameName(frameName),
   duplicateBrowserPopupTabWindowMs: DUPLICATE_BROWSER_POPUP_TAB_WINDOW_MS,
+  queueBrowserDownloadPrompt: (workspaceId, targetUrl, options) =>
+    queueBrowserDownloadPrompt(workspaceId, targetUrl, options),
+  browserContextSuggestedFilename: (context) =>
+    browserContextSuggestedFilename(context),
 });
 const getActiveBrowserTab = browserPaneTabState.getActiveBrowserTab;
 const activeVisibleBrowserTarget = browserPaneTabState.activeVisibleBrowserTarget;
@@ -1009,6 +1013,7 @@ const setActiveBrowserTab = browserPaneTabState.setActiveBrowserTab;
 const closeBrowserTab = browserPaneTabState.closeBrowserTab;
 const navigateActiveBrowserTab = browserPaneTabState.navigateActiveBrowserTab;
 const handleBrowserWindowOpenAsTab = browserPaneTabState.handleBrowserWindowOpenAsTab;
+const showBrowserViewContextMenu = browserPaneTabState.showBrowserViewContextMenu;
 const reportedOperatorSurfaceContexts = new Map<
   string,
   ReportedOperatorSurfaceContextPayload
@@ -18977,147 +18982,6 @@ function consumeBrowserDownloadOverride(
   return override ?? null;
 }
 
-function showBrowserViewContextMenu(params: {
-  workspaceId: string;
-  space: BrowserSpaceId;
-  sessionId?: string | null;
-  view: BrowserView;
-  context: ContextMenuParams;
-}) {
-  const { workspaceId, space, sessionId, view, context } = params;
-  const template: MenuItemConstructorOptions[] = [];
-  const selectionText = context.selectionText.trim();
-  const linkUrl = context.linkURL.trim();
-  const canGoBack = view.webContents.navigationHistory.canGoBack();
-  const canGoForward = view.webContents.navigationHistory.canGoForward();
-  const popupX = browserBounds.x + context.x;
-  const popupY = browserBounds.y + context.y;
-  const imageUrl = context.srcURL.trim();
-
-  if (linkUrl) {
-    template.push(
-      {
-        label: "Open Link in New Tab",
-        click: () =>
-          handleBrowserWindowOpenAsTab(
-            workspaceId,
-            linkUrl,
-            "foreground-tab",
-            "",
-            space,
-            sessionId,
-          ),
-      },
-      {
-        label: "Open Link Externally",
-        click: () => {
-          openExternalUrlFromMain(linkUrl, "browser context menu");
-        },
-      },
-      {
-        label: "Copy Link Address",
-        click: () => {
-          clipboard.writeText(linkUrl);
-        },
-      },
-      { type: "separator" },
-    );
-  }
-
-  if (context.mediaType === "image" && imageUrl) {
-    template.push(
-      {
-        label: "Open Image in New Tab",
-        click: () =>
-          handleBrowserWindowOpenAsTab(
-            workspaceId,
-            imageUrl,
-            "foreground-tab",
-            "",
-            space,
-            sessionId,
-          ),
-      },
-      {
-        label: "Copy Image Address",
-        click: () => {
-          clipboard.writeText(imageUrl);
-        },
-      },
-      {
-        label: "Save Image As...",
-        click: () => {
-          queueBrowserDownloadPrompt(workspaceId, imageUrl, {
-            defaultFilename: browserContextSuggestedFilename(context),
-            dialogTitle: "Save Image As",
-            buttonLabel: "Save Image",
-          });
-          void view.webContents.downloadURL(imageUrl);
-        },
-      },
-      { type: "separator" },
-    );
-  }
-
-  if (context.isEditable) {
-    template.push(
-      { label: "Undo", role: "undo", enabled: context.editFlags.canUndo },
-      { label: "Redo", role: "redo", enabled: context.editFlags.canRedo },
-      { type: "separator" },
-      { label: "Cut", role: "cut", enabled: context.editFlags.canCut },
-      { label: "Copy", role: "copy", enabled: context.editFlags.canCopy },
-      { label: "Paste", role: "paste", enabled: context.editFlags.canPaste },
-      {
-        label: "Select All",
-        role: "selectAll",
-        enabled: context.editFlags.canSelectAll,
-      },
-    );
-  } else if (selectionText) {
-    template.push(
-      { label: "Copy", role: "copy", enabled: context.editFlags.canCopy },
-      {
-        label: "Select All",
-        role: "selectAll",
-        enabled: context.editFlags.canSelectAll,
-      },
-    );
-  } else {
-    template.push(
-      {
-        label: "Back",
-        enabled: canGoBack,
-        click: () => view.webContents.navigationHistory.goBack(),
-      },
-      {
-        label: "Forward",
-        enabled: canGoForward,
-        click: () => view.webContents.navigationHistory.goForward(),
-      },
-      {
-        label: "Reload",
-        click: () => view.webContents.reload(),
-      },
-      {
-        label: "Select All",
-        role: "selectAll",
-        enabled: context.editFlags.canSelectAll,
-      },
-    );
-  }
-
-  if (template.length === 0) {
-    return;
-  }
-
-  Menu.buildFromTemplate(template).popup({
-    window: mainWindow ?? undefined,
-    frame: context.frame ?? undefined,
-    x: popupX,
-    y: popupY,
-    sourceType: context.menuSourceType,
-  });
-}
 
 function createBrowserTab(
   workspaceId: string,
