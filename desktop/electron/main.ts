@@ -126,6 +126,10 @@ import {
   createBrowserPaneDownloads,
   type BrowserPaneDownloads,
 } from "./browser-pane/downloads.js";
+import {
+  createBrowserPaneTabState,
+  type BrowserPaneTabState,
+} from "./browser-pane/tab-state.js";
 import type {
   BrowserCopyWorkspaceProfilePayload,
   BrowserImportProfilePayload,
@@ -898,6 +902,72 @@ const agentSessionCache = new Map<
 >();
 const userBrowserInterruptPrompts = new Set<string>();
 const programmaticBrowserInputDepth = new WeakMap<WebContents, number>();
+// Tab state — query, view-attachment, state-emit, history (BP-P5b-1).
+// Reads/writes main's `attachedBrowserTabView` + `browserBounds` through
+// deps getters/setters so functions still owned by main share one source
+// of truth. Heavier write-side functions (createBrowserTab, navigation,
+// context-menu, popup-as-tab handling) move in subsequent extractions.
+const browserPaneTabState: BrowserPaneTabState = createBrowserPaneTabState({
+  getMainWindow: () => mainWindow,
+  getActiveWorkspaceId: () => activeBrowserWorkspaceId,
+  getActiveSpaceId: () => activeBrowserSpaceId,
+  getActiveSessionId: () => activeBrowserSessionId,
+  getAttachedView: () => attachedBrowserTabView,
+  setAttachedView: (view) => {
+    attachedBrowserTabView = view;
+  },
+  getBrowserBounds: () => browserBounds,
+  setBrowserBounds: (bounds) => {
+    browserBounds = bounds;
+  },
+  getWorkspace: (id) =>
+    browserWorkspaceFromMap(id) as unknown as Parameters<
+      Parameters<typeof createBrowserPaneTabState>[0]["getWorkspace"]
+    >[0] extends string
+      ? ReturnType<
+          Parameters<typeof createBrowserPaneTabState>[0]["getWorkspace"]
+        >
+      : never,
+  getWorkspaceOrEmpty: (id) =>
+    browserWorkspaceOrEmpty(id) as unknown as ReturnType<
+      Parameters<typeof createBrowserPaneTabState>[0]["getWorkspaceOrEmpty"]
+    >,
+  persistWorkspace: (id) => persistBrowserWorkspace(id),
+  browserSpaceId: (value) => browserSpaceId(value),
+  browserSessionId: (value) => browserSessionId(value),
+  browserTabSpaceState: (workspace, space, sessionId, options) =>
+    browserTabSpaceState(
+      workspace as unknown as BrowserWorkspaceState | null | undefined,
+      space,
+      sessionId,
+      options,
+    ) as unknown as ReturnType<
+      Parameters<typeof createBrowserPaneTabState>[0]["browserTabSpaceState"]
+    >,
+  browserTabSpaceTouch: (tabSpace) =>
+    browserTabSpaceTouch(tabSpace as unknown as BrowserTabSpaceState),
+  browserWorkspaceSnapshot: (workspaceId, space, sessionId, options) =>
+    browserWorkspaceSnapshot(workspaceId, space, sessionId, options),
+  scheduleAgentSessionBrowserLifecycleCheck: (workspaceId, sessionId) =>
+    scheduleAgentSessionBrowserLifecycleCheck(workspaceId, sessionId),
+  shouldTrackHistoryUrl: (url) => shouldTrackHistoryUrl(url),
+  hasOpenHistoryPopup: () => browserPanePopups.hasOpenHistoryPopup(),
+  sendHistoryToPopup: (history) => browserPanePopups.sendHistoryToPopup(history),
+  reserveMainWindowClosedListenerBudget: (count) =>
+    reserveMainWindowClosedListenerBudget(count),
+});
+const getActiveBrowserTab = browserPaneTabState.getActiveBrowserTab;
+const activeVisibleBrowserTarget = browserPaneTabState.activeVisibleBrowserTarget;
+const currentBrowserTabPageTitle = browserPaneTabState.currentBrowserTabPageTitle;
+const currentBrowserTabUrl = browserPaneTabState.currentBrowserTabUrl;
+const applyBoundsToTab = browserPaneTabState.applyBoundsToTab;
+const hasVisibleBrowserBounds = browserPaneTabState.hasVisibleBounds;
+const updateAttachedBrowserView = browserPaneTabState.updateAttachedBrowserView;
+const emitBrowserState = browserPaneTabState.emitBrowserState;
+const emitHistoryState = browserPaneTabState.emitHistoryState;
+const closeBrowserTabRecord = browserPaneTabState.closeBrowserTabRecord;
+const syncBrowserState = browserPaneTabState.syncBrowserState;
+const recordHistoryVisit = browserPaneTabState.recordHistoryVisit;
 const reportedOperatorSurfaceContexts = new Map<
   string,
   ReportedOperatorSurfaceContextPayload
@@ -18728,61 +18798,7 @@ function shouldTrackHistoryUrl(rawUrl: string) {
   return shouldTrackHistoryUrlUtil(rawUrl);
 }
 
-async function recordHistoryVisit(
-  workspaceId: string,
-  entry: Pick<BrowserHistoryEntryPayload, "url" | "title" | "faviconUrl">,
-) {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const url = entry.url.trim();
-  if (!workspace || !shouldTrackHistoryUrl(url)) {
-    return;
-  }
-
-  const now = new Date().toISOString();
-  const existing = workspace.history.find((item) => item.url === url);
-
-  if (existing) {
-    workspace.history = workspace.history
-      .map((item) =>
-        item.id === existing.id
-          ? {
-              ...item,
-              title: entry.title?.trim() || item.title || url,
-              faviconUrl: entry.faviconUrl || item.faviconUrl,
-              visitCount: item.visitCount + 1,
-              lastVisitedAt: now,
-            }
-          : item,
-      )
-      .sort(
-        (a, b) =>
-          new Date(b.lastVisitedAt).getTime() -
-          new Date(a.lastVisitedAt).getTime(),
-      );
-  } else {
-    workspace.history = [
-      {
-        id: `history-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        url,
-        title: entry.title?.trim() || url,
-        faviconUrl: entry.faviconUrl,
-        visitCount: 1,
-        createdAt: now,
-        lastVisitedAt: now,
-      },
-      ...workspace.history,
-    ]
-      .sort(
-        (a, b) =>
-          new Date(b.lastVisitedAt).getTime() -
-          new Date(a.lastVisitedAt).getTime(),
-      )
-      .slice(0, 500);
-  }
-
-  emitHistoryState(workspaceId);
-  await persistBrowserWorkspace(workspaceId);
-}
+// recordHistoryVisit moved to browser-pane/tab-state.ts (BP-P5b-1).
 
 function browserWorkspaceSnapshot(
   workspaceId?: string | null,
@@ -18842,47 +18858,8 @@ function browserWorkspaceSnapshot(
   };
 }
 
-function getActiveBrowserTab(
-  workspaceId?: string | null,
-  space?: BrowserSpaceId | null,
-  sessionId?: string | null,
-  options?: {
-    useVisibleAgentSession?: boolean;
-  },
-): BrowserTabRecord | null {
-  const browserSpace = browserSpaceId(space);
-  const workspace = browserWorkspaceOrEmpty(workspaceId);
-  const tabSpace = browserTabSpaceState(
-    workspace,
-    browserSpace,
-    sessionId,
-    options,
-  );
-  if (!tabSpace || !tabSpace.activeTabId) {
-    return null;
-  }
-  return tabSpace.tabs.get(tabSpace.activeTabId) ?? null;
-}
-
-function activeVisibleBrowserTarget(): {
-  workspaceId: string;
-  space: BrowserSpaceId;
-  sessionId: string | null;
-} {
-  return {
-    workspaceId: activeBrowserWorkspaceId,
-    space: activeBrowserSpaceId,
-    sessionId: activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-  };
-}
-
-function currentBrowserTabPageTitle(tab: BrowserTabRecord): string {
-  return tab.view.webContents.getTitle() || tab.state.title || "";
-}
-
-function currentBrowserTabUrl(tab: BrowserTabRecord): string {
-  return tab.view.webContents.getURL() || tab.state.url || "";
-}
+// getActiveBrowserTab, activeVisibleBrowserTarget, currentBrowserTabPageTitle,
+// currentBrowserTabUrl moved to browser-pane/tab-state.ts (BP-P5b-1).
 
 function reserveMainWindowClosedListenerBudget(additionalClosedListeners = 0) {
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -18903,76 +18880,9 @@ function reserveMainWindowClosedListenerBudget(additionalClosedListeners = 0) {
   }
 }
 
-function applyBoundsToTab(
-  workspaceId: string,
-  tabId: string,
-  space: BrowserSpaceId = activeBrowserSpaceId,
-  sessionId?: string | null,
-) {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const tab = browserTabSpaceState(workspace, space, sessionId, {
-    useVisibleAgentSession: !browserSessionId(sessionId),
-  })?.tabs.get(tabId);
-  if (!tab) {
-    return;
-  }
-  tab.view.setBounds(browserBounds);
-}
-
-function hasVisibleBrowserBounds() {
-  return browserBounds.width > 0 && browserBounds.height > 0;
-}
-
-function emitBrowserState(
-  workspaceId?: string | null,
-  space?: BrowserSpaceId | null,
-) {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return;
-  }
-  const normalizedWorkspaceId =
-    typeof workspaceId === "string"
-      ? workspaceId.trim()
-      : activeBrowserWorkspaceId;
-  const browserSpace = browserSpaceId(space);
-  if (normalizedWorkspaceId !== activeBrowserWorkspaceId) {
-    return;
-  }
-  if (browserSpace !== activeBrowserSpaceId) {
-    return;
-  }
-  mainWindow.webContents.send(
-    "browser:state",
-    browserWorkspaceSnapshot(normalizedWorkspaceId, browserSpace, null, {
-      useVisibleAgentSession: true,
-    }),
-  );
-}
-
-function emitHistoryState(workspaceId?: string | null) {
-  const normalizedWorkspaceId =
-    typeof workspaceId === "string"
-      ? workspaceId.trim()
-      : activeBrowserWorkspaceId;
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    if (!browserPanePopups.hasOpenHistoryPopup()) {
-      return;
-    }
-    return;
-  }
-  if (normalizedWorkspaceId !== activeBrowserWorkspaceId) {
-    return;
-  }
-  const workspace = browserWorkspaceOrEmpty(normalizedWorkspaceId);
-  const history = workspace?.history ?? [];
-  mainWindow.webContents.send("browser:history", history);
-  browserPanePopups.sendHistoryToPopup(history);
-}
-
-function closeBrowserTabRecord(tab: BrowserTabRecord) {
-  tab.view.webContents.removeAllListeners();
-  void tab.view.webContents.close();
-}
+// applyBoundsToTab, hasVisibleBrowserBounds, emitBrowserState,
+// emitHistoryState, closeBrowserTabRecord moved to
+// browser-pane/tab-state.ts (BP-P5b-1).
 
 function destroyBrowserWorkspace(workspaceId: string) {
   const workspace = browserWorkspaceFromMap(workspaceId);
@@ -19000,67 +18910,8 @@ function destroyBrowserWorkspace(workspaceId: string) {
   browserWorkspaces.delete(workspaceId);
 }
 
-function updateAttachedBrowserView() {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return;
-  }
-  const activeTab = getActiveBrowserTab(
-    activeBrowserWorkspaceId,
-    activeBrowserSpaceId,
-    null,
-    { useVisibleAgentSession: true },
-  );
-  if (!activeTab || !hasVisibleBrowserBounds()) {
-    if (attachedBrowserTabView) {
-      mainWindow.setBrowserView(null);
-      attachedBrowserTabView = null;
-    }
-    return;
-  }
-  if (attachedBrowserTabView !== activeTab.view) {
-    reserveMainWindowClosedListenerBudget(1);
-    mainWindow.setBrowserView(activeTab.view);
-    attachedBrowserTabView = activeTab.view;
-  }
-  applyBoundsToTab(
-    activeBrowserWorkspaceId,
-    activeTab.state.id,
-    activeBrowserSpaceId,
-    activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-  );
-}
-
-function syncBrowserState(
-  workspaceId: string,
-  tabId: string,
-  space: BrowserSpaceId,
-  sessionId?: string | null,
-) {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const tabSpace = browserTabSpaceState(workspace, space, sessionId);
-  const tab = tabSpace?.tabs.get(tabId);
-  if (!workspace || !tab) {
-    return;
-  }
-  if (tabSpace) {
-    browserTabSpaceTouch(tabSpace);
-  }
-  if (space === "agent" && browserSessionId(sessionId)) {
-    scheduleAgentSessionBrowserLifecycleCheck(workspaceId, sessionId);
-  }
-
-  const viewContents = tab.view.webContents;
-  tab.state = {
-    ...tab.state,
-    url: viewContents.getURL() || tab.state.url,
-    title: viewContents.getTitle() || tab.state.title,
-    faviconUrl: tab.state.faviconUrl,
-    canGoBack: viewContents.navigationHistory.canGoBack(),
-    canGoForward: viewContents.navigationHistory.canGoForward(),
-  };
-  emitBrowserState(workspaceId, space);
-  void persistBrowserWorkspace(workspaceId);
-}
+// updateAttachedBrowserView, syncBrowserState moved to
+// browser-pane/tab-state.ts (BP-P5b-1).
 
 function normalizeBrowserPopupFrameName(frameName?: string | null): string {
   return normalizeBrowserPopupFrameNameUtil(frameName);
