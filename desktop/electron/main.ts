@@ -56,12 +56,7 @@ import {
   spawn,
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
-import {
-  createDecipheriv,
-  createHash,
-  pbkdf2Sync,
-  randomUUID,
-} from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   createWriteStream,
   existsSync,
@@ -87,7 +82,6 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { URL } from "node:url";
 import ExcelJS from "exceljs";
-import JSZip from "jszip";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import {
@@ -97,7 +91,6 @@ import {
   generateMarketplaceTemplateContent as sdkGenerateMarketplaceTemplateContent,
   listMarketplaceAppTemplates as sdkListMarketplaceAppTemplates,
   listMarketplaceSubmissions as sdkListMarketplaceSubmissions,
-  listMarketplaceTemplates as sdkListMarketplaceTemplates,
   materializeMarketplaceTemplate as sdkMaterializeMarketplaceTemplate,
 } from "@holaboss/app-sdk/core";
 import {
@@ -106,6 +99,58 @@ import {
 import * as modelCatalog from "../shared/model-catalog.js";
 import { buildAppSdkClient } from "./appSdkClient.js";
 import { ensureWorkspaceGitRepo } from "./workspace-git.js";
+import {
+  createRuntimeClient,
+  isTransientRuntimeError,
+  runtimeErrorFromBody,
+} from "@holaboss/runtime-client";
+import { installBffFetchHandler } from "./bff-fetch.js";
+import { installBrowserPaneHandlers } from "./browser-pane/index.js";
+import {
+  copyBrowserWorkspaceProfile as importBrowsersCopyBrowserWorkspaceProfile,
+  importBrowserProfileIntoWorkspace as importBrowsersImportBrowserProfileIntoWorkspace,
+  importChromeProfileIntoWorkspace as importBrowsersImportChromeProfileIntoWorkspace,
+  listImportBrowserProfiles as importBrowsersListImportBrowserProfiles,
+  type BrowserCopySpaceAction,
+  type BrowserImportDeps,
+} from "./browser-pane/import-browsers.js";
+import {
+  createBrowserPanePopups,
+  type BrowserPanePopups,
+} from "./browser-pane/popups.js";
+import {
+  createBrowserPaneBookmarks,
+  type BrowserPaneBookmarks,
+} from "./browser-pane/bookmarks.js";
+import {
+  createBrowserPaneDownloads,
+  type BrowserPaneDownloads,
+} from "./browser-pane/downloads.js";
+import type {
+  BrowserCopyWorkspaceProfilePayload,
+  BrowserImportProfilePayload,
+  BrowserImportSource,
+  BrowserWorkspaceImportTarget,
+} from "./browser-pane/types.js";
+import {
+  browserAcceptedLanguages as browserAcceptedLanguagesUtil,
+  browserChromeLikePlatformToken as browserChromeLikePlatformTokenUtil,
+  browserContextSuggestedFilename as browserContextSuggestedFilenameUtil,
+  browserSessionId as browserSessionIdUtil,
+  browserSpaceId as browserSpaceIdUtil,
+  browserWorkspacePartition as browserWorkspacePartitionUtil,
+  browserWorkspaceStatePath as browserWorkspaceStatePathUtil,
+  browserWorkspaceStorageDir as browserWorkspaceStorageDirUtil,
+  createBrowserState as createBrowserStateUtil,
+  emptyBrowserTabCountsPayload as emptyBrowserTabCountsPayloadUtil,
+  isAbortedBrowserLoadError as isAbortedBrowserLoadErrorUtil,
+  isAbortedBrowserLoadFailure as isAbortedBrowserLoadFailureUtil,
+  isBrowserPopupWindowRequest as isBrowserPopupWindowRequestUtil,
+  normalizeBrowserPopupFrameName as normalizeBrowserPopupFrameNameUtil,
+  oppositeBrowserSpaceId as oppositeBrowserSpaceIdUtil,
+  sanitizeBrowserWorkspaceSegment as sanitizeBrowserWorkspaceSegmentUtil,
+  shouldTrackHistoryUrl as shouldTrackHistoryUrlUtil,
+} from "./browser-pane/utils.js";
 
 const APP_DISPLAY_NAME = "Holaboss";
 const MAC_APP_MENU_PRODUCT_LABEL = "holaOS";
@@ -140,28 +185,9 @@ const USER_BROWSER_LOCK_TIMEOUT_MS = 15_000;
 const SESSION_BROWSER_BUSY_CHECK_MS = 15_000;
 const SESSION_BROWSER_COMPLETED_GRACE_MS = 30_000;
 const SESSION_BROWSER_WARM_TTL_MS = 2 * 60 * 1000;
-const CHROME_HISTORY_IMPORT_LIMIT = 500;
-const CHROME_COOKIE_SAFE_STORAGE_SERVICE_NAMES = [
-  "Chrome Safe Storage",
-  "Google Chrome Safe Storage",
-];
-const CHROME_COOKIE_SAFE_STORAGE_ACCOUNT_NAMES = [
-  "Chrome",
-  "Google Chrome",
-];
-const CHROME_COOKIE_PBKDF2_SALT = "saltysalt";
-const CHROME_COOKIE_CBC_IV = Buffer.alloc(16, 0x20);
-const CHROME_WINDOWS_DPAPI_KEY_PREFIX = "DPAPI";
-const CHROME_WINDOWS_COOKIE_AEAD_PREFIXES = new Set(["v10", "v11"]);
-const CHROME_WINDOWS_APP_BOUND_COOKIE_PREFIX = "v20";
-const BROWSER_IMPORT_PROFILE_DIR_PATTERNS = [
-  /^Default$/,
-  /^Profile \d+$/,
-  /^Profile [A-Za-z0-9_-]+$/,
-  /^Guest Profile$/,
-];
-const SAFARI_EXPORT_BOOKMARKS_FILE_NAME = "bookmarks.html";
-const SAFARI_EXPORT_HISTORY_FILE_NAME = "history.json";
+// Chromium cookie / profile-discovery constants moved to
+// `browser-pane/import-chromium.ts`. Safari export filename constants
+// moved to `browser-pane/import-browsers.ts`.
 const APP_THEMES = new Set([
   "amber-minimal-dark",
   "amber-minimal-light",
@@ -646,61 +672,8 @@ interface ClipboardImagePayload {
   height: number;
 }
 
-type BrowserImportSource = "chrome" | "chromium" | "arc" | "safari";
-type ChromiumFamilyBrowser = Exclude<BrowserImportSource, "safari">;
-
-interface ChromiumProfileSelection {
-  browser: ChromiumFamilyBrowser;
-  userDataDir: string;
-  profileId: string;
-  profileDir: string;
-  profileLabel: string;
-}
-
-interface ChromeBookmarkNodePayload {
-  type?: string;
-  name?: string;
-  url?: string;
-  date_added?: string;
-  children?: ChromeBookmarkNodePayload[];
-}
-
-interface BrowserImportSummary {
-  sourceKind: BrowserImportSource | "workspace_copy";
-  sourceLabel: string;
-  sourcePath: string;
-  sourceProfileDir: string;
-  sourceProfileLabel: string;
-  importedBookmarks: number;
-  importedHistoryEntries: number;
-  importedCookies: number;
-  skippedCookies: number;
-  warnings: string[];
-}
-
-interface BrowserCookieImportSummary {
-  importedCount: number;
-  skippedCount: number;
-  warnings: string[];
-}
-
-interface BrowserImportProfilePayload {
-  workspaceId: string;
-  source: BrowserImportSource;
-  profileDir?: string | null;
-  safariArchivePath?: string | null;
-}
-
-interface BrowserCopyWorkspaceProfilePayload {
-  sourceWorkspaceId: string;
-  targetWorkspaceId: string;
-}
-
-interface BrowserImportProfileOptionPayload {
-  profileId: string;
-  profileLabel: string;
-  profileDir: string;
-}
+// Browser import / chromium-family types moved to
+// `browser-pane/types.ts` and re-imported above.
 
 interface BrowserAnchorBoundsPayload {
   x: number;
@@ -865,24 +838,52 @@ interface WorkbenchOpenBrowserPayload {
 let mainWindow: BrowserWindow | null = null;
 let authPopupWindow: BrowserWindow | null = null;
 let authPopupCloseTimer: ReturnType<typeof setTimeout> | null = null;
-let downloadsPopupWindow: BrowserWindow | null = null;
-let historyPopupWindow: BrowserWindow | null = null;
-let overflowPopupWindow: BrowserWindow | null = null;
-let addressSuggestionsPopupWindow: BrowserWindow | null = null;
 let statusItemTray: Tray | null = null;
 const unresponsiveDesktopWindows = new WeakSet<BrowserWindow>();
 let attachedBrowserTabView: BrowserView | null = null;
 let attachedAppSurfaceView: BrowserView | null = null;
 let currentTheme = "amber-minimal-light";
 let browserBounds: BrowserBoundsPayload = { x: 0, y: 0, width: 0, height: 0 };
-let overflowAnchorBounds: BrowserAnchorBoundsPayload | null = null;
-let addressSuggestionsState: {
-  suggestions: AddressSuggestionPayload[];
-  selectedIndex: number;
-} = {
-  suggestions: [],
-  selectedIndex: -1,
-};
+// Popup state (downloads / history / overflow / address suggestions) lives in
+// `browser-pane/popups.ts`. main.ts holds the module instance below and
+// delegates IPC handler bodies through it.
+const browserPanePopups: BrowserPanePopups = createBrowserPanePopups({
+  getMainWindow: () => mainWindow,
+  popupThemeCss: () => popupThemeCss(),
+  preloadDir: () => __dirname,
+});
+const browserPaneBookmarks: BrowserPaneBookmarks = createBrowserPaneBookmarks({
+  getMainWindow: () => mainWindow,
+  getActiveWorkspaceId: () => activeBrowserWorkspaceId,
+  getWorkspaceBookmarks: (workspaceId) =>
+    browserWorkspaceOrEmpty(workspaceId)?.bookmarks ?? [],
+});
+const browserPaneDownloads: BrowserPaneDownloads = createBrowserPaneDownloads({
+  getMainWindow: () => mainWindow,
+  getActiveWorkspaceId: () => activeBrowserWorkspaceId,
+  getWorkspace: (id) => browserWorkspaceFromMap(id),
+  consumeDownloadOverride: (workspace, targetUrl) =>
+    consumeBrowserDownloadOverride(
+      workspace as unknown as BrowserWorkspaceState,
+      targetUrl,
+    ),
+  resolveTargetPath: (workspaceId, filename) =>
+    resolveWorkspaceDownloadTargetPath(workspaceId, filename),
+  persistWorkspace: (workspaceId) => persistBrowserWorkspace(workspaceId),
+  sendDownloadsToPopup: (downloads) =>
+    browserPanePopups.sendDownloadsToPopup(downloads),
+  hasOpenDownloadsPopup: () => browserPanePopups.hasOpenDownloadsPopup(),
+});
+const emitBookmarksState = browserPaneBookmarks.emitBookmarksState;
+const emitDownloadsState = browserPaneDownloads.emitDownloadsState;
+const ensureBrowserWorkspaceDownloadTracking = (
+  workspace: BrowserWorkspaceState,
+) =>
+  browserPaneDownloads.ensureBrowserWorkspaceDownloadTracking(
+    workspace as unknown as Parameters<
+      typeof browserPaneDownloads.ensureBrowserWorkspaceDownloadTracking
+    >[0],
+  );
 let activeBrowserWorkspaceId = "";
 let activeBrowserSpaceId: BrowserSpaceId = "user";
 let activeBrowserSessionId = "";
@@ -901,7 +902,6 @@ const reportedOperatorSurfaceContexts = new Map<
   string,
   ReportedOperatorSurfaceContextPayload
 >();
-const browserDownloadTrackingPartitions = new Set<string>();
 const appSurfaceViews = new Map<string, BrowserView>();
 let appSurfaceBounds: BrowserBoundsPayload = {
   x: 0,
@@ -989,17 +989,9 @@ function desktopWindowTelemetryRole(window: BrowserWindow | null | undefined): s
   if (window === authPopupWindow) {
     return "auth_popup";
   }
-  if (window === downloadsPopupWindow) {
-    return "downloads_popup";
-  }
-  if (window === historyPopupWindow) {
-    return "history_popup";
-  }
-  if (window === overflowPopupWindow) {
-    return "overflow_popup";
-  }
-  if (window === addressSuggestionsPopupWindow) {
-    return "address_suggestions_popup";
+  const popupKind = browserPanePopups.classifyWindow(window);
+  if (popupKind) {
+    return popupKind;
   }
   return "browser_window";
 }
@@ -1321,6 +1313,22 @@ const AUTH_SIGN_IN_URL = configuredRemoteBaseUrl(
   ["HOLABOSS_AUTH_SIGN_IN_URL"],
   packagedDesktopConfig.authSignInUrl,
 );
+
+// Hosts the renderer is allowed to reach via the bff:fetch IPC bridge.
+// Derived from the configured AUTH/BACKEND base URLs so the allowlist tracks
+// whichever environment (prod, staging, local) the desktop is wired to.
+function bffFetchAllowedHosts(): readonly string[] {
+  const hosts = new Set<string>();
+  for (const base of [AUTH_BASE_URL, BACKEND_BASE_URL]) {
+    if (!base) continue;
+    try {
+      hosts.add(new URL(base).host);
+    } catch {
+      // ignore malformed config — the allowlist stays narrower
+    }
+  }
+  return [...hosts];
+}
 const DESKTOP_RUNTIME_BINDING_EXCHANGE_PATH =
   "/api/v1/desktop-runtime/bindings/exchange";
 const DESKTOP_RUNTIME_MODEL_CATALOG_PATH =
@@ -3007,83 +3015,6 @@ interface HolabossClientConfigPayload {
   marketplaceUrl: string;
 }
 
-interface DesktopBillingOverviewPayload {
-  hasHostedBillingAccount: boolean;
-  planId: string;
-  planName: string | null;
-  planStatus: string;
-  renewsAt: string | null;
-  expiresAt: string | null;
-  creditsBalance: number;
-  totalAllocated: number;
-  totalUsed: number;
-  monthlyCreditsIncluded: number | null;
-  monthlyCreditsUsed: number | null;
-  dailyRefreshCredits: number | null;
-  dailyRefreshTarget: number | null;
-  lowBalanceThreshold: number;
-  isLowBalance: boolean;
-}
-
-interface DesktopBillingUsageItemPayload {
-  id: string;
-  type: string;
-  sourceType: string | null;
-  reason: string | null;
-  amount: number;
-  absoluteAmount: number;
-  createdAt: string;
-}
-
-interface DesktopBillingUsagePayload {
-  items: DesktopBillingUsageItemPayload[];
-  count: number;
-}
-
-interface DesktopBillingLinksPayload {
-  billingPageUrl: string;
-  addCreditsUrl: string;
-  upgradeUrl: string;
-  usageUrl: string;
-}
-
-interface DesktopBillingRpcEnvelope<T> {
-  json: T;
-  meta?: unknown;
-}
-
-interface DesktopBillingQuotaRpcPayload {
-  balance: number;
-  totalAllocated: number;
-  totalUsed: number;
-}
-
-interface DesktopBillingTransactionRpcPayload {
-  id: string;
-  type: string;
-  sourceType: string | null;
-  reason: string | null;
-  serviceType: string | null;
-  serviceId: string | null;
-  category: string | null;
-  metadata: Record<string, unknown> | null;
-  amount: number;
-  createdAt: string;
-}
-
-interface DesktopBillingSubscriptionRpcPayload {
-  status: string;
-  plan: string;
-  currentPeriodEnd: string | null;
-  cancelAtPeriodEnd: boolean;
-}
-
-interface DesktopBillingInfoRpcPayload {
-  hasActiveSubscription: boolean;
-  subscription: DesktopBillingSubscriptionRpcPayload | null;
-  stripeCustomerId: string | null;
-}
-
 interface InstalledWorkspaceAppPayload {
   app_id: string;
   config_path: string;
@@ -3298,1739 +3229,203 @@ function appendSessionStreamDebug(
 }
 
 function sanitizeBrowserWorkspaceSegment(workspaceId: string) {
-  const normalized =
-    workspaceId
-      .trim()
-      .replace(/[^A-Za-z0-9_-]+/g, "_")
-      .replace(/^_+|_+$/g, "") || "workspace";
-  const digest = createHash("sha256")
-    .update(workspaceId.trim(), "utf8")
-    .digest("hex")
-    .slice(0, 12);
-  return `${normalized}-${digest}`;
+  return sanitizeBrowserWorkspaceSegmentUtil(workspaceId);
 }
 
 function browserWorkspaceStorageDir(workspaceId: string) {
-  return path.join(
-    app.getPath("userData"),
-    "browser-workspaces",
-    sanitizeBrowserWorkspaceSegment(workspaceId),
-  );
+  return browserWorkspaceStorageDirUtil(app.getPath("userData"), workspaceId);
 }
 
 function browserWorkspaceStatePath(workspaceId: string) {
-  return path.join(
-    browserWorkspaceStorageDir(workspaceId),
-    "browser-state.json",
-  );
+  return browserWorkspaceStatePathUtil(app.getPath("userData"), workspaceId);
 }
 
 function browserWorkspacePartition(workspaceId: string) {
-  return `persist:holaboss-browser-${sanitizeBrowserWorkspaceSegment(workspaceId)}`;
+  return browserWorkspacePartitionUtil(workspaceId);
 }
 
-function chromiumFamilyDisplayName(browser: ChromiumFamilyBrowser) {
-  switch (browser) {
-    case "chromium":
-      return "Chromium";
-    case "arc":
-      return "Arc";
-    default:
-      return "Chrome";
-  }
+// ---------------------------------------------------------------------------
+// browser-pane/import-browsers binding
+//
+// The chromium-family + Safari profile import flow lives in
+// `electron/browser-pane/import-{chromium,browsers}.ts`. main.ts still owns
+// the BrowserWorkspaceState graph and the renderer-notification surface, so
+// we hand those to the import module via the deps object below.
+// ---------------------------------------------------------------------------
+
+function asBrowserImportTarget(
+  workspace: BrowserWorkspaceState,
+): BrowserWorkspaceImportTarget {
+  return workspace as unknown as BrowserWorkspaceImportTarget;
 }
 
-function chromiumFamilyUserDataRootCandidates(
-  browser: ChromiumFamilyBrowser,
-): string[] {
-  const localAppData =
-    process.env.LOCALAPPDATA?.trim() ||
-    path.join(os.homedir(), "AppData", "Local");
-  const configHome =
-    process.env.XDG_CONFIG_HOME?.trim() ||
-    path.join(os.homedir(), ".config");
-
-  switch (process.platform) {
-    case "darwin":
-      if (browser === "chromium") {
-        return [
-          path.join(os.homedir(), "Library", "Application Support", "Chromium"),
-        ];
-      }
-      if (browser === "arc") {
-        return [
-          path.join(os.homedir(), "Library", "Application Support", "Arc"),
-        ];
-      }
-      return [
-        path.join(
-          os.homedir(),
-          "Library",
-          "Application Support",
-          "Google",
-          "Chrome",
-        ),
-      ];
-    case "win32":
-      if (browser === "chromium") {
-        return [path.join(localAppData, "Chromium", "User Data")];
-      }
-      if (browser === "arc") {
-        return [
-          path.join(localAppData, "Arc", "User Data"),
-          path.join(localAppData, "TheBrowserCompany", "Arc", "User Data"),
-          path.join(
-            localAppData,
-            "Packages",
-            "TheBrowserCompany.Arc_ttt1ap7aakyb4",
-            "LocalCache",
-            "Local",
-            "Arc",
-            "User Data",
-          ),
-        ];
-      }
-      return [path.join(localAppData, "Google", "Chrome", "User Data")];
-    case "linux":
-      if (browser === "chromium") {
-        return [path.join(configHome, "chromium")];
-      }
-      if (browser === "arc") {
-        return [path.join(configHome, "arc"), path.join(configHome, "Arc")];
-      }
-      return [path.join(configHome, "google-chrome")];
-    default:
-      return [];
-  }
-}
-
-function resolveChromiumFamilyUserDataRoot(
-  browser: ChromiumFamilyBrowser,
-): string | null {
-  for (const candidate of chromiumFamilyUserDataRootCandidates(browser)) {
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-  return chromiumFamilyUserDataRootCandidates(browser)[0] ?? null;
-}
-
-function resolveChromeUserDataRoot(): string | null {
-  return resolveChromiumFamilyUserDataRoot("chrome");
-}
-
-function chromeLocalStatePath(userDataDir: string) {
-  return path.join(userDataDir, "Local State");
-}
-
-function chromeProfileBookmarksPath(profileDir: string) {
-  return path.join(profileDir, "Bookmarks");
-}
-
-function chromeProfileHistoryPath(profileDir: string) {
-  return path.join(profileDir, "History");
-}
-
-function chromeProfileCookiesPath(profileDir: string) {
-  const candidates = [
-    path.join(profileDir, "Network", "Cookies"),
-    path.join(profileDir, "Cookies"),
-  ];
-  return candidates.find((candidate) => existsSync(candidate)) ?? null;
-}
-
-function chromeProfileHasImportableData(profileDir: string) {
-  return (
-    existsSync(chromeProfileBookmarksPath(profileDir)) ||
-    existsSync(chromeProfileHistoryPath(profileDir)) ||
-    Boolean(chromeProfileCookiesPath(profileDir))
-  );
-}
-
-function chromeProfileLabelFromInfo(
-  info: Record<string, unknown> | null | undefined,
-  profileId: string,
-) {
-  const candidates = [
-    typeof info?.name === "string" ? info.name.trim() : "",
-    typeof info?.shortcut_name === "string" ? info.shortcut_name.trim() : "",
-    typeof info?.gaia_name === "string" ? info.gaia_name.trim() : "",
-    typeof info?.user_name === "string" ? info.user_name.trim() : "",
-  ];
-  return candidates.find(Boolean) || profileId;
-}
-
-async function selectChromiumFamilyProfileDirectory(
-  browser: ChromiumFamilyBrowser,
-  defaultPath: string | null,
-): Promise<string | null> {
-  const browserDisplayName = chromiumFamilyDisplayName(browser);
-  const options: OpenDialogOptions = {
-    title: `Select ${browserDisplayName} Profile Folder`,
-    buttonLabel: "Import From This Profile",
-    properties: ["openDirectory"],
-    defaultPath: defaultPath ?? undefined,
-    message:
-      `Choose a ${browserDisplayName} profile folder such as Default or Profile 1.`,
-  };
-  const ownerWindow =
-    mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-  const result = ownerWindow
-    ? await dialog.showOpenDialog(ownerWindow, options)
-    : await dialog.showOpenDialog(options);
-  if (result.canceled || result.filePaths.length === 0) {
-    return null;
-  }
-  return result.filePaths[0]?.trim() || null;
-}
-
-async function readChromiumFamilyProfileMetadata(userDataDir: string | null) {
-  const parsedLocalState =
-    userDataDir && existsSync(chromeLocalStatePath(userDataDir))
-      ? await readJsonFile<Record<string, unknown>>(
-          chromeLocalStatePath(userDataDir),
-          {},
-        )
-      : {};
-  const profileSection =
-    parsedLocalState.profile &&
-    typeof parsedLocalState.profile === "object" &&
-    !Array.isArray(parsedLocalState.profile)
-      ? (parsedLocalState.profile as Record<string, unknown>)
-      : {};
-  const infoCache =
-    profileSection.info_cache &&
-    typeof profileSection.info_cache === "object" &&
-    !Array.isArray(profileSection.info_cache)
-      ? (profileSection.info_cache as Record<string, Record<string, unknown>>)
-      : {};
-  const lastUsedProfileId =
-    typeof profileSection.last_used === "string"
-      ? profileSection.last_used.trim()
-      : "";
-  const lastActiveProfiles = Array.isArray(profileSection.last_active_profiles)
-    ? profileSection.last_active_profiles
-        .map((value) => (typeof value === "string" ? value.trim() : ""))
-        .filter(Boolean)
-    : [];
+function buildBrowserImportDepsBase(): Omit<BrowserImportDeps, "tabGraph"> {
   return {
-    infoCache,
-    lastUsedProfileId,
-    lastActiveProfiles,
-  };
-}
-
-async function discoverChromiumFamilyImportProfiles(
-  browser: ChromiumFamilyBrowser,
-): Promise<{
-  userDataDir: string | null;
-  infoCache: Record<string, Record<string, unknown>>;
-  profiles: ChromiumProfileSelection[];
-}> {
-  const userDataDir = resolveChromiumFamilyUserDataRoot(browser);
-  const { infoCache, lastUsedProfileId, lastActiveProfiles } =
-    await readChromiumFamilyProfileMetadata(userDataDir);
-
-  if (userDataDir && existsSync(userDataDir)) {
-    const candidateProfileIds = new Set<string>();
-    if (lastUsedProfileId) {
-      candidateProfileIds.add(lastUsedProfileId);
-    }
-    for (const profileId of lastActiveProfiles) {
-      candidateProfileIds.add(profileId);
-    }
-    candidateProfileIds.add("Default");
-
-    try {
-      const childEntries = await fs.readdir(userDataDir, {
-        withFileTypes: true,
-      });
-      for (const entry of childEntries) {
-        if (!entry.isDirectory()) {
-          continue;
-        }
-        if (BROWSER_IMPORT_PROFILE_DIR_PATTERNS.some((pattern) => pattern.test(entry.name))) {
-          candidateProfileIds.add(entry.name);
-        }
-      }
-    } catch {
-      // Fall back to Local State candidates below.
-    }
-
-    const importableProfiles: ChromiumProfileSelection[] = [];
-    for (const profileId of candidateProfileIds) {
-      const profileDir = path.join(userDataDir, profileId);
-      if (!existsSync(profileDir) || !chromeProfileHasImportableData(profileDir)) {
-        continue;
-      }
-      importableProfiles.push({
-        browser,
-        userDataDir,
-        profileId,
-        profileDir,
-        profileLabel: chromeProfileLabelFromInfo(infoCache[profileId], profileId),
-      });
-    }
-    return {
-      userDataDir,
-      infoCache,
-      profiles: importableProfiles,
-    };
-  }
-
-  return {
-    userDataDir,
-    infoCache,
-    profiles: [],
-  };
-}
-
-function matchChromiumProfileByDirectory(
-  profiles: ChromiumProfileSelection[],
-  selectedProfileDir: string,
-) {
-  const selectedProfileId = path.basename(selectedProfileDir);
-  return (
-    profiles.find(
-      (profile) =>
-        profile.profileDir === selectedProfileDir ||
-        profile.profileId === selectedProfileId,
-    ) ?? null
-  );
-}
-
-async function resolveChromiumFamilyProfileSelection(
-  browser: ChromiumFamilyBrowser,
-  preferredProfileDir?: string | null,
-): Promise<ChromiumProfileSelection | null> {
-  const { userDataDir, infoCache, profiles } =
-    await discoverChromiumFamilyImportProfiles(browser);
-
-  const preferredDir =
-    typeof preferredProfileDir === "string" ? preferredProfileDir.trim() : "";
-  if (preferredDir) {
-    const matched = matchChromiumProfileByDirectory(profiles, preferredDir);
-    if (matched) {
-      return matched;
-    }
-    if (!chromeProfileHasImportableData(preferredDir)) {
-      throw new Error(
-        "Selected profile does not contain importable bookmarks, history, or cookies.",
+    ensureBrowserWorkspace: async (workspaceId, space) => {
+      const resolved = await ensureBrowserWorkspace(
+        typeof workspaceId === "string" ? workspaceId : null,
+        space ?? null,
       );
-    }
-    const selectedProfileId = path.basename(preferredDir);
-    return {
-      browser,
-      userDataDir: path.dirname(preferredDir),
-      profileId: selectedProfileId,
-      profileDir: preferredDir,
-      profileLabel: chromeProfileLabelFromInfo(
-        infoCache[selectedProfileId],
-        selectedProfileId,
-      ),
-    };
-  }
-
-  if (profiles.length === 1) {
-    return profiles[0];
-  }
-
-  if (profiles.length > 1) {
-    const selectedProfileDir = await selectChromiumFamilyProfileDirectory(
-      browser,
-      userDataDir,
-    );
-    if (!selectedProfileDir) {
-      return null;
-    }
-    const matchedProfile = matchChromiumProfileByDirectory(
-      profiles,
-      selectedProfileDir,
-    );
-    if (matchedProfile) {
-      return matchedProfile;
-    }
-    if (!chromeProfileHasImportableData(selectedProfileDir)) {
-      throw new Error(
-        "Selected profile does not contain importable bookmarks, history, or cookies.",
-      );
-    }
-
-    const selectedProfileId = path.basename(selectedProfileDir);
-    return {
-      browser,
-      userDataDir: path.dirname(selectedProfileDir),
-      profileId: selectedProfileId,
-      profileDir: selectedProfileDir,
-      profileLabel: chromeProfileLabelFromInfo(
-        infoCache[selectedProfileId],
-        selectedProfileId,
-      ),
-    };
-  }
-
-  const selectedProfileDir = await selectChromiumFamilyProfileDirectory(
-    browser,
-    userDataDir,
-  );
-  if (!selectedProfileDir) {
-    return null;
-  }
-
-  const profileId = path.basename(selectedProfileDir);
-  const resolvedUserDataDir = path.dirname(selectedProfileDir);
-  return {
-    browser,
-    userDataDir: resolvedUserDataDir,
-    profileId,
-    profileDir: selectedProfileDir,
-    profileLabel: chromeProfileLabelFromInfo(infoCache[profileId], profileId),
+      return resolved ? asBrowserImportTarget(resolved) : null;
+    },
+    persistBrowserWorkspace: (workspaceId) =>
+      persistBrowserWorkspace(workspaceId),
+    emitBookmarksState: (workspaceId) => emitBookmarksState(workspaceId),
+    emitHistoryState: (workspaceId) => emitHistoryState(workspaceId),
+    emitDownloadsState: (workspaceId) => emitDownloadsState(workspaceId),
+    emitBrowserState: (workspaceId, space) =>
+      emitBrowserState(workspaceId, space),
+    getActiveBrowserWorkspaceId: () => activeBrowserWorkspaceId,
+    getActiveBrowserSpaceId: () => activeBrowserSpaceId,
+    updateAttachedBrowserView: () => updateAttachedBrowserView(),
+    getMainWindow: () => mainWindow,
   };
 }
 
-async function resolveChromeProfileSelection(): Promise<ChromiumProfileSelection | null> {
-  return resolveChromiumFamilyProfileSelection("chrome");
-}
-
-async function listImportBrowserProfiles(
-  source: BrowserImportSource,
-): Promise<BrowserImportProfileOptionPayload[]> {
-  if (source === "safari") {
-    return [];
-  }
-  const { profiles } = await discoverChromiumFamilyImportProfiles(source);
-  return profiles.map((profile) => ({
-    profileId: profile.profileId,
-    profileLabel: profile.profileLabel,
-    profileDir: profile.profileDir,
-  }));
-}
-
-function parseChromeTimestampMicros(rawValue: string | number | bigint | null | undefined) {
-  if (
-    rawValue == null ||
-    rawValue === "" ||
-    rawValue === 0 ||
-    rawValue === 0n
-  ) {
-    return null;
-  }
-  try {
-    return BigInt(rawValue);
-  } catch {
-    return null;
-  }
-}
-
-function chromeTimestampMicrosToIso(
-  rawValue: string | number | bigint | null | undefined,
-) {
-  const micros = parseChromeTimestampMicros(rawValue);
-  if (!micros || micros <= 0n) {
-    return null;
-  }
-  const unixMicros = micros - 11644473600000000n;
-  if (unixMicros <= 0n) {
-    return null;
-  }
-  return new Date(Number(unixMicros / 1000n)).toISOString();
-}
-
-function importedCookieUrl(
-  hostKey: string,
-  cookiePath: string,
-  secure: boolean,
-) {
-  const normalizedHost = hostKey.trim().replace(/^\.+/, "");
-  if (!normalizedHost) {
-    return null;
-  }
-  try {
-    return new URL(
-      `${secure ? "https" : "http"}://${normalizedHost}${cookiePath || "/"}`,
-    ).toString();
-  } catch {
-    return null;
-  }
-}
-
-function chromeSameSiteToElectronSameSite(
-  value: number | null | undefined,
-): "unspecified" | "no_restriction" | "lax" | "strict" {
-  switch (value) {
-    case 0:
-      return "no_restriction";
-    case 1:
-      return "lax";
-    case 2:
-      return "strict";
-    default:
-      return "unspecified";
-  }
-}
-
-function chromeEncryptedCookieVersion(encryptedValue: Buffer) {
-  if (encryptedValue.length < 3) {
-    return null;
-  }
-  const prefix = encryptedValue.subarray(0, 3).toString("utf8");
-  return /^v\d\d$/.test(prefix) ? prefix : null;
-}
-
-function readChromeSafeStoragePasswordMac() {
-  for (const serviceName of CHROME_COOKIE_SAFE_STORAGE_SERVICE_NAMES) {
-    for (const accountName of CHROME_COOKIE_SAFE_STORAGE_ACCOUNT_NAMES) {
-      try {
-        const password = execFileSync(
-          "security",
-          [
-            "find-generic-password",
-            "-w",
-            "-s",
-            serviceName,
-            "-a",
-            accountName,
-          ],
-          { encoding: "utf8" },
-        ).trim();
-        if (password) {
-          return password;
-        }
-      } catch {
-        // Try the next service/account pair.
-      }
-    }
-
-    try {
-      const password = execFileSync(
-        "security",
-        ["find-generic-password", "-w", "-s", serviceName],
-        { encoding: "utf8" },
-      ).trim();
-      if (password) {
-        return password;
-      }
-    } catch {
-      // Try the next service name.
-    }
-  }
-
-  throw new Error(
-    "Chrome Safe Storage key was not found in the macOS keychain.",
-  );
-}
-
-function readChromeWindowsEncryptedKey(userDataDir: string) {
-  const localStatePath = chromeLocalStatePath(userDataDir);
-  if (!existsSync(localStatePath)) {
-    throw new Error("Chrome Local State was not found.");
-  }
-  const parsed = JSON.parse(
-    readFileSync(localStatePath, "utf8"),
-  ) as Record<string, unknown>;
-  const osCrypt =
-    parsed.os_crypt &&
-    typeof parsed.os_crypt === "object" &&
-    !Array.isArray(parsed.os_crypt)
-      ? (parsed.os_crypt as Record<string, unknown>)
-      : null;
-  const encodedKey =
-    typeof osCrypt?.encrypted_key === "string"
-      ? osCrypt.encrypted_key.trim()
-      : "";
-  if (!encodedKey) {
-    throw new Error("Chrome Local State did not contain os_crypt.encrypted_key.");
-  }
-  const encryptedKeyWithHeader = Buffer.from(encodedKey, "base64");
-  const header = Buffer.from(CHROME_WINDOWS_DPAPI_KEY_PREFIX, "utf8");
-  if (!encryptedKeyWithHeader.subarray(0, header.length).equals(header)) {
-    throw new Error("Chrome os_crypt.encrypted_key did not use the DPAPI format.");
-  }
-  return encryptedKeyWithHeader.subarray(header.length);
-}
-
-function runPowerShellScriptSync(command: string) {
-  const shells = ["powershell.exe", "powershell"];
-  let lastError: unknown = null;
-  for (const shellName of shells) {
-    try {
-      return execFileSync(
-        shellName,
-        [
-          "-NoProfile",
-          "-NonInteractive",
-          "-ExecutionPolicy",
-          "Bypass",
-          "-Command",
-          command,
-        ],
-        { encoding: "utf8" },
-      ).trim();
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("PowerShell was not available.");
-}
-
-function decryptWindowsDpapi(input: Buffer) {
-  const base64Input = input.toString("base64");
-  const command = [
-    "$ErrorActionPreference='Stop'",
-    `Add-Type -AssemblyName System.Security`,
-    `$bytes=[Convert]::FromBase64String('${base64Input}')`,
-    `$plaintext=[System.Security.Cryptography.ProtectedData]::Unprotect($bytes,$null,[System.Security.Cryptography.DataProtectionScope]::CurrentUser)`,
-    `[Convert]::ToBase64String($plaintext)`,
-  ].join(";");
-  const output = runPowerShellScriptSync(command);
-  if (!output) {
-    throw new Error("Windows DPAPI decryption returned an empty result.");
-  }
-  return Buffer.from(output, "base64");
-}
-
-function decryptChromeCookieValueWindows(
-  encryptedValue: Buffer,
-  encryptionKey: Buffer,
-) {
-  const version = chromeEncryptedCookieVersion(encryptedValue);
-  if (!version || !CHROME_WINDOWS_COOKIE_AEAD_PREFIXES.has(version)) {
-    throw new Error("Unsupported Windows Chrome cookie encryption format.");
-  }
-  const nonceOffset = version.length;
-  const nonceLength = 12;
-  const authTagLength = 16;
-  if (encryptedValue.length <= nonceOffset + nonceLength + authTagLength) {
-    throw new Error("Windows Chrome cookie value was too short to decrypt.");
-  }
-  const nonce = encryptedValue.subarray(nonceOffset, nonceOffset + nonceLength);
-  const encryptedPayload = encryptedValue.subarray(nonceOffset + nonceLength);
-  const ciphertext = encryptedPayload.subarray(
-    0,
-    encryptedPayload.length - authTagLength,
-  );
-  const authTag = encryptedPayload.subarray(
-    encryptedPayload.length - authTagLength,
-  );
-  const decipher = createDecipheriv("aes-256-gcm", encryptionKey, nonce);
-  decipher.setAuthTag(authTag);
-  return Buffer.concat([
-    decipher.update(ciphertext),
-    decipher.final(),
-  ]);
-}
-
-function decryptChromeCookieValueMac(
-  encryptedValue: Buffer,
-  safeStoragePassword: string,
-) {
-  const version = chromeEncryptedCookieVersion(encryptedValue);
-  if (!version) {
-    throw new Error("Unsupported Chrome cookie encryption format.");
-  }
-  const key = pbkdf2Sync(
-    safeStoragePassword,
-    CHROME_COOKIE_PBKDF2_SALT,
-    1003,
-    16,
-    "sha1",
-  );
-  const decipher = createDecipheriv(
-    "aes-128-cbc",
-    key,
-    CHROME_COOKIE_CBC_IV,
-  );
-  decipher.setAutoPadding(true);
-  return Buffer.concat([
-    decipher.update(encryptedValue.subarray(version.length)),
-    decipher.final(),
-  ]);
-}
-
-function stripChromeCookieDomainHashPrefix(
-  hostKey: string,
-  decryptedValue: Buffer,
-) {
-  const domainHash = createHash("sha256").update(hostKey, "utf8").digest();
-  if (
-    decryptedValue.length >= domainHash.length &&
-    decryptedValue.subarray(0, domainHash.length).equals(domainHash)
-  ) {
-    return decryptedValue.subarray(domainHash.length);
-  }
-  return decryptedValue;
-}
-
-function decodeChromeCookieValue(
-  hostKey: string,
-  decryptedValue: Buffer,
-) {
-  const valueBytes = stripChromeCookieDomainHashPrefix(hostKey, decryptedValue);
-  return valueBytes.toString("utf8");
-}
-
-function collectChromeBookmarkEntries(
-  node: ChromeBookmarkNodePayload,
-  bucket: BrowserBookmarkPayload[],
-) {
-  if (node.type === "url" && typeof node.url === "string" && node.url.trim()) {
-    bucket.push({
-      id: `bookmark-import-${randomUUID()}`,
-      url: node.url.trim(),
-      title: typeof node.name === "string" && node.name.trim()
-        ? node.name.trim()
-        : node.url.trim(),
-      createdAt: chromeTimestampMicrosToIso(node.date_added) ?? utcNowIso(),
-    });
-    return;
-  }
-
-  if (!Array.isArray(node.children)) {
-    return;
-  }
-  for (const child of node.children) {
-    if (child && typeof child === "object") {
-      collectChromeBookmarkEntries(child, bucket);
-    }
-  }
-}
-
-async function readChromeBookmarks(
-  profileDir: string,
-): Promise<BrowserBookmarkPayload[]> {
-  const bookmarksPath = chromeProfileBookmarksPath(profileDir);
-  if (!existsSync(bookmarksPath)) {
-    return [];
-  }
-
-  const parsed = await readJsonFile<Record<string, unknown>>(bookmarksPath, {});
-  const roots =
-    parsed.roots && typeof parsed.roots === "object" && !Array.isArray(parsed.roots)
-      ? (parsed.roots as Record<string, ChromeBookmarkNodePayload>)
-      : {};
-  const bookmarks: BrowserBookmarkPayload[] = [];
-  for (const root of Object.values(roots)) {
-    if (root && typeof root === "object") {
-      collectChromeBookmarkEntries(root, bookmarks);
-    }
-  }
-  return bookmarks;
-}
-
-async function copyChromeProfileDatabaseToTemp(
-  sourcePath: string,
-  tempPrefix: string,
-) {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), tempPrefix));
-  const copiedPath = path.join(tempDir, path.basename(sourcePath));
-  await fs.copyFile(sourcePath, copiedPath);
-  for (const suffix of ["-wal", "-shm"]) {
-    const sourceCompanionPath = `${sourcePath}${suffix}`;
-    if (!existsSync(sourceCompanionPath)) {
-      continue;
-    }
-    await fs.copyFile(
-      sourceCompanionPath,
-      `${copiedPath}${suffix}`,
-    ).catch(() => undefined);
-  }
+/**
+ * Build the `tabGraph` deps for `copyBrowserWorkspaceProfile`. Per-call
+ * because it captures the source/target workspace pair.
+ */
+function buildBrowserImportTabGraph(
+  sourceWorkspaceId: string,
+  targetWorkspaceId: string,
+): BrowserImportDeps["tabGraph"] {
   return {
-    copiedPath,
-    cleanup: async () => {
-      await fs.rm(tempDir, { recursive: true, force: true }).catch(
-        () => undefined,
-      );
+    forEachBrowserSpace: (callback) => {
+      for (const browserSpace of BROWSER_SPACE_IDS) {
+        const sourceWorkspace = browserWorkspaces.get(sourceWorkspaceId);
+        const targetWorkspace = browserWorkspaces.get(targetWorkspaceId);
+        if (!sourceWorkspace || !targetWorkspace) {
+          return;
+        }
+        const sourceSpace = sourceWorkspace.spaces[browserSpace];
+        const targetSpace = targetWorkspace.spaces[browserSpace];
+
+        const action: BrowserCopySpaceAction = {
+          resetTargetSpace: () => {
+            clearBrowserTabSpaceSuspendTimer(targetSpace);
+            for (const tab of targetSpace.tabs.values()) {
+              closeBrowserTabRecord(tab);
+            }
+            targetSpace.tabs.clear();
+            targetSpace.persistedTabs = [];
+            targetSpace.lifecycleState = "active";
+          },
+          copyTabsAndResolveActive: () => {
+            const tabIdMap = new Map<string, string>();
+            for (const sourceTab of sourceSpace.tabs.values()) {
+              const copiedTabId = createBrowserTab(targetWorkspaceId, {
+                browserSpace,
+                url: sourceTab.state.url || HOME_URL,
+                title: sourceTab.state.title || NEW_TAB_TITLE,
+                faviconUrl: sourceTab.state.faviconUrl,
+                skipInitialHistoryRecord: true,
+              });
+              if (copiedTabId) {
+                tabIdMap.set(sourceTab.state.id, copiedTabId);
+              }
+            }
+            if (targetSpace.tabs.size === 0) {
+              ensureBrowserTabSpaceInitialized(
+                targetWorkspaceId,
+                browserSpace,
+              );
+            }
+            const mappedActiveTabId = tabIdMap.get(
+              sourceSpace.activeTabId || "",
+            );
+            return (
+              (mappedActiveTabId && targetSpace.tabs.has(mappedActiveTabId)
+                ? mappedActiveTabId
+                : Array.from(targetSpace.tabs.keys())[0]) || ""
+            );
+          },
+          setActiveTab: (activeTabId) => {
+            targetSpace.activeTabId = activeTabId;
+          },
+        };
+        callback(browserSpace, action);
+      }
+    },
+    resetAgentSessionSpaces: (workspaceId) => {
+      const targetWorkspace = browserWorkspaces.get(workspaceId);
+      if (!targetWorkspace) {
+        return;
+      }
+      for (const tabSpace of targetWorkspace.agentSessionSpaces.values()) {
+        clearBrowserTabSpaceSuspendTimer(tabSpace);
+        for (const tab of tabSpace.tabs.values()) {
+          closeBrowserTabRecord(tab);
+        }
+        tabSpace.tabs.clear();
+      }
+      targetWorkspace.agentSessionSpaces.clear();
+    },
+    clearUserBrowserLock: (workspaceId) => {
+      const targetWorkspace = browserWorkspaces.get(workspaceId);
+      if (targetWorkspace) {
+        targetWorkspace.userBrowserLock = null;
+      }
+    },
+    clearActiveAgentSession: (workspaceId) => {
+      const targetWorkspace = browserWorkspaces.get(workspaceId);
+      if (targetWorkspace) {
+        targetWorkspace.activeAgentSessionId = null;
+      }
     },
   };
 }
 
-async function readChromeHistory(
-  profileDir: string,
-): Promise<BrowserHistoryEntryPayload[]> {
-  const historyPath = chromeProfileHistoryPath(profileDir);
-  if (!existsSync(historyPath)) {
-    return [];
-  }
-
-  const { copiedPath, cleanup } = await copyChromeProfileDatabaseToTemp(
-    historyPath,
-    "holaboss-chrome-history-",
-  );
-
-  try {
-    const database = new Database(copiedPath, {
-      readonly: true,
-      fileMustExist: true,
-    });
-    try {
-      const rows = database
-        .prepare(
-          `
-          SELECT
-            url,
-            title,
-            visit_count,
-            CAST(last_visit_time AS TEXT) AS last_visit_time
-          FROM urls
-          WHERE hidden = 0
-          ORDER BY last_visit_time DESC
-          LIMIT ?
-        `,
-        )
-        .all(
-          CHROME_HISTORY_IMPORT_LIMIT,
-        ) as Array<{
-          url: string;
-          title: string | null;
-          visit_count: number;
-          last_visit_time: string;
-        }>;
-
-      return rows
-        .map((row) => {
-          const url = row.url.trim();
-          if (!shouldTrackHistoryUrl(url)) {
-            return null;
-          }
-          const lastVisitedAt =
-            chromeTimestampMicrosToIso(row.last_visit_time) ?? utcNowIso();
-          return {
-            id: `history-import-${randomUUID()}`,
-            url,
-            title: row.title?.trim() || url,
-            visitCount:
-              Number.isFinite(row.visit_count) && row.visit_count > 0
-                ? row.visit_count
-                : 1,
-            createdAt: lastVisitedAt,
-            lastVisitedAt,
-          } satisfies BrowserHistoryEntryPayload;
-        })
-        .filter(
-          (entry): entry is BrowserHistoryEntryPayload => Boolean(entry),
-        );
-    } finally {
-      database.close();
-    }
-  } finally {
-    await cleanup();
-  }
-}
-
-function mergeImportedBookmarksIntoWorkspace(
-  workspace: BrowserWorkspaceState,
-  importedBookmarks: BrowserBookmarkPayload[],
-) {
-  const bookmarkByUrl = new Map(
-    workspace.bookmarks.map((bookmark) => [bookmark.url, bookmark] as const),
-  );
-  let changedCount = 0;
-
-  for (const importedBookmark of importedBookmarks) {
-    if (!shouldTrackHistoryUrl(importedBookmark.url)) {
-      continue;
-    }
-    const existing = bookmarkByUrl.get(importedBookmark.url);
-    if (!existing) {
-      bookmarkByUrl.set(importedBookmark.url, importedBookmark);
-      changedCount += 1;
-      continue;
-    }
-
-    const nextTitle = importedBookmark.title?.trim() || existing.title;
-    const nextCreatedAt = existing.createdAt || importedBookmark.createdAt;
-    if (nextTitle !== existing.title || nextCreatedAt !== existing.createdAt) {
-      bookmarkByUrl.set(importedBookmark.url, {
-        ...existing,
-        title: nextTitle,
-        createdAt: nextCreatedAt,
-      });
-      changedCount += 1;
-    }
-  }
-
-  workspace.bookmarks = Array.from(bookmarkByUrl.values()).sort(
-    (left, right) =>
-      new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
-  );
-  return changedCount;
-}
-
-function mergeImportedHistoryIntoWorkspace(
-  workspace: BrowserWorkspaceState,
-  importedHistoryEntries: BrowserHistoryEntryPayload[],
-) {
-  const historyByUrl = new Map(
-    workspace.history.map((entry) => [entry.url, entry] as const),
-  );
-  let changedCount = 0;
-
-  for (const importedEntry of importedHistoryEntries) {
-    if (!shouldTrackHistoryUrl(importedEntry.url)) {
-      continue;
-    }
-    const existing = historyByUrl.get(importedEntry.url);
-    if (!existing) {
-      historyByUrl.set(importedEntry.url, importedEntry);
-      changedCount += 1;
-      continue;
-    }
-
-    const nextLastVisitedAt =
-      new Date(importedEntry.lastVisitedAt).getTime() >
-        new Date(existing.lastVisitedAt).getTime()
-        ? importedEntry.lastVisitedAt
-        : existing.lastVisitedAt;
-    const nextCreatedAt =
-      new Date(importedEntry.createdAt).getTime() <
-        new Date(existing.createdAt).getTime()
-        ? importedEntry.createdAt
-        : existing.createdAt;
-    const nextVisitCount = Math.max(
-      existing.visitCount,
-      importedEntry.visitCount,
-    );
-    const nextTitle = importedEntry.title?.trim() || existing.title;
-    if (
-      nextLastVisitedAt !== existing.lastVisitedAt ||
-      nextCreatedAt !== existing.createdAt ||
-      nextVisitCount !== existing.visitCount ||
-      nextTitle !== existing.title
-    ) {
-      historyByUrl.set(importedEntry.url, {
-        ...existing,
-        title: nextTitle,
-        createdAt: nextCreatedAt,
-        lastVisitedAt: nextLastVisitedAt,
-        visitCount: nextVisitCount,
-      });
-      changedCount += 1;
-    }
-  }
-
-  workspace.history = Array.from(historyByUrl.values())
-    .sort(
-      (left, right) =>
-        new Date(right.lastVisitedAt).getTime() -
-        new Date(left.lastVisitedAt).getTime(),
-    )
-    .slice(0, CHROME_HISTORY_IMPORT_LIMIT);
-  return changedCount;
-}
-
-async function importChromiumFamilyCookiesIntoWorkspaceSession(
-  browser: ChromiumFamilyBrowser,
-  browserSession: Session,
-  profileDir: string,
-): Promise<BrowserCookieImportSummary> {
-  const browserDisplayName = chromiumFamilyDisplayName(browser);
-  const cookiesPath = chromeProfileCookiesPath(profileDir);
-  if (!cookiesPath) {
-    return {
-      importedCount: 0,
-      skippedCount: 0,
-      warnings: [],
-    };
-  }
-
-  if (process.platform !== "darwin" && process.platform !== "win32") {
-    return {
-      importedCount: 0,
-      skippedCount: 0,
-      warnings: [
-        `Cookie import for ${browserDisplayName} is currently supported on macOS and Windows only. Bookmarks and history were still imported.`,
-      ],
-    };
-  }
-
-  let safeStoragePassword = "";
-  let windowsEncryptionKey: Buffer | null = null;
-  if (process.platform === "darwin") {
-    try {
-      safeStoragePassword = readChromeSafeStoragePasswordMac();
-    } catch (error) {
-      return {
-        importedCount: 0,
-        skippedCount: 0,
-        warnings: [
-          error instanceof Error
-            ? error.message
-            : `${browserDisplayName} cookie decryption key could not be loaded.`,
-        ],
-      };
-    }
-  } else if (process.platform === "win32") {
-    try {
-      const encryptedKey = readChromeWindowsEncryptedKey(path.dirname(profileDir));
-      windowsEncryptionKey = decryptWindowsDpapi(encryptedKey);
-    } catch (error) {
-      return {
-        importedCount: 0,
-        skippedCount: 0,
-        warnings: [
-          error instanceof Error
-            ? error.message
-            : `${browserDisplayName} Windows cookie decryption key could not be loaded.`,
-        ],
-      };
-    }
-  }
-
-  const { copiedPath, cleanup } = await copyChromeProfileDatabaseToTemp(
-    cookiesPath,
-    "holaboss-chrome-cookies-",
-  );
-
-  try {
-    const database = new Database(copiedPath, {
-      readonly: true,
-      fileMustExist: true,
-    });
-    try {
-      const rows = database
-        .prepare(
-          `
-          SELECT
-            host_key,
-            name,
-            value,
-            path,
-            CAST(expires_utc AS TEXT) AS expires_utc,
-            is_secure,
-            is_httponly,
-            has_expires,
-            is_persistent,
-            samesite,
-            encrypted_value
-          FROM cookies
-          ORDER BY host_key ASC, name ASC
-        `,
-        )
-        .all() as Array<{
-          host_key: string;
-          name: string;
-          value: string;
-          path: string;
-          expires_utc: string;
-          is_secure: number;
-          is_httponly: number;
-          has_expires: number;
-          is_persistent: number;
-          samesite: number | null;
-          encrypted_value: Buffer;
-        }>;
-
-      let importedCount = 0;
-      let skippedCount = 0;
-      const warnings = new Set<string>();
-
-      for (const row of rows) {
-        const cookieUrl = importedCookieUrl(
-          row.host_key,
-          row.path,
-          Boolean(row.is_secure),
-        );
-        if (!cookieUrl || !row.name?.trim()) {
-          skippedCount += 1;
-          continue;
-        }
-
-        let cookieValue = row.value ?? "";
-        if (!cookieValue) {
-          try {
-            const version = chromeEncryptedCookieVersion(row.encrypted_value);
-            if (
-              process.platform === "win32" &&
-              version === CHROME_WINDOWS_APP_BOUND_COOKIE_PREFIX
-            ) {
-              throw new Error(
-                "Some Windows Chrome cookies use App-Bound encryption and cannot be imported from a different desktop app.",
-              );
-            }
-            const decryptedValue =
-              process.platform === "win32"
-                ? decryptChromeCookieValueWindows(
-                    row.encrypted_value,
-                    windowsEncryptionKey ?? Buffer.alloc(0),
-                  )
-                : decryptChromeCookieValueMac(
-                    row.encrypted_value,
-                    safeStoragePassword,
-                  );
-            cookieValue = decodeChromeCookieValue(
-              row.host_key,
-              decryptedValue,
-            );
-          } catch (error) {
-            skippedCount += 1;
-            warnings.add(
-              error instanceof Error
-                ? error.message
-                : `Some ${browserDisplayName} cookies could not be decrypted.`,
-            );
-            continue;
-          }
-        }
-
-        const expirationDate = chromeTimestampMicrosToIso(row.expires_utc);
-        const expirationDateSeconds = expirationDate
-          ? Math.floor(new Date(expirationDate).getTime() / 1000)
-          : undefined;
-
-        const cookiePayload = {
-          url: cookieUrl,
-          name: row.name.trim(),
-          value: cookieValue,
-          domain: row.host_key?.trim() || undefined,
-          path: row.path?.trim() || "/",
-          secure: Boolean(row.is_secure),
-          httpOnly: Boolean(row.is_httponly),
-          sameSite: chromeSameSiteToElectronSameSite(row.samesite),
-          expirationDate: row.has_expires ? expirationDateSeconds : undefined,
-        } as const;
-
-        try {
-          await browserSession.cookies.set(cookiePayload);
-          importedCount += 1;
-        } catch (error) {
-          const normalizedDomain = cookiePayload.domain?.replace(/^\.+/, "");
-          if (normalizedDomain && normalizedDomain !== cookiePayload.domain) {
-            try {
-              await browserSession.cookies.set({
-                ...cookiePayload,
-                domain: normalizedDomain,
-              });
-              importedCount += 1;
-              continue;
-            } catch {
-              // Fall through to warning path below.
-            }
-          }
-          skippedCount += 1;
-          warnings.add(
-            error instanceof Error
-              ? error.message
-              : `Some ${browserDisplayName} cookies could not be imported into Electron.`,
-          );
-        }
-      }
-
-      await browserSession.cookies.flushStore();
-      return {
-        importedCount,
-        skippedCount,
-        warnings: Array.from(warnings),
-      };
-    } finally {
-      database.close();
-    }
-  } finally {
-    await cleanup();
-  }
-}
-
-async function importChromeCookiesIntoWorkspaceSession(
-  browserSession: Session,
-  profileDir: string,
-): Promise<BrowserCookieImportSummary> {
-  return importChromiumFamilyCookiesIntoWorkspaceSession(
-    "chrome",
-    browserSession,
-    profileDir,
-  );
-}
-
-function decodeHtmlEntities(value: string) {
-  return value
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, "\"")
-    .replace(/&#39;/gi, "'");
-}
-
-function stripHtmlTags(value: string) {
-  return value.replace(/<[^>]*>/g, " ");
-}
-
-function parseImportedVisitTimestamp(value: unknown): string | null {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) {
-      return null;
-    }
-    const numeric = Number(trimmed);
-    if (Number.isFinite(numeric) && /^\d+(\.\d+)?$/.test(trimmed)) {
-      return parseImportedVisitTimestamp(numeric);
-    }
-    const parsed = Date.parse(trimmed);
-    if (Number.isFinite(parsed)) {
-      return new Date(parsed).toISOString();
-    }
-    return null;
-  }
-
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    return null;
-  }
-
-  if (value >= 11644473600000000) {
-    return chromeTimestampMicrosToIso(Math.floor(value)) ?? null;
-  }
-
-  if (value > 10_000_000_000_000) {
-    return new Date(Math.floor(value / 1000)).toISOString();
-  }
-
-  if (value > 10_000_000_000) {
-    return new Date(Math.floor(value)).toISOString();
-  }
-
-  return new Date(Math.floor(value * 1000)).toISOString();
-}
-
-function zipEntryBasename(entryName: string) {
-  const normalized = entryName.replace(/\\/g, "/");
-  const segments = normalized.split("/").filter(Boolean);
-  return (segments[segments.length - 1] || "").toLowerCase();
-}
-
-function parseSafariBookmarksFromHtml(html: string): BrowserBookmarkPayload[] {
-  const bookmarks: BrowserBookmarkPayload[] = [];
-  const anchorPattern =
-    /<a\b[^>]*\bhref\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
-  for (const match of html.matchAll(anchorPattern)) {
-    const url = (match[1] || "").trim();
-    if (!shouldTrackHistoryUrl(url)) {
-      continue;
-    }
-    const cleanedTitle = decodeHtmlEntities(
-      stripHtmlTags(match[2] || "")
-        .replace(/\s+/g, " ")
-        .trim(),
-    );
-    bookmarks.push({
-      id: `bookmark-import-${randomUUID()}`,
-      url,
-      title: cleanedTitle || url,
-      createdAt: utcNowIso(),
-    });
-  }
-  return bookmarks;
-}
-
-function safariHistoryObjectString(
-  value: Record<string, unknown>,
-  keys: readonly string[],
-) {
-  for (const key of keys) {
-    const raw = value[key];
-    if (typeof raw === "string" && raw.trim()) {
-      return raw.trim();
-    }
-  }
-  return "";
-}
-
-function safariHistoryObjectNumber(
-  value: Record<string, unknown>,
-  keys: readonly string[],
-) {
-  for (const key of keys) {
-    const raw = value[key];
-    if (typeof raw === "number" && Number.isFinite(raw)) {
-      return raw;
-    }
-    if (typeof raw === "string") {
-      const parsed = Number(raw.trim());
-      if (Number.isFinite(parsed)) {
-        return parsed;
-      }
-    }
-  }
-  return null;
-}
-
-function collectSafariHistoryEntries(
-  value: unknown,
-  bucket: BrowserHistoryEntryPayload[],
-) {
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      collectSafariHistoryEntries(entry, bucket);
-    }
-    return;
-  }
-
-  if (!value || typeof value !== "object") {
-    return;
-  }
-
-  const record = value as Record<string, unknown>;
-  const url = safariHistoryObjectString(record, ["url", "URL"]);
-  if (url && shouldTrackHistoryUrl(url)) {
-    const title =
-      safariHistoryObjectString(record, [
-        "title",
-        "Title",
-        "pageTitle",
-        "page_title",
-      ]) || url;
-    const visitCountRaw = safariHistoryObjectNumber(record, [
-      "visit_count",
-      "visitCount",
-      "visit_count_total",
-    ]);
-    const visitCount =
-      visitCountRaw && visitCountRaw > 0 ? Math.floor(visitCountRaw) : 1;
-    const lastVisitedAt =
-      parseImportedVisitTimestamp(
-        record.lastVisitedAt ??
-          record.last_visited_at ??
-          record.lastVisitTime ??
-          record.last_visit_time ??
-          record.visitedAt ??
-          record.visited_at ??
-          record.visit_time ??
-          record.visitTime ??
-          record.timestamp,
-      ) ?? utcNowIso();
-    bucket.push({
-      id: `history-import-${randomUUID()}`,
-      url,
-      title,
-      visitCount,
-      createdAt: lastVisitedAt,
-      lastVisitedAt,
-    });
-  }
-
-  for (const nestedValue of Object.values(record)) {
-    if (nestedValue && typeof nestedValue === "object") {
-      collectSafariHistoryEntries(nestedValue, bucket);
-    }
-  }
-}
-
-function parseSafariHistoryEntriesFromJson(
-  jsonContent: string,
-): BrowserHistoryEntryPayload[] {
-  const parsed = JSON.parse(jsonContent) as unknown;
-  const entries: BrowserHistoryEntryPayload[] = [];
-  collectSafariHistoryEntries(parsed, entries);
-  return entries.slice(0, CHROME_HISTORY_IMPORT_LIMIT);
-}
-
-async function selectSafariExportArchivePath(): Promise<string | null> {
-  const options: OpenDialogOptions = {
-    title: "Select Safari Export ZIP",
-    buttonLabel: "Import Safari Export",
-    properties: ["openFile"],
-    filters: [{ name: "ZIP files", extensions: ["zip"] }],
-    defaultPath: path.join(os.homedir(), "Downloads"),
-    message:
-      "Choose a Safari export zip that contains Bookmarks.html and History.json.",
-  };
-  const ownerWindow =
-    mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-  const result = ownerWindow
-    ? await dialog.showOpenDialog(ownerWindow, options)
-    : await dialog.showOpenDialog(options);
-  if (result.canceled || result.filePaths.length === 0) {
-    return null;
-  }
-  return result.filePaths[0]?.trim() || null;
-}
-
-async function readSafariExportArchive(
-  archivePath: string,
-): Promise<{
-  bookmarks: BrowserBookmarkPayload[];
-  history: BrowserHistoryEntryPayload[];
-}> {
-  const zipBuffer = await fs.readFile(archivePath);
-  const zip = await JSZip.loadAsync(zipBuffer);
-
-  let bookmarksHtmlContent = "";
-  let historyJsonContent = "";
-  for (const zipEntry of Object.values(zip.files)) {
-    if (zipEntry.dir) {
-      continue;
-    }
-    const basename = zipEntryBasename(zipEntry.name);
-    if (!bookmarksHtmlContent && basename === SAFARI_EXPORT_BOOKMARKS_FILE_NAME) {
-      bookmarksHtmlContent = await zipEntry.async("string");
-      continue;
-    }
-    if (!historyJsonContent && basename === SAFARI_EXPORT_HISTORY_FILE_NAME) {
-      historyJsonContent = await zipEntry.async("string");
-    }
-  }
-
-  if (!bookmarksHtmlContent && !historyJsonContent) {
-    throw new Error(
-      "Safari export zip did not include Bookmarks.html or History.json.",
-    );
-  }
-
+function buildBrowserImportDeps(
+  tabGraph?: BrowserImportDeps["tabGraph"],
+): BrowserImportDeps {
   return {
-    bookmarks: bookmarksHtmlContent
-      ? parseSafariBookmarksFromHtml(bookmarksHtmlContent)
-      : [],
-    history: historyJsonContent
-      ? parseSafariHistoryEntriesFromJson(historyJsonContent)
-      : [],
+    ...buildBrowserImportDepsBase(),
+    tabGraph: tabGraph ?? {
+      // Unused for non-copy import flows. Throw if a caller tries to use it.
+      forEachBrowserSpace: () => {
+        throw new Error("tabGraph not bound for this import flow");
+      },
+      resetAgentSessionSpaces: () => undefined,
+      clearUserBrowserLock: () => undefined,
+      clearActiveAgentSession: () => undefined,
+    },
   };
 }
 
-async function copyCookiesBetweenBrowserSessions(
-  sourceSession: Session,
-  targetSession: Session,
-): Promise<BrowserCookieImportSummary> {
-  await targetSession.clearStorageData({ storages: ["cookies"] });
+const listImportBrowserProfiles = importBrowsersListImportBrowserProfiles;
 
-  const sourceCookies = await sourceSession.cookies.get({});
-  let importedCount = 0;
-  let skippedCount = 0;
-  const warnings = new Set<string>();
-
-  for (const cookie of sourceCookies) {
-    const cookieUrl = importedCookieUrl(
-      cookie.domain || "",
-      cookie.path || "/",
-      Boolean(cookie.secure),
-    );
-    if (!cookieUrl || !cookie.name?.trim()) {
-      skippedCount += 1;
-      continue;
-    }
-    try {
-      await targetSession.cookies.set({
-        url: cookieUrl,
-        name: cookie.name.trim(),
-        value: cookie.value ?? "",
-        domain: cookie.domain || undefined,
-        path: cookie.path || "/",
-        secure: Boolean(cookie.secure),
-        httpOnly: Boolean(cookie.httpOnly),
-        sameSite: cookie.sameSite ?? "unspecified",
-        expirationDate:
-          typeof cookie.expirationDate === "number" &&
-            Number.isFinite(cookie.expirationDate)
-            ? cookie.expirationDate
-            : undefined,
-      });
-      importedCount += 1;
-    } catch (error) {
-      skippedCount += 1;
-      warnings.add(
-        error instanceof Error
-          ? error.message
-          : "Some cookies could not be copied into the target workspace.",
-      );
-    }
-  }
-
-  await targetSession.cookies.flushStore();
-  return {
-    importedCount,
-    skippedCount,
-    warnings: Array.from(warnings),
-  };
-}
-
-function cloneBrowserBookmarkPayload(
-  bookmark: BrowserBookmarkPayload,
-): BrowserBookmarkPayload {
-  return {
-    id: `bookmark-import-${randomUUID()}`,
-    url: bookmark.url,
-    title: bookmark.title,
-    faviconUrl: bookmark.faviconUrl,
-    createdAt: bookmark.createdAt,
-  };
-}
-
-function cloneBrowserHistoryEntryPayload(
-  entry: BrowserHistoryEntryPayload,
-): BrowserHistoryEntryPayload {
-  return {
-    id: `history-import-${randomUUID()}`,
-    url: entry.url,
-    title: entry.title,
-    faviconUrl: entry.faviconUrl,
-    visitCount: entry.visitCount,
-    createdAt: entry.createdAt,
-    lastVisitedAt: entry.lastVisitedAt,
-  };
-}
-
-function cloneBrowserDownloadPayload(
-  download: BrowserDownloadPayload,
-): BrowserDownloadPayload {
-  return {
-    ...download,
-    id: `download-import-${randomUUID()}`,
-  };
-}
-
-async function importChromiumFamilyProfileIntoWorkspace(
-  browser: ChromiumFamilyBrowser,
-  workspaceId?: string | null,
-  profileDir?: string | null,
-): Promise<BrowserImportSummary | null> {
-  const workspace = await ensureBrowserWorkspace(workspaceId, activeBrowserSpaceId);
-  if (!workspace) {
-    throw new Error("Choose a workspace before importing browser data.");
-  }
-  const browserDisplayName = chromiumFamilyDisplayName(browser);
-
-  const selection = await resolveChromiumFamilyProfileSelection(
-    browser,
-    profileDir,
-  );
-  if (!selection) {
-    return null;
-  }
-
-  const importedBookmarks = await readChromeBookmarks(selection.profileDir);
-  const importedHistoryEntries = await readChromeHistory(selection.profileDir);
-  const bookmarkCount = mergeImportedBookmarksIntoWorkspace(
-    workspace,
-    importedBookmarks,
-  );
-  const historyCount = mergeImportedHistoryIntoWorkspace(
-    workspace,
-    importedHistoryEntries,
-  );
-  const cookieSummary = await importChromiumFamilyCookiesIntoWorkspaceSession(
-    browser,
-    workspace.session,
-    selection.profileDir,
-  );
-
-  if (
-    bookmarkCount === 0 &&
-    historyCount === 0 &&
-    cookieSummary.importedCount === 0 &&
-    cookieSummary.warnings.length === 0
-  ) {
-    throw new Error(
-      `No importable bookmarks, history, or cookies were found in that ${browserDisplayName} profile.`,
-    );
-  }
-
-  emitBookmarksState(workspace.workspaceId);
-  emitHistoryState(workspace.workspaceId);
-  await persistBrowserWorkspace(workspace.workspaceId);
-
-  return {
-    sourceKind: browser,
-    sourceLabel: `${browserDisplayName} ${selection.profileLabel}`,
-    sourcePath: selection.profileDir,
-    sourceProfileDir: selection.profileDir,
-    sourceProfileLabel: selection.profileLabel,
-    importedBookmarks: bookmarkCount,
-    importedHistoryEntries: historyCount,
-    importedCookies: cookieSummary.importedCount,
-    skippedCookies: cookieSummary.skippedCount,
-    warnings: cookieSummary.warnings,
-  };
-}
-
-async function importSafariProfileIntoWorkspace(
-  workspaceId?: string | null,
-  safariArchivePath?: string | null,
-): Promise<BrowserImportSummary | null> {
-  const workspace = await ensureBrowserWorkspace(workspaceId, activeBrowserSpaceId);
-  if (!workspace) {
-    throw new Error("Choose a workspace before importing browser data.");
-  }
-
-  const archivePath =
-    typeof safariArchivePath === "string" && safariArchivePath.trim()
-      ? safariArchivePath.trim()
-      : await selectSafariExportArchivePath();
-  if (!archivePath) {
-    return null;
-  }
-
-  const safariExport = await readSafariExportArchive(archivePath);
-  const bookmarkCount = mergeImportedBookmarksIntoWorkspace(
-    workspace,
-    safariExport.bookmarks,
-  );
-  const historyCount = mergeImportedHistoryIntoWorkspace(
-    workspace,
-    safariExport.history,
-  );
-
-  if (bookmarkCount === 0 && historyCount === 0) {
-    throw new Error(
-      "No importable bookmarks or history entries were found in that Safari export.",
-    );
-  }
-
-  emitBookmarksState(workspace.workspaceId);
-  emitHistoryState(workspace.workspaceId);
-  await persistBrowserWorkspace(workspace.workspaceId);
-
-  return {
-    sourceKind: "safari",
-    sourceLabel: `Safari export ${path.basename(archivePath)}`,
-    sourcePath: archivePath,
-    sourceProfileDir: archivePath,
-    sourceProfileLabel: path.basename(archivePath),
-    importedBookmarks: bookmarkCount,
-    importedHistoryEntries: historyCount,
-    importedCookies: 0,
-    skippedCookies: 0,
-    warnings: [
-      "Safari export files include bookmarks and history only. Cookies and login sessions are not included.",
-    ],
-  };
-}
-
-async function copyBrowserWorkspaceProfile(
-  payload: BrowserCopyWorkspaceProfilePayload,
-): Promise<BrowserImportSummary> {
-  const sourceWorkspaceId = payload.sourceWorkspaceId.trim();
-  const targetWorkspaceId = payload.targetWorkspaceId.trim();
-  if (!sourceWorkspaceId || !targetWorkspaceId) {
-    throw new Error("Both source and target workspaces are required.");
-  }
-  if (sourceWorkspaceId === targetWorkspaceId) {
-    throw new Error("Choose a different source workspace to copy from.");
-  }
-
-  const sourceWorkspace = await ensureBrowserWorkspace(sourceWorkspaceId, "user");
-  const targetWorkspace = await ensureBrowserWorkspace(targetWorkspaceId, "user");
-  if (!sourceWorkspace || !targetWorkspace) {
-    throw new Error("Could not resolve source and target workspace browser state.");
-  }
-
-  targetWorkspace.bookmarks = sourceWorkspace.bookmarks.map(
-    cloneBrowserBookmarkPayload,
-  );
-  targetWorkspace.history = sourceWorkspace.history.map(
-    cloneBrowserHistoryEntryPayload,
-  );
-  targetWorkspace.downloads = sourceWorkspace.downloads.map(
-    cloneBrowserDownloadPayload,
-  );
-
-  for (const browserSpace of BROWSER_SPACE_IDS) {
-    const sourceSpace = sourceWorkspace.spaces[browserSpace];
-    const targetSpace = targetWorkspace.spaces[browserSpace];
-    clearBrowserTabSpaceSuspendTimer(targetSpace);
-    for (const tab of targetSpace.tabs.values()) {
-      closeBrowserTabRecord(tab);
-    }
-    targetSpace.tabs.clear();
-    targetSpace.persistedTabs = [];
-    targetSpace.lifecycleState = "active";
-
-    const tabIdMap = new Map<string, string>();
-    for (const sourceTab of sourceSpace.tabs.values()) {
-      const copiedTabId = createBrowserTab(targetWorkspaceId, {
-        browserSpace,
-        url: sourceTab.state.url || HOME_URL,
-        title: sourceTab.state.title || NEW_TAB_TITLE,
-        faviconUrl: sourceTab.state.faviconUrl,
-        skipInitialHistoryRecord: true,
-      });
-      if (copiedTabId) {
-        tabIdMap.set(sourceTab.state.id, copiedTabId);
-      }
-    }
-
-    if (targetSpace.tabs.size === 0) {
-      ensureBrowserTabSpaceInitialized(targetWorkspaceId, browserSpace);
-    }
-    const mappedActiveTabId = tabIdMap.get(sourceSpace.activeTabId || "");
-    targetSpace.activeTabId =
-      (mappedActiveTabId && targetSpace.tabs.has(mappedActiveTabId)
-        ? mappedActiveTabId
-        : Array.from(targetSpace.tabs.keys())[0]) || "";
-  }
-  for (const tabSpace of targetWorkspace.agentSessionSpaces.values()) {
-    clearBrowserTabSpaceSuspendTimer(tabSpace);
-    for (const tab of tabSpace.tabs.values()) {
-      closeBrowserTabRecord(tab);
-    }
-    tabSpace.tabs.clear();
-  }
-  targetWorkspace.agentSessionSpaces.clear();
-  targetWorkspace.userBrowserLock = null;
-  targetWorkspace.activeAgentSessionId = null;
-
-  const cookieSummary = await copyCookiesBetweenBrowserSessions(
-    sourceWorkspace.session,
-    targetWorkspace.session,
-  );
-
-  if (targetWorkspaceId === activeBrowserWorkspaceId) {
-    updateAttachedBrowserView();
-    emitBrowserState(targetWorkspaceId, activeBrowserSpaceId);
-  }
-  emitBookmarksState(targetWorkspaceId);
-  emitDownloadsState(targetWorkspaceId);
-  emitHistoryState(targetWorkspaceId);
-  await persistBrowserWorkspace(targetWorkspaceId);
-
-  return {
-    sourceKind: "workspace_copy",
-    sourceLabel: sourceWorkspaceId,
-    sourcePath: sourceWorkspaceId,
-    sourceProfileDir: sourceWorkspaceId,
-    sourceProfileLabel: sourceWorkspaceId,
-    importedBookmarks: targetWorkspace.bookmarks.length,
-    importedHistoryEntries: targetWorkspace.history.length,
-    importedCookies: cookieSummary.importedCount,
-    skippedCookies: cookieSummary.skippedCount,
-    warnings: cookieSummary.warnings,
-  };
-}
-
-async function importBrowserProfileIntoWorkspace(
+const importBrowserProfileIntoWorkspace = (
   payload: BrowserImportProfilePayload,
-): Promise<BrowserImportSummary | null> {
-  const source = payload.source;
-  const workspaceId = payload.workspaceId;
-  if (source === "safari") {
-    return importSafariProfileIntoWorkspace(workspaceId, payload.safariArchivePath);
-  }
-  return importChromiumFamilyProfileIntoWorkspace(
-    source,
-    workspaceId,
-    payload.profileDir,
+) =>
+  importBrowsersImportBrowserProfileIntoWorkspace(
+    payload,
+    buildBrowserImportDeps(),
   );
-}
 
-async function importChromeProfileIntoWorkspace(
-  workspaceId?: string | null,
-): Promise<BrowserImportSummary | null> {
-  return importChromiumFamilyProfileIntoWorkspace("chrome", workspaceId);
-}
+const copyBrowserWorkspaceProfile = (
+  payload: BrowserCopyWorkspaceProfilePayload,
+) => {
+  const sourceId = payload.sourceWorkspaceId.trim();
+  const targetId = payload.targetWorkspaceId.trim();
+  return importBrowsersCopyBrowserWorkspaceProfile(
+    payload,
+    buildBrowserImportDeps(buildBrowserImportTabGraph(sourceId, targetId)),
+  );
+};
+
+const importChromeProfileIntoWorkspace = (workspaceId: string) =>
+  importBrowsersImportChromeProfileIntoWorkspace(
+    workspaceId,
+    buildBrowserImportDeps(),
+  );
 
 function browserChromeLikePlatformToken(): string {
-  switch (process.platform) {
-    case "darwin":
-      return "Macintosh; Intel Mac OS X 10_15_7";
-    case "win32":
-      return "Windows NT 10.0; Win64; x64";
-    default:
-      return "X11; Linux x86_64";
-  }
+  return browserChromeLikePlatformTokenUtil();
 }
 
 function browserAcceptedLanguages(): string {
-  const locale = app.getLocale().trim().replace(/_/g, "-");
-  const preferred = [locale, "en-US", "en"].filter(Boolean);
-  return [...new Set(preferred)].join(",");
+  return browserAcceptedLanguagesUtil(app.getLocale());
 }
 
 function browserNativeIdentity(session: Session): BrowserSessionIdentity {
@@ -6905,29 +5300,14 @@ function serializeBrowserEvalResult(value: unknown): unknown {
 }
 
 function isAbortedBrowserLoadError(error: unknown): boolean {
-  if (!error || typeof error !== "object") {
-    return false;
-  }
-  const candidate = error as {
-    code?: unknown;
-    errno?: unknown;
-    message?: unknown;
-  };
-  return (
-    candidate.code === "ERR_ABORTED" ||
-    candidate.errno === -3 ||
-    (typeof candidate.message === "string" &&
-      candidate.message.includes("ERR_ABORTED"))
-  );
+  return isAbortedBrowserLoadErrorUtil(error);
 }
 
 function isAbortedBrowserLoadFailure(
   errorCode: number,
   errorDescription: string,
 ): boolean {
-  return (
-    errorCode === -3 || errorDescription.trim().toUpperCase() === "ERR_ABORTED"
-  );
+  return isAbortedBrowserLoadFailureUtil(errorCode, errorDescription);
 }
 
 async function navigateActiveBrowserTab(
@@ -9909,188 +8289,6 @@ async function getAuthenticatedUser(): Promise<AuthUserPayload | null> {
   return payload?.user ?? null;
 }
 
-const DESKTOP_BILLING_TOKENS_PER_CREDIT = 2000;
-const DESKTOP_BILLING_LOW_BALANCE_THRESHOLD = 10;
-const DESKTOP_BILLING_PLAN_META = {
-  basic: {
-    planId: "basic",
-    planName: "Holaboss",
-    monthlyCreditsIncluded: 200,
-  },
-  pro: {
-    planId: "pro",
-    planName: "Holaboss Pro",
-    monthlyCreditsIncluded: 2000,
-  },
-  customize: {
-    planId: "customize",
-    planName: "Holaboss Custom",
-    monthlyCreditsIncluded: null,
-  },
-} as const;
-
-type DesktopBillingPlanMeta =
-  (typeof DESKTOP_BILLING_PLAN_META)[keyof typeof DESKTOP_BILLING_PLAN_META];
-
-function desktopBillingTokensToCredits(tokens: number): number {
-  return Math.floor(tokens / DESKTOP_BILLING_TOKENS_PER_CREDIT);
-}
-
-function desktopBillingPlanMeta(
-  plan: string | null | undefined,
-): DesktopBillingPlanMeta {
-  if (plan === "pro" || plan === "customize") {
-    return DESKTOP_BILLING_PLAN_META[plan];
-  }
-  return DESKTOP_BILLING_PLAN_META.basic;
-}
-
-async function billingFetch<T>(path: string, input?: unknown): Promise<T> {
-  if (!AUTH_BASE_URL) {
-    throw new Error(
-      "Remote billing is not configured. Set HOLABOSS_AUTH_BASE_URL outside the public repo.",
-    );
-  }
-
-  const cookieHeader = authCookieHeader();
-  if (!cookieHeader) {
-    throw new Error("Not authenticated — sign in first.");
-  }
-
-  const response = await fetch(`${AUTH_BASE_URL}${path}`, {
-    method: "POST",
-    headers: {
-      Cookie: cookieHeader,
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(input === undefined ? {} : { json: input }),
-  });
-
-  if (!response.ok) {
-    if (response.status === 401 || response.status === 403) {
-      clearPersistedAuthCookie();
-      throw new Error("Not authenticated — sign in first.");
-    }
-    const detail = await response.text();
-    throw new Error(
-      detail || `Desktop billing request failed with status ${response.status}`,
-    );
-  }
-
-  const payload =
-    (await response.json()) as DesktopBillingRpcEnvelope<T> | null;
-  if (!payload || !("json" in payload)) {
-    throw new Error("Desktop billing received a malformed RPC response.");
-  }
-
-  return payload.json;
-}
-
-function desktopAppBaseUrl(): string {
-  if (!AUTH_BASE_URL) {
-    return HOLABOSS_HOME_URL;
-  }
-
-  try {
-    const parsed = new URL(AUTH_BASE_URL);
-    if (parsed.hostname === "localhost" && parsed.port === "4000") {
-      parsed.port = "4321";
-      return parsed.origin;
-    }
-    if (parsed.hostname.startsWith("api-preview.")) {
-      parsed.hostname = parsed.hostname.replace(/^api-preview\./, "preview.");
-      return parsed.origin;
-    }
-    if (parsed.hostname.startsWith("api.")) {
-      parsed.hostname = parsed.hostname.replace(/^api\./, "app.");
-      return parsed.origin;
-    }
-    return parsed.origin;
-  } catch {
-    return HOLABOSS_HOME_URL;
-  }
-}
-
-function buildDesktopBillingLinks(
-  appBaseUrl = desktopAppBaseUrl(),
-): DesktopBillingLinksPayload {
-  const normalizedBaseUrl = normalizeBaseUrl(appBaseUrl) || HOLABOSS_HOME_URL;
-  return {
-    billingPageUrl: `${normalizedBaseUrl}/app/settings?tab=billing`,
-    addCreditsUrl: `${normalizedBaseUrl}/app/settings?tab=billing&intent=add-credits`,
-    upgradeUrl: `${normalizedBaseUrl}/app/settings?tab=billing&intent=upgrade`,
-    usageUrl: `${normalizedBaseUrl}/app/settings?tab=billing&intent=usage`,
-  };
-}
-
-async function getDesktopBillingOverview(): Promise<DesktopBillingOverviewPayload> {
-  const [quota, billingInfo] = await Promise.all([
-    billingFetch<DesktopBillingQuotaRpcPayload>("/rpc/quota/myQuota"),
-    billingFetch<DesktopBillingInfoRpcPayload>("/rpc/billing/myBillingInfo"),
-  ]);
-  const subscription = billingInfo.subscription;
-  const planMeta = desktopBillingPlanMeta(subscription?.plan);
-  const renewsAt =
-    subscription && !subscription.cancelAtPeriodEnd
-      ? subscription.currentPeriodEnd
-      : null;
-  const expiresAt = subscription?.cancelAtPeriodEnd
-    ? subscription.currentPeriodEnd
-    : null;
-  const creditsBalance = quota.balance;
-
-  return {
-    hasHostedBillingAccount: true,
-    planId: planMeta.planId,
-    planName: planMeta.planName,
-    planStatus: subscription?.status ?? "inactive",
-    renewsAt,
-    expiresAt,
-    creditsBalance,
-    totalAllocated: quota.totalAllocated,
-    totalUsed: quota.totalUsed,
-    monthlyCreditsIncluded: planMeta.monthlyCreditsIncluded,
-    monthlyCreditsUsed: null,
-    dailyRefreshCredits: null,
-    dailyRefreshTarget: null,
-    lowBalanceThreshold: DESKTOP_BILLING_LOW_BALANCE_THRESHOLD,
-    isLowBalance:
-      creditsBalance > 0 &&
-      creditsBalance < DESKTOP_BILLING_LOW_BALANCE_THRESHOLD,
-  };
-}
-
-async function getDesktopBillingUsage(
-  limit = 10,
-): Promise<DesktopBillingUsagePayload> {
-  const normalizedLimit = Math.max(1, Math.min(limit, 50));
-  const items = await billingFetch<DesktopBillingTransactionRpcPayload[]>(
-    "/rpc/quota/myTransactions",
-    { limit: normalizedLimit },
-  );
-
-  return {
-    items: items.map((transaction) => {
-      const amount = desktopBillingTokensToCredits(transaction.amount);
-      return {
-        id: transaction.id,
-        type: transaction.type,
-        sourceType: transaction.sourceType,
-        reason: transaction.reason,
-        serviceType: transaction.serviceType,
-        serviceId: transaction.serviceId,
-        category: transaction.category,
-        metadata: transaction.metadata,
-        amount,
-        absoluteAmount: Math.abs(amount),
-        createdAt: transaction.createdAt,
-      };
-    }),
-    count: items.length,
-  };
-}
-
 function authUserId(user: AuthUserPayload | null | undefined): string {
   if (!user || typeof user.id !== "string") {
     return "";
@@ -11111,7 +9309,7 @@ async function ingestWorkspaceHeartbeat(params: {
 
   try {
     const bundledContext =
-      await requestRuntimeJson<ProactiveContextCaptureResponsePayload>({
+      await runtimeClient.request<ProactiveContextCaptureResponsePayload>({
         method: "POST",
         path: "/api/v1/proactive/context/capture",
         payload: {
@@ -11276,28 +9474,6 @@ async function parseLocalTemplateMetadata(
   };
 }
 
-async function listMarketplaceTemplates(): Promise<TemplateListResponsePayload> {
-  // Uses @holaboss/app-sdk against Hono's native /api/marketplace/templates
-  // route. The endpoint is publicly readable, so the Cookie header is
-  // forwarded when a session exists but the call still works anonymously.
-  const client = getMarketplaceAppSdkClient();
-  const data = await sdkListMarketplaceTemplates({ client });
-  // Community-source templates can omit the array fields (apps/agents/
-  // views/tags). Normalize at the read boundary so the rest of the UI can
-  // treat them as guaranteed arrays.
-  const templates = (data.templates as TemplateMetadataPayload[]).map((t) => ({
-    ...t,
-    apps: t.apps ?? [],
-    agents: t.agents ?? [],
-    views: t.views ?? [],
-    tags: t.tags ?? [],
-  }));
-  return {
-    templates,
-    spotlight: (data.spotlight ?? []) as SpotlightItemPayload[],
-  };
-}
-
 interface AppTemplateListResponsePayload {
   templates: AppTemplateMetadataPayload[];
 }
@@ -11397,11 +9573,7 @@ async function listTaskProposals(
   if (!workspaceId.trim()) {
     return { proposals: [], count: 0 };
   }
-  return requestRuntimeJson<TaskProposalListResponsePayload>({
-    method: "GET",
-    path: "/api/v1/task-proposals/unreviewed",
-    params: { workspace_id: workspaceId },
-  });
+  return runtimeClient.taskProposals.listUnreviewed(workspaceId);
 }
 
 async function listMemoryUpdateProposals(
@@ -11410,18 +9582,7 @@ async function listMemoryUpdateProposals(
   if (!payload.workspaceId.trim()) {
     return { proposals: [], count: 0 };
   }
-  return requestRuntimeJson<MemoryUpdateProposalListResponsePayload>({
-    method: "GET",
-    path: "/api/v1/memory-update-proposals",
-    params: {
-      workspace_id: payload.workspaceId,
-      session_id: payload.sessionId ?? undefined,
-      input_id: payload.inputId ?? undefined,
-      state: payload.state ?? undefined,
-      limit: payload.limit ?? 200,
-      offset: payload.offset ?? 0,
-    },
-  });
+  return runtimeClient.memory.listUpdateProposals(payload);
 }
 
 function secondsSinceIso(value: string | null): number | null {
@@ -11439,41 +9600,21 @@ function secondsSinceIso(value: string | null): number | null {
 async function acceptTaskProposal(
   payload: TaskProposalAcceptPayload,
 ): Promise<TaskProposalAcceptResponsePayload> {
-  return requestRuntimeJson<TaskProposalAcceptResponsePayload>({
-    method: "POST",
-    path: `/api/v1/task-proposals/${encodeURIComponent(payload.proposal_id)}/accept`,
-    payload: {
-      task_name: payload.task_name,
-      task_prompt: payload.task_prompt,
-      session_id: payload.session_id,
-      parent_session_id: payload.parent_session_id,
-      created_by: payload.created_by,
-      priority: payload.priority ?? 0,
-      model: payload.model ?? null,
-    },
-  });
+  return runtimeClient.taskProposals.accept(
+    payload,
+  ) as unknown as Promise<TaskProposalAcceptResponsePayload>;
 }
 
 async function acceptMemoryUpdateProposal(
   payload: MemoryUpdateProposalAcceptPayload,
 ): Promise<MemoryUpdateProposalAcceptResponsePayload> {
-  return requestRuntimeJson<MemoryUpdateProposalAcceptResponsePayload>({
-    method: "POST",
-    path: `/api/v1/memory-update-proposals/${encodeURIComponent(payload.proposalId)}/accept`,
-    payload: {
-      summary: payload.summary ?? undefined,
-    },
-  });
+  return runtimeClient.memory.acceptUpdateProposal(payload);
 }
 
 async function dismissMemoryUpdateProposal(
   proposalId: string,
 ): Promise<MemoryUpdateProposalDismissResponsePayload> {
-  return requestRuntimeJson<MemoryUpdateProposalDismissResponsePayload>({
-    method: "POST",
-    path: `/api/v1/memory-update-proposals/${encodeURIComponent(proposalId)}/dismiss`,
-    payload: {},
-  });
+  return runtimeClient.memory.dismissUpdateProposal(proposalId);
 }
 
 async function getProactiveStatus(
@@ -11664,48 +9805,30 @@ async function listCronjobs(
   workspaceId: string,
   enabledOnly = false,
 ): Promise<CronjobListResponsePayload> {
-  return requestRuntimeJson<CronjobListResponsePayload>({
-    method: "GET",
-    path: "/api/v1/cronjobs",
-    params: { workspace_id: workspaceId, enabled_only: enabledOnly },
-  });
+  return runtimeClient.cronjobs.list(workspaceId, enabledOnly);
 }
 
 async function runCronjobNow(
   jobId: string,
 ): Promise<CronjobRunResponsePayload> {
-  return requestRuntimeJson<CronjobRunResponsePayload>({
-    method: "POST",
-    path: `/api/v1/cronjobs/${encodeURIComponent(jobId)}/run`,
-  });
+  return runtimeClient.cronjobs.runNow(jobId);
 }
 
 async function createCronjob(
   payload: CronjobCreatePayload,
 ): Promise<CronjobRecordPayload> {
-  return requestRuntimeJson<CronjobRecordPayload>({
-    method: "POST",
-    path: "/api/v1/cronjobs",
-    payload,
-  });
+  return runtimeClient.cronjobs.create(payload);
 }
 
 async function updateCronjob(
   jobId: string,
   payload: CronjobUpdatePayload,
 ): Promise<CronjobRecordPayload> {
-  return requestRuntimeJson<CronjobRecordPayload>({
-    method: "PATCH",
-    path: `/api/v1/cronjobs/${encodeURIComponent(jobId)}`,
-    payload,
-  });
+  return runtimeClient.cronjobs.update(jobId, payload);
 }
 
 async function deleteCronjob(jobId: string): Promise<{ success: boolean }> {
-  return requestRuntimeJson<{ success: boolean }>({
-    method: "DELETE",
-    path: `/api/v1/cronjobs/${encodeURIComponent(jobId)}`,
-  });
+  return runtimeClient.cronjobs.delete(jobId);
 }
 
 const runtimeNotificationListCache = new Map<
@@ -11739,16 +9862,11 @@ async function listNotifications(
     includeDismissed,
   );
   try {
-    const response =
-      await requestRuntimeJson<RuntimeNotificationListResponsePayload>({
-        method: "GET",
-        path: "/api/v1/notifications",
-        params: {
-          workspace_id: workspaceId ?? undefined,
-          include_dismissed: includeDismissed,
-          limit: 50,
-        },
-      });
+    const response = await runtimeClient.notifications.list({
+      workspaceId,
+      includeDismissed,
+      limit: 50,
+    });
     runtimeNotificationListCache.set(cacheKey, response);
     return response;
   } catch (error) {
@@ -11766,44 +9884,29 @@ async function updateNotification(
   notificationId: string,
   payload: RuntimeNotificationUpdatePayload,
 ): Promise<RuntimeNotificationRecordPayload> {
-  const response = await requestRuntimeJson<RuntimeNotificationRecordPayload>({
-    method: "PATCH",
-    path: `/api/v1/notifications/${encodeURIComponent(notificationId)}`,
+  const response = await runtimeClient.notifications.update(
+    notificationId,
     payload,
-  });
+  );
   runtimeNotificationListCache.clear();
   return response;
 }
 
 async function listIntegrationCatalog(): Promise<IntegrationCatalogResponsePayload> {
-  return requestRuntimeJson<IntegrationCatalogResponsePayload>({
-    method: "GET",
-    path: "/api/v1/integrations/catalog",
-  });
+  return runtimeClient.integrations.listCatalog();
 }
 
 async function listIntegrationConnections(params?: {
   providerId?: string;
   ownerUserId?: string;
 }): Promise<IntegrationConnectionListResponsePayload> {
-  return requestRuntimeJson<IntegrationConnectionListResponsePayload>({
-    method: "GET",
-    path: "/api/v1/integrations/connections",
-    params: {
-      provider_id: params?.providerId,
-      owner_user_id: params?.ownerUserId,
-    },
-  });
+  return runtimeClient.integrations.listConnections(params);
 }
 
 async function listIntegrationBindings(
   workspaceId: string,
 ): Promise<IntegrationBindingListResponsePayload> {
-  return requestRuntimeJson<IntegrationBindingListResponsePayload>({
-    method: "GET",
-    path: "/api/v1/integrations/bindings",
-    params: { workspace_id: workspaceId },
-  });
+  return runtimeClient.integrations.listBindings(workspaceId);
 }
 
 async function upsertIntegrationBinding(
@@ -11813,90 +9916,66 @@ async function upsertIntegrationBinding(
   integrationKey: string,
   payload: IntegrationUpsertBindingPayload,
 ): Promise<IntegrationBindingPayload> {
-  return requestRuntimeJson<IntegrationBindingPayload>({
-    method: "PUT",
-    path: `/api/v1/integrations/bindings/${encodeURIComponent(workspaceId)}/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/${encodeURIComponent(integrationKey)}`,
+  return runtimeClient.integrations.upsertBinding(
+    workspaceId,
+    targetType,
+    targetId,
+    integrationKey,
     payload,
-  });
+  );
 }
 
 async function deleteIntegrationBinding(
   bindingId: string,
   workspaceId: string,
 ): Promise<{ deleted: boolean }> {
-  return requestRuntimeJson<{ deleted: boolean }>({
-    method: "DELETE",
-    path: `/api/v1/integrations/bindings/${encodeURIComponent(bindingId)}`,
-    params: { workspace_id: workspaceId },
-  });
+  return runtimeClient.integrations.deleteBinding(bindingId, workspaceId);
 }
 
 async function createIntegrationConnection(
   payload: IntegrationCreateConnectionPayload,
 ): Promise<IntegrationConnectionPayload> {
-  return requestRuntimeJson<IntegrationConnectionPayload>({
-    method: "POST",
-    path: "/api/v1/integrations/connections",
-    payload,
-  });
+  return runtimeClient.integrations.createConnection(payload);
 }
 
 async function updateIntegrationConnection(
   connectionId: string,
   payload: IntegrationUpdateConnectionPayload,
 ): Promise<IntegrationConnectionPayload> {
-  return requestRuntimeJson<IntegrationConnectionPayload>({
-    method: "PATCH",
-    path: `/api/v1/integrations/connections/${encodeURIComponent(connectionId)}`,
-    payload,
-  });
+  return runtimeClient.integrations.updateConnection(connectionId, payload);
 }
 
 async function deleteIntegrationConnection(
   connectionId: string,
 ): Promise<{ deleted: boolean }> {
-  return requestRuntimeJson<{ deleted: boolean }>({
-    method: "DELETE",
-    path: `/api/v1/integrations/connections/${encodeURIComponent(connectionId)}`,
-  });
+  return runtimeClient.integrations.deleteConnection(connectionId);
 }
 
 async function mergeIntegrationConnections(
   keepConnectionId: string,
   removeConnectionIds: string[],
 ): Promise<IntegrationMergeConnectionsResult> {
-  return requestRuntimeJson<IntegrationMergeConnectionsResult>({
-    method: "POST",
-    path: `/api/v1/integrations/connections/${encodeURIComponent(keepConnectionId)}/merge`,
-    payload: { remove_connection_ids: removeConnectionIds },
-  });
+  return runtimeClient.integrations.mergeConnections(
+    keepConnectionId,
+    removeConnectionIds,
+  );
 }
 
 async function listOAuthConfigs(): Promise<OAuthAppConfigListResponsePayload> {
-  return requestRuntimeJson<OAuthAppConfigListResponsePayload>({
-    method: "GET",
-    path: "/api/v1/integrations/oauth/configs",
-  });
+  return runtimeClient.integrations.listOAuthConfigs();
 }
 
 async function upsertOAuthConfig(
   providerId: string,
   payload: OAuthAppConfigUpsertPayload,
 ): Promise<OAuthAppConfigPayload> {
-  return requestRuntimeJson<OAuthAppConfigPayload>({
-    method: "PUT",
-    path: `/api/v1/integrations/oauth/configs/${encodeURIComponent(providerId)}`,
-    payload,
-  });
+  return runtimeClient.integrations.upsertOAuthConfig(providerId, payload);
 }
 
 async function deleteOAuthConfig(
   providerId: string,
 ): Promise<{ deleted: boolean }> {
-  return requestRuntimeJson<{ deleted: boolean }>({
-    method: "DELETE",
-    path: `/api/v1/integrations/oauth/configs/${encodeURIComponent(providerId)}`,
-  });
+  return runtimeClient.integrations.deleteOAuthConfig(providerId);
 }
 
 async function startOAuthFlow(
@@ -11904,10 +9983,9 @@ async function startOAuthFlow(
 ): Promise<OAuthAuthorizeResponsePayload> {
   const runtimeConfig = await readRuntimeConfigFile();
   const userId = (runtimeConfig.user_id || "").trim() || "local";
-  const result = await requestRuntimeJson<OAuthAuthorizeResponsePayload>({
-    method: "POST",
-    path: "/api/v1/integrations/oauth/authorize",
-    payload: { provider, owner_user_id: userId },
+  const result = await runtimeClient.integrations.authorizeOAuth({
+    provider,
+    owner_user_id: userId,
   });
   if (result.authorize_url) {
     shell.openExternal(result.authorize_url);
@@ -12466,15 +10544,11 @@ async function composioFinalize(payload: {
     }
   }
 
-  return requestRuntimeJson<IntegrationConnectionPayload>({
-    method: "POST",
-    path: "/api/v1/integrations/composio/finalize",
-    payload: {
-      ...payload,
-      ...(resolvedLabel ? { account_label: resolvedLabel } : {}),
-      account_handle: enrichedHandle,
-      account_email: enrichedEmail,
-    },
+  return runtimeClient.integrations.composioFinalize({
+    ...payload,
+    ...(resolvedLabel ? { account_label: resolvedLabel } : {}),
+    account_handle: enrichedHandle,
+    account_email: enrichedEmail,
   });
 }
 
@@ -13055,11 +11129,7 @@ async function updateTaskProposalState(
   proposalId: string,
   state: string,
 ): Promise<TaskProposalStateUpdatePayload> {
-  return requestRuntimeJson<TaskProposalStateUpdatePayload>({
-    method: "PATCH",
-    path: `/api/v1/task-proposals/${encodeURIComponent(proposalId)}`,
-    payload: { state },
-  });
+  return runtimeClient.taskProposals.updateState(proposalId, state);
 }
 
 const LOCAL_TEMPLATE_IGNORE_NAMES = new Set([
@@ -13820,163 +11890,19 @@ function sleep(ms: number) {
   });
 }
 
-function isTransientRuntimeError(error: unknown): boolean {
-  if (error instanceof TypeError) {
-    return true;
-  }
-  if (!(error instanceof Error)) {
-    return false;
-  }
-  const message = error.message.toLowerCase();
-  return (
-    message.includes("embedded runtime is not ready") ||
-    message.includes("fetch failed") ||
-    message.includes("bad port") ||
-    message.includes("invalid url") ||
-    message.includes("econnrefused") ||
-    message.includes("econnreset") ||
-    message.includes("socket hang up")
-  );
-}
-
-function runtimeErrorFromBody(
-  statusCode: number,
-  statusMessage: string | undefined,
-  body: string,
-): Error {
-  const trimmed = body.trim();
-  if (trimmed) {
-    try {
-      const parsed = JSON.parse(trimmed) as {
-        detail?: unknown;
-        message?: unknown;
-        error?: unknown;
-      };
-      const detail =
-        typeof parsed.detail === "string"
-          ? parsed.detail
-          : typeof parsed.message === "string"
-            ? parsed.message
-            : typeof parsed.error === "string"
-              ? parsed.error
-              : "";
-      if (detail) {
-        return new Error(detail);
-      }
-    } catch {
-      return new Error(trimmed);
+// Singleton runtime client. Owns retry/timeout/error parsing for every
+// runtime call in this process; new endpoints should reach for typed methods
+// (`runtimeClient.<domain>.<method>(...)`) or the generic `runtimeClient.request<T>()`
+// rather than reintroducing inline fetch.
+const runtimeClient = createRuntimeClient({
+  getBaseURL: async () => {
+    const status = await ensureRuntimeReady();
+    if (!status.url) {
+      throw new Error("Embedded runtime is not ready (no url yet).");
     }
-  }
-  return new Error(
-    `${statusCode} ${statusMessage ?? "Runtime request failed."}`.trim(),
-  );
-}
-
-async function requestRuntimeJsonViaHttp<T>(
-  targetUrl: URL,
-  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
-  payload?: unknown,
-  timeoutMs = 15000,
-): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const serializedPayload =
-      payload === undefined ? null : JSON.stringify(payload);
-    const request = httpRequest(
-      {
-        hostname: targetUrl.hostname,
-        port: targetUrl.port || "80",
-        path: `${targetUrl.pathname}${targetUrl.search}`,
-        method,
-        headers:
-          serializedPayload === null
-            ? undefined
-            : {
-                "Content-Type": "application/json",
-                "Content-Length": Buffer.byteLength(serializedPayload),
-              },
-        timeout: timeoutMs,
-      },
-      (response) => {
-        const chunks: Buffer[] = [];
-        response.on("data", (chunk) => {
-          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-        });
-        response.on("end", () => {
-          const statusCode = response.statusCode ?? 0;
-          const body = Buffer.concat(chunks).toString("utf-8");
-          if (statusCode < 200 || statusCode >= 300) {
-            reject(
-              runtimeErrorFromBody(statusCode, response.statusMessage, body),
-            );
-            return;
-          }
-          if (statusCode === 204 || !body.trim()) {
-            resolve(null as T);
-            return;
-          }
-          try {
-            resolve(JSON.parse(body) as T);
-          } catch {
-            reject(new Error("Runtime returned invalid JSON."));
-          }
-        });
-      },
-    );
-
-    request.on("timeout", () => {
-      request.destroy(new Error("Runtime request timed out."));
-    });
-    request.on("error", (error) => {
-      reject(error);
-    });
-
-    if (serializedPayload !== null) {
-      request.write(serializedPayload);
-    }
-    request.end();
-  });
-}
-
-async function requestRuntimeJson<T>({
-  method,
-  path: requestPath,
-  payload,
-  params,
-  timeoutMs,
-  retryTransientErrors = false,
-}: {
-  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-  path: string;
-  payload?: unknown;
-  params?: Record<string, string | number | boolean | null | undefined>;
-  timeoutMs?: number;
-  retryTransientErrors?: boolean;
-}): Promise<T> {
-  const attempts = method === "GET" || retryTransientErrors ? 3 : 1;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    try {
-      const status = await ensureRuntimeReady();
-      const url = new URL(`${status.url}${requestPath}`);
-      if (params) {
-        for (const [key, value] of Object.entries(params)) {
-          if (value === undefined || value === null || value === "") {
-            continue;
-          }
-          url.searchParams.set(key, String(value));
-        }
-      }
-      return requestRuntimeJsonViaHttp<T>(url, method, payload, timeoutMs);
-    } catch (error) {
-      if (attempt < attempts && isTransientRuntimeError(error)) {
-        await sleep(250 * attempt);
-        continue;
-      }
-      throw error;
-    }
-  }
-
-  throw new Error("Runtime request failed after retries.");
-}
+    return status.url;
+  },
+});
 
 function workspaceHarness() {
   return (
@@ -14054,10 +11980,7 @@ async function resolveWorkspaceDir(workspaceId: string): Promise<string> {
     return cached;
   }
   try {
-    const response = await requestRuntimeJson<WorkspaceResponsePayload>({
-      method: "GET",
-      path: `/api/v1/workspaces/${encodeURIComponent(safeId)}`,
-    });
+    const response = await runtimeClient.workspaces.get(safeId);
     const registered = response.workspace.workspace_path?.trim() || "";
     if (registered) {
       const resolved = path.resolve(registered);
@@ -14915,14 +12838,10 @@ function listWorkspacesFromLocalDb(): WorkspaceListResponsePayload {
 }
 
 async function listWorkspacesViaRuntime(): Promise<WorkspaceListResponsePayload> {
-  const response = await requestRuntimeJson<WorkspaceListResponsePayload>({
-    method: "GET",
-    path: "/api/v1/workspaces",
-    params: {
-      include_deleted: false,
-      limit: 100,
-      offset: 0,
-    },
+  const response = await runtimeClient.workspaces.list({
+    includeDeleted: false,
+    limit: 100,
+    offset: 0,
   });
   for (const item of response.items) {
     // List response is authoritative: reset cache so relocated workspaces
@@ -15002,13 +12921,7 @@ function staticCatalogMeta(appId: string) {
 async function listAppCatalog(params: {
   source?: "marketplace" | "local";
 }): Promise<AppCatalogListResponse> {
-  const query: Record<string, string> = {};
-  if (params.source) query.source = params.source;
-  return requestRuntimeJson<AppCatalogListResponse>({
-    method: "GET",
-    path: "/api/v1/apps/catalog",
-    params: query,
-  });
+  return runtimeClient.apps.listCatalog({ source: params.source });
 }
 
 async function syncAppCatalog(params: {
@@ -15039,10 +12952,10 @@ async function syncAppCatalog(params: {
         archive_path: null,
       });
     }
-    return requestRuntimeJson<AppCatalogSyncResponse>({
-      method: "POST",
-      path: "/api/v1/apps/catalog/sync",
-      payload: { source: "marketplace", target, entries },
+    return runtimeClient.apps.syncCatalog({
+      source: "marketplace",
+      target,
+      entries,
     });
   }
 
@@ -15061,10 +12974,10 @@ async function syncAppCatalog(params: {
       archive_path: row.filePath,
     };
   });
-  return requestRuntimeJson<AppCatalogSyncResponse>({
-    method: "POST",
-    path: "/api/v1/apps/catalog/sync",
-    payload: { source: "local", target, entries },
+  return runtimeClient.apps.syncCatalog({
+    source: "local",
+    target,
+    entries,
   });
 }
 
@@ -15119,15 +13032,10 @@ async function installAppFromCatalog(params: {
   });
 
   try {
-    const resp = await requestRuntimeJson<InstallAppFromCatalogResponse>({
-      method: "POST",
-      path: "/api/v1/apps/install-archive",
-      payload: {
-        workspace_id: params.workspaceId,
-        app_id: params.appId,
-        archive_path: archivePath,
-      },
-      timeoutMs: 300_000,
+    const resp = await runtimeClient.apps.installArchive({
+      workspace_id: params.workspaceId,
+      app_id: params.appId,
+      archive_path: archivePath,
     });
     return resp;
   } finally {
@@ -15275,15 +13183,12 @@ async function installAppFromArchiveFile(params: {
   });
 
   try {
-    return await requestRuntimeJson<InstallAppFromCatalogResponse>({
-      method: "POST",
-      path: "/api/v1/apps/install-archive",
-      payload: {
-        workspace_id: workspaceId,
-        app_id: appId,
-        archive_path: stagedPath,
-      },
-      timeoutMs: 300_000,
+    // SDK's installArchive defaults timeoutMs to 300_000 — equivalent to the
+    // upstream change in main. Keeping the typed-method form.
+    return await runtimeClient.apps.installArchive({
+      workspace_id: workspaceId,
+      app_id: appId,
+      archive_path: stagedPath,
     });
   } finally {
     await cleanup();
@@ -15393,13 +13298,7 @@ async function listInstalledApps(
 async function listInstalledAppsViaRuntime(
   workspaceId: string,
 ): Promise<InstalledWorkspaceAppListResponsePayload> {
-  return requestRuntimeJson<InstalledWorkspaceAppListResponsePayload>({
-    method: "GET",
-    path: "/api/v1/apps",
-    params: {
-      workspace_id: workspaceId,
-    },
-  });
+  return runtimeClient.apps.listInstalled(workspaceId);
 }
 
 async function removeInstalledApp(
@@ -15408,14 +13307,7 @@ async function removeInstalledApp(
 ): Promise<void> {
   const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
   const safeAppId = assertSafeAppId(appId);
-  await requestRuntimeJson<Record<string, unknown>>({
-    method: "DELETE",
-    path: `/api/v1/apps/${encodeURIComponent(safeAppId)}`,
-    payload: {
-      workspace_id: safeWorkspaceId,
-    },
-    timeoutMs: 30000,
-  });
+  await runtimeClient.apps.remove(safeWorkspaceId, safeAppId);
 }
 
 async function controlPlaneWorkspaceUserId(): Promise<string | null> {
@@ -15536,13 +13428,7 @@ async function activateWorkspace(
   const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
   // Desktop always activates via local runtime.
   // Ensure all enabled apps are running in parallel via the runtime.
-  await requestRuntimeJson<Record<string, unknown>>({
-    method: "POST",
-    path: "/api/v1/apps/ensure-running",
-    payload: { workspace_id: safeWorkspaceId },
-    timeoutMs: 300000,
-    retryTransientErrors: true,
-  });
+  await runtimeClient.workspaces.ensureAppsRunning(safeWorkspaceId);
   return getWorkspaceLifecycleViaRuntime(safeWorkspaceId);
 }
 
@@ -15580,20 +13466,16 @@ async function listOutputs(
 ): Promise<WorkspaceOutputListResponsePayload> {
   const requestPayload =
     typeof payload === "string" ? { workspaceId: payload } : payload;
-  return requestRuntimeJson<WorkspaceOutputListResponsePayload>({
-    method: "GET",
-    path: "/api/v1/outputs",
-    params: {
-      workspace_id: requestPayload.workspaceId,
-      output_type: requestPayload.outputType ?? undefined,
-      status: requestPayload.status ?? undefined,
-      platform: requestPayload.platform ?? undefined,
-      folder_id: requestPayload.folderId ?? undefined,
-      session_id: requestPayload.sessionId ?? undefined,
-      input_id: requestPayload.inputId ?? undefined,
-      limit: requestPayload.limit ?? 50,
-      offset: requestPayload.offset ?? 0,
-    },
+  return runtimeClient.outputs.list({
+    workspaceId: requestPayload.workspaceId,
+    outputType: requestPayload.outputType,
+    status: requestPayload.status,
+    platform: requestPayload.platform,
+    folderId: requestPayload.folderId,
+    sessionId: requestPayload.sessionId,
+    inputId: requestPayload.inputId,
+    limit: requestPayload.limit,
+    offset: requestPayload.offset,
   });
 }
 
@@ -15925,16 +13807,12 @@ async function createWorkspace(
     hasCustomWorkspacePath: Boolean(customWorkspacePath),
   });
   try {
-    created = await requestRuntimeJson<WorkspaceResponsePayload>({
-      method: "POST",
-      path: "/api/v1/workspaces",
-      payload: {
-        name: payload.name,
-        harness,
-        status: "provisioning",
-        onboarding_status: "not_required",
-        ...(customWorkspacePath ? { workspace_path: customWorkspacePath } : {}),
-      },
+    created = await runtimeClient.workspaces.create({
+      name: payload.name,
+      harness,
+      status: "provisioning",
+      onboarding_status: "not_required",
+      ...(customWorkspacePath ? { workspace_path: customWorkspacePath } : {}),
     });
     stageLog("runtime_post_workspaces.ok", { workspaceId: created.workspace.id });
   } catch (error) {
@@ -16040,15 +13918,11 @@ async function createWorkspace(
     stageLog("activate_workspace.start", { workspaceId, onboardingStatus });
     let updated: WorkspaceResponsePayload;
     try {
-      updated = await requestRuntimeJson<WorkspaceResponsePayload>({
-        method: "PATCH",
-        path: `/api/v1/workspaces/${workspaceId}`,
-        payload: {
-          status: "active",
-          onboarding_status: onboardingStatus.toLowerCase(),
-          onboarding_session_id: onboardingSessionId,
-          error_message: null,
-        },
+      updated = await runtimeClient.workspaces.update(workspaceId, {
+        status: "active",
+        onboarding_status: onboardingStatus.toLowerCase(),
+        onboarding_session_id: onboardingSessionId,
+        error_message: null,
       });
       stageLog("activate_workspace.ok", { workspaceId });
     } catch (error) {
@@ -16148,27 +14022,21 @@ async function createWorkspace(
 
     if (onboardingSessionId) {
       try {
-        await requestRuntimeJson<EnqueueSessionInputResponsePayload>({
-          method: "POST",
-          path: "/api/v1/agent-sessions/queue",
-          payload: {
-            workspace_id: workspaceId,
-            session_id: onboardingSessionId,
-            text: "Start workspace onboarding now. Use ONBOARD.md as the guide and ask the first onboarding question only.",
-            priority: 0,
-          },
+        await runtimeClient.sessions.queueInput({
+          workspace_id: workspaceId,
+          session_id: onboardingSessionId,
+          text: "Start workspace onboarding now. Use ONBOARD.md as the guide and ask the first onboarding question only.",
+          priority: 0,
         });
       } catch (error) {
-        updated = await requestRuntimeJson<WorkspaceResponsePayload>({
-          method: "PATCH",
-          path: `/api/v1/workspaces/${workspaceId}`,
-          payload: {
+        updated = await runtimeClient.workspaces
+          .update(workspaceId, {
             error_message: contextualWorkspaceCreateError(
               "Workspace created, but automatic onboarding could not start",
               error,
             ),
-          },
-        }).catch(() => updated);
+          })
+          .catch(() => updated);
       }
     }
     const runtimeConfigForHeartbeat = await readRuntimeConfigFile();
@@ -16211,14 +14079,12 @@ async function createWorkspace(
     }
     return updated;
   } catch (error) {
-    await requestRuntimeJson<WorkspaceResponsePayload>({
-      method: "PATCH",
-      path: `/api/v1/workspaces/${workspaceId}`,
-      payload: {
+    await runtimeClient.workspaces
+      .update(workspaceId, {
         status: "error",
         error_message: normalizeErrorMessage(error),
-      },
-    }).catch(() => undefined);
+      })
+      .catch(() => undefined);
     throw error;
   }
 }
@@ -16228,11 +14094,10 @@ async function deleteWorkspace(
   keepFiles?: boolean,
 ): Promise<WorkspaceResponsePayload> {
   const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
-  const response = await requestRuntimeJson<WorkspaceResponsePayload>({
-    method: "DELETE",
-    path: `/api/v1/workspaces/${encodeURIComponent(safeWorkspaceId)}`,
-    ...(keepFiles !== undefined ? { params: { keep_files: keepFiles } } : {}),
-  });
+  const response = await runtimeClient.workspaces.delete(
+    safeWorkspaceId,
+    keepFiles !== undefined ? { keepFiles } : undefined,
+  );
   forgetWorkspaceDir(safeWorkspaceId);
   return response;
 }
@@ -16242,10 +14107,8 @@ async function relocateWorkspace(
   newPath: string,
 ): Promise<WorkspaceResponsePayload> {
   const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
-  const response = await requestRuntimeJson<WorkspaceResponsePayload>({
-    method: "PATCH",
-    path: `/api/v1/workspaces/${encodeURIComponent(safeWorkspaceId)}`,
-    payload: { workspace_path: newPath },
+  const response = await runtimeClient.workspaces.update(safeWorkspaceId, {
+    workspace_path: newPath,
   });
   forgetWorkspaceDir(safeWorkspaceId);
   rememberWorkspaceDir(safeWorkspaceId, response.workspace.workspace_path);
@@ -16256,11 +14119,7 @@ async function activateWorkspaceRecord(
   workspaceId: string,
 ): Promise<WorkspaceResponsePayload> {
   const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
-  return requestRuntimeJson<WorkspaceResponsePayload>({
-    method: "POST",
-    path: `/api/v1/workspaces/${encodeURIComponent(safeWorkspaceId)}/activate`,
-    payload: {},
-  });
+  return runtimeClient.workspaces.activate(safeWorkspaceId);
 }
 
 async function pickWorkspaceRelocationFolder(
@@ -16316,13 +14175,10 @@ async function listRuntimeStates(
   workspaceId: string,
 ): Promise<SessionRuntimeStateListResponsePayload> {
   try {
-    const response = await requestRuntimeJson<SessionRuntimeStateListResponsePayload>({
-      method: "GET",
-      path: `/api/v1/agent-sessions/by-workspace/${workspaceId}/runtime-states`,
-      params: {
-        limit: 100,
-        offset: 0,
-      },
+    const response = await runtimeClient.sessions.listRuntimeStates({
+      workspaceId,
+      limit: 100,
+      offset: 0,
     });
     const items = cacheRuntimeStateRecords(workspaceId, response.items ?? []);
     return {
@@ -16348,15 +14204,11 @@ async function listAgentSessions(
     return { items: [], count: 0 };
   }
   try {
-    const response = await requestRuntimeJson<AgentSessionListResponsePayload>({
-      method: "GET",
-      path: "/api/v1/agent-sessions",
-      params: {
-        workspace_id: workspaceId,
-        include_archived: false,
-        limit: 100,
-        offset: 0,
-      },
+    const response = await runtimeClient.sessions.list({
+      workspaceId,
+      includeArchived: false,
+      limit: 100,
+      offset: 0,
     });
     const items = cacheAgentSessionRecords(workspaceId, response.items ?? []);
     return {
@@ -16378,17 +14230,13 @@ async function listAgentSessions(
 async function createAgentSession(
   payload: CreateAgentSessionPayload,
 ): Promise<CreateAgentSessionResponsePayload> {
-  const response = await requestRuntimeJson<CreateAgentSessionResponsePayload>({
-    method: "POST",
-    path: "/api/v1/agent-sessions",
-    payload: {
-      workspace_id: payload.workspace_id,
-      session_id: payload.session_id ?? undefined,
-      kind: payload.kind ?? undefined,
-      title: payload.title ?? undefined,
-      parent_session_id: payload.parent_session_id ?? undefined,
-      created_by: payload.created_by ?? undefined,
-    },
+  const response = await runtimeClient.sessions.create({
+    workspace_id: payload.workspace_id,
+    session_id: payload.session_id ?? undefined,
+    kind: payload.kind ?? undefined,
+    title: payload.title ?? undefined,
+    parent_session_id: payload.parent_session_id ?? undefined,
+    created_by: payload.created_by ?? undefined,
   });
   if (response.session) {
     upsertCachedAgentSessionRecord(response.session);
@@ -16434,15 +14282,12 @@ async function getSessionHistory(
   payload: SessionHistoryRequestPayload,
 ): Promise<SessionHistoryResponsePayload> {
   try {
-    return await requestRuntimeJson<SessionHistoryResponsePayload>({
-      method: "GET",
-      path: `/api/v1/agent-sessions/${payload.sessionId}/history`,
-      params: {
-        workspace_id: payload.workspaceId,
-        limit: payload.limit ?? 200,
-        offset: payload.offset ?? 0,
-        order: payload.order ?? "asc",
-      },
+    return await runtimeClient.sessions.getHistory({
+      sessionId: payload.sessionId,
+      workspaceId: payload.workspaceId,
+      limit: payload.limit,
+      offset: payload.offset,
+      order: payload.order,
     });
   } catch (error) {
     if (
@@ -16462,15 +14307,9 @@ async function getSessionHistory(
 async function getSessionOutputEvents(
   payload: SessionOutputEventListRequestPayload,
 ): Promise<SessionOutputEventListResponsePayload> {
-  return requestRuntimeJson<SessionOutputEventListResponsePayload>({
-    method: "GET",
-    path: `/api/v1/agent-sessions/${encodeURIComponent(payload.sessionId)}/outputs/events`,
-    params: {
-      input_id: payload.inputId ?? undefined,
-      include_history: true,
-      after_event_id: 0,
-      include_native: false,
-    },
+  return runtimeClient.sessions.getOutputEvents({
+    sessionId: payload.sessionId,
+    inputId: payload.inputId,
   });
 }
 
@@ -16492,10 +14331,8 @@ async function queueSessionInput(
   }
   const idempotencyKey =
     payload.idempotency_key?.trim() || `desktop-session-input:${randomUUID()}`;
-  const response = await requestRuntimeJson<EnqueueSessionInputResponsePayload>({
-    method: "POST",
-    path: "/api/v1/agent-sessions/queue",
-    payload: {
+  const response = await runtimeClient.sessions.queueInput(
+    {
       workspace_id: payload.workspace_id,
       text: payload.text,
       image_urls: payload.image_urls,
@@ -16506,8 +14343,8 @@ async function queueSessionInput(
       model: payload.model,
       thinking_value: payload.thinking_value ?? null,
     },
-    retryTransientErrors: true,
-  });
+    { retryTransientErrors: true },
+  );
   const runtimeStatus = response.runtime_status?.trim() || response.status || "QUEUED";
   const effectiveState =
     response.effective_state?.trim() || runtimeStatus || "QUEUED";
@@ -16535,12 +14372,8 @@ async function queueSessionInput(
 async function pauseSessionRun(
   payload: HolabossPauseSessionRunPayload,
 ): Promise<PauseSessionRunResponsePayload> {
-  const response = await requestRuntimeJson<PauseSessionRunResponsePayload>({
-    method: "POST",
-    path: `/api/v1/agent-sessions/${encodeURIComponent(payload.session_id)}/pause`,
-    payload: {
-      workspace_id: payload.workspace_id,
-    },
+  const response = await runtimeClient.sessions.pause(payload.session_id, {
+    workspace_id: payload.workspace_id,
   });
   upsertCachedRuntimeStateRecord({
     workspace_id: payload.workspace_id,
@@ -16566,14 +14399,14 @@ async function pauseSessionRun(
 async function updateQueuedSessionInput(
   payload: HolabossUpdateQueuedSessionInputPayload,
 ): Promise<UpdateQueuedSessionInputResponsePayload> {
-  return requestRuntimeJson<UpdateQueuedSessionInputResponsePayload>({
-    method: "PATCH",
-    path: `/api/v1/agent-sessions/${encodeURIComponent(payload.session_id)}/inputs/${encodeURIComponent(payload.input_id)}`,
-    payload: {
+  return runtimeClient.sessions.updateQueuedInput(
+    payload.session_id,
+    payload.input_id,
+    {
       workspace_id: payload.workspace_id,
       text: payload.text,
     },
-  });
+  );
 }
 
 async function* iterSseEvents(stream: NodeJS.ReadableStream) {
@@ -17909,28 +15742,18 @@ function persistFileBookmarks() {
 function createBrowserState(
   overrides?: Partial<BrowserStatePayload>,
 ): BrowserStatePayload {
-  return {
-    id: overrides?.id ?? "",
-    url: overrides?.url ?? "",
-    title: overrides?.title ?? NEW_TAB_TITLE,
-    faviconUrl: overrides?.faviconUrl,
-    canGoBack: overrides?.canGoBack ?? false,
-    canGoForward: overrides?.canGoForward ?? false,
-    loading: overrides?.loading ?? false,
-    initialized: overrides?.initialized ?? false,
-    error: overrides?.error ?? "",
-  };
+  return createBrowserStateUtil({ newTabTitle: NEW_TAB_TITLE }, overrides);
 }
 
 function browserSpaceId(
   value?: string | null,
   fallback: BrowserSpaceId = activeBrowserSpaceId,
 ): BrowserSpaceId {
-  return value === "agent" ? "agent" : value === "user" ? "user" : fallback;
+  return browserSpaceIdUtil(value, fallback);
 }
 
 function browserSessionId(value?: string | null): string {
-  return typeof value === "string" ? value.trim() : "";
+  return browserSessionIdUtil(value);
 }
 
 function createBrowserTabSpaceState(): BrowserTabSpaceState {
@@ -18001,10 +15824,7 @@ function browserTabSpaceStates(
 }
 
 function emptyBrowserTabCountsPayload(): BrowserTabCountsPayload {
-  return {
-    user: 0,
-    agent: 0,
-  };
+  return emptyBrowserTabCountsPayloadUtil();
 }
 
 function emptyBrowserTabListPayload(
@@ -18073,13 +15893,7 @@ async function getAppHttpUrl(
   appId: string,
 ): Promise<string | null> {
   try {
-    const ports = await requestRuntimeJson<
-      Record<string, { http: number; mcp: number }>
-    >({
-      method: "GET",
-      path: "/api/v1/apps/ports",
-      params: { workspace_id: workspaceId },
-    });
+    const ports = await runtimeClient.apps.listPorts(workspaceId);
     const appPorts = ports[appId];
     if (!appPorts?.http) {
       return null;
@@ -18315,7 +16129,7 @@ function browserTabSpaceState(
 }
 
 function oppositeBrowserSpaceId(space: BrowserSpaceId): BrowserSpaceId {
-  return space === "agent" ? "user" : "agent";
+  return oppositeBrowserSpaceIdUtil(space);
 }
 
 function browserWorkspaceTabCounts(
@@ -20322,13 +18136,6 @@ function closeAllFilePreviewWatchSubscriptions() {
   }
 }
 
-function emitAddressSuggestionsState() {
-  addressSuggestionsPopupWindow?.webContents.send(
-    "addressSuggestions:update",
-    addressSuggestionsState,
-  );
-}
-
 function createAuthPopupHtml() {
   return `<!doctype html>
 <html lang="en">
@@ -20918,16 +18725,7 @@ function createAuthPopupHtml() {
 }
 
 function shouldTrackHistoryUrl(rawUrl: string) {
-  if (!rawUrl) {
-    return false;
-  }
-
-  try {
-    const parsed = new URL(rawUrl);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
-  }
+  return shouldTrackHistoryUrlUtil(rawUrl);
 }
 
 async function recordHistoryVisit(
@@ -21151,47 +18949,13 @@ function emitBrowserState(
   );
 }
 
-function emitBookmarksState(workspaceId?: string | null) {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return;
-  }
-  const normalizedWorkspaceId =
-    typeof workspaceId === "string"
-      ? workspaceId.trim()
-      : activeBrowserWorkspaceId;
-  if (normalizedWorkspaceId !== activeBrowserWorkspaceId) {
-    return;
-  }
-  const workspace = browserWorkspaceOrEmpty(normalizedWorkspaceId);
-  mainWindow.webContents.send("browser:bookmarks", workspace?.bookmarks ?? []);
-}
-
-function emitDownloadsState(workspaceId?: string | null) {
-  const normalizedWorkspaceId =
-    typeof workspaceId === "string"
-      ? workspaceId.trim()
-      : activeBrowserWorkspaceId;
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    if (!downloadsPopupWindow || downloadsPopupWindow.isDestroyed()) {
-      return;
-    }
-  }
-  if (normalizedWorkspaceId !== activeBrowserWorkspaceId) {
-    return;
-  }
-  const workspace = browserWorkspaceOrEmpty(normalizedWorkspaceId);
-  const downloads = workspace?.downloads ?? [];
-  mainWindow?.webContents.send("browser:downloads", downloads);
-  downloadsPopupWindow?.webContents.send("downloads:update", downloads);
-}
-
 function emitHistoryState(workspaceId?: string | null) {
   const normalizedWorkspaceId =
     typeof workspaceId === "string"
       ? workspaceId.trim()
       : activeBrowserWorkspaceId;
   if (!mainWindow || mainWindow.isDestroyed()) {
-    if (!historyPopupWindow || historyPopupWindow.isDestroyed()) {
+    if (!browserPanePopups.hasOpenHistoryPopup()) {
       return;
     }
     return;
@@ -21202,7 +18966,7 @@ function emitHistoryState(workspaceId?: string | null) {
   const workspace = browserWorkspaceOrEmpty(normalizedWorkspaceId);
   const history = workspace?.history ?? [];
   mainWindow.webContents.send("browser:history", history);
-  historyPopupWindow?.webContents.send("history:update", history);
+  browserPanePopups.sendHistoryToPopup(history);
 }
 
 function closeBrowserTabRecord(tab: BrowserTabRecord) {
@@ -21299,26 +19063,14 @@ function syncBrowserState(
 }
 
 function normalizeBrowserPopupFrameName(frameName?: string | null): string {
-  const normalized = typeof frameName === "string" ? frameName.trim() : "";
-  return normalized && normalized !== "_blank" ? normalized : "";
+  return normalizeBrowserPopupFrameNameUtil(frameName);
 }
 
 function isBrowserPopupWindowRequest(
   frameName?: string | null,
   features?: string | null,
 ): boolean {
-  if (normalizeBrowserPopupFrameName(frameName)) {
-    return true;
-  }
-  const normalizedFeatures =
-    typeof features === "string" ? features.trim().toLowerCase() : "";
-  return (
-    normalizedFeatures.includes("popup") ||
-    normalizedFeatures.includes("width=") ||
-    normalizedFeatures.includes("height=") ||
-    normalizedFeatures.includes("left=") ||
-    normalizedFeatures.includes("top=")
-  );
+  return isBrowserPopupWindowRequestUtil(frameName, features);
 }
 
 function focusBrowserTabInSpace(
@@ -21429,27 +19181,7 @@ function handleBrowserWindowOpenAsTab(
 }
 
 function browserContextSuggestedFilename(context: ContextMenuParams): string {
-  const suggested = context.suggestedFilename.trim();
-  if (suggested) {
-    return sanitizeAttachmentName(suggested);
-  }
-
-  const candidateUrl = context.srcURL.trim() || context.linkURL.trim();
-  if (!candidateUrl) {
-    return context.mediaType === "image" ? "image" : "download";
-  }
-
-  try {
-    const parsed = new URL(candidateUrl);
-    const basename = path.basename(parsed.pathname).trim();
-    if (basename) {
-      return sanitizeAttachmentName(basename);
-    }
-  } catch {
-    // fall through to fallback names below
-  }
-
-  return context.mediaType === "image" ? "image" : "download";
+  return browserContextSuggestedFilenameUtil(context, sanitizeAttachmentName);
 }
 
 function queueBrowserDownloadPrompt(
@@ -22021,106 +19753,6 @@ function ensureBrowserTabSpaceInitialized(
   return true;
 }
 
-function ensureBrowserWorkspaceDownloadTracking(
-  workspace: BrowserWorkspaceState,
-) {
-  if (
-    workspace.downloadTrackingRegistered ||
-    browserDownloadTrackingPartitions.has(workspace.partition)
-  ) {
-    workspace.downloadTrackingRegistered = true;
-    return;
-  }
-  workspace.downloadTrackingRegistered = true;
-  browserDownloadTrackingPartitions.add(workspace.partition);
-  workspace.session.on("will-download", (_event, item: DownloadItem) => {
-    const currentWorkspace = browserWorkspaceFromMap(workspace.workspaceId);
-    if (!currentWorkspace) {
-      return;
-    }
-
-    const createdAt = new Date().toISOString();
-    const downloadId = `download-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const override = consumeBrowserDownloadOverride(
-      currentWorkspace,
-      item.getURL(),
-    );
-    const savePath = override
-      ? ""
-      : resolveWorkspaceDownloadTargetPath(
-          currentWorkspace.workspaceId,
-          item.getFilename(),
-        );
-    if (override) {
-      item.setSaveDialogOptions({
-        title: override.dialogTitle,
-        buttonLabel: override.buttonLabel,
-        defaultPath: override.defaultPath,
-        properties: ["showOverwriteConfirmation"],
-      });
-    } else {
-      item.setSavePath(savePath);
-    }
-
-    const payload: BrowserDownloadPayload = {
-      id: downloadId,
-      url: item.getURL(),
-      filename: item.getFilename(),
-      targetPath: item.getSavePath() || savePath,
-      status: "progressing",
-      receivedBytes: 0,
-      totalBytes: item.getTotalBytes(),
-      createdAt,
-      completedAt: null,
-    };
-
-    currentWorkspace.downloads = [payload, ...currentWorkspace.downloads].slice(
-      0,
-      100,
-    );
-    emitDownloadsState(workspace.workspaceId);
-    void persistBrowserWorkspace(workspace.workspaceId);
-
-    const updateDownload = (patch: Partial<BrowserDownloadPayload>) => {
-      const latestWorkspace = browserWorkspaceFromMap(workspace.workspaceId);
-      if (!latestWorkspace) {
-        return;
-      }
-      latestWorkspace.downloads = latestWorkspace.downloads.map((download) =>
-        download.id === downloadId ? { ...download, ...patch } : download,
-      );
-      emitDownloadsState(workspace.workspaceId);
-      void persistBrowserWorkspace(workspace.workspaceId);
-    };
-
-    item.on("updated", (_updatedEvent, state) => {
-      updateDownload({
-        status: state === "interrupted" ? "interrupted" : "progressing",
-        targetPath: item.getSavePath() || "",
-        receivedBytes: item.getReceivedBytes(),
-        totalBytes: item.getTotalBytes(),
-      });
-    });
-
-    item.once("done", (_doneEvent, state) => {
-      const nextStatus: BrowserDownloadStatus =
-        state === "completed"
-          ? "completed"
-          : state === "cancelled"
-            ? "cancelled"
-            : "interrupted";
-      updateDownload({
-        status: nextStatus,
-        targetPath: item.getSavePath() || "",
-        receivedBytes: item.getReceivedBytes(),
-        totalBytes: item.getTotalBytes(),
-        completedAt:
-          nextStatus === "completed" ? new Date().toISOString() : null,
-      });
-    });
-  });
-}
-
 async function ensureBrowserWorkspace(
   workspaceId?: string | null,
   space?: BrowserSpaceId | null,
@@ -22507,188 +20139,6 @@ async function captureVisibleBrowserSnapshot(): Promise<BrowserVisibleSnapshotPa
   };
 }
 
-function createDownloadsPopupHtml() {
-  return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Downloads</title>
-    <style>
-      :root { color-scheme: dark; }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        font-family: "Exo 2", "Segoe UI Variable", sans-serif;
-        background: transparent;
-        color: #deeee6;
-      }
-      .panel {
-        margin: 10px;
-        border-radius: 18px;
-        border: 1px solid rgba(87, 255, 173, 0.24);
-        background: linear-gradient(180deg, rgba(9, 16, 13, 0.98), rgba(5, 9, 7, 0.98));
-        box-shadow: 0 18px 42px rgba(0, 0, 0, 0.45);
-        overflow: hidden;
-      }
-      .header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 16px 18px 10px;
-      }
-      .title {
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 0.16em;
-        text-transform: uppercase;
-        color: rgba(222, 238, 230, 0.82);
-      }
-      .close {
-        width: 26px;
-        height: 26px;
-        border: 0;
-        border-radius: 9999px;
-        background: transparent;
-        color: rgba(222, 238, 230, 0.6);
-        cursor: pointer;
-        font-size: 20px;
-        line-height: 1;
-      }
-      .close:hover { background: rgba(255, 255, 255, 0.06); color: rgba(222, 238, 230, 0.92); }
-      .list {
-        max-height: 274px;
-        overflow-y: auto;
-        padding: 0 12px 12px;
-      }
-      .empty {
-        margin: 0 6px 6px;
-        padding: 16px;
-        border-radius: 14px;
-        border: 1px solid rgba(87, 255, 173, 0.14);
-        background: rgba(255, 255, 255, 0.03);
-        font-size: 12px;
-        color: rgba(222, 238, 230, 0.68);
-      }
-      .item {
-        margin: 0 6px 10px;
-        padding: 12px;
-        border-radius: 14px;
-        border: 1px solid rgba(87, 255, 173, 0.14);
-        background: rgba(255, 255, 255, 0.03);
-      }
-      .row {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-      }
-      .meta {
-        min-width: 0;
-        flex: 1;
-      }
-      .filename {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        font-size: 13px;
-        font-weight: 700;
-        color: rgba(222, 238, 230, 0.92);
-      }
-      .status {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        margin-top: 3px;
-        font-size: 10px;
-        letter-spacing: 0.14em;
-        text-transform: uppercase;
-        color: rgba(222, 238, 230, 0.48);
-      }
-      .actions {
-        display: flex;
-        gap: 6px;
-      }
-      .action {
-        height: 28px;
-        min-width: 28px;
-        padding: 0 10px;
-        border-radius: 10px;
-        border: 1px solid rgba(87, 255, 173, 0.18);
-        background: rgba(255, 255, 255, 0.04);
-        color: rgba(222, 238, 230, 0.76);
-        cursor: pointer;
-        font-size: 11px;
-      }
-      .action:hover { border-color: rgba(87, 255, 173, 0.42); color: #57ffad; }
-      .bar {
-        margin-top: 10px;
-        height: 6px;
-        border-radius: 9999px;
-        background: rgba(0, 0, 0, 0.35);
-        overflow: hidden;
-      }
-      .bar > span {
-        display: block;
-        height: 100%;
-        background: linear-gradient(90deg, rgba(87, 255, 173, 0.72), rgba(87, 255, 173, 0.92));
-      }
-      ${popupThemeCss()}
-    </style>
-  </head>
-  <body>
-    <div class="panel">
-      <div class="header">
-        <div class="title">Downloads</div>
-        <button class="close" id="close" aria-label="Close">×</button>
-      </div>
-      <div class="list" id="list"></div>
-    </div>
-    <script>
-      const list = document.getElementById("list");
-      const close = document.getElementById("close");
-
-      const render = (downloads) => {
-        const recent = downloads.slice(0, 5);
-        if (!recent.length) {
-          list.innerHTML = '<div class="empty">No downloads yet.</div>';
-          return;
-        }
-
-        list.innerHTML = recent.map((download) => {
-          const progress = download.totalBytes > 0 ? Math.min(100, Math.round((download.receivedBytes / download.totalBytes) * 100)) : 0;
-          return \`
-            <div class="item">
-              <div class="row">
-                <div class="meta">
-                  <div class="filename" title="\${download.filename}">\${download.filename}</div>
-                  <div class="status">\${download.status}</div>
-                </div>
-                <div class="actions">
-                  <button class="action" data-open="\${download.id}">Open</button>
-                  <button class="action" data-reveal="\${download.id}">Show</button>
-                </div>
-              </div>
-              <div class="bar"><span style="width:\${progress}%"></span></div>
-            </div>
-          \`;
-        }).join("");
-
-        list.querySelectorAll("[data-open]").forEach((button) => {
-          button.addEventListener("click", () => window.downloadsPopup.openDownload(button.dataset.open));
-        });
-        list.querySelectorAll("[data-reveal]").forEach((button) => {
-          button.addEventListener("click", () => window.downloadsPopup.showDownloadInFolder(button.dataset.reveal));
-        });
-      };
-
-      close.addEventListener("click", () => window.downloadsPopup.close());
-      window.downloadsPopup.onDownloadsChange(render);
-      window.downloadsPopup.getDownloads().then(render);
-    </script>
-  </body>
-</html>`;
-}
-
 function ensureAuthPopupWindow() {
   if (authPopupWindow && !authPopupWindow.isDestroyed()) {
     return authPopupWindow;
@@ -22826,737 +20276,6 @@ function toggleAuthPopup(anchorBounds: BrowserAnchorBoundsPayload) {
   }
 
   showAuthPopup(anchorBounds);
-}
-
-function ensureDownloadsPopupWindow() {
-  if (downloadsPopupWindow && !downloadsPopupWindow.isDestroyed()) {
-    return downloadsPopupWindow;
-  }
-
-  if (!mainWindow) {
-    return null;
-  }
-
-  downloadsPopupWindow = new BrowserWindow({
-    width: DOWNLOADS_POPUP_WIDTH,
-    height: DOWNLOADS_POPUP_HEIGHT,
-    parent: mainWindow,
-    frame: false,
-    resizable: false,
-    movable: false,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    show: false,
-    skipTaskbar: true,
-    backgroundColor: "#00000000",
-    transparent: true,
-    hasShadow: false,
-    webPreferences: {
-      preload: path.join(__dirname, "downloadsPopupPreload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-    },
-  });
-
-  downloadsPopupWindow.on("blur", () => {
-    downloadsPopupWindow?.hide();
-  });
-
-  downloadsPopupWindow.once("closed", () => {
-    downloadsPopupWindow = null;
-  });
-
-  const html = createDownloadsPopupHtml();
-  void downloadsPopupWindow.loadURL(
-    `data:text/html;charset=utf-8,${encodeURIComponent(html)}`,
-  );
-  return downloadsPopupWindow;
-}
-
-function toggleDownloadsPopup(anchorBounds: BrowserAnchorBoundsPayload) {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return;
-  }
-
-  const popup = ensureDownloadsPopupWindow();
-  if (!popup) {
-    return;
-  }
-
-  if (popup.isVisible()) {
-    popup.hide();
-    return;
-  }
-
-  const contentBounds = mainWindow.getContentBounds();
-  const x = Math.round(
-    Math.min(
-      Math.max(
-        contentBounds.x +
-          anchorBounds.x +
-          anchorBounds.width -
-          DOWNLOADS_POPUP_WIDTH,
-        contentBounds.x + 8,
-      ),
-      contentBounds.x + contentBounds.width - DOWNLOADS_POPUP_WIDTH - 8,
-    ),
-  );
-  const y = Math.round(
-    contentBounds.y + anchorBounds.y + anchorBounds.height + 8,
-  );
-
-  popup.setBounds({
-    x,
-    y,
-    width: DOWNLOADS_POPUP_WIDTH,
-    height: DOWNLOADS_POPUP_HEIGHT,
-  });
-  popup.show();
-  popup.focus();
-  emitDownloadsState();
-}
-
-function createHistoryPopupHtml() {
-  return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>History</title>
-    <style>
-      :root { color-scheme: dark; }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        font-family: "Exo 2", "Segoe UI Variable", sans-serif;
-        background: transparent;
-        color: #deeee6;
-      }
-      .panel {
-        margin: 10px;
-        border-radius: 18px;
-        border: 1px solid rgba(87, 255, 173, 0.24);
-        background: linear-gradient(180deg, rgba(9, 16, 13, 0.98), rgba(5, 9, 7, 0.98));
-        box-shadow: 0 18px 42px rgba(0, 0, 0, 0.45);
-        overflow: hidden;
-      }
-      .header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-        padding: 16px 18px 10px;
-      }
-      .title {
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 0.16em;
-        text-transform: uppercase;
-        color: rgba(222, 238, 230, 0.82);
-      }
-      .actions { display: flex; gap: 6px; }
-      .button {
-        height: 28px;
-        min-width: 28px;
-        padding: 0 10px;
-        border-radius: 10px;
-        border: 1px solid rgba(87, 255, 173, 0.18);
-        background: rgba(255, 255, 255, 0.04);
-        color: rgba(222, 238, 230, 0.76);
-        cursor: pointer;
-        font-size: 11px;
-      }
-      .button:hover { border-color: rgba(87, 255, 173, 0.42); color: #57ffad; }
-      .list {
-        max-height: 344px;
-        overflow-y: auto;
-        padding: 0 12px 12px;
-      }
-      .empty {
-        margin: 0 6px 6px;
-        padding: 16px;
-        border-radius: 14px;
-        border: 1px solid rgba(87, 255, 173, 0.14);
-        background: rgba(255, 255, 255, 0.03);
-        font-size: 12px;
-        color: rgba(222, 238, 230, 0.68);
-      }
-      .item {
-        margin: 0 6px 8px;
-        padding: 10px 12px;
-        border-radius: 14px;
-        border: 1px solid rgba(87, 255, 173, 0.14);
-        background: rgba(255, 255, 255, 0.03);
-        display: flex;
-        gap: 8px;
-        align-items: center;
-      }
-      .open {
-        flex: 1;
-        min-width: 0;
-        border: 0;
-        background: transparent;
-        color: inherit;
-        text-align: left;
-        cursor: pointer;
-        padding: 0;
-      }
-      .title-row {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        font-size: 13px;
-        font-weight: 700;
-        color: rgba(222, 238, 230, 0.92);
-      }
-      .url-row {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        margin-top: 3px;
-        font-size: 11px;
-        color: rgba(222, 238, 230, 0.56);
-      }
-      .icon {
-        width: 16px;
-        height: 16px;
-        border-radius: 4px;
-        flex: 0 0 auto;
-      }
-      .remove {
-        width: 26px;
-        height: 26px;
-        border: 0;
-        border-radius: 9999px;
-        background: transparent;
-        color: rgba(222, 238, 230, 0.58);
-        cursor: pointer;
-        font-size: 16px;
-      }
-      .remove:hover { background: rgba(255, 255, 255, 0.06); color: #57ffad; }
-      ${popupThemeCss()}
-    </style>
-  </head>
-  <body>
-    <div class="panel">
-      <div class="header">
-        <div class="title">History</div>
-        <div class="actions">
-          <button class="button" id="clear">Clear</button>
-          <button class="button" id="close">Close</button>
-        </div>
-      </div>
-      <div class="list" id="list"></div>
-    </div>
-    <script>
-      const list = document.getElementById("list");
-      const clear = document.getElementById("clear");
-      const close = document.getElementById("close");
-
-      const formatTime = (value) => new Intl.DateTimeFormat(undefined, {
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit"
-      }).format(new Date(value));
-
-      const render = (entries) => {
-        const recent = entries.slice(0, 30);
-        if (!recent.length) {
-          list.innerHTML = '<div class="empty">No browsing history yet.</div>';
-          return;
-        }
-
-        list.innerHTML = recent.map((entry) => {
-          const icon = entry.faviconUrl
-            ? '<img class="icon" src="' + entry.faviconUrl + '" alt="" />'
-            : '<div class="icon" style="background:rgba(255,255,255,0.08)"></div>';
-
-          return \`
-            <div class="item">
-              \${icon}
-              <button class="open" data-url="\${entry.url}">
-                <div class="title-row" title="\${entry.title}">\${entry.title}</div>
-                <div class="url-row" title="\${entry.url}">\${entry.url} · \${formatTime(entry.lastVisitedAt)}</div>
-              </button>
-              <button class="remove" data-remove="\${entry.id}" aria-label="Remove">×</button>
-            </div>
-          \`;
-        }).join("");
-
-        list.querySelectorAll("[data-url]").forEach((button) => {
-          button.addEventListener("click", () => window.historyPopup.openUrl(button.dataset.url));
-        });
-        list.querySelectorAll("[data-remove]").forEach((button) => {
-          button.addEventListener("click", () => window.historyPopup.removeEntry(button.dataset.remove));
-        });
-      };
-
-      clear.addEventListener("click", () => window.historyPopup.clear());
-      close.addEventListener("click", () => window.historyPopup.close());
-      window.historyPopup.onHistoryChange(render);
-      window.historyPopup.getHistory().then(render);
-    </script>
-  </body>
-</html>`;
-}
-
-function ensureHistoryPopupWindow() {
-  if (historyPopupWindow && !historyPopupWindow.isDestroyed()) {
-    return historyPopupWindow;
-  }
-
-  if (!mainWindow) {
-    return null;
-  }
-
-  historyPopupWindow = new BrowserWindow({
-    width: HISTORY_POPUP_WIDTH,
-    height: HISTORY_POPUP_HEIGHT,
-    parent: mainWindow,
-    frame: false,
-    resizable: false,
-    movable: false,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    show: false,
-    skipTaskbar: true,
-    backgroundColor: "#00000000",
-    transparent: true,
-    hasShadow: false,
-    webPreferences: {
-      preload: path.join(__dirname, "historyPopupPreload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-    },
-  });
-
-  historyPopupWindow.on("blur", () => {
-    historyPopupWindow?.hide();
-  });
-
-  historyPopupWindow.once("closed", () => {
-    historyPopupWindow = null;
-  });
-
-  const html = createHistoryPopupHtml();
-  void historyPopupWindow.loadURL(
-    `data:text/html;charset=utf-8,${encodeURIComponent(html)}`,
-  );
-  return historyPopupWindow;
-}
-
-function toggleHistoryPopup(anchorBounds: BrowserAnchorBoundsPayload) {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return;
-  }
-
-  const popup = ensureHistoryPopupWindow();
-  if (!popup) {
-    return;
-  }
-
-  if (popup.isVisible()) {
-    popup.hide();
-    return;
-  }
-
-  const contentBounds = mainWindow.getContentBounds();
-  const x = Math.round(
-    Math.min(
-      Math.max(
-        contentBounds.x +
-          anchorBounds.x +
-          anchorBounds.width -
-          HISTORY_POPUP_WIDTH,
-        contentBounds.x + 8,
-      ),
-      contentBounds.x + contentBounds.width - HISTORY_POPUP_WIDTH - 8,
-    ),
-  );
-  const y = Math.round(
-    contentBounds.y + anchorBounds.y + anchorBounds.height + 8,
-  );
-
-  popup.setBounds({
-    x,
-    y,
-    width: HISTORY_POPUP_WIDTH,
-    height: HISTORY_POPUP_HEIGHT,
-  });
-  popup.show();
-  popup.focus();
-  emitHistoryState();
-}
-
-function createOverflowPopupHtml() {
-  return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>More</title>
-    <style>
-      :root { color-scheme: dark; }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        font-family: "Exo 2", "Segoe UI Variable", sans-serif;
-        background: transparent;
-        color: #deeee6;
-      }
-      .panel {
-        margin: 10px;
-        border-radius: 16px;
-        border: 1px solid rgba(87, 255, 173, 0.24);
-        background: linear-gradient(180deg, rgba(9, 16, 13, 0.98), rgba(5, 9, 7, 0.98));
-        box-shadow: 0 18px 42px rgba(0, 0, 0, 0.45);
-        padding: 8px;
-      }
-      .item {
-        display: flex;
-        width: 100%;
-        align-items: center;
-        gap: 10px;
-        border: 0;
-        border-radius: 12px;
-        background: transparent;
-        color: rgba(222, 238, 230, 0.88);
-        padding: 10px 12px;
-        font-size: 13px;
-        cursor: pointer;
-      }
-      .item:hover {
-        background: rgba(255,255,255,0.05);
-        color: #57ffad;
-      }
-      .icon {
-        width: 18px;
-        text-align: center;
-        flex: 0 0 auto;
-        color: rgba(222,238,230,0.66);
-      }
-      ${popupThemeCss()}
-    </style>
-  </head>
-  <body>
-    <div class="panel">
-      <button class="item" id="downloads"><span class="icon">⭳</span><span>Downloads</span></button>
-      <button class="item" id="history"><span class="icon">🕘</span><span>History</span></button>
-      <button class="item" id="chrome-import"><span class="icon">⇪</span><span>Import Chrome</span></button>
-    </div>
-    <script>
-      document.getElementById("downloads").addEventListener("click", () => window.overflowPopup.openDownloads());
-      document.getElementById("history").addEventListener("click", () => window.overflowPopup.openHistory());
-      document.getElementById("chrome-import").addEventListener("click", () => window.overflowPopup.importChrome());
-    </script>
-  </body>
-</html>`;
-}
-
-function createAddressSuggestionsPopupHtml() {
-  return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Suggestions</title>
-    <style>
-      :root { color-scheme: dark; }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        font-family: "IBM Plex Sans", "Segoe UI Variable", sans-serif;
-        background: transparent;
-        color: #deeee6;
-      }
-      .panel {
-        margin: 6px 0 0;
-        border-radius: 14px;
-        border: 1px solid rgba(87, 255, 173, 0.18);
-        background: linear-gradient(180deg, rgba(17, 19, 22, 0.98), rgba(12, 15, 18, 0.98));
-        box-shadow: 0 18px 42px rgba(0, 0, 0, 0.36);
-        overflow: hidden;
-      }
-      .list {
-        max-height: 100%;
-        overflow-y: auto;
-      }
-      .item {
-        display: flex;
-        width: 100%;
-        align-items: center;
-        gap: 10px;
-        border: 0;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-        background: transparent;
-        color: rgba(222, 238, 230, 0.84);
-        padding: 10px 12px;
-        text-align: left;
-        cursor: pointer;
-      }
-      .item:last-child { border-bottom: 0; }
-      .item:hover,
-      .item.active {
-        background: rgba(124, 146, 184, 0.12);
-      }
-      .icon {
-        width: 14px;
-        height: 14px;
-        flex: 0 0 auto;
-        border-radius: 4px;
-        opacity: 0.74;
-      }
-      .meta {
-        min-width: 0;
-        flex: 1;
-      }
-      .title {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        font-size: 12px;
-        font-weight: 600;
-        color: rgba(236, 239, 243, 0.92);
-      }
-      .url {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        margin-top: 2px;
-        font-size: 10px;
-        color: rgba(160, 167, 176, 0.72);
-      }
-      .clock {
-        width: 14px;
-        text-align: center;
-        flex: 0 0 auto;
-        color: rgba(160, 167, 176, 0.55);
-        font-size: 12px;
-      }
-      ${popupThemeCss()}
-    </style>
-  </head>
-  <body>
-    <div class="panel">
-      <div class="list" id="list"></div>
-    </div>
-    <script>
-      const list = document.getElementById("list");
-
-      const render = (payload) => {
-        const suggestions = payload?.suggestions ?? [];
-        const selectedIndex = payload?.selectedIndex ?? -1;
-        list.innerHTML = suggestions.map((entry, index) => {
-          const icon = entry.faviconUrl
-            ? '<img class="icon" src="' + entry.faviconUrl + '" alt="" />'
-            : '<span class="clock">🕘</span>';
-
-          return \`
-            <button class="item \${index === selectedIndex ? "active" : ""}" data-index="\${index}">
-              \${icon}
-              <div class="meta">
-                <div class="title" title="\${entry.title || entry.url}">\${entry.title || entry.url}</div>
-                <div class="url" title="\${entry.url}">\${entry.url}</div>
-              </div>
-            </button>
-          \`;
-        }).join("");
-
-        list.querySelectorAll("[data-index]").forEach((button) => {
-          button.addEventListener("mousedown", (event) => {
-            event.preventDefault();
-            window.addressSuggestions.choose(Number(button.dataset.index));
-          });
-        });
-      };
-
-      window.addressSuggestions.onSuggestionsChange(render);
-    </script>
-  </body>
-</html>`;
-}
-
-function ensureOverflowPopupWindow() {
-  if (overflowPopupWindow && !overflowPopupWindow.isDestroyed()) {
-    return overflowPopupWindow;
-  }
-
-  if (!mainWindow) {
-    return null;
-  }
-
-  overflowPopupWindow = new BrowserWindow({
-    width: OVERFLOW_POPUP_WIDTH,
-    height: OVERFLOW_POPUP_HEIGHT,
-    parent: mainWindow,
-    frame: false,
-    resizable: false,
-    movable: false,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    show: false,
-    skipTaskbar: true,
-    backgroundColor: "#00000000",
-    transparent: true,
-    hasShadow: false,
-    webPreferences: {
-      preload: path.join(__dirname, "overflowPopupPreload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-    },
-  });
-
-  overflowPopupWindow.on("blur", () => {
-    overflowPopupWindow?.hide();
-  });
-
-  overflowPopupWindow.once("closed", () => {
-    overflowPopupWindow = null;
-  });
-
-  const html = createOverflowPopupHtml();
-  void overflowPopupWindow.loadURL(
-    `data:text/html;charset=utf-8,${encodeURIComponent(html)}`,
-  );
-  return overflowPopupWindow;
-}
-
-function ensureAddressSuggestionsPopupWindow() {
-  if (
-    addressSuggestionsPopupWindow &&
-    !addressSuggestionsPopupWindow.isDestroyed()
-  ) {
-    return addressSuggestionsPopupWindow;
-  }
-
-  if (!mainWindow) {
-    return null;
-  }
-
-  addressSuggestionsPopupWindow = new BrowserWindow({
-    width: 420,
-    height: ADDRESS_SUGGESTIONS_POPUP_MIN_HEIGHT,
-    parent: mainWindow,
-    frame: false,
-    resizable: false,
-    movable: false,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    show: false,
-    focusable: false,
-    skipTaskbar: true,
-    backgroundColor: "#00000000",
-    transparent: true,
-    hasShadow: false,
-    webPreferences: {
-      preload: path.join(__dirname, "addressSuggestionsPopupPreload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-    },
-  });
-
-  addressSuggestionsPopupWindow.once("closed", () => {
-    addressSuggestionsPopupWindow = null;
-  });
-
-  const html = createAddressSuggestionsPopupHtml();
-  void addressSuggestionsPopupWindow.loadURL(
-    `data:text/html;charset=utf-8,${encodeURIComponent(html)}`,
-  );
-  return addressSuggestionsPopupWindow;
-}
-
-function showAddressSuggestionsPopup(
-  anchorBounds: BrowserAnchorBoundsPayload,
-  suggestions: AddressSuggestionPayload[],
-  selectedIndex: number,
-) {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return;
-  }
-
-  const popup = ensureAddressSuggestionsPopupWindow();
-  if (!popup) {
-    return;
-  }
-
-  addressSuggestionsState = { suggestions, selectedIndex };
-  const contentBounds = mainWindow.getContentBounds();
-  const itemHeight = 49;
-  const popupHeight = Math.max(
-    ADDRESS_SUGGESTIONS_POPUP_MIN_HEIGHT,
-    Math.min(
-      ADDRESS_SUGGESTIONS_POPUP_MAX_HEIGHT,
-      suggestions.length * itemHeight + 8,
-    ),
-  );
-
-  popup.setBounds({
-    x: Math.round(contentBounds.x + anchorBounds.x),
-    y: Math.round(contentBounds.y + anchorBounds.y + anchorBounds.height),
-    width: Math.round(anchorBounds.width),
-    height: popupHeight,
-  });
-  popup.showInactive();
-  emitAddressSuggestionsState();
-}
-
-function hideAddressSuggestionsPopup() {
-  addressSuggestionsState = { suggestions: [], selectedIndex: -1 };
-  addressSuggestionsPopupWindow?.hide();
-}
-
-function toggleOverflowPopup(anchorBounds: BrowserAnchorBoundsPayload) {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return;
-  }
-
-  const popup = ensureOverflowPopupWindow();
-  if (!popup) {
-    return;
-  }
-
-  overflowAnchorBounds = anchorBounds;
-
-  if (popup.isVisible()) {
-    popup.hide();
-    return;
-  }
-
-  const contentBounds = mainWindow.getContentBounds();
-  const x = Math.round(
-    Math.min(
-      Math.max(
-        contentBounds.x +
-          anchorBounds.x +
-          anchorBounds.width -
-          OVERFLOW_POPUP_WIDTH,
-        contentBounds.x + 8,
-      ),
-      contentBounds.x + contentBounds.width - OVERFLOW_POPUP_WIDTH - 8,
-    ),
-  );
-  const y = Math.round(
-    contentBounds.y + anchorBounds.y + anchorBounds.height + 8,
-  );
-
-  popup.setBounds({
-    x,
-    y,
-    width: OVERFLOW_POPUP_WIDTH,
-    height: OVERFLOW_POPUP_HEIGHT,
-  });
-  popup.show();
-  popup.focus();
 }
 
 function resolveWindowsBackgroundMaterial():
@@ -23717,14 +20436,7 @@ function createMainWindow() {
   win.once("closed", () => {
     authPopupWindow?.close();
     authPopupWindow = null;
-    addressSuggestionsPopupWindow?.close();
-    addressSuggestionsPopupWindow = null;
-    downloadsPopupWindow?.close();
-    downloadsPopupWindow = null;
-    historyPopupWindow?.close();
-    historyPopupWindow = null;
-    overflowPopupWindow?.close();
-    overflowPopupWindow = null;
+    browserPanePopups.closeAllPopups();
     for (const workspaceId of Array.from(browserWorkspaces.keys())) {
       destroyBrowserWorkspace(workspaceId);
     }
@@ -24045,6 +20757,30 @@ app.whenReady().then(async () => {
   ensureOpenAiCodexRefreshLoop();
   void refreshOpenAiCodexProviderCredentials().catch(() => undefined);
 
+  installBffFetchHandler({
+    getCookieHeader: () => authCookieHeader(),
+    allowedHosts: () => bffFetchAllowedHosts(),
+    register: (channel, handler) =>
+      handleTrustedIpc(channel, ["main"], handler),
+    log: (event) => {
+      // Same shape as the rest of the structured logs — short, single-line,
+      // single source of truth in main stdout.
+      // eslint-disable-next-line no-console
+      console.info(`[bff-fetch] ${JSON.stringify(event)}`);
+    },
+  });
+
+  installBrowserPaneHandlers({
+    getMainWindow: () => mainWindow,
+    getCookieHeader: () => authCookieHeader(),
+    register: (channel, handler) =>
+      handleTrustedIpc(channel, ["main"], handler),
+    log: (event) => {
+      // eslint-disable-next-line no-console
+      console.info(`[browser-pane] ${JSON.stringify(event)}`);
+    },
+  });
+
   handleTrustedIpc(
     "fs:listDirectory",
     ["main"],
@@ -24229,17 +20965,16 @@ app.whenReady().then(async () => {
   handleTrustedIpc("auth:getUser", ["main", "auth-popup"], async () =>
     getAuthenticatedUser(),
   );
-  handleTrustedIpc("billing:getOverview", ["main"], async () =>
-    getDesktopBillingOverview(),
-  );
+  // Renderer-side BFF clients (e.g. @holaboss/app-sdk in renderer, billing
+  // RPC calls) reach the BFF via the bff:fetch IPC bridge — main injects
+  // the auth cookie there, so the renderer never sees it. The two URL
+  // accessors below stay because the renderer still needs to know which
+  // host to target (encoded in the SDK's baseURL).
+  handleTrustedIpc("auth:getApiBaseUrl", ["main"], () => AUTH_BASE_URL ?? "");
   handleTrustedIpc(
-    "billing:getUsage",
+    "auth:getMarketplaceBaseUrl",
     ["main"],
-    async (_event, limit?: number) =>
-      getDesktopBillingUsage(typeof limit === "number" ? limit : 10),
-  );
-  handleTrustedIpc("billing:getLinks", ["main"], async () =>
-    buildDesktopBillingLinks(),
+    () => marketplaceBaseUrl(),
   );
   handleTrustedIpc("auth:requestAuth", ["main", "auth-popup"], async () => {
     await requireAuthClient().requestAuth();
@@ -24424,14 +21159,7 @@ app.whenReady().then(async () => {
       emitThemeChanged();
       authPopupWindow?.close();
       authPopupWindow = null;
-      downloadsPopupWindow?.close();
-      downloadsPopupWindow = null;
-      historyPopupWindow?.close();
-      historyPopupWindow = null;
-      overflowPopupWindow?.close();
-      overflowPopupWindow = null;
-      addressSuggestionsPopupWindow?.close();
-      addressSuggestionsPopupWindow = null;
+      browserPanePopups.closeAllPopups();
     },
   );
   handleTrustedIpc(
@@ -24495,9 +21223,6 @@ app.whenReady().then(async () => {
   );
   handleTrustedIpc("workspace:getClientConfig", ["main"], () =>
     getHolabossClientConfig(),
-  );
-  handleTrustedIpc("workspace:listMarketplaceTemplates", ["main"], async () =>
-    listMarketplaceTemplates(),
   );
   handleTrustedIpc("workspace:pickTemplateFolder", ["main"], async () =>
     pickTemplateFolder(),
@@ -25634,36 +22359,46 @@ app.whenReady().then(async () => {
       suggestions: AddressSuggestionPayload[],
       selectedIndex: number,
     ) => {
-      showAddressSuggestionsPopup(anchorBounds, suggestions, selectedIndex);
+      browserPanePopups.showAddressSuggestionsPopup(
+        anchorBounds,
+        suggestions,
+        selectedIndex,
+      );
     },
   );
   ipcMain.handle("browser:hideAddressSuggestions", () => {
-    hideAddressSuggestionsPopup();
+    browserPanePopups.hideAddressSuggestionsPopup();
   });
   ipcMain.handle("browser:chooseAddressSuggestion", (_event, index: number) => {
-    hideAddressSuggestionsPopup();
+    browserPanePopups.hideAddressSuggestionsPopup();
     mainWindow?.webContents.send("browser:addressSuggestionChosen", index);
   });
   ipcMain.handle(
     "browser:toggleOverflowPopup",
     (_event, anchorBounds: BrowserAnchorBoundsPayload) => {
-      toggleOverflowPopup(anchorBounds);
+      browserPanePopups.toggleOverflowPopup(anchorBounds);
     },
   );
   ipcMain.handle("browser:overflowOpenHistory", () => {
-    overflowPopupWindow?.hide();
+    browserPanePopups.hideOverflowPopup();
+    const overflowAnchorBounds = browserPanePopups.getOverflowAnchorBounds();
     if (overflowAnchorBounds) {
-      toggleHistoryPopup(overflowAnchorBounds);
+      browserPanePopups.toggleHistoryPopup(overflowAnchorBounds);
+      // Pre-fill the popup with the latest history.
+      emitHistoryState();
     }
   });
   ipcMain.handle("browser:overflowOpenDownloads", () => {
-    overflowPopupWindow?.hide();
+    browserPanePopups.hideOverflowPopup();
+    const overflowAnchorBounds = browserPanePopups.getOverflowAnchorBounds();
     if (overflowAnchorBounds) {
-      toggleDownloadsPopup(overflowAnchorBounds);
+      browserPanePopups.toggleDownloadsPopup(overflowAnchorBounds);
+      // Pre-fill the popup with the latest downloads list.
+      emitDownloadsState();
     }
   });
   ipcMain.handle("browser:overflowImportChrome", async () => {
-    overflowPopupWindow?.hide();
+    browserPanePopups.hideOverflowPopup();
 
     try {
       const summary = await importChromeProfileIntoWorkspace(
@@ -25722,11 +22457,13 @@ app.whenReady().then(async () => {
   ipcMain.handle(
     "browser:toggleHistoryPopup",
     (_event, anchorBounds: BrowserAnchorBoundsPayload) => {
-      toggleHistoryPopup(anchorBounds);
+      browserPanePopups.toggleHistoryPopup(anchorBounds);
+      // Pre-fill the popup with the latest history list.
+      emitHistoryState();
     },
   );
   ipcMain.handle("browser:closeHistoryPopup", () => {
-    historyPopupWindow?.hide();
+    browserPanePopups.hideHistoryPopup();
   });
   ipcMain.handle(
     "browser:openHistoryUrl",
@@ -25767,7 +22504,7 @@ app.whenReady().then(async () => {
       }
 
       try {
-        historyPopupWindow?.hide();
+        browserPanePopups.hideHistoryPopup();
         activeTab.state = { ...activeTab.state, error: "" };
         await activeTab.view.webContents.loadURL(targetUrl);
       } catch (error) {
@@ -25823,11 +22560,13 @@ app.whenReady().then(async () => {
   ipcMain.handle(
     "browser:toggleDownloadsPopup",
     (_event, anchorBounds: BrowserAnchorBoundsPayload) => {
-      toggleDownloadsPopup(anchorBounds);
+      browserPanePopups.toggleDownloadsPopup(anchorBounds);
+      // Pre-fill the popup with the latest downloads list.
+      emitDownloadsState();
     },
   );
   ipcMain.handle("browser:closeDownloadsPopup", () => {
-    downloadsPopupWindow?.hide();
+    browserPanePopups.hideDownloadsPopup();
   });
   ipcMain.handle(
     "browser:showDownloadInFolder",

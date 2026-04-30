@@ -356,8 +356,8 @@ declare global {
     icon: string;
     emoji: string | null;
     // Community-source templates omit these array fields on the wire; the
-    // main-process listMarketplaceTemplates() normalizes them to [] before
-    // reaching the renderer, so UI code can rely on them being present.
+    // renderer-side workspaceDesktop loader normalizes them to [] before
+    // exposing them via context, so UI code can rely on them being present.
     apps: TemplateAppEntryPayload[];
     min_optional_apps: number;
     tags: string[];
@@ -1453,10 +1453,10 @@ declare global {
       readImage: () => Promise<ClipboardImagePayload | null>;
       writeText: (text: string) => Promise<void>;
     };
-    billing: {
-      getOverview: () => Promise<DesktopBillingOverviewPayload>;
-      getUsage: (limit?: number) => Promise<DesktopBillingUsagePayload>;
-      getLinks: () => Promise<DesktopBillingLinksPayload>;
+    bff: {
+      fetch: (
+        req: import("../../shared/bff-fetch-protocol").BffFetchRequest,
+      ) => Promise<import("../../shared/bff-fetch-protocol").BffFetchResponse>;
     };
     appUpdate: {
       getStatus: () => Promise<AppUpdateStatusPayload>;
@@ -1479,7 +1479,6 @@ declare global {
     };
     workspace: {
       getClientConfig: () => Promise<HolabossClientConfigPayload>;
-      listMarketplaceTemplates: () => Promise<TemplateListResponsePayload>;
       pickTemplateFolder: () => Promise<TemplateFolderSelectionPayload>;
       pickWorkspaceRuntimeFolder: () => Promise<WorkspaceRuntimeFolderSelectionPayload>;
       pickWorkspaceRelocationFolder: (workspaceId: string) => Promise<WorkspaceRuntimeFolderSelectionPayload>;
@@ -1626,6 +1625,10 @@ declare global {
     };
     auth: {
       getUser: () => Promise<AuthUserPayload | null>;
+      // Renderer-side BFF clients reach the API via the bff.fetch bridge —
+      // these accessors expose only the host URLs the renderer should target.
+      getApiBaseUrl: () => Promise<string>;
+      getMarketplaceBaseUrl: () => Promise<string>;
       requestAuth: () => Promise<void>;
       signOut: () => Promise<void>;
       showPopup: (anchorBounds: BrowserAnchorBoundsPayload) => Promise<void>;

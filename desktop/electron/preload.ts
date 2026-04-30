@@ -1,4 +1,9 @@
 import { contextBridge, ipcRenderer } from "electron";
+import {
+  BFF_FETCH_CHANNEL,
+  type BffFetchRequest,
+  type BffFetchResponse,
+} from "../shared/bff-fetch-protocol.js";
 
 interface FileSystemEntry {
   name: string;
@@ -1210,13 +1215,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
     writeText: (text: string) =>
       ipcRenderer.invoke("clipboard:writeText", text) as Promise<void>,
   },
-  billing: {
-    getOverview: () =>
-      ipcRenderer.invoke("billing:getOverview") as Promise<DesktopBillingOverviewPayload>,
-    getUsage: (limit?: number) =>
-      ipcRenderer.invoke("billing:getUsage", limit) as Promise<DesktopBillingUsagePayload>,
-    getLinks: () =>
-      ipcRenderer.invoke("billing:getLinks") as Promise<DesktopBillingLinksPayload>,
+  bff: {
+    /**
+     * fetch-shaped IPC bridge to the BFF. Use the renderer-side wrapper
+     * `bffFetch` from `src/lib/bff-fetch-bridge.ts` rather than calling
+     * this directly — the wrapper presents a real `Response` object.
+     */
+    fetch: (req: BffFetchRequest): Promise<BffFetchResponse> =>
+      ipcRenderer.invoke(BFF_FETCH_CHANNEL, req) as Promise<BffFetchResponse>,
   },
   appUpdate: {
     getStatus: () => ipcRenderer.invoke("appUpdate:getStatus") as Promise<AppUpdateStatusPayload>,
@@ -1253,8 +1259,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   workspace: {
     getClientConfig: () => ipcRenderer.invoke("workspace:getClientConfig") as Promise<HolabossClientConfigPayload>,
-    listMarketplaceTemplates: () =>
-      ipcRenderer.invoke("workspace:listMarketplaceTemplates") as Promise<TemplateListResponsePayload>,
     pickTemplateFolder: () =>
       ipcRenderer.invoke("workspace:pickTemplateFolder") as Promise<TemplateFolderSelectionPayload>,
     pickWorkspaceRuntimeFolder: () =>
@@ -1491,6 +1495,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   auth: {
     getUser: () => ipcRenderer.invoke("auth:getUser") as Promise<AuthUserPayload | null>,
+    // Renderer-direct BFF clients (e.g. @holaboss/app-sdk in renderer,
+    // billing RPC) reach the BFF via the bff:fetch bridge below — the
+    // raw cookie stays in main. These two accessors expose only the host
+    // URL the renderer should target.
+    getApiBaseUrl: () => ipcRenderer.invoke("auth:getApiBaseUrl") as Promise<string>,
+    getMarketplaceBaseUrl: () =>
+      ipcRenderer.invoke("auth:getMarketplaceBaseUrl") as Promise<string>,
     requestAuth: () => ipcRenderer.invoke("auth:requestAuth") as Promise<void>,
     signOut: () => ipcRenderer.invoke("auth:signOut") as Promise<void>,
     showPopup: (anchorBounds: BrowserAnchorBoundsPayload) => ipcRenderer.invoke("auth:showPopup", anchorBounds) as Promise<void>,
