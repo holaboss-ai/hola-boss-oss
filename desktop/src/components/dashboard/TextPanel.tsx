@@ -18,7 +18,7 @@ export function TextPanel({ panel }: TextPanelProps) {
   const body = useMemo(() => panel.body, [panel.body]);
   return (
     <section className="min-w-0">
-      <div className="prose prose-sm max-w-none text-foreground prose-headings:font-semibold prose-headings:tracking-tight prose-h1:text-lg prose-h2:text-base prose-h3:text-sm prose-p:leading-relaxed prose-p:text-foreground/85 prose-a:text-primary prose-a:underline-offset-4 prose-strong:font-semibold prose-strong:text-foreground prose-code:rounded prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:text-[12px]">
+      <div className="prose prose-sm max-w-none text-foreground prose-headings:font-semibold prose-headings:tracking-tight prose-h1:text-lg prose-h2:text-base prose-h3:text-sm prose-p:leading-relaxed prose-p:text-foreground prose-a:text-primary prose-a:underline-offset-4 prose-strong:font-semibold prose-strong:text-foreground prose-code:rounded prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:text-[12px]">
         <SimpleMarkdown>{body}</SimpleMarkdown>
       </div>
     </section>

@@ -1,8 +1,9 @@
-import { ChevronDown, ChevronsUpDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronsUpDown, ChevronUp, Table2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ColorToken, TableColumnSpec, TableViewSpec } from "@/lib/dashboardSchema";
 
+import { EmptyState } from "./EmptyState";
 import { isStatusColumn, StatusBadge } from "./StatusBadge";
 import {
   colorClasses,
@@ -83,31 +84,9 @@ export function TableView({ view, columns, rows, emptyState }: TableViewProps) {
     });
   };
 
-  if (visible.length === 0) {
-    return (
-      <div className="py-10 text-center text-xs text-muted-foreground">
-        No columns to display.
-      </div>
-    );
-  }
-  if (rows.length === 0) {
-    return (
-      <div className="py-10 text-center text-xs text-muted-foreground">
-        {emptyState ?? "No rows."}
-      </div>
-    );
-  }
-
   const beginResize = useCallback(
     (name: string, startX: number) => {
       const startWidth = effectiveWidths[name] ?? 160;
-      // Pointer events with capture — works for mouse + touch + pen
-      // and isn't lost when the cursor leaves the small handle area
-      // mid-drag.
-      const handle = document.createElement("div");
-      // Add a body-level cursor so the col-resize cursor stays even
-      // when the pointer moves off the handle (otherwise the cursor
-      // flickers on every frame). Restored on pointerup.
       const prevCursor = document.body.style.cursor;
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
@@ -122,7 +101,6 @@ export function TableView({ view, columns, rows, emptyState }: TableViewProps) {
         window.removeEventListener("pointerup", onUp);
         document.body.style.cursor = prevCursor;
         document.body.style.userSelect = "";
-        handle.remove();
       };
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
@@ -130,19 +108,11 @@ export function TableView({ view, columns, rows, emptyState }: TableViewProps) {
     [effectiveWidths],
   );
 
-  // Total pixel width across all columns. The wrapper's overflow-x:
-  // auto kicks in when this exceeds the container, so very wide
-  // tables scroll horizontally with mask-edges-x fading the cut.
   const totalWidth = visible.reduce(
     (sum, c) => sum + (effectiveWidths[c.name] ?? 160),
     0,
   );
 
-  // Edge-fade only on the side that has hidden content. Notion's
-  // pattern: leftmost column shouldn't be ghosted just because the
-  // table is wider than its frame; the fade is a hint that "more
-  // exists in this direction", and there's nothing to the left of
-  // scroll position 0.
   const scrollWrapRef = useRef<HTMLDivElement | null>(null);
   const [edgeFade, setEdgeFade] = useState({ left: 0, right: 0 });
   const updateEdgeFade = useCallback(() => {
@@ -164,6 +134,13 @@ export function TableView({ view, columns, rows, emptyState }: TableViewProps) {
     ro.observe(el);
     return () => ro.disconnect();
   }, [updateEdgeFade, totalWidth]);
+
+  if (visible.length === 0) {
+    return <EmptyState icon={Table2} message="No columns to display." />;
+  }
+  if (rows.length === 0) {
+    return <EmptyState icon={Table2} message={emptyState ?? "Nothing here yet."} />;
+  }
 
   return (
     <div className="group pt-1">

@@ -1,5 +1,8 @@
+import { Rows3 } from "lucide-react";
+
 import type { ListViewSpec } from "@/lib/dashboardSchema";
 
+import { EmptyState } from "./EmptyState";
 import { formatSmartDate, looksLikeDateColumn } from "./format";
 
 interface ListViewProps {
@@ -25,11 +28,7 @@ export function ListView({ view, columns, rows, emptyState }: ListViewProps) {
     );
   }
   if (rows.length === 0) {
-    return (
-      <div className="py-10 text-center text-xs text-muted-foreground">
-        {emptyState ?? "Nothing here yet."}
-      </div>
-    );
+    return <EmptyState icon={Rows3} message={emptyState ?? "Nothing here yet."} />;
   }
 
   const display = rows.slice(0, 500);

@@ -48,7 +48,11 @@ export function DashboardRenderer({
   fullWidth = false,
   refreshKey = 0,
 }: DashboardRendererProps) {
-  const parsed = useMemo(() => parseDashboard(content), [content]);
+  // Debounce parsing so live-edit keystrokes don't reparse + refire
+  // every panel's SQL query on every character. 250ms is enough that a
+  // user pausing to read sees the result, while typing isn't laggy.
+  const debouncedContent = useDebouncedValue(content, 250);
+  const parsed = useMemo(() => parseDashboard(debouncedContent), [debouncedContent]);
 
   if (!parsed.ok || !parsed.dashboard) {
     return (
@@ -394,6 +398,17 @@ function PanelDispatch({ panel, state }: { panel: DashboardPanel; state: PanelSt
       Unsupported panel state.
     </div>
   );
+}
+
+// ----- Hooks --------------------------------------------------------
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(id);
+  }, [value, delayMs]);
+  return debounced;
 }
 
 // ----- Result merging ----------------------------------------------
