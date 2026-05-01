@@ -153,6 +153,7 @@ import {
   type BrowserRequestRecord as BrowserRequestRecordImported,
   type BrowserResponseBodyMetadata as BrowserResponseBodyMetadataImported,
 } from "./browser-pane/observability.js";
+import { createTabObservability } from "./browser-pane/tab-observability.js";
 import type {
   BrowserCopyWorkspaceProfilePayload,
   BrowserImportProfilePayload,
@@ -966,6 +967,32 @@ let activeBrowserWorkspaceId = "";
 let activeBrowserSpaceId: BrowserSpaceId = "user";
 let activeBrowserSessionId = "";
 const browserWorkspaces = new Map<string, BrowserWorkspaceState>();
+function* eachBrowserTabRecord(): IterableIterator<BrowserTabRecord> {
+  for (const workspace of browserWorkspaces.values()) {
+    for (const tab of workspace.spaces.user.tabs.values()) {
+      yield tab;
+    }
+    for (const tab of workspace.spaces.agent.tabs.values()) {
+      yield tab;
+    }
+    for (const tabSpace of workspace.agentSessionSpaces.values()) {
+      for (const tab of tabSpace.tabs.values()) {
+        yield tab;
+      }
+    }
+  }
+}
+const tabObservability = createTabObservability({
+  eachTabRecord: () => eachBrowserTabRecord(),
+});
+const browserTabForWebContentsId = tabObservability.browserTabForWebContentsId;
+const appendBrowserObservedError = tabObservability.appendBrowserObservedError;
+const upsertBrowserRequestRecord = tabObservability.upsertBrowserRequestRecord;
+const trackBrowserRequestStart = tabObservability.trackBrowserRequestStart;
+const trackBrowserRequestHeaders = tabObservability.trackBrowserRequestHeaders;
+const trackBrowserRequestCompletion =
+  tabObservability.trackBrowserRequestCompletion;
+const trackBrowserRequestFailure = tabObservability.trackBrowserRequestFailure;
 const sessionRuntimeStateCache = new Map<
   string,
   Map<string, SessionRuntimeRecordPayload>
@@ -3617,245 +3644,11 @@ function setRequestHeaderValue(
 // RequestBodyMetadata / appendBoundedEntry) moved to
 // browser-pane/observability.ts.
 
-function browserTabForWebContentsId(
-  webContentsId: number,
-): BrowserTabRecord | null {
-  for (const workspace of browserWorkspaces.values()) {
-    for (const tab of workspace.spaces.user.tabs.values()) {
-      if (tab.view.webContents.id === webContentsId) {
-        return tab;
-      }
-    }
-    for (const tab of workspace.spaces.agent.tabs.values()) {
-      if (tab.view.webContents.id === webContentsId) {
-        return tab;
-      }
-    }
-    for (const tabSpace of workspace.agentSessionSpaces.values()) {
-      for (const tab of tabSpace.tabs.values()) {
-        if (tab.view.webContents.id === webContentsId) {
-          return tab;
-        }
-      }
-    }
-  }
-  return null;
-}
-
-function appendBrowserObservedError(
-  tab: BrowserTabRecord,
-  entry: BrowserObservedError,
-): void {
-  appendBoundedEntry(
-    tab.errorEntries,
-    entry,
-    BROWSER_OBSERVABILITY_ENTRY_LIMIT,
-  );
-}
-
-// browserRequestIdValue / RequestFailure / RequestSummary moved to
-// browser-pane/observability.ts.
-
-function upsertBrowserRequestRecord(
-  tab: BrowserTabRecord,
-  requestId: string,
-  overrides: Partial<BrowserRequestRecord>,
-): BrowserRequestRecord {
-  const existing = tab.requests.get(requestId);
-  if (existing) {
-    const next = { ...existing, ...overrides };
-    tab.requests.set(requestId, next);
-    return next;
-  }
-  const next: BrowserRequestRecord = {
-    id: requestId,
-    url: overrides.url ?? "",
-    method: overrides.method ?? "",
-    resourceType: overrides.resourceType ?? "other",
-    referrer: overrides.referrer ?? "",
-    startedAt: overrides.startedAt ?? new Date().toISOString(),
-    completedAt: overrides.completedAt ?? null,
-    durationMs: overrides.durationMs ?? null,
-    fromCache: overrides.fromCache ?? false,
-    statusCode: overrides.statusCode ?? null,
-    statusLine: overrides.statusLine ?? "",
-    error: overrides.error ?? "",
-    requestHeaders: overrides.requestHeaders ?? null,
-    responseHeaders: overrides.responseHeaders ?? null,
-    requestBody: overrides.requestBody ?? null,
-    responseBody: overrides.responseBody ?? null,
-  };
-  tab.requests.set(requestId, next);
-  tab.requestOrder.push(requestId);
-  if (tab.requestOrder.length > BROWSER_REQUEST_HISTORY_LIMIT) {
-    const removedRequestId = tab.requestOrder.shift();
-    if (removedRequestId) {
-      tab.requests.delete(removedRequestId);
-    }
-  }
-  return next;
-}
-
-function trackBrowserRequestStart(details: {
-  id: unknown;
-  webContentsId?: number;
-  url?: string;
-  method?: string;
-  resourceType?: string;
-  referrer?: string;
-  timestamp?: number;
-  uploadData?: unknown;
-}): void {
-  if (typeof details.webContentsId !== "number") {
-    return;
-  }
-  const tab = browserTabForWebContentsId(details.webContentsId);
-  const requestId = browserRequestIdValue(details.id);
-  if (!tab || !requestId) {
-    return;
-  }
-  upsertBrowserRequestRecord(tab, requestId, {
-    url: typeof details.url === "string" ? details.url : "",
-    method: typeof details.method === "string" ? details.method : "",
-    resourceType:
-      typeof details.resourceType === "string" ? details.resourceType : "other",
-    referrer: typeof details.referrer === "string" ? details.referrer : "",
-    startedAt: browserIsoFromNetworkTimestamp(details.timestamp),
-    requestBody: browserRequestBodyMetadata(details.uploadData),
-  });
-}
-
-function trackBrowserRequestHeaders(details: {
-  id: unknown;
-  webContentsId?: number;
-  requestHeaders?: unknown;
-}): void {
-  if (typeof details.webContentsId !== "number") {
-    return;
-  }
-  const tab = browserTabForWebContentsId(details.webContentsId);
-  const requestId = browserRequestIdValue(details.id);
-  if (!tab || !requestId) {
-    return;
-  }
-  upsertBrowserRequestRecord(tab, requestId, {
-    requestHeaders: browserHeaderRecord(details.requestHeaders),
-  });
-}
-
-function trackBrowserRequestCompletion(details: {
-  id: unknown;
-  webContentsId?: number;
-  url?: string;
-  method?: string;
-  resourceType?: string;
-  referrer?: string;
-  timestamp?: number;
-  fromCache?: boolean;
-  statusCode?: number;
-  statusLine?: string;
-  error?: string;
-  responseHeaders?: unknown;
-}): void {
-  if (typeof details.webContentsId !== "number") {
-    return;
-  }
-  const tab = browserTabForWebContentsId(details.webContentsId);
-  const requestId = browserRequestIdValue(details.id);
-  if (!tab || !requestId) {
-    return;
-  }
-  const existing = upsertBrowserRequestRecord(tab, requestId, {
-    url: typeof details.url === "string" ? details.url : "",
-    method: typeof details.method === "string" ? details.method : "",
-    resourceType:
-      typeof details.resourceType === "string" ? details.resourceType : "other",
-    referrer: typeof details.referrer === "string" ? details.referrer : "",
-    completedAt: browserIsoFromNetworkTimestamp(details.timestamp),
-    fromCache: details.fromCache === true,
-    statusCode:
-      typeof details.statusCode === "number" && Number.isFinite(details.statusCode)
-        ? details.statusCode
-        : null,
-    statusLine: typeof details.statusLine === "string" ? details.statusLine : "",
-    error: typeof details.error === "string" ? details.error : "",
-    responseHeaders: browserHeaderRecord(details.responseHeaders),
-  });
-  if (existing.completedAt) {
-    const startedAtMs = Date.parse(existing.startedAt);
-    const completedAtMs = Date.parse(existing.completedAt);
-    if (Number.isFinite(startedAtMs) && Number.isFinite(completedAtMs)) {
-      existing.durationMs = Math.max(0, completedAtMs - startedAtMs);
-    }
-  }
-  existing.responseBody = browserResponseBodyMetadata(existing.responseHeaders);
-  tab.requests.set(requestId, existing);
-  if ((existing.statusCode ?? 0) >= 400) {
-    appendBrowserObservedError(tab, {
-      id: `network-${requestId}-${existing.completedAt ?? existing.startedAt}`,
-      source: "network",
-      kind: "http_error",
-      level: "error",
-      message:
-        existing.statusLine || `HTTP ${existing.statusCode ?? "error"} ${existing.url}`,
-      timestamp: existing.completedAt ?? new Date().toISOString(),
-      url: existing.url,
-      requestId,
-      statusCode: existing.statusCode ?? undefined,
-      resourceType: existing.resourceType,
-    });
-  }
-}
-
-function trackBrowserRequestFailure(details: {
-  id: unknown;
-  webContentsId?: number;
-  url?: string;
-  method?: string;
-  resourceType?: string;
-  referrer?: string;
-  timestamp?: number;
-  fromCache?: boolean;
-  error?: string;
-}): void {
-  if (typeof details.webContentsId !== "number") {
-    return;
-  }
-  const tab = browserTabForWebContentsId(details.webContentsId);
-  const requestId = browserRequestIdValue(details.id);
-  if (!tab || !requestId) {
-    return;
-  }
-  const existing = upsertBrowserRequestRecord(tab, requestId, {
-    url: typeof details.url === "string" ? details.url : "",
-    method: typeof details.method === "string" ? details.method : "",
-    resourceType:
-      typeof details.resourceType === "string" ? details.resourceType : "other",
-    referrer: typeof details.referrer === "string" ? details.referrer : "",
-    completedAt: browserIsoFromNetworkTimestamp(details.timestamp),
-    fromCache: details.fromCache === true,
-    error: typeof details.error === "string" ? details.error : "Request failed",
-  });
-  if (existing.completedAt) {
-    const startedAtMs = Date.parse(existing.startedAt);
-    const completedAtMs = Date.parse(existing.completedAt);
-    if (Number.isFinite(startedAtMs) && Number.isFinite(completedAtMs)) {
-      existing.durationMs = Math.max(0, completedAtMs - startedAtMs);
-    }
-  }
-  tab.requests.set(requestId, existing);
-  appendBrowserObservedError(tab, {
-    id: `network-${requestId}-${existing.completedAt ?? existing.startedAt}`,
-    source: "network",
-    kind: "request_error",
-    level: "error",
-    message: existing.error || `Request failed for ${existing.url}`,
-    timestamp: existing.completedAt ?? new Date().toISOString(),
-    url: existing.url,
-    requestId,
-    resourceType: existing.resourceType,
-  });
-}
+// Per-tab observability state mutation (browserTabForWebContentsId,
+// appendBrowserObservedError, upsertBrowserRequestRecord,
+// trackBrowserRequest{Start,Headers,Completion,Failure}) moved to
+// browser-pane/tab-observability.ts. Wired below where browserWorkspaces
+// is declared.
 
 function configureBrowserWorkspaceSession(
   session: Session,
