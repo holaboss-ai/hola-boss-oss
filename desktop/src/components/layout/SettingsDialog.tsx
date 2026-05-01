@@ -109,13 +109,13 @@ const ABOUT_LINKS = [
     id: "docs",
     label: "Docs",
     icon: Info,
-    href: "https://github.com/holaboss-ai/holaOS",
+    href: "https://github.com/holaboss-ai/holaOS-priv",
   },
   {
     id: "help",
     label: "Get help",
     icon: CircleHelp,
-    href: "https://github.com/holaboss-ai/holaOS/issues",
+    href: "https://github.com/holaboss-ai/holaOS-priv/issues",
   },
 ] as const;
 

@@ -22,13 +22,49 @@ const runtimePlatform = resolveRuntimePlatform();
 const stageParentDir = path.join(repoRoot, "out");
 const stageDir = path.join(stageParentDir, runtimeBundleDirName(runtimePlatform));
 const defaultLocalRuntimeDir = path.join(os.tmpdir(), `holaboss-runtime-${runtimePlatform}-full`);
-const sourceRepo = process.env.HOLABOSS_RUNTIME_SOURCE_REPO?.trim() || "holaboss-ai/holaOS";
+const explicitSourceRepo = process.env.HOLABOSS_RUNTIME_SOURCE_REPO?.trim() || "";
 const requestedReleaseTag = process.env.HOLABOSS_RUNTIME_RELEASE_TAG?.trim() || "";
 const runtimeReleaseAssetPrefix = `holaboss-runtime-${runtimePlatform}-`;
 const githubReleaseListPageSize = 50;
 
 function log(message) {
   process.stdout.write(`[stage-runtime] ${message}\n`);
+}
+
+function parseGitHubRepoFromRemoteUrl(value) {
+  const trimmed = typeof value === "string" ? value.trim().replace(/^git\+/, "") : "";
+  if (!trimmed) {
+    return null;
+  }
+  const match = trimmed.match(/github\.com[:/]([^/]+\/[^/.]+?)(?:\.git)?$/i);
+  return match?.[1] ?? null;
+}
+
+async function resolveSourceRepo() {
+  if (explicitSourceRepo) {
+    return explicitSourceRepo;
+  }
+
+  const environmentRepo = process.env.GITHUB_REPOSITORY?.trim();
+  if (environmentRepo && environmentRepo.includes("/")) {
+    return environmentRepo;
+  }
+
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["remote", "get-url", "origin"],
+      { cwd: repoRoot },
+    );
+    const repo = parseGitHubRepoFromRemoteUrl(stdout);
+    if (repo) {
+      return repo;
+    }
+  } catch {
+    // Fall through to the repo-local default.
+  }
+
+  return "holaboss-ai/holaOS-priv";
 }
 
 async function pathExists(targetPath) {
@@ -188,6 +224,7 @@ async function downloadGithubReleaseAsset(url, destinationTarball, token) {
 }
 
 async function stageFromGithubReleaseSelection(token) {
+  const sourceRepo = await resolveSourceRepo();
   const [owner, repo] = sourceRepo.split("/");
   const releaseUrl =
     `https://api.github.com/repos/${owner}/${repo}/releases?per_page=${githubReleaseListPageSize}`;

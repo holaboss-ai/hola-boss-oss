@@ -272,7 +272,7 @@ jobs:
       RELEASE_TAG: ${{ needs.ensure-release.outputs.release_tag }}
       RELEASE_CHANNEL: ${{ needs.ensure-release.outputs.release_channel }}
       HOLABOSS_RELEASE_CHANNEL: ${{ needs.ensure-release.outputs.release_channel }}
-      GH_REPO: holaboss-ai/holaOS
+      GH_REPO: ${{ github.repository }}
       RUNTIME_ASSET_NAME: holaboss-runtime-linux.tar.gz
       RUNTIME_ARTIFACT_NAME: holaboss-runtime-linux
     steps:
@@ -788,7 +788,7 @@ jobs:
       RELEASE_CHANNEL: ${{ needs.ensure-release.outputs.release_channel }}
       HOLABOSS_RELEASE_CHANNEL: ${{ needs.ensure-release.outputs.release_channel }}
       PRERELEASE: ${{ inputs.prerelease }}
-      GH_REPO: holaboss-ai/holaOS
+      GH_REPO: ${{ github.repository }}
     steps:
       - name: Download Linux runtime release artifacts
         uses: actions/download-artifact@v8

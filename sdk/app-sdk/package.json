@@ -82,12 +82,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/holaboss-ai/holaOS.git",
+    "url": "git+https://github.com/holaboss-ai/holaOS-priv.git",
     "directory": "sdk/app-sdk"
   },
-  "homepage": "https://github.com/holaboss-ai/holaOS/tree/main/sdk/app-sdk",
+  "homepage": "https://github.com/holaboss-ai/holaOS-priv/tree/main/sdk/app-sdk",
   "bugs": {
-    "url": "https://github.com/holaboss-ai/holaOS/issues"
+    "url": "https://github.com/holaboss-ai/holaOS-priv/issues"
   },
   "engines": {
     "node": ">=20"
