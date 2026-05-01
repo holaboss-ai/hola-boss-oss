@@ -35,7 +35,9 @@ export interface BrowserStatePayload {
   canGoForward: boolean;
   loading: boolean;
   initialized: boolean;
-  error?: string | null;
+  // main's ambient global declares this as `error: string`. Keep
+  // structurally compatible.
+  error: string;
 }
 
 export interface BrowserTabCountsPayload {
@@ -43,20 +45,18 @@ export interface BrowserTabCountsPayload {
   agent: number;
 }
 
-export type BrowserTabLifecycleState =
-  | "active"
-  | "suspended"
-  | "evicted"
-  | "released";
+// Match main.ts's ambient declaration which uses a narrower set + null variant.
+export type BrowserTabLifecycleState = "active" | "suspended" | null;
 
-export type BrowserControlMode = "user" | "agent" | "shared";
+export type BrowserControlMode = "none" | "user_locked" | "session_owned";
 
 export interface BrowserTabListPayload {
   space: BrowserSpaceId;
   activeTabId: string;
   tabs: BrowserStatePayload[];
   tabCounts: BrowserTabCountsPayload;
-  sessionId: string;
+  // main's ambient global allows null when no session is bound.
+  sessionId: string | null;
   lifecycleState: BrowserTabLifecycleState;
   controlMode: BrowserControlMode;
   controlSessionId: string | null;

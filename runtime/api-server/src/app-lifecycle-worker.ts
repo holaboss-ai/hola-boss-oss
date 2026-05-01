@@ -12,7 +12,13 @@ import {
   killChildProcess,
   spawnShellCommand,
 } from "./runtime-shell.js";
-import { workspaceDataDbPath, workspaceDirForId } from "./ts-runner-session-state.js";
+import {
+  ensureWorkspaceDataDb,
+  workspaceDataDbPath,
+  workspaceDirForId,
+} from "./ts-runner-session-state.js";
+import { parseDataSchema, DataSchemaError } from "./data-schema.js";
+import { applyAppSchema, ApplySchemaError } from "./apply-app-schema.js";
 
 export interface AppLifecycleActionResult {
   app_id: string;
@@ -352,13 +358,65 @@ function buildShellLifecycleEnv(
     !env.WORKSPACE_DB_PATH
   ) {
     try {
-      env.WORKSPACE_DB_PATH = workspaceDataDbPath(workspaceDirForId(params.workspaceId));
+      // ensureWorkspaceDataDb() materializes the file with WAL + the
+      // _workspace_meta anchor row before the app process spawns. This
+      // closes the race where workspace-level tools (list_data_tables,
+      // create_dashboard) ran before any app had called getDb() and
+      // saw a missing file even though the app was about to write.
+      const dataDbPath = ensureWorkspaceDataDb(workspaceDirForId(params.workspaceId));
+      env.WORKSPACE_DB_PATH = dataDbPath;
+      maybeApplyAppSchema(params.resolvedApp, dataDbPath);
     } catch {
       // sanitizeWorkspaceId throws on invalid ids; the caller will surface
       // the underlying validation error elsewhere — don't crash env build.
     }
   }
   return env;
+}
+
+/** When an app declares `data_schema:` in its app.runtime.yaml, the
+ *  runtime owns schema lifecycle (Tier 2). We parse + apply before
+ *  spawning so the app process opens a DB whose tables already match
+ *  the manifest. Apps without the block still self-manage in their
+ *  db.ts (Tier 0/1) — both can coexist during rollout.
+ *
+ *  Errors are surfaced via console.warn rather than throwing because:
+ *  (a) blocking app start on a malformed manifest punishes the rest
+ *  of the workspace, (b) the underlying app.runtime.yaml is parsed
+ *  here for the first time so its problems are runtime-bug-ish, not
+ *  user-input, and (c) the app's existing self-managed schema is a
+ *  reasonable fallback during rollout. */
+function maybeApplyAppSchema(
+  resolvedApp: ResolvedApplicationRuntime,
+  dataDbPath: string,
+): void {
+  if (resolvedApp.dataSchemaRaw === undefined) return;
+  try {
+    const schema = parseDataSchema(resolvedApp.dataSchemaRaw, { appId: resolvedApp.appId });
+    const result = applyAppSchema({ appId: resolvedApp.appId, dataDbPath, schema });
+    if (result.kind !== "noop") {
+      console.log(
+        `[data-schema] ${resolvedApp.appId}: ${result.kind}` +
+          (result.kind === "upgraded"
+            ? ` v${result.from}→v${result.to} (+${result.addedTables.length} tables, +${result.addedColumns.length} columns, +${result.addedIndexes.length} indexes)`
+            : ` v${"version" in result ? result.version : ""}`),
+      );
+    }
+  } catch (err) {
+    if (err instanceof DataSchemaError) {
+      console.warn(
+        `[data-schema] ${resolvedApp.appId}: manifest invalid (${err.message}); falling back to app-managed schema`,
+      );
+      return;
+    }
+    if (err instanceof ApplySchemaError) {
+      console.warn(
+        `[data-schema] ${resolvedApp.appId}: cannot apply (${err.message}); falling back to app-managed schema`,
+      );
+      return;
+    }
+    console.warn(`[data-schema] ${resolvedApp.appId}: unexpected error`, err);
+  }
 }
 
 /** Resolve the persistent install-log directory for an app. Stored at

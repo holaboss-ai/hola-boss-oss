@@ -699,10 +699,13 @@ afterEach(() => {
   harness.cleanup();
 });
 
-test("listDataTables returns empty list when data.db is missing", () => {
+test("listDataTables auto-creates data.db on first read; returns empty list when no app has written", () => {
   const result = harness.service.listDataTables({ workspaceId: harness.workspaceId });
+  // data.db is now a workspace-level resource owned by the runtime, so
+  // it's materialized on demand instead of returning a "doesn't exist"
+  // error. The _workspace_meta anchor row is runtime-internal (hidden).
   assert.deepEqual(result.tables, []);
-  assert.match(String(result.note ?? ""), /data\.db does not exist/);
+  assert.equal(result.count, 0);
 });
 
 test("listDataTables introspects tables, columns, and row counts", () => {

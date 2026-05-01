@@ -1,0 +1,82 @@
+import type { ListViewSpec } from "@/lib/dashboardSchema";
+
+import { formatSmartDate, looksLikeDateColumn } from "./format";
+
+interface ListViewProps {
+  view: ListViewSpec;
+  columns: string[];
+  rows: unknown[][];
+  emptyState?: string;
+}
+
+// Denser than table — no header row, primary + secondary + meta lines.
+// Notion-list / Linear-issue-list style.
+export function ListView({ view, columns, rows, emptyState }: ListViewProps) {
+  const primaryIdx = columns.indexOf(view.primary);
+  const secondaryIdx = view.secondary ? columns.indexOf(view.secondary) : -1;
+  const metaIdx = view.meta ? columns.indexOf(view.meta) : -1;
+  const metaIsDate = looksLikeDateColumn(view.meta);
+
+  if (primaryIdx < 0) {
+    return (
+      <div className="py-10 text-center text-xs text-destructive">
+        list view: column "{view.primary}" not in projection.
+      </div>
+    );
+  }
+  if (rows.length === 0) {
+    return (
+      <div className="py-10 text-center text-xs text-muted-foreground">
+        {emptyState ?? "Nothing here yet."}
+      </div>
+    );
+  }
+
+  const display = rows.slice(0, 500);
+
+  return (
+    <ul className="divide-y divide-border/40 pt-1">
+      {display.map((row, idx) => {
+        const primary = String(row[primaryIdx] ?? "");
+        const secondary = secondaryIdx >= 0 ? String(row[secondaryIdx] ?? "") : "";
+        const metaSmart =
+          metaIdx >= 0 && metaIsDate ? formatSmartDate(row[metaIdx]) : null;
+        const metaText =
+          metaSmart?.text ??
+          (metaIdx >= 0 ? String(row[metaIdx] ?? "") : "");
+        const metaTitle = metaSmart?.full;
+        return (
+          // biome-ignore lint/suspicious/noArrayIndexKey: SQL row order is the natural key
+          <li
+            key={idx}
+            className="group flex items-baseline gap-3 px-1 py-2.5 transition-colors hover:bg-fg-4"
+          >
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium leading-snug text-foreground">
+                {primary || <span className="text-muted-foreground">(untitled)</span>}
+              </div>
+              {secondary ? (
+                <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                  {secondary}
+                </div>
+              ) : null}
+            </div>
+            {metaText ? (
+              <div
+                className="shrink-0 text-[11px] tabular-nums text-muted-foreground"
+                title={metaTitle}
+              >
+                {metaText}
+              </div>
+            ) : null}
+          </li>
+        );
+      })}
+      {rows.length > display.length ? (
+        <li className="pt-3 text-xs text-muted-foreground">
+          Showing {display.length} of {rows.length}.
+        </li>
+      ) : null}
+    </ul>
+  );
+}

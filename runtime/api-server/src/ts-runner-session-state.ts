@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import Database from "better-sqlite3";
 
 const WORKSPACE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const SESSION_STATE_DIR_NAME = ".holaboss";
@@ -53,6 +54,48 @@ export function workspaceSessionStatePath(workspaceDir: string): string {
  *  processes via the WORKSPACE_DB_PATH env var. */
 export function workspaceDataDbPath(workspaceDir: string): string {
   return path.join(path.resolve(workspaceDir), SESSION_STATE_DIR_NAME, "data.db");
+}
+
+/** Ensure the workspace's shared data SQLite exists, with WAL enabled
+ *  and a `_workspace_meta` row anchoring the schema version.
+ *
+ *  data.db used to be created lazily by the first module app to call
+ *  getDb() — which left a window where workspace-level tools like
+ *  list_data_tables / create_dashboard saw "data.db does not exist
+ *  yet" even though the workspace had been provisioned and apps were
+ *  installed. The data layer is a workspace-level resource, so its
+ *  existence is the runtime's responsibility, not any individual
+ *  app's.
+ *
+ *  Idempotent: runs CREATE TABLE IF NOT EXISTS and INSERT OR IGNORE,
+ *  so calling it on every workspace boot or app start is a no-op
+ *  after the first invocation. */
+export function ensureWorkspaceDataDb(workspaceDir: string): string {
+  const dbPath = workspaceDataDbPath(workspaceDir)
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true })
+
+  const db = new Database(dbPath)
+  try {
+    db.pragma("journal_mode = WAL")
+    db.pragma("foreign_keys = ON")
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS _workspace_meta (
+        key        TEXT PRIMARY KEY,
+        value      TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `)
+    db.prepare(
+      `INSERT OR IGNORE INTO _workspace_meta (key, value) VALUES ('schema_version', '1')`
+    ).run()
+    db.prepare(
+      `INSERT OR IGNORE INTO _workspace_meta (key, value) VALUES ('created_at', datetime('now'))`
+    ).run()
+  } finally {
+    db.close()
+  }
+
+  return dbPath
 }
 
 function normalizeHarness(value: unknown): string {
