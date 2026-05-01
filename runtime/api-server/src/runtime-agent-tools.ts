@@ -24,6 +24,7 @@ import {
 
 import { RUNTIME_AGENT_TOOL_DEFINITIONS as RUNTIME_AGENT_TOOL_BASE_DEFINITIONS } from "../../harnesses/src/runtime-agent-tools.js";
 import { cronjobNextRunAt } from "./cron-worker.js";
+import { ensureWorkspaceDataDb } from "./ts-runner-session-state.js";
 import { generateWorkspaceImage } from "./image-generation.js";
 import { searchPublicWeb } from "./native-web-search.js";
 import {
@@ -247,6 +248,14 @@ const SYSTEM_TABLE_SUFFIXES = [
 function isSystemTable(name: string): boolean {
   const lowered = name.toLowerCase();
   return SYSTEM_TABLE_SUFFIXES.some((suffix) => lowered.endsWith(suffix));
+}
+
+// Runtime-internal tables are owned by the runtime itself, not by any
+// module app, and are never relevant to the agent. Always hidden, even
+// when includeSystem=true (which only reveals app-internal tables like
+// queues / scheduler logs).
+function isRuntimeInternalTable(name: string): boolean {
+  return name.startsWith("_");
 }
 
 export type DashboardPanelInput =
@@ -2839,15 +2848,14 @@ export class RuntimeAgentToolsService {
   // PRAGMA query_only and closes it before returning.
   listDataTables(params: RuntimeAgentToolsListDataTablesParams): JsonObject {
     this.requireWorkspace(params.workspaceId);
-    const dbPath = path.join(
-      this.options.workspaceRoot,
-      params.workspaceId,
-      ".holaboss",
-      "data.db",
+    // The shared data.db is a workspace-level resource, not an app's
+    // file. Eagerly create it if a module app hasn't yet — otherwise
+    // this tool gives the agent a misleading "no data exists" view
+    // even on healthy workspaces where apps simply haven't called
+    // their getDb() yet.
+    const dbPath = ensureWorkspaceDataDb(
+      path.join(this.options.workspaceRoot, params.workspaceId),
     );
-    if (!existsSync(dbPath)) {
-      return { tables: [], note: "Workspace data.db does not exist yet — no module apps have written rows." };
-    }
 
     let db: Database.Database | null = null;
     try {
@@ -2863,6 +2871,7 @@ export class RuntimeAgentToolsService {
       const out: JsonObject[] = [];
       let hiddenSystemCount = 0;
       for (const { name } of tables) {
+        if (isRuntimeInternalTable(name)) continue;
         if (!includeSystem && isSystemTable(name)) {
           hiddenSystemCount += 1;
           continue;
@@ -2934,19 +2943,14 @@ export class RuntimeAgentToolsService {
       );
     }
 
-    const dbPath = path.join(
-      this.options.workspaceRoot,
-      params.workspaceId,
-      ".holaboss",
-      "data.db",
+    // ensureWorkspaceDataDb() creates the file with WAL + _workspace_meta
+    // if it doesn't exist. The dashboard's panel queries will validate
+    // (and fail loudly) below if they reference tables the user hasn't
+    // populated yet — but the workspace-level resource itself always
+    // exists, so the agent can build dashboards before any app starts.
+    const dbPath = ensureWorkspaceDataDb(
+      path.join(this.options.workspaceRoot, params.workspaceId),
     );
-    if (!existsSync(dbPath)) {
-      throw new RuntimeAgentToolsServiceError(
-        409,
-        "dashboard_data_db_missing",
-        "Workspace data.db does not exist yet — install an app and create some data first.",
-      );
-    }
 
     const yamlPanels: unknown[] = [];
     let db: Database.Database | null = null;

@@ -1,5 +1,13 @@
-import { Columns3, type LucideIcon, Table2 } from "lucide-react";
-import { useState } from "react";
+import {
+  CalendarDays,
+  Columns3,
+  GalleryThumbnails,
+  type LucideIcon,
+  List as ListIcon,
+  Rows3,
+  Table2,
+} from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
   type DataViewPanel as DataViewPanelSpec,
@@ -8,6 +16,7 @@ import {
 } from "@/lib/dashboardSchema";
 
 import { BoardView } from "./BoardView";
+import { ListView } from "./ListView";
 import { TableView } from "./TableView";
 
 interface DataViewPanelProps {
@@ -23,12 +32,16 @@ export type DataViewState =
 const VIEW_META: Record<DataViewSpec["type"], { label: string; icon: LucideIcon }> = {
   table: { label: "Table", icon: Table2 },
   board: { label: "Board", icon: Columns3 },
+  list: { label: "List", icon: Rows3 },
+  gallery: { label: "Gallery", icon: GalleryThumbnails },
+  calendar: { label: "Calendar", icon: CalendarDays },
+  timeline: { label: "Timeline", icon: ListIcon },
 };
 
 // Wraps a single panel's data in a Notion-style card: thin border,
 // solid card surface, header with title + connected segmented view
-// switcher, body with the active view's content. Selected view state
-// is component-local — survives within the session, isn't persisted.
+// switcher with an animated indicator pill, body with the active
+// view's content. Selected view state is component-local.
 export function DataViewPanel({ panel, state }: DataViewPanelProps) {
   const [activeViewType, setActiveViewType] = useState<DataViewSpec["type"]>(
     () => resolveInitialView(panel).type,
@@ -36,62 +49,195 @@ export function DataViewPanel({ panel, state }: DataViewPanelProps) {
   const activeView =
     panel.views.find((v) => v.type === activeViewType) ?? panel.views[0];
 
-  const rowCount =
-    state.kind === "data" ? state.rows.length : null;
+  const rowCount = state.kind === "data" ? state.rows.length : null;
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-card">
-      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+    <section className="group overflow-hidden rounded-xl bg-card shadow-md smooth-corners">
+      <header className="flex items-center justify-between gap-3 border-b border-border/70 bg-fg-2 px-4 py-3">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-sm font-semibold tracking-tight text-foreground">
+          <h3 className="truncate text-sm font-semibold tracking-tight text-foreground">
             {panel.title}
-          </span>
+          </h3>
           {rowCount !== null ? (
-            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+            <span className="shrink-0 rounded-md bg-fg-6 px-1.5 py-0.5 text-[10.5px] font-medium tabular-nums text-muted-foreground">
               {rowCount}
+            </span>
+          ) : null}
+          {panel.description ? (
+            <span className="hidden truncate text-xs text-muted-foreground md:inline">
+              · {panel.description}
             </span>
           ) : null}
         </div>
         {panel.views.length > 1 ? (
-          <div className="flex shrink-0 items-center rounded-md border border-border bg-muted/40 p-0.5">
-            {panel.views.map((view) => {
-              const active = view.type === activeViewType;
-              const meta = VIEW_META[view.type];
-              const Icon = meta.icon;
-              return (
-                <button
-                  type="button"
-                  key={view.type}
-                  onClick={() => setActiveViewType(view.type)}
-                  title={meta.label}
-                  aria-label={`${meta.label} view`}
-                  aria-pressed={active}
-                  className={`grid size-6 place-items-center rounded transition-colors ${
-                    active
-                      ? "bg-background text-foreground shadow-xs"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  <Icon size={13} strokeWidth={1.75} />
-                </button>
-              );
-            })}
-          </div>
+          <ViewTabs
+            views={panel.views}
+            active={activeViewType}
+            onChange={setActiveViewType}
+          />
         ) : null}
-      </div>
-      <div className="max-h-[520px] overflow-auto px-4 pb-3">
+      </header>
+      <div className="scrollbar-ghost max-h-[560px] overflow-auto px-4 pb-3">
         {state.kind === "loading" ? (
-          <div className="grid place-items-center py-10 text-xs text-muted-foreground">
-            Loading…
-          </div>
+          <SkeletonRows />
         ) : state.kind === "error" ? (
-          <div className="py-4 text-xs text-destructive">{state.message}</div>
-        ) : activeView.type === "table" ? (
-          <TableView view={activeView} columns={state.columns} rows={state.rows} />
+          <div className="my-3 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+            {state.message}
+          </div>
         ) : (
-          <BoardView view={activeView} columns={state.columns} rows={state.rows} />
+          <ViewBody view={activeView} state={state} emptyState={panel.empty_state} />
         )}
       </div>
+    </section>
+  );
+}
+
+function ViewBody({
+  view,
+  state,
+  emptyState,
+}: {
+  view: DataViewSpec;
+  state: Extract<DataViewState, { kind: "data" }>;
+  emptyState?: string;
+}) {
+  if (view.type === "table") {
+    return (
+      <TableView
+        view={view}
+        columns={state.columns}
+        rows={state.rows}
+        emptyState={emptyState}
+      />
+    );
+  }
+  if (view.type === "board") {
+    return (
+      <BoardView
+        view={view}
+        columns={state.columns}
+        rows={state.rows}
+        emptyState={emptyState}
+      />
+    );
+  }
+  if (view.type === "list") {
+    return (
+      <ListView
+        view={view}
+        columns={state.columns}
+        rows={state.rows}
+        emptyState={emptyState}
+      />
+    );
+  }
+  // gallery / calendar / timeline — declared in v2 spec, renderer ships
+  // in PR2. Show a clean placeholder rather than crashing.
+  return (
+    <div className="my-6 rounded-md border border-dashed border-border/70 bg-fg-2 px-4 py-6 text-center text-xs text-muted-foreground">
+      The <span className="font-medium text-foreground">{view.type}</span> view
+      ships in the next dashboard release. Showing an alternate view above
+      should keep this panel useful in the meantime.
+    </div>
+  );
+}
+
+interface ViewTabsProps {
+  views: DataViewSpec[];
+  active: DataViewSpec["type"];
+  onChange: (type: DataViewSpec["type"]) => void;
+}
+
+// Segmented control with an animated background pill that slides under
+// the active tab — that's the Notion / Linear / Apple finish that
+// makes view switching feel solid instead of janky.
+function ViewTabs({ views, active, onChange }: ViewTabsProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const [indicator, setIndicator] = useState<{ left: number; width: number } | null>(
+    null,
+  );
+
+  useLayoutEffect(() => {
+    const target = tabRefs.current[active];
+    const container = containerRef.current;
+    if (!target || !container) return;
+    const cRect = container.getBoundingClientRect();
+    const tRect = target.getBoundingClientRect();
+    setIndicator({ left: tRect.left - cRect.left, width: tRect.width });
+  }, [active, views.length]);
+
+  // Recompute on container resize so the indicator stays under the tab
+  // when the panel is resized (split-pane layouts, full-width toggle).
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const ro = new ResizeObserver(() => {
+      const target = tabRefs.current[active];
+      const container = containerRef.current;
+      if (!target || !container) return;
+      const cRect = container.getBoundingClientRect();
+      const tRect = target.getBoundingClientRect();
+      setIndicator({ left: tRect.left - cRect.left, width: tRect.width });
+    });
+    ro.observe(containerRef.current);
+    return () => ro.disconnect();
+  }, [active]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative flex shrink-0 items-center rounded-md border border-border bg-muted/40 p-0.5"
+    >
+      {indicator ? (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute top-0.5 bottom-0.5 rounded bg-background shadow-[0_1px_2px_oklch(0_0_0/0.06)] transition-[left,width] duration-200 ease-out"
+          style={{ left: indicator.left, width: indicator.width }}
+        />
+      ) : null}
+      {views.map((view) => {
+        const meta = VIEW_META[view.type];
+        if (!meta) return null;
+        const isActive = view.type === active;
+        const Icon = meta.icon;
+        return (
+          <button
+            ref={(el) => {
+              tabRefs.current[view.type] = el;
+            }}
+            type="button"
+            key={view.type}
+            onClick={() => onChange(view.type)}
+            title={meta.label}
+            aria-label={`${meta.label} view`}
+            aria-pressed={isActive}
+            className={`relative z-10 grid size-6 place-items-center rounded transition-colors duration-150 ${
+              isActive
+                ? "text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50`}
+          >
+            <Icon size={13} strokeWidth={1.75} />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function SkeletonRows() {
+  return (
+    <div className="space-y-2 py-3" aria-busy aria-label="Loading">
+      {[80, 64, 92, 70, 76].map((width, i) => (
+        <div
+          // biome-ignore lint/suspicious/noArrayIndexKey: skeleton order is not data-driven
+          key={i}
+          className="flex items-center gap-3"
+        >
+          <div className="animate-shimmer h-4 flex-1 rounded bg-fg-6" style={{ maxWidth: `${width}%` }} />
+          <div className="animate-shimmer h-4 w-12 shrink-0 rounded bg-fg-6" />
+        </div>
+      ))}
     </div>
   );
 }

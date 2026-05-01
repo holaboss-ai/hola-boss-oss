@@ -7848,7 +7848,7 @@ function getMarketplaceAppSdkClient() {
     );
   }
   marketplaceAppSdkClientCache = buildAppSdkClient({
-    baseURL: `${AUTH_BASE_URL.replace(/\/+$/, "")}/api/marketplace`,
+    baseURL: marketplaceBffBaseUrl(),
     getCookie: authCookieHeader,
     // Intentionally do NOT clear the persisted cookie on 401 — the marketplace
     // BFF may 401 for reasons unrelated to cookie validity (e.g. session
@@ -8586,6 +8586,20 @@ function marketplaceBaseUrl() {
   return AUTH_BASE_URL
     ? gatewayBaseUrl("marketplace")
     : DEFAULT_MARKETPLACE_URL.replace(/\/+$/, "");
+}
+
+/**
+ * BFF (Hono) marketplace base URL — used by the @holaboss/app-sdk client
+ * (both main-side and renderer-direct via bff:fetch). Lives on the Hono
+ * server at `/api/marketplace`, NOT behind the `/gateway/marketplace`
+ * Python control-plane proxy. Distinct from `marketplaceBaseUrl()` which
+ * targets that gateway proxy.
+ */
+function marketplaceBffBaseUrl() {
+  if (!AUTH_BASE_URL) {
+    return "";
+  }
+  return `${AUTH_BASE_URL.replace(/\/+$/, "")}/api/marketplace`;
 }
 
 async function controlPlaneHeaders(
@@ -20241,7 +20255,7 @@ app.whenReady().then(async () => {
   handleTrustedIpc(
     "auth:getMarketplaceBaseUrl",
     ["main"],
-    () => marketplaceBaseUrl(),
+    () => marketplaceBffBaseUrl(),
   );
   handleTrustedIpc("auth:requestAuth", ["main", "auth-popup"], async () => {
     await requireAuthClient().requestAuth();
