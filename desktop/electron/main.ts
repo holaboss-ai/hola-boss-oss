@@ -128,6 +128,31 @@ import {
   createBrowserPaneDownloads,
   type BrowserPaneDownloads,
 } from "./browser-pane/downloads.js";
+import {
+  BROWSER_OBSERVABILITY_ENTRY_LIMIT,
+  BROWSER_OBSERVABILITY_DEFAULT_LIMIT as BROWSER_OBSERVABILITY_DEFAULT_LIMIT_IMPORTED,
+  BROWSER_REQUEST_HISTORY_LIMIT,
+  appendBoundedEntry,
+  browserConsoleLevelRank,
+  browserConsoleLevelValue,
+  browserHeaderFirstValue,
+  browserHeaderRecord,
+  browserIsoFromNetworkTimestamp,
+  browserObservabilityLimit,
+  browserObservedErrorSource,
+  browserRequestBodyMetadata,
+  browserRequestFailure,
+  browserRequestIdValue,
+  browserRequestSummary,
+  browserResponseBodyMetadata,
+  type BrowserConsoleEntry as BrowserConsoleEntryImported,
+  type BrowserConsoleLevel as BrowserConsoleLevelImported,
+  type BrowserErrorSource as BrowserErrorSourceImported,
+  type BrowserObservedError as BrowserObservedErrorImported,
+  type BrowserRequestBodyMetadata as BrowserRequestBodyMetadataImported,
+  type BrowserRequestRecord as BrowserRequestRecordImported,
+  type BrowserResponseBodyMetadata as BrowserResponseBodyMetadataImported,
+} from "./browser-pane/observability.js";
 import type {
   BrowserCopyWorkspaceProfilePayload,
   BrowserImportProfilePayload,
@@ -187,9 +212,10 @@ const USER_BROWSER_LOCK_TIMEOUT_MS = 15_000;
 const SESSION_BROWSER_BUSY_CHECK_MS = 15_000;
 const SESSION_BROWSER_COMPLETED_GRACE_MS = 30_000;
 const SESSION_BROWSER_WARM_TTL_MS = 2 * 60 * 1000;
-const BROWSER_OBSERVABILITY_ENTRY_LIMIT = 100;
-const BROWSER_REQUEST_HISTORY_LIMIT = 200;
-const BROWSER_OBSERVABILITY_DEFAULT_LIMIT = 20;
+// BROWSER_OBSERVABILITY_ENTRY_LIMIT / BROWSER_REQUEST_HISTORY_LIMIT /
+// BROWSER_OBSERVABILITY_DEFAULT_LIMIT moved to browser-pane/observability.ts.
+const BROWSER_OBSERVABILITY_DEFAULT_LIMIT =
+  BROWSER_OBSERVABILITY_DEFAULT_LIMIT_IMPORTED;
 // Chromium cookie / profile-discovery constants moved to
 // `browser-pane/import-chromium.ts`. Safari export filename constants
 // moved to `browser-pane/import-browsers.ts`.
@@ -687,65 +713,15 @@ interface BrowserDownloadPayload {
   completedAt: string | null;
 }
 
-type BrowserConsoleLevel = "debug" | "info" | "warning" | "error";
-type BrowserErrorSource = "page" | "runtime" | "network";
-
-interface BrowserConsoleEntry {
-  id: string;
-  level: BrowserConsoleLevel;
-  message: string;
-  sourceId: string;
-  lineNumber: number | null;
-  timestamp: string;
-  frameUrl: string;
-}
-
-interface BrowserObservedError {
-  id: string;
-  source: BrowserErrorSource;
-  kind: string;
-  level: "warning" | "error";
-  message: string;
-  timestamp: string;
-  url: string;
-  requestId?: string;
-  statusCode?: number;
-  resourceType?: string;
-  lineNumber?: number;
-  sourceId?: string;
-  errorCode?: number;
-}
-
-interface BrowserRequestBodyMetadata {
-  entryCount: number;
-  byteLength: number;
-  fileCount: number;
-  types: string[];
-}
-
-interface BrowserResponseBodyMetadata {
-  contentType: string | null;
-  contentLength: number | null;
-}
-
-interface BrowserRequestRecord {
-  id: string;
-  url: string;
-  method: string;
-  resourceType: string;
-  referrer: string;
-  startedAt: string;
-  completedAt: string | null;
-  durationMs: number | null;
-  fromCache: boolean;
-  statusCode: number | null;
-  statusLine: string;
-  error: string;
-  requestHeaders: Record<string, string[]> | null;
-  responseHeaders: Record<string, string[]> | null;
-  requestBody: BrowserRequestBodyMetadata | null;
-  responseBody: BrowserResponseBodyMetadata | null;
-}
+// Types + pure observability helpers moved to browser-pane/observability.ts
+// (re-imported below).
+type BrowserConsoleLevel = BrowserConsoleLevelImported;
+type BrowserErrorSource = BrowserErrorSourceImported;
+type BrowserConsoleEntry = BrowserConsoleEntryImported;
+type BrowserObservedError = BrowserObservedErrorImported;
+type BrowserRequestBodyMetadata = BrowserRequestBodyMetadataImported;
+type BrowserResponseBodyMetadata = BrowserResponseBodyMetadataImported;
+type BrowserRequestRecord = BrowserRequestRecordImported;
 
 interface BrowserHistoryEntryPayload {
   id: string;
@@ -3635,160 +3611,11 @@ function setRequestHeaderValue(
   return headers;
 }
 
-function browserObservabilityLimit(
-  value: string | null | undefined,
-  defaultValue = BROWSER_OBSERVABILITY_DEFAULT_LIMIT,
-): number {
-  const parsed = Number(value ?? "");
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return defaultValue;
-  }
-  return Math.max(1, Math.min(BROWSER_OBSERVABILITY_ENTRY_LIMIT, Math.floor(parsed)));
-}
-
-function browserConsoleLevelValue(value: unknown): BrowserConsoleLevel {
-  return value === "warning" ||
-    value === "error" ||
-    value === "debug" ||
-    value === "info"
-    ? value
-    : "info";
-}
-
-function browserConsoleLevelRank(level: BrowserConsoleLevel): number {
-  switch (level) {
-    case "debug":
-      return 0;
-    case "info":
-      return 1;
-    case "warning":
-      return 2;
-    case "error":
-      return 3;
-  }
-}
-
-function browserObservedErrorSource(
-  value: unknown,
-): BrowserErrorSource | null {
-  return value === "page" || value === "runtime" || value === "network"
-    ? value
-    : null;
-}
-
-function browserIsoFromNetworkTimestamp(value: unknown): string {
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-    return new Date(value * 1000).toISOString();
-  }
-  return new Date().toISOString();
-}
-
-function browserHeaderRecord(
-  value: unknown,
-): Record<string, string[]> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  const result: Record<string, string[]> = {};
-  for (const [key, rawValue] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof rawValue === "string") {
-      result[key] = [rawValue];
-      continue;
-    }
-    if (Array.isArray(rawValue)) {
-      const entries = rawValue
-        .filter((entry): entry is string => typeof entry === "string")
-        .map((entry) => entry);
-      if (entries.length > 0) {
-        result[key] = entries;
-      }
-    }
-  }
-  return Object.keys(result).length > 0 ? result : null;
-}
-
-function browserHeaderFirstValue(
-  headers: Record<string, string[]> | null | undefined,
-  headerName: string,
-): string | null {
-  if (!headers) {
-    return null;
-  }
-  const normalizedName = headerName.toLowerCase();
-  for (const [key, values] of Object.entries(headers)) {
-    if (key.toLowerCase() !== normalizedName || values.length === 0) {
-      continue;
-    }
-    const value = values[0]?.trim() || "";
-    return value || null;
-  }
-  return null;
-}
-
-function browserResponseBodyMetadata(
-  headers: Record<string, string[]> | null,
-): BrowserResponseBodyMetadata | null {
-  if (!headers) {
-    return null;
-  }
-  const contentType = browserHeaderFirstValue(headers, "content-type");
-  const contentLengthRaw = browserHeaderFirstValue(headers, "content-length");
-  const contentLength = contentLengthRaw ? Number(contentLengthRaw) : null;
-  if (!contentType && !Number.isFinite(contentLength ?? NaN)) {
-    return null;
-  }
-  return {
-    contentType,
-    contentLength:
-      typeof contentLength === "number" && Number.isFinite(contentLength)
-        ? contentLength
-        : null,
-  };
-}
-
-function browserRequestBodyMetadata(
-  uploadData: unknown,
-): BrowserRequestBodyMetadata | null {
-  if (!Array.isArray(uploadData) || uploadData.length === 0) {
-    return null;
-  }
-  let byteLength = 0;
-  let fileCount = 0;
-  const types = new Set<string>();
-  for (const entry of uploadData) {
-    if (!entry || typeof entry !== "object") {
-      continue;
-    }
-    const record = entry as Record<string, unknown>;
-    if (record.bytes instanceof Uint8Array) {
-      byteLength += record.bytes.byteLength;
-      types.add("bytes");
-    } else if (Buffer.isBuffer(record.bytes)) {
-      byteLength += record.bytes.byteLength;
-      types.add("bytes");
-    } else if (typeof record.file === "string" && record.file.trim()) {
-      fileCount += 1;
-      types.add("file");
-    } else if (typeof record.blobUUID === "string" && record.blobUUID.trim()) {
-      types.add("blob");
-    } else {
-      types.add("other");
-    }
-  }
-  return {
-    entryCount: uploadData.length,
-    byteLength,
-    fileCount,
-    types: [...types],
-  };
-}
-
-function appendBoundedEntry<T>(entries: T[], entry: T, limit: number): void {
-  entries.push(entry);
-  if (entries.length > limit) {
-    entries.splice(0, entries.length - limit);
-  }
-}
+// Pure observability helpers (browserObservabilityLimit / ConsoleLevelValue /
+// ConsoleLevelRank / ObservedErrorSource / IsoFromNetworkTimestamp /
+// HeaderRecord / HeaderFirstValue / ResponseBodyMetadata /
+// RequestBodyMetadata / appendBoundedEntry) moved to
+// browser-pane/observability.ts.
 
 function browserTabForWebContentsId(
   webContentsId: number,
@@ -3826,37 +3653,8 @@ function appendBrowserObservedError(
   );
 }
 
-function browserRequestIdValue(value: unknown): string {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return String(Math.trunc(value));
-  }
-  if (typeof value === "string" && value.trim()) {
-    return value.trim();
-  }
-  return "";
-}
-
-function browserRequestFailure(record: BrowserRequestRecord): boolean {
-  return Boolean(record.error) || (record.statusCode ?? 0) >= 400;
-}
-
-function browserRequestSummary(
-  record: BrowserRequestRecord,
-): Record<string, unknown> {
-  return {
-    id: record.id,
-    url: record.url,
-    method: record.method,
-    resourceType: record.resourceType,
-    startedAt: record.startedAt,
-    completedAt: record.completedAt,
-    durationMs: record.durationMs,
-    fromCache: record.fromCache,
-    statusCode: record.statusCode,
-    statusLine: record.statusLine,
-    error: record.error,
-  };
-}
+// browserRequestIdValue / RequestFailure / RequestSummary moved to
+// browser-pane/observability.ts.
 
 function upsertBrowserRequestRecord(
   tab: BrowserTabRecord,
