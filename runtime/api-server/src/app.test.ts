@@ -4675,7 +4675,8 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
         integrations: undefined,
         startCommand: "",
         baseDir: "apps/app-b",
-        lifecycle: { setup: "", start: "", stop: "" }
+        lifecycle: { setup: "", start: "", stop: "" },
+        dataSchemaRaw: undefined
       }
     },
     {
@@ -4697,7 +4698,8 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
         integrations: undefined,
         startCommand: "",
         baseDir: "apps/app-b",
-        lifecycle: { setup: "", start: "", stop: "" }
+        lifecycle: { setup: "", start: "", stop: "" },
+        dataSchemaRaw: undefined
       }
     },
     {
@@ -4719,7 +4721,8 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
         integrations: undefined,
         startCommand: "",
         baseDir: "apps/app-b",
-        lifecycle: { setup: "", start: "", stop: "" }
+        lifecycle: { setup: "", start: "", stop: "" },
+        dataSchemaRaw: undefined
       }
     }
   ]);
