@@ -154,6 +154,7 @@ import {
   type BrowserResponseBodyMetadata as BrowserResponseBodyMetadataImported,
 } from "./browser-pane/observability.js";
 import { createTabObservability } from "./browser-pane/tab-observability.js";
+import { createBrowserUserLock } from "./browser-pane/user-lock.js";
 import type {
   BrowserCopyWorkspaceProfilePayload,
   BrowserImportProfilePayload,
@@ -1001,8 +1002,10 @@ const agentSessionCache = new Map<
   string,
   Map<string, AgentSessionRecordPayload>
 >();
-const userBrowserInterruptPrompts = new Set<string>();
-const programmaticBrowserInputDepth = new WeakMap<WebContents, number>();
+// userBrowserInterruptPrompts (the dedup Set) and
+// programmaticBrowserInputDepth (the per-WebContents re-entrant counter)
+// moved into the closure of createBrowserUserLock — see further down where
+// browserUserLock is instantiated.
 const reportedOperatorSurfaceContexts = new Map<
   string,
   ReportedOperatorSurfaceContextPayload
@@ -17146,216 +17149,36 @@ function isVisibleAgentBrowserSession(
   );
 }
 
-function activeUserBrowserLock(
-  workspace: BrowserWorkspaceState | null | undefined,
-): BrowserUserLockState | null {
-  if (!workspace?.userBrowserLock) {
-    return null;
-  }
-  const heartbeatAtMs = Date.parse(workspace.userBrowserLock.heartbeatAt);
-  if (
-    !Number.isFinite(heartbeatAtMs) ||
-    Date.now() - heartbeatAtMs > USER_BROWSER_LOCK_TIMEOUT_MS
-  ) {
-    workspace.userBrowserLock = null;
-    return null;
-  }
-  return workspace.userBrowserLock;
-}
-
-function releaseUserBrowserLock(
-  workspaceId: string,
-  sessionId?: string | null,
-): boolean {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const activeLock = activeUserBrowserLock(workspace);
-  const normalizedSessionId = browserSessionId(sessionId);
-  if (
-    !workspace ||
-    !activeLock ||
-    (normalizedSessionId && activeLock.sessionId !== normalizedSessionId)
-  ) {
-    return false;
-  }
-  workspace.userBrowserLock = null;
-  return true;
-}
-
-function ensureUserBrowserLock(
-  workspaceId: string,
-  sessionId?: string | null,
-  reason?: string | null,
-): { ok: true; lock: BrowserUserLockState } | {
-  ok: false;
-  lockHolderSessionId: string;
-} {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const normalizedSessionId = browserSessionId(sessionId);
-  if (!workspace || !normalizedSessionId) {
-    return { ok: false, lockHolderSessionId: "" };
-  }
-  const existing = activeUserBrowserLock(workspace);
-  if (existing && existing.sessionId !== normalizedSessionId) {
-    return { ok: false, lockHolderSessionId: existing.sessionId };
-  }
-  const now = new Date().toISOString();
-  workspace.userBrowserLock = existing
-    ? {
-        ...existing,
-        heartbeatAt: now,
-        reason:
-          typeof reason === "string" && reason.trim()
-            ? reason.trim()
-            : existing.reason,
-      }
-    : {
-        sessionId: normalizedSessionId,
-        acquiredAt: now,
-        heartbeatAt: now,
-        reason:
-          typeof reason === "string" && reason.trim() ? reason.trim() : null,
-      };
-  return { ok: true, lock: workspace.userBrowserLock };
-}
-
-async function pauseBrowserControlSession(
-  workspaceId: string,
-  sessionId: string,
-): Promise<void> {
-  try {
-    await pauseSessionRun({
-      workspace_id: workspaceId,
-      session_id: sessionId,
-    });
-  } finally {
-    releaseUserBrowserLock(workspaceId, sessionId);
-  }
-}
-
-function agentBrowserSessionNeedsInterrupt(
-  workspaceId: string,
-  sessionId?: string | null,
-): boolean {
-  const normalizedSessionId =
-    browserSessionId(sessionId) ||
-    browserSessionId(browserWorkspaceFromMap(workspaceId)?.activeAgentSessionId);
-  if (!workspaceId.trim() || !normalizedSessionId) {
-    return false;
-  }
-  const runtimeRecord = getCachedRuntimeStateRecord(
-    workspaceId,
-    normalizedSessionId,
-  );
-  const status = runtimeRecordEffectiveStatus(runtimeRecord);
-  return status === "BUSY" || status === "QUEUED" || status === "PAUSING";
-}
-
-async function confirmBrowserInterrupt(
-  workspaceId: string,
-  sessionId: string,
-): Promise<void> {
-  if (userBrowserInterruptPrompts.has(workspaceId)) {
-    return;
-  }
-  userBrowserInterruptPrompts.add(workspaceId);
-  try {
-    const ownerWindow =
-      mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-    const { response } = ownerWindow
-      ? await dialog.showMessageBox(ownerWindow, {
-          type: "warning",
-          buttons: ["Let agent continue", "Interrupt and take over"],
-          defaultId: 0,
-          cancelId: 0,
-          noLink: true,
-          title: "Agent Controlling Browser",
-          message: "The agent is currently controlling this browser.",
-          detail:
-            "Your input will only go through if you interrupt. Interrupting will pause the active agent session and return control to you.",
-        })
-      : await dialog.showMessageBox({
-          type: "warning",
-          buttons: ["Let agent continue", "Interrupt and take over"],
-          defaultId: 0,
-          cancelId: 0,
-          noLink: true,
-          title: "Agent Controlling Browser",
-          message: "The agent is currently controlling this browser.",
-          detail:
-            "Your input will only go through if you interrupt. Interrupting will pause the active agent session and return control to you.",
-        });
-    if (response !== 1) {
-      return;
-    }
-    await pauseBrowserControlSession(workspaceId, sessionId);
-  } catch (error) {
-    const ownerWindow =
-      mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-    const messageBoxOptions = {
-      type: "error",
-      title: "Could Not Interrupt Agent",
-      message: "The agent session could not be paused.",
-      detail:
-        error instanceof Error
-          ? error.message
-          : "The browser remained under agent control.",
-    } as const;
-    if (ownerWindow) {
-      await dialog.showMessageBox(ownerWindow, messageBoxOptions);
-    } else {
-      await dialog.showMessageBox(messageBoxOptions);
-    }
-  } finally {
-    userBrowserInterruptPrompts.delete(workspaceId);
-  }
-}
-
-function maybePromptBrowserInterrupt(
-  workspaceId: string,
-  space: BrowserSpaceId,
-  sessionId?: string | null,
-): boolean {
-  if (space === "user") {
-    const workspace = browserWorkspaceFromMap(workspaceId);
-    const lock = activeUserBrowserLock(workspace);
-    if (!lock) {
-      return false;
-    }
-    void confirmBrowserInterrupt(workspaceId, lock.sessionId);
-    return true;
-  }
-
-  const controllingSessionId = browserSessionId(sessionId);
-  if (!agentBrowserSessionNeedsInterrupt(workspaceId, controllingSessionId)) {
-    return false;
-  }
-  void confirmBrowserInterrupt(workspaceId, controllingSessionId);
-  return true;
-}
-
-function isProgrammaticBrowserInput(webContents: WebContents): boolean {
-  return (programmaticBrowserInputDepth.get(webContents) ?? 0) > 0;
-}
-
-async function withProgrammaticBrowserInput<T>(
-  webContents: WebContents,
-  callback: () => Promise<T>,
-): Promise<T> {
-  programmaticBrowserInputDepth.set(
-    webContents,
-    (programmaticBrowserInputDepth.get(webContents) ?? 0) + 1,
-  );
-  try {
-    return await callback();
-  } finally {
-    const nextDepth = (programmaticBrowserInputDepth.get(webContents) ?? 1) - 1;
-    if (nextDepth > 0) {
-      programmaticBrowserInputDepth.set(webContents, nextDepth);
-    } else {
-      programmaticBrowserInputDepth.delete(webContents);
-    }
-  }
-}
+// activeUserBrowserLock / releaseUserBrowserLock / ensureUserBrowserLock /
+// pauseBrowserControlSession / agentBrowserSessionNeedsInterrupt /
+// confirmBrowserInterrupt / maybePromptBrowserInterrupt /
+// isProgrammaticBrowserInput / withProgrammaticBrowserInput moved to
+// browser-pane/user-lock.ts. Wired below as `browserUserLock`.
+const browserUserLock = createBrowserUserLock({
+  getMainWindow: () => mainWindow,
+  getWorkspace: (id) =>
+    browserWorkspaceFromMap(id) as unknown as ReturnType<
+      Parameters<typeof createBrowserUserLock>[0]["getWorkspace"]
+    >,
+  browserSessionId: (value) => browserSessionId(value),
+  lockTimeoutMs: USER_BROWSER_LOCK_TIMEOUT_MS,
+  pauseSessionRun: (params) => pauseSessionRun(params),
+  isAgentSessionBusy: (workspaceId, sessionId) => {
+    const runtimeRecord = getCachedRuntimeStateRecord(workspaceId, sessionId);
+    const status = runtimeRecordEffectiveStatus(runtimeRecord);
+    return status === "BUSY" || status === "QUEUED" || status === "PAUSING";
+  },
+});
+const activeUserBrowserLock = browserUserLock.activeUserBrowserLock;
+const releaseUserBrowserLock = browserUserLock.releaseUserBrowserLock;
+const ensureUserBrowserLock = browserUserLock.ensureUserBrowserLock;
+const pauseBrowserControlSession = browserUserLock.pauseBrowserControlSession;
+const agentBrowserSessionNeedsInterrupt =
+  browserUserLock.agentBrowserSessionNeedsInterrupt;
+const confirmBrowserInterrupt = browserUserLock.confirmBrowserInterrupt;
+const maybePromptBrowserInterrupt = browserUserLock.maybePromptBrowserInterrupt;
+const isProgrammaticBrowserInput = browserUserLock.isProgrammaticBrowserInput;
+const withProgrammaticBrowserInput = browserUserLock.withProgrammaticBrowserInput;
 
 async function sendBrowserKeyPress(
   webContents: WebContents,
