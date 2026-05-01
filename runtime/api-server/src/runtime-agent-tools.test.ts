@@ -755,6 +755,94 @@ test("listDataTables hides app-internal tables by default; includeSystem reveals
   assert.equal(all.hidden_system_count, undefined);
 });
 
+test("createDataTable writes rows into the shared workspace data.db", () => {
+  const result = harness.service.createDataTable({
+    workspaceId: harness.workspaceId,
+    name: "demo_dashboard_data",
+    columns: [
+      { name: "id", type: "INTEGER", primary_key: true },
+      { name: "account", type: "TEXT", not_null: true },
+      { name: "category", type: "TEXT", not_null: true },
+      { name: "value", type: "INTEGER", not_null: true },
+    ],
+    rows: [
+      { id: 1, account: "Northwind", category: "Alpha", value: 42 },
+      { id: 2, account: "Beacon", category: "Beta", value: 54 },
+      { id: 3, account: "Atlas", category: "Gamma", value: 76 },
+    ],
+  });
+
+  assert.equal(result.table_name, "demo_dashboard_data");
+  assert.equal(result.row_count, 3);
+  assert.equal(result.column_count, 4);
+  assert.equal(result.db_path, ".holaboss/data.db");
+  assert.equal(fs.existsSync(path.join(harness.workspaceDir, "data.db")), false);
+
+  const tables = harness.service.listDataTables({ workspaceId: harness.workspaceId })
+    .tables as Array<{
+    name: string;
+    row_count: number;
+    columns: Array<{ name: string; type: string }>;
+  }>;
+  assert.equal(tables.length, 1);
+  assert.equal(tables[0]?.name, "demo_dashboard_data");
+  assert.equal(tables[0]?.row_count, 3);
+  assert.deepEqual(
+    tables[0]?.columns.map((column) => column.name),
+    ["id", "account", "category", "value"],
+  );
+});
+
+test("createDataTable + createDashboard supports empty-workspace demo dashboard flow", async () => {
+  harness.service.createDataTable({
+    workspaceId: harness.workspaceId,
+    name: "demo_dashboard_data",
+    columns: [
+      { name: "id", type: "INTEGER", primary_key: true },
+      { name: "item", type: "TEXT", not_null: true },
+      { name: "category", type: "TEXT", not_null: true },
+      { name: "value", type: "INTEGER", not_null: true },
+      { name: "owner", type: "TEXT", not_null: true },
+    ],
+    rows: [
+      { id: 1, item: "Northwind", category: "Alpha", value: 42, owner: "Ava" },
+      { id: 2, item: "Bluebird", category: "Alpha", value: 67, owner: "Noah" },
+      { id: 3, item: "Summit", category: "Beta", value: 31, owner: "Mia" },
+      { id: 4, item: "Atlas", category: "Gamma", value: 76, owner: "Emma" },
+    ],
+  });
+
+  const result = await harness.service.createDashboard({
+    workspaceId: harness.workspaceId,
+    name: "demo-showcase-dashboard",
+    title: "Demo Showcase Dashboard",
+    description: "Simple showcase dashboard with random demo data.",
+    panels: [
+      {
+        type: "data_view",
+        title: "Demo Data Table",
+        query:
+          "SELECT id, item, category, value, owner FROM demo_dashboard_data ORDER BY value DESC",
+        views: [
+          { type: "table", columns: ["id", "item", "category", "value", "owner"] },
+        ],
+        default_view: "table",
+      },
+      {
+        type: "kpi",
+        title: "Total Demo Value",
+        query: "SELECT SUM(value) AS value FROM demo_dashboard_data",
+      },
+    ],
+  });
+
+  assert.equal(result.file_path, "files/dashboards/demo-showcase-dashboard.dashboard");
+  assert.equal(
+    fs.existsSync(path.join(harness.workspaceDir, "files", "dashboards", "demo-showcase-dashboard.dashboard")),
+    true,
+  );
+});
+
 test("createDashboard validates SQL and writes a YAML file", async () => {
   seedTwitterPosts(harness.dataDbPath);
   const result = await harness.service.createDashboard({

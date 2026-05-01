@@ -232,6 +232,21 @@ export interface RuntimeAgentToolsListDataTablesParams {
   includeSystem?: boolean;
 }
 
+export interface DataTableColumnInput {
+  name: string;
+  type: string;
+  not_null?: boolean;
+  primary_key?: boolean;
+}
+
+export interface RuntimeAgentToolsCreateDataTableParams {
+  workspaceId: string;
+  name: string;
+  columns: DataTableColumnInput[];
+  rows?: Array<Record<string, unknown>>;
+  replaceExisting?: boolean;
+}
+
 // Suffixes that mark a table as app-internal under the cross-platform
 // metrics convention (see post-metrics-convention plan doc). Tables
 // matching these are hidden from list_data_tables by default so the
@@ -567,6 +582,12 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
     method: "GET",
     path: "/api/v1/capabilities/runtime-tools/data-tables",
     description: runtimeToolBaseDefinition("list_data_tables").description
+  },
+  {
+    id: runtimeToolBaseDefinition("create_data_table").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/data-tables",
+    description: runtimeToolBaseDefinition("create_data_table").description
   },
   {
     id: runtimeToolBaseDefinition("create_dashboard").id,
@@ -2918,6 +2939,82 @@ export class RuntimeAgentToolsService {
     }
   }
 
+  createDataTable(params: RuntimeAgentToolsCreateDataTableParams): JsonObject {
+    this.requireWorkspace(params.workspaceId);
+    const tableName = sanitizeUserDataTableName(params.name);
+    const columns = validateDataTableColumns(params.columns);
+    const rows = normalizeDataTableRows(params.rows ?? [], columns);
+    const replaceExisting = params.replaceExisting === true;
+    const dbPath = ensureWorkspaceDataDb(
+      path.join(this.options.workspaceRoot, params.workspaceId),
+    );
+
+    let db: Database.Database | null = null;
+    try {
+      db = new Database(dbPath);
+      db.pragma("journal_mode = WAL");
+      db.pragma("foreign_keys = ON");
+
+      const exists = Boolean(
+        db
+          .prepare(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ? LIMIT 1",
+          )
+          .get(tableName),
+      );
+      if (exists && !replaceExisting) {
+        throw new RuntimeAgentToolsServiceError(
+          409,
+          "data_table_exists",
+          `table "${tableName}" already exists; pass replace_existing=true to recreate it`,
+        );
+      }
+
+      const insertSql = buildInsertUserDataTableSql(tableName, columns);
+      const createSql = buildCreateUserDataTableSql(tableName, columns);
+      const txn = db.transaction(() => {
+        if (exists && replaceExisting) {
+          db!.exec(`DROP TABLE IF EXISTS ${quoteSqlIdentifier(tableName)}`);
+        }
+        db!.exec(createSql);
+        if (rows.length > 0) {
+          const insert = db!.prepare(insertSql);
+          for (const row of rows) {
+            insert.run(
+              ...columns.map((column) => sqliteInsertValue(row[column.name] ?? null)),
+            );
+          }
+        }
+      });
+      txn();
+
+      return {
+        table_name: tableName,
+        row_count: rows.length,
+        column_count: columns.length,
+        replaced_existing: exists && replaceExisting,
+        db_path: ".holaboss/data.db",
+      };
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        throw error;
+      }
+      throw new RuntimeAgentToolsServiceError(
+        500,
+        "create_data_table_failed",
+        error instanceof Error ? error.message : "Failed to create data table",
+      );
+    } finally {
+      if (db) {
+        try {
+          db.close();
+        } catch {
+          /* best effort */
+        }
+      }
+    }
+  }
+
   // Authors a `.dashboard` file under workspace/<id>/files/dashboards/.
   // Each panel's SQL is dry-run against data.db (LIMIT 0) before the
   // file is written, so a parse / column / table error surfaces to the
@@ -3013,6 +3110,232 @@ export class RuntimeAgentToolsService {
       title,
     };
   }
+}
+
+const SQL_IDENTIFIER_PATTERN = /^[A-Za-z][A-Za-z0-9_]*$/;
+const DATA_TABLE_COLUMN_TYPES = new Set([
+  "TEXT",
+  "INTEGER",
+  "REAL",
+  "NUMERIC",
+  "BLOB",
+]);
+type ValidatedDataTableColumn = {
+  name: string;
+  type: string;
+  notNull: boolean;
+  primaryKey: boolean;
+};
+
+function quoteSqlIdentifier(value: string): string {
+  return `"${value.replace(/"/g, "\"\"")}"`;
+}
+
+function sanitizeSqlIdentifier(params: {
+  raw: string;
+  fieldLabel: string;
+  requiredCode: string;
+  invalidCode: string;
+}): string {
+  const value = String(params.raw ?? "").trim();
+  if (!value) {
+    throw new RuntimeAgentToolsServiceError(
+      400,
+      params.requiredCode,
+      `${params.fieldLabel} is required`,
+    );
+  }
+  if (
+    !SQL_IDENTIFIER_PATTERN.test(value) ||
+    value.length > 80 ||
+    value.toLowerCase().startsWith("sqlite_") ||
+    value.startsWith("_")
+  ) {
+    throw new RuntimeAgentToolsServiceError(
+      400,
+      params.invalidCode,
+      `${params.fieldLabel} must be a short SQL identifier using letters, digits, and underscores, and may not start with "_" or "sqlite_"`,
+    );
+  }
+  return value;
+}
+
+function sanitizeUserDataTableName(raw: string): string {
+  return sanitizeSqlIdentifier({
+    raw,
+    fieldLabel: "table name",
+    requiredCode: "data_table_name_required",
+    invalidCode: "data_table_name_invalid",
+  });
+}
+
+function validateDataTableColumns(
+  rawColumns: DataTableColumnInput[],
+): ValidatedDataTableColumn[] {
+  if (!Array.isArray(rawColumns) || rawColumns.length === 0) {
+    throw new RuntimeAgentToolsServiceError(
+      400,
+      "data_table_columns_required",
+      "columns must be a non-empty array",
+    );
+  }
+
+  const seen = new Set<string>();
+  let primaryKeyCount = 0;
+  const columns = rawColumns.map((column, index) => {
+    if (!column || typeof column !== "object") {
+      throw new RuntimeAgentToolsServiceError(
+        400,
+        "data_table_column_invalid",
+        `column #${index + 1} must be an object`,
+      );
+    }
+    const name = sanitizeSqlIdentifier({
+      raw: String(column.name ?? ""),
+      fieldLabel: `column #${index + 1} name`,
+      requiredCode: "data_table_column_name_required",
+      invalidCode: "data_table_column_name_invalid",
+    });
+    const loweredName = name.toLowerCase();
+    if (seen.has(loweredName)) {
+      throw new RuntimeAgentToolsServiceError(
+        400,
+        "data_table_column_name_invalid",
+        `column name "${name}" is duplicated`,
+      );
+    }
+    seen.add(loweredName);
+
+    const type = String(column.type ?? "").trim().toUpperCase();
+    if (!DATA_TABLE_COLUMN_TYPES.has(type)) {
+      throw new RuntimeAgentToolsServiceError(
+        400,
+        "data_table_column_type_invalid",
+        `column "${name}" type must be one of ${Array.from(DATA_TABLE_COLUMN_TYPES).join(", ")}`,
+      );
+    }
+    const primaryKey = column.primary_key === true;
+    if (primaryKey) {
+      primaryKeyCount += 1;
+    }
+    return {
+      name,
+      type,
+      notNull: column.not_null === true,
+      primaryKey,
+    };
+  });
+
+  if (primaryKeyCount > 1) {
+    throw new RuntimeAgentToolsServiceError(
+      400,
+      "data_table_primary_key_invalid",
+      "only one primary_key column is supported",
+    );
+  }
+  return columns;
+}
+
+function normalizeDataTableRows(
+  rawRows: Array<Record<string, unknown>>,
+  columns: ValidatedDataTableColumn[],
+): Array<Record<string, string | number | boolean | null>> {
+  if (!Array.isArray(rawRows)) {
+    throw new RuntimeAgentToolsServiceError(
+      400,
+      "data_table_rows_invalid",
+      "rows must be an array when provided",
+    );
+  }
+
+  const allowedColumns = new Set(columns.map((column) => column.name));
+  return rawRows.map((row, index) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      throw new RuntimeAgentToolsServiceError(
+        400,
+        "data_table_rows_invalid",
+        `row #${index + 1} must be an object`,
+      );
+    }
+
+    for (const key of Object.keys(row)) {
+      if (!allowedColumns.has(key)) {
+        throw new RuntimeAgentToolsServiceError(
+          400,
+          "data_table_rows_invalid",
+          `row #${index + 1} contains unknown column "${key}"`,
+        );
+      }
+    }
+
+    const normalized: Record<string, string | number | boolean | null> = {};
+    for (const column of columns) {
+      const hasValue = Object.prototype.hasOwnProperty.call(row, column.name);
+      const value = hasValue ? row[column.name] : null;
+      if (value === null || value === undefined) {
+        if (column.notNull || column.primaryKey) {
+          throw new RuntimeAgentToolsServiceError(
+            400,
+            "data_table_rows_invalid",
+            `row #${index + 1} is missing required value for column "${column.name}"`,
+          );
+        }
+        normalized[column.name] = null;
+        continue;
+      }
+      if (typeof value === "string") {
+        normalized[column.name] = value;
+        continue;
+      }
+      if (typeof value === "boolean") {
+        normalized[column.name] = value;
+        continue;
+      }
+      if (typeof value === "number" && Number.isFinite(value)) {
+        normalized[column.name] = value;
+        continue;
+      }
+      throw new RuntimeAgentToolsServiceError(
+        400,
+        "data_table_rows_invalid",
+        `row #${index + 1}, column "${column.name}" must be a string, number, boolean, or null`,
+      );
+    }
+    return normalized;
+  });
+}
+
+function buildCreateUserDataTableSql(
+  tableName: string,
+  columns: ValidatedDataTableColumn[],
+): string {
+  const columnSql = columns.map((column) =>
+    [
+      quoteSqlIdentifier(column.name),
+      column.type,
+      column.primaryKey ? "PRIMARY KEY" : "",
+      column.notNull ? "NOT NULL" : "",
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+  return `CREATE TABLE ${quoteSqlIdentifier(tableName)} (${columnSql.join(", ")})`;
+}
+
+function buildInsertUserDataTableSql(
+  tableName: string,
+  columns: ValidatedDataTableColumn[],
+): string {
+  return `INSERT INTO ${quoteSqlIdentifier(tableName)} (${columns
+    .map((column) => quoteSqlIdentifier(column.name))
+    .join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`;
+}
+
+function sqliteInsertValue(value: string | number | boolean | null): string | number | null {
+  if (typeof value === "boolean") {
+    return value ? 1 : 0;
+  }
+  return value;
 }
 
 const DASHBOARD_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*$/i;

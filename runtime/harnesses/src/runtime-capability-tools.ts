@@ -652,6 +652,57 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         },
         additionalProperties: false,
       };
+    case "create_data_table":
+      return {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description:
+              "SQL-safe table name to create inside the shared workspace DB at `.holaboss/data.db`.",
+          },
+          columns: {
+            type: "array",
+            minItems: 1,
+            description:
+              "Ordered column definitions. Use SQLite affinity names such as `TEXT`, `INTEGER`, or `REAL`.",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string", description: "Column name." },
+                type: { type: "string", description: "SQLite column type." },
+                not_null: { type: "boolean", description: "Whether the column rejects NULL values." },
+                primary_key: { type: "boolean", description: "Whether the column is the table primary key." },
+              },
+              required: ["name", "type"],
+              additionalProperties: false,
+            },
+          },
+          rows: {
+            type: "array",
+            description:
+              "Optional rows to insert immediately after table creation. Each row is an object keyed by column name.",
+            items: {
+              type: "object",
+              additionalProperties: {
+                anyOf: [
+                  { type: "string" },
+                  { type: "number" },
+                  { type: "boolean" },
+                  { type: "null" },
+                ],
+              },
+            },
+          },
+          replace_existing: {
+            type: "boolean",
+            description:
+              "When true, drop an existing table with the same name before recreating it. Default false.",
+          },
+        },
+        required: ["name", "columns"],
+        additionalProperties: false,
+      };
     case "create_dashboard":
       return {
         type: "object",
@@ -679,7 +730,7 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
                 query: {
                   type: "string",
                   description:
-                    "Read-only SQL against data.db. For kpi, prefer aliasing the answer as `value`.",
+                    "Read-only SQL against the shared workspace DB at `.holaboss/data.db`. For kpi, prefer aliasing the answer as `value`.",
                 },
                 views: {
                   type: "array",

@@ -540,6 +540,21 @@ function requestPlan(
           : RUNTIME_TOOLS_DATA_TABLES_PATH,
       };
     }
+    case "create_data_table": {
+      const params = isRecord(toolParams) ? toolParams : {};
+      return {
+        method: "POST",
+        requestPath: RUNTIME_TOOLS_DATA_TABLES_PATH,
+        body: {
+          name: String(params.name ?? ""),
+          columns: Array.isArray(params.columns) ? params.columns : [],
+          rows: Array.isArray(params.rows) ? params.rows : [],
+          ...(typeof params.replace_existing === "boolean"
+            ? { replace_existing: params.replace_existing }
+            : {}),
+        },
+      };
+    }
     case "create_dashboard": {
       const params = isRecord(toolParams) ? toolParams : {};
       return {
