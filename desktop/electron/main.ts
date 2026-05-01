@@ -155,6 +155,7 @@ import {
 } from "./browser-pane/observability.js";
 import { createTabObservability } from "./browser-pane/tab-observability.js";
 import { createBrowserUserLock } from "./browser-pane/user-lock.js";
+import { createAgentSessionLifecycle } from "./browser-pane/agent-session-lifecycle.js";
 import type {
   BrowserCopyWorkspaceProfilePayload,
   BrowserImportProfilePayload,
@@ -17201,202 +17202,75 @@ async function clearFocusedBrowserTextInput(
   await sendBrowserKeyPress(webContents, "Backspace");
 }
 
-function hydrateAgentSessionBrowserSpace(
-  workspaceId: string,
-  sessionId?: string | null,
-): BrowserTabSpaceState | null {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const normalizedSessionId = browserSessionId(sessionId);
-  const tabSpace = browserAgentSessionSpaceState(workspace, normalizedSessionId, {
-    createIfMissing: Boolean(normalizedSessionId),
-  });
-  if (!workspace || !tabSpace || !normalizedSessionId) {
-    return null;
-  }
-  clearBrowserTabSpaceSuspendTimer(tabSpace);
-  if (tabSpace.lifecycleState !== "suspended") {
-    browserTabSpaceTouch(tabSpace);
-    return tabSpace;
-  }
-
-  const persistedTabs = [...tabSpace.persistedTabs];
-  const persistedActiveTabId = tabSpace.activeTabId;
-  tabSpace.persistedTabs = [];
-  tabSpace.lifecycleState = "active";
-  for (const persistedTab of persistedTabs) {
-    createBrowserTab(workspaceId, {
-      browserSpace: "agent",
-      sessionId: normalizedSessionId,
-      id: typeof persistedTab.id === "string" ? persistedTab.id : undefined,
-      url:
-        typeof persistedTab.url === "string" && persistedTab.url.trim()
-          ? persistedTab.url.trim()
-          : HOME_URL,
-      title:
-        typeof persistedTab.title === "string"
-          ? persistedTab.title
-          : NEW_TAB_TITLE,
-      faviconUrl:
-        typeof persistedTab.faviconUrl === "string"
-          ? persistedTab.faviconUrl
-          : undefined,
-      skipInitialHistoryRecord: true,
-    });
-  }
-  tabSpace.activeTabId = tabSpace.tabs.has(persistedActiveTabId)
-    ? persistedActiveTabId
-    : (Array.from(tabSpace.tabs.keys())[0] ?? "");
-  if (tabSpace.tabs.size === 0) {
-    ensureBrowserTabSpaceInitialized(workspaceId, "agent", normalizedSessionId);
-  }
-  browserTabSpaceTouch(tabSpace);
-  return tabSpace;
-}
-
-function suspendAgentSessionBrowserSpace(
-  workspaceId: string,
-  sessionId?: string | null,
-): boolean {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const normalizedSessionId = browserSessionId(sessionId);
-  const tabSpace = browserAgentSessionSpaceState(workspace, normalizedSessionId);
-  if (!workspace || !tabSpace || !normalizedSessionId) {
-    return false;
-  }
-  clearBrowserTabSpaceSuspendTimer(tabSpace);
-  if (isVisibleAgentBrowserSession(workspaceId, normalizedSessionId)) {
-    return false;
-  }
-  if (tabSpace.lifecycleState === "suspended") {
-    return true;
-  }
-  const persisted = browserTabSpacePersistencePayload(tabSpace);
-  for (const tab of tabSpace.tabs.values()) {
-    closeBrowserTabRecord(tab);
-  }
-  tabSpace.tabs.clear();
-  tabSpace.activeTabId = persisted.activeTabId;
-  tabSpace.persistedTabs = persisted.tabs;
-  tabSpace.lifecycleState = "suspended";
-  emitBrowserState(workspaceId, "agent");
-  void persistBrowserWorkspace(workspaceId);
-  return true;
-}
-
-function scheduleAgentSessionBrowserLifecycleCheck(
-  workspaceId: string,
-  sessionId?: string | null,
-  delayMs = SESSION_BROWSER_BUSY_CHECK_MS,
-): void {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const normalizedSessionId = browserSessionId(sessionId);
-  const tabSpace = browserAgentSessionSpaceState(workspace, normalizedSessionId);
-  if (!tabSpace || !normalizedSessionId) {
-    return;
-  }
-  clearBrowserTabSpaceSuspendTimer(tabSpace);
-  tabSpace.suspendTimer = setTimeout(() => {
-    void reconcileAgentSessionBrowserSpace(workspaceId, normalizedSessionId);
-  }, Math.max(1_000, Math.round(delayMs)));
-}
-
-function touchAgentSessionBrowserSpace(
-  workspaceId: string,
-  sessionId?: string | null,
-): void {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const normalizedSessionId = browserSessionId(sessionId);
-  const tabSpace = browserAgentSessionSpaceState(workspace, normalizedSessionId);
-  if (!tabSpace || !normalizedSessionId) {
-    return;
-  }
-  tabSpace.lifecycleState = "active";
-  browserTabSpaceTouch(tabSpace);
-  scheduleAgentSessionBrowserLifecycleCheck(workspaceId, normalizedSessionId);
-}
-
-async function reconcileAgentSessionBrowserSpace(
-  workspaceId: string,
-  sessionId?: string | null,
-): Promise<void> {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const normalizedSessionId = browserSessionId(sessionId);
-  const tabSpace = browserAgentSessionSpaceState(workspace, normalizedSessionId);
-  if (!workspace || !tabSpace || !normalizedSessionId) {
-    return;
-  }
-  clearBrowserTabSpaceSuspendTimer(tabSpace);
-  if (isVisibleAgentBrowserSession(workspaceId, normalizedSessionId)) {
-    scheduleAgentSessionBrowserLifecycleCheck(
-      workspaceId,
-      normalizedSessionId,
-      SESSION_BROWSER_BUSY_CHECK_MS,
-    );
-    return;
-  }
-
-  let runtimeRecord: SessionRuntimeRecordPayload | null = null;
-  try {
-    const runtimeStates = await listRuntimeStates(workspaceId);
-    runtimeRecord =
-      runtimeStates.items.find(
-        (item) => browserSessionId(item.session_id) === normalizedSessionId,
-      ) ?? null;
-  } catch {
-    runtimeRecord = null;
-  }
-
-  const status = runtimeRecordEffectiveStatus(runtimeRecord);
-  const lastTurnStatus =
-    runtimeRecord?.last_turn_status?.trim().toLowerCase() ?? "";
-  const touchedAtMs = Date.parse(tabSpace.lastTouchedAt);
-  const ageMs = Number.isFinite(touchedAtMs)
-    ? Math.max(0, Date.now() - touchedAtMs)
-    : Number.MAX_SAFE_INTEGER;
-
-  if (status === "BUSY" || status === "QUEUED" || status === "PAUSING") {
-    scheduleAgentSessionBrowserLifecycleCheck(
-      workspaceId,
-      normalizedSessionId,
-      SESSION_BROWSER_BUSY_CHECK_MS,
-    );
-    return;
-  }
-
-  if (
-    (status === "WAITING_USER" || status === "PAUSED") &&
-    ageMs < SESSION_BROWSER_WARM_TTL_MS
-  ) {
-    scheduleAgentSessionBrowserLifecycleCheck(
-      workspaceId,
-      normalizedSessionId,
-      SESSION_BROWSER_WARM_TTL_MS - ageMs,
-    );
-    return;
-  }
-
-  if (
-    !(
-      status === "WAITING_USER" || status === "PAUSED"
-    ) &&
-    (status === "IDLE" ||
-      status === "ERROR" ||
-      !runtimeRecord ||
-      lastTurnStatus === "completed" ||
-      lastTurnStatus === "failed" ||
-      lastTurnStatus === "error") &&
-    ageMs < SESSION_BROWSER_COMPLETED_GRACE_MS
-  ) {
-    scheduleAgentSessionBrowserLifecycleCheck(
-      workspaceId,
-      normalizedSessionId,
-      SESSION_BROWSER_COMPLETED_GRACE_MS - ageMs,
-    );
-    return;
-  }
-
-  suspendAgentSessionBrowserSpace(workspaceId, normalizedSessionId);
-}
+// Agent-session browser tab-space lifecycle (hydrate / suspend / schedule
+// / touch / reconcile) moved to browser-pane/agent-session-lifecycle.ts.
+// Wired via `agentSessionLifecycle` below.
+const agentSessionLifecycle = createAgentSessionLifecycle({
+  getWorkspace: (id) =>
+    browserWorkspaceFromMap(id) as unknown as ReturnType<
+      Parameters<typeof createAgentSessionLifecycle>[0]["getWorkspace"]
+    >,
+  browserSessionId: (value) => browserSessionId(value),
+  browserAgentSessionSpaceState: (workspace, sessionId, options) =>
+    browserAgentSessionSpaceState(
+      workspace as unknown as BrowserWorkspaceState | null | undefined,
+      sessionId,
+      options,
+    ) as unknown as ReturnType<
+      Parameters<typeof createAgentSessionLifecycle>[0]["browserAgentSessionSpaceState"]
+    >,
+  clearBrowserTabSpaceSuspendTimer: (tabSpace) =>
+    clearBrowserTabSpaceSuspendTimer(tabSpace as unknown as BrowserTabSpaceState),
+  browserTabSpaceTouch: (tabSpace) =>
+    browserTabSpaceTouch(tabSpace as unknown as BrowserTabSpaceState),
+  browserTabSpacePersistencePayload: (tabSpace) =>
+    browserTabSpacePersistencePayload(
+      tabSpace as unknown as BrowserTabSpaceState,
+    ),
+  closeBrowserTabRecord: (tab) =>
+    closeBrowserTabRecord(tab as unknown as BrowserTabRecord),
+  isVisibleAgentBrowserSession: (workspaceId, sessionId) =>
+    isVisibleAgentBrowserSession(workspaceId, sessionId),
+  fetchSessionRuntimeStatus: async (workspaceId, sessionId) => {
+    try {
+      const runtimeStates = await listRuntimeStates(workspaceId);
+      const record =
+        runtimeStates.items.find(
+          (item) => browserSessionId(item.session_id) === sessionId,
+        ) ?? null;
+      if (!record) {
+        return null;
+      }
+      return {
+        status: runtimeRecordEffectiveStatus(record),
+        lastTurnStatus: record.last_turn_status?.trim().toLowerCase() ?? "",
+      };
+    } catch {
+      return null;
+    }
+  },
+  createBrowserTab: (workspaceId, options) =>
+    createBrowserTab(workspaceId, options),
+  ensureBrowserTabSpaceInitialized: (workspaceId, space, sessionId) =>
+    ensureBrowserTabSpaceInitialized(workspaceId, space, sessionId),
+  emitBrowserState: (workspaceId, space) => emitBrowserState(workspaceId, space),
+  persistWorkspace: (workspaceId) => persistBrowserWorkspace(workspaceId),
+  homeUrl: HOME_URL,
+  newTabTitle: NEW_TAB_TITLE,
+  busyCheckMs: SESSION_BROWSER_BUSY_CHECK_MS,
+  warmTtlMs: SESSION_BROWSER_WARM_TTL_MS,
+  completedGraceMs: SESSION_BROWSER_COMPLETED_GRACE_MS,
+});
+const hydrateAgentSessionBrowserSpace =
+  agentSessionLifecycle.hydrateAgentSessionBrowserSpace;
+const suspendAgentSessionBrowserSpace =
+  agentSessionLifecycle.suspendAgentSessionBrowserSpace;
+const scheduleAgentSessionBrowserLifecycleCheck =
+  agentSessionLifecycle.scheduleAgentSessionBrowserLifecycleCheck;
+const touchAgentSessionBrowserSpace =
+  agentSessionLifecycle.touchAgentSessionBrowserSpace;
+const reconcileAgentSessionBrowserSpace =
+  agentSessionLifecycle.reconcileAgentSessionBrowserSpace;
 
 const TEXT_FILE_EXTENSIONS = new Set([
   ".txt",
