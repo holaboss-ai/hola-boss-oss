@@ -128,6 +128,43 @@ import {
   createBrowserPaneDownloads,
   type BrowserPaneDownloads,
 } from "./browser-pane/downloads.js";
+import {
+  BROWSER_OBSERVABILITY_ENTRY_LIMIT,
+  BROWSER_OBSERVABILITY_DEFAULT_LIMIT as BROWSER_OBSERVABILITY_DEFAULT_LIMIT_IMPORTED,
+  BROWSER_REQUEST_HISTORY_LIMIT,
+  appendBoundedEntry,
+  browserConsoleLevelRank,
+  browserConsoleLevelValue,
+  browserHeaderFirstValue,
+  browserHeaderRecord,
+  browserIsoFromNetworkTimestamp,
+  browserObservabilityLimit,
+  browserObservedErrorSource,
+  browserRequestBodyMetadata,
+  browserRequestFailure,
+  browserRequestIdValue,
+  browserRequestSummary,
+  browserResponseBodyMetadata,
+  type BrowserConsoleEntry as BrowserConsoleEntryImported,
+  type BrowserConsoleLevel as BrowserConsoleLevelImported,
+  type BrowserErrorSource as BrowserErrorSourceImported,
+  type BrowserObservedError as BrowserObservedErrorImported,
+  type BrowserRequestBodyMetadata as BrowserRequestBodyMetadataImported,
+  type BrowserRequestRecord as BrowserRequestRecordImported,
+  type BrowserResponseBodyMetadata as BrowserResponseBodyMetadataImported,
+} from "./browser-pane/observability.js";
+import { createTabObservability } from "./browser-pane/tab-observability.js";
+import { createBrowserUserLock } from "./browser-pane/user-lock.js";
+import { createAgentSessionLifecycle } from "./browser-pane/agent-session-lifecycle.js";
+import {
+  createBrowserPaneTabState,
+  type BrowserPaneTabState,
+} from "./browser-pane/tab-state.js";
+import {
+  createBrowserHttpService,
+  type BrowserHttpService,
+} from "./browser-pane/http-service.js";
+import { installBrowserPaneIpcHandlers } from "./browser-pane/handlers.js";
 import type {
   BrowserCopyWorkspaceProfilePayload,
   BrowserImportProfilePayload,
@@ -187,9 +224,10 @@ const USER_BROWSER_LOCK_TIMEOUT_MS = 15_000;
 const SESSION_BROWSER_BUSY_CHECK_MS = 15_000;
 const SESSION_BROWSER_COMPLETED_GRACE_MS = 30_000;
 const SESSION_BROWSER_WARM_TTL_MS = 2 * 60 * 1000;
-const BROWSER_OBSERVABILITY_ENTRY_LIMIT = 100;
-const BROWSER_REQUEST_HISTORY_LIMIT = 200;
-const BROWSER_OBSERVABILITY_DEFAULT_LIMIT = 20;
+// BROWSER_OBSERVABILITY_ENTRY_LIMIT / BROWSER_REQUEST_HISTORY_LIMIT /
+// BROWSER_OBSERVABILITY_DEFAULT_LIMIT moved to browser-pane/observability.ts.
+const BROWSER_OBSERVABILITY_DEFAULT_LIMIT =
+  BROWSER_OBSERVABILITY_DEFAULT_LIMIT_IMPORTED;
 // Chromium cookie / profile-discovery constants moved to
 // `browser-pane/import-chromium.ts`. Safari export filename constants
 // moved to `browser-pane/import-browsers.ts`.
@@ -687,65 +725,15 @@ interface BrowserDownloadPayload {
   completedAt: string | null;
 }
 
-type BrowserConsoleLevel = "debug" | "info" | "warning" | "error";
-type BrowserErrorSource = "page" | "runtime" | "network";
-
-interface BrowserConsoleEntry {
-  id: string;
-  level: BrowserConsoleLevel;
-  message: string;
-  sourceId: string;
-  lineNumber: number | null;
-  timestamp: string;
-  frameUrl: string;
-}
-
-interface BrowserObservedError {
-  id: string;
-  source: BrowserErrorSource;
-  kind: string;
-  level: "warning" | "error";
-  message: string;
-  timestamp: string;
-  url: string;
-  requestId?: string;
-  statusCode?: number;
-  resourceType?: string;
-  lineNumber?: number;
-  sourceId?: string;
-  errorCode?: number;
-}
-
-interface BrowserRequestBodyMetadata {
-  entryCount: number;
-  byteLength: number;
-  fileCount: number;
-  types: string[];
-}
-
-interface BrowserResponseBodyMetadata {
-  contentType: string | null;
-  contentLength: number | null;
-}
-
-interface BrowserRequestRecord {
-  id: string;
-  url: string;
-  method: string;
-  resourceType: string;
-  referrer: string;
-  startedAt: string;
-  completedAt: string | null;
-  durationMs: number | null;
-  fromCache: boolean;
-  statusCode: number | null;
-  statusLine: string;
-  error: string;
-  requestHeaders: Record<string, string[]> | null;
-  responseHeaders: Record<string, string[]> | null;
-  requestBody: BrowserRequestBodyMetadata | null;
-  responseBody: BrowserResponseBodyMetadata | null;
-}
+// Types + pure observability helpers moved to browser-pane/observability.ts
+// (re-imported below).
+type BrowserConsoleLevel = BrowserConsoleLevelImported;
+type BrowserErrorSource = BrowserErrorSourceImported;
+type BrowserConsoleEntry = BrowserConsoleEntryImported;
+type BrowserObservedError = BrowserObservedErrorImported;
+type BrowserRequestBodyMetadata = BrowserRequestBodyMetadataImported;
+type BrowserResponseBodyMetadata = BrowserResponseBodyMetadataImported;
+type BrowserRequestRecord = BrowserRequestRecordImported;
 
 interface BrowserHistoryEntryPayload {
   id: string;
@@ -990,6 +978,32 @@ let activeBrowserWorkspaceId = "";
 let activeBrowserSpaceId: BrowserSpaceId = "user";
 let activeBrowserSessionId = "";
 const browserWorkspaces = new Map<string, BrowserWorkspaceState>();
+function* eachBrowserTabRecord(): IterableIterator<BrowserTabRecord> {
+  for (const workspace of browserWorkspaces.values()) {
+    for (const tab of workspace.spaces.user.tabs.values()) {
+      yield tab;
+    }
+    for (const tab of workspace.spaces.agent.tabs.values()) {
+      yield tab;
+    }
+    for (const tabSpace of workspace.agentSessionSpaces.values()) {
+      for (const tab of tabSpace.tabs.values()) {
+        yield tab;
+      }
+    }
+  }
+}
+const tabObservability = createTabObservability({
+  eachTabRecord: () => eachBrowserTabRecord(),
+});
+const browserTabForWebContentsId = tabObservability.browserTabForWebContentsId;
+const appendBrowserObservedError = tabObservability.appendBrowserObservedError;
+const upsertBrowserRequestRecord = tabObservability.upsertBrowserRequestRecord;
+const trackBrowserRequestStart = tabObservability.trackBrowserRequestStart;
+const trackBrowserRequestHeaders = tabObservability.trackBrowserRequestHeaders;
+const trackBrowserRequestCompletion =
+  tabObservability.trackBrowserRequestCompletion;
+const trackBrowserRequestFailure = tabObservability.trackBrowserRequestFailure;
 const sessionRuntimeStateCache = new Map<
   string,
   Map<string, SessionRuntimeRecordPayload>
@@ -998,8 +1012,10 @@ const agentSessionCache = new Map<
   string,
   Map<string, AgentSessionRecordPayload>
 >();
-const userBrowserInterruptPrompts = new Set<string>();
-const programmaticBrowserInputDepth = new WeakMap<WebContents, number>();
+// userBrowserInterruptPrompts (the dedup Set) and
+// programmaticBrowserInputDepth (the per-WebContents re-entrant counter)
+// moved into the closure of createBrowserUserLock — see further down where
+// browserUserLock is instantiated.
 const reportedOperatorSurfaceContexts = new Map<
   string,
   ReportedOperatorSurfaceContextPayload
@@ -3635,429 +3651,17 @@ function setRequestHeaderValue(
   return headers;
 }
 
-function browserObservabilityLimit(
-  value: string | null | undefined,
-  defaultValue = BROWSER_OBSERVABILITY_DEFAULT_LIMIT,
-): number {
-  const parsed = Number(value ?? "");
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return defaultValue;
-  }
-  return Math.max(1, Math.min(BROWSER_OBSERVABILITY_ENTRY_LIMIT, Math.floor(parsed)));
-}
+// Pure observability helpers (browserObservabilityLimit / ConsoleLevelValue /
+// ConsoleLevelRank / ObservedErrorSource / IsoFromNetworkTimestamp /
+// HeaderRecord / HeaderFirstValue / ResponseBodyMetadata /
+// RequestBodyMetadata / appendBoundedEntry) moved to
+// browser-pane/observability.ts.
 
-function browserConsoleLevelValue(value: unknown): BrowserConsoleLevel {
-  return value === "warning" ||
-    value === "error" ||
-    value === "debug" ||
-    value === "info"
-    ? value
-    : "info";
-}
-
-function browserConsoleLevelRank(level: BrowserConsoleLevel): number {
-  switch (level) {
-    case "debug":
-      return 0;
-    case "info":
-      return 1;
-    case "warning":
-      return 2;
-    case "error":
-      return 3;
-  }
-}
-
-function browserObservedErrorSource(
-  value: unknown,
-): BrowserErrorSource | null {
-  return value === "page" || value === "runtime" || value === "network"
-    ? value
-    : null;
-}
-
-function browserIsoFromNetworkTimestamp(value: unknown): string {
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-    return new Date(value * 1000).toISOString();
-  }
-  return new Date().toISOString();
-}
-
-function browserHeaderRecord(
-  value: unknown,
-): Record<string, string[]> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  const result: Record<string, string[]> = {};
-  for (const [key, rawValue] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof rawValue === "string") {
-      result[key] = [rawValue];
-      continue;
-    }
-    if (Array.isArray(rawValue)) {
-      const entries = rawValue
-        .filter((entry): entry is string => typeof entry === "string")
-        .map((entry) => entry);
-      if (entries.length > 0) {
-        result[key] = entries;
-      }
-    }
-  }
-  return Object.keys(result).length > 0 ? result : null;
-}
-
-function browserHeaderFirstValue(
-  headers: Record<string, string[]> | null | undefined,
-  headerName: string,
-): string | null {
-  if (!headers) {
-    return null;
-  }
-  const normalizedName = headerName.toLowerCase();
-  for (const [key, values] of Object.entries(headers)) {
-    if (key.toLowerCase() !== normalizedName || values.length === 0) {
-      continue;
-    }
-    const value = values[0]?.trim() || "";
-    return value || null;
-  }
-  return null;
-}
-
-function browserResponseBodyMetadata(
-  headers: Record<string, string[]> | null,
-): BrowserResponseBodyMetadata | null {
-  if (!headers) {
-    return null;
-  }
-  const contentType = browserHeaderFirstValue(headers, "content-type");
-  const contentLengthRaw = browserHeaderFirstValue(headers, "content-length");
-  const contentLength = contentLengthRaw ? Number(contentLengthRaw) : null;
-  if (!contentType && !Number.isFinite(contentLength ?? NaN)) {
-    return null;
-  }
-  return {
-    contentType,
-    contentLength:
-      typeof contentLength === "number" && Number.isFinite(contentLength)
-        ? contentLength
-        : null,
-  };
-}
-
-function browserRequestBodyMetadata(
-  uploadData: unknown,
-): BrowserRequestBodyMetadata | null {
-  if (!Array.isArray(uploadData) || uploadData.length === 0) {
-    return null;
-  }
-  let byteLength = 0;
-  let fileCount = 0;
-  const types = new Set<string>();
-  for (const entry of uploadData) {
-    if (!entry || typeof entry !== "object") {
-      continue;
-    }
-    const record = entry as Record<string, unknown>;
-    if (record.bytes instanceof Uint8Array) {
-      byteLength += record.bytes.byteLength;
-      types.add("bytes");
-    } else if (Buffer.isBuffer(record.bytes)) {
-      byteLength += record.bytes.byteLength;
-      types.add("bytes");
-    } else if (typeof record.file === "string" && record.file.trim()) {
-      fileCount += 1;
-      types.add("file");
-    } else if (typeof record.blobUUID === "string" && record.blobUUID.trim()) {
-      types.add("blob");
-    } else {
-      types.add("other");
-    }
-  }
-  return {
-    entryCount: uploadData.length,
-    byteLength,
-    fileCount,
-    types: [...types],
-  };
-}
-
-function appendBoundedEntry<T>(entries: T[], entry: T, limit: number): void {
-  entries.push(entry);
-  if (entries.length > limit) {
-    entries.splice(0, entries.length - limit);
-  }
-}
-
-function browserTabForWebContentsId(
-  webContentsId: number,
-): BrowserTabRecord | null {
-  for (const workspace of browserWorkspaces.values()) {
-    for (const tab of workspace.spaces.user.tabs.values()) {
-      if (tab.view.webContents.id === webContentsId) {
-        return tab;
-      }
-    }
-    for (const tab of workspace.spaces.agent.tabs.values()) {
-      if (tab.view.webContents.id === webContentsId) {
-        return tab;
-      }
-    }
-    for (const tabSpace of workspace.agentSessionSpaces.values()) {
-      for (const tab of tabSpace.tabs.values()) {
-        if (tab.view.webContents.id === webContentsId) {
-          return tab;
-        }
-      }
-    }
-  }
-  return null;
-}
-
-function appendBrowserObservedError(
-  tab: BrowserTabRecord,
-  entry: BrowserObservedError,
-): void {
-  appendBoundedEntry(
-    tab.errorEntries,
-    entry,
-    BROWSER_OBSERVABILITY_ENTRY_LIMIT,
-  );
-}
-
-function browserRequestIdValue(value: unknown): string {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return String(Math.trunc(value));
-  }
-  if (typeof value === "string" && value.trim()) {
-    return value.trim();
-  }
-  return "";
-}
-
-function browserRequestFailure(record: BrowserRequestRecord): boolean {
-  return Boolean(record.error) || (record.statusCode ?? 0) >= 400;
-}
-
-function browserRequestSummary(
-  record: BrowserRequestRecord,
-): Record<string, unknown> {
-  return {
-    id: record.id,
-    url: record.url,
-    method: record.method,
-    resourceType: record.resourceType,
-    startedAt: record.startedAt,
-    completedAt: record.completedAt,
-    durationMs: record.durationMs,
-    fromCache: record.fromCache,
-    statusCode: record.statusCode,
-    statusLine: record.statusLine,
-    error: record.error,
-  };
-}
-
-function upsertBrowserRequestRecord(
-  tab: BrowserTabRecord,
-  requestId: string,
-  overrides: Partial<BrowserRequestRecord>,
-): BrowserRequestRecord {
-  const existing = tab.requests.get(requestId);
-  if (existing) {
-    const next = { ...existing, ...overrides };
-    tab.requests.set(requestId, next);
-    return next;
-  }
-  const next: BrowserRequestRecord = {
-    id: requestId,
-    url: overrides.url ?? "",
-    method: overrides.method ?? "",
-    resourceType: overrides.resourceType ?? "other",
-    referrer: overrides.referrer ?? "",
-    startedAt: overrides.startedAt ?? new Date().toISOString(),
-    completedAt: overrides.completedAt ?? null,
-    durationMs: overrides.durationMs ?? null,
-    fromCache: overrides.fromCache ?? false,
-    statusCode: overrides.statusCode ?? null,
-    statusLine: overrides.statusLine ?? "",
-    error: overrides.error ?? "",
-    requestHeaders: overrides.requestHeaders ?? null,
-    responseHeaders: overrides.responseHeaders ?? null,
-    requestBody: overrides.requestBody ?? null,
-    responseBody: overrides.responseBody ?? null,
-  };
-  tab.requests.set(requestId, next);
-  tab.requestOrder.push(requestId);
-  if (tab.requestOrder.length > BROWSER_REQUEST_HISTORY_LIMIT) {
-    const removedRequestId = tab.requestOrder.shift();
-    if (removedRequestId) {
-      tab.requests.delete(removedRequestId);
-    }
-  }
-  return next;
-}
-
-function trackBrowserRequestStart(details: {
-  id: unknown;
-  webContentsId?: number;
-  url?: string;
-  method?: string;
-  resourceType?: string;
-  referrer?: string;
-  timestamp?: number;
-  uploadData?: unknown;
-}): void {
-  if (typeof details.webContentsId !== "number") {
-    return;
-  }
-  const tab = browserTabForWebContentsId(details.webContentsId);
-  const requestId = browserRequestIdValue(details.id);
-  if (!tab || !requestId) {
-    return;
-  }
-  upsertBrowserRequestRecord(tab, requestId, {
-    url: typeof details.url === "string" ? details.url : "",
-    method: typeof details.method === "string" ? details.method : "",
-    resourceType:
-      typeof details.resourceType === "string" ? details.resourceType : "other",
-    referrer: typeof details.referrer === "string" ? details.referrer : "",
-    startedAt: browserIsoFromNetworkTimestamp(details.timestamp),
-    requestBody: browserRequestBodyMetadata(details.uploadData),
-  });
-}
-
-function trackBrowserRequestHeaders(details: {
-  id: unknown;
-  webContentsId?: number;
-  requestHeaders?: unknown;
-}): void {
-  if (typeof details.webContentsId !== "number") {
-    return;
-  }
-  const tab = browserTabForWebContentsId(details.webContentsId);
-  const requestId = browserRequestIdValue(details.id);
-  if (!tab || !requestId) {
-    return;
-  }
-  upsertBrowserRequestRecord(tab, requestId, {
-    requestHeaders: browserHeaderRecord(details.requestHeaders),
-  });
-}
-
-function trackBrowserRequestCompletion(details: {
-  id: unknown;
-  webContentsId?: number;
-  url?: string;
-  method?: string;
-  resourceType?: string;
-  referrer?: string;
-  timestamp?: number;
-  fromCache?: boolean;
-  statusCode?: number;
-  statusLine?: string;
-  error?: string;
-  responseHeaders?: unknown;
-}): void {
-  if (typeof details.webContentsId !== "number") {
-    return;
-  }
-  const tab = browserTabForWebContentsId(details.webContentsId);
-  const requestId = browserRequestIdValue(details.id);
-  if (!tab || !requestId) {
-    return;
-  }
-  const existing = upsertBrowserRequestRecord(tab, requestId, {
-    url: typeof details.url === "string" ? details.url : "",
-    method: typeof details.method === "string" ? details.method : "",
-    resourceType:
-      typeof details.resourceType === "string" ? details.resourceType : "other",
-    referrer: typeof details.referrer === "string" ? details.referrer : "",
-    completedAt: browserIsoFromNetworkTimestamp(details.timestamp),
-    fromCache: details.fromCache === true,
-    statusCode:
-      typeof details.statusCode === "number" && Number.isFinite(details.statusCode)
-        ? details.statusCode
-        : null,
-    statusLine: typeof details.statusLine === "string" ? details.statusLine : "",
-    error: typeof details.error === "string" ? details.error : "",
-    responseHeaders: browserHeaderRecord(details.responseHeaders),
-  });
-  if (existing.completedAt) {
-    const startedAtMs = Date.parse(existing.startedAt);
-    const completedAtMs = Date.parse(existing.completedAt);
-    if (Number.isFinite(startedAtMs) && Number.isFinite(completedAtMs)) {
-      existing.durationMs = Math.max(0, completedAtMs - startedAtMs);
-    }
-  }
-  existing.responseBody = browserResponseBodyMetadata(existing.responseHeaders);
-  tab.requests.set(requestId, existing);
-  if ((existing.statusCode ?? 0) >= 400) {
-    appendBrowserObservedError(tab, {
-      id: `network-${requestId}-${existing.completedAt ?? existing.startedAt}`,
-      source: "network",
-      kind: "http_error",
-      level: "error",
-      message:
-        existing.statusLine || `HTTP ${existing.statusCode ?? "error"} ${existing.url}`,
-      timestamp: existing.completedAt ?? new Date().toISOString(),
-      url: existing.url,
-      requestId,
-      statusCode: existing.statusCode ?? undefined,
-      resourceType: existing.resourceType,
-    });
-  }
-}
-
-function trackBrowserRequestFailure(details: {
-  id: unknown;
-  webContentsId?: number;
-  url?: string;
-  method?: string;
-  resourceType?: string;
-  referrer?: string;
-  timestamp?: number;
-  fromCache?: boolean;
-  error?: string;
-}): void {
-  if (typeof details.webContentsId !== "number") {
-    return;
-  }
-  const tab = browserTabForWebContentsId(details.webContentsId);
-  const requestId = browserRequestIdValue(details.id);
-  if (!tab || !requestId) {
-    return;
-  }
-  const existing = upsertBrowserRequestRecord(tab, requestId, {
-    url: typeof details.url === "string" ? details.url : "",
-    method: typeof details.method === "string" ? details.method : "",
-    resourceType:
-      typeof details.resourceType === "string" ? details.resourceType : "other",
-    referrer: typeof details.referrer === "string" ? details.referrer : "",
-    completedAt: browserIsoFromNetworkTimestamp(details.timestamp),
-    fromCache: details.fromCache === true,
-    error: typeof details.error === "string" ? details.error : "Request failed",
-  });
-  if (existing.completedAt) {
-    const startedAtMs = Date.parse(existing.startedAt);
-    const completedAtMs = Date.parse(existing.completedAt);
-    if (Number.isFinite(startedAtMs) && Number.isFinite(completedAtMs)) {
-      existing.durationMs = Math.max(0, completedAtMs - startedAtMs);
-    }
-  }
-  tab.requests.set(requestId, existing);
-  appendBrowserObservedError(tab, {
-    id: `network-${requestId}-${existing.completedAt ?? existing.startedAt}`,
-    source: "network",
-    kind: "request_error",
-    level: "error",
-    message: existing.error || `Request failed for ${existing.url}`,
-    timestamp: existing.completedAt ?? new Date().toISOString(),
-    url: existing.url,
-    requestId,
-    resourceType: existing.resourceType,
-  });
-}
+// Per-tab observability state mutation (browserTabForWebContentsId,
+// appendBrowserObservedError, upsertBrowserRequestRecord,
+// trackBrowserRequest{Start,Headers,Completion,Failure}) moved to
+// browser-pane/tab-observability.ts. Wired below where browserWorkspaces
+// is declared.
 
 function configureBrowserWorkspaceSession(
   session: Session,
@@ -5643,90 +5247,19 @@ async function syncDesktopBrowserCapabilityConfig(): Promise<void> {
   );
 }
 
-function desktopBrowserServiceTokenFromRequest(
-  request: IncomingMessage,
-): string {
-  const raw = request.headers["x-holaboss-desktop-token"];
-  if (Array.isArray(raw)) {
-    return (raw[0] || "").trim();
-  }
-  return typeof raw === "string" ? raw.trim() : "";
-}
+// desktopBrowserServiceTokenFromRequest moved to browser-pane/tab-state.ts.
 
-function desktopBrowserWorkspaceIdFromRequest(
-  request: IncomingMessage,
-): string {
-  const raw = request.headers["x-holaboss-workspace-id"];
-  if (Array.isArray(raw)) {
-    return (raw[0] || "").trim();
-  }
-  return typeof raw === "string" ? raw.trim() : "";
-}
+// desktopBrowserWorkspaceIdFromRequest moved to browser-pane/tab-state.ts.
 
-function desktopBrowserSessionIdFromRequest(
-  request: IncomingMessage,
-): string {
-  const raw = request.headers["x-holaboss-session-id"];
-  if (Array.isArray(raw)) {
-    return (raw[0] || "").trim();
-  }
-  return typeof raw === "string" ? raw.trim() : "";
-}
+// desktopBrowserSessionIdFromRequest moved to browser-pane/tab-state.ts.
 
-function desktopBrowserSpaceFromRequest(
-  request: IncomingMessage,
-): BrowserSpaceId {
-  const raw = request.headers["x-holaboss-browser-space"];
-  if (Array.isArray(raw)) {
-    return browserSpaceId(raw[0] || "", "agent");
-  }
-  return browserSpaceId(typeof raw === "string" ? raw.trim() : "", "agent");
-}
+// desktopBrowserSpaceFromRequest moved to browser-pane/tab-state.ts.
 
-function writeBrowserServiceJson(
-  response: ServerResponse<IncomingMessage>,
-  statusCode: number,
-  payload: unknown,
-): void {
-  response.statusCode = statusCode;
-  response.setHeader("content-type", "application/json; charset=utf-8");
-  response.end(`${JSON.stringify(payload)}\n`);
-}
+// writeBrowserServiceJson moved to browser-pane/tab-state.ts.
 
-async function readBrowserServiceJsonBody(
-  request: IncomingMessage,
-): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  if (chunks.length === 0) {
-    return {};
-  }
-  const raw = Buffer.concat(chunks).toString("utf-8").trim();
-  if (!raw) {
-    return {};
-  }
-  const parsed = JSON.parse(raw) as unknown;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("Request body must be a JSON object.");
-  }
-  return parsed as Record<string, unknown>;
-}
+// readBrowserServiceJsonBody moved to browser-pane/tab-state.ts.
 
-function browserPagePayload(tab: BrowserTabRecord): Record<string, unknown> {
-  const webContents = tab.view.webContents;
-  return {
-    tabId: tab.state.id,
-    url: webContents.getURL() || tab.state.url,
-    title: webContents.getTitle() || tab.state.title,
-    loading: tab.state.loading,
-    initialized: tab.state.initialized,
-    canGoBack: webContents.navigationHistory.canGoBack(),
-    canGoForward: webContents.navigationHistory.canGoForward(),
-    error: tab.state.error || "",
-  };
-}
+// browserPagePayload moved to browser-pane/tab-state.ts.
 
 function operatorSurfaceTypeValue(value: unknown): OperatorSurfaceType | null {
   return value === "browser" ||
@@ -5904,27 +5437,7 @@ function operatorSurfaceContextPayload(workspaceId: string): OperatorSurfaceCont
   };
 }
 
-function serializeBrowserEvalResult(value: unknown): unknown {
-  if (value === undefined) {
-    return null;
-  }
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  ) {
-    return value;
-  }
-  if (typeof value === "bigint") {
-    return value.toString();
-  }
-  try {
-    return JSON.parse(JSON.stringify(value)) as unknown;
-  } catch {
-    return String(value);
-  }
-}
+// serializeBrowserEvalResult moved to browser-pane/tab-state.ts.
 
 function isAbortedBrowserLoadError(error: unknown): boolean {
   return isAbortedBrowserLoadErrorUtil(error);
@@ -5937,946 +5450,9 @@ function isAbortedBrowserLoadFailure(
   return isAbortedBrowserLoadFailureUtil(errorCode, errorDescription);
 }
 
-async function navigateActiveBrowserTab(
-  workspaceId: string,
-  targetUrl: string,
-  space: BrowserSpaceId = activeBrowserSpaceId,
-  sessionId?: string | null,
-): Promise<BrowserTabListPayload> {
-  await ensureBrowserWorkspace(workspaceId, space, sessionId);
-  if (space === "agent" && browserSessionId(sessionId)) {
-    touchAgentSessionBrowserSpace(workspaceId, sessionId);
-  }
-  const activeTab = getActiveBrowserTab(workspaceId, space, sessionId, {
-    useVisibleAgentSession: !browserSessionId(sessionId),
-  });
-  if (!activeTab) {
-    throw new Error("No active browser tab is available.");
-  }
+// navigateActiveBrowserTab moved to browser-pane/tab-state.ts.
 
-  try {
-    activeTab.state = { ...activeTab.state, error: "" };
-    await activeTab.view.webContents.loadURL(targetUrl);
-  } catch (error) {
-    if (isAbortedBrowserLoadError(error)) {
-      return browserWorkspaceSnapshot(workspaceId, space, sessionId, {
-        useVisibleAgentSession: !browserSessionId(sessionId),
-      });
-    }
-    activeTab.state = {
-      ...activeTab.state,
-      loading: false,
-      error: error instanceof Error ? error.message : "Failed to load URL.",
-    };
-    emitBrowserState(workspaceId, space);
-    throw error;
-  }
-
-  return browserWorkspaceSnapshot(workspaceId, space, sessionId, {
-    useVisibleAgentSession: !browserSessionId(sessionId),
-  });
-}
-
-async function handleDesktopBrowserServiceRequest(
-  request: IncomingMessage,
-  response: ServerResponse<IncomingMessage>,
-): Promise<void> {
-  try {
-    const requestUrl = new URL(request.url || "/", "http://127.0.0.1");
-    const pathname = requestUrl.pathname;
-    const method = (request.method || "GET").toUpperCase();
-    const targetSpace = desktopBrowserSpaceFromRequest(request);
-    const requestedWorkspaceId = desktopBrowserWorkspaceIdFromRequest(request);
-    const requestedSessionId = desktopBrowserSessionIdFromRequest(request);
-    const targetWorkspaceId = requestedWorkspaceId || activeBrowserWorkspaceId;
-
-    if (
-      !desktopBrowserServiceAuthToken ||
-      desktopBrowserServiceTokenFromRequest(request) !==
-        desktopBrowserServiceAuthToken
-    ) {
-      writeBrowserServiceJson(response, 401, { error: "Unauthorized." });
-      return;
-    }
-
-    if (method === "GET" && pathname === "/api/v1/browser/health") {
-      writeBrowserServiceJson(response, 200, { ok: true });
-      return;
-    }
-
-    if (!targetWorkspaceId) {
-      writeBrowserServiceJson(response, 409, {
-        error: "No active browser workspace is available.",
-      });
-      return;
-    }
-
-    const ensuredSessionId = targetSpace === "agent" ? requestedSessionId : null;
-    const ensureTargetBrowserSpace = async (
-      reason: string,
-    ): Promise<BrowserWorkspaceState | null> => {
-      const workspace = await ensureBrowserWorkspace(
-        targetWorkspaceId,
-        targetSpace,
-        ensuredSessionId,
-      );
-      if (!workspace) {
-        return null;
-      }
-      if (targetSpace === "user") {
-        if (!requestedSessionId) {
-          writeBrowserServiceJson(response, 400, {
-            error:
-              "Header 'x-holaboss-session-id' is required when targeting the user browser.",
-          });
-          return null;
-        }
-        const lockResult = ensureUserBrowserLock(
-          targetWorkspaceId,
-          requestedSessionId,
-          reason,
-        );
-        if (!lockResult.ok) {
-          writeBrowserServiceJson(response, 409, {
-            error: "User browser is locked by another agent session.",
-            code: "user_browser_locked",
-            lock_holder_session_id: lockResult.lockHolderSessionId,
-          });
-          return null;
-        }
-      } else if (requestedSessionId) {
-        touchAgentSessionBrowserSpace(targetWorkspaceId, requestedSessionId);
-      }
-      return workspace;
-    };
-
-    if (method === "GET" && pathname === "/api/v1/browser/tabs") {
-      const workspace = await ensureTargetBrowserSpace("tabs");
-      if (!workspace) {
-        return;
-      }
-      writeBrowserServiceJson(
-        response,
-        200,
-        browserWorkspaceSnapshot(targetWorkspaceId, targetSpace, ensuredSessionId, {
-          useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId,
-        }),
-      );
-      return;
-    }
-
-    if (method === "GET" && pathname === "/api/v1/browser/downloads") {
-      const workspace = await ensureTargetBrowserSpace("downloads");
-      if (!workspace) {
-        return;
-      }
-      writeBrowserServiceJson(response, 200, {
-        downloads: workspace.downloads,
-      });
-      return;
-    }
-
-    if (method === "GET" && pathname === "/api/v1/browser/console") {
-      if (!(await ensureTargetBrowserSpace("console"))) {
-        return;
-      }
-      const activeTab = getActiveBrowserTab(
-        targetWorkspaceId,
-        targetSpace,
-        ensuredSessionId,
-        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
-      );
-      if (!activeTab) {
-        writeBrowserServiceJson(response, 409, {
-          error: "No active browser tab is available.",
-        });
-        return;
-      }
-      const requestedLevel = requestUrl.searchParams.get("level")?.trim() || "";
-      const minimumLevel =
-        requestedLevel === "debug" ||
-        requestedLevel === "info" ||
-        requestedLevel === "warning" ||
-        requestedLevel === "error"
-          ? requestedLevel
-          : null;
-      const filtered = [...activeTab.consoleEntries].filter((entry) =>
-        minimumLevel
-          ? browserConsoleLevelRank(entry.level) >=
-            browserConsoleLevelRank(minimumLevel)
-          : true,
-      );
-      const limit = browserObservabilityLimit(
-        requestUrl.searchParams.get("limit"),
-      );
-      const entries = filtered.slice(-limit).reverse();
-      writeBrowserServiceJson(response, 200, {
-        entries,
-        total: filtered.length,
-        truncated: filtered.length > entries.length,
-      });
-      return;
-    }
-
-    if (method === "GET" && pathname === "/api/v1/browser/errors") {
-      if (!(await ensureTargetBrowserSpace("errors"))) {
-        return;
-      }
-      const activeTab = getActiveBrowserTab(
-        targetWorkspaceId,
-        targetSpace,
-        ensuredSessionId,
-        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
-      );
-      if (!activeTab) {
-        writeBrowserServiceJson(response, 409, {
-          error: "No active browser tab is available.",
-        });
-        return;
-      }
-      const requestedSource = browserObservedErrorSource(
-        requestUrl.searchParams.get("source")?.trim() || null,
-      );
-      const filtered = [...activeTab.errorEntries].filter((entry) =>
-        requestedSource ? entry.source === requestedSource : true,
-      );
-      const limit = browserObservabilityLimit(
-        requestUrl.searchParams.get("limit"),
-      );
-      const errors = filtered.slice(-limit).reverse();
-      writeBrowserServiceJson(response, 200, {
-        errors,
-        total: filtered.length,
-        truncated: filtered.length > errors.length,
-      });
-      return;
-    }
-
-    if (method === "GET" && pathname === "/api/v1/browser/requests") {
-      if (!(await ensureTargetBrowserSpace("requests"))) {
-        return;
-      }
-      const activeTab = getActiveBrowserTab(
-        targetWorkspaceId,
-        targetSpace,
-        ensuredSessionId,
-        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
-      );
-      if (!activeTab) {
-        writeBrowserServiceJson(response, 409, {
-          error: "No active browser tab is available.",
-        });
-        return;
-      }
-      const requestedResourceType =
-        requestUrl.searchParams.get("resource_type")?.trim().toLowerCase() || "";
-      const failuresOnly = requestUrl.searchParams.get("failures_only") === "true";
-      const filtered = [...activeTab.requestOrder]
-        .map((requestId) => activeTab.requests.get(requestId) ?? null)
-        .filter((request): request is BrowserRequestRecord => Boolean(request))
-        .filter((request) =>
-          requestedResourceType
-            ? request.resourceType.toLowerCase() === requestedResourceType
-            : true,
-        )
-        .filter((request) => (failuresOnly ? browserRequestFailure(request) : true));
-      const limit = browserObservabilityLimit(
-        requestUrl.searchParams.get("limit"),
-      );
-      const requests = filtered.slice(-limit).reverse().map((request) =>
-        browserRequestSummary(request),
-      );
-      writeBrowserServiceJson(response, 200, {
-        requests,
-        total: filtered.length,
-        truncated: filtered.length > requests.length,
-      });
-      return;
-    }
-
-    if (
-      method === "GET" &&
-      pathname.startsWith("/api/v1/browser/requests/")
-    ) {
-      if (!(await ensureTargetBrowserSpace("request"))) {
-        return;
-      }
-      const activeTab = getActiveBrowserTab(
-        targetWorkspaceId,
-        targetSpace,
-        ensuredSessionId,
-        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
-      );
-      if (!activeTab) {
-        writeBrowserServiceJson(response, 409, {
-          error: "No active browser tab is available.",
-        });
-        return;
-      }
-      const requestId = decodeURIComponent(
-        pathname.slice("/api/v1/browser/requests/".length),
-      ).trim();
-      if (!requestId) {
-        writeBrowserServiceJson(response, 400, {
-          error: "Request id is required.",
-        });
-        return;
-      }
-      const requestRecord = activeTab.requests.get(requestId) ?? null;
-      if (!requestRecord) {
-        writeBrowserServiceJson(response, 404, {
-          error: "Browser request not found for the active tab.",
-        });
-        return;
-      }
-      writeBrowserServiceJson(response, 200, {
-        request: requestRecord,
-      });
-      return;
-    }
-
-    if (method === "GET" && pathname === "/api/v1/browser/cookies") {
-      const workspace = await ensureTargetBrowserSpace("cookies:get");
-      if (!workspace) {
-        return;
-      }
-      const useVisibleAgentSession = targetSpace === "agent" && !requestedSessionId;
-      const activeTab = getActiveBrowserTab(
-        targetWorkspaceId,
-        targetSpace,
-        ensuredSessionId,
-        { useVisibleAgentSession },
-      );
-      const requestedUrl = requestUrl.searchParams.get("url")?.trim() || "";
-      const requestedName = requestUrl.searchParams.get("name")?.trim() || "";
-      const requestedDomain =
-        requestUrl.searchParams.get("domain")?.trim() || "";
-      try {
-        const cookies = await workspace.session.cookies.get({
-          ...(requestedUrl || activeTab?.view.webContents.getURL()
-            ? { url: requestedUrl || activeTab?.view.webContents.getURL() || "" }
-            : {}),
-          ...(requestedName ? { name: requestedName } : {}),
-          ...(requestedDomain ? { domain: requestedDomain } : {}),
-        });
-        writeBrowserServiceJson(response, 200, {
-          cookies: cookies.map((cookie) => ({
-            name: cookie.name || "",
-            value: cookie.value || "",
-            domain: cookie.domain || "",
-            path: cookie.path || "/",
-            secure: Boolean(cookie.secure),
-            httpOnly: Boolean(cookie.httpOnly),
-            session: Boolean(cookie.session),
-            sameSite: cookie.sameSite || "unspecified",
-            expirationDate:
-              typeof cookie.expirationDate === "number" &&
-              Number.isFinite(cookie.expirationDate)
-                ? cookie.expirationDate
-                : null,
-          })),
-        });
-      } catch (error) {
-        writeBrowserServiceJson(response, 400, {
-          error:
-            error instanceof Error
-              ? error.message
-              : "Failed to read browser cookies.",
-        });
-      }
-      return;
-    }
-
-    if (method === "GET" && pathname === "/api/v1/browser/page") {
-      const workspace = await ensureTargetBrowserSpace("page");
-      if (!workspace) {
-        return;
-      }
-      const activeTab = getActiveBrowserTab(
-        targetWorkspaceId,
-        targetSpace,
-        ensuredSessionId,
-        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
-      );
-      if (!activeTab) {
-        writeBrowserServiceJson(response, 409, {
-          error: "No active browser tab is available.",
-        });
-        return;
-      }
-      syncBrowserState(targetWorkspaceId, activeTab.state.id, targetSpace, ensuredSessionId);
-      writeBrowserServiceJson(response, 200, browserPagePayload(activeTab));
-      return;
-    }
-
-    if (method === "GET" && pathname === "/api/v1/browser/operator-surface-context") {
-      await ensureBrowserWorkspace(targetWorkspaceId, "user");
-      await ensureBrowserWorkspace(targetWorkspaceId, "agent");
-      writeBrowserServiceJson(response, 200, operatorSurfaceContextPayload(targetWorkspaceId));
-      return;
-    }
-
-    if (method === "POST" && pathname === "/api/v1/browser/navigate") {
-      const payload = await readBrowserServiceJsonBody(request);
-      const targetUrl =
-        typeof payload.url === "string" ? payload.url.trim() : "";
-      if (!targetUrl) {
-        writeBrowserServiceJson(response, 400, {
-          error: "Field 'url' is required.",
-        });
-        return;
-      }
-      const workspace = await ensureTargetBrowserSpace("navigate");
-      if (!workspace) {
-        return;
-      }
-      if (targetWorkspaceId && targetWorkspaceId === activeBrowserWorkspaceId) {
-        emitWorkbenchOpenBrowser({
-          workspaceId: targetWorkspaceId,
-          url: targetUrl,
-          space: targetSpace,
-          sessionId: requestedSessionId || null,
-        });
-      }
-      const snapshot = await navigateActiveBrowserTab(
-        targetWorkspaceId,
-        targetUrl,
-        targetSpace,
-        ensuredSessionId,
-      );
-      writeBrowserServiceJson(response, 200, snapshot);
-      return;
-    }
-
-    if (method === "POST" && pathname === "/api/v1/browser/tabs/select") {
-      const payload = await readBrowserServiceJsonBody(request);
-      const tabId =
-        typeof payload.tab_id === "string" && payload.tab_id.trim()
-          ? payload.tab_id.trim()
-          : typeof payload.tabId === "string" && payload.tabId.trim()
-            ? payload.tabId.trim()
-            : "";
-      if (!tabId) {
-        writeBrowserServiceJson(response, 400, {
-          error: "Field 'tab_id' is required.",
-        });
-        return;
-      }
-      const workspace = await ensureTargetBrowserSpace("tabs:select");
-      if (!workspace) {
-        return;
-      }
-      const snapshot = await setActiveBrowserTab(tabId, {
-        workspaceId: workspace.workspaceId,
-        space: targetSpace,
-        sessionId: ensuredSessionId,
-        useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId,
-      });
-      writeBrowserServiceJson(response, 200, snapshot);
-      return;
-    }
-
-    if (method === "POST" && pathname === "/api/v1/browser/tabs/close") {
-      const payload = await readBrowserServiceJsonBody(request);
-      const tabId =
-        typeof payload.tab_id === "string" && payload.tab_id.trim()
-          ? payload.tab_id.trim()
-          : typeof payload.tabId === "string" && payload.tabId.trim()
-            ? payload.tabId.trim()
-            : "";
-      if (!tabId) {
-        writeBrowserServiceJson(response, 400, {
-          error: "Field 'tab_id' is required.",
-        });
-        return;
-      }
-      const workspace = await ensureTargetBrowserSpace("tabs:close");
-      if (!workspace) {
-        return;
-      }
-      const snapshot = await closeBrowserTab(tabId, {
-        workspaceId: workspace.workspaceId,
-        space: targetSpace,
-        sessionId: ensuredSessionId,
-        useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId,
-      });
-      writeBrowserServiceJson(response, 200, snapshot);
-      return;
-    }
-
-    if (method === "POST" && pathname === "/api/v1/browser/cookies") {
-      const payload = await readBrowserServiceJsonBody(request);
-      const workspace = await ensureTargetBrowserSpace("cookies:set");
-      if (!workspace) {
-        return;
-      }
-      const useVisibleAgentSession = targetSpace === "agent" && !requestedSessionId;
-      const activeTab = getActiveBrowserTab(
-        targetWorkspaceId,
-        targetSpace,
-        ensuredSessionId,
-        { useVisibleAgentSession },
-      );
-      const activeTabUrl = activeTab?.view.webContents.getURL()?.trim() || "";
-      const targetUrl =
-        (typeof payload.url === "string" && payload.url.trim()
-          ? payload.url.trim()
-          : activeTabUrl) || "";
-      const cookieName =
-        typeof payload.name === "string" && payload.name.trim()
-          ? payload.name.trim()
-          : "";
-      if (!targetUrl) {
-        writeBrowserServiceJson(response, 400, {
-          error: "Field 'url' is required when there is no active browser page.",
-        });
-        return;
-      }
-      if (!cookieName) {
-        writeBrowserServiceJson(response, 400, {
-          error: "Field 'name' is required.",
-        });
-        return;
-      }
-      try {
-        const expirationDate =
-          typeof payload.expiration_date === "number" &&
-          Number.isFinite(payload.expiration_date)
-            ? payload.expiration_date
-            : typeof payload.expirationDate === "number" &&
-                Number.isFinite(payload.expirationDate)
-              ? payload.expirationDate
-              : undefined;
-        await workspace.session.cookies.set({
-          url: targetUrl,
-          name: cookieName,
-          value: typeof payload.value === "string" ? payload.value : "",
-          ...(typeof payload.domain === "string" && payload.domain.trim()
-            ? { domain: payload.domain.trim() }
-            : {}),
-          ...(typeof payload.path === "string" && payload.path.trim()
-            ? { path: payload.path.trim() }
-            : {}),
-          ...(typeof payload.secure === "boolean"
-            ? { secure: payload.secure }
-            : {}),
-          ...(typeof payload.http_only === "boolean"
-            ? { httpOnly: payload.http_only }
-            : typeof payload.httpOnly === "boolean"
-              ? { httpOnly: payload.httpOnly }
-              : {}),
-          ...(payload.same_site === "unspecified" ||
-          payload.same_site === "no_restriction" ||
-          payload.same_site === "lax" ||
-          payload.same_site === "strict"
-            ? { sameSite: payload.same_site }
-            : payload.sameSite === "unspecified" ||
-                payload.sameSite === "no_restriction" ||
-                payload.sameSite === "lax" ||
-                payload.sameSite === "strict"
-              ? { sameSite: payload.sameSite }
-              : {}),
-          ...(typeof expirationDate === "number" ? { expirationDate } : {}),
-        });
-        await workspace.session.cookies.flushStore();
-        const cookies = await workspace.session.cookies.get({
-          url: targetUrl,
-          name: cookieName,
-        });
-        const cookie = cookies[0] ?? null;
-        writeBrowserServiceJson(response, 200, {
-          ok: true,
-          cookie: cookie
-            ? {
-                name: cookie.name || "",
-                value: cookie.value || "",
-                domain: cookie.domain || "",
-                path: cookie.path || "/",
-                secure: Boolean(cookie.secure),
-                httpOnly: Boolean(cookie.httpOnly),
-                session: Boolean(cookie.session),
-                sameSite: cookie.sameSite || "unspecified",
-                expirationDate:
-                  typeof cookie.expirationDate === "number" &&
-                  Number.isFinite(cookie.expirationDate)
-                    ? cookie.expirationDate
-                    : null,
-              }
-            : null,
-        });
-      } catch (error) {
-        writeBrowserServiceJson(response, 400, {
-          error:
-            error instanceof Error
-              ? error.message
-              : "Failed to set browser cookie.",
-        });
-      }
-      return;
-    }
-
-    if (method === "POST" && pathname === "/api/v1/browser/tabs") {
-      const payload = await readBrowserServiceJsonBody(request);
-      const targetUrl =
-        typeof payload.url === "string" && payload.url.trim()
-          ? payload.url.trim()
-          : HOME_URL;
-      const background = payload.background === true;
-      const workspace = await ensureTargetBrowserSpace("tabs:create");
-      const tabSpace = browserTabSpaceState(workspace, targetSpace, ensuredSessionId, {
-        createIfMissing: targetSpace === "agent" && Boolean(requestedSessionId),
-        useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId,
-      });
-      if (!workspace) {
-        writeBrowserServiceJson(response, 409, {
-          error: "No active browser workspace is available.",
-        });
-        return;
-      }
-
-      const nextTabId = createBrowserTab(targetWorkspaceId, {
-        url: targetUrl,
-        browserSpace: targetSpace,
-        sessionId: ensuredSessionId,
-      });
-      if (!nextTabId) {
-        writeBrowserServiceJson(response, 500, {
-          error: "Failed to create browser tab.",
-        });
-        return;
-      }
-
-      if (!background && tabSpace) {
-        tabSpace.activeTabId = nextTabId;
-        if (targetWorkspaceId === activeBrowserWorkspaceId) {
-          updateAttachedBrowserView();
-        }
-      }
-
-      emitBrowserState(targetWorkspaceId, targetSpace);
-      await persistBrowserWorkspace(targetWorkspaceId);
-      writeBrowserServiceJson(
-        response,
-        200,
-        browserWorkspaceSnapshot(targetWorkspaceId, targetSpace, ensuredSessionId, {
-          useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId,
-        }),
-      );
-      return;
-    }
-
-    if (method === "POST" && pathname === "/api/v1/browser/evaluate") {
-      const payload = await readBrowserServiceJsonBody(request);
-      const expression =
-        typeof payload.expression === "string" ? payload.expression.trim() : "";
-      if (!expression) {
-        writeBrowserServiceJson(response, 400, {
-          error: "Field 'expression' is required.",
-        });
-        return;
-      }
-
-      const workspace = await ensureTargetBrowserSpace("evaluate");
-      if (!workspace) {
-        return;
-      }
-      const activeTab = getActiveBrowserTab(
-        targetWorkspaceId,
-        targetSpace,
-        ensuredSessionId,
-        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
-      );
-      if (!activeTab) {
-        writeBrowserServiceJson(response, 409, {
-          error: "No active browser tab is available.",
-        });
-        return;
-      }
-
-      const result =
-        await activeTab.view.webContents.executeJavaScript(expression);
-      writeBrowserServiceJson(response, 200, {
-        tabId: activeTab.state.id,
-        result: serializeBrowserEvalResult(result),
-      });
-      return;
-    }
-
-    if (method === "POST" && pathname === "/api/v1/browser/context-click") {
-      const payload = await readBrowserServiceJsonBody(request);
-      const x =
-        typeof payload.x === "number" && Number.isFinite(payload.x)
-          ? Math.round(payload.x)
-          : NaN;
-      const y =
-        typeof payload.y === "number" && Number.isFinite(payload.y)
-          ? Math.round(payload.y)
-          : NaN;
-      if (!Number.isFinite(x) || x < 0 || !Number.isFinite(y) || y < 0) {
-        writeBrowserServiceJson(response, 400, {
-          error: "Fields 'x' and 'y' must be non-negative numbers.",
-        });
-        return;
-      }
-
-      const workspace = await ensureTargetBrowserSpace("context-click");
-      if (!workspace) {
-        return;
-      }
-      const activeTab = getActiveBrowserTab(
-        targetWorkspaceId,
-        targetSpace,
-        ensuredSessionId,
-        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
-      );
-      if (!activeTab) {
-        writeBrowserServiceJson(response, 409, {
-          error: "No active browser tab is available.",
-        });
-        return;
-      }
-
-      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) {
-        mainWindow.focus();
-      }
-      await withProgrammaticBrowserInput(activeTab.view.webContents, async () => {
-        activeTab.view.webContents.focus();
-        await activeTab.view.webContents.sendInputEvent({
-          type: "mouseMove",
-          x,
-          y,
-        });
-        await activeTab.view.webContents.sendInputEvent({
-          type: "mouseDown",
-          x,
-          y,
-          button: "right",
-          clickCount: 1,
-        });
-        await activeTab.view.webContents.sendInputEvent({
-          type: "mouseUp",
-          x,
-          y,
-          button: "right",
-          clickCount: 1,
-        });
-      });
-
-      writeBrowserServiceJson(response, 200, {
-        ok: true,
-        tabId: activeTab.state.id,
-        x,
-        y,
-      });
-      return;
-    }
-
-    if (method === "POST" && pathname === "/api/v1/browser/mouse") {
-      const payload = await readBrowserServiceJsonBody(request);
-      const x =
-        typeof payload.x === "number" && Number.isFinite(payload.x)
-          ? Math.round(payload.x)
-          : NaN;
-      const y =
-        typeof payload.y === "number" && Number.isFinite(payload.y)
-          ? Math.round(payload.y)
-          : NaN;
-      const action =
-        payload.action === "double_click" || payload.action === "hover"
-          ? payload.action
-          : "click";
-      if (!Number.isFinite(x) || x < 0 || !Number.isFinite(y) || y < 0) {
-        writeBrowserServiceJson(response, 400, {
-          error: "Fields 'x' and 'y' must be non-negative numbers.",
-        });
-        return;
-      }
-
-      const workspace = await ensureTargetBrowserSpace("mouse");
-      if (!workspace) {
-        return;
-      }
-      const activeTab = getActiveBrowserTab(
-        targetWorkspaceId,
-        targetSpace,
-        ensuredSessionId,
-        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
-      );
-      if (!activeTab) {
-        writeBrowserServiceJson(response, 409, {
-          error: "No active browser tab is available.",
-        });
-        return;
-      }
-
-      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) {
-        mainWindow.focus();
-      }
-      await withProgrammaticBrowserInput(activeTab.view.webContents, async () => {
-        activeTab.view.webContents.focus();
-        await activeTab.view.webContents.sendInputEvent({
-          type: "mouseMove",
-          x,
-          y,
-        });
-
-        if (action === "click" || action === "double_click") {
-          await activeTab.view.webContents.sendInputEvent({
-            type: "mouseDown",
-            x,
-            y,
-            button: "left",
-            clickCount: 1,
-          });
-          await activeTab.view.webContents.sendInputEvent({
-            type: "mouseUp",
-            x,
-            y,
-            button: "left",
-            clickCount: 1,
-          });
-        }
-        if (action === "double_click") {
-          await activeTab.view.webContents.sendInputEvent({
-            type: "mouseDown",
-            x,
-            y,
-            button: "left",
-            clickCount: 2,
-          });
-          await activeTab.view.webContents.sendInputEvent({
-            type: "mouseUp",
-            x,
-            y,
-            button: "left",
-            clickCount: 2,
-          });
-        }
-      });
-
-      writeBrowserServiceJson(response, 200, {
-        ok: true,
-        tabId: activeTab.state.id,
-        action,
-        x,
-        y,
-      });
-      return;
-    }
-
-    if (method === "POST" && pathname === "/api/v1/browser/keyboard") {
-      const payload = await readBrowserServiceJsonBody(request);
-      const action = payload.action === "press" ? "press" : "insert_text";
-      const text = typeof payload.text === "string" ? payload.text : "";
-      const key =
-        typeof payload.key === "string" && payload.key.trim()
-          ? payload.key.trim()
-          : "";
-      const clear = payload.clear === true;
-      const submit = payload.submit === true;
-      if (action === "press" && !key) {
-        writeBrowserServiceJson(response, 400, {
-          error: "Field 'key' is required for keyboard press actions.",
-        });
-        return;
-      }
-
-      const workspace = await ensureTargetBrowserSpace("keyboard");
-      if (!workspace) {
-        return;
-      }
-      const activeTab = getActiveBrowserTab(
-        targetWorkspaceId,
-        targetSpace,
-        ensuredSessionId,
-        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
-      );
-      if (!activeTab) {
-        writeBrowserServiceJson(response, 409, {
-          error: "No active browser tab is available.",
-        });
-        return;
-      }
-
-      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) {
-        mainWindow.focus();
-      }
-      await withProgrammaticBrowserInput(activeTab.view.webContents, async () => {
-        activeTab.view.webContents.focus();
-        if (action === "press") {
-          await sendBrowserKeyPress(activeTab.view.webContents, key);
-          return;
-        }
-        if (clear) {
-          await clearFocusedBrowserTextInput(activeTab.view.webContents);
-        }
-        if (text) {
-          await activeTab.view.webContents.insertText(text);
-        }
-        if (submit) {
-          await sendBrowserKeyPress(activeTab.view.webContents, "Enter");
-        }
-      });
-
-      writeBrowserServiceJson(response, 200, {
-        ok: true,
-        tabId: activeTab.state.id,
-        action,
-        text_length: action === "insert_text" ? text.length : 0,
-        key: action === "press" ? key : "",
-        clear,
-        submit,
-      });
-      return;
-    }
-
-    if (method === "POST" && pathname === "/api/v1/browser/screenshot") {
-      const payload = await readBrowserServiceJsonBody(request);
-      const workspace = await ensureTargetBrowserSpace("screenshot");
-      if (!workspace) {
-        return;
-      }
-      const activeTab = getActiveBrowserTab(
-        targetWorkspaceId,
-        targetSpace,
-        ensuredSessionId,
-        { useVisibleAgentSession: targetSpace === "agent" && !requestedSessionId },
-      );
-      if (!activeTab) {
-        writeBrowserServiceJson(response, 409, {
-          error: "No active browser tab is available.",
-        });
-        return;
-      }
-
-      const format = payload.format === "jpeg" ? "jpeg" : "png";
-      const qualityRaw =
-        typeof payload.quality === "number" ? payload.quality : 90;
-      const quality = Math.max(0, Math.min(100, Math.round(qualityRaw)));
-      const image = await activeTab.view.webContents.capturePage();
-      const buffer = format === "jpeg" ? image.toJPEG(quality) : image.toPNG();
-      const size = image.getSize();
-
-      writeBrowserServiceJson(response, 200, {
-        tabId: activeTab.state.id,
-        mimeType: format === "jpeg" ? "image/jpeg" : "image/png",
-        width: size.width,
-        height: size.height,
-        base64: buffer.toString("base64"),
-      });
-      return;
-    }
-
-    writeBrowserServiceJson(response, 404, { error: "Not found." });
-  } catch (error) {
-    writeBrowserServiceJson(response, 500, {
-      error:
-        error instanceof Error
-          ? error.message
-          : "Browser service request failed.",
-    });
-  }
-}
+// handleDesktopBrowserServiceRequest moved to browser-pane/tab-state.ts.
 
 async function startDesktopBrowserService(): Promise<void> {
   if (desktopBrowserServiceServer) {
@@ -6885,7 +5461,7 @@ async function startDesktopBrowserService(): Promise<void> {
 
   const authToken = randomUUID();
   const server = createServer((request, response) => {
-    void handleDesktopBrowserServiceRequest(request, response);
+    void browserHttpService.handleRequest(request, response);
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -17569,216 +16145,36 @@ function isVisibleAgentBrowserSession(
   );
 }
 
-function activeUserBrowserLock(
-  workspace: BrowserWorkspaceState | null | undefined,
-): BrowserUserLockState | null {
-  if (!workspace?.userBrowserLock) {
-    return null;
-  }
-  const heartbeatAtMs = Date.parse(workspace.userBrowserLock.heartbeatAt);
-  if (
-    !Number.isFinite(heartbeatAtMs) ||
-    Date.now() - heartbeatAtMs > USER_BROWSER_LOCK_TIMEOUT_MS
-  ) {
-    workspace.userBrowserLock = null;
-    return null;
-  }
-  return workspace.userBrowserLock;
-}
-
-function releaseUserBrowserLock(
-  workspaceId: string,
-  sessionId?: string | null,
-): boolean {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const activeLock = activeUserBrowserLock(workspace);
-  const normalizedSessionId = browserSessionId(sessionId);
-  if (
-    !workspace ||
-    !activeLock ||
-    (normalizedSessionId && activeLock.sessionId !== normalizedSessionId)
-  ) {
-    return false;
-  }
-  workspace.userBrowserLock = null;
-  return true;
-}
-
-function ensureUserBrowserLock(
-  workspaceId: string,
-  sessionId?: string | null,
-  reason?: string | null,
-): { ok: true; lock: BrowserUserLockState } | {
-  ok: false;
-  lockHolderSessionId: string;
-} {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const normalizedSessionId = browserSessionId(sessionId);
-  if (!workspace || !normalizedSessionId) {
-    return { ok: false, lockHolderSessionId: "" };
-  }
-  const existing = activeUserBrowserLock(workspace);
-  if (existing && existing.sessionId !== normalizedSessionId) {
-    return { ok: false, lockHolderSessionId: existing.sessionId };
-  }
-  const now = new Date().toISOString();
-  workspace.userBrowserLock = existing
-    ? {
-        ...existing,
-        heartbeatAt: now,
-        reason:
-          typeof reason === "string" && reason.trim()
-            ? reason.trim()
-            : existing.reason,
-      }
-    : {
-        sessionId: normalizedSessionId,
-        acquiredAt: now,
-        heartbeatAt: now,
-        reason:
-          typeof reason === "string" && reason.trim() ? reason.trim() : null,
-      };
-  return { ok: true, lock: workspace.userBrowserLock };
-}
-
-async function pauseBrowserControlSession(
-  workspaceId: string,
-  sessionId: string,
-): Promise<void> {
-  try {
-    await pauseSessionRun({
-      workspace_id: workspaceId,
-      session_id: sessionId,
-    });
-  } finally {
-    releaseUserBrowserLock(workspaceId, sessionId);
-  }
-}
-
-function agentBrowserSessionNeedsInterrupt(
-  workspaceId: string,
-  sessionId?: string | null,
-): boolean {
-  const normalizedSessionId =
-    browserSessionId(sessionId) ||
-    browserSessionId(browserWorkspaceFromMap(workspaceId)?.activeAgentSessionId);
-  if (!workspaceId.trim() || !normalizedSessionId) {
-    return false;
-  }
-  const runtimeRecord = getCachedRuntimeStateRecord(
-    workspaceId,
-    normalizedSessionId,
-  );
-  const status = runtimeRecordEffectiveStatus(runtimeRecord);
-  return status === "BUSY" || status === "QUEUED" || status === "PAUSING";
-}
-
-async function confirmBrowserInterrupt(
-  workspaceId: string,
-  sessionId: string,
-): Promise<void> {
-  if (userBrowserInterruptPrompts.has(workspaceId)) {
-    return;
-  }
-  userBrowserInterruptPrompts.add(workspaceId);
-  try {
-    const ownerWindow =
-      mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-    const { response } = ownerWindow
-      ? await dialog.showMessageBox(ownerWindow, {
-          type: "warning",
-          buttons: ["Let agent continue", "Interrupt and take over"],
-          defaultId: 0,
-          cancelId: 0,
-          noLink: true,
-          title: "Agent Controlling Browser",
-          message: "The agent is currently controlling this browser.",
-          detail:
-            "Your input will only go through if you interrupt. Interrupting will pause the active agent session and return control to you.",
-        })
-      : await dialog.showMessageBox({
-          type: "warning",
-          buttons: ["Let agent continue", "Interrupt and take over"],
-          defaultId: 0,
-          cancelId: 0,
-          noLink: true,
-          title: "Agent Controlling Browser",
-          message: "The agent is currently controlling this browser.",
-          detail:
-            "Your input will only go through if you interrupt. Interrupting will pause the active agent session and return control to you.",
-        });
-    if (response !== 1) {
-      return;
-    }
-    await pauseBrowserControlSession(workspaceId, sessionId);
-  } catch (error) {
-    const ownerWindow =
-      mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-    const messageBoxOptions = {
-      type: "error",
-      title: "Could Not Interrupt Agent",
-      message: "The agent session could not be paused.",
-      detail:
-        error instanceof Error
-          ? error.message
-          : "The browser remained under agent control.",
-    } as const;
-    if (ownerWindow) {
-      await dialog.showMessageBox(ownerWindow, messageBoxOptions);
-    } else {
-      await dialog.showMessageBox(messageBoxOptions);
-    }
-  } finally {
-    userBrowserInterruptPrompts.delete(workspaceId);
-  }
-}
-
-function maybePromptBrowserInterrupt(
-  workspaceId: string,
-  space: BrowserSpaceId,
-  sessionId?: string | null,
-): boolean {
-  if (space === "user") {
-    const workspace = browserWorkspaceFromMap(workspaceId);
-    const lock = activeUserBrowserLock(workspace);
-    if (!lock) {
-      return false;
-    }
-    void confirmBrowserInterrupt(workspaceId, lock.sessionId);
-    return true;
-  }
-
-  const controllingSessionId = browserSessionId(sessionId);
-  if (!agentBrowserSessionNeedsInterrupt(workspaceId, controllingSessionId)) {
-    return false;
-  }
-  void confirmBrowserInterrupt(workspaceId, controllingSessionId);
-  return true;
-}
-
-function isProgrammaticBrowserInput(webContents: WebContents): boolean {
-  return (programmaticBrowserInputDepth.get(webContents) ?? 0) > 0;
-}
-
-async function withProgrammaticBrowserInput<T>(
-  webContents: WebContents,
-  callback: () => Promise<T>,
-): Promise<T> {
-  programmaticBrowserInputDepth.set(
-    webContents,
-    (programmaticBrowserInputDepth.get(webContents) ?? 0) + 1,
-  );
-  try {
-    return await callback();
-  } finally {
-    const nextDepth = (programmaticBrowserInputDepth.get(webContents) ?? 1) - 1;
-    if (nextDepth > 0) {
-      programmaticBrowserInputDepth.set(webContents, nextDepth);
-    } else {
-      programmaticBrowserInputDepth.delete(webContents);
-    }
-  }
-}
+// activeUserBrowserLock / releaseUserBrowserLock / ensureUserBrowserLock /
+// pauseBrowserControlSession / agentBrowserSessionNeedsInterrupt /
+// confirmBrowserInterrupt / maybePromptBrowserInterrupt /
+// isProgrammaticBrowserInput / withProgrammaticBrowserInput moved to
+// browser-pane/user-lock.ts. Wired below as `browserUserLock`.
+const browserUserLock = createBrowserUserLock({
+  getMainWindow: () => mainWindow,
+  getWorkspace: (id) =>
+    browserWorkspaceFromMap(id) as unknown as ReturnType<
+      Parameters<typeof createBrowserUserLock>[0]["getWorkspace"]
+    >,
+  browserSessionId: (value) => browserSessionId(value),
+  lockTimeoutMs: USER_BROWSER_LOCK_TIMEOUT_MS,
+  pauseSessionRun: (params) => pauseSessionRun(params),
+  isAgentSessionBusy: (workspaceId, sessionId) => {
+    const runtimeRecord = getCachedRuntimeStateRecord(workspaceId, sessionId);
+    const status = runtimeRecordEffectiveStatus(runtimeRecord);
+    return status === "BUSY" || status === "QUEUED" || status === "PAUSING";
+  },
+});
+const activeUserBrowserLock = browserUserLock.activeUserBrowserLock;
+const releaseUserBrowserLock = browserUserLock.releaseUserBrowserLock;
+const ensureUserBrowserLock = browserUserLock.ensureUserBrowserLock;
+const pauseBrowserControlSession = browserUserLock.pauseBrowserControlSession;
+const agentBrowserSessionNeedsInterrupt =
+  browserUserLock.agentBrowserSessionNeedsInterrupt;
+const confirmBrowserInterrupt = browserUserLock.confirmBrowserInterrupt;
+const maybePromptBrowserInterrupt = browserUserLock.maybePromptBrowserInterrupt;
+const isProgrammaticBrowserInput = browserUserLock.isProgrammaticBrowserInput;
+const withProgrammaticBrowserInput = browserUserLock.withProgrammaticBrowserInput;
 
 async function sendBrowserKeyPress(
   webContents: WebContents,
@@ -17801,202 +16197,304 @@ async function clearFocusedBrowserTextInput(
   await sendBrowserKeyPress(webContents, "Backspace");
 }
 
-function hydrateAgentSessionBrowserSpace(
-  workspaceId: string,
-  sessionId?: string | null,
-): BrowserTabSpaceState | null {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const normalizedSessionId = browserSessionId(sessionId);
-  const tabSpace = browserAgentSessionSpaceState(workspace, normalizedSessionId, {
-    createIfMissing: Boolean(normalizedSessionId),
-  });
-  if (!workspace || !tabSpace || !normalizedSessionId) {
-    return null;
-  }
-  clearBrowserTabSpaceSuspendTimer(tabSpace);
-  if (tabSpace.lifecycleState !== "suspended") {
-    browserTabSpaceTouch(tabSpace);
-    return tabSpace;
-  }
+// Agent-session browser tab-space lifecycle (hydrate / suspend / schedule
+// / touch / reconcile) moved to browser-pane/agent-session-lifecycle.ts.
+// Wired via `agentSessionLifecycle` below.
+const agentSessionLifecycle = createAgentSessionLifecycle({
+  getWorkspace: (id) =>
+    browserWorkspaceFromMap(id) as unknown as ReturnType<
+      Parameters<typeof createAgentSessionLifecycle>[0]["getWorkspace"]
+    >,
+  browserSessionId: (value) => browserSessionId(value),
+  browserAgentSessionSpaceState: (workspace, sessionId, options) =>
+    browserAgentSessionSpaceState(
+      workspace as unknown as BrowserWorkspaceState | null | undefined,
+      sessionId,
+      options,
+    ) as unknown as ReturnType<
+      Parameters<typeof createAgentSessionLifecycle>[0]["browserAgentSessionSpaceState"]
+    >,
+  clearBrowserTabSpaceSuspendTimer: (tabSpace) =>
+    clearBrowserTabSpaceSuspendTimer(tabSpace as unknown as BrowserTabSpaceState),
+  browserTabSpaceTouch: (tabSpace) =>
+    browserTabSpaceTouch(tabSpace as unknown as BrowserTabSpaceState),
+  browserTabSpacePersistencePayload: (tabSpace) =>
+    browserTabSpacePersistencePayload(
+      tabSpace as unknown as BrowserTabSpaceState,
+    ),
+  closeBrowserTabRecord: (tab) =>
+    closeBrowserTabRecord(tab as unknown as BrowserTabRecord),
+  isVisibleAgentBrowserSession: (workspaceId, sessionId) =>
+    isVisibleAgentBrowserSession(workspaceId, sessionId),
+  fetchSessionRuntimeStatus: async (workspaceId, sessionId) => {
+    try {
+      const runtimeStates = await listRuntimeStates(workspaceId);
+      const record =
+        runtimeStates.items.find(
+          (item) => browserSessionId(item.session_id) === sessionId,
+        ) ?? null;
+      if (!record) {
+        return null;
+      }
+      return {
+        status: runtimeRecordEffectiveStatus(record),
+        lastTurnStatus: record.last_turn_status?.trim().toLowerCase() ?? "",
+      };
+    } catch {
+      return null;
+    }
+  },
+  createBrowserTab: (workspaceId, options) =>
+    createBrowserTab(workspaceId, options),
+  ensureBrowserTabSpaceInitialized: (workspaceId, space, sessionId) =>
+    ensureBrowserTabSpaceInitialized(workspaceId, space, sessionId),
+  emitBrowserState: (workspaceId, space) => emitBrowserState(workspaceId, space),
+  persistWorkspace: (workspaceId) => persistBrowserWorkspace(workspaceId),
+  homeUrl: HOME_URL,
+  newTabTitle: NEW_TAB_TITLE,
+  busyCheckMs: SESSION_BROWSER_BUSY_CHECK_MS,
+  warmTtlMs: SESSION_BROWSER_WARM_TTL_MS,
+  completedGraceMs: SESSION_BROWSER_COMPLETED_GRACE_MS,
+});
+const hydrateAgentSessionBrowserSpace =
+  agentSessionLifecycle.hydrateAgentSessionBrowserSpace;
+const suspendAgentSessionBrowserSpace =
+  agentSessionLifecycle.suspendAgentSessionBrowserSpace;
+const scheduleAgentSessionBrowserLifecycleCheck =
+  agentSessionLifecycle.scheduleAgentSessionBrowserLifecycleCheck;
+const touchAgentSessionBrowserSpace =
+  agentSessionLifecycle.touchAgentSessionBrowserSpace;
+const reconcileAgentSessionBrowserSpace =
+  agentSessionLifecycle.reconcileAgentSessionBrowserSpace;
 
-  const persistedTabs = [...tabSpace.persistedTabs];
-  const persistedActiveTabId = tabSpace.activeTabId;
-  tabSpace.persistedTabs = [];
-  tabSpace.lifecycleState = "active";
-  for (const persistedTab of persistedTabs) {
-    createBrowserTab(workspaceId, {
-      browserSpace: "agent",
-      sessionId: normalizedSessionId,
-      id: typeof persistedTab.id === "string" ? persistedTab.id : undefined,
-      url:
-        typeof persistedTab.url === "string" && persistedTab.url.trim()
-          ? persistedTab.url.trim()
-          : HOME_URL,
-      title:
-        typeof persistedTab.title === "string"
-          ? persistedTab.title
-          : NEW_TAB_TITLE,
-      faviconUrl:
-        typeof persistedTab.faviconUrl === "string"
-          ? persistedTab.faviconUrl
-          : undefined,
-      skipInitialHistoryRecord: true,
-    });
+// Browser-pane tab state — read+emit + lifecycle (createBrowserTab,
+// navigation, popup-as-tab, context-menu) + download-prompt helpers.
+const browserPaneTabState: BrowserPaneTabState = createBrowserPaneTabState({
+  getMainWindow: () => mainWindow,
+  getActiveWorkspaceId: () => activeBrowserWorkspaceId,
+  getActiveSpaceId: () => activeBrowserSpaceId,
+  getActiveSessionId: () => activeBrowserSessionId,
+  getAttachedView: () => attachedBrowserTabView,
+  setAttachedView: (view) => {
+    attachedBrowserTabView = view;
+  },
+  getBrowserBounds: () => browserBounds,
+  setBrowserBounds: (bounds) => {
+    browserBounds = bounds;
+  },
+  getWorkspace: (id) =>
+    browserWorkspaceFromMap(id) as unknown as ReturnType<
+      Parameters<typeof createBrowserPaneTabState>[0]["getWorkspace"]
+    >,
+  getWorkspaceOrEmpty: (id) =>
+    browserWorkspaceOrEmpty(id) as unknown as ReturnType<
+      Parameters<typeof createBrowserPaneTabState>[0]["getWorkspaceOrEmpty"]
+    >,
+  persistWorkspace: (id) => persistBrowserWorkspace(id),
+  browserSpaceId: (value) => browserSpaceId(value),
+  browserSessionId: (value) => browserSessionId(value),
+  browserTabSpaceState: (workspace, space, sessionId, options) =>
+    browserTabSpaceState(
+      workspace as unknown as BrowserWorkspaceState | null | undefined,
+      space,
+      sessionId,
+      options,
+    ) as unknown as ReturnType<
+      Parameters<typeof createBrowserPaneTabState>[0]["browserTabSpaceState"]
+    >,
+  browserTabSpaceTouch: (tabSpace) =>
+    browserTabSpaceTouch(tabSpace as unknown as BrowserTabSpaceState),
+  browserWorkspaceSnapshot: (workspaceId, space, sessionId, options) =>
+    browserWorkspaceSnapshot(workspaceId, space, sessionId, options),
+  emptyBrowserTabListPayload: (space) => emptyBrowserTabListPayload(space),
+  browserVisibleAgentSessionId: (workspace) =>
+    browserVisibleAgentSessionId(
+      workspace as unknown as BrowserWorkspaceState | null | undefined,
+    ),
+  createBrowserState: (state) => createBrowserState(state),
+  scheduleAgentSessionBrowserLifecycleCheck: (workspaceId, sessionId) =>
+    scheduleAgentSessionBrowserLifecycleCheck(workspaceId, sessionId),
+  setVisibleAgentBrowserSession: (workspace, sessionId) =>
+    setVisibleAgentBrowserSession(
+      workspace as unknown as BrowserWorkspaceState,
+      sessionId,
+    ),
+  seedVisibleAgentBrowserSession: (workspace, sessionId) =>
+    seedVisibleAgentBrowserSession(
+      workspace as unknown as BrowserWorkspaceState,
+      sessionId,
+    ),
+  shouldTrackHistoryUrl: (url) => shouldTrackHistoryUrl(url),
+  hasOpenHistoryPopup: () => browserPanePopups.hasOpenHistoryPopup(),
+  sendHistoryToPopup: (history) =>
+    browserPanePopups.sendHistoryToPopup(history),
+  reserveMainWindowClosedListenerBudget: (count) =>
+    reserveMainWindowClosedListenerBudget(count),
+  homeUrl: HOME_URL,
+  newTabTitle: NEW_TAB_TITLE,
+  duplicateBrowserPopupTabWindowMs: DUPLICATE_BROWSER_POPUP_TAB_WINDOW_MS,
+  shouldAllowBrowserPopupWindow: (url, frameName, features) =>
+    shouldAllowBrowserPopupWindow(url, frameName, features),
+  normalizeBrowserPopupFrameName: (frameName) =>
+    normalizeBrowserPopupFrameName(frameName),
+  isAbortedBrowserLoadError: (error) => isAbortedBrowserLoadError(error),
+  isAbortedBrowserLoadFailure: (errorCode, errorDescription) =>
+    isAbortedBrowserLoadFailure(errorCode, errorDescription),
+  openExternalUrlFromMain: (url, reason) =>
+    openExternalUrlFromMain(url, reason),
+  appendBrowserObservedError: (tab, entry) =>
+    appendBrowserObservedError(tab as unknown as BrowserTabRecord, entry),
+  isProgrammaticBrowserInput: (webContents) =>
+    isProgrammaticBrowserInput(webContents),
+  maybePromptBrowserInterrupt: (workspaceId, space, sessionId) =>
+    maybePromptBrowserInterrupt(workspaceId, space, sessionId),
+  sanitizeAttachmentName: (name) => sanitizeAttachmentName(name),
+  resolveWorkspaceDir: (id) => resolveWorkspaceDirSync(id),
+  preloadDir: __dirname,
+});
+const getActiveBrowserTab = browserPaneTabState.getActiveBrowserTab;
+const activeVisibleBrowserTarget = browserPaneTabState.activeVisibleBrowserTarget;
+const currentBrowserTabPageTitle = browserPaneTabState.currentBrowserTabPageTitle;
+const currentBrowserTabUrl = browserPaneTabState.currentBrowserTabUrl;
+const applyBoundsToTab = browserPaneTabState.applyBoundsToTab;
+const hasVisibleBrowserBounds = browserPaneTabState.hasVisibleBounds;
+const updateAttachedBrowserView = browserPaneTabState.updateAttachedBrowserView;
+const emitBrowserState = browserPaneTabState.emitBrowserState;
+const emitHistoryState = browserPaneTabState.emitHistoryState;
+const closeBrowserTabRecord = browserPaneTabState.closeBrowserTabRecord;
+const syncBrowserState = browserPaneTabState.syncBrowserState;
+const recordHistoryVisit = browserPaneTabState.recordHistoryVisit;
+const setBrowserBounds = browserPaneTabState.setBounds;
+const captureVisibleBrowserSnapshot = browserPaneTabState.captureVisibleSnapshot;
+const focusBrowserTabInSpace = browserPaneTabState.focusBrowserTabInSpace;
+const handleBrowserWindowOpenAsTab = browserPaneTabState.handleBrowserWindowOpenAsTab;
+const showBrowserViewContextMenu = browserPaneTabState.showBrowserViewContextMenu;
+const createBrowserTab = browserPaneTabState.createBrowserTab;
+const initialBrowserTabSeed = browserPaneTabState.initialBrowserTabSeed;
+const ensureBrowserTabSpaceInitialized =
+  browserPaneTabState.ensureBrowserTabSpaceInitialized;
+const queueBrowserDownloadPrompt = browserPaneTabState.queueBrowserDownloadPrompt;
+const consumeBrowserDownloadOverride =
+  browserPaneTabState.consumeBrowserDownloadOverride;
+const browserContextSuggestedFilename =
+  browserPaneTabState.browserContextSuggestedFilename;
+const browserPagePayload = browserPaneTabState.browserPagePayload;
+const setActiveBrowserTabInner = browserPaneTabState.setActiveBrowserTab;
+const closeBrowserTabInner = browserPaneTabState.closeBrowserTab;
+
+/** Wrap tab-state's navigateActiveBrowserTab with workspace materialization. */
+async function navigateActiveBrowserTab(
+  workspaceId: string,
+  targetUrl: string,
+  space: BrowserSpaceId = activeBrowserSpaceId,
+  sessionId?: string | null,
+): Promise<BrowserTabListPayload> {
+  await ensureBrowserWorkspace(workspaceId, space, sessionId);
+  if (space === "agent" && browserSessionId(sessionId)) {
+    touchAgentSessionBrowserSpace(workspaceId, sessionId);
   }
-  tabSpace.activeTabId = tabSpace.tabs.has(persistedActiveTabId)
-    ? persistedActiveTabId
-    : (Array.from(tabSpace.tabs.keys())[0] ?? "");
-  if (tabSpace.tabs.size === 0) {
-    ensureBrowserTabSpaceInitialized(workspaceId, "agent", normalizedSessionId);
-  }
-  browserTabSpaceTouch(tabSpace);
-  return tabSpace;
+  return browserPaneTabState.navigateActiveBrowserTab(
+    workspaceId,
+    targetUrl,
+    space,
+    sessionId,
+  );
 }
 
-function suspendAgentSessionBrowserSpace(
-  workspaceId: string,
-  sessionId?: string | null,
-): boolean {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const normalizedSessionId = browserSessionId(sessionId);
-  const tabSpace = browserAgentSessionSpaceState(workspace, normalizedSessionId);
-  if (!workspace || !tabSpace || !normalizedSessionId) {
-    return false;
-  }
-  clearBrowserTabSpaceSuspendTimer(tabSpace);
-  if (isVisibleAgentBrowserSession(workspaceId, normalizedSessionId)) {
-    return false;
-  }
-  if (tabSpace.lifecycleState === "suspended") {
-    return true;
-  }
-  const persisted = browserTabSpacePersistencePayload(tabSpace);
-  for (const tab of tabSpace.tabs.values()) {
-    closeBrowserTabRecord(tab);
-  }
-  tabSpace.tabs.clear();
-  tabSpace.activeTabId = persisted.activeTabId;
-  tabSpace.persistedTabs = persisted.tabs;
-  tabSpace.lifecycleState = "suspended";
-  emitBrowserState(workspaceId, "agent");
-  void persistBrowserWorkspace(workspaceId);
-  return true;
+/** Wrap tab-state's setActiveBrowserTab with workspace materialization. */
+async function setActiveBrowserTab(
+  tabId: string,
+  options: {
+    workspaceId?: string | null;
+    space?: BrowserSpaceId | null;
+    sessionId?: string | null;
+    useVisibleAgentSession?: boolean;
+  } = {},
+): Promise<BrowserTabListPayload> {
+  const browserSpace = browserSpaceId(options.space);
+  const normalizedSessionId =
+    browserSpace === "agent" ? browserSessionId(options.sessionId) : "";
+  await ensureBrowserWorkspace(options.workspaceId, browserSpace, normalizedSessionId);
+  return setActiveBrowserTabInner(tabId, options);
 }
 
-function scheduleAgentSessionBrowserLifecycleCheck(
-  workspaceId: string,
-  sessionId?: string | null,
-  delayMs = SESSION_BROWSER_BUSY_CHECK_MS,
-): void {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const normalizedSessionId = browserSessionId(sessionId);
-  const tabSpace = browserAgentSessionSpaceState(workspace, normalizedSessionId);
-  if (!tabSpace || !normalizedSessionId) {
-    return;
-  }
-  clearBrowserTabSpaceSuspendTimer(tabSpace);
-  tabSpace.suspendTimer = setTimeout(() => {
-    void reconcileAgentSessionBrowserSpace(workspaceId, normalizedSessionId);
-  }, Math.max(1_000, Math.round(delayMs)));
+/** Wrap tab-state's closeBrowserTab with workspace materialization. */
+async function closeBrowserTab(
+  tabId: string,
+  options: {
+    workspaceId?: string | null;
+    space?: BrowserSpaceId | null;
+    sessionId?: string | null;
+    useVisibleAgentSession?: boolean;
+  } = {},
+): Promise<BrowserTabListPayload> {
+  const browserSpace = browserSpaceId(options.space);
+  const normalizedSessionId =
+    browserSpace === "agent" ? browserSessionId(options.sessionId) : "";
+  await ensureBrowserWorkspace(options.workspaceId, browserSpace, normalizedSessionId);
+  return closeBrowserTabInner(tabId, options);
 }
 
-function touchAgentSessionBrowserSpace(
-  workspaceId: string,
-  sessionId?: string | null,
-): void {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const normalizedSessionId = browserSessionId(sessionId);
-  const tabSpace = browserAgentSessionSpaceState(workspace, normalizedSessionId);
-  if (!tabSpace || !normalizedSessionId) {
-    return;
-  }
-  tabSpace.lifecycleState = "active";
-  browserTabSpaceTouch(tabSpace);
-  scheduleAgentSessionBrowserLifecycleCheck(workspaceId, normalizedSessionId);
-}
-
-async function reconcileAgentSessionBrowserSpace(
-  workspaceId: string,
-  sessionId?: string | null,
-): Promise<void> {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const normalizedSessionId = browserSessionId(sessionId);
-  const tabSpace = browserAgentSessionSpaceState(workspace, normalizedSessionId);
-  if (!workspace || !tabSpace || !normalizedSessionId) {
-    return;
-  }
-  clearBrowserTabSpaceSuspendTimer(tabSpace);
-  if (isVisibleAgentBrowserSession(workspaceId, normalizedSessionId)) {
-    scheduleAgentSessionBrowserLifecycleCheck(
-      workspaceId,
-      normalizedSessionId,
-      SESSION_BROWSER_BUSY_CHECK_MS,
-    );
-    return;
-  }
-
-  let runtimeRecord: SessionRuntimeRecordPayload | null = null;
-  try {
-    const runtimeStates = await listRuntimeStates(workspaceId);
-    runtimeRecord =
-      runtimeStates.items.find(
-        (item) => browserSessionId(item.session_id) === normalizedSessionId,
-      ) ?? null;
-  } catch {
-    runtimeRecord = null;
-  }
-
-  const status = runtimeRecordEffectiveStatus(runtimeRecord);
-  const lastTurnStatus =
-    runtimeRecord?.last_turn_status?.trim().toLowerCase() ?? "";
-  const touchedAtMs = Date.parse(tabSpace.lastTouchedAt);
-  const ageMs = Number.isFinite(touchedAtMs)
-    ? Math.max(0, Date.now() - touchedAtMs)
-    : Number.MAX_SAFE_INTEGER;
-
-  if (status === "BUSY" || status === "QUEUED" || status === "PAUSING") {
-    scheduleAgentSessionBrowserLifecycleCheck(
-      workspaceId,
-      normalizedSessionId,
-      SESSION_BROWSER_BUSY_CHECK_MS,
-    );
-    return;
-  }
-
-  if (
-    (status === "WAITING_USER" || status === "PAUSED") &&
-    ageMs < SESSION_BROWSER_WARM_TTL_MS
-  ) {
-    scheduleAgentSessionBrowserLifecycleCheck(
-      workspaceId,
-      normalizedSessionId,
-      SESSION_BROWSER_WARM_TTL_MS - ageMs,
-    );
-    return;
-  }
-
-  if (
-    !(
-      status === "WAITING_USER" || status === "PAUSED"
-    ) &&
-    (status === "IDLE" ||
-      status === "ERROR" ||
-      !runtimeRecord ||
-      lastTurnStatus === "completed" ||
-      lastTurnStatus === "failed" ||
-      lastTurnStatus === "error") &&
-    ageMs < SESSION_BROWSER_COMPLETED_GRACE_MS
-  ) {
-    scheduleAgentSessionBrowserLifecycleCheck(
-      workspaceId,
-      normalizedSessionId,
-      SESSION_BROWSER_COMPLETED_GRACE_MS - ageMs,
-    );
-    return;
-  }
-
-  suspendAgentSessionBrowserSpace(workspaceId, normalizedSessionId);
-}
+// Renderer-→runtime browser HTTP service. The route handler lives in
+// browser-pane/http-service.ts; here we just wire deps. Server lifecycle
+// (start/stop, auth-token rotation, capability config sync) stays in
+// main.ts.
+const browserHttpService: BrowserHttpService = createBrowserHttpService({
+  getMainWindow: () => mainWindow,
+  getActiveWorkspaceId: () => activeBrowserWorkspaceId,
+  getAuthToken: () => desktopBrowserServiceAuthToken,
+  homeUrl: HOME_URL,
+  browserSpaceId: (value, fallback) => browserSpaceId(value, fallback),
+  ensureBrowserWorkspace: (workspaceId, space, sessionId) =>
+    ensureBrowserWorkspace(workspaceId, space, sessionId) as unknown as ReturnType<
+      Parameters<typeof createBrowserHttpService>[0]["ensureBrowserWorkspace"]
+    >,
+  ensureUserBrowserLock: (workspaceId, sessionId, reason) => {
+    const result = ensureUserBrowserLock(workspaceId, sessionId, reason);
+    return result.ok
+      ? { ok: true }
+      : { ok: false, lockHolderSessionId: result.lockHolderSessionId };
+  },
+  touchAgentSessionBrowserSpace: (workspaceId, sessionId) =>
+    touchAgentSessionBrowserSpace(workspaceId, sessionId),
+  browserWorkspaceSnapshot: (workspaceId, space, sessionId, options) =>
+    browserWorkspaceSnapshot(workspaceId, space, sessionId, options),
+  browserTabSpaceState: (workspace, space, sessionId, options) =>
+    browserTabSpaceState(
+      workspace as unknown as BrowserWorkspaceState | null | undefined,
+      space,
+      sessionId,
+      options,
+    ) as unknown as ReturnType<
+      Parameters<typeof createBrowserHttpService>[0]["browserTabSpaceState"]
+    >,
+  getActiveBrowserTab: (workspaceId, space, sessionId, options) =>
+    getActiveBrowserTab(workspaceId, space, sessionId, options) as unknown as ReturnType<
+      Parameters<typeof createBrowserHttpService>[0]["getActiveBrowserTab"]
+    >,
+  syncBrowserState: (workspaceId, tabId, space, sessionId) =>
+    syncBrowserState(workspaceId, tabId, space, sessionId),
+  navigateActiveBrowserTab: (workspaceId, targetUrl, space, sessionId) =>
+    navigateActiveBrowserTab(workspaceId, targetUrl, space, sessionId),
+  createBrowserTab: (workspaceId, options) =>
+    createBrowserTab(workspaceId, options),
+  setActiveBrowserTab: (tabId, options) => setActiveBrowserTab(tabId, options),
+  closeBrowserTab: (tabId, options) => closeBrowserTab(tabId, options),
+  updateAttachedBrowserView: () => updateAttachedBrowserView(),
+  emitBrowserState: (workspaceId, space) => emitBrowserState(workspaceId, space),
+  persistWorkspace: (workspaceId) => persistBrowserWorkspace(workspaceId),
+  emitWorkbenchOpenBrowser: (payload) => emitWorkbenchOpenBrowser(payload),
+  operatorSurfaceContextPayload: (workspaceId) =>
+    operatorSurfaceContextPayload(workspaceId),
+  browserPagePayload: (tab) =>
+    browserPagePayload(tab as unknown as BrowserTabRecord),
+  withProgrammaticBrowserInput: (webContents, callback) =>
+    withProgrammaticBrowserInput(webContents, callback),
+  sendBrowserKeyPress: (webContents, keyCode, modifiers) =>
+    sendBrowserKeyPress(webContents, keyCode, modifiers),
+  clearFocusedBrowserTextInput: (webContents) =>
+    clearFocusedBrowserTextInput(webContents),
+});
 
 const TEXT_FILE_EXTENSIONS = new Set([
   ".txt",
@@ -20314,61 +18812,7 @@ function shouldTrackHistoryUrl(rawUrl: string) {
   return shouldTrackHistoryUrlUtil(rawUrl);
 }
 
-async function recordHistoryVisit(
-  workspaceId: string,
-  entry: Pick<BrowserHistoryEntryPayload, "url" | "title" | "faviconUrl">,
-) {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const url = entry.url.trim();
-  if (!workspace || !shouldTrackHistoryUrl(url)) {
-    return;
-  }
-
-  const now = new Date().toISOString();
-  const existing = workspace.history.find((item) => item.url === url);
-
-  if (existing) {
-    workspace.history = workspace.history
-      .map((item) =>
-        item.id === existing.id
-          ? {
-              ...item,
-              title: entry.title?.trim() || item.title || url,
-              faviconUrl: entry.faviconUrl || item.faviconUrl,
-              visitCount: item.visitCount + 1,
-              lastVisitedAt: now,
-            }
-          : item,
-      )
-      .sort(
-        (a, b) =>
-          new Date(b.lastVisitedAt).getTime() -
-          new Date(a.lastVisitedAt).getTime(),
-      );
-  } else {
-    workspace.history = [
-      {
-        id: `history-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        url,
-        title: entry.title?.trim() || url,
-        faviconUrl: entry.faviconUrl,
-        visitCount: 1,
-        createdAt: now,
-        lastVisitedAt: now,
-      },
-      ...workspace.history,
-    ]
-      .sort(
-        (a, b) =>
-          new Date(b.lastVisitedAt).getTime() -
-          new Date(a.lastVisitedAt).getTime(),
-      )
-      .slice(0, 500);
-  }
-
-  emitHistoryState(workspaceId);
-  await persistBrowserWorkspace(workspaceId);
-}
+// recordHistoryVisit moved to browser-pane/tab-state.ts.
 
 function browserWorkspaceSnapshot(
   workspaceId?: string | null,
@@ -20428,47 +18872,13 @@ function browserWorkspaceSnapshot(
   };
 }
 
-function getActiveBrowserTab(
-  workspaceId?: string | null,
-  space?: BrowserSpaceId | null,
-  sessionId?: string | null,
-  options?: {
-    useVisibleAgentSession?: boolean;
-  },
-): BrowserTabRecord | null {
-  const browserSpace = browserSpaceId(space);
-  const workspace = browserWorkspaceOrEmpty(workspaceId);
-  const tabSpace = browserTabSpaceState(
-    workspace,
-    browserSpace,
-    sessionId,
-    options,
-  );
-  if (!tabSpace || !tabSpace.activeTabId) {
-    return null;
-  }
-  return tabSpace.tabs.get(tabSpace.activeTabId) ?? null;
-}
+// getActiveBrowserTab moved to browser-pane/tab-state.ts.
 
-function activeVisibleBrowserTarget(): {
-  workspaceId: string;
-  space: BrowserSpaceId;
-  sessionId: string | null;
-} {
-  return {
-    workspaceId: activeBrowserWorkspaceId,
-    space: activeBrowserSpaceId,
-    sessionId: activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-  };
-}
+// activeVisibleBrowserTarget moved to browser-pane/tab-state.ts.
 
-function currentBrowserTabPageTitle(tab: BrowserTabRecord): string {
-  return tab.view.webContents.getTitle() || tab.state.title || "";
-}
+// currentBrowserTabPageTitle moved to browser-pane/tab-state.ts.
 
-function currentBrowserTabUrl(tab: BrowserTabRecord): string {
-  return tab.view.webContents.getURL() || tab.state.url || "";
-}
+// currentBrowserTabUrl moved to browser-pane/tab-state.ts.
 
 function reserveMainWindowClosedListenerBudget(additionalClosedListeners = 0) {
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -20489,76 +18899,15 @@ function reserveMainWindowClosedListenerBudget(additionalClosedListeners = 0) {
   }
 }
 
-function applyBoundsToTab(
-  workspaceId: string,
-  tabId: string,
-  space: BrowserSpaceId = activeBrowserSpaceId,
-  sessionId?: string | null,
-) {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const tab = browserTabSpaceState(workspace, space, sessionId, {
-    useVisibleAgentSession: !browserSessionId(sessionId),
-  })?.tabs.get(tabId);
-  if (!tab) {
-    return;
-  }
-  tab.view.setBounds(browserBounds);
-}
+// applyBoundsToTab moved to browser-pane/tab-state.ts.
 
-function hasVisibleBrowserBounds() {
-  return browserBounds.width > 0 && browserBounds.height > 0;
-}
+// hasVisibleBrowserBounds moved to browser-pane/tab-state.ts.
 
-function emitBrowserState(
-  workspaceId?: string | null,
-  space?: BrowserSpaceId | null,
-) {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return;
-  }
-  const normalizedWorkspaceId =
-    typeof workspaceId === "string"
-      ? workspaceId.trim()
-      : activeBrowserWorkspaceId;
-  const browserSpace = browserSpaceId(space);
-  if (normalizedWorkspaceId !== activeBrowserWorkspaceId) {
-    return;
-  }
-  if (browserSpace !== activeBrowserSpaceId) {
-    return;
-  }
-  mainWindow.webContents.send(
-    "browser:state",
-    browserWorkspaceSnapshot(normalizedWorkspaceId, browserSpace, null, {
-      useVisibleAgentSession: true,
-    }),
-  );
-}
+// emitBrowserState moved to browser-pane/tab-state.ts.
 
-function emitHistoryState(workspaceId?: string | null) {
-  const normalizedWorkspaceId =
-    typeof workspaceId === "string"
-      ? workspaceId.trim()
-      : activeBrowserWorkspaceId;
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    if (!browserPanePopups.hasOpenHistoryPopup()) {
-      return;
-    }
-    return;
-  }
-  if (normalizedWorkspaceId !== activeBrowserWorkspaceId) {
-    return;
-  }
-  const workspace = browserWorkspaceOrEmpty(normalizedWorkspaceId);
-  const history = workspace?.history ?? [];
-  mainWindow.webContents.send("browser:history", history);
-  browserPanePopups.sendHistoryToPopup(history);
-}
+// emitHistoryState moved to browser-pane/tab-state.ts.
 
-function closeBrowserTabRecord(tab: BrowserTabRecord) {
-  tab.view.webContents.removeAllListeners();
-  void tab.view.webContents.close();
-}
+// closeBrowserTabRecord moved to browser-pane/tab-state.ts.
 
 function destroyBrowserWorkspace(workspaceId: string) {
   const workspace = browserWorkspaceFromMap(workspaceId);
@@ -20586,67 +18935,9 @@ function destroyBrowserWorkspace(workspaceId: string) {
   browserWorkspaces.delete(workspaceId);
 }
 
-function updateAttachedBrowserView() {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return;
-  }
-  const activeTab = getActiveBrowserTab(
-    activeBrowserWorkspaceId,
-    activeBrowserSpaceId,
-    null,
-    { useVisibleAgentSession: true },
-  );
-  if (!activeTab || !hasVisibleBrowserBounds()) {
-    if (attachedBrowserTabView) {
-      mainWindow.setBrowserView(null);
-      attachedBrowserTabView = null;
-    }
-    return;
-  }
-  if (attachedBrowserTabView !== activeTab.view) {
-    reserveMainWindowClosedListenerBudget(1);
-    mainWindow.setBrowserView(activeTab.view);
-    attachedBrowserTabView = activeTab.view;
-  }
-  applyBoundsToTab(
-    activeBrowserWorkspaceId,
-    activeTab.state.id,
-    activeBrowserSpaceId,
-    activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-  );
-}
+// updateAttachedBrowserView moved to browser-pane/tab-state.ts.
 
-function syncBrowserState(
-  workspaceId: string,
-  tabId: string,
-  space: BrowserSpaceId,
-  sessionId?: string | null,
-) {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const tabSpace = browserTabSpaceState(workspace, space, sessionId);
-  const tab = tabSpace?.tabs.get(tabId);
-  if (!workspace || !tab) {
-    return;
-  }
-  if (tabSpace) {
-    browserTabSpaceTouch(tabSpace);
-  }
-  if (space === "agent" && browserSessionId(sessionId)) {
-    scheduleAgentSessionBrowserLifecycleCheck(workspaceId, sessionId);
-  }
-
-  const viewContents = tab.view.webContents;
-  tab.state = {
-    ...tab.state,
-    url: viewContents.getURL() || tab.state.url,
-    title: viewContents.getTitle() || tab.state.title,
-    faviconUrl: tab.state.faviconUrl,
-    canGoBack: viewContents.navigationHistory.canGoBack(),
-    canGoForward: viewContents.navigationHistory.canGoForward(),
-  };
-  emitBrowserState(workspaceId, space);
-  void persistBrowserWorkspace(workspaceId);
-}
+// syncBrowserState moved to browser-pane/tab-state.ts.
 
 function normalizeBrowserPopupFrameName(frameName?: string | null): string {
   return normalizeBrowserPopupFrameNameUtil(frameName);
@@ -20659,770 +18950,23 @@ function isBrowserPopupWindowRequest(
   return isBrowserPopupWindowRequestUtil(frameName, features);
 }
 
-function focusBrowserTabInSpace(
-  workspaceId: string,
-  tabSpace: BrowserTabSpaceState,
-  tabId: string,
-  space: BrowserSpaceId,
-  sessionId?: string | null,
-) {
-  tabSpace.activeTabId = tabId;
-  browserTabSpaceTouch(tabSpace);
-  if (space === "agent" && browserSessionId(sessionId)) {
-    scheduleAgentSessionBrowserLifecycleCheck(workspaceId, sessionId);
-  }
-  if (workspaceId === activeBrowserWorkspaceId && space === activeBrowserSpaceId) {
-    updateAttachedBrowserView();
-  }
-  emitBrowserState(workspaceId, space);
-  void persistBrowserWorkspace(workspaceId);
-}
+// focusBrowserTabInSpace moved to browser-pane/tab-state.ts.
 
-function handleBrowserWindowOpenAsTab(
-  workspaceId: string,
-  targetUrl: string,
-  disposition: string,
-  frameName: string,
-  space: BrowserSpaceId,
-  sessionId?: string | null,
-) {
-  const normalizedUrl = targetUrl.trim();
-  if (!normalizedUrl) {
-    return;
-  }
+// handleBrowserWindowOpenAsTab moved to browser-pane/tab-state.ts.
 
-  try {
-    const parsed = new URL(normalizedUrl);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      openExternalUrlFromMain(normalizedUrl, "browser tab creation");
-      return;
-    }
-  } catch {
-    return;
-  }
+// browserContextSuggestedFilename moved to browser-pane/tab-state.ts.
 
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const tabSpace = browserTabSpaceState(workspace, space, sessionId, {
-    createIfMissing: true,
-  });
-  if (!workspace || !tabSpace) {
-    return;
-  }
+// queueBrowserDownloadPrompt moved to browser-pane/tab-state.ts.
 
-  const normalizedFrameName = normalizeBrowserPopupFrameName(frameName);
-  const now = Date.now();
-  const existingPopupTab = Array.from(tabSpace.tabs.entries()).find(
-    ([, tab]) =>
-      (normalizedFrameName && tab.popupFrameName === normalizedFrameName) ||
-      (!normalizedFrameName &&
-        tab.state.url === normalizedUrl &&
-        typeof tab.popupOpenedAtMs === "number" &&
-        now - tab.popupOpenedAtMs <= DUPLICATE_BROWSER_POPUP_TAB_WINDOW_MS),
-  );
+// consumeBrowserDownloadOverride moved to browser-pane/tab-state.ts.
 
-  if (existingPopupTab) {
-    const [existingTabId, existingTab] = existingPopupTab;
-    existingTab.popupFrameName =
-      normalizedFrameName || existingTab.popupFrameName;
-    existingTab.popupOpenedAtMs = now;
-    if (existingTab.state.url !== normalizedUrl) {
-      existingTab.state = { ...existingTab.state, error: "" };
-      void existingTab.view.webContents.loadURL(normalizedUrl).catch((error) => {
-        if (isAbortedBrowserLoadError(error)) {
-          return;
-        }
-        existingTab.state = {
-          ...existingTab.state,
-          loading: false,
-          error: error instanceof Error ? error.message : "Failed to load URL.",
-        };
-        emitBrowserState(workspaceId, space);
-        void persistBrowserWorkspace(workspaceId);
-      });
-    }
-    if (disposition !== "background-tab") {
-      focusBrowserTabInSpace(workspaceId, tabSpace, existingTabId, space, sessionId);
-    }
-    return;
-  }
+// showBrowserViewContextMenu moved to browser-pane/tab-state.ts.
 
-  const nextTabId = createBrowserTab(workspaceId, {
-    url: normalizedUrl,
-    browserSpace: space,
-    sessionId,
-    popupFrameName: normalizedFrameName,
-    popupOpenedAtMs: now,
-  });
-  if (!nextTabId) {
-    return;
-  }
+// createBrowserTab moved to browser-pane/tab-state.ts.
 
-  if (disposition !== "background-tab") {
-    focusBrowserTabInSpace(workspaceId, tabSpace, nextTabId, space, sessionId);
-    return;
-  }
+// initialBrowserTabSeed moved to browser-pane/tab-state.ts.
 
-  emitBrowserState(workspaceId, space);
-  void persistBrowserWorkspace(workspaceId);
-}
-
-function browserContextSuggestedFilename(context: ContextMenuParams): string {
-  return browserContextSuggestedFilenameUtil(context, sanitizeAttachmentName);
-}
-
-function queueBrowserDownloadPrompt(
-  workspaceId: string,
-  targetUrl: string,
-  options: {
-    defaultFilename: string;
-    dialogTitle: string;
-    buttonLabel: string;
-  },
-) {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  if (!workspace) {
-    return;
-  }
-  workspace.pendingDownloadOverrides.push({
-    url: targetUrl.trim(),
-    defaultPath: path.join(
-      resolveWorkspaceDirSync(workspaceId),
-      "Downloads",
-      sanitizeAttachmentName(options.defaultFilename),
-    ),
-    dialogTitle: options.dialogTitle,
-    buttonLabel: options.buttonLabel,
-  });
-}
-
-function consumeBrowserDownloadOverride(
-  workspace: BrowserWorkspaceState,
-  targetUrl: string,
-): BrowserDownloadOverride | null {
-  const normalizedTargetUrl = targetUrl.trim();
-  const overrideIndex = workspace.pendingDownloadOverrides.findIndex(
-    (override) => override.url === normalizedTargetUrl,
-  );
-  if (overrideIndex < 0) {
-    return null;
-  }
-  const [override] = workspace.pendingDownloadOverrides.splice(
-    overrideIndex,
-    1,
-  );
-  return override ?? null;
-}
-
-function showBrowserViewContextMenu(params: {
-  workspaceId: string;
-  space: BrowserSpaceId;
-  sessionId?: string | null;
-  view: BrowserView;
-  context: ContextMenuParams;
-}) {
-  const { workspaceId, space, sessionId, view, context } = params;
-  const template: MenuItemConstructorOptions[] = [];
-  const selectionText = context.selectionText.trim();
-  const linkUrl = context.linkURL.trim();
-  const canGoBack = view.webContents.navigationHistory.canGoBack();
-  const canGoForward = view.webContents.navigationHistory.canGoForward();
-  const popupX = browserBounds.x + context.x;
-  const popupY = browserBounds.y + context.y;
-  const imageUrl = context.srcURL.trim();
-
-  if (linkUrl) {
-    template.push(
-      {
-        label: "Open Link in New Tab",
-        click: () =>
-          handleBrowserWindowOpenAsTab(
-            workspaceId,
-            linkUrl,
-            "foreground-tab",
-            "",
-            space,
-            sessionId,
-          ),
-      },
-      {
-        label: "Open Link Externally",
-        click: () => {
-          openExternalUrlFromMain(linkUrl, "browser context menu");
-        },
-      },
-      {
-        label: "Copy Link Address",
-        click: () => {
-          clipboard.writeText(linkUrl);
-        },
-      },
-      { type: "separator" },
-    );
-  }
-
-  if (context.mediaType === "image" && imageUrl) {
-    template.push(
-      {
-        label: "Open Image in New Tab",
-        click: () =>
-          handleBrowserWindowOpenAsTab(
-            workspaceId,
-            imageUrl,
-            "foreground-tab",
-            "",
-            space,
-            sessionId,
-          ),
-      },
-      {
-        label: "Copy Image Address",
-        click: () => {
-          clipboard.writeText(imageUrl);
-        },
-      },
-      {
-        label: "Save Image As...",
-        click: () => {
-          queueBrowserDownloadPrompt(workspaceId, imageUrl, {
-            defaultFilename: browserContextSuggestedFilename(context),
-            dialogTitle: "Save Image As",
-            buttonLabel: "Save Image",
-          });
-          void view.webContents.downloadURL(imageUrl);
-        },
-      },
-      { type: "separator" },
-    );
-  }
-
-  if (context.isEditable) {
-    template.push(
-      { label: "Undo", role: "undo", enabled: context.editFlags.canUndo },
-      { label: "Redo", role: "redo", enabled: context.editFlags.canRedo },
-      { type: "separator" },
-      { label: "Cut", role: "cut", enabled: context.editFlags.canCut },
-      { label: "Copy", role: "copy", enabled: context.editFlags.canCopy },
-      { label: "Paste", role: "paste", enabled: context.editFlags.canPaste },
-      {
-        label: "Select All",
-        role: "selectAll",
-        enabled: context.editFlags.canSelectAll,
-      },
-    );
-  } else if (selectionText) {
-    template.push(
-      { label: "Copy", role: "copy", enabled: context.editFlags.canCopy },
-      {
-        label: "Select All",
-        role: "selectAll",
-        enabled: context.editFlags.canSelectAll,
-      },
-    );
-  } else {
-    template.push(
-      {
-        label: "Back",
-        enabled: canGoBack,
-        click: () => view.webContents.navigationHistory.goBack(),
-      },
-      {
-        label: "Forward",
-        enabled: canGoForward,
-        click: () => view.webContents.navigationHistory.goForward(),
-      },
-      {
-        label: "Reload",
-        click: () => view.webContents.reload(),
-      },
-      {
-        label: "Select All",
-        role: "selectAll",
-        enabled: context.editFlags.canSelectAll,
-      },
-    );
-  }
-
-  if (template.length === 0) {
-    return;
-  }
-
-  Menu.buildFromTemplate(template).popup({
-    window: mainWindow ?? undefined,
-    frame: context.frame ?? undefined,
-    x: popupX,
-    y: popupY,
-    sourceType: context.menuSourceType,
-  });
-}
-
-function createBrowserTab(
-  workspaceId: string,
-  options: {
-    browserSpace?: BrowserSpaceId;
-    sessionId?: string | null;
-    id?: string;
-    url?: string;
-    title?: string;
-    faviconUrl?: string;
-    popupFrameName?: string;
-    popupOpenedAtMs?: number;
-    skipInitialHistoryRecord?: boolean;
-  } = {},
-) {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const browserSpace = browserSpaceId(options.browserSpace);
-  const normalizedSessionId = browserSessionId(options.sessionId);
-  const tabSpace = browserTabSpaceState(
-    workspace,
-    browserSpace,
-    normalizedSessionId,
-    {
-      createIfMissing: Boolean(normalizedSessionId),
-    },
-  );
-  if (!mainWindow || !workspace || !tabSpace) {
-    return null;
-  }
-  tabSpace.lifecycleState = "active";
-  browserTabSpaceTouch(tabSpace);
-
-  const tabId =
-    options.id?.trim() ||
-    `tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const initialUrl = options.url?.trim() || "";
-  const hasInitialUrl = initialUrl.length > 0;
-  let suppressNextHistoryEntry = Boolean(options.skipInitialHistoryRecord);
-  const view = new BrowserView({
-    webPreferences: {
-      session: workspace.session,
-      sandbox: false,
-      nodeIntegration: false,
-      contextIsolation: true,
-    },
-  });
-  view.webContents.setUserAgent(workspace.browserIdentity.userAgent);
-  const state = createBrowserState({
-    id: tabId,
-    url: initialUrl,
-    title: options.title || NEW_TAB_TITLE,
-    faviconUrl: options.faviconUrl,
-    initialized: !hasInitialUrl,
-  });
-  tabSpace.tabs.set(tabId, {
-    view,
-    state,
-    popupFrameName: options.popupFrameName?.trim() || undefined,
-    popupOpenedAtMs:
-      typeof options.popupOpenedAtMs === "number" ? options.popupOpenedAtMs : undefined,
-    consoleEntries: [],
-    errorEntries: [],
-    requests: new Map<string, BrowserRequestRecord>(),
-    requestOrder: [],
-  });
-
-  view.setBounds(browserBounds);
-  view.setAutoResize({
-    width: false,
-    height: false,
-    horizontal: false,
-    vertical: false,
-  });
-  view.webContents.setWindowOpenHandler(
-    ({ url, disposition, frameName, features }) => {
-      const normalizedUrl = url.trim();
-      if (!normalizedUrl) {
-        return { action: "deny" };
-      }
-
-      if (shouldAllowBrowserPopupWindow(normalizedUrl, frameName, features)) {
-        return {
-          action: "allow",
-          overrideBrowserWindowOptions: {
-            parent: mainWindow ?? undefined,
-            autoHideMenuBar: true,
-            backgroundColor: "#050907",
-            width: 520,
-            height: 760,
-            minWidth: 420,
-            minHeight: 620,
-            webPreferences: {
-              session: workspace.session,
-              preload: path.join(__dirname, "browserPopupPreload.cjs"),
-            },
-          },
-        };
-      }
-
-      try {
-        const parsed = new URL(normalizedUrl);
-        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-          openExternalUrlFromMain(normalizedUrl, "browser window open");
-          return { action: "deny" };
-        }
-      } catch {
-        return { action: "deny" };
-      }
-
-      const shouldOpenAsTab =
-        disposition === "foreground-tab" ||
-        disposition === "background-tab" ||
-        disposition === "new-window";
-      if (shouldOpenAsTab) {
-        handleBrowserWindowOpenAsTab(
-          workspaceId,
-          normalizedUrl,
-          disposition,
-          frameName,
-          browserSpace,
-          normalizedSessionId,
-        );
-      }
-      return { action: "deny" };
-    },
-  );
-  view.webContents.setZoomFactor(1);
-  view.webContents.setVisualZoomLevelLimits(1, 1).catch(() => undefined);
-
-  const currentTabRecord = () =>
-    browserTabSpaceState(
-      browserWorkspaceFromMap(workspaceId),
-      browserSpace,
-      normalizedSessionId,
-    )?.tabs.get(tabId);
-
-  view.webContents.on("console-message", ({ level, message, lineNumber, sourceId, frame }) => {
-    const currentTab = currentTabRecord();
-    if (!currentTab) {
-      return;
-    }
-    const consoleLevel = browserConsoleLevelValue(level);
-    const entry: BrowserConsoleEntry = {
-      id: randomUUID(),
-      level: consoleLevel,
-      message: typeof message === "string" ? message : String(message ?? ""),
-      sourceId: typeof sourceId === "string" ? sourceId : "",
-      lineNumber:
-        typeof lineNumber === "number" && Number.isFinite(lineNumber)
-          ? Math.floor(lineNumber)
-          : null,
-      timestamp: new Date().toISOString(),
-      frameUrl:
-        frame && typeof frame.url === "string" ? frame.url : "",
-    };
-    appendBoundedEntry(
-      currentTab.consoleEntries,
-      entry,
-      BROWSER_OBSERVABILITY_ENTRY_LIMIT,
-    );
-    if (consoleLevel === "warning" || consoleLevel === "error") {
-      appendBrowserObservedError(currentTab, {
-        id: `runtime-console-${entry.id}`,
-        source: "runtime",
-        kind: "console_message",
-        level: consoleLevel,
-        message: entry.message,
-        timestamp: entry.timestamp,
-        url: currentBrowserTabUrl(currentTab),
-        ...(entry.lineNumber !== null ? { lineNumber: entry.lineNumber } : {}),
-        ...(entry.sourceId ? { sourceId: entry.sourceId } : {}),
-      });
-    }
-  });
-
-  view.webContents.on("before-input-event", (event, input) => {
-    if (isProgrammaticBrowserInput(view.webContents)) {
-      return;
-    }
-    if (
-      (input.type === "keyDown" ||
-        input.type === "keyUp" ||
-        input.type === "char" ||
-        input.type === "rawKeyDown") &&
-      maybePromptBrowserInterrupt(
-        workspaceId,
-        browserSpace,
-        normalizedSessionId,
-      )
-    ) {
-      event.preventDefault();
-    }
-  });
-
-  view.webContents.on("before-mouse-event", (event, mouse) => {
-    if (isProgrammaticBrowserInput(view.webContents)) {
-      return;
-    }
-    if (
-      mouse.type !== "mouseMove" &&
-      mouse.type !== "mouseEnter" &&
-      mouse.type !== "mouseLeave" &&
-      maybePromptBrowserInterrupt(
-        workspaceId,
-        browserSpace,
-        normalizedSessionId,
-      )
-    ) {
-      event.preventDefault();
-    }
-  });
-
-  view.webContents.on("dom-ready", () => {
-    const currentTab = currentTabRecord();
-    if (!currentTab) {
-      return;
-    }
-    currentTab.state = { ...currentTab.state, initialized: true, error: "" };
-    syncBrowserState(workspaceId, tabId, browserSpace, normalizedSessionId);
-  });
-
-  view.webContents.on("did-start-loading", () => {
-    const currentTab = currentTabRecord();
-    if (!currentTab) {
-      return;
-    }
-    currentTab.state = { ...currentTab.state, loading: true, error: "" };
-    syncBrowserState(workspaceId, tabId, browserSpace, normalizedSessionId);
-  });
-
-  view.webContents.on("did-stop-loading", () => {
-    const currentTab = currentTabRecord();
-    if (!currentTab) {
-      return;
-    }
-    currentTab.state = { ...currentTab.state, loading: false, error: "" };
-    syncBrowserState(workspaceId, tabId, browserSpace, normalizedSessionId);
-    if (suppressNextHistoryEntry) {
-      suppressNextHistoryEntry = false;
-      return;
-    }
-    void recordHistoryVisit(workspaceId, {
-      url: currentTab.view.webContents.getURL() || currentTab.state.url,
-      title: currentTab.view.webContents.getTitle() || currentTab.state.title,
-      faviconUrl: currentTab.state.faviconUrl,
-    });
-  });
-
-  view.webContents.on("page-title-updated", () => {
-    syncBrowserState(workspaceId, tabId, browserSpace, normalizedSessionId);
-  });
-
-  view.webContents.on("page-favicon-updated", (_event, favicons) => {
-    const currentTab = currentTabRecord();
-    if (!currentTab) {
-      return;
-    }
-    currentTab.state = {
-      ...currentTab.state,
-      faviconUrl: favicons[0] || currentTab.state.faviconUrl,
-    };
-    emitBrowserState(workspaceId, browserSpace);
-    void persistBrowserWorkspace(workspaceId);
-  });
-
-  view.webContents.on("did-navigate", () => {
-    syncBrowserState(workspaceId, tabId, browserSpace, normalizedSessionId);
-  });
-
-  view.webContents.on("did-navigate-in-page", () => {
-    syncBrowserState(workspaceId, tabId, browserSpace, normalizedSessionId);
-  });
-
-  view.webContents.on("context-menu", (_event, params) => {
-    showBrowserViewContextMenu({
-      workspaceId,
-      space: browserSpace,
-      sessionId: normalizedSessionId,
-      view,
-      context: params,
-    });
-  });
-
-  view.webContents.on(
-    "did-fail-load",
-    (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-      if (
-        !isMainFrame ||
-        isAbortedBrowserLoadFailure(errorCode, errorDescription)
-      ) {
-        return;
-      }
-      const currentTab = currentTabRecord();
-      if (!currentTab) {
-        return;
-      }
-      currentTab.state = {
-        ...currentTab.state,
-        loading: false,
-        error: `${errorDescription} (${errorCode})`,
-        url: validatedURL || currentTab.state.url,
-      };
-      appendBrowserObservedError(currentTab, {
-        id: `page-load-${randomUUID()}`,
-        source: "page",
-        kind: "load_failed",
-        level: "error",
-        message: errorDescription || "Page load failed.",
-        timestamp: new Date().toISOString(),
-        url: validatedURL || currentTab.state.url || currentBrowserTabUrl(currentTab),
-        errorCode,
-      });
-      emitBrowserState(workspaceId, browserSpace);
-      void persistBrowserWorkspace(workspaceId);
-    },
-  );
-
-  view.webContents.on("render-process-gone", (_event, details) => {
-    const currentTab = currentTabRecord();
-    if (!currentTab) {
-      return;
-    }
-    const reason = typeof details.reason === "string" ? details.reason : "gone";
-    const exitCode =
-      typeof details.exitCode === "number" && Number.isFinite(details.exitCode)
-        ? details.exitCode
-        : null;
-    const message =
-      exitCode !== null
-        ? `Browser render process exited: ${reason} (${exitCode})`
-        : `Browser render process exited: ${reason}`;
-    currentTab.state = {
-      ...currentTab.state,
-      loading: false,
-      error: message,
-    };
-    appendBrowserObservedError(currentTab, {
-      id: `runtime-render-${randomUUID()}`,
-      source: "runtime",
-      kind: "render_process_gone",
-      level: "error",
-      message,
-      timestamp: new Date().toISOString(),
-      url: currentBrowserTabUrl(currentTab),
-    });
-    emitBrowserState(workspaceId, browserSpace);
-    void persistBrowserWorkspace(workspaceId);
-  });
-
-  if (hasInitialUrl) {
-    void view.webContents.loadURL(initialUrl).catch((error) => {
-      if (isAbortedBrowserLoadError(error)) {
-        return;
-      }
-      const currentTab = currentTabRecord();
-      if (!currentTab) {
-        return;
-      }
-      currentTab.state = {
-        ...currentTab.state,
-        loading: false,
-        error: error instanceof Error ? error.message : "Failed to load page.",
-      };
-      emitBrowserState(workspaceId, browserSpace);
-      void persistBrowserWorkspace(workspaceId);
-    });
-  }
-
-  if (browserSpace === "agent" && normalizedSessionId) {
-    scheduleAgentSessionBrowserLifecycleCheck(workspaceId, normalizedSessionId);
-  }
-
-  return tabId;
-}
-
-function initialBrowserTabSeed(
-  workspaceId: string,
-  space: BrowserSpaceId,
-  sessionId?: string | null,
-): {
-  url: string;
-  title?: string;
-  faviconUrl?: string;
-  skipInitialHistoryRecord: boolean;
-} {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const sourceSpaceId = oppositeBrowserSpaceId(space);
-  const sourceSessionId =
-    sourceSpaceId === "agent" ? browserSessionId(sessionId) : "";
-  const sourceSpace = browserTabSpaceState(
-    workspace,
-    sourceSpaceId,
-    sourceSessionId,
-    {
-      useVisibleAgentSession: sourceSpaceId === "agent" && !sourceSessionId,
-    },
-  );
-  const sourceTab =
-    (sourceSpace?.activeTabId
-      ? sourceSpace.tabs.get(sourceSpace.activeTabId)
-      : null) ??
-    (sourceSpace ? Array.from(sourceSpace.tabs.values())[0] ?? null : null);
-  const sourceState =
-    sourceTab?.state ??
-    (sourceSpace?.activeTabId
-      ? browserTabSpaceStates(sourceSpace).find(
-          (state) => state.id === sourceSpace.activeTabId,
-        ) ?? null
-      : browserTabSpaceStates(sourceSpace)[0] ?? null);
-  if (!sourceState) {
-    return {
-      url: HOME_URL,
-      title: NEW_TAB_TITLE,
-      skipInitialHistoryRecord: false,
-    };
-  }
-
-  return {
-    url:
-      sourceTab?.view.webContents.getURL() ||
-      sourceState.url ||
-      HOME_URL,
-    title:
-      sourceTab?.view.webContents.getTitle() ||
-      sourceState.title ||
-      NEW_TAB_TITLE,
-    faviconUrl: sourceState.faviconUrl,
-    // Mirrored first-tab seeding should not create duplicate history entries.
-    skipInitialHistoryRecord: true,
-  };
-}
-
-function ensureBrowserTabSpaceInitialized(
-  workspaceId: string,
-  space: BrowserSpaceId,
-  sessionId?: string | null,
-): boolean {
-  const workspace = browserWorkspaceFromMap(workspaceId);
-  const normalizedSessionId = browserSessionId(sessionId);
-  const tabSpace = browserTabSpaceState(
-    workspace,
-    space,
-    normalizedSessionId,
-    {
-      createIfMissing: Boolean(normalizedSessionId),
-      useVisibleAgentSession: !normalizedSessionId,
-    },
-  );
-  if (
-    !workspace ||
-    !tabSpace ||
-    tabSpace.tabs.size > 0 ||
-    tabSpace.persistedTabs.length > 0
-  ) {
-    return false;
-  }
-
-  const seed = initialBrowserTabSeed(workspaceId, space, normalizedSessionId);
-  const initialTabId = createBrowserTab(workspaceId, {
-    ...seed,
-    browserSpace: space,
-    sessionId: normalizedSessionId,
-  });
-  tabSpace.activeTabId = initialTabId ?? "";
-  if (space === "agent" && normalizedSessionId) {
-    seedVisibleAgentBrowserSession(workspace, normalizedSessionId);
-  }
-  return true;
-}
+// ensureBrowserTabSpaceInitialized moved to browser-pane/tab-state.ts.
 
 async function ensureBrowserWorkspace(
   workspaceId?: string | null,
@@ -21661,189 +19205,13 @@ async function setActiveBrowserWorkspace(
   );
 }
 
-async function setActiveBrowserTab(
-  tabId: string,
-  options: {
-    workspaceId?: string | null;
-    space?: BrowserSpaceId | null;
-    sessionId?: string | null;
-    useVisibleAgentSession?: boolean;
-  } = {},
-) {
-  const browserSpace = browserSpaceId(options.space);
-  const normalizedSessionId =
-    browserSpace === "agent" ? browserSessionId(options.sessionId) : "";
-  const useVisibleAgentSession =
-    browserSpace === "agent"
-      ? options.useVisibleAgentSession ?? !normalizedSessionId
-      : false;
-  const workspace = await ensureBrowserWorkspace(
-    options.workspaceId,
-    browserSpace,
-    normalizedSessionId,
-  );
-  const tabSpace = browserTabSpaceState(workspace, browserSpace, normalizedSessionId, {
-    useVisibleAgentSession,
-  });
-  if (!workspace || !tabSpace || !tabSpace.tabs.has(tabId)) {
-    return browserWorkspaceSnapshot(
-      workspace?.workspaceId ?? options.workspaceId,
-      browserSpace,
-      normalizedSessionId,
-      { useVisibleAgentSession },
-    );
-  }
+// setActiveBrowserTab moved to browser-pane/tab-state.ts.
 
-  tabSpace.activeTabId = tabId;
-  browserTabSpaceTouch(tabSpace);
-  if (browserSpace === "agent" && normalizedSessionId) {
-    setVisibleAgentBrowserSession(workspace, normalizedSessionId);
-    scheduleAgentSessionBrowserLifecycleCheck(workspace.workspaceId, normalizedSessionId);
-  } else if (browserSpace === "agent" && useVisibleAgentSession) {
-    const visibleSessionId = browserVisibleAgentSessionId(workspace);
-    if (visibleSessionId) {
-      scheduleAgentSessionBrowserLifecycleCheck(workspace.workspaceId, visibleSessionId);
-    }
-  }
-  if (
-    workspace.workspaceId === activeBrowserWorkspaceId &&
-    browserSpace === activeBrowserSpaceId
-  ) {
-    updateAttachedBrowserView();
-  }
-  emitBrowserState(workspace.workspaceId, browserSpace);
-  await persistBrowserWorkspace(workspace.workspaceId);
-  return browserWorkspaceSnapshot(
-    workspace.workspaceId,
-    browserSpace,
-    normalizedSessionId,
-    { useVisibleAgentSession },
-  );
-}
+// closeBrowserTab moved to browser-pane/tab-state.ts.
 
-async function closeBrowserTab(
-  tabId: string,
-  options: {
-    workspaceId?: string | null;
-    space?: BrowserSpaceId | null;
-    sessionId?: string | null;
-    useVisibleAgentSession?: boolean;
-  } = {},
-) {
-  const browserSpace = browserSpaceId(options.space);
-  const normalizedSessionId =
-    browserSpace === "agent" ? browserSessionId(options.sessionId) : "";
-  const useVisibleAgentSession =
-    browserSpace === "agent"
-      ? options.useVisibleAgentSession ?? !normalizedSessionId
-      : false;
-  const workspace = await ensureBrowserWorkspace(
-    options.workspaceId,
-    browserSpace,
-    normalizedSessionId,
-  );
-  const tabSpace = browserTabSpaceState(workspace, browserSpace, normalizedSessionId, {
-    useVisibleAgentSession,
-  });
-  const tab = tabSpace?.tabs.get(tabId);
-  if (!workspace || !tabSpace || !tab) {
-    return browserWorkspaceSnapshot(
-      workspace?.workspaceId ?? options.workspaceId,
-      browserSpace,
-      normalizedSessionId,
-      { useVisibleAgentSession },
-    );
-  }
-  const resolvedSessionId =
-    browserSpace === "agent" &&
-    !normalizedSessionId &&
-    useVisibleAgentSession &&
-    workspace
-      ? browserVisibleAgentSessionId(workspace)
-      : normalizedSessionId;
+// setBrowserBounds moved to browser-pane/tab-state.ts.
 
-  const tabIds = Array.from(tabSpace.tabs.keys());
-  const closedIndex = tabIds.indexOf(tabId);
-  tabSpace.tabs.delete(tabId);
-  closeBrowserTabRecord(tab);
-  browserTabSpaceTouch(tabSpace);
-
-  if (tabSpace.tabs.size === 0) {
-    const replacementTabId = createBrowserTab(workspace.workspaceId, {
-      url: HOME_URL,
-      browserSpace,
-      sessionId: resolvedSessionId,
-    });
-    tabSpace.activeTabId = replacementTabId ?? "";
-  } else if (tabSpace.activeTabId === tabId) {
-    const remainingIds = Array.from(tabSpace.tabs.keys());
-    tabSpace.activeTabId =
-      remainingIds[Math.max(0, closedIndex - 1)] ?? remainingIds[0] ?? "";
-  }
-
-  if (
-    workspace.workspaceId === activeBrowserWorkspaceId &&
-    browserSpace === activeBrowserSpaceId
-  ) {
-    updateAttachedBrowserView();
-  }
-  if (browserSpace === "agent" && normalizedSessionId) {
-    scheduleAgentSessionBrowserLifecycleCheck(workspace.workspaceId, normalizedSessionId);
-  } else if (browserSpace === "agent" && useVisibleAgentSession) {
-    const visibleSessionId = browserVisibleAgentSessionId(workspace);
-    if (visibleSessionId) {
-      scheduleAgentSessionBrowserLifecycleCheck(workspace.workspaceId, visibleSessionId);
-    }
-  }
-  emitBrowserState(workspace.workspaceId, browserSpace);
-  await persistBrowserWorkspace(workspace.workspaceId);
-  return browserWorkspaceSnapshot(
-    workspace.workspaceId,
-    browserSpace,
-    normalizedSessionId,
-    { useVisibleAgentSession },
-  );
-}
-
-function setBrowserBounds(bounds: BrowserBoundsPayload) {
-  browserBounds = {
-    x: Math.max(0, Math.round(bounds.x)),
-    y: Math.max(0, Math.round(bounds.y)),
-    width: Math.max(0, Math.round(bounds.width)),
-    height: Math.max(0, Math.round(bounds.height)),
-  };
-
-  const activeTab = getActiveBrowserTab(
-    activeBrowserWorkspaceId,
-    activeBrowserSpaceId,
-    activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-    { useVisibleAgentSession: true },
-  );
-  if (!activeTab || !hasVisibleBrowserBounds()) {
-    mainWindow?.setBrowserView(null);
-    attachedBrowserTabView = null;
-    return;
-  }
-  updateAttachedBrowserView();
-}
-
-async function captureVisibleBrowserSnapshot(): Promise<BrowserVisibleSnapshotPayload | null> {
-  const activeTab = getActiveBrowserTab(
-    activeBrowserWorkspaceId,
-    activeBrowserSpaceId,
-    activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-    { useVisibleAgentSession: true },
-  );
-  if (!activeTab || !hasVisibleBrowserBounds()) {
-    return null;
-  }
-
-  const image = await activeTab.view.webContents.capturePage();
-  return {
-    bounds: { ...browserBounds },
-    dataUrl: `data:image/png;base64,${image.toPNG().toString("base64")}`,
-  };
-}
+// captureVisibleBrowserSnapshot moved to browser-pane/tab-state.ts.
 
 function ensureAuthPopupWindow() {
   if (authPopupWindow && !authPopupWindow.isDestroyed()) {
@@ -23853,696 +21221,64 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, targetPath: string) => revealDiagnosticsBundle(targetPath),
   );
-  ipcMain.handle(
-    "browser:setActiveWorkspace",
-    async (
-      _event,
-      workspaceId?: string | null,
-      space?: BrowserSpaceId | null,
-      sessionId?: string | null,
-    ) => {
-      return setActiveBrowserWorkspace(workspaceId, space, sessionId);
-    },
-  );
-  ipcMain.handle("browser:getState", async () => {
-    await ensureBrowserWorkspace(
-      undefined,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-    );
-    return browserWorkspaceSnapshot(
-      undefined,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-      { useVisibleAgentSession: true },
-    );
+  installBrowserPaneIpcHandlers({
+    ipcMain,
+    getMainWindow: () => mainWindow,
+    getActiveWorkspaceId: () => activeBrowserWorkspaceId,
+    getActiveSpaceId: () => activeBrowserSpaceId,
+    getActiveSessionId: () => activeBrowserSessionId,
+    ensureBrowserWorkspace: (workspaceId, space, sessionId) =>
+      ensureBrowserWorkspace(workspaceId, space, sessionId) as unknown as ReturnType<
+        Parameters<typeof installBrowserPaneIpcHandlers>[0]["ensureBrowserWorkspace"]
+      >,
+    setActiveBrowserWorkspace: (workspaceId, space, sessionId) =>
+      setActiveBrowserWorkspace(workspaceId, space, sessionId),
+    browserWorkspaceSnapshot: (workspaceId, space, sessionId, options) =>
+      browserWorkspaceSnapshot(workspaceId, space, sessionId, options),
+    emptyBrowserTabListPayload: (space) => emptyBrowserTabListPayload(space),
+    browserTabSpaceState: (workspace, space, sessionId, options) =>
+      browserTabSpaceState(
+        workspace as unknown as BrowserWorkspaceState | null | undefined,
+        space,
+        sessionId,
+        options,
+      ) as unknown as ReturnType<
+        Parameters<typeof installBrowserPaneIpcHandlers>[0]["browserTabSpaceState"]
+      >,
+    setBrowserBounds: (bounds) => setBrowserBounds(bounds),
+    captureVisibleBrowserSnapshot: () => captureVisibleBrowserSnapshot(),
+    navigateActiveBrowserTab: (workspaceId, targetUrl, space, sessionId) =>
+      navigateActiveBrowserTab(workspaceId, targetUrl, space, sessionId),
+    getActiveBrowserTab: (workspaceId, space, sessionId, options) =>
+      getActiveBrowserTab(workspaceId, space, sessionId, options) as unknown as ReturnType<
+        Parameters<typeof installBrowserPaneIpcHandlers>[0]["getActiveBrowserTab"]
+      >,
+    activeVisibleBrowserTarget: () => activeVisibleBrowserTarget(),
+    currentBrowserTabPageTitle: (tab) => currentBrowserTabPageTitle(tab as unknown as BrowserTabRecord),
+    currentBrowserTabUrl: (tab) => currentBrowserTabUrl(tab as unknown as BrowserTabRecord),
+    createBrowserTab: (workspaceId, options) =>
+      createBrowserTab(workspaceId, options),
+    setActiveBrowserTab: (tabId, options) => setActiveBrowserTab(tabId, options),
+    closeBrowserTab: (tabId, options) => closeBrowserTab(tabId, options),
+    setVisibleAgentBrowserSession: (workspace, sessionId) =>
+      setVisibleAgentBrowserSession(
+        workspace as unknown as BrowserWorkspaceState,
+        sessionId,
+      ),
+    updateAttachedBrowserView: () => updateAttachedBrowserView(),
+    emitBrowserState: (workspaceId, space) => emitBrowserState(workspaceId, space),
+    persistWorkspace: (workspaceId) => persistBrowserWorkspace(workspaceId),
+    maybePromptBrowserInterrupt: (workspaceId, space, sessionId) =>
+      maybePromptBrowserInterrupt(workspaceId, space, sessionId),
+    emitBookmarksState: (workspaceId) => emitBookmarksState(workspaceId),
+    emitDownloadsState: (workspaceId) => emitDownloadsState(workspaceId),
+    emitHistoryState: (workspaceId) => emitHistoryState(workspaceId),
+    popups: browserPanePopups,
+    importChromeProfileIntoWorkspace: (workspaceId) =>
+      importChromeProfileIntoWorkspace(workspaceId),
+    isAbortedBrowserLoadError: (error) => isAbortedBrowserLoadError(error),
   });
-  ipcMain.handle(
-    "browser:setBounds",
-    async (_event, bounds: BrowserBoundsPayload) => {
-      setBrowserBounds(bounds);
-      return browserWorkspaceSnapshot(
-        undefined,
-        activeBrowserSpaceId,
-        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-        { useVisibleAgentSession: true },
-      );
-    },
-  );
-  ipcMain.handle("browser:captureVisibleSnapshot", async () => {
-    return captureVisibleBrowserSnapshot();
-  });
-  ipcMain.handle("browser:navigate", async (_event, targetUrl: string) => {
-    if (!activeBrowserWorkspaceId) {
-      return emptyBrowserTabListPayload(activeBrowserSpaceId);
-    }
-    if (
-      maybePromptBrowserInterrupt(
-        activeBrowserWorkspaceId,
-        activeBrowserSpaceId,
-        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-      )
-    ) {
-      return browserWorkspaceSnapshot(
-        activeBrowserWorkspaceId,
-        activeBrowserSpaceId,
-        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-        { useVisibleAgentSession: true },
-      );
-    }
-    return navigateActiveBrowserTab(
-      activeBrowserWorkspaceId,
-      targetUrl,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-    );
-  });
-  ipcMain.handle("browser:back", async () => {
-    if (
-      activeBrowserWorkspaceId &&
-      maybePromptBrowserInterrupt(
-        activeBrowserWorkspaceId,
-        activeBrowserSpaceId,
-        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-      )
-    ) {
-      return browserWorkspaceSnapshot(
-        activeBrowserWorkspaceId,
-        activeBrowserSpaceId,
-        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-        { useVisibleAgentSession: true },
-      );
-    }
-    await ensureBrowserWorkspace(
-      undefined,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-    );
-    const activeTab = getActiveBrowserTab(
-      undefined,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-      { useVisibleAgentSession: true },
-    );
-    if (activeTab?.view.webContents.navigationHistory.canGoBack()) {
-      activeTab.view.webContents.navigationHistory.goBack();
-    }
-    return browserWorkspaceSnapshot(
-      undefined,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-      { useVisibleAgentSession: true },
-    );
-  });
-  ipcMain.handle("browser:forward", async () => {
-    if (
-      activeBrowserWorkspaceId &&
-      maybePromptBrowserInterrupt(
-        activeBrowserWorkspaceId,
-        activeBrowserSpaceId,
-        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-      )
-    ) {
-      return browserWorkspaceSnapshot(
-        activeBrowserWorkspaceId,
-        activeBrowserSpaceId,
-        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-        { useVisibleAgentSession: true },
-      );
-    }
-    await ensureBrowserWorkspace(
-      undefined,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-    );
-    const activeTab = getActiveBrowserTab(
-      undefined,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-      { useVisibleAgentSession: true },
-    );
-    if (activeTab?.view.webContents.navigationHistory.canGoForward()) {
-      activeTab.view.webContents.navigationHistory.goForward();
-    }
-    return browserWorkspaceSnapshot(
-      undefined,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-      { useVisibleAgentSession: true },
-    );
-  });
-  ipcMain.handle("browser:reload", async () => {
-    if (
-      activeBrowserWorkspaceId &&
-      maybePromptBrowserInterrupt(
-        activeBrowserWorkspaceId,
-        activeBrowserSpaceId,
-        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-      )
-    ) {
-      return browserWorkspaceSnapshot(
-        activeBrowserWorkspaceId,
-        activeBrowserSpaceId,
-        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-        { useVisibleAgentSession: true },
-      );
-    }
-    await ensureBrowserWorkspace(
-      undefined,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-    );
-    getActiveBrowserTab(
-      undefined,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-      { useVisibleAgentSession: true },
-    )?.view.webContents.reload();
-    return browserWorkspaceSnapshot(
-      undefined,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-      { useVisibleAgentSession: true },
-    );
-  });
-  ipcMain.handle("browser:stopLoading", async () => {
-    if (
-      activeBrowserWorkspaceId &&
-      maybePromptBrowserInterrupt(
-        activeBrowserWorkspaceId,
-        activeBrowserSpaceId,
-        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-      )
-    ) {
-      return browserWorkspaceSnapshot(
-        activeBrowserWorkspaceId,
-        activeBrowserSpaceId,
-        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-        { useVisibleAgentSession: true },
-      );
-    }
-    await ensureBrowserWorkspace(
-      undefined,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-    );
-    const activeTab = getActiveBrowserTab(
-      undefined,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-      { useVisibleAgentSession: true },
-    );
-    if (activeTab?.view.webContents.isLoadingMainFrame()) {
-      activeTab.view.webContents.stop();
-    }
-    return browserWorkspaceSnapshot(
-      undefined,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-      { useVisibleAgentSession: true },
-    );
-  });
-  ipcMain.handle("browser:captureScreenshotToClipboard", async () => {
-    const target = activeVisibleBrowserTarget();
-    if (!target.workspaceId) {
-      throw new Error("No active browser tab is available.");
-    }
-    const interrupted = maybePromptBrowserInterrupt(
-      target.workspaceId,
-      target.space,
-      target.sessionId,
-    );
-    await ensureBrowserWorkspace(
-      undefined,
-      target.space,
-      target.sessionId,
-    );
-    const activeTab = getActiveBrowserTab(
-      undefined,
-      target.space,
-      target.sessionId,
-      { useVisibleAgentSession: true },
-    );
-    if (!activeTab) {
-      throw new Error("No active browser tab is available.");
-    }
-    if (interrupted) {
-      return {
-        tabId: activeTab.state.id,
-        pageTitle: currentBrowserTabPageTitle(activeTab),
-        url: currentBrowserTabUrl(activeTab),
-        width: 0,
-        height: 0,
-        copied: false,
-      } satisfies BrowserClipboardScreenshotPayload;
-    }
 
-    const image = await activeTab.view.webContents.capturePage();
-    clipboard.writeImage(image);
-    const size = image.getSize();
-    return {
-      tabId: activeTab.state.id,
-      pageTitle: currentBrowserTabPageTitle(activeTab),
-      url: currentBrowserTabUrl(activeTab),
-      width: size.width,
-      height: size.height,
-      copied: true,
-    } satisfies BrowserClipboardScreenshotPayload;
-  });
-  ipcMain.handle("browser:newTab", async (_event, targetUrl?: string) => {
-    if (
-      activeBrowserWorkspaceId &&
-      maybePromptBrowserInterrupt(
-        activeBrowserWorkspaceId,
-        activeBrowserSpaceId,
-        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-      )
-    ) {
-      return browserWorkspaceSnapshot(
-        activeBrowserWorkspaceId,
-        activeBrowserSpaceId,
-        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-        { useVisibleAgentSession: true },
-      );
-    }
-    const workspace = await ensureBrowserWorkspace(
-      undefined,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-    );
-    const tabSpace = browserTabSpaceState(
-      workspace,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-      { useVisibleAgentSession: true },
-    );
-    if (!workspace) {
-      return emptyBrowserTabListPayload(activeBrowserSpaceId);
-    }
-    const nextTabId = createBrowserTab(workspace.workspaceId, {
-      url: targetUrl,
-      browserSpace: activeBrowserSpaceId,
-      sessionId: activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-    });
-    if (nextTabId && tabSpace) {
-      tabSpace.activeTabId = nextTabId;
-      if (activeBrowserSpaceId === "agent" && activeBrowserSessionId) {
-        setVisibleAgentBrowserSession(workspace, activeBrowserSessionId);
-      }
-      updateAttachedBrowserView();
-      emitBrowserState(workspace.workspaceId, activeBrowserSpaceId);
-      await persistBrowserWorkspace(workspace.workspaceId);
-    }
-    return browserWorkspaceSnapshot(
-      workspace.workspaceId,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-      { useVisibleAgentSession: true },
-    );
-  });
-  ipcMain.handle("browser:setActiveTab", async (_event, tabId: string) => {
-    if (
-      activeBrowserWorkspaceId &&
-      maybePromptBrowserInterrupt(
-        activeBrowserWorkspaceId,
-        activeBrowserSpaceId,
-        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-      )
-    ) {
-      return browserWorkspaceSnapshot(
-        activeBrowserWorkspaceId,
-        activeBrowserSpaceId,
-        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-        { useVisibleAgentSession: true },
-      );
-    }
-    await ensureBrowserWorkspace(
-      undefined,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-    );
-    return setActiveBrowserTab(
-      tabId,
-      {
-        space: activeBrowserSpaceId,
-        sessionId: activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-        useVisibleAgentSession: true,
-      },
-    );
-  });
-  ipcMain.handle("browser:closeTab", async (_event, tabId: string) => {
-    if (
-      activeBrowserWorkspaceId &&
-      maybePromptBrowserInterrupt(
-        activeBrowserWorkspaceId,
-        activeBrowserSpaceId,
-        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-      )
-    ) {
-      return browserWorkspaceSnapshot(
-        activeBrowserWorkspaceId,
-        activeBrowserSpaceId,
-        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-        { useVisibleAgentSession: true },
-      );
-    }
-    await ensureBrowserWorkspace(
-      undefined,
-      activeBrowserSpaceId,
-      activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-    );
-    return closeBrowserTab(
-      tabId,
-      {
-        space: activeBrowserSpaceId,
-        sessionId: activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-        useVisibleAgentSession: true,
-      },
-    );
-  });
-  ipcMain.handle("browser:getBookmarks", async () => {
-    const workspace = await ensureBrowserWorkspace();
-    return workspace?.bookmarks ?? [];
-  });
-  ipcMain.handle(
-    "browser:addBookmark",
-    async (_event, payload: { url: string; title?: string }) => {
-      const workspace = await ensureBrowserWorkspace();
-      const url = payload.url.trim();
-      if (!workspace || !url) {
-        return workspace?.bookmarks ?? [];
-      }
-
-      const activeTab = getActiveBrowserTab(
-        undefined,
-        activeBrowserSpaceId,
-        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-        { useVisibleAgentSession: true },
-      );
-      const faviconUrl =
-        activeTab?.state.url === url ? activeTab.state.faviconUrl : undefined;
-
-      const existing = workspace.bookmarks.find(
-        (bookmark) => bookmark.url === url,
-      );
-      if (existing) {
-        const nextTitle = payload.title?.trim() || existing.title;
-        const nextFaviconUrl = faviconUrl || existing.faviconUrl;
-        if (
-          nextTitle !== existing.title ||
-          nextFaviconUrl !== existing.faviconUrl
-        ) {
-          workspace.bookmarks = workspace.bookmarks.map((bookmark) =>
-            bookmark.id === existing.id
-              ? { ...bookmark, title: nextTitle, faviconUrl: nextFaviconUrl }
-              : bookmark,
-          );
-          emitBookmarksState(workspace.workspaceId);
-          await persistBrowserWorkspace(workspace.workspaceId);
-        }
-        return workspace.bookmarks;
-      }
-
-      workspace.bookmarks = [
-        {
-          id: `bookmark-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          url,
-          title: payload.title?.trim() || url,
-          faviconUrl,
-          createdAt: new Date().toISOString(),
-        },
-        ...workspace.bookmarks,
-      ];
-      emitBookmarksState(workspace.workspaceId);
-      await persistBrowserWorkspace(workspace.workspaceId);
-      return workspace.bookmarks;
-    },
-  );
-  ipcMain.handle(
-    "browser:removeBookmark",
-    async (_event, bookmarkId: string) => {
-      const workspace = await ensureBrowserWorkspace();
-      if (!workspace) {
-        return [];
-      }
-      workspace.bookmarks = workspace.bookmarks.filter(
-        (bookmark) => bookmark.id !== bookmarkId,
-      );
-      emitBookmarksState(workspace.workspaceId);
-      await persistBrowserWorkspace(workspace.workspaceId);
-      return workspace.bookmarks;
-    },
-  );
-  ipcMain.handle("browser:getDownloads", async () => {
-    const workspace = await ensureBrowserWorkspace();
-    return workspace?.downloads ?? [];
-  });
-  ipcMain.handle("browser:getHistory", async () => {
-    const workspace = await ensureBrowserWorkspace();
-    return workspace?.history ?? [];
-  });
-  ipcMain.handle(
-    "browser:showAddressSuggestions",
-    (
-      _event,
-      anchorBounds: BrowserAnchorBoundsPayload,
-      suggestions: AddressSuggestionPayload[],
-      selectedIndex: number,
-    ) => {
-      browserPanePopups.showAddressSuggestionsPopup(
-        anchorBounds,
-        suggestions,
-        selectedIndex,
-      );
-    },
-  );
-  ipcMain.handle("browser:hideAddressSuggestions", () => {
-    browserPanePopups.hideAddressSuggestionsPopup();
-  });
-  ipcMain.handle("browser:chooseAddressSuggestion", (_event, index: number) => {
-    browserPanePopups.hideAddressSuggestionsPopup();
-    mainWindow?.webContents.send("browser:addressSuggestionChosen", index);
-  });
-  ipcMain.handle(
-    "browser:toggleOverflowPopup",
-    (_event, anchorBounds: BrowserAnchorBoundsPayload) => {
-      browserPanePopups.toggleOverflowPopup(anchorBounds);
-    },
-  );
-  ipcMain.handle("browser:overflowOpenHistory", () => {
-    browserPanePopups.hideOverflowPopup();
-    const overflowAnchorBounds = browserPanePopups.getOverflowAnchorBounds();
-    if (overflowAnchorBounds) {
-      browserPanePopups.toggleHistoryPopup(overflowAnchorBounds);
-      // Pre-fill the popup with the latest history.
-      emitHistoryState();
-    }
-  });
-  ipcMain.handle("browser:overflowOpenDownloads", () => {
-    browserPanePopups.hideOverflowPopup();
-    const overflowAnchorBounds = browserPanePopups.getOverflowAnchorBounds();
-    if (overflowAnchorBounds) {
-      browserPanePopups.toggleDownloadsPopup(overflowAnchorBounds);
-      // Pre-fill the popup with the latest downloads list.
-      emitDownloadsState();
-    }
-  });
-  ipcMain.handle("browser:overflowImportChrome", async () => {
-    browserPanePopups.hideOverflowPopup();
-
-    try {
-      const summary = await importChromeProfileIntoWorkspace(
-        activeBrowserWorkspaceId,
-      );
-      if (!summary) {
-        return;
-      }
-
-      const detailLines = [
-        `Profile: ${summary.sourceProfileLabel}`,
-        `Location: ${summary.sourceProfileDir}`,
-        `Bookmarks imported: ${summary.importedBookmarks}`,
-        `History entries imported: ${summary.importedHistoryEntries}`,
-        `Cookies imported: ${summary.importedCookies}`,
-      ];
-      if (summary.skippedCookies > 0) {
-        detailLines.push(`Cookies skipped: ${summary.skippedCookies}`);
-      }
-      if (summary.warnings.length > 0) {
-        detailLines.push("", "Warnings:", ...summary.warnings.map((warning) => `- ${warning}`));
-      }
-
-      const ownerWindow =
-        mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-      const messageBoxOptions = {
-        type: summary.warnings.length > 0 ? "warning" : "info",
-        title: "Chrome Import Complete",
-        message: "Chrome data was imported into this workspace browser.",
-        detail: detailLines.join("\n"),
-      } as const;
-      if (ownerWindow) {
-        await dialog.showMessageBox(ownerWindow, messageBoxOptions);
-      } else {
-        await dialog.showMessageBox(messageBoxOptions);
-      }
-    } catch (error) {
-      const ownerWindow =
-        mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-      const messageBoxOptions = {
-        type: "error",
-        title: "Chrome Import Failed",
-        message: "Could not import data from Chrome.",
-        detail:
-          error instanceof Error
-            ? error.message
-            : "The Chrome import did not complete.",
-      } as const;
-      if (ownerWindow) {
-        await dialog.showMessageBox(ownerWindow, messageBoxOptions);
-      } else {
-        await dialog.showMessageBox(messageBoxOptions);
-      }
-    }
-  });
-  ipcMain.handle(
-    "browser:toggleHistoryPopup",
-    (_event, anchorBounds: BrowserAnchorBoundsPayload) => {
-      browserPanePopups.toggleHistoryPopup(anchorBounds);
-      // Pre-fill the popup with the latest history list.
-      emitHistoryState();
-    },
-  );
-  ipcMain.handle("browser:closeHistoryPopup", () => {
-    browserPanePopups.hideHistoryPopup();
-  });
-  ipcMain.handle(
-    "browser:openHistoryUrl",
-    async (_event, targetUrl: string) => {
-      if (
-        activeBrowserWorkspaceId &&
-        maybePromptBrowserInterrupt(
-          activeBrowserWorkspaceId,
-          activeBrowserSpaceId,
-          activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-        )
-      ) {
-        return browserWorkspaceSnapshot(
-          activeBrowserWorkspaceId,
-          activeBrowserSpaceId,
-          activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-          { useVisibleAgentSession: true },
-        );
-      }
-      const workspace = await ensureBrowserWorkspace(
-        undefined,
-        activeBrowserSpaceId,
-        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-      );
-      const activeTab = getActiveBrowserTab(
-        undefined,
-        activeBrowserSpaceId,
-        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-        { useVisibleAgentSession: true },
-      );
-      if (!workspace || !activeTab) {
-        return browserWorkspaceSnapshot(
-          undefined,
-          activeBrowserSpaceId,
-          activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-          { useVisibleAgentSession: true },
-        );
-      }
-
-      try {
-        browserPanePopups.hideHistoryPopup();
-        activeTab.state = { ...activeTab.state, error: "" };
-        await activeTab.view.webContents.loadURL(targetUrl);
-      } catch (error) {
-        if (isAbortedBrowserLoadError(error)) {
-          return browserWorkspaceSnapshot(
-            workspace.workspaceId,
-            activeBrowserSpaceId,
-            activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-            { useVisibleAgentSession: true },
-          );
-        }
-        activeTab.state = {
-          ...activeTab.state,
-          loading: false,
-          error: error instanceof Error ? error.message : "Failed to load URL.",
-        };
-        emitBrowserState(workspace.workspaceId, activeBrowserSpaceId);
-      }
-
-      return browserWorkspaceSnapshot(
-        workspace.workspaceId,
-        activeBrowserSpaceId,
-        activeBrowserSpaceId === "agent" ? activeBrowserSessionId : null,
-        { useVisibleAgentSession: true },
-      );
-    },
-  );
-  ipcMain.handle(
-    "browser:removeHistoryEntry",
-    async (_event, historyId: string) => {
-      const workspace = await ensureBrowserWorkspace();
-      if (!workspace) {
-        return [];
-      }
-      workspace.history = workspace.history.filter(
-        (entry) => entry.id !== historyId,
-      );
-      emitHistoryState(workspace.workspaceId);
-      await persistBrowserWorkspace(workspace.workspaceId);
-      return workspace.history;
-    },
-  );
-  ipcMain.handle("browser:clearHistory", async () => {
-    const workspace = await ensureBrowserWorkspace();
-    if (!workspace) {
-      return [];
-    }
-    workspace.history = [];
-    emitHistoryState(workspace.workspaceId);
-    await persistBrowserWorkspace(workspace.workspaceId);
-    return workspace.history;
-  });
-  ipcMain.handle(
-    "browser:toggleDownloadsPopup",
-    (_event, anchorBounds: BrowserAnchorBoundsPayload) => {
-      browserPanePopups.toggleDownloadsPopup(anchorBounds);
-      // Pre-fill the popup with the latest downloads list.
-      emitDownloadsState();
-    },
-  );
-  ipcMain.handle("browser:closeDownloadsPopup", () => {
-    browserPanePopups.hideDownloadsPopup();
-  });
-  ipcMain.handle(
-    "browser:showDownloadInFolder",
-    async (_event, downloadId: string) => {
-      const workspace = await ensureBrowserWorkspace();
-      const download = workspace?.downloads.find(
-        (item) => item.id === downloadId,
-      );
-      if (!download?.targetPath) {
-        return false;
-      }
-
-      return shell.showItemInFolder(download.targetPath);
-    },
-  );
-  ipcMain.handle("browser:openDownload", async (_event, downloadId: string) => {
-    const workspace = await ensureBrowserWorkspace();
-    const download = workspace?.downloads.find(
-      (item) => item.id === downloadId,
-    );
-    if (!download?.targetPath) {
-      return "Download not found.";
-    }
-
-    return shell.openPath(download.targetPath);
-  });
 
   createMainWindow();
   configureAutoUpdater();
