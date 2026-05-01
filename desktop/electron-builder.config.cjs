@@ -30,6 +30,8 @@ function resolveRuntimePlatform() {
 const runtimePlatform = resolveRuntimePlatform();
 const runtimeBundleDir = `runtime-${runtimePlatform}`;
 const runtimeBundlePath = path.join(__dirname, "out", runtimeBundleDir);
+const githubReleasesOwner = "holaboss-ai";
+const githubReleasesRepo = "holaOS-releases";
 const windowsSigningConfigured = Boolean(
   (process.env.WIN_CSC_LINK || process.env.CSC_LINK || "").trim(),
 );
@@ -117,8 +119,8 @@ module.exports = {
   publish: [
     {
       provider: "github",
-      owner: "holaboss-ai",
-      repo: "holaOS",
+      owner: githubReleasesOwner,
+      repo: githubReleasesRepo,
       ...(releaseChannel === "beta" ? { channel: releaseChannel } : {})
     }
   ],

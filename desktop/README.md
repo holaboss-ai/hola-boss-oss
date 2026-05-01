@@ -116,7 +116,7 @@ The staging script accepts one of:
 - `HOLABOSS_RUNTIME_TARBALL=/absolute/path/to/holaboss-runtime-<platform>-<sha>.tar.gz`
 - `HOLABOSS_RUNTIME_BUNDLE_URL=https://.../holaboss-runtime-<platform>-<sha>.tar.gz`
 - `HOLABOSS_GITHUB_TOKEN=...` or `GITHUB_TOKEN=...` to fetch the latest stable release asset from GitHub Releases
-- `HOLABOSS_RUNTIME_RELEASE_TAG=holaboss-desktop-YYYY.MDD.R` to fetch the runtime asset from a specific release tag instead of the latest stable release
+- `HOLABOSS_RUNTIME_RELEASE_TAG=holaOS-YYYY.MDD.R` to fetch the runtime asset from a specific release tag instead of the latest stable release
 - `HOLABOSS_RUNTIME_SOURCE_REPO=owner/repo` to override the GitHub repository used for release asset lookup
 - `HOLABOSS_RUNTIME_PLATFORM=macos|linux|windows` to override the auto-detected target platform when needed
 
@@ -207,7 +207,7 @@ Desktop validation and desktop release packaging now share the single `.github/w
 
 On pull requests and pushes to `main`, `CI` runs the normal validation jobs only. On manual dispatch, that same workflow:
 - checks out the requested `ref`
-- creates or updates the requested GitHub release tag
+- creates the requested GitHub release in `holaboss-ai/holaOS-releases`
 - builds and uploads Linux, macOS, and Windows runtime tarballs as release assets
 - builds the signed and notarized macOS app, then uploads the DMG, ZIP, blockmaps, and `latest-mac.yml`
 - builds the signed Windows NSIS installer, then uploads the installer, blockmaps, and `latest.yml`
@@ -215,7 +215,7 @@ On pull requests and pushes to `main`, `CI` runs the normal validation jobs only
 Release channel policy:
 - there are no standalone runtime-only GitHub releases anymore
 - runtime bundles are attached to the same desktop release tag as the installable macOS and Windows artifacts
-- desktop-shippable releases publish under `holaboss-desktop-YYYY.MDD.R`
+- desktop-shippable releases publish to `holaboss-ai/holaOS-releases`
 - the in-app desktop updater is still intended to track desktop releases, not arbitrary runtime assets
 
 Desktop release versioning:
@@ -223,7 +223,7 @@ Desktop release versioning:
 - `YYYY` = year, `MDD` = month without a leading zero plus a two-digit day, `R` = release number for that date
 - examples: `2026.410.1`, `2026.410.2`, `2026.1113.1`
 - do not zero-pad the month in the middle segment; `2026.0410.1` is not valid semver
-- desktop GitHub release tags must be `holaboss-desktop-YYYY.MDD.R`
+- desktop GitHub release tags must be `holaOS-YYYY.MDD.R`
 - the desktop packager derives the app update version from the trailing `X.Y.Z` suffix in `release_tag`, so tags should end with the same `YYYY.MDD.R` value
 - to print a version for today, run `npm --prefix desktop run release:version`
 - to print the full desktop release tag for today, run `npm --prefix desktop run release:tag`
@@ -239,11 +239,12 @@ The manual `CI` release path requires these repository secrets and fails fast wh
 - `APPLE_TEAM_ID`: Apple Developer Team ID
 - `WINDOWS_CERTIFICATE`: base64-encoded or file-backed Windows code-signing certificate
 - `WINDOWS_CERTIFICATE_PASSWORD`: password for the Windows certificate
+- `HOLABOSS_RELEASES_REPO_TOKEN`: token with read access to the private source repo and write access to `holaboss-ai/holaOS-releases`
 
 When manually triggering `CI`, provide:
 
 - `ref`: the branch, tag, or commit you want to ship
-- `release_tag`: the GitHub release tag to create or update, in `holaboss-desktop-YYYY.MDD.R` format
+- `release_tag`: the GitHub release tag to create or update, in `holaOS-YYYY.MDD.R` format
 - `release_title`: optional display title for the GitHub release
 - `prerelease`: whether the GitHub release should be marked as a prerelease when first created
 

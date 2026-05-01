@@ -22,10 +22,10 @@ test("desktop packaging keeps Windows runtime publishing scoped to the full runt
 
   assert.match(workflowSource, /RUNTIME_ASSET_NAME: holaboss-runtime-windows\.tar\.gz/);
   assert.match(workflowSource, /runtime_asset_path=/);
-  assert.match(workflowSource, /\$uploadPaths \+= \$env:RUNTIME_ASSET_PATH/);
+  assert.match(workflowSource, /desktop\/out\/\$\{\{ env\.RUNTIME_ASSET_NAME \}\}/);
   assert.doesNotMatch(workflowSource, /TOOLCHAIN_ASSET_NAME: holaboss-toolchain-windows\.tar\.gz/);
   assert.doesNotMatch(workflowSource, /toolchain_asset_path=/);
-  assert.doesNotMatch(workflowSource, /\$uploadPaths \+= \$env:TOOLCHAIN_ASSET_PATH/);
+  assert.doesNotMatch(workflowSource, /desktop\/out\/\$\{\{ env\.TOOLCHAIN_ASSET_NAME \}\}/);
   assert.doesNotMatch(packagedConfigSource, /toolchainManifest,/);
 });
 
@@ -49,7 +49,7 @@ test("windows packaging config and CI workflow support optional signing and NSIS
   assert.match(workflowSource, /release-windows-desktop:/);
   assert.match(workflowSource, /if: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.release_windows \}\}/);
   assert.match(workflowSource, /runs-on: windows-latest/);
-  assert.match(workflowSource, /release_tag must match holaboss-desktop-YYYY\.MDD\.R/);
+  assert.match(workflowSource, /release_tag must match holaOS-YYYY\.MDD\.R/);
   assert.match(workflowSource, /DESKTOP_RELEASE_ASSET_NAME: Holaboss-windows-x64-setup\.exe/);
   assert.match(workflowSource, /CSC_LINK: \$\{\{ env\.WINDOWS_CERTIFICATE \}\}/);
   assert.match(workflowSource, /npm run dist:win:local/);
@@ -57,7 +57,6 @@ test("windows packaging config and CI workflow support optional signing and NSIS
   assert.match(workflowSource, /\$manifestName = if \(\$primaryChannel -eq "beta"\) \{ "beta\.yml" \} else \{ "latest\.yml" \}/);
   assert.match(workflowSource, /\$manifestName was not generated/);
   assert.match(workflowSource, /Get-ChildItem -Path desktop\/out\/release -File -Filter \*\.blockmap/);
-  assert.match(workflowSource, /\$uploadPaths \+= \$manifestPath/);
-  assert.match(workflowSource, /\$uploadPaths \+= \$env:RUNTIME_ASSET_PATH/);
-  assert.match(workflowSource, /gh release upload \$env:RELEASE_TAG @uploadPaths --clobber/);
+  assert.match(workflowSource, /uses: actions\/upload-artifact@v7/);
+  assert.match(workflowSource, /name: \$\{\{ env\.DESKTOP_ASSET_PREFIX \}\}-\$\{\{ inputs\.release_tag \}\}/);
 });

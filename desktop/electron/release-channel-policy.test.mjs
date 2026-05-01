@@ -44,7 +44,7 @@ test("desktop updater uses electron-updater and exposes install-now state", asyn
 
   assert.match(source, /import \{[\s\S]*autoUpdater,[\s\S]*\} from "electron-updater";/);
   assert.match(source, /const APP_UPDATE_SUPPORTED_PLATFORMS = new Set\(\["darwin", "win32"\]\);/);
-  assert.match(source, /const GITHUB_RELEASES_REPO = "holaOS";/);
+  assert.match(source, /const GITHUB_RELEASES_REPO = "holaOS-releases";/);
   assert.match(source, /const DEFAULT_APP_UPDATE_CHANNEL =/);
   assert.match(source, /function preferredAppUpdateChannel\(\): AppUpdateChannel \| null \{/);
   assert.match(source, /function effectiveAppUpdateChannel\(\): AppUpdateChannel \{/);
@@ -73,7 +73,8 @@ test("desktop updater uses electron-updater and exposes install-now state", asyn
 test("runtime staging prefers an explicit release tag, then stable releases, then prerelease fallback", async () => {
   const source = await readFile(stageRuntimeBundlePath, "utf8");
 
-  assert.match(source, /const sourceRepo = process\.env\.HOLABOSS_RUNTIME_SOURCE_REPO\?\.trim\(\) \|\| "holaboss-ai\/holaOS";/);
+  assert.match(source, /const explicitSourceRepo = process\.env\.HOLABOSS_RUNTIME_SOURCE_REPO\?\.trim\(\) \|\| "";/);
+  assert.match(source, /return "holaboss-ai\/holaOS-releases";/);
   assert.match(source, /const requestedReleaseTag = process\.env\.HOLABOSS_RUNTIME_RELEASE_TAG\?\.trim\(\) \|\| "";/);
   assert.match(
     source,
@@ -105,6 +106,7 @@ test("manual CI workflow creates combined desktop releases with bundled runtime 
   ]);
 
   assert.match(source, /^name: CI$/m);
+  assert.match(source, /HOLABOSS_RELEASES_REPO: holaboss-ai\/holaOS-releases/);
   assert.match(source, /workflow_dispatch:\n\s+inputs:\n\s+ref:/);
   assert.match(source, /release_tag:\n\s+description: GitHub release tag to create or update/);
   assert.match(source, /release_title:\n\s+description: Optional GitHub release title/);
@@ -114,15 +116,16 @@ test("manual CI workflow creates combined desktop releases with bundled runtime 
   assert.match(source, /type: choice/);
   assert.match(source, /options:\n\s+- latest\n\s+- beta/);
   assert.match(source, /release_windows:\n\s+description: Build and publish the Windows desktop installer/);
-  assert.match(source, /release_tag must match holaboss-desktop-YYYY\.MDD\.R/);
-  assert.match(source, /release_version="\$\{release_tag#holaboss-desktop-\}"/);
+  assert.match(source, /release_tag must match holaOS-YYYY\.MDD\.R/);
+  assert.match(source, /release_version="\$\{release_tag#holaOS-\}"/);
   assert.match(source, /release_title="Holaboss \$\{release_version\}"/);
   assert.match(source, /release_channel="\$\{\{ inputs\.release_channel \}\}"/);
   assert.match(source, /beta channel releases must be marked as prerelease/);
   assert.match(source, /latest channel releases must not be marked as prerelease/);
   assert.match(source, /Ensure release tag is available/);
-  assert.match(source, /release tag \$\{RELEASE_TAG\} already points to \$\{remote_tag_sha\}, not \$\{RELEASE_SHA\}/);
-  assert.match(source, /release \$\{RELEASE_TAG\} already exists on GitHub/);
+  assert.match(source, /manual release publishing to \$\{RELEASE_GH_REPO\} requires HOLABOSS_RELEASES_REPO_TOKEN/);
+  assert.match(source, /release tag \$\{RELEASE_TAG\} already exists in \$\{RELEASE_GH_REPO\}/);
+  assert.match(source, /release \$\{RELEASE_TAG\} already exists in \$\{RELEASE_GH_REPO\}/);
   assert.doesNotMatch(source, /gh release create "\$\{RELEASE_TAG\}" \\\n\s+--title "\$\{RELEASE_TITLE\}" \\\n\s+--notes-file "\$\{notes_path\}" \\\n\s+--draft/);
   assert.doesNotMatch(source, /gh release edit "\$\{RELEASE_TAG\}" \\\n\s+--title "\$\{RELEASE_TITLE\}" \\\n\s+--notes-file "\$\{notes_path\}" \\\n\s+--draft/);
   assert.match(source, /RUNTIME_ASSET_NAME: holaboss-runtime-linux\.tar\.gz/);
@@ -158,10 +161,13 @@ test("manual CI workflow creates combined desktop releases with bundled runtime 
   assert.match(source, /name: holaboss-desktop-macos-\$\{\{ inputs\.release_tag \}\}/);
   assert.match(source, /Download Windows desktop release artifacts/);
   assert.match(source, /name: holaboss-desktop-windows-\$\{\{ inputs\.release_tag \}\}/);
-  assert.match(source, /repos\/\$\{GH_REPO\}\/releases\/generate-notes/);
+  assert.match(source, /SOURCE_GH_REPO: \$\{\{ github\.repository \}\}/);
+  assert.match(source, /RELEASE_GH_REPO: \$\{\{ env\.HOLABOSS_RELEASES_REPO \}\}/);
+  assert.match(source, /repos\/\$\{SOURCE_GH_REPO\}\/releases\/generate-notes/);
   assert.match(source, /tag_name=\$\{RELEASE_TAG\}/);
   assert.match(source, /target_commitish=\$\{RELEASE_SHA\}/);
   assert.match(source, /linux_runtime_asset="release-assets\/linux-runtime\/holaboss-runtime-linux\.tar\.gz"/);
+  assert.match(source, /mac_runtime_asset="release-assets\/macos-desktop\/holaboss-runtime-macos\.tar\.gz"/);
   assert.match(source, /mac_dmg_asset="release-assets\/macos-desktop\/Holaboss-macos-arm64\.dmg"/);
   assert.match(source, /mac_zip_asset="\$\(find release-assets\/macos-desktop -maxdepth 1 -name 'Holaboss-\*-arm64-mac\.zip' -print -quit\)"/);
   assert.match(source, /upload_paths=\(/);
@@ -173,12 +179,12 @@ test("manual CI workflow creates combined desktop releases with bundled runtime 
   assert.match(source, /if \[ "\$\{PRERELEASE\}" = "true" \]; then\s+prerelease_flag\+=\(--prerelease\)/);
   assert.match(
     source,
-    /gh release create "\$\{RELEASE_TAG\}" \\\n\s+--target "\$\{RELEASE_SHA\}" \\\n\s+--title "\$\{RELEASE_TITLE\}" \\\n\s+--notes-file "\$\{notes_path\}" \\\n\s+"\$\{prerelease_flag\[@\]\}" \\\n\s+"\$\{upload_paths\[@\]\}"/,
+    /gh release create "\$\{RELEASE_TAG\}" \\\n\s+--repo "\$\{RELEASE_GH_REPO\}" \\\n\s+--title "\$\{RELEASE_TITLE\}" \\\n\s+--notes-file "\$\{notes_path\}" \\\n\s+"\$\{prerelease_flag\[@\]\}" \\\n\s+"\$\{upload_paths\[@\]\}"/,
   );
   assert.doesNotMatch(source, /gh release edit "\$\{RELEASE_TAG\}" \\\n\s+--draft=false/);
   assert.match(source, /\$manifestName = if \(\$primaryChannel -eq "beta"\) \{ "beta\.yml" \} else \{ "latest\.yml" \}/);
   assert.match(source, /beta\.yml was not generated for stable-channel compatibility/);
-  assert.match(builderConfig, /repo: "holaOS"/);
+  assert.match(builderConfig, /repo: githubReleasesRepo/);
   assert.match(builderConfig, /generateUpdatesFilesForAllChannels: true/);
   assert.match(builderConfig, /\.\.\.\(releaseChannel === "beta" \? \{ channel: releaseChannel \} : \{\}\)/);
   assert.match(builderConfig, /"node-runtime\/\*\*\/\*"/);
@@ -195,15 +201,8 @@ test("manual CI workflow creates combined desktop releases with bundled runtime 
 });
 
 test("docs workflow remains independent and CI ignores docs-only changes", async () => {
-  const [ciSource, docsSource] = await Promise.all([
-    readFile(ciWorkflowPath, "utf8"),
-    readFile(docsWorkflowPath, "utf8"),
-  ]);
+  const ciSource = await readFile(ciWorkflowPath, "utf8");
 
-  assert.match(ciSource, /paths-ignore:\n\s+- \.github\/workflows\/deploy-docs\.yml\n\s+- website\/docs\/\*\*/);
-  assert.match(docsSource, /^name: Deploy Docs$/m);
-  assert.match(docsSource, /pull_request:\n\s+paths:\n\s+- \.github\/workflows\/deploy-docs\.yml\n\s+- website\/docs\/\*\*/);
-  assert.match(docsSource, /push:\n\s+branches:\n\s+- main\n\s+paths:\n\s+- \.github\/workflows\/deploy-docs\.yml\n\s+- website\/docs\/\*\*/);
-  assert.match(docsSource, /run: npm run docs:test/);
-  assert.match(docsSource, /run: npm run docs:build/);
+  await assert.rejects(readFile(docsWorkflowPath, "utf8"), /ENOENT/);
+  assert.match(ciSource, /paths-ignore:\n\s+- website\/docs\/\*\*/);
 });

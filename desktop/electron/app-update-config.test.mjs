@@ -37,7 +37,7 @@ test("write-app-update-config writes the packaged github updater metadata", asyn
 
     assert.equal(updaterConfig.provider, "github");
     assert.equal(updaterConfig.owner, "holaboss-ai");
-    assert.equal(updaterConfig.repo, "holaOS");
+    assert.equal(updaterConfig.repo, "holaOS-releases");
     assert.equal(updaterConfig.updaterCacheDirName, "holaboss-local-updater");
     assert.equal(updaterConfig.channel, undefined);
   } finally {
@@ -68,7 +68,7 @@ test("write-app-update-config includes the beta channel when requested", async (
 
     assert.equal(updaterConfig.provider, "github");
     assert.equal(updaterConfig.owner, "holaboss-ai");
-    assert.equal(updaterConfig.repo, "holaOS");
+    assert.equal(updaterConfig.repo, "holaOS-releases");
     assert.equal(updaterConfig.channel, "beta");
     assert.equal(updaterConfig.updaterCacheDirName, "holaboss-local-updater");
   } finally {

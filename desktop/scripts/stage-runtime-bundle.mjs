@@ -64,7 +64,7 @@ async function resolveSourceRepo() {
     // Fall through to the repo-local default.
   }
 
-  return "holaboss-ai/holaOS-priv";
+  return "holaboss-ai/holaOS-releases";
 }
 
 async function pathExists(targetPath) {

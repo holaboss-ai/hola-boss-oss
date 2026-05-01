@@ -46,6 +46,9 @@ on:
 permissions:
   contents: read
 
+env:
+  HOLABOSS_RELEASES_REPO: holaboss-ai/holaOS-releases
+
 jobs:
   desktop-typecheck:
     if: ${{ github.event_name != 'workflow_dispatch' }}
@@ -213,12 +216,12 @@ jobs:
         id: release_meta
         run: |
           release_tag="${{ inputs.release_tag }}"
-          if ! printf '%s' "${release_tag}" | grep -Eq '^holaboss-desktop-[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "release_tag must match holaboss-desktop-YYYY.MDD.R; got ${release_tag}" >&2
+          if ! printf '%s' "${release_tag}" | grep -Eq '^holaOS-[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "release_tag must match holaOS-YYYY.MDD.R; got ${release_tag}" >&2
             exit 1
           fi
 
-          release_version="${release_tag#holaboss-desktop-}"
+          release_version="${release_tag#holaOS-}"
           release_title="${{ inputs.release_title }}"
           release_channel="${{ inputs.release_channel }}"
           if [ -z "${release_title}" ]; then
@@ -247,20 +250,23 @@ jobs:
 
       - name: Ensure release tag is available
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.HOLABOSS_RELEASES_REPO_TOKEN }}
           RELEASE_SHA: ${{ steps.release_meta.outputs.release_sha }}
           RELEASE_TAG: ${{ steps.release_meta.outputs.release_tag }}
+          RELEASE_GH_REPO: ${{ env.HOLABOSS_RELEASES_REPO }}
         run: |
-          remote_tag_sha="$(
-            git ls-remote --tags origin "refs/tags/${RELEASE_TAG}" | awk '{print $1}' | head -n1
-          )"
-          if [ -n "${remote_tag_sha}" ] && [ "${remote_tag_sha}" != "${RELEASE_SHA}" ]; then
-            echo "release tag ${RELEASE_TAG} already points to ${remote_tag_sha}, not ${RELEASE_SHA}" >&2
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "manual release publishing to ${RELEASE_GH_REPO} requires HOLABOSS_RELEASES_REPO_TOKEN with read access to ${GITHUB_REPOSITORY} and write access to ${RELEASE_GH_REPO}" >&2
             exit 1
           fi
 
-          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-            echo "release ${RELEASE_TAG} already exists on GitHub" >&2
+          if git ls-remote --tags "https://github.com/${RELEASE_GH_REPO}.git" "refs/tags/${RELEASE_TAG}" | grep -q .; then
+            echo "release tag ${RELEASE_TAG} already exists in ${RELEASE_GH_REPO}" >&2
+            exit 1
+          fi
+
+          if gh release view --repo "${RELEASE_GH_REPO}" "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "release ${RELEASE_TAG} already exists in ${RELEASE_GH_REPO}" >&2
             exit 1
           fi
 
@@ -610,7 +616,13 @@ jobs:
             echo "no DMG found in desktop/out/release" >&2
             exit 1
           fi
+          runtime_asset_path="out/${RUNTIME_ASSET_NAME}"
+          if [ ! -f "${runtime_asset_path}" ]; then
+            echo "no macOS runtime tarball found at ${runtime_asset_path}" >&2
+            exit 1
+          fi
           cp "${dmg_path}" "desktop/out/release/${DESKTOP_RELEASE_ASSET_NAME}"
+          cp "${runtime_asset_path}" "desktop/out/release/${RUNTIME_ASSET_NAME}"
 
       - name: Upload macOS desktop release artifacts
         uses: actions/upload-artifact@v7
@@ -618,6 +630,7 @@ jobs:
           name: ${{ env.DESKTOP_ASSET_PREFIX }}-${{ inputs.release_tag }}
           path: |
             desktop/out/release/${{ env.DESKTOP_RELEASE_ASSET_NAME }}
+            desktop/out/release/${{ env.RUNTIME_ASSET_NAME }}
             desktop/out/release/*.zip
             desktop/out/release/*.blockmap
             desktop/out/release/*-mac.yml
@@ -779,7 +792,7 @@ jobs:
       - release-windows-desktop
     permissions:
       actions: read
-      contents: write
+      contents: read
     runs-on: ubuntu-latest
     env:
       RELEASE_SHA: ${{ needs.ensure-release.outputs.release_sha }}
@@ -788,7 +801,8 @@ jobs:
       RELEASE_CHANNEL: ${{ needs.ensure-release.outputs.release_channel }}
       HOLABOSS_RELEASE_CHANNEL: ${{ needs.ensure-release.outputs.release_channel }}
       PRERELEASE: ${{ inputs.prerelease }}
-      GH_REPO: ${{ github.repository }}
+      SOURCE_GH_REPO: ${{ github.repository }}
+      RELEASE_GH_REPO: ${{ env.HOLABOSS_RELEASES_REPO }}
     steps:
       - name: Download Linux runtime release artifacts
         uses: actions/download-artifact@v8
@@ -811,32 +825,42 @@ jobs:
 
       - name: Publish validated GitHub release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.HOLABOSS_RELEASES_REPO_TOKEN }}
         run: |
           notes_path="$(mktemp)"
           trap 'rm -f "${notes_path}"' EXIT
 
-          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-            echo "release ${RELEASE_TAG} already exists on GitHub" >&2
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "manual release publishing to ${RELEASE_GH_REPO} requires HOLABOSS_RELEASES_REPO_TOKEN with read access to ${SOURCE_GH_REPO} and write access to ${RELEASE_GH_REPO}" >&2
             exit 1
           fi
 
-          if git ls-remote --tags "https://github.com/${GH_REPO}.git" "refs/tags/${RELEASE_TAG}" | grep -q .; then
-            echo "release tag ${RELEASE_TAG} already exists on origin" >&2
+          if gh release view --repo "${RELEASE_GH_REPO}" "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "release ${RELEASE_TAG} already exists in ${RELEASE_GH_REPO}" >&2
             exit 1
           fi
 
-          gh api "repos/${GH_REPO}/releases/generate-notes" \
+          if git ls-remote --tags "https://github.com/${RELEASE_GH_REPO}.git" "refs/tags/${RELEASE_TAG}" | grep -q .; then
+            echo "release tag ${RELEASE_TAG} already exists in ${RELEASE_GH_REPO}" >&2
+            exit 1
+          fi
+
+          gh api "repos/${SOURCE_GH_REPO}/releases/generate-notes" \
             --method POST \
             -f "tag_name=${RELEASE_TAG}" \
             -f "target_commitish=${RELEASE_SHA}" \
             --jq '.body' > "${notes_path}"
 
           linux_runtime_asset="release-assets/linux-runtime/holaboss-runtime-linux.tar.gz"
+          mac_runtime_asset="release-assets/macos-desktop/holaboss-runtime-macos.tar.gz"
           mac_dmg_asset="release-assets/macos-desktop/Holaboss-macos-arm64.dmg"
           mac_zip_asset="$(find release-assets/macos-desktop -maxdepth 1 -name 'Holaboss-*-arm64-mac.zip' -print -quit)"
           if [ ! -f "${linux_runtime_asset}" ]; then
             echo "missing Linux runtime release asset" >&2
+            exit 1
+          fi
+          if [ ! -f "${mac_runtime_asset}" ]; then
+            echo "missing macOS runtime release asset" >&2
             exit 1
           fi
           if [ ! -f "${mac_dmg_asset}" ]; then
@@ -850,6 +874,7 @@ jobs:
 
           upload_paths=(
             "${linux_runtime_asset}"
+            "${mac_runtime_asset}"
             "${mac_dmg_asset}"
             "${mac_zip_asset}"
           )
@@ -877,7 +902,7 @@ jobs:
           fi
 
           gh release create "${RELEASE_TAG}" \
-            --target "${RELEASE_SHA}" \
+            --repo "${RELEASE_GH_REPO}" \
             --title "${RELEASE_TITLE}" \
             --notes-file "${notes_path}" \
             "${prerelease_flag[@]}" \
