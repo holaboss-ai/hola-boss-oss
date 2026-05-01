@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "@fontsource-variable/inter";
+@import "@fontsource-variable/geist-mono";
 
 /* tweakcn themes */
 @import "./styles/themes/amber-minimal.css";
@@ -16,6 +17,28 @@
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: "Inter Variable", sans-serif;
+  /* Geist Mono — used for tabular numerals, code blocks, datetime
+     stamps. The variable family carries 100-900 weights. */
+  --font-mono:
+    "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  /* Foreground-mix utilities — solid mix of foreground into background
+     at N%. Use bg-fg-3, bg-fg-6, bg-fg-12 etc. for opaque tinted
+     surfaces (panel headers, list-row hovers, separators). Distinct
+     from Tailwind's bg-foreground/N which is alpha-on-foreground. */
+  --color-fg-2: var(--fg-2);
+  --color-fg-4: var(--fg-4);
+  --color-fg-6: var(--fg-6);
+  --color-fg-8: var(--fg-8);
+  --color-fg-12: var(--fg-12);
+  --color-fg-16: var(--fg-16);
+  --color-fg-24: var(--fg-24);
+  --color-fg-32: var(--fg-32);
+  --color-fg-48: var(--fg-48);
+  --color-fg-64: var(--fg-64);
+  --color-fg-80: var(--fg-80);
+  --color-fg-92: var(--fg-92);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -1408,3 +1431,171 @@ webview {
    selectors here used Radix-style attribute names that Base UI
    doesn't emit, so they were dead code. See ConfirmDialog and
    SettingsDialog for the live pattern. */
+
+/* ============================================================
+ * Dashboard polish utilities
+ * Borrowed patterns (custom scrollbar, shimmer, smooth corners,
+ * 9-cube spinner, tinted shadow) — naming + values our own.
+ * ============================================================ */
+
+/* ---- Smooth corners (iOS superellipse, falls back to border-radius) ----
+   Apply alongside rounded-* to get the continuous curve where
+   supported. Subtle but tactile; mostly visible on larger radii. */
+.smooth-corners {
+  corner-shape: superellipse;
+  -webkit-corner-shape: superellipse;
+}
+
+/* ---- Custom scrollbars ----
+   Theme-aware, 8px thumb, hairline track. Thumb uses the border
+   color so it reads as a continuation of the panel chrome rather
+   than a chrome element of its own. */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-foreground);
+}
+
+/* Hide scrollbar chrome entirely (still scrollable). */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* "Ghost" scrollbar: invisible until the parent (.group) is hovered.
+   Notion uses this to keep dashboards visually clean at rest. */
+.scrollbar-ghost::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 4px;
+  transition: background 180ms ease;
+}
+.group:hover .scrollbar-ghost::-webkit-scrollbar-thumb {
+  background: var(--border);
+}
+.group:hover .scrollbar-ghost::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-foreground);
+}
+
+/* ---- Tinted shadow ----
+   Status-tinted box-shadow. Set --shadow-color (R,G,B triple) on
+   the element and apply .shadow-tinted. Light mode: soft glow.
+   Dark mode: solid 1px tinted ring (no glow — looks better on
+   dark surfaces than a halo). */
+.shadow-tinted {
+  --shadow-color: 0, 0, 0;
+  box-shadow:
+    rgba(var(--shadow-color), calc(var(--hairline-alpha) * 1.5)) 0 0 0 1px,
+    rgba(var(--shadow-color), var(--hairline-alpha)) 0 1px 1px -0.5px,
+    rgba(var(--shadow-color), var(--shadow-alpha)) 0 3px 3px -1.5px,
+    rgba(var(--shadow-color), calc(var(--shadow-alpha) * 0.67)) 0 6px 6px -3px;
+}
+.dark .shadow-tinted {
+  box-shadow:
+    rgba(var(--shadow-color), calc(var(--hairline-alpha) * 2.5)) 0 0 0 1px;
+}
+
+/* ---- Shimmer skeleton ----
+   Directional gradient sweep for "loading" states. Apply alongside
+   a base muted-bg element; the ::after layer runs the sweep. More
+   alive than animate-pulse (which is symmetric, no direction). */
+@keyframes hb-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+.animate-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.animate-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--fg-6) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: hb-shimmer 1.6s ease-in-out infinite;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+/* ---- 9-cube grid spinner ----
+   3×3 grid of cubes that fade in/out in a wave pattern. Inherits
+   size from font-size, color from currentColor. Use for "still
+   thinking" states where a skeleton row would be misleading
+   (the row count is unknown). */
+.hb-spinner {
+  display: inline-grid;
+  grid-template-columns: repeat(3, 1fr);
+  width: 1em;
+  height: 1em;
+  gap: 0.08em;
+}
+.hb-spinner > span {
+  background-color: currentColor;
+  animation: hb-spinner-grid 1.3s infinite ease-in-out;
+  transform: scale3d(0.5, 0.5, 1);
+}
+.hb-spinner > span:nth-child(1) { animation-delay: 0.2s; }
+.hb-spinner > span:nth-child(2) { animation-delay: 0.3s; }
+.hb-spinner > span:nth-child(3) { animation-delay: 0.4s; }
+.hb-spinner > span:nth-child(4) { animation-delay: 0.1s; }
+.hb-spinner > span:nth-child(5) { animation-delay: 0.2s; }
+.hb-spinner > span:nth-child(6) { animation-delay: 0.3s; }
+.hb-spinner > span:nth-child(7) { animation-delay: 0s; }
+.hb-spinner > span:nth-child(8) { animation-delay: 0.1s; }
+.hb-spinner > span:nth-child(9) { animation-delay: 0.2s; }
+@keyframes hb-spinner-grid {
+  0%, 70%, 100% {
+    transform: scale3d(0.5, 0.5, 1);
+  }
+  35% {
+    transform: scale3d(0, 0, 1);
+  }
+}
+
+/* ---- Edge fade mask (horizontal scroll containers) ----
+   Fades each side of a horizontally-scrolling area only when content
+   is actually hidden in that direction. Caller drives this by setting
+   --mask-left and --mask-right inline (px values); 0 = no fade. With
+   both at 0 the mask is a solid rectangle (no-op) so it's safe to
+   leave applied at all times. Notion does this on database tables —
+   the left edge stops fading the moment scroll position is 0. */
+.mask-edges-x {
+  --mask-left: 0px;
+  --mask-right: 0px;
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    black var(--mask-left),
+    black calc(100% - var(--mask-right)),
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    black var(--mask-left),
+    black calc(100% - var(--mask-right)),
+    transparent 100%
+  );
+  transition: mask-image 120ms ease-out, -webkit-mask-image 120ms ease-out;
+}

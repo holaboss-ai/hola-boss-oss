@@ -49,6 +49,12 @@ export type ResolvedApplicationRuntime = {
     start: string;
     stop: string;
   };
+  /** Raw `data_schema:` block from app.runtime.yaml when the app
+   *  declares one (Tier 2 of the workspace data layer). The runtime
+   *  parses + applies it before spawning the app. Apps without this
+   *  block continue to manage schema in their own `db.ts` (Tier 0/1
+   *  behaviour); both can coexist during rollout. */
+  dataSchemaRaw?: unknown;
 };
 
 export type ResolvedWorkspaceApp = {
@@ -292,7 +298,8 @@ export function parseResolvedAppRuntime(
       setup: typeof lifecycle.setup === "string" ? lifecycle.setup : "",
       start: typeof lifecycle.start === "string" ? lifecycle.start : "",
       stop: typeof lifecycle.stop === "string" ? lifecycle.stop : ""
-    }
+    },
+    dataSchemaRaw: loaded.data_schema
   };
 }
 

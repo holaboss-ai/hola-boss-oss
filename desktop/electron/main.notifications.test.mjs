@@ -23,7 +23,10 @@ test("main notification IPC path reuses cached results during transient runtime 
     source,
     /if \(isTransientRuntimeError\(error\)\) \{\s*return \(\s*runtimeNotificationListCache\.get\(cacheKey\) \?\?\s*emptyRuntimeNotificationListResponse\(\)\s*\);/s,
   );
-  assert.match(source, /isRuntimeHealthcheckStartupFailureMessage\(message\)/);
+  // Matches the function definition `isRuntimeHealthcheckStartupFailureMessage(message: string)`.
+  // Earlier versions of this regex used `\(message\)` (literal closing paren), which never
+  // matched any callsite because main.ts passes `failureMessage` / `error.message`.
+  assert.match(source, /isRuntimeHealthcheckStartupFailureMessage\(message:/);
   assert.match(source, /runtimeNotificationListCache\.clear\(\);/);
 });
 

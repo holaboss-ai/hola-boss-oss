@@ -3,11 +3,17 @@ import { useEffect, useMemo, useState } from "react";
 import {
   type Dashboard,
   type DashboardPanel,
+  type KpiPanel as KpiPanelSpec,
+  type StatGridPanel as StatGridPanelSpec,
+  type Width,
   parseDashboard,
 } from "@/lib/dashboardSchema";
 
-import { deriveKpiLabel, type KpiCardState, KpiCard } from "./KpiCard";
+import { ChartPanel } from "./ChartPanel";
 import { type DataViewState, DataViewPanel } from "./DataViewPanel";
+import { type KpiCardState, type KpiDelta, KpiCard, deriveKpiValue } from "./KpiCard";
+import { type StatGridState, StatGridPanel } from "./StatGridPanel";
+import { TextPanel } from "./TextPanel";
 
 interface DashboardRendererProps {
   workspaceId: string;
@@ -19,14 +25,23 @@ interface DashboardRendererProps {
   refreshKey?: number;
 }
 
-type PanelState = KpiCardState | DataViewState;
+interface DashboardQueryResult {
+  ok: boolean;
+  rows?: unknown[][];
+  columns?: string[];
+  error?: string;
+}
+
+type PanelState =
+  | { kind: "kpi"; main: KpiCardState; delta: KpiDelta }
+  | { kind: "stat_grid"; state: StatGridState | { kind: "loading" } | { kind: "error"; message: string } }
+  | { kind: "data_view"; state: DataViewState }
+  | { kind: "text" }
+  | { kind: "chart"; state: DataViewState };
 
 // Reads a `.dashboard` YAML doc, runs each panel's query against the
 // workspace's shared data.db (read-only IPC), and renders panels in
-// document order. The toolbar (refresh / full-width toggle) is owned
-// by the host pane — they need to share visual chrome with the
-// pane's existing file header (filename, save, etc.) so the renderer
-// surfaces them via props rather than rendering a duplicate strip.
+// document order with a width-flow layout (full / half / third).
 export function DashboardRenderer({
   workspaceId,
   content,
@@ -68,54 +83,139 @@ function DashboardBody({
   refreshKey: number;
 }) {
   const [panelStates, setPanelStates] = useState<PanelState[]>(() =>
-    dashboard.panels.map(() => ({ kind: "loading" })),
+    dashboard.panels.map((p) => initialPanelState(p)),
   );
 
   // Run all queries when the dashboard changes (file edited, new mount,
-  // or refresh). Each result writes into its own slot so a slow query
-  // doesn't block earlier rendering.
+  // or refresh). Per-panel queries write into their own slot so a slow
+  // query doesn't block earlier rendering.
   useEffect(() => {
     let cancelled = false;
-    setPanelStates(dashboard.panels.map(() => ({ kind: "loading" })));
-    dashboard.panels.forEach((panel, index) => {
+    setPanelStates(dashboard.panels.map((p) => initialPanelState(p)));
+
+    const run = (
+      panelIdx: number,
+      sql: string,
+      apply: (result: DashboardQueryResult) => void,
+    ) => {
       void window.electronAPI.workspace
-        .runDashboardQuery({ workspaceId, sql: panel.query })
-        .then((result) => {
+        .runDashboardQuery({ workspaceId, sql })
+        .then((result: DashboardQueryResult) => {
           if (cancelled) return;
-          setPanelStates((prev) => {
-            const next = prev.slice();
-            next[index] = panelStateFromResult(panel, result);
-            return next;
-          });
+          apply(result);
         })
         .catch((err: unknown) => {
           if (cancelled) return;
-          const message = err instanceof Error ? err.message : String(err);
+          apply({ ok: false, error: err instanceof Error ? err.message : String(err) });
+        });
+    };
+
+    dashboard.panels.forEach((panel, panelIdx) => {
+      if (panel.type === "text") return;
+
+      if (panel.type === "kpi") {
+        run(panelIdx, panel.query, (result) => {
           setPanelStates((prev) => {
             const next = prev.slice();
-            next[index] = panelErrorState(panel, message);
+            next[panelIdx] = mergeKpiResult(next[panelIdx], "main", kpiSlotFromResult(result));
             return next;
           });
         });
+        if (panel.delta_query) {
+          run(panelIdx, panel.delta_query, (result) => {
+            setPanelStates((prev) => {
+              const next = prev.slice();
+              next[panelIdx] = mergeKpiResult(next[panelIdx], "delta", kpiDeltaFromResult(result));
+              return next;
+            });
+          });
+        }
+        return;
+      }
+
+      if (panel.type === "stat_grid") {
+        panel.stats.forEach((stat, statIdx) => {
+          run(panelIdx, stat.query, (result) => {
+            setPanelStates((prev) => {
+              const next = prev.slice();
+              next[panelIdx] = mergeStatResult(
+                next[panelIdx],
+                statIdx,
+                "main",
+                kpiSlotFromResult(result),
+                panel.stats.length,
+              );
+              return next;
+            });
+          });
+          if (stat.delta_query) {
+            run(panelIdx, stat.delta_query, (result) => {
+              setPanelStates((prev) => {
+                const next = prev.slice();
+                next[panelIdx] = mergeStatResult(
+                  next[panelIdx],
+                  statIdx,
+                  "delta",
+                  kpiDeltaFromResult(result),
+                  panel.stats.length,
+                );
+                return next;
+              });
+            });
+          }
+        });
+        return;
+      }
+
+      if (panel.type === "data_view") {
+        run(panelIdx, panel.query, (result) => {
+          setPanelStates((prev) => {
+            const next = prev.slice();
+            next[panelIdx] = {
+              kind: "data_view",
+              state: result.ok
+                ? { kind: "data", columns: result.columns ?? [], rows: result.rows ?? [] }
+                : { kind: "error", message: result.error ?? "Query failed." },
+            };
+            return next;
+          });
+        });
+        return;
+      }
+
+      if (panel.type === "chart") {
+        run(panelIdx, panel.query, (result) => {
+          setPanelStates((prev) => {
+            const next = prev.slice();
+            next[panelIdx] = {
+              kind: "chart",
+              state: result.ok
+                ? { kind: "data", columns: result.columns ?? [], rows: result.rows ?? [] }
+                : { kind: "error", message: result.error ?? "Query failed." },
+            };
+            return next;
+          });
+        });
+      }
     });
+
     return () => {
       cancelled = true;
     };
   }, [dashboard, workspaceId, refreshKey]);
 
-  const groups = useMemo(() => groupPanels(dashboard.panels), [dashboard.panels]);
-  // `max-w-none` resolves to a huge max-width so a CSS transition would
-  // animate over a literal-billion-px change. Use a concrete pixel width
-  // for full-width too — wide enough to count as "full" against any
-  // realistic pane size, narrow enough that the swap stays smooth.
+  // Width hints arrange panels into rows. `max-w-none` would animate
+  // over a literal-billion-px change so we use a pixel value for full.
   const widthClass = fullWidth ? "max-w-[1600px]" : "max-w-4xl";
+
+  const groups = useMemo(() => groupPanels(dashboard.panels), [dashboard.panels]);
 
   return (
     <div className="h-full overflow-auto bg-background">
       <div
         className={`mx-auto px-10 pt-10 pb-16 transition-[max-width] duration-200 ease-out ${widthClass}`}
       >
-        <div className="min-w-0">
+        <header className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">
             {dashboard.title}
           </h1>
@@ -124,95 +224,250 @@ function DashboardBody({
               {dashboard.description}
             </p>
           ) : null}
-        </div>
+        </header>
 
-        <div className="mt-8 flex flex-col gap-10">
-          {groups.map((group, gIdx) => {
-            if (group.kind === "kpi-row") {
-              return (
-                <div
-                  // biome-ignore lint/suspicious/noArrayIndexKey: panel order is canonical
-                  key={`g-${gIdx}`}
-                  className="grid gap-x-8 gap-y-4"
-                  style={{
-                    gridTemplateColumns: `repeat(${Math.min(group.indices.length, 4)}, minmax(0, 1fr))`,
-                  }}
-                >
-                  {group.indices.map((panelIdx) => {
-                    const panel = dashboard.panels[panelIdx] as Extract<
-                      DashboardPanel,
-                      { type: "kpi" }
-                    >;
-                    return (
-                      <KpiCard
-                        key={panelIdx}
-                        title={panel.title}
-                        state={panelStates[panelIdx] as KpiCardState}
-                      />
-                    );
-                  })}
-                </div>
-              );
-            }
-            const panel = dashboard.panels[group.index];
-            const state = panelStates[group.index];
-            return (
-              <DataViewPanel
-                key={group.index}
-                panel={panel as Extract<DashboardPanel, { type: "data_view" }>}
-                state={state as DataViewState}
-              />
-            );
-          })}
+        <div className="mt-8 flex flex-col gap-8">
+          {groups.map((group, gIdx) => (
+            <RowGroup
+              // biome-ignore lint/suspicious/noArrayIndexKey: panel order is canonical
+              key={`g-${gIdx}`}
+              group={group}
+              panels={dashboard.panels}
+              states={panelStates}
+            />
+          ))}
         </div>
       </div>
     </div>
   );
 }
 
-type PanelGroup =
-  | { kind: "kpi-row"; indices: number[] }
-  | { kind: "panel"; index: number };
+interface RowGroup {
+  /** One or more panel indices that flow into a single horizontal row. */
+  indices: number[];
+  /** Number of columns in this row — derived from the panels' widths. */
+  columns: number;
+}
 
-// Folds consecutive kpi panels into a single row group so two or more
-// KPIs render side-by-side rather than as stacked blocks. Any panel
-// that isn't a kpi gets its own slot.
-function groupPanels(panels: DashboardPanel[]): PanelGroup[] {
-  const out: PanelGroup[] = [];
-  let runStart = -1;
-  panels.forEach((panel, i) => {
-    if (panel.type === "kpi") {
-      if (runStart < 0) runStart = i;
-      const next = panels[i + 1];
-      if (!next || next.type !== "kpi") {
-        const indices: number[] = [];
-        for (let j = runStart; j <= i; j += 1) indices.push(j);
-        out.push({ kind: "kpi-row", indices });
-        runStart = -1;
-      }
-    } else {
-      out.push({ kind: "panel", index: i });
+// Walks panels in order, batching adjacent panels whose `width` hints
+// can share a row. The rules:
+//   - `width: full` always breaks a row (alone in its group)
+//   - `width: half` pairs greedily with the next half / kpi-half
+//   - `width: third` triples greedily with the next two thirds
+//   - bare kpi (width unset) is treated as full unless followed by
+//     consecutive bare kpis, in which case they form a 2-3-4 row —
+//     this preserves the v1 behavior where consecutive KPIs share a
+//     row implicitly.
+function groupPanels(panels: DashboardPanel[]): RowGroup[] {
+  const out: RowGroup[] = [];
+  let i = 0;
+  while (i < panels.length) {
+    const panel = panels[i];
+    const width = effectiveWidth(panel);
+
+    if (width === "full") {
+      out.push({ indices: [i], columns: 1 });
+      i += 1;
+      continue;
     }
-  });
+
+    if (width === "half") {
+      const partner = panels[i + 1];
+      if (partner && effectiveWidth(partner) === "half") {
+        out.push({ indices: [i, i + 1], columns: 2 });
+        i += 2;
+        continue;
+      }
+      out.push({ indices: [i], columns: 2 }); // orphan half — render in 2-col grid for layout consistency
+      i += 1;
+      continue;
+    }
+
+    if (width === "third") {
+      const a = panels[i + 1];
+      const b = panels[i + 2];
+      if (
+        a && b &&
+        effectiveWidth(a) === "third" &&
+        effectiveWidth(b) === "third"
+      ) {
+        out.push({ indices: [i, i + 1, i + 2], columns: 3 });
+        i += 3;
+        continue;
+      }
+      if (a && effectiveWidth(a) === "third") {
+        out.push({ indices: [i, i + 1], columns: 3 });
+        i += 2;
+        continue;
+      }
+      out.push({ indices: [i], columns: 3 });
+      i += 1;
+      continue;
+    }
+
+    // Implicit-kpi run: width === undefined. Walk forward over
+    // consecutive bare kpis; pack up to 4 in a row.
+    if (panel.type === "kpi" && !panel.width) {
+      const indices: number[] = [i];
+      let j = i + 1;
+      while (
+        j < panels.length &&
+        indices.length < 4 &&
+        panels[j].type === "kpi" &&
+        !(panels[j] as KpiPanelSpec).width
+      ) {
+        indices.push(j);
+        j += 1;
+      }
+      out.push({ indices, columns: indices.length });
+      i = j;
+      continue;
+    }
+
+    out.push({ indices: [i], columns: 1 });
+    i += 1;
+  }
   return out;
 }
 
-function panelStateFromResult(
-  panel: DashboardPanel,
-  result: DashboardQueryResult,
-): PanelState {
-  if (!result.ok) {
-    return panelErrorState(panel, result.error);
-  }
-  if (panel.type === "kpi") {
-    return { kind: "value", label: deriveKpiLabel(result.columns, result.rows) };
-  }
-  return { kind: "data", columns: result.columns, rows: result.rows };
+function effectiveWidth(panel: DashboardPanel): Width | undefined {
+  return panel.width;
 }
 
-function panelErrorState(panel: DashboardPanel, message: string): PanelState {
-  if (panel.type === "kpi") {
-    return { kind: "error", message };
+function RowGroup({
+  group,
+  panels,
+  states,
+}: {
+  group: RowGroup;
+  panels: DashboardPanel[];
+  states: PanelState[];
+}) {
+  const cols = group.columns;
+  return (
+    <div
+      className="grid gap-x-6 gap-y-4"
+      style={{
+        gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+      }}
+    >
+      {group.indices.map((panelIdx) => {
+        const panel = panels[panelIdx];
+        const state = states[panelIdx];
+        return (
+          <PanelDispatch key={panelIdx} panel={panel} state={state} />
+        );
+      })}
+    </div>
+  );
+}
+
+function PanelDispatch({ panel, state }: { panel: DashboardPanel; state: PanelState }) {
+  if (panel.type === "kpi" && state.kind === "kpi") {
+    const kpi = panel as KpiPanelSpec;
+    return (
+      <KpiCard
+        title={kpi.title}
+        description={kpi.description}
+        state={state.main}
+        delta={state.delta}
+        format={kpi.format}
+        currency={kpi.currency}
+        target={kpi.target}
+      />
+    );
   }
-  return { kind: "error", message };
+  if (panel.type === "stat_grid" && state.kind === "stat_grid") {
+    return <StatGridPanel panel={panel as StatGridPanelSpec} state={state.state} />;
+  }
+  if (panel.type === "data_view" && state.kind === "data_view") {
+    return <DataViewPanel panel={panel} state={state.state} />;
+  }
+  if (panel.type === "text" && state.kind === "text") {
+    return <TextPanel panel={panel} />;
+  }
+  if (panel.type === "chart" && state.kind === "chart") {
+    return <ChartPanel panel={panel} state={state.state} />;
+  }
+  return (
+    <div className="rounded-md border border-dashed border-border/70 bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
+      Unsupported panel state.
+    </div>
+  );
+}
+
+// ----- Result merging ----------------------------------------------
+
+function initialPanelState(panel: DashboardPanel): PanelState {
+  if (panel.type === "kpi") {
+    return {
+      kind: "kpi",
+      main: { kind: "loading" },
+      delta: panel.delta_query ? { kind: "loading" } : { kind: "none" },
+    };
+  }
+  if (panel.type === "stat_grid") {
+    return { kind: "stat_grid", state: { kind: "loading" } };
+  }
+  if (panel.type === "text") {
+    return { kind: "text" };
+  }
+  if (panel.type === "chart") {
+    return { kind: "chart", state: { kind: "loading" } };
+  }
+  return { kind: "data_view", state: { kind: "loading" } };
+}
+
+function kpiSlotFromResult(result: DashboardQueryResult): KpiCardState {
+  if (!result.ok) return { kind: "error", message: result.error ?? "Query failed." };
+  const cols = result.columns ?? [];
+  const rows = result.rows ?? [];
+  if (rows.length === 0) return { kind: "empty" };
+  return { kind: "value", raw: deriveKpiValue(cols, rows) };
+}
+
+function kpiDeltaFromResult(result: DashboardQueryResult): KpiDelta {
+  if (!result.ok) return { kind: "error" };
+  const cols = result.columns ?? [];
+  const rows = result.rows ?? [];
+  if (rows.length === 0) return { kind: "none" };
+  return { kind: "value", raw: deriveKpiValue(cols, rows) };
+}
+
+function mergeKpiResult(
+  current: PanelState,
+  slot: "main" | "delta",
+  next: KpiCardState | KpiDelta,
+): PanelState {
+  if (current.kind !== "kpi") return current;
+  if (slot === "main") {
+    return { ...current, main: next as KpiCardState };
+  }
+  return { ...current, delta: next as KpiDelta };
+}
+
+function mergeStatResult(
+  current: PanelState,
+  statIdx: number,
+  slot: "main" | "delta",
+  next: KpiCardState | KpiDelta,
+  total: number,
+): PanelState {
+  if (current.kind !== "stat_grid") return current;
+  const prevState = current.state;
+  let values: KpiCardState[];
+  let deltas: KpiDelta[];
+  if (prevState.kind === "stats") {
+    values = prevState.values.slice();
+    deltas = prevState.deltas.slice();
+  } else {
+    values = Array.from({ length: total }, () => ({ kind: "loading" } as KpiCardState));
+    deltas = Array.from({ length: total }, () => ({ kind: "none" } as KpiDelta));
+  }
+  if (slot === "main") {
+    values[statIdx] = next as KpiCardState;
+  } else {
+    deltas[statIdx] = next as KpiDelta;
+  }
+  return { kind: "stat_grid", state: { kind: "stats", values, deltas } };
 }
