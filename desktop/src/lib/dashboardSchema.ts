@@ -94,6 +94,10 @@ export type ChartSpec =
       x: string;
       y: string[];
       stacked?: boolean;
+      /** Single-series bar charts only: color each bar by the sign of
+       *  its value — positive uses palette[0] (sky), negative uses
+       *  palette[1] (orange). Ignored on multi-series, line, area. */
+      color_by_sign?: boolean;
       x_format?: "date" | "datetime" | "text";
       y_format?: "integer" | "number" | "percent" | "currency" | "duration";
       legend?: boolean;
@@ -591,6 +595,7 @@ function parseChartSpec(raw: unknown): ChartSpec | null {
       x,
       y,
       ...(raw.stacked === true ? { stacked: true } : {}),
+      ...(raw.color_by_sign === true ? { color_by_sign: true } : {}),
       ...(xFormat ? { x_format: xFormat } : {}),
       ...(yFormat &&
       (yFormat === "integer" ||

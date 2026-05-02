@@ -295,16 +295,36 @@ function CartesianChartBody({
                 wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
               />
             ) : null}
-            {seriesIdx.map((s, i) => (
-              <Bar
-                key={s.name}
-                dataKey={s.name}
-                fill={palette[i % palette.length]}
-                radius={[3, 3, 0, 0]}
-                stackId={chart.stacked ? "stack" : undefined}
-                isAnimationActive
-              />
-            ))}
+            {seriesIdx.map((s, i) => {
+              // color_by_sign only applies to single-series bars: per-row
+              // Cell color picked by sign. Stacked bars get radius=0
+              // because per-segment rounded corners look like dents.
+              const colorBySign =
+                chart.color_by_sign === true && seriesIdx.length === 1;
+              return (
+                <Bar
+                  key={s.name}
+                  dataKey={s.name}
+                  fill={palette[i % palette.length]}
+                  radius={chart.stacked ? 0 : [3, 3, 0, 0]}
+                  stackId={chart.stacked ? "stack" : undefined}
+                  isAnimationActive
+                >
+                  {colorBySign
+                    ? data.map((entry, idx) => {
+                        const v = entry[s.name];
+                        const n = typeof v === "number" ? v : null;
+                        const fill =
+                          n !== null && n < 0 ? palette[1] : palette[0];
+                        return (
+                          // biome-ignore lint/suspicious/noArrayIndexKey: row order is the natural key
+                          <Cell key={idx} fill={fill} />
+                        );
+                      })
+                    : null}
+                </Bar>
+              );
+            })}
           </BarChart>
         ) : (
           <AreaChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
