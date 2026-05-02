@@ -1,5 +1,8 @@
+import { AlertTriangle } from "lucide-react";
+
 import type { ColumnFormat } from "@/lib/dashboardSchema";
 
+import { ErrorMessage } from "./ErrorMessage";
 import { formatValue } from "./format";
 
 export type KpiCardState =
@@ -59,7 +62,7 @@ export function KpiCard({
   const progress = computeProgress(state, target);
 
   return (
-    <div className={compact ? "px-3 py-3" : "px-1 py-1"}>
+    <div className={compact ? "px-4 py-2" : "px-1 py-1"}>
       <div className="flex items-baseline gap-2">
         <span className="text-[11px] font-medium uppercase tracking-[0.04em] text-muted-foreground">
           {title}
@@ -67,25 +70,20 @@ export function KpiCard({
       </div>
       <div className="mt-2 flex min-h-[2rem] items-baseline gap-2.5">
         {state.kind === "loading" ? (
-          <span
-            className="hb-spinner text-muted-foreground"
-            style={{ fontSize: compact ? "1.25rem" : "1.5rem" }}
+          <div
+            className={`animate-shimmer rounded-md bg-fg-6 ${
+              compact ? "h-7 w-20" : "h-8 w-28"
+            }`}
             aria-busy
             aria-label="Loading"
-          >
-            <span /><span /><span />
-            <span /><span /><span />
-            <span /><span /><span />
-          </span>
+          />
         ) : state.kind === "error" ? (
-          <div className="truncate text-xs text-destructive" title={state.message}>
-            {state.message}
-          </div>
+          <ErrorMessage message={state.message} compact />
         ) : (
           <>
             <span
               className={`font-mono tabular-nums tracking-tight text-foreground ${
-                compact ? "text-2xl font-medium" : "text-[28px] font-medium leading-none"
+                compact ? "text-2xl font-semibold" : "text-3xl font-semibold leading-none"
               }`}
             >
               {valueText}
@@ -97,6 +95,13 @@ export function KpiCard({
               >
                 <span aria-hidden>{deltaInfo.arrow}</span>
                 {deltaInfo.text}
+              </span>
+            ) : delta?.kind === "error" ? (
+              <span
+                className="inline-flex items-center rounded-md bg-muted px-1 py-0.5 text-muted-foreground"
+                title="Delta query failed"
+              >
+                <AlertTriangle size={10} strokeWidth={2.25} />
               </span>
             ) : null}
           </>
@@ -111,7 +116,7 @@ export function KpiCard({
         <div className="mt-2.5">
           <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
             <div
-              className="h-full bg-foreground/85 transition-[width] duration-500 ease-out"
+              className="h-full bg-foreground transition-[width] duration-500 ease-out"
               style={{ width: `${Math.max(0, Math.min(100, progress.pct))}%` }}
             />
           </div>
