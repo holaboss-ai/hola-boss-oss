@@ -1,5 +1,5 @@
-import { Check, ChevronDown } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Check, ChevronDown, Columns3 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   DropdownMenu,
@@ -9,14 +9,17 @@ import {
 } from "@/components/ui/dropdown-menu";
 import type { BoardViewSpec, ColorToken } from "@/lib/dashboardSchema";
 
+import { EmptyState } from "./EmptyState";
 import { colorClasses, formatSmartDate, hashToColor, looksLikeDateColumn } from "./format";
 import { isStatusColumn, StatusBadge } from "./StatusBadge";
+import { usePersistedState } from "./usePersistedState";
 
 interface BoardViewProps {
   view: BoardViewSpec;
   columns: string[];
   rows: unknown[][];
   emptyState?: string;
+  storageKeyBase?: string;
 }
 
 // Read-only Kanban: rows are bucketed by distinct values of the
@@ -25,18 +28,27 @@ interface BoardViewProps {
 // header (Notion-style). Selection is component-local; we don't
 // persist back to YAML in v2 because the dashboard is a pure
 // function of its file.
-export function BoardView({ view, columns, rows, emptyState }: BoardViewProps) {
-  const [activeGroupBy, setActiveGroupBy] = useState<string>(view.group_by);
+export function BoardView({
+  view,
+  columns,
+  rows,
+  emptyState,
+  storageKeyBase,
+}: BoardViewProps) {
+  const [activeGroupBy, setActiveGroupBy] = usePersistedState<string>(
+    storageKeyBase ? `${storageKeyBase}:board:groupBy` : undefined,
+    view.group_by,
+  );
+  const initialGroupBy = view.group_by;
 
   // Reset when the YAML changes the initial group_by underneath us
-  // (e.g. agent re-emits the dashboard).
-  const initialGroupBy = view.group_by;
-  if (
-    activeGroupBy !== view.group_by &&
-    !columns.includes(activeGroupBy)
-  ) {
-    setActiveGroupBy(initialGroupBy);
-  }
+  // (e.g. agent re-emits the dashboard) and the previously-selected
+  // column has gone away. Effect rather than render-phase setState.
+  useEffect(() => {
+    if (activeGroupBy !== view.group_by && !columns.includes(activeGroupBy)) {
+      setActiveGroupBy(view.group_by);
+    }
+  }, [view.group_by, columns, activeGroupBy]);
 
   const titleIdx = columns.indexOf(view.card_title);
   const subtitleIdx = view.card_subtitle ? columns.indexOf(view.card_subtitle) : -1;
@@ -113,9 +125,7 @@ export function BoardView({ view, columns, rows, emptyState }: BoardViewProps) {
     return (
       <div className="pt-2">
         <div className="mb-2">{picker}</div>
-        <div className="py-8 text-center text-xs text-muted-foreground">
-          {emptyState ?? "No rows."}
-        </div>
+        <EmptyState icon={Columns3} message={emptyState ?? "Nothing here yet."} />
       </div>
     );
   }
@@ -156,8 +166,7 @@ export function BoardView({ view, columns, rows, emptyState }: BoardViewProps) {
                 // biome-ignore lint/suspicious/noArrayIndexKey: SQL row order is the natural key
                 <article
                   key={rIdx}
-                  tabIndex={0}
-                  className="cursor-default rounded-md border border-transparent bg-fg-4 px-3 py-2.5 text-xs transition-all hover:border-border hover:bg-card hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                  className="rounded-md border border-transparent bg-fg-4 px-3 py-2.5 text-xs transition-colors hover:border-border hover:bg-card"
                 >
                   <div className="line-clamp-3 leading-snug text-foreground">
                     {formatCell(row[titleIdx])}

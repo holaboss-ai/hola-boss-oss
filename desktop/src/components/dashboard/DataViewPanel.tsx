@@ -16,12 +16,15 @@ import {
 } from "@/lib/dashboardSchema";
 
 import { BoardView } from "./BoardView";
+import { ErrorMessage } from "./ErrorMessage";
 import { ListView } from "./ListView";
 import { TableView } from "./TableView";
 
 interface DataViewPanelProps {
   panel: DataViewPanelSpec;
   state: DataViewState;
+  storageKeyBase?: string;
+  fullWidth?: boolean;
 }
 
 export type DataViewState =
@@ -42,7 +45,12 @@ const VIEW_META: Record<DataViewSpec["type"], { label: string; icon: LucideIcon 
 // solid card surface, header with title + connected segmented view
 // switcher with an animated indicator pill, body with the active
 // view's content. Selected view state is component-local.
-export function DataViewPanel({ panel, state }: DataViewPanelProps) {
+export function DataViewPanel({
+  panel,
+  state,
+  storageKeyBase,
+  fullWidth = false,
+}: DataViewPanelProps) {
   const [activeViewType, setActiveViewType] = useState<DataViewSpec["type"]>(
     () => resolveInitialView(panel).type,
   );
@@ -53,39 +61,48 @@ export function DataViewPanel({ panel, state }: DataViewPanelProps) {
 
   return (
     <section className="group overflow-hidden rounded-xl bg-card shadow-md smooth-corners">
-      <header className="flex items-center justify-between gap-3 border-b border-border/70 bg-fg-2 px-4 py-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <h3 className="truncate text-sm font-semibold tracking-tight text-foreground">
-            {panel.title}
-          </h3>
-          {rowCount !== null ? (
-            <span className="shrink-0 rounded-md bg-fg-6 px-1.5 py-0.5 text-[10.5px] font-medium tabular-nums text-muted-foreground">
-              {rowCount}
-            </span>
-          ) : null}
-          {panel.description ? (
-            <span className="hidden truncate text-xs text-muted-foreground md:inline">
-              · {panel.description}
-            </span>
+      <header className="border-b border-border/70 bg-fg-2 px-4 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <h3 className="truncate text-sm font-semibold tracking-tight text-foreground">
+              {panel.title}
+            </h3>
+            {rowCount !== null ? (
+              <span className="shrink-0 rounded-md bg-fg-6 px-1.5 py-0.5 text-[10.5px] font-medium tabular-nums text-muted-foreground">
+                {rowCount}
+              </span>
+            ) : null}
+          </div>
+          {panel.views.length > 1 ? (
+            <ViewTabs
+              views={panel.views}
+              active={activeViewType}
+              onChange={setActiveViewType}
+            />
           ) : null}
         </div>
-        {panel.views.length > 1 ? (
-          <ViewTabs
-            views={panel.views}
-            active={activeViewType}
-            onChange={setActiveViewType}
-          />
+        {panel.description ? (
+          <p className="mt-1 truncate text-xs text-muted-foreground">
+            {panel.description}
+          </p>
         ) : null}
       </header>
-      <div className="scrollbar-ghost max-h-[560px] overflow-auto px-4 pb-3">
+      <div
+        className={`scrollbar-ghost overflow-auto px-4 py-3 ${
+          fullWidth ? "max-h-[800px]" : "max-h-[560px]"
+        }`}
+      >
         {state.kind === "loading" ? (
           <SkeletonRows />
         ) : state.kind === "error" ? (
-          <div className="my-3 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-            {state.message}
-          </div>
+          <ErrorMessage message={state.message} />
         ) : (
-          <ViewBody view={activeView} state={state} emptyState={panel.empty_state} />
+          <ViewBody
+            view={activeView}
+            state={state}
+            emptyState={panel.empty_state}
+            storageKeyBase={storageKeyBase}
+          />
         )}
       </div>
     </section>
@@ -96,10 +113,12 @@ function ViewBody({
   view,
   state,
   emptyState,
+  storageKeyBase,
 }: {
   view: DataViewSpec;
   state: Extract<DataViewState, { kind: "data" }>;
   emptyState?: string;
+  storageKeyBase: string | undefined;
 }) {
   if (view.type === "table") {
     return (
@@ -108,6 +127,7 @@ function ViewBody({
         columns={state.columns}
         rows={state.rows}
         emptyState={emptyState}
+        storageKeyBase={storageKeyBase}
       />
     );
   }
@@ -118,6 +138,7 @@ function ViewBody({
         columns={state.columns}
         rows={state.rows}
         emptyState={emptyState}
+        storageKeyBase={storageKeyBase}
       />
     );
   }

@@ -8,6 +8,7 @@ import {
   type Width,
   parseDashboard,
 } from "@/lib/dashboardSchema";
+import { bumpDashboardRefreshKey } from "@/lib/dashboardToolbarStore";
 
 import { ChartPanel } from "./ChartPanel";
 import { type DataViewState, DataViewPanel } from "./DataViewPanel";
@@ -18,6 +19,7 @@ import { TextPanel } from "./TextPanel";
 interface DashboardRendererProps {
   workspaceId: string;
   content: string;
+  dashboardPath?: string;
   /** Toggled by the host pane (InternalSurfacePane). When true, the
    *  centered max-width is dropped and the renderer fills its container. */
   fullWidth?: boolean;
@@ -45,10 +47,15 @@ type PanelState =
 export function DashboardRenderer({
   workspaceId,
   content,
+  dashboardPath,
   fullWidth = false,
   refreshKey = 0,
 }: DashboardRendererProps) {
-  const parsed = useMemo(() => parseDashboard(content), [content]);
+  // Debounce parsing so live-edit keystrokes don't reparse + refire
+  // every panel's SQL query on every character. 250ms is enough that a
+  // user pausing to read sees the result, while typing isn't laggy.
+  const debouncedContent = useDebouncedValue(content, 250);
+  const parsed = useMemo(() => parseDashboard(debouncedContent), [debouncedContent]);
 
   if (!parsed.ok || !parsed.dashboard) {
     return (
@@ -65,6 +72,7 @@ export function DashboardRenderer({
     <DashboardBody
       workspaceId={workspaceId}
       dashboard={parsed.dashboard}
+      dashboardPath={dashboardPath}
       fullWidth={fullWidth}
       refreshKey={refreshKey}
     />
@@ -74,11 +82,13 @@ export function DashboardRenderer({
 function DashboardBody({
   workspaceId,
   dashboard,
+  dashboardPath,
   fullWidth,
   refreshKey,
 }: {
   workspaceId: string;
   dashboard: Dashboard;
+  dashboardPath: string | undefined;
   fullWidth: boolean;
   refreshKey: number;
 }) {
@@ -204,6 +214,25 @@ function DashboardBody({
     };
   }, [dashboard, workspaceId, refreshKey]);
 
+  const isRefreshing = useMemo(
+    () => panelStates.some(isPanelLoading),
+    [panelStates],
+  );
+  const [lastRefreshAt, setLastRefreshAt] = useState<number | null>(null);
+  useEffect(() => {
+    if (!isRefreshing) setLastRefreshAt(Date.now());
+  }, [isRefreshing]);
+
+  // Auto-refresh — schema clamps interval ≥ 10s on parse.
+  useEffect(() => {
+    const interval = dashboard.refresh_interval;
+    if (!interval) return;
+    const id = window.setInterval(() => {
+      bumpDashboardRefreshKey();
+    }, interval * 1000);
+    return () => window.clearInterval(id);
+  }, [dashboard.refresh_interval]);
+
   // Width hints arrange panels into rows. `max-w-none` would animate
   // over a literal-billion-px change so we use a pixel value for full.
   const widthClass = fullWidth ? "max-w-[1600px]" : "max-w-4xl";
@@ -215,15 +244,21 @@ function DashboardBody({
       <div
         className={`mx-auto px-10 pt-10 pb-16 transition-[max-width] duration-200 ease-out ${widthClass}`}
       >
-        <header className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-            {dashboard.title}
-          </h1>
-          {dashboard.description ? (
-            <p className="mt-1 text-sm text-muted-foreground">
-              {dashboard.description}
-            </p>
-          ) : null}
+        <header className="flex min-w-0 items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+              {dashboard.title}
+            </h1>
+            {dashboard.description ? (
+              <p className="mt-1 text-sm text-muted-foreground">
+                {dashboard.description}
+              </p>
+            ) : null}
+          </div>
+          <RefreshIndicator
+            isRefreshing={isRefreshing}
+            lastRefreshAt={lastRefreshAt}
+          />
         </header>
 
         <div className="mt-8 flex flex-col gap-8">
@@ -234,6 +269,8 @@ function DashboardBody({
               group={group}
               panels={dashboard.panels}
               states={panelStates}
+              dashboardPath={dashboardPath}
+              fullWidth={fullWidth}
             />
           ))}
         </div>
@@ -338,10 +375,14 @@ function RowGroup({
   group,
   panels,
   states,
+  dashboardPath,
+  fullWidth,
 }: {
   group: RowGroup;
   panels: DashboardPanel[];
   states: PanelState[];
+  dashboardPath: string | undefined;
+  fullWidth: boolean;
 }) {
   const cols = group.columns;
   return (
@@ -354,15 +395,34 @@ function RowGroup({
       {group.indices.map((panelIdx) => {
         const panel = panels[panelIdx];
         const state = states[panelIdx];
+        const storageKeyBase = dashboardPath
+          ? `dash:${dashboardPath}:p${panelIdx}`
+          : undefined;
         return (
-          <PanelDispatch key={panelIdx} panel={panel} state={state} />
+          <PanelDispatch
+            key={panelIdx}
+            panel={panel}
+            state={state}
+            storageKeyBase={storageKeyBase}
+            fullWidth={fullWidth}
+          />
         );
       })}
     </div>
   );
 }
 
-function PanelDispatch({ panel, state }: { panel: DashboardPanel; state: PanelState }) {
+function PanelDispatch({
+  panel,
+  state,
+  storageKeyBase,
+  fullWidth,
+}: {
+  panel: DashboardPanel;
+  state: PanelState;
+  storageKeyBase: string | undefined;
+  fullWidth: boolean;
+}) {
   if (panel.type === "kpi" && state.kind === "kpi") {
     const kpi = panel as KpiPanelSpec;
     return (
@@ -381,7 +441,14 @@ function PanelDispatch({ panel, state }: { panel: DashboardPanel; state: PanelSt
     return <StatGridPanel panel={panel as StatGridPanelSpec} state={state.state} />;
   }
   if (panel.type === "data_view" && state.kind === "data_view") {
-    return <DataViewPanel panel={panel} state={state.state} />;
+    return (
+      <DataViewPanel
+        panel={panel}
+        state={state.state}
+        storageKeyBase={storageKeyBase}
+        fullWidth={fullWidth}
+      />
+    );
   }
   if (panel.type === "text" && state.kind === "text") {
     return <TextPanel panel={panel} />;
@@ -394,6 +461,84 @@ function PanelDispatch({ panel, state }: { panel: DashboardPanel; state: PanelSt
       Unsupported panel state.
     </div>
   );
+}
+
+// ----- Hooks --------------------------------------------------------
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(id);
+  }, [value, delayMs]);
+  return debounced;
+}
+
+// ----- Refresh indicator --------------------------------------------
+
+function isPanelLoading(s: PanelState): boolean {
+  if (s.kind === "kpi") {
+    return s.main.kind === "loading" || s.delta.kind === "loading";
+  }
+  if (s.kind === "stat_grid") {
+    if (s.state.kind === "loading") return true;
+    if (s.state.kind === "stats") {
+      return (
+        s.state.values.some((v) => v.kind === "loading") ||
+        s.state.deltas.some((d) => d.kind === "loading")
+      );
+    }
+    return false;
+  }
+  if (s.kind === "data_view" || s.kind === "chart") {
+    return s.state.kind === "loading";
+  }
+  return false;
+}
+
+function RefreshIndicator({
+  isRefreshing,
+  lastRefreshAt,
+}: {
+  isRefreshing: boolean;
+  lastRefreshAt: number | null;
+}) {
+  // Tick every 30s so the relative time stays roughly accurate without
+  // re-rendering the whole dashboard on a faster cadence.
+  const [, force] = useState(0);
+  useEffect(() => {
+    if (lastRefreshAt === null || isRefreshing) return;
+    const id = window.setInterval(() => force((n) => n + 1), 30_000);
+    return () => window.clearInterval(id);
+  }, [lastRefreshAt, isRefreshing]);
+
+  if (isRefreshing) {
+    return (
+      <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+        Refreshing…
+      </span>
+    );
+  }
+  if (lastRefreshAt === null) return null;
+  return (
+    <span
+      className="shrink-0 text-[11px] tabular-nums text-muted-foreground"
+      title={new Date(lastRefreshAt).toLocaleString()}
+    >
+      Updated {formatRelativeShort(lastRefreshAt)}
+    </span>
+  );
+}
+
+function formatRelativeShort(ts: number): string {
+  const s = Math.round((Date.now() - ts) / 1000);
+  if (s < 5) return "just now";
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
 }
 
 // ----- Result merging ----------------------------------------------

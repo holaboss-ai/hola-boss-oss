@@ -1,8 +1,9 @@
-import { ChevronDown, ChevronsUpDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronsUpDown, ChevronUp, Table2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ColorToken, TableColumnSpec, TableViewSpec } from "@/lib/dashboardSchema";
 
+import { EmptyState } from "./EmptyState";
 import { isStatusColumn, StatusBadge } from "./StatusBadge";
 import {
   colorClasses,
@@ -10,12 +11,14 @@ import {
   formatValue,
   resolveLinkTemplate,
 } from "./format";
+import { usePersistedState } from "./usePersistedState";
 
 interface TableViewProps {
   view: TableViewSpec;
   columns: string[];
   rows: unknown[][];
   emptyState?: string;
+  storageKeyBase?: string;
 }
 
 type SortDir = "asc" | "desc" | null;
@@ -39,10 +42,22 @@ interface ResolvedColumn {
 // padding, larger row text, hairline borders, soft hover. The view's
 // `columns` field, when set, drives column order, format, alignment,
 // width, color chips, and clickable links.
-export function TableView({ view, columns, rows, emptyState }: TableViewProps) {
+export function TableView({
+  view,
+  columns,
+  rows,
+  emptyState,
+  storageKeyBase,
+}: TableViewProps) {
   const visible = pickColumns(view, columns);
-  const [sort, setSort] = useState<SortState | null>(null);
-  const [resizedWidths, setResizedWidths] = useState<Record<string, number>>({});
+  const [sort, setSort] = usePersistedState<SortState | null>(
+    storageKeyBase ? `${storageKeyBase}:table:sort` : undefined,
+    null,
+  );
+  const [resizedWidths, setResizedWidths] = usePersistedState<Record<string, number>>(
+    storageKeyBase ? `${storageKeyBase}:table:widths` : undefined,
+    {},
+  );
 
   // Effective width per column: spec.width > user resize > default.
   const effectiveWidths = useMemo(() => {
@@ -73,41 +88,19 @@ export function TableView({ view, columns, rows, emptyState }: TableViewProps) {
     });
   }, [rows, sort, columns]);
 
-  const displayRows = sortedRows.slice(0, 500);
+  const [shownLimit, setShownLimit] = useState(500);
+  const displayRows = sortedRows.slice(0, shownLimit);
 
   const cycleSort = (column: string) => {
     setSort((prev) => {
       if (!prev || prev.column !== column) return { column, dir: "asc" };
-      if (prev.dir === "asc") return { column, dir: "desc" };
-      return null;
+      return { column, dir: prev.dir === "asc" ? "desc" : "asc" };
     });
   };
-
-  if (visible.length === 0) {
-    return (
-      <div className="py-10 text-center text-xs text-muted-foreground">
-        No columns to display.
-      </div>
-    );
-  }
-  if (rows.length === 0) {
-    return (
-      <div className="py-10 text-center text-xs text-muted-foreground">
-        {emptyState ?? "No rows."}
-      </div>
-    );
-  }
 
   const beginResize = useCallback(
     (name: string, startX: number) => {
       const startWidth = effectiveWidths[name] ?? 160;
-      // Pointer events with capture — works for mouse + touch + pen
-      // and isn't lost when the cursor leaves the small handle area
-      // mid-drag.
-      const handle = document.createElement("div");
-      // Add a body-level cursor so the col-resize cursor stays even
-      // when the pointer moves off the handle (otherwise the cursor
-      // flickers on every frame). Restored on pointerup.
       const prevCursor = document.body.style.cursor;
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
@@ -122,7 +115,6 @@ export function TableView({ view, columns, rows, emptyState }: TableViewProps) {
         window.removeEventListener("pointerup", onUp);
         document.body.style.cursor = prevCursor;
         document.body.style.userSelect = "";
-        handle.remove();
       };
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
@@ -130,19 +122,11 @@ export function TableView({ view, columns, rows, emptyState }: TableViewProps) {
     [effectiveWidths],
   );
 
-  // Total pixel width across all columns. The wrapper's overflow-x:
-  // auto kicks in when this exceeds the container, so very wide
-  // tables scroll horizontally with mask-edges-x fading the cut.
   const totalWidth = visible.reduce(
     (sum, c) => sum + (effectiveWidths[c.name] ?? 160),
     0,
   );
 
-  // Edge-fade only on the side that has hidden content. Notion's
-  // pattern: leftmost column shouldn't be ghosted just because the
-  // table is wider than its frame; the fade is a hint that "more
-  // exists in this direction", and there's nothing to the left of
-  // scroll position 0.
   const scrollWrapRef = useRef<HTMLDivElement | null>(null);
   const [edgeFade, setEdgeFade] = useState({ left: 0, right: 0 });
   const updateEdgeFade = useCallback(() => {
@@ -164,6 +148,13 @@ export function TableView({ view, columns, rows, emptyState }: TableViewProps) {
     ro.observe(el);
     return () => ro.disconnect();
   }, [updateEdgeFade, totalWidth]);
+
+  if (visible.length === 0) {
+    return <EmptyState icon={Table2} message="No columns to display." />;
+  }
+  if (rows.length === 0) {
+    return <EmptyState icon={Table2} message={emptyState ?? "Nothing here yet."} />;
+  }
 
   return (
     <div className="group pt-1">
@@ -206,7 +197,7 @@ export function TableView({ view, columns, rows, emptyState }: TableViewProps) {
                         dir === "asc"
                           ? "Sorted ascending — click for descending"
                           : dir === "desc"
-                            ? "Sorted descending — click to clear"
+                            ? "Sorted descending — click for ascending"
                             : "Click to sort"
                       }
                       className={`-mx-1 inline-flex items-center gap-1 rounded px-1 py-0.5 transition-colors hover:bg-fg-6 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
@@ -255,8 +246,17 @@ export function TableView({ view, columns, rows, emptyState }: TableViewProps) {
         </table>
       </div>
       {rows.length > displayRows.length ? (
-        <div className="pt-3 text-xs text-muted-foreground">
-          Showing {displayRows.length} of {rows.length} rows.
+        <div className="flex items-center gap-3 pt-3 text-xs text-muted-foreground">
+          <span>
+            Showing {displayRows.length} of {rows.length} rows.
+          </span>
+          <button
+            type="button"
+            onClick={() => setShownLimit((n) => n + 500)}
+            className="rounded-md border border-border px-2 py-0.5 transition-colors hover:bg-muted hover:text-foreground"
+          >
+            Show {Math.min(500, rows.length - displayRows.length)} more
+          </button>
         </div>
       ) : null}
     </div>
@@ -315,11 +315,11 @@ function defaultColumnWidthPx(c: ResolvedColumn): number {
   if (fmt === "datetime" || fmt === "date") return 170;
   if (fmt === "url") return 140;
   if (fmt === "image_url") return 64;
+  if (fmt === "currency") return 130;
   if (
     fmt === "integer" ||
     fmt === "number" ||
     fmt === "percent" ||
-    fmt === "currency" ||
     fmt === "duration"
   ) {
     return 110;

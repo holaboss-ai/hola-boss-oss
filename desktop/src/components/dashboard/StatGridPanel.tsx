@@ -32,18 +32,18 @@ export function StatGridPanel({ panel, state }: StatGridPanelProps) {
 
   return (
     <section className="min-w-0">
-      <div className="mb-2.5 flex items-baseline justify-between gap-3">
-        <h2 className="text-base font-semibold tracking-tight text-foreground">
+      <div className="mb-3">
+        <h2 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
           {panel.title}
         </h2>
         {panel.description ? (
-          <p className="hidden text-xs text-muted-foreground sm:block">
+          <p className="mt-1 text-xs text-muted-foreground">
             {panel.description}
           </p>
         ) : null}
       </div>
       <div
-        className={`grid gap-x-6 gap-y-4 rounded-xl bg-card p-5 shadow-md smooth-corners ${gridClass}`}
+        className={`grid divide-x divide-border [&>*:first-child]:pl-0 ${gridClass}`}
       >
         {panel.stats.map((stat, i) => {
           const cardState =
