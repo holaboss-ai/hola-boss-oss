@@ -555,6 +555,9 @@ test("accepting a task proposal starts background work without surfacing a hidde
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(source, /async function acceptTaskProposal\(proposal: TaskProposalRecordPayload\)/);
+  assert.match(source, /function currentComposerSelectedModel\(/);
+  assert.match(source, /localStorage\.getItem\(CHAT_MODEL_STORAGE_KEY\)/);
+  assert.match(source, /model: currentComposerSelectedModel\(runtimeConfig\)/);
   assert.match(source, /Started background task "\$\{proposal\.task_name\}"\./);
   assert.doesNotMatch(source, /const proposalSessionId = `proposal-\$\{crypto\.randomUUID\(\)\}`;/);
   assert.doesNotMatch(source, /Queued "\$\{proposal\.task_name\}" into session \$\{targetSessionId\}\./);

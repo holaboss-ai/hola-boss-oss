@@ -266,6 +266,7 @@ interface RuntimeConfigPayload {
   sandboxId: string | null;
   modelProxyBaseUrl: string | null;
   defaultModel: string | null;
+  subagentModel: string | null;
   defaultBackgroundModel: string | null;
   defaultEmbeddingModel: string | null;
   defaultImageModel: string | null;
@@ -299,6 +300,7 @@ interface RuntimeConfigUpdatePayload {
   sandboxId?: string | null;
   modelProxyBaseUrl?: string | null;
   defaultModel?: string | null;
+  subagentModel?: string | null;
   defaultBackgroundModel?: string | null;
   defaultEmbeddingModel?: string | null;
   defaultImageModel?: string | null;

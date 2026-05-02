@@ -22,9 +22,10 @@ test("billing summary card exposes web-only billing actions", async () => {
   const source = await readFile(BILLING_SUMMARY_CARD_PATH, "utf8");
 
   assert.match(source, /Add credits/);
-  assert.match(source, /Manage on web/);
+  assert.match(source, /Billing managed on web/);
+  assert.match(source, />\s*Manage\s*</);
   assert.match(source, /openExternalUrl/);
-  assert.match(source, /backgroundColor: "rgb\(243, 243, 244\)"/);
+  assert.match(source, /shadow-md/);
   assert.doesNotMatch(source, /Available hosted credits/);
   assert.doesNotMatch(source, /Recent usage/);
   assert.doesNotMatch(source, /text-\[[0-9]+px\]/);
@@ -37,31 +38,39 @@ test("runtime auth panel keeps model provider settings compact", async () => {
     source.match(/const runtimeProviderSettings = \([\s\S]*?\n  \);\n\n  if \(view === "account"\)/)?.[0] ?? "";
 
   assert.match(source, /Background tasks/);
+  assert.match(source, /Subagent model/);
   assert.match(source, /Provider model resolution needs attention/);
   assert.match(source, /No embedding model can be resolved from the currently connected providers\./);
   assert.match(source, /No image generation model can be resolved from the currently connected providers\./);
-  assert.match(source, /const ADVANCED_SETTINGS_WARNING_PANEL_STYLE = \{/);
-  assert.match(source, /borderColor: "color-mix\(in oklch, var\(--warning\) 40%, var\(--border\)\)"/);
-  assert.match(source, /backgroundColor: "color-mix\(in oklch, var\(--warning\) 12%, var\(--card\)\)"/);
-  assert.match(source, /color: "color-mix\(in oklch, var\(--warning\) 36%, var\(--foreground\)\)"/);
-  assert.match(source, /const ADVANCED_SETTINGS_WARNING_TITLE_STYLE = \{/);
-  assert.match(source, /color: "color-mix\(in oklch, var\(--warning\) 52%, var\(--foreground\)\)"/);
-  assert.match(source, /style=\{ADVANCED_SETTINGS_WARNING_PANEL_STYLE\}/);
-  assert.match(source, /className="font-medium" style=\{ADVANCED_SETTINGS_WARNING_TITLE_STYLE\}/);
+  assert.match(source, /className="flex items-start gap-3 rounded-xl bg-warning\/10 px-4 py-3 ring-1 ring-warning\/25"/);
+  assert.match(source, /className="font-medium text-foreground"/);
   assert.match(source, /Used for memory recall and evolve tasks\./);
   assert.match(source, /Recall embeddings/);
   assert.match(source, /Advanced settings/);
   assert.match(source, /Used to preselect memory candidates for recall\./);
   assert.match(source, /Embedding indexing stays off the user input path\./);
-  assert.match(source, /Until embeddings have been indexed separately, recall continues to use the staged path\./);
+  assert.match(
+    source,
+    /Until\s+embeddings have been indexed separately, recall continues\s+to use the staged path\./,
+  );
   assert.match(source, /Image generation/);
-  assert.match(source, /Used when the agent generates new images into the workspace\./);
+  assert.match(
+    source,
+    /Used when the agent generates new images into the\s+workspace\./,
+  );
   assert.match(source, /Select a model to enable image generation\./);
   assert.match(source, /Select a model to enable background tasks\./);
   assert.match(source, /Select a model to enable vector recall\./);
-  assert.match(source, /Connected providers/);
-  assert.match(source, /Click Connect to configure settings\./);
-  assert.match(source, /Models/);
+  assert.match(source, /Follow composer/);
+  assert.match(source, /Use the current composer model whenever hidden subagent work starts or continues\./);
+  assert.match(source, /Optional override for hidden subagent runs\. Leave it on Follow composer to use the current composer model\./);
+  assert.match(source, /title="Model providers"/);
+  assert.match(source, /No providers connected/);
+  assert.match(
+    source,
+    /Pick one to give the agent access to a model\.\s+You can add more\s+later\./,
+  );
+  assert.match(source, /Add provider/);
   assert.match(source, /applyBackgroundTaskProviderSelection/);
   assert.match(source, /applyRecallEmbeddingsProviderSelection/);
   assert.match(source, /applyImageGenerationProviderSelection/);
@@ -76,13 +85,18 @@ test("runtime auth panel keeps model provider settings compact", async () => {
   assert.match(source, /Select at least one configured model before saving\./);
   assert.match(source, /Some saved models are not in the local catalog\./);
   assert.match(source, /const AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME =/);
-  assert.match(source, /hover:border-border\/65/);
+  assert.match(source, /hover:border-border/);
   assert.match(source, /overflow-hidden/);
   assert.match(source, /focus-visible:ring-0/);
   assert.match(source, /const backgroundTaskModelOptions = uniqueValues\(\[/);
   assert.match(source, /const recallEmbeddingsModelOptions = uniqueValues\(\[/);
   assert.match(source, /const imageGenerationModelOptions = uniqueValues\(\[/);
-  assert.match(source, /setShowAdvancedRuntimeSettings\(\(current\) => !current\)/);
+  assert.match(source, /const subagentModelToken = \(runtimeConfig\?\.subagentModel \?\? ""\)\.trim\(\);/);
+  assert.match(source, /const subagentModelOptions: SettingsMenuOption\[] = \[/);
+  assert.match(source, /SUBAGENT_MODEL_FOLLOW_COMPOSER/);
+  assert.match(source, /subagentModel:\s*token === SUBAGENT_MODEL_FOLLOW_COMPOSER \? "" : token/);
+  assert.match(source, /onClick=\{\(\) => setShowAdvancedRuntimeSettings\(true\)\}/);
+  assert.match(source, /if \(!next\) setShowAdvancedRuntimeSettings\(false\);/);
   assert.match(source, /const advancedSettingsWarnings = \[/);
   assert.match(source, /if \(isSignedIn \|\| isProviderDraftDirty\) \{\s*return;\s*\}/);
   assert.match(source, /if \(backgroundTasksDraft\.providerId === "holaboss"\) \{\s*setBackgroundTasksDraft\(\{ providerId: "", model: "" \}\);\s*\}/);
@@ -95,10 +109,22 @@ test("runtime auth panel keeps model provider settings compact", async () => {
   assert.match(source, /!recallEmbeddingsDraft\.providerId \|\|\s*recallEmbeddingsModelOptions\.length === 0/);
   assert.match(source, /!imageGenerationDraft\.providerId \|\|\s*imageGenerationModelOptions\.length === 0/);
   assert.match(source, /if \(\s*isProviderDraftDirty \|\|\s*recallEmbeddingsDraft\.providerId \|\|\s*connectedRecallEmbeddingProviderIds\.length === 0\s*\) \{\s*return;\s*\}/);
-  assert.match(source, /applyRecallEmbeddingsProviderSelection\(connectedRecallEmbeddingProviderIds\[0\] \?\? ""\);/);
-  assert.match(source, /Selected provider is not connected\. Background tasks stay disabled until you reconnect it or choose another provider\./);
-  assert.match(source, /Selected provider is not connected\. Vector recall stays disabled until you reconnect it or choose another provider\./);
-  assert.match(source, /Selected provider is not connected\. Image generation stays disabled until you reconnect it or choose another provider\./);
+  assert.match(
+    source,
+    /applyRecallEmbeddingsProviderSelection\(\s*connectedRecallEmbeddingProviderIds\[0\] \?\? "",\s*\);/,
+  );
+  assert.match(
+    source,
+    /Selected provider is not connected\.\s+Background tasks\s+stay disabled until you reconnect it or choose another\s+provider\./,
+  );
+  assert.match(
+    source,
+    /Selected provider is not connected\.\s+Vector recall\s+stays disabled until you reconnect it or choose\s+another provider\./,
+  );
+  assert.match(
+    source,
+    /Selected provider is not connected\.\s+Image generation\s+stays disabled until you reconnect it or choose\s+another provider\./,
+  );
   assert.doesNotMatch(source, /Background Tasks Model/);
   assert.doesNotMatch(source, /__automatic__/);
   assert.doesNotMatch(source, /Recall uses:/);
@@ -118,15 +144,22 @@ test("runtime auth panel keeps model provider settings compact", async () => {
   assert.doesNotMatch(source, /set one manually in Advanced settings/);
   assert.match(source, /const setupLoadingPanel = \(/);
   assert.match(source, /Refreshing desktop connection\.\.\.|Connecting your account\.\.\./);
-  assert.match(source, /Finalizing your desktop session and runtime binding\. This should only take a moment\./);
+  assert.match(
+    source,
+    /Finalizing your desktop session and runtime binding\.\s+This should only\s+take a moment\./,
+  );
   assert.doesNotMatch(source, /Finishing setup/);
   assert.doesNotMatch(source, /Retry setup/);
   assert.doesNotMatch(source, /Sign-in completed\. Holaboss is finishing local runtime setup\./);
-  assert.match(runtimeProviderSettingsBlock, /<div className="mt-3 grid gap-4">/);
+  assert.match(runtimeProviderSettingsBlock, /<div className="grid gap-6">/);
   assert.doesNotMatch(runtimeProviderSettingsBlock, /theme-subtle-surface mt-3 grid gap-4 rounded-\[20px\] border border-border\/40 p-4/);
   assert.match(
     runtimeProviderSettingsBlock,
-    /<div className="rounded-\[18px\] border border-border\/40 bg-card\/80 p-4">\s*<div className="grid gap-3">\s*<div className="text-sm font-medium text-foreground">Connected providers<\/div>/,
+    /<SettingsSection\s+title="Model providers"\s+description="Connect the providers you want the agent to be able to use\."/,
+  );
+  assert.match(
+    runtimeProviderSettingsBlock,
+    /<div className="flex flex-col items-center justify-center gap-2 rounded-xl bg-card shadow-md px-6 py-8 text-center">/,
   );
 });
 
@@ -136,8 +169,14 @@ test("auth panel derives runtime readiness from the shared desktop runtime state
   assert.match(source, /import \{ useWorkspaceDesktop \} from "@\/lib\/workspaceDesktop";/);
   assert.match(source, /const \{ runtimeConfig: sharedRuntimeConfig \} = useWorkspaceDesktop\(\);/);
   assert.match(source, /const effectiveRuntimeConfig = sharedRuntimeConfig \?\? runtimeConfig;/);
-  assert.match(source, /const \[hasLoadedRuntimeConfigDocument, setHasLoadedRuntimeConfigDocument\] = useState\(false\);/);
-  assert.match(source, /const \[hydratedRuntimeConfigDocument, setHydratedRuntimeConfigDocument\] = useState<string \| null>\(null\);/);
+  assert.match(
+    source,
+    /const \[hasLoadedRuntimeConfigDocument, setHasLoadedRuntimeConfigDocument\]\s*=\s*useState\(false\);/,
+  );
+  assert.match(
+    source,
+    /const \[hydratedRuntimeConfigDocument, setHydratedRuntimeConfigDocument\]\s*=\s*useState<string \| null>\(null\);/,
+  );
   assert.match(source, /const hasHydratedProviderDrafts =\s*hasLoadedRuntimeConfigDocument &&\s*hydratedRuntimeConfigDocument === runtimeConfigDocument;/);
   assert.match(source, /Boolean\(effectiveRuntimeConfig\?\.authTokenPresent\)/);
   assert.match(source, /deriveProviderDraftsFromDocument\(\s*parseRuntimeConfigDocument\(runtimeConfigDocument\),\s*effectiveRuntimeConfig,\s*\)/);
@@ -159,7 +198,7 @@ test("auth panel manual save prefers edited provider credentials over previously
   );
   assert.match(
     source,
-    /const currentDocumentText = await window\.electronAPI\.runtime\.getConfigDocument\(\);/,
+    /const currentDocumentText\s*=\s*await window\.electronAPI\.runtime\.getConfigDocument\(\);/,
   );
   assert.match(
     source,
@@ -219,18 +258,16 @@ test("auth panel disconnects connected providers immediately while keeping new d
   assert.match(source, /const providerDraftEnabled = \(providerId: KnownProviderId\) =>/);
   assert.match(source, /const hasPendingConnection = !isConnected && draftEnabled;/);
   assert.match(source, /const isDisconnecting = disconnectingProviderId === providerId;/);
-  assert.match(source, /Enter an API key and save to connect\./);
-  assert.match(source, /Disconnecting now\./);
+  assert.match(source, /statusLabel = "Configuring";/);
   assert.match(source, /async function handleDisconnectRuntimeProvider\(providerId: KnownProviderId\) \{/);
   assert.match(source, /setDisconnectingProviderId\(providerId\);/);
   assert.match(source, /setDisconnectingProviderId\(null\);/);
   assert.match(source, /persistedBeforeDisconnect\.backgroundTasks/);
   assert.match(source, /persistedBeforeDisconnect\.imageGeneration/);
   assert.match(source, /KNOWN_PROVIDER_TEMPLATES\[providerId\]\.label} disconnected\./);
-  assert.match(source, /onClick=\{\(\) => void handleSaveRuntimeSettings\(providerId\)\}/);
-  assert.match(source, /onClick=\{\(\) => void handleDisconnectRuntimeProvider\(providerId\)\}/);
-  assert.match(source, /Cancel/);
-  assert.match(source, /Disconnecting\.\.\./);
+  assert.match(source, /onClick=\{\(\)\s*=>\s*void handleDisconnectRuntimeProvider\(providerId\)\s*\}/);
+  assert.match(source, /Disconnecting…/);
+  assert.match(source, /Disconnect/);
   assert.doesNotMatch(source, /Disconnect pending\. Save changes to apply\./);
   assert.doesNotMatch(source, /Undo/);
 });
@@ -241,10 +278,10 @@ test("runtime auth panel keeps provider cards readable in dark themes", async ()
   assert.match(source, /function providerBrandIconMarkup/);
   assert.match(source, /import openaiLogoMarkup from "@\/assets\/providers\/openai\.svg\?raw"/);
   assert.match(source, /dangerouslySetInnerHTML=\{\{ __html: iconMarkup \}\}/);
-  assert.match(source, /className="block h-4 w-4 text-foreground\/92 \[\&_svg\]:h-full \[\&_svg\]:w-full"/);
-  assert.match(source, /border-border\/55 bg-background\/80 text-foreground/);
-  assert.match(source, /text-sm leading-6 text-foreground\/82/);
-  assert.match(source, /text-sm leading-6 text-muted-foreground\/95/);
+  assert.match(source, /className=\{`block \$\{sizeClass\} text-foreground \[\&_svg\]:h-full \[\&_svg\]:w-full`\}/);
+  assert.match(source, /rounded-full bg-background ring-2 ring-card/);
+  assert.match(source, /text-sm font-medium text-foreground/);
+  assert.match(source, /text-sm text-muted-foreground/);
   assert.doesNotMatch(source, /WebkitMaskImage/);
   assert.doesNotMatch(source, /text-text-main/);
 });
@@ -272,7 +309,10 @@ test("holaboss proxy models come from the managed runtime catalog instead of loc
   assert.doesNotMatch(holabossTemplate, /claude-/);
   assert.match(source, /function configuredRuntimeProviderModelIds\(/);
   assert.match(source, /function runtimeCatalogModelSupportsCapability\(/);
-  assert.match(source, /configuredRuntimeProviderModelIds\(runtimeConfig, providerId, "image_generation"\)/);
+  assert.match(
+    source,
+    /configuredRuntimeProviderModelIds\(\s*runtimeConfig,\s*providerId,\s*"image_generation",?\s*\)/,
+  );
   assert.match(source, /if \(providerId === "holaboss"\) \{\s*return managedCatalogModels;\s*\}/);
   assert.match(source, /if \(providerId === "holaboss"\) \{\s*return managedCatalogImageModels;\s*\}/);
   assert.match(source, /runtimeConfig\?\.defaultBackgroundModel/);
@@ -285,14 +325,24 @@ test("holaboss proxy models come from the managed runtime catalog instead of loc
   assert.match(source, /if \(providerId !== "holaboss" && normalizedModelIds.length === 0\)/);
   assert.match(source, /function runtimeProviderStorageId\(/);
   assert.match(source, /providerId === "holaboss" \? "holaboss_model_proxy" : providerId/);
-  assert.match(source, /return \["openai\/", "google\/", "anthropic\/", "holaboss\/", "holaboss_model_proxy\/"\]/);
+  assert.match(
+    source,
+    /return \[\s*"openai\/",\s*"google\/",\s*"anthropic\/",\s*"holaboss\/",\s*"holaboss_model_proxy\/",\s*\]/,
+  );
   assert.match(source, /function holabossSupportedModels\(/);
   assert.match(source, /runtimeCatalogModelSupportsCapability\(model, "chat"\)/);
-  assert.match(source, /Catalog, base URL, and credentials come from your Holaboss runtime binding\./);
+  assert.match(
+    source,
+    /Catalog, base URL, and credentials come from your Holaboss runtime\s+binding\./,
+  );
   assert.match(source, /Supported models/);
-  assert.match(source, /No managed models are available yet\. Refresh your runtime binding to load the latest Holaboss catalog\./);
+  assert.match(
+    source,
+    /No managed models are available yet\.\s+Refresh your runtime binding\s+to load the latest Holaboss catalog\./,
+  );
   assert.match(source, /providerId === "holaboss_model_proxy"/);
-  assert.match(source, /\{isExpanded \? "Hide" : "Show"\}/);
+  assert.match(source, /open=\{Boolean\(expandedProviderId\)\}/);
+  assert.match(source, /renderProviderDrawerContent\(expandedProviderId\)/);
   assert.doesNotMatch(source, /Managed and ready on this desktop\. Expand to edit the background tasks model\./);
 });
 
@@ -300,17 +350,16 @@ test("account view uses an inline profile header and theme-colored sign-in actio
   const source = await readFile(AUTH_PANEL_PATH, "utf8");
 
   assert.match(source, /if \(view === "account"\) \{/);
-  assert.match(source, /if \(showsSetupLoadingState\) \{\s*return \(\s*<section className="grid w-full max-w-\[1080px\] gap-5">\s*\{setupLoadingPanel\}/);
-  assert.match(source, /<div className="grid gap-4">/);
-  assert.doesNotMatch(source, /rounded-\[28px\] border border-border\/35 bg-card\/95 px-5 py-5 shadow-sm/);
   assert.match(
     source,
-    /className="inline-flex h-10 items-center justify-center rounded-full border border-primary\/35 bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"/,
+    /if \(showsSetupLoadingState\) \{\s*return \(\s*<section className="theme-shell w-full max-w-none overflow-hidden rounded-\[24px\] border border-border text-sm text-foreground shadow-card">\s*<div className="px-4 py-5">\s*\{setupLoadingPanel\}\s*<\/div>/,
   );
-  assert.doesNotMatch(
-    source,
-    /className="inline-flex h-11 items-center justify-center rounded-full border border-foreground bg-foreground px-5 text-sm font-medium text-background transition hover:opacity-92 disabled:cursor-not-allowed disabled:opacity-50"/,
-  );
+  assert.match(source, /className="flex items-start justify-between gap-3"/);
+  assert.match(source, /className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-primary bg-primary\/10 text-lg font-semibold text-primary"/);
+  assert.doesNotMatch(source, /rounded-\[28px\] border border-border\/35 bg-card\/95 px-5 py-5 shadow-sm/);
+  assert.match(source, /Sign in with browser/);
+  assert.match(source, /Refresh session/);
+  assert.match(source, /Sign out/);
 });
 
 test("direct Anthropic, OpenRouter, and Gemini defaults advertise current provider model ids", async () => {
@@ -334,12 +383,15 @@ test("direct Anthropic, OpenRouter, and Gemini defaults advertise current provid
   );
   assert.match(openaiTemplate, /defaultBackgroundModel: "gpt-5\.4"/);
   assert.match(openaiTemplate, /defaultImageModel: "gpt-image-1\.5"/);
-  assert.match(openaiTemplate, /imageModelSuggestions: \["gpt-image-1\.5", "gpt-image-1", "gpt-image-1-mini", "chatgpt-image-latest"\]/);
+  assert.match(
+    openaiTemplate,
+    /imageModelSuggestions:\s*\[\s*"gpt-image-1\.5",\s*"gpt-image-1",\s*"gpt-image-1-mini",\s*"chatgpt-image-latest",\s*\]/,
+  );
   assert.doesNotMatch(openaiTemplate, /gpt-5\.4-mini/);
 
   assert.match(codexTemplate, /label: "OpenAI Codex"/);
   assert.match(codexTemplate, /defaultBaseUrl: "https:\/\/chatgpt\.com\/backend-api\/codex"/);
-  assert.match(codexTemplate, /defaultModels: \["gpt-5\.4", "gpt-5\.3-codex"\]/);
+  assert.match(codexTemplate, /defaultModels: \["gpt-5\.4", "gpt-5\.5", "gpt-5\.3-codex"\]/);
   assert.match(codexTemplate, /defaultBackgroundModel: "gpt-5\.4"/);
   assert.match(codexTemplate, /defaultImageModel: null/);
   assert.match(source, /handleConnectCodexProvider\(providerId: KnownProviderId\)/);
@@ -349,7 +401,7 @@ test("direct Anthropic, OpenRouter, and Gemini defaults advertise current provid
 
   assert.match(
     anthropicTemplate,
-    /defaultModels: \["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"\]/,
+    /defaultModels:\s*\[\s*"claude-sonnet-4-6",\s*"claude-opus-4-6",\s*"claude-haiku-4-5",\s*\]/,
   );
   assert.match(anthropicTemplate, /defaultBaseUrl: "https:\/\/api\.anthropic\.com"/);
   assert.doesNotMatch(anthropicTemplate, /defaultBaseUrl: "https:\/\/api\.anthropic\.com\/v1"/);
@@ -357,13 +409,13 @@ test("direct Anthropic, OpenRouter, and Gemini defaults advertise current provid
 
   assert.match(
     openrouterTemplate,
-    /defaultModels: \["openai\/gpt-5\.4", "anthropic\/claude-sonnet-4-6", "qwen\/qwen3\.6-plus"\]/,
+    /defaultModels:\s*\[\s*"openai\/gpt-5\.4",\s*"anthropic\/claude-sonnet-4-6",\s*"qwen\/qwen3\.6-plus",\s*\]/,
   );
   assert.match(openrouterTemplate, /defaultBackgroundModel: "openai\/gpt-5\.4"/);
   assert.match(openrouterTemplate, /defaultImageModel: "google\/gemini-3\.1-flash-image-preview"/);
   assert.match(
     openrouterTemplate,
-    /imageModelSuggestions: \["google\/gemini-3\.1-flash-image-preview"\]/,
+    /imageModelSuggestions:\s*\[\s*"google\/gemini-3\.1-flash-image-preview"\s*\]/,
   );
   assert.doesNotMatch(openrouterTemplate, /claude-sonnet-4-5/);
   assert.doesNotMatch(openrouterTemplate, /gpt-5\.4-mini/);
@@ -375,7 +427,7 @@ test("direct Anthropic, OpenRouter, and Gemini defaults advertise current provid
   assert.match(geminiTemplate, /defaultImageModel: "gemini-3\.1-flash-image-preview"/);
   assert.match(
     geminiTemplate,
-    /imageModelSuggestions: \["gemini-3\.1-flash-image-preview", "gemini-2\.5-flash-image"\]/,
+    /imageModelSuggestions:\s*\[\s*"gemini-3\.1-flash-image-preview",\s*"gemini-2\.5-flash-image",\s*\]/,
   );
   assert.match(source, /managedCatalogImageModels.length === 0 && template.defaultImageModel/);
   assert.match(source, /backgroundTaskDefaultModel\(providerId, runtimeConfig\)/);

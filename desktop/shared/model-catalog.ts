@@ -110,6 +110,14 @@ export const PROVIDER_MODEL_CATALOG: ProviderModelCatalog = {
         input_modalities: ["text", "image"],
       },
       {
+        model_id: "gpt-5.5",
+        label: "GPT-5.5",
+        reasoning: true,
+        thinking_values: [...OPENAI_GPT54_THINKING_VALUES],
+        default_thinking_value: "medium",
+        input_modalities: ["text", "image"],
+      },
+      {
         model_id: "gpt-5.3-codex",
         label: "GPT-5.3 Codex",
         reasoning: true,

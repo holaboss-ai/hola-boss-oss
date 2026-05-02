@@ -73,14 +73,35 @@ test("desktop runtime backfills managed Holaboss defaults into runtime config af
   );
   assert.match(
     source,
-    /await persistRuntimeModelCatalog\(payload\);\s*if \(await syncManagedHolabossDefaultsToRuntimeConfigIfNeeded\(payload\)\) \{\s*await emitRuntimeConfig\(\);\s*\}/,
+    /await persistRuntimeModelCatalog\(payload\);[\s\S]*syncManagedHolabossDefaultsToRuntimeConfigIfNeeded\(payload\)[\s\S]*syncOpenAiCodexDefaultsToRuntimeConfigIfNeeded\(\)[\s\S]*await emitRuntimeConfig\(\);/,
   );
   assert.match(
     source,
-    /if \(!shouldRefreshRuntimeModelCatalog\(Boolean\(options\?\.force\)\)\) \{\s*if \(await syncManagedHolabossDefaultsToRuntimeConfigIfNeeded\(\)\) \{\s*await emitRuntimeConfig\(\);\s*\}\s*return runtimeModelCatalogState;\s*\}/,
+    /if \(!shouldRefreshRuntimeModelCatalog\(Boolean\(options\?\.force\)\)\) \{[\s\S]*syncManagedHolabossDefaultsToRuntimeConfigIfNeeded\(\)[\s\S]*syncOpenAiCodexDefaultsToRuntimeConfigIfNeeded\(\)[\s\S]*await emitRuntimeConfig\(\);[\s\S]*return runtimeModelCatalogState;\s*\}/,
   );
   assert.match(
     source,
-    /const managedCatalog = await refreshRuntimeModelCatalogIfNeeded\(\)\.catch\([\s\S]*if \(await syncManagedHolabossDefaultsToRuntimeConfigIfNeeded\(managedCatalog\)\) \{\s*await emitRuntimeConfig\(\);\s*\}\s*const loaded = await readRuntimeConfigFile\(\);\s*const document = await readRuntimeConfigDocument\(\);/,
+    /async function getRuntimeConfigWithoutCatalogRefresh\(\): Promise<RuntimeConfigPayload> \{[\s\S]*syncManagedHolabossDefaultsToRuntimeConfigIfNeeded\(managedCatalog\)[\s\S]*syncOpenAiCodexDefaultsToRuntimeConfigIfNeeded\(\)[\s\S]*return getRuntimeConfigSnapshot\(runtimeModelCatalogState\);[\s\S]*return getRuntimeConfigSnapshot\(managedCatalog\);[\s\S]*\}/,
+  );
+});
+
+test("desktop runtime backfills missing Codex default models for existing OAuth configs", async () => {
+  const source = await readFile(mainSourcePath, "utf8");
+
+  assert.match(
+    source,
+    /function withProviderDefaultModels\([\s\S]*const existingModelIds = runtimeDocumentProviderModelIds\(document, providerId\);[\s\S]*nextModels\[\`\$\{providerId\}\/\$\{normalizedModelId\}\`\] = \{\s*provider: providerId,\s*model: normalizedModelId,\s*\};[\s\S]*return \{\s*\.\.\.document,\s*models: nextModels,\s*\};/,
+  );
+  assert.match(
+    source,
+    /function withOpenAiCodexProviderState\([\s\S]*return withProviderDefaultModels\(\{[\s\S]*providers: nextProviders,[\s\S]*\}, OPENAI_CODEX_PROVIDER_ID, OPENAI_CODEX_DEFAULT_MODELS\);/,
+  );
+  assert.match(
+    source,
+    /async function syncOpenAiCodexDefaultsToRuntimeConfigIfNeeded\(\): Promise<boolean> \{[\s\S]*withProviderDefaultModels\([\s\S]*OPENAI_CODEX_PROVIDER_ID,[\s\S]*OPENAI_CODEX_DEFAULT_MODELS,[\s\S]*await writeRuntimeConfigTextAtomically\(nextText\);[\s\S]*return true;\s*\}/,
+  );
+  assert.match(
+    source,
+    /async function getRuntimeConfigDocumentText\(\): Promise<string> \{\s*await syncOpenAiCodexDefaultsToRuntimeConfigIfNeeded\(\);/,
   );
 });

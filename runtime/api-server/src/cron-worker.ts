@@ -14,6 +14,7 @@ import {
 
 import type { QueueWorkerLike } from "./queue-worker.js";
 import { normalizeSubagentToolProfile } from "./runtime-agent-tools.js";
+import { resolveSubagentExecutionModel } from "./subagent-model.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
 
@@ -68,39 +69,6 @@ function cronjobNotificationPriority(metadata: Record<string, unknown>): Runtime
     return explicitPriority;
   }
   return "normal";
-}
-
-function cronjobModelFromSnapshotPayload(payload: Record<string, unknown>): string | null {
-  const runtimeConfig = isRecord(payload.runtime_config) ? payload.runtime_config : null;
-  if (!runtimeConfig) {
-    return null;
-  }
-  const providerId = normalizedString(runtimeConfig.provider_id);
-  const modelId = normalizedString(runtimeConfig.model_id);
-  if (providerId && modelId) {
-    return `${providerId}/${modelId}`;
-  }
-  return modelId || null;
-}
-
-function inheritedCronjobModelFromSession(params: {
-  store: RuntimeStateStore;
-  workspace: WorkspaceRecord;
-  sessionId: string | null;
-}): string | null {
-  const sessionId = normalizedString(params.sessionId);
-  if (!sessionId) {
-    return null;
-  }
-  const snapshot = params.store.listTurnRequestSnapshots({
-    workspaceId: params.workspace.id,
-    sessionId,
-    limit: 1,
-  })[0];
-  if (!snapshot) {
-    return null;
-  }
-  return cronjobModelFromSnapshotPayload(snapshot.payload);
 }
 
 function isCronjobMainSessionKind(value: string | null | undefined): boolean {
@@ -214,29 +182,8 @@ function resolvedCronjobModel(params: {
   metadata: Record<string, unknown>;
   sessionId?: string | null;
 }): string | null {
-  const explicitModel = normalizedString(params.metadata.model);
-  if (explicitModel) {
-    return explicitModel;
-  }
-  return (
-    inheritedCronjobModelFromSession({
-      store: params.store,
-      workspace: params.workspace,
-      sessionId:
-        params.sessionId ??
-        preferredCronjobMainSessionId({
-          store: params.store,
-          workspace: params.workspace,
-          metadata: params.metadata,
-        }),
-    }) ||
-    inheritedCronjobModelFromSession({
-      store: params.store,
-      workspace: params.workspace,
-      sessionId: params.workspace.onboardingSessionId,
-    }) ||
-    null
-  );
+  void params;
+  return resolveSubagentExecutionModel();
 }
 
 export function cronjobCheckIntervalMs(): number {

@@ -76,6 +76,7 @@ const KNOWN_PROVIDER_ORDER = [
   "ollama_direct",
   "minimax_direct",
 ] as const;
+const SUBAGENT_MODEL_FOLLOW_COMPOSER = "__subagent_follow_composer__";
 type KnownProviderId = (typeof KNOWN_PROVIDER_ORDER)[number];
 const AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME =
   "auth-settings-control theme-control-surface relative isolate h-9 w-full overflow-hidden rounded-[10px] border border-border bg-muted px-2.5 text-sm text-foreground shadow-none transition-colors hover:border-border focus-visible:border-border focus-visible:ring-0 focus-visible:ring-transparent aria-invalid:border-border aria-invalid:ring-0";
@@ -260,7 +261,7 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
         "ChatGPT/Codex OAuth for GPT-5 models without a separate API key.",
       kind: "openai_compatible",
       defaultBaseUrl: "https://chatgpt.com/backend-api/codex",
-      defaultModels: ["gpt-5.4", "gpt-5.3-codex"],
+      defaultModels: ["gpt-5.4", "gpt-5.5", "gpt-5.3-codex"],
       defaultBackgroundModel: "gpt-5.4",
       defaultImageModel: null,
       imageModelSuggestions: [],
@@ -3410,6 +3411,18 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const defaultChatModelMatched = defaultChatModelOptions.some(
     (option) => option.value === defaultChatModelToken,
   );
+  const subagentModelToken = (runtimeConfig?.subagentModel ?? "").trim();
+  const subagentModelOptions: SettingsMenuOption[] = [
+    {
+      value: SUBAGENT_MODEL_FOLLOW_COMPOSER,
+      label: "Follow composer",
+      description:
+        "Use the current composer model whenever hidden subagent work starts or continues.",
+    },
+    ...defaultChatModelOptions,
+  ];
+  const subagentModelValue =
+    subagentModelToken || SUBAGENT_MODEL_FOLLOW_COMPOSER;
   const selectedWebSearchTemplate =
     WEB_SEARCH_PROVIDER_TEMPLATES[webSearchDraft.providerId];
   const selectedWebSearchProviderManaged = isManagedWebSearchProvider(
@@ -3439,6 +3452,22 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     }
   };
 
+  const handleSubagentModelChange = async (token: string) => {
+    if (!window.electronAPI || !token) return;
+    try {
+      await window.electronAPI.runtime.setConfig({
+        subagentModel:
+          token === SUBAGENT_MODEL_FOLLOW_COMPOSER ? "" : token,
+      });
+    } catch (error) {
+      setAuthError(
+        error instanceof Error
+          ? error.message
+          : "Failed to update subagent model.",
+      );
+    }
+  };
+
   const runtimeProviderSettings = (
     <div className="grid gap-6">
       {advancedSettingsWarnings.length > 0 ? (
@@ -3463,20 +3492,37 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       >
         <SettingsCard>
           {defaultChatModelOptions.length > 0 ? (
-            <SettingsMenuSelectRow
-              label="Default chat model"
-              description="Used for new sessions unless a workspace overrides it."
-              value={defaultChatModelMatched ? defaultChatModelToken : ""}
-              onValueChange={handleDefaultChatModelChange}
-              options={defaultChatModelOptions}
-              placeholder="Pick a model"
-              triggerWidth="w-[260px]"
-            />
+            <>
+              <SettingsMenuSelectRow
+                label="Default chat model"
+                description="Used for new sessions unless a workspace overrides it."
+                value={defaultChatModelMatched ? defaultChatModelToken : ""}
+                onValueChange={handleDefaultChatModelChange}
+                options={defaultChatModelOptions}
+                placeholder="Pick a model"
+                triggerWidth="w-[260px]"
+              />
+              <SettingsMenuSelectRow
+                label="Subagent model"
+                description="Optional override for hidden subagent runs. Leave it on Follow composer to use the current composer model."
+                value={subagentModelValue}
+                onValueChange={handleSubagentModelChange}
+                options={subagentModelOptions}
+                placeholder="Pick a model"
+                triggerWidth="w-[260px]"
+              />
+            </>
           ) : (
-            <SettingsRow
-              label="Default chat model"
-              description="Connect a provider below to choose your default model."
-            />
+            <>
+              <SettingsRow
+                label="Default chat model"
+                description="Connect a provider below to choose your default model."
+              />
+              <SettingsRow
+                label="Subagent model"
+                description="Connect a provider below to choose your subagent model."
+              />
+            </>
           )}
         </SettingsCard>
       </SettingsSection>

@@ -33,6 +33,7 @@ export type ProductRuntimeConfig = {
   sandboxId: string;
   modelProxyBaseUrl: string;
   defaultModel: string;
+  subagentModel?: string;
   runtimeMode: string;
   defaultProvider: string;
   holabossEnabled: boolean;
@@ -186,6 +187,7 @@ function loadRuntimeConfigPayload(): {
 } {
   const { document, configPath, loadedFromFile } = loadRuntimeConfigDocument();
   const runtimePayload = asObject(document.runtime);
+  const subagentsPayload = asObject(runtimePayload.subagents ?? runtimePayload.subAgents);
   const providersPayload = asObject(document.providers);
   const integrationsPayload = asObject(document.integrations);
   const capabilitiesPayload = asObject(document.capabilities);
@@ -212,6 +214,11 @@ function loadRuntimeConfigPayload(): {
     normalizeString(holabossProvider.base_url) || normalizeString(legacyPayload.model_proxy_base_url);
   const defaultModelValue =
     normalizeString(runtimePayload.default_model) || normalizeString(legacyPayload.default_model);
+  const subagentModelValue = normalizeString(
+    subagentsPayload.model ??
+      subagentsPayload.model_id ??
+      subagentsPayload.modelId,
+  );
   const defaultProvider = normalizeString(runtimePayload.default_provider);
   const explicitHolabossEnabled = normalizeBool(holabossIntegration.enabled);
   const holabossEnabled =
@@ -282,6 +289,9 @@ function loadRuntimeConfigPayload(): {
   }
   if (defaultModelValue) {
     payload.default_model = defaultModelValue;
+  }
+  if (subagentModelValue) {
+    payload.subagent_model = subagentModelValue;
   }
   if (runtimeMode) {
     payload.runtime_mode = runtimeMode;
@@ -394,6 +404,7 @@ export function resolveProductRuntimeConfig(params?: {
       required: requireBaseUrl
     }),
     defaultModel: defaultModel(payload),
+    subagentModel: payload.subagent_model || "",
     runtimeMode: runtimeMode(payload),
     defaultProvider: defaultProvider(payload),
     holabossEnabled: payload.holaboss_enabled === "true",
@@ -419,6 +430,7 @@ export function runtimeConfigResponse(config: ProductRuntimeConfig): Record<stri
     sandbox_id: config.sandboxId || null,
     model_proxy_base_url: config.modelProxyBaseUrl || null,
     default_model: config.defaultModel || null,
+    subagent_model: config.subagentModel || null,
     runtime_mode: config.runtimeMode || null,
     default_provider: config.defaultProvider || null,
     holaboss_enabled: config.holabossEnabled,
@@ -523,6 +535,7 @@ function assignStringListOrRemove(target: StringMap, key: string, value: unknown
 export function updateRuntimeConfigDocument(payload: Record<string, unknown>): ProductRuntimeConfig {
   const { document, configPath } = loadRuntimeConfigDocument();
   const runtimePayload = asObject(document.runtime);
+  const subagentsPayload = asObject(runtimePayload.subagents ?? runtimePayload.subAgents);
   const providersPayload = asObject(document.providers);
   const integrationsPayload = asObject(document.integrations);
   const capabilitiesPayload = asObject(document.capabilities);
@@ -538,6 +551,7 @@ export function updateRuntimeConfigDocument(payload: Record<string, unknown>): P
   assignOrRemove(holabossProvider, "base_url", payload.model_proxy_base_url);
   assignOrRemove(runtimePayload, "sandbox_id", payload.sandbox_id);
   assignOrRemove(runtimePayload, "default_model", payload.default_model);
+  assignOrRemove(subagentsPayload, "model", payload.subagent_model);
   assignOrRemove(runtimePayload, "mode", payload.runtime_mode);
   assignOrRemove(runtimePayload, "default_provider", payload.default_provider);
   assignOrRemove(legacyPayload, "auth_token", payload.auth_token);
@@ -564,6 +578,12 @@ export function updateRuntimeConfigDocument(payload: Record<string, unknown>): P
   }
   if (!runtimePayload.mode) {
     runtimePayload.mode = DEFAULT_RUNTIME_MODE;
+  }
+  delete runtimePayload.subAgents;
+  if (Object.keys(subagentsPayload).length > 0) {
+    runtimePayload.subagents = subagentsPayload;
+  } else {
+    delete runtimePayload.subagents;
   }
 
   const holabossEnabled = normalizeBool(payload.holaboss_enabled);

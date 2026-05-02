@@ -268,6 +268,7 @@ declare global {
     sandboxId: string | null;
     modelProxyBaseUrl: string | null;
     defaultModel: string | null;
+    subagentModel: string | null;
     defaultBackgroundModel: string | null;
     defaultEmbeddingModel: string | null;
     defaultImageModel: string | null;
@@ -301,6 +302,7 @@ declare global {
     sandboxId?: string | null;
     modelProxyBaseUrl?: string | null;
     defaultModel?: string | null;
+    subagentModel?: string | null;
     defaultBackgroundModel?: string | null;
     defaultEmbeddingModel?: string | null;
     defaultImageModel?: string | null;
