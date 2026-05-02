@@ -33,6 +33,7 @@ interface InternalSurfacePaneProps {
   htmlContent?: string | null;
   onResourceMissing?: (resourceId: string) => void;
   onOpenLinkInBrowser?: (url: string) => void;
+  onOpenLocalLink?: (absolutePath: string) => void;
 }
 
 const MARKDOWN_PREVIEW_EXTENSIONS = new Set([".md", ".mdx", ".markdown"]);
@@ -71,6 +72,32 @@ function isAbsolutePath(targetPath: string) {
   return /^(?:[a-zA-Z]:[\\/]|\/)/.test(targetPath.trim());
 }
 
+function dirnameFromAbsolutePath(absolutePath: string): string {
+  const trimmed = absolutePath.trim();
+  if (!trimmed) {
+    return "";
+  }
+  const sep = trimmed.includes("\\") ? "\\" : "/";
+  const idx = trimmed.lastIndexOf(sep);
+  if (idx <= 0) {
+    return sep;
+  }
+  return trimmed.slice(0, idx);
+}
+
+function joinPath(base: string, relative: string): string {
+  if (!base) {
+    return relative;
+  }
+  if (!relative) {
+    return base;
+  }
+  const sep = base.includes("\\") ? "\\" : "/";
+  const trimmedBase = base.replace(/[\\/]+$/, "");
+  const trimmedRel = relative.replace(/^[\\/]+/, "");
+  return `${trimmedBase}${sep}${trimmedRel}`;
+}
+
 function isMarkdownPreviewPayload(
   preview: Pick<FilePreviewPayload, "kind" | "extension"> | null | undefined,
 ): boolean {
@@ -107,6 +134,7 @@ export function InternalSurfacePane({
   htmlContent,
   onResourceMissing,
   onOpenLinkInBrowser,
+  onOpenLocalLink,
 }: InternalSurfacePaneProps) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const [workspaceRootPath, setWorkspaceRootPath] = useState<string | null>(
@@ -140,6 +168,41 @@ export function InternalSurfacePane({
     }
     void window.electronAPI.ui.openExternalUrl(url);
   }, [onOpenLinkInBrowser]);
+
+  const previewAbsolutePath = preview?.absolutePath ?? null;
+  const handleLocalLinkInPreview = useCallback(
+    (href: string) => {
+      if (!onOpenLocalLink) {
+        return;
+      }
+      let raw = href.trim();
+      if (!raw) {
+        return;
+      }
+      if (raw.toLowerCase().startsWith("file://")) {
+        raw = raw.slice(7);
+      }
+      let cleaned = raw;
+      try {
+        cleaned = decodeURI(raw);
+      } catch {
+        cleaned = raw;
+      }
+      let absolute = cleaned;
+      if (!isAbsolutePath(cleaned)) {
+        const previewPath = previewAbsolutePath?.trim() ?? "";
+        const baseDir = previewPath
+          ? dirnameFromAbsolutePath(previewPath)
+          : (workspaceRootPath?.trim() ?? "");
+        if (!baseDir) {
+          return;
+        }
+        absolute = joinPath(baseDir, cleaned);
+      }
+      onOpenLocalLink(absolute);
+    },
+    [onOpenLocalLink, previewAbsolutePath, workspaceRootPath],
+  );
 
   useEffect(() => {
     if (!selectedWorkspaceId) {
@@ -608,6 +671,7 @@ export function InternalSurfacePane({
                   <SimpleMarkdown
                     className="chat-markdown text-sm leading-7 text-foreground"
                     onLinkClick={openPreviewLink}
+                    onLocalLinkClick={handleLocalLinkInPreview}
                   >
                     {previewDraft}
                   </SimpleMarkdown>
