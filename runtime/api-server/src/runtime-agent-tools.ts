@@ -386,7 +386,7 @@ export interface RuntimeAgentToolsCloseTerminalSessionParams {
   workspaceId?: string | null;
 }
 
-export const ALLOWED_DELIVERY_MODES = new Set(["none", "announce"]);
+export const ALLOWED_DELIVERY_MODES = new Set(["none", "announce", "deliver"]);
 export const ALLOWED_DELIVERY_CHANNELS = new Set(["system_notification", "session_run"]);
 const DEFAULT_DOWNLOAD_TIMEOUT_MS = 120_000;
 const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
@@ -1125,6 +1125,7 @@ export function normalizeDelivery(params: {
   to?: unknown;
 }): JsonObject {
   const normalizedMode = normalizedString(params.mode ?? "announce") || "announce";
+  const canonicalMode = normalizedMode === "deliver" ? "announce" : normalizedMode;
   const normalizedChannel = normalizedString(params.channel);
   if (!ALLOWED_DELIVERY_MODES.has(normalizedMode)) {
     throw new RuntimeAgentToolsServiceError(
@@ -1141,7 +1142,7 @@ export function normalizeDelivery(params: {
     );
   }
   return {
-    mode: normalizedMode,
+    mode: canonicalMode,
     channel: normalizedChannel,
     to: typeof params.to === "string" ? params.to : params.to == null ? null : String(params.to)
   };

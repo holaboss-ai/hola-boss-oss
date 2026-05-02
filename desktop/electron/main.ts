@@ -5116,11 +5116,12 @@ function openAiCodexProviderStateFromDocument(document: Record<string, unknown>)
   };
 }
 
-function runtimeDocumentHasProviderModels(
+function runtimeDocumentProviderModelIds(
   document: Record<string, unknown>,
   providerId: string,
-): boolean {
+): Set<string> {
   const modelsPayload = runtimeConfigObject(document.models);
+  const modelIds = new Set<string>();
   for (const [token, rawModel] of Object.entries(modelsPayload)) {
     const modelPayload = runtimeConfigObject(rawModel);
     const configuredProviderId = runtimeFirstNonEmptyString(
@@ -5128,11 +5129,48 @@ function runtimeDocumentHasProviderModels(
       modelPayload.provider_id as string | undefined,
       token.includes("/") ? token.split("/")[0]?.trim() : "",
     );
-    if (configuredProviderId === providerId) {
-      return true;
+    if (configuredProviderId !== providerId) {
+      continue;
+    }
+    const configuredModelId = runtimeFirstNonEmptyString(
+      modelPayload.model as string | undefined,
+      modelPayload.model_id as string | undefined,
+      token.includes("/") ? token.split("/").slice(1).join("/").trim() : "",
+    );
+    if (configuredModelId) {
+      modelIds.add(configuredModelId);
     }
   }
-  return false;
+  return modelIds;
+}
+
+function withProviderDefaultModels(
+  document: Record<string, unknown>,
+  providerId: string,
+  modelIds: readonly string[],
+): Record<string, unknown> {
+  const currentModels = runtimeConfigObject(document.models);
+  const nextModels: Record<string, unknown> = { ...currentModels };
+  const existingModelIds = runtimeDocumentProviderModelIds(document, providerId);
+  let didAddModel = false;
+  for (const modelId of modelIds) {
+    const normalizedModelId = modelId.trim();
+    if (!normalizedModelId || existingModelIds.has(normalizedModelId)) {
+      continue;
+    }
+    nextModels[`${providerId}/${normalizedModelId}`] = {
+      provider: providerId,
+      model: normalizedModelId,
+    };
+    didAddModel = true;
+  }
+  if (!didAddModel) {
+    return document;
+  }
+  return {
+    ...document,
+    models: nextModels,
+  };
 }
 
 function withOpenAiCodexProviderState(
@@ -5167,21 +5205,10 @@ function withOpenAiCodexProviderState(
     ...providersPayload,
     [OPENAI_CODEX_PROVIDER_ID]: nextProviderPayload,
   };
-  const currentModels = runtimeConfigObject(document.models);
-  const nextModels: Record<string, unknown> = { ...currentModels };
-  if (!runtimeDocumentHasProviderModels(document, OPENAI_CODEX_PROVIDER_ID)) {
-    for (const modelId of OPENAI_CODEX_DEFAULT_MODELS) {
-      nextModels[`${OPENAI_CODEX_PROVIDER_ID}/${modelId}`] = {
-        provider: OPENAI_CODEX_PROVIDER_ID,
-        model: modelId,
-      };
-    }
-  }
-  return {
+  return withProviderDefaultModels({
     ...document,
     providers: nextProviders,
-    models: nextModels,
-  };
+  }, OPENAI_CODEX_PROVIDER_ID, OPENAI_CODEX_DEFAULT_MODELS);
 }
 
 async function updateRuntimeConfigDocumentWithoutRestart(
@@ -6842,13 +6869,27 @@ async function refreshRuntimeModelCatalogIfNeeded(options?: {
     return runtimeModelCatalogState;
   }
   if (!shouldRefreshRuntimeModelCatalog(Boolean(options?.force))) {
+    let didSyncDefaults = false;
     if (await syncManagedHolabossDefaultsToRuntimeConfigIfNeeded()) {
+      didSyncDefaults = true;
+    }
+    if (await syncOpenAiCodexDefaultsToRuntimeConfigIfNeeded()) {
+      didSyncDefaults = true;
+    }
+    if (didSyncDefaults) {
       await emitRuntimeConfig();
     }
     return runtimeModelCatalogState;
   }
   if (!options?.force && hasRecentRuntimeModelCatalogRefreshFailure()) {
+    let didSyncDefaults = false;
     if (await syncManagedHolabossDefaultsToRuntimeConfigIfNeeded()) {
+      didSyncDefaults = true;
+    }
+    if (await syncOpenAiCodexDefaultsToRuntimeConfigIfNeeded()) {
+      didSyncDefaults = true;
+    }
+    if (didSyncDefaults) {
       await emitRuntimeConfig();
     }
     return runtimeModelCatalogState;
@@ -6863,7 +6904,14 @@ async function refreshRuntimeModelCatalogIfNeeded(options?: {
         await fetchDesktopRuntimeModelCatalog(),
       );
       await persistRuntimeModelCatalog(payload);
+      let didSyncDefaults = false;
       if (await syncManagedHolabossDefaultsToRuntimeConfigIfNeeded(payload)) {
+        didSyncDefaults = true;
+      }
+      if (await syncOpenAiCodexDefaultsToRuntimeConfigIfNeeded()) {
+        didSyncDefaults = true;
+      }
+      if (didSyncDefaults) {
         await emitRuntimeConfig();
       }
     });
@@ -6933,6 +6981,32 @@ async function syncManagedHolabossDefaultsToRuntimeConfigIfNeeded(
     defaultEmbeddingModel: managedCatalog.defaultEmbeddingModel,
     defaultImageModel: managedCatalog.defaultImageModel,
   });
+  return true;
+}
+
+async function syncOpenAiCodexDefaultsToRuntimeConfigIfNeeded(): Promise<boolean> {
+  const currentDocument = await readRuntimeConfigDocument();
+  const state = openAiCodexProviderStateFromDocument(currentDocument);
+  if (
+    state.authMode !== "codex_oauth" &&
+    Object.keys(state.providerPayload).length === 0
+  ) {
+    return false;
+  }
+  const nextDocument = withProviderDefaultModels(
+    currentDocument,
+    OPENAI_CODEX_PROVIDER_ID,
+    OPENAI_CODEX_DEFAULT_MODELS,
+  );
+  const currentText =
+    Object.keys(currentDocument).length > 0
+      ? `${JSON.stringify(currentDocument, null, 2)}\n`
+      : "";
+  const nextText = `${JSON.stringify(nextDocument, null, 2)}\n`;
+  if (currentText === nextText) {
+    return false;
+  }
+  await writeRuntimeConfigTextAtomically(nextText);
   return true;
 }
 
@@ -7158,18 +7232,29 @@ async function withRuntimeConfigMutationLock<T>(
 
 async function getRuntimeConfig(): Promise<RuntimeConfigPayload> {
   refreshRuntimeModelCatalogInBackground();
+  if (await syncOpenAiCodexDefaultsToRuntimeConfigIfNeeded()) {
+    return getRuntimeConfigSnapshot(runtimeModelCatalogState);
+  }
   return getRuntimeConfigSnapshot(runtimeModelCatalogState);
 }
 
 async function getRuntimeConfigWithoutCatalogRefresh(): Promise<RuntimeConfigPayload> {
   const managedCatalog = runtimeModelCatalogState;
+  let didSyncDefaults = false;
   if (await syncManagedHolabossDefaultsToRuntimeConfigIfNeeded(managedCatalog)) {
+    didSyncDefaults = true;
+  }
+  if (await syncOpenAiCodexDefaultsToRuntimeConfigIfNeeded()) {
+    didSyncDefaults = true;
+  }
+  if (didSyncDefaults) {
     return getRuntimeConfigSnapshot(runtimeModelCatalogState);
   }
   return getRuntimeConfigSnapshot(managedCatalog);
 }
 
 async function getRuntimeConfigDocumentText(): Promise<string> {
+  await syncOpenAiCodexDefaultsToRuntimeConfigIfNeeded();
   const document = await readRuntimeConfigDocument();
   if (Object.keys(document).length > 0) {
     return `${JSON.stringify(document, null, 2)}\n`;

@@ -10,7 +10,7 @@ import {
 } from "./runtime-agent-tools.js";
 
 const CRONJOB_DELIVERY_CHANNELS = ["system_notification", "session_run"] as const;
-const CRONJOB_DELIVERY_MODES = ["announce", "none"] as const;
+const CRONJOB_DELIVERY_MODES = ["deliver", "none"] as const;
 const SCRATCHPAD_WRITE_OPS = ["append", "replace", "clear"] as const;
 const SUBAGENT_TOOL_BUCKETS = ["web", "browser", "terminal", "file"] as const;
 const TODO_STATUSES = ["pending", "in_progress", "blocked", "completed", "abandoned"] as const;
@@ -54,7 +54,7 @@ function cronjobDeliveryChannelSchema(): Record<string, unknown> {
 function cronjobDeliveryModeSchema(): Record<string, unknown> {
   return literalStringUnion(
     CRONJOB_DELIVERY_MODES,
-    "Delivery mode. Allowed values: `announce` or `none`.",
+    "Delivery mode. Allowed values: `deliver` or `none`. Use `deliver` for the normal visible delivery path.",
   );
 }
 

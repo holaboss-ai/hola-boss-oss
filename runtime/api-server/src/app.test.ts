@@ -796,7 +796,8 @@ test("runtime tools capability routes expose local onboarding and cronjob action
     },
     payload: {
       cron: "0 9 * * *",
-      description: "Daily check"
+      description: "Daily check",
+      delivery: { mode: "deliver", channel: "session_run" }
     }
   });
   assert.equal(createdJob.statusCode, 200);

@@ -17,7 +17,7 @@ test("desktop runtime config bootstrap does not block on remote catalog refreshe
   );
   assert.match(
     source,
-    /async function getRuntimeConfig\(\): Promise<RuntimeConfigPayload> \{\s*refreshRuntimeModelCatalogInBackground\(\);\s*return getRuntimeConfigSnapshot\(runtimeModelCatalogState\);\s*\}/,
+    /async function getRuntimeConfig\(\): Promise<RuntimeConfigPayload> \{\s*refreshRuntimeModelCatalogInBackground\(\);\s*if \(await syncOpenAiCodexDefaultsToRuntimeConfigIfNeeded\(\)\) \{\s*return getRuntimeConfigSnapshot\(runtimeModelCatalogState\);\s*\}\s*return getRuntimeConfigSnapshot\(runtimeModelCatalogState\);\s*\}/,
   );
   assert.match(
     source,
