@@ -339,7 +339,7 @@ test("direct Anthropic, OpenRouter, and Gemini defaults advertise current provid
 
   assert.match(codexTemplate, /label: "OpenAI Codex"/);
   assert.match(codexTemplate, /defaultBaseUrl: "https:\/\/chatgpt\.com\/backend-api\/codex"/);
-  assert.match(codexTemplate, /defaultModels: \["gpt-5\.4", "gpt-5\.3-codex"\]/);
+  assert.match(codexTemplate, /defaultModels: \["gpt-5\.4", "gpt-5\.5", "gpt-5\.3-codex"\]/);
   assert.match(codexTemplate, /defaultBackgroundModel: "gpt-5\.4"/);
   assert.match(codexTemplate, /defaultImageModel: null/);
   assert.match(source, /handleConnectCodexProvider\(providerId: KnownProviderId\)/);

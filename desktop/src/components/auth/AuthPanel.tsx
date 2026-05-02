@@ -260,7 +260,7 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
         "ChatGPT/Codex OAuth for GPT-5 models without a separate API key.",
       kind: "openai_compatible",
       defaultBaseUrl: "https://chatgpt.com/backend-api/codex",
-      defaultModels: ["gpt-5.4", "gpt-5.3-codex"],
+      defaultModels: ["gpt-5.4", "gpt-5.5", "gpt-5.3-codex"],
       defaultBackgroundModel: "gpt-5.4",
       defaultImageModel: null,
       imageModelSuggestions: [],

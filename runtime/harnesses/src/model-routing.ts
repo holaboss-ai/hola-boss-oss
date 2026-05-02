@@ -383,10 +383,33 @@ function knownModelBudgetOverride(
   api: HarnessModelApi,
 ): HarnessModelBudget | null {
   const normalizedModelId = normalizeHarnessModelId(request.model_id);
-  if (api !== "openai-responses") {
+  if (api !== "openai-responses" && api !== "openai-codex-responses") {
     return null;
   }
+  if (api === "openai-codex-responses") {
+    switch (normalizedModelId) {
+      case "gpt-5.5":
+      case "gpt-5.3-codex":
+        return {
+          contextWindow: 400_000,
+          maxTokens: 128_000,
+        };
+      case "gpt-5.4":
+      case "gpt-5.4-pro":
+        return {
+          contextWindow: 1_000_000,
+          maxTokens: 128_000,
+        };
+      default:
+        return null;
+    }
+  }
   switch (normalizedModelId) {
+    case "gpt-5.5":
+      return {
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+      };
     case "gpt-5.4":
     case "gpt-5.4-pro":
       return {
