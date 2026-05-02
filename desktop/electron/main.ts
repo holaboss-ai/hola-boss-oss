@@ -1318,7 +1318,16 @@ interface PackagedDesktopConfig {
   marketplaceUrl?: string;
   proactiveUrl?: string;
   appUpdateEnabled?: boolean;
+  macWebAuthnKeychainAccessGroup?: string;
   updateChannel?: string;
+}
+
+interface ElectronWebAuthnApp {
+  configureWebAuthn?: (options: {
+    touchID?: {
+      keychainAccessGroup: string;
+    };
+  }) => void;
 }
 
 interface RuntimeLaunchSpec {
@@ -1345,6 +1354,33 @@ function loadPackagedDesktopConfig(): PackagedDesktopConfig {
 }
 
 const packagedDesktopConfig = loadPackagedDesktopConfig();
+
+function configuredMacWebAuthnKeychainAccessGroup(): string {
+  return (
+    process.env.HOLABOSS_MAC_WEBAUTHN_KEYCHAIN_ACCESS_GROUP?.trim() ||
+    packagedDesktopConfig.macWebAuthnKeychainAccessGroup?.trim() ||
+    ""
+  );
+}
+
+function configureMacWebAuthnPlatformAuthenticator(): void {
+  if (process.platform !== "darwin") {
+    return;
+  }
+  const keychainAccessGroup = configuredMacWebAuthnKeychainAccessGroup();
+  if (!keychainAccessGroup) {
+    return;
+  }
+  const electronApp = app as typeof app & ElectronWebAuthnApp;
+  if (typeof electronApp.configureWebAuthn !== "function") {
+    return;
+  }
+  electronApp.configureWebAuthn({
+    touchID: {
+      keychainAccessGroup,
+    },
+  });
+}
 
 function normalizeAppUpdateChannel(
   value: string | null | undefined,
@@ -20022,6 +20058,8 @@ app.on("child-process-gone", (_event, details) => {
 });
 
 app.whenReady().then(async () => {
+  configureMacWebAuthnPlatformAuthenticator();
+
   if (process.platform === "darwin" && app.dock) {
     const dockIcon = nativeImage.createFromPath(desktopAppIconPath());
     if (!dockIcon.isEmpty()) {

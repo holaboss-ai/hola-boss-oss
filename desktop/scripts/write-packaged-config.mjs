@@ -8,6 +8,8 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDir, "..");
 const outputDir = path.join(desktopRoot, "out");
 const outputPath = path.join(outputDir, "holaboss-config.json");
+const MAC_WEBAUTHN_KEYCHAIN_GROUP_SUFFIX =
+  "com.holaboss.workspace.webauthn";
 
 function resolveUpdateChannel() {
   const rawValue = (process.env.HOLABOSS_RELEASE_CHANNEL || "").trim().toLowerCase();
@@ -77,6 +79,23 @@ function resolveEnvValue(...names) {
   return "";
 }
 
+function resolveMacWebAuthnKeychainAccessGroup() {
+  const explicitValue = resolveEnvValue(
+    "HOLABOSS_MAC_WEBAUTHN_KEYCHAIN_ACCESS_GROUP",
+  );
+  if (explicitValue) {
+    return explicitValue;
+  }
+  const appleTeamId = resolveEnvValue("APPLE_TEAM_ID");
+  if (!appleTeamId) {
+    return "";
+  }
+  return `${appleTeamId}.${MAC_WEBAUTHN_KEYCHAIN_GROUP_SUFFIX}`;
+}
+
+const macWebAuthnKeychainAccessGroup =
+  resolveMacWebAuthnKeychainAccessGroup();
+
 const config = {
   authBaseUrl: resolveEnvValue("HOLABOSS_AUTH_BASE_URL"),
   authSignInUrl: resolveEnvValue("HOLABOSS_AUTH_SIGN_IN_URL"),
@@ -97,6 +116,9 @@ const config = {
     "HOLABOSS_CLI_PROACTIVE_URL"
   ),
   appUpdateEnabled,
+  ...(macWebAuthnKeychainAccessGroup
+    ? { macWebAuthnKeychainAccessGroup }
+    : {}),
   ...(updateChannel === "beta" ? { updateChannel } : {}),
 };
 
