@@ -93,7 +93,7 @@ import * as modelCatalog from "../../../shared/model-catalog.js";
 type ChatAttachment = SessionInputAttachmentPayload;
 type ChatPaneVariant = "default" | "onboarding";
 
-type ChatAssistantSegment =
+export type ChatAssistantSegment =
   | {
       kind: "execution";
       items: ChatExecutionTimelineItem[];
@@ -104,7 +104,7 @@ type ChatAssistantSegment =
       tone?: "default" | "error";
     };
 
-interface ChatMessage {
+export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
@@ -337,7 +337,7 @@ interface StreamTelemetryEntry {
   detail: string;
 }
 
-type ArtifactBrowserFilter =
+export type ArtifactBrowserFilter =
   | "all"
   | "documents"
   | "images"
@@ -819,7 +819,7 @@ function normalizeChatAttachment(value: unknown): ChatAttachment | null {
   };
 }
 
-function attachmentsFromMetadata(
+export function attachmentsFromMetadata(
   metadata: Record<string, unknown> | null | undefined,
 ): ChatAttachment[] {
   const raw = metadata?.attachments;
@@ -1099,7 +1099,7 @@ function outputSecondaryLabel(output: WorkspaceOutputRecordPayload) {
   return parts.join(" · ");
 }
 
-function sortOutputs(outputs: WorkspaceOutputRecordPayload[]) {
+export function sortOutputs(outputs: WorkspaceOutputRecordPayload[]) {
   return [...dedupeOutputsForDisplay(outputs)].sort((left, right) => {
     const leftTime = Date.parse(left.created_at || "") || 0;
     const rightTime = Date.parse(right.created_at || "") || 0;
@@ -1639,26 +1639,31 @@ function toolTraceStepId(payload: Record<string, unknown>) {
     : "";
 }
 
-function inputIdFromMessageId(messageId: string, role: "user" | "assistant") {
+export function inputIdFromMessageId(
+  messageId: string,
+  role: "user" | "assistant",
+) {
   const prefix = `${role}-`;
   return messageId.startsWith(prefix) ? messageId.slice(prefix.length) : "";
 }
 
-function inputIdFromHistoryMessage(message: SessionHistoryMessagePayload) {
+export function inputIdFromHistoryMessage(
+  message: SessionHistoryMessagePayload,
+) {
   if (message.role === "user" || message.role === "assistant") {
     return inputIdFromMessageId(message.id, message.role);
   }
   return "";
 }
 
-function historyMessagesInDisplayOrder(
+export function historyMessagesInDisplayOrder(
   messages: SessionHistoryMessagePayload[],
   order: "asc" | "desc",
 ) {
   return order === "desc" ? [...messages].reverse() : messages;
 }
 
-function turnInputIdsFromHistoryMessages(
+export function turnInputIdsFromHistoryMessages(
   messages: SessionHistoryMessagePayload[],
 ) {
   const seen = new Set<string>();
@@ -3038,6 +3043,13 @@ interface ChatPaneBrowserJumpRequest {
   requestKey: number;
 }
 
+interface ChatPaneArtifactBrowserRequest {
+  workspaceId: string;
+  outputs: WorkspaceOutputRecordPayload[];
+  requestKey: number;
+  scope?: "reply" | "session";
+}
+
 interface ChatPaneProps {
   onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
   onSyncFileDisplayFromAgentOperation?: (path: string) => void;
@@ -3053,6 +3065,8 @@ interface ChatPaneProps {
   onComposerPrefillConsumed?: (requestKey: number) => void;
   explorerAttachmentRequest?: ChatPaneExplorerAttachmentRequest | null;
   onExplorerAttachmentRequestConsumed?: (requestKey: number) => void;
+  artifactBrowserRequest?: ChatPaneArtifactBrowserRequest | null;
+  onArtifactBrowserRequestConsumed?: (requestKey: number) => void;
   onActiveSessionIdChange?: (sessionId: string | null) => void;
   browserJumpRequest?: ChatPaneBrowserJumpRequest | null;
   onBrowserJumpRequestConsumed?: (
@@ -3083,6 +3097,8 @@ export function ChatPane({
   onComposerPrefillConsumed,
   explorerAttachmentRequest = null,
   onExplorerAttachmentRequestConsumed,
+  artifactBrowserRequest = null,
+  onArtifactBrowserRequestConsumed,
   onActiveSessionIdChange,
   browserJumpRequest = null,
   onBrowserJumpRequestConsumed,
@@ -3252,6 +3268,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   const lastHandledLocalSessionOpenRequestKeyRef = useRef(0);
   const lastHandledComposerPrefillRequestKeyRef = useRef(0);
   const lastHandledExplorerAttachmentRequestKeyRef = useRef(0);
+  const lastHandledArtifactBrowserRequestKeyRef = useRef(0);
   const consumedSessionOpenRequestKeysRef = useRef<Set<number>>(new Set());
   const localSessionOpenRequestRef = useRef<ChatPaneSessionOpenRequest | null>(
     null,
@@ -6603,6 +6620,49 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   ]);
 
   useEffect(() => {
+    const requestKey = artifactBrowserRequest?.requestKey ?? 0;
+    const requestWorkspaceId =
+      artifactBrowserRequest?.workspaceId?.trim() ?? "";
+    const normalizedWorkspaceId = (selectedWorkspaceId || "").trim();
+    const mainSessionWorkspaceId =
+      (desktopMainSession?.workspace_id || "").trim();
+    const mainSessionId = (desktopMainSession?.session_id || "").trim();
+    const normalizedActiveSessionId = (activeSessionId || "").trim();
+    const requestWorkspaceReady =
+      Boolean(requestWorkspaceId) &&
+      requestWorkspaceId === normalizedWorkspaceId &&
+      requestWorkspaceId === mainSessionWorkspaceId &&
+      Boolean(mainSessionId) &&
+      normalizedActiveSessionId === mainSessionId &&
+      !isLoadingHistory;
+    if (
+      requestKey <= 0 ||
+      requestKey === lastHandledArtifactBrowserRequestKeyRef.current ||
+      !requestWorkspaceReady
+    ) {
+      return;
+    }
+
+    lastHandledArtifactBrowserRequestKeyRef.current = requestKey;
+    setArtifactBrowserFilter("all");
+    setArtifactBrowserScopedOutputs(artifactBrowserRequest?.outputs ?? []);
+    setArtifactBrowserScope(artifactBrowserRequest?.scope ?? "reply");
+    setArtifactBrowserOpen(true);
+    onArtifactBrowserRequestConsumed?.(requestKey);
+  }, [
+    activeSessionId,
+    artifactBrowserRequest?.outputs,
+    artifactBrowserRequest?.requestKey,
+    artifactBrowserRequest?.scope,
+    artifactBrowserRequest?.workspaceId,
+    desktopMainSession?.session_id,
+    desktopMainSession?.workspace_id,
+    isLoadingHistory,
+    onArtifactBrowserRequestConsumed,
+    selectedWorkspaceId,
+  ]);
+
+  useEffect(() => {
     let mounted = true;
 
     const applyVisibleBrowserState = (state: BrowserTabListPayload) => {
@@ -8415,7 +8475,7 @@ interface ComposerProps {
   onPreviewAttachment: (attachment: AttachmentListItem) => void;
 }
 
-function UserTurn({
+export function UserTurn({
   text,
   createdAt,
   attachments,
@@ -8765,7 +8825,7 @@ function QueuedSessionInputRail({
   );
 }
 
-function AssistantTurn({
+export function AssistantTurn({
   label,
   mode,
   showSeparator = false,
@@ -9410,7 +9470,7 @@ function AssistantTurnMemoryProposals({
   );
 }
 
-function ArtifactBrowserModal({
+export function ArtifactBrowserModal({
   open,
   filter,
   outputs,
@@ -9418,6 +9478,7 @@ function ArtifactBrowserModal({
   onClose,
   onFilterChange,
   onOpenOutput,
+  layout = "page",
 }: {
   open: boolean;
   filter: ArtifactBrowserFilter;
@@ -9426,6 +9487,7 @@ function ArtifactBrowserModal({
   onClose: () => void;
   onFilterChange: (nextFilter: ArtifactBrowserFilter) => void;
   onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
+  layout?: "page" | "card";
 }) {
   if (!open) {
     return null;
@@ -9448,10 +9510,18 @@ function ArtifactBrowserModal({
           (output) => outputBrowserFilterForOutput(output) === filter,
         ),
   );
+  const overlayClassName =
+    layout === "card"
+      ? "absolute inset-0 z-30 flex items-stretch justify-stretch bg-background/88 p-2 backdrop-blur-[2px]"
+      : "absolute inset-0 z-30 flex items-center justify-center bg-black/40 px-6 py-8 backdrop-blur-[2px]";
+  const panelClassName =
+    layout === "card"
+      ? "flex h-full w-full min-h-0 flex-col overflow-hidden rounded-[22px] border border-border bg-background shadow-xl"
+      : "flex max-h-full w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border bg-background shadow-xl";
 
   return (
-    <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 px-6 py-8 backdrop-blur-[2px]">
-      <div className="flex max-h-full w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border bg-background shadow-xl">
+    <div className={overlayClassName}>
+      <div className={panelClassName}>
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
           <div>
             <div className="text-sm font-semibold text-foreground">
@@ -9475,67 +9545,67 @@ function ArtifactBrowserModal({
             <X className="size-3.5" />
           </Button>
         </div>
-      </div>
 
-      <div className="flex shrink-0 flex-wrap gap-1 border-b border-border px-3 py-2">
-        {filterLabels.map((item) => {
-          const active = filter === item.id;
-          return (
-            <Button
-              key={item.id}
-              variant={active ? "secondary" : "ghost"}
-              size="xs"
-              onClick={() => onFilterChange(item.id)}
-            >
-              {item.label}
-            </Button>
-          );
-        })}
-      </div>
+        <div className="flex shrink-0 flex-wrap gap-1 border-b border-border px-3 py-2">
+          {filterLabels.map((item) => {
+            const active = filter === item.id;
+            return (
+              <Button
+                key={item.id}
+                variant={active ? "secondary" : "ghost"}
+                size="xs"
+                onClick={() => onFilterChange(item.id)}
+              >
+                {item.label}
+              </Button>
+            );
+          })}
+        </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-        {filteredOutputs.length === 0 ? (
-          <div className="py-10 text-center text-xs text-muted-foreground">
-            No artifacts match this filter.
-          </div>
-        ) : (
-          <div className="grid gap-2">
-            {filteredOutputs.map((output) => {
-              const kindLabel = outputKindLabel(output);
-              const changeLabel = outputChangeLabel(output);
-              return (
-                <button
-                  key={output.id}
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    onOpenOutput?.(output);
-                  }}
-                  disabled={!onOpenOutput}
-                  className="group flex w-full min-w-0 items-start gap-2.5 rounded-lg border border-border bg-card px-3 py-2.5 text-left ring-border transition-colors hover:bg-accent/50 disabled:cursor-default disabled:hover:bg-card"
-                >
-                  <OutputArtifactIcon output={output} />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                      {kindLabel}
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+          {filteredOutputs.length === 0 ? (
+            <div className="py-10 text-center text-xs text-muted-foreground">
+              No artifacts match this filter.
+            </div>
+          ) : (
+            <div className="grid gap-2">
+              {filteredOutputs.map((output) => {
+                const kindLabel = outputKindLabel(output);
+                const changeLabel = outputChangeLabel(output);
+                return (
+                  <button
+                    key={output.id}
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenOutput?.(output);
+                    }}
+                    disabled={!onOpenOutput}
+                    className="group flex w-full min-w-0 items-start gap-2.5 rounded-lg border border-border bg-card px-3 py-2.5 text-left ring-border transition-colors hover:bg-accent/50 disabled:cursor-default disabled:hover:bg-card"
+                  >
+                    <OutputArtifactIcon output={output} />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                        {kindLabel}
+                      </div>
+                      <div className="truncate text-sm font-medium text-foreground">
+                        {output.title || "Untitled artifact"}
+                      </div>
                     </div>
-                    <div className="truncate text-sm font-medium text-foreground">
-                      {output.title || "Untitled artifact"}
-                    </div>
-                  </div>
-                  {changeLabel ? (
-                    <Badge
-                      variant="outline"
-                      className="shrink-0 text-[10px] uppercase"
-                    >
-                      {changeLabel}
-                    </Badge>
-                  ) : null}
-                </button>
-              );
-            })}
-          </div>
-        )}
+                    {changeLabel ? (
+                      <Badge
+                        variant="outline"
+                        className="shrink-0 text-[10px] uppercase"
+                      >
+                        {changeLabel}
+                      </Badge>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

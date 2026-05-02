@@ -93,6 +93,74 @@ test("chat pane can consume a one-shot explorer attachment request", async () =>
   );
 });
 
+test("chat pane can consume a one-shot artifact browser request", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /interface ChatPaneArtifactBrowserRequest \{\s*workspaceId: string;\s*outputs: WorkspaceOutputRecordPayload\[];\s*requestKey: number;\s*scope\?: "reply" \| "session";\s*\}/,
+  );
+  assert.match(
+    source,
+    /artifactBrowserRequest\?: ChatPaneArtifactBrowserRequest \| null;/,
+  );
+  assert.match(
+    source,
+    /onArtifactBrowserRequestConsumed\?: \(requestKey: number\) => void;/,
+  );
+  assert.match(
+    source,
+    /const lastHandledArtifactBrowserRequestKeyRef = useRef\(0\);/,
+  );
+  assert.match(
+    source,
+    /const requestKey = artifactBrowserRequest\?\.requestKey \?\? 0;/,
+  );
+  assert.match(
+    source,
+    /const requestWorkspaceId =\s*artifactBrowserRequest\?\.workspaceId\?\.trim\(\) \?\? "";/,
+  );
+  assert.match(
+    source,
+    /const normalizedWorkspaceId = \(selectedWorkspaceId \|\| ""\)\.trim\(\);/,
+  );
+  assert.match(
+    source,
+    /const mainSessionWorkspaceId =\s*\(desktopMainSession\?\.workspace_id \|\| ""\)\.trim\(\);/,
+  );
+  assert.match(
+    source,
+    /const mainSessionId = \(desktopMainSession\?\.session_id \|\| ""\)\.trim\(\);/,
+  );
+  assert.match(
+    source,
+    /const normalizedActiveSessionId = \(activeSessionId \|\| ""\)\.trim\(\);/,
+  );
+  assert.match(
+    source,
+    /const requestWorkspaceReady =\s*Boolean\(requestWorkspaceId\) &&[\s\S]*requestWorkspaceId === normalizedWorkspaceId &&[\s\S]*requestWorkspaceId === mainSessionWorkspaceId &&[\s\S]*Boolean\(mainSessionId\) &&[\s\S]*normalizedActiveSessionId === mainSessionId &&[\s\S]*!isLoadingHistory;/,
+  );
+  assert.match(
+    source,
+    /requestKey === lastHandledArtifactBrowserRequestKeyRef\.current/,
+  );
+  assert.match(source, /!requestWorkspaceReady/);
+  assert.match(source, /setArtifactBrowserFilter\("all"\);/);
+  assert.match(
+    source,
+    /setArtifactBrowserScopedOutputs\(artifactBrowserRequest\?\.outputs \?\? \[\]\);/,
+  );
+  assert.match(
+    source,
+    /setArtifactBrowserScope\(artifactBrowserRequest\?\.scope \?\? "reply"\);/,
+  );
+  assert.match(source, /setArtifactBrowserOpen\(true\);/);
+  assert.match(
+    source,
+    /onArtifactBrowserRequestConsumed\?\.\(requestKey\);/,
+  );
+});
+
 test("chat pane does not expose browser comment draft plumbing", async () => {
   const source = await readFile(sourcePath, "utf8");
 

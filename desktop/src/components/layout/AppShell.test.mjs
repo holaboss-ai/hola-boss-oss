@@ -499,7 +499,9 @@ test("app shell uses the top toolbar for shell navigation and removes the left r
   );
   assert.match(source, /const handleOpenControlCenter = useCallback\(\(\) => \{/);
   assert.match(source, /const handleEnterWorkspace = useCallback\(\s*\(workspaceId: string\) => \{/);
-  assert.match(source, /<WorkspaceControlCenter[\s\S]*onEnterWorkspace=\{handleEnterWorkspace\}/);
+  assert.match(source, /const handleOpenControlCenterWorkspaceOutput = useCallback\(\s*async \(workspaceId: string, output: WorkspaceOutputRecordPayload\) => \{/);
+  assert.match(source, /window\.electronAPI\.workspace\.getWorkspaceLifecycle\(\s*normalizedWorkspaceId/);
+  assert.match(source, /<WorkspaceControlCenter[\s\S]*onEnterWorkspace=\{handleEnterWorkspace\}[\s\S]*onOpenOutput=\{handleOpenControlCenterWorkspaceOutput\}/);
   assert.match(source, /controlCenterActive=\{controlCenterMode\}/);
   assert.match(source, /onOpenControlCenter=\{handleOpenControlCenter\}/);
   assert.match(source, /handleOpenAutomationsPane = useCallback/);
@@ -516,6 +518,9 @@ test("app shell uses the top toolbar for shell navigation and removes the left r
   assert.doesNotMatch(source, /<SettingsDialog[\s\S]*onOpenAutomationRunSession/);
   assert.doesNotMatch(source, /handleOpenMarketplace/);
   assert.doesNotMatch(source, /MarketplacePane/);
+  assert.doesNotMatch(source, /ChatArtifactBrowserRequest/);
+  assert.doesNotMatch(source, /handleOpenControlCenterWorkspaceArtifacts/);
+  assert.doesNotMatch(source, /artifactBrowserRequest=\{chatArtifactBrowserRequest\}/);
   assert.doesNotMatch(source, /activeShellView === "marketplace"/);
   assert.doesNotMatch(source, /handleOpenSpace = useCallback/);
   assert.doesNotMatch(source, /onOpenSpace=\{handleOpenSpace\}/);

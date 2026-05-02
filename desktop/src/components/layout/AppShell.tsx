@@ -3930,9 +3930,11 @@ function AppShellContent() {
     });
   }, []);
 
-  const handleOpenWorkspaceOutput = useCallback(
-    (output: WorkspaceOutputRecordPayload) => {
-      const target = workspaceOutputNavigationTarget(output, installedAppIds);
+  const openWorkspaceOutputTarget = useCallback(
+    (
+      target: WorkspaceOutputNavigationTarget,
+      output: WorkspaceOutputRecordPayload,
+    ) => {
       if (target.type === "app") {
         handleOpenSpaceApp(target.appId, {
           path: target.path,
@@ -3984,7 +3986,54 @@ function AppShellContent() {
         });
       }
     },
-    [handleOpenSpaceApp, installedAppIds],
+    [handleOpenSpaceApp],
+  );
+
+  const handleOpenWorkspaceOutput = useCallback(
+    (output: WorkspaceOutputRecordPayload) => {
+      const target = workspaceOutputNavigationTarget(output, installedAppIds);
+      openWorkspaceOutputTarget(target, output);
+    },
+    [installedAppIds, openWorkspaceOutputTarget],
+  );
+
+  const handleOpenControlCenterWorkspaceOutput = useCallback(
+    async (workspaceId: string, output: WorkspaceOutputRecordPayload) => {
+      const normalizedWorkspaceId = workspaceId.trim();
+      if (!normalizedWorkspaceId) {
+        return;
+      }
+
+      let workspaceInstalledAppIds = installedAppIds;
+      if (normalizedWorkspaceId !== (selectedWorkspaceId?.trim() || "")) {
+        try {
+          const lifecycle =
+            await window.electronAPI.workspace.getWorkspaceLifecycle(
+              normalizedWorkspaceId,
+            );
+          workspaceInstalledAppIds = new Set(
+            lifecycle.applications
+              .map((application) => application.app_id.trim())
+              .filter(Boolean),
+          );
+        } catch {
+          workspaceInstalledAppIds = new Set<string>();
+        }
+        setSelectedWorkspaceId(normalizedWorkspaceId);
+      }
+
+      const target = workspaceOutputNavigationTarget(
+        output,
+        workspaceInstalledAppIds,
+      );
+      openWorkspaceOutputTarget(target, output);
+    },
+    [
+      installedAppIds,
+      openWorkspaceOutputTarget,
+      selectedWorkspaceId,
+      setSelectedWorkspaceId,
+    ],
   );
 
   const handleOpenRunningSession = (sessionId: string) => {
@@ -4870,6 +4919,7 @@ function AppShellContent() {
             selectedWorkspaceId={selectedWorkspaceId}
             onSelectWorkspace={handleSelectControlCenterWorkspace}
             onEnterWorkspace={handleEnterWorkspace}
+            onOpenOutput={handleOpenControlCenterWorkspaceOutput}
           />
         ) : (
           <div className="relative flex h-full min-h-0 flex-col overflow-hidden">

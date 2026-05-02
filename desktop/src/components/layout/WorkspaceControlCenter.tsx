@@ -14,6 +14,18 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
+import {
+  AssistantTurn,
+  ArtifactBrowserModal,
+  type ArtifactBrowserFilter,
+  attachmentsFromMetadata,
+  historyMessagesInDisplayOrder,
+  inputIdFromMessageId,
+  sortOutputs,
+  turnInputIdsFromHistoryMessages,
+  type ChatMessage,
+  UserTurn,
+} from "@/components/panes/ChatPane";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,22 +38,21 @@ import { cn } from "@/lib/utils";
 
 const PREVIEW_HISTORY_LIMIT = 18;
 const PREVIEW_MESSAGE_LIMIT = 12;
+const PREVIEW_OUTPUT_LIMIT = 80;
 
-type PreviewMessageRole = "assistant" | "system" | "user";
-
-interface PreviewMessage {
-  id: string;
-  role: PreviewMessageRole;
-  text: string;
-  createdAt: string | null;
+type PreviewChatMessage = ChatMessage & {
   optimistic?: boolean;
-}
+};
 
 interface WorkspaceControlCenterProps {
   workspaces: WorkspaceRecordPayload[];
   selectedWorkspaceId: string | null;
   onSelectWorkspace: (workspaceId: string) => void;
   onEnterWorkspace: (workspaceId: string) => void;
+  onOpenOutput: (
+    workspaceId: string,
+    output: WorkspaceOutputRecordPayload,
+  ) => void;
 }
 
 interface WorkspaceCardProps {
@@ -49,6 +60,10 @@ interface WorkspaceCardProps {
   isSelected: boolean;
   onSelectWorkspace: (workspaceId: string) => void;
   onEnterWorkspace: (workspaceId: string) => void;
+  onOpenOutput: (
+    workspaceId: string,
+    output: WorkspaceOutputRecordPayload,
+  ) => void;
   onActivityAtChange: (workspaceId: string, activityAt: string | null) => void;
 }
 
@@ -73,42 +88,103 @@ function normalizedPreviewText(text: string) {
   return text.replace(/\r\n/g, "\n").trim();
 }
 
-function previewRoleForMessage(role: string): PreviewMessageRole | null {
-  const normalizedRole = role.trim().toLowerCase();
-  if (normalizedRole === "assistant") {
-    return "assistant";
+function previewMessageHasRenderableContent(message: PreviewChatMessage) {
+  if (message.role === "user") {
+    return (
+      Boolean(message.text.trim()) ||
+      (message.attachments?.length ?? 0) > 0
+    );
   }
-  if (normalizedRole === "user") {
-    return "user";
-  }
-  if (normalizedRole === "system") {
-    return "system";
-  }
-  return null;
+  return (
+    Boolean(message.text.trim()) ||
+    (message.outputs?.length ?? 0) > 0 ||
+    (message.segments?.length ?? 0) > 0 ||
+    (message.executionItems?.length ?? 0) > 0
+  );
 }
 
-function historyMessagesToPreviewMessages(
-  messages: SessionHistoryMessagePayload[],
-): PreviewMessage[] {
-  return messages
-    .map((message) => {
-      const role = previewRoleForMessage(message.role);
-      const text = normalizedPreviewText(message.text || "");
-      if (!role || !text) {
-        return null;
+function previewMessagesFromSessionState(params: {
+  historyMessages: SessionHistoryMessagePayload[];
+  outputs: WorkspaceOutputRecordPayload[];
+}): PreviewChatMessage[] {
+  const outputsByInputId = new Map<string, WorkspaceOutputRecordPayload[]>();
+  for (const output of params.outputs) {
+    const inputId = (output.input_id || "").trim();
+    if (!inputId) {
+      continue;
+    }
+    const existing = outputsByInputId.get(inputId);
+    if (existing) {
+      existing.push(output);
+    } else {
+      outputsByInputId.set(inputId, [output]);
+    }
+  }
+
+  const assistantHistoryInputIds = new Set<string>();
+  for (const message of params.historyMessages) {
+    if (message.role !== "assistant") {
+      continue;
+    }
+    const inputId = inputIdFromMessageId(message.id, "assistant");
+    if (inputId) {
+      assistantHistoryInputIds.add(inputId);
+    }
+  }
+
+  return params.historyMessages
+    .flatMap((message) => {
+      if (message.role !== "user" && message.role !== "assistant") {
+        return [];
       }
-      return {
-        id: message.id,
-        role,
-        text,
-        createdAt: message.created_at ?? null,
-      } satisfies PreviewMessage;
+
+      const nextMessage: PreviewChatMessage = {
+        id: message.id || `history-${message.created_at ?? crypto.randomUUID()}`,
+        role: message.role as "user" | "assistant",
+        text: normalizedPreviewText(message.text || ""),
+        createdAt: message.created_at ?? undefined,
+        attachments: attachmentsFromMetadata(message.metadata),
+      };
+      const renderedMessages: PreviewChatMessage[] = [nextMessage];
+
+      if (nextMessage.role === "assistant") {
+        const inputId = inputIdFromMessageId(nextMessage.id, "assistant");
+        if (inputId) {
+          const turnOutputs = sortOutputs(outputsByInputId.get(inputId) ?? []);
+          if (turnOutputs.length > 0) {
+            nextMessage.outputs = turnOutputs;
+          }
+        }
+      }
+
+      const userInputId =
+        nextMessage.role === "user"
+          ? inputIdFromMessageId(nextMessage.id, "user")
+          : "";
+      if (
+        nextMessage.role === "user" &&
+        userInputId &&
+        !assistantHistoryInputIds.has(userInputId)
+      ) {
+        const turnOutputs = sortOutputs(outputsByInputId.get(userInputId) ?? []);
+        if (turnOutputs.length > 0) {
+          renderedMessages.push({
+            id: `assistant-${userInputId}`,
+            role: "assistant",
+            text: "",
+            createdAt: nextMessage.createdAt,
+            outputs: turnOutputs,
+          });
+        }
+      }
+
+      return renderedMessages;
     })
-    .filter((message): message is PreviewMessage => Boolean(message))
+    .filter((message) => previewMessageHasRenderableContent(message))
     .slice(-PREVIEW_MESSAGE_LIMIT);
 }
 
-function trimPreviewMessages(messages: PreviewMessage[]) {
+function trimPreviewMessages(messages: PreviewChatMessage[]) {
   return messages.slice(-PREVIEW_MESSAGE_LIMIT);
 }
 
@@ -128,7 +204,7 @@ function fallbackWorkspaceActivityAt(workspace: WorkspaceRecordPayload) {
 function lastActivityFromSnapshot(params: {
   fallbackActivityAt: string | null;
   mainSessionUpdatedAt: string | null;
-  messages: PreviewMessage[];
+  messages: PreviewChatMessage[];
 }) {
   const lastMessageAt =
     [...params.messages]
@@ -242,6 +318,7 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
   isSelected,
   onSelectWorkspace,
   onEnterWorkspace,
+  onOpenOutput,
   onActivityAtChange,
 }: WorkspaceCardProps) {
   const workspaceId = workspace.id;
@@ -249,7 +326,7 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
   const [mainSession, setMainSession] = useState<AgentSessionRecordPayload | null>(
     null,
   );
-  const [messages, setMessages] = useState<PreviewMessage[]>([]);
+  const [messages, setMessages] = useState<PreviewChatMessage[]>([]);
   const [runtimeState, setRuntimeState] =
     useState<SessionRuntimeRecordPayload | null>(null);
   const [runtimeCardState, setRuntimeCardState] =
@@ -259,6 +336,12 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isResponding, setIsResponding] = useState(false);
+  const [artifactBrowserOpen, setArtifactBrowserOpen] = useState(false);
+  const [artifactBrowserFilter, setArtifactBrowserFilter] =
+    useState<ArtifactBrowserFilter>("all");
+  const [artifactBrowserOutputs, setArtifactBrowserOutputs] = useState<
+    WorkspaceOutputRecordPayload[]
+  >([]);
   const previewScrollerRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const activeStreamIdRef = useRef<string | null>(null);
@@ -271,6 +354,25 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
   }, [workspaceFallbackActivityAt]);
 
   const workspaceUnavailable = workspace.folder_state === "missing";
+  const handleEnterWorkspace = useCallback(() => {
+    onSelectWorkspace(workspaceId);
+    onEnterWorkspace(workspaceId);
+  }, [onEnterWorkspace, onSelectWorkspace, workspaceId]);
+  const handleOpenExternalUrl = useCallback((url: string) => {
+    void window.electronAPI.ui.openExternalUrl(url);
+  }, []);
+  const handleOpenArtifacts = useCallback(
+    (outputs: WorkspaceOutputRecordPayload[]) => {
+      if (outputs.length === 0) {
+        return;
+      }
+      onSelectWorkspace(workspaceId);
+      setArtifactBrowserFilter("all");
+      setArtifactBrowserOutputs(outputs);
+      setArtifactBrowserOpen(true);
+    },
+    [onSelectWorkspace, workspaceId],
+  );
   const lastActivityAt = useMemo(
     () =>
       lastActivityFromSnapshot({
@@ -336,21 +438,39 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
       );
       const session = ensured.session;
       const sessionId = session.session_id.trim();
-      const [history, runtimeStates] = await Promise.all([
+      const [history, runtimeStates, outputsResponse] = await Promise.all([
         window.electronAPI.workspace.getSessionHistory({
           workspaceId,
           sessionId,
           limit: PREVIEW_HISTORY_LIMIT,
           offset: 0,
-          order: "asc",
+          order: "desc",
         }),
         window.electronAPI.workspace.listRuntimeStates(workspaceId),
+        window.electronAPI.workspace.listOutputs({
+          workspaceId,
+          sessionId,
+          limit: PREVIEW_OUTPUT_LIMIT,
+          offset: 0,
+        }),
       ]);
       if (disposedRef.current) {
         return;
       }
 
-      const nextMessages = historyMessagesToPreviewMessages(history.messages);
+      const historyMessages = historyMessagesInDisplayOrder(
+        history.messages,
+        "desc",
+      );
+      const previewInputIds = new Set(
+        turnInputIdsFromHistoryMessages(historyMessages),
+      );
+      const nextMessages = previewMessagesFromSessionState({
+        historyMessages,
+        outputs: outputsResponse.items.filter((output) =>
+          previewInputIds.has((output.input_id || "").trim()),
+        ),
+      });
       const nextRuntimeState =
         runtimeStates.items.find((item) => item.session_id === sessionId) ??
         null;
@@ -695,7 +815,7 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
   return (
     <Card
       className={cn(
-        "h-[480px] min-h-0 border border-border/70 bg-card py-0 shadow-md transition-[transform,border-color,box-shadow] duration-200 ease-out",
+        "relative h-[480px] min-h-0 border border-border/70 bg-card py-0 shadow-md transition-[transform,border-color,box-shadow] duration-200 ease-out",
         isSelected
           ? "border-primary/45 shadow-[0_16px_48px_-24px_color-mix(in_oklch,var(--primary)_32%,transparent)]"
           : "hover:-translate-y-0.5 hover:border-border hover:shadow-xl",
@@ -736,10 +856,7 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => {
-                onSelectWorkspace(workspaceId);
-                onEnterWorkspace(workspaceId);
-              }}
+              onClick={handleEnterWorkspace}
               className="h-6 rounded-full px-2.5 text-[11px]"
             >
               Enter workspace
@@ -762,35 +879,65 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
             </div>
           ) : messages.length > 0 ? (
             <div className="space-y-2.5">
-              {messages.map((message) => {
-                const isUser = message.role === "user";
-                const isAssistant = message.role === "assistant";
-                return (
+              {messages.map((message, index) =>
+                message.role === "user" ? (
                   <div
                     key={message.id}
-                    className={cn(
-                      "flex",
-                      isUser ? "justify-end" : "justify-start",
-                    )}
+                    className={cn(message.optimistic ? "opacity-80" : "")}
                   >
-                    <div
-                      className={cn(
-                        "max-w-[88%] rounded-2xl px-3.5 py-2 text-[12.5px] leading-5 text-foreground",
-                        isUser
-                          ? "theme-chat-user-bubble"
-                          : isAssistant
-                            ? "theme-chat-assistant-bubble"
-                            : "theme-chat-system-bubble border",
-                        message.optimistic ? "opacity-80" : "",
-                      )}
-                    >
-                      <div className="whitespace-pre-wrap break-words">
-                        {message.text}
-                      </div>
-                    </div>
+                    <UserTurn
+                      text={message.text}
+                      createdAt={message.createdAt}
+                      attachments={message.attachments ?? []}
+                      onLinkClick={handleOpenExternalUrl}
+                    />
                   </div>
-                );
-              })}
+                ) : (
+                  <div
+                    key={message.id}
+                    className={cn(message.optimistic ? "opacity-80" : "")}
+                  >
+                    <AssistantTurn
+                      label={workspace.name}
+                      mode="control_center_preview"
+                      showSeparator={index > 0}
+                      showExecutionInternals={false}
+                      text={message.text}
+                      tone={message.tone ?? "default"}
+                      segments={message.segments ?? []}
+                      executionItems={message.executionItems ?? []}
+                      memoryProposals={[]}
+                      outputs={message.outputs ?? []}
+                      memoryProposalAction={null}
+                      editingMemoryProposalId={null}
+                      memoryProposalDrafts={{}}
+                      onEditMemoryProposal={(_proposalId) => undefined}
+                      onMemoryProposalDraftChange={(_proposalId, _value) =>
+                        undefined
+                      }
+                      onAcceptMemoryProposal={(_proposal) => undefined}
+                      onDismissMemoryProposal={(_proposal) => undefined}
+                      onOpenOutput={(output) =>
+                        onOpenOutput(workspaceId, output)
+                      }
+                      onOpenAllArtifacts={handleOpenArtifacts}
+                      collapsedTraceByStepId={{}}
+                      onToggleTraceStep={(_stepId) => undefined}
+                      onLinkClick={handleOpenExternalUrl}
+                      status={
+                        isResponding && index === messages.length - 1
+                          ? "Working"
+                          : ""
+                      }
+                      live={
+                        isResponding &&
+                        index === messages.length - 1 &&
+                        !message.outputs?.length
+                      }
+                    />
+                  </div>
+                ),
+              )}
             </div>
           ) : (
             <div className="flex h-full items-center justify-center text-center text-xs text-muted-foreground">
@@ -848,6 +995,16 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
           </div>
         </div>
       </CardContent>
+      <ArtifactBrowserModal
+        open={artifactBrowserOpen}
+        filter={artifactBrowserFilter}
+        outputs={artifactBrowserOutputs}
+        scope="reply"
+        layout="card"
+        onClose={() => setArtifactBrowserOpen(false)}
+        onFilterChange={setArtifactBrowserFilter}
+        onOpenOutput={(output) => onOpenOutput(workspaceId, output)}
+      />
     </Card>
   );
 });
@@ -857,6 +1014,7 @@ export function WorkspaceControlCenter({
   selectedWorkspaceId,
   onSelectWorkspace,
   onEnterWorkspace,
+  onOpenOutput,
 }: WorkspaceControlCenterProps) {
   const [activityByWorkspaceId, setActivityByWorkspaceId] = useState<
     Record<string, string | null>
@@ -903,6 +1061,7 @@ export function WorkspaceControlCenter({
                 isSelected={workspace.id === (selectedWorkspaceId || "").trim()}
                 onSelectWorkspace={onSelectWorkspace}
                 onEnterWorkspace={onEnterWorkspace}
+                onOpenOutput={onOpenOutput}
                 onActivityAtChange={handleActivityAtChange}
               />
             ))}
