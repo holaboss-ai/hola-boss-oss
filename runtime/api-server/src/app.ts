@@ -4444,6 +4444,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         }),
         subagentId: requiredString(params.subagentId, "subagentId"),
         answer: requiredString(request.body.answer, "answer"),
+        selectedModel: capabilitySelectedModel({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
         model: nullableString(request.body.model) ?? undefined,
       });
     } catch (error) {
@@ -4481,6 +4485,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         subagentId: requiredString(params.subagentId, "subagentId"),
         instruction: requiredString(request.body.instruction, "instruction"),
         title: nullableString(request.body.title) ?? undefined,
+        selectedModel: capabilitySelectedModel({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
         model: nullableString(request.body.model) ?? undefined,
       });
     } catch (error) {
@@ -8076,7 +8084,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       null;
     const priority = optionalInteger(request.body.priority, 0);
     const requestedModel = nullableString(request.body.model) ?? null;
-    const effectiveModel = resolveSubagentExecutionModel();
+    const effectiveModel = resolveSubagentExecutionModel({
+      selectedModel: requestedModel,
+    });
     const createdBy = nullableString(request.body.created_by) ?? "workspace_user";
     const subagentId = randomUUID();
 

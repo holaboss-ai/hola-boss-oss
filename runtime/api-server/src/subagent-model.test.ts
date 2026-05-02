@@ -59,8 +59,24 @@ test("subagent execution model prefers the configured runtime.subagents.model", 
   );
 });
 
-test("subagent execution model falls back to the runtime default model when unset", () => {
+test("subagent execution model falls back to the current selected composer model when unset", () => {
   const root = makeTempDir("hb-subagent-model-default-");
+  writeRuntimeConfig(root, {
+    runtime: {
+      default_model: "openai_direct/gpt-5.4",
+    },
+  });
+
+  assert.equal(
+    resolveSubagentExecutionModel({
+      selectedModel: "anthropic_direct/claude-sonnet-4-6",
+    }),
+    "anthropic_direct/claude-sonnet-4-6",
+  );
+});
+
+test("subagent execution model falls back to the runtime default model when no selected composer model is available", () => {
+  const root = makeTempDir("hb-subagent-model-runtime-default-");
   writeRuntimeConfig(root, {
     runtime: {
       default_model: "openai_direct/gpt-5.4",

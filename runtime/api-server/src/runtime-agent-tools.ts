@@ -135,6 +135,7 @@ export interface RuntimeAgentToolsResumeSubagentParams {
   inputId?: string | null;
   subagentId: string;
   answer: string;
+  selectedModel?: string | null;
   model?: string | null;
 }
 
@@ -145,6 +146,7 @@ export interface RuntimeAgentToolsContinueSubagentParams {
   subagentId: string;
   instruction: string;
   title?: string | null;
+  selectedModel?: string | null;
   model?: string | null;
 }
 
@@ -1553,7 +1555,9 @@ export class RuntimeAgentToolsService {
       const childSessionId = `subagent-${randomUUID()}`;
       const title = normalizedSubagentTaskTitle(task.title, task.goal);
       const requestedModel = task.model || null;
-      const effectiveModel = resolveSubagentExecutionModel();
+      const effectiveModel = resolveSubagentExecutionModel({
+        selectedModel: params.selectedModel,
+      });
       const toolProfile = normalizeSubagentToolProfile({
         tools: task.tools,
         timeoutMs: task.timeoutMs,
@@ -1755,7 +1759,9 @@ export class RuntimeAgentToolsService {
         "subagent is not currently waiting on user input",
       );
     }
-    const effectiveModel = resolveSubagentExecutionModel();
+    const effectiveModel = resolveSubagentExecutionModel({
+      selectedModel: params.selectedModel ?? params.model,
+    });
     const previousChildInput = normalizedString(state.run.latestChildInputId)
       ? this.store.getInput(normalizedString(state.run.latestChildInputId))
       : null;
@@ -1847,7 +1853,9 @@ export class RuntimeAgentToolsService {
         "subagent is waiting on user input; use resume instead",
       );
     }
-    const effectiveModel = resolveSubagentExecutionModel();
+    const effectiveModel = resolveSubagentExecutionModel({
+      selectedModel: params.selectedModel ?? params.model,
+    });
     const parentInput = normalizedString(params.inputId)
       ? this.store.getInput(normalizedString(params.inputId))
       : null;

@@ -1,11 +1,21 @@
 import { resolveProductRuntimeConfig } from "./runtime-config.js";
 
-export function resolveSubagentExecutionModel(): string {
+export function resolveSubagentExecutionModel(params?: {
+  selectedModel?: string | null;
+}): string {
   const runtimeConfig = resolveProductRuntimeConfig({
     requireAuth: false,
     requireUser: false,
     requireBaseUrl: false,
     includeDefaultBaseUrl: false,
   });
-  return runtimeConfig.subagentModel?.trim() || runtimeConfig.defaultModel.trim();
+  const configuredSubagentModel = runtimeConfig.subagentModel?.trim() || "";
+  if (configuredSubagentModel) {
+    return configuredSubagentModel;
+  }
+  const selectedModel = params?.selectedModel?.trim() || "";
+  if (selectedModel) {
+    return selectedModel;
+  }
+  return runtimeConfig.defaultModel.trim();
 }

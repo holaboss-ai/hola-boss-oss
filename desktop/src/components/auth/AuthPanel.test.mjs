@@ -61,7 +61,9 @@ test("runtime auth panel keeps model provider settings compact", async () => {
   assert.match(source, /Select a model to enable image generation\./);
   assert.match(source, /Select a model to enable background tasks\./);
   assert.match(source, /Select a model to enable vector recall\./);
-  assert.match(source, /Used for all hidden subagent runs, including delegated work and scheduled jobs\./);
+  assert.match(source, /Follow composer/);
+  assert.match(source, /Use the current composer model whenever hidden subagent work starts or continues\./);
+  assert.match(source, /Optional override for hidden subagent runs\. Leave it on Follow composer to use the current composer model\./);
   assert.match(source, /title="Model providers"/);
   assert.match(source, /No providers connected/);
   assert.match(
@@ -90,8 +92,9 @@ test("runtime auth panel keeps model provider settings compact", async () => {
   assert.match(source, /const recallEmbeddingsModelOptions = uniqueValues\(\[/);
   assert.match(source, /const imageGenerationModelOptions = uniqueValues\(\[/);
   assert.match(source, /const subagentModelToken = \(runtimeConfig\?\.subagentModel \?\? ""\)\.trim\(\);/);
-  assert.match(source, /await window\.electronAPI\.runtime\.setConfig\(\{ subagentModel: token \}\);/);
-  assert.match(source, /setConfig\(\{ subagentModel: fallbackToken \}\)/);
+  assert.match(source, /const subagentModelOptions: SettingsMenuOption\[] = \[/);
+  assert.match(source, /SUBAGENT_MODEL_FOLLOW_COMPOSER/);
+  assert.match(source, /subagentModel:\s*token === SUBAGENT_MODEL_FOLLOW_COMPOSER \? "" : token/);
   assert.match(source, /onClick=\{\(\) => setShowAdvancedRuntimeSettings\(true\)\}/);
   assert.match(source, /if \(!next\) setShowAdvancedRuntimeSettings\(false\);/);
   assert.match(source, /const advancedSettingsWarnings = \[/);

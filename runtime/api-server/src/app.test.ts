@@ -6607,7 +6607,7 @@ test("accept task proposal creates a hidden subagent run with queued work", asyn
   assert.equal(childInput.sessionId, body.session.session_id);
   assert.equal(childInput.priority, 2);
   assert.equal(childInput.payload.text, "Write the follow-up and send a reminder");
-  assert.equal(childInput.payload.model, "openai/gpt-5.4");
+  assert.equal(childInput.payload.model, "openai/gpt-5.2");
   const childContext = childInput.payload.context as Record<string, unknown>;
   assert.deepEqual(childContext, {
     source: "task_proposal",
@@ -6631,7 +6631,7 @@ test("accept task proposal creates a hidden subagent run with queued work", asyn
   assert.equal(subagentRun?.sourceType, "task_proposal");
   assert.equal(subagentRun?.status, "queued");
   assert.equal(subagentRun?.requestedModel, "openai/gpt-5.2");
-  assert.equal(subagentRun?.effectiveModel, "openai/gpt-5.4");
+  assert.equal(subagentRun?.effectiveModel, "openai/gpt-5.2");
 
   const childHistory = store.listSessionMessages({
     workspaceId: workspace.id,

@@ -76,6 +76,7 @@ const KNOWN_PROVIDER_ORDER = [
   "ollama_direct",
   "minimax_direct",
 ] as const;
+const SUBAGENT_MODEL_FOLLOW_COMPOSER = "__subagent_follow_composer__";
 type KnownProviderId = (typeof KNOWN_PROVIDER_ORDER)[number];
 const AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME =
   "auth-settings-control theme-control-surface relative isolate h-9 w-full overflow-hidden rounded-[10px] border border-border bg-muted px-2.5 text-sm text-foreground shadow-none transition-colors hover:border-border focus-visible:border-border focus-visible:ring-0 focus-visible:ring-transparent aria-invalid:border-border aria-invalid:ring-0";
@@ -1846,21 +1847,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       });
   }, [isSignedIn, runtimeConfig]);
 
-  useEffect(() => {
-    if (!window.electronAPI) return;
-    if (!runtimeConfig) return;
-    if ((runtimeConfig.subagentModel ?? "").trim()) return;
-
-    const fallbackToken = (runtimeConfig.defaultModel ?? "").trim();
-    if (!fallbackToken) return;
-
-    void window.electronAPI.runtime
-      .setConfig({ subagentModel: fallbackToken })
-      .catch(() => {
-        // Non-fatal — user can pick manually from the Defaults selector.
-      });
-  }, [runtimeConfig]);
-
   const persistedProviderDrafts = deriveProviderDraftsFromDocument(
     parseRuntimeConfigDocument(runtimeConfigDocument),
     effectiveRuntimeConfig,
@@ -3426,9 +3412,17 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     (option) => option.value === defaultChatModelToken,
   );
   const subagentModelToken = (runtimeConfig?.subagentModel ?? "").trim();
-  const subagentModelMatched = defaultChatModelOptions.some(
-    (option) => option.value === subagentModelToken,
-  );
+  const subagentModelOptions: SettingsMenuOption[] = [
+    {
+      value: SUBAGENT_MODEL_FOLLOW_COMPOSER,
+      label: "Follow composer",
+      description:
+        "Use the current composer model whenever hidden subagent work starts or continues.",
+    },
+    ...defaultChatModelOptions,
+  ];
+  const subagentModelValue =
+    subagentModelToken || SUBAGENT_MODEL_FOLLOW_COMPOSER;
   const selectedWebSearchTemplate =
     WEB_SEARCH_PROVIDER_TEMPLATES[webSearchDraft.providerId];
   const selectedWebSearchProviderManaged = isManagedWebSearchProvider(
@@ -3461,7 +3455,10 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const handleSubagentModelChange = async (token: string) => {
     if (!window.electronAPI || !token) return;
     try {
-      await window.electronAPI.runtime.setConfig({ subagentModel: token });
+      await window.electronAPI.runtime.setConfig({
+        subagentModel:
+          token === SUBAGENT_MODEL_FOLLOW_COMPOSER ? "" : token,
+      });
     } catch (error) {
       setAuthError(
         error instanceof Error
@@ -3507,10 +3504,10 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               />
               <SettingsMenuSelectRow
                 label="Subagent model"
-                description="Used for all hidden subagent runs, including delegated work and scheduled jobs."
-                value={subagentModelMatched ? subagentModelToken : ""}
+                description="Optional override for hidden subagent runs. Leave it on Follow composer to use the current composer model."
+                value={subagentModelValue}
                 onValueChange={handleSubagentModelChange}
-                options={defaultChatModelOptions}
+                options={subagentModelOptions}
                 placeholder="Pick a model"
                 triggerWidth="w-[260px]"
               />

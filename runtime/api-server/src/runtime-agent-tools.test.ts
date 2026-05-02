@@ -95,6 +95,7 @@ test("continueSubagent queues a new input onto the same completed child session"
       title: "Web search for AI",
       goal: "Search the web for AI.",
       sourceType: "delegate_task",
+      effectiveModel: "openai/gpt-5.4",
       status: "completed",
       summary: "Top AI results.",
       resultPayload: { assistant_text: "Top AI results: item 1, item 2, item 3." },
@@ -131,14 +132,14 @@ test("continueSubagent queues a new input onto the same completed child session"
     assert.equal(result.result_payload, null);
     assert.equal(result.completed_at, null);
     assert.equal(result.cancelled_at, null);
-    assert.equal(result.effective_model, "openai/gpt-5.4");
+    assert.equal(result.effective_model, "gpt-test");
     const session = store.getSession({ workspaceId, sessionId: childSessionId });
     assert.equal(session?.archivedAt, null);
     const nextInputId = String(result.latest_child_input_id);
     const nextInput = store.getInput(nextInputId);
     assert.ok(nextInput);
     assert.equal(nextInput?.sessionId, childSessionId);
-    assert.equal(nextInput?.payload.model, "openai/gpt-5.4");
+    assert.equal(nextInput?.payload.model, "gpt-test");
     const nextInputText = String(nextInput?.payload.text ?? "");
     assert.match(nextInputText, /Create a concise report from those AI results\./);
     assert.match(nextInputText, /Continue from your previous result in this same child session\./);
