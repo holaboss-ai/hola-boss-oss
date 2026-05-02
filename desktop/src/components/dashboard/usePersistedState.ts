@@ -18,11 +18,14 @@ export function usePersistedState<T>(
 
   useEffect(() => {
     if (!key || typeof localStorage === "undefined") return;
-    try {
-      localStorage.setItem(key, JSON.stringify(state));
-    } catch {
-      // ignore
-    }
+    const id = window.setTimeout(() => {
+      try {
+        localStorage.setItem(key, JSON.stringify(state));
+      } catch {
+        // ignore
+      }
+    }, 200);
+    return () => window.clearTimeout(id);
   }, [key, state]);
 
   return [state, setState];

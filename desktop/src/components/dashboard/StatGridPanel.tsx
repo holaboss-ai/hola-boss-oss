@@ -37,13 +37,13 @@ export function StatGridPanel({ panel, state }: StatGridPanelProps) {
           {panel.title}
         </h2>
         {panel.description ? (
-          <p className="mt-0.5 text-xs text-muted-foreground">
+          <p className="mt-1 text-xs text-muted-foreground">
             {panel.description}
           </p>
         ) : null}
       </div>
       <div
-        className={`grid divide-x divide-border/50 [&>*:first-child]:pl-0 ${gridClass}`}
+        className={`grid divide-x divide-border [&>*:first-child]:pl-0 ${gridClass}`}
       >
         {panel.stats.map((stat, i) => {
           const cardState =

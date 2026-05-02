@@ -24,6 +24,7 @@ interface DataViewPanelProps {
   panel: DataViewPanelSpec;
   state: DataViewState;
   storageKeyBase?: string;
+  fullWidth?: boolean;
 }
 
 export type DataViewState =
@@ -44,7 +45,12 @@ const VIEW_META: Record<DataViewSpec["type"], { label: string; icon: LucideIcon 
 // solid card surface, header with title + connected segmented view
 // switcher with an animated indicator pill, body with the active
 // view's content. Selected view state is component-local.
-export function DataViewPanel({ panel, state, storageKeyBase }: DataViewPanelProps) {
+export function DataViewPanel({
+  panel,
+  state,
+  storageKeyBase,
+  fullWidth = false,
+}: DataViewPanelProps) {
   const [activeViewType, setActiveViewType] = useState<DataViewSpec["type"]>(
     () => resolveInitialView(panel).type,
   );
@@ -76,12 +82,16 @@ export function DataViewPanel({ panel, state, storageKeyBase }: DataViewPanelPro
           ) : null}
         </div>
         {panel.description ? (
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+          <p className="mt-1 truncate text-xs text-muted-foreground">
             {panel.description}
           </p>
         ) : null}
       </header>
-      <div className="scrollbar-ghost max-h-[560px] overflow-auto px-4 py-3">
+      <div
+        className={`scrollbar-ghost overflow-auto px-4 py-3 ${
+          fullWidth ? "max-h-[800px]" : "max-h-[560px]"
+        }`}
+      >
         {state.kind === "loading" ? (
           <SkeletonRows />
         ) : state.kind === "error" ? (

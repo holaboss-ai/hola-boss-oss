@@ -270,6 +270,7 @@ function DashboardBody({
               panels={dashboard.panels}
               states={panelStates}
               dashboardPath={dashboardPath}
+              fullWidth={fullWidth}
             />
           ))}
         </div>
@@ -375,11 +376,13 @@ function RowGroup({
   panels,
   states,
   dashboardPath,
+  fullWidth,
 }: {
   group: RowGroup;
   panels: DashboardPanel[];
   states: PanelState[];
   dashboardPath: string | undefined;
+  fullWidth: boolean;
 }) {
   const cols = group.columns;
   return (
@@ -401,6 +404,7 @@ function RowGroup({
             panel={panel}
             state={state}
             storageKeyBase={storageKeyBase}
+            fullWidth={fullWidth}
           />
         );
       })}
@@ -412,10 +416,12 @@ function PanelDispatch({
   panel,
   state,
   storageKeyBase,
+  fullWidth,
 }: {
   panel: DashboardPanel;
   state: PanelState;
   storageKeyBase: string | undefined;
+  fullWidth: boolean;
 }) {
   if (panel.type === "kpi" && state.kind === "kpi") {
     const kpi = panel as KpiPanelSpec;
@@ -440,6 +446,7 @@ function PanelDispatch({
         panel={panel}
         state={state.state}
         storageKeyBase={storageKeyBase}
+        fullWidth={fullWidth}
       />
     );
   }

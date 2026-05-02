@@ -109,7 +109,7 @@ export function ChartPanel({ panel, state }: ChartPanelProps) {
           {panel.title}
         </h3>
         {panel.description ? (
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+          <p className="mt-1 truncate text-xs text-muted-foreground">
             {panel.description}
           </p>
         ) : null}

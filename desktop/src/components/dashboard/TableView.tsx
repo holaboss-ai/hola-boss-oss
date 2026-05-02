@@ -88,13 +88,13 @@ export function TableView({
     });
   }, [rows, sort, columns]);
 
-  const displayRows = sortedRows.slice(0, 500);
+  const [shownLimit, setShownLimit] = useState(500);
+  const displayRows = sortedRows.slice(0, shownLimit);
 
   const cycleSort = (column: string) => {
     setSort((prev) => {
       if (!prev || prev.column !== column) return { column, dir: "asc" };
-      if (prev.dir === "asc") return { column, dir: "desc" };
-      return null;
+      return { column, dir: prev.dir === "asc" ? "desc" : "asc" };
     });
   };
 
@@ -197,7 +197,7 @@ export function TableView({
                         dir === "asc"
                           ? "Sorted ascending — click for descending"
                           : dir === "desc"
-                            ? "Sorted descending — click to clear"
+                            ? "Sorted descending — click for ascending"
                             : "Click to sort"
                       }
                       className={`-mx-1 inline-flex items-center gap-1 rounded px-1 py-0.5 transition-colors hover:bg-fg-6 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
@@ -246,8 +246,17 @@ export function TableView({
         </table>
       </div>
       {rows.length > displayRows.length ? (
-        <div className="pt-3 text-xs text-muted-foreground">
-          Showing {displayRows.length} of {rows.length} rows.
+        <div className="flex items-center gap-3 pt-3 text-xs text-muted-foreground">
+          <span>
+            Showing {displayRows.length} of {rows.length} rows.
+          </span>
+          <button
+            type="button"
+            onClick={() => setShownLimit((n) => n + 500)}
+            className="rounded-md border border-border px-2 py-0.5 transition-colors hover:bg-muted hover:text-foreground"
+          >
+            Show {Math.min(500, rows.length - displayRows.length)} more
+          </button>
         </div>
       ) : null}
     </div>

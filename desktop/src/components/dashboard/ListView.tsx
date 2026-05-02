@@ -1,4 +1,5 @@
 import { Rows3 } from "lucide-react";
+import { useState } from "react";
 
 import type { ListViewSpec } from "@/lib/dashboardSchema";
 
@@ -19,6 +20,7 @@ export function ListView({ view, columns, rows, emptyState }: ListViewProps) {
   const secondaryIdx = view.secondary ? columns.indexOf(view.secondary) : -1;
   const metaIdx = view.meta ? columns.indexOf(view.meta) : -1;
   const metaIsDate = looksLikeDateColumn(view.meta);
+  const [shownLimit, setShownLimit] = useState(500);
 
   if (primaryIdx < 0) {
     return (
@@ -31,7 +33,7 @@ export function ListView({ view, columns, rows, emptyState }: ListViewProps) {
     return <EmptyState icon={Rows3} message={emptyState ?? "Nothing here yet."} />;
   }
 
-  const display = rows.slice(0, 500);
+  const display = rows.slice(0, shownLimit);
 
   return (
     <ul className="divide-y divide-border/40 pt-1">
@@ -72,8 +74,17 @@ export function ListView({ view, columns, rows, emptyState }: ListViewProps) {
         );
       })}
       {rows.length > display.length ? (
-        <li className="pt-3 text-xs text-muted-foreground">
-          Showing {display.length} of {rows.length}.
+        <li className="flex items-center gap-3 pt-3 text-xs text-muted-foreground">
+          <span>
+            Showing {display.length} of {rows.length}.
+          </span>
+          <button
+            type="button"
+            onClick={() => setShownLimit((n) => n + 500)}
+            className="rounded-md border border-border px-2 py-0.5 transition-colors hover:bg-muted hover:text-foreground"
+          >
+            Show {Math.min(500, rows.length - display.length)} more
+          </button>
         </li>
       ) : null}
     </ul>
