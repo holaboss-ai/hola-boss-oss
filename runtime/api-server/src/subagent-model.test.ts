@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, test } from "node:test";
 
-import { resolveSubagentExecutionModel } from "./subagent-model.js";
+import {
+  resolveSubagentExecutionModel,
+  resolveSubagentExecutionProfile,
+} from "./subagent-model.js";
 
 const tempDirs: string[] = [];
 const ORIGINAL_ENV = {
@@ -57,6 +60,10 @@ test("subagent execution model prefers the configured runtime.subagents.model", 
     resolveSubagentExecutionModel(),
     "anthropic_direct/claude-sonnet-4-6",
   );
+  assert.deepEqual(resolveSubagentExecutionProfile(), {
+    model: "anthropic_direct/claude-sonnet-4-6",
+    thinkingValue: "medium",
+  });
 });
 
 test("subagent execution model falls back to the current selected composer model when unset", () => {
@@ -73,6 +80,16 @@ test("subagent execution model falls back to the current selected composer model
     }),
     "anthropic_direct/claude-sonnet-4-6",
   );
+  assert.deepEqual(
+    resolveSubagentExecutionProfile({
+      selectedModel: "anthropic_direct/claude-sonnet-4-6",
+      selectedThinkingValue: "high",
+    }),
+    {
+      model: "anthropic_direct/claude-sonnet-4-6",
+      thinkingValue: "high",
+    },
+  );
 });
 
 test("subagent execution model falls back to the runtime default model when no selected composer model is available", () => {
@@ -84,4 +101,31 @@ test("subagent execution model falls back to the runtime default model when no s
   });
 
   assert.equal(resolveSubagentExecutionModel(), "openai_direct/gpt-5.4");
+  assert.deepEqual(resolveSubagentExecutionProfile(), {
+    model: "openai_direct/gpt-5.4",
+    thinkingValue: "medium",
+  });
+});
+
+test("configured subagent model takes precedence over composer thinking and uses the model default", () => {
+  const root = makeTempDir("hb-subagent-model-configured-thinking-");
+  writeRuntimeConfig(root, {
+    runtime: {
+      default_model: "openai_direct/gpt-5.4",
+      subagents: {
+        model: "openai/gpt-5.5",
+      },
+    },
+  });
+
+  assert.deepEqual(
+    resolveSubagentExecutionProfile({
+      selectedModel: "anthropic_direct/claude-sonnet-4-6",
+      selectedThinkingValue: "high",
+    }),
+    {
+      model: "openai/gpt-5.5",
+      thinkingValue: "medium",
+    },
+  );
 });
