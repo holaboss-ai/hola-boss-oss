@@ -55,6 +55,10 @@ export type ResolvedApplicationRuntime = {
    *  block continue to manage schema in their own `db.ts` (Tier 0/1
    *  behaviour); both can coexist during rollout. */
   dataSchemaRaw?: unknown;
+  /** Raw `triggers:` block from app.runtime.yaml. Lifecycle worker
+   *  calls Composio's triggers.create() at install / .delete() at
+   *  uninstall, persisted via _app_trigger_subscriptions. */
+  triggersRaw?: unknown;
 };
 
 export type ResolvedWorkspaceApp = {
@@ -299,7 +303,8 @@ export function parseResolvedAppRuntime(
       start: typeof lifecycle.start === "string" ? lifecycle.start : "",
       stop: typeof lifecycle.stop === "string" ? lifecycle.stop : ""
     },
-    dataSchemaRaw: loaded.data_schema
+    dataSchemaRaw: loaded.data_schema,
+    triggersRaw: loaded.triggers
   };
 }
 

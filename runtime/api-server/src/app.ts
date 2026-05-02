@@ -116,6 +116,7 @@ import {
   TerminalSessionManagerError,
   type TerminalSessionManagerLike,
 } from "./terminal-session-manager.js";
+import { registerTriggerRoutes } from "./triggers.js";
 import {
   appendWorkspaceApplication,
   listWorkspaceComposeShutdownTargets,
@@ -3527,6 +3528,11 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       }
       return sendError(reply, 500, error instanceof Error ? error.message : "terminal session listing failed");
     }
+  });
+
+  registerTriggerRoutes(app, {
+    workspaceRoot: store.workspaceRoot,
+    runtimeStateStore: store,
   });
 
   app.post("/api/v1/terminal-sessions", async (request, reply) => {
