@@ -85,7 +85,7 @@ const extraResources = [
 
 module.exports = {
   appId: "com.holaboss.workspace",
-  productName: "Holaboss",
+  productName: "holaOS",
   generateUpdatesFilesForAllChannels: true,
   directories: {
     output: "out/release"
@@ -99,7 +99,7 @@ module.exports = {
   asar: true,
   protocols: [
     {
-      name: "Holaboss Auth Callback",
+      name: "holaOS Auth Callback",
       schemes: [
         "ai.holaboss.app"
       ]

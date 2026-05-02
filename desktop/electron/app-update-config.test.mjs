@@ -20,7 +20,7 @@ const writeAppUpdateConfigPath = path.join(
 
 test("write-app-update-config writes the packaged github updater metadata", async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "holaboss-app-update-"));
-  const appBundlePath = path.join(tempRoot, "Holaboss.app");
+  const appBundlePath = path.join(tempRoot, "holaOS.app");
   const resourcesPath = path.join(appBundlePath, "Contents", "Resources");
   await mkdir(resourcesPath, { recursive: true });
 
@@ -47,7 +47,7 @@ test("write-app-update-config writes the packaged github updater metadata", asyn
 
 test("write-app-update-config includes the beta channel when requested", async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "holaboss-app-update-beta-"));
-  const appBundlePath = path.join(tempRoot, "Holaboss.app");
+  const appBundlePath = path.join(tempRoot, "holaOS.app");
   const resourcesPath = path.join(appBundlePath, "Contents", "Resources");
   await mkdir(resourcesPath, { recursive: true });
 

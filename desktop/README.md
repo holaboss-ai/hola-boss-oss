@@ -148,7 +148,7 @@ The Windows packaging command also writes `out/holaboss-config.json` from your c
 This produces a Windows NSIS installer `.exe` in `out/release/`.
 
 Output:
-- [Holaboss Workspace.app](/Users/jeffrey/Desktop/holaOS/desktop/out/release/mac-arm64/Holaboss%20Workspace.app)
+- [holaOS.app](/Users/jeffrey/Desktop/holaOS/desktop/out/release/mac-arm64/holaOS.app)
 
 Run packaged app with endpoint presets:
 
@@ -250,9 +250,9 @@ Docs publishing remains separate in `.github/workflows/deploy-docs.yml` and auto
 After a signed build, validate the produced app locally with:
 
 ```bash
-codesign --verify --deep --strict --verbose=2 /path/to/Holaboss.app
-spctl -a -vv -t exec /path/to/Holaboss.app
-xcrun stapler validate /path/to/Holaboss.app
+codesign --verify --deep --strict --verbose=2 /path/to/holaOS.app
+spctl -a -vv -t exec /path/to/holaOS.app
+xcrun stapler validate /path/to/holaOS.app
 ```
 
 ## Project Structure

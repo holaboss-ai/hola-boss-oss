@@ -225,7 +225,7 @@ jobs:
           release_title="${{ inputs.release_title }}"
           release_channel="${{ inputs.release_channel }}"
           if [ -z "${release_title}" ]; then
-            release_title="Holaboss ${release_version}"
+            release_title="holaOS ${release_version}"
           fi
           if [ "${release_channel}" != "latest" ] && [ "${release_channel}" != "beta" ]; then
             echo "release_channel must be one of: latest, beta; got ${release_channel}" >&2
@@ -279,7 +279,7 @@ jobs:
       RELEASE_CHANNEL: ${{ needs.ensure-release.outputs.release_channel }}
       HOLABOSS_RELEASE_CHANNEL: ${{ needs.ensure-release.outputs.release_channel }}
       DESKTOP_ASSET_PREFIX: holaboss-desktop-macos
-      DESKTOP_RELEASE_ASSET_NAME: Holaboss-macos-arm64.dmg
+      DESKTOP_RELEASE_ASSET_NAME: holaOS-macos-arm64.dmg
       MAC_CERTIFICATE: ${{ secrets.MAC_CERTIFICATE }}
       MAC_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -408,7 +408,7 @@ jobs:
             echo "app-update.yml is missing from signed app bundle" >&2
             exit 1
           fi
-          packaged_app="${RUNNER_TEMP}/Holaboss.app"
+          packaged_app="${RUNNER_TEMP}/holaOS.app"
           rm -rf "${packaged_app}"
           ditto "${app_path}" "${packaged_app}"
           echo "app_path=${packaged_app}" >> "${GITHUB_OUTPUT}"
@@ -529,11 +529,11 @@ jobs:
               exit 1
             fi
           fi
-          if ! zipinfo -1 "${zip_path}" | grep -Eq '^Holaboss\.app/'; then
-            echo "macOS zip does not contain Holaboss.app as the root app bundle" >&2
+          if ! zipinfo -1 "${zip_path}" | grep -Eq '^holaOS\.app/'; then
+            echo "macOS zip does not contain holaOS.app as the root app bundle" >&2
             exit 1
           fi
-          if ! zipinfo -1 "${zip_path}" | grep -Fxq 'Holaboss.app/Contents/Resources/app-update.yml'; then
+          if ! zipinfo -1 "${zip_path}" | grep -Fxq 'holaOS.app/Contents/Resources/app-update.yml'; then
             echo "app-update.yml is missing from final macOS zip" >&2
             exit 1
           fi
@@ -541,9 +541,9 @@ jobs:
           rm -rf "${extract_dir}"
           mkdir -p "${extract_dir}"
           ditto -x -k "${zip_path}" "${extract_dir}"
-          extracted_app="${extract_dir}/Holaboss.app"
+          extracted_app="${extract_dir}/holaOS.app"
           if [ ! -d "${extracted_app}" ]; then
-            echo "Holaboss.app was not extracted from the final macOS zip" >&2
+            echo "holaOS.app was not extracted from the final macOS zip" >&2
             exit 1
           fi
           codesign --verify --deep --strict --verbose=2 "${extracted_app}"
@@ -580,7 +580,7 @@ jobs:
       RELEASE_CHANNEL: ${{ needs.ensure-release.outputs.release_channel }}
       HOLABOSS_RELEASE_CHANNEL: ${{ needs.ensure-release.outputs.release_channel }}
       DESKTOP_ASSET_PREFIX: holaboss-desktop-windows
-      DESKTOP_RELEASE_ASSET_NAME: Holaboss-windows-x64-setup.exe
+      DESKTOP_RELEASE_ASSET_NAME: holaOS-windows-x64-setup.exe
       WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
       WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
     steps:
@@ -775,8 +775,8 @@ jobs:
             "${notes_path}"
           rm -f "${notes_path}.bak"
 
-          mac_dmg_asset="release-assets/macos-desktop/Holaboss-macos-arm64.dmg"
-          mac_zip_asset="$(find release-assets/macos-desktop -maxdepth 1 -name 'Holaboss-*-arm64-mac.zip' -print -quit)"
+          mac_dmg_asset="release-assets/macos-desktop/holaOS-macos-arm64.dmg"
+          mac_zip_asset="$(find release-assets/macos-desktop -maxdepth 1 -name 'holaOS-*-arm64-mac.zip' -print -quit)"
           if [ ! -f "${mac_dmg_asset}" ]; then
             echo "missing macOS DMG release asset" >&2
             exit 1

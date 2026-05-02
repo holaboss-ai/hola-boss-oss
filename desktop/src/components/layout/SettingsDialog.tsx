@@ -535,7 +535,7 @@ export function SettingsDialog({
               <div className="grid gap-6">
                 <SettingsSection title="App">
                   <SettingsCard>
-                    <SettingsRow label="Holaboss Desktop" description="Version">
+                    <SettingsRow label="holaOS Desktop" description="Version">
                       <Badge
                         variant="outline"
                         className="border-border bg-background/60 font-mono text-[11px] text-foreground"

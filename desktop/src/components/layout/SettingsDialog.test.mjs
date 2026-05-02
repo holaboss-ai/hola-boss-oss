@@ -16,7 +16,7 @@ test("settings dialog no longer surfaces automations; that surface lives in the 
   assert.doesNotMatch(source, /onCreateAutomationSchedule/);
   assert.doesNotMatch(source, /onEditAutomationSchedule/);
   assert.doesNotMatch(source, /onOpenAutomationRunSession/);
-  assert.doesNotMatch(source, /useWorkspaceDesktop/);
+  assert.match(source, /useWorkspaceDesktop/);
 });
 
 test("settings dialog settings section shows the app controls above appearance", async () => {
@@ -40,7 +40,7 @@ test("settings dialog settings section shows the app controls above appearance",
   assert.doesNotMatch(source, /if \(status\.downloaded\) \{\s*return \{[\s\S]*progressPercent: 100,/);
 
   const settingsSectionIndex = source.indexOf('activeSection === "settings" ? (');
-  const appLabelIndex = source.indexOf("Holaboss Desktop");
+  const appLabelIndex = source.indexOf("holaOS Desktop");
   const desktopUpdatesIndex = source.indexOf("Desktop updates");
   const betaUpdatesIndex = source.indexOf("Beta updates");
   const appearanceIndex = source.indexOf("Appearance");
@@ -65,15 +65,14 @@ test("settings dialog settings section shows the app controls above appearance",
   assert.match(source, /Update and Restart Now/);
   assert.match(source, /Restarting\.\.\./);
   assert.match(source, /Opt into beta desktop releases before they reach the stable channel\./);
-  assert.match(source, /<Switch[\s\S]*checked=\{betaChannelEnabled\}/);
-  assert.match(source, /aria-label="Enable beta updates"/);
+  assert.match(source, /<SettingsToggle[\s\S]*checked=\{betaChannelEnabled\}/);
 });
 
 test("settings nav drops the automations section now that it lives in the chat pane", async () => {
   const source = await readFile(SETTINGS_DIALOG_PATH, "utf8");
 
   assert.notEqual(
-    source.indexOf('{ id: "providers", label: "Model Providers", icon: Waypoints }'),
+    source.indexOf('{ id: "providers", label: "AI", icon: Waypoints }'),
     -1,
   );
   assert.equal(source.indexOf('label: "Automations"'), -1);

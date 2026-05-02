@@ -999,7 +999,7 @@ function buildDevAppUpdatePreviewStatus(
     downloadProgressPercent: mode === "downloading" ? 64 : 100,
     currentVersion: currentVersion.trim() || "0.1.0",
     latestVersion,
-    releaseName: `Holaboss ${latestVersion}`,
+    releaseName: `holaOS ${latestVersion}`,
     publishedAt: now,
     dismissedVersion: null,
     lastCheckedAt: now,
@@ -1168,7 +1168,7 @@ function WorkspaceBootstrapPane() {
           />
           <img
             src={holabossLogoUrl}
-            alt="Holaboss"
+            alt="holaOS"
             width={56}
             height={56}
             draggable={false}
@@ -1179,7 +1179,7 @@ function WorkspaceBootstrapPane() {
           className="mt-6 text-[17px] font-semibold tracking-tight text-foreground"
           style={{ letterSpacing: "-0.01em" }}
         >
-          Holaboss
+          holaOS
         </h1>
         <p className="mt-1.5 text-[12.5px] font-medium text-muted-foreground">
           Preparing your desktop

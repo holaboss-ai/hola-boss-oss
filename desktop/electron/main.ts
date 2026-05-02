@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { app as electronApp } from "electron";
 
-electronApp.setName("Holaboss");
+electronApp.setName("holaOS");
 
 import * as Sentry from "@sentry/electron/main";
 
@@ -191,7 +191,7 @@ import {
   shouldTrackHistoryUrl as shouldTrackHistoryUrlUtil,
 } from "./browser-pane/utils.js";
 
-const APP_DISPLAY_NAME = "Holaboss";
+const APP_DISPLAY_NAME = "holaOS";
 const MAC_APP_MENU_PRODUCT_LABEL = "holaOS";
 const AUTH_CALLBACK_PROTOCOL = "ai.holaboss.app";
 const DESKTOP_LAUNCH_ID = randomUUID();
