@@ -15,6 +15,15 @@ const chatPaneSourcePath = path.join(
   "ChatPane.tsx",
 );
 const sharedCatalogPath = path.join(__dirname, "..", "shared", "model-catalog.ts");
+const modelRoutingPath = path.join(
+  __dirname,
+  "..",
+  "..",
+  "runtime",
+  "harnesses",
+  "src",
+  "model-routing.ts",
+);
 
 test("desktop runtime uses the managed holaboss catalog instead of local seed catalogs or local suppression", async () => {
   const source = await readFile(mainSourcePath, "utf8");
@@ -57,6 +66,7 @@ test("desktop model catalog carries reasoning metadata and the composer persists
   ]);
 
   assert.match(sharedCatalogSource, /export const PROVIDER_MODEL_CATALOG: ProviderModelCatalog = \{/);
+  assert.match(sharedCatalogSource, /openai_codex:\s*\{[\s\S]*"gpt-5\.5"/);
   assert.match(sharedCatalogSource, /openrouter_direct:\s*\{[\s\S]*"qwen\/qwen3\.6-plus"/);
   assert.match(sharedCatalogSource, /openrouter_direct:\s*\{[\s\S]*"xiaomi\/mimo-v2-pro"/);
   assert.match(sharedCatalogSource, /openrouter_direct:\s*\{[\s\S]*"z-ai\/glm-5-turbo"/);
@@ -67,4 +77,17 @@ test("desktop model catalog carries reasoning metadata and the composer persists
   assert.match(chatPaneSource, /CHAT_THINKING_STORAGE_KEY/);
   assert.match(chatPaneSource, /thinking_value: effectiveThinkingValue/);
   assert.match(chatPaneSource, /function ThinkingValueSelect\(/);
+});
+
+test("desktop codex wiring includes GPT-5.5 defaults and Codex-specific routing budgets", async () => {
+  const [mainSource, modelRoutingSource] = await Promise.all([
+    readFile(mainSourcePath, "utf8"),
+    readFile(modelRoutingPath, "utf8"),
+  ]);
+
+  assert.match(mainSource, /const OPENAI_CODEX_DEFAULT_MODELS = \["gpt-5\.4", "gpt-5\.5", "gpt-5\.3-codex"\] as const;/);
+  assert.match(modelRoutingSource, /if \(api !== "openai-responses" && api !== "openai-codex-responses"\)/);
+  assert.match(modelRoutingSource, /if \(api === "openai-codex-responses"\) \{[\s\S]*case "gpt-5\.5":[\s\S]*contextWindow: 400_000/);
+  assert.match(modelRoutingSource, /if \(api === "openai-codex-responses"\) \{[\s\S]*case "gpt-5\.4":[\s\S]*contextWindow: 1_000_000/);
+  assert.match(modelRoutingSource, /switch \(normalizedModelId\) \{[\s\S]*case "gpt-5\.5":[\s\S]*contextWindow: 1_000_000/);
 });

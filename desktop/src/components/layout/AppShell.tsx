@@ -74,6 +74,8 @@ const TASK_PROPOSAL_TOAST_ID_PREFIX = "task-proposal-toast:";
 const OPERATIONS_DRAWER_OPEN_STORAGE_KEY = "holaboss-operations-drawer-open-v1";
 const OPERATIONS_DRAWER_TAB_STORAGE_KEY = "holaboss-operations-drawer-tab-v1";
 const TASK_PROPOSAL_SEEN_STORAGE_KEY = "holaboss-task-proposal-seen-v1";
+const CHAT_MODEL_STORAGE_KEY = "holaboss-chat-model-v1";
+const CHAT_MODEL_USE_RUNTIME_DEFAULT = "__runtime_default__";
 const BROWSER_PANE_WIDTH_STORAGE_KEY = "holaboss-browser-pane-width-v1";
 const SPACE_VISIBILITY_STORAGE_KEY = "holaboss-space-visibility-v1";
 const SPACE_WORKSPACE_PANEL_COLLAPSED_STORAGE_KEY =
@@ -110,6 +112,21 @@ const APP_UPDATE_CHANGELOG_BASE_URL =
   "https://github.com/holaboss-ai/holaOS-releases/releases/tag";
 const DEFAULT_PROACTIVE_HEARTBEAT_CRON = "0 9 * * *";
 const MAX_SEEN_TASK_PROPOSAL_IDS_PER_WORKSPACE = 200;
+
+function currentComposerSelectedModel(
+  runtimeConfig: RuntimeConfigPayload | null,
+): string | null {
+  const runtimeDefaultModel = (runtimeConfig?.defaultModel ?? "").trim();
+  try {
+    const storedModel = (localStorage.getItem(CHAT_MODEL_STORAGE_KEY) ?? "").trim();
+    if (!storedModel || storedModel === CHAT_MODEL_USE_RUNTIME_DEFAULT) {
+      return runtimeDefaultModel || null;
+    }
+    return storedModel;
+  } catch {
+    return runtimeDefaultModel || null;
+  }
+}
 
 type SpaceComponentId = "agent" | "files" | "browser";
 type UtilityPaneId = "files" | "browser";
@@ -2923,7 +2940,7 @@ function AppShellContent() {
         task_prompt: proposal.task_prompt,
         parent_session_id: activeChatSessionId?.trim() || null,
         priority: 0,
-        model: runtimeConfig?.defaultModel ?? null,
+        model: currentComposerSelectedModel(runtimeConfig),
       });
       const detail =
         accepted.input.status === "QUEUED"

@@ -21,6 +21,7 @@ type UpdateRuntimeConfigRequest = {
   sandbox_id?: string | null;
   model_proxy_base_url?: string | null;
   default_model?: string | null;
+  subagent_model?: string | null;
   runtime_mode?: string | null;
   default_provider?: string | null;
   holaboss_enabled?: boolean | string | null;
@@ -49,6 +50,7 @@ function productRuntimeConfigResponse(config: ProductRuntimeConfig): Record<stri
     sandbox_id: config.sandboxId,
     model_proxy_base_url: config.modelProxyBaseUrl,
     default_model: config.defaultModel,
+    subagent_model: config.subagentModel,
     runtime_mode: config.runtimeMode,
     default_provider: config.defaultProvider,
     holaboss_enabled: config.holabossEnabled,

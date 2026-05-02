@@ -107,6 +107,7 @@ import {
   RuntimeAgentToolsService,
   RuntimeAgentToolsServiceError,
 } from "./runtime-agent-tools.js";
+import { resolveSubagentExecutionModel } from "./subagent-model.js";
 import {
   capabilityToolResultModeFromHeaders,
   shapeCapabilityToolResultPayload,
@@ -4443,6 +4444,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         }),
         subagentId: requiredString(params.subagentId, "subagentId"),
         answer: requiredString(request.body.answer, "answer"),
+        selectedModel: capabilitySelectedModel({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
         model: nullableString(request.body.model) ?? undefined,
       });
     } catch (error) {
@@ -4480,6 +4485,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         subagentId: requiredString(params.subagentId, "subagentId"),
         instruction: requiredString(request.body.instruction, "instruction"),
         title: nullableString(request.body.title) ?? undefined,
+        selectedModel: capabilitySelectedModel({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
         model: nullableString(request.body.model) ?? undefined,
       });
     } catch (error) {
@@ -8074,7 +8083,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       preferredWorkspaceSessionId({ store, workspace }) ??
       null;
     const priority = optionalInteger(request.body.priority, 0);
-    const model = nullableString(request.body.model) ?? null;
+    const requestedModel = nullableString(request.body.model) ?? null;
+    const effectiveModel = resolveSubagentExecutionModel({
+      selectedModel: requestedModel,
+    });
     const createdBy = nullableString(request.body.created_by) ?? "workspace_user";
     const subagentId = randomUUID();
 
@@ -8137,7 +8149,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         text: taskPrompt,
         attachments: [],
         image_urls: [],
-        model,
+        model: effectiveModel,
         context: {
           source: "task_proposal",
           source_type: "task_proposal",
@@ -8185,8 +8197,8 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       toolProfile: {
         requested_tools: ["terminal", "file", "browser", "web"],
       },
-      requestedModel: model,
-      effectiveModel: model,
+      requestedModel,
+      effectiveModel,
       status: "queued",
       lastEventAt: utcNowIso(),
     });

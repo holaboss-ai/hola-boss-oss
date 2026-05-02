@@ -37,6 +37,7 @@ holaOS already provides model configuration in the desktop app:
 - use the `Background tasks` panel to choose one connected provider and model for recall selection, finalization, and evolve tasks
 - use the `Recall embeddings` panel to leave vector-assisted recall on `Automatic` or choose an explicit embedding-capable provider and model
 - use the `Image generation` panel to choose an image-capable provider and model for runtime image generation
+- use the `Defaults` panel to leave `Subagent model` on `Follow composer` or choose a fixed override for hidden delegated and scheduled subagent runs
 - use the `Web search` panel to choose Holaboss Search or Exa and provide a search API key when needed
 - saved changes update `runtime-config.json`, and the chat model picker uses the configured provider models
 
@@ -136,6 +137,8 @@ You can override that path with:
   - provider for recall selection, finalization, and evolve tasks
 - `runtime.background_tasks.model`
   - model id used for that background provider
+- `runtime.subagents.model`
+  - optional fixed model token for hidden subagent execution; when unset, subagents use the current composer model if one is available
 - `runtime.recall_embeddings.provider`
   - optional embedding-capable provider used for vector-assisted recall candidate narrowing
 - `runtime.recall_embeddings.model`
