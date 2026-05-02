@@ -56,6 +56,14 @@ function makeTempDir(prefix: string): string {
   return dir;
 }
 
+function writeRuntimeConfig(root: string, document: Record<string, unknown>): void {
+  const configPath = path.join(root, "state", "runtime-config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify(document, null, 2)}\n`, "utf8");
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
+}
+
 function buildTestRuntimeApiServer(options: BuildRuntimeApiServerOptions) {
   return buildRuntimeApiServer({
     queueWorker: null,
@@ -1029,6 +1037,62 @@ test("runtime subagent capability routes create and cancel hidden background tas
   });
   assert.equal(listedAfterArchive.statusCode, 200);
   assert.equal(listedAfterArchive.json().count, 0);
+
+  await app.close();
+  store.close();
+});
+
+test("delegated subagents use the configured global subagent model instead of request-level overrides", async () => {
+  const root = makeTempDir("hb-runtime-api-subagent-model-");
+  writeRuntimeConfig(root, {
+    runtime: {
+      default_model: "openai/gpt-5.4",
+      subagents: {
+        model: "anthropic_direct/claude-sonnet-4-6",
+      },
+    },
+  });
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace"),
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    kind: "workspace_session",
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/capabilities/runtime-tools/subagents",
+    headers: {
+      "x-holaboss-workspace-id": workspace.id,
+      "x-holaboss-session-id": "session-main",
+      "x-holaboss-selected-model": "openai_direct/gpt-5.4-mini",
+    },
+    payload: {
+      goal: "Summarize the repo status.",
+      model: "gemini_direct/gemini-2.5-pro",
+    },
+  });
+
+  assert.equal(created.statusCode, 200);
+  const task = created.json().tasks[0];
+  const run = store.getSubagentRun({ subagentId: task.subagent_id });
+  const childInput = run?.currentChildInputId
+    ? store.getInput(run.currentChildInputId)
+    : null;
+
+  assert.equal(run?.requestedModel, "gemini_direct/gemini-2.5-pro");
+  assert.equal(run?.effectiveModel, "anthropic_direct/claude-sonnet-4-6");
+  assert.equal(childInput?.payload.model, "anthropic_direct/claude-sonnet-4-6");
 
   await app.close();
   store.close();
@@ -6453,6 +6517,11 @@ test("runtime api server starts and closes the main-session event worker", async
 
 test("accept task proposal creates a hidden subagent run with queued work", async () => {
   const root = makeTempDir("hb-runtime-api-task-proposal-");
+  writeRuntimeConfig(root, {
+    runtime: {
+      default_model: "openai/gpt-5.4",
+    },
+  });
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
     workspaceRoot: path.join(root, "workspace")
@@ -6538,7 +6607,7 @@ test("accept task proposal creates a hidden subagent run with queued work", asyn
   assert.equal(childInput.sessionId, body.session.session_id);
   assert.equal(childInput.priority, 2);
   assert.equal(childInput.payload.text, "Write the follow-up and send a reminder");
-  assert.equal(childInput.payload.model, "openai/gpt-5.2");
+  assert.equal(childInput.payload.model, "openai/gpt-5.4");
   const childContext = childInput.payload.context as Record<string, unknown>;
   assert.deepEqual(childContext, {
     source: "task_proposal",
@@ -6561,6 +6630,8 @@ test("accept task proposal creates a hidden subagent run with queued work", asyn
   assert.equal(subagentRun?.proposalId, "proposal-1");
   assert.equal(subagentRun?.sourceType, "task_proposal");
   assert.equal(subagentRun?.status, "queued");
+  assert.equal(subagentRun?.requestedModel, "openai/gpt-5.2");
+  assert.equal(subagentRun?.effectiveModel, "openai/gpt-5.4");
 
   const childHistory = store.listSessionMessages({
     workspaceId: workspace.id,

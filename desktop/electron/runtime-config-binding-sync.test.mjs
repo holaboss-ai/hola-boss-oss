@@ -22,6 +22,10 @@ test("desktop runtime config prefers the bound Holaboss sandbox id when auth is 
     readRuntimeConfigSection,
     /const sandboxId =[\s\S]*authToken && bindingSandboxId[\s\S]*\? bindingSandboxId[\s\S]*: runtimeFirstNonEmptyString\([\s\S]*runtimePayload\.sandbox_id[\s\S]*bindingSandboxId[\s\S]*\);/,
   );
+  assert.match(
+    readRuntimeConfigSection,
+    /const subagentsPayload = runtimeConfigObject\(\s*runtimePayload\.subagents \?\? runtimePayload\.subAgents,\s*\);/,
+  );
 });
 
 test("desktop runtime config writes Holaboss binding fields back into canonical runtime sections", async () => {
@@ -65,7 +69,19 @@ test("desktop runtime config writes Holaboss binding fields back into canonical 
   );
   assert.match(
     writeRuntimeConfigSection,
+    /const currentSubagents = runtimeConfigObject\(\s*runtimePayload\.subagents \?\? runtimePayload\.subAgents,\s*\);/,
+  );
+  assert.match(
+    writeRuntimeConfigSection,
+    /assignOrDelete\(currentSubagents, "model", next\.subagent_model\);/,
+  );
+  assert.match(
+    writeRuntimeConfigSection,
     /const currentBackgroundTasks = runtimeConfigObject\(\s*runtimePayload\.background_tasks \?\? runtimePayload\.backgroundTasks,\s*\);/,
+  );
+  assert.match(
+    writeRuntimeConfigSection,
+    /if \(Object\.keys\(currentSubagents\)\.length > 0\) \{\s*runtimePayload\.subagents = currentSubagents;\s*\} else \{\s*delete runtimePayload\.subagents;\s*\}/,
   );
   assert.match(
     writeRuntimeConfigSection,

@@ -107,6 +107,7 @@ import {
   RuntimeAgentToolsService,
   RuntimeAgentToolsServiceError,
 } from "./runtime-agent-tools.js";
+import { resolveSubagentExecutionModel } from "./subagent-model.js";
 import {
   capabilityToolResultModeFromHeaders,
   shapeCapabilityToolResultPayload,
@@ -8074,7 +8075,8 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       preferredWorkspaceSessionId({ store, workspace }) ??
       null;
     const priority = optionalInteger(request.body.priority, 0);
-    const model = nullableString(request.body.model) ?? null;
+    const requestedModel = nullableString(request.body.model) ?? null;
+    const effectiveModel = resolveSubagentExecutionModel();
     const createdBy = nullableString(request.body.created_by) ?? "workspace_user";
     const subagentId = randomUUID();
 
@@ -8137,7 +8139,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         text: taskPrompt,
         attachments: [],
         image_urls: [],
-        model,
+        model: effectiveModel,
         context: {
           source: "task_proposal",
           source_type: "task_proposal",
@@ -8185,8 +8187,8 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       toolProfile: {
         requested_tools: ["terminal", "file", "browser", "web"],
       },
-      requestedModel: model,
-      effectiveModel: model,
+      requestedModel,
+      effectiveModel,
       status: "queued",
       lastEventAt: utcNowIso(),
     });

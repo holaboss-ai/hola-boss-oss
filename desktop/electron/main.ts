@@ -818,6 +818,7 @@ interface RuntimeConfigPayload {
   sandboxId: string | null;
   modelProxyBaseUrl: string | null;
   defaultModel: string | null;
+  subagentModel: string | null;
   defaultBackgroundModel: string | null;
   defaultEmbeddingModel: string | null;
   defaultImageModel: string | null;
@@ -851,6 +852,7 @@ interface RuntimeConfigUpdatePayload {
   sandboxId?: string | null;
   modelProxyBaseUrl?: string | null;
   defaultModel?: string | null;
+  subagentModel?: string | null;
   defaultBackgroundModel?: string | null;
   defaultEmbeddingModel?: string | null;
   defaultImageModel?: string | null;
@@ -4822,6 +4824,9 @@ async function readRuntimeConfigFile(): Promise<Record<string, string>> {
     }
     const parsedRecord = parsed as Record<string, unknown>;
     const runtimePayload = runtimeConfigObject(parsedRecord.runtime);
+    const subagentsPayload = runtimeConfigObject(
+      runtimePayload.subagents ?? runtimePayload.subAgents,
+    );
     const providersPayload = runtimeConfigObject(parsedRecord.providers);
     const integrationsPayload = runtimeConfigObject(parsedRecord.integrations);
     const holabossIntegration = runtimeConfigObject(
@@ -4868,6 +4873,13 @@ async function readRuntimeConfigFile(): Promise<Record<string, string>> {
         legacyPayload.default_model as string | undefined,
       ),
     );
+    const subagentModel = normalizeLegacyRuntimeModelToken(
+      runtimeFirstNonEmptyString(
+        subagentsPayload.model as string | undefined,
+        subagentsPayload.model_id as string | undefined,
+        subagentsPayload.modelId as string | undefined,
+      ),
+    );
     const defaultProvider = runtimeFirstNonEmptyString(
       runtimePayload.default_provider as string | undefined,
       legacyPayload.default_provider as string | undefined,
@@ -4891,6 +4903,9 @@ async function readRuntimeConfigFile(): Promise<Record<string, string>> {
     }
     if (defaultModel) {
       normalized.default_model = defaultModel;
+    }
+    if (subagentModel) {
+      normalized.subagent_model = subagentModel;
     }
     if (defaultProvider) {
       normalized.default_provider = defaultProvider;
@@ -5674,6 +5689,7 @@ async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
       ["sandboxId", "sandbox_id"],
       ["modelProxyBaseUrl", "model_proxy_base_url"],
       ["defaultModel", "default_model"],
+      ["subagentModel", "subagent_model"],
       ["controlPlaneBaseUrl", "control_plane_base_url"],
     ];
 
@@ -5728,6 +5744,10 @@ async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
     assignOrDelete(holabossProvider, "base_url", next.model_proxy_base_url);
     assignOrDelete(runtimePayload, "sandbox_id", next.sandbox_id);
     assignOrDelete(runtimePayload, "default_model", next.default_model);
+    const currentSubagents = runtimeConfigObject(
+      runtimePayload.subagents ?? runtimePayload.subAgents,
+    );
+    assignOrDelete(currentSubagents, "model", next.subagent_model);
     const currentBackgroundTasks = runtimeConfigObject(
       runtimePayload.background_tasks ?? runtimePayload.backgroundTasks,
     );
@@ -5776,6 +5796,12 @@ async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
     delete runtimePayload.backgroundTasks;
     delete runtimePayload.recallEmbeddings;
     delete runtimePayload.imageGeneration;
+    delete runtimePayload.subAgents;
+    if (Object.keys(currentSubagents).length > 0) {
+      runtimePayload.subagents = currentSubagents;
+    } else {
+      delete runtimePayload.subagents;
+    }
     if (
       managedDefaultBackgroundModel &&
       runtimeModelProxyApiKeyFromConfig(next) &&
@@ -6866,6 +6892,7 @@ async function getRuntimeConfigSnapshot(
     sandboxId: loaded.sandbox_id ?? null,
     modelProxyBaseUrl: loaded.model_proxy_base_url ?? null,
     defaultModel: loaded.default_model ?? null,
+    subagentModel: loaded.subagent_model ?? null,
     defaultBackgroundModel: managedCatalog.defaultBackgroundModel,
     defaultEmbeddingModel: managedCatalog.defaultEmbeddingModel,
     defaultImageModel: managedCatalog.defaultImageModel,

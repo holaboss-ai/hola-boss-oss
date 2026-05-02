@@ -86,6 +86,7 @@ test("file runtime config service updates runtime config without writing harness
     sandbox_id: "sandbox-1",
     model_proxy_base_url: "https://runtime.example/api/v1/model-proxy",
     default_model: "openai/gpt-5.4",
+    subagent_model: null,
     runtime_mode: "oss",
     default_provider: "holaboss_model_proxy",
     holaboss_enabled: true,

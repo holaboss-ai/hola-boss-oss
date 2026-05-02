@@ -1846,6 +1846,21 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       });
   }, [isSignedIn, runtimeConfig]);
 
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    if (!runtimeConfig) return;
+    if ((runtimeConfig.subagentModel ?? "").trim()) return;
+
+    const fallbackToken = (runtimeConfig.defaultModel ?? "").trim();
+    if (!fallbackToken) return;
+
+    void window.electronAPI.runtime
+      .setConfig({ subagentModel: fallbackToken })
+      .catch(() => {
+        // Non-fatal — user can pick manually from the Defaults selector.
+      });
+  }, [runtimeConfig]);
+
   const persistedProviderDrafts = deriveProviderDraftsFromDocument(
     parseRuntimeConfigDocument(runtimeConfigDocument),
     effectiveRuntimeConfig,
@@ -3410,6 +3425,10 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const defaultChatModelMatched = defaultChatModelOptions.some(
     (option) => option.value === defaultChatModelToken,
   );
+  const subagentModelToken = (runtimeConfig?.subagentModel ?? "").trim();
+  const subagentModelMatched = defaultChatModelOptions.some(
+    (option) => option.value === subagentModelToken,
+  );
   const selectedWebSearchTemplate =
     WEB_SEARCH_PROVIDER_TEMPLATES[webSearchDraft.providerId];
   const selectedWebSearchProviderManaged = isManagedWebSearchProvider(
@@ -3439,6 +3458,19 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     }
   };
 
+  const handleSubagentModelChange = async (token: string) => {
+    if (!window.electronAPI || !token) return;
+    try {
+      await window.electronAPI.runtime.setConfig({ subagentModel: token });
+    } catch (error) {
+      setAuthError(
+        error instanceof Error
+          ? error.message
+          : "Failed to update subagent model.",
+      );
+    }
+  };
+
   const runtimeProviderSettings = (
     <div className="grid gap-6">
       {advancedSettingsWarnings.length > 0 ? (
@@ -3463,20 +3495,37 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       >
         <SettingsCard>
           {defaultChatModelOptions.length > 0 ? (
-            <SettingsMenuSelectRow
-              label="Default chat model"
-              description="Used for new sessions unless a workspace overrides it."
-              value={defaultChatModelMatched ? defaultChatModelToken : ""}
-              onValueChange={handleDefaultChatModelChange}
-              options={defaultChatModelOptions}
-              placeholder="Pick a model"
-              triggerWidth="w-[260px]"
-            />
+            <>
+              <SettingsMenuSelectRow
+                label="Default chat model"
+                description="Used for new sessions unless a workspace overrides it."
+                value={defaultChatModelMatched ? defaultChatModelToken : ""}
+                onValueChange={handleDefaultChatModelChange}
+                options={defaultChatModelOptions}
+                placeholder="Pick a model"
+                triggerWidth="w-[260px]"
+              />
+              <SettingsMenuSelectRow
+                label="Subagent model"
+                description="Used for all hidden subagent runs, including delegated work and scheduled jobs."
+                value={subagentModelMatched ? subagentModelToken : ""}
+                onValueChange={handleSubagentModelChange}
+                options={defaultChatModelOptions}
+                placeholder="Pick a model"
+                triggerWidth="w-[260px]"
+              />
+            </>
           ) : (
-            <SettingsRow
-              label="Default chat model"
-              description="Connect a provider below to choose your default model."
-            />
+            <>
+              <SettingsRow
+                label="Default chat model"
+                description="Connect a provider below to choose your default model."
+              />
+              <SettingsRow
+                label="Subagent model"
+                description="Connect a provider below to choose your subagent model."
+              />
+            </>
           )}
         </SettingsCard>
       </SettingsSection>

@@ -27,6 +27,7 @@ import { cronjobNextRunAt } from "./cron-worker.js";
 import { ensureWorkspaceDataDb } from "./ts-runner-session-state.js";
 import { generateWorkspaceImage } from "./image-generation.js";
 import { searchPublicWeb } from "./native-web-search.js";
+import { resolveSubagentExecutionModel } from "./subagent-model.js";
 import {
   readSessionScratchpad,
   type SessionScratchpadWriteOperation,
@@ -1552,7 +1553,7 @@ export class RuntimeAgentToolsService {
       const childSessionId = `subagent-${randomUUID()}`;
       const title = normalizedSubagentTaskTitle(task.title, task.goal);
       const requestedModel = task.model || null;
-      const effectiveModel = requestedModel || normalizedString(params.selectedModel) || null;
+      const effectiveModel = resolveSubagentExecutionModel();
       const toolProfile = normalizeSubagentToolProfile({
         tools: task.tools,
         timeoutMs: task.timeoutMs,
@@ -1754,7 +1755,7 @@ export class RuntimeAgentToolsService {
         "subagent is not currently waiting on user input",
       );
     }
-    const effectiveModel = normalizedString(params.model) || state.run.effectiveModel || null;
+    const effectiveModel = resolveSubagentExecutionModel();
     const previousChildInput = normalizedString(state.run.latestChildInputId)
       ? this.store.getInput(normalizedString(state.run.latestChildInputId))
       : null;
@@ -1846,7 +1847,7 @@ export class RuntimeAgentToolsService {
         "subagent is waiting on user input; use resume instead",
       );
     }
-    const effectiveModel = normalizedString(params.model) || state.run.effectiveModel || null;
+    const effectiveModel = resolveSubagentExecutionModel();
     const parentInput = normalizedString(params.inputId)
       ? this.store.getInput(normalizedString(params.inputId))
       : null;

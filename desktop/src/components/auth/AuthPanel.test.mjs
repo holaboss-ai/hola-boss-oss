@@ -38,6 +38,7 @@ test("runtime auth panel keeps model provider settings compact", async () => {
     source.match(/const runtimeProviderSettings = \([\s\S]*?\n  \);\n\n  if \(view === "account"\)/)?.[0] ?? "";
 
   assert.match(source, /Background tasks/);
+  assert.match(source, /Subagent model/);
   assert.match(source, /Provider model resolution needs attention/);
   assert.match(source, /No embedding model can be resolved from the currently connected providers\./);
   assert.match(source, /No image generation model can be resolved from the currently connected providers\./);
@@ -60,6 +61,7 @@ test("runtime auth panel keeps model provider settings compact", async () => {
   assert.match(source, /Select a model to enable image generation\./);
   assert.match(source, /Select a model to enable background tasks\./);
   assert.match(source, /Select a model to enable vector recall\./);
+  assert.match(source, /Used for all hidden subagent runs, including delegated work and scheduled jobs\./);
   assert.match(source, /title="Model providers"/);
   assert.match(source, /No providers connected/);
   assert.match(
@@ -87,6 +89,9 @@ test("runtime auth panel keeps model provider settings compact", async () => {
   assert.match(source, /const backgroundTaskModelOptions = uniqueValues\(\[/);
   assert.match(source, /const recallEmbeddingsModelOptions = uniqueValues\(\[/);
   assert.match(source, /const imageGenerationModelOptions = uniqueValues\(\[/);
+  assert.match(source, /const subagentModelToken = \(runtimeConfig\?\.subagentModel \?\? ""\)\.trim\(\);/);
+  assert.match(source, /await window\.electronAPI\.runtime\.setConfig\(\{ subagentModel: token \}\);/);
+  assert.match(source, /setConfig\(\{ subagentModel: fallbackToken \}\)/);
   assert.match(source, /onClick=\{\(\) => setShowAdvancedRuntimeSettings\(true\)\}/);
   assert.match(source, /if \(!next\) setShowAdvancedRuntimeSettings\(false\);/);
   assert.match(source, /const advancedSettingsWarnings = \[/);

@@ -15,8 +15,26 @@ import {
   RuntimeAgentToolsServiceError,
 } from "./runtime-agent-tools.js";
 
+const ORIGINAL_ENV = {
+  HB_SANDBOX_ROOT: process.env.HB_SANDBOX_ROOT,
+  HOLABOSS_RUNTIME_CONFIG_PATH: process.env.HOLABOSS_RUNTIME_CONFIG_PATH,
+};
+
+function writeRuntimeConfig(root: string, document: Record<string, unknown>): void {
+  const configPath = path.join(root, "state", "runtime-config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify(document, null, 2)}\n`, "utf8");
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
+}
+
 test("continueSubagent queues a new input onto the same completed child session", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "hb-runtime-agent-tools-continue-"));
+  writeRuntimeConfig(root, {
+    runtime: {
+      default_model: "openai/gpt-5.4",
+    },
+  });
   const workspaceRoot = path.join(root, "workspace");
   const dbPath = path.join(root, "runtime.db");
   const workspaceId = "workspace-1";
@@ -113,13 +131,14 @@ test("continueSubagent queues a new input onto the same completed child session"
     assert.equal(result.result_payload, null);
     assert.equal(result.completed_at, null);
     assert.equal(result.cancelled_at, null);
-    assert.equal(result.effective_model, "gpt-test");
+    assert.equal(result.effective_model, "openai/gpt-5.4");
     const session = store.getSession({ workspaceId, sessionId: childSessionId });
     assert.equal(session?.archivedAt, null);
     const nextInputId = String(result.latest_child_input_id);
     const nextInput = store.getInput(nextInputId);
     assert.ok(nextInput);
     assert.equal(nextInput?.sessionId, childSessionId);
+    assert.equal(nextInput?.payload.model, "openai/gpt-5.4");
     const nextInputText = String(nextInput?.payload.text ?? "");
     assert.match(nextInputText, /Create a concise report from those AI results\./);
     assert.match(nextInputText, /Continue from your previous result in this same child session\./);
@@ -697,6 +716,16 @@ beforeEach(() => {
 });
 afterEach(() => {
   harness.cleanup();
+  if (ORIGINAL_ENV.HB_SANDBOX_ROOT === undefined) {
+    delete process.env.HB_SANDBOX_ROOT;
+  } else {
+    process.env.HB_SANDBOX_ROOT = ORIGINAL_ENV.HB_SANDBOX_ROOT;
+  }
+  if (ORIGINAL_ENV.HOLABOSS_RUNTIME_CONFIG_PATH === undefined) {
+    delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+  } else {
+    process.env.HOLABOSS_RUNTIME_CONFIG_PATH = ORIGINAL_ENV.HOLABOSS_RUNTIME_CONFIG_PATH;
+  }
 });
 
 test("listDataTables auto-creates data.db on first read; returns empty list when no app has written", () => {
