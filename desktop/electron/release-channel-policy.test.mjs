@@ -70,36 +70,28 @@ test("desktop updater uses electron-updater and exposes install-now state", asyn
   assert.match(packagedConfigSource, /\.\.\.\(updateChannel === "beta" \? \{ updateChannel \} : \{\}\),/);
 });
 
-test("runtime staging prefers an explicit release tag, then stable releases, then prerelease fallback", async () => {
+test("runtime staging accepts explicit runtime sources and falls back to a locally prepared runtime bundle", async () => {
   const source = await readFile(stageRuntimeBundlePath, "utf8");
 
-  assert.match(source, /const explicitSourceRepo = process\.env\.HOLABOSS_RUNTIME_SOURCE_REPO\?\.trim\(\) \|\| "";/);
-  assert.match(source, /return "holaboss-ai\/holaOS-releases";/);
-  assert.match(source, /const requestedReleaseTag = process\.env\.HOLABOSS_RUNTIME_RELEASE_TAG\?\.trim\(\) \|\| "";/);
+  assert.match(source, /const runtimeDir = process\.env\.HOLABOSS_RUNTIME_DIR\?\.trim\(\);/);
+  assert.match(source, /const runtimeTarball = process\.env\.HOLABOSS_RUNTIME_TARBALL\?\.trim\(\);/);
+  assert.match(source, /const runtimeBundleUrl = process\.env\.HOLABOSS_RUNTIME_BUNDLE_URL\?\.trim\(\);/);
+  assert.match(source, /if \(runtimeDir\) \{/);
+  assert.match(source, /if \(runtimeTarball\) \{/);
+  assert.match(source, /if \(runtimeBundleUrl\) \{/);
+  assert.match(source, /if \(existsSync\(defaultLocalRuntimeDir\)\) \{/);
+  assert.match(source, /copying fallback runtime directory from \$\{defaultLocalRuntimeDir\}/);
   assert.match(
     source,
-    /const requestedRelease = sortedReleases\.find\(\(release\) => \{[\s\S]*isRequestedRelease\(release\) && findRuntimeReleaseAsset\(release\)[\s\S]*\}\) \?\? null;/,
+    /No runtime bundle source found\. Set HOLABOSS_RUNTIME_DIR, HOLABOSS_RUNTIME_TARBALL, or HOLABOSS_RUNTIME_BUNDLE_URL, or run npm run prepare:runtime:local first\./,
   );
-  assert.match(
-    source,
-    /const stableRelease = sortedReleases\.find\(\(release\) => \{[\s\S]*isStableRelease\(release\) && findRuntimeReleaseAsset\(release\)[\s\S]*\}\) \?\? null;/,
-  );
-  assert.match(
-    source,
-    /const prereleaseRelease = sortedReleases\.find\(\(release\) => \{[\s\S]*isPrerelease\(release\) && findRuntimeReleaseAsset\(release\)[\s\S]*\}\) \?\? null;/,
-  );
-  assert.match(source, /const release = requestedRelease \?\? stableRelease \?\? prereleaseRelease;/);
-  assert.match(
-    source,
-    /requested runtime release \$\{requestedReleaseTag\} is unavailable; falling back to the latest eligible release asset/,
-  );
-  assert.match(
-    source,
-    /no stable release runtime asset was found; falling back to prerelease \$\{normalizedReleaseTag\(prereleaseRelease\)\}/,
-  );
+  assert.doesNotMatch(source, /HOLABOSS_RUNTIME_SOURCE_REPO/);
+  assert.doesNotMatch(source, /HOLABOSS_RUNTIME_RELEASE_TAG/);
+  assert.doesNotMatch(source, /holaboss-ai\/holaOS-releases/);
+  assert.doesNotMatch(source, /latest eligible release asset/);
 });
 
-test("manual CI workflow creates combined desktop releases with bundled runtime assets", async () => {
+test("manual CI workflow publishes desktop installers without standalone runtime tar assets", async () => {
   const [source, builderConfig] = await Promise.all([
     readFile(ciWorkflowPath, "utf8"),
     readFile(electronBuilderConfigPath, "utf8"),
@@ -128,9 +120,11 @@ test("manual CI workflow creates combined desktop releases with bundled runtime 
   assert.match(source, /release \$\{RELEASE_TAG\} already exists in \$\{RELEASE_GH_REPO\}/);
   assert.doesNotMatch(source, /gh release create "\$\{RELEASE_TAG\}" \\\n\s+--title "\$\{RELEASE_TITLE\}" \\\n\s+--notes-file "\$\{notes_path\}" \\\n\s+--draft/);
   assert.doesNotMatch(source, /gh release edit "\$\{RELEASE_TAG\}" \\\n\s+--title "\$\{RELEASE_TITLE\}" \\\n\s+--notes-file "\$\{notes_path\}" \\\n\s+--draft/);
-  assert.match(source, /RUNTIME_ASSET_NAME: holaboss-runtime-linux\.tar\.gz/);
-  assert.match(source, /RUNTIME_ASSET_NAME: holaboss-runtime-macos\.tar\.gz/);
-  assert.match(source, /RUNTIME_ASSET_NAME: holaboss-runtime-windows\.tar\.gz/);
+  assert.match(source, /HOLABOSS_RUNTIME_DIR: \$\{\{ github\.workspace \}\}\/out\/runtime-macos/);
+  assert.doesNotMatch(source, /HOLABOSS_RUNTIME_TARBALL:/);
+  assert.doesNotMatch(source, /RUNTIME_ASSET_NAME: holaboss-runtime-linux\.tar\.gz/);
+  assert.doesNotMatch(source, /RUNTIME_ASSET_NAME: holaboss-runtime-macos\.tar\.gz/);
+  assert.doesNotMatch(source, /RUNTIME_ASSET_NAME: holaboss-runtime-windows\.tar\.gz/);
   assert.doesNotMatch(source, /gh release upload "\$\{RELEASE_TAG\}"/);
   assert.match(source, /Build desktop code for macOS release/);
   assert.match(source, /Build signed macOS app bundle/);
@@ -155,8 +149,6 @@ test("manual CI workflow creates combined desktop releases with bundled runtime 
   assert.doesNotMatch(source, /raise "latest-mac\.yml path does not match uploaded zip"/);
   assert.doesNotMatch(source, /raise "beta-mac\.yml path does not match uploaded zip"/);
   assert.match(source, /publish-release:/);
-  assert.match(source, /Download Linux runtime release artifacts/);
-  assert.match(source, /name: holaboss-runtime-linux-\$\{\{ inputs\.release_tag \}\}/);
   assert.match(source, /Download macOS desktop release artifacts/);
   assert.match(source, /name: holaboss-desktop-macos-\$\{\{ inputs\.release_tag \}\}/);
   assert.match(source, /Download Windows desktop release artifacts/);
@@ -170,8 +162,6 @@ test("manual CI workflow creates combined desktop releases with bundled runtime 
   assert.match(source, /rm -f "\$\{notes_path\}\.bak"/);
   assert.match(source, /tag_name=\$\{RELEASE_TAG\}/);
   assert.match(source, /target_commitish=\$\{RELEASE_SHA\}/);
-  assert.match(source, /linux_runtime_asset="release-assets\/linux-runtime\/holaboss-runtime-linux\.tar\.gz"/);
-  assert.match(source, /mac_runtime_asset="release-assets\/macos-desktop\/holaboss-runtime-macos\.tar\.gz"/);
   assert.match(source, /mac_dmg_asset="release-assets\/macos-desktop\/Holaboss-macos-arm64\.dmg"/);
   assert.match(source, /mac_zip_asset="\$\(find release-assets\/macos-desktop -maxdepth 1 -name 'Holaboss-\*-arm64-mac\.zip' -print -quit\)"/);
   assert.match(source, /upload_paths=\(/);
@@ -179,6 +169,7 @@ test("manual CI workflow creates combined desktop releases with bundled runtime 
   assert.match(source, /while IFS= read -r blockmap_path; do\s+upload_paths\+=\("\$\{blockmap_path\}"\)/);
   assert.match(source, /if \[ "\$\{\{ inputs\.release_windows \}\}" = "true" \]; then/);
   assert.match(source, /find release-assets\/windows-desktop -maxdepth 1 -type f/);
+  assert.doesNotMatch(source, /holaboss-runtime-windows\.tar\.gz/);
   assert.match(source, /prerelease_flag=\(\)/);
   assert.match(source, /if \[ "\$\{PRERELEASE\}" = "true" \]; then\s+prerelease_flag\+=\(--prerelease\)/);
   assert.match(

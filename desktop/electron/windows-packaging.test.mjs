@@ -14,15 +14,16 @@ test("windows packaging scripts prepare the packaged config before building inst
   assert.match(packageJson.scripts["dist:win:local"], /prepare:packaged-config/);
 });
 
-test("desktop packaging keeps Windows runtime publishing scoped to the full runtime bundle", async () => {
+test("desktop packaging does not publish standalone Windows runtime tar artifacts", async () => {
   const [workflowSource, packagedConfigSource] = await Promise.all([
     readFile(CI_WORKFLOW_PATH, "utf8"),
     readFile(new URL("../scripts/write-packaged-config.mjs", import.meta.url), "utf8"),
   ]);
 
-  assert.match(workflowSource, /RUNTIME_ASSET_NAME: holaboss-runtime-windows\.tar\.gz/);
-  assert.match(workflowSource, /runtime_asset_path=/);
-  assert.match(workflowSource, /desktop\/out\/\$\{\{ env\.RUNTIME_ASSET_NAME \}\}/);
+  assert.match(workflowSource, /No staged Windows runtime bundle was produced under desktop\/out\/runtime-windows\./);
+  assert.doesNotMatch(workflowSource, /RUNTIME_ASSET_NAME: holaboss-runtime-windows\.tar\.gz/);
+  assert.doesNotMatch(workflowSource, /runtime_asset_path=/);
+  assert.doesNotMatch(workflowSource, /desktop\/out\/\$\{\{ env\.RUNTIME_ASSET_NAME \}\}/);
   assert.doesNotMatch(workflowSource, /TOOLCHAIN_ASSET_NAME: holaboss-toolchain-windows\.tar\.gz/);
   assert.doesNotMatch(workflowSource, /toolchain_asset_path=/);
   assert.doesNotMatch(workflowSource, /desktop\/out\/\$\{\{ env\.TOOLCHAIN_ASSET_NAME \}\}/);
