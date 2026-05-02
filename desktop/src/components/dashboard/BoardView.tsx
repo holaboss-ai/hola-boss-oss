@@ -166,8 +166,7 @@ export function BoardView({
                 // biome-ignore lint/suspicious/noArrayIndexKey: SQL row order is the natural key
                 <article
                   key={rIdx}
-                  tabIndex={0}
-                  className="cursor-default rounded-md border border-transparent bg-fg-4 px-3 py-2.5 text-xs transition-all hover:border-border hover:bg-card hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                  className="rounded-md border border-transparent bg-fg-4 px-3 py-2.5 text-xs transition-colors hover:border-border hover:bg-card"
                 >
                   <div className="line-clamp-3 leading-snug text-foreground">
                     {formatCell(row[titleIdx])}

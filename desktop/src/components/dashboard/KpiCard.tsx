@@ -1,3 +1,5 @@
+import { AlertTriangle } from "lucide-react";
+
 import type { ColumnFormat } from "@/lib/dashboardSchema";
 
 import { ErrorMessage } from "./ErrorMessage";
@@ -93,6 +95,13 @@ export function KpiCard({
               >
                 <span aria-hidden>{deltaInfo.arrow}</span>
                 {deltaInfo.text}
+              </span>
+            ) : delta?.kind === "error" ? (
+              <span
+                className="inline-flex items-center rounded-md bg-muted px-1 py-0.5 text-muted-foreground"
+                title="Delta query failed"
+              >
+                <AlertTriangle size={10} strokeWidth={2.25} />
               </span>
             ) : null}
           </>
