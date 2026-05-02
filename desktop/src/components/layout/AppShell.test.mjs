@@ -141,6 +141,10 @@ test("app shell passes the current app version into the settings dialog", async 
     source,
     /<SettingsDialog[\s\S]*appVersion=\{effectiveAppUpdateStatus\?\.currentVersion \|\| ""\}/,
   );
+  assert.match(
+    source,
+    /<SettingsDialog[\s\S]*workspaceCardsPerRow=\{controlCenterCardsPerRow\}[\s\S]*onWorkspaceCardsPerRowChange=\{setControlCenterCardsPerRow\}/,
+  );
 });
 
 test("app shell clears a consumed file explorer focus request", async () => {
@@ -651,6 +655,13 @@ test("app shell tracks unread task proposals and badges the inbox control", asyn
 test("app shell renders a persistent explorer rail and universal display in space mode", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
+  assert.match(
+    source,
+    /const CONTROL_CENTER_CARDS_PER_ROW_STORAGE_KEY =\s*"holaboss-control-center-cards-per-row-v1";/,
+  );
+  assert.match(source, /function loadControlCenterCardsPerRow\(\): ControlCenterCardsPerRow \{/);
+  assert.match(source, /localStorage\.getItem\(CONTROL_CENTER_CARDS_PER_ROW_STORAGE_KEY\)/);
+  assert.match(source, /if \(isControlCenterCardsPerRow\(parsed\)\) \{\s*return parsed;\s*\}/);
   assert.match(source, /function loadSpaceVisibility\(\): SpaceVisibilityState \{/);
   assert.match(
     source,
@@ -672,12 +683,20 @@ test("app shell renders a persistent explorer rail and universal display in spac
     source,
     /const \[spaceWorkspacePanelCollapsed, setSpaceWorkspacePanelCollapsed\] =\s*useState\(loadSpaceWorkspacePanelCollapsed\);/,
   );
+  assert.match(
+    source,
+    /const \[controlCenterCardsPerRow, setControlCenterCardsPerRow\] =\s*useState<ControlCenterCardsPerRow>\(loadControlCenterCardsPerRow\);/,
+  );
   assert.doesNotMatch(source, /spaceExplorerCollapsed/);
   assert.doesNotMatch(source, /setSpaceExplorerCollapsed/);
   assert.match(source, /const \[spaceDisplayView, setSpaceDisplayView\] = useState<SpaceDisplayView>\(\{\s*type: "browser",\s*\}\);/);
   assert.match(
     source,
     /localStorage\.setItem\(\s*SPACE_WORKSPACE_PANEL_COLLAPSED_STORAGE_KEY,\s*spaceWorkspacePanelCollapsed \? "1" : "0",\s*\);/,
+  );
+  assert.match(
+    source,
+    /localStorage\.setItem\(\s*CONTROL_CENTER_CARDS_PER_ROW_STORAGE_KEY,\s*String\(controlCenterCardsPerRow\),\s*\);/,
   );
   assert.match(
     source,
@@ -690,6 +709,10 @@ test("app shell renders a persistent explorer rail and universal display in spac
   assert.match(source, /<SpaceApplicationsExplorerPane[\s\S]*installedApps=\{installedApps\}/);
   assert.match(source, /<SpaceApplicationsExplorerPane[\s\S]*onAddApp=\{handleAddApp\}/);
   assert.match(source, /<SpaceBrowserExplorerPane[\s\S]*browserSpace=\{spaceBrowserSpace\}/);
+  assert.match(
+    source,
+    /<WorkspaceControlCenter[\s\S]*cardsPerRow=\{controlCenterCardsPerRow\}/,
+  );
   assert.match(source, /<SpaceBrowserDisplayPane[\s\S]*layoutSyncKey=\{spaceDisplayLayoutSyncKey\}/);
   assert.match(source, /<SpaceBrowserDisplayPane[\s\S]*embedded/);
   assert.match(

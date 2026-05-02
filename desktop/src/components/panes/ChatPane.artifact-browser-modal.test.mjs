@@ -22,7 +22,7 @@ test("artifact browser modal keeps header, filters, and results inside one modal
   );
   assert.match(
     source,
-    /<div className=\{overlayClassName\}>\s*<div className=\{panelClassName\}>/,
+    /<div[\s\S]*className=\{overlayClassName\}[\s\S]*data-control-center-swipe-ignore=\{layout === "card" \? "true" : undefined\}[\s\S]*>\s*<div className=\{panelClassName\}>/,
   );
   assert.match(
     source,

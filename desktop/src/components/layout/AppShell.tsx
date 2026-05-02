@@ -79,6 +79,8 @@ const BROWSER_PANE_WIDTH_STORAGE_KEY = "holaboss-browser-pane-width-v1";
 const SPACE_VISIBILITY_STORAGE_KEY = "holaboss-space-visibility-v1";
 const SPACE_WORKSPACE_PANEL_COLLAPSED_STORAGE_KEY =
   "holaboss-space-workspace-panel-collapsed-v1";
+const CONTROL_CENTER_CARDS_PER_ROW_STORAGE_KEY =
+  "holaboss-control-center-cards-per-row-v1";
 const THEMES = [
   "amber-minimal-dark",
   "amber-minimal-light",
@@ -183,9 +185,16 @@ function isThemeVariant(value: string): value is ThemeVariant {
 }
 
 export type ColorScheme = "system" | "light" | "dark";
+export type ControlCenterCardsPerRow = 2 | 3 | 4;
 
 function isColorScheme(value: string): value is ColorScheme {
   return value === "system" || value === "light" || value === "dark";
+}
+
+function isControlCenterCardsPerRow(
+  value: number,
+): value is ControlCenterCardsPerRow {
+  return value === 2 || value === 3 || value === 4;
 }
 
 const COLOR_SCHEME_STORAGE_KEY = "holaboss-color-scheme";
@@ -827,6 +836,20 @@ function loadSpaceWorkspacePanelCollapsed(): boolean {
   }
 
   return false;
+}
+
+function loadControlCenterCardsPerRow(): ControlCenterCardsPerRow {
+  try {
+    const raw = localStorage.getItem(CONTROL_CENTER_CARDS_PER_ROW_STORAGE_KEY);
+    const parsed = Number(raw);
+    if (isControlCenterCardsPerRow(parsed)) {
+      return parsed;
+    }
+  } catch {
+    // ignore invalid persisted control center layout state
+  }
+
+  return 3;
 }
 
 function loadOperationsDrawerOpen(): boolean {
@@ -1484,6 +1507,8 @@ function AppShellContent() {
   );
   const [browserPaneWidth, setBrowserPaneWidth] =
     useState(loadBrowserPaneWidth);
+  const [controlCenterCardsPerRow, setControlCenterCardsPerRow] =
+    useState<ControlCenterCardsPerRow>(loadControlCenterCardsPerRow);
   const [isUtilityPaneResizing, setIsUtilityPaneResizing] = useState(false);
   const [operationsDrawerOpen, setOperationsDrawerOpen] = useState(
     loadOperationsDrawerOpen,
@@ -2634,6 +2659,13 @@ function AppShellContent() {
       String(browserPaneWidth),
     );
   }, [browserPaneWidth]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      CONTROL_CENTER_CARDS_PER_ROW_STORAGE_KEY,
+      String(controlCenterCardsPerRow),
+    );
+  }, [controlCenterCardsPerRow]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -4917,6 +4949,7 @@ function AppShellContent() {
           <WorkspaceControlCenter
             workspaces={workspaces}
             selectedWorkspaceId={selectedWorkspaceId}
+            cardsPerRow={controlCenterCardsPerRow}
             onSelectWorkspace={handleSelectControlCenterWorkspace}
             onEnterWorkspace={handleEnterWorkspace}
             onOpenOutput={handleOpenControlCenterWorkspaceOutput}
@@ -5150,6 +5183,8 @@ function AppShellContent() {
         themeVariant={themeVariant}
         themeVariants={THEME_VARIANTS}
         onThemeVariantChange={handleThemeVariantChange}
+        workspaceCardsPerRow={controlCenterCardsPerRow}
+        onWorkspaceCardsPerRowChange={setControlCenterCardsPerRow}
         onOpenExternalUrl={handleOpenExternalUrl}
       />
       {selectedWorkspaceId && (

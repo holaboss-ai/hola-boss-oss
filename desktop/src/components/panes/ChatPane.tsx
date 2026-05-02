@@ -9520,7 +9520,10 @@ export function ArtifactBrowserModal({
       : "flex max-h-full w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border bg-background shadow-xl";
 
   return (
-    <div className={overlayClassName}>
+    <div
+      className={overlayClassName}
+      data-control-center-swipe-ignore={layout === "card" ? "true" : undefined}
+    >
       <div className={panelClassName}>
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
           <div>

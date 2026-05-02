@@ -52,7 +52,11 @@ const THEME_SWATCHES: Record<string, [string, string, string]> = {
   "bubblegum-light": ["#fef2f8", "#ec4899", "#fce7f3"],
 };
 
-import type { ColorScheme, ThemeVariant } from "@/components/layout/AppShell";
+import type {
+  ColorScheme,
+  ControlCenterCardsPerRow,
+  ThemeVariant,
+} from "@/components/layout/AppShell";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -65,6 +69,8 @@ interface SettingsDialogProps {
   themeVariant: ThemeVariant;
   themeVariants: readonly ThemeVariant[];
   onThemeVariantChange: (variant: ThemeVariant) => void;
+  workspaceCardsPerRow: ControlCenterCardsPerRow;
+  onWorkspaceCardsPerRowChange: (value: ControlCenterCardsPerRow) => void;
   onOpenExternalUrl: (url: string) => void;
 }
 
@@ -252,6 +258,8 @@ export function SettingsDialog({
   themeVariant,
   themeVariants,
   onThemeVariantChange,
+  workspaceCardsPerRow,
+  onWorkspaceCardsPerRowChange,
   onOpenExternalUrl,
 }: SettingsDialogProps) {
   const displayAppVersion = appVersion.trim() || "Unavailable";
@@ -690,6 +698,34 @@ export function SettingsDialog({
                         };
                       })}
                       triggerWidth="w-[180px]"
+                    />
+                    <SettingsMenuSelectRow
+                      label="Workspace cards per row"
+                      description="Choose how many control center cards to fit on each row when the window is wide enough."
+                      value={String(workspaceCardsPerRow)}
+                      onValueChange={(value) =>
+                        onWorkspaceCardsPerRowChange(
+                          Number(value) as ControlCenterCardsPerRow,
+                        )
+                      }
+                      options={[
+                        {
+                          value: "2",
+                          label: "2",
+                          description: "Comfortable, larger previews.",
+                        },
+                        {
+                          value: "3",
+                          label: "3",
+                          description: "Balanced density.",
+                        },
+                        {
+                          value: "4",
+                          label: "4",
+                          description: "Dense, smaller cards.",
+                        },
+                      ]}
+                      triggerWidth="w-[140px]"
                     />
                   </SettingsCard>
                 </SettingsSection>
