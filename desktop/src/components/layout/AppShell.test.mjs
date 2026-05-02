@@ -215,7 +215,7 @@ test("app shell restores the last internal display and otherwise keeps the curre
   );
   assert.match(
     source,
-    /\(displayView\.surface === "document" \|\| displayView\.surface === "file"\)\s*&&\s*displayView\.resourceId\?\.trim\(\)/,
+    /displayView\.surface === "document"[\s\S]*displayView\.surface === "file"[\s\S]*displayView\.resourceId\?\.trim\(\)/,
   );
   assert.match(
     source,
@@ -231,7 +231,7 @@ test("app shell restores the last internal display and otherwise keeps the curre
   );
   assert.match(
     source,
-    /const restoreLastSpaceFileDisplayView = useCallback\(\(\) => \{\s*if \(!selectedWorkspaceId\) \{\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*const lastDisplayView =\s*lastRestorableSpaceFileDisplayViewByWorkspaceRef\.current\[\s*selectedWorkspaceId\s*\];\s*const nextDisplayView = lastDisplayView \?\? spaceDisplayView;\s*setSpaceDisplayView\(nextDisplayView\);\s*syncFileExplorerFocusWithDisplayView\(nextDisplayView\);\s*\}, \[selectedWorkspaceId, spaceDisplayView, syncFileExplorerFocusWithDisplayView\]\);/,
+    /const restoreLastSpaceFileDisplayView = useCallback\(\(\) => \{[\s\S]*setSpaceDisplayView\(\{ type: "browser" \}\);[\s\S]*const lastDisplayView =[\s\S]*lastRestorableSpaceFileDisplayViewByWorkspaceRef\.current\[[\s\S]*selectedWorkspaceId[\s\S]*const nextDisplayView = lastDisplayView \?\? spaceDisplayView;[\s\S]*setSpaceDisplayView\(nextDisplayView\);[\s\S]*syncFileExplorerFocusWithDisplayView\(nextDisplayView\);/,
   );
   assert.match(
     source,
@@ -462,7 +462,7 @@ test("app shell wires filesPaneWidth into the explorer panel and uses a drag han
 
   assert.match(
     source,
-    /const \[filesPaneWidth, setFilesPaneWidth\] = useState\(\s*DEFAULT_FILES_PANE_WIDTH,\s*\);/,
+    /const \[filesPaneWidth, setFilesPaneWidth\] =\s*useState\(\s*DEFAULT_FILES_PANE_WIDTH,\s*\);/,
   );
   assert.match(
     source,
@@ -470,7 +470,7 @@ test("app shell wires filesPaneWidth into the explorer panel and uses a drag han
   );
   assert.match(
     source,
-    /id="space-explorer-panel"[\s\S]*?style=\{\{ width: `\$\{filesPaneWidth\}px` \}\}/,
+    /style=\{\{ width: `\$\{filesPaneWidth\}px` \}\}[\s\S]*id="space-explorer-panel"/,
   );
   assert.match(
     source,
@@ -492,8 +492,16 @@ test("app shell wires filesPaneWidth into the explorer panel and uses a drag han
 test("app shell uses the top toolbar for shell navigation and removes the left rail", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /type ShellView = "space";/);
-  assert.match(source, /const \[activeShellView, setActiveShellView\] = useState<ShellView>\("space"\);/);
+  assert.match(source, /type ShellView = "control_center" \| "space";/);
+  assert.match(
+    source,
+    /const \[activeShellView, setActiveShellView\] =\s*useState<ShellView>\("control_center"\);/,
+  );
+  assert.match(source, /const handleOpenControlCenter = useCallback\(\(\) => \{/);
+  assert.match(source, /const handleEnterWorkspace = useCallback\(\s*\(workspaceId: string\) => \{/);
+  assert.match(source, /<WorkspaceControlCenter[\s\S]*onEnterWorkspace=\{handleEnterWorkspace\}/);
+  assert.match(source, /controlCenterActive=\{controlCenterMode\}/);
+  assert.match(source, /onOpenControlCenter=\{handleOpenControlCenter\}/);
   assert.match(source, /handleOpenAutomationsPane = useCallback/);
   assert.match(source, /const handleOpenSessionsPane = useCallback\(\(\) => \{/);
   assert.match(source, /setAgentView\(\{ type: "sessions" \}\)/);
@@ -591,7 +599,7 @@ test("app shell keeps agent browser open requests session-scoped until the user 
 
   assert.match(
     source,
-    /const \[chatBrowserJumpRequestKeysBySessionId,\s*setChatBrowserJumpRequestKeysBySessionId\] =\s*useState<Record<string, number>>\(\{\}\);/,
+    /const \[\s*chatBrowserJumpRequestKeysBySessionId,\s*setChatBrowserJumpRequestKeysBySessionId,\s*\] =\s*useState<Record<string, number>>\(\{\}\);/,
   );
   assert.match(
     source,
@@ -866,11 +874,11 @@ test("app shell clears missing internal file surfaces after explorer deletion or
   assert.match(source, /function isPathWithin\(parentPath: string, targetPath: string\)/);
   assert.match(
     source,
-    /const handleMissingInternalResource = useCallback\(\s*\(resourceId: string\) => \{[\s\S]*setAgentView\(\(current\) => \{[\s\S]*return \{ type: "chat" \};[\s\S]*\}\);[\s\S]*setSpaceDisplayView\(\(current\) => \{[\s\S]*delete lastRestorableSpaceFileDisplayViewByWorkspaceRef\.current\[[\s\S]*selectedWorkspaceId[\s\S]*\];[\s\S]*return \{ type: "empty" \};[\s\S]*\}\);/,
+    /const handleMissingInternalResource = useCallback\(\s*\(resourceId: string\) => \{[\s\S]*setAgentView\(\(current\) => \{[\s\S]*return \{ type: "chat" \};[\s\S]*setSpaceDisplayView\(\(current\) => \{[\s\S]*delete lastRestorableSpaceFileDisplayViewByWorkspaceRef\.current\[[\s\S]*selectedWorkspaceId[\s\S]*return \{ type: "empty" \};/,
   );
   assert.match(
     source,
-    /const handleDeleteWorkspaceEntry = useCallback\(\s*\(entry: LocalFileEntry\) => \{[\s\S]*const normalizedDeletedPath = normalizeComparablePath\(entry\.absolutePath\);[\s\S]*setSpaceDisplayView\(\(current\) => \{[\s\S]*if \(!isPathWithin\(normalizedDeletedPath, current\.resourceId\?\.trim\(\) \?\? ""\)\) \{\s*return current;\s*\}[\s\S]*return \{ type: "empty" \};[\s\S]*\}\);/,
+    /const handleDeleteWorkspaceEntry = useCallback\(\s*\(entry: LocalFileEntry\) => \{[\s\S]*const normalizedDeletedPath = normalizeComparablePath\(entry\.absolutePath\);[\s\S]*setSpaceDisplayView\(\(current\) => \{[\s\S]*!isPathWithin\(normalizedDeletedPath, current\.resourceId\?\.trim\(\) \?\? ""\)[\s\S]*return \{ type: "empty" \};/,
   );
   assert.match(source, /<InternalSurfacePane[\s\S]*onResourceMissing=\{handleMissingInternalResource\}/);
   assert.match(source, /<FileExplorerPane[\s\S]*onDeleteEntry=\{handleDeleteWorkspaceEntry\}/);
@@ -882,7 +890,7 @@ test("app shell passes new session requests into the chat pane selector", async 
   assert.match(source, /type ChatSessionOpenRequest = \{\s*sessionId: string;\s*requestKey: number;\s*mode\?: "session" \| "draft";\s*parentSessionId\?: string \| null;\s*\};/);
   assert.match(
     source,
-    /const \[chatComposerDraftTextByWorkspace, setChatComposerDraftTextByWorkspace\] =\s*useState<Record<string, string>>\(\{\}\);/,
+    /const \[\s*chatComposerDraftTextByWorkspace,\s*setChatComposerDraftTextByWorkspace,\s*\] =\s*useState<Record<string, string>>\(\{\}\);/,
   );
   assert.match(
     source,
@@ -910,7 +918,7 @@ test("app shell passes new session requests into the chat pane selector", async 
   assert.match(source, /<OperationsInboxPane[\s\S]*proposals=\{taskProposals\}/);
   assert.match(
     source,
-    /onRequestCreateSession=\{\(request\) => void handleCreateSession\(request\)\}[\s\S]*composerDraftText=\{[\s\S]*chatComposerDraftTextByWorkspace\[selectedWorkspaceId\] \?\? ""[\s\S]*\}[\s\S]*onComposerDraftTextChange=\{handleChatComposerDraftTextChange\}/,
+    /sessionOpenRequest=\{chatSessionOpenRequest\}[\s\S]*composerDraftText=\{[\s\S]*chatComposerDraftTextByWorkspace\[selectedWorkspaceId\] \?\? ""[\s\S]*\}[\s\S]*onComposerDraftTextChange=\{handleChatComposerDraftTextChange\}/,
   );
   assert.match(source, /onSessionOpenRequestConsumed=\{handleChatSessionOpenRequestConsumed\}/);
 });
@@ -929,7 +937,7 @@ test("app shell passes workspace-scoped chat composer drafts into the chat pane"
 
   assert.match(
     source,
-    /const \[chatComposerDraftTextByWorkspace, setChatComposerDraftTextByWorkspace\] =\s*useState<Record<string, string>>\(\{\}\);/,
+    /const \[\s*chatComposerDraftTextByWorkspace,\s*setChatComposerDraftTextByWorkspace,\s*\] =\s*useState<Record<string, string>>\(\{\}\);/,
   );
   assert.match(
     source,

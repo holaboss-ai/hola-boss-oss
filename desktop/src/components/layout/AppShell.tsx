@@ -27,6 +27,7 @@ import {
 } from "@/components/layout/OperationsDrawer";
 import { SettingsDialog } from "@/components/layout/SettingsDialog";
 import { TopTabsBar } from "@/components/layout/TopTabsBar";
+import { WorkspaceControlCenter } from "@/components/layout/WorkspaceControlCenter";
 import { WorkspaceAppsDialog } from "@/components/layout/WorkspaceAppsDialog";
 import { FirstWorkspacePane } from "@/components/onboarding";
 import { AppSurfacePane } from "@/components/panes/AppSurfacePane";
@@ -115,7 +116,7 @@ type SpaceComponentId = "agent" | "files" | "browser";
 type UtilityPaneId = "files" | "browser";
 type DevAppUpdatePreviewMode = "off" | "downloading" | "ready";
 type SpaceExplorerMode = "files" | "browser" | "applications";
-type ShellView = "space";
+type ShellView = "control_center" | "space";
 
 type SpaceVisibilityState = Record<SpaceComponentId, boolean>;
 
@@ -1431,7 +1432,8 @@ function AppShellContent() {
     createWorkspacePanelAnchorWorkspaceId,
     setCreateWorkspacePanelAnchorWorkspaceId,
   ] = useState("");
-  const [activeShellView, setActiveShellView] = useState<ShellView>("space");
+  const [activeShellView, setActiveShellView] =
+    useState<ShellView>("control_center");
   const [agentView, setAgentView] = useState<AgentView>({ type: "chat" });
   const [chatFocusRequestKey, setChatFocusRequestKey] = useState(1);
   const [chatSessionJumpRequest, setChatSessionJumpRequest] = useState<{
@@ -2582,6 +2584,9 @@ function AppShellContent() {
       return;
     }
     if (selectedWorkspaceId !== createWorkspacePanelAnchorWorkspaceId) {
+      setActiveShellView("space");
+      setAgentView({ type: "chat" });
+      setChatFocusRequestKey((current) => current + 1);
       setCreateWorkspacePanelOpen(false);
       setCreateWorkspacePanelAnchorWorkspaceId("");
     }
@@ -3382,6 +3387,39 @@ function AppShellContent() {
     setChatFocusRequestKey((current) => current + 1);
   }, []);
 
+  const handleOpenControlCenter = useCallback(() => {
+    setActiveShellView("control_center");
+  }, []);
+
+  const handleSelectControlCenterWorkspace = useCallback(
+    (workspaceId: string) => {
+      setSelectedWorkspaceId(workspaceId);
+    },
+    [setSelectedWorkspaceId],
+  );
+
+  const handleEnterWorkspace = useCallback(
+    (workspaceId: string) => {
+      const normalizedWorkspaceId = workspaceId.trim();
+      if (!normalizedWorkspaceId) {
+        return;
+      }
+
+      if (normalizedWorkspaceId !== (selectedWorkspaceId?.trim() || "")) {
+        setSelectedWorkspaceId(normalizedWorkspaceId);
+      }
+
+      setActiveShellView("space");
+      setSpaceVisibility((previous) => ({
+        ...previous,
+        agent: true,
+      }));
+      setAgentView({ type: "chat" });
+      setChatFocusRequestKey((current) => current + 1);
+    },
+    [selectedWorkspaceId, setSelectedWorkspaceId],
+  );
+
   const handleChatComposerDraftTextChange = useCallback(
     (text: string) => {
       const workspaceId = selectedWorkspaceId?.trim() || "";
@@ -3968,6 +4006,7 @@ function AppShellContent() {
     });
   };
 
+  const controlCenterMode = activeShellView === "control_center";
   const spaceMode = activeShellView === "space";
   const activeAppId =
     agentView.type === "app"
@@ -4025,7 +4064,8 @@ function AppShellContent() {
     hasHydratedWorkspaceList &&
     hasWorkspaces &&
     hasSelectedWorkspace &&
-    onboardingModeActive;
+    onboardingModeActive &&
+    spaceMode;
 
   const agentContent = useMemo(() => {
     if (!hasSelectedWorkspace) {
@@ -4790,6 +4830,8 @@ function AppShellContent() {
               integratedTitleBar={hasIntegratedTitleBar}
               desktopPlatform={desktopPlatform}
               runtimeStatus={runtimeStatus}
+              controlCenterActive={controlCenterMode}
+              onOpenControlCenter={handleOpenControlCenter}
               onWorkspaceSwitcherVisibilityChange={setWorkspaceSwitcherOpen}
               onOpenWorkspaceCreatePanel={handleOpenCreateWorkspacePanel}
               onOpenSettings={() => {
@@ -4822,6 +4864,13 @@ function AppShellContent() {
           <FirstWorkspacePane />
         ) : showOnboardingTakeover ? (
           <WorkspaceOnboardingTakeover focusRequestKey={chatFocusRequestKey} />
+        ) : controlCenterMode ? (
+          <WorkspaceControlCenter
+            workspaces={workspaces}
+            selectedWorkspaceId={selectedWorkspaceId}
+            onSelectWorkspace={handleSelectControlCenterWorkspace}
+            onEnterWorkspace={handleEnterWorkspace}
+          />
         ) : (
           <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
             <div className="min-h-0 flex-1 overflow-hidden">
