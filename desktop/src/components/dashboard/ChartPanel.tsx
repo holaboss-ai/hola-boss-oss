@@ -5,7 +5,7 @@ import {
   type LucideIcon,
   PieChart as PieChartIcon,
 } from "lucide-react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -31,6 +31,7 @@ import type {
 
 import type { DataViewState } from "./DataViewPanel";
 import { EmptyState } from "./EmptyState";
+import { ErrorMessage } from "./ErrorMessage";
 import { formatValue } from "./format";
 
 const CHART_ICON: Record<ChartSpec["kind"], LucideIcon> = {
@@ -74,14 +75,30 @@ const SERIES_DARK = [
   "oklch(70.4% 0.04 256.788)",  // slate-400
 ];
 
-function pickSeriesPalette(): string[] {
-  if (typeof document !== "undefined") {
-    const isDark =
-      document.documentElement.classList.contains("dark") ||
-      document.documentElement.dataset.theme === "dark";
-    return isDark ? SERIES_DARK : SERIES_LIGHT;
-  }
-  return SERIES_LIGHT;
+function readIsDark(): boolean {
+  if (typeof document === "undefined") return false;
+  const root = document.documentElement;
+  return root.classList.contains("dark") || root.dataset.theme === "dark";
+}
+
+// Subscribes to live theme changes on <html>. Recharts paints into SVG
+// and can't pick up CSS vars at render time, so the palette is plain
+// OKLch literals — meaning charts won't repaint on theme toggle unless
+// the component re-renders. This hook does that via MutationObserver.
+function useSeriesPalette(): string[] {
+  const [isDark, setIsDark] = useState<boolean>(readIsDark);
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const root = document.documentElement;
+    const update = () => setIsDark(readIsDark());
+    const mo = new MutationObserver(update);
+    mo.observe(root, {
+      attributes: true,
+      attributeFilter: ["class", "data-theme"],
+    });
+    return () => mo.disconnect();
+  }, []);
+  return isDark ? SERIES_DARK : SERIES_LIGHT;
 }
 
 export function ChartPanel({ panel, state }: ChartPanelProps) {
@@ -101,9 +118,7 @@ export function ChartPanel({ panel, state }: ChartPanelProps) {
         {state.kind === "loading" ? (
           <ChartSkeleton />
         ) : state.kind === "error" ? (
-          <div className="my-3 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-            {state.message}
-          </div>
+          <ErrorMessage message={state.message} />
         ) : state.rows.length === 0 ? (
           <EmptyState
             icon={CHART_ICON[panel.chart.kind] ?? BarChart3}
@@ -148,7 +163,7 @@ function CartesianChartBody({
   chart: Extract<ChartSpec, { kind: "line" | "bar" | "area" }>;
   state: Extract<DataViewState, { kind: "data" }>;
 }) {
-  const palette = pickSeriesPalette();
+  const palette = useSeriesPalette();
   const xIdx = state.columns.indexOf(chart.x);
   const seriesIdx = chart.y
     .map((s) => ({ name: s, idx: state.columns.indexOf(s) }))
@@ -391,7 +406,7 @@ function PieChartBody({
   chart: Extract<ChartSpec, { kind: "pie" | "donut" }>;
   state: Extract<DataViewState, { kind: "data" }>;
 }) {
-  const palette = pickSeriesPalette();
+  const palette = useSeriesPalette();
   const labelIdx = state.columns.indexOf(chart.label);
   const valueIdx = state.columns.indexOf(chart.value);
 

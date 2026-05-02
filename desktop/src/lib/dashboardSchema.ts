@@ -203,6 +203,8 @@ export type DashboardPanel =
 export interface Dashboard {
   title: string;
   description?: string;
+  /** Auto-refresh interval in seconds. Minimum 10. */
+  refresh_interval?: number;
   panels: DashboardPanel[];
 }
 
@@ -230,6 +232,11 @@ export function parseDashboard(content: string): DashboardParseResult {
   const title = stringField(parsed, "title");
   if (!title) return { ok: false, error: "Missing required field: `title`." };
   const description = optionalStringField(parsed, "description");
+  const refreshIntervalRaw = parseNumberField(parsed.refresh_interval);
+  const refreshInterval =
+    refreshIntervalRaw !== null && refreshIntervalRaw >= 10
+      ? Math.floor(refreshIntervalRaw)
+      : null;
   const rawPanels = parsed.panels;
   if (!Array.isArray(rawPanels) || rawPanels.length === 0) {
     return { ok: false, error: "Missing or empty `panels` list." };
@@ -245,6 +252,7 @@ export function parseDashboard(content: string): DashboardParseResult {
     dashboard: {
       title,
       ...(description ? { description } : {}),
+      ...(refreshInterval !== null ? { refresh_interval: refreshInterval } : {}),
       panels,
     },
   };

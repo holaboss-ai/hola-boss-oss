@@ -1,5 +1,6 @@
 import type { ColumnFormat } from "@/lib/dashboardSchema";
 
+import { ErrorMessage } from "./ErrorMessage";
 import { formatValue } from "./format";
 
 export type KpiCardState =
@@ -75,9 +76,7 @@ export function KpiCard({
             aria-label="Loading"
           />
         ) : state.kind === "error" ? (
-          <div className="truncate text-xs text-destructive" title={state.message}>
-            {state.message}
-          </div>
+          <ErrorMessage message={state.message} compact />
         ) : (
           <>
             <span

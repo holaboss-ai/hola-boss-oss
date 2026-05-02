@@ -12,12 +12,14 @@ import type { BoardViewSpec, ColorToken } from "@/lib/dashboardSchema";
 import { EmptyState } from "./EmptyState";
 import { colorClasses, formatSmartDate, hashToColor, looksLikeDateColumn } from "./format";
 import { isStatusColumn, StatusBadge } from "./StatusBadge";
+import { usePersistedState } from "./usePersistedState";
 
 interface BoardViewProps {
   view: BoardViewSpec;
   columns: string[];
   rows: unknown[][];
   emptyState?: string;
+  storageKeyBase?: string;
 }
 
 // Read-only Kanban: rows are bucketed by distinct values of the
@@ -26,8 +28,17 @@ interface BoardViewProps {
 // header (Notion-style). Selection is component-local; we don't
 // persist back to YAML in v2 because the dashboard is a pure
 // function of its file.
-export function BoardView({ view, columns, rows, emptyState }: BoardViewProps) {
-  const [activeGroupBy, setActiveGroupBy] = useState<string>(view.group_by);
+export function BoardView({
+  view,
+  columns,
+  rows,
+  emptyState,
+  storageKeyBase,
+}: BoardViewProps) {
+  const [activeGroupBy, setActiveGroupBy] = usePersistedState<string>(
+    storageKeyBase ? `${storageKeyBase}:board:groupBy` : undefined,
+    view.group_by,
+  );
   const initialGroupBy = view.group_by;
 
   // Reset when the YAML changes the initial group_by underneath us

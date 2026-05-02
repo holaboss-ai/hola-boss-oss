@@ -11,12 +11,14 @@ import {
   formatValue,
   resolveLinkTemplate,
 } from "./format";
+import { usePersistedState } from "./usePersistedState";
 
 interface TableViewProps {
   view: TableViewSpec;
   columns: string[];
   rows: unknown[][];
   emptyState?: string;
+  storageKeyBase?: string;
 }
 
 type SortDir = "asc" | "desc" | null;
@@ -40,10 +42,22 @@ interface ResolvedColumn {
 // padding, larger row text, hairline borders, soft hover. The view's
 // `columns` field, when set, drives column order, format, alignment,
 // width, color chips, and clickable links.
-export function TableView({ view, columns, rows, emptyState }: TableViewProps) {
+export function TableView({
+  view,
+  columns,
+  rows,
+  emptyState,
+  storageKeyBase,
+}: TableViewProps) {
   const visible = pickColumns(view, columns);
-  const [sort, setSort] = useState<SortState | null>(null);
-  const [resizedWidths, setResizedWidths] = useState<Record<string, number>>({});
+  const [sort, setSort] = usePersistedState<SortState | null>(
+    storageKeyBase ? `${storageKeyBase}:table:sort` : undefined,
+    null,
+  );
+  const [resizedWidths, setResizedWidths] = usePersistedState<Record<string, number>>(
+    storageKeyBase ? `${storageKeyBase}:table:widths` : undefined,
+    {},
+  );
 
   // Effective width per column: spec.width > user resize > default.
   const effectiveWidths = useMemo(() => {
@@ -292,11 +306,11 @@ function defaultColumnWidthPx(c: ResolvedColumn): number {
   if (fmt === "datetime" || fmt === "date") return 170;
   if (fmt === "url") return 140;
   if (fmt === "image_url") return 64;
+  if (fmt === "currency") return 130;
   if (
     fmt === "integer" ||
     fmt === "number" ||
     fmt === "percent" ||
-    fmt === "currency" ||
     fmt === "duration"
   ) {
     return 110;
