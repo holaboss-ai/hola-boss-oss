@@ -3045,6 +3045,7 @@ interface ChatPaneProps {
   focusRequestKey?: number;
   variant?: ChatPaneVariant;
   onOpenLinkInBrowser?: (url: string) => void;
+  onOpenLocalLink?: (href: string) => void;
   sessionJumpSessionId?: string | null;
   sessionJumpRequestKey?: number;
   sessionOpenRequest?: ChatPaneSessionOpenRequest | null;
@@ -3075,6 +3076,7 @@ export function ChatPane({
   focusRequestKey = 0,
   variant = "default",
   onOpenLinkInBrowser,
+  onOpenLocalLink,
   sessionJumpSessionId = null,
   sessionJumpRequestKey = 0,
   sessionOpenRequest = null,
@@ -7905,6 +7907,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                         attachments={message.attachments ?? []}
                         onPreviewAttachment={openImageAttachmentPreview}
                         onLinkClick={onOpenLinkInBrowser}
+                        onLocalLinkClick={onOpenLocalLink}
                       />
                     ) : (
                       <AssistantTurn
@@ -7956,6 +7959,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                         collapsedTraceByStepId={collapsedTraceByStepId}
                         onToggleTraceStep={toggleTraceStep}
                         onLinkClick={onOpenLinkInBrowser}
+                        onLocalLinkClick={onOpenLocalLink}
                         footerAccessory={
                           message.id === lastCompletedAssistantMessageId
                             ? sessionBrowserJumpCta
@@ -7994,6 +7998,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                       collapsedTraceByStepId={collapsedTraceByStepId}
                       onToggleTraceStep={toggleTraceStep}
                       onLinkClick={onOpenLinkInBrowser}
+                      onLocalLinkClick={onOpenLocalLink}
                       live
                       statusAccessory={sessionBrowserJumpCta}
                       status={
@@ -8421,12 +8426,14 @@ function UserTurn({
   attachments,
   onPreviewAttachment,
   onLinkClick,
+  onLocalLinkClick,
 }: {
   text: string;
   createdAt?: string;
   attachments: ChatAttachment[];
   onPreviewAttachment?: (attachment: AttachmentListItem) => void;
   onLinkClick?: (url: string) => void;
+  onLocalLinkClick?: (href: string) => void;
 }) {
   const [copyFeedbackVisible, setCopyFeedbackVisible] = useState(false);
   const copyResetTimerRef = useRef<number | null>(null);
@@ -8507,6 +8514,7 @@ function UserTurn({
               <SimpleMarkdown
                 className="chat-markdown chat-user-markdown max-w-full"
                 onLinkClick={onLinkClick}
+                onLocalLinkClick={onLocalLinkClick}
               >
                 {userBubbleText}
               </SimpleMarkdown>
@@ -8788,6 +8796,7 @@ function AssistantTurn({
   collapsedTraceByStepId,
   onToggleTraceStep,
   onLinkClick,
+  onLocalLinkClick,
   status = "",
   live = false,
   statusAccessory = null,
@@ -8820,6 +8829,7 @@ function AssistantTurn({
   collapsedTraceByStepId: Record<string, boolean>;
   onToggleTraceStep: (stepId: string) => void;
   onLinkClick?: (url: string) => void;
+  onLocalLinkClick?: (href: string) => void;
   status?: string;
   live?: boolean;
   statusAccessory?: ReactNode;
@@ -8913,6 +8923,7 @@ function AssistantTurn({
                   .some((nextSegment) => nextSegment.kind === "output")
               }
               onLinkClick={onLinkClick}
+              onLocalLinkClick={onLocalLinkClick}
             />
           ) : segment.tone === "error" ? (
             <div
@@ -8924,6 +8935,7 @@ function AssistantTurn({
                 <SimpleMarkdown
                   className="chat-markdown max-w-full text-foreground"
                   onLinkClick={onLinkClick}
+                  onLocalLinkClick={onLocalLinkClick}
                 >
                   {segment.text}
                 </SimpleMarkdown>
@@ -8934,6 +8946,7 @@ function AssistantTurn({
               key={`output-${index}`}
               className="chat-markdown chat-assistant-markdown mt-2 max-w-full text-foreground"
               onLinkClick={onLinkClick}
+              onLocalLinkClick={onLocalLinkClick}
             >
               {segment.text}
             </SimpleMarkdown>
@@ -9722,9 +9735,11 @@ function TraceTimelineStepEntry({
 function ExecutionTimelineThinkingEntry({
   text,
   onLinkClick,
+  onLocalLinkClick,
 }: {
   text: string;
   onLinkClick?: (url: string) => void;
+  onLocalLinkClick?: (href: string) => void;
 }) {
   return (
     <div className="py-1">
@@ -9732,6 +9747,7 @@ function ExecutionTimelineThinkingEntry({
         <SimpleMarkdown
           className="chat-markdown chat-thinking-markdown max-w-full text-foreground"
           onLinkClick={onLinkClick}
+          onLocalLinkClick={onLocalLinkClick}
         >
           {text}
         </SimpleMarkdown>
@@ -9747,6 +9763,7 @@ function TraceStepGroup({
   live = false,
   liveOutputStarted = false,
   onLinkClick,
+  onLocalLinkClick,
 }: {
   items: ChatExecutionTimelineItem[];
   collapsedByStepId: Record<string, boolean>;
@@ -9754,6 +9771,7 @@ function TraceStepGroup({
   live?: boolean;
   liveOutputStarted?: boolean;
   onLinkClick?: (url: string) => void;
+  onLocalLinkClick?: (href: string) => void;
 }) {
   const steps = traceStepsFromExecutionItems(items);
   const [groupExpanded, setGroupExpanded] = useState(
@@ -9854,6 +9872,7 @@ function TraceStepGroup({
                 key={item.id}
                 text={item.text}
                 onLinkClick={onLinkClick}
+                onLocalLinkClick={onLocalLinkClick}
               />
             ) : (
               <TraceTimelineStepEntry
