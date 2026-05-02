@@ -850,6 +850,11 @@ jobs:
             -f "tag_name=${RELEASE_TAG}" \
             -f "target_commitish=${RELEASE_SHA}" \
             --jq '.body' > "${notes_path}"
+          sed -i.bak \
+            -e '/^\*\*Full Changelog\*\*:/d' \
+            -e '/^Full Changelog:/d' \
+            "${notes_path}"
+          rm -f "${notes_path}.bak"
 
           linux_runtime_asset="release-assets/linux-runtime/holaboss-runtime-linux.tar.gz"
           mac_runtime_asset="release-assets/macos-desktop/holaboss-runtime-macos.tar.gz"

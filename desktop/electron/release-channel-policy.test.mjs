@@ -164,6 +164,10 @@ test("manual CI workflow creates combined desktop releases with bundled runtime 
   assert.match(source, /SOURCE_GH_REPO: \$\{\{ github\.repository \}\}/);
   assert.match(source, /RELEASE_GH_REPO: holaboss-ai\/holaOS-releases/);
   assert.match(source, /repos\/\$\{SOURCE_GH_REPO\}\/releases\/generate-notes/);
+  assert.match(source, /sed -i\.bak \\/);
+  assert.match(source, /-e '\/\^\\\*\\\*Full Changelog\\\*\\\*:\/d' \\/);
+  assert.match(source, /-e '\/\^Full Changelog:\/d' \\/);
+  assert.match(source, /rm -f "\$\{notes_path\}\.bak"/);
   assert.match(source, /tag_name=\$\{RELEASE_TAG\}/);
   assert.match(source, /target_commitish=\$\{RELEASE_SHA\}/);
   assert.match(source, /linux_runtime_asset="release-assets\/linux-runtime\/holaboss-runtime-linux\.tar\.gz"/);
