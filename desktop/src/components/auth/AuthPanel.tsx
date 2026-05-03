@@ -399,6 +399,16 @@ function runtimeConfigHasManagedWebSearchBinding(
   );
 }
 
+function normalizeWebSearchProviderSelection(
+  providerId: WebSearchProviderId,
+  runtimeConfig: RuntimeConfigPayload | null,
+): WebSearchProviderId {
+  return providerId === "holaboss_search" &&
+    !runtimeConfigHasManagedWebSearchBinding(runtimeConfig)
+    ? "exa"
+    : providerId;
+}
+
 function createDefaultWebSearchDraft(): WebSearchDraft {
   return {
     providerId: "exa",
@@ -1270,11 +1280,14 @@ function deriveWebSearchDraftFromDocument(
     webSearchPayload.providerId as string | undefined,
     webSearchPayload.default_provider as string | undefined,
   );
-  const selectedProviderId = configuredProviderId
-    ? webSearchProviderDraftId(configuredProviderId)
-    : runtimeConfigHasManagedWebSearchBinding(runtimeConfig)
-      ? "holaboss_search"
-      : "exa";
+  const selectedProviderId = normalizeWebSearchProviderSelection(
+    configuredProviderId
+      ? webSearchProviderDraftId(configuredProviderId)
+      : runtimeConfigHasManagedWebSearchBinding(runtimeConfig)
+        ? "holaboss_search"
+        : "exa",
+    runtimeConfig,
+  );
   const providersPayload = asRecord(webSearchPayload.providers);
   const storageId = webSearchProviderStorageId(selectedProviderId);
   const providerPayload = asRecord(
@@ -2163,11 +2176,15 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   }
 
   function applyWebSearchProviderSelection(providerId: WebSearchProviderId) {
-    const template = WEB_SEARCH_PROVIDER_TEMPLATES[providerId];
-    updateWebSearchDraft({
+    const nextProviderId = normalizeWebSearchProviderSelection(
       providerId,
+      effectiveRuntimeConfig,
+    );
+    const template = WEB_SEARCH_PROVIDER_TEMPLATES[nextProviderId];
+    updateWebSearchDraft({
+      providerId: nextProviderId,
       baseUrl:
-        isManagedWebSearchProvider(providerId)
+        isManagedWebSearchProvider(nextProviderId)
           ? defaultHolabossSearchBaseUrl(effectiveRuntimeConfig)
           : template.defaultBaseUrl,
       apiKey: "",
@@ -2625,6 +2642,17 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     }
     const template = WEB_SEARCH_PROVIDER_TEMPLATES[webSearchDraft.providerId];
     const managedProvider = isManagedWebSearchProvider(webSearchDraft.providerId);
+    if (
+      managedProvider &&
+      !runtimeConfigHasManagedWebSearchBinding(effectiveRuntimeConfig)
+    ) {
+      setAuthError(
+        "Holaboss Search is unavailable until you refresh your Holaboss runtime binding.",
+      );
+      setAuthMessage("");
+      setWebSearchSaveStatus("error");
+      return;
+    }
     const normalizedBaseUrl = managedProvider ? "" : webSearchDraft.baseUrl.trim();
     if (!managedProvider && !normalizedBaseUrl) {
       setAuthError(`${template.label} requires an endpoint URL.`);
@@ -3428,6 +3456,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const selectedWebSearchProviderManaged = isManagedWebSearchProvider(
     webSearchDraft.providerId,
   );
+  const managedWebSearchAvailable =
+    runtimeConfigHasManagedWebSearchBinding(effectiveRuntimeConfig);
   const webSearchProviderOptions: SettingsMenuOption[] =
     WEB_SEARCH_PROVIDER_ORDER.map((providerId) => {
       const template = WEB_SEARCH_PROVIDER_TEMPLATES[providerId];
@@ -3435,6 +3465,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         value: providerId,
         label: template.label,
         description: template.description,
+        disabled:
+          providerId === "holaboss_search" && !managedWebSearchAvailable,
       };
     });
   const handleDefaultChatModelChange = async (token: string) => {
@@ -3616,7 +3648,11 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         <SettingsCard>
           <SettingsMenuSelectRow
             label="Search provider"
-            description={selectedWebSearchTemplate.description}
+            description={
+              selectedWebSearchProviderManaged && !managedWebSearchAvailable
+                ? "Holaboss Search requires an active Holaboss runtime binding. Sign in or refresh the session to re-enable it."
+                : selectedWebSearchTemplate.description
+            }
             leading={<Search className="size-4 text-muted-foreground" />}
             value={webSearchDraft.providerId}
             onValueChange={(value) =>

@@ -212,6 +212,66 @@ test("Pi web search tool defaults to managed Holaboss search when runtime bindin
   }
 });
 
+test("Pi web search tool preserves sandbox gateway prefixes when deriving Holaboss search URL from control plane config", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "holaboss-web-search-"));
+  const previousConfigPath = process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+  const configPath = path.join(tempDir, "runtime-config.json");
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({
+      control_plane_base_url: "https://api.imerchstaging.com/gateway/sandbox",
+      integrations: {
+        holaboss: {
+          auth_token: "hb-search-key",
+          user_id: "user-1",
+          sandbox_id: "desktop:sandbox-1",
+        },
+      },
+    }),
+  );
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
+
+  try {
+    const requests: Array<{
+      url: string;
+      init?: RequestInit;
+    }> = [];
+    const tools = await resolvePiWebSearchToolDefinitions({
+      fetchImpl: async (input, init) => {
+        requests.push({ url: String(input), init });
+        return new Response(JSON.stringify({ text: "managed result" }), {
+          status: 200,
+          headers: { "content-type": "application/json; charset=utf-8" },
+        });
+      },
+    });
+
+    const result = await tools[0]!.execute(
+      "call-1",
+      { query: "latest alpha 2026", max_results: 2 },
+      undefined,
+      undefined,
+      {} as never,
+    );
+
+    assert.equal(
+      result.content[0]?.type === "text" ? result.content[0].text : "",
+      "managed result",
+    );
+    assert.equal(
+      requests[0]?.url,
+      "https://api.imerchstaging.com/gateway/sandbox/api/v1/search/web",
+    );
+  } finally {
+    if (previousConfigPath === undefined) {
+      delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+    } else {
+      process.env.HOLABOSS_RUNTIME_CONFIG_PATH = previousConfigPath;
+    }
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("Pi web search tool derives local Holaboss search URL from model proxy config", async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "holaboss-web-search-"));
   const previousConfigPath = process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
@@ -263,7 +323,7 @@ test("Pi web search tool derives local Holaboss search URL from model proxy conf
     );
 
     assert.equal(result.content[0]?.type === "text" ? result.content[0].text : "", "managed result");
-    assert.equal(requests[0]?.url, "http://127.0.0.1:3038/api/v1/search/web");
+    assert.equal(requests[0]?.url, "http://127.0.0.1:3060/api/v1/search/web");
     assert.deepEqual(requests[0]?.init?.headers, {
       accept: "application/json",
       "content-type": "application/json",
@@ -276,6 +336,143 @@ test("Pi web search tool derives local Holaboss search URL from model proxy conf
     assert.deepEqual(result.details, {
       tool_id: "web_search",
       provider: "holaboss_search",
+    });
+  } finally {
+    if (previousConfigPath === undefined) {
+      delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+    } else {
+      process.env.HOLABOSS_RUNTIME_CONFIG_PATH = previousConfigPath;
+    }
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Pi web search tool preserves sandbox gateway prefixes when deriving Holaboss search URL from model proxy config", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "holaboss-web-search-"));
+  const previousConfigPath = process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+  const configPath = path.join(tempDir, "runtime-config.json");
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({
+      model_proxy_base_url:
+        "https://api.imerchstaging.com/gateway/sandbox/api/v1/model-proxy",
+      integrations: {
+        holaboss: {
+          auth_token: "hb-search-key",
+          user_id: "user-1",
+          sandbox_id: "desktop:sandbox-1",
+        },
+      },
+      web_search: {
+        provider: "holaboss_search",
+        providers: {
+          holaboss_search: {
+            kind: "holaboss_search",
+          },
+        },
+      },
+    })
+  );
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
+
+  try {
+    const requests: Array<{
+      url: string;
+      init?: RequestInit;
+    }> = [];
+    const tools = await resolvePiWebSearchToolDefinitions({
+      fetchImpl: async (input, init) => {
+        requests.push({ url: String(input), init });
+        return new Response(JSON.stringify({ text: "managed result" }), {
+          status: 200,
+          headers: { "content-type": "application/json; charset=utf-8" },
+        });
+      },
+    });
+
+    const result = await tools[0]!.execute(
+      "call-1",
+      { query: "latest alpha 2026", max_results: 2 },
+      undefined,
+      undefined,
+      {} as never
+    );
+
+    assert.equal(
+      result.content[0]?.type === "text" ? result.content[0].text : "",
+      "managed result"
+    );
+    assert.equal(
+      requests[0]?.url,
+      "https://api.imerchstaging.com/gateway/sandbox/api/v1/search/web"
+    );
+  } finally {
+    if (previousConfigPath === undefined) {
+      delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+    } else {
+      process.env.HOLABOSS_RUNTIME_CONFIG_PATH = previousConfigPath;
+    }
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Pi web search tool falls back to Exa when stale Holaboss search config has no managed binding", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "holaboss-web-search-"));
+  const previousConfigPath = process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+  const configPath = path.join(tempDir, "runtime-config.json");
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({
+      control_plane_base_url: "https://api.imerchstaging.com/gateway/sandbox",
+      web_search: {
+        provider: "holaboss_search",
+        providers: {
+          holaboss_search: {
+            kind: "holaboss_search",
+          },
+          exa: {
+            kind: "exa_hosted_mcp",
+          },
+        },
+      },
+    }),
+  );
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
+
+  try {
+    const requests: Array<{
+      url: string;
+      init?: RequestInit;
+    }> = [];
+    const tools = await resolvePiWebSearchToolDefinitions({
+      fetchImpl: async (input, init) => {
+        requests.push({ url: String(input), init });
+        return new Response(
+          'event: message\ndata: {"result":{"content":[{"type":"text","text":"exa fallback result"}]},"jsonrpc":"2.0","id":1}\n',
+          {
+            status: 200,
+            headers: { "content-type": "text/event-stream; charset=utf-8" },
+          },
+        );
+      },
+    });
+
+    const result = await tools[0]!.execute(
+      "call-1",
+      { query: "latest alpha 2026", max_results: 2 },
+      undefined,
+      undefined,
+      {} as never,
+    );
+
+    assert.equal(
+      result.content[0]?.type === "text" ? result.content[0].text : "",
+      "exa fallback result",
+    );
+    assert.equal(requests[0]?.url, "https://mcp.exa.ai/mcp");
+    assert.deepEqual(result.details, {
+      tool_id: "web_search",
+      provider: "exa_hosted_mcp",
     });
   } finally {
     if (previousConfigPath === undefined) {

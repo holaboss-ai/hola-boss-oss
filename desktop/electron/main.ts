@@ -1460,11 +1460,10 @@ const BACKEND_BASE_URL = configuredRemoteBaseUrl(
   packagedDesktopConfig.backendBaseUrl,
 );
 const DESKTOP_CONTROL_PLANE_BASE_URL =
-  serviceBaseUrlFromControlPlane(BACKEND_BASE_URL, 3060) ||
   configuredRemoteBaseUrl(
     ["HOLABOSS_DESKTOP_CONTROL_PLANE_BASE_URL"],
     packagedDesktopConfig.desktopControlPlaneBaseUrl,
-  );
+  ) || serviceBaseUrlFromControlPlane(BACKEND_BASE_URL, 3060);
 const AUTH_SIGN_IN_URL = configuredRemoteBaseUrl(
   ["HOLABOSS_AUTH_SIGN_IN_URL"],
   packagedDesktopConfig.authSignInUrl,
