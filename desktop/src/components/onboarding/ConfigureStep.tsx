@@ -1,11 +1,17 @@
-import { ArrowRight, FolderOpen, X } from "lucide-react";
+import { Folder, FolderOpen, X } from "lucide-react";
+
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { IntegrationsList } from "./IntegrationsList";
 import { TemplateCard } from "./TemplateCard";
+import {
+  WizardField,
+  WorkspaceWizardLayout,
+} from "./WorkspaceWizardLayout";
 
 interface ConfigureStepProps {
+  stepIndex: number;
+  stepTotal: number;
   templateSourceMode: string;
   selectedMarketplaceTemplate: TemplateMetadataPayload | null;
   selectedTemplateFolder: TemplateFolderSelectionPayload | null;
@@ -30,6 +36,8 @@ interface ConfigureStepProps {
 }
 
 export function ConfigureStep({
+  stepIndex,
+  stepTotal,
   templateSourceMode,
   selectedMarketplaceTemplate,
   selectedTemplateFolder,
@@ -52,127 +60,119 @@ export function ConfigureStep({
   onConnect,
   onContinue,
 }: ConfigureStepProps) {
+  const primaryDisabled =
+    continueDisabled ||
+    hasUnconnectedIntegrations ||
+    isResolvingIntegrations ||
+    connectingProvider !== null;
+
   return (
-    <div>
-      <div className="max-w-3xl">
-        <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
-          New workspace
-        </p>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-          Configure &amp; launch
-        </h1>
-      </div>
+    <WorkspaceWizardLayout
+      description="Pick a name and where the workspace files live. We'll set up the rest."
+      errorMessage={workspaceErrorMessage || null}
+      primary={{
+        label: "Continue",
+        onClick: onContinue,
+        disabled: primaryDisabled,
+      }}
+      secondary={
+        stepIndex > 1
+          ? {
+              label: "Back",
+              onClick: onChangeKit,
+            }
+          : undefined
+      }
+      stepIndex={stepIndex}
+      stepTotal={stepTotal}
+      tertiary={{ label: "Cancel", onClick: onCancel }}
+      title="Name your workspace"
+      width="md"
+    >
+      <div className="space-y-5">
+        {/* Source summary */}
+        <TemplateCard
+          onChangeFolder={onChangeFolder}
+          onChangeKit={onChangeKit}
+          selectedMarketplaceTemplate={selectedMarketplaceTemplate}
+          selectedTemplateFolder={selectedTemplateFolder}
+          templateSourceMode={templateSourceMode}
+        />
 
-      <TemplateCard
-        templateSourceMode={templateSourceMode}
-        selectedMarketplaceTemplate={selectedMarketplaceTemplate}
-        selectedTemplateFolder={selectedTemplateFolder}
-        onChangeKit={onChangeKit}
-        onChangeFolder={onChangeFolder}
-      />
+        <WizardField htmlFor="workspace-name" label="Workspace name" required>
+          <div className="rounded-lg bg-fg-2 shadow-subtle-xs transition-colors focus-within:bg-background focus-within:shadow-subtle-sm">
+            <Input
+              autoFocus
+              className="h-10 border-0 bg-transparent shadow-none focus-visible:ring-0"
+              id="workspace-name"
+              onChange={(e) => setNewWorkspaceName(e.target.value)}
+              placeholder="My first workspace"
+              value={newWorkspaceName}
+            />
+          </div>
+        </WizardField>
 
-      <div className="mt-6 grid gap-5" style={{ maxWidth: 480 }}>
-        <div className="grid gap-2">
-          <Label
-            htmlFor="workspace-name"
-            className="text-xs uppercase tracking-widest text-muted-foreground"
-          >
-            Workspace name
-          </Label>
-          <Input
-            id="workspace-name"
-            value={newWorkspaceName}
-            onChange={(e) => setNewWorkspaceName(e.target.value)}
-            placeholder="My first workspace"
-            className="h-10"
-          />
-        </div>
-
-        <div className="grid gap-2">
-          <Label className="text-xs uppercase tracking-widest text-muted-foreground">
-            Workspace folder
-            <span className="ml-2 text-muted-foreground normal-case tracking-normal">
-              optional
-            </span>
-          </Label>
+        <WizardField
+          help={
+            selectedWorkspaceFolder?.rootPath ? (
+              "Workspace files will live in the folder above."
+            ) : defaultWorkspaceRoot ? (
+              <>
+                Defaults to{" "}
+                <code className="rounded bg-fg-4 px-1 py-0.5 font-mono text-[11px]">
+                  {defaultWorkspaceRoot}/workspace/&lt;id&gt;
+                </code>
+                . Pick a folder if you'd rather keep the files somewhere you
+                control.
+              </>
+            ) : (
+              "Pick an empty folder if you'd rather keep the workspace files on a drive you control."
+            )
+          }
+          label="Workspace folder"
+          optional
+        >
           {selectedWorkspaceFolder?.rootPath ? (
-            <div className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2">
-              <FolderOpen size={14} className="shrink-0 text-muted-foreground" />
-              <span className="flex-1 truncate text-sm text-foreground" title={selectedWorkspaceFolder.rootPath}>
+            <div className="flex items-center gap-2 rounded-lg bg-fg-2 px-3 py-2 shadow-subtle-xs">
+              <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
+              <span
+                className="flex-1 truncate text-sm text-foreground"
+                title={selectedWorkspaceFolder.rootPath}
+              >
                 {selectedWorkspaceFolder.rootPath}
               </span>
               <Button
-                variant="ghost"
-                size="sm"
-                onClick={onClearWorkspaceFolder}
-                className="h-7 px-2 text-muted-foreground hover:bg-accent"
                 aria-label="Clear workspace folder"
+                onClick={onClearWorkspaceFolder}
+                size="icon-xs"
+                type="button"
+                variant="ghost"
               >
-                <X size={14} />
+                <X />
               </Button>
             </div>
           ) : (
             <Button
-              variant="outline"
-              size="sm"
+              className="w-full justify-start"
               onClick={onChooseWorkspaceFolder}
-              className="h-9 justify-start gap-2 font-normal"
+              size="lg"
+              type="button"
+              variant="bordered"
             >
-              <FolderOpen size={14} />
+              <Folder className="text-muted-foreground" />
               Choose an empty folder…
             </Button>
           )}
-          <p className="text-xs text-muted-foreground">
-            {selectedWorkspaceFolder?.rootPath ? (
-              <>Your workspace's files will be stored in the folder above.</>
-            ) : defaultWorkspaceRoot ? (
-              <>
-                Defaults to{" "}
-                <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
-                  {defaultWorkspaceRoot}/workspace/&lt;id&gt;
-                </code>
-                . Pick a folder if you'd rather keep the files somewhere you control.
-              </>
-            ) : (
-              <>Pick an empty folder if you'd rather keep the workspace files on a drive you control.</>
-            )}
-          </p>
-        </div>
+        </WizardField>
+
+        <IntegrationsList
+          connectStatus={connectStatus}
+          connectingProvider={connectingProvider}
+          isResolvingIntegrations={isResolvingIntegrations}
+          onConnect={onConnect}
+          pendingIntegrations={pendingIntegrations}
+        />
       </div>
-
-      <IntegrationsList
-        pendingIntegrations={pendingIntegrations}
-        isResolvingIntegrations={isResolvingIntegrations}
-        connectingProvider={connectingProvider}
-        connectStatus={connectStatus}
-        onConnect={onConnect}
-      />
-
-      {workspaceErrorMessage ? (
-        <div className="mt-4 rounded-xl border border-destructive/25 bg-destructive/5 px-4 py-3 text-sm text-destructive" style={{ maxWidth: 480 }}>
-          {workspaceErrorMessage}
-        </div>
-      ) : null}
-
-      <div className="mt-5 flex items-center gap-3">
-        <Button
-          disabled={
-            continueDisabled ||
-            hasUnconnectedIntegrations ||
-            isResolvingIntegrations ||
-            connectingProvider !== null
-          }
-          onClick={onContinue}
-          size="lg"
-          className="h-11 gap-2 rounded-xl px-5"
-        >
-          Next
-          <ArrowRight size={16} />
-        </Button>
-        <Button variant="link" size="sm" onClick={onCancel} className="text-muted-foreground">
-          Cancel
-        </Button>
-      </div>
-    </div>
+    </WorkspaceWizardLayout>
   );
 }

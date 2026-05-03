@@ -1,16 +1,17 @@
 import { X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { firstWorkspacePaneSectionClassName } from "@/components/layout/firstWorkspacePaneLayout";
-import { MarketplaceGallery } from "@/components/marketplace/MarketplaceGallery";
+import { Button } from "@/components/ui/button";
 import { KitDetail } from "@/components/marketplace/KitDetail";
+import { MarketplaceGallery } from "@/components/marketplace/MarketplaceGallery";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { BrowserProfileStep } from "./BrowserProfileStep";
-import { ConnectIntegrationsStep } from "./ConnectIntegrationsStep";
 import { ConfigureStep } from "./ConfigureStep";
+import { ConnectIntegrationsStep } from "./ConnectIntegrationsStep";
 import { CreatingView } from "./CreatingView";
-import { SelectAppsStep } from "./SelectAppsStep";
-import { PROVIDER_DISPLAY_NAMES } from "./constants";
 import { OnboardingUserButton } from "./OnboardingUserButton";
+import { PROVIDER_DISPLAY_NAMES } from "./constants";
+import { SelectAppsStep } from "./SelectAppsStep";
 
 type OnboardingStep =
   | "gallery"
@@ -26,6 +27,20 @@ const IMPORT_PROFILE_LIST_HANDLER_MISSING_MESSAGE =
 interface FirstWorkspacePaneProps {
   variant?: "full" | "panel";
   onClose?: () => void;
+}
+
+/**
+ * Wizard-step ordering. Marketplace flows with optional apps add a
+ * `select_apps` step at the front; everything else starts on `configure`.
+ * `connect_integrations` is a side path off `configure` and shares the final
+ * step slot when surfaced.
+ */
+function buildWizardSteps(
+  hasOptionalApps: boolean,
+): Array<"select_apps" | "configure" | "browser_profile"> {
+  return hasOptionalApps
+    ? ["select_apps", "configure", "browser_profile"]
+    : ["configure", "browser_profile"];
 }
 
 export function FirstWorkspacePane({
@@ -87,7 +102,6 @@ export function FirstWorkspacePane({
 
   const isPanelVariant = variant === "panel";
 
-  // Auto-resolve integrations when entering configure step
   const configureStepActive = step === "configure";
   const prevConfigureRef = useRef(false);
   useEffect(() => {
@@ -129,7 +143,9 @@ export function FirstWorkspacePane({
         setImportProfiles(profiles);
         if (
           profiles.length > 0 &&
-          !profiles.some((profile) => profile.profileDir === browserImportProfileDir)
+          !profiles.some(
+            (profile) => profile.profileDir === browserImportProfileDir,
+          )
         ) {
           setBrowserImportProfileDir(profiles[0]?.profileDir ?? "");
         }
@@ -138,8 +154,7 @@ export function FirstWorkspacePane({
         if (cancelled) {
           return;
         }
-        const message =
-          error instanceof Error ? error.message : String(error);
+        const message = error instanceof Error ? error.message : String(error);
         if (message.includes(IMPORT_PROFILE_LIST_HANDLER_MISSING_MESSAGE)) {
           setImportProfiles([]);
           setImportProfilesError(
@@ -163,11 +178,7 @@ export function FirstWorkspacePane({
     return () => {
       cancelled = true;
     };
-  }, [
-    step,
-    browserBootstrapMode,
-    browserImportSource,
-  ]);
+  }, [step, browserBootstrapMode, browserImportSource]);
 
   const hasUnconnectedIntegrations = pendingIntegrations
     ? pendingIntegrations.missing_providers.length > 0
@@ -175,13 +186,10 @@ export function FirstWorkspacePane({
 
   async function handleConnectProvider(provider: string) {
     setConnectingProvider(provider);
-    setConnectStatus("Complete authorization in your browser...");
+    setConnectStatus("Complete authorization in your browser…");
     try {
       const runtimeConfig = await window.electronAPI.runtime.getConfig();
       const userId = runtimeConfig.userId ?? "local";
-      // Snapshot existing connection ids before initiating — see
-      // IntegrationsPane comment: poll the list and look for a new id,
-      // since the id from /link isn't reliably queryable.
       let beforeIds = new Set<string>();
       try {
         const before =
@@ -239,28 +247,14 @@ export function FirstWorkspacePane({
     }
   }
 
-  const sectionClassName = isPanelVariant
-    ? [
-        "relative",
-        "h-full",
-        "min-h-0",
-        "min-w-0",
-        "overflow-hidden",
-        "px-3",
-        "py-3",
-        "sm:px-4",
-        "sm:py-4",
-      ].join(" ")
-    : firstWorkspacePaneSectionClassName(step);
+  const sectionClassName = firstWorkspacePaneSectionClassName(step);
   const creatingViaMarketplace =
     templateSourceMode === "marketplace" && canUseMarketplaceTemplates;
 
-  // --- Auth helper ---
   const openAuthPopup = () => {
     void window.electronAPI.auth.requestAuth();
   };
 
-  // --- Step handlers ---
   function handleSelectKitFromGallery(template: TemplateMetadataPayload) {
     setDetailKit(template);
     setStep("detail");
@@ -272,7 +266,6 @@ export function FirstWorkspacePane({
     if (!newWorkspaceName.trim()) {
       setNewWorkspaceName(template.name);
     }
-    // Route to app selection if template has optional apps
     const hasOptional = template.apps.some((a) => !a.required);
     setStep(hasOptional ? "select_apps" : "configure");
   }
@@ -287,6 +280,20 @@ export function FirstWorkspacePane({
       setStep("configure");
     });
   }
+
+  // Wizard step counter — derived per render so the indicator stays correct
+  // when the user backs out and switches templates.
+  const hasOptionalApps =
+    templateSourceMode === "marketplace" && selectedMarketplaceTemplate
+      ? selectedMarketplaceTemplate.apps.some((a) => !a.required)
+      : false;
+  const wizardSteps = useMemo(
+    () => buildWizardSteps(hasOptionalApps),
+    [hasOptionalApps],
+  );
+  const wizardStepTotal = wizardSteps.length;
+  const wizardStepIndex = (id: "select_apps" | "configure" | "browser_profile") =>
+    Math.max(1, wizardSteps.indexOf(id) + 1);
 
   const configureContinueDisabled =
     !newWorkspaceName.trim() ||
@@ -307,169 +314,214 @@ export function FirstWorkspacePane({
     (templateSourceMode === "marketplace" &&
       (!canUseMarketplaceTemplates || !selectedMarketplaceTemplate));
 
+  // KitDetail surfaces its own "Back to templates" link, and wizard steps own
+  // their action bar back button — so the slim header just carries workspace
+  // identity (matches PublishScreen).
+  const stepLabel = (() => {
+    if (isCreatingWorkspace) {
+      return "Creating workspace";
+    }
+    if (step === "gallery") {
+      return "Pick a template";
+    }
+    if (step === "detail") {
+      return "Template detail";
+    }
+    if (step === "connect_integrations") {
+      return "Connect integrations";
+    }
+    return `New workspace`;
+  })();
+
+  const isWide = step === "gallery" || step === "detail";
+
   const content = isCreatingWorkspace ? (
     <CreatingView
-      sectionClassName={sectionClassName}
-      creatingViaMarketplace={creatingViaMarketplace}
-      showUserButton={!isPanelVariant}
-      panelVariant={isPanelVariant}
       browserBootstrapMode={browserBootstrapMode}
+      creatingViaMarketplace={creatingViaMarketplace}
+      panelVariant={isPanelVariant}
+      sectionClassName={sectionClassName}
+      showUserButton={!isPanelVariant}
       workspaceCreatePhase={workspaceCreatePhase}
     />
   ) : (
     <section className={sectionClassName}>
-      {!isPanelVariant ? (
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_16%_12%,rgba(247,90,84,0.08),transparent_28%),radial-gradient(circle_at_86%_14%,rgba(233,117,109,0.08),transparent_30%)]" />
-      ) : null}
-      {!isPanelVariant ? (
-        <div className="absolute right-4 top-4 z-10">
-          <OnboardingUserButton />
+      {isWide ? (
+        // Gallery + detail keep their own width; the canvas just provides
+        // padding and scroll.
+        <div className="mx-auto w-full max-w-6xl flex-1 px-5 pb-8">
+          <div className="rounded-2xl bg-background px-7 py-7 shadow-subtle-sm sm:px-9 sm:py-8">
+            {step === "gallery" ? (
+              <MarketplaceGallery
+                authenticated={canUseMarketplaceTemplates}
+                error={marketplaceTemplatesError || undefined}
+                isLoading={isLoadingMarketplaceTemplates}
+                mode="pick"
+                onRetry={retryMarketplaceTemplates}
+                onSelectKit={handleSelectKitFromGallery}
+                onSignIn={openAuthPopup}
+                onStartFromScratch={handleStartFromScratch}
+                onUseLocalTemplate={handleUseLocalTemplate}
+                templates={marketplaceTemplates}
+              />
+            ) : step === "detail" && detailKit ? (
+              <KitDetail
+                onBack={() => setStep("gallery")}
+                onSelect={handleUseKit}
+                onSignIn={openAuthPopup}
+                selectDisabled={!canUseMarketplaceTemplates}
+                selectDisabledReason="Sign in required"
+                template={detailKit}
+              />
+            ) : null}
+          </div>
         </div>
+      ) : step === "select_apps" && selectedMarketplaceTemplate ? (
+        <SelectAppsStep
+          onBack={() => setStep("detail")}
+          onContinue={() => setStep("configure")}
+          onToggleApp={(appName) => {
+            const app = selectedMarketplaceTemplate.apps.find(
+              (a) => a.name === appName,
+            );
+            if (app?.required) {
+              return;
+            }
+            setSelectedApps((prev) => {
+              const next = new Set(prev);
+              if (next.has(appName)) {
+                next.delete(appName);
+              } else {
+                next.add(appName);
+              }
+              return next;
+            });
+          }}
+          selectedApps={selectedApps}
+          stepIndex={wizardStepIndex("select_apps")}
+          stepTotal={wizardStepTotal}
+          template={selectedMarketplaceTemplate}
+        />
+      ) : step === "configure" ? (
+        <ConfigureStep
+          connectStatus={connectStatus}
+          connectingProvider={connectingProvider}
+          continueDisabled={configureContinueDisabled}
+          defaultWorkspaceRoot={runtimeStatus?.sandboxRoot ?? null}
+          hasUnconnectedIntegrations={hasUnconnectedIntegrations}
+          isResolvingIntegrations={isResolvingIntegrations}
+          newWorkspaceName={newWorkspaceName}
+          onCancel={() => setStep("gallery")}
+          onChangeFolder={() => void chooseTemplateFolder()}
+          onChangeKit={() => setStep("gallery")}
+          onChooseWorkspaceFolder={() => void chooseWorkspaceFolder()}
+          onClearWorkspaceFolder={clearSelectedWorkspaceFolder}
+          onConnect={(provider) => void handleConnectProvider(provider)}
+          onContinue={() => setStep("browser_profile")}
+          pendingIntegrations={pendingIntegrations}
+          selectedMarketplaceTemplate={selectedMarketplaceTemplate}
+          selectedTemplateFolder={selectedTemplateFolder}
+          selectedWorkspaceFolder={selectedWorkspaceFolder}
+          setNewWorkspaceName={setNewWorkspaceName}
+          stepIndex={wizardStepIndex("configure")}
+          stepTotal={wizardStepTotal}
+          templateSourceMode={templateSourceMode}
+          workspaceErrorMessage={workspaceErrorMessage}
+        />
+      ) : step === "browser_profile" ? (
+        <BrowserProfileStep
+          browserBootstrapMode={browserBootstrapMode}
+          browserBootstrapSourceWorkspaceId={browserBootstrapSourceWorkspaceId}
+          browserImportProfileDir={browserImportProfileDir}
+          browserImportSource={browserImportSource}
+          copySourceWorkspaces={workspaces}
+          createDisabled={browserStepCreateDisabled}
+          importProfiles={importProfiles}
+          importProfilesError={importProfilesError}
+          importProfilesLoading={importProfilesLoading}
+          onBack={() => setStep("configure")}
+          onCancel={() => setStep("gallery")}
+          onCreate={() => void createWorkspace()}
+          setBrowserBootstrapMode={setBrowserBootstrapMode}
+          setBrowserBootstrapSourceWorkspaceId={
+            setBrowserBootstrapSourceWorkspaceId
+          }
+          setBrowserImportProfileDir={setBrowserImportProfileDir}
+          setBrowserImportSource={setBrowserImportSource}
+          stepIndex={wizardStepIndex("browser_profile")}
+          stepTotal={wizardStepTotal}
+          workspaceErrorMessage={workspaceErrorMessage}
+        />
+      ) : step === "connect_integrations" && pendingIntegrations ? (
+        <ConnectIntegrationsStep
+          connectStatus={connectStatus}
+          connectingProvider={connectingProvider}
+          onBack={() => {
+            clearPendingIntegrations();
+            setStep("configure");
+          }}
+          onConnect={(provider) => void handleConnectProvider(provider)}
+          pendingIntegrations={pendingIntegrations}
+          stepIndex={wizardStepIndex("configure")}
+          stepTotal={wizardStepTotal}
+        />
       ) : null}
-      <div
-        className={`w-full ${isPanelVariant ? "h-full max-w-[1020px]" : "max-w-[1080px]"}`}
-      >
-        <div
-          className={`theme-shell w-full rounded-xl border border-border px-6 py-6 shadow-lg sm:px-8 sm:py-7 lg:px-10 lg:py-8 ${
-            isPanelVariant ? "h-full overflow-hidden" : ""
-          }`}
-        >
-          {step === "gallery" ? (
-            <MarketplaceGallery
-              mode="pick"
-              templates={marketplaceTemplates}
-              isLoading={isLoadingMarketplaceTemplates}
-              authenticated={canUseMarketplaceTemplates}
-              error={marketplaceTemplatesError || undefined}
-              onSelectKit={handleSelectKitFromGallery}
-              onRetry={retryMarketplaceTemplates}
-              onSignIn={openAuthPopup}
-              onStartFromScratch={handleStartFromScratch}
-              onUseLocalTemplate={handleUseLocalTemplate}
-            />
-          ) : step === "detail" && detailKit ? (
-            <KitDetail
-              template={detailKit}
-              onBack={() => setStep("gallery")}
-              onSelect={handleUseKit}
-              selectDisabled={!canUseMarketplaceTemplates}
-              selectDisabledReason="Sign in required"
-              onSignIn={openAuthPopup}
-            />
-          ) : step === "select_apps" && selectedMarketplaceTemplate ? (
-            <SelectAppsStep
-              template={selectedMarketplaceTemplate}
-              selectedApps={selectedApps}
-              onToggleApp={(appName) => {
-                const app = selectedMarketplaceTemplate.apps.find(
-                  (a) => a.name === appName,
-                );
-                if (app?.required) {
-                  return;
-                }
-                setSelectedApps((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(appName)) {
-                    next.delete(appName);
-                  } else {
-                    next.add(appName);
-                  }
-                  return next;
-                });
-              }}
-              onBack={() => setStep("detail")}
-              onContinue={() => setStep("configure")}
-            />
-          ) : step === "configure" ? (
-            <ConfigureStep
-              templateSourceMode={templateSourceMode}
-              selectedMarketplaceTemplate={selectedMarketplaceTemplate}
-              selectedTemplateFolder={selectedTemplateFolder}
-              selectedWorkspaceFolder={selectedWorkspaceFolder}
-              newWorkspaceName={newWorkspaceName}
-              setNewWorkspaceName={setNewWorkspaceName}
-              pendingIntegrations={pendingIntegrations}
-              isResolvingIntegrations={isResolvingIntegrations}
-              connectingProvider={connectingProvider}
-              connectStatus={connectStatus}
-              workspaceErrorMessage={workspaceErrorMessage}
-              continueDisabled={configureContinueDisabled}
-              hasUnconnectedIntegrations={hasUnconnectedIntegrations}
-              onChangeKit={() => setStep("gallery")}
-              onChangeFolder={() => void chooseTemplateFolder()}
-              onChooseWorkspaceFolder={() => void chooseWorkspaceFolder()}
-              onClearWorkspaceFolder={clearSelectedWorkspaceFolder}
-              defaultWorkspaceRoot={runtimeStatus?.sandboxRoot ?? null}
-              onCancel={() => setStep("gallery")}
-              onConnect={(provider) => void handleConnectProvider(provider)}
-              onContinue={() => setStep("browser_profile")}
-            />
-          ) : step === "browser_profile" ? (
-            <BrowserProfileStep
-              browserBootstrapMode={browserBootstrapMode}
-              setBrowserBootstrapMode={setBrowserBootstrapMode}
-              browserBootstrapSourceWorkspaceId={browserBootstrapSourceWorkspaceId}
-              setBrowserBootstrapSourceWorkspaceId={setBrowserBootstrapSourceWorkspaceId}
-              copySourceWorkspaces={workspaces}
-              browserImportSource={browserImportSource}
-              setBrowserImportSource={setBrowserImportSource}
-              browserImportProfileDir={browserImportProfileDir}
-              setBrowserImportProfileDir={setBrowserImportProfileDir}
-              importProfiles={importProfiles}
-              importProfilesLoading={importProfilesLoading}
-              importProfilesError={importProfilesError}
-              workspaceErrorMessage={workspaceErrorMessage}
-              createDisabled={browserStepCreateDisabled}
-              onBack={() => setStep("configure")}
-              onCancel={() => setStep("gallery")}
-              onCreate={() => void createWorkspace()}
-            />
-          ) : step === "connect_integrations" && pendingIntegrations ? (
-            <ConnectIntegrationsStep
-              pendingIntegrations={pendingIntegrations}
-              connectingProvider={connectingProvider}
-              connectStatus={connectStatus}
-              onConnect={(provider) => void handleConnectProvider(provider)}
-              onBack={() => {
-                clearPendingIntegrations();
-                setStep("configure");
-              }}
-            />
-          ) : null}
-        </div>
-      </div>
     </section>
   );
 
-  if (!isPanelVariant) {
-    return content;
+  // ---------------------------------------------------------------------------
+  // Outer chrome: full-screen bg-fg-2 canvas with macOS title bar + slim header.
+  // ---------------------------------------------------------------------------
+  const shellInner = (
+    <div className="relative z-10 flex min-h-0 flex-1 flex-col">
+      <div className="titlebar-drag-region pointer-events-none fixed top-0 right-0 left-0 z-10 h-[38px]" />
+
+      <header className="relative z-20 flex shrink-0 items-center justify-between gap-3 px-5 pt-[44px] pb-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-xs text-muted-foreground">
+            {stepLabel}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          {isPanelVariant ? (
+            <Button
+              aria-label="Close create workspace"
+              onClick={onClose}
+              size="icon"
+              type="button"
+              variant="ghost"
+            >
+              <X />
+            </Button>
+          ) : (
+            <OnboardingUserButton />
+          )}
+        </div>
+      </header>
+
+      {content}
+    </div>
+  );
+
+  if (isPanelVariant) {
+    return (
+      <div className="pointer-events-none fixed inset-0 z-40">
+        <button
+          aria-label="Close create workspace"
+          className="pointer-events-auto absolute inset-0 bg-scrim backdrop-blur-sm"
+          onClick={onClose}
+          type="button"
+        />
+        <div className="pointer-events-auto absolute inset-0 flex min-h-0 flex-col bg-fg-2">
+          {shellInner}
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-40 grid place-items-center px-4 py-6">
-      <button
-        type="button"
-        aria-label="Close create workspace"
-        onClick={onClose}
-        className="pointer-events-auto absolute inset-0 bg-scrim backdrop-blur-sm"
-      />
-
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Create workspace"
-        className="pointer-events-auto relative z-10 h-[min(860px,calc(100vh-44px))] w-[min(1120px,calc(100vw-32px))]"
-      >
-        <button
-          type="button"
-          aria-label="Close create workspace"
-          onClick={onClose}
-          className="absolute right-6 top-6 z-30 grid h-10 w-10 place-items-center rounded-full border border-black/15 bg-white/95 text-foreground shadow-md backdrop-blur transition hover:bg-white"
-        >
-          <X size={16} />
-        </button>
-        {content}
-      </div>
+    <div className="fixed inset-0 z-30 flex min-h-0 flex-col bg-fg-2">
+      {shellInner}
     </div>
   );
 }

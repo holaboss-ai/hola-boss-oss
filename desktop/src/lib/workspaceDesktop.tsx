@@ -641,12 +641,23 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
         if (!selectedMarketplaceTemplate) {
           throw new Error("Choose a marketplace template first.");
         }
+        // Without template_apps the main process skips install_template_apps
+        // entirely and apps stay stuck at "Initializing" forever. Fall back to
+        // ALL template apps when the per-app selection state is empty —
+        // selectedApps is only populated by selectMarketplaceTemplate, so an
+        // HMR reset / deeplink can leave it empty even though the user picked
+        // a template.
+        const submittedApps =
+          selectedApps.size > 0
+            ? [...selectedApps]
+            : selectedMarketplaceTemplate.apps.map((a) => a.name);
         response = await window.electronAPI.workspace.createWorkspace({
           holaboss_user_id: resolvedUserId,
           harness: selectedCreateHarness,
           name: trimmedWorkspaceName,
           template_mode: "template",
           template_name: selectedMarketplaceTemplate.name,
+          template_apps: submittedApps,
           ...(customWorkspacePath ? { workspace_path: customWorkspacePath } : {})
         });
       } else if (templateSourceMode === "empty" || templateSourceMode === "empty_onboarding") {
