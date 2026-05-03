@@ -44,7 +44,7 @@ import { SubagentSessionsPane } from "@/components/panes/SubagentSessionsPane";
 import { SpaceApplicationsExplorerPane } from "@/components/panes/SpaceApplicationsExplorerPane";
 import { SpaceBrowserDisplayPane } from "@/components/panes/SpaceBrowserDisplayPane";
 import { SpaceBrowserExplorerPane } from "@/components/panes/SpaceBrowserExplorerPane";
-import { PublishDialog } from "@/components/publish/PublishDialog";
+import { PublishScreen } from "@/components/publish/PublishScreen";
 import { Button } from "@/components/ui/button";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
 import { StoplightProvider } from "@/lib/StoplightContext";
@@ -1424,6 +1424,7 @@ function AppShellContent() {
   const [settingsDialogSection, setSettingsDialogSection] =
     useState<UiSettingsPaneSection>("settings");
   const [publishOpen, setPublishOpen] = useState(false);
+  const [submissionsFocusId, setSubmissionsFocusId] = useState<string | null>(null);
   const [createWorkspacePanelOpen, setCreateWorkspacePanelOpen] =
     useState(false);
   const [workspaceAppsDialogOpen, setWorkspaceAppsDialogOpen] = useState(false);
@@ -5044,19 +5045,33 @@ function AppShellContent() {
         open={settingsDialogOpen}
         activeSection={settingsDialogSection}
         appVersion={effectiveAppUpdateStatus?.currentVersion || ""}
-        onSectionChange={setSettingsDialogSection}
-        onClose={() => setSettingsDialogOpen(false)}
+        onSectionChange={(section) => {
+          setSettingsDialogSection(section);
+          if (section !== "submissions") {
+            setSubmissionsFocusId(null);
+          }
+        }}
+        onClose={() => {
+          setSettingsDialogOpen(false);
+          setSubmissionsFocusId(null);
+        }}
         colorScheme={colorScheme}
         onColorSchemeChange={handleColorSchemeChange}
         themeVariant={themeVariant}
         themeVariants={THEME_VARIANTS}
         onThemeVariantChange={handleThemeVariantChange}
         onOpenExternalUrl={handleOpenExternalUrl}
+        submissionsFocusId={submissionsFocusId}
       />
       {selectedWorkspaceId && (
-        <PublishDialog
-          open={publishOpen}
+        <PublishScreen
           onOpenChange={setPublishOpen}
+          onViewSubmission={(submissionId) => {
+            setSubmissionsFocusId(submissionId);
+            setSettingsDialogSection("submissions");
+            setSettingsDialogOpen(true);
+          }}
+          open={publishOpen}
           workspaceId={selectedWorkspaceId}
         />
       )}

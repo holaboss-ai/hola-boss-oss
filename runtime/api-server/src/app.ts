@@ -6638,6 +6638,8 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
+  // [removed] /api/v1/apps/register-existing — community apps now install via install-archive like official ones (cross-platform safety: only GitHub-release tarballs are guaranteed to be runnable on the installer's OS/arch).
+
   app.post("/api/v1/apps/install", async (request, reply) => {
     if (!isRecord(request.body)) {
       return sendError(reply, 400, "request body must be an object");

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -100,12 +100,18 @@ function SubmissionRow({
   submission,
   isDeleting,
   onDelete,
+  initiallyExpanded = false,
+  highlight = false,
+  rowRef,
 }: {
   submission: SubmissionItem;
   isDeleting: boolean;
   onDelete: () => void;
+  initiallyExpanded?: boolean;
+  highlight?: boolean;
+  rowRef?: (el: HTMLDivElement | null) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(initiallyExpanded);
   const config = STATUS_CONFIG[submission.status] ?? {
     label: submission.status,
     icon: Clock,
@@ -121,7 +127,7 @@ function SubmissionRow({
     (submission.status === "rejected" && submission.review_notes);
 
   return (
-    <div>
+    <div ref={rowRef} className={highlight ? "ring-2 ring-primary/40 ring-offset-0" : undefined}>
       <div
         className="flex items-center justify-between gap-4 px-4 py-3 cursor-pointer transition-colors hover:bg-accent"
         onClick={() => hasDetails && setExpanded((v) => !v)}
@@ -247,13 +253,29 @@ function SubmissionRow({
   );
 }
 
-export function SubmissionsPanel() {
+export interface SubmissionsPanelProps {
+  /** Submission to auto-expand and scroll into view on first render. */
+  initialFocusedId?: string | null;
+}
+
+export function SubmissionsPanel({ initialFocusedId = null }: SubmissionsPanelProps = {}) {
   const authSessionState = useDesktopAuthSession();
   const [submissions, setSubmissions] = useState<SubmissionItem[]>([]);
   const [loading, setLoading] = useState(authSessionState.isPending);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const isSignedIn = Boolean(authSessionState.data?.user?.id?.trim());
+  const focusedRowRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!initialFocusedId) {
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      focusedRowRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 60);
+    return () => window.clearTimeout(handle);
+  }, [initialFocusedId, submissions.length]);
 
   const fetchSubmissions = useCallback(
     async (signal?: { cancelled: boolean }) => {
@@ -435,14 +457,20 @@ export function SubmissionsPanel() {
   return (
     <div className="grid gap-6">
       <SettingsCard>
-        {submissions.map((submission) => (
-          <SubmissionRow
-            key={submission.id}
-            submission={submission}
-            isDeleting={deletingId === submission.id}
-            onDelete={() => void handleDelete(submission)}
-          />
-        ))}
+        {submissions.map((submission) => {
+          const isFocused = initialFocusedId === submission.id;
+          return (
+            <SubmissionRow
+              highlight={isFocused}
+              initiallyExpanded={isFocused}
+              isDeleting={deletingId === submission.id}
+              key={submission.id}
+              onDelete={() => void handleDelete(submission)}
+              rowRef={isFocused ? (el) => { focusedRowRef.current = el; } : undefined}
+              submission={submission}
+            />
+          );
+        })}
       </SettingsCard>
     </div>
   );
