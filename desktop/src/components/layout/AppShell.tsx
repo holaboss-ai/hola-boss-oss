@@ -1380,35 +1380,21 @@ function WorkspaceStartupErrorPane({ message }: { message: string }) {
     }
   }
 
-  function handleReinstall() {
-    void window.electronAPI.ui.openExternalUrl("https://holaboss.ai/download");
-  }
-
   return (
     <BlockingErrorScreen
       actions={
-        <>
-          <Button
-            className="flex-1"
-            disabled={isRetrying}
-            onClick={() => void handleRetry()}
-            size="lg"
-            type="button"
-          >
-            {isRetrying ? <Loader2 className="animate-spin" /> : null}
-            Try again
-          </Button>
-          <Button
-            onClick={handleReinstall}
-            size="lg"
-            type="button"
-            variant="bordered"
-          >
-            Reinstall…
-          </Button>
-        </>
+        <Button
+          className="w-full"
+          disabled={isRetrying}
+          onClick={() => void handleRetry()}
+          size="lg"
+          type="button"
+        >
+          {isRetrying ? <Loader2 className="animate-spin" /> : null}
+          Try again
+        </Button>
       }
-      description="Some files Holaboss needs to start are missing or damaged. Try again — if it keeps failing, reinstalling the app usually fixes it."
+      description="Some files Holaboss needs to start are missing or damaged. Try again — if it keeps failing after a couple of attempts, restarting the app usually fixes it."
       technicalDetail={`${message}\n\nFor diagnostics, check runtime.log in the Electron userData directory.`}
       title="Holaboss couldn't start"
     />
