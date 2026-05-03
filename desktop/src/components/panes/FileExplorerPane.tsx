@@ -82,6 +82,7 @@ interface FileExplorerPaneProps {
   onReferenceInChat?: (entry: LocalFileEntry) => void;
   onDeleteEntry?: (entry: LocalFileEntry) => void;
   onOpenLinkInBrowser?: (url: string) => void;
+  onOpenLocalLink?: (absolutePath: string) => void;
   embedded?: boolean;
 }
 
@@ -1145,6 +1146,7 @@ export function FileExplorerPane({
   onReferenceInChat,
   onDeleteEntry,
   onOpenLinkInBrowser,
+  onOpenLocalLink,
   embedded = false,
 }: FileExplorerPaneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -1767,6 +1769,45 @@ export function FileExplorerPane({
       void window.electronAPI.ui.openExternalUrl(url);
     },
     [onOpenLinkInBrowser],
+  );
+
+  const previewAbsolutePath = preview?.absolutePath ?? null;
+  const handleLocalLinkInPreview = useCallback(
+    (href: string) => {
+      if (!onOpenLocalLink) {
+        return;
+      }
+      let raw = href.trim();
+      if (!raw) {
+        return;
+      }
+      if (raw.toLowerCase().startsWith("file://")) {
+        raw = raw.slice(7);
+      }
+      let cleaned = raw;
+      try {
+        cleaned = decodeURI(raw);
+      } catch {
+        cleaned = raw;
+      }
+      let absolute = cleaned;
+      if (!isAbsolutePath(cleaned)) {
+        const previewPath = previewAbsolutePath?.trim() ?? "";
+        const sep = previewPath.includes("\\") ? "\\" : "/";
+        const baseDir = previewPath
+          ? (() => {
+              const idx = previewPath.lastIndexOf(sep);
+              return idx <= 0 ? sep : previewPath.slice(0, idx);
+            })()
+          : (workspaceRootPath?.trim() ?? "");
+        if (!baseDir) {
+          return;
+        }
+        absolute = resolveWorkspaceTargetPath(baseDir, cleaned);
+      }
+      onOpenLocalLink(absolute);
+    },
+    [onOpenLocalLink, previewAbsolutePath, workspaceRootPath],
   );
 
   const closeContextMenu = useCallback(() => {
@@ -3519,6 +3560,7 @@ export function FileExplorerPane({
                   <SimpleMarkdown
                     className="file-preview-markdown"
                     onLinkClick={openPreviewLink}
+                    onLocalLinkClick={handleLocalLinkInPreview}
                   >
                     {previewDraft}
                   </SimpleMarkdown>
