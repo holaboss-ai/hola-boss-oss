@@ -27,7 +27,7 @@ import { cronjobNextRunAt } from "./cron-worker.js";
 import { ensureWorkspaceDataDb } from "./ts-runner-session-state.js";
 import { generateWorkspaceImage } from "./image-generation.js";
 import { searchPublicWeb } from "./native-web-search.js";
-import { resolveSubagentExecutionModel } from "./subagent-model.js";
+import { resolveSubagentExecutionProfile } from "./subagent-model.js";
 import {
   readSessionScratchpad,
   type SessionScratchpadWriteOperation,
@@ -761,6 +761,20 @@ function inputUsesUserBrowserSurface(
   input: { payload?: Record<string, unknown> | null } | null | undefined,
 ): boolean {
   return contextUsesUserBrowserSurface(input?.payload?.context);
+}
+
+function inputThinkingValue(
+  input: { payload?: Record<string, unknown> | null } | null | undefined,
+): string | null {
+  const value = input?.payload?.thinking_value;
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function inputModelValue(
+  input: { payload?: Record<string, unknown> | null } | null | undefined,
+): string | null {
+  const value = input?.payload?.model;
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
 function subagentInstruction(params: {
@@ -1556,14 +1570,16 @@ export class RuntimeAgentToolsService {
       const childSessionId = `subagent-${randomUUID()}`;
       const title = normalizedSubagentTaskTitle(task.title, task.goal);
       const requestedModel = task.model || null;
-      const effectiveModel = resolveSubagentExecutionModel({
-        selectedModel: params.selectedModel,
+      const parentInput = parentInputId ? this.store.getInput(parentInputId) : null;
+      const effectiveProfile = resolveSubagentExecutionProfile({
+        selectedModel: params.selectedModel ?? inputModelValue(parentInput),
+        selectedThinkingValue: inputThinkingValue(parentInput),
       });
+      const effectiveModel = effectiveProfile.model;
       const toolProfile = normalizeSubagentToolProfile({
         tools: task.tools,
         timeoutMs: task.timeoutMs,
       });
-      const parentInput = parentInputId ? this.store.getInput(parentInputId) : null;
       const forwardedAttachments = attachmentsFromInputPayload(parentInput?.payload.attachments);
       const forwardedImageUrls = normalizedStringList(parentInput?.payload.image_urls);
       const forwardedQuotedSkillIds = quotedSkillIdsFromInstruction(parentInput?.payload.text);
@@ -1609,6 +1625,7 @@ export class RuntimeAgentToolsService {
           attachments: forwardedAttachments,
           image_urls: forwardedImageUrls,
           model: effectiveModel,
+          thinking_value: effectiveProfile.thinkingValue,
           context: {
             source: "subagent",
             subagent_id: createdRun.subagentId,
@@ -1760,12 +1777,15 @@ export class RuntimeAgentToolsService {
         "subagent is not currently waiting on user input",
       );
     }
-    const effectiveModel = resolveSubagentExecutionModel({
-      selectedModel: params.selectedModel ?? params.model,
-    });
     const previousChildInput = normalizedString(state.run.latestChildInputId)
       ? this.store.getInput(normalizedString(state.run.latestChildInputId))
       : null;
+    const effectiveProfile = resolveSubagentExecutionProfile({
+      selectedModel:
+        params.selectedModel ?? params.model ?? inputModelValue(previousChildInput),
+      selectedThinkingValue: inputThinkingValue(previousChildInput),
+    });
+    const effectiveModel = effectiveProfile.model;
     const useUserBrowserSurface = inputUsesUserBrowserSurface(previousChildInput);
     const resumedInput = this.store.enqueueInput({
       workspaceId: params.workspaceId,
@@ -1775,6 +1795,7 @@ export class RuntimeAgentToolsService {
         attachments: [],
         image_urls: [],
         model: effectiveModel,
+        thinking_value: effectiveProfile.thinkingValue,
         context: {
           source: "subagent_resume",
           subagent_id: state.run.subagentId,
@@ -1854,15 +1875,22 @@ export class RuntimeAgentToolsService {
         "subagent is waiting on user input; use resume instead",
       );
     }
-    const effectiveModel = resolveSubagentExecutionModel({
-      selectedModel: params.selectedModel ?? params.model,
-    });
     const parentInput = normalizedString(params.inputId)
       ? this.store.getInput(normalizedString(params.inputId))
       : null;
     const previousChildInput = normalizedString(state.run.latestChildInputId)
       ? this.store.getInput(normalizedString(state.run.latestChildInputId))
       : null;
+    const effectiveProfile = resolveSubagentExecutionProfile({
+      selectedModel:
+        params.selectedModel ??
+        params.model ??
+        inputModelValue(parentInput) ??
+        inputModelValue(previousChildInput),
+      selectedThinkingValue:
+        inputThinkingValue(parentInput) ?? inputThinkingValue(previousChildInput),
+    });
+    const effectiveModel = effectiveProfile.model;
     const forwardedAttachments = attachmentsFromInputPayload(parentInput?.payload.attachments);
     const forwardedImageUrls = normalizedStringList(parentInput?.payload.image_urls);
     const forwardedQuotedSkillIds = quotedSkillIdsFromInstruction(parentInput?.payload.text);
@@ -1894,6 +1922,7 @@ export class RuntimeAgentToolsService {
         attachments: forwardedAttachments,
         image_urls: forwardedImageUrls,
         model: effectiveModel,
+        thinking_value: effectiveProfile.thinkingValue,
         context: {
           source: "subagent_continue",
           subagent_id: state.run.subagentId,

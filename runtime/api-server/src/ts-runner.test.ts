@@ -3839,6 +3839,7 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
     [
       "browser-core-efficient",
       "browser-qa",
+      "mcp-configurator",
       "skill-creator",
       "skill-installer",
       "alpha",
@@ -3858,6 +3859,7 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
     [
       "browser-core-efficient",
       "browser-qa",
+      "mcp-configurator",
       "skill-creator",
       "skill-installer",
       "alpha",

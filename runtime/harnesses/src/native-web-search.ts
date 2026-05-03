@@ -195,6 +195,32 @@ function providerIdForKind(kind: NativeWebSearchProviderKind): string {
     : EXA_WEB_SEARCH_PROVIDER_ID;
 }
 
+function hasManagedHolabossSearchBinding(document: Record<string, unknown>): boolean {
+  const integrations = asRecord(document.integrations);
+  const holabossIntegration = asRecord(integrations.holaboss);
+  const providers = asRecord(document.providers);
+  const holabossProvider = asRecord(
+    providers.holaboss_model_proxy ?? providers.holaboss,
+  );
+  const runtimePayload = asRecord(document.runtime);
+  const holabossAuthToken = firstNonEmptyString(
+    holabossIntegration.auth_token as string | undefined,
+    holabossProvider.api_key as string | undefined,
+    document.auth_token as string | undefined,
+    document.model_proxy_api_key as string | undefined,
+  );
+  const holabossUserId = firstNonEmptyString(
+    holabossIntegration.user_id as string | undefined,
+    document.user_id as string | undefined,
+  );
+  const holabossSandboxId = firstNonEmptyString(
+    holabossIntegration.sandbox_id as string | undefined,
+    runtimePayload.sandbox_id as string | undefined,
+    document.sandbox_id as string | undefined,
+  );
+  return Boolean(holabossAuthToken && holabossUserId && holabossSandboxId);
+}
+
 function holabossSearchEndpointFromDocument(
   document: Record<string, unknown>,
 ): string {
@@ -237,7 +263,7 @@ function holabossSearchEndpointFromDocument(
 
 function holabossSearchEndpointFromBaseUrl(
   baseUrl: string,
-  options: { useSearchServicePort?: boolean } = {},
+  _options: { useSearchServicePort?: boolean } = {},
 ): string {
   const normalized = baseUrl.trim().replace(/\/+$/, "");
   if (!normalized) {
@@ -248,10 +274,14 @@ function holabossSearchEndpointFromBaseUrl(
   }
   try {
     const url = new URL(normalized);
-    if (options.useSearchServicePort && url.port === "3060") {
-      url.port = "3038";
-    }
-    url.pathname = "/api/v1/search/web";
+    const nextPathname = url.pathname.replace(
+      /\/api\/v1\/(?:model-proxy|search\/web)(?:\/.*)?$/,
+      "/api/v1/search/web",
+    );
+    url.pathname =
+      nextPathname && nextPathname !== url.pathname
+        ? nextPathname
+        : `${url.pathname.replace(/\/+$/, "") || ""}/api/v1/search/web`;
     url.search = "";
     url.hash = "";
     return url.toString();
@@ -267,10 +297,14 @@ function holabossSearchEndpointFromModelProxyUrl(modelProxyBaseUrl: string): str
   }
   try {
     const url = new URL(normalized);
-    if (url.port === "3060") {
-      url.port = "3038";
-    }
-    url.pathname = "/api/v1/search/web";
+    const nextPathname = url.pathname.replace(
+      /\/api\/v1\/model-proxy(?:\/.*)?$/,
+      "/api/v1/search/web",
+    );
+    url.pathname =
+      nextPathname && nextPathname !== url.pathname
+        ? nextPathname
+        : "/api/v1/search/web";
     url.search = "";
     url.hash = "";
     return url.toString();
@@ -324,11 +358,16 @@ function resolveProviderFromRuntimeConfig(): Partial<ResolvedWebSearchProvider> 
     config.providerId as string | undefined,
     config.default_provider as string | undefined,
   );
+  const managedHolabossSearchBinding = hasManagedHolabossSearchBinding(document);
   const selectedProviderId =
-    configuredProviderId ||
-    (holabossAuthToken && holabossUserId
-      ? HOLABOSS_WEB_SEARCH_PROVIDER_ID
-      : "");
+    configuredProviderId === HOLABOSS_WEB_SEARCH_PROVIDER_ID
+      ? managedHolabossSearchBinding
+        ? HOLABOSS_WEB_SEARCH_PROVIDER_ID
+        : EXA_WEB_SEARCH_PROVIDER_ID
+      : configuredProviderId ||
+        (managedHolabossSearchBinding
+          ? HOLABOSS_WEB_SEARCH_PROVIDER_ID
+          : EXA_WEB_SEARCH_PROVIDER_ID);
   const providerPayload = configuredProviderPayload(config, selectedProviderId);
   const providerKind = normalizeProviderKind(
     firstNonEmptyString(
