@@ -1363,20 +1363,20 @@ function FocusPlaceholder({
 }
 
 function WorkspaceStartupErrorPane({ message }: { message: string }) {
-  const [isRetrying, setIsRetrying] = useState(false);
+  const [isRelaunching, setIsRelaunching] = useState(false);
 
-  async function handleRetry() {
-    if (isRetrying) {
+  async function handleRelaunch() {
+    if (isRelaunching) {
       return;
     }
-    setIsRetrying(true);
+    setIsRelaunching(true);
+    // Fire-and-forget: the IPC triggers app.quit() in main, so this promise
+    // never resolves in practice. The spinner exists for the brief window
+    // before the renderer is torn down.
     try {
-      await window.electronAPI.runtime.restart();
+      await window.electronAPI.app.relaunch();
     } catch {
-      // Restart may legitimately fail again with the same root cause; the
-      // runtime status feed will repaint this screen with the fresh message.
-    } finally {
-      setIsRetrying(false);
+      setIsRelaunching(false);
     }
   }
 
@@ -1385,16 +1385,16 @@ function WorkspaceStartupErrorPane({ message }: { message: string }) {
       actions={
         <Button
           className="w-full"
-          disabled={isRetrying}
-          onClick={() => void handleRetry()}
+          disabled={isRelaunching}
+          onClick={() => void handleRelaunch()}
           size="lg"
           type="button"
         >
-          {isRetrying ? <Loader2 className="animate-spin" /> : null}
-          Try again
+          {isRelaunching ? <Loader2 className="animate-spin" /> : null}
+          Restart Holaboss
         </Button>
       }
-      description="Some files Holaboss needs to start are missing or damaged. Try again — if it keeps failing after a couple of attempts, restarting the app usually fixes it."
+      description="Something is keeping Holaboss from starting. Restarting the app usually clears it — if it doesn't, reinstalling will."
       technicalDetail={`${message}\n\nFor diagnostics, check runtime.log in the Electron userData directory.`}
       title="Holaboss couldn't start"
     />
