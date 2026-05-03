@@ -1,5 +1,3 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import {
   ArrowRight,
   Check,
@@ -15,6 +13,8 @@ import {
   Upload,
   X,
 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { AppIcon } from "@/components/marketplace/AppIcon";
 import { Button } from "@/components/ui/button";
@@ -33,17 +33,17 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useDesktopAuthSession } from "@/lib/auth/authClient";
-import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { cn } from "@/lib/utils";
+import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 
+import { BundleFileTree } from "./BundleFileTree";
 import { LivePreviewPanel } from "./LivePreviewPanel";
 import { useNameCheck } from "./useNameCheck";
 import {
-  EMPTY_DRAFT,
   clearDraft,
   loadDraft,
-  usePublishDraftAutosave,
   useDraftRestore,
+  usePublishDraftAutosave,
 } from "./usePublishDraft";
 import { usePublishFlow } from "./usePublishFlow";
 
@@ -140,6 +140,10 @@ export function PublishScreen({
   const [readmeMd, setReadmeMd] = useState("");
   const [coverImage, setCoverImage] = useState<string | null>(null);
   const [screenshots, setScreenshots] = useState<string[]>([]);
+  // Workspace-relative paths the user has opted out of bundling. Stored as a
+  // sorted string[] (rather than Set) so it serializes cleanly into draft JSON
+  // and the IPC payload. UI uses an in-memory Set derived from this array.
+  const [forceExcludePaths, setForceExcludePaths] = useState<string[]>([]);
 
   const [isGeneratingOnboarding, setIsGeneratingOnboarding] = useState(false);
   const [isGeneratingReadme, setIsGeneratingReadme] = useState(false);
@@ -175,6 +179,7 @@ export function PublishScreen({
       readmeMd,
       coverImageDataUrl: coverImage,
       screenshotsDataUrls: screenshots,
+      forceExcludePaths,
     }),
     [
       name,
@@ -186,6 +191,7 @@ export function PublishScreen({
       readmeMd,
       coverImage,
       screenshots,
+      forceExcludePaths,
     ],
   );
 
@@ -243,6 +249,7 @@ export function PublishScreen({
       setReadmeMd("");
       setCoverImage(null);
       setScreenshots([]);
+      setForceExcludePaths([]);
       setGenerationError(null);
       setPendingGenerated(null);
       setRestorePromptDismissed(false);
@@ -305,6 +312,7 @@ export function PublishScreen({
     setReadmeMd(existing.readmeMd);
     setCoverImage(existing.coverImageDataUrl);
     setScreenshots(existing.screenshotsDataUrls);
+    setForceExcludePaths(existing.forceExcludePaths ?? []);
     setRestorePromptDismissed(true);
   };
 
@@ -373,6 +381,7 @@ export function PublishScreen({
       onboardingMd: onboardingMd.trim() ? onboardingMd : null,
       readmeMd: readmeMd.trim() ? readmeMd : null,
       userId,
+      forceExcludePaths,
     });
   };
 
@@ -392,6 +401,7 @@ export function PublishScreen({
       onboardingMd: onboardingMd.trim() ? onboardingMd : null,
       readmeMd: readmeMd.trim() ? readmeMd : null,
       userId,
+      forceExcludePaths,
       resume:
         failed.failedAt === "creating"
           ? undefined
@@ -469,7 +479,8 @@ export function PublishScreen({
               className="text-xs text-muted-foreground"
               title={userEmail || userName}
             >
-              as <span className="font-medium text-foreground">{userHandle}</span>
+              as{" "}
+              <span className="font-medium text-foreground">{userHandle}</span>
             </span>
           )}
           {phase.status !== "success" && (
@@ -593,11 +604,18 @@ export function PublishScreen({
                     />
                   )}
                   {step === "bundle" && (
-                    <BundleForm
-                      apps={installedApps}
-                      onSelectedAppsChange={setSelectedApps}
-                      selectedApps={selectedApps}
-                    />
+                    <div className="space-y-7">
+                      <BundleForm
+                        apps={installedApps}
+                        onSelectedAppsChange={setSelectedApps}
+                        selectedApps={selectedApps}
+                      />
+                      <BundleFileTree
+                        forceExcludePaths={forceExcludePaths}
+                        onForceExcludePathsChange={setForceExcludePaths}
+                        workspaceId={workspaceId}
+                      />
+                    </div>
                   )}
                   {step === "docs" && (
                     <DocsForm
@@ -652,20 +670,23 @@ export function PublishScreen({
                 <div className="mt-auto space-y-3 pt-8">
                   <div className="flex items-center gap-2.5">
                     {stepIdx > 0 ? (
-                      <button
-                        className="inline-flex h-10 flex-1 items-center justify-center rounded-lg bg-fg-2 px-4 text-sm font-medium text-foreground transition-colors hover:bg-fg-4 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:[box-shadow:none!important]"
+                      <Button
+                        className="flex-1"
                         disabled={inFlight}
                         onClick={() => setStep(STEPS[stepIdx - 1]!.id)}
+                        size="lg"
                         type="button"
+                        variant="bordered"
                       >
                         Back
-                      </button>
+                      </Button>
                     ) : null}
                     {isLastStep ? (
-                      <button
-                        className="inline-flex h-10 flex-1 items-center justify-center gap-1.5 rounded-lg bg-foreground px-4 text-sm font-medium text-background shadow-subtle-sm transition-[background-color,opacity] hover:bg-foreground/90 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:[box-shadow:none!important]"
+                      <Button
+                        className="flex-1"
                         disabled={!canPublish || inFlight}
                         onClick={handlePublish}
+                        size="lg"
                         type="button"
                       >
                         {inFlight ? (
@@ -679,17 +700,18 @@ export function PublishScreen({
                             Publish to Store
                           </>
                         )}
-                      </button>
+                      </Button>
                     ) : (
-                      <button
-                        className="inline-flex h-10 flex-1 items-center justify-center gap-1.5 rounded-lg bg-foreground px-4 text-sm font-medium text-background shadow-subtle-sm transition-[background-color,opacity] hover:bg-foreground/90 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:[box-shadow:none!important]"
+                      <Button
+                        className="flex-1 mb-10"
                         disabled={inFlight || (step === "about" && !aboutValid)}
                         onClick={() => setStep(STEPS[stepIdx + 1]!.id)}
+                        size="lg"
                         type="button"
                       >
                         Continue
                         <ArrowRight className="size-3.5" />
-                      </button>
+                      </Button>
                     )}
                   </div>
                 </div>
@@ -701,6 +723,7 @@ export function PublishScreen({
             <section className="hidden min-h-0 overflow-hidden rounded-2xl bg-fg-2 ring-1 ring-border/35 animate-in fade-in-0 slide-in-from-right-2 duration-300 ease-out lg:block">
               <LivePreviewPanel
                 data={previewData}
+                forceExcludePaths={forceExcludePaths}
                 step={step}
                 workspaceId={workspaceId}
               />
@@ -856,7 +879,10 @@ function AboutForm({
           </>
         }
       >
-        <ScreenshotsUploader onChange={onScreenshotsChange} value={screenshots} />
+        <ScreenshotsUploader
+          onChange={onScreenshotsChange}
+          value={screenshots}
+        />
       </Field>
     </div>
   );
@@ -943,7 +969,11 @@ function BundleForm({
                       >
                         {checked && <Check className="size-3" />}
                       </span>
-                      <AppIcon appId={app.id} label={app.label || app.id} size="row" />
+                      <AppIcon
+                        appId={app.id}
+                        label={app.label || app.id}
+                        size="row"
+                      />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-medium">
                           {app.label || app.id}
@@ -1234,9 +1264,7 @@ function Field({
         )}
       </div>
       {children}
-      {help && (
-        <p className="mt-1.5 text-xs text-muted-foreground">{help}</p>
-      )}
+      {help && <p className="mt-1.5 text-xs text-muted-foreground">{help}</p>}
     </div>
   );
 }
@@ -1413,7 +1441,12 @@ function CoverUploader({
           <img alt="" className="h-full w-full object-cover" src={value} />
           {/* Hover-revealed action layer */}
           <div className="absolute inset-0 flex items-center justify-center gap-2 bg-foreground/0 opacity-0 transition-[opacity,background-color] duration-150 group-hover:bg-foreground/35 group-hover:opacity-100">
-            <Button onClick={pickFile} size="sm" type="button" variant="secondary">
+            <Button
+              onClick={pickFile}
+              size="sm"
+              type="button"
+              variant="secondary"
+            >
               <Upload className="size-3.5" />
               Replace
             </Button>
@@ -1763,21 +1796,18 @@ function PublishSuccessView({
             Matches the wizard's bottom-button pattern so success doesn't feel
             like a different visual language. */}
         <div className="mt-6 flex flex-col gap-2">
-          <button
-            className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg bg-foreground px-4 text-sm font-medium text-background shadow-subtle-sm transition-[background-color,opacity] hover:bg-foreground/90 focus-visible:[box-shadow:none!important]"
-            onClick={onViewSubmission}
-            type="button"
-          >
+          <Button onClick={onViewSubmission} size="lg" type="button">
             <ExternalLink className="size-3.5" />
             View submission
-          </button>
-          <button
-            className="inline-flex h-10 items-center justify-center rounded-lg bg-fg-2 px-4 text-sm font-medium text-foreground transition-colors hover:bg-fg-4 focus-visible:[box-shadow:none!important]"
+          </Button>
+          <Button
             onClick={onPublishAnother}
+            size="lg"
             type="button"
+            variant="bordered"
           >
             Publish another
-          </button>
+          </Button>
         </div>
 
         {/* Tiny ghost close link */}

@@ -41,6 +41,7 @@ export interface LivePreviewPanelProps {
   step: "about" | "bundle" | "docs";
   data: LivePreviewData;
   workspaceId: string;
+  forceExcludePaths: string[];
 }
 
 function formatBytes(n: number): string {
@@ -63,6 +64,7 @@ export function LivePreviewPanel({
   step,
   data,
   workspaceId,
+  forceExcludePaths,
 }: LivePreviewPanelProps) {
   return (
     <div className="flex h-full min-h-0 items-center justify-center overflow-hidden p-8">
@@ -72,7 +74,11 @@ export function LivePreviewPanel({
       >
         {step === "about" && <ListingMockup data={data} />}
         {step === "bundle" && (
-          <BundleIllustration data={data} workspaceId={workspaceId} />
+          <BundleIllustration
+            data={data}
+            forceExcludePaths={forceExcludePaths}
+            workspaceId={workspaceId}
+          />
         )}
         {step === "docs" && <DocsMockup data={data} />}
       </div>
@@ -210,16 +216,22 @@ interface BundleSummary {
 function BundleIllustration({
   data,
   workspaceId,
+  forceExcludePaths,
 }: {
   data: LivePreviewData;
   workspaceId: string;
+  forceExcludePaths: string[];
 }) {
   const [bundle, setBundle] = useState<BundleSummary | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     window.electronAPI.workspace
-      .previewBundle({ workspaceId, apps: data.apps.map((a) => a.id) })
+      .previewBundle({
+        workspaceId,
+        apps: data.apps.map((a) => a.id),
+        forceExcludePaths,
+      })
       .then((p) => {
         if (cancelled) {
           return;
@@ -273,7 +285,7 @@ function BundleIllustration({
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, data.apps]);
+  }, [workspaceId, data.apps, forceExcludePaths]);
 
   const visibleEntries = useMemo(
     () => bundle?.topEntries.slice(0, 5) ?? [],
@@ -445,7 +457,11 @@ function DocsMockup({ data }: { data: LivePreviewData }) {
   const firstQuestion = useMemo(() => firstQuestionFromOnboarding(data.onboardingMd), [data.onboardingMd]);
 
   return (
-    <div className="w-full max-w-[560px]">
+    // Fixed width — empty / partial / full states should all occupy the same
+    // canvas so the panel doesn't shift sideways as the user types README or
+    // first-run content. Was `w-full max-w-[560px]` which collapsed to the
+    // empty-state's natural width when both tabs had no content.
+    <div className="w-[560px] max-w-full">
       <div className="overflow-hidden rounded-2xl bg-background shadow-subtle-sm ring-1 ring-border/35">
         {/* Tab strip */}
         <div className="flex items-center border-b border-border/35 px-3">

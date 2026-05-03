@@ -1505,7 +1505,8 @@ interface RuntimeNotificationListOptionsPayload {
     | "build_artifact"
     | "hbignore"
     | "unselected_app"
-    | "system_file";
+    | "system_file"
+    | "user_excluded";
 
   interface BundleFilePayload {
     path: string;
@@ -1813,11 +1814,16 @@ interface RuntimeNotificationListOptionsPayload {
         apps: string[];
         manifest: Record<string, unknown>;
         uploadUrl: string;
+        forceExcludePaths?: string[];
       }): Promise<PackageAndUploadResult>;
       onPublishProgress: (
         listener: (payload: PublishProgressPayload) => void,
       ) => () => void;
-      previewBundle(params: { workspaceId: string; apps: string[] }): Promise<BundlePreviewPayload>;
+      previewBundle(params: {
+        workspaceId: string;
+        apps: string[];
+        forceExcludePaths?: string[];
+      }): Promise<BundlePreviewPayload>;
       checkTemplateName(name: string): Promise<TemplateNameCheckPayload>;
       finalizeSubmission(submissionId: string): Promise<FinalizeSubmissionResponse>;
       listSubmissions(): Promise<SubmissionListResponse>;

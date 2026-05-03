@@ -20,6 +20,8 @@ export interface PublishInput {
   onboardingMd: string | null;
   readmeMd: string | null;
   userId: string;
+  /** Per-publish opt-out file paths from the bundle file tree. */
+  forceExcludePaths?: string[];
   /**
    * Resume context — if present we skip the create step and go straight to
    * package/upload using the existing submission.
@@ -129,6 +131,7 @@ export function usePublishFlow(): PublishFlowApi {
           author: { id: input.userId, name: input.authorName },
         },
         uploadUrl,
+        forceExcludePaths: input.forceExcludePaths ?? [],
       });
 
       setPhase({ status: "finalizing" });

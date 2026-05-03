@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const STORAGE_PREFIX = "publish:draft:";
+// Bumping this throws away in-flight drafts, so prefer to keep it stable
+// and tolerate missing fields below — readers should default new fields
+// to safe empty values.
 const SCHEMA_VERSION = 1;
 
 export interface PublishDraft {
@@ -15,6 +18,8 @@ export interface PublishDraft {
   readmeMd: string;
   coverImageDataUrl: string | null;
   screenshotsDataUrls: string[];
+  /** Workspace-relative paths the user opted out of bundling (added in v2). */
+  forceExcludePaths: string[];
 }
 
 export const EMPTY_DRAFT: Omit<PublishDraft, "schemaVersion" | "savedAt"> = {
@@ -27,6 +32,7 @@ export const EMPTY_DRAFT: Omit<PublishDraft, "schemaVersion" | "savedAt"> = {
   readmeMd: "",
   coverImageDataUrl: null,
   screenshotsDataUrls: [],
+  forceExcludePaths: [],
 };
 
 function storageKey(workspaceId: string): string {
@@ -42,6 +48,10 @@ export function loadDraft(workspaceId: string): PublishDraft | null {
     const parsed = JSON.parse(raw) as PublishDraft;
     if (parsed.schemaVersion !== SCHEMA_VERSION) {
       return null;
+    }
+    // Tolerate older drafts written before forceExcludePaths existed.
+    if (!Array.isArray(parsed.forceExcludePaths)) {
+      parsed.forceExcludePaths = [];
     }
     return parsed;
   } catch {

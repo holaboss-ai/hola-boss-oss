@@ -72,7 +72,8 @@ export type ExclusionReason =
   | "build_artifact"
   | "hbignore"
   | "unselected_app"
-  | "system_file";
+  | "system_file"
+  | "user_excluded";
 
 const SENSITIVE_PATTERNS: RegExp[] = [
   /\.pem$/i,
@@ -146,6 +147,13 @@ export interface PackageWorkspaceParams {
   manifest: Record<string, unknown>;
   runtimeBaseUrl: string;
   workspaceId: string;
+  /**
+   * Per-publish user opt-out list, one entry per workspace-relative path.
+   * Drops files/subtrees the user unchecked in the bundle file tree.
+   * Layered AFTER the existing ignore + sensitive checks, so it can only
+   * remove otherwise-includeable files — never re-include excluded ones.
+   */
+  forceExcludePaths?: string[];
   /** Test hook */
   automationsFetcher?: typeof fetchAndSerializeAutomations;
 }
@@ -303,12 +311,37 @@ export function buildPresignedUploadError(
 }
 
 /**
+ * Match a relative path against a user force-exclude list. A path matches
+ * when it's identical to an entry, or when an entry names a parent directory
+ * (so unchecking ``skills/`` excludes ``skills/foo.md`` and the whole subtree).
+ */
+function isUserForceExcluded(relPath: string, forceExcludePaths: string[]): boolean {
+  if (forceExcludePaths.length === 0) {
+    return false;
+  }
+  for (const raw of forceExcludePaths) {
+    const entry = raw.replace(/\/+$/, "");
+    if (!entry) {
+      continue;
+    }
+    if (relPath === entry) {
+      return true;
+    }
+    if (relPath.startsWith(`${entry}/`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Determine whether a file should be included in the archive.
  */
 function shouldInclude(
   relPath: string,
   selectedApps: string[],
-  hbPatterns: string[]
+  hbPatterns: string[],
+  forceExcludePaths: string[]
 ): boolean {
   if (isGloballyIgnored(relPath)) {
     return false;
@@ -331,6 +364,13 @@ function shouldInclude(
     return false;
   }
 
+  // User opt-out via the publish file tree. Layered AFTER the safety nets
+  // above so users can only DROP otherwise-includeable files; they cannot
+  // re-include credentials/.hbignore/apps via this list.
+  if (isUserForceExcluded(relPath, forceExcludePaths)) {
+    return false;
+  }
+
   return true;
 }
 
@@ -347,7 +387,8 @@ async function collectFiles(
   dir: string,
   baseDir: string,
   selectedApps: string[],
-  hbPatterns: string[]
+  hbPatterns: string[],
+  forceExcludePaths: string[]
 ): Promise<string[]> {
   const results: string[] = [];
   const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -377,11 +418,12 @@ async function collectFiles(
         absPath,
         baseDir,
         selectedApps,
-        hbPatterns
+        hbPatterns,
+        forceExcludePaths
       );
       results.push(...children);
     } else {
-      if (shouldInclude(relPath, selectedApps, hbPatterns)) {
+      if (shouldInclude(relPath, selectedApps, hbPatterns, forceExcludePaths)) {
         results.push(relPath);
       }
     }
@@ -411,7 +453,12 @@ export interface BundlePreview {
   totalExcludedBytes: number;
 }
 
-function classifyExclusion(relPath: string, hbPatterns: string[], selectedApps: string[]): ExclusionReason | null {
+function classifyExclusion(
+  relPath: string,
+  hbPatterns: string[],
+  selectedApps: string[],
+  forceExcludePaths: string[],
+): ExclusionReason | null {
   if (/^memory(\/|$)/.test(relPath)) {
     return "personal_memory";
   }
@@ -443,6 +490,11 @@ function classifyExclusion(relPath: string, hbPatterns: string[], selectedApps: 
   if (relPath === "apps" || relPath.startsWith("apps/")) {
     return "unselected_app";
   }
+  // User force-exclude is the lowest-priority reason — only applies when none
+  // of the safety-net categories above matched.
+  if (isUserForceExcluded(relPath, forceExcludePaths)) {
+    return "user_excluded";
+  }
   return null;
 }
 
@@ -454,6 +506,7 @@ function classifyExclusion(relPath: string, hbPatterns: string[], selectedApps: 
 export async function previewBundle(
   workspaceDir: string,
   selectedApps: string[],
+  forceExcludePaths: string[] = [],
 ): Promise<BundlePreview> {
   const hbIgnorePath = path.join(workspaceDir, ".hbignore");
   let hbPatterns: string[] = [];
@@ -482,7 +535,13 @@ export async function previewBundle(
         // Hard-prune massive build/dep dirs without recursing
         if (GLOBAL_IGNORE_DIR_NAMES.has(entry.name)) {
           // Record a single rolled-up exclusion entry so the UI can show it
-          excluded.push({ path: relPath + "/", reason: classifyExclusion(relPath + "/", hbPatterns, selectedApps) ?? "ignored_dir", sizeBytes: 0 });
+          excluded.push({
+            path: relPath + "/",
+            reason:
+              classifyExclusion(relPath + "/", hbPatterns, selectedApps, forceExcludePaths) ??
+              "ignored_dir",
+            sizeBytes: 0,
+          });
           continue;
         }
         await walk(absPath);
@@ -494,11 +553,12 @@ export async function previewBundle(
         } catch {
           sizeBytes = 0;
         }
-        if (shouldInclude(relPath, selectedApps, hbPatterns)) {
+        if (shouldInclude(relPath, selectedApps, hbPatterns, forceExcludePaths)) {
           included.push({ path: relPath, sizeBytes });
           totalIncludedBytes += sizeBytes;
         } else {
-          const reason = classifyExclusion(relPath, hbPatterns, selectedApps) ?? "ignored_dir";
+          const reason =
+            classifyExclusion(relPath, hbPatterns, selectedApps, forceExcludePaths) ?? "ignored_dir";
           excluded.push({ path: relPath, reason, sizeBytes });
           totalExcludedBytes += sizeBytes;
         }
@@ -529,6 +589,7 @@ export async function packageWorkspace(
     manifest,
     runtimeBaseUrl,
     workspaceId,
+    forceExcludePaths = [],
     automationsFetcher = fetchAndSerializeAutomations,
   } = params;
 
@@ -541,7 +602,7 @@ export async function packageWorkspace(
   }
 
   // Collect files
-  const relPaths = await collectFiles(workspaceDir, workspaceDir, apps, hbPatterns);
+  const relPaths = await collectFiles(workspaceDir, workspaceDir, apps, hbPatterns, forceExcludePaths);
 
   // Fetch automations — failures bubble up to the IPC handler
   const automations = await automationsFetcher(runtimeBaseUrl, workspaceId);

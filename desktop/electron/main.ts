@@ -13566,6 +13566,8 @@ async function createWorkspace(
     hasTemplateRootPath: Boolean(templateRootPath),
     harness,
     requiresRuntimeBinding,
+    templateApps: payload.template_apps ?? [],
+    templateAppsCount: (payload.template_apps ?? []).length,
   });
   if (requiresRuntimeBinding) {
     await ensureRuntimeBindingReadyForWorkspaceFlow("workspace_create");
@@ -21118,6 +21120,7 @@ app.whenReady().then(async () => {
         apps: string[];
         manifest: Record<string, unknown>;
         uploadUrl: string;
+        forceExcludePaths?: string[];
       },
     ) => {
       const sender = event.sender;
@@ -21145,6 +21148,7 @@ app.whenReady().then(async () => {
           manifest: params.manifest,
           runtimeBaseUrl: runtimeUrl,
           workspaceId: params.workspaceId,
+          forceExcludePaths: params.forceExcludePaths ?? [],
         });
         emit("packaging", { stage: "complete", archiveSizeBytes: result.archiveSizeBytes });
         emit("uploading", { stage: "start", totalBytes: result.archiveSizeBytes });
@@ -21168,11 +21172,11 @@ app.whenReady().then(async () => {
     ["main"],
     async (
       _event,
-      params: { workspaceId: string; apps: string[] },
+      params: { workspaceId: string; apps: string[]; forceExcludePaths?: string[] },
     ) => {
       const { previewBundle } = await import("./workspace-packager.js");
       const workspaceDir = await resolveWorkspaceDir(params.workspaceId);
-      return previewBundle(workspaceDir, params.apps);
+      return previewBundle(workspaceDir, params.apps, params.forceExcludePaths ?? []);
     },
   );
   handleTrustedIpc(

@@ -197,3 +197,107 @@ test("fetchAndSerializeAutomations rejects with fetch cronjobs failed when fetch
     },
   );
 });
+
+test("packageWorkspace honors forceExcludePaths for individual files", async () => {
+  const workspaceDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), "holaboss-workspace-packager-"),
+  );
+  await fs.writeFile(path.join(workspaceDir, "workspace.yaml"), "name: test\n", "utf8");
+  await fs.writeFile(path.join(workspaceDir, "README.md"), "# Test\n", "utf8");
+  await fs.writeFile(path.join(workspaceDir, "secret.md"), "secret\n", "utf8");
+
+  const result = await workspacePackager.packageWorkspace({
+    workspaceDir,
+    apps: [],
+    manifest: { name: "Test", version: "1.0.0" },
+    runtimeBaseUrl: "http://127.0.0.1:8080",
+    workspaceId: "test-workspace-id",
+    forceExcludePaths: ["secret.md"],
+    automationsFetcher: zeroAutomationsFetcher,
+  });
+
+  const zip = await JSZip.loadAsync(result.archiveBuffer);
+  assert.ok(zip.file("README.md"), "README.md should be bundled");
+  assert.equal(zip.file("secret.md"), null, "secret.md should be excluded");
+});
+
+test("packageWorkspace honors forceExcludePaths as a directory prefix", async () => {
+  const workspaceDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), "holaboss-workspace-packager-"),
+  );
+  await fs.writeFile(path.join(workspaceDir, "workspace.yaml"), "name: test\n", "utf8");
+  await fs.mkdir(path.join(workspaceDir, "skills", "alpha"), { recursive: true });
+  await fs.writeFile(
+    path.join(workspaceDir, "skills", "alpha", "SKILL.md"),
+    "skill\n",
+    "utf8",
+  );
+  await fs.writeFile(
+    path.join(workspaceDir, "skills", "beta.md"),
+    "skill\n",
+    "utf8",
+  );
+  await fs.writeFile(path.join(workspaceDir, "README.md"), "ok\n", "utf8");
+
+  const result = await workspacePackager.packageWorkspace({
+    workspaceDir,
+    apps: [],
+    manifest: { name: "Test", version: "1.0.0" },
+    runtimeBaseUrl: "http://127.0.0.1:8080",
+    workspaceId: "test-workspace-id",
+    forceExcludePaths: ["skills"],
+    automationsFetcher: zeroAutomationsFetcher,
+  });
+
+  const zip = await JSZip.loadAsync(result.archiveBuffer);
+  assert.ok(zip.file("README.md"), "files outside the prefix stay bundled");
+  assert.equal(
+    zip.file("skills/beta.md"),
+    null,
+    "files directly under the prefix should be excluded",
+  );
+  assert.equal(
+    zip.file("skills/alpha/SKILL.md"),
+    null,
+    "files in nested subdirs under the prefix should be excluded",
+  );
+});
+
+test("forceExcludePaths cannot bypass the sensitive-file blocker", async () => {
+  // The user might list a credential path in forceExcludePaths thinking
+  // they're opting-in (UI never offers that path because it's not a
+  // candidate). Make sure listing it as exclude doesn't suddenly include
+  // it — the safety nets remain authoritative.
+  const workspaceDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), "holaboss-workspace-packager-"),
+  );
+  await fs.writeFile(path.join(workspaceDir, "workspace.yaml"), "name: test\n", "utf8");
+  await fs.writeFile(path.join(workspaceDir, "secret.pem"), "key\n", "utf8");
+
+  const preview = await workspacePackager.previewBundle(workspaceDir, [], [
+    "secret.pem",
+  ]);
+  // .pem matches isSensitive — should be classified credential, not user_excluded.
+  const entry = preview.excluded.find((e) => e.path === "secret.pem");
+  assert.ok(entry, "secret.pem must appear in excluded list");
+  assert.equal(entry.reason, "credential");
+});
+
+test("previewBundle classifies user opt-outs as user_excluded", async () => {
+  const workspaceDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), "holaboss-workspace-packager-"),
+  );
+  await fs.writeFile(path.join(workspaceDir, "workspace.yaml"), "name: test\n", "utf8");
+  await fs.writeFile(path.join(workspaceDir, "drop-me.md"), "x\n", "utf8");
+
+  const preview = await workspacePackager.previewBundle(workspaceDir, [], [
+    "drop-me.md",
+  ]);
+  const entry = preview.excluded.find((e) => e.path === "drop-me.md");
+  assert.ok(entry);
+  assert.equal(entry.reason, "user_excluded");
+  assert.ok(
+    !preview.included.some((i) => i.path === "drop-me.md"),
+    "user-excluded files must not appear in included",
+  );
+});

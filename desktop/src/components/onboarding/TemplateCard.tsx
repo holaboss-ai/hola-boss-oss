@@ -1,71 +1,33 @@
-import { FolderOpen } from "lucide-react";
+import { FolderOpen, Plus } from "lucide-react";
 import { KitEmoji } from "@/components/marketplace/KitEmoji";
-import { Button } from "@/components/ui/button";
 
-interface MarketplaceCardProps {
-  template: TemplateMetadataPayload;
-  onChangeKit: () => void;
+interface RowProps {
+  icon: React.ReactNode;
+  title: string;
+  subtitle: string;
+  onChange: () => void;
+  changeLabel?: string;
 }
 
-function MarketplaceCard({ template, onChangeKit }: MarketplaceCardProps) {
+function SourceRow({ icon, title, subtitle, onChange, changeLabel }: RowProps) {
   return (
-    <div className="mt-5 flex items-center gap-3 rounded-xl border border-border bg-muted/50 px-4 py-3">
-      <KitEmoji emoji={template.emoji} size={32} />
+    <div className="flex items-center gap-3 rounded-lg bg-fg-2 px-3.5 py-2.5 shadow-subtle-xs">
+      <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-background shadow-subtle-xs">
+        {icon}
+      </div>
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium text-foreground">
-          {template.name}
+          {title}
         </div>
-        <div className="truncate text-xs text-muted-foreground">
-          {template.description || template.apps.map((a) => a.name).join(", ")}
-        </div>
+        <div className="truncate text-xs text-muted-foreground">{subtitle}</div>
       </div>
-      <Button variant="link" size="sm" onClick={onChangeKit}>
-        Change
-      </Button>
-    </div>
-  );
-}
-
-function EmptyCard({ onChangeKit }: { onChangeKit: () => void }) {
-  return (
-    <div className="mt-5 flex items-center gap-3 rounded-xl border border-border bg-muted/50 px-4 py-3">
-      <span className="text-3xl leading-none">+</span>
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-foreground">
-          Starting from scratch
-        </div>
-        <div className="text-xs text-muted-foreground">
-          Empty workspace scaffold
-        </div>
-      </div>
-      <Button variant="link" size="sm" onClick={onChangeKit}>
-        Change
-      </Button>
-    </div>
-  );
-}
-
-function LocalTemplateCard({
-  folder,
-  onChangeFolder,
-}: {
-  folder: TemplateFolderSelectionPayload | null;
-  onChangeFolder: () => void;
-}) {
-  return (
-    <div className="mt-5 flex items-center gap-3 rounded-xl border border-border bg-muted/50 px-4 py-3">
-      <FolderOpen size={24} className="shrink-0 text-muted-foreground" />
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium text-foreground">
-          {folder?.templateName || "Local template"}
-        </div>
-        <div className="truncate text-xs text-muted-foreground">
-          {folder?.rootPath || "No folder selected"}
-        </div>
-      </div>
-      <Button variant="link" size="sm" onClick={onChangeFolder}>
-        Change folder
-      </Button>
+      <button
+        className="shrink-0 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:[box-shadow:none!important]"
+        onClick={onChange}
+        type="button"
+      >
+        {changeLabel ?? "Change"}
+      </button>
     </div>
   );
 }
@@ -83,14 +45,18 @@ export function TemplateCard({
   onChangeKit: () => void;
   onChangeFolder: () => void;
 }) {
-  if (
-    templateSourceMode === "marketplace" &&
-    selectedMarketplaceTemplate
-  ) {
+  if (templateSourceMode === "marketplace" && selectedMarketplaceTemplate) {
+    const template = selectedMarketplaceTemplate;
     return (
-      <MarketplaceCard
-        template={selectedMarketplaceTemplate}
-        onChangeKit={onChangeKit}
+      <SourceRow
+        icon={<KitEmoji emoji={template.emoji} size={22} />}
+        onChange={onChangeKit}
+        subtitle={
+          template.description ||
+          template.apps.map((a) => a.name).join(", ") ||
+          "Marketplace template"
+        }
+        title={template.name}
       />
     );
   }
@@ -99,14 +65,24 @@ export function TemplateCard({
     templateSourceMode === "empty" ||
     templateSourceMode === "empty_onboarding"
   ) {
-    return <EmptyCard onChangeKit={onChangeKit} />;
+    return (
+      <SourceRow
+        icon={<Plus className="size-4 text-muted-foreground" />}
+        onChange={onChangeKit}
+        subtitle="Empty workspace scaffold"
+        title="Starting from scratch"
+      />
+    );
   }
 
   if (templateSourceMode === "local") {
     return (
-      <LocalTemplateCard
-        folder={selectedTemplateFolder}
-        onChangeFolder={onChangeFolder}
+      <SourceRow
+        changeLabel="Change folder"
+        icon={<FolderOpen className="size-4 text-muted-foreground" />}
+        onChange={onChangeFolder}
+        subtitle={selectedTemplateFolder?.rootPath || "No folder selected"}
+        title={selectedTemplateFolder?.templateName || "Local template"}
       />
     );
   }
