@@ -35,10 +35,17 @@ import type { ExtraProps } from "react-markdown";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type MdProps = any;
 
-function createMarkdownComponents(onLinkClick?: ((url: string) => void) | undefined): Components {
+function createMarkdownComponents(
+  onLinkClick?: ((url: string) => void) | undefined,
+  onLocalLinkClick?: ((href: string) => void) | undefined,
+): Components {
   return {
   a({ className, ...props }: MdProps) {
-    const normalizedHref = normalizeHttpUrl(typeof props.href === "string" ? props.href : null);
+    const rawHref = typeof props.href === "string" ? props.href.trim() : "";
+    const normalizedHttpHref = normalizeHttpUrl(rawHref);
+    const isHttpHref = normalizedHttpHref !== null;
+    const isAnchor = rawHref.startsWith("#");
+    const localHref = !isHttpHref && !isAnchor && rawHref ? rawHref : null;
     const upstreamOnClick = props.onClick;
     return (
       <a
@@ -46,14 +53,21 @@ function createMarkdownComponents(onLinkClick?: ((url: string) => void) | undefi
         className={appendClassName(className, "md-link")}
         onClick={(event) => {
           upstreamOnClick?.(event);
-          if (event.defaultPrevented || !onLinkClick || !normalizedHref) {
+          if (event.defaultPrevented) {
             return;
           }
-          event.preventDefault();
-          onLinkClick(normalizedHref);
+          if (isHttpHref && onLinkClick && normalizedHttpHref) {
+            event.preventDefault();
+            onLinkClick(normalizedHttpHref);
+            return;
+          }
+          if (localHref && onLocalLinkClick) {
+            event.preventDefault();
+            onLocalLinkClick(localHref);
+          }
         }}
         rel="noopener noreferrer"
-        target="_blank"
+        target={isHttpHref ? "_blank" : undefined}
       />
     );
   },
@@ -118,20 +132,22 @@ interface SimpleMarkdownProps {
   children: string;
   className?: string;
   onLinkClick?: (url: string) => void;
+  onLocalLinkClick?: (href: string) => void;
 }
 
 function SimpleMarkdownComponent({
   children,
   className = "",
   onLinkClick,
+  onLocalLinkClick,
 }: SimpleMarkdownProps) {
   const normalizedChildren = useMemo(
     () => normalizeWrappedMarkdownFence(children),
     [children],
   );
   const components = useMemo(
-    () => createMarkdownComponents(onLinkClick),
-    [onLinkClick],
+    () => createMarkdownComponents(onLinkClick, onLocalLinkClick),
+    [onLinkClick, onLocalLinkClick],
   );
 
   return (

@@ -43,11 +43,7 @@ test("macOS browser builds configure Electron WebAuthn from packaged config", as
   );
   assert.match(
     packagedConfigSource,
-    /const MAC_WEBAUTHN_KEYCHAIN_GROUP_SUFFIX =\s*"com\.holaboss\.workspace\.webauthn";/,
-  );
-  assert.match(
-    packagedConfigSource,
-    /function resolveMacWebAuthnKeychainAccessGroup\(\) \{[\s\S]*HOLABOSS_MAC_WEBAUTHN_KEYCHAIN_ACCESS_GROUP[\s\S]*resolveEnvValue\("APPLE_TEAM_ID"\)[\s\S]*\}/,
+    /function resolveMacWebAuthnKeychainAccessGroup\(\) \{[\s\S]*return resolveEnvValue\([\s\S]*HOLABOSS_MAC_WEBAUTHN_KEYCHAIN_ACCESS_GROUP[\s\S]*\);[\s\S]*\}/,
   );
   assert.match(
     packagedConfigSource,
@@ -55,12 +51,8 @@ test("macOS browser builds configure Electron WebAuthn from packaged config", as
   );
 });
 
-test("macOS entitlements allow the WebAuthn keychain access group", async () => {
+test("default macOS entitlements stay free of restricted keychain access groups", async () => {
   const entitlements = await readFile(macEntitlementsPath, "utf8");
 
-  assert.match(entitlements, /<key>keychain-access-groups<\/key>/);
-  assert.match(
-    entitlements,
-    /<string>\$\(AppIdentifierPrefix\)com\.holaboss\.workspace\.webauthn<\/string>/,
-  );
+  assert.doesNotMatch(entitlements, /<key>keychain-access-groups<\/key>/);
 });

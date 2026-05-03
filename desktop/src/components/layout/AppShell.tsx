@@ -3909,6 +3909,27 @@ function AppShellContent() {
     });
   }, []);
 
+  const handleOpenLocalLinkInFiles = useCallback(
+    (href: string) => {
+      let raw = href.trim();
+      if (!raw) {
+        return;
+      }
+      if (raw.toLowerCase().startsWith("file://")) {
+        raw = raw.slice(7);
+      }
+      let decoded = raw;
+      try {
+        decoded = decodeURI(raw);
+      } catch {
+        decoded = raw;
+      }
+      // FileExplorerPane resolves relative paths against the workspace root.
+      handleSyncAgentOperationFileDisplay(decoded);
+    },
+    [handleSyncAgentOperationFileDisplay],
+  );
+
   const handleOpenWorkspaceOutput = useCallback(
     (output: WorkspaceOutputRecordPayload) => {
       const target = workspaceOutputNavigationTarget(output, installedAppIds);
@@ -4219,6 +4240,7 @@ function AppShellContent() {
           onImageAttachmentPreviewOpenChange={setChatImagePreviewOpen}
           focusRequestKey={chatFocusRequestKey}
           onOpenLinkInBrowser={handleOpenLinkInAppBrowser}
+          onOpenLocalLink={handleOpenLocalLinkInFiles}
           sessionJumpSessionId={chatSessionJumpRequest?.sessionId ?? null}
           sessionJumpRequestKey={chatSessionJumpRequest?.requestKey ?? 0}
           sessionOpenRequest={chatSessionOpenRequest}
@@ -4274,6 +4296,7 @@ function AppShellContent() {
           htmlContent={agentView.htmlContent}
           onResourceMissing={handleMissingInternalResource}
           onOpenLinkInBrowser={handleOpenLinkInNewAppBrowserTab}
+          onOpenLocalLink={handleSyncAgentOperationFileDisplay}
         />
       </div>
     );
@@ -4306,6 +4329,7 @@ function AppShellContent() {
     handleProactiveHeartbeatCronChange,
     handleProactiveWorkspaceEnabledChange,
     handleOpenLinkInAppBrowser,
+    handleOpenLocalLinkInFiles,
     handleSyncAgentOperationFileDisplay,
     handleOpenWorkspaceOutput,
     hasSelectedWorkspace,
@@ -4387,6 +4411,7 @@ function AppShellContent() {
             htmlContent={spaceDisplayView.htmlContent}
             onResourceMissing={handleMissingInternalResource}
             onOpenLinkInBrowser={handleOpenLinkInNewAppBrowserTab}
+            onOpenLocalLink={handleSyncAgentOperationFileDisplay}
           />
         </div>
       );
@@ -4442,6 +4467,7 @@ function AppShellContent() {
               onReferenceInChat={handleReferenceWorkspacePathInChat}
               onDeleteEntry={handleDeleteWorkspaceEntry}
               onOpenLinkInBrowser={handleOpenLinkInNewAppBrowserTab}
+              onOpenLocalLink={handleSyncAgentOperationFileDisplay}
             />
           ) : (
             <BrowserPane
@@ -4967,6 +4993,9 @@ function AppShellContent() {
                                   onDeleteEntry={handleDeleteWorkspaceEntry}
                                   onOpenLinkInBrowser={
                                     handleOpenLinkInNewAppBrowserTab
+                                  }
+                                  onOpenLocalLink={
+                                    handleSyncAgentOperationFileDisplay
                                   }
                                   previewInPane={false}
                                   embedded
