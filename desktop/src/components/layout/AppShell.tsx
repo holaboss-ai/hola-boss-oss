@@ -1,14 +1,12 @@
 import {
   ArrowLeft,
   Bot,
-  CircleCheck,
   Clock3,
   Folder,
   Globe,
   Inbox,
   LayoutGrid,
   Loader2,
-  XCircle,
 } from "lucide-react";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -47,7 +45,6 @@ import { SpaceBrowserExplorerPane } from "@/components/panes/SpaceBrowserExplore
 import { PublishScreen } from "@/components/publish/PublishScreen";
 import { Button } from "@/components/ui/button";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
-import { cn } from "@/lib/utils";
 import { StoplightProvider } from "@/lib/StoplightContext";
 import { holabossLogoUrl } from "@/lib/assetPaths";
 import { type ExplorerAttachmentDragPayload } from "@/lib/attachmentDrag";
@@ -1253,88 +1250,6 @@ function runtimeStartupBlockedMessage(
     );
   }
   return "";
-}
-
-function WorkspaceInitializingGate({
-  apps,
-}: {
-  apps: Array<{
-    id: string;
-    label: string;
-    ready: boolean;
-    error: string | null;
-  }>;
-}) {
-  const hasErrors = apps.some((app) => app.error);
-  const readyCount = apps.filter((app) => app.ready).length;
-
-  const body = (
-    <ul className="divide-y divide-border/50 overflow-hidden rounded-lg ring-1 ring-border/40">
-      {apps.map((app) => {
-        const status = app.ready
-          ? "ready"
-          : app.error
-            ? "failed"
-            : "setting_up";
-        return (
-          <li
-            className="flex items-center gap-3 bg-background px-3.5 py-2.5"
-            key={app.id}
-          >
-            {status === "ready" ? (
-              <CircleCheck className="size-3.5 shrink-0 text-primary" aria-hidden />
-            ) : status === "failed" ? (
-              <XCircle className="size-3.5 shrink-0 text-destructive" aria-hidden />
-            ) : (
-              <Loader2
-                aria-hidden
-                className="size-3.5 shrink-0 animate-spin text-muted-foreground"
-              />
-            )}
-            <span className="min-w-0 flex-1 truncate text-left text-sm text-foreground">
-              {app.label}
-            </span>
-            <span
-              className={cn(
-                "shrink-0 text-xs",
-                status === "ready" && "text-primary",
-                status === "failed" && "text-destructive",
-                status === "setting_up" && "text-muted-foreground",
-              )}
-            >
-              {status === "ready"
-                ? "Ready"
-                : status === "failed"
-                  ? "Failed"
-                  : "Setting up…"}
-            </span>
-          </li>
-        );
-      })}
-    </ul>
-  );
-
-  return (
-    <BlockingErrorScreen
-      body={body}
-      description={
-        hasErrors
-          ? "One or more workspace apps couldn't start. Open the app's settings or restart the workspace once the underlying issue is resolved."
-          : "Starting workspace apps. This may take a moment on first setup."
-      }
-      hint={
-        hasErrors ? null : (
-          <span className="tabular-nums">
-            {readyCount} of {apps.length} ready
-          </span>
-        )
-      }
-      icon={hasErrors ? undefined : Loader2}
-      iconSpinning={!hasErrors}
-      title={hasErrors ? "Some apps need attention" : "Setting up workspace"}
-      tone={hasErrors ? "error" : "info"}
-    />
-  );
 }
 
 function FocusPlaceholder({
