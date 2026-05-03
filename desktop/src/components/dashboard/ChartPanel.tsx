@@ -1,4 +1,11 @@
-import { useMemo } from "react";
+import {
+  AreaChart as AreaChartIcon,
+  BarChart3,
+  LineChart as LineChartIcon,
+  type LucideIcon,
+  PieChart as PieChartIcon,
+} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -22,8 +29,18 @@ import type {
   ChartSpec,
 } from "@/lib/dashboardSchema";
 
-import { formatValue } from "./format";
 import type { DataViewState } from "./DataViewPanel";
+import { EmptyState } from "./EmptyState";
+import { ErrorMessage } from "./ErrorMessage";
+import { formatValue } from "./format";
+
+const CHART_ICON: Record<ChartSpec["kind"], LucideIcon> = {
+  line: LineChartIcon,
+  bar: BarChart3,
+  area: AreaChartIcon,
+  pie: PieChartIcon,
+  donut: PieChartIcon,
+};
 
 interface ChartPanelProps {
   panel: ChartPanelSpec;
@@ -58,42 +75,56 @@ const SERIES_DARK = [
   "oklch(70.4% 0.04 256.788)",  // slate-400
 ];
 
-function pickSeriesPalette(): string[] {
-  if (typeof document !== "undefined") {
-    const isDark =
-      document.documentElement.classList.contains("dark") ||
-      document.documentElement.dataset.theme === "dark";
-    return isDark ? SERIES_DARK : SERIES_LIGHT;
-  }
-  return SERIES_LIGHT;
+function readIsDark(): boolean {
+  if (typeof document === "undefined") return false;
+  const root = document.documentElement;
+  return root.classList.contains("dark") || root.dataset.theme === "dark";
+}
+
+// Subscribes to live theme changes on <html>. Recharts paints into SVG
+// and can't pick up CSS vars at render time, so the palette is plain
+// OKLch literals — meaning charts won't repaint on theme toggle unless
+// the component re-renders. This hook does that via MutationObserver.
+function useSeriesPalette(): string[] {
+  const [isDark, setIsDark] = useState<boolean>(readIsDark);
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const root = document.documentElement;
+    const update = () => setIsDark(readIsDark());
+    const mo = new MutationObserver(update);
+    mo.observe(root, {
+      attributes: true,
+      attributeFilter: ["class", "data-theme"],
+    });
+    return () => mo.disconnect();
+  }, []);
+  return isDark ? SERIES_DARK : SERIES_LIGHT;
 }
 
 export function ChartPanel({ panel, state }: ChartPanelProps) {
   return (
     <section className="overflow-hidden rounded-xl bg-card shadow-md smooth-corners">
-      <header className="flex items-center justify-between gap-3 border-b border-border/70 bg-fg-2 px-4 py-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <h3 className="truncate text-sm font-semibold tracking-tight text-foreground">
-            {panel.title}
-          </h3>
-          {panel.description ? (
-            <span className="hidden truncate text-xs text-muted-foreground md:inline">
-              · {panel.description}
-            </span>
-          ) : null}
-        </div>
+      <header className="border-b border-border/70 bg-fg-2 px-4 py-3">
+        <h3 className="truncate text-sm font-semibold tracking-tight text-foreground">
+          {panel.title}
+        </h3>
+        {panel.description ? (
+          <p className="mt-1 truncate text-xs text-muted-foreground">
+            {panel.description}
+          </p>
+        ) : null}
       </header>
-      <div className="px-4 py-4">
+      <div className="px-4 py-3">
         {state.kind === "loading" ? (
           <ChartSkeleton />
         ) : state.kind === "error" ? (
-          <div className="my-3 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-            {state.message}
-          </div>
+          <ErrorMessage message={state.message} />
         ) : state.rows.length === 0 ? (
-          <div className="grid h-[260px] place-items-center text-xs text-muted-foreground">
-            {panel.empty_state ?? "No data."}
-          </div>
+          <EmptyState
+            icon={CHART_ICON[panel.chart.kind] ?? BarChart3}
+            message={panel.empty_state ?? "Nothing here yet."}
+            minHeight={260}
+          />
         ) : (
           <ChartBody chart={panel.chart} state={state} />
         )}
@@ -132,26 +163,11 @@ function CartesianChartBody({
   chart: Extract<ChartSpec, { kind: "line" | "bar" | "area" }>;
   state: Extract<DataViewState, { kind: "data" }>;
 }) {
-  const palette = pickSeriesPalette();
+  const palette = useSeriesPalette();
   const xIdx = state.columns.indexOf(chart.x);
   const seriesIdx = chart.y
     .map((s) => ({ name: s, idx: state.columns.indexOf(s) }))
     .filter((s) => s.idx >= 0);
-
-  if (xIdx < 0) {
-    return (
-      <ChartConfigError
-        msg={`x column "${chart.x}" not in projection.`}
-      />
-    );
-  }
-  if (seriesIdx.length === 0) {
-    return (
-      <ChartConfigError
-        msg={`y column(s) ${chart.y.map((s) => `"${s}"`).join(", ")} not in projection.`}
-      />
-    );
-  }
 
   // Project the row set into Recharts shape: array of objects keyed by
   // column name. Coerce numeric columns from string (sqlite REAL/
@@ -173,6 +189,21 @@ function CartesianChartBody({
       return o;
     });
   }, [state.rows, xIdx, seriesIdx, chart.x]);
+
+  if (xIdx < 0) {
+    return (
+      <ChartConfigError
+        msg={`x column "${chart.x}" not in projection.`}
+      />
+    );
+  }
+  if (seriesIdx.length === 0) {
+    return (
+      <ChartConfigError
+        msg={`y column(s) ${chart.y.map((s) => `"${s}"`).join(", ")} not in projection.`}
+      />
+    );
+  }
 
   const xTickFormatter = (raw: unknown): string => {
     if (chart.x_format === "date") return formatValue(raw, "date");
@@ -279,16 +310,36 @@ function CartesianChartBody({
                 wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
               />
             ) : null}
-            {seriesIdx.map((s, i) => (
-              <Bar
-                key={s.name}
-                dataKey={s.name}
-                fill={palette[i % palette.length]}
-                radius={[3, 3, 0, 0]}
-                stackId={chart.stacked ? "stack" : undefined}
-                isAnimationActive
-              />
-            ))}
+            {seriesIdx.map((s, i) => {
+              // color_by_sign only applies to single-series bars: per-row
+              // Cell color picked by sign. Stacked bars get radius=0
+              // because per-segment rounded corners look like dents.
+              const colorBySign =
+                chart.color_by_sign === true && seriesIdx.length === 1;
+              return (
+                <Bar
+                  key={s.name}
+                  dataKey={s.name}
+                  fill={palette[i % palette.length]}
+                  radius={chart.stacked ? 0 : [3, 3, 0, 0]}
+                  stackId={chart.stacked ? "stack" : undefined}
+                  isAnimationActive
+                >
+                  {colorBySign
+                    ? data.map((entry, idx) => {
+                        const v = entry[s.name];
+                        const n = typeof v === "number" ? v : null;
+                        const fill =
+                          n !== null && n < 0 ? palette[1] : palette[0];
+                        return (
+                          // biome-ignore lint/suspicious/noArrayIndexKey: row order is the natural key
+                          <Cell key={idx} fill={fill} />
+                        );
+                      })
+                    : null}
+                </Bar>
+              );
+            })}
           </BarChart>
         ) : (
           <AreaChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
@@ -355,16 +406,9 @@ function PieChartBody({
   chart: Extract<ChartSpec, { kind: "pie" | "donut" }>;
   state: Extract<DataViewState, { kind: "data" }>;
 }) {
-  const palette = pickSeriesPalette();
+  const palette = useSeriesPalette();
   const labelIdx = state.columns.indexOf(chart.label);
   const valueIdx = state.columns.indexOf(chart.value);
-
-  if (labelIdx < 0) {
-    return <ChartConfigError msg={`label column "${chart.label}" not in projection.`} />;
-  }
-  if (valueIdx < 0) {
-    return <ChartConfigError msg={`value column "${chart.value}" not in projection.`} />;
-  }
 
   const data = useMemo(() => {
     type Slice = { name: string; value: number };
@@ -388,6 +432,13 @@ function PieChartBody({
     }
     return arr;
   }, [state.rows, labelIdx, valueIdx, chart.sort_desc, chart.max_slices]);
+
+  if (labelIdx < 0) {
+    return <ChartConfigError msg={`label column "${chart.label}" not in projection.`} />;
+  }
+  if (valueIdx < 0) {
+    return <ChartConfigError msg={`value column "${chart.value}" not in projection.`} />;
+  }
 
   const isDonut = chart.kind === "donut";
 

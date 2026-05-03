@@ -268,7 +268,7 @@ const RUNTIME_HOLABOSS_PROVIDER_ALIASES = [
 const OPENAI_CODEX_PROVIDER_ID = "openai_codex";
 const OPENAI_CODEX_PROVIDER_LABEL = "OpenAI Codex";
 const OPENAI_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
-const OPENAI_CODEX_DEFAULT_MODELS = ["gpt-5.4", "gpt-5.3-codex"] as const;
+const OPENAI_CODEX_DEFAULT_MODELS = ["gpt-5.4", "gpt-5.5", "gpt-5.3-codex"] as const;
 const OPENAI_CODEX_OAUTH_ISSUER = "https://auth.openai.com";
 const OPENAI_CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OPENAI_CODEX_OAUTH_DEVICE_CODE_URL =
@@ -818,6 +818,7 @@ interface RuntimeConfigPayload {
   sandboxId: string | null;
   modelProxyBaseUrl: string | null;
   defaultModel: string | null;
+  subagentModel: string | null;
   defaultBackgroundModel: string | null;
   defaultEmbeddingModel: string | null;
   defaultImageModel: string | null;
@@ -851,6 +852,7 @@ interface RuntimeConfigUpdatePayload {
   sandboxId?: string | null;
   modelProxyBaseUrl?: string | null;
   defaultModel?: string | null;
+  subagentModel?: string | null;
   defaultBackgroundModel?: string | null;
   defaultEmbeddingModel?: string | null;
   defaultImageModel?: string | null;
@@ -1318,7 +1320,16 @@ interface PackagedDesktopConfig {
   marketplaceUrl?: string;
   proactiveUrl?: string;
   appUpdateEnabled?: boolean;
+  macWebAuthnKeychainAccessGroup?: string;
   updateChannel?: string;
+}
+
+interface ElectronWebAuthnApp {
+  configureWebAuthn?: (options: {
+    touchID?: {
+      keychainAccessGroup: string;
+    };
+  }) => void;
 }
 
 interface RuntimeLaunchSpec {
@@ -1345,6 +1356,33 @@ function loadPackagedDesktopConfig(): PackagedDesktopConfig {
 }
 
 const packagedDesktopConfig = loadPackagedDesktopConfig();
+
+function configuredMacWebAuthnKeychainAccessGroup(): string {
+  return (
+    process.env.HOLABOSS_MAC_WEBAUTHN_KEYCHAIN_ACCESS_GROUP?.trim() ||
+    packagedDesktopConfig.macWebAuthnKeychainAccessGroup?.trim() ||
+    ""
+  );
+}
+
+function configureMacWebAuthnPlatformAuthenticator(): void {
+  if (process.platform !== "darwin") {
+    return;
+  }
+  const keychainAccessGroup = configuredMacWebAuthnKeychainAccessGroup();
+  if (!keychainAccessGroup) {
+    return;
+  }
+  const electronApp = app as typeof app & ElectronWebAuthnApp;
+  if (typeof electronApp.configureWebAuthn !== "function") {
+    return;
+  }
+  electronApp.configureWebAuthn({
+    touchID: {
+      keychainAccessGroup,
+    },
+  });
+}
 
 function normalizeAppUpdateChannel(
   value: string | null | undefined,
@@ -1422,11 +1460,10 @@ const BACKEND_BASE_URL = configuredRemoteBaseUrl(
   packagedDesktopConfig.backendBaseUrl,
 );
 const DESKTOP_CONTROL_PLANE_BASE_URL =
-  serviceBaseUrlFromControlPlane(BACKEND_BASE_URL, 3060) ||
   configuredRemoteBaseUrl(
     ["HOLABOSS_DESKTOP_CONTROL_PLANE_BASE_URL"],
     packagedDesktopConfig.desktopControlPlaneBaseUrl,
-  );
+  ) || serviceBaseUrlFromControlPlane(BACKEND_BASE_URL, 3060);
 const AUTH_SIGN_IN_URL = configuredRemoteBaseUrl(
   ["HOLABOSS_AUTH_SIGN_IN_URL"],
   packagedDesktopConfig.authSignInUrl,
@@ -4786,6 +4823,9 @@ async function readRuntimeConfigFile(): Promise<Record<string, string>> {
     }
     const parsedRecord = parsed as Record<string, unknown>;
     const runtimePayload = runtimeConfigObject(parsedRecord.runtime);
+    const subagentsPayload = runtimeConfigObject(
+      runtimePayload.subagents ?? runtimePayload.subAgents,
+    );
     const providersPayload = runtimeConfigObject(parsedRecord.providers);
     const integrationsPayload = runtimeConfigObject(parsedRecord.integrations);
     const holabossIntegration = runtimeConfigObject(
@@ -4832,6 +4872,13 @@ async function readRuntimeConfigFile(): Promise<Record<string, string>> {
         legacyPayload.default_model as string | undefined,
       ),
     );
+    const subagentModel = normalizeLegacyRuntimeModelToken(
+      runtimeFirstNonEmptyString(
+        subagentsPayload.model as string | undefined,
+        subagentsPayload.model_id as string | undefined,
+        subagentsPayload.modelId as string | undefined,
+      ),
+    );
     const defaultProvider = runtimeFirstNonEmptyString(
       runtimePayload.default_provider as string | undefined,
       legacyPayload.default_provider as string | undefined,
@@ -4855,6 +4902,9 @@ async function readRuntimeConfigFile(): Promise<Record<string, string>> {
     }
     if (defaultModel) {
       normalized.default_model = defaultModel;
+    }
+    if (subagentModel) {
+      normalized.subagent_model = subagentModel;
     }
     if (defaultProvider) {
       normalized.default_provider = defaultProvider;
@@ -5065,11 +5115,12 @@ function openAiCodexProviderStateFromDocument(document: Record<string, unknown>)
   };
 }
 
-function runtimeDocumentHasProviderModels(
+function runtimeDocumentProviderModelIds(
   document: Record<string, unknown>,
   providerId: string,
-): boolean {
+): Set<string> {
   const modelsPayload = runtimeConfigObject(document.models);
+  const modelIds = new Set<string>();
   for (const [token, rawModel] of Object.entries(modelsPayload)) {
     const modelPayload = runtimeConfigObject(rawModel);
     const configuredProviderId = runtimeFirstNonEmptyString(
@@ -5077,11 +5128,48 @@ function runtimeDocumentHasProviderModels(
       modelPayload.provider_id as string | undefined,
       token.includes("/") ? token.split("/")[0]?.trim() : "",
     );
-    if (configuredProviderId === providerId) {
-      return true;
+    if (configuredProviderId !== providerId) {
+      continue;
+    }
+    const configuredModelId = runtimeFirstNonEmptyString(
+      modelPayload.model as string | undefined,
+      modelPayload.model_id as string | undefined,
+      token.includes("/") ? token.split("/").slice(1).join("/").trim() : "",
+    );
+    if (configuredModelId) {
+      modelIds.add(configuredModelId);
     }
   }
-  return false;
+  return modelIds;
+}
+
+function withProviderDefaultModels(
+  document: Record<string, unknown>,
+  providerId: string,
+  modelIds: readonly string[],
+): Record<string, unknown> {
+  const currentModels = runtimeConfigObject(document.models);
+  const nextModels: Record<string, unknown> = { ...currentModels };
+  const existingModelIds = runtimeDocumentProviderModelIds(document, providerId);
+  let didAddModel = false;
+  for (const modelId of modelIds) {
+    const normalizedModelId = modelId.trim();
+    if (!normalizedModelId || existingModelIds.has(normalizedModelId)) {
+      continue;
+    }
+    nextModels[`${providerId}/${normalizedModelId}`] = {
+      provider: providerId,
+      model: normalizedModelId,
+    };
+    didAddModel = true;
+  }
+  if (!didAddModel) {
+    return document;
+  }
+  return {
+    ...document,
+    models: nextModels,
+  };
 }
 
 function withOpenAiCodexProviderState(
@@ -5116,21 +5204,10 @@ function withOpenAiCodexProviderState(
     ...providersPayload,
     [OPENAI_CODEX_PROVIDER_ID]: nextProviderPayload,
   };
-  const currentModels = runtimeConfigObject(document.models);
-  const nextModels: Record<string, unknown> = { ...currentModels };
-  if (!runtimeDocumentHasProviderModels(document, OPENAI_CODEX_PROVIDER_ID)) {
-    for (const modelId of OPENAI_CODEX_DEFAULT_MODELS) {
-      nextModels[`${OPENAI_CODEX_PROVIDER_ID}/${modelId}`] = {
-        provider: OPENAI_CODEX_PROVIDER_ID,
-        model: modelId,
-      };
-    }
-  }
-  return {
+  return withProviderDefaultModels({
     ...document,
     providers: nextProviders,
-    models: nextModels,
-  };
+  }, OPENAI_CODEX_PROVIDER_ID, OPENAI_CODEX_DEFAULT_MODELS);
 }
 
 async function updateRuntimeConfigDocumentWithoutRestart(
@@ -5638,6 +5715,7 @@ async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
       ["sandboxId", "sandbox_id"],
       ["modelProxyBaseUrl", "model_proxy_base_url"],
       ["defaultModel", "default_model"],
+      ["subagentModel", "subagent_model"],
       ["controlPlaneBaseUrl", "control_plane_base_url"],
     ];
 
@@ -5692,6 +5770,10 @@ async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
     assignOrDelete(holabossProvider, "base_url", next.model_proxy_base_url);
     assignOrDelete(runtimePayload, "sandbox_id", next.sandbox_id);
     assignOrDelete(runtimePayload, "default_model", next.default_model);
+    const currentSubagents = runtimeConfigObject(
+      runtimePayload.subagents ?? runtimePayload.subAgents,
+    );
+    assignOrDelete(currentSubagents, "model", next.subagent_model);
     const currentBackgroundTasks = runtimeConfigObject(
       runtimePayload.background_tasks ?? runtimePayload.backgroundTasks,
     );
@@ -5740,6 +5822,12 @@ async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
     delete runtimePayload.backgroundTasks;
     delete runtimePayload.recallEmbeddings;
     delete runtimePayload.imageGeneration;
+    delete runtimePayload.subAgents;
+    if (Object.keys(currentSubagents).length > 0) {
+      runtimePayload.subagents = currentSubagents;
+    } else {
+      delete runtimePayload.subagents;
+    }
     if (
       managedDefaultBackgroundModel &&
       runtimeModelProxyApiKeyFromConfig(next) &&
@@ -6780,13 +6868,27 @@ async function refreshRuntimeModelCatalogIfNeeded(options?: {
     return runtimeModelCatalogState;
   }
   if (!shouldRefreshRuntimeModelCatalog(Boolean(options?.force))) {
+    let didSyncDefaults = false;
     if (await syncManagedHolabossDefaultsToRuntimeConfigIfNeeded()) {
+      didSyncDefaults = true;
+    }
+    if (await syncOpenAiCodexDefaultsToRuntimeConfigIfNeeded()) {
+      didSyncDefaults = true;
+    }
+    if (didSyncDefaults) {
       await emitRuntimeConfig();
     }
     return runtimeModelCatalogState;
   }
   if (!options?.force && hasRecentRuntimeModelCatalogRefreshFailure()) {
+    let didSyncDefaults = false;
     if (await syncManagedHolabossDefaultsToRuntimeConfigIfNeeded()) {
+      didSyncDefaults = true;
+    }
+    if (await syncOpenAiCodexDefaultsToRuntimeConfigIfNeeded()) {
+      didSyncDefaults = true;
+    }
+    if (didSyncDefaults) {
       await emitRuntimeConfig();
     }
     return runtimeModelCatalogState;
@@ -6801,7 +6903,14 @@ async function refreshRuntimeModelCatalogIfNeeded(options?: {
         await fetchDesktopRuntimeModelCatalog(),
       );
       await persistRuntimeModelCatalog(payload);
+      let didSyncDefaults = false;
       if (await syncManagedHolabossDefaultsToRuntimeConfigIfNeeded(payload)) {
+        didSyncDefaults = true;
+      }
+      if (await syncOpenAiCodexDefaultsToRuntimeConfigIfNeeded()) {
+        didSyncDefaults = true;
+      }
+      if (didSyncDefaults) {
         await emitRuntimeConfig();
       }
     });
@@ -6830,6 +6939,7 @@ async function getRuntimeConfigSnapshot(
     sandboxId: loaded.sandbox_id ?? null,
     modelProxyBaseUrl: loaded.model_proxy_base_url ?? null,
     defaultModel: loaded.default_model ?? null,
+    subagentModel: loaded.subagent_model ?? null,
     defaultBackgroundModel: managedCatalog.defaultBackgroundModel,
     defaultEmbeddingModel: managedCatalog.defaultEmbeddingModel,
     defaultImageModel: managedCatalog.defaultImageModel,
@@ -6870,6 +6980,32 @@ async function syncManagedHolabossDefaultsToRuntimeConfigIfNeeded(
     defaultEmbeddingModel: managedCatalog.defaultEmbeddingModel,
     defaultImageModel: managedCatalog.defaultImageModel,
   });
+  return true;
+}
+
+async function syncOpenAiCodexDefaultsToRuntimeConfigIfNeeded(): Promise<boolean> {
+  const currentDocument = await readRuntimeConfigDocument();
+  const state = openAiCodexProviderStateFromDocument(currentDocument);
+  if (
+    state.authMode !== "codex_oauth" &&
+    Object.keys(state.providerPayload).length === 0
+  ) {
+    return false;
+  }
+  const nextDocument = withProviderDefaultModels(
+    currentDocument,
+    OPENAI_CODEX_PROVIDER_ID,
+    OPENAI_CODEX_DEFAULT_MODELS,
+  );
+  const currentText =
+    Object.keys(currentDocument).length > 0
+      ? `${JSON.stringify(currentDocument, null, 2)}\n`
+      : "";
+  const nextText = `${JSON.stringify(nextDocument, null, 2)}\n`;
+  if (currentText === nextText) {
+    return false;
+  }
+  await writeRuntimeConfigTextAtomically(nextText);
   return true;
 }
 
@@ -7095,18 +7231,29 @@ async function withRuntimeConfigMutationLock<T>(
 
 async function getRuntimeConfig(): Promise<RuntimeConfigPayload> {
   refreshRuntimeModelCatalogInBackground();
+  if (await syncOpenAiCodexDefaultsToRuntimeConfigIfNeeded()) {
+    return getRuntimeConfigSnapshot(runtimeModelCatalogState);
+  }
   return getRuntimeConfigSnapshot(runtimeModelCatalogState);
 }
 
 async function getRuntimeConfigWithoutCatalogRefresh(): Promise<RuntimeConfigPayload> {
   const managedCatalog = runtimeModelCatalogState;
+  let didSyncDefaults = false;
   if (await syncManagedHolabossDefaultsToRuntimeConfigIfNeeded(managedCatalog)) {
+    didSyncDefaults = true;
+  }
+  if (await syncOpenAiCodexDefaultsToRuntimeConfigIfNeeded()) {
+    didSyncDefaults = true;
+  }
+  if (didSyncDefaults) {
     return getRuntimeConfigSnapshot(runtimeModelCatalogState);
   }
   return getRuntimeConfigSnapshot(managedCatalog);
 }
 
 async function getRuntimeConfigDocumentText(): Promise<string> {
+  await syncOpenAiCodexDefaultsToRuntimeConfigIfNeeded();
   const document = await readRuntimeConfigDocument();
   if (Object.keys(document).length > 0) {
     return `${JSON.stringify(document, null, 2)}\n`;
@@ -20022,6 +20169,8 @@ app.on("child-process-gone", (_event, details) => {
 });
 
 app.whenReady().then(async () => {
+  configureMacWebAuthnPlatformAuthenticator();
+
   if (process.platform === "darwin" && app.dock) {
     const dockIcon = nativeImage.createFromPath(desktopAppIconPath());
     if (!dockIcon.isEmpty()) {

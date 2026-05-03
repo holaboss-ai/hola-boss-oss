@@ -27,6 +27,7 @@ import { cronjobNextRunAt } from "./cron-worker.js";
 import { ensureWorkspaceDataDb } from "./ts-runner-session-state.js";
 import { generateWorkspaceImage } from "./image-generation.js";
 import { searchPublicWeb } from "./native-web-search.js";
+import { resolveSubagentExecutionProfile } from "./subagent-model.js";
 import {
   readSessionScratchpad,
   type SessionScratchpadWriteOperation,
@@ -134,6 +135,7 @@ export interface RuntimeAgentToolsResumeSubagentParams {
   inputId?: string | null;
   subagentId: string;
   answer: string;
+  selectedModel?: string | null;
   model?: string | null;
 }
 
@@ -144,6 +146,7 @@ export interface RuntimeAgentToolsContinueSubagentParams {
   subagentId: string;
   instruction: string;
   title?: string | null;
+  selectedModel?: string | null;
   model?: string | null;
 }
 
@@ -383,7 +386,7 @@ export interface RuntimeAgentToolsCloseTerminalSessionParams {
   workspaceId?: string | null;
 }
 
-export const ALLOWED_DELIVERY_MODES = new Set(["none", "announce"]);
+export const ALLOWED_DELIVERY_MODES = new Set(["none", "announce", "deliver"]);
 export const ALLOWED_DELIVERY_CHANNELS = new Set(["system_notification", "session_run"]);
 const DEFAULT_DOWNLOAD_TIMEOUT_MS = 120_000;
 const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
@@ -760,6 +763,20 @@ function inputUsesUserBrowserSurface(
   return contextUsesUserBrowserSurface(input?.payload?.context);
 }
 
+function inputThinkingValue(
+  input: { payload?: Record<string, unknown> | null } | null | undefined,
+): string | null {
+  const value = input?.payload?.thinking_value;
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function inputModelValue(
+  input: { payload?: Record<string, unknown> | null } | null | undefined,
+): string | null {
+  const value = input?.payload?.model;
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
 function subagentInstruction(params: {
   goal: string;
   context?: string | null;
@@ -1122,6 +1139,7 @@ export function normalizeDelivery(params: {
   to?: unknown;
 }): JsonObject {
   const normalizedMode = normalizedString(params.mode ?? "announce") || "announce";
+  const canonicalMode = normalizedMode === "deliver" ? "announce" : normalizedMode;
   const normalizedChannel = normalizedString(params.channel);
   if (!ALLOWED_DELIVERY_MODES.has(normalizedMode)) {
     throw new RuntimeAgentToolsServiceError(
@@ -1138,7 +1156,7 @@ export function normalizeDelivery(params: {
     );
   }
   return {
-    mode: normalizedMode,
+    mode: canonicalMode,
     channel: normalizedChannel,
     to: typeof params.to === "string" ? params.to : params.to == null ? null : String(params.to)
   };
@@ -1552,12 +1570,16 @@ export class RuntimeAgentToolsService {
       const childSessionId = `subagent-${randomUUID()}`;
       const title = normalizedSubagentTaskTitle(task.title, task.goal);
       const requestedModel = task.model || null;
-      const effectiveModel = requestedModel || normalizedString(params.selectedModel) || null;
+      const parentInput = parentInputId ? this.store.getInput(parentInputId) : null;
+      const effectiveProfile = resolveSubagentExecutionProfile({
+        selectedModel: params.selectedModel ?? inputModelValue(parentInput),
+        selectedThinkingValue: inputThinkingValue(parentInput),
+      });
+      const effectiveModel = effectiveProfile.model;
       const toolProfile = normalizeSubagentToolProfile({
         tools: task.tools,
         timeoutMs: task.timeoutMs,
       });
-      const parentInput = parentInputId ? this.store.getInput(parentInputId) : null;
       const forwardedAttachments = attachmentsFromInputPayload(parentInput?.payload.attachments);
       const forwardedImageUrls = normalizedStringList(parentInput?.payload.image_urls);
       const forwardedQuotedSkillIds = quotedSkillIdsFromInstruction(parentInput?.payload.text);
@@ -1603,6 +1625,7 @@ export class RuntimeAgentToolsService {
           attachments: forwardedAttachments,
           image_urls: forwardedImageUrls,
           model: effectiveModel,
+          thinking_value: effectiveProfile.thinkingValue,
           context: {
             source: "subagent",
             subagent_id: createdRun.subagentId,
@@ -1754,10 +1777,15 @@ export class RuntimeAgentToolsService {
         "subagent is not currently waiting on user input",
       );
     }
-    const effectiveModel = normalizedString(params.model) || state.run.effectiveModel || null;
     const previousChildInput = normalizedString(state.run.latestChildInputId)
       ? this.store.getInput(normalizedString(state.run.latestChildInputId))
       : null;
+    const effectiveProfile = resolveSubagentExecutionProfile({
+      selectedModel:
+        params.selectedModel ?? params.model ?? inputModelValue(previousChildInput),
+      selectedThinkingValue: inputThinkingValue(previousChildInput),
+    });
+    const effectiveModel = effectiveProfile.model;
     const useUserBrowserSurface = inputUsesUserBrowserSurface(previousChildInput);
     const resumedInput = this.store.enqueueInput({
       workspaceId: params.workspaceId,
@@ -1767,6 +1795,7 @@ export class RuntimeAgentToolsService {
         attachments: [],
         image_urls: [],
         model: effectiveModel,
+        thinking_value: effectiveProfile.thinkingValue,
         context: {
           source: "subagent_resume",
           subagent_id: state.run.subagentId,
@@ -1846,13 +1875,22 @@ export class RuntimeAgentToolsService {
         "subagent is waiting on user input; use resume instead",
       );
     }
-    const effectiveModel = normalizedString(params.model) || state.run.effectiveModel || null;
     const parentInput = normalizedString(params.inputId)
       ? this.store.getInput(normalizedString(params.inputId))
       : null;
     const previousChildInput = normalizedString(state.run.latestChildInputId)
       ? this.store.getInput(normalizedString(state.run.latestChildInputId))
       : null;
+    const effectiveProfile = resolveSubagentExecutionProfile({
+      selectedModel:
+        params.selectedModel ??
+        params.model ??
+        inputModelValue(parentInput) ??
+        inputModelValue(previousChildInput),
+      selectedThinkingValue:
+        inputThinkingValue(parentInput) ?? inputThinkingValue(previousChildInput),
+    });
+    const effectiveModel = effectiveProfile.model;
     const forwardedAttachments = attachmentsFromInputPayload(parentInput?.payload.attachments);
     const forwardedImageUrls = normalizedStringList(parentInput?.payload.image_urls);
     const forwardedQuotedSkillIds = quotedSkillIdsFromInstruction(parentInput?.payload.text);
@@ -1884,6 +1922,7 @@ export class RuntimeAgentToolsService {
         attachments: forwardedAttachments,
         image_urls: forwardedImageUrls,
         model: effectiveModel,
+        thinking_value: effectiveProfile.thinkingValue,
         context: {
           source: "subagent_continue",
           subagent_id: state.run.subagentId,

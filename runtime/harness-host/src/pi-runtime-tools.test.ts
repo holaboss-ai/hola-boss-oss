@@ -197,7 +197,7 @@ test("Pi runtime cronjob tools send instruction separately from description", as
       body,
     });
 
-    return new Response(JSON.stringify({ ok: true }), {
+    return new Response(JSON.stringify({ delivery: { channel: "session_run", mode: "announce" } }), {
       status: 200,
       headers: { "content-type": "application/json; charset=utf-8" },
     });
@@ -214,14 +214,14 @@ test("Pi runtime cronjob tools send instruction separately from description", as
   const createTool = tools.find((tool) => tool.name === "holaboss_cronjobs_create");
   assert.ok(createTool);
 
-  await createTool.execute(
+  const result = await createTool.execute(
     "call-1",
     {
       cron: "*/5 * * * *",
       description: "Say hello every 5 minutes.",
       instruction: "Say hello.",
       delivery_channel: "session_run",
-      delivery_mode: "announce",
+      delivery_mode: "deliver",
     },
     undefined,
     undefined,
@@ -243,6 +243,10 @@ test("Pi runtime cronjob tools send instruction separately from description", as
       }),
     },
   ]);
+  assert.equal(
+    result.content[0]?.text,
+    JSON.stringify({ delivery: { channel: "session_run", mode: "deliver" } }, null, 2),
+  );
 });
 
 test("Pi runtime cronjob tools expose only allowed delivery enum values", async () => {
@@ -279,9 +283,9 @@ test("Pi runtime cronjob tools expose only allowed delivery enum values", async 
         ?.anyOf ?? []
     ).map((item) => item.const);
 
-  assert.deepEqual(createDeliveryModeValues, ["announce", "none"]);
+  assert.deepEqual(createDeliveryModeValues, ["deliver", "none"]);
   assert.deepEqual(createDeliveryChannelValues, ["system_notification", "session_run"]);
-  assert.deepEqual(updateDeliveryModeValues, ["announce", "none"]);
+  assert.deepEqual(updateDeliveryModeValues, ["deliver", "none"]);
   assert.deepEqual(updateDeliveryChannelValues, ["system_notification", "session_run"]);
 });
 

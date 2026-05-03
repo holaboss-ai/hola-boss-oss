@@ -24,6 +24,7 @@ interface RuntimeConfigPayload {
   sandboxId: string | null;
   modelProxyBaseUrl: string | null;
   defaultModel: string | null;
+  subagentModel: string | null;
   defaultBackgroundModel: string | null;
   defaultImageModel: string | null;
   controlPlaneBaseUrl: string | null;
@@ -36,6 +37,7 @@ interface RuntimeConfigUpdatePayload {
   sandboxId?: string | null;
   modelProxyBaseUrl?: string | null;
   defaultModel?: string | null;
+  subagentModel?: string | null;
   defaultBackgroundModel?: string | null;
   defaultImageModel?: string | null;
   controlPlaneBaseUrl?: string | null;
@@ -110,7 +112,8 @@ const serviceBaseUrlFromHost = (baseUrl: string, port: number): string => {
 };
 const BACKEND_BASE_URL = configuredRemoteBaseUrl("HOLABOSS_BACKEND_BASE_URL");
 const CONTROL_PLANE_BASE_URL =
-  serviceBaseUrlFromHost(BACKEND_BASE_URL, 3060) || configuredRemoteBaseUrl("HOLABOSS_DESKTOP_CONTROL_PLANE_BASE_URL");
+  configuredRemoteBaseUrl("HOLABOSS_DESKTOP_CONTROL_PLANE_BASE_URL") ||
+  serviceBaseUrlFromHost(BACKEND_BASE_URL, 3060);
 const DEFAULT_MODEL_PROXY_BASE_URL = CONTROL_PLANE_BASE_URL ? `${CONTROL_PLANE_BASE_URL}/api/v1/model-proxy` : "";
 const DEFAULT_RUNTIME_MODEL = "openai/gpt-5.4";
 

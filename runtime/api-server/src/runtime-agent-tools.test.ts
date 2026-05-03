@@ -15,8 +15,26 @@ import {
   RuntimeAgentToolsServiceError,
 } from "./runtime-agent-tools.js";
 
+const ORIGINAL_ENV = {
+  HB_SANDBOX_ROOT: process.env.HB_SANDBOX_ROOT,
+  HOLABOSS_RUNTIME_CONFIG_PATH: process.env.HOLABOSS_RUNTIME_CONFIG_PATH,
+};
+
+function writeRuntimeConfig(root: string, document: Record<string, unknown>): void {
+  const configPath = path.join(root, "state", "runtime-config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify(document, null, 2)}\n`, "utf8");
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
+}
+
 test("continueSubagent queues a new input onto the same completed child session", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "hb-runtime-agent-tools-continue-"));
+  writeRuntimeConfig(root, {
+    runtime: {
+      default_model: "openai/gpt-5.4",
+    },
+  });
   const workspaceRoot = path.join(root, "workspace");
   const dbPath = path.join(root, "runtime.db");
   const workspaceId = "workspace-1";
@@ -77,6 +95,7 @@ test("continueSubagent queues a new input onto the same completed child session"
       title: "Web search for AI",
       goal: "Search the web for AI.",
       sourceType: "delegate_task",
+      effectiveModel: "openai/gpt-5.4",
       status: "completed",
       summary: "Top AI results.",
       resultPayload: { assistant_text: "Top AI results: item 1, item 2, item 3." },
@@ -120,6 +139,7 @@ test("continueSubagent queues a new input onto the same completed child session"
     const nextInput = store.getInput(nextInputId);
     assert.ok(nextInput);
     assert.equal(nextInput?.sessionId, childSessionId);
+    assert.equal(nextInput?.payload.model, "gpt-test");
     const nextInputText = String(nextInput?.payload.text ?? "");
     assert.match(nextInputText, /Create a concise report from those AI results\./);
     assert.match(nextInputText, /Continue from your previous result in this same child session\./);
@@ -133,6 +153,112 @@ test("continueSubagent queues a new input onto the same completed child session"
       continued_from_input_id: firstInput.inputId,
       continued_from_status: "completed",
     });
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("continueSubagent inherits the composer-selected thinking value for the effective child model", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "hb-runtime-agent-tools-continue-thinking-"));
+  writeRuntimeConfig(root, {
+    runtime: {
+      default_model: "openai/gpt-5.4",
+    },
+  });
+  const workspaceRoot = path.join(root, "workspace");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceId = "workspace-1";
+  const mainSessionId = "main-1";
+  const childSessionId = "subagent-child-1";
+  const subagentId = "subagent-run-1";
+  const completedAt = utcNowIso();
+
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+  try {
+    store.createWorkspace({
+      workspaceId,
+      name: "Workspace 1",
+      harness: "pi",
+      status: "active",
+    });
+    store.ensureSession({
+      workspaceId,
+      sessionId: mainSessionId,
+      kind: "workspace_session",
+      createdBy: "workspace_user",
+    });
+    store.ensureSession({
+      workspaceId,
+      sessionId: childSessionId,
+      kind: "subagent",
+      parentSessionId: mainSessionId,
+      createdBy: "workspace_agent",
+      archivedAt: completedAt,
+    });
+    const parentInput = store.enqueueInput({
+      workspaceId,
+      sessionId: mainSessionId,
+      payload: {
+        text: "Find the latest crypto news.",
+        model: "openai/gpt-5.5",
+        thinking_value: "medium",
+      },
+    });
+    const firstInput = store.enqueueInput({
+      workspaceId,
+      sessionId: childSessionId,
+      payload: {
+        text: "Research major crypto developments today.",
+        model: "openai/gpt-5.5",
+        thinking_value: "medium",
+      },
+    });
+    store.updateInput(firstInput.inputId, { status: "DONE" });
+    store.upsertTurnResult({
+      workspaceId,
+      sessionId: childSessionId,
+      inputId: firstInput.inputId,
+      startedAt: completedAt,
+      completedAt,
+      status: "completed",
+      stopReason: "success",
+      assistantText: "Top crypto results.",
+    });
+    store.createSubagentRun({
+      subagentId,
+      workspaceId,
+      parentSessionId: mainSessionId,
+      parentInputId: parentInput.inputId,
+      originMainSessionId: mainSessionId,
+      ownerMainSessionId: mainSessionId,
+      childSessionId,
+      initialChildInputId: firstInput.inputId,
+      currentChildInputId: null,
+      latestChildInputId: firstInput.inputId,
+      title: "Crypto research",
+      goal: "Research crypto news.",
+      sourceType: "delegate_task",
+      effectiveModel: "openai/gpt-5.5",
+      status: "completed",
+      summary: "Top crypto results.",
+      resultPayload: { assistant_text: "Top crypto results." },
+      completedAt,
+    });
+
+    const service = new RuntimeAgentToolsService(store, { workspaceRoot });
+    const result = service.continueSubagent({
+      workspaceId,
+      sessionId: mainSessionId,
+      inputId: parentInput.inputId,
+      subagentId,
+      instruction: "Write a concise crypto digest.",
+      selectedModel: "openai/gpt-5.5",
+    }) as Record<string, unknown>;
+
+    const nextInput = store.getInput(String(result.latest_child_input_id));
+    assert.equal(nextInput?.payload.model, "openai/gpt-5.5");
+    assert.equal(nextInput?.payload.thinking_value, "medium");
   } finally {
     store.close();
     await rm(root, { recursive: true, force: true });
@@ -194,6 +320,66 @@ test("delegateTask opts into the user browser surface only when explicitly reque
       ),
       false,
     );
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("delegateTask inherits the composer-selected model and thinking when no subagent default is configured", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "hb-runtime-agent-tools-delegate-thinking-"));
+  writeRuntimeConfig(root, {
+    runtime: {
+      default_model: "openai/gpt-5.4",
+    },
+  });
+  const workspaceRoot = path.join(root, "workspace");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceId = "workspace-1";
+  const mainSessionId = "main-1";
+
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+  try {
+    store.createWorkspace({
+      workspaceId,
+      name: "Workspace 1",
+      harness: "pi",
+      status: "active",
+    });
+    store.ensureSession({
+      workspaceId,
+      sessionId: mainSessionId,
+      kind: "workspace_session",
+      createdBy: "workspace_user",
+    });
+    const parentInput = store.enqueueInput({
+      workspaceId,
+      sessionId: mainSessionId,
+      payload: {
+        text: "Find the latest crypto news.",
+        model: "openai/gpt-5.5",
+        thinking_value: "medium",
+      },
+    });
+
+    const service = new RuntimeAgentToolsService(store, { workspaceRoot });
+    const result = service.delegateTask({
+      workspaceId,
+      sessionId: mainSessionId,
+      inputId: parentInput.inputId,
+      selectedModel: "openai/gpt-5.5",
+      tasks: [
+        {
+          goal: "Research major crypto developments today.",
+        },
+      ],
+    }) as { tasks?: Array<Record<string, unknown>> };
+
+    const tasks = result.tasks ?? [];
+    assert.equal(tasks.length, 1);
+    const childInput = store.getInput(String(tasks[0]?.latest_child_input_id ?? ""));
+    assert.equal(childInput?.payload.model, "openai/gpt-5.5");
+    assert.equal(childInput?.payload.thinking_value, "medium");
   } finally {
     store.close();
     await rm(root, { recursive: true, force: true });
@@ -488,6 +674,107 @@ test("resumeSubagent preserves the user browser surface flag while waiting on us
   }
 });
 
+test("resumeSubagent preserves the prior child thinking value", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "hb-runtime-agent-tools-resume-thinking-"));
+  writeRuntimeConfig(root, {
+    runtime: {
+      default_model: "openai/gpt-5.4",
+    },
+  });
+  const workspaceRoot = path.join(root, "workspace");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceId = "workspace-1";
+  const mainSessionId = "main-1";
+  const childSessionId = "subagent-child-1";
+  const subagentId = "subagent-run-1";
+  const blockedAt = utcNowIso();
+
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+  try {
+    store.createWorkspace({
+      workspaceId,
+      name: "Workspace 1",
+      harness: "pi",
+      status: "active",
+    });
+    store.ensureSession({
+      workspaceId,
+      sessionId: mainSessionId,
+      kind: "workspace_session",
+      createdBy: "workspace_user",
+    });
+    store.ensureSession({
+      workspaceId,
+      sessionId: childSessionId,
+      kind: "subagent",
+      parentSessionId: mainSessionId,
+      createdBy: "workspace_agent",
+    });
+    const blockedInput = store.enqueueInput({
+      workspaceId,
+      sessionId: childSessionId,
+      payload: {
+        text: "Check the latest X post stats in my current browser tab.",
+        model: "openai/gpt-5.5",
+        thinking_value: "medium",
+        context: {
+          source: "subagent",
+          use_user_browser_surface: true,
+        },
+      },
+    });
+    store.updateInput(blockedInput.inputId, { status: "DONE" });
+    store.upsertTurnResult({
+      workspaceId,
+      sessionId: childSessionId,
+      inputId: blockedInput.inputId,
+      startedAt: blockedAt,
+      completedAt: blockedAt,
+      status: "completed",
+      stopReason: "waiting_on_user",
+      assistantText: "Please log in to continue.",
+    });
+    store.createSubagentRun({
+      subagentId,
+      workspaceId,
+      parentSessionId: mainSessionId,
+      parentInputId: "parent-input-1",
+      originMainSessionId: mainSessionId,
+      ownerMainSessionId: mainSessionId,
+      childSessionId,
+      initialChildInputId: blockedInput.inputId,
+      currentChildInputId: blockedInput.inputId,
+      latestChildInputId: blockedInput.inputId,
+      title: "Check X stats",
+      goal: "Inspect the latest X post stats in the user's current browser tab.",
+      sourceType: "delegate_task",
+      effectiveModel: "openai/gpt-5.5",
+      status: "waiting_on_user",
+      summary: "Blocked by login.",
+      blockingPayload: {
+        status: "waiting_on_user",
+        blocking_question: "Please log in, then tell me to continue.",
+      },
+    });
+
+    const service = new RuntimeAgentToolsService(store, { workspaceRoot });
+    const result = service.resumeSubagent({
+      workspaceId,
+      sessionId: mainSessionId,
+      inputId: "parent-input-2",
+      subagentId,
+      answer: "Logged in now.",
+    }) as Record<string, unknown>;
+
+    const resumedInput = store.getInput(String(result.latest_child_input_id));
+    assert.equal(resumedInput?.payload.model, "openai/gpt-5.5");
+    assert.equal(resumedInput?.payload.thinking_value, "medium");
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("cancelSubagent waits for a claimed child runtime to settle before returning", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "hb-runtime-agent-tools-"));
   const workspaceRoot = path.join(root, "workspace");
@@ -697,6 +984,16 @@ beforeEach(() => {
 });
 afterEach(() => {
   harness.cleanup();
+  if (ORIGINAL_ENV.HB_SANDBOX_ROOT === undefined) {
+    delete process.env.HB_SANDBOX_ROOT;
+  } else {
+    process.env.HB_SANDBOX_ROOT = ORIGINAL_ENV.HB_SANDBOX_ROOT;
+  }
+  if (ORIGINAL_ENV.HOLABOSS_RUNTIME_CONFIG_PATH === undefined) {
+    delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+  } else {
+    process.env.HOLABOSS_RUNTIME_CONFIG_PATH = ORIGINAL_ENV.HOLABOSS_RUNTIME_CONFIG_PATH;
+  }
 });
 
 test("listDataTables auto-creates data.db on first read; returns empty list when no app has written", () => {

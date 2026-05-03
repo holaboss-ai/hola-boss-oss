@@ -27,6 +27,8 @@ const DEFAULT_RUNTIME_TOOL_TIMEOUT_MS = 30000;
 const IMAGE_GENERATE_RUNTIME_TOOL_TIMEOUT_MS = 180000;
 const DOWNLOAD_URL_RUNTIME_TOOL_TIMEOUT_MS = 120000;
 const TERMINAL_WAIT_RUNTIME_TOOL_TIMEOUT_MS = 65000;
+const MODEL_CRONJOB_DELIVERY_MODE_ALIAS = "deliver";
+const STORED_CRONJOB_DELIVERY_MODE = "announce";
 
 export interface RuntimeToolCapabilityClientOptions {
   runtimeApiBaseUrl: string;
@@ -72,7 +74,7 @@ function optionalStringArray(value: unknown): string[] | undefined {
 function buildDeliveryPayload(toolParams: unknown): Record<string, unknown> | undefined {
   const params = isRecord(toolParams) ? toolParams : {};
   const channel = optionalString(params.delivery_channel);
-  const mode = optionalString(params.delivery_mode);
+  const mode = normalizeCronjobDeliveryModeForRequest(params.delivery_mode);
   const to = optionalString(params.delivery_to);
   if (!channel && !mode && to === undefined) {
     return undefined;
@@ -82,6 +84,40 @@ function buildDeliveryPayload(toolParams: unknown): Record<string, unknown> | un
     ...(mode ? { mode } : {}),
     ...(to !== undefined ? { to } : {}),
   };
+}
+
+function normalizeCronjobDeliveryModeForRequest(value: unknown): string | undefined {
+  const mode = optionalString(value);
+  if (!mode) {
+    return undefined;
+  }
+  return mode === MODEL_CRONJOB_DELIVERY_MODE_ALIAS ? STORED_CRONJOB_DELIVERY_MODE : mode;
+}
+
+function rewriteCronjobDeliveryModesForModel(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => rewriteCronjobDeliveryModesForModel(item));
+  }
+  if (!isRecord(value)) {
+    return value;
+  }
+  const next: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === "delivery" && isRecord(entry)) {
+      const nextDelivery: Record<string, unknown> = {};
+      for (const [deliveryKey, deliveryValue] of Object.entries(entry)) {
+        if (deliveryKey === "mode" && deliveryValue === STORED_CRONJOB_DELIVERY_MODE) {
+          nextDelivery[deliveryKey] = MODEL_CRONJOB_DELIVERY_MODE_ALIAS;
+          continue;
+        }
+        nextDelivery[deliveryKey] = rewriteCronjobDeliveryModesForModel(deliveryValue);
+      }
+      next[key] = nextDelivery;
+      continue;
+    }
+    next[key] = rewriteCronjobDeliveryModesForModel(entry);
+  }
+  return next;
 }
 
 function subagentPath(subagentId: unknown): string {
@@ -615,14 +651,15 @@ export async function executeRuntimeToolCapability(params: RuntimeToolCapability
     throw new Error(message);
   }
 
-  const formatted = formatCapabilityToolResultForModel(response.payload);
+  const modelFacingPayload = rewriteCronjobDeliveryModesForModel(response.payload);
+  const formatted = formatCapabilityToolResultForModel(modelFacingPayload);
   return {
     content: [{ type: "text", text: formatted.text }],
     details: {
       tool_id: params.toolId,
       ...(formatted.compacted
         ? {
-            raw: response.payload,
+            raw: modelFacingPayload,
             raw_result_bytes: formatted.serializedBytes,
             model_result_bytes: formatted.modelTextBytes,
           }

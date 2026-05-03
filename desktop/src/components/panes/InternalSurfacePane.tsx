@@ -703,6 +703,7 @@ export function InternalSurfacePane({
             <DashboardRenderer
               workspaceId={selectedWorkspaceId}
               content={previewDraft}
+              dashboardPath={preview.absolutePath}
               fullWidth={dashboardFullWidth}
               refreshKey={dashboardRefreshKey}
             />

@@ -11,7 +11,7 @@ export function StatusBadge({ value }: StatusBadgeProps) {
   const className = badgeClassFor(value);
   return (
     <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium leading-4 ${className}`}
+      className={`inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-medium leading-4 ${className}`}
     >
       {value || "—"}
     </span>

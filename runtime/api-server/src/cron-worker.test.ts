@@ -16,10 +16,24 @@ import {
 } from "./cron-worker.js";
 
 const tempDirs: string[] = [];
+const ORIGINAL_ENV = {
+  HB_SANDBOX_ROOT: process.env.HB_SANDBOX_ROOT,
+  HOLABOSS_RUNTIME_CONFIG_PATH: process.env.HOLABOSS_RUNTIME_CONFIG_PATH,
+};
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+  if (ORIGINAL_ENV.HB_SANDBOX_ROOT === undefined) {
+    delete process.env.HB_SANDBOX_ROOT;
+  } else {
+    process.env.HB_SANDBOX_ROOT = ORIGINAL_ENV.HB_SANDBOX_ROOT;
+  }
+  if (ORIGINAL_ENV.HOLABOSS_RUNTIME_CONFIG_PATH === undefined) {
+    delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+  } else {
+    process.env.HOLABOSS_RUNTIME_CONFIG_PATH = ORIGINAL_ENV.HOLABOSS_RUNTIME_CONFIG_PATH;
   }
 });
 
@@ -72,6 +86,23 @@ test("cronjob helpers honor next_run_at and preserve legacy scheduling fallback"
 
 test("runtime cron worker queues due session_run cronjobs as hidden subagents and updates bookkeeping", async () => {
   const root = makeTempDir("hb-runtime-cron-worker-");
+  const configPath = path.join(root, "state", "runtime-config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(
+    configPath,
+    `${JSON.stringify(
+      {
+        runtime: {
+          default_model: "openai/gpt-5.4",
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
     workspaceRoot: path.join(root, "workspace")
@@ -158,12 +189,14 @@ test("runtime cron worker queues due session_run cronjobs as hidden subagents an
   assert.deepEqual(run?.toolProfile, {
     requested_tools: ["terminal", "file", "browser", "web"],
   });
+  assert.equal(run?.requestedModel, "gpt-5");
+  assert.equal(run?.effectiveModel, "openai/gpt-5.4");
   assert.ok(childSession);
   assert.equal(childSession?.kind, "subagent");
   assert.ok(runtimeState);
   assert.equal(runtimeState.status, "QUEUED");
   assert.equal(queued.length, 1);
-  assert.equal(queued[0].payload.model, "gpt-5");
+  assert.equal(queued[0].payload.model, "openai/gpt-5.4");
   assert.equal(
     (queued[0].payload.context as Record<string, unknown>).source,
     "subagent",
@@ -193,8 +226,28 @@ test("runtime cron worker queues due session_run cronjobs as hidden subagents an
   store.close();
 });
 
-test("runtime cron worker inherits the main-session model when cronjob metadata does not pin one", async () => {
+test("runtime cron worker uses the configured global subagent model instead of inheriting the main-session model", async () => {
   const root = makeTempDir("hb-runtime-cron-worker-");
+  const configPath = path.join(root, "state", "runtime-config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(
+    configPath,
+    `${JSON.stringify(
+      {
+        runtime: {
+          default_model: "openai/gpt-5.4",
+          subagents: {
+            model: "anthropic_direct/claude-sonnet-4-6",
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
     workspaceRoot: path.join(root, "workspace")
@@ -257,9 +310,10 @@ test("runtime cron worker inherits the main-session model when cronjob metadata 
 
   assert.equal(processed, 1);
   assert.equal(queued.length, 1);
-  assert.equal(queued[0]?.payload.model, "openai/gpt-5.4");
+  assert.equal(queued[0]?.payload.model, "anthropic_direct/claude-sonnet-4-6");
   assert.equal(runs.length, 1);
   assert.equal(runs[0]?.ownerMainSessionId, "session-main");
+  assert.equal(runs[0]?.effectiveModel, "anthropic_direct/claude-sonnet-4-6");
 
   store.close();
 });

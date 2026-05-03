@@ -173,12 +173,18 @@ test("searchPublicWeb reads provider settings from runtime config", async (t) =>
     configPath,
     JSON.stringify({
       control_plane_base_url: "https://api.holaboss.test",
+      integrations: {
+        holaboss: {
+          auth_token: "runtime-search-key",
+          user_id: "user-1",
+          sandbox_id: "desktop:sandbox-1",
+        },
+      },
       web_search: {
         provider: "holaboss_search",
         providers: {
           holaboss_search: {
             kind: "holaboss_search",
-            api_key: "runtime-search-key",
           },
         },
       },
@@ -208,6 +214,8 @@ test("searchPublicWeb reads provider settings from runtime config", async (t) =>
     "content-type": "application/json",
     authorization: "Bearer runtime-search-key",
     "x-api-key": "runtime-search-key",
+    "X-Holaboss-User-Id": "user-1",
+    "X-Holaboss-Sandbox-Id": "desktop:sandbox-1",
   });
 });
 
@@ -264,7 +272,7 @@ test("searchPublicWeb derives local Holaboss search URL from model proxy config"
 
   assert.equal(result.providerId, "holaboss_search");
   assert.equal(result.text, "runtime result");
-  assert.equal(requests[0]?.url, "http://127.0.0.1:3038/api/v1/search/web");
+  assert.equal(requests[0]?.url, "http://127.0.0.1:3060/api/v1/search/web");
   assert.deepEqual(requests[0]?.init?.headers, {
     accept: "application/json",
     "content-type": "application/json",
@@ -273,6 +281,121 @@ test("searchPublicWeb derives local Holaboss search URL from model proxy config"
     "X-Holaboss-User-Id": "user-1",
     "X-Holaboss-Sandbox-Id": "desktop:sandbox-1",
   });
+});
+
+test("searchPublicWeb falls back to Exa when stale Holaboss search config has no managed binding", async (t) => {
+  const previousConfigPath = process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "holaboss-search-"));
+  t.after(async () => {
+    if (previousConfigPath === undefined) {
+      delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+    } else {
+      process.env.HOLABOSS_RUNTIME_CONFIG_PATH = previousConfigPath;
+    }
+    await rm(tempDir, { force: true, recursive: true });
+  });
+
+  const configPath = path.join(tempDir, "runtime-config.json");
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      control_plane_base_url: "https://api.imerchstaging.com/gateway/sandbox",
+      web_search: {
+        provider: "holaboss_search",
+        providers: {
+          holaboss_search: {
+            kind: "holaboss_search",
+          },
+          exa: {
+            kind: "exa_hosted_mcp",
+          },
+        },
+      },
+    }),
+  );
+
+  const requests: Array<{
+    url: string;
+    init?: RequestInit;
+  }> = [];
+  const result = await searchPublicWeb({
+    query: "runtime configured search",
+    fetchImpl: async (input, init) => {
+      requests.push({ url: String(input), init });
+      return new Response(
+        'event: message\ndata: {"result":{"content":[{"type":"text","text":"exa fallback result"}]},"jsonrpc":"2.0","id":1}\n',
+        {
+          status: 200,
+          headers: { "content-type": "text/event-stream; charset=utf-8" },
+        },
+      );
+    },
+  });
+
+  assert.equal(result.providerId, "exa_hosted_mcp");
+  assert.equal(result.text, "exa fallback result");
+  assert.equal(requests[0]?.url, "https://mcp.exa.ai/mcp");
+});
+
+test("searchPublicWeb preserves sandbox gateway prefixes when deriving Holaboss search URL from model proxy config", async (t) => {
+  const previousConfigPath = process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "holaboss-search-"));
+  t.after(async () => {
+    if (previousConfigPath === undefined) {
+      delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+    } else {
+      process.env.HOLABOSS_RUNTIME_CONFIG_PATH = previousConfigPath;
+    }
+    await rm(tempDir, { force: true, recursive: true });
+  });
+
+  const configPath = path.join(tempDir, "runtime-config.json");
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      model_proxy_base_url:
+        "https://api.imerchstaging.com/gateway/sandbox/api/v1/model-proxy",
+      integrations: {
+        holaboss: {
+          auth_token: "runtime-search-key",
+          user_id: "user-1",
+          sandbox_id: "desktop:sandbox-1",
+        },
+      },
+      web_search: {
+        provider: "holaboss_search",
+        providers: {
+          holaboss_search: {
+            kind: "holaboss_search",
+          },
+        },
+      },
+    }),
+  );
+
+  const requests: Array<{
+    url: string;
+    init?: RequestInit;
+  }> = [];
+  const result = await searchPublicWeb({
+    query: "gateway configured search",
+    fetchImpl: async (input, init) => {
+      requests.push({ url: String(input), init });
+      return new Response(JSON.stringify({ text: "gateway result" }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    },
+  });
+
+  assert.equal(result.providerId, "holaboss_search");
+  assert.equal(result.text, "gateway result");
+  assert.equal(
+    requests[0]?.url,
+    "https://api.imerchstaging.com/gateway/sandbox/api/v1/search/web",
+  );
 });
 
 test("searchPublicWeb maps local control plane URL to Holaboss search service", async (t) => {
@@ -297,6 +420,7 @@ test("searchPublicWeb maps local control plane URL to Holaboss search service", 
         holaboss: {
           auth_token: "runtime-search-key",
           user_id: "user-1",
+          sandbox_id: "desktop:sandbox-1",
         },
       },
     }),
@@ -317,7 +441,7 @@ test("searchPublicWeb maps local control plane URL to Holaboss search service", 
     },
   });
 
-  assert.equal(requests[0]?.url, "http://127.0.0.1:3038/api/v1/search/web");
+  assert.equal(requests[0]?.url, "http://127.0.0.1:3060/api/v1/search/web");
 });
 
 test("searchPublicWeb explicit Holaboss provider inherits runtime binding", async (t) => {
@@ -342,6 +466,7 @@ test("searchPublicWeb explicit Holaboss provider inherits runtime binding", asyn
         holaboss: {
           auth_token: "runtime-search-key",
           user_id: "user-1",
+          sandbox_id: "desktop:sandbox-1",
         },
       },
     }),
@@ -363,14 +488,69 @@ test("searchPublicWeb explicit Holaboss provider inherits runtime binding", asyn
     },
   });
 
-  assert.equal(requests[0]?.url, "http://127.0.0.1:3038/api/v1/search/web");
+  assert.equal(requests[0]?.url, "http://127.0.0.1:3060/api/v1/search/web");
   assert.deepEqual(requests[0]?.init?.headers, {
     accept: "application/json",
     "content-type": "application/json",
     authorization: "Bearer runtime-search-key",
     "x-api-key": "runtime-search-key",
     "X-Holaboss-User-Id": "user-1",
+    "X-Holaboss-Sandbox-Id": "desktop:sandbox-1",
   });
+});
+
+test("searchPublicWeb preserves sandbox gateway prefixes when deriving Holaboss search URL from control plane config", async (t) => {
+  const previousConfigPath = process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "holaboss-search-"));
+  t.after(async () => {
+    if (previousConfigPath === undefined) {
+      delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+    } else {
+      process.env.HOLABOSS_RUNTIME_CONFIG_PATH = previousConfigPath;
+    }
+    await rm(tempDir, { force: true, recursive: true });
+  });
+
+  const configPath = path.join(tempDir, "runtime-config.json");
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      control_plane_base_url: "https://api.imerchstaging.com/gateway/sandbox",
+      integrations: {
+        holaboss: {
+          auth_token: "runtime-search-key",
+          user_id: "user-1",
+          sandbox_id: "desktop:sandbox-1",
+        },
+      },
+    }),
+  );
+
+  const requests: Array<{
+    url: string;
+    init?: RequestInit;
+  }> = [];
+  const result = await searchPublicWeb({
+    query: "gateway control plane search",
+    fetchImpl: async (input, init) => {
+      requests.push({ url: String(input), init });
+      return new Response(
+        JSON.stringify({ text: "gateway control plane result" }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json; charset=utf-8" },
+        },
+      );
+    },
+  });
+
+  assert.equal(result.providerId, "holaboss_search");
+  assert.equal(result.text, "gateway control plane result");
+  assert.equal(
+    requests[0]?.url,
+    "https://api.imerchstaging.com/gateway/sandbox/api/v1/search/web",
+  );
 });
 
 test("searchPublicWeb requires a non-empty query", async () => {

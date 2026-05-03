@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const mainSourcePath = path.join(__dirname, "main.ts");
+const authPopupPreloadPath = path.join(__dirname, "authPopupPreload.ts");
 
 test("embedded runtime launch forwards auth base URL alongside the auth cookie", async () => {
   const source = await readFile(mainSourcePath, "utf8");
@@ -34,5 +35,23 @@ test("embedded runtime bridge uses the same proactive base URL resolution as int
   assert.match(
     source,
     /PROACTIVE_BRIDGE_BASE_URL:\s*runtimeProactiveBridgeBaseUrl\(\)/,
+  );
+});
+
+test("desktop runtime control plane base URL prefers the explicit sandbox gateway override", async () => {
+  const source = await readFile(mainSourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const DESKTOP_CONTROL_PLANE_BASE_URL =\s*configuredRemoteBaseUrl\(\s*\["HOLABOSS_DESKTOP_CONTROL_PLANE_BASE_URL"\],\s*packagedDesktopConfig\.desktopControlPlaneBaseUrl,\s*\)\s*\|\|\s*serviceBaseUrlFromControlPlane\(BACKEND_BASE_URL, 3060\);/,
+  );
+});
+
+test("auth popup runtime defaults prefer the explicit sandbox gateway override", async () => {
+  const source = await readFile(authPopupPreloadPath, "utf8");
+
+  assert.match(
+    source,
+    /const CONTROL_PLANE_BASE_URL =\s*configuredRemoteBaseUrl\("HOLABOSS_DESKTOP_CONTROL_PLANE_BASE_URL"\)\s*\|\|\s*serviceBaseUrlFromHost\(BACKEND_BASE_URL, 3060\);/,
   );
 });
