@@ -6,9 +6,5 @@
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
-    <key>keychain-access-groups</key>
-    <array>
-      <string>$(AppIdentifierPrefix)com.holaboss.workspace.webauthn</string>
-    </array>
   </dict>
 </plist>

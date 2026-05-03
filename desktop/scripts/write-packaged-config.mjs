@@ -8,8 +8,6 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDir, "..");
 const outputDir = path.join(desktopRoot, "out");
 const outputPath = path.join(outputDir, "holaboss-config.json");
-const MAC_WEBAUTHN_KEYCHAIN_GROUP_SUFFIX =
-  "com.holaboss.workspace.webauthn";
 
 function resolveUpdateChannel() {
   const rawValue = (process.env.HOLABOSS_RELEASE_CHANNEL || "").trim().toLowerCase();
@@ -80,17 +78,13 @@ function resolveEnvValue(...names) {
 }
 
 function resolveMacWebAuthnKeychainAccessGroup() {
-  const explicitValue = resolveEnvValue(
+  // The Touch ID / platform WebAuthn access group is only safe when the
+  // signed app is built with the matching Apple capability and provisioning
+  // context. Treat it as an explicit opt-in so default Developer ID builds
+  // remain launchable.
+  return resolveEnvValue(
     "HOLABOSS_MAC_WEBAUTHN_KEYCHAIN_ACCESS_GROUP",
   );
-  if (explicitValue) {
-    return explicitValue;
-  }
-  const appleTeamId = resolveEnvValue("APPLE_TEAM_ID");
-  if (!appleTeamId) {
-    return "";
-  }
-  return `${appleTeamId}.${MAC_WEBAUTHN_KEYCHAIN_GROUP_SUFFIX}`;
 }
 
 const macWebAuthnKeychainAccessGroup =
