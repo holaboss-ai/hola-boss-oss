@@ -1363,18 +1363,54 @@ function FocusPlaceholder({
 }
 
 function WorkspaceStartupErrorPane({ message }: { message: string }) {
+  const [isRetrying, setIsRetrying] = useState(false);
+
+  async function handleRetry() {
+    if (isRetrying) {
+      return;
+    }
+    setIsRetrying(true);
+    try {
+      await window.electronAPI.runtime.restart();
+    } catch {
+      // Restart may legitimately fail again with the same root cause; the
+      // runtime status feed will repaint this screen with the fresh message.
+    } finally {
+      setIsRetrying(false);
+    }
+  }
+
+  function handleReinstall() {
+    void window.electronAPI.ui.openExternalUrl("https://holaboss.ai/download");
+  }
+
   return (
     <BlockingErrorScreen
-      description="The desktop shell can't finish restoring workspaces until the embedded runtime is available again."
-      detail={message}
-      hint={
+      actions={
         <>
-          Check <code className="font-mono">runtime.log</code> in the Electron
-          userData directory and confirm the desktop runtime configuration is
-          present.
+          <Button
+            className="flex-1"
+            disabled={isRetrying}
+            onClick={() => void handleRetry()}
+            size="lg"
+            type="button"
+          >
+            {isRetrying ? <Loader2 className="animate-spin" /> : null}
+            Try again
+          </Button>
+          <Button
+            onClick={handleReinstall}
+            size="lg"
+            type="button"
+            variant="bordered"
+          >
+            Reinstall…
+          </Button>
         </>
       }
-      title="The local runtime is unavailable"
+      description="Some files Holaboss needs to start are missing or damaged. Try again — if it keeps failing, reinstalling the app usually fixes it."
+      technicalDetail={`${message}\n\nFor diagnostics, check runtime.log in the Electron userData directory.`}
+      title="Holaboss couldn't start"
     />
   );
 }

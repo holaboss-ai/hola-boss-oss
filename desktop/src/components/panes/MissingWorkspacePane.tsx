@@ -88,7 +88,7 @@ export function MissingWorkspacePane({
           mounted right now.
         </>
       }
-      detail={workspacePath ?? undefined}
+      technicalDetail={workspacePath ?? undefined}
       hint="Pick the original folder if you moved it, or an empty folder to start fresh."
       icon={FolderX}
       title="Workspace folder is missing"

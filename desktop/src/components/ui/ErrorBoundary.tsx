@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/electron/renderer";
-import { AlertTriangle, RotateCw } from "lucide-react";
+import { AlertTriangle, ChevronRight, RotateCw } from "lucide-react";
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -20,7 +20,9 @@ interface ErrorBoundaryState {
  * `bg-fg-2` canvas, single max-w-md card, no destructive fill or radial
  * gradients. We can't reuse `BlockingErrorScreen` directly without risking
  * a re-throw inside the boundary itself, so the markup is duplicated by
- * design.
+ * design. Friendly copy + Reload up top, technical detail behind a
+ * disclosure (auto-open in dev) so a normal user isn't reading a stack
+ * trace they can't act on.
  */
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   state: ErrorBoundaryState = {
@@ -57,6 +59,8 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       return this.props.children;
     }
 
+    const detailsDefaultOpen = Boolean(import.meta.env.DEV);
+
     return (
       <main className="flex h-full min-h-0 min-w-0 items-center justify-center overflow-y-auto bg-fg-2 px-6 py-12">
         <div className="w-full max-w-md">
@@ -64,16 +68,15 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             <div className="flex size-9 items-center justify-center rounded-full bg-destructive/8 ring-1 ring-destructive/20">
               <AlertTriangle aria-hidden className="size-4 text-destructive" />
             </div>
+
             <h2 className="mt-5 text-xl font-semibold tracking-tight text-foreground sm:text-[22px]">
               Something went wrong
             </h2>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              A component crashed. Reloading usually clears it. If it keeps
-              coming back, check the terminal log for the full stack trace.
+              Reloading usually fixes this. If it keeps happening after a
+              reload, it's worth restarting the app.
             </p>
-            <pre className="mt-5 overflow-auto rounded-lg bg-fg-2 px-3.5 py-3 font-mono text-xs leading-5 text-foreground/85">
-              {this.state.message}
-            </pre>
+
             <div className="mt-6">
               <Button
                 className="w-full"
@@ -85,6 +88,19 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
                 Reload the app
               </Button>
             </div>
+
+            <details className="group mt-6" open={detailsDefaultOpen}>
+              <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-md py-1 text-xs text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+                <ChevronRight
+                  aria-hidden
+                  className="size-3 transition-transform group-open:rotate-90"
+                />
+                Show technical details
+              </summary>
+              <pre className="mt-2 overflow-auto rounded-lg bg-fg-2 px-3.5 py-3 font-mono text-xs leading-5 break-all whitespace-pre-wrap text-foreground/85">
+                {this.state.message}
+              </pre>
+            </details>
           </div>
         </div>
       </main>

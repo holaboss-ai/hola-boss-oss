@@ -1,7 +1,8 @@
 import type { LucideIcon } from "lucide-react";
-import { AlertTriangle } from "lucide-react";
-import type { ReactNode } from "react";
+import { AlertTriangle, Check, ChevronRight, Copy } from "lucide-react";
+import { type ReactNode, useState } from "react";
 
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export type BlockingErrorTone = "error" | "warning" | "info";
@@ -19,10 +20,16 @@ interface BlockingErrorScreenProps {
   title: string;
   description?: ReactNode;
   /**
-   * Quiet, mono-styled detail block — the literal error message, a path,
-   * a stack trace, etc. Wraps long content; long lines should `break-all`.
+   * Engineer-facing context: paths, raw error messages, "check runtime.log"
+   * hints. Hidden behind a "Show technical details" disclosure so a normal
+   * user doesn't have to read it. Auto-expanded in dev (Vite `import.meta.
+   * env.DEV`) so we still see it without clicking while iterating.
+   *
+   * Pass a string when possible — string content gets a Copy-to-clipboard
+   * button so support handoffs are one click. ReactNode also accepted for
+   * cases that need richer formatting (per-app failure lists, etc.).
    */
-  detail?: ReactNode;
+  technicalDetail?: ReactNode;
   /**
    * Domain-specific block rendered between description and actions —
    * used by the per-app status list, etc. Author owns its layout.
@@ -61,7 +68,9 @@ const TONE_STYLES: Record<
  * same `bg-fg-2` canvas + centered card vocabulary as the publish + onboarding
  * full-screen flows so a hard-block doesn't visually splinter from the rest
  * of the app. Stay restrained: small icon, no destructive fill, no radial
- * gradients — the title carries the weight.
+ * gradients — the title carries the weight. Engineer-facing context lives
+ * behind a "Show technical details" disclosure so normal users aren't
+ * staring at file paths and log filenames.
  */
 export function BlockingErrorScreen({
   tone = "error",
@@ -69,7 +78,7 @@ export function BlockingErrorScreen({
   iconSpinning = false,
   title,
   description,
-  detail,
+  technicalDetail,
   body,
   actions,
   hint,
@@ -107,25 +116,80 @@ export function BlockingErrorScreen({
             </div>
           ) : null}
 
-          {detail ? (
-            <div className="mt-5 overflow-hidden rounded-lg bg-fg-2 px-3.5 py-3 font-mono text-xs leading-5 break-all whitespace-pre-wrap text-foreground/85">
-              {detail}
-            </div>
-          ) : null}
-
           {body ? <div className="mt-5">{body}</div> : null}
 
           {actions ? (
             <div className="mt-6 flex flex-col gap-2 sm:flex-row">{actions}</div>
           ) : null}
 
+          {technicalDetail ? <TechnicalDetail content={technicalDetail} /> : null}
+
           {hint ? (
-            <p className="mt-5 text-xs leading-5 text-muted-foreground">
+            <p className="mt-4 text-xs leading-5 text-muted-foreground">
               {hint}
             </p>
           ) : null}
         </div>
       </div>
     </section>
+  );
+}
+
+/**
+ * Collapsible "Show technical details" disclosure. Closed by default in
+ * production so a normal user never sees the engineer-facing copy; open by
+ * default in dev so we don't have to click every time during development.
+ * Native `<details>` for accessibility + zero-state-machine simplicity.
+ */
+function TechnicalDetail({ content }: { content: ReactNode }) {
+  const defaultOpen = Boolean(import.meta.env.DEV);
+  const [copied, setCopied] = useState(false);
+  const isCopyable = typeof content === "string";
+
+  async function handleCopy(event: React.MouseEvent<HTMLButtonElement>) {
+    // Stop the click from bubbling into the <summary> and toggling open state.
+    event.preventDefault();
+    event.stopPropagation();
+    if (!isCopyable) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(content as string);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard can fail in some sandboxed contexts; silent is fine —
+      // the user can still select-and-copy from the rendered detail block.
+    }
+  }
+
+  return (
+    <details className="group mt-6" open={defaultOpen}>
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-md py-1 text-xs text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+        <span className="inline-flex items-center gap-1.5">
+          <ChevronRight
+            aria-hidden
+            className="size-3 transition-transform group-open:rotate-90"
+          />
+          Show technical details
+        </span>
+        {isCopyable ? (
+          <Button
+            aria-label="Copy technical details"
+            className="hidden group-open:inline-flex"
+            onClick={handleCopy}
+            size="xs"
+            type="button"
+            variant="ghost"
+          >
+            {copied ? <Check /> : <Copy />}
+            {copied ? "Copied" : "Copy"}
+          </Button>
+        ) : null}
+      </summary>
+      <div className="mt-2 overflow-hidden rounded-lg bg-fg-2 px-3.5 py-3 font-mono text-xs leading-5 break-all whitespace-pre-wrap text-foreground/85">
+        {content}
+      </div>
+    </details>
   );
 }
