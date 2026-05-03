@@ -362,6 +362,32 @@ test("account view uses an inline profile header and theme-colored sign-in actio
   assert.match(source, /Sign out/);
 });
 
+test("web search settings fall back to Exa when the managed Holaboss binding is unavailable", async () => {
+  const source = await readFile(AUTH_PANEL_PATH, "utf8");
+
+  assert.match(source, /function normalizeWebSearchProviderSelection\(/);
+  assert.match(
+    source,
+    /providerId === "holaboss_search" &&\s*!runtimeConfigHasManagedWebSearchBinding\(runtimeConfig\)\s*\?\s*"exa"\s*:\s*providerId/,
+  );
+  assert.match(
+    source,
+    /const selectedProviderId = normalizeWebSearchProviderSelection\(/,
+  );
+  assert.match(
+    source,
+    /const managedWebSearchAvailable =\s*runtimeConfigHasManagedWebSearchBinding\(effectiveRuntimeConfig\)/,
+  );
+  assert.match(
+    source,
+    /disabled:\s*providerId === "holaboss_search" && !managedWebSearchAvailable/,
+  );
+  assert.match(
+    source,
+    /Holaboss Search is unavailable until you refresh your Holaboss runtime binding\./,
+  );
+});
+
 test("direct Anthropic, OpenRouter, and Gemini defaults advertise current provider model ids", async () => {
   const source = await readFile(AUTH_PANEL_PATH, "utf8");
   const providerTemplatesBlock =
