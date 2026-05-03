@@ -8,7 +8,6 @@ import {
   Inbox,
   LayoutGrid,
   Loader2,
-  TriangleAlert,
   XCircle,
 } from "lucide-react";
 import {
@@ -20,6 +19,7 @@ import {
   useState,
 } from "react";
 import { appShellMainGridClassName } from "@/components/layout/appShellLayout";
+import { BlockingErrorScreen } from "@/components/layout/BlockingErrorScreen";
 import { NotificationToastStack } from "@/components/layout/NotificationToastStack";
 import {
   type OperationsDrawerTab,
@@ -47,6 +47,7 @@ import { SpaceBrowserExplorerPane } from "@/components/panes/SpaceBrowserExplore
 import { PublishScreen } from "@/components/publish/PublishScreen";
 import { Button } from "@/components/ui/button";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
+import { cn } from "@/lib/utils";
 import { StoplightProvider } from "@/lib/StoplightContext";
 import { holabossLogoUrl } from "@/lib/assetPaths";
 import { type ExplorerAttachmentDragPayload } from "@/lib/attachmentDrag";
@@ -1267,65 +1268,72 @@ function WorkspaceInitializingGate({
   const hasErrors = apps.some((app) => app.error);
   const readyCount = apps.filter((app) => app.ready).length;
 
-  return (
-    <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden px-6">
-      <div className="flex w-full max-w-md flex-col items-center text-center">
-        {hasErrors ? (
-          <TriangleAlert size={20} className="text-destructive" />
-        ) : (
-          <Loader2 size={20} className="animate-spin text-muted-foreground" />
-        )}
-
-        <h2 className="mt-5 text-[17px] font-medium text-foreground">
-          {hasErrors ? "Some apps need attention" : "Setting up workspace"}
-        </h2>
-        <p className="mt-2 max-w-sm text-[13px] leading-6 text-muted-foreground">
-          {hasErrors
-            ? "Some workspace apps encountered errors."
-            : "Starting workspace apps. This may take a moment on first setup."}
-        </p>
-
-        <div className="mt-6 w-full space-y-2">
-          {apps.map((app) => (
-            <div
-              key={app.id}
-              className="flex items-center gap-3 rounded-[14px] border border-border bg-muted px-4 py-2.5"
-            >
-              {app.ready ? (
-                <CircleCheck size={14} className="shrink-0 text-primary" />
-              ) : app.error ? (
-                <XCircle size={14} className="shrink-0 text-destructive" />
-              ) : (
-                <Loader2
-                  size={14}
-                  className="shrink-0 animate-spin text-muted-foreground"
-                />
+  const body = (
+    <ul className="divide-y divide-border/50 overflow-hidden rounded-lg ring-1 ring-border/40">
+      {apps.map((app) => {
+        const status = app.ready
+          ? "ready"
+          : app.error
+            ? "failed"
+            : "setting_up";
+        return (
+          <li
+            className="flex items-center gap-3 bg-background px-3.5 py-2.5"
+            key={app.id}
+          >
+            {status === "ready" ? (
+              <CircleCheck className="size-3.5 shrink-0 text-primary" aria-hidden />
+            ) : status === "failed" ? (
+              <XCircle className="size-3.5 shrink-0 text-destructive" aria-hidden />
+            ) : (
+              <Loader2
+                aria-hidden
+                className="size-3.5 shrink-0 animate-spin text-muted-foreground"
+              />
+            )}
+            <span className="min-w-0 flex-1 truncate text-left text-sm text-foreground">
+              {app.label}
+            </span>
+            <span
+              className={cn(
+                "shrink-0 text-xs",
+                status === "ready" && "text-primary",
+                status === "failed" && "text-destructive",
+                status === "setting_up" && "text-muted-foreground",
               )}
-              <span className="min-w-0 flex-1 text-left text-[13px] text-foreground">
-                {app.label}
-              </span>
-              <span
-                className={`text-xs ${
-                  app.ready
-                    ? "text-primary"
-                    : app.error
-                      ? "text-destructive"
-                      : "text-muted-foreground"
-                }`}
-              >
-                {app.ready ? "Ready" : app.error ? "Failed" : "Setting up..."}
-              </span>
-            </div>
-          ))}
-        </div>
+            >
+              {status === "ready"
+                ? "Ready"
+                : status === "failed"
+                  ? "Failed"
+                  : "Setting up…"}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
 
-        {!hasErrors ? (
-          <div className="mt-3 text-[12px] text-muted-foreground">
+  return (
+    <BlockingErrorScreen
+      body={body}
+      description={
+        hasErrors
+          ? "One or more workspace apps couldn't start. Open the app's settings or restart the workspace once the underlying issue is resolved."
+          : "Starting workspace apps. This may take a moment on first setup."
+      }
+      hint={
+        hasErrors ? null : (
+          <span className="tabular-nums">
             {readyCount} of {apps.length} ready
-          </div>
-        ) : null}
-      </div>
-    </section>
+          </span>
+        )
+      }
+      icon={hasErrors ? undefined : Loader2}
+      iconSpinning={!hasErrors}
+      title={hasErrors ? "Some apps need attention" : "Setting up workspace"}
+      tone={hasErrors ? "error" : "info"}
+    />
   );
 }
 
@@ -1356,31 +1364,18 @@ function FocusPlaceholder({
 
 function WorkspaceStartupErrorPane({ message }: { message: string }) {
   return (
-    <section className="theme-shell relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-xl shadow-subtle-sm">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(247,90,84,0.12),transparent_32%),radial-gradient(circle_at_bottom,rgba(247,170,126,0.08),transparent_36%)]" />
-      <div className="relative w-full max-w-180 px-6 py-8">
-        <div className="theme-subtle-surface rounded-[30px] border border-destructive/24 p-6 shadow-subtle-sm sm:p-8">
-          <div className="inline-flex items-center gap-2 rounded-full border border-destructive/22 bg-destructive/8 px-3 py-1.5 text-[10px] uppercase text-destructive">
-            <TriangleAlert size={12} />
-            <span>Desktop startup blocked</span>
-          </div>
-          <div className="mt-6 text-[30px] font-semibold text-foreground">
-            The local runtime is unavailable
-          </div>
-          <div className="mt-3 text-sm leading-7 text-muted-foreground">
-            The desktop shell cannot finish restoring workspaces until the
-            embedded runtime is available again.
-          </div>
-          <div className="mt-6 rounded-[20px] border border-destructive/22 bg-destructive/6 px-4 py-4 text-[13px] leading-7 text-foreground">
-            {message}
-          </div>
-          <div className="mt-5 text-[12px] leading-6 text-muted-foreground">
-            Check `runtime.log` in the Electron userData directory and confirm
-            the required desktop runtime configuration is present.
-          </div>
-        </div>
-      </div>
-    </section>
+    <BlockingErrorScreen
+      description="The desktop shell can't finish restoring workspaces until the embedded runtime is available again."
+      detail={message}
+      hint={
+        <>
+          Check <code className="font-mono">runtime.log</code> in the Electron
+          userData directory and confirm the desktop runtime configuration is
+          present.
+        </>
+      }
+      title="The local runtime is unavailable"
+    />
   );
 }
 
