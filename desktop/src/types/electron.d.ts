@@ -1606,6 +1606,9 @@ interface RuntimeNotificationListOptionsPayload {
       ) => Promise<DiagnosticsExportPayload>;
       revealBundle: (bundlePath: string) => Promise<boolean>;
     };
+    app: {
+      relaunch: () => Promise<void>;
+    };
     runtime: {
       getStatus: () => Promise<RuntimeStatusPayload>;
       restart: () => Promise<RuntimeStatusPayload>;
