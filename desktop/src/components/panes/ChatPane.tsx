@@ -3177,6 +3177,8 @@ export function ChatPane({
   const [streamTelemetry, setStreamTelemetry] = useState<
     StreamTelemetryEntry[]
   >([]);
+  const streamTelemetryRingRef = useRef<StreamTelemetryEntry[]>([]);
+  const streamTelemetryFlushTimerRef = useRef<number | null>(null);
   const [artifactBrowserOpen, setArtifactBrowserOpen] = useState(false);
   const [artifactBrowserFilter, setArtifactBrowserFilter] =
     useState<ArtifactBrowserFilter>("all");
@@ -3297,14 +3299,27 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
       at,
       ...entry,
     };
-    setStreamTelemetry((prev) => {
-      const merged = [...prev, next];
-      if (merged.length <= STREAM_TELEMETRY_LIMIT) {
-        return merged;
-      }
-      return merged.slice(merged.length - STREAM_TELEMETRY_LIMIT);
-    });
+    const ring = streamTelemetryRingRef.current;
+    ring.push(next);
+    if (ring.length > STREAM_TELEMETRY_LIMIT) {
+      ring.splice(0, ring.length - STREAM_TELEMETRY_LIMIT);
+    }
+    if (streamTelemetryFlushTimerRef.current === null) {
+      streamTelemetryFlushTimerRef.current = window.setTimeout(() => {
+        streamTelemetryFlushTimerRef.current = null;
+        setStreamTelemetry(streamTelemetryRingRef.current.slice());
+      }, 250);
+    }
   }
+
+  useEffect(
+    () => () => {
+      if (streamTelemetryFlushTimerRef.current !== null) {
+        window.clearTimeout(streamTelemetryFlushTimerRef.current);
+      }
+    },
+    [],
+  );
 
   async function closeStreamWithReason(streamId: string, reason: string) {
     appendStreamTelemetry({
