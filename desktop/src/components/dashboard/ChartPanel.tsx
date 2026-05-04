@@ -5,7 +5,9 @@ import {
   type LucideIcon,
   PieChart as PieChartIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
+
+import { useIsDarkTheme } from "@/lib/themeAttr";
 import {
   Area,
   AreaChart,
@@ -75,30 +77,8 @@ const SERIES_DARK = [
   "oklch(70.4% 0.04 256.788)",  // slate-400
 ];
 
-function readIsDark(): boolean {
-  if (typeof document === "undefined") return false;
-  const root = document.documentElement;
-  return root.classList.contains("dark") || root.dataset.theme === "dark";
-}
-
-// Subscribes to live theme changes on <html>. Recharts paints into SVG
-// and can't pick up CSS vars at render time, so the palette is plain
-// OKLch literals — meaning charts won't repaint on theme toggle unless
-// the component re-renders. This hook does that via MutationObserver.
 function useSeriesPalette(): string[] {
-  const [isDark, setIsDark] = useState<boolean>(readIsDark);
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    const root = document.documentElement;
-    const update = () => setIsDark(readIsDark());
-    const mo = new MutationObserver(update);
-    mo.observe(root, {
-      attributes: true,
-      attributeFilter: ["class", "data-theme"],
-    });
-    return () => mo.disconnect();
-  }, []);
-  return isDark ? SERIES_DARK : SERIES_LIGHT;
+  return useIsDarkTheme() ? SERIES_DARK : SERIES_LIGHT;
 }
 
 export function ChartPanel({ panel, state }: ChartPanelProps) {

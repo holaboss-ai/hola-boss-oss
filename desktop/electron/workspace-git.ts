@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -28,6 +27,15 @@ export interface WorkspaceGitBootstrapResult {
   initialCommitCreated: boolean;
   branch: string;
   gitDir: string;
+}
+
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await fs.access(target);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function normalizeCommandError(
@@ -84,7 +92,7 @@ export async function ensureWorkspaceGitRepo(
   workspaceDir: string,
 ): Promise<WorkspaceGitBootstrapResult> {
   const gitDir = path.join(workspaceDir, ".git");
-  if (existsSync(gitDir)) {
+  if (await pathExists(gitDir)) {
     return {
       initialized: false,
       initialCommitCreated: false,
